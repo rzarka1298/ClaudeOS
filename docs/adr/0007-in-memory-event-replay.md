@@ -20,3 +20,7 @@ aged out.
   redaction and deletion controls.
 - Buffer depth becomes a tuning parameter that trades memory against how long a
   disconnected plugin can be away before paying for a resync.
+- The hook spool file introduced in ADR-0010 is a transient queue, not a
+  retained log: it is drained and truncated on read. Were it allowed to
+  accumulate, it would reintroduce the durable record of session activity this
+  decision exists to avoid.
