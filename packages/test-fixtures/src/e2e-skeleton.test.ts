@@ -1,17 +1,20 @@
 import { existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { HealthResponseSchema } from "@ccc/domain";
+import { type HealthResponse, HealthResponseSchema } from "@ccc/domain";
 import { openStore } from "@ccc/operational-store";
 import { resolveSocketPath, SocketPathTooLongError } from "@ccc/service/paths";
+import { createSocketApiClient } from "@ccc/service-api-client";
 import { describe, expect, it } from "vitest";
-import { requestOverSocket, startServiceForTest } from "./service-harness.js";
+import { startServiceForTest } from "./service-harness.js";
 import { withTempSocketDir } from "./socket-fixture.js";
 
 /**
  * End-to-end proof of the walking skeleton (SKELETON.md): a value written
  * to SQLite by the service is read back through a 0600 Unix domain socket
- * by the same client shape the Obsidian plugin uses. No mocking — every
- * test here spawns the real, built `@ccc/service` entry point.
+ * by `createSocketApiClient` — the exact `@ccc/service-api-client` code
+ * `packages/plugin/src/main.ts` constructs and calls, not a bespoke test
+ * double. No mocking — every test here spawns the real, built
+ * `@ccc/service` entry point.
  */
 describe("walking skeleton: clone to a live command-center connection state", () => {
   it("Test 1: binds the socket at mode 0600 the instant it reports listening", async () => {
@@ -33,10 +36,8 @@ describe("walking skeleton: clone to a live command-center connection state", ()
       const dbPath = join(dir, "operational.db");
       const handle = await startServiceForTest({ socketPath, dbPath });
       try {
-        const res = await requestOverSocket<unknown>(socketPath, {
-          method: "GET",
-          path: "/api/v1/health",
-        });
+        const client = createSocketApiClient({ socketPath });
+        const res = await client.request<unknown>({ method: "GET", path: "/api/v1/health" });
         expect(res.status).toBe(200);
         const parsed = HealthResponseSchema.safeParse(res.body);
         expect(parsed.success).toBe(true);
@@ -51,7 +52,8 @@ describe("walking skeleton: clone to a live command-center connection state", ()
       const dbPath = join(dir, "operational.db");
       const handle = await startServiceForTest({ socketPath, dbPath });
       try {
-        const res = await requestOverSocket<{ startedAt: string }>(socketPath, {
+        const client = createSocketApiClient({ socketPath });
+        const res = await client.request<HealthResponse>({
           method: "GET",
           path: "/api/v1/health",
         });
