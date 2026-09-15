@@ -10,3 +10,6 @@ packages/plugin/styles.css
 .privacy-denylist.local
 coverage/
 .DS_Store
+
+# GSD local runtime state (isolation sentinels, never shared)
+.gsd/
