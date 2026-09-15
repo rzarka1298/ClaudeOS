@@ -24,6 +24,8 @@
     "@ccc/service-api-client": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "24.13.4"
+    "@types/node": "24.13.4",
+    "@ccc/adapters": "workspace:*",
+    "@ccc/plugin": "workspace:*"
   }
 }
