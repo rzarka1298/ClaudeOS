@@ -16,5 +16,11 @@
     "typecheck": "tsc -b",
     "test": "vitest run --passWithNoTests",
     "lint": "biome check ."
+  },
+  "dependencies": {
+    "execa": "10.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.4"
   }
 }
