@@ -1,15 +1,17 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { connectionState } from "../connection-state.js";
+import { connectionState, lastEvent } from "../connection-state.js";
 import { Shell } from "./shell.js";
 
 afterEach(() => {
   cleanup();
   connectionState.value = { kind: "connecting" };
+  lastEvent.value = undefined;
 });
 
 beforeEach(() => {
   connectionState.value = { kind: "connecting" };
+  lastEvent.value = undefined;
 });
 
 describe("Shell", () => {
@@ -45,10 +47,23 @@ describe("Shell", () => {
     expect(screen.getByText(/Disconnected — connect ECONNREFUSED/)).toBeTruthy();
   });
 
-  it("renders the live state's start time as text", () => {
-    connectionState.value = { kind: "live", startedAt: "2026-09-15T00:00:00Z", measuredAtMs: 0 };
+  it("renders the live state as text", () => {
+    connectionState.value = { kind: "live" };
     render(<Shell />);
-    expect(screen.getByText(/Live — service started at 2026-09-15T00:00:00Z/)).toBeTruthy();
+    expect(screen.getByText(/^Live$/)).toBeTruthy();
+  });
+
+  it("renders the most recent event's type and timestamp beneath the connection state, once one has arrived", () => {
+    connectionState.value = { kind: "live" };
+    lastEvent.value = { type: "service.heartbeat", occurredAt: "2026-09-15T00:00:00Z" };
+    render(<Shell />);
+    expect(screen.getByText(/Last event: service\.heartbeat at 2026-09-15T00:00:00Z/)).toBeTruthy();
+  });
+
+  it("renders no last-event line before any event has arrived", () => {
+    connectionState.value = { kind: "connecting" };
+    render(<Shell />);
+    expect(screen.queryByText(/Last event:/)).toBeNull();
   });
 
   it("completes its first render without ever calling a socket client", () => {

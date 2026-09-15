@@ -1,6 +1,6 @@
 import { useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
-import { connectionState } from "../connection-state.js";
+import { connectionState, lastEvent } from "../connection-state.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 
 export interface ShellProps {
@@ -13,7 +13,7 @@ export interface ShellProps {
 function connectionStatusText(state: ConnectionState): string {
   switch (state.kind) {
     case "live":
-      return `Live — service started at ${state.startedAt}`;
+      return "Live";
     case "disconnected":
       return `Disconnected — ${state.reason}`;
     default:
@@ -51,12 +51,18 @@ export function Shell({ initialDestination, onDestinationChange }: ShellProps) {
 
   const active = DESTINATIONS.find((d) => d.id === activeId) ?? DESTINATIONS[0];
   const status = connectionState.value;
+  const event = lastEvent.value;
 
   return (
     <div className="ccc-command-center">
       <div className="ccc-connection-status" data-state={status.kind}>
         <span className="ccc-status-dot" aria-hidden="true" />
         <span className="ccc-status-text">{connectionStatusText(status)}</span>
+        {event && (
+          <span className="ccc-last-event-text">
+            {`Last event: ${event.type} at ${event.occurredAt}`}
+          </span>
+        )}
       </div>
       <div
         role="tablist"

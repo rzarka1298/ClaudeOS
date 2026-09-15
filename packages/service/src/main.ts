@@ -2,12 +2,21 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
 import { applyMigrations, openStore } from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
+import { createEventBus } from "./events/event-bus.js";
 import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
 import { drainSpool } from "./lifecycle/spool-drain.js";
 import { logger } from "./logging.js";
 import { resolveDbPath, resolveRuntimeDir, resolveSocketPath, resolveSpoolPath } from "./paths.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
+
+/**
+ * The default interval between the service's own `service.heartbeat`
+ * events. Overridable via `CCC_HEARTBEAT_INTERVAL_MS` so an integration
+ * test can observe a push within its own timeout without waiting thirty
+ * real seconds.
+ */
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
  * Composition root: resolves the runtime directory and socket/db paths,
@@ -55,12 +64,29 @@ async function main(): Promise<void> {
   const secretStore = createSecurityCliSecretStore();
   const installSecret = await getInstallSecret(secretStore);
 
-  const requestListener = createRequestListener({ store, getSecret: () => installSecret });
+  // ADR-0007: the bus (and the bounded buffer it publishes into) is
+  // in-process memory only, never written to the store or a file — a
+  // service restart loses it by design, and the client implements full
+  // resync for exactly that case.
+  const eventBus = createEventBus();
+  const heartbeatIntervalMs = Number(
+    process.env.CCC_HEARTBEAT_INTERVAL_MS ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+  );
+  const heartbeatTimer = setInterval(() => {
+    eventBus.publish("service.heartbeat", { at: new Date().toISOString() });
+  }, heartbeatIntervalMs);
+
+  const requestListener = createRequestListener({
+    store,
+    getSecret: () => installSecret,
+    eventBus,
+  });
   const server = await startSocketServer({ socketPath, requestListener });
 
   logger.info({ socketPath }, "listening");
 
   const shutdown = (): void => {
+    clearInterval(heartbeatTimer);
     server.close(() => {
       store.close();
       if (existsSync(socketPath)) {
