@@ -25,6 +25,12 @@
     { "path": "packages/service" },
     { "path": "packages/service-api-client" },
     { "path": "packages/plugin" },
-    { "path": "packages/test-fixtures" }
+    { "path": "packages/test-fixtures" },
+    { "path": "packages/adapters" },
+    { "path": "packages/vault-repo" },
+    { "path": "packages/scheduler" },
+    { "path": "packages/collectors" },
+    { "path": "packages/launchers" },
+    { "path": "packages/keychain" }
   ]
 }
