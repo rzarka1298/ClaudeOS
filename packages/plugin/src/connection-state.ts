@@ -1,5 +1,5 @@
-import { API_BASE, type HealthResponse } from "@ccc/domain";
-import type { SocketApiClient } from "@ccc/service-api-client";
+import { HEALTH_PATH, type HealthResponse } from "@ccc/domain";
+import type { AuthenticatedSocketApiClient } from "@ccc/service-api-client";
 import { signal } from "@preact/signals";
 
 /**
@@ -16,12 +16,19 @@ export type ConnectionState =
 
 export const connectionState = signal<ConnectionState>({ kind: "connecting" });
 
-/** Probes `GET /api/v1/health` and maps the outcome onto {@link ConnectionState}. */
-export async function probeConnection(client: SocketApiClient): Promise<ConnectionState> {
+/**
+ * Probes `GET /api/v1/health` and maps the outcome onto
+ * {@link ConnectionState}. `client` is an {@link AuthenticatedSocketApiClient}
+ * (ADR-0016) — it handshakes for a bearer token on first use and attaches
+ * it automatically, since `/api/v1/health` now requires one.
+ */
+export async function probeConnection(
+  client: AuthenticatedSocketApiClient,
+): Promise<ConnectionState> {
   try {
     const res = await client.request<HealthResponse>({
       method: "GET",
-      path: `${API_BASE}/health`,
+      path: HEALTH_PATH,
     });
     const next: ConnectionState =
       res.status === 200

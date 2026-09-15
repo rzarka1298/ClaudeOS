@@ -97,6 +97,9 @@ importers:
       '@ccc/domain':
         specifier: workspace:*
         version: link:../domain
+      '@ccc/keychain':
+        specifier: workspace:*
+        version: link:../keychain
       '@ccc/operational-store':
         specifier: workspace:*
         version: link:../operational-store

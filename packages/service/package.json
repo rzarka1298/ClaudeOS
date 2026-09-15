@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@ccc/domain": "workspace:*",
+    "@ccc/keychain": "workspace:*",
     "@ccc/operational-store": "workspace:*"
   },
   "devDependencies": {
