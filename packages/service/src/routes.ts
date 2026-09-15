@@ -10,6 +10,8 @@ import {
 import type { OperationalStore } from "@ccc/operational-store";
 import { requireToken } from "./auth/require-token.js";
 import { mintToken } from "./auth/token.js";
+import { logger } from "./logging.js";
+import type { PathNotAllowedError } from "./path-allowlist.js";
 
 export interface RouteContext {
   store: OperationalStore;
@@ -52,6 +54,22 @@ const handshakeHandler: Handler = (_req, res, ctx) => {
   };
   sendJson(res, 200, body);
 };
+
+/**
+ * Sends the uniform 403 response for a candidate `assertPathAllowed`
+ * rejected. The resolved path and the failing candidate are logged
+ * locally through the redacting logger; the response body is the exact
+ * `{ error: 'path not permitted' }` shape and never carries a filesystem
+ * path (SVC-04 / research §Security Domain, ASVS V4). No path-accepting
+ * handler exists yet in this phase — the vault root and registered
+ * projects land in Phase 2/4 — so nothing calls this yet, but it lands
+ * now so no later handler is written without it.
+ */
+export function sendPathNotAllowed(res: ServerResponse, err: PathNotAllowedError): void {
+  logger.warn({ candidate: err.candidate }, "path not permitted");
+  const body: ApiErrorBody = { error: "path not permitted" };
+  sendJson(res, 403, body);
+}
 
 /** Wraps a route `Handler` in the bearer-token requirement. Every route this plan and later plans add other than the handshake itself is registered through this. */
 function withAuth(handler: Handler): Handler {
