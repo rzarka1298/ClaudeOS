@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createSocketApiClient } from "@ccc/service-api-client";
+import { createAuthenticatedClient } from "@ccc/service-api-client";
 import { ItemView, Plugin, type WorkspaceLeaf } from "obsidian";
 import { probeConnection } from "./connection-state.js";
 
@@ -35,7 +35,7 @@ class CommandCenterView extends ItemView {
     const status = root.createDiv({ cls: "ccc-connection-status" });
     status.setText("Connecting…");
 
-    const client = createSocketApiClient({ socketPath: resolveSocketPath() });
+    const client = createAuthenticatedClient({ socketPath: resolveSocketPath() });
     const state = await probeConnection(client);
     if (state.kind === "live") {
       status.setText(`Live — service started at ${state.startedAt}`);

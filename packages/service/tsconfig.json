@@ -5,5 +5,9 @@
     "rootDir": "src"
   },
   "include": ["src"],
-  "references": [{ "path": "../domain" }, { "path": "../operational-store" }]
+  "references": [
+    { "path": "../domain" },
+    { "path": "../keychain" },
+    { "path": "../operational-store" }
+  ]
 }
