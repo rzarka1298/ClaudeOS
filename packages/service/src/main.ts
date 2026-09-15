@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
-import { openStore } from "@ccc/operational-store";
+import { applyMigrations, openStore } from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
 import { logger } from "./logging.js";
 import { resolveDbPath, resolveRuntimeDir, resolveSocketPath } from "./paths.js";
@@ -25,6 +25,12 @@ async function main(): Promise<void> {
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
 
   const store = openStore(dbPath);
+  // ADR-0018: migrations apply before anything else touches the store, so
+  // no request is ever served against a stale schema. `service_meta` was
+  // created ad hoc by `openStore()` above (plan 01-01); the baseline
+  // migration's `CREATE TABLE IF NOT EXISTS` takes ownership without
+  // erroring on the table it finds already there.
+  applyMigrations(store.db);
   const startedAt = new Date().toISOString();
   store.writeServiceMeta("started_at", startedAt);
   // The walking skeleton pins the service version literally rather than
