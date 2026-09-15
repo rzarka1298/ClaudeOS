@@ -5,7 +5,7 @@ import type { RunId, RunState } from "@ccc/domain";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyMigrations } from "./migrate.js";
-import { getRun, insertRun, InvalidRunStateError, listNonTerminalRuns } from "./run-store.js";
+import { getRun, InvalidRunStateError, insertRun, listNonTerminalRuns } from "./run-store.js";
 
 const REAL_MIGRATIONS_DIR = join(import.meta.dirname, "../migrations");
 
@@ -75,7 +75,9 @@ describe("run-store", () => {
     const nonTerminal = listNonTerminalRuns(db)
       .map((r) => r.runId)
       .sort();
-    expect(nonTerminal).toEqual(["run-queued", "run-running", "run-starting", "run-waiting"].sort());
+    expect(nonTerminal).toEqual(
+      ["run-queued", "run-running", "run-starting", "run-waiting"].sort(),
+    );
   });
 
   it("rejects a state string outside the eight-member RunState union before it reaches the database", () => {
