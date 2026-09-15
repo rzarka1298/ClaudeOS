@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   HANDSHAKE_PATH,
@@ -121,6 +122,37 @@ describe("authenticated round-trip: handshake mints a token, health requires it"
           headers: { authorization: `Bearer ${handshake.body.token}` },
         });
         expect(res.status).toBe(200);
+      } finally {
+        await handle.stop();
+      }
+    });
+  });
+
+  it("the per-install secret never appears in the operational store file or any log line (SVC-09)", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      const dbPath = join(dir, "operational.db");
+      const handle = await startServiceForTest({ socketPath, dbPath });
+      try {
+        const client = createSocketApiClient({ socketPath });
+        await client.request<HandshakeResponse>({ method: "POST", path: HANDSHAKE_PATH });
+
+        // The real secret the service just generated (or reused) for this
+        // throwaway account — the marker this assertion greps for.
+        const secretValue = execFileSync(
+          "security",
+          ["find-generic-password", "-a", throwawayAccount, "-s", KEYCHAIN_SERVICE_NAME, "-w"],
+          { encoding: "utf8" },
+        ).trim();
+        expect(secretValue.length).toBeGreaterThan(0);
+
+        const dbBytes = readFileSync(dbPath);
+        expect(dbBytes.includes(secretValue)).toBe(false);
+
+        const logPath = join(dir, "logs", "service.log");
+        if (existsSync(logPath)) {
+          const logText = readFileSync(logPath, "utf8");
+          expect(logText).not.toContain(secretValue);
+        }
       } finally {
         await handle.stop();
       }
