@@ -84,4 +84,17 @@ describe("createHostRegistry", () => {
     const registry = createHostRegistry(host);
     expect(() => registry.registerRaw("unknown-kind", () => {})).toThrow(/unknown-kind/);
   });
+
+  it("registers and disposes a raw eventStream disposer with no Obsidian host method involved (plan 01-06)", () => {
+    const host = createStubHost();
+    const registry = createHostRegistry(host);
+    const dispose = vi.fn();
+
+    registry.registerRaw("eventStream", dispose);
+    expect(registry.liveCount()).toBe(1);
+
+    registry.disposeAll();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(registry.liveCount()).toBe(0);
+  });
 });

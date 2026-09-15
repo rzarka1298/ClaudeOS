@@ -1,5 +1,10 @@
-import type { AuthenticatedSocketApiClient } from "@ccc/service-api-client";
-import { createAuthenticatedClient } from "@ccc/service-api-client";
+import { HANDSHAKE_PATH, type HandshakeResponse } from "@ccc/domain";
+import type { AuthenticatedSocketApiClient, EventClient } from "@ccc/service-api-client";
+import {
+  createAuthenticatedClient,
+  createEventClient,
+  createSocketApiClient,
+} from "@ccc/service-api-client";
 import { Plugin, type WorkspaceLeaf } from "obsidian";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
 import {
@@ -21,6 +26,7 @@ import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 export default class ClaudeCommandCenterPlugin extends Plugin {
   settings: CommandCenterSettings = DEFAULT_SETTINGS;
   client!: AuthenticatedSocketApiClient;
+  eventClient!: EventClient;
   private hostRegistry!: HostRegistry;
 
   async onload(): Promise<void> {
@@ -28,7 +34,30 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
 
     const socketPath = resolveSocketPath(this.settings.socketPathOverride);
     this.client = createAuthenticatedClient({ socketPath });
+
+    // A separate, unauthenticated client purely for the event stream's own
+    // token acquisition: the stream connection is long-lived and
+    // hand-managed (ADR-0001), so it mints its own bearer token on every
+    // connect/reconnect through the plain handshake route rather than
+    // going through the JSON-response-shaped AuthenticatedSocketApiClient.
+    const handshakeClient = createSocketApiClient({ socketPath });
+    this.eventClient = createEventClient({
+      socketPath,
+      getToken: async () => {
+        const res = await handshakeClient.request<HandshakeResponse>({
+          method: "POST",
+          path: HANDSHAKE_PATH,
+        });
+        return res.body.token;
+      },
+    });
+
     this.hostRegistry = createHostRegistry(createObsidianHost(this));
+    // eventClient.dispose() is not an Obsidian host method at all -- routed
+    // through registerRaw directly (host-registry.ts), so the subscription
+    // is still torn down on unload regardless of whether the command-center
+    // view is currently open.
+    this.hostRegistry.registerRaw("eventStream", () => this.eventClient.dispose());
 
     this.hostRegistry.view(VIEW_TYPE, (leaf: WorkspaceLeaf) => new CommandCenterView(leaf, this));
 
@@ -50,9 +79,10 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
    * because it discards the user's workspace layout. `disposeAll()`
    * returns this plugin's own registration bookkeeping to zero (Obsidian's
    * own `register*` sweep, which every `hostRegistry` call also triggers
-   * internally, runs independently at the same moment); `invalidateToken()`
-   * drops the cached bearer token rather than leaving it live in memory
-   * past this plugin instance's lifetime.
+   * internally, runs independently at the same moment) and also tears down
+   * the event-stream subscription; `invalidateToken()` drops the cached
+   * bearer token rather than leaving it live in memory past this plugin
+   * instance's lifetime.
    */
   onunload(): void {
     this.hostRegistry.disposeAll();

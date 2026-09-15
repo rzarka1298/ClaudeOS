@@ -71,7 +71,22 @@ export interface HostRegistry {
   registerRaw(kind: string, dispose: Disposer): void;
 }
 
-const KNOWN_KINDS = ["event", "interval", "domEvent", "view", "ribbon", "command"] as const;
+/**
+ * `eventStream` is not an Obsidian host method at all -- it is
+ * `@ccc/service-api-client`'s `EventClient.dispose()` (plan 01-06), routed
+ * through `registerRaw` directly rather than a named `RegistrationHost`
+ * method, exactly the "future registration kind not yet covered by a named
+ * method" case `registerRaw`'s own doc comment anticipates.
+ */
+const KNOWN_KINDS = [
+  "event",
+  "interval",
+  "domEvent",
+  "view",
+  "ribbon",
+  "command",
+  "eventStream",
+] as const;
 type KnownKind = (typeof KNOWN_KINDS)[number];
 
 function isKnownKind(kind: string): kind is KnownKind {

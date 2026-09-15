@@ -2,6 +2,7 @@ import type { IncomingMessage, RequestListener, ServerResponse } from "node:http
 import {
   API_BASE,
   type ApiErrorBody,
+  EVENTS_PATH,
   HANDSHAKE_PATH,
   type HandshakeResponse,
   HEALTH_PATH,
@@ -11,6 +12,8 @@ import {
 import { listAllRuns, type OperationalStore } from "@ccc/operational-store";
 import { requireToken } from "./auth/require-token.js";
 import { mintToken } from "./auth/token.js";
+import type { EventBus } from "./events/event-bus.js";
+import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
 
@@ -18,6 +21,7 @@ export interface RouteContext {
   store: OperationalStore;
   /** Returns the per-install secret used to mint and verify bearer tokens. */
   getSecret: () => Buffer;
+  eventBus: EventBus;
 }
 
 type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;
@@ -90,10 +94,21 @@ function withAuth(handler: Handler): Handler {
   return (req, res, ctx) => requireToken(ctx.getSecret, (r, s) => handler(r, s, ctx))(req, res);
 }
 
+/**
+ * `GET /api/v1/events` — the same token requirement as every other
+ * non-handshake route (SVC-07's own threat register, T-01-31). The stream
+ * itself never ends on its own; `createEventStreamHandler` writes directly
+ * to `res` for as long as the connection stays open.
+ */
+const eventsHandler: Handler = (req, res, ctx) => {
+  createEventStreamHandler(ctx.eventBus)(req, res);
+};
+
 const routeTable: Record<string, Record<string, Handler>> = {
   [HANDSHAKE_PATH]: { POST: handshakeHandler },
   [HEALTH_PATH]: { GET: withAuth(healthHandler) },
   [RUNS_PATH]: { GET: withAuth(listRunsHandler) },
+  [EVENTS_PATH]: { GET: withAuth(eventsHandler) },
 };
 
 /** Builds the request listener the socket server hands to `http.createServer`. */

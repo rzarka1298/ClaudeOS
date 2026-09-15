@@ -1,7 +1,7 @@
-import type { AuthenticatedSocketApiClient } from "@ccc/service-api-client";
+import type { AuthenticatedSocketApiClient, EventClient } from "@ccc/service-api-client";
 import { ItemView, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
-import { probeConnection } from "../connection-state.js";
+import { attachEventClient } from "../connection-state.js";
 import type { CommandCenterSettings } from "../settings.js";
 import type { DestinationId } from "./destinations.js";
 import { Shell } from "./shell.js";
@@ -10,25 +10,30 @@ export const VIEW_TYPE = "claude-command-center-view";
 
 /**
  * The subset of the plugin the view needs — settings for the last-opened
- * destination (PLUG-05) and the one shared authenticated client the plugin
- * owns for its whole lifetime (so `onunload` can invalidate its token).
+ * destination (PLUG-05), the shared authenticated client (so `onunload`
+ * can invalidate its token), and the shared event-stream client the view
+ * subscribes to on open (its teardown lives at the plugin level, through
+ * the host registry, not here — see `main.ts`).
  */
 export interface CommandCenterViewHost {
   readonly settings: CommandCenterSettings;
   readonly client: AuthenticatedSocketApiClient;
+  readonly eventClient: EventClient;
   saveSettings(): Promise<void>;
 }
 
 /**
- * `onOpen` mounts the Preact shell synchronously, then starts the
- * connection probe — never the other way around, which is what makes
+ * `onOpen` mounts the Preact shell synchronously, then subscribes to the
+ * live event stream — never the other way around, which is what makes
  * PERF-01 (shell visible before the network resolves) a structural
- * property. `onClose` unmounts the tree and marks any in-flight probe
- * result as stale so it can never write into a view that no longer exists.
+ * property. `onClose` unmounts the tree; the event-stream subscription
+ * itself outlives a view close (it is only torn down when the plugin
+ * unloads, via `main.ts`'s host-registry registration), so reconnecting to
+ * the view later reads whatever `connectionState`/`lastEvent` the
+ * subscription already produced rather than needing to reconnect.
  */
 export class CommandCenterView extends ItemView {
   private readonly host: CommandCenterViewHost;
-  private closed = false;
 
   constructor(leaf: WorkspaceLeaf, host: CommandCenterViewHost) {
     super(leaf);
@@ -48,7 +53,6 @@ export class CommandCenterView extends ItemView {
   }
 
   override async onOpen(): Promise<void> {
-    this.closed = false;
     const initial = this.host.settings.lastOpenedDestination as DestinationId;
 
     this.contentEl.empty();
@@ -64,16 +68,13 @@ export class CommandCenterView extends ItemView {
       this.contentEl,
     );
 
-    // The probe always starts after the render above returns — painting
-    // never waits on the network (PERF-01 as a structural property, not a
-    // performance hope).
-    void probeConnection(this.host.client).then(() => {
-      if (this.closed) return;
-    });
+    // The subscription always starts after the render above returns —
+    // painting never waits on the network (PERF-01 as a structural
+    // property, not a performance hope).
+    attachEventClient(this.host.eventClient);
   }
 
   override async onClose(): Promise<void> {
-    this.closed = true;
     render(null, this.contentEl);
   }
 }

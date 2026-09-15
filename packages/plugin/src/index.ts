@@ -3,5 +3,5 @@
 // file exists so the package follows the same `src/index.ts` shape every
 // other workspace package does; it re-exports the side-effect-free pieces.
 
-export type { ConnectionState } from "./connection-state.js";
-export { connectionState, probeConnection } from "./connection-state.js";
+export type { ConnectionState, LastEventInfo } from "./connection-state.js";
+export { attachEventClient, connectionState, lastEvent } from "./connection-state.js";

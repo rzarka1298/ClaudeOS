@@ -1,4 +1,10 @@
 export type {
+  CreateEventClientOptions,
+  EventClient,
+  EventClientState,
+} from "./event-client.js";
+export { createEventClient } from "./event-client.js";
+export type {
   AuthenticatedSocketApiClient,
   CreateAuthenticatedClientOptions,
 } from "./handshake.js";
