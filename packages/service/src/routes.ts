@@ -1,5 +1,6 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
 import {
+  API_BASE,
   type ApiErrorBody,
   HANDSHAKE_PATH,
   type HandshakeResponse,
@@ -7,7 +8,7 @@ import {
   type HealthResponse,
   TOKEN_TTL_MS,
 } from "@ccc/domain";
-import type { OperationalStore } from "@ccc/operational-store";
+import { listAllRuns, type OperationalStore } from "@ccc/operational-store";
 import { requireToken } from "./auth/require-token.js";
 import { mintToken } from "./auth/token.js";
 import { logger } from "./logging.js";
@@ -37,6 +38,19 @@ const healthHandler: Handler = (_req, res, ctx) => {
     schemaVersion: 1,
   };
   sendJson(res, 200, body);
+};
+
+const RUNS_PATH = `${API_BASE}/runs`;
+
+/**
+ * `GET /api/v1/runs` — the persisted Runs (most recently started first),
+ * so restart recovery's reconciliation (`recoverInterruptedRuns`,
+ * `packages/service/src/lifecycle/recover-runs.ts`) is observable from the
+ * plugin over the API, not only from the service's own log.
+ */
+const listRunsHandler: Handler = (_req, res, ctx) => {
+  const runs = listAllRuns(ctx.store.db);
+  sendJson(res, 200, { runs });
 };
 
 /**
@@ -79,6 +93,7 @@ function withAuth(handler: Handler): Handler {
 const routeTable: Record<string, Record<string, Handler>> = {
   [HANDSHAKE_PATH]: { POST: handshakeHandler },
   [HEALTH_PATH]: { GET: withAuth(healthHandler) },
+  [RUNS_PATH]: { GET: withAuth(listRunsHandler) },
 };
 
 /** Builds the request listener the socket server hands to `http.createServer`. */

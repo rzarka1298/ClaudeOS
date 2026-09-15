@@ -8,10 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLogger } from "../logging.js";
 import { recoverInterruptedRuns } from "./recover-runs.js";
 
-const REAL_MIGRATIONS_DIR = join(
-  import.meta.dirname,
-  "../../../operational-store/migrations",
-);
+const REAL_MIGRATIONS_DIR = join(import.meta.dirname, "../../../operational-store/migrations");
 
 let dir: string;
 let db: Database.Database;
