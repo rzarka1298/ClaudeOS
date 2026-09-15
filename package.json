@@ -11,12 +11,17 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "setup": "sh scripts/preflight.sh && pnpm install && turbo run build",
-    "dev:service": "node packages/service/dist/main.js"
+    "dev:service": "node packages/service/dist/main.js",
+    "ci:boundaries": "eslint --config eslint.config.mjs packages --ext .ts --ignore-pattern 'packages/test-fixtures/boundary-violations/**'"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.13.4",
+    "@typescript-eslint/eslint-plugin": "8.70.0",
+    "@typescript-eslint/parser": "8.70.0",
+    "eslint": "10.10.0",
+    "eslint-plugin-boundaries": "7.2.0",
     "turbo": "2.10.13",
     "typescript": "6.0.3",
     "vitest": "^4.1.11"
