@@ -31,8 +31,16 @@ regex = '''v1\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{20,}'''
 tags = ["token", "ccc", "bearer-token"]
 
 [allowlist]
-description = "Placeholder-shaped strings in documented example config and docs -- never real credentials"
+# Narrowed per commit security review (allowlist-overbroad): the former
+# blanket '''(^|/)docs/.*''' path exempted the entire docs tree from every
+# rule, so a real credential pasted into an ADR would have been invisible.
+# The docs tree was verified to contain no rule-tripping strings at the time
+# of narrowing; if a doc ever needs a placeholder that trips a rule, add a
+# targeted regex for that placeholder here -- never a directory blanket.
+description = "Placeholder-shaped strings in documented example config -- never real credentials"
 paths = [
   '''(^|/)\.env\.example$''',
-  '''(^|/)docs/.*''',
+]
+regexes = [
+  '''/Users/USERNAME/''',
 ]
