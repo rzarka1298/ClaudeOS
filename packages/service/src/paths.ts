@@ -37,3 +37,12 @@ export function resolveSocketPath(): string {
 export function resolveDbPath(): string {
   return join(resolveRuntimeDir(), "operational.db");
 }
+
+/**
+ * The hook spool file `drainSpool` (`./lifecycle/spool-drain.ts`) reads and
+ * truncates on every startup — a transient queue, never a retained record
+ * of session activity (ADR-0007, ADR-0010).
+ */
+export function resolveSpoolPath(): string {
+  return process.env.CCC_SPOOL_PATH ?? join(resolveRuntimeDir(), "spool", "hooks.ndjson");
+}

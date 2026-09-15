@@ -2,8 +2,10 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
 import { applyMigrations, openStore } from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
+import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
+import { drainSpool } from "./lifecycle/spool-drain.js";
 import { logger } from "./logging.js";
-import { resolveDbPath, resolveRuntimeDir, resolveSocketPath } from "./paths.js";
+import { resolveDbPath, resolveRuntimeDir, resolveSocketPath, resolveSpoolPath } from "./paths.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
 
@@ -38,6 +40,17 @@ async function main(): Promise<void> {
   // resolution is an unnecessary wrinkle for Phase 1); a later phase can
   // thread the real build-time version through if it becomes load-bearing.
   store.writeServiceMeta("service_version", "0.1.0");
+
+  // Restart recovery, then the spool drain, both before the socket begins
+  // accepting connections: a Run's pre-recovery state and a spool record
+  // from a previous process's lifetime must never be observable over the
+  // API (SVC-11, ADR-0007/ADR-0010).
+  const reconciledCount = recoverInterruptedRuns(store.db, logger);
+  if (reconciledCount > 0) {
+    logger.info({ reconciledCount }, "startup: reconciled interrupted runs");
+  }
+  const spoolRecords = drainSpool(resolveSpoolPath(), logger);
+  logger.info({ count: spoolRecords.length }, "startup: drained hook spool");
 
   const secretStore = createSecurityCliSecretStore();
   const installSecret = await getInstallSecret(secretStore);

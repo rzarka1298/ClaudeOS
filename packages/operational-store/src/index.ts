@@ -6,6 +6,7 @@ export {
   getRun,
   InvalidRunStateError,
   insertRun,
+  listAllRuns,
   listNonTerminalRuns,
   updateRunState,
 } from "./run-store.js";

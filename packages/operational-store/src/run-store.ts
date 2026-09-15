@@ -132,3 +132,9 @@ export function listNonTerminalRuns(db: Database.Database): RunRecord[] {
     .all(...NON_TERMINAL_STATES) as RunRow[];
   return rows.map(rowToRecord);
 }
+
+/** Every persisted Run, most recently started first — the source `GET /api/v1/runs` reads from so reconciliation is observable from the plugin, not only from the log. */
+export function listAllRuns(db: Database.Database): RunRecord[] {
+  const rows = db.prepare("SELECT * FROM runs ORDER BY started_at DESC").all() as RunRow[];
+  return rows.map(rowToRecord);
+}
