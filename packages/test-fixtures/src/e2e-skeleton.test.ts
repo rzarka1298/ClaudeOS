@@ -1,17 +1,52 @@
+import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type HealthResponse, HealthResponseSchema } from "@ccc/domain";
 import { openStore } from "@ccc/operational-store";
 import { resolveSocketPath, SocketPathTooLongError } from "@ccc/service/paths";
-import { createSocketApiClient } from "@ccc/service-api-client";
-import { describe, expect, it } from "vitest";
+import { createAuthenticatedClient } from "@ccc/service-api-client";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startServiceForTest } from "./service-harness.js";
 import { withTempSocketDir } from "./socket-fixture.js";
+
+const KEYCHAIN_SERVICE_NAME = "com.claude-command-center";
+const ITEM_NOT_FOUND_EXIT_CODE = 44;
+
+/**
+ * `GET /api/v1/health` requires a bearer token as of plan 01-02 (ADR-0016)
+ * — tests here that call it use `createAuthenticatedClient`, the exact
+ * `@ccc/service-api-client` code `packages/plugin/src/main.ts` constructs
+ * and calls, not a bespoke test double, which handshakes automatically. As
+ * in `authenticated-roundtrip.test.ts`, each test spawns the real service
+ * against a fresh, throwaway Keychain account and deletes that item in
+ * teardown so no test ever touches a real installation's own secret.
+ */
+let throwawayAccount: string;
+
+beforeEach(() => {
+  throwawayAccount = `install-secret-test-${randomBytes(6).toString("hex")}`;
+  process.env.CCC_INSTALL_SECRET_ACCOUNT = throwawayAccount;
+});
+
+afterEach(() => {
+  delete process.env.CCC_INSTALL_SECRET_ACCOUNT;
+  try {
+    execFileSync(
+      "security",
+      ["delete-generic-password", "-a", throwawayAccount, "-s", KEYCHAIN_SERVICE_NAME],
+      { stdio: "ignore" },
+    );
+  } catch (err: unknown) {
+    const status = (err as { status?: number }).status;
+    if (status !== ITEM_NOT_FOUND_EXIT_CODE) throw err;
+  }
+});
 
 /**
  * End-to-end proof of the walking skeleton (SKELETON.md): a value written
  * to SQLite by the service is read back through a 0600 Unix domain socket
- * by `createSocketApiClient` — the exact `@ccc/service-api-client` code
+ * by `createAuthenticatedClient` — the exact `@ccc/service-api-client` code
  * `packages/plugin/src/main.ts` constructs and calls, not a bespoke test
  * double. No mocking — every test here spawns the real, built
  * `@ccc/service` entry point.
@@ -36,7 +71,7 @@ describe("walking skeleton: clone to a live command-center connection state", ()
       const dbPath = join(dir, "operational.db");
       const handle = await startServiceForTest({ socketPath, dbPath });
       try {
-        const client = createSocketApiClient({ socketPath });
+        const client = createAuthenticatedClient({ socketPath });
         const res = await client.request<unknown>({ method: "GET", path: "/api/v1/health" });
         expect(res.status).toBe(200);
         const parsed = HealthResponseSchema.safeParse(res.body);
@@ -52,7 +87,7 @@ describe("walking skeleton: clone to a live command-center connection state", ()
       const dbPath = join(dir, "operational.db");
       const handle = await startServiceForTest({ socketPath, dbPath });
       try {
-        const client = createSocketApiClient({ socketPath });
+        const client = createAuthenticatedClient({ socketPath });
         const res = await client.request<HealthResponse>({
           method: "GET",
           path: "/api/v1/health",
