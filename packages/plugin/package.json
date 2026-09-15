@@ -1,0 +1,23 @@
+{
+  "name": "@ccc/plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "typecheck": "tsc -b",
+    "test": "echo \"no plugin-level unit tests in phase 1\"",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@ccc/domain": "workspace:*",
+    "@ccc/service-api-client": "workspace:*",
+    "@preact/signals": "2.11.2",
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.4",
+    "esbuild": "0.28.2",
+    "obsidian": "1.13.1"
+  }
+}
