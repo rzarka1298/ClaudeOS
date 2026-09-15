@@ -18,7 +18,8 @@
     "ci:backstop": "sh scripts/check-boundaries.sh",
     "ci:obsidianmd": "cd packages/plugin && pnpm exec eslint --config eslint.config.mjs src --ext .ts",
     "ci:typecheck": "turbo run typecheck",
-    "ci:test": "turbo run test"
+    "ci:test": "turbo run test",
+    "ci:privacy": "sh scripts/check-privacy.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

@@ -15,19 +15,20 @@ local checkout — that's the rule, not just a convention.
 | `obsidianmd`   | `pnpm run ci:obsidianmd` (`cd packages/plugin && pnpm exec eslint --config eslint.config.mjs src --ext .ts`) | Obsidian's own plugin-review-bot rule set (REPO-05/REPO-06), scoped to `packages/plugin` only. |
 | `typecheck`    | `pnpm run ci:typecheck` (`turbo run typecheck`)                             | Every package's `tsc -b` project-reference build. |
 | `test`         | `pnpm run ci:test` (`turbo run test`)                                      | Every package's Vitest suite. |
+| `privacy`      | `pnpm run ci:privacy` (`sh scripts/check-privacy.sh`)                       | No tracked file carries the owner's home-directory prefix, email address, or a maintained denylist pattern (PRIV-01/PRIV-02). |
+| `secrets`      | `gitleaks detect --no-git --source . --config .gitleaks.toml` (the CI job itself uses the official `gitleaks/gitleaks-action@v2` over full git history, `fetch-depth: 0`) | No credential-shaped string, including this project's own `v1.<payload>.<signature>` bearer-token shape, appears anywhere in the repository's committed history. |
 
-Every gate job (`format` through `test`) depends on `setup` in the workflow
-graph — `setup` proves the frozen-lockfile install itself succeeds before
-any gate runs against it. Because GitHub Actions runners don't share a
-filesystem across jobs, each gate job repeats the same checkout/Node/
+Every gate job (`format` through `privacy`) depends on `setup` in the
+workflow graph — `setup` proves the frozen-lockfile install itself succeeds
+before any gate runs against it. Because GitHub Actions runners don't share
+a filesystem across jobs, each gate job repeats the same checkout/Node/
 pnpm-install sequence `setup` uses; this is the "shared setup" every job
 depends on in the sense that every job runs the identical install sequence,
 not that a filesystem is literally shared across runners. The gate jobs
 themselves then run in parallel with each other, serialized only behind
-`setup`.
+`setup`. `secrets` is the one exception: `gitleaks/gitleaks-action@v2` needs
+no pnpm install at all, so it runs standalone against a full-history
+checkout rather than depending on `setup`.
 
 No job in `.github/workflows/ci.yml` sets a soft-fail/tolerate-failure
 setting on any step. A red job is always a red build.
-
-<!-- Plan 01-03 task 3 appends `privacy` and `secrets` rows here once those
-     jobs exist. -->
