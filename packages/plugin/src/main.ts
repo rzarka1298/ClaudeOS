@@ -83,7 +83,7 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
 
     this.addCommand({
       id: "open-overview",
-      name: "Open command center",
+      name: "Open overview",
       callback: () => {
         void this.activateView();
       },
@@ -108,6 +108,6 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf(true);
       await leaf.setViewState({ type: VIEW_TYPE, active: true });
     }
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
   }
 }

@@ -29,7 +29,7 @@ const CREDENTIAL_KEY_PATTERN = /token|secret|password|authorization/i;
  */
 export function assertNoCredentialFields(value: unknown): void {
   if (value === null || typeof value !== "object") return;
-  for (const key of Object.keys(value as Record<string, unknown>)) {
+  for (const key of Object.keys(value)) {
     if (CREDENTIAL_KEY_PATTERN.test(key)) {
       throw new Error(
         `Refusing to persist plugin settings: key "${key}" looks like a credential field.`,
