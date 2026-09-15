@@ -2,7 +2,16 @@
 # rather than inlining a command, so a developer runs the identical thing on
 # a local checkout -- see scripts/ci/README.md for the mapping. Every job
 # either passes or fails the build outright -- no job is configured to
-# tolerate or swallow a non-zero exit code.
+# tolerate or swallow a non-zero exit code, and no soft-fail setting appears
+# anywhere in this file.
+#
+# Every gate job depends on `setup`, which proves the frozen-lockfile install
+# itself succeeds before any gate runs against it. Because GitHub Actions
+# runners don't share a filesystem across jobs, each gate job repeats the
+# same checkout/Node/pnpm-install sequence `setup` uses (this is the "shared
+# setup" every job depends on: identical steps, not a shared filesystem) --
+# but all seven gate jobs then run in parallel with each other, only
+# serialized behind `setup` itself.
 name: CI
 
 on:
@@ -11,8 +20,66 @@ on:
   pull_request:
 
 jobs:
+  setup:
+    name: Setup (frozen-lockfile install)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.20.0"
+      - name: Enable corepack
+        run: corepack enable
+      - name: Activate pnpm
+        run: corepack prepare pnpm@11.24.0 --activate
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+  format:
+    name: Format (Biome)
+    needs: setup
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.20.0"
+      - name: Enable corepack
+        run: corepack enable
+      - name: Activate pnpm
+        run: corepack prepare pnpm@11.24.0 --activate
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Run format check
+        run: pnpm run ci:format
+
+  lint:
+    name: Lint (Biome)
+    needs: setup
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.20.0"
+      - name: Enable corepack
+        run: corepack enable
+      - name: Activate pnpm
+        run: corepack prepare pnpm@11.24.0 --activate
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Run lint
+        run: pnpm run ci:lint
+
   boundaries:
     name: Import boundaries (REPO-03)
+    needs: setup
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -29,3 +96,83 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Run import-boundary lint
         run: pnpm run ci:boundaries
+
+  backstop:
+    name: Boundary grep backstop
+    needs: setup
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.20.0"
+      - name: Enable corepack
+        run: corepack enable
+      - name: Activate pnpm
+        run: corepack prepare pnpm@11.24.0 --activate
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Run literal grep backstop
+        run: pnpm run ci:backstop
+
+  obsidianmd:
+    name: Obsidian plugin policy (REPO-05/REPO-06)
+    needs: setup
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.20.0"
+      - name: Enable corepack
+        run: corepack enable
+      - name: Activate pnpm
+        run: corepack prepare pnpm@11.24.0 --activate
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Run eslint-plugin-obsidianmd against packages/plugin
+        run: pnpm run ci:obsidianmd
+
+  typecheck:
+    name: Typecheck
+    needs: setup
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.20.0"
+      - name: Enable corepack
+        run: corepack enable
+      - name: Activate pnpm
+        run: corepack prepare pnpm@11.24.0 --activate
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Run typecheck
+        run: pnpm run ci:typecheck
+
+  test:
+    name: Test
+    needs: setup
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.20.0"
+      - name: Enable corepack
+        run: corepack enable
+      - name: Activate pnpm
+        run: corepack prepare pnpm@11.24.0 --activate
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Run tests
+        run: pnpm run ci:test

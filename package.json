@@ -12,7 +12,13 @@
     "lint": "turbo run lint",
     "setup": "sh scripts/preflight.sh && pnpm install && turbo run build",
     "dev:service": "node packages/service/dist/main.js",
-    "ci:boundaries": "eslint --config eslint.config.mjs packages --ext .ts --ignore-pattern 'packages/test-fixtures/boundary-violations/**'"
+    "ci:format": "biome ci .",
+    "ci:lint": "biome lint .",
+    "ci:boundaries": "eslint --config eslint.config.mjs packages --ext .ts --ignore-pattern 'packages/test-fixtures/boundary-violations/**'",
+    "ci:backstop": "sh scripts/check-boundaries.sh",
+    "ci:obsidianmd": "cd packages/plugin && pnpm exec eslint --config eslint.config.mjs src --ext .ts",
+    "ci:typecheck": "turbo run typecheck",
+    "ci:test": "turbo run test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

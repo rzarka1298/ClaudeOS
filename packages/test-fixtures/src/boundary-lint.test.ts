@@ -29,7 +29,11 @@ interface EslintFileResult {
  * non-zero exit -- ESLint exits 1 when it reports lint errors, but the JSON
  * report is still on stdout. */
 function hasStdout(err: unknown): err is { stdout: string } {
-  return typeof err === "object" && err !== null && typeof (err as { stdout?: unknown }).stdout === "string";
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    typeof (err as { stdout?: unknown }).stdout === "string"
+  );
 }
 
 function runEslintJson(filePath: string): EslintFileResult[] {
@@ -47,7 +51,9 @@ function runEslintJson(filePath: string): EslintFileResult[] {
 }
 
 function boundariesMessages(results: EslintFileResult[]): EslintMessage[] {
-  return results.flatMap((r) => r.messages).filter((m) => m.ruleId?.startsWith("boundaries/") === true);
+  return results
+    .flatMap((r) => r.messages)
+    .filter((m) => m.ruleId?.startsWith("boundaries/") === true);
 }
 
 interface Fixture {

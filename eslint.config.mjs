@@ -17,8 +17,9 @@
 // worse than no lint at all (false confidence), so this uses the
 // non-deprecated, verified-working rule instead. See
 // docs/adr/0019-import-boundary-enforcement.md for the full record.
-import boundaries from "eslint-plugin-boundaries";
+
 import tsParser from "@typescript-eslint/parser";
+import boundaries from "eslint-plugin-boundaries";
 
 /**
  * Every element type this repository recognises. Exactly 13 -- one per
@@ -184,8 +185,14 @@ export default [
             // keychain, operational-store, service-api-client, adapters,
             // vault-repo, scheduler, launchers -- may import domain only.
             { from: { element: { type: "keychain" } }, allow: allowElementTypes(["domain"]) },
-            { from: { element: { type: "operational-store" } }, allow: allowElementTypes(["domain"]) },
-            { from: { element: { type: "service-api-client" } }, allow: allowElementTypes(["domain"]) },
+            {
+              from: { element: { type: "operational-store" } },
+              allow: allowElementTypes(["domain"]),
+            },
+            {
+              from: { element: { type: "service-api-client" } },
+              allow: allowElementTypes(["domain"]),
+            },
             { from: { element: { type: "adapters" } }, allow: allowElementTypes(["domain"]) },
             { from: { element: { type: "vault-repo" } }, allow: allowElementTypes(["domain"]) },
             { from: { element: { type: "scheduler" } }, allow: allowElementTypes(["domain"]) },
@@ -212,7 +219,10 @@ export default [
               allow: allowElementTypes(["domain", "service-api-client"]),
             },
             // test-fixtures -- may import every element.
-            { from: { element: { type: "test-fixtures" } }, allow: allowElementTypes(ELEMENT_TYPES) },
+            {
+              from: { element: { type: "test-fixtures" } },
+              allow: allowElementTypes(ELEMENT_TYPES),
+            },
           ],
         },
       ],
@@ -252,11 +262,13 @@ export default [
           paths: [
             {
               name: "node:http",
-              message: "@ccc/plugin must speak to the service only through @ccc/service-api-client.",
+              message:
+                "@ccc/plugin must speak to the service only through @ccc/service-api-client.",
             },
             {
               name: "node:https",
-              message: "@ccc/plugin must speak to the service only through @ccc/service-api-client.",
+              message:
+                "@ccc/plugin must speak to the service only through @ccc/service-api-client.",
             },
           ],
         },
