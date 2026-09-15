@@ -19,10 +19,12 @@
   },
   "dependencies": {
     "@ccc/domain": "workspace:*",
-    "better-sqlite3": "13.0.3"
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
-    "@types/node": "24.13.4"
+    "@types/node": "24.13.4",
+    "drizzle-kit": "0.31.10"
   }
 }
