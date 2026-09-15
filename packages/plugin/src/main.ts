@@ -1,66 +1,13 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
+import type { AuthenticatedSocketApiClient } from "@ccc/service-api-client";
 import { createAuthenticatedClient } from "@ccc/service-api-client";
-import { ItemView, Plugin, type WorkspaceLeaf } from "obsidian";
-import { probeConnection } from "./connection-state.js";
+import { Plugin, type WorkspaceLeaf } from "obsidian";
 import {
   assertNoCredentialFields,
   type CommandCenterSettings,
   DEFAULT_SETTINGS,
 } from "./settings.js";
-
-const VIEW_TYPE = "claude-command-center-view";
-
-/** Mirrors `@ccc/service`'s `resolveSocketPath` default: `CCC_SOCKET_PATH`
- * then the short, fixed runtime directory under `$HOME`. The plugin does
- * not import `@ccc/service` (that package may pull in Node built-ins the
- * plugin has no reason to depend on); it re-derives the same default path.
- * `override` is the user's own `socketPathOverride` setting, if set.
- */
-function resolveSocketPath(override: string | null): string {
-  if (override) return override;
-  return process.env.CCC_SOCKET_PATH ?? join(homedir(), ".claude-command-center", "svc.sock");
-}
-
-class CommandCenterView extends ItemView {
-  private readonly plugin: ClaudeCommandCenterPlugin;
-
-  constructor(leaf: WorkspaceLeaf, plugin: ClaudeCommandCenterPlugin) {
-    super(leaf);
-    this.plugin = plugin;
-  }
-
-  getViewType(): string {
-    return VIEW_TYPE;
-  }
-
-  getDisplayText(): string {
-    return "Command center";
-  }
-
-  getIcon(): string {
-    return "layout-dashboard";
-  }
-
-  async onOpen(): Promise<void> {
-    const container = this.containerEl.children[1] ?? this.containerEl;
-    container.empty();
-    const root = container.createDiv({ cls: "ccc-command-center" });
-    const status = root.createDiv({ cls: "ccc-connection-status" });
-    status.setText("Connecting…");
-
-    const socketPath = resolveSocketPath(this.plugin.settings.socketPathOverride);
-    const client = createAuthenticatedClient({ socketPath });
-    const state = await probeConnection(client);
-    if (state.kind === "live") {
-      status.setText(`Live — service started at ${state.startedAt}`);
-    } else if (state.kind === "disconnected") {
-      status.setText(`Disconnected — ${state.reason}`);
-    } else {
-      status.setText("Connecting…");
-    }
-  }
-}
+import { resolveSocketPath } from "./socket-path.js";
+import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 
 /**
  * Structural markup and Obsidian's own CSS variables only in this phase —
@@ -71,21 +18,25 @@ class CommandCenterView extends ItemView {
  */
 export default class ClaudeCommandCenterPlugin extends Plugin {
   settings: CommandCenterSettings = DEFAULT_SETTINGS;
+  client!: AuthenticatedSocketApiClient;
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
+    const socketPath = resolveSocketPath(this.settings.socketPathOverride);
+    this.client = createAuthenticatedClient({ socketPath });
+
     this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new CommandCenterView(leaf, this));
 
     this.addRibbonIcon("layout-dashboard", "Open command center", () => {
-      void this.activateView();
+      void this.revealView();
     });
 
     this.addCommand({
       id: "open-overview",
       name: "Open overview",
       callback: () => {
-        void this.activateView();
+        void this.revealView();
       },
     });
   }
@@ -101,7 +52,13 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  private async activateView(): Promise<void> {
+  /**
+   * The single entry point both the ribbon icon and the palette command
+   * call — reveals an existing leaf of `VIEW_TYPE` if one exists, creating
+   * one only when none does, so the two entry points can never produce two
+   * views (PLUG-01).
+   */
+  async revealView(): Promise<void> {
     const { workspace } = this.app;
     let leaf = workspace.getLeavesOfType(VIEW_TYPE)[0];
     if (!leaf) {
