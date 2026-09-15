@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createHostRegistry, type HostRegistry } from "./host-registry.js";
 import {
   createFakeDomTarget,
-  FakeObsidianHost,
   type EventTargetLike,
+  FakeObsidianHost,
 } from "./test-support/fake-obsidian-host.js";
 
 const VIEW_TYPE = "claude-command-center-view";
