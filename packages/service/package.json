@@ -21,7 +21,8 @@
   "dependencies": {
     "@ccc/domain": "workspace:*",
     "@ccc/keychain": "workspace:*",
-    "@ccc/operational-store": "workspace:*"
+    "@ccc/operational-store": "workspace:*",
+    "pino": "10.3.1"
   },
   "devDependencies": {
     "@types/node": "24.13.4"
