@@ -4,3 +4,9 @@ dist/
 *.tsbuildinfo
 packages/plugin/main.js
 packages/plugin/styles.css
+.env
+.env.local
+.claude/settings.local.json
+.privacy-denylist.local
+coverage/
+.DS_Store
