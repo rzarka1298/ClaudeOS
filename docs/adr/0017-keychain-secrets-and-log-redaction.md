@@ -21,6 +21,14 @@ project name or account label reaching a shell would open. Exit code 44 means th
 exist; `security-cli.test.ts` asserts that specific code maps to `null` rather than being treated
 as a generic failure, and every other non-zero exit code rethrows.
 
+`setSecret` never puts the plaintext value in argv: a plain `add-generic-password -w <value>`
+would leave the secret visible in `ps`/`KERN_PROCARGS2` for the child process's entire lifetime to
+any other process running as the same user. Instead it spawns `security -i` (interactive mode)
+with only `-i` in argv, and writes the full `add-generic-password -a ... -s ... -w ... -U` command
+line over stdin. Account, service name, and value are rejected outright (a typed
+`UnsafeSecretInputError`, not creative escaping) if any contains a double quote or a newline,
+since either would corrupt the single-line stdin command.
+
 `packages/service/src/auth/install-secret.ts` reads the `install-secret` account through an
 injected `SecretStore`, generating one via `randomBytes(32)` and writing it back on first use, and
 caches the result in module scope so the Keychain is consulted at most once per process start.
