@@ -1,0 +1,9 @@
+{
+  "id": "claude-command-center",
+  "name": "Claude command center",
+  "version": "0.1.0",
+  "minAppVersion": "1.13.0",
+  "description": "A live-connected command center for research, productivity, and software development.",
+  "author": "Claude Command Center",
+  "isDesktopOnly": true
+}

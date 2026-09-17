@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+packages/plugin/main.js
+packages/plugin/styles.css
+.env
+.env.local
+.claude/settings.local.json
+.privacy-denylist.local
+coverage/
+.DS_Store
+
+# GSD local runtime state (isolation sentinels, never shared)
+.gsd/

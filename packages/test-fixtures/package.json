@@ -1,0 +1,31 @@
+{
+  "name": "@ccc/test-fixtures",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "lint": "biome check ."
+  },
+  "dependencies": {
+    "@ccc/domain": "workspace:*",
+    "@ccc/operational-store": "workspace:*",
+    "@ccc/service": "workspace:*",
+    "@ccc/service-api-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.4",
+    "@ccc/adapters": "workspace:*",
+    "@ccc/plugin": "workspace:*"
+  }
+}
