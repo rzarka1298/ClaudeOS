@@ -1,0 +1,46 @@
+# Secret-scanner configuration (PRIV-01, PRIV-02). Extends gitleaks' own
+# default rule set (AWS keys, GitHub PATs, generic high-entropy secrets,
+# etc.) rather than replacing it, then layers two project-specific
+# additions on top:
+#
+#   1. A rule matching this project's own bearer-token shape
+#      (`v1.<base64url-payload>.<base64url-signature>`, packages/service/
+#      src/auth/token.ts) -- a token leaked into a tracked file or commit
+#      message is caught by literal pattern, not left to entropy heuristics
+#      alone, since a short-lived token may not always score as
+#      "high-entropy enough" against the default ruleset's thresholds.
+#   2. Allowlist entries for the placeholder-shaped strings that
+#      legitimately appear in `.env.example` and the `docs/` tree (ADR
+#      numbers, example socket paths, `/Users/USERNAME/`-style
+#      documentation placeholders per 01-RESEARCH.md) -- none of these are
+#      real credentials, and the plan's own truths require they not be
+#      misclassified as leaks.
+#
+# This is the "secrets" CI job's config (full-history scan via gitleaks'
+# official GitHub Action, fetch-depth: 0) -- see scripts/ci/README.md.
+
+title = "Claude Command Center secret-scan config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "ccc-bearer-token"
+description = "Claude Command Center socket-auth bearer token (v1.<payload>.<signature>, ADR-0016)"
+regex = '''v1\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{20,}'''
+tags = ["token", "ccc", "bearer-token"]
+
+[allowlist]
+# Narrowed per commit security review (allowlist-overbroad): the former
+# blanket '''(^|/)docs/.*''' path exempted the entire docs tree from every
+# rule, so a real credential pasted into an ADR would have been invisible.
+# The docs tree was verified to contain no rule-tripping strings at the time
+# of narrowing; if a doc ever needs a placeholder that trips a rule, add a
+# targeted regex for that placeholder here -- never a directory blanket.
+description = "Placeholder-shaped strings in documented example config -- never real credentials"
+paths = [
+  '''(^|/)\.env\.example$''',
+]
+regexes = [
+  '''/Users/USERNAME/''',
+]

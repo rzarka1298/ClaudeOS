@@ -1,0 +1,96 @@
+/*
+ * Structural markup only (Phase 3 owns the visual direction — see
+ * PROJECT.md's Phase 3 note and the plan's own threat register). Every
+ * color and spacing value below is an Obsidian theme custom property, never
+ * a literal value, and no dimension is a fixed pixel width: the shell must
+ * be correct in both a narrow side pane and a full-window pane (PLUG-06).
+ */
+
+.ccc-command-center {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  color: var(--text-normal);
+  background-color: var(--background-primary);
+}
+
+.ccc-connection-status {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  padding: var(--size-4-2);
+  border-bottom: 0.0625rem solid var(--background-modifier-border);
+}
+
+.ccc-status-dot {
+  display: inline-block;
+  width: 0.6em;
+  height: 0.6em;
+  flex: none;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+}
+
+/*
+ * The dot is decorative reinforcement only — connectionStatusText() in
+ * shell.tsx always renders the same information as text, so nothing here
+ * is conveyed by color alone (A11Y-04).
+ */
+.ccc-connection-status[data-state="live"] .ccc-status-dot {
+  background-color: var(--text-success);
+}
+
+.ccc-connection-status[data-state="disconnected"] .ccc-status-dot {
+  background-color: var(--text-error);
+}
+
+.ccc-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+  padding: var(--size-4-2);
+  border-bottom: 0.0625rem solid var(--background-modifier-border);
+}
+
+.ccc-nav-item {
+  flex: 1 1 auto;
+  min-width: max-content;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-bottom: 0.125rem solid transparent;
+  cursor: pointer;
+}
+
+.ccc-nav-item[aria-selected="true"] {
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+  border-bottom-color: var(--text-accent);
+}
+
+.ccc-nav-item:focus-visible,
+.ccc-content:focus-visible {
+  outline: 0.125rem solid var(--text-accent);
+  outline-offset: -0.125rem;
+}
+
+.ccc-content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--size-4-2);
+}
+
+/* Below this container width, stack the destination navigation vertically
+ * rather than letting it overflow horizontally (PLUG-06). Layout
+ * correctness only — no new color, type scale, or motion. */
+@container (max-width: 24rem) {
+  .ccc-nav {
+    flex-direction: column;
+  }
+
+  .ccc-nav-item {
+    width: 100%;
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@ccc/service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "exports": {
+    ".": "./dist/main.js",
+    "./paths": {
+      "types": "./dist/paths.d.ts",
+      "default": "./dist/paths.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "dev": "node dist/main.js"
+  },
+  "dependencies": {
+    "@ccc/domain": "workspace:*",
+    "@ccc/keychain": "workspace:*",
+    "@ccc/operational-store": "workspace:*",
+    "pino": "10.3.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.13.4",
+    "better-sqlite3": "13.0.3"
+  }
+}

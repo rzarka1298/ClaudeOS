@@ -1,0 +1,148 @@
+import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
+import {
+  API_BASE,
+  type ApiErrorBody,
+  EVENTS_PATH,
+  HANDSHAKE_PATH,
+  type HandshakeResponse,
+  HEALTH_PATH,
+  type HealthResponse,
+  SNAPSHOT_PATH,
+  type SnapshotResponse,
+  TOKEN_TTL_MS,
+} from "@ccc/domain";
+import { listAllRuns, type OperationalStore } from "@ccc/operational-store";
+import { requireToken } from "./auth/require-token.js";
+import { mintToken } from "./auth/token.js";
+import type { EventBus } from "./events/event-bus.js";
+import { createEventStreamHandler } from "./events/event-stream-route.js";
+import { logger } from "./logging.js";
+import type { PathNotAllowedError } from "./path-allowlist.js";
+
+export interface RouteContext {
+  store: OperationalStore;
+  /** Returns the per-install secret used to mint and verify bearer tokens. */
+  getSecret: () => Buffer;
+  eventBus: EventBus;
+}
+
+type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(payload);
+}
+
+const healthHandler: Handler = (_req, res, ctx) => {
+  const startedAt = ctx.store.readServiceMeta("started_at");
+  const serviceVersion = ctx.store.readServiceMeta("service_version") ?? "0.0.0";
+  const body: HealthResponse = {
+    status: "ok",
+    serviceVersion,
+    startedAt: startedAt ?? new Date(0).toISOString(),
+    schemaVersion: 1,
+  };
+  sendJson(res, 200, body);
+};
+
+const RUNS_PATH = `${API_BASE}/runs`;
+
+/**
+ * `GET /api/v1/runs` — the persisted Runs (most recently started first),
+ * so restart recovery's reconciliation (`recoverInterruptedRuns`,
+ * `packages/service/src/lifecycle/recover-runs.ts`) is observable from the
+ * plugin over the API, not only from the service's own log.
+ */
+const listRunsHandler: Handler = (_req, res, ctx) => {
+  const runs = listAllRuns(ctx.store.db);
+  sendJson(res, 200, { runs });
+};
+
+/**
+ * `POST /api/v1/handshake` is the only route not wrapped in `withAuth`: the
+ * socket's `0600` permission is the authorization event for reaching it at
+ * all (ADR-0016) — there is nothing the caller could present yet on a
+ * first connection. Mints a fresh bearer token every call.
+ */
+const handshakeHandler: Handler = (_req, res, ctx) => {
+  const nowMs = Date.now();
+  const token = mintToken(ctx.getSecret(), { nowMs });
+  const body: HandshakeResponse = {
+    token,
+    expiresAt: new Date(nowMs + TOKEN_TTL_MS).toISOString(),
+  };
+  sendJson(res, 200, body);
+};
+
+/**
+ * Sends the uniform 403 response for a candidate `assertPathAllowed`
+ * rejected. The resolved path and the failing candidate are logged
+ * locally through the redacting logger; the response body is the exact
+ * `{ error: 'path not permitted' }` shape and never carries a filesystem
+ * path (SVC-04 / research §Security Domain, ASVS V4). No path-accepting
+ * handler exists yet in this phase — the vault root and registered
+ * projects land in Phase 2/4 — so nothing calls this yet, but it lands
+ * now so no later handler is written without it.
+ */
+export function sendPathNotAllowed(res: ServerResponse, err: PathNotAllowedError): void {
+  logger.warn({ candidate: err.candidate }, "path not permitted");
+  const body: ApiErrorBody = { error: "path not permitted" };
+  sendJson(res, 403, body);
+}
+
+/** Wraps a route `Handler` in the bearer-token requirement. Every route this plan and later plans add other than the handshake itself is registered through this. */
+function withAuth(handler: Handler): Handler {
+  return (req, res, ctx) => requireToken(ctx.getSecret, (r, s) => handler(r, s, ctx))(req, res);
+}
+
+/**
+ * `GET /api/v1/events` — the same token requirement as every other
+ * non-handshake route (SVC-07's own threat register, T-01-31). The stream
+ * itself never ends on its own; `createEventStreamHandler` writes directly
+ * to `res` for as long as the connection stays open.
+ */
+const eventsHandler: Handler = (req, res, ctx) => {
+  createEventStreamHandler(ctx.eventBus)(req, res);
+};
+
+/**
+ * `GET /api/v1/snapshot` — the full-resync payload, behind the same token
+ * requirement as every other non-handshake route. Reading `lastEventId`
+ * from the same buffer the snapshot's own state is drawn from (both read
+ * synchronously, in the same tick, with nothing async in between) is what
+ * makes the resync path race-free: a client that applies this snapshot and
+ * then replays from `lastEventId` can neither miss nor double-apply an
+ * event (Task 2 action text).
+ */
+const snapshotHandler: Handler = (_req, res, ctx) => {
+  const startedAt = ctx.store.readServiceMeta("started_at") ?? new Date(0).toISOString();
+  const body: SnapshotResponse = {
+    lastEventId: ctx.eventBus.buffer.latestId(),
+    state: { serviceStartedAt: startedAt },
+  };
+  sendJson(res, 200, body);
+};
+
+const routeTable: Record<string, Record<string, Handler>> = {
+  [HANDSHAKE_PATH]: { POST: handshakeHandler },
+  [HEALTH_PATH]: { GET: withAuth(healthHandler) },
+  [RUNS_PATH]: { GET: withAuth(listRunsHandler) },
+  [EVENTS_PATH]: { GET: withAuth(eventsHandler) },
+  [SNAPSHOT_PATH]: { GET: withAuth(snapshotHandler) },
+};
+
+/** Builds the request listener the socket server hands to `http.createServer`. */
+export function createRequestListener(ctx: RouteContext): RequestListener {
+  return (req, res) => {
+    const path = req.url ?? "";
+    const method = req.method ?? "GET";
+    const handler = routeTable[path]?.[method];
+    if (!handler) {
+      const body: ApiErrorBody = { error: `No route for ${method} ${path}` };
+      sendJson(res, 404, body);
+      return;
+    }
+    handler(req, res, ctx);
+  };
+}
