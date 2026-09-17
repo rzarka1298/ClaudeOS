@@ -5,7 +5,9 @@ vi.mock("execa", () => ({
   execa: (...args: unknown[]) => execaMock(...args),
 }));
 
-const { getSecret, setSecret, deleteSecret, SERVICE_NAME } = await import("./security-cli.js");
+const { getSecret, setSecret, deleteSecret, SERVICE_NAME, UnsafeSecretInputError } = await import(
+  "./security-cli.js"
+);
 
 beforeEach(() => {
   execaMock.mockReset();
@@ -53,19 +55,40 @@ describe("security-cli", () => {
     expect(args.some((a) => typeof a === "string" && a.includes(" "))).toBe(false);
   });
 
-  it("calls execa with an argument array of separate strings for set()", async () => {
+  it("set() spawns `security -i` with no secret material in argv, and sends the secret via stdin", async () => {
     execaMock.mockResolvedValueOnce({ stdout: "" });
     await setSecret("my-account", "my-value");
-    expect(execaMock).toHaveBeenCalledWith("security", [
-      "add-generic-password",
-      "-a",
-      "my-account",
-      "-s",
-      SERVICE_NAME,
-      "-w",
-      "my-value",
-      "-U",
-    ]);
+    expect(execaMock).toHaveBeenCalledTimes(1);
+    const [bin, args, options] = execaMock.mock.calls[0] as [
+      string,
+      string[],
+      { input?: string },
+    ];
+    expect(bin).toBe("security");
+    // argv contains only "-i" — no account, no service name, no secret.
+    expect(args).toEqual(["-i"]);
+    for (const arg of args) {
+      expect(arg).not.toContain("my-value");
+    }
+    // The secret travels over stdin as the `input` option, not argv.
+    expect(options?.input).toContain("my-value");
+    expect(options?.input).toContain("my-account");
+    expect(options?.input).toContain(SERVICE_NAME);
+    expect(options?.input).toMatch(/^add-generic-password /);
+  });
+
+  it("set() rejects an account containing a double quote instead of escaping it", async () => {
+    await expect(setSecret('bad"account', "my-value")).rejects.toBeInstanceOf(
+      UnsafeSecretInputError,
+    );
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("set() rejects a value containing a newline instead of escaping it", async () => {
+    await expect(setSecret("my-account", "line1\nline2")).rejects.toBeInstanceOf(
+      UnsafeSecretInputError,
+    );
+    expect(execaMock).not.toHaveBeenCalled();
   });
 
   it("calls execa with an argument array of separate strings for delete()", async () => {
