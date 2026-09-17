@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
 import { applyMigrations, openStore } from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
@@ -6,7 +6,13 @@ import { createEventBus } from "./events/event-bus.js";
 import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
 import { drainSpool } from "./lifecycle/spool-drain.js";
 import { logger } from "./logging.js";
-import { resolveDbPath, resolveRuntimeDir, resolveSocketPath, resolveSpoolPath } from "./paths.js";
+import {
+  ensureRuntimeDir,
+  resolveDbPath,
+  resolveRuntimeDir,
+  resolveSocketPath,
+  resolveSpoolPath,
+} from "./paths.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
 
@@ -33,7 +39,7 @@ async function main(): Promise<void> {
   const socketPath = resolveSocketPath();
   const dbPath = resolveDbPath();
 
-  mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+  ensureRuntimeDir(runtimeDir, logger);
 
   const store = openStore(dbPath);
   // ADR-0018: migrations apply before anything else touches the store, so
