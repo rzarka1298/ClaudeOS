@@ -7,6 +7,8 @@ import {
   type HandshakeResponse,
   HEALTH_PATH,
   type HealthResponse,
+  SNAPSHOT_PATH,
+  type SnapshotResponse,
   TOKEN_TTL_MS,
 } from "@ccc/domain";
 import { listAllRuns, type OperationalStore } from "@ccc/operational-store";
@@ -104,11 +106,30 @@ const eventsHandler: Handler = (req, res, ctx) => {
   createEventStreamHandler(ctx.eventBus)(req, res);
 };
 
+/**
+ * `GET /api/v1/snapshot` — the full-resync payload, behind the same token
+ * requirement as every other non-handshake route. Reading `lastEventId`
+ * from the same buffer the snapshot's own state is drawn from (both read
+ * synchronously, in the same tick, with nothing async in between) is what
+ * makes the resync path race-free: a client that applies this snapshot and
+ * then replays from `lastEventId` can neither miss nor double-apply an
+ * event (Task 2 action text).
+ */
+const snapshotHandler: Handler = (_req, res, ctx) => {
+  const startedAt = ctx.store.readServiceMeta("started_at") ?? new Date(0).toISOString();
+  const body: SnapshotResponse = {
+    lastEventId: ctx.eventBus.buffer.latestId(),
+    state: { serviceStartedAt: startedAt },
+  };
+  sendJson(res, 200, body);
+};
+
 const routeTable: Record<string, Record<string, Handler>> = {
   [HANDSHAKE_PATH]: { POST: handshakeHandler },
   [HEALTH_PATH]: { GET: withAuth(healthHandler) },
   [RUNS_PATH]: { GET: withAuth(listRunsHandler) },
   [EVENTS_PATH]: { GET: withAuth(eventsHandler) },
+  [SNAPSHOT_PATH]: { GET: withAuth(snapshotHandler) },
 };
 
 /** Builds the request listener the socket server hands to `http.createServer`. */
