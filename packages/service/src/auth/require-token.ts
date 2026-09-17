@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { AUTH_HEADER } from "@ccc/domain";
+import { logger } from "../logging.js";
 import { verifyToken } from "./token.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
@@ -8,12 +9,13 @@ const UNAUTHENTICATED_BODY = JSON.stringify({ error: "authentication required" }
 const BEARER_PREFIX = "Bearer ";
 
 function rejectUnauthenticated(res: ServerResponse, reason: string): void {
-  // Plan 01-02 Task 2 wires the redacting pino logger; until then this is
-  // the service's only diagnostic signal for a rejected request. The
-  // reason itself never carries a credential — only one of "missing",
-  // "malformed", "signature", or "expired" — so this line is safe on its
-  // own, but it is deliberately never written to the response body below.
-  console.warn(`[ccc-service] authentication rejected: ${reason}`);
+  // Routed through the service's redacting pino logger (`./logging.js`,
+  // ADR-0016/ADR-0017), the same as every other diagnostic line in this
+  // service — never a raw console write. The reason itself never carries
+  // a credential — only one of "missing", "malformed", "signature", or
+  // "expired" — so this line is safe on its own, but it is deliberately
+  // never written to the response body below.
+  logger.warn({ reason }, "authentication rejected");
   res.writeHead(401, { "Content-Type": "application/json" });
   res.end(UNAUTHENTICATED_BODY);
 }
