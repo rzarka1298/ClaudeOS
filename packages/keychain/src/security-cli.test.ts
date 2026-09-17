@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const execaMock = vi.fn();
@@ -89,6 +90,46 @@ describe("security-cli", () => {
       UnsafeSecretInputError,
     );
     expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("set() rejects a value containing a backslash (allowlist, not a denylist)", async () => {
+    await expect(setSecret("my-account", 'esc\\"pe')).rejects.toBeInstanceOf(
+      UnsafeSecretInputError,
+    );
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("set() rejects a value containing control characters (\\x00-\\x1f)", async () => {
+    await expect(setSecret("my-account", "value\x00tail")).rejects.toBeInstanceOf(
+      UnsafeSecretInputError,
+    );
+    await expect(setSecret("my-account", "value\x1ftail")).rejects.toBeInstanceOf(
+      UnsafeSecretInputError,
+    );
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("set() rejects an account containing a backslash", async () => {
+    await expect(setSecret("bad\\account", "my-value")).rejects.toBeInstanceOf(
+      UnsafeSecretInputError,
+    );
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("set() accepts a real randomBytes(32) base64url value, unchanged", async () => {
+    execaMock.mockResolvedValueOnce({ stdout: "" });
+    const value = randomBytes(32).toString("base64url");
+    await setSecret("install-secret", value);
+    const [, , options] = execaMock.mock.calls[0] as [string, string[], { input?: string }];
+    expect(options?.input).toContain(value);
+  });
+
+  it("set() accepts a real randomBytes(32) standard-base64 value, unchanged", async () => {
+    execaMock.mockResolvedValueOnce({ stdout: "" });
+    const value = randomBytes(32).toString("base64");
+    await setSecret("install-secret", value);
+    const [, , options] = execaMock.mock.calls[0] as [string, string[], { input?: string }];
+    expect(options?.input).toContain(value);
   });
 
   it("calls execa with an argument array of separate strings for delete()", async () => {

@@ -10,26 +10,39 @@ function isExecaExitCodeError(err: unknown): err is { exitCode: number } {
 
 /**
  * Thrown when a value that must travel through the `security -i` stdin
- * command line (account, service name, or secret value) contains a
- * double quote or a newline. Both would corrupt the single-line
- * `add-generic-password ...` command this module writes to stdin —
- * a double quote breaks the quoting, a newline starts a second command.
- * These inputs are hex/base64 from `randomBytes` in the normal case, so
- * this should never trigger; it exists to reject rather than to attempt
- * creative escaping.
+ * command line (account, service name, or secret value) does not match
+ * the expected shape for that field. Every legitimate value here is
+ * machine-generated (hex/base64/base64url from `randomBytes`, or a
+ * literal constant), so this is an allowlist, not a denylist: rather
+ * than enumerate dangerous characters (a double quote breaks the
+ * quoting, a newline starts a second command, a backslash can escape a
+ * quote from inside it), it enforces the exact character set the real
+ * inputs use and rejects everything else, including control characters
+ * a denylist could miss.
  */
 export class UnsafeSecretInputError extends Error {
   constructor(field: string) {
     super(
-      `${field} must not contain a double quote or a newline: cannot be safely written to the ` +
+      `${field} does not match the expected character set and cannot be safely written to the ` +
         "security -i stdin command line",
     );
     this.name = "UnsafeSecretInputError";
   }
 }
 
-function assertSafeForStdinCommand(value: string, field: string): void {
-  if (value.includes('"') || value.includes("\n") || value.includes("\r")) {
+/** account/service: identifier-shaped — letters, digits, dot, underscore, hyphen. */
+const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9._-]+$/;
+/** value: base64 / base64url / hex output — letters, digits, +/=_- only. */
+const SAFE_SECRET_VALUE_PATTERN = /^[A-Za-z0-9+/=_-]+$/;
+
+function assertSafeIdentifier(value: string, field: string): void {
+  if (!SAFE_IDENTIFIER_PATTERN.test(value)) {
+    throw new UnsafeSecretInputError(field);
+  }
+}
+
+function assertSafeSecretValue(value: string, field: string): void {
+  if (!SAFE_SECRET_VALUE_PATTERN.test(value)) {
     throw new UnsafeSecretInputError(field);
   }
 }
@@ -71,12 +84,14 @@ export async function getSecret(account: string): Promise<string | null> {
  * `-i` in argv, and writes the full `add-generic-password` command line
  * over stdin. Exit code and stderr are checked exactly as before — `-i`
  * mode still propagates the underlying command's exit code and error
- * output, verified against the real `security` binary.
+ * output, verified against the real `security` binary. Quoting each
+ * value is belt-and-braces on top of the allowlist checks above, not a
+ * substitute for them.
  */
 export async function setSecret(account: string, value: string): Promise<void> {
-  assertSafeForStdinCommand(account, "account");
-  assertSafeForStdinCommand(SERVICE_NAME, "service name");
-  assertSafeForStdinCommand(value, "value");
+  assertSafeIdentifier(account, "account");
+  assertSafeIdentifier(SERVICE_NAME, "service name");
+  assertSafeSecretValue(value, "value");
   const command = `add-generic-password -a "${account}" -s "${SERVICE_NAME}" -w "${value}" -U\n`;
   await execa("security", ["-i"], { input: command });
 }
