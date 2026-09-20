@@ -5,6 +5,27 @@ import { API_BASE } from "./api.js";
 export const EVENTS_PATH = `${API_BASE}/events`;
 
 /**
+ * The service's default interval between `service.heartbeat` events.
+ * Single-sourced here so the service (which emits at this cadence via
+ * `CCC_HEARTBEAT_INTERVAL_MS ?? DEFAULT_HEARTBEAT_INTERVAL_MS`) and the
+ * client's liveness watchdog (which must know that cadence to size its own
+ * timeout) never hand-copy the same number into two places and risk it
+ * drifting between them.
+ */
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+
+/**
+ * A client that receives no event (heartbeat or otherwise) within this many
+ * multiples of the heartbeat interval must treat the connection as dead,
+ * even if the underlying transport never surfaces a `close`/`end`/`error`.
+ * This is the guard against exactly the failure a `launchctl bootout`
+ * (SIGTERM to the service process) can produce in the real Electron/Node
+ * runtime: a UDS response that never emits a terminal event on the client
+ * side, leaving the client frozen on a stale "live" state indefinitely.
+ */
+export const HEARTBEAT_LIVENESS_MULTIPLIER = 3;
+
+/**
  * `GET /api/v1/snapshot` — returns the state a client needs to catch up
  * from nothing to current, plus the buffer identifier that state is
  * consistent with. Always sufficient on its own; later phases grow its

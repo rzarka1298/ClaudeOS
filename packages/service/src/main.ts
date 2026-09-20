@@ -1,4 +1,5 @@
 import { existsSync, unlinkSync } from "node:fs";
+import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "@ccc/domain";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
 import { applyMigrations, openStore } from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
@@ -15,14 +16,6 @@ import {
 } from "./paths.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
-
-/**
- * The default interval between the service's own `service.heartbeat`
- * events. Overridable via `CCC_HEARTBEAT_INTERVAL_MS` so an integration
- * test can observe a push within its own timeout without waiting thirty
- * real seconds.
- */
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
  * Composition root: resolves the runtime directory and socket/db paths,

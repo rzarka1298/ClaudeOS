@@ -1,7 +1,9 @@
 import http, { type IncomingMessage } from "node:http";
 import {
   AUTH_HEADER,
+  DEFAULT_HEARTBEAT_INTERVAL_MS,
   EVENTS_PATH,
+  HEARTBEAT_LIVENESS_MULTIPLIER,
   LAST_EVENT_ID_HEADER,
   type ServiceEvent,
   ServiceEventSchema,
@@ -20,6 +22,16 @@ export interface CreateEventClientOptions {
   socketPath: string;
   /** Returns a fresh bearer token for the next connection or snapshot-fetch attempt. */
   getToken: () => Promise<string>;
+  /**
+   * The server's heartbeat cadence, matching `CCC_HEARTBEAT_INTERVAL_MS`
+   * on the service side. Defaults to `DEFAULT_HEARTBEAT_INTERVAL_MS`
+   * (`@ccc/domain`) -- the same default the service itself falls back to.
+   * Sizes the liveness watchdog (`HEARTBEAT_LIVENESS_MULTIPLIER` times
+   * this value); a test spinning up a real service with a short interval
+   * passes the matching short value here so the watchdog fires within its
+   * own timeout instead of the production 30s default.
+   */
+  heartbeatIntervalMs?: number;
 }
 
 export interface EventClient {
@@ -64,7 +76,11 @@ function nextBackoffDelay(attempt: number): number {
  * event delivery, and reconnects with exponential backoff on stream end or
  * transport error.
  */
-export function createEventClient({ socketPath, getToken }: CreateEventClientOptions): EventClient {
+export function createEventClient({
+  socketPath,
+  getToken,
+  heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
+}: CreateEventClientOptions): EventClient {
   let disposed = false;
   let subscribed = false;
   let onEventCb: ((event: ServiceEvent) => void) | undefined;
@@ -75,6 +91,37 @@ export function createEventClient({ socketPath, getToken }: CreateEventClientOpt
   let attempt = 0;
   let lastEventId: number | undefined;
   let parser = createEventStreamParser();
+
+  // Liveness watchdog (#PLUG-04 UAT fix): a `launchctl bootout` SIGTERM
+  // (and observed SIGKILL) of the service can leave the client's response
+  // object with no observable transport-level signal at all in the real
+  // Electron/Node runtime -- no 'close', no 'end', no 'error'. Without this
+  // watchdog, a stream that simply goes silent leaves the client frozen on
+  // a stale "live" state forever. Reset on every byte received from the
+  // server (heartbeats included) and on issuing each new request; fires a
+  // disconnect + reconnect if the window elapses with nothing at all.
+  const livenessWindowMs = heartbeatIntervalMs * HEARTBEAT_LIVENESS_MULTIPLIER;
+  let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+  // Always points at the currently-open connection attempt's own
+  // `endConnection`, so the one shared watchdog timer always tears down
+  // whichever connection is actually live when it expires.
+  let currentEndConnection: ((reason: string) => void) | undefined;
+
+  function clearWatchdog(): void {
+    if (watchdogTimer !== undefined) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = undefined;
+    }
+  }
+
+  function resetWatchdog(): void {
+    clearWatchdog();
+    if (disposed) return;
+    watchdogTimer = setTimeout(() => {
+      watchdogTimer = undefined;
+      currentEndConnection?.("no event received within the liveness window");
+    }, livenessWindowMs);
+  }
 
   function setState(state: EventClientState): void {
     if (disposed) return;
@@ -186,17 +233,38 @@ export function createEventClient({ socketPath, getToken }: CreateEventClientOpt
       headers[LAST_EVENT_ID_HEADER] = String(lastEventId);
     }
 
+    // Scoped to this one connection attempt: collapses every terminal
+    // signal (whichever of 'end'/'close'/'aborted'/'error' the runtime
+    // happens to surface, on either req or res -- observed to vary between
+    // a graceful SIGTERM and a SIGKILL/hard-crash in the real runtime)
+    // into a single disconnected transition, and guards against a stray
+    // late-firing event from THIS connection double-scheduling a reconnect
+    // after a newer connection has already been opened.
+    let connectionSettled = false;
+    function endConnection(reason: string): void {
+      if (disposed || connectionSettled) return;
+      connectionSettled = true;
+      clearWatchdog();
+      currentReq?.destroy();
+      setState({ kind: "disconnected", reason });
+      // A fresh handshake (getToken()) happens at the top of the next
+      // connect() call regardless of why this one ended -- including a
+      // 401 from a stale token after the service restarted with a new
+      // install secret, so reconnect never wedges waiting on a token that
+      // can never become valid again.
+      scheduleReconnect();
+    }
+    currentEndConnection = endConnection;
+
     const req = http.request({ socketPath, path: EVENTS_PATH, method: "GET", headers }, (res) => {
       if (res.statusCode !== 200) {
         res.resume();
-        if (!disposed) {
-          setState({ kind: "disconnected", reason: `unexpected status ${res.statusCode}` });
-          scheduleReconnect();
-        }
+        endConnection(`unexpected status ${res.statusCode}`);
         return;
       }
       attempt = 0;
       setState({ kind: "live" });
+      resetWatchdog();
       res.setEncoding("utf8");
       // Chunks are chained onto one FIFO promise rather than handled with
       // an independent "fire and forget" call each: without this, a
@@ -208,21 +276,26 @@ export function createEventClient({ socketPath, getToken }: CreateEventClientOpt
       let processingChain: Promise<void> = Promise.resolve();
       res.on("data", (chunk: string) => {
         if (disposed) return;
+        // Any byte from the server proves this connection is still alive,
+        // not just a fully-parsed event -- reset before processing so a
+        // slow/partial chunk still counts.
+        resetWatchdog();
         processingChain = processingChain.then(() => handleChunk(chunk, res)).catch(() => {});
       });
-      res.on("end", () => {
-        if (disposed) return;
-        setState({ kind: "disconnected", reason: "stream ended" });
-        scheduleReconnect();
-      });
+      res.on("end", () => endConnection("stream ended"));
+      res.on("close", () => endConnection("stream closed"));
+      res.on("aborted", () => endConnection("stream aborted"));
+      res.on("error", (err: Error) => endConnection(err.message));
     });
     currentReq = req;
-    req.on("error", (err: NodeJS.ErrnoException) => {
-      if (disposed) return;
-      setState({ kind: "disconnected", reason: err.message });
-      scheduleReconnect();
-    });
+    req.on("error", (err: NodeJS.ErrnoException) => endConnection(err.message));
+    req.on("close", () => endConnection("request closed"));
     req.end();
+    // Covers a hang before the response callback ever fires at all (the
+    // request is accepted at the transport level but the server never
+    // responds and never surfaces an error) -- the same watchdog also
+    // protects the post-connect silent-stream case once reset above.
+    resetWatchdog();
   }
 
   return {
@@ -244,6 +317,7 @@ export function createEventClient({ socketPath, getToken }: CreateEventClientOpt
         clearTimeout(retryTimer);
         retryTimer = undefined;
       }
+      clearWatchdog();
       currentReq?.destroy();
       onEventCb = undefined;
       onStateCb = undefined;
