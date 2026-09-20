@@ -249,4 +249,94 @@ describe("createEventClient", () => {
     expect(states).toEqual(["connecting", "live"]);
     client.dispose();
   });
+
+  it("a bare 'close' with no preceding 'end' (e.g. the server process disappears) is treated as a disconnect and reconnects", async () => {
+    // Reproduces the real-world UAT failure: `launchctl bootout` SIGTERMs
+    // the service, and in the real Electron/Node runtime the UDS response
+    // can surface only a socket-level 'close', never 'end'. Before the
+    // fix, only 'end'/'error' drove a disconnect transition, so this event
+    // was silently ignored and the client stayed frozen on "live" forever.
+    const getToken = vi.fn().mockResolvedValue("tok");
+    const states: EventClientState["kind"][] = [];
+    const client = createEventClient({ socketPath: "/tmp/sock", getToken });
+    client.subscribe(
+      () => {},
+      (s) => states.push(s.kind),
+    );
+    await flush();
+    pendingCalls[0]?.respond();
+    await flush();
+    expect(states.at(-1)).toBe("live");
+
+    pendingCalls[0]?.res.emit("close");
+    await flush();
+    expect(states.at(-1)).toBe("disconnected");
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+    expect(pendingCalls).toHaveLength(2);
+    client.dispose();
+  });
+
+  it("no event received within 3x the heartbeat interval transitions to disconnected and engages reconnect, even with no close/error at all", async () => {
+    // This is the second half of the same real-world failure: a UDS
+    // response that never surfaces ANY terminal event (no 'close', no
+    // 'end', no 'error') must still be caught by a liveness watchdog, not
+    // wait forever for a transport signal that may never arrive.
+    const getToken = vi.fn().mockResolvedValue("tok");
+    const states: EventClientState["kind"][] = [];
+    const client = createEventClient({
+      socketPath: "/tmp/sock",
+      getToken,
+      heartbeatIntervalMs: 1000,
+    });
+    client.subscribe(
+      () => {},
+      (s) => states.push(s.kind),
+    );
+    await flush();
+    pendingCalls[0]?.respond();
+    await flush();
+    expect(states.at(-1)).toBe("live");
+
+    // No data, no close, no error -- just silence. Advance past 3x the
+    // 1000ms heartbeat interval.
+    await vi.advanceTimersByTimeAsync(3_000);
+    await flush();
+    expect(states.at(-1)).toBe("disconnected");
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+    expect(pendingCalls).toHaveLength(2);
+    client.dispose();
+  });
+
+  it("receiving a heartbeat resets the liveness watchdog", async () => {
+    const getToken = vi.fn().mockResolvedValue("tok");
+    const states: EventClientState["kind"][] = [];
+    const client = createEventClient({
+      socketPath: "/tmp/sock",
+      getToken,
+      heartbeatIntervalMs: 1000,
+    });
+    client.subscribe(
+      () => {},
+      (s) => states.push(s.kind),
+    );
+    await flush();
+    pendingCalls[0]?.respond();
+    await flush();
+
+    // Reset the watchdog just before it would have expired.
+    await vi.advanceTimersByTimeAsync(2_000);
+    pendingCalls[0]?.res.emit("data", heartbeatRecord(1));
+    await flush();
+    // Total elapsed is now 4000ms since connect, past the 3000ms window --
+    // but only 2000ms since the reset, so it must still report live.
+    await vi.advanceTimersByTimeAsync(2_000);
+    await flush();
+
+    expect(states.at(-1)).toBe("live");
+    client.dispose();
+  });
 });
