@@ -13,7 +13,11 @@ import {
   SNAPSHOT_PATH,
   type SnapshotResponse,
 } from "@ccc/domain";
-import { createEventClient, createSocketApiClient } from "@ccc/service-api-client";
+import {
+  createEventClient,
+  type EventClientState,
+  createSocketApiClient,
+} from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startServiceForTest } from "./service-harness.js";
 import { withTempSocketDir } from "./socket-fixture.js";
@@ -142,6 +146,39 @@ function waitForMatchingEvent(
 const isHeartbeat = (event: ServiceEvent): boolean => event.type === "service.heartbeat";
 const isResync = (event: ServiceEvent): boolean => event.type === "stream.resync";
 
+/**
+ * Polls `getStates()` until `kind` appears at or after `fromIndex`, or
+ * rejects after `timeoutMs`. Used by the liveness/recovery tests below in
+ * place of a fresh `subscribe()` per phase, since `EventClient.subscribe`
+ * only opens one underlying connection for the client's whole lifetime —
+ * one persistent state log, sliced per phase, is the natural fit.
+ */
+function waitForState(
+  getStates: () => EventClientState["kind"][],
+  kind: EventClientState["kind"],
+  fromIndex: number,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const check = (): void => {
+      const states = getStates();
+      if (states.slice(fromIndex).includes(kind)) {
+        resolve();
+        return;
+      }
+      if (Date.now() - start > timeoutMs) {
+        reject(
+          new Error(`timed out waiting for state "${kind}"; saw: ${JSON.stringify(states)}`),
+        );
+        return;
+      }
+      setTimeout(check, 25);
+    };
+    check();
+  });
+}
+
 describe("live push: one event, pushed from the service, received by the same client the plugin uses", () => {
   it("the client receives a heartbeat event whose envelope validates and whose id is 1", async () => {
     await withTempSocketDir(async ({ dir, socketPath }) => {
@@ -267,4 +304,81 @@ describe("recovery: reconnect resumes from a held identifier, or resynchronizes 
       }
     });
   });
+});
+
+describe("liveness: the client detects the service disappearing with no clean stream close, and recovers automatically on restart", () => {
+  // Reproduces the real-world UAT failure: `pnpm run service:uninstall`
+  // (launchctl bootout) SIGTERMs the service; the plugin's indicator froze
+  // on a stale "Live" line forever and never recovered after the service
+  // was reinstalled. `heartbeatIntervalMs: 150` matches the beforeEach's
+  // `CCC_HEARTBEAT_INTERVAL_MS`, so the 3x liveness window is ~450ms --
+  // fast enough to assert within the test's own timeout, not the
+  // production 30s default.
+  it("SIGTERM: the client reports disconnected within the liveness window, then recovers to live automatically after restart with no manual re-handshake", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      const dbPath = join(dir, "operational.db");
+      let handle = await startServiceForTest({ socketPath, dbPath });
+      const client = createEventClient({
+        socketPath,
+        getToken: tokenGetter(socketPath),
+        heartbeatIntervalMs: 150,
+      });
+      try {
+        const states: EventClientState["kind"][] = [];
+        client.subscribe(
+          () => {},
+          (s) => states.push(s.kind),
+        );
+        await waitForState(() => states, "live", 0, 5000);
+
+        await handle.stop(); // real SIGTERM, waits for the process to actually exit
+
+        const idxAfterStop = states.length;
+        await waitForState(() => states, "disconnected", idxAfterStop, 2000);
+
+        handle = await startServiceForTest({ socketPath, dbPath });
+
+        const idxAfterRestart = states.length;
+        await waitForState(() => states, "live", idxAfterRestart, 10_000);
+      } finally {
+        client.dispose();
+        await handle.stop().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it("SIGKILL: the same detection and recovery holds with no graceful shutdown at all", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      const dbPath = join(dir, "operational.db");
+      let handle = await startServiceForTest({ socketPath, dbPath });
+      const client = createEventClient({
+        socketPath,
+        getToken: tokenGetter(socketPath),
+        heartbeatIntervalMs: 150,
+      });
+      try {
+        const states: EventClientState["kind"][] = [];
+        client.subscribe(
+          () => {},
+          (s) => states.push(s.kind),
+        );
+        await waitForState(() => states, "live", 0, 5000);
+
+        const pid = handle.pid;
+        if (pid === undefined) throw new Error("service pid unavailable");
+        process.kill(pid, "SIGKILL");
+
+        const idxAfterKill = states.length;
+        await waitForState(() => states, "disconnected", idxAfterKill, 2000);
+
+        handle = await startServiceForTest({ socketPath, dbPath });
+
+        const idxAfterRestart = states.length;
+        await waitForState(() => states, "live", idxAfterRestart, 10_000);
+      } finally {
+        client.dispose();
+        await handle.stop().catch(() => {});
+      }
+    });
+  }, 20_000);
 });
