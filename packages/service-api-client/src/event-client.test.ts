@@ -305,7 +305,11 @@ describe("createEventClient", () => {
     await flush();
     expect(states.at(-1)).toBe("disconnected");
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    // Advance only past the first backoff delay (capped well under the
+    // second connection's own 3000ms watchdog window) so exactly one
+    // reconnect attempt is observed, not a cascade of further
+    // watchdog-driven retries against a mock that never responds.
+    await vi.advanceTimersByTimeAsync(700);
     await flush();
     expect(pendingCalls).toHaveLength(2);
     client.dispose();
