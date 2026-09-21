@@ -1,5 +1,11 @@
-import type { NoteFrontmatter } from "@ccc/domain";
-import type { TFile, Vault } from "obsidian";
+import {
+  GENERATED_BY_KEY_ORDER,
+  type GeneratedBy,
+  NOTE_FRONTMATTER_KEY_ORDER,
+  type NoteFrontmatter,
+  NoteFrontmatterSchema,
+} from "@ccc/domain";
+import { parseYaml, stringifyYaml, type TFile, type Vault } from "obsidian";
 
 /**
  * The ONLY plugin-side write path for managed notes (VAULT-06).
@@ -174,6 +180,73 @@ export class InvalidManagedNoteError extends Error {
   }
 }
 
+const FRONTMATTER_OPEN = "---\n";
+const FRONTMATTER_CLOSE = "---\n";
+/** The newline that ends the YAML block, plus the closing delimiter line. */
+const FRONTMATTER_TERMINATOR = "\n---\n";
+
+/**
+ * Splits a managed note into its raw YAML frontmatter text (including the
+ * newline that terminates it) and its body, or `null` when the content has
+ * no frontmatter block at all.
+ *
+ * Deliberately a literal split rather than a YAML-library "load document"
+ * call: the body must come back as the exact bytes that were on disk, and
+ * a round-trip through any document model is a chance for it not to.
+ */
+function splitNote(raw: string): { frontmatter: string; body: string } | null {
+  if (!raw.startsWith(FRONTMATTER_OPEN)) return null;
+  // Search from the opening delimiter's own newline so an empty
+  // frontmatter block (`---\n---\n`) is still found.
+  const terminator = raw.indexOf(FRONTMATTER_TERMINATOR, FRONTMATTER_OPEN.length - 1);
+  if (terminator === -1) return null;
+  return {
+    frontmatter: raw.slice(FRONTMATTER_OPEN.length, terminator + 1),
+    body: raw.slice(terminator + FRONTMATTER_TERMINATOR.length),
+  };
+}
+
+/**
+ * Rebuilds the nested `generatedBy` map in `GENERATED_BY_KEY_ORDER`,
+ * dropping absent subfields -- the same two rules the service-side
+ * serializer follows, and for the same two reasons: YAML cannot dump
+ * `undefined`, and an explicit `model: null` would assert "no model" where
+ * the schema means "model unknown".
+ */
+function orderedGeneratedBy(value: GeneratedBy): Record<string, string> {
+  const ordered: Record<string, string> = {};
+  for (const key of GENERATED_BY_KEY_ORDER) {
+    const sub = value[key];
+    if (sub !== undefined) ordered[key] = sub;
+  }
+  return ordered;
+}
+
+/**
+ * Emits the YAML frontmatter body (no delimiters) one key at a time, in
+ * `NOTE_FRONTMATTER_KEY_ORDER`.
+ *
+ * Each key is dumped as its own single-entry document and the results are
+ * concatenated. That is what makes the order a property of this loop rather
+ * than of the YAML library's object handling: no object with more than one
+ * key is ever handed to the serializer at the top level, so there is no
+ * insertion order for it to honour or ignore. At top level a single-entry
+ * dump is byte-identical to that entry's lines inside a whole-object dump,
+ * which is why the output still matches the service writer exactly.
+ */
+function serializeFrontmatter(frontmatter: NoteFrontmatter): string {
+  const source = frontmatter as unknown as Record<string, unknown>;
+  let out = "";
+  for (const key of NOTE_FRONTMATTER_KEY_ORDER) {
+    const value = source[key];
+    if (value === undefined) continue;
+    out += stringifyYaml({
+      [key]: key === "generatedBy" ? orderedGeneratedBy(value as GeneratedBy) : value,
+    });
+  }
+  return out;
+}
+
 /**
  * A pure transformation of a note's validated provenance frontmatter --
  * bump `updated`, set `lastReviewed`, and so on. Receives a value that has
@@ -201,12 +274,33 @@ export type ProvenanceMutation = (current: NoteFrontmatter) => NoteFrontmatter;
  *   well-formed managed note. Nothing is written in that case.
  */
 export function updateNoteProvenance(
-  _vault: ProcessableVault,
-  _file: ManagedNoteFile,
-  _expectedPriorContent: string,
-  _mutate: ProvenanceMutation,
+  vault: ProcessableVault,
+  file: ManagedNoteFile,
+  expectedPriorContent: string,
+  mutate: ProvenanceMutation,
 ): Promise<ConflictSafeUpdateResult> {
-  throw new Error(
-    "updateNoteProvenance is not implemented yet (packages/plugin/src/vault-write.ts)",
-  );
+  return applyConflictSafeUpdate(vault, file, expectedPriorContent, (current) => {
+    const note = splitNote(current);
+    if (!note) {
+      throw new InvalidManagedNoteError(file.path, "no YAML frontmatter block found");
+    }
+
+    // Obsidian types `parseYaml` as returning `any`. Pinning it to
+    // `unknown` here is the point at which hand-edited YAML stops being
+    // trusted: nothing downstream can read a field off it until zod has
+    // said what shape it is (threat T-02-08).
+    const parsed: unknown = parseYaml(note.frontmatter);
+    const validated = NoteFrontmatterSchema.safeParse(parsed);
+    if (!validated.success) {
+      throw new InvalidManagedNoteError(
+        file.path,
+        "frontmatter does not match the provenance schema",
+        validated.error.issues,
+      );
+    }
+
+    // The body is carried across verbatim -- this module rewrites the
+    // frontmatter block and nothing else, so no prose byte can move.
+    return `${FRONTMATTER_OPEN}${serializeFrontmatter(mutate(validated.data))}${FRONTMATTER_CLOSE}${note.body}`;
+  });
 }
