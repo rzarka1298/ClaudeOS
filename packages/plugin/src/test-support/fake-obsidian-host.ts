@@ -10,6 +10,79 @@
 
 export type Disposer = () => void;
 
+/**
+ * The minimal file handle `FakeVault.process()` accepts, matching the one
+ * property `vault-write.ts` reads off a real `TFile`. Deliberately NOT a
+ * cast of the real `TFile` class: constructing one would mean reaching into
+ * the `obsidian` runtime (which ships types only) or casting an object
+ * literal, and the plugin skill's rule 2 forbids unsafe `TFile` casts.
+ */
+export interface FakeFile {
+  readonly path: string;
+}
+
+/**
+ * An in-memory stand-in for the one Obsidian `Vault` method the managed-note
+ * write path uses, `process()` -- the same fake-host technique
+ * {@link FakeObsidianHost} applies to the registration surface, applied to
+ * the write surface.
+ *
+ * Two pieces of bookkeeping exist so VAULT-06 claims are assertable rather
+ * than assumed: {@link processCallCount} makes "exactly one process() call
+ * per invocation, never a silent retry" a counted fact, and
+ * {@link writtenPaths} makes "this module writes the note and nothing else --
+ * never an index.md" a recorded fact. Like the real `Vault.process`, a write
+ * is recorded on every call, including one whose callback returns the
+ * content unchanged.
+ */
+export class FakeVault {
+  private readonly contents = new Map<string, string>();
+
+  /** Number of `process()` invocations since construction. */
+  processCallCount = 0;
+
+  /** Every path `process()` wrote, in call order (duplicates kept). */
+  readonly writtenPaths: string[] = [];
+
+  constructor(initial: Readonly<Record<string, string>> = {}) {
+    for (const [path, content] of Object.entries(initial)) {
+      this.contents.set(path, content);
+    }
+  }
+
+  /** A handle for `path`, whether or not the fake currently holds content for it. */
+  file(path: string): FakeFile {
+    return { path };
+  }
+
+  /** The current on-"disk" content at `path`. Throws for an unknown path. */
+  read(path: string): string {
+    const current = this.contents.get(path);
+    if (current === undefined) {
+      throw new Error(`fake vault: no file at ${path}`);
+    }
+    return current;
+  }
+
+  /** Replaces the content at `path` without going through `process()` -- the fake's way of staging a concurrent external edit. */
+  setExternally(path: string, content: string): void {
+    this.contents.set(path, content);
+  }
+
+  /**
+   * Mirrors `Vault.process(file, fn)`: reads the current content, hands it
+   * to the synchronous callback, persists the callback's return value, and
+   * resolves with what was written.
+   */
+  async process(file: FakeFile, fn: (data: string) => string): Promise<string> {
+    this.processCallCount++;
+    const next = fn(this.read(file.path));
+    this.contents.set(file.path, next);
+    this.writtenPaths.push(file.path);
+    return next;
+  }
+}
+
 export interface LiveCounts {
   event: number;
   interval: number;
