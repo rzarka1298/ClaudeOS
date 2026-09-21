@@ -145,6 +145,25 @@ const UPSERT_SQL = `INSERT INTO vault_notes
      content_hash = excluded.content_hash`;
 
 /**
+ * Clears any STALE row still holding `path` under a different note id.
+ *
+ * The table carries two unique indexes — `note_id` (the primary key) and
+ * `path` — but `UPSERT_SQL` can only declare one conflict target. Without
+ * this, the ordinary sequence "rename note A from `inbox/a.md` to
+ * `inbox/b.md`, then create note B at `inbox/a.md`" throws
+ * `SQLITE_CONSTRAINT_UNIQUE` whenever B is upserted before A's row has
+ * been refreshed: B's insert collides on the PATH index, which has no
+ * conflict clause.
+ *
+ * Deleting is right rather than merely convenient: a path can hold exactly
+ * one note, so a row claiming a path the caller has just told us belongs
+ * to a different note is stale by definition, and the cache is a derived
+ * artifact that `rebuildVaultNotes` can reconstruct from the vault at any
+ * time.
+ */
+const CLEAR_PATH_SQL = `DELETE FROM vault_notes WHERE path = @path AND note_id <> @noteId`;
+
+/**
  * Inserts or replaces the cache row for one note, keyed by note ID rather
  * than by path — a note that moves between lifecycle folders is still the
  * same note (VAULT-07), so a move must update its row, not create a second.
@@ -153,10 +172,18 @@ const UPSERT_SQL = `INSERT INTO vault_notes
  * the first service-side note-write route (Phase 6). Phase 2's population
  * path is {@link rebuildVaultNotes}, which the repair pass (plan 02-06)
  * runs in a single pass.
+ *
+ * The stale-path clear and the upsert run in ONE transaction, so a failure
+ * in the second cannot leave the first applied — the cache never loses a
+ * row without gaining its replacement.
  */
 export function upsertVaultNote(db: Database.Database, record: VaultNoteRecord): void {
   assertValidVaultNoteRecord(record);
-  db.prepare(UPSERT_SQL).run(recordToParams(record));
+  const params = recordToParams(record);
+  db.transaction(() => {
+    db.prepare(CLEAR_PATH_SQL).run(params);
+    db.prepare(UPSERT_SQL).run(params);
+  })();
 }
 
 /** Reads one cache row back by note ID, or `null` when the note is not cached. */

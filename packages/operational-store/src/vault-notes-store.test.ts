@@ -78,6 +78,45 @@ describe("vault_notes cache", () => {
     expect(getVaultNote(db, "absent" as NoteId)).toBeNull();
   });
 
+  it("handles a rename that frees a path for a different note, which the path UNIQUE index refuses", () => {
+    // The table has TWO unique indexes -- note_id and path -- but an
+    // UPSERT can declare only one conflict target. This is the ordinary
+    // sequence the docblock names ("a note that moves between lifecycle
+    // folders"): A vacates inbox/a.md, B takes it, and B arrives before
+    // A's row has been refreshed.
+    upsertVaultNote(db, note({ noteId: "note-a", path: "inbox/a.md" }));
+
+    upsertVaultNote(db, note({ noteId: "note-b", path: "inbox/a.md" }));
+
+    expect(countVaultNotes(db)).toBe(1);
+    expect(getVaultNote(db, "note-b" as NoteId)?.path).toBe("inbox/a.md");
+    // The stale row is gone rather than duplicated: a path holds exactly
+    // one note, so the row claiming it under the old id was stale.
+    expect(getVaultNote(db, "note-a" as NoteId)).toBeNull();
+  });
+
+  it("re-adding the vacating note at its new path leaves both rows, one per path", () => {
+    upsertVaultNote(db, note({ noteId: "note-a", path: "inbox/a.md" }));
+    upsertVaultNote(db, note({ noteId: "note-b", path: "inbox/a.md" }));
+
+    upsertVaultNote(db, note({ noteId: "note-a", path: "inbox/b.md" }));
+
+    expect(countVaultNotes(db)).toBe(2);
+    expect(getVaultNote(db, "note-a" as NoteId)?.path).toBe("inbox/b.md");
+    expect(getVaultNote(db, "note-b" as NoteId)?.path).toBe("inbox/a.md");
+  });
+
+  it("moving a note to a free path does not disturb any other row", () => {
+    upsertVaultNote(db, note({ noteId: "note-a", path: "inbox/a.md" }));
+    upsertVaultNote(db, note({ noteId: "note-c", path: "inbox/c.md" }));
+
+    upsertVaultNote(db, note({ noteId: "note-a", path: "global/wiki/a.md" }));
+
+    expect(countVaultNotes(db)).toBe(2);
+    expect(getVaultNote(db, "note-a" as NoteId)?.path).toBe("global/wiki/a.md");
+    expect(getVaultNote(db, "note-c" as NoteId)?.path).toBe("inbox/c.md");
+  });
+
   it("keeps exactly one row per note id when the same note is upserted twice, holding the later values", () => {
     upsertVaultNote(db, note({ noteId: "note-upsert", stage: "raw", confidence: "unverified" }));
     upsertVaultNote(
