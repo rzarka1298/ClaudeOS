@@ -22,6 +22,7 @@
     "@ccc/domain": "workspace:*",
     "@ccc/keychain": "workspace:*",
     "@ccc/operational-store": "workspace:*",
+    "@ccc/vault-repo": "workspace:*",
     "pino": "10.3.1"
   },
   "devDependencies": {

@@ -1,4 +1,13 @@
 import http from "node:http";
+import {
+  ApiErrorBodySchema,
+  VAULT_SETUP_PATH,
+  VAULT_SETUP_PLAN_PATH,
+  type VaultSetupPlanResponse,
+  VaultSetupPlanResponseSchema,
+  type VaultSetupResponse,
+  VaultSetupResponseSchema,
+} from "@ccc/domain";
 
 /**
  * Thrown when the socket cannot be reached at all — connection refused, no
@@ -89,4 +98,92 @@ export function createSocketApiClient({
       });
     },
   };
+}
+
+/**
+ * Thrown when a vault-setup call reached the service and the service
+ * refused it — a 401, a 400 for a malformed body, a 422 for a missing
+ * vault root, or a response whose shape the domain schema does not
+ * recognise. Distinct from {@link SocketUnreachableError}, which means the
+ * service was never reached at all: the two need different words in front
+ * of a user, and only one of them means "start the service".
+ *
+ * `message` is whatever the service put in its constant error body. By
+ * construction (routes.ts) that never contains a filesystem path, so a UI
+ * may display it verbatim.
+ */
+export class VaultSetupRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "VaultSetupRequestError";
+    this.status = status;
+  }
+}
+
+/** Used when a refusal carries no readable `error` field of its own. */
+const UNRECOGNISED_FAILURE = "The service refused the request.";
+const UNRECOGNISED_RESPONSE = "The service returned a response this client does not recognise.";
+
+/**
+ * A schema shape, structurally — the same trick the service's
+ * `readJsonBody` uses, kept here so this module's two call sites read the
+ * same way whichever response they are validating.
+ */
+interface ResponseParser<T> {
+  safeParse(input: unknown): { success: true; data: T } | { success: false };
+}
+
+/**
+ * The one place a vault-setup response becomes a value or an error.
+ *
+ * Validating the 200 body rather than casting it is the point: the plugin
+ * renders the entry list straight into a confirmation modal, so a
+ * malformed or truncated response must become a visible failure here and
+ * not a modal that silently displays fewer paths than setup will write.
+ */
+async function postVaultSetupRequest<T>(
+  client: SocketApiClient,
+  path: string,
+  vaultRoot: string,
+  schema: ResponseParser<T>,
+): Promise<T> {
+  const res = await client.request<unknown>({ method: "POST", path, body: { vaultRoot } });
+  if (res.status !== 200) {
+    const parsed = ApiErrorBodySchema.safeParse(res.body);
+    throw new VaultSetupRequestError(
+      res.status,
+      parsed.success ? parsed.data.error : UNRECOGNISED_FAILURE,
+    );
+  }
+  const parsed = schema.safeParse(res.body);
+  if (!parsed.success) {
+    throw new VaultSetupRequestError(res.status, UNRECOGNISED_RESPONSE);
+  }
+  return parsed.data;
+}
+
+/**
+ * Fetches the show-paths-first plan (VAULT-01): every path setup would
+ * touch and whether it is already there. Writes nothing.
+ */
+export function requestVaultSetupPlan(
+  client: SocketApiClient,
+  vaultRoot: string,
+): Promise<VaultSetupPlanResponse> {
+  return postVaultSetupRequest(
+    client,
+    VAULT_SETUP_PLAN_PATH,
+    vaultRoot,
+    VaultSetupPlanResponseSchema,
+  );
+}
+
+/** Applies setup, creating the managed tree the plan described. */
+export function requestVaultSetup(
+  client: SocketApiClient,
+  vaultRoot: string,
+): Promise<VaultSetupResponse> {
+  return postVaultSetupRequest(client, VAULT_SETUP_PATH, vaultRoot, VaultSetupResponseSchema);
 }

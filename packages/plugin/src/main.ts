@@ -12,6 +12,7 @@ import {
   type CommandCenterSettings,
   DEFAULT_SETTINGS,
 } from "./settings.js";
+import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 
@@ -72,6 +73,12 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         void this.revealView();
       },
     });
+
+    // Vault setup (VAULT-01). Registered through the same seam as
+    // everything else, and given the authenticated client — the plugin
+    // never reaches the filesystem for this: it hands the service a path
+    // and renders the plan the service sends back.
+    registerVaultSetupCommand(this.hostRegistry, createObsidianVaultSetupUi(this.app), this.client);
   }
 
   /**

@@ -17,5 +17,8 @@ export type {
 } from "./socket-api-client.js";
 export {
   createSocketApiClient,
+  requestVaultSetup,
+  requestVaultSetupPlan,
   SocketUnreachableError,
+  VaultSetupRequestError,
 } from "./socket-api-client.js";

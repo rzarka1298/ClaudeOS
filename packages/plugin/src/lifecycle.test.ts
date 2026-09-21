@@ -1,5 +1,7 @@
+import type { SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createHostRegistry, type HostRegistry } from "./host-registry.js";
+import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js";
 import {
   createFakeDomTarget,
   type EventTargetLike,
@@ -10,12 +12,30 @@ const VIEW_TYPE = "claude-command-center-view";
 const COMMAND_ID = "open-overview";
 const WORKSPACE_EVENT = "workspace-event";
 
+/** Inert doubles: this suite proves registration bookkeeping, never behaviour. */
+const NOOP_SETUP_UI: VaultSetupUi = {
+  resolveVaultPath: () => null,
+  notify: () => {},
+  confirmPlan: () => Promise.resolve(false),
+};
+const NOOP_CLIENT: SocketApiClient = {
+  request<T>(_opts: SocketRequestOptions): Promise<{ status: number; body: T }> {
+    return Promise.reject(new Error("not called"));
+  },
+};
+
 /**
  * What a realistic `onload()` registers, all six kinds, routed entirely
  * through the registry -- mirroring `main.ts`'s own shape (view, ribbon,
- * command) plus the three kinds `main.ts` doesn't currently use but the
- * registry still must prove leak-proof (event, interval, domEvent), per
- * PITFALLS.md's Pitfall 1 technique.
+ * two commands) plus the three kinds `main.ts` doesn't currently use but
+ * the registry still must prove leak-proof (event, interval, domEvent),
+ * per PITFALLS.md's Pitfall 1 technique.
+ *
+ * The vault-setup command is registered through the REAL
+ * `registerVaultSetupCommand`, not a hand-written stand-in: a stand-in
+ * would still pass this suite if the real function ever stopped routing
+ * through the registry, which is precisely the regression it is here to
+ * catch.
  */
 function loadCycle(
   host: FakeObsidianHost,
@@ -26,6 +46,7 @@ function loadCycle(
   registry.view(VIEW_TYPE, () => ({}));
   registry.ribbon("layout-dashboard", "Open command center", () => {});
   registry.command({ id: COMMAND_ID, name: "Open overview", callback: () => {} });
+  registerVaultSetupCommand(registry, NOOP_SETUP_UI, NOOP_CLIENT);
   registry.event(WORKSPACE_EVENT, handler);
   registry.interval(() => {}, 60_000);
   registry.domEvent(domTarget, "click", () => {});
@@ -72,7 +93,7 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     expect(handlerCalls).toBe(1);
   });
 
-  it("registers the view type and the command identifier exactly once after the twentieth load", () => {
+  it("registers the view type and both command identifiers exactly once after the twentieth load", () => {
     let current: HostRegistry | undefined;
     for (let i = 0; i < 20; i++) {
       current?.disposeAll();
@@ -80,7 +101,9 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     }
 
     expect(host.liveCounts().view).toBe(1);
-    expect(host.liveCounts().command).toBe(1);
+    // Two commands now: "Open overview" and "Set up managed vault". Twenty
+    // loads leave exactly one of each, not twenty of each.
+    expect(host.liveCounts().command).toBe(2);
   });
 
   it("settings saved in the first cycle are present and unchanged in the twentieth, and save is invoked at most once per cycle", async () => {

@@ -25,8 +25,17 @@ export class PathNotAllowedError extends Error {
  */
 let approvedRoots: string[] = [];
 
-/** Registers `root` as an approved directory candidates may resolve inside. */
+/**
+ * Registers `root` as an approved directory candidates may resolve inside.
+ *
+ * Idempotent: re-registering the same root is a no-op rather than a second
+ * entry. Setup is explicitly safe to re-run forever (VAULT-02) and the
+ * startup hook registers the persisted root on every boot, so without this
+ * the registry would grow one duplicate per call — lengthening the linear
+ * scan in `assertPathAllowed` for no added permission.
+ */
 export function registerApprovedRoot(root: string): void {
+  if (approvedRoots.includes(root)) return;
   approvedRoots.push(root);
 }
 

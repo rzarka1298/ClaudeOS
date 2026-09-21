@@ -16,6 +16,7 @@ import {
 } from "./paths.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
+import { registerPersistedVaultRoot } from "./vault-root.js";
 
 /**
  * Composition root: resolves the runtime directory and socket/db paths,
@@ -59,6 +60,17 @@ async function main(): Promise<void> {
   }
   const spoolRecords = drainSpool(resolveSpoolPath(), logger);
   logger.info({ count: spoolRecords.length }, "startup: drained hook spool");
+
+  // The managed vault root is the only approved path root this phase
+  // introduces, and the allowlist is in-memory — so it has to be rebuilt
+  // from the private operational store on every boot or a restart would
+  // silently revoke access to the user's own vault. Deny-by-default holds
+  // until setup has run at least once: `null` here registers nothing.
+  const vaultRoot = registerPersistedVaultRoot(store);
+  logger.info(
+    { registered: vaultRoot !== null },
+    "startup: reloaded managed vault root into the path allowlist",
+  );
 
   const secretStore = createSecurityCliSecretStore();
   const installSecret = await getInstallSecret(secretStore);

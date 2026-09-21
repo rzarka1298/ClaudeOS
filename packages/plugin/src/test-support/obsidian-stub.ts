@@ -38,3 +38,74 @@ export function parseYaml(input: string): unknown {
 export function stringifyYaml(obj: unknown): string {
   return yaml.safeDump(obj);
 }
+
+/**
+ * Stand-ins for the obsidian VALUES `setup-command.ts` constructs or
+ * subclasses at module scope. Without them that module cannot even be
+ * imported under Vitest, so `runVaultSetup` -- which touches none of
+ * them -- would be untestable purely because its file neighbours do.
+ *
+ * Deliberately minimal and deliberately inert: no test in this repository
+ * drives the modal through this stub, because a hand-written double of
+ * Obsidian's DOM helpers would prove nothing about the real modal. The
+ * modal's behaviour is covered by the live-Obsidian UAT; these exist only
+ * so the module loads.
+ */
+
+/** The subset of Obsidian's element helpers the setup modal builds with. */
+export interface StubElement {
+  createEl(tag: string, options?: { text?: string }): StubElement;
+  createDiv(): StubElement;
+  addEventListener(type: string, handler: () => void): void;
+  empty(): void;
+}
+
+function createStubElement(): StubElement {
+  return {
+    createEl: () => createStubElement(),
+    createDiv: () => createStubElement(),
+    addEventListener: () => {},
+    empty: () => {},
+  };
+}
+
+export class Notice {
+  readonly message: string;
+
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+export class Modal {
+  readonly app: unknown;
+  contentEl: StubElement = createStubElement();
+
+  constructor(app: unknown) {
+    this.app = app;
+  }
+
+  open(): void {
+    this.onOpen();
+  }
+
+  close(): void {
+    this.onClose();
+  }
+
+  onOpen(): void {}
+
+  onClose(): void {}
+}
+
+export class FileSystemAdapter {
+  private readonly basePath: string;
+
+  constructor(basePath = "") {
+    this.basePath = basePath;
+  }
+
+  getBasePath(): string {
+    return this.basePath;
+  }
+}
