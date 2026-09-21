@@ -178,7 +178,17 @@ describe("regenerateIndex", () => {
     const result = regenerateIndex(folder, { vaultRoot });
 
     expect(rowCount(result.content)).toBe(2);
-    expect(result.content).not.toContain("id-forged");
+    // The contract is that a crafted value cannot occupy a ROW POSITION.
+    // Its characters still appear as inline text of the note's own
+    // `updated` field — that is the honest rendering of what is actually
+    // in that note's frontmatter, and pretending otherwise would make the
+    // index lie. What must not exist is a line the reader parses as a
+    // separate note.
+    const forgedRow = result.content
+      .split("\n")
+      .some((line) => line.startsWith(`${ROW_MARKER}forged]]`));
+    expect(forgedRow).toBe(false);
+    expect(result.content.split("\n").filter((line) => line.includes("id-forged"))).toHaveLength(1);
   });
 
   test("workspace identity keys are re-emitted unchanged while the listing is rebuilt", () => {
