@@ -7,6 +7,7 @@ import {
   clearApprovedRoots,
   PathNotAllowedError,
   registerApprovedRoot,
+  setApprovedRoots,
 } from "./path-allowlist.js";
 
 let dir: string;
@@ -63,5 +64,50 @@ describe("assertPathAllowed", () => {
       expect(message).not.toContain(root);
       expect(message).toBe("path not permitted");
     }
+  });
+});
+
+describe("setApprovedRoots", () => {
+  it("replaces the registry, so a previously approved root stops being approved", () => {
+    // The whole point of threat T-02-18: a second setup run against a
+    // different directory must not leave the first one approved for the
+    // rest of the process lifetime.
+    const second = join(dir, "second");
+    mkdirSync(second, { recursive: true });
+    const firstCandidate = join(root, "file.txt");
+    const secondCandidate = join(second, "file.txt");
+    writeFileSync(firstCandidate, "x");
+    writeFileSync(secondCandidate, "x");
+
+    setApprovedRoots([root]);
+    expect(() => assertPathAllowed(firstCandidate)).not.toThrow();
+
+    setApprovedRoots([second]);
+    expect(() => assertPathAllowed(secondCandidate)).not.toThrow();
+    expect(() => assertPathAllowed(firstCandidate)).toThrow(PathNotAllowedError);
+  });
+
+  it("treats a trailing-slash spelling as the same root", () => {
+    const candidate = join(root, "file.txt");
+    writeFileSync(candidate, "x");
+
+    setApprovedRoots([root, `${root}/`, root]);
+
+    expect(() => assertPathAllowed(candidate)).not.toThrow();
+    // Re-registering the same directory additively is also a no-op, so the
+    // linear scan cannot grow one duplicate per boot.
+    registerApprovedRoot(`${root}/`);
+    registerApprovedRoot(root);
+    expect(() => assertPathAllowed(candidate)).not.toThrow();
+  });
+
+  it("an empty replacement denies everything, exactly like a fresh install", () => {
+    const candidate = join(root, "file.txt");
+    writeFileSync(candidate, "x");
+    setApprovedRoots([root]);
+
+    setApprovedRoots([]);
+
+    expect(() => assertPathAllowed(candidate)).toThrow(PathNotAllowedError);
   });
 });

@@ -214,6 +214,26 @@ describe("POST /api/v1/vault/setup", () => {
     expect(assertPathAllowed(join(vaultRoot, "global", "raw"))).toBeTruthy();
   });
 
+  it("a setup against a different root REPLACES the approved root rather than widening it", async () => {
+    // `service_meta` is keyed, so the persisted root was always replaced —
+    // but the in-memory registry only ever appended, leaving both
+    // directories approved for the rest of the process lifetime. That is
+    // exactly the "something a request can widen on the way back in" that
+    // threat T-02-18 forbids, and it goes live the moment a handler calls
+    // `assertPathAllowed`.
+    const second = join(dir, "SecondVault");
+    mkdirSync(second);
+
+    await postVaultRoot<unknown>(socketPath, VAULT_SETUP_PATH, vaultRoot, token);
+    expect(assertPathAllowed(join(vaultRoot, "global"))).toBeTruthy();
+
+    await postVaultRoot<unknown>(socketPath, VAULT_SETUP_PATH, second, token);
+
+    expect(store.readServiceMeta(VAULT_ROOT_META_KEY)).toBe(second);
+    expect(assertPathAllowed(join(second, "global"))).toBeTruthy();
+    expect(() => assertPathAllowed(join(vaultRoot, "global"))).toThrow(PathNotAllowedError);
+  });
+
   it("is idempotent over the socket: a second call creates nothing and reports everything existing", async () => {
     await postVaultRoot<unknown>(socketPath, VAULT_SETUP_PATH, vaultRoot, token);
     const claudeMd = join(vaultRoot, "CLAUDE.md");

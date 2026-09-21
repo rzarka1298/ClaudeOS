@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { checkPathContainment } from "@ccc/domain";
 
 /**
@@ -26,17 +27,39 @@ export class PathNotAllowedError extends Error {
 let approvedRoots: string[] = [];
 
 /**
- * Registers `root` as an approved directory candidates may resolve inside.
+ * REPLACES the registry with exactly `roots`.
  *
- * Idempotent: re-registering the same root is a no-op rather than a second
- * entry. Setup is explicitly safe to re-run forever (VAULT-02) and the
- * startup hook registers the persisted root on every boot, so without this
- * the registry would grow one duplicate per call — lengthening the linear
- * scan in `assertPathAllowed` for no added permission.
+ * Replacement, not accumulation, is what makes "the approved roots are what
+ * the owner set up" a structural property rather than a convention. An
+ * append-only registry meant two `POST /api/v1/vault/setup` calls against
+ * different directories in one process left BOTH approved for the rest of
+ * the process lifetime — precisely the "something a request can widen on
+ * the way back in" that `vault-root.ts`'s own docblock says cannot happen
+ * (threat T-02-18), and latent only for as long as `assertPathAllowed` has
+ * no production caller.
+ *
+ * Each root is `resolve`d before it is stored, so `/v` and `/v/` are one
+ * entry rather than two.
+ */
+export function setApprovedRoots(roots: readonly string[]): void {
+  approvedRoots = [...new Set(roots.map((root) => resolve(root)))];
+}
+
+/**
+ * Adds `root` to the registry, leaving existing entries in place.
+ *
+ * This is for genuinely ADDITIVE roots — Phase 4's registered project
+ * directories, of which there are many at once. The managed vault root is
+ * NOT one of those: it goes through {@link setApprovedRoots}, because there
+ * is exactly one of it.
+ *
+ * Idempotent on the resolved path: re-registering the same directory (or a
+ * trailing-slash spelling of it) is a no-op rather than a second entry.
  */
 export function registerApprovedRoot(root: string): void {
-  if (approvedRoots.includes(root)) return;
-  approvedRoots.push(root);
+  const resolved = resolve(root);
+  if (approvedRoots.includes(resolved)) return;
+  approvedRoots.push(resolved);
 }
 
 /** Test-only: clears the registry. */

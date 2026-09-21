@@ -1,5 +1,5 @@
 import type { OperationalStore } from "@ccc/operational-store";
-import { registerApprovedRoot } from "./path-allowlist.js";
+import { setApprovedRoots } from "./path-allowlist.js";
 
 /**
  * The `service_meta` key the managed vault root is persisted under.
@@ -19,12 +19,16 @@ export const VAULT_ROOT_META_KEY = "vault_root";
  *
  * One vault root, not a growing set: a second setup run against a
  * different directory REPLACES the persisted value (`service_meta` is
- * keyed), which is what keeps "the approved roots are what the owner set
- * up" true across restarts instead of accumulating every path ever named.
+ * keyed) AND replaces the in-memory registration, which is what keeps "the
+ * approved roots are what the owner set up" true within a process as well
+ * as across restarts. Registering additively here was the gap: it left the
+ * previous directory approved for the rest of the process lifetime even
+ * though `service_meta` no longer named it, so the two halves of the same
+ * invariant disagreed for exactly as long as the service stayed up.
  */
 export function persistVaultRoot(store: OperationalStore, vaultRoot: string): void {
   store.writeServiceMeta(VAULT_ROOT_META_KEY, vaultRoot);
-  registerApprovedRoot(vaultRoot);
+  setApprovedRoots([vaultRoot]);
 }
 
 /**
@@ -42,6 +46,9 @@ export function persistVaultRoot(store: OperationalStore, vaultRoot: string): vo
 export function registerPersistedVaultRoot(store: OperationalStore): string | null {
   const vaultRoot = store.readServiceMeta(VAULT_ROOT_META_KEY);
   if (vaultRoot === null || vaultRoot.length === 0) return null;
-  registerApprovedRoot(vaultRoot);
+  // Replace, for the same reason `persistVaultRoot` does: the persisted
+  // key names THE vault root, so re-running this hook can only ever mean
+  // "these are the approved roots", never "add one more".
+  setApprovedRoots([vaultRoot]);
   return vaultRoot;
 }
