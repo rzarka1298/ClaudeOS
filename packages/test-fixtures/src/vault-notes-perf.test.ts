@@ -58,89 +58,81 @@ describe("synthetic note fixture", () => {
 });
 
 describe("PERF-06: filter responsiveness at 10,000 cached notes", () => {
-  it(
-    "answers scope, stage, and combined filters over a 10,000-row cache inside the ceiling",
-    async () => {
-      await withTempVaultDir(async ({ vaultRoot }) => {
-        // A file-backed database opened through the production entry
-        // point — not `:memory:`, and not a bare better-sqlite3 handle —
-        // so the measured number includes the WAL settings and the I/O a
-        // real install actually pays.
-        const store = openStore(join(vaultRoot, "operational.db"));
-        const db = store.db;
-        try {
-          applyMigrations(db);
-          const records = generateSyntheticNotes(NOTE_COUNT);
+  it("answers scope, stage, and combined filters over a 10,000-row cache inside the ceiling", async () => {
+    await withTempVaultDir(async ({ vaultRoot }) => {
+      // A file-backed database opened through the production entry
+      // point — not `:memory:`, and not a bare better-sqlite3 handle —
+      // so the measured number includes the WAL settings and the I/O a
+      // real install actually pays.
+      const store = openStore(join(vaultRoot, "operational.db"));
+      const db = store.db;
+      try {
+        applyMigrations(db);
+        const records = generateSyntheticNotes(NOTE_COUNT);
 
-          const rebuildStart = performance.now();
-          rebuildVaultNotes(db, records);
-          const rebuildMs = performance.now() - rebuildStart;
+        const rebuildStart = performance.now();
+        rebuildVaultNotes(db, records);
+        const rebuildMs = performance.now() - rebuildStart;
 
-          expect(countVaultNotes(db)).toBe(NOTE_COUNT);
+        expect(countVaultNotes(db)).toBe(NOTE_COUNT);
 
-          const scope = records[0]?.scope as string;
-          const stage = records[0]?.stage as (typeof LIFECYCLE_STAGES)[number];
-          const measure = (label: string, run: () => unknown): number => {
-            const started = performance.now();
-            const rows = run() as unknown[];
-            const elapsed = performance.now() - started;
-            console.log(
-              `[PERF-06] ${label}: ${elapsed.toFixed(2)}ms (${rows.length} rows of ${NOTE_COUNT})`,
-            );
-            return elapsed;
-          };
-
+        const scope = records[0]?.scope as string;
+        const stage = records[0]?.stage as (typeof LIFECYCLE_STAGES)[number];
+        const measure = (label: string, run: () => unknown): number => {
+          const started = performance.now();
+          const rows = run() as unknown[];
+          const elapsed = performance.now() - started;
           console.log(
-            `[PERF-06] rebuild of ${NOTE_COUNT} rows in one transaction: ${rebuildMs.toFixed(2)}ms`,
+            `[PERF-06] ${label}: ${elapsed.toFixed(2)}ms (${rows.length} rows of ${NOTE_COUNT})`,
           );
+          return elapsed;
+        };
 
-          const byScope = measure("queryVaultNotes({scope})", () => queryVaultNotes(db, { scope }));
-          const byStage = measure("queryVaultNotes({stage})", () => queryVaultNotes(db, { stage }));
-          const byBoth = measure("queryVaultNotes({scope,stage})", () =>
-            queryVaultNotes(db, { scope, stage }),
-          );
-
-          expect(byScope).toBeLessThan(QUERY_CEILING_MS);
-          expect(byStage).toBeLessThan(QUERY_CEILING_MS);
-          expect(byBoth).toBeLessThan(QUERY_CEILING_MS);
-        } finally {
-          store.close();
-        }
-      });
-    },
-    120_000,
-  );
-
-  it(
-    "records why the cache is load-bearing: a naive frontmatter scan of the same vault, extrapolated",
-    async () => {
-      await withTempVaultDir(async ({ vaultRoot }) => {
-        const written = writeSyntheticVault(vaultRoot, NAIVE_SCAN_SAMPLE);
-        expect(written).toHaveLength(NAIVE_SCAN_SAMPLE);
-
-        // The synthetic notes must be REAL notes, not approximations:
-        // every one parses back through the production parser.
-        const scanStart = performance.now();
-        for (const path of written) {
-          parseNote(readFileSync(path, "utf8"));
-        }
-        const scanMs = performance.now() - scanStart;
-
-        const perNoteMs = scanMs / NAIVE_SCAN_SAMPLE;
-        const extrapolatedMs = perNoteMs * NOTE_COUNT;
         console.log(
-          `[PERF-06] naive frontmatter scan: ${scanMs.toFixed(2)}ms for ${NAIVE_SCAN_SAMPLE} notes ` +
-            `(${perNoteMs.toFixed(3)}ms/note) -> ~${extrapolatedMs.toFixed(0)}ms extrapolated to ${NOTE_COUNT} notes, ` +
-            `versus a cache query asserted under ${QUERY_CEILING_MS}ms`,
+          `[PERF-06] rebuild of ${NOTE_COUNT} rows in one transaction: ${rebuildMs.toFixed(2)}ms`,
         );
 
-        // Not asserted as a performance bound — the point of this test is
-        // the logged comparison. What IS asserted is that the extrapolation
-        // was computed from real parses of real files.
-        expect(scanMs).toBeGreaterThan(0);
-        expect(parseNote(readFileSync(written[0] as string, "utf8")).frontmatter.id).toBeTruthy();
-      });
-    },
-    120_000,
-  );
+        const byScope = measure("queryVaultNotes({scope})", () => queryVaultNotes(db, { scope }));
+        const byStage = measure("queryVaultNotes({stage})", () => queryVaultNotes(db, { stage }));
+        const byBoth = measure("queryVaultNotes({scope,stage})", () =>
+          queryVaultNotes(db, { scope, stage }),
+        );
+
+        expect(byScope).toBeLessThan(QUERY_CEILING_MS);
+        expect(byStage).toBeLessThan(QUERY_CEILING_MS);
+        expect(byBoth).toBeLessThan(QUERY_CEILING_MS);
+      } finally {
+        store.close();
+      }
+    });
+  }, 120_000);
+
+  it("records why the cache is load-bearing: a naive frontmatter scan of the same vault, extrapolated", async () => {
+    await withTempVaultDir(async ({ vaultRoot }) => {
+      const written = writeSyntheticVault(vaultRoot, NAIVE_SCAN_SAMPLE);
+      expect(written).toHaveLength(NAIVE_SCAN_SAMPLE);
+
+      // The synthetic notes must be REAL notes, not approximations:
+      // every one parses back through the production parser.
+      const scanStart = performance.now();
+      for (const path of written) {
+        parseNote(readFileSync(path, "utf8"));
+      }
+      const scanMs = performance.now() - scanStart;
+
+      const perNoteMs = scanMs / NAIVE_SCAN_SAMPLE;
+      const extrapolatedMs = perNoteMs * NOTE_COUNT;
+      console.log(
+        `[PERF-06] naive frontmatter scan: ${scanMs.toFixed(2)}ms for ${NAIVE_SCAN_SAMPLE} notes ` +
+          `(${perNoteMs.toFixed(3)}ms/note) -> ~${extrapolatedMs.toFixed(0)}ms extrapolated to ${NOTE_COUNT} notes, ` +
+          `versus a cache query asserted under ${QUERY_CEILING_MS}ms`,
+      );
+
+      // Not asserted as a performance bound — the point of this test is
+      // the logged comparison. What IS asserted is that the extrapolation
+      // was computed from real parses of real files.
+      expect(scanMs).toBeGreaterThan(0);
+      expect(parseNote(readFileSync(written[0] as string, "utf8")).frontmatter.id).toBeTruthy();
+    });
+  }, 120_000);
 });
