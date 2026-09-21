@@ -25,7 +25,9 @@ const WORKSPACE_B = "workspace:bbbbbbbbb0123456789abcdef";
 let dir: string;
 let db: Database.Database;
 
-function note(overrides: Partial<VaultNoteRecord> & { noteId: string }): VaultNoteRecord {
+function note(
+  overrides: Partial<Omit<VaultNoteRecord, "noteId">> & { noteId: string },
+): VaultNoteRecord {
   return {
     path: `global/wiki/${overrides.noteId}.md`,
     scope: "global",
@@ -127,7 +129,11 @@ describe("vault_notes cache", () => {
     ).toThrow(InvalidVaultNoteError);
 
     expect(countVaultNotes(db)).toBe(before);
-    expect(queryVaultNotes(db).map((r) => r.noteId).sort()).toEqual(["keep-1", "keep-2"]);
+    expect(
+      queryVaultNotes(db)
+        .map((r) => r.noteId)
+        .sort(),
+    ).toEqual(["keep-1", "keep-2"]);
   });
 
   it("replaces the whole cache on a successful rebuild", () => {
