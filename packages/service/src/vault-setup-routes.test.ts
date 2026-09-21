@@ -94,6 +94,17 @@ function postVaultRoot<T>(
   });
 }
 
+/**
+ * Everything in the fixture vault EXCEPT the `.obsidian` marker.
+ *
+ * The marker is part of the fixture, not part of what setup writes, so
+ * "setup wrote nothing" assertions have to look past it — a bare
+ * `readdirSync` would now be non-empty before any request was made.
+ */
+function vaultContents(): string[] {
+  return readdirSync(vaultRoot).filter((name) => name !== ".obsidian");
+}
+
 let dir: string;
 let socketPath: string;
 let dbPath: string;
@@ -114,7 +125,10 @@ beforeEach(async () => {
   socketPath = join(dir, "t.sock");
   dbPath = join(dir, "operational.db");
   vaultRoot = join(dir, "Vault");
-  mkdirSync(vaultRoot);
+  // The `.obsidian` marker is what makes this a VAULT rather than an
+  // arbitrary directory. The setup routes now require it, so every fixture
+  // vault carries one — exactly as a real Obsidian vault does.
+  mkdirSync(join(vaultRoot, ".obsidian"), { recursive: true });
 
   store = openStore(dbPath);
   secret = randomBytes(32);
@@ -156,7 +170,7 @@ describe("vault-setup routes: authentication", () => {
     });
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: "authentication required" });
-    expect(readdirSync(vaultRoot)).toEqual([]);
+    expect(vaultContents()).toEqual([]);
   });
 });
 
@@ -178,7 +192,7 @@ describe("POST /api/v1/vault/setup-plan", () => {
     expect(parsed.data.entries.every((entry) => entry.exists === false)).toBe(true);
     // Purely read-only: a plan call must be safe on a vault the user has
     // not decided about yet (VAULT-01).
-    expect(readdirSync(vaultRoot)).toEqual([]);
+    expect(vaultContents()).toEqual([]);
   });
 
   it("reports accurate exists flags after the tree has been created", async () => {
@@ -222,7 +236,7 @@ describe("POST /api/v1/vault/setup", () => {
     // threat T-02-18 forbids, and it goes live the moment a handler calls
     // `assertPathAllowed`.
     const second = join(dir, "SecondVault");
-    mkdirSync(second);
+    mkdirSync(join(second, ".obsidian"), { recursive: true });
 
     await postVaultRoot<unknown>(socketPath, VAULT_SETUP_PATH, vaultRoot, token);
     expect(assertPathAllowed(join(vaultRoot, "global"))).toBeTruthy();
@@ -269,6 +283,77 @@ describe("POST /api/v1/vault/setup", () => {
   });
 });
 
+describe("vault-setup root policy (threat T-02-18)", () => {
+  it("refuses a directory that is not an Obsidian vault, with a 422 that names nothing", async () => {
+    // The schema rejects relative paths and NUL bytes; `initializeVault`
+    // rejects a root that does not exist. Nothing rejected an arbitrary
+    // EXISTING absolute directory — so a setup call created nine managed
+    // folders plus CLAUDE.md there AND registered it as *the* approved
+    // path root for the whole service. The plugin's modal lists the paths,
+    // but the modal is not the trust boundary: this route is, and it is
+    // reachable by anything holding a bearer token.
+    const notAVault = join(dir, "Documents");
+    mkdirSync(notAVault);
+
+    const res = await postVaultRoot<{ error: string }>(
+      socketPath,
+      VAULT_SETUP_PATH,
+      notAVault,
+      token,
+    );
+
+    expect(res.status).toBe(422);
+    expect(readdirSync(notAVault)).toEqual([]);
+    expect(store.readServiceMeta(VAULT_ROOT_META_KEY)).toBeNull();
+    expect(() => assertPathAllowed(join(notAVault, "global"))).toThrow(PathNotAllowedError);
+    // Constant body, like every other refusal this file establishes: no
+    // path segment of this machine's filesystem appears in the response.
+    expect(res.raw).not.toContain(notAVault);
+    expect(res.raw).not.toMatch(/\/[A-Za-z0-9._-]+\//);
+  });
+
+  it("refuses the home directory even though it exists", async () => {
+    const res = await postVaultRoot<{ error: string }>(
+      socketPath,
+      VAULT_SETUP_PATH,
+      homedir(),
+      token,
+    );
+
+    expect(res.status).toBe(422);
+    expect(store.readServiceMeta(VAULT_ROOT_META_KEY)).toBeNull();
+  });
+
+  it("refuses the filesystem root", async () => {
+    const res = await postVaultRoot<{ error: string }>(socketPath, VAULT_SETUP_PATH, "/", token);
+
+    expect(res.status).toBe(422);
+    expect(store.readServiceMeta(VAULT_ROOT_META_KEY)).toBeNull();
+  });
+
+  it("the PLAN route refuses the same roots, so a plan never describes a vault apply would reject", async () => {
+    const notAVault = join(dir, "Pictures");
+    mkdirSync(notAVault);
+
+    const res = await postVaultRoot<{ error: string }>(
+      socketPath,
+      VAULT_SETUP_PLAN_PATH,
+      notAVault,
+      token,
+    );
+
+    expect(res.status).toBe(422);
+    expect(readdirSync(notAVault)).toEqual([]);
+  });
+
+  it("still accepts a real vault, so the refusals above are not a blanket denial", async () => {
+    const res = await postVaultRoot<unknown>(socketPath, VAULT_SETUP_PATH, vaultRoot, token);
+
+    expect(res.status).toBe(200);
+    expect(store.readServiceMeta(VAULT_ROOT_META_KEY)).toBe(vaultRoot);
+  });
+});
+
 describe("vault-setup request bodies", () => {
   it("refuses a relative vault root with 400 and writes nothing", async () => {
     const res = await postVaultRoot<{ error: string }>(
@@ -278,7 +363,7 @@ describe("vault-setup request bodies", () => {
       token,
     );
     expect(res.status).toBe(400);
-    expect(readdirSync(vaultRoot)).toEqual([]);
+    expect(vaultContents()).toEqual([]);
     expect(store.readServiceMeta(VAULT_ROOT_META_KEY)).toBeNull();
   });
 
@@ -290,7 +375,7 @@ describe("vault-setup request bodies", () => {
       token,
     );
     expect(res.status).toBe(400);
-    expect(readdirSync(vaultRoot)).toEqual([]);
+    expect(vaultContents()).toEqual([]);
   });
 
   it("refuses a non-JSON body with 400 and writes nothing", async () => {
@@ -301,7 +386,7 @@ describe("vault-setup request bodies", () => {
       token,
     });
     expect(res.status).toBe(400);
-    expect(readdirSync(vaultRoot)).toEqual([]);
+    expect(vaultContents()).toEqual([]);
   });
 
   it("refuses a body over the 64KB cap with 400 and writes nothing", async () => {
@@ -313,7 +398,7 @@ describe("vault-setup request bodies", () => {
       token,
     });
     expect(res.status).toBe(400);
-    expect(readdirSync(vaultRoot)).toEqual([]);
+    expect(vaultContents()).toEqual([]);
   });
 });
 

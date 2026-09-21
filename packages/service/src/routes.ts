@@ -26,6 +26,7 @@ import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
 import { readJsonBody } from "./request-body.js";
 import { persistVaultRoot } from "./vault-root.js";
+import { assertUsableVaultRoot, VaultRootRefusedError } from "./vault-root-policy.js";
 
 export interface RouteContext {
   store: OperationalStore;
@@ -141,6 +142,12 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
  */
 const INVALID_BODY_BODY: ApiErrorBody = { error: "invalid request body" };
 const VAULT_ROOT_MISSING_BODY: ApiErrorBody = { error: "vault root does not exist" };
+/** Constant like its neighbours: it names neither the candidate nor the
+ * refused locations, so a caller cannot use the response to map this
+ * machine's filesystem. The specific reason stays in the local log. */
+const VAULT_ROOT_REFUSED_BODY: ApiErrorBody = {
+  error: "vault root is not an Obsidian vault this service will manage",
+};
 const INTERNAL_ERROR_BODY: ApiErrorBody = { error: "internal error" };
 
 /**
@@ -151,6 +158,17 @@ const INTERNAL_ERROR_BODY: ApiErrorBody = { error: "internal error" };
  * missing resource.
  */
 function sendVaultSetupFailure(res: ServerResponse, err: unknown, route: string): void {
+  if (err instanceof VaultRootRefusedError) {
+    // Same 422 class as a missing root: the request is well-formed and the
+    // route exists, the named directory is simply not something this
+    // service will adopt.
+    logger.warn(
+      { route, vaultRoot: err.vaultRoot, reason: err.reason },
+      "vault setup refused: unusable root",
+    );
+    sendJson(res, 422, VAULT_ROOT_REFUSED_BODY);
+    return;
+  }
   if (err instanceof VaultRootMissingError) {
     // The root itself is logged locally (the operator needs to see which
     // path was wrong) and never returned.
@@ -178,6 +196,9 @@ async function handleVaultSetupPlan(req: IncomingMessage, res: ServerResponse): 
     return;
   }
   try {
+    // Both routes assert this, in the same order, so a plan can never
+    // describe a vault the corresponding apply would refuse.
+    assertUsableVaultRoot(parsed.value.vaultRoot);
     const plan = planVaultSetup(parsed.value.vaultRoot);
     const body: VaultSetupPlanResponse = {
       vaultRoot: plan.vaultRoot,
@@ -216,6 +237,7 @@ async function handleVaultSetup(
   }
   const { vaultRoot } = parsed.value;
   try {
+    assertUsableVaultRoot(vaultRoot);
     const result = initializeVault(vaultRoot);
     persistVaultRoot(ctx.store, vaultRoot);
     const body: VaultSetupResponse = {
