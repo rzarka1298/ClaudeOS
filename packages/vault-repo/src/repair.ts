@@ -1,7 +1,11 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { checkPathContainment, type NoteFrontmatter } from "@ccc/domain";
-import { InvalidNoteFrontmatterError, parseNote } from "./frontmatter.js";
+import {
+  InvalidNoteFrontmatterError,
+  parseNote,
+  parseUntrustedFrontmatter,
+} from "./frontmatter.js";
 import { regenerateIndex, WorkspaceIdentityUnreadableError } from "./index-generation.js";
 import { computeSetupEntries, VaultRootMissingError } from "./setup.js";
 
@@ -228,6 +232,28 @@ function describeParseFailure(error: unknown): string {
 }
 
 /**
+ * Best-effort recovery of the `id` a note CLAIMS, from frontmatter that
+ * failed `NoteFrontmatterSchema`.
+ *
+ * Used for one purpose only: to keep a note that exists but did not
+ * validate out of the orphan pass. The value is never written anywhere,
+ * never used as a key in the returned records, and never treated as
+ * ground truth — an unvalidated frontmatter has not earned that, which is
+ * exactly why it is not in `pathsById` in the first place.
+ *
+ * The parse goes through the hardened reader, so recovering an id cannot
+ * be the thing that reintroduces an eval on untrusted content.
+ */
+function recoverNoteId(raw: string): string | undefined {
+  try {
+    const id = parseUntrustedFrontmatter(raw).id;
+    return typeof id === "string" ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The specifics of one index-regeneration refusal.
  *
  * Deterministic for a given vault state, like every other `detail` in this
@@ -313,13 +339,25 @@ export function repairVault(vaultRoot: string): RepairReport {
   const warnings: RepairWarning[] = [];
   const pathsById = new Map<string, string[]>();
   const frontmatterByPath = new Map<string, NoteFrontmatter>();
+  // Ids belonging to notes that ARE on disk but did not validate. They are
+  // deliberately kept out of `pathsById` (nothing may treat an unvalidated
+  // frontmatter as ground truth), but the orphan pass must still know they
+  // exist — see the loop below for why.
+  const unparsedIds = new Set<string>();
 
   for (const folder of scanFolders) {
     for (const filename of listNoteFiles(folder, vaultRoot)) {
       const absolute = join(folder, filename);
       const notePath = toVaultRelative(vaultRoot, absolute);
+      let raw: string;
       try {
-        const { frontmatter } = parseNote(readFileSync(absolute, "utf8"));
+        raw = readFileSync(absolute, "utf8");
+      } catch {
+        // Deleted between the listing and the read; not a note.
+        continue;
+      }
+      try {
+        const { frontmatter } = parseNote(raw);
         frontmatterByPath.set(notePath, frontmatter);
         const existing = pathsById.get(frontmatter.id);
         if (existing === undefined) {
@@ -333,6 +371,8 @@ export function repairVault(vaultRoot: string): RepairReport {
           paths: [notePath],
           detail: describeParseFailure(error),
         });
+        const recovered = recoverNoteId(raw);
+        if (recovered !== undefined) unparsedIds.add(recovered);
       }
     }
   }
@@ -358,10 +398,21 @@ export function repairVault(vaultRoot: string): RepairReport {
   for (const [indexPath, ids] of listedIds) {
     for (const id of [...new Set(ids)].sort(compareStrings)) {
       if (pathsById.has(id)) continue;
+      // A note whose frontmatter failed validation is NOT an orphan. The
+      // file is right there; it just did not parse, and it already has an
+      // `invalid-frontmatter` warning naming it. Reporting it a second
+      // time as "not present anywhere in the vault" is a false statement,
+      // and it sends the user looking for a deleted note that exists —
+      // repair's entire value is the accuracy of this report.
+      if (unparsedIds.has(id)) continue;
       warnings.push({
         kind: "orphaned-index-entry",
         paths: [indexPath],
-        detail: `index lists note id ${id}, which is not present anywhere in the vault`,
+        // "no readable note" rather than "not present anywhere": an id
+        // whose file is so damaged that even its `id` could not be
+        // recovered still lands here, and the report must not overstate
+        // what was actually checked.
+        detail: `index lists note id ${id}, which no readable note in the vault claims`,
       });
     }
   }

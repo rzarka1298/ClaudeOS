@@ -219,6 +219,36 @@ describe("repairVault", () => {
     expect(repairVault(vaultRoot).warnings).toEqual([]);
   });
 
+  test("a listed note that exists but failed to validate is not ALSO reported as an orphan", () => {
+    // The file is right there. Reporting "not present anywhere in the
+    // vault" for it is a false statement, and it sends the user looking
+    // for a deleted note that exists -- repair's whole value is the
+    // accuracy of this report.
+    const alpha = writeManagedNote("global/wiki/alpha.md");
+    const brokenId = "brokenid00000000000000000";
+    const broken = join(vaultRoot, "global", "wiki", "broken.md");
+    writeFileSync(
+      broken,
+      `---\nid: ${brokenId}\nscope: global\nstage: not-a-stage\n---\n\n# broken\n`,
+      "utf8",
+    );
+    const indexPath = join(vaultRoot, "global", "wiki", "index.md");
+    writeFileSync(
+      indexPath,
+      `${readFileSync(indexPath, "utf8")}- [[broken]] — id \`${brokenId}\` · stage \`wiki\` · updated 2026-01-01T00:00:00.000Z\n`,
+      "utf8",
+    );
+
+    const report = repairVault(vaultRoot);
+
+    expect(report.warnings.filter((w) => w.kind === "invalid-frontmatter")).toHaveLength(1);
+    expect(report.warnings.filter((w) => w.kind === "orphaned-index-entry")).toEqual([]);
+    // Not vacuous: the healthy sibling is still the only returned record,
+    // so the broken note really was excluded from the ground truth.
+    expect(report.notes.map((note) => note.path)).toEqual([rel(alpha.path)]);
+    expect(existsSync(broken)).toBe(true);
+  });
+
   test("flags a note with invalid frontmatter, never rewrites it, and leaves its siblings in the records", () => {
     const sibling = writeManagedNote("global/wiki/alpha.md");
     const broken = join(vaultRoot, "global", "wiki", "broken.md");
