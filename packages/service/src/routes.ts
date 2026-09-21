@@ -272,15 +272,38 @@ const routeTable: Record<string, Record<string, Handler>> = {
   [SNAPSHOT_PATH]: { GET: withAuth(snapshotHandler) },
 };
 
+/**
+ * The 404 body, a compile-time CONSTANT like every other refusal in this
+ * file.
+ *
+ * It used to be `` `No route for ${method} ${path}` ``, where `path` was
+ * `req.url` verbatim — arbitrary caller-controlled text echoed straight
+ * back in the response body, and the one error body whose text was not a
+ * constant, which made "every refusal is a constant" untestable as a
+ * blanket assertion (T-02-19).
+ */
+const NO_ROUTE_BODY: ApiErrorBody = { error: "no such route" };
+
 /** Builds the request listener the socket server hands to `http.createServer`. */
 export function createRequestListener(ctx: RouteContext): RequestListener {
   return (req, res) => {
-    const path = req.url ?? "";
+    const rawUrl = req.url ?? "";
+    // `req.url` carries the query string, so a registered route reached
+    // with `?x=1` used to miss the table entirely and fall through to the
+    // 404. The base is a throwaway: only `pathname` is read from it.
+    let path: string;
+    try {
+      path = new URL(rawUrl, "http://localhost").pathname;
+    } catch {
+      path = rawUrl;
+    }
     const method = req.method ?? "GET";
     const handler = routeTable[path]?.[method];
     if (!handler) {
-      const body: ApiErrorBody = { error: `No route for ${method} ${path}` };
-      sendJson(res, 404, body);
+      // Specifics stay local, in the redacting logger, exactly as they do
+      // for a denied path.
+      logger.warn({ method, path }, "no route");
+      sendJson(res, 404, NO_ROUTE_BODY);
       return;
     }
     handler(req, res, ctx);

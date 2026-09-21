@@ -4,6 +4,7 @@ import http, { type Server } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  HANDSHAKE_PATH,
   VAULT_SETUP_PATH,
   VAULT_SETUP_PLAN_PATH,
   VaultSetupPlanResponseSchema,
@@ -351,6 +352,37 @@ describe("vault-setup root policy (threat T-02-18)", () => {
 
     expect(res.status).toBe(200);
     expect(store.readServiceMeta(VAULT_ROOT_META_KEY)).toBe(vaultRoot);
+  });
+});
+
+describe("the route table's own refusals", () => {
+  it("the 404 body is a constant and never echoes the caller's method or path", async () => {
+    const probe = "/api/v1/../../etc/passwd-<script>alert(1)</script>";
+
+    const res = await requestWithBody<{ error: string }>(socketPath, {
+      method: "DELETE",
+      path: probe,
+      token,
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "no such route" });
+    // The defect: `req.url` verbatim in the body meant arbitrary
+    // caller-controlled text came straight back out (T-02-19).
+    expect(res.raw).not.toContain("script");
+    expect(res.raw).not.toContain("passwd");
+    expect(res.raw).not.toContain("DELETE");
+  });
+
+  it("a registered route reached with a query string still resolves, rather than 404ing", async () => {
+    // `req.url` includes the query, so the table lookup missed entirely.
+    const res = await requestWithBody<{ token: string }>(socketPath, {
+      method: "POST",
+      path: `${HANDSHAKE_PATH}?x=1`,
+    });
+
+    expect(res.status).toBe(200);
+    expect(typeof res.body.token).toBe("string");
   });
 });
 
