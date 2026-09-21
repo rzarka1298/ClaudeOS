@@ -1,4 +1,5 @@
 import http from "node:http";
+import type { VaultSetupPlanResponse, VaultSetupResponse } from "@ccc/domain";
 
 /**
  * Thrown when the socket cannot be reached at all — connection refused, no
@@ -89,4 +90,45 @@ export function createSocketApiClient({
       });
     },
   };
+}
+
+/**
+ * Thrown when a vault-setup call reached the service and the service
+ * refused it — a 401, a 400 for a malformed body, a 422 for a missing
+ * vault root, or a response whose shape the domain schema does not
+ * recognise. Distinct from {@link SocketUnreachableError}, which means the
+ * service was never reached at all: the two need different words in front
+ * of a user, and only one of them means "start the service".
+ *
+ * `message` is whatever the service put in its constant error body. By
+ * construction (routes.ts) that never contains a filesystem path, so a UI
+ * may display it verbatim.
+ */
+export class VaultSetupRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "VaultSetupRequestError";
+    this.status = status;
+  }
+}
+
+/**
+ * Fetches the show-paths-first plan (VAULT-01): every path setup would
+ * touch and whether it is already there. Writes nothing.
+ */
+export function requestVaultSetupPlan(
+  _client: SocketApiClient,
+  _vaultRoot: string,
+): Promise<VaultSetupPlanResponse> {
+  throw new Error("requestVaultSetupPlan is not implemented yet");
+}
+
+/** Applies setup, creating the managed tree the plan described. */
+export function requestVaultSetup(
+  _client: SocketApiClient,
+  _vaultRoot: string,
+): Promise<VaultSetupResponse> {
+  throw new Error("requestVaultSetup is not implemented yet");
 }
