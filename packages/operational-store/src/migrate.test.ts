@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("applyMigrations", () => {
-  it("creates every declared table and records schema version 1 on a brand-new database", () => {
+  it("creates every declared table and records the current schema version on a brand-new database", () => {
     const db = new Database(dbPath);
     try {
       applyMigrations(db, REAL_MIGRATIONS_DIR);
@@ -28,11 +28,33 @@ describe("applyMigrations", () => {
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
         .all()
         .map((row) => (row as { name: string }).name);
-      for (const table of ["service_meta", "projects", "runs", "job_runs", "cache_index"]) {
+      for (const table of [
+        "service_meta",
+        "projects",
+        "runs",
+        "job_runs",
+        "cache_index",
+        "vault_notes",
+      ]) {
         expect(tables).toContain(table);
       }
       const version = db.prepare("SELECT version FROM schema_version").get() as { version: number };
-      expect(version.version).toBe(1);
+      expect(version.version).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("creates the vault_notes cache table with its scope and stage indexes (migration 0001)", () => {
+    const db = new Database(dbPath);
+    try {
+      applyMigrations(db, REAL_MIGRATIONS_DIR);
+      const indexes = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'vault_notes'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      expect(indexes).toContain("vault_notes_scope_idx");
+      expect(indexes).toContain("vault_notes_stage_idx");
     } finally {
       db.close();
     }
@@ -45,7 +67,7 @@ describe("applyMigrations", () => {
       db.prepare("INSERT INTO service_meta (key, value) VALUES (?, ?)").run("probe", "still-here");
       expect(() => applyMigrations(db, REAL_MIGRATIONS_DIR)).not.toThrow();
       const version = db.prepare("SELECT version FROM schema_version").get() as { version: number };
-      expect(version.version).toBe(1);
+      expect(version.version).toBe(2);
       const row = db.prepare("SELECT value FROM service_meta WHERE key = ?").get("probe") as {
         value: string;
       };
