@@ -15,3 +15,10 @@ PRIVACY-GATE-REPORT.md
 
 # GSD local runtime state (isolation sentinels, never shared)
 .gsd/
+
+# Internal planning artifacts — never tracked in the public repo
+.planning/
+.claude/
+CONTEXT.md
+claude-command-center-prd.md
+PRIVACY-GATE-REPORT.md
