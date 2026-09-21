@@ -10,6 +10,8 @@ packages/plugin/styles.css
 .privacy-denylist.local
 coverage/
 .DS_Store
+.obsidian/
+PRIVACY-GATE-REPORT.md
 
 # GSD local runtime state (isolation sentinels, never shared)
 .gsd/
