@@ -33,6 +33,7 @@ import {
 import { homedir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { globalScope, type NoteFrontmatter, workspaceScope } from "@ccc/domain";
+import matter from "gray-matter";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { stringifyNote } from "./frontmatter.js";
 import { repairVault } from "./repair.js";
@@ -262,15 +263,25 @@ describe("repairVault", () => {
   test("re-emits a workspace's identity keys while rebuilding its listing", () => {
     const displayName = "Repair 🛠 ワークスペース";
     const workspace = createWorkspace(vaultRoot, displayName);
-    writeManagedNote(`workspaces/${workspace.workspaceId}/wiki/gamma.md`, {
+    const gamma = writeManagedNote(`workspaces/${workspace.workspaceId}/wiki/gamma.md`, {
       scope: workspaceScope(workspace.workspaceId),
     });
+    // The listing below the identity keys is the part repair rebuilds, so
+    // make it stale first — otherwise "rebuilding" is untested.
+    rmSync(join(workspace.path, "wiki", "index.md"));
 
     repairVault(vaultRoot);
 
-    const workspaceIndex = readFileSync(join(workspace.path, "index.md"), "utf8");
-    expect(workspaceIndex).toContain(`workspaceId: ${workspace.workspaceId}`);
-    expect(workspaceIndex).toContain(displayName);
+    // Asserted through a YAML parse, not a substring: js-yaml escapes
+    // astral-plane characters in a double-quoted scalar (the emoji is
+    // written `\U0001F6E0`), so a substring match would fail on a perfectly
+    // preserved name — and, worse, would pass on a mangled one that happened
+    // to contain the same bytes. What the contract promises is that the VALUE
+    // round-trips, which is what this reads.
+    const identity = matter(readFileSync(join(workspace.path, "index.md"), "utf8")).data;
+    expect(identity.workspaceId).toBe(workspace.workspaceId);
+    expect(identity.displayName).toBe(displayName);
+    expect(readFileSync(join(workspace.path, "wiki", "index.md"), "utf8")).toContain(gamma.noteId);
   });
 
   test("produces deep-equal reports on two runs over the same corrupted tree", () => {

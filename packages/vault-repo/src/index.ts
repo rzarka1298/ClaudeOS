@@ -18,6 +18,13 @@ export type {
 } from "./index-generation.js";
 export { IndexOutsideVaultError, regenerateIndex } from "./index-generation.js";
 export type {
+  RepairedNote,
+  RepairReport,
+  RepairWarning,
+  RepairWarningKind,
+} from "./repair.js";
+export { repairVault } from "./repair.js";
+export type {
   CreatedWorkspace,
   VaultSetupEntry,
   VaultSetupEntryKind,

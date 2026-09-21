@@ -1,4 +1,27 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import type { NoteFrontmatter } from "@ccc/domain";
+import { InvalidNoteFrontmatterError, parseNote } from "./frontmatter.js";
+import { regenerateIndex } from "./index-generation.js";
+import { computeSetupEntries, VaultRootMissingError } from "./setup.js";
+
+/** The one generated file repair rewrites, and the one it never reads as a note. */
+const INDEX_FILENAME = "index.md";
+
+/** The managed root beneath which every workspace tree lives. */
+const WORKSPACES_FOLDER = "workspaces";
+
+/**
+ * Pulls the note id out of one generated index row.
+ *
+ * The shape is the one `index-generation.ts` writes
+ * (``- [[basename]] — id `<id>` · stage `<stage>` · updated <updated>``),
+ * matched loosely enough that a HAND-EDITED row still parses — which is the
+ * only kind of row an orphan check ever finds something in, since a
+ * generated index by construction lists only notes that were on disk when
+ * it was written.
+ */
+const INDEX_ROW_ID = /^-\s+\[\[.*?\]\].*?\bid\s+`([^`]+)`/;
 
 /**
  * The three conditions repair FLAGS rather than resolves.
@@ -36,16 +59,259 @@ export interface RepairReport {
   readonly warnings: readonly RepairWarning[];
 }
 
+/** Total order over plain strings. Deliberately not `localeCompare`, whose
+ * result depends on ICU collation — the same reason `index-generation.ts`
+ * spells its comparator out. */
+function compareStrings(a: string, b: string): number {
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Vault-relative and POSIX-separated: the single path vocabulary the
+ * report speaks, so a caller can compare a warning against a note record
+ * without re-deriving anything. */
+function toVaultRelative(vaultRoot: string, absolute: string): string {
+  const rel = relative(vaultRoot, absolute);
+  return rel === "" ? "." : rel.split(sep).join("/");
+}
+
+/** Sorted subdirectory names, dot-directories excluded (`.obsidian/` and
+ * friends are Obsidian's, not ours). */
+function listSubdirectories(dir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => !name.startsWith(".") && isDirectory(join(dir, name)))
+    .sort(compareStrings);
+}
+
+/**
+ * Depth-first descent from each root, explicitly sorted at every level and
+ * deduplicated by absolute path.
+ *
+ * The dedup matters because the managed folder list is genuinely nested
+ * (`global` and `global/raw` are both entries), so a naive walk would visit
+ * — and therefore COUNT — the same note twice, turning every note under a
+ * nested managed folder into a phantom duplicate-id warning.
+ */
+function descend(roots: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const visit = (dir: string): void => {
+    if (seen.has(dir)) return;
+    seen.add(dir);
+    ordered.push(dir);
+    for (const name of listSubdirectories(dir)) visit(join(dir, name));
+  };
+  for (const root of roots) {
+    if (isDirectory(root)) visit(root);
+  }
+  return ordered;
+}
+
+/** Sorted direct-child `*.md` files, excluding `index.md` and dotfiles. */
+function listNoteFiles(dir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => {
+      if (name.startsWith(".")) return false;
+      if (name === INDEX_FILENAME) return false;
+      if (!name.endsWith(".md")) return false;
+      try {
+        return statSync(join(dir, name)).isFile();
+      } catch {
+        // A broken symlink, or an entry deleted between readdir and stat,
+        // is simply not a note; it must not abort the repair.
+        return false;
+      }
+    })
+    .sort(compareStrings);
+}
+
+/** Every note id an existing index CLAIMS to list, in file order. */
+function readIndexNoteIds(indexPath: string): string[] {
+  let raw: string;
+  try {
+    raw = readFileSync(indexPath, "utf8");
+  } catch {
+    return [];
+  }
+  const ids: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const match = INDEX_ROW_ID.exec(line);
+    const id = match?.[1];
+    if (id !== undefined) ids.push(id);
+  }
+  return ids;
+}
+
+/** The specifics of one parse refusal, including the underlying issue where
+ * there is one — "this note is invalid" is not actionable; naming the field
+ * is. */
+function describeParseFailure(error: unknown): string {
+  if (error instanceof InvalidNoteFrontmatterError) {
+    const issue = error.issues[0] as { message?: unknown } | undefined;
+    const detail = typeof issue?.message === "string" ? `: ${issue.message}` : "";
+    return `${error.message}${detail}`;
+  }
+  return "note could not be read";
+}
+
 /**
  * Rebuilds every derived artifact in the managed vault from note
  * frontmatter (VAULT-04).
+ *
+ * The walk covers the same managed folder list {@link computeSetupEntries}
+ * drives setup from, plus every existing `workspaces/<id>` subtree,
+ * descending recursively — so a note stashed in a subfolder is still seen
+ * by the duplicate check even though no index lists it.
  *
  * Read-only with respect to note bodies: the only file this function ever
  * writes is an `index.md`, and it writes those through the same
  * `regenerateIndex` the ordinary write path uses, so there is exactly one
  * index generator and no possibility of a repaired index differing from a
- * freshly-written one.
+ * freshly-written one. Note frontmatter is READ; note files are never
+ * rewritten, moved, or deleted — not even the invalid ones, which are
+ * reported and left exactly as found.
+ *
+ * Ambiguity is flagged, never resolved (research Pitfall 4): a note id at
+ * two paths yields one warning naming both and excludes BOTH from the
+ * returned records, because a repair that quietly picked a winner would be
+ * a data-loss mechanism wearing a maintenance command's name.
+ *
+ * The returned records are the second derived artifact: feeding
+ * `report.notes` to `rebuildVaultNotes` repopulates the operational store's
+ * `vault_notes` cache from the same single pass that rebuilt the indexes.
+ * That composition deliberately happens in the SERVICE layer — this package
+ * never imports `@ccc/operational-store` (ADR-0022, ADR-0019).
  */
-export function repairVault(_vaultRoot: string): RepairReport {
-  throw new Error("repairVault is not implemented yet (packages/vault-repo/src/repair.ts)");
+export function repairVault(vaultRoot: string): RepairReport {
+  if (!isDirectory(vaultRoot)) {
+    throw new VaultRootMissingError(vaultRoot);
+  }
+
+  const managedRoots = computeSetupEntries(vaultRoot)
+    .filter((entry) => entry.kind === "folder")
+    .map((entry) => join(vaultRoot, ...entry.relativePath.split("/")));
+  const managedRootSet = new Set(managedRoots);
+
+  // Everything reachable in the managed tree gets SCANNED for notes; only
+  // the fixed skeleton and the workspace trees get an index REGENERATED.
+  // Repair rebuilds derived artifacts — it does not invent a managed folder
+  // (and an index.md) inside a subfolder the user made for their own reasons.
+  const workspacesPrefix = join(vaultRoot, WORKSPACES_FOLDER) + sep;
+  const scanFolders = descend(managedRoots);
+  const indexFolders = scanFolders.filter(
+    (folder) => managedRootSet.has(folder) || folder.startsWith(workspacesPrefix),
+  );
+
+  // Every pre-existing index is read BEFORE any regeneration: an orphaned
+  // entry is a claim the OLD index made, and regeneration is precisely what
+  // silences it.
+  const listedIds = new Map<string, readonly string[]>();
+  for (const folder of indexFolders) {
+    const indexPath = join(folder, INDEX_FILENAME);
+    const ids = readIndexNoteIds(indexPath);
+    if (ids.length > 0) {
+      listedIds.set(toVaultRelative(vaultRoot, indexPath), ids);
+    }
+  }
+
+  const warnings: RepairWarning[] = [];
+  const pathsById = new Map<string, string[]>();
+  const frontmatterByPath = new Map<string, NoteFrontmatter>();
+
+  for (const folder of scanFolders) {
+    for (const filename of listNoteFiles(folder)) {
+      const absolute = join(folder, filename);
+      const notePath = toVaultRelative(vaultRoot, absolute);
+      try {
+        const { frontmatter } = parseNote(readFileSync(absolute, "utf8"));
+        frontmatterByPath.set(notePath, frontmatter);
+        const existing = pathsById.get(frontmatter.id);
+        if (existing === undefined) {
+          pathsById.set(frontmatter.id, [notePath]);
+        } else {
+          existing.push(notePath);
+        }
+      } catch (error) {
+        warnings.push({
+          kind: "invalid-frontmatter",
+          paths: [notePath],
+          detail: describeParseFailure(error),
+        });
+      }
+    }
+  }
+
+  const notes: RepairedNote[] = [];
+  for (const [id, paths] of pathsById) {
+    if (paths.length > 1) {
+      const collided = [...paths].sort(compareStrings);
+      warnings.push({
+        kind: "duplicate-id",
+        paths: collided,
+        detail: `note id ${id} appears at ${collided.length} paths; repair flags the collision and returns neither copy`,
+      });
+      continue;
+    }
+    const path = paths[0];
+    if (path === undefined) continue;
+    const frontmatter = frontmatterByPath.get(path);
+    if (frontmatter === undefined) continue;
+    notes.push({ path, frontmatter });
+  }
+
+  for (const [indexPath, ids] of listedIds) {
+    for (const id of [...new Set(ids)].sort(compareStrings)) {
+      if (pathsById.has(id)) continue;
+      warnings.push({
+        kind: "orphaned-index-entry",
+        paths: [indexPath],
+        detail: `index lists note id ${id}, which is not present anywhere in the vault`,
+      });
+    }
+  }
+
+  for (const folder of indexFolders) {
+    regenerateIndex(folder, { vaultRoot });
+  }
+
+  notes.sort((a, b) => {
+    if (a.frontmatter.created !== b.frontmatter.created) {
+      return compareStrings(a.frontmatter.created, b.frontmatter.created);
+    }
+    if (a.frontmatter.id !== b.frontmatter.id) {
+      return compareStrings(a.frontmatter.id, b.frontmatter.id);
+    }
+    // Path is a third tiebreak for the same reason index rows carry one:
+    // without a final discriminator, two otherwise-identical records would
+    // fall back to filesystem enumeration order.
+    return compareStrings(a.path, b.path);
+  });
+  warnings.sort((a, b) => {
+    if (a.kind !== b.kind) return compareStrings(a.kind, b.kind);
+    const left = a.paths[0] ?? "";
+    const right = b.paths[0] ?? "";
+    if (left !== right) return compareStrings(left, right);
+    return compareStrings(a.detail, b.detail);
+  });
+
+  return { notes, warnings };
 }
