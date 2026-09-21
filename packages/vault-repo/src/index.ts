@@ -11,6 +11,12 @@ export interface VaultRepository {
 export { AtomicWriteError, atomicWriteFileSync } from "./atomic-write.js";
 export type { ParsedNote } from "./frontmatter.js";
 export { InvalidNoteFrontmatterError, parseNote, stringifyNote } from "./frontmatter.js";
+export type {
+  IndexIdentity,
+  RegeneratedIndex,
+  RegenerateIndexOptions,
+} from "./index-generation.js";
+export { IndexOutsideVaultError, regenerateIndex } from "./index-generation.js";
 export { assertScopedWrite, WorkspaceScopeViolationError } from "./workspace-scope.js";
 export type { WriteNoteOptions, WrittenNote } from "./write-note.js";
 export { writeNote } from "./write-note.js";

@@ -14,6 +14,7 @@ import {
 } from "@ccc/domain";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { stringifyNote } from "./frontmatter.js";
+import { regenerateIndex } from "./index-generation.js";
 import { assertScopedWrite } from "./workspace-scope.js";
 
 /**
@@ -104,8 +105,17 @@ export function writeNote(options: WriteNoteOptions): WrittenNote {
     contentHash: createHash("sha256").update(options.body, "utf8").digest("hex"),
   });
 
-  mkdirSync(dirname(target), { recursive: true });
+  const folder = dirname(target);
+  mkdirSync(folder, { recursive: true });
   atomicWriteFileSync(target, stringifyNote(frontmatter, options.body));
+
+  // The write is not finished until the folder's index reflects it. Doing
+  // this synchronously — and as a full recompute rather than a patch — is
+  // what makes "the index is stale" an unreachable state for every
+  // SERVICE-side write, rather than a race the repair command has to clean
+  // up later. Plugin-side provenance updates remain eventually consistent
+  // within the bound ADR-0022 records (plans 02-03 and 02-06).
+  regenerateIndex(folder, { vaultRoot: options.vaultRoot });
 
   return { noteId, path: target, frontmatter };
 }

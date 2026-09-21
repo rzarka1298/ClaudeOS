@@ -13,10 +13,16 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type NoteFrontmatter, NoteFrontmatterSchema } from "@ccc/domain";
+import {
+  type NoteFrontmatter,
+  NoteFrontmatterSchema,
+  newWorkspaceId,
+  workspaceScope,
+} from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { stringifyNote } from "./frontmatter.js";
 import { regenerateIndex } from "./index-generation.js";
+import { writeNote } from "./write-note.js";
 
 const TEST_BASE = join(homedir(), ".ccc-test");
 
@@ -241,5 +247,38 @@ describe("regenerateIndex", () => {
     expect(result.content).toContain("type: index");
     expect(result.content).toContain("generated: claude-command-center");
     expect(result.content).toContain("folder: global/wiki");
+  });
+});
+
+describe("writeNote integration", () => {
+  test("a written note is already listed in its own folder's index", () => {
+    const workspaceId = newWorkspaceId();
+    const wiki = join(vaultRoot, "workspaces", workspaceId, "wiki");
+    mkdirSync(wiki, { recursive: true });
+
+    const written = writeNote({
+      vaultRoot,
+      relativePath: join("workspaces", workspaceId, "wiki", "fresh.md"),
+      body: "# Fresh\n\nWritten through the real write path.\n",
+      scope: workspaceScope(workspaceId),
+      stage: "wiki",
+      generatedBy: { automation: "index-integration" },
+      aiGenerated: false,
+      confidence: "unverified",
+    });
+
+    // No explicit regenerateIndex call here on purpose: the point is that
+    // the WRITE PATH leaves the index fresh, not that a caller can
+    // remember to refresh it.
+    const content = readFileSync(join(wiki, "index.md"), "utf8");
+    const rows = content.split("\n").filter((line) => line.startsWith(ROW_MARKER));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain(written.noteId);
+    expect(rows[0]).toContain("[[fresh]]");
+    // The returned shape is unchanged by the wiring — plan 02-04's cache
+    // consumer depends on it.
+    expect(written.path).toBe(join(wiki, "fresh.md"));
+    expect(written.frontmatter.id).toBe(written.noteId);
   });
 });
