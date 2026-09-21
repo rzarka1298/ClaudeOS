@@ -62,6 +62,18 @@ function orderedGeneratedBy(value: GeneratedBy): Record<string, string> {
  * a fresh object is built by walking the canonical key array, so the bytes
  * a caller gets are a function of the note's content alone and not of the
  * order that caller happened to write its object literal in.
+ *
+ * The body is handed over as `{ content }` rather than as a bare string,
+ * and that distinction is load-bearing rather than stylistic: given a
+ * string, `matter.stringify` runs it back through `matter()` first, so the
+ * body is PARSED as if it carried front matter of its own. A body whose
+ * first line is `---` then loses its content and leaks its characters into
+ * the frontmatter as forged keys, and a body whose first line is `---js`
+ * is handed to gray-matter's eval-based JavaScript engine and executed at
+ * write time. Bodies on this path come from research capture, imported
+ * Markdown and email — ADR-0014's untrusted content — so neither outcome
+ * is acceptable. Passing a file-shaped object skips that re-parse; the
+ * bytes are identical for every body that does not start with a delimiter.
  */
 export function stringifyNote(frontmatter: NoteFrontmatter, body: string): string {
   const source = frontmatter as unknown as Record<string, unknown>;
@@ -71,21 +83,93 @@ export function stringifyNote(frontmatter: NoteFrontmatter, body: string): strin
     if (value === undefined) continue;
     ordered[key] = key === "generatedBy" ? orderedGeneratedBy(value as GeneratedBy) : value;
   }
-  return matter.stringify(body, ordered);
+  return matter.stringify({ content: body }, ordered);
+}
+
+/**
+ * Builds a rejection carrying a single zod-shaped issue, so a caller
+ * walking `.issues` reads a refusal by this module exactly the way it
+ * reads a schema violation.
+ */
+function refusal(message: string): InvalidNoteFrontmatterError {
+  return new InvalidNoteFrontmatterError([{ code: "custom", path: [], message }]);
+}
+
+const EXECUTABLE_ENGINE_REFUSED =
+  "executable frontmatter engines are not available to managed notes";
+
+/**
+ * An engine that refuses to run. Registered below under the names
+ * gray-matter would otherwise resolve to its `eval`-based JavaScript
+ * engine, so the delimiter check has a second, independent layer beneath
+ * it rather than being the only thing standing between an untrusted note
+ * and `eval`.
+ */
+const REFUSED_ENGINE = {
+  parse(): never {
+    throw refusal(EXECUTABLE_ENGINE_REFUSED);
+  },
+  stringify(): never {
+    throw refusal(EXECUTABLE_ENGINE_REFUSED);
+  },
+};
+
+/**
+ * Refuses a note whose opening delimiter carries a LANGUAGE TAG.
+ *
+ * gray-matter reads the text after the opening `---` as the name of the
+ * engine to parse the block with, and one of the engines it ships —
+ * reachable as `js`, `JS` or `javascript` — is a literal `eval`. A note
+ * beginning `---js` is therefore arbitrary code, executed inside the
+ * companion-service process that holds the Keychain secrets and can
+ * launch other processes. This is threat T-02-03's real shape: the risk
+ * was never a `!!js/function` YAML tag (js-yaml's safe load already
+ * refuses those, which this package's tests now assert), it was the
+ * language selector one layer above YAML.
+ *
+ * Managed notes are plain-YAML-fronted by definition, so the fix is a
+ * refusal rather than an allow-list of safe engines: only a bare `---`
+ * (or the equivalent explicit `---yaml`) is accepted, and the check runs
+ * BEFORE gray-matter sees the string, which is what makes every spelling
+ * — BOM-prefixed, space- or tab-separated, capitalised, CRLF — moot.
+ */
+function assertPlainYamlDelimiter(raw: string): void {
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  if (!text.startsWith("---")) return;
+
+  const lineEnd = text.indexOf("\n");
+  const firstLine = lineEnd === -1 ? text : text.slice(0, lineEnd);
+  const language = firstLine.slice(3).trim().toLowerCase();
+  if (language === "" || language === "yaml") return;
+
+  throw refusal(
+    `frontmatter delimiter carries a language tag (${language}); managed notes are plain YAML`,
+  );
 }
 
 /**
  * Parses a raw note, validating its frontmatter through
  * `NoteFrontmatterSchema` before any field is trusted.
  *
- * `matter()` is called with no engine options on purpose: gray-matter's
- * default js-yaml engine loads with the schema that does NOT instantiate
- * arbitrary JS types from YAML tags. Passing a custom engine or schema
- * here would reopen that deserialization surface against notes this
- * process did not write (threat T-02-03) — so don't.
+ * Two deserialization defences, in order, because on-disk notes are
+ * untrusted input (hand-edited in Obsidian, synced in by another tool,
+ * captured from the web):
+ *
+ * 1. {@link assertPlainYamlDelimiter} refuses a language-tagged opening
+ *    delimiter outright — see there for why that, not the YAML tag, is
+ *    the executable surface.
+ * 2. The YAML block itself is parsed by gray-matter's default engine,
+ *    which is js-yaml's SAFE load: it does not instantiate arbitrary JS
+ *    types from YAML tags such as `!!js/function`. Do not replace it with
+ *    a custom engine or a fuller schema — that reopens exactly the
+ *    surface this comment exists to keep closed.
  */
 export function parseNote(raw: string): ParsedNote {
-  const parsed = matter(raw);
+  assertPlainYamlDelimiter(raw);
+
+  const parsed = matter(raw, {
+    engines: { javascript: REFUSED_ENGINE, js: REFUSED_ENGINE, coffee: REFUSED_ENGINE },
+  });
   const result = NoteFrontmatterSchema.safeParse(parsed.data);
   if (!result.success) {
     throw new InvalidNoteFrontmatterError(result.error.issues);
