@@ -54,6 +54,23 @@ afterEach(() => {
   rmSync(vaultRoot, { recursive: true, force: true });
 });
 
+/**
+ * A 25-character id in the minted alphabet, prefixed with `label` so the
+ * assertions below still read as prose.
+ *
+ * `NoteFrontmatterSchema.id` is pinned to `NOTE_ID_PATTERN`, so a fixture
+ * cannot use a mnemonic like `id-alpha` any more — and that constraint is
+ * itself part of what stops a hand-edited id from carrying the row
+ * template's structural characters. `padEnd` with `0` preserves the
+ * lexicographic ordering the tie-break tests depend on.
+ */
+function testId(label: string): string {
+  return label
+    .replace(/[^0-9a-z]/g, "")
+    .padEnd(25, "0")
+    .slice(0, 25);
+}
+
 interface SeedFields {
   readonly id: string;
   readonly created: string;
@@ -95,8 +112,8 @@ function rowCount(content: string): number {
 
 describe("regenerateIndex", () => {
   test("running twice over an unchanged folder produces byte-identical output", () => {
-    seedNote(folder, "alpha.md", { id: "id-alpha", created: "2026-01-01T00:00:00.000Z" });
-    seedNote(folder, "beta.md", { id: "id-beta", created: "2026-01-02T00:00:00.000Z" });
+    seedNote(folder, "alpha.md", { id: testId("alpha"), created: "2026-01-01T00:00:00.000Z" });
+    seedNote(folder, "beta.md", { id: testId("beta"), created: "2026-01-02T00:00:00.000Z" });
 
     regenerateIndex(folder, { vaultRoot });
     const first = indexBytes(folder);
@@ -116,13 +133,13 @@ describe("regenerateIndex", () => {
     const created = "2026-01-01T00:00:00.000Z";
     // Written zulu-first so filesystem enumeration order and the expected
     // output order genuinely disagree.
-    seedNote(folder, "zulu.md", { id: "id-zzz", created });
-    seedNote(folder, "alpha.md", { id: "id-aaa", created });
+    seedNote(folder, "zulu.md", { id: testId("zzz"), created });
+    seedNote(folder, "alpha.md", { id: testId("aaa"), created });
 
     const result = regenerateIndex(folder, { vaultRoot });
 
-    const zuluRow = result.content.indexOf("id-zzz");
-    const alphaRow = result.content.indexOf("id-aaa");
+    const zuluRow = result.content.indexOf(testId("zzz"));
+    const alphaRow = result.content.indexOf(testId("aaa"));
     expect(alphaRow).toBeGreaterThan(-1);
     expect(zuluRow).toBeGreaterThan(alphaRow);
   });
@@ -134,14 +151,14 @@ describe("regenerateIndex", () => {
       const otherFolder = join(other, "global", "wiki");
       mkdirSync(otherFolder, { recursive: true });
 
-      seedNote(folder, "alpha.md", { id: "id-aaa", created });
-      seedNote(folder, "mike.md", { id: "id-mmm", created });
-      seedNote(folder, "zulu.md", { id: "id-zzz", created });
+      seedNote(folder, "alpha.md", { id: testId("aaa"), created });
+      seedNote(folder, "mike.md", { id: testId("mmm"), created });
+      seedNote(folder, "zulu.md", { id: testId("zzz"), created });
 
       // Same three notes, created in the opposite order.
-      seedNote(otherFolder, "zulu.md", { id: "id-zzz", created });
-      seedNote(otherFolder, "mike.md", { id: "id-mmm", created });
-      seedNote(otherFolder, "alpha.md", { id: "id-aaa", created });
+      seedNote(otherFolder, "zulu.md", { id: testId("zzz"), created });
+      seedNote(otherFolder, "mike.md", { id: testId("mmm"), created });
+      seedNote(otherFolder, "alpha.md", { id: testId("aaa"), created });
 
       regenerateIndex(folder, { vaultRoot });
       regenerateIndex(otherFolder, { vaultRoot: other });
@@ -165,7 +182,7 @@ describe("regenerateIndex", () => {
   });
 
   test("a schema-invalid child is listed as unreadable and its valid siblings are unaffected", () => {
-    seedNote(folder, "valid.md", { id: "id-valid", created: "2026-01-01T00:00:00.000Z" });
+    seedNote(folder, "valid.md", { id: testId("valid"), created: "2026-01-01T00:00:00.000Z" });
     writeFileSync(
       join(folder, "broken.md"),
       "---\nid: id-broken\nstage: not-a-stage\n---\n\n# Broken\n",
@@ -180,35 +197,76 @@ describe("regenerateIndex", () => {
     expect(result.content).toContain("broken.md");
     // The valid sibling is still listed — an unreadable neighbour must not
     // silently swallow notes that parse fine.
-    expect(result.content).toContain("id-valid");
+    expect(result.content).toContain(testId("valid"));
     expect(rowCount(result.content)).toBe(1);
   });
 
-  test("a frontmatter value containing a newline cannot forge an extra row", () => {
-    seedNote(folder, "honest.md", { id: "id-honest", created: "2026-01-01T00:00:00.000Z" });
-    seedNote(folder, "crafted.md", {
-      id: "id-crafted",
+  test("a newline in a sort-key frontmatter value is refused by the schema outright", () => {
+    // `updated` used to be a free-form `z.string()`, so a newline-bearing
+    // value passed validation and reached the row template — the original
+    // T-02-04 path. Pinning `created`/`updated` to ISO instants closes it
+    // one layer earlier: the note is now simply unreadable.
+    writeFileSync(
+      join(folder, "crafted.md"),
+      [
+        "---",
+        `id: ${testId("crafted")}`,
+        "scope: global",
+        "stage: wiki",
+        "created: '2026-01-02T00:00:00.000Z'",
+        "updated: |-",
+        "  2026-01-02T00:00:00.000Z",
+        "  - [[forged]] — id `forged00000000000000000` · stage `wiki` · updated x",
+        "generatedBy: {}",
+        "aiGenerated: false",
+        "sources: []",
+        "confidence: unverified",
+        "lastReviewed: null",
+        "---",
+        "# crafted",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    seedNote(folder, "honest.md", { id: testId("honest"), created: "2026-01-01T00:00:00.000Z" });
+
+    const result = regenerateIndex(folder, { vaultRoot });
+
+    expect(result.unreadable).toEqual(["crafted.md"]);
+    expect(rowCount(result.content)).toBe(1);
+    expect(
+      result.content.split("\n").some((line) => line.startsWith(`${ROW_MARKER}forged]]`)),
+    ).toBe(false);
+  });
+
+  test("a filename carrying the row template's own delimiters cannot forge or repoint a row", () => {
+    // The filename is the one row cell no schema constrains, and the row
+    // template relies on `` ` `` and `]]` as delimiters just as much as it
+    // relies on newlines. `repair.ts` reads ids back out of these rows with
+    // LAZY quantifiers, so a crafted basename could make the orphan check
+    // report someone else's id — suppressing a genuine warning or inventing
+    // a false one — and `]]` mid-name repoints the wikilink at another note.
+    const honest = testId("honest");
+    const fake = testId("fake");
+    seedNote(folder, "honest.md", { id: honest, created: "2026-01-01T00:00:00.000Z" });
+    seedNote(folder, `evil]] — id \`${fake}\` · x.md`, {
+      id: testId("crafted"),
       created: "2026-01-02T00:00:00.000Z",
-      // `updated` is a free-form string in the schema, so this passes
-      // validation and reaches the row template — exactly the tampering
-      // path T-02-04 describes.
-      updated: "2026-01-02T00:00:00.000Z\n- [[forged]] — id `id-forged` · stage `wiki` · updated x",
     });
 
     const result = regenerateIndex(folder, { vaultRoot });
 
     expect(rowCount(result.content)).toBe(2);
-    // The contract is that a crafted value cannot occupy a ROW POSITION.
-    // Its characters still appear as inline text of the note's own
-    // `updated` field — that is the honest rendering of what is actually
-    // in that note's frontmatter, and pretending otherwise would make the
-    // index lie. What must not exist is a line the reader parses as a
-    // separate note.
-    const forgedRow = result.content
-      .split("\n")
-      .some((line) => line.startsWith(`${ROW_MARKER}forged]]`));
-    expect(forgedRow).toBe(false);
-    expect(result.content.split("\n").filter((line) => line.includes("id-forged"))).toHaveLength(1);
+    // Same contract as before: the crafted characters may still appear as
+    // inline TEXT (the index must not lie about what is on disk), but they
+    // may not occupy a structural position.
+    const idsInBackticks = [...result.content.matchAll(/id `([^`]+)`/g)].map((m) => m[1]);
+    expect(idsInBackticks).toEqual([honest, testId("crafted")]);
+    expect(idsInBackticks).not.toContain(fake);
+    // And the wikilink of each row still resolves to exactly one target.
+    for (const line of result.content.split("\n").filter((l) => l.startsWith(ROW_MARKER))) {
+      expect([...line.matchAll(/\]\]/g)]).toHaveLength(1);
+    }
   });
 
   test("workspace identity keys are re-emitted unchanged while the listing is rebuilt", () => {
@@ -222,31 +280,31 @@ describe("regenerateIndex", () => {
     // A later regeneration is given no identity — it must recover both
     // keys from the existing index rather than dropping them, and must
     // still rebuild the listing from the folder's current contents.
-    seedNote(folder, "added.md", { id: "id-added", created: "2026-01-03T00:00:00.000Z" });
+    seedNote(folder, "added.md", { id: testId("added"), created: "2026-01-03T00:00:00.000Z" });
     const second = regenerateIndex(folder, { vaultRoot });
 
     expect(second.content).toContain("ws-0123456789abcdefghijklm");
     expect(second.content).toContain("Research");
-    expect(second.content).toContain("id-added");
+    expect(second.content).toContain(testId("added"));
     expect(second.noteCount).toBe(1);
   });
 
   test("index.md, dotfiles and non-Markdown children are never listed as notes", () => {
-    seedNote(folder, "real.md", { id: "id-real", created: "2026-01-01T00:00:00.000Z" });
-    seedNote(folder, ".hidden.md", { id: "id-hidden", created: "2026-01-01T00:00:00.000Z" });
+    seedNote(folder, "real.md", { id: testId("real"), created: "2026-01-01T00:00:00.000Z" });
+    seedNote(folder, ".hidden.md", { id: testId("hidden"), created: "2026-01-01T00:00:00.000Z" });
     writeFileSync(join(folder, "notes.txt"), "not markdown\n", "utf8");
     mkdirSync(join(folder, "subfolder"), { recursive: true });
     seedNote(join(folder, "subfolder"), "nested.md", {
-      id: "id-nested",
+      id: testId("nested"),
       created: "2026-01-01T00:00:00.000Z",
     });
 
     const result = regenerateIndex(folder, { vaultRoot });
 
     expect(result.noteCount).toBe(1);
-    expect(result.content).toContain("id-real");
-    expect(result.content).not.toContain("id-hidden");
-    expect(result.content).not.toContain("id-nested");
+    expect(result.content).toContain(testId("real"));
+    expect(result.content).not.toContain(testId("hidden"));
+    expect(result.content).not.toContain(testId("nested"));
     expect(result.content).not.toContain("[[index]]");
 
     // Regenerating again now that index.md exists must not list the index
@@ -266,7 +324,7 @@ describe("regenerateIndex", () => {
       `---js\n{ workspaceId: (globalThis['${SENTINEL}'] = 'index-rce'), displayName: 'x' }\n---\n# Index\n`,
       "utf8",
     );
-    seedNote(folder, "alpha.md", { id: "id-alpha", created: "2026-01-01T00:00:00.000Z" });
+    seedNote(folder, "alpha.md", { id: testId("alpha"), created: "2026-01-01T00:00:00.000Z" });
 
     const result = regenerateIndex(folder, { vaultRoot });
 
@@ -276,7 +334,7 @@ describe("regenerateIndex", () => {
     // Regeneration of a non-workspace folder still succeeds — an unreadable
     // derived artifact is replaced, which is the whole point of one.
     expect(result.noteCount).toBe(1);
-    expect(result.content).toContain("id-alpha");
+    expect(result.content).toContain(testId("alpha"));
     expect(result.content).not.toContain("index-rce");
   });
 
@@ -313,7 +371,7 @@ describe("regenerateIndex", () => {
     // refusal. Without this the fix above would be a denial-of-service on
     // every corrupt derived artifact in the vault.
     writeFileSync(join(folder, "index.md"), "---\ndisplayName: 'unterminated\n---\n", "utf8");
-    seedNote(folder, "alpha.md", { id: "id-alpha", created: "2026-01-01T00:00:00.000Z" });
+    seedNote(folder, "alpha.md", { id: testId("alpha"), created: "2026-01-01T00:00:00.000Z" });
 
     const result = regenerateIndex(folder, { vaultRoot });
 

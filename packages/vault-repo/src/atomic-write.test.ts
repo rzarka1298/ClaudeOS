@@ -114,7 +114,7 @@ describe("atomicWriteFileSync crash window", () => {
 
   test("the crash-window temp file is invisible to a folder index scan", () => {
     const frontmatter = NoteFrontmatterSchema.parse({
-      id: "id-survivor",
+      id: "survivor00000000000000000",
       scope: "global",
       stage: "wiki",
       created: "2026-01-01T00:00:00.000Z",
@@ -135,7 +135,7 @@ describe("atomicWriteFileSync crash window", () => {
     // outlived a crash from appearing as a phantom note in the vault.
     expect(result.noteCount).toBe(1);
     expect(result.unreadable).toEqual([]);
-    expect(result.content).toContain("id-survivor");
+    expect(result.content).toContain("survivor00000000000000000");
     expect(result.content).not.toContain(tmpPath.split("/").pop() as string);
   });
 

@@ -106,6 +106,29 @@ function singleLine(value: string): string {
 }
 
 /**
+ * Everything {@link singleLine} does, plus the row template's OWN
+ * structural characters.
+ *
+ * A newline is not the only delimiter a row is built from: `` ` `` fences
+ * the id and the stage, and `[[`/`]]` fence the wikilink. `repair.ts`
+ * parses those back out with lazy quantifiers
+ * (`/^-\s+\[\[.*?\]\].*?\bid\s+`([^`]+)`/`), so a filename containing
+ * ``]] id `fake-id` `` makes the orphan check read `fake-id` instead of the
+ * note's real one — suppressing a genuine orphan warning or inventing a
+ * false one — and a filename containing `]]` repoints the link at a
+ * different note entirely. Both are the same class of tampering primitive
+ * `singleLine` exists to stop, reached through a different delimiter.
+ *
+ * Stripping rather than escaping: these cells are rendered by Obsidian, an
+ * escape would have to survive its Markdown parser as well as `repair.ts`'s
+ * regex, and there is no value a managed note legitimately carries that
+ * needs one of these characters in a row cell.
+ */
+function cellSafe(value: string): string {
+  return singleLine(value).replace(/[`[\]|]/g, "");
+}
+
+/**
  * Total order over index rows: `created` ascending, `id` as the tiebreak,
  * filename as the final tiebreak.
  *
@@ -266,9 +289,9 @@ function buildBody(rows: readonly IndexRow[], unreadable: readonly string[]): st
   } else {
     for (const row of rows) {
       lines.push(
-        `- [[${singleLine(row.basename)}]] — id \`${singleLine(row.id)}\` · stage \`${singleLine(
+        `- [[${cellSafe(row.basename)}]] — id \`${cellSafe(row.id)}\` · stage \`${cellSafe(
           row.stage,
-        )}\` · updated ${singleLine(row.updated)}`,
+        )}\` · updated ${cellSafe(row.updated)}`,
       );
     }
     lines.push("");
@@ -280,7 +303,7 @@ function buildBody(rows: readonly IndexRow[], unreadable: readonly string[]): st
       // Filename only: a note whose frontmatter failed validation has no
       // trustworthy metadata to quote, and omitting it entirely would hide
       // a real file from anyone reading the index.
-      lines.push(`- \`${singleLine(filename)}\``);
+      lines.push(`- \`${cellSafe(filename)}\``);
     }
     lines.push("");
   }

@@ -61,6 +61,22 @@ export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
  */
 export const NOTE_SCOPE_PATTERN = /^(global|workspace:[0-9a-z]{25})$/;
 
+/**
+ * The shape of every minted NoteId: nine base-36 timestamp characters plus
+ * a sixteen-character random suffix (see `newNoteId`). Nothing else is a
+ * valid note id.
+ *
+ * Pinned for the same reason {@link NOTE_SCOPE_PATTERN} is, and with more
+ * reach: an id is DECOMPOSED into generated index rows, where backticks and
+ * `]]` are structural delimiters, and it is also the `vault_notes` primary
+ * key. Left as an unconstrained `z.string()`, a hand-edited or synced-in
+ * note could carry an id containing those delimiters and forge or repoint a
+ * row that the repair pass reads back as ground truth (threat T-02-04).
+ * Constraining the alphabet is the first of two layers; `cellSafe()` in
+ * `index-generation.ts` is the second, and neither is the only one.
+ */
+export const NOTE_ID_PATTERN = /^[0-9a-z]{25}$/;
+
 /** A validated note scope: `"global"` or `` `workspace:${WorkspaceId}` ``. */
 export type NoteScope = string;
 
@@ -118,13 +134,19 @@ export type GeneratedBy = z.infer<typeof GeneratedBySchema>;
  * - `lastReviewed` is nullable rather than optional: `null` positively
  *   records "never reviewed", which a missing key could not distinguish
  *   from "this schema version had no such field".
+ * - `id` is pinned to {@link NOTE_ID_PATTERN} and `created`/`updated` to
+ *   ISO-8601 instants, because all three are DECOMPOSED downstream: `id`
+ *   into index rows and the cache's primary key, the timestamps into the
+ *   index's sort keys. A free-form string in any of the three is a value
+ *   the rest of the system trusts structurally without anything having
+ *   checked its structure.
  */
 export const NoteFrontmatterSchema = z.object({
-  id: z.string(),
+  id: z.string().regex(NOTE_ID_PATTERN),
   scope: z.string().regex(NOTE_SCOPE_PATTERN),
   stage: z.enum(LIFECYCLE_STAGES),
-  created: z.string(),
-  updated: z.string(),
+  created: z.iso.datetime(),
+  updated: z.iso.datetime(),
   generatedBy: GeneratedBySchema,
   aiGenerated: z.boolean(),
   claimType: z.enum(CLAIM_TYPES).optional(),
