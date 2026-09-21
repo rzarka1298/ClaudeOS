@@ -1,19 +1,27 @@
-import type {
-  ClaimType,
-  ConfidenceState,
-  GeneratedBy,
-  LifecycleStage,
-  NoteFrontmatter,
-  NoteId,
-  NoteScope,
+import { createHash } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import {
+  type ClaimType,
+  type ConfidenceState,
+  type GeneratedBy,
+  type LifecycleStage,
+  type NoteFrontmatter,
+  NoteFrontmatterSchema,
+  type NoteId,
+  type NoteScope,
+  newNoteId,
 } from "@ccc/domain";
+import { atomicWriteFileSync } from "./atomic-write.js";
+import { stringifyNote } from "./frontmatter.js";
+import { assertScopedWrite } from "./workspace-scope.js";
 
 /**
  * Everything a caller supplies to write one managed note. Deliberately
  * NOT a `NoteFrontmatter` plus a path: the fields this package derives
- * (`id` when new, `created`/`updated`, `contentHash`) are absent here so a
- * caller cannot forge them, and `relativePath` is vault-relative so no
- * caller hands an absolute path straight to the filesystem.
+ * (`id` when new, `updated`, `contentHash`) are absent here so a caller
+ * cannot forge them, and `relativePath` is vault-relative so no caller
+ * hands an absolute path straight to the filesystem.
  */
 export interface WriteNoteOptions {
   /** The managed vault's root directory. Must already exist. */
@@ -57,14 +65,47 @@ export interface WrittenNote {
  * target against both vault containment and the declared scope, serialize
  * the frontmatter in fixed key order, and replace the target atomically.
  *
+ * The parent directory is created only AFTER the scope check passes —
+ * ordering it the other way would let a rejected write leave directories
+ * behind at a path it was never allowed to touch.
+ *
  * This function NEVER deletes or moves a file. The only mutations the
  * Phase 2 write surface performs are "create a new file" and "atomically
  * replace a generated one"; destructive operations (note deletion,
  * cross-scope promotion) are deliberately outside it.
- *
- * NOT YET IMPLEMENTED — RED phase (plan 02-01).
  */
 export function writeNote(options: WriteNoteOptions): WrittenNote {
-  void options;
-  throw new Error("writeNote is not implemented yet");
+  const noteId = options.id ?? newNoteId();
+  const now = new Date().toISOString();
+  const target = assertScopedWrite(
+    join(options.vaultRoot, options.relativePath),
+    options.scope,
+    options.vaultRoot,
+  );
+
+  // Validated rather than asserted: the same schema that guards untrusted
+  // on-disk YAML also guards what this package is about to put there, so a
+  // caller cannot write a note that would fail to parse back.
+  const frontmatter = NoteFrontmatterSchema.parse({
+    id: noteId,
+    scope: options.scope,
+    stage: options.stage,
+    created: options.created ?? now,
+    updated: now,
+    generatedBy: options.generatedBy,
+    aiGenerated: options.aiGenerated,
+    ...(options.claimType === undefined ? {} : { claimType: options.claimType }),
+    sources: options.sources === undefined ? [] : [...options.sources],
+    confidence: options.confidence,
+    lastReviewed: options.lastReviewed ?? null,
+    // SHA-256 of the body only, not the serialized file: the hash answers
+    // "has the content changed", and must not flip merely because a
+    // provenance field was updated.
+    contentHash: createHash("sha256").update(options.body, "utf8").digest("hex"),
+  });
+
+  mkdirSync(dirname(target), { recursive: true });
+  atomicWriteFileSync(target, stringifyNote(frontmatter, options.body));
+
+  return { noteId, path: target, frontmatter };
 }

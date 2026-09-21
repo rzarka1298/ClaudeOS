@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 /**
  * Wraps any failure of the temp-write / fsync / rename sequence in
  * {@link atomicWriteFileSync}. One named class for one condition: the
@@ -25,10 +29,32 @@ export class AtomicWriteError extends Error {
  * write. The `fsync` before the rename is what stops a crash from leaving
  * a temp file whose contents were still in the page cache.
  *
- * NOT YET IMPLEMENTED — RED phase (plan 02-01).
+ * The dot prefix matters for a vault specifically: Obsidian ignores
+ * dot-prefixed files, so a temp file that outlives a crash never appears
+ * as a phantom note in the user's vault.
+ *
+ * On any failure the temp file is removed and {@link AtomicWriteError} is
+ * thrown; the target is left exactly as it was.
  */
 export function atomicWriteFileSync(targetPath: string, content: string): void {
-  void targetPath;
-  void content;
-  throw new Error("atomicWriteFileSync is not implemented yet");
+  const tmpPath = join(dirname(targetPath), `.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(tmpPath, content, "utf8");
+    const fd = openSync(tmpPath, "r+");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmpPath, targetPath);
+  } catch (cause) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // The temp file may never have been created, or may already have
+      // been renamed away. Either way there is nothing left to clean up,
+      // and the original failure below is the one worth reporting.
+    }
+    throw new AtomicWriteError(targetPath, cause);
+  }
 }
