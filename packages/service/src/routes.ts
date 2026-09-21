@@ -12,14 +12,20 @@ import {
   TOKEN_TTL_MS,
   VAULT_SETUP_PATH,
   VAULT_SETUP_PLAN_PATH,
+  type VaultSetupPlanResponse,
+  VaultSetupRequestSchema,
+  type VaultSetupResponse,
 } from "@ccc/domain";
 import { listAllRuns, type OperationalStore } from "@ccc/operational-store";
+import { initializeVault, planVaultSetup, VaultRootMissingError } from "@ccc/vault-repo";
 import { requireToken } from "./auth/require-token.js";
 import { mintToken } from "./auth/token.js";
 import type { EventBus } from "./events/event-bus.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
+import { readJsonBody } from "./request-body.js";
+import { persistVaultRoot } from "./vault-root.js";
 
 export interface RouteContext {
   store: OperationalStore;
@@ -127,19 +133,117 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
 };
 
 /**
- * Placeholder for the two vault-setup handlers, present so the route table
- * and its auth wrapping are the contract the failing tests assert against.
- * Replaced by the real handlers in this plan's GREEN commit.
+ * The three error bodies the vault-setup routes can produce, each a
+ * CONSTANT — the same `sendPathNotAllowed` discipline extended to these
+ * handlers (threat T-02-19). None names a directory, a file, or any part
+ * of this machine's filesystem layout; the specific candidate stays in the
+ * local redacting log, exactly as it does for a denied path.
  */
-const notImplementedHandler: Handler = (_req, res) => {
-  const body: ApiErrorBody = { error: "not implemented" };
-  sendJson(res, 501, body);
+const INVALID_BODY_BODY: ApiErrorBody = { error: "invalid request body" };
+const VAULT_ROOT_MISSING_BODY: ApiErrorBody = { error: "vault root does not exist" };
+const INTERNAL_ERROR_BODY: ApiErrorBody = { error: "internal error" };
+
+/**
+ * Maps a vault-setup failure onto its response. `VaultRootMissingError` is
+ * 422, not 404: the request is well-formed and the route exists — the
+ * named directory simply is not there, and setup deliberately refuses to
+ * create a vault root (02-05), so this is a semantic refusal rather than a
+ * missing resource.
+ */
+function sendVaultSetupFailure(res: ServerResponse, err: unknown, route: string): void {
+  if (err instanceof VaultRootMissingError) {
+    // The root itself is logged locally (the operator needs to see which
+    // path was wrong) and never returned.
+    logger.warn({ route, vaultRoot: err.vaultRoot }, "vault setup refused: root missing");
+    sendJson(res, 422, VAULT_ROOT_MISSING_BODY);
+    return;
+  }
+  logger.error({ route, err }, "vault setup failed");
+  sendJson(res, 500, INTERNAL_ERROR_BODY);
+}
+
+/**
+ * `POST /api/v1/vault/setup-plan` — the show-paths-first half of VAULT-01.
+ * Read-only: `planVaultSetup` writes nothing, so this route is safe to
+ * call against a vault the user has not decided about yet. The entries it
+ * returns are the SAME list the apply route below iterates (both walk
+ * `computeSetupEntries`), which is what makes "the modal shows exactly
+ * what setup will write" a structural fact rather than a promise.
+ */
+async function handleVaultSetupPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const parsed = await readJsonBody(req, VaultSetupRequestSchema);
+  if (!parsed.ok) {
+    logger.warn({ route: VAULT_SETUP_PLAN_PATH, reason: parsed.reason }, "rejected request body");
+    sendJson(res, 400, INVALID_BODY_BODY);
+    return;
+  }
+  try {
+    const plan = planVaultSetup(parsed.value.vaultRoot);
+    const body: VaultSetupPlanResponse = {
+      vaultRoot: plan.vaultRoot,
+      entries: plan.entries.map((entry) => ({
+        relativePath: entry.relativePath,
+        kind: entry.kind,
+        exists: entry.exists,
+      })),
+    };
+    sendJson(res, 200, body);
+  } catch (err: unknown) {
+    sendVaultSetupFailure(res, err, VAULT_SETUP_PLAN_PATH);
+  }
+}
+
+/**
+ * `POST /api/v1/vault/setup` — the apply half. Creates the managed tree,
+ * then persists the root and registers it as an approved path root.
+ *
+ * Order matters: persistence happens only AFTER `initializeVault` returns,
+ * so a refused or failed setup can never leave a directory registered as
+ * approved. This is the Phase 1 allowlist TODO's consumer — the comment in
+ * `path-allowlist.ts` naming "the managed vault root (Phase 2)" is this
+ * call.
+ */
+async function handleVaultSetup(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: RouteContext,
+): Promise<void> {
+  const parsed = await readJsonBody(req, VaultSetupRequestSchema);
+  if (!parsed.ok) {
+    logger.warn({ route: VAULT_SETUP_PATH, reason: parsed.reason }, "rejected request body");
+    sendJson(res, 400, INVALID_BODY_BODY);
+    return;
+  }
+  const { vaultRoot } = parsed.value;
+  try {
+    const result = initializeVault(vaultRoot);
+    persistVaultRoot(ctx.store, vaultRoot);
+    const body: VaultSetupResponse = {
+      created: [...result.created],
+      existing: [...result.existing],
+    };
+    sendJson(res, 200, body);
+  } catch (err: unknown) {
+    sendVaultSetupFailure(res, err, VAULT_SETUP_PATH);
+  }
+}
+
+const vaultSetupPlanHandler: Handler = (req, res) => {
+  // `Handler` is synchronous by contract (it writes to `res` and returns);
+  // the body read is not. Every failure path inside resolves to a written
+  // response, so the floating promise carries nothing a caller could act
+  // on — `void` says that deliberately rather than by omission.
+  void handleVaultSetupPlan(req, res);
+};
+
+const vaultSetupHandler: Handler = (req, res, ctx) => {
+  void handleVaultSetup(req, res, ctx);
 };
 
 const routeTable: Record<string, Record<string, Handler>> = {
   [HANDSHAKE_PATH]: { POST: handshakeHandler },
-  [VAULT_SETUP_PLAN_PATH]: { POST: withAuth(notImplementedHandler) },
-  [VAULT_SETUP_PATH]: { POST: withAuth(notImplementedHandler) },
+  [VAULT_SETUP_PLAN_PATH]: { POST: withAuth(vaultSetupPlanHandler) },
+  [VAULT_SETUP_PATH]: { POST: withAuth(vaultSetupHandler) },
   [HEALTH_PATH]: { GET: withAuth(healthHandler) },
   [RUNS_PATH]: { GET: withAuth(listRunsHandler) },
   [EVENTS_PATH]: { GET: withAuth(eventsHandler) },
