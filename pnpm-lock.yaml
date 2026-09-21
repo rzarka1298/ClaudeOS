@@ -147,6 +147,9 @@ importers:
       '@ccc/operational-store':
         specifier: workspace:*
         version: link:../operational-store
+      '@ccc/vault-repo':
+        specifier: workspace:*
+        version: link:../vault-repo
       pino:
         specifier: 10.3.1
         version: 10.3.1

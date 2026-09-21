@@ -8,6 +8,7 @@
   "references": [
     { "path": "../domain" },
     { "path": "../keychain" },
-    { "path": "../operational-store" }
+    { "path": "../operational-store" },
+    { "path": "../vault-repo" }
   ]
 }

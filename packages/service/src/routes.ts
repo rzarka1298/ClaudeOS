@@ -10,6 +10,8 @@ import {
   SNAPSHOT_PATH,
   type SnapshotResponse,
   TOKEN_TTL_MS,
+  VAULT_SETUP_PATH,
+  VAULT_SETUP_PLAN_PATH,
 } from "@ccc/domain";
 import { listAllRuns, type OperationalStore } from "@ccc/operational-store";
 import { requireToken } from "./auth/require-token.js";
@@ -124,8 +126,20 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
   sendJson(res, 200, body);
 };
 
+/**
+ * Placeholder for the two vault-setup handlers, present so the route table
+ * and its auth wrapping are the contract the failing tests assert against.
+ * Replaced by the real handlers in this plan's GREEN commit.
+ */
+const notImplementedHandler: Handler = (_req, res) => {
+  const body: ApiErrorBody = { error: "not implemented" };
+  sendJson(res, 501, body);
+};
+
 const routeTable: Record<string, Record<string, Handler>> = {
   [HANDSHAKE_PATH]: { POST: handshakeHandler },
+  [VAULT_SETUP_PLAN_PATH]: { POST: withAuth(notImplementedHandler) },
+  [VAULT_SETUP_PATH]: { POST: withAuth(notImplementedHandler) },
   [HEALTH_PATH]: { GET: withAuth(healthHandler) },
   [RUNS_PATH]: { GET: withAuth(listRunsHandler) },
   [EVENTS_PATH]: { GET: withAuth(eventsHandler) },
