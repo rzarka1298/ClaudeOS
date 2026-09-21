@@ -28,6 +28,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -307,6 +308,96 @@ describe("repairVault", () => {
     // vault was still rebuilt.
     expect(readFileSync(join(workspace.path, "wiki", "index.md"), "utf8")).toContain("type: index");
     expect(readFileSync(join(vaultRoot, "system", "index.md"), "utf8")).toContain("type: index");
+  });
+
+  describe("containment (VAULT-10, read side)", () => {
+    let outside: string;
+
+    beforeEach(() => {
+      outside = mkdtempSync(join(TEST_BASE, "voutside-"));
+      writeFileSync(
+        join(outside, "private.md"),
+        stringifyNote(
+          {
+            id: "0000000000000000000000002",
+            scope: globalScope(),
+            stage: "raw",
+            created: "2026-01-01T00:00:00.000Z",
+            updated: "2026-01-01T00:00:00.000Z",
+            generatedBy: { skill: "repair-test" },
+            aiGenerated: false,
+            sources: [],
+            confidence: "unverified",
+            lastReviewed: null,
+          },
+          "# private\n",
+        ),
+        "utf8",
+      );
+    });
+
+    afterEach(() => {
+      rmSync(outside, { recursive: true, force: true });
+    });
+
+    test("a symlinked directory escaping the vault contributes no notes to the report", () => {
+      // Every WRITE in this package resolves through `checkPathContainment`;
+      // the walk did not, and `statSync` follows symlinks. The records this
+      // produced are the documented input to `rebuildVaultNotes`, so an
+      // escape here puts metadata for files outside the approved root into
+      // the operational store under a path that lies about where they live.
+      symlinkSync(outside, join(vaultRoot, "global", "escape"), "dir");
+      const inside = writeManagedNote("global/wiki/alpha.md");
+
+      const report = repairVault(vaultRoot);
+
+      expect(report.notes.map((note) => note.path)).toEqual([rel(inside.path)]);
+      expect(report.notes.some((note) => note.path.includes("escape"))).toBe(false);
+      expect(existsSync(join(outside, "index.md"))).toBe(false);
+    });
+
+    test("a symlinked note file escaping the vault is not reported as a vault note", () => {
+      symlinkSync(join(outside, "private.md"), join(vaultRoot, "inbox", "linked.md"), "file");
+      const inside = writeManagedNote("global/wiki/alpha.md");
+
+      const report = repairVault(vaultRoot);
+
+      expect(report.notes.map((note) => note.path)).toEqual([rel(inside.path)]);
+    });
+
+    test("a symlink under workspaces/ does not abort the run", () => {
+      // The escaping folder made `indexFolders` include a path
+      // `regenerateIndex` refuses, and the throw propagated out of
+      // `repairVault` AFTER earlier indexes had already been rewritten —
+      // leaving the vault half-repaired and the command permanently failing
+      // until a human found the symlink unaided.
+      const workspace = createWorkspace(vaultRoot, "Escape hatch");
+      symlinkSync(outside, join(workspace.path, "esc"), "dir");
+      writeManagedNote(`${rel(workspace.path)}/wiki/gamma.md`, {
+        scope: workspaceScope(workspace.workspaceId),
+      });
+
+      const report = repairVault(vaultRoot);
+
+      expect(report.notes.some((note) => note.path.includes("esc/"))).toBe(false);
+      expect(readFileSync(join(workspace.path, "wiki", "index.md"), "utf8")).toContain("gamma");
+      expect(existsSync(join(outside, "index.md"))).toBe(false);
+    });
+
+    test("a directory symlink cycle terminates on the walk's own guard", () => {
+      // Termination today relies on macOS returning ELOOP after ~32
+      // resolutions, which is an accident of the platform rather than
+      // anything this code guarantees. Deduplicating by REAL path makes it
+      // a property of the walk.
+      const loop = join(vaultRoot, "global", "raw", "loop");
+      symlinkSync(join(vaultRoot, "global"), loop, "dir");
+      const inside = writeManagedNote("global/wiki/alpha.md");
+
+      const report = repairVault(vaultRoot);
+
+      expect(report.notes.map((note) => note.path)).toEqual([rel(inside.path)]);
+      expect(report.warnings.filter((w) => w.kind === "duplicate-id")).toEqual([]);
+    });
   });
 
   test("produces deep-equal reports on two runs over the same corrupted tree", () => {

@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import type { NoteFrontmatter } from "@ccc/domain";
+import { checkPathContainment, type NoteFrontmatter } from "@ccc/domain";
 import { InvalidNoteFrontmatterError, parseNote } from "./frontmatter.js";
 import { regenerateIndex, WorkspaceIdentityUnreadableError } from "./index-generation.js";
 import { computeSetupEntries, VaultRootMissingError } from "./setup.js";
@@ -93,9 +93,24 @@ function toVaultRelative(vaultRoot: string, absolute: string): string {
   return rel === "" ? "." : rel.split(sep).join("/");
 }
 
-/** Sorted subdirectory names, dot-directories excluded (`.obsidian/` and
- * friends are Obsidian's, not ours). */
-function listSubdirectories(dir: string): string[] {
+/**
+ * Sorted subdirectory names, dot-directories excluded (`.obsidian/` and
+ * friends are Obsidian's, not ours) and anything whose REAL path leaves the
+ * vault excluded too.
+ *
+ * The containment filter is the read-side half of VAULT-10 / threat
+ * T-02-01, and it is not optional: `statSync` follows symbolic links, so
+ * without it a symlinked directory dropped into a managed folder is walked
+ * as though it were vault content. The consequences are both real — files
+ * outside the approved root get reported as vault notes (and land in the
+ * operational store under a vault-relative path that misrepresents where
+ * they actually live), and an escaping folder under `workspaces/` makes
+ * `regenerateIndex` refuse a target it was never allowed to write.
+ *
+ * Every WRITE in this package already resolves through
+ * `checkPathContainment`; this is the same discipline applied to the walk.
+ */
+function listSubdirectories(dir: string, vaultRoot: string): string[] {
   let names: string[];
   try {
     names = readdirSync(dir);
@@ -103,27 +118,46 @@ function listSubdirectories(dir: string): string[] {
     return [];
   }
   return names
-    .filter((name) => !name.startsWith(".") && isDirectory(join(dir, name)))
+    .filter((name) => {
+      if (name.startsWith(".")) return false;
+      const child = join(dir, name);
+      if (!isDirectory(child)) return false;
+      return checkPathContainment(child, vaultRoot).contained;
+    })
     .sort(compareStrings);
 }
 
 /**
  * Depth-first descent from each root, explicitly sorted at every level and
- * deduplicated by absolute path.
+ * deduplicated by REAL path.
  *
  * The dedup matters because the managed folder list is genuinely nested
  * (`global` and `global/raw` are both entries), so a naive walk would visit
  * — and therefore COUNT — the same note twice, turning every note under a
  * nested managed folder into a phantom duplicate-id warning.
+ *
+ * Keying it on the real path rather than the joined string is what makes a
+ * directory-symlink CYCLE terminate here rather than at whatever depth the
+ * kernel happens to give up at (macOS returns `ELOOP` after ~32
+ * resolutions, which is an accident of the platform, not a guarantee this
+ * code may lean on). The ORDERED list still carries the joined path, so
+ * every vault-relative path in the report stays expressed in the caller's
+ * vocabulary.
  */
-function descend(roots: readonly string[]): string[] {
+function descend(roots: readonly string[], vaultRoot: string): string[] {
   const seen = new Set<string>();
   const ordered: string[] = [];
   const visit = (dir: string): void => {
-    if (seen.has(dir)) return;
-    seen.add(dir);
+    let real: string;
+    try {
+      real = realpathSync.native(dir);
+    } catch {
+      return;
+    }
+    if (seen.has(real)) return;
+    seen.add(real);
     ordered.push(dir);
-    for (const name of listSubdirectories(dir)) visit(join(dir, name));
+    for (const name of listSubdirectories(dir, vaultRoot)) visit(join(dir, name));
   };
   for (const root of roots) {
     if (isDirectory(root)) visit(root);
@@ -131,8 +165,15 @@ function descend(roots: readonly string[]): string[] {
   return ordered;
 }
 
-/** Sorted direct-child `*.md` files, excluding `index.md` and dotfiles. */
-function listNoteFiles(dir: string): string[] {
+/**
+ * Sorted direct-child `*.md` files, excluding `index.md`, dotfiles, and any
+ * entry whose real path is outside the vault.
+ *
+ * Same reasoning as {@link listSubdirectories}: a symlinked `.md` file is
+ * not vault content, and reporting one would put a path that lies about
+ * where the file lives into the cache every consumer reads.
+ */
+function listNoteFiles(dir: string, vaultRoot: string): string[] {
   let names: string[];
   try {
     names = readdirSync(dir);
@@ -144,13 +185,15 @@ function listNoteFiles(dir: string): string[] {
       if (name.startsWith(".")) return false;
       if (name === INDEX_FILENAME) return false;
       if (!name.endsWith(".md")) return false;
+      const child = join(dir, name);
       try {
-        return statSync(join(dir, name)).isFile();
+        if (!statSync(child).isFile()) return false;
       } catch {
         // A broken symlink, or an entry deleted between readdir and stat,
         // is simply not a note; it must not abort the repair.
         return false;
       }
+      return checkPathContainment(child, vaultRoot).contained;
     })
     .sort(compareStrings);
 }
@@ -250,7 +293,7 @@ export function repairVault(vaultRoot: string): RepairReport {
   // Repair rebuilds derived artifacts — it does not invent a managed folder
   // (and an index.md) inside a subfolder the user made for their own reasons.
   const workspacesPrefix = join(vaultRoot, WORKSPACES_FOLDER) + sep;
-  const scanFolders = descend(managedRoots);
+  const scanFolders = descend(managedRoots, vaultRoot);
   const indexFolders = scanFolders.filter(
     (folder) => managedRootSet.has(folder) || folder.startsWith(workspacesPrefix),
   );
@@ -272,7 +315,7 @@ export function repairVault(vaultRoot: string): RepairReport {
   const frontmatterByPath = new Map<string, NoteFrontmatter>();
 
   for (const folder of scanFolders) {
-    for (const filename of listNoteFiles(folder)) {
+    for (const filename of listNoteFiles(folder, vaultRoot)) {
       const absolute = join(folder, filename);
       const notePath = toVaultRelative(vaultRoot, absolute);
       try {
