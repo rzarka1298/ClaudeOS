@@ -309,9 +309,15 @@ describe("createWorkspace", () => {
     // 1. Same opaque id, new display name.
     expect(identity.workspaceId).toBe(workspace.workspaceId);
     expect(identity.displayName).toBe("Renamed workspace");
-    // 2. Same directory path.
+    // 2. Same directory path — and no second directory appeared alongside
+    // it, which is what a rename implemented as "move the folder" would
+    // have left behind. (`workspaces/` also holds its own generated
+    // index.md, so only directories are compared.)
     expect(existsSync(join(vaultRoot, "workspaces", workspace.workspaceId))).toBe(true);
-    expect(readdirSync(join(vaultRoot, "workspaces"))).toEqual([workspace.workspaceId]);
+    const workspaceDirs = readdirSync(join(vaultRoot, "workspaces")).filter((name) =>
+      statSync(join(vaultRoot, "workspaces", name)).isDirectory(),
+    );
+    expect(workspaceDirs).toEqual([workspace.workspaceId]);
     // 3. The note sits at its original path, byte-identical.
     expect(Buffer.compare(readFileSync(note.path), noteBefore)).toBe(0);
     // 4. The wiki index still references the note by its original id.
