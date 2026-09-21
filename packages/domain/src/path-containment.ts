@@ -8,7 +8,27 @@ import path from "node:path";
  */
 export type PathContainmentResult =
   | { contained: true; resolved: string }
-  | { contained: false; reason: "nul-byte" | "root-unresolvable" | "is-root" | "not-descendant" };
+  | {
+      contained: false;
+      reason:
+        | "nul-byte"
+        | "root-unresolvable"
+        | "is-root"
+        | "not-descendant"
+        /**
+         * The candidate could not be resolved at all — not even to an
+         * existing ancestor. Folded into the result union rather than
+         * thrown, because every caller (`assertScopedWrite`,
+         * `resolveFolder`, `assertPathAllowed`) treats this function's
+         * return type as total: a throw escaping it surfaced as a bare
+         * `Error` instead of their own typed refusal, which `routes.ts`
+         * would have mapped to a 500 rather than a 403/422. The thrown
+         * message also embedded the full candidate path, which is exactly
+         * what `PathNotAllowedError` and `WorkspaceScopeViolationError`
+         * both go out of their way not to do.
+         */
+        | "candidate-unresolvable";
+    };
 
 /**
  * Resolves `candidate` to its real, symlink-free path. When `candidate`
@@ -20,11 +40,11 @@ export type PathContainmentResult =
  * `root`'s real path, not as `root` itself (the ancestor it happened to
  * resolve to).
  */
-function resolveRealOrNearestAncestor(candidate: string): string {
+function resolveRealOrNearestAncestor(candidate: string): string | null {
   let current = path.resolve(candidate);
   const tail: string[] = [];
   // Bounded: path.dirname(x) === x only at the filesystem root, which
-  // always exists, so this loop always terminates.
+  // normally always exists, so this loop always terminates.
   for (;;) {
     try {
       const resolvedAncestor = realpathSync.native(current);
@@ -32,7 +52,12 @@ function resolveRealOrNearestAncestor(candidate: string): string {
     } catch {
       const parent = path.dirname(current);
       if (parent === current) {
-        throw new Error(`Could not resolve any existing ancestor of: ${candidate}`);
+        // Reached the filesystem root without resolving anything —
+        // possible under a sandbox, a revoked mount, or an EACCES on the
+        // root itself. `null` rather than a throw: this function's caller
+        // promises a total result, and an unresolvable candidate is simply
+        // not contained.
+        return null;
       }
       tail.unshift(path.basename(current));
       current = parent;
@@ -49,6 +74,12 @@ function resolveRealOrNearestAncestor(candidate: string): string {
  * never contained — containment is strict descendancy, so a handler
  * cannot be tricked into operating on the root directory by passing the
  * root as the candidate.
+ *
+ * TOTAL: this function never throws. Its three call sites in `vault-repo`
+ * and `service` treat the return type as exhaustive and translate a
+ * rejection into their own typed refusal; a security primitive that can
+ * throw instead of returning is one whose callers silently stop refusing
+ * the way they documented.
  */
 export function checkPathContainment(candidate: string, root: string): PathContainmentResult {
   if (candidate.includes("\0") || root.includes("\0")) {
@@ -63,6 +94,9 @@ export function checkPathContainment(candidate: string, root: string): PathConta
   }
 
   const resolvedCandidate = resolveRealOrNearestAncestor(candidate);
+  if (resolvedCandidate === null) {
+    return { contained: false, reason: "candidate-unresolvable" };
+  }
 
   const relative = path.relative(resolvedRoot, resolvedCandidate);
   if (relative === "") {
