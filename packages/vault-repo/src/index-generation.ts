@@ -294,7 +294,14 @@ export function regenerateIndex(
     if (value !== undefined) frontmatter[key] = value;
   }
 
-  const content = matter.stringify(buildBody(rows, unreadable), frontmatter);
+  // `{ content }`, never a bare string: handed a string, `matter.stringify`
+  // runs it back through `matter()` with DEFAULT engines first, so the body
+  // would be re-parsed as if it carried front matter of its own — the exact
+  // re-parse `frontmatter.ts` documents as load-bearing to avoid. Today
+  // `buildBody` always opens with `# Index` so nothing reaches that branch,
+  // which is precisely why the convention has to be structural rather than
+  // dependent on a future edit to `buildBody` preserving the accident.
+  const content = matter.stringify({ content: buildBody(rows, unreadable) }, frontmatter);
   atomicWriteFileSync(indexPath, content);
 
   return { path: indexPath, content, noteCount: rows.length, unreadable };

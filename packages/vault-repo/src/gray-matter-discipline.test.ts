@@ -71,6 +71,23 @@ describe("gray-matter call discipline", () => {
     expect(offences).toEqual([]);
   });
 
+  test("matter.stringify is never handed a bare string body", () => {
+    const offences: Offence[] = [];
+
+    for (const name of sourceFiles()) {
+      codeLines(readFileSync(join(SRC_DIR, name), "utf8")).forEach((text, index) => {
+        const call = /\bmatter\s*\.\s*stringify\s*\(\s*([^,)]*)/.exec(text);
+        if (call === null) return;
+        // The safe form passes a file-shaped object, which skips
+        // gray-matter's `typeof file === 'string'` re-parse branch.
+        if (call[1]?.trimStart().startsWith("{")) return;
+        offences.push({ file: name, line: index + 1, text: text.trim() });
+      });
+    }
+
+    expect(offences).toEqual([]);
+  });
+
   test("the scan actually saw this package's modules", () => {
     // Without this the two assertions above would pass vacuously if the
     // directory layout ever changed underneath them.
