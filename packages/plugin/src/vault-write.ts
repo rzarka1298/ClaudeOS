@@ -90,13 +90,25 @@ export type ConflictSafeUpdateResult = "applied" | "conflict";
  *   requirement. An async transform is a compile error, not a runtime
  *   surprise.
  */
-export function applyConflictSafeUpdate(
-  _vault: ProcessableVault,
-  _file: ManagedNoteFile,
-  _expectedPriorContent: string,
-  _transform: (current: string) => string,
+export async function applyConflictSafeUpdate(
+  vault: ProcessableVault,
+  file: ManagedNoteFile,
+  expectedPriorContent: string,
+  transform: (current: string) => string,
 ): Promise<ConflictSafeUpdateResult> {
-  throw new Error(
-    "applyConflictSafeUpdate is not implemented yet (packages/plugin/src/vault-write.ts)",
-  );
+  let conflict = false;
+  await vault.process(file, (current) => {
+    // Strict string equality, not a normalised or trimmed comparison: a
+    // trailing newline the user added IS an edit, and a comparison lenient
+    // enough to ignore it is lenient enough to overwrite it.
+    if (current !== expectedPriorContent) {
+      conflict = true;
+      // Returning `current` unchanged is what makes the user's edit win
+      // byte-for-byte. `process()` still writes -- it always does -- but it
+      // writes back exactly the bytes it just read.
+      return current;
+    }
+    return transform(current);
+  });
+  return conflict ? "conflict" : "applied";
 }
