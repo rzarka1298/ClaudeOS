@@ -1,3 +1,5 @@
+import { mkdtempSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -23,6 +25,121 @@ describe("createSocketApiClient", () => {
     const client = createSocketApiClient({ socketPath, timeoutMs: 1000 });
     await expect(client.request({ method: "GET", path: "/api/v1/health" })).rejects.toBeInstanceOf(
       SocketUnreachableError,
+    );
+  });
+});
+
+/**
+ * A real Unix-domain-socket server replaying one canned reply.
+ *
+ * These cases need the genuine transport rather than the client double
+ * below: the defect they cover lives in the response event handlers, which
+ * a fake `request()` never exercises at all. Every handler there fires
+ * AFTER the Promise executor has returned, so a throw inside one escapes
+ * the promise entirely -- an uncaught exception in Obsidian's renderer plus
+ * a caller `await` that never settles.
+ */
+async function withSocketServer(
+  handler: (res: ServerResponse) => void,
+  run: (client: SocketApiClient) => Promise<void>,
+): Promise<void> {
+  const socketPath = join(mkdtempSync(join(tmpdir(), "ccc-sock-")), "t.sock");
+  const server = createServer((_req, res) => handler(res));
+  await new Promise<void>((done) => server.listen(socketPath, done));
+  try {
+    await run(createSocketApiClient({ socketPath, timeoutMs: 2000 }));
+  } finally {
+    await new Promise<void>((done) => server.close(() => done()));
+  }
+}
+
+/** Rejects if the promise has not settled within `ms` -- the assertion that
+ * distinguishes "reported a failure" from "hung forever", which is the
+ * actual symptom being fixed. */
+function settlesWithin<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, fail) =>
+      setTimeout(() => fail(new Error(`promise never settled within ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
+describe("createSocketApiClient response handling", () => {
+  it("rejects rather than stranding the caller when the body is not JSON", async () => {
+    await withSocketServer(
+      (res) => {
+        res.writeHead(500, { "Content-Type": "text/html" });
+        res.end("<html><body>Proxy error</body></html>");
+      },
+      async (client) => {
+        await expect(
+          settlesWithin(client.request({ method: "GET", path: "/api/v1/health" }), 2000),
+        ).rejects.toBeInstanceOf(VaultSetupRequestError);
+      },
+    );
+  });
+
+  it("rejects when the connection is torn down after the headers, which emits no end event", async () => {
+    await withSocketServer(
+      (res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.write('{"partial":');
+        res.socket?.destroy();
+      },
+      async (client) => {
+        await expect(
+          settlesWithin(client.request({ method: "GET", path: "/api/v1/health" }), 2000),
+        ).rejects.toBeInstanceOf(Error);
+      },
+    );
+  });
+
+  it("refuses a response larger than the inbound cap instead of buffering it without bound", async () => {
+    await withSocketServer(
+      (res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        // 128 KiB of valid JSON: parseable, and twice the cap the service
+        // applies in the other direction.
+        res.end(JSON.stringify({ pad: "x".repeat(128 * 1024) }));
+      },
+      async (client) => {
+        await expect(
+          settlesWithin(client.request({ method: "GET", path: "/api/v1/health" }), 2000),
+        ).rejects.toBeInstanceOf(VaultSetupRequestError);
+      },
+    );
+  });
+
+  it("still returns a well-formed JSON body unchanged", async () => {
+    await withSocketServer(
+      (res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
+      },
+      async (client) => {
+        const res = await settlesWithin(
+          client.request<{ status: string }>({ method: "GET", path: "/api/v1/health" }),
+          2000,
+        );
+        expect(res).toEqual({ status: 200, body: { status: "ok" } });
+      },
+    );
+  });
+
+  it("returns undefined for an empty body rather than trying to parse it", async () => {
+    await withSocketServer(
+      (res) => {
+        res.writeHead(204);
+        res.end();
+      },
+      async (client) => {
+        const res = await settlesWithin(
+          client.request({ method: "GET", path: "/api/v1/health" }),
+          2000,
+        );
+        expect(res).toEqual({ status: 204, body: undefined });
+      },
     );
   });
 });

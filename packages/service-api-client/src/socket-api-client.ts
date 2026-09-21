@@ -47,6 +47,17 @@ export interface SocketApiClient {
 }
 
 /**
+ * The inbound cap, mirroring the service's own `DEFAULT_BODY_LIMIT_BYTES`.
+ *
+ * Duplicated as a literal rather than imported because the import-boundary
+ * map forbids this package from depending on `@ccc/service`. The service
+ * caps what it will READ from a caller; this caps what the plugin will
+ * accumulate from the service, so neither direction can be made to buffer
+ * without bound.
+ */
+const MAX_RESPONSE_BYTES = 64 * 1024;
+
+/**
  * Builds a typed client over `http.request({ socketPath })` — this is the
  * one package permitted to speak the Unix-domain-socket transport
  * directly (research §Recommended Project Structure); the Obsidian plugin
@@ -73,11 +84,54 @@ export function createSocketApiClient({
           },
           (res) => {
             const chunks: Buffer[] = [];
-            res.on("data", (chunk: Buffer) => chunks.push(chunk));
+            let received = 0;
+
+            // Every listener below settles the promise exactly once. The
+            // executor has already RETURNED by the time any of them fires,
+            // so a throw inside one is not captured by the promise: it
+            // surfaces as an uncaught exception in Obsidian's renderer
+            // while the caller's `await` never settles. That is a hung
+            // command with no error in front of the user, which is why the
+            // JSON parse below is inside a `try` rather than inline.
+            res.on("data", (chunk: Buffer) => {
+              received += chunk.length;
+              if (received > MAX_RESPONSE_BYTES) {
+                chunks.length = 0;
+                // Settle BEFORE destroying: `destroy()` emits `aborted`
+                // synchronously, and that handler would otherwise win the
+                // race and report "the service went away" for what is
+                // really "the service said too much".
+                reject(new VaultSetupRequestError(res.statusCode ?? 0, UNRECOGNISED_RESPONSE));
+                res.destroy();
+                return;
+              }
+              chunks.push(chunk);
+            });
+
+            // A connection torn down AFTER headers arrived never emits
+            // `end`, and `req`'s own `error` handler does not fire for it
+            // either — without these two the promise stays pending forever.
+            res.on("aborted", () => {
+              const abortErr = Object.assign(new Error("response aborted"), {
+                code: "ECONNRESET",
+              }) as NodeJS.ErrnoException;
+              reject(new SocketUnreachableError(socketPath, abortErr));
+            });
+            res.on("error", (err: NodeJS.ErrnoException) => {
+              reject(new SocketUnreachableError(socketPath, err));
+            });
+
             res.on("end", () => {
               const raw = Buffer.concat(chunks).toString("utf8");
-              const body = raw.length > 0 ? (JSON.parse(raw) as T) : (undefined as T);
-              resolve({ status: res.statusCode ?? 0, body });
+              try {
+                const body = raw.length > 0 ? (JSON.parse(raw) as T) : (undefined as T);
+                resolve({ status: res.statusCode ?? 0, body });
+              } catch {
+                // A truncated body, a proxy error page, a stack trace, or a
+                // future non-JSON route all land here. The status is kept
+                // so a caller can still tell a refusal from a success.
+                reject(new VaultSetupRequestError(res.statusCode ?? 0, UNRECOGNISED_RESPONSE));
+              }
             });
           },
         );
