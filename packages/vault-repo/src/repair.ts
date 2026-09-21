@@ -15,6 +15,34 @@ const INDEX_FILENAME = "index.md";
 /** The managed root beneath which every workspace tree lives. */
 const WORKSPACES_FOLDER = "workspaces";
 
+/** The three knowledge folders `createWorkspace` mints inside a workspace
+ * — the only descendants of a workspace root that this package owns. */
+const WORKSPACE_LEAF_FOLDERS = new Set(["raw", "wiki", "output"]);
+
+/**
+ * True for `workspaces/<id>` and for `workspaces/<id>/{raw,wiki,output}` —
+ * and for nothing else beneath `workspaces/`.
+ *
+ * The previous test was `folder.startsWith(join(vaultRoot, "workspaces") +
+ * sep)`, which matches at EVERY depth, so repair created an `index.md`
+ * inside `workspaces/<id>/my-notes/2026/drafts` — a folder the user made
+ * for their own reasons. That directly contradicts the contract stated
+ * immediately above the filter ("does not invent a managed folder... inside
+ * a subfolder the user made for their own reasons"), and it behaved
+ * inconsistently with `global/`, where the identical `global/my-notes` was
+ * correctly left alone.
+ *
+ * Repair rebuilds derived artifacts; it does not decide that a user's
+ * folder should have become a managed one.
+ */
+function isManagedWorkspaceFolder(folder: string, vaultRoot: string): boolean {
+  const rel = relative(join(vaultRoot, WORKSPACES_FOLDER), folder);
+  if (rel === "" || rel.startsWith("..")) return false;
+  const segments = rel.split(sep);
+  if (segments.length === 1) return true;
+  return segments.length === 2 && WORKSPACE_LEAF_FOLDERS.has(segments[1] as string);
+}
+
 /**
  * Pulls the note id out of one generated index row.
  *
@@ -318,10 +346,9 @@ export function repairVault(vaultRoot: string): RepairReport {
   // the fixed skeleton and the workspace trees get an index REGENERATED.
   // Repair rebuilds derived artifacts — it does not invent a managed folder
   // (and an index.md) inside a subfolder the user made for their own reasons.
-  const workspacesPrefix = join(vaultRoot, WORKSPACES_FOLDER) + sep;
   const scanFolders = descend(managedRoots, vaultRoot);
   const indexFolders = scanFolders.filter(
-    (folder) => managedRootSet.has(folder) || folder.startsWith(workspacesPrefix),
+    (folder) => managedRootSet.has(folder) || isManagedWorkspaceFolder(folder, vaultRoot),
   );
 
   // Every pre-existing index is read BEFORE any regeneration: an orphaned

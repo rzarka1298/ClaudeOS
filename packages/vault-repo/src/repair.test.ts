@@ -291,6 +291,52 @@ describe("repairVault", () => {
     }
   });
 
+  test("does not invent an index.md inside a user's own subfolder, under workspaces/ or global/", () => {
+    // The filter used to be `folder.startsWith(workspaces + sep)`, which
+    // matches at EVERY depth -- so a folder the user made for their own
+    // reasons got a generated file dropped into it, at any nesting. The
+    // identical folder under `global/` was correctly left alone, so the two
+    // scopes disagreed for no stated reason.
+    const workspace = createWorkspace(vaultRoot, "User folders");
+    const deep = join(workspace.path, "my-notes", "2026", "drafts");
+    mkdirSync(deep, { recursive: true });
+    const globalOwn = join(vaultRoot, "global", "my-notes");
+    mkdirSync(globalOwn, { recursive: true });
+
+    repairVault(vaultRoot);
+
+    expect(existsSync(join(workspace.path, "my-notes", "index.md"))).toBe(false);
+    expect(existsSync(join(workspace.path, "my-notes", "2026", "index.md"))).toBe(false);
+    expect(existsSync(join(deep, "index.md"))).toBe(false);
+    expect(existsSync(join(globalOwn, "index.md"))).toBe(false);
+
+    // The folders this package DOES own still get one -- otherwise the
+    // assertions above would pass by simply never regenerating anything.
+    expect(existsSync(join(workspace.path, "index.md"))).toBe(true);
+    for (const leaf of ["raw", "wiki", "output"]) {
+      expect(`${leaf}:${existsSync(join(workspace.path, leaf, "index.md"))}`).toBe(`${leaf}:true`);
+    }
+  });
+
+  test("a note stashed in a user subfolder is still SCANNED even though it gets no index", () => {
+    // Scanning and indexing are deliberately different sets: a duplicate id
+    // hidden in a user's folder must still be caught.
+    const workspace = createWorkspace(vaultRoot, "Stashed");
+    const original = writeManagedNote(`workspaces/${workspace.workspaceId}/wiki/gamma.md`, {
+      scope: workspaceScope(workspace.workspaceId),
+    });
+    const stash = join(workspace.path, "my-notes");
+    mkdirSync(stash, { recursive: true });
+    copyFileSync(original.path, join(stash, "gamma-copy.md"));
+
+    const report = repairVault(vaultRoot);
+
+    const duplicates = report.warnings.filter((warning) => warning.kind === "duplicate-id");
+    expect(duplicates).toHaveLength(1);
+    expect(duplicates[0]?.detail).toContain(original.noteId);
+    expect(existsSync(join(stash, "index.md"))).toBe(false);
+  });
+
   test("re-emits a workspace's identity keys while rebuilding its listing", () => {
     const displayName = "Repair 🛠 ワークスペース";
     const workspace = createWorkspace(vaultRoot, displayName);
