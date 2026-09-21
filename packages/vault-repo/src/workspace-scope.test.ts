@@ -145,6 +145,52 @@ describe("assertScopedWrite refuses every scope violation", () => {
   });
 });
 
+describe("writeNote refuses a target the vault root itself owns", () => {
+  test("a note directly at the vault root is refused, and no root index.md is created", () => {
+    // `assertScopedWrite` accepts this: `x.md` is a strict descendant of
+    // the vault and is not under `workspaces/`. The consequence was one
+    // level up -- `regenerateIndex(vaultRoot, ...)` took its `is-root`
+    // branch and wrote `<vaultRoot>/index.md`, a file in no plan.
+    // `MANAGED_FOLDERS` has no root entry, so `computeSetupEntries` never
+    // lists it and `repairVault`'s managed-root set never regenerates it:
+    // it goes stale the moment a second root note appears.
+    const before = vaultTree();
+
+    expect(() =>
+      writeNote({
+        vaultRoot,
+        relativePath: "x.md",
+        body: "# Root note\n",
+        scope: globalScope(),
+        stage: "wiki",
+        generatedBy: {},
+        aiGenerated: false,
+        confidence: "unverified",
+      }),
+    ).toThrow(WorkspaceScopeViolationError);
+
+    expect(vaultTree()).toEqual(before);
+    expect(vaultTree()).not.toContain("index.md");
+  });
+
+  test("a note one level down in a managed folder is still accepted", () => {
+    // Not vacuous: the refusal above must be about the ROOT, not about
+    // global-scoped writes in general.
+    const written = writeNote({
+      vaultRoot,
+      relativePath: join("global", "wiki", "ok.md"),
+      body: "# Fine\n",
+      scope: globalScope(),
+      stage: "wiki",
+      generatedBy: {},
+      aiGenerated: false,
+      confidence: "unverified",
+    });
+
+    expect(written.path).toBe(join(vaultRoot, "global", "wiki", "ok.md"));
+  });
+});
+
 describe("assertScopedWrite accepts what the scope genuinely owns", () => {
   test("a workspace-scoped write inside its own tree resolves", () => {
     const candidate = join(vaultRoot, "workspaces", workspaceA, "wiki", "mine.md");

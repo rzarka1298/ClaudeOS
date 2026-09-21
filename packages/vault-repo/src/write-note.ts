@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type ClaimType,
@@ -15,7 +15,7 @@ import {
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { stringifyNote } from "./frontmatter.js";
 import { regenerateIndex } from "./index-generation.js";
-import { assertScopedWrite } from "./workspace-scope.js";
+import { assertScopedWrite, WorkspaceScopeViolationError } from "./workspace-scope.js";
 
 /**
  * Everything a caller supplies to write one managed note. Deliberately
@@ -68,7 +68,8 @@ export interface WrittenNote {
  *
  * The parent directory is created only AFTER the scope check passes —
  * ordering it the other way would let a rejected write leave directories
- * behind at a path it was never allowed to touch.
+ * behind at a path it was never allowed to touch. A target whose parent IS
+ * the vault root is refused for a related reason: see the check inline.
  *
  * This function NEVER deletes or moves a file. The only mutations the
  * Phase 2 write surface performs are "create a new file" and "atomically
@@ -106,6 +107,18 @@ export function writeNote(options: WriteNoteOptions): WrittenNote {
   });
 
   const folder = dirname(target);
+  // A note directly at the vault root is refused. `assertScopedWrite` only
+  // requires strict descendancy of the vault plus "not under workspaces/",
+  // so `relativePath: "x.md"` passed it — and then `regenerateIndex` took
+  // its `is-root` branch and wrote `<vaultRoot>/index.md`. That file is in
+  // no plan: `MANAGED_FOLDERS` has no root entry, so `computeSetupEntries`
+  // never lists it (breaking VAULT-01's "setup writes only what it
+  // displayed") and `repairVault`'s managed-root set never contains it, so
+  // it is never regenerated again and goes stale as soon as a second root
+  // note appears. A managed note belongs in a managed folder.
+  if (folder === realpathSync.native(options.vaultRoot)) {
+    throw new WorkspaceScopeViolationError(options.relativePath);
+  }
   mkdirSync(folder, { recursive: true });
   atomicWriteFileSync(target, stringifyNote(frontmatter, options.body));
 
