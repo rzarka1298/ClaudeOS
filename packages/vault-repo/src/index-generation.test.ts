@@ -21,7 +21,7 @@ import {
 } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { stringifyNote } from "./frontmatter.js";
-import { regenerateIndex } from "./index-generation.js";
+import { regenerateIndex, WorkspaceIdentityUnreadableError } from "./index-generation.js";
 import { writeNote } from "./write-note.js";
 
 const TEST_BASE = join(homedir(), ".ccc-test");
@@ -278,6 +278,64 @@ describe("regenerateIndex", () => {
     expect(result.noteCount).toBe(1);
     expect(result.content).toContain("id-alpha");
     expect(result.content).not.toContain("index-rce");
+  });
+
+  test("a workspace root whose index will not parse is refused, not overwritten", () => {
+    const workspaceId = newWorkspaceId();
+    const workspaceRoot = join(vaultRoot, "workspaces", workspaceId);
+    mkdirSync(workspaceRoot, { recursive: true });
+
+    regenerateIndex(workspaceRoot, {
+      vaultRoot,
+      identity: { workspaceId, displayName: "My Research Workspace" },
+    });
+
+    // A hand-edit with an unbalanced quote — the most ordinary way a user
+    // breaks the one file their workspace's name lives in.
+    const indexPath = join(workspaceRoot, "index.md");
+    const damaged = readFileSync(indexPath, "utf8").replace(
+      "displayName: My Research Workspace",
+      "displayName: 'My Research Workspace",
+    );
+    writeFileSync(indexPath, damaged, "utf8");
+
+    expect(() => regenerateIndex(workspaceRoot, { vaultRoot })).toThrow(
+      WorkspaceIdentityUnreadableError,
+    );
+    // The load-bearing assertion: refusing is only worth anything if the
+    // file survives. `displayName` is recoverable from nowhere else.
+    expect(readFileSync(indexPath, "utf8")).toBe(damaged);
+  });
+
+  test("an unreadable index outside a workspace root is still replaced", () => {
+    // Same damage, ordinary managed folder: there is no unrecoverable
+    // state here, so regeneration is the correct answer rather than a
+    // refusal. Without this the fix above would be a denial-of-service on
+    // every corrupt derived artifact in the vault.
+    writeFileSync(join(folder, "index.md"), "---\ndisplayName: 'unterminated\n---\n", "utf8");
+    seedNote(folder, "alpha.md", { id: "id-alpha", created: "2026-01-01T00:00:00.000Z" });
+
+    const result = regenerateIndex(folder, { vaultRoot });
+
+    expect(result.noteCount).toBe(1);
+    expect(result.content).toContain("folder: global/wiki");
+    expect(result.content).not.toContain("displayName");
+  });
+
+  test("an explicit identity always wins, even over an unreadable workspace index", () => {
+    // Workspace creation supplies identity directly, so a corrupt leftover
+    // index must not be able to block minting a workspace at that path.
+    const workspaceId = newWorkspaceId();
+    const workspaceRoot = join(vaultRoot, "workspaces", workspaceId);
+    mkdirSync(workspaceRoot, { recursive: true });
+    writeFileSync(join(workspaceRoot, "index.md"), "---\ndisplayName: 'nope\n---\n", "utf8");
+
+    const result = regenerateIndex(workspaceRoot, {
+      vaultRoot,
+      identity: { workspaceId, displayName: "Fresh" },
+    });
+
+    expect(result.content).toContain("displayName: Fresh");
   });
 
   test("the generated frontmatter records the folder path relative to the vault root", () => {

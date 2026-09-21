@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { NoteFrontmatter } from "@ccc/domain";
 import { InvalidNoteFrontmatterError, parseNote } from "./frontmatter.js";
-import { regenerateIndex } from "./index-generation.js";
+import { regenerateIndex, WorkspaceIdentityUnreadableError } from "./index-generation.js";
 import { computeSetupEntries, VaultRootMissingError } from "./setup.js";
 
 /** The one generated file repair rewrites, and the one it never reads as a note. */
@@ -24,7 +24,7 @@ const WORKSPACES_FOLDER = "workspaces";
 const INDEX_ROW_ID = /^-\s+\[\[.*?\]\].*?\bid\s+`([^`]+)`/;
 
 /**
- * The three conditions repair FLAGS rather than resolves.
+ * The four conditions repair FLAGS rather than resolves.
  *
  * Every one of them is a state where the vault's ground truth is ambiguous,
  * and repair's contract is to surface the ambiguity with enough detail for a
@@ -32,8 +32,19 @@ const INDEX_ROW_ID = /^-\s+\[\[.*?\]\].*?\bid\s+`([^`]+)`/;
  * store's `SchemaAheadOfCodeError` discipline: a tool that silently guesses
  * on an ambiguous input is worse than one that refuses, because the guess is
  * invisible.
+ *
+ * `index-not-regenerated` is the newest and the least obvious: an index
+ * this pass could not rebuild. The case that motivated it is a
+ * workspace-root `index.md` whose YAML no longer parses — `displayName`
+ * lives ONLY there, is not recoverable from anywhere else, and regenerating
+ * over it would erase the workspace's name during the very command a user
+ * runs to recover from damage.
  */
-export type RepairWarningKind = "duplicate-id" | "orphaned-index-entry" | "invalid-frontmatter";
+export type RepairWarningKind =
+  | "duplicate-id"
+  | "orphaned-index-entry"
+  | "invalid-frontmatter"
+  | "index-not-regenerated";
 
 /** One flagged condition, carrying every path involved in it. */
 export interface RepairWarning {
@@ -174,6 +185,29 @@ function describeParseFailure(error: unknown): string {
 }
 
 /**
+ * The specifics of one index-regeneration refusal.
+ *
+ * Deterministic for a given vault state, like every other `detail` in this
+ * report: two runs over the same damage must produce deep-equal reports, so
+ * nothing here may quote a path, a clock value, or a stack.
+ */
+function describeIndexFailure(error: unknown): string {
+  if (error instanceof WorkspaceIdentityUnreadableError) {
+    return `${error.message}; displayName is stored nowhere else, so this index was left untouched — fix its YAML by hand${describeCause(error.cause)}`;
+  }
+  return error instanceof Error ? error.message : "index could not be regenerated";
+}
+
+/** The underlying parse issue, where the refusal carries one. */
+function describeCause(cause: unknown): string {
+  if (cause instanceof InvalidNoteFrontmatterError) {
+    const issue = cause.issues[0] as { message?: unknown } | undefined;
+    if (typeof issue?.message === "string") return ` (${issue.message})`;
+  }
+  return "";
+}
+
+/**
  * Rebuilds every derived artifact in the managed vault from note
  * frontmatter (VAULT-04).
  *
@@ -290,7 +324,21 @@ export function repairVault(vaultRoot: string): RepairReport {
   }
 
   for (const folder of indexFolders) {
-    regenerateIndex(folder, { vaultRoot });
+    try {
+      regenerateIndex(folder, { vaultRoot });
+    } catch (error) {
+      // Non-fatal BY DESIGN. This loop has already rewritten some indexes
+      // by the time any one folder fails, so letting the failure propagate
+      // would leave the vault half-repaired and the command permanently
+      // failing until a human found the cause unaided. Flagging it keeps
+      // every other derived artifact rebuilt and hands the user the one
+      // folder that needs a decision.
+      warnings.push({
+        kind: "index-not-regenerated",
+        paths: [toVaultRelative(vaultRoot, folder)],
+        detail: describeIndexFailure(error),
+      });
+    }
   }
 
   notes.sort((a, b) => {

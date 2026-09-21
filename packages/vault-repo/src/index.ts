@@ -21,7 +21,11 @@ export type {
   RegeneratedIndex,
   RegenerateIndexOptions,
 } from "./index-generation.js";
-export { IndexOutsideVaultError, regenerateIndex } from "./index-generation.js";
+export {
+  IndexOutsideVaultError,
+  regenerateIndex,
+  WorkspaceIdentityUnreadableError,
+} from "./index-generation.js";
 export type {
   RepairedNote,
   RepairReport,

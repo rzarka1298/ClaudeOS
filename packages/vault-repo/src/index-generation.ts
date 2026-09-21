@@ -8,6 +8,9 @@ import { parseNote, parseUntrustedFrontmatter } from "./frontmatter.js";
 /** The one generated file this module owns, in every managed folder. */
 const INDEX_FILENAME = "index.md";
 
+/** The managed root beneath which every workspace tree lives. */
+const WORKSPACES_FOLDER = "workspaces";
+
 /**
  * Fixed key order for the index's OWN frontmatter, for the same reason
  * `NOTE_FRONTMATTER_KEY_ORDER` exists: JavaScript preserves string-key
@@ -143,6 +146,47 @@ function listCandidateFiles(folderPath: string): string[] {
 }
 
 /**
+ * What a read of an existing index's identity keys found.
+ *
+ * Three states, not two, and the distinction is load-bearing. "There is no
+ * identity here" and "there IS an identity here and I could not read it"
+ * are completely different facts: the first is true of a brand-new folder
+ * and of every non-workspace folder, while the second means the only
+ * on-disk copy of a `displayName` is sitting in a file this code is about
+ * to overwrite. Collapsing them into one `undefined` made a single
+ * unbalanced quote in a hand-edited workspace index enough to destroy the
+ * workspace's name — silently, during the command whose job is to recover
+ * from damage.
+ */
+type IdentityRead =
+  | { kind: "none" }
+  | { kind: "identity"; identity: IndexIdentity }
+  | { kind: "unreadable"; cause: unknown };
+
+/**
+ * Thrown when a workspace-root `index.md` exists but cannot be parsed.
+ *
+ * `displayName` is NOT a derived artifact: per `setup.ts` the
+ * workspace-root index frontmatter is the only place it is stored, and the
+ * user is explicitly invited to edit it there. It is not recoverable from
+ * the folder name, from the operational store, or from anywhere else — so
+ * an unreadable workspace identity is ambiguity to be FLAGGED, exactly as
+ * `repair.ts` flags a duplicate id, and never something to resolve by
+ * overwriting. (`workspaceId` happens to be recoverable from the folder
+ * name; that is not a reason to destroy the name beside it.)
+ */
+export class WorkspaceIdentityUnreadableError extends Error {
+  readonly folderPath: string;
+
+  constructor(folderPath: string, cause: unknown) {
+    super("workspace index exists but its identity could not be read");
+    this.name = "WorkspaceIdentityUnreadableError";
+    this.folderPath = folderPath;
+    this.cause = cause;
+  }
+}
+
+/**
  * Recovers `workspaceId`/`displayName` from an existing index.
  *
  * This is the SOLE read-back of a previous index anywhere in this module.
@@ -150,12 +194,13 @@ function listCandidateFiles(folderPath: string): string[] {
  * full-recompute contract intact: there is no "read the old index, patch
  * it" step for a concurrent writer to race against (research Pitfall 3).
  */
-function readIdentity(indexPath: string): IndexIdentity | undefined {
+function readIdentity(indexPath: string): IdentityRead {
   let raw: string;
   try {
     raw = readFileSync(indexPath, "utf8");
   } catch {
-    return undefined;
+    // No file at all — nothing was ever written here to preserve.
+    return { kind: "none" };
   }
   try {
     // NEVER `matter(raw)` here. An `index.md` is ordinary vault content —
@@ -167,13 +212,24 @@ function readIdentity(indexPath: string): IndexIdentity | undefined {
     const data = parseUntrustedFrontmatter(raw);
     const workspaceId = data.workspaceId;
     const displayName = data.displayName;
-    if (typeof workspaceId !== "string" || typeof displayName !== "string") return undefined;
-    return { workspaceId, displayName };
-  } catch {
-    // A corrupt index has no identity to preserve. Regeneration still
-    // replaces it — that is the whole point of a derived artifact.
-    return undefined;
+    // Parsed cleanly and simply carries no identity keys: an ordinary
+    // managed folder's index, which is a fully derived artifact.
+    if (typeof workspaceId !== "string" || typeof displayName !== "string") {
+      return { kind: "none" };
+    }
+    return { kind: "identity", identity: { workspaceId, displayName } };
+  } catch (cause) {
+    return { kind: "unreadable", cause };
   }
+}
+
+/** True for `<vaultRoot>/workspaces/<id>` and nothing else — not the
+ * `workspaces` folder itself, and not a leaf or a user subfolder beneath a
+ * workspace. That exact folder is the only one whose `index.md` holds
+ * unrecoverable state. */
+function isWorkspaceRoot(resolvedRoot: string, resolvedFolder: string): boolean {
+  const segments = relative(resolvedRoot, resolvedFolder).split(sep);
+  return segments.length === 2 && segments[0] === WORKSPACES_FOLDER && segments[1] !== "";
 }
 
 /** The folder's path relative to the vault root, in POSIX separators so
@@ -252,7 +308,22 @@ export function regenerateIndex(
 ): RegeneratedIndex {
   const [resolvedRoot, resolvedFolder] = resolveFolder(folderPath, options.vaultRoot);
   const indexPath = join(resolvedFolder, INDEX_FILENAME);
-  const identity = options.identity ?? readIdentity(indexPath);
+
+  let identity: IndexIdentity | undefined = options.identity;
+  if (identity === undefined) {
+    const read = readIdentity(indexPath);
+    if (read.kind === "identity") {
+      identity = read.identity;
+    } else if (read.kind === "unreadable" && isWorkspaceRoot(resolvedRoot, resolvedFolder)) {
+      // Refuse rather than regenerate: the file in front of us is the only
+      // copy of this workspace's `displayName`, and overwriting it is not
+      // a repair, it is the data loss a repair exists to prevent.
+      // `repairVault` turns this into a warning the user can act on.
+      throw new WorkspaceIdentityUnreadableError(resolvedFolder, read.cause);
+    }
+    // Anywhere else, an unreadable index is a corrupt DERIVED artifact
+    // with nothing to preserve, and replacing it is the whole point.
+  }
 
   const rows: IndexRow[] = [];
   const unreadable: string[] = [];

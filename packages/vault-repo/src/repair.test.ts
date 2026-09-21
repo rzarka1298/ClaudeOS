@@ -284,6 +284,31 @@ describe("repairVault", () => {
     expect(readFileSync(join(workspace.path, "wiki", "index.md"), "utf8")).toContain(gamma.noteId);
   });
 
+  test("flags a workspace whose index will not parse instead of erasing its displayName", () => {
+    const displayName = "My Research Workspace";
+    const workspace = createWorkspace(vaultRoot, displayName);
+    const indexPath = join(workspace.path, "index.md");
+    const damaged = readFileSync(indexPath, "utf8").replace(
+      `displayName: ${displayName}`,
+      `displayName: '${displayName}`,
+    );
+    writeFileSync(indexPath, damaged, "utf8");
+
+    const report = repairVault(vaultRoot);
+
+    const flagged = report.warnings.filter((warning) => warning.kind === "index-not-regenerated");
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0]?.paths).toEqual([rel(workspace.path)]);
+    // Not merely reported — left alone. `displayName` is stored in this
+    // file and nowhere else, so an overwrite here is unrecoverable.
+    expect(readFileSync(indexPath, "utf8")).toBe(damaged);
+
+    // And one refusal does not abort the run: every other index in the
+    // vault was still rebuilt.
+    expect(readFileSync(join(workspace.path, "wiki", "index.md"), "utf8")).toContain("type: index");
+    expect(readFileSync(join(vaultRoot, "system", "index.md"), "utf8")).toContain("type: index");
+  });
+
   test("produces deep-equal reports on two runs over the same corrupted tree", () => {
     // Deliberately only the two conditions repair does NOT resolve — a
     // duplicate and an invalid note are both still there after run one,
