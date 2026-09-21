@@ -87,6 +87,18 @@ export function stringifyNote(frontmatter: NoteFrontmatter, body: string): strin
 }
 
 /**
+ * Builds a rejection carrying a single zod-shaped issue, so a caller
+ * walking `.issues` reads a refusal by this module exactly the way it
+ * reads a schema violation.
+ */
+function refusal(message: string): InvalidNoteFrontmatterError {
+  return new InvalidNoteFrontmatterError([{ code: "custom", path: [], message }]);
+}
+
+const EXECUTABLE_ENGINE_REFUSED =
+  "executable frontmatter engines are not available to managed notes";
+
+/**
  * An engine that refuses to run. Registered below under the names
  * gray-matter would otherwise resolve to its `eval`-based JavaScript
  * engine, so the delimiter check has a second, independent layer beneath
@@ -95,22 +107,10 @@ export function stringifyNote(frontmatter: NoteFrontmatter, body: string): strin
  */
 const REFUSED_ENGINE = {
   parse(): never {
-    throw new InvalidNoteFrontmatterError([
-      {
-        code: "custom",
-        path: [],
-        message: "executable frontmatter engines are not available to managed notes",
-      },
-    ]);
+    throw refusal(EXECUTABLE_ENGINE_REFUSED);
   },
   stringify(): never {
-    throw new InvalidNoteFrontmatterError([
-      {
-        code: "custom",
-        path: [],
-        message: "executable frontmatter engines are not available to managed notes",
-      },
-    ]);
+    throw refusal(EXECUTABLE_ENGINE_REFUSED);
   },
 };
 
@@ -142,13 +142,9 @@ function assertPlainYamlDelimiter(raw: string): void {
   const language = firstLine.slice(3).trim().toLowerCase();
   if (language === "" || language === "yaml") return;
 
-  throw new InvalidNoteFrontmatterError([
-    {
-      code: "custom",
-      path: [],
-      message: `frontmatter delimiter carries a language tag (${language}); managed notes are plain YAML`,
-    },
-  ]);
+  throw refusal(
+    `frontmatter delimiter carries a language tag (${language}); managed notes are plain YAML`,
+  );
 }
 
 /**
