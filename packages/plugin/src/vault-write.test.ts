@@ -1,8 +1,10 @@
+import { NOTE_FRONTMATTER_KEY_ORDER, type NoteFrontmatter } from "@ccc/domain";
 import { beforeEach, describe, expect, it } from "vitest";
 import { FakeVault } from "./test-support/fake-obsidian-host.js";
-import { applyConflictSafeUpdate } from "./vault-write.js";
+import { applyConflictSafeUpdate, updateNoteProvenance } from "./vault-write.js";
 
 const NOTE_PATH = "workspaces/mfz0a1b2c3d4e5f6g7h8i9j0k/wiki/note.md";
+const INDEX_PATH = "workspaces/mfz0a1b2c3d4e5f6g7h8i9j0k/wiki/index.md";
 
 const ORIGINAL = "---\nid: n1\n---\noriginal body\n";
 /** What the user typed into the open editor pane while an update was in flight. */
@@ -67,5 +69,196 @@ describe("applyConflictSafeUpdate", () => {
     const rejectsAsyncTransform: RejectsAsyncTransform = true;
 
     expect(returnsPlainString && rejectsAsyncTransform).toBe(true);
+  });
+});
+
+/**
+ * Captured verbatim from `@ccc/vault-repo`'s `stringifyNote()` -- the
+ * service-side writer -- run against the frontmatter reconstructed in
+ * {@link SERVICE_FRONTMATTER} below. It is a golden fixture rather than a
+ * live import because the import-boundary map forbids `@ccc/plugin` from
+ * importing `@ccc/vault-repo`: these two writers must agree on bytes
+ * precisely BECAUSE they can never share code.
+ */
+const SERVICE_SERIALIZED_NOTE = [
+  "---",
+  "id: mfz0a1b2c3d4e5f6g7h8i9j0k",
+  "scope: 'workspace:mfz0a1b2c3d4e5f6g7h8i9j0k'",
+  "stage: wiki",
+  "created: '2026-01-02T03:04:05.000Z'",
+  "updated: '2026-01-02T03:04:05.000Z'",
+  "generatedBy:",
+  "  model: claude-opus-5",
+  "  skill: research",
+  "  automation: daily-brief",
+  "  runId: run-123",
+  "aiGenerated: true",
+  "claimType: summary",
+  "sources:",
+  "  - 'note:abc'",
+  "  - 'https://example.com/a'",
+  "confidence: inferred",
+  "lastReviewed: null",
+  "contentHash: 9f2c",
+  "---",
+  "# Heading",
+  "",
+  "Body line one.",
+  "",
+  "- bullet",
+  "",
+].join("\n");
+
+/** The same note's frontmatter as an object, for mutations to rebuild from. */
+const SERVICE_FRONTMATTER: NoteFrontmatter = {
+  id: "mfz0a1b2c3d4e5f6g7h8i9j0k",
+  scope: "workspace:mfz0a1b2c3d4e5f6g7h8i9j0k",
+  stage: "wiki",
+  created: "2026-01-02T03:04:05.000Z",
+  updated: "2026-01-02T03:04:05.000Z",
+  generatedBy: {
+    model: "claude-opus-5",
+    skill: "research",
+    automation: "daily-brief",
+    runId: "run-123",
+  },
+  aiGenerated: true,
+  claimType: "summary",
+  sources: ["note:abc", "https://example.com/a"],
+  confidence: "inferred",
+  lastReviewed: null,
+  contentHash: "9f2c",
+};
+
+/** The top-level frontmatter keys of `note`, in the order they appear on disk. */
+function frontmatterKeyOrder(note: string): string[] {
+  const block = /^---\n([\s\S]*?)\n---\n/.exec(note);
+  if (!block?.[1]) return [];
+  return [...block[1].matchAll(/^([A-Za-z][A-Za-z0-9]*):/gm)].map((m) => m[1] as string);
+}
+
+describe("updateNoteProvenance", () => {
+  let vault: FakeVault;
+
+  beforeEach(() => {
+    vault = new FakeVault({
+      [NOTE_PATH]: SERVICE_SERIALIZED_NOTE,
+      [INDEX_PATH]: "---\nkind: index\n---\n| id | updated |\n",
+    });
+  });
+
+  it("re-serializes a service-written note byte-for-byte under an identity mutation", async () => {
+    const result = await updateNoteProvenance(
+      vault,
+      vault.file(NOTE_PATH),
+      SERVICE_SERIALIZED_NOTE,
+      (current) => current,
+    );
+
+    expect(result).toBe("applied");
+    expect(
+      Buffer.compare(
+        Buffer.from(vault.read(NOTE_PATH), "utf8"),
+        Buffer.from(SERVICE_SERIALIZED_NOTE, "utf8"),
+      ),
+    ).toBe(0);
+  });
+
+  it("emits keys in NOTE_FRONTMATTER_KEY_ORDER even when the mutation returns them permuted", async () => {
+    // Every key present, rebuilt in reverse -- including the nested
+    // generatedBy map. Insertion order here must not survive to disk.
+    const permuted: NoteFrontmatter = {
+      contentHash: SERVICE_FRONTMATTER.contentHash,
+      lastReviewed: SERVICE_FRONTMATTER.lastReviewed,
+      confidence: SERVICE_FRONTMATTER.confidence,
+      sources: SERVICE_FRONTMATTER.sources,
+      claimType: SERVICE_FRONTMATTER.claimType,
+      aiGenerated: SERVICE_FRONTMATTER.aiGenerated,
+      generatedBy: {
+        runId: "run-123",
+        automation: "daily-brief",
+        skill: "research",
+        model: "claude-opus-5",
+      },
+      updated: SERVICE_FRONTMATTER.updated,
+      created: SERVICE_FRONTMATTER.created,
+      stage: SERVICE_FRONTMATTER.stage,
+      scope: SERVICE_FRONTMATTER.scope,
+      id: SERVICE_FRONTMATTER.id,
+    };
+
+    const result = await updateNoteProvenance(
+      vault,
+      vault.file(NOTE_PATH),
+      SERVICE_SERIALIZED_NOTE,
+      () => permuted,
+    );
+
+    expect(result).toBe("applied");
+    expect(frontmatterKeyOrder(vault.read(NOTE_PATH))).toEqual([...NOTE_FRONTMATTER_KEY_ORDER]);
+    expect(
+      Buffer.compare(
+        Buffer.from(vault.read(NOTE_PATH), "utf8"),
+        Buffer.from(SERVICE_SERIALIZED_NOTE, "utf8"),
+      ),
+    ).toBe(0);
+  });
+
+  it("changes exactly one frontmatter line and no body line when the mutation bumps updated", async () => {
+    await updateNoteProvenance(
+      vault,
+      vault.file(NOTE_PATH),
+      SERVICE_SERIALIZED_NOTE,
+      (current) => ({
+        ...current,
+        updated: "2026-03-04T05:06:07.000Z",
+      }),
+    );
+
+    const before = SERVICE_SERIALIZED_NOTE.split("\n");
+    const after = vault.read(NOTE_PATH).split("\n");
+    expect(after).toHaveLength(before.length);
+
+    const changed = before.flatMap((line, i) => (line === after[i] ? [] : [i]));
+    expect(changed).toHaveLength(1);
+
+    const closingDelimiter = before.indexOf("---", 1);
+    expect(changed[0]).toBeLessThan(closingDelimiter);
+    expect(after[changed[0] as number]).toBe("updated: '2026-03-04T05:06:07.000Z'");
+  });
+
+  it("writes exactly one file, the note itself, and never a folder index", async () => {
+    await updateNoteProvenance(
+      vault,
+      vault.file(NOTE_PATH),
+      SERVICE_SERIALIZED_NOTE,
+      (current) => ({
+        ...current,
+        lastReviewed: "2026-03-04T05:06:07.000Z",
+      }),
+    );
+
+    expect(vault.writtenPaths).toEqual([NOTE_PATH]);
+    expect(vault.writtenPaths.some((p) => p.endsWith("index.md"))).toBe(false);
+    expect(vault.read(INDEX_PATH)).toBe("---\nkind: index\n---\n| id | updated |\n");
+  });
+
+  it("reports conflict without ever invoking the mutation when the note changed since the caller's read", async () => {
+    const edited = SERVICE_SERIALIZED_NOTE.replace("Body line one.", "Body line one, still typing");
+    vault.setExternally(NOTE_PATH, edited);
+
+    const result = await updateNoteProvenance(
+      vault,
+      vault.file(NOTE_PATH),
+      SERVICE_SERIALIZED_NOTE,
+      () => {
+        throw new Error("the mutation must never run against content the caller did not read");
+      },
+    );
+
+    expect(result).toBe("conflict");
+    expect(
+      Buffer.compare(Buffer.from(vault.read(NOTE_PATH), "utf8"), Buffer.from(edited, "utf8")),
+    ).toBe(0);
   });
 });
