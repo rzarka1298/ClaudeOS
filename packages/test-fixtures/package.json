@@ -21,7 +21,8 @@
     "@ccc/domain": "workspace:*",
     "@ccc/operational-store": "workspace:*",
     "@ccc/service": "workspace:*",
-    "@ccc/service-api-client": "workspace:*"
+    "@ccc/service-api-client": "workspace:*",
+    "@ccc/vault-repo": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.13.4",

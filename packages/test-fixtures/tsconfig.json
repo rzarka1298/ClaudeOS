@@ -9,6 +9,7 @@
     { "path": "../domain" },
     { "path": "../operational-store" },
     { "path": "../service" },
-    { "path": "../service-api-client" }
+    { "path": "../service-api-client" },
+    { "path": "../vault-repo" }
   ]
 }

@@ -16,5 +16,12 @@
     "typecheck": "tsc -b",
     "test": "vitest run --passWithNoTests",
     "lint": "biome check ."
+  },
+  "dependencies": {
+    "@ccc/domain": "workspace:*",
+    "gray-matter": "4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.4"
   }
 }
