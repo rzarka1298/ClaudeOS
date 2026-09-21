@@ -16,7 +16,12 @@ import {
   NoteFrontmatterSchema,
 } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { InvalidNoteFrontmatterError, parseNote, stringifyNote } from "./frontmatter.js";
+import {
+  InvalidNoteFrontmatterError,
+  parseNote,
+  parseUntrustedFrontmatter,
+  stringifyNote,
+} from "./frontmatter.js";
 
 const SENTINEL = "__cccFrontmatterEvalSentinel";
 
@@ -258,6 +263,55 @@ describe("parseNote deserialization safety", () => {
     expect(paths).toContain("scope");
     expect(paths).toContain("stage");
     expect(paths).toContain("confidence");
+  });
+});
+
+// The identity read-back in `index-generation.ts` parses a file whose
+// frontmatter is NOT `NoteFrontmatterSchema`-shaped, so it cannot go
+// through `parseNote`. These assert that the escape hatch it does use
+// carries the same two defences — the omission of exactly this coverage is
+// what let a bare `matter(raw)` survive in that module.
+describe("parseUntrustedFrontmatter", () => {
+  test("a ---js language-tagged delimiter is refused and never evaluated", () => {
+    const raw = `---js\n{ pwn: (globalThis['${SENTINEL}'] = 'index-identity') }\n---\nbody\n`;
+
+    expect(() => parseUntrustedFrontmatter(raw)).toThrow(InvalidNoteFrontmatterError);
+    expect(evaluated()).toBe(false);
+  });
+
+  test("every spelling of the language tag is refused, and a !!js/function tag is inert", () => {
+    const variants = [
+      `﻿---js\n{ pwn: (globalThis['${SENTINEL}'] = 'bom') }\n---\nbody\n`,
+      `--- js\n{ pwn: (globalThis['${SENTINEL}'] = 'space') }\n---\nbody\n`,
+      `---\tjs\n{ pwn: (globalThis['${SENTINEL}'] = 'tab') }\n---\nbody\n`,
+      `---JAVASCRIPT\n{ pwn: (globalThis['${SENTINEL}'] = 'caps') }\n---\nbody\n`,
+      `---js\r\n{ pwn: (globalThis['${SENTINEL}'] = 'crlf') }\r\n---\r\nbody\r\n`,
+    ];
+
+    for (const raw of variants) {
+      expect(() => parseUntrustedFrontmatter(raw)).toThrow(InvalidNoteFrontmatterError);
+    }
+
+    const yamlTag = [
+      "---",
+      "type: index",
+      `pwn: !!js/function "function(){ globalThis['${SENTINEL}'] = 'yaml-tag'; return 1; }"`,
+      "---",
+      "body",
+      "",
+    ].join("\n");
+    expect(() => parseUntrustedFrontmatter(yamlTag)).toThrow();
+    expect(evaluated()).toBe(false);
+  });
+
+  test("an ordinary index frontmatter block still parses, unvalidated", () => {
+    const raw = "---\ntype: index\nfolder: global/wiki\nworkspaceId: w1\n---\n# Index\n";
+
+    expect(parseUntrustedFrontmatter(raw)).toEqual({
+      type: "index",
+      folder: "global/wiki",
+      workspaceId: "w1",
+    });
   });
 });
 

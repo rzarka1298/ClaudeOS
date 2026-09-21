@@ -26,10 +26,23 @@ import { writeNote } from "./write-note.js";
 
 const TEST_BASE = join(homedir(), ".ccc-test");
 
+/** Set by any frontmatter gray-matter was tricked into EVALUATING. Asserted
+ * on rather than on a thrown error alone: "rejected" is not the property
+ * that matters, "never executed" is (the same discipline
+ * `frontmatter.test.ts` establishes). */
+const SENTINEL = "__cccIndexEvalSentinel";
+
+type Sentinel = Record<string, unknown>;
+
+function evaluated(): unknown {
+  return (globalThis as Sentinel)[SENTINEL];
+}
+
 let vaultRoot: string;
 let folder: string;
 
 beforeEach(() => {
+  (globalThis as Sentinel)[SENTINEL] = false;
   mkdirSync(TEST_BASE, { recursive: true });
   vaultRoot = mkdtempSync(join(TEST_BASE, "vidx-"));
   folder = join(vaultRoot, "global", "wiki");
@@ -37,6 +50,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete (globalThis as Sentinel)[SENTINEL];
   rmSync(vaultRoot, { recursive: true, force: true });
 });
 
@@ -239,6 +253,31 @@ describe("regenerateIndex", () => {
     // itself — the classic self-referential drift.
     const again = regenerateIndex(folder, { vaultRoot });
     expect(again.noteCount).toBe(1);
+  });
+
+  test("an index.md whose delimiter is ---js is never evaluated during the identity read-back", () => {
+    // The identity read-back is the one place this module parses a file it
+    // did not write. `index.md` is ordinary vault content, so a synced or
+    // hand-edited one carrying gray-matter's `js` language tag would reach
+    // an `eval` inside the companion-service process (threat T-02-03) —
+    // the same surface `parseNote` closes, on the path that skipped it.
+    writeFileSync(
+      join(folder, "index.md"),
+      `---js\n{ workspaceId: (globalThis['${SENTINEL}'] = 'index-rce'), displayName: 'x' }\n---\n# Index\n`,
+      "utf8",
+    );
+    seedNote(folder, "alpha.md", { id: "id-alpha", created: "2026-01-01T00:00:00.000Z" });
+
+    const result = regenerateIndex(folder, { vaultRoot });
+
+    // "Never evaluated", not merely "rejected afterwards": a parser that
+    // runs the code and then discards the value has already lost.
+    expect(evaluated()).toBe(false);
+    // Regeneration of a non-workspace folder still succeeds — an unreadable
+    // derived artifact is replaced, which is the whole point of one.
+    expect(result.noteCount).toBe(1);
+    expect(result.content).toContain("id-alpha");
+    expect(result.content).not.toContain("index-rce");
   });
 
   test("the generated frontmatter records the folder path relative to the vault root", () => {

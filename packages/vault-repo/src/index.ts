@@ -10,7 +10,12 @@ export interface VaultRepository {
 
 export { AtomicWriteError, atomicWriteFileSync } from "./atomic-write.js";
 export type { ParsedNote } from "./frontmatter.js";
-export { InvalidNoteFrontmatterError, parseNote, stringifyNote } from "./frontmatter.js";
+export {
+  InvalidNoteFrontmatterError,
+  parseNote,
+  parseUntrustedFrontmatter,
+  stringifyNote,
+} from "./frontmatter.js";
 export type {
   IndexIdentity,
   RegeneratedIndex,

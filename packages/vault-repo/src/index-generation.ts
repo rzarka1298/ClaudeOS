@@ -3,7 +3,7 @@ import { join, relative, sep } from "node:path";
 import { checkPathContainment } from "@ccc/domain";
 import matter from "gray-matter";
 import { atomicWriteFileSync } from "./atomic-write.js";
-import { parseNote } from "./frontmatter.js";
+import { parseNote, parseUntrustedFrontmatter } from "./frontmatter.js";
 
 /** The one generated file this module owns, in every managed folder. */
 const INDEX_FILENAME = "index.md";
@@ -158,7 +158,13 @@ function readIdentity(indexPath: string): IndexIdentity | undefined {
     return undefined;
   }
   try {
-    const data = matter(raw).data as Record<string, unknown>;
+    // NEVER `matter(raw)` here. An `index.md` is ordinary vault content —
+    // hand-editable in Obsidian, synced in by Obsidian Sync/iCloud/git —
+    // and gray-matter resolves a `---js` opening delimiter to an
+    // `eval`-based engine. `parseUntrustedFrontmatter` applies the same
+    // two layers `parseNote` does (delimiter assertion, then refusing
+    // engines) and is the only parse this module is permitted to make.
+    const data = parseUntrustedFrontmatter(raw);
     const workspaceId = data.workspaceId;
     const displayName = data.displayName;
     if (typeof workspaceId !== "string" || typeof displayName !== "string") return undefined;

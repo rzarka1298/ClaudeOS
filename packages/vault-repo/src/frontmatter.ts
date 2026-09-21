@@ -148,6 +148,44 @@ function assertPlainYamlDelimiter(raw: string): void {
 }
 
 /**
+ * The gray-matter options EVERY parse in this repository must use.
+ *
+ * Passing an options object is load-bearing twice over. It registers the
+ * refusing engines under the three names gray-matter would otherwise
+ * resolve to its `eval`-based JavaScript engine, AND it suppresses
+ * gray-matter's module-level `matter.cache` — `matter(file)` with no
+ * options stores the parsed file keyed by its full content and never
+ * evicts it, so a long-running service that read every `index.md` in a
+ * large vault would retain all of them for the process lifetime.
+ */
+const HARDENED_MATTER_OPTIONS = {
+  engines: { javascript: REFUSED_ENGINE, js: REFUSED_ENGINE, coffee: REFUSED_ENGINE },
+};
+
+/**
+ * Parses UNTRUSTED front matter out of a raw file and returns the data
+ * map, with both of {@link parseNote}'s deserialization defences applied
+ * and no schema validation on top.
+ *
+ * This exists so that the one read in this package that is NOT a managed
+ * note — `index-generation.ts`'s identity read-back, whose frontmatter is
+ * the index's own `type`/`folder`/`workspaceId` shape rather than
+ * `NoteFrontmatterSchema`'s — cannot be written any other way. Calling
+ * `matter(raw)` directly is the exact defect this function exists to make
+ * unrepresentable: an `index.md` is ordinary vault content (hand-editable
+ * in Obsidian, synced in by Obsidian Sync, iCloud or git), so one whose
+ * first line is `---js` would otherwise reach gray-matter's `eval`-based
+ * engine inside the companion-service process.
+ *
+ * @throws {InvalidNoteFrontmatterError} when the opening delimiter carries
+ *   a language tag, or when the YAML itself does not parse.
+ */
+export function parseUntrustedFrontmatter(raw: string): Record<string, unknown> {
+  assertPlainYamlDelimiter(raw);
+  return matter(raw, HARDENED_MATTER_OPTIONS).data as Record<string, unknown>;
+}
+
+/**
  * Parses a raw note, validating its frontmatter through
  * `NoteFrontmatterSchema` before any field is trusted.
  *
@@ -167,9 +205,7 @@ function assertPlainYamlDelimiter(raw: string): void {
 export function parseNote(raw: string): ParsedNote {
   assertPlainYamlDelimiter(raw);
 
-  const parsed = matter(raw, {
-    engines: { javascript: REFUSED_ENGINE, js: REFUSED_ENGINE, coffee: REFUSED_ENGINE },
-  });
+  const parsed = matter(raw, HARDENED_MATTER_OPTIONS);
   const result = NoteFrontmatterSchema.safeParse(parsed.data);
   if (!result.success) {
     throw new InvalidNoteFrontmatterError(result.error.issues);
