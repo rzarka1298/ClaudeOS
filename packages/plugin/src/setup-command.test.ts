@@ -9,7 +9,7 @@ import {
   type VaultSetupUi,
 } from "./setup-command.js";
 
-const VAULT_ROOT = "/Users/someone/Vault";
+const VAULT_ROOT = "/Users/USERNAME/Vault";
 
 const PLAN: VaultSetupPlanResponse = {
   vaultRoot: VAULT_ROOT,
@@ -32,7 +32,7 @@ function harness(opts: {
   vaultPath?: string | null;
   confirm?: boolean;
   replies?: Record<string, { status: number; body: unknown }>;
-  throwOn?: { path: string; error: unknown };
+  throwOn?: { path: string; error: Error };
 }): Harness {
   const notices: string[] = [];
   const paths: string[] = [];

@@ -47,7 +47,7 @@ describe("vault-setup route paths", () => {
 
 describe("VaultSetupRequestSchema", () => {
   it("accepts an absolute vault root", () => {
-    expect(VaultSetupRequestSchema.safeParse({ vaultRoot: "/Users/someone/Vault" }).success).toBe(
+    expect(VaultSetupRequestSchema.safeParse({ vaultRoot: "/Users/USERNAME/Vault" }).success).toBe(
       true,
     );
   });
@@ -73,7 +73,7 @@ describe("VaultSetupRequestSchema", () => {
 describe("VaultSetupPlanResponseSchema", () => {
   it("accepts a plan whose entries carry relativePath, kind and exists", () => {
     const result = VaultSetupPlanResponseSchema.safeParse({
-      vaultRoot: "/Users/someone/Vault",
+      vaultRoot: "/Users/USERNAME/Vault",
       entries: [
         { relativePath: "global", kind: "folder", exists: false },
         { relativePath: "global/index.md", kind: "index", exists: true },
@@ -85,7 +85,7 @@ describe("VaultSetupPlanResponseSchema", () => {
 
   it("rejects an entry whose kind is not one of the three managed kinds", () => {
     const result = VaultSetupPlanResponseSchema.safeParse({
-      vaultRoot: "/Users/someone/Vault",
+      vaultRoot: "/Users/USERNAME/Vault",
       entries: [{ relativePath: "global", kind: "symlink", exists: false }],
     });
     expect(result.success).toBe(false);
@@ -93,7 +93,7 @@ describe("VaultSetupPlanResponseSchema", () => {
 
   it("rejects an entry missing its exists flag — the display contract needs it on every row", () => {
     const result = VaultSetupPlanResponseSchema.safeParse({
-      vaultRoot: "/Users/someone/Vault",
+      vaultRoot: "/Users/USERNAME/Vault",
       entries: [{ relativePath: "global", kind: "folder" }],
     });
     expect(result.success).toBe(false);
