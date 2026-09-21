@@ -17,6 +17,21 @@ export type {
   RegenerateIndexOptions,
 } from "./index-generation.js";
 export { IndexOutsideVaultError, regenerateIndex } from "./index-generation.js";
+export type {
+  CreatedWorkspace,
+  VaultSetupEntry,
+  VaultSetupEntryKind,
+  VaultSetupPlan,
+  VaultSetupResult,
+} from "./setup.js";
+export {
+  computeSetupEntries,
+  createWorkspace,
+  initializeVault,
+  planVaultSetup,
+  VaultRootMissingError,
+} from "./setup.js";
+export { VAULT_CLAUDE_MD } from "./vault-claude-md.js";
 export { assertScopedWrite, WorkspaceScopeViolationError } from "./workspace-scope.js";
 export type { WriteNoteOptions, WrittenNote } from "./write-note.js";
 export { writeNote } from "./write-note.js";
