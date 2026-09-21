@@ -15,6 +15,18 @@ import matter from "gray-matter";
 export interface ParsedNote {
   readonly frontmatter: NoteFrontmatter;
   readonly body: string;
+  /**
+   * Frontmatter keys the provenance schema does not own — `tags`,
+   * `aliases`, `cssclasses`, Dataview inline fields and anything else the
+   * user put there.
+   *
+   * `NoteFrontmatterSchema` is a plain `z.object`, so zod strips these from
+   * `frontmatter`. Returning them separately is what lets a caller that
+   * re-serializes a parsed note put them back: a read-modify-write that
+   * dropped them would be silent, permanent user-data loss in code whose
+   * whole contract is that it never rewrites what it did not author.
+   */
+  readonly passthrough: Record<string, unknown>;
 }
 
 /**
@@ -75,13 +87,28 @@ function orderedGeneratedBy(value: GeneratedBy): Record<string, string> {
  * is acceptable. Passing a file-shaped object skips that re-parse; the
  * bytes are identical for every body that does not start with a delimiter.
  */
-export function stringifyNote(frontmatter: NoteFrontmatter, body: string): string {
+export function stringifyNote(
+  frontmatter: NoteFrontmatter,
+  body: string,
+  passthrough: Readonly<Record<string, unknown>> = {},
+): string {
   const source = frontmatter as unknown as Record<string, unknown>;
   const ordered: Record<string, unknown> = {};
   for (const key of NOTE_FRONTMATTER_KEY_ORDER) {
     const value = source[key];
     if (value === undefined) continue;
     ordered[key] = key === "generatedBy" ? orderedGeneratedBy(value as GeneratedBy) : value;
+  }
+  // The user's own keys follow the managed block, in the order they were
+  // read — the same placement and ordering rule the plugin-side writer
+  // uses, so a note updated by either process keeps the same bytes.
+  // Schema-owned keys are never taken from here: a caller cannot use
+  // `passthrough` to forge or override provenance.
+  for (const [key, value] of Object.entries(passthrough)) {
+    if (value === undefined) continue;
+    if (key in ordered) continue;
+    if ((NOTE_FRONTMATTER_KEY_ORDER as readonly string[]).includes(key)) continue;
+    ordered[key] = value;
   }
   return matter.stringify({ content: body }, ordered);
 }
@@ -210,5 +237,14 @@ export function parseNote(raw: string): ParsedNote {
   if (!result.success) {
     throw new InvalidNoteFrontmatterError(result.error.issues);
   }
-  return { frontmatter: result.data, body: parsed.content };
+
+  // Everything zod stripped is the user's, and is handed back separately
+  // rather than discarded — see {@link ParsedNote.passthrough}.
+  const owned = new Set<string>(NOTE_FRONTMATTER_KEY_ORDER);
+  const passthrough: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parsed.data as Record<string, unknown>)) {
+    if (!owned.has(key)) passthrough[key] = value;
+  }
+
+  return { frontmatter: result.data, body: parsed.content, passthrough };
 }

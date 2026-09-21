@@ -248,6 +248,45 @@ function serializeFrontmatter(frontmatter: NoteFrontmatter): string {
 }
 
 /**
+ * The frontmatter keys this module does NOT own, emitted verbatim after the
+ * managed block.
+ *
+ * `NoteFrontmatterSchema` is a plain `z.object`, and zod strips unknown keys
+ * by default -- so `validated.data` holds only the twelve provenance keys.
+ * Rebuilding the whole block from it would DELETE everything else, and in an
+ * Obsidian vault "everything else" is not exotic: `tags`, `aliases`,
+ * `cssclasses`, `publish`, Dataview inline fields and Templater metadata all
+ * live in note frontmatter and are load-bearing for search, graph and
+ * theming. Losing them would be exactly the silent destruction this module's
+ * contract says it never performs.
+ *
+ * Original key order is preserved (`Object.entries` walks insertion order,
+ * and the YAML parse inserts in document order), so a provenance update is
+ * byte-stable for the user's own keys too.
+ */
+function passthroughKeys(parsed: unknown): [string, unknown][] {
+  if (typeof parsed !== "object" || parsed === null) return [];
+  const owned = new Set<string>(NOTE_FRONTMATTER_KEY_ORDER);
+  return Object.entries(parsed as Record<string, unknown>).filter(([key]) => !owned.has(key));
+}
+
+/** Serializes the user's own keys one entry at a time, for the same reason
+ * {@link serializeFrontmatter} does: a single-entry dump is byte-identical
+ * to that entry's lines inside a whole-object dump, and emitting one key at
+ * a time keeps order a property of this loop rather than of the library. */
+function serializePassthrough(entries: readonly [string, unknown][]): string {
+  let out = "";
+  for (const [key, value] of entries) {
+    // js-yaml refuses to dump `undefined`; a key whose parsed value is
+    // `undefined` carries no information to preserve, so dropping it loses
+    // nothing a round-trip could have kept.
+    if (value === undefined) continue;
+    out += stringifyYaml({ [key]: value });
+  }
+  return out;
+}
+
+/**
  * A pure transformation of a note's validated provenance frontmatter --
  * bump `updated`, set `lastReviewed`, and so on. Receives a value that has
  * already passed `NoteFrontmatterSchema`, and must return one too.
@@ -300,7 +339,12 @@ export function updateNoteProvenance(
     }
 
     // The body is carried across verbatim -- this module rewrites the
-    // frontmatter block and nothing else, so no prose byte can move.
-    return `${FRONTMATTER_OPEN}${serializeFrontmatter(mutate(validated.data))}${FRONTMATTER_CLOSE}${note.body}`;
+    // frontmatter block and nothing else, so no prose byte can move. Keys
+    // outside the provenance schema belong to the USER and are re-emitted
+    // after the managed block rather than dropped (see
+    // {@link passthroughKeys}).
+    const managed = serializeFrontmatter(mutate(validated.data));
+    const extra = serializePassthrough(passthroughKeys(parsed));
+    return `${FRONTMATTER_OPEN}${managed}${extra}${FRONTMATTER_CLOSE}${note.body}`;
   });
 }

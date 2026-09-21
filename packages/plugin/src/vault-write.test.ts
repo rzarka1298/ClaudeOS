@@ -243,6 +243,57 @@ describe("updateNoteProvenance", () => {
     expect(vault.read(INDEX_PATH)).toBe("---\nkind: index\n---\n| id | updated |\n");
   });
 
+  it("preserves user-authored frontmatter keys the provenance schema does not own", async () => {
+    // `NoteFrontmatterSchema` is a plain `z.object`, so zod strips unknown
+    // keys -- and rebuilding the block from the stripped value would DELETE
+    // them. In an Obsidian vault these are not exotic: `tags`, `aliases`
+    // and `cssclasses` drive search, graph and theming, and their loss
+    // would be silent, permanent, and invisible until the user went looking.
+    const withUserKeys = SERVICE_SERIALIZED_NOTE.replace(
+      "contentHash: 9f2c\n---",
+      [
+        "contentHash: 9f2c",
+        "tags:",
+        "  - research",
+        "  - obsidian",
+        "aliases:",
+        "  - The Note",
+        "cssclasses: wide-table",
+        "dataviewField: 42",
+        "---",
+      ].join("\n"),
+    );
+    vault.setExternally(NOTE_PATH, withUserKeys);
+
+    const result = await updateNoteProvenance(
+      vault,
+      vault.file(NOTE_PATH),
+      withUserKeys,
+      (current) => ({ ...current, updated: "2026-03-04T05:06:07.000Z" }),
+    );
+
+    expect(result).toBe("applied");
+    const after = vault.read(NOTE_PATH);
+    // The managed keys still lead, in canonical order, with the user's own
+    // keys following in the order they were read.
+    expect(frontmatterKeyOrder(after)).toEqual([
+      ...NOTE_FRONTMATTER_KEY_ORDER,
+      "tags",
+      "aliases",
+      "cssclasses",
+      "dataviewField",
+    ]);
+    expect(after).toContain("- research");
+    expect(after).toContain("- obsidian");
+    expect(after).toContain("- The Note");
+    expect(after).toContain("cssclasses: wide-table");
+    expect(after).toContain("dataviewField: 42");
+    // The one provenance line the mutation asked for is the only managed
+    // change, and the body is untouched.
+    expect(after).toContain("updated: '2026-03-04T05:06:07.000Z'");
+    expect(after.endsWith("# Heading\n\nBody line one.\n\n- bullet\n")).toBe(true);
+  });
+
   it("reports conflict without ever invoking the mutation when the note changed since the caller's read", async () => {
     const edited = SERVICE_SERIALIZED_NOTE.replace("Body line one.", "Body line one, still typing");
     vault.setExternally(NOTE_PATH, edited);

@@ -266,6 +266,66 @@ describe("parseNote deserialization safety", () => {
   });
 });
 
+// The read-modify-write round trip. `NoteFrontmatterSchema` strips unknown
+// keys, so a caller that parsed a note and re-serialized it would delete
+// every key the user put there. The plugin-side writer had exactly that
+// defect; these hold the service-side pair to the same contract before any
+// service path gains a read-modify-write.
+describe("user-authored frontmatter keys survive a parse/stringify round trip", () => {
+  const USER_KEYS = ["tags:", "  - research", "aliases:", "  - The Note", "cssclasses: wide"];
+
+  function noteWithUserKeys(): string {
+    const serialized = stringifyNote(fullFrontmatter(), "# Body\n");
+    return serialized.replace(/\n---\n/, `\n${USER_KEYS.join("\n")}\n---\n`);
+  }
+
+  test("parseNote returns them separately rather than discarding them", () => {
+    const parsed = parseNote(noteWithUserKeys());
+
+    expect(parsed.passthrough).toEqual({
+      tags: ["research"],
+      aliases: ["The Note"],
+      cssclasses: "wide",
+    });
+    // And they are absent from the validated value, which is what makes
+    // carrying them separately necessary rather than merely tidy.
+    expect(Object.keys(parsed.frontmatter)).not.toContain("tags");
+  });
+
+  test("stringifyNote re-emits them after the managed block, in read order", () => {
+    const parsed = parseNote(noteWithUserKeys());
+
+    const round = stringifyNote(parsed.frontmatter, parsed.body, parsed.passthrough);
+
+    expect(topLevelKeys(round)).toEqual([
+      ...NOTE_FRONTMATTER_KEY_ORDER,
+      "tags",
+      "aliases",
+      "cssclasses",
+    ]);
+    expect(parseNote(round).passthrough).toEqual(parsed.passthrough);
+    expect(parseNote(round).body).toBe(parsed.body);
+  });
+
+  test("passthrough can neither forge nor override a schema-owned key", () => {
+    const forged = stringifyNote(minimalFrontmatter(), "# Body\n", {
+      id: "forged",
+      stage: "deliverable",
+      tags: ["kept"],
+    });
+
+    expect(parseNote(forged).frontmatter.id).toBe("0000000001234567890abcdef");
+    expect(parseNote(forged).frontmatter.stage).toBe("capture");
+    expect(parseNote(forged).passthrough).toEqual({ tags: ["kept"] });
+  });
+
+  test("omitting the argument leaves the managed-only output byte-identical", () => {
+    expect(stringifyNote(fullFrontmatter(), "# Body\n", {})).toBe(
+      stringifyNote(fullFrontmatter(), "# Body\n"),
+    );
+  });
+});
+
 // The identity read-back in `index-generation.ts` parses a file whose
 // frontmatter is NOT `NoteFrontmatterSchema`-shaped, so it cannot go
 // through `parseNote`. These assert that the escape hatch it does use
