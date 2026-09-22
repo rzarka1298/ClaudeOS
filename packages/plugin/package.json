@@ -22,6 +22,7 @@
     "@ccc/domain": "workspace:*",
     "@ccc/service-api-client": "workspace:*",
     "@preact/signals": "2.11.2",
+    "js-yaml": "3.15.2",
     "preact": "10.29.8"
   },
   "devDependencies": {
@@ -30,7 +31,6 @@
     "esbuild": "0.28.2",
     "eslint": "10.10.0",
     "eslint-plugin-obsidianmd": "0.4.2",
-    "js-yaml": "3.15.2",
     "jsdom": "30.0.1",
     "obsidian": "1.13.1",
     "typescript-eslint": "8.70.0"

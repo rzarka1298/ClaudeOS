@@ -274,10 +274,10 @@ describe("serializePassthroughFrontmatter", () => {
   it("drops an entry whose value is undefined rather than throwing, since js-yaml cannot dump it", () => {
     expectSameBytes(
       serializePassthroughFrontmatter([
-        ["kept", "yes"],
+        ["kept", "keep-me"],
         ["dropped", undefined],
       ]),
-      "kept: yes\n",
+      "kept: keep-me\n",
     );
   });
 
@@ -300,5 +300,32 @@ describe("serializer independence from the Obsidian API", () => {
       .map((line) => line.replace(/\/\/.*$/, ""));
 
     expect(code.filter((line) => /["']obsidian["']/.test(line))).toEqual([]);
+  });
+
+  it("ships js-yaml as a runtime dependency, not a devDependency", () => {
+    // A devDependency would satisfy the test runner and then be absent from
+    // the published/sideloaded plugin folder — the serializer would resolve
+    // nothing at load time. js-yaml is now production code.
+    const pkg = JSON.parse(readFileSync(join(SRC_DIR, "..", "package.json"), "utf8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(pkg.dependencies?.["js-yaml"]).toBeDefined();
+    expect(pkg.devDependencies?.["js-yaml"]).toBeUndefined();
+  });
+
+  it("does not externalise js-yaml from the esbuild bundle", () => {
+    // Obsidian externalises `obsidian`, `electron` and the CodeMirror
+    // packages because the application PROVIDES them at runtime. It provides
+    // no js-yaml to a plugin, so adding js-yaml to that list would turn a
+    // bundled module into an unresolvable `require` at load time. This is the
+    // machine check for the one esbuild setting GAP-1's fix depends on.
+    const config = readFileSync(join(SRC_DIR, "..", "esbuild.config.mjs"), "utf8");
+    const externalBlock = /external:\s*\[([\s\S]*?)\]/.exec(config)?.[1] ?? "";
+
+    expect(externalBlock).not.toBe("");
+    expect(externalBlock).toContain('"obsidian"');
+    expect(externalBlock).not.toContain("js-yaml");
   });
 });
