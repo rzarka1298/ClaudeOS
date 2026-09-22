@@ -98,6 +98,9 @@ importers:
       '@preact/signals':
         specifier: 2.11.2
         version: 2.11.2(preact@10.29.8)
+      js-yaml:
+        specifier: 3.15.2
+        version: 3.15.2
       preact:
         specifier: 10.29.8
         version: 10.29.8
@@ -117,9 +120,6 @@ importers:
       eslint-plugin-obsidianmd:
         specifier: 0.4.2
         version: 0.4.2(@eslint/js@9.39.5)(@eslint/json@0.14.0)(@typescript-eslint/parser@8.70.0(eslint@10.10.0(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3))(eslint@10.10.0(supports-color@7.2.0))(obsidian@1.13.1(@codemirror/state@6.5.0)(@codemirror/view@6.38.6))(supports-color@7.2.0)(typescript-eslint@8.70.0(eslint@10.10.0(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3))
-      js-yaml:
-        specifier: 3.15.2
-        version: 3.15.2
       jsdom:
         specifier: 30.0.1
         version: 30.0.1

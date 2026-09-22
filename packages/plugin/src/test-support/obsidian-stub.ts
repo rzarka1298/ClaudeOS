@@ -17,26 +17,31 @@ import yaml from "js-yaml";
  * double is reviewable, is shared by every test, and cannot drift
  * test-by-test.
  *
- * Fidelity note, stated plainly because the byte-parity test leans on it:
- * Obsidian's `parseYaml`/`stringifyYaml` are documented as its bundled
- * js-yaml surface, and this stub calls js-yaml directly with the same
- * `safeLoad`/`safeDump` entry points gray-matter uses service-side. What
- * that proves in-repo is that this module's key-ordering logic reproduces
- * the service's bytes through one shared engine. What it cannot prove is
- * that Obsidian's own build passes identical dump options -- that residual
- * is exactly what the live-Obsidian UAT in this phase's verification
- * covers, and it is the reason the parity claim is asserted here rather
- * than assumed anywhere.
+ * ## Why there is no `stringifyYaml` here
+ *
+ * There used to be, backed by js-yaml's `safeDump`, and the byte-parity
+ * test leaned on it. The live-Obsidian UAT (2026-09-22) proved that
+ * stand-in was WRONG: Obsidian's real `stringifyYaml` differs from js-yaml
+ * in quote style, astral-plane escaping and number-like strings (GAP-1). A
+ * stub cannot model a serializer whose options it cannot observe, so it no
+ * longer pretends to -- the plugin serializes managed frontmatter through
+ * its own bundled js-yaml (`../frontmatter-serializer.ts`) instead.
+ *
+ * Its ABSENCE is now a guard: production code that reaches back for
+ * `stringifyYaml` fails at import time under Vitest, independently of the
+ * source scans in `vault-write.test.ts` and
+ * `frontmatter-serializer.test.ts`. Do not add it back.
+ *
+ * `parseYaml` stays, and is faithful for a different reason: it is a
+ * PARSE, and both sides reach js-yaml's `safeLoad` (gray-matter's default
+ * engine service-side). Its result is handed straight to a zod validation
+ * before any field is read (threat T-02-08), so a parse difference would
+ * surface as a refusal rather than as silently divergent bytes.
  */
 
 /** Mirrors obsidian's `parseYaml(yaml: string): any`. */
 export function parseYaml(input: string): unknown {
   return yaml.safeLoad(input);
-}
-
-/** Mirrors obsidian's `stringifyYaml(obj: any): string`. */
-export function stringifyYaml(obj: unknown): string {
-  return yaml.safeDump(obj);
 }
 
 /**

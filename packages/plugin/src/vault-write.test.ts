@@ -1,7 +1,12 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { NOTE_FRONTMATTER_KEY_ORDER, type NoteFrontmatter } from "@ccc/domain";
 import { beforeEach, describe, expect, it } from "vitest";
 import { FakeVault } from "./test-support/fake-obsidian-host.js";
 import { applyConflictSafeUpdate, updateNoteProvenance } from "./vault-write.js";
+
+const SRC_DIR = dirname(fileURLToPath(import.meta.url));
 
 const NOTE_PATH = "workspaces/mfz0a1b2c3d4e5f6g7h8i9j0k/wiki/note.md";
 const INDEX_PATH = "workspaces/mfz0a1b2c3d4e5f6g7h8i9j0k/wiki/index.md";
@@ -311,5 +316,43 @@ describe("updateNoteProvenance", () => {
     expect(
       Buffer.compare(Buffer.from(vault.read(NOTE_PATH), "utf8"), Buffer.from(edited, "utf8")),
     ).toBe(0);
+  });
+});
+
+describe("managed-frontmatter serialization discipline", () => {
+  /** Blanks comment text while preserving line numbering, so the scan reads
+   * CODE only -- the module most likely to name the forbidden call is the one
+   * documenting why it is forbidden. */
+  function codeLines(source: string): string[] {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, " "))
+      .split("\n")
+      .map((line) => line.replace(/\/\/.*$/, ""));
+  }
+
+  it("never calls Obsidian's stringifyYaml", () => {
+    // The live UAT (2026-09-22) proved Obsidian's stringifyYaml is NOT the
+    // service's js-yaml -- it differs in quote style, astral-plane escaping
+    // and number-like strings -- so routing managed frontmatter back through
+    // it would silently reintroduce GAP-1. A source scan rather than a
+    // behavioural assertion, because under Vitest `obsidian` resolves to a
+    // js-yaml-backed stub that would make the regression invisible.
+    const code = codeLines(readFileSync(join(SRC_DIR, "vault-write.ts"), "utf8"));
+
+    expect(code.filter((line) => /\bstringifyYaml\b/.test(line))).toEqual([]);
+  });
+
+  it("still routes its one untrusted YAML parse through a zod validation", () => {
+    // `parseYaml` MAY remain: on-disk frontmatter is untrusted input, and the
+    // existing discipline is that nothing reads a field off it until
+    // `NoteFrontmatterSchema` has said what shape it is (threat T-02-08).
+    // This pins that pairing so a future edit cannot drop the validation and
+    // leave a bare parse behind.
+    const code = codeLines(readFileSync(join(SRC_DIR, "vault-write.ts"), "utf8"));
+
+    expect(code.filter((line) => /\bparseYaml\s*\(/.test(line))).toHaveLength(1);
+    expect(code.filter((line) => /NoteFrontmatterSchema\.safeParse\s*\(/.test(line))).toHaveLength(
+      1,
+    );
   });
 });
