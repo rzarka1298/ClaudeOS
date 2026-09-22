@@ -1,11 +1,13 @@
 import {
-  GENERATED_BY_KEY_ORDER,
-  type GeneratedBy,
   NOTE_FRONTMATTER_KEY_ORDER,
   type NoteFrontmatter,
   NoteFrontmatterSchema,
 } from "@ccc/domain";
-import { parseYaml, stringifyYaml, type TFile, type Vault } from "obsidian";
+import { parseYaml, type TFile, type Vault } from "obsidian";
+import {
+  serializeManagedFrontmatter,
+  serializePassthroughFrontmatter,
+} from "./frontmatter-serializer.js";
 
 /**
  * The ONLY plugin-side write path for managed notes (VAULT-06).
@@ -207,47 +209,6 @@ function splitNote(raw: string): { frontmatter: string; body: string } | null {
 }
 
 /**
- * Rebuilds the nested `generatedBy` map in `GENERATED_BY_KEY_ORDER`,
- * dropping absent subfields -- the same two rules the service-side
- * serializer follows, and for the same two reasons: YAML cannot dump
- * `undefined`, and an explicit `model: null` would assert "no model" where
- * the schema means "model unknown".
- */
-function orderedGeneratedBy(value: GeneratedBy): Record<string, string> {
-  const ordered: Record<string, string> = {};
-  for (const key of GENERATED_BY_KEY_ORDER) {
-    const sub = value[key];
-    if (sub !== undefined) ordered[key] = sub;
-  }
-  return ordered;
-}
-
-/**
- * Emits the YAML frontmatter body (no delimiters) one key at a time, in
- * `NOTE_FRONTMATTER_KEY_ORDER`.
- *
- * Each key is dumped as its own single-entry document and the results are
- * concatenated. That is what makes the order a property of this loop rather
- * than of the YAML library's object handling: no object with more than one
- * key is ever handed to the serializer at the top level, so there is no
- * insertion order for it to honour or ignore. At top level a single-entry
- * dump is byte-identical to that entry's lines inside a whole-object dump,
- * which is why the output still matches the service writer exactly.
- */
-function serializeFrontmatter(frontmatter: NoteFrontmatter): string {
-  const source = frontmatter as unknown as Record<string, unknown>;
-  let out = "";
-  for (const key of NOTE_FRONTMATTER_KEY_ORDER) {
-    const value = source[key];
-    if (value === undefined) continue;
-    out += stringifyYaml({
-      [key]: key === "generatedBy" ? orderedGeneratedBy(value as GeneratedBy) : value,
-    });
-  }
-  return out;
-}
-
-/**
  * The frontmatter keys this module does NOT own, emitted verbatim after the
  * managed block.
  *
@@ -270,22 +231,6 @@ function passthroughKeys(parsed: unknown): [string, unknown][] {
   return Object.entries(parsed as Record<string, unknown>).filter(([key]) => !owned.has(key));
 }
 
-/** Serializes the user's own keys one entry at a time, for the same reason
- * {@link serializeFrontmatter} does: a single-entry dump is byte-identical
- * to that entry's lines inside a whole-object dump, and emitting one key at
- * a time keeps order a property of this loop rather than of the library. */
-function serializePassthrough(entries: readonly [string, unknown][]): string {
-  let out = "";
-  for (const [key, value] of entries) {
-    // js-yaml refuses to dump `undefined`; a key whose parsed value is
-    // `undefined` carries no information to preserve, so dropping it loses
-    // nothing a round-trip could have kept.
-    if (value === undefined) continue;
-    out += stringifyYaml({ [key]: value });
-  }
-  return out;
-}
-
 /**
  * A pure transformation of a note's validated provenance frontmatter --
  * bump `updated`, set `lastReviewed`, and so on. Receives a value that has
@@ -298,13 +243,16 @@ export type ProvenanceMutation = (current: NoteFrontmatter) => NoteFrontmatter;
  * the result through {@link applyConflictSafeUpdate}, leaving the note body
  * byte-for-byte untouched.
  *
- * The rebuilt block is serialized by walking `NOTE_FRONTMATTER_KEY_ORDER`
- * (and `GENERATED_BY_KEY_ORDER` for the nested map), emitting one key at a
- * time -- never by dumping an object and trusting a YAML library's own
- * ordering. That is what makes a plugin-side update and a service-side
- * `writeNote()` of the same note produce the same bytes: both walk the same
- * exported key arrays, so the output is a function of the note's content
- * alone.
+ * The rebuilt block is serialized ENTIRELY through
+ * {@link ./frontmatter-serializer.js}, which walks
+ * `NOTE_FRONTMATTER_KEY_ORDER` (and `GENERATED_BY_KEY_ORDER` for the nested
+ * map) emitting one key at a time on the same js-yaml the service reaches --
+ * never through Obsidian's `stringifyYaml`, which the live UAT proved is a
+ * DIFFERENT serializer that quotes, escapes and bares values differently
+ * (GAP-1; see that module's header for the three classes and the table).
+ * That shared engine plus the shared key arrays is what makes a plugin-side
+ * update and a service-side `writeNote()` of the same note produce the same
+ * bytes: the output is a function of the note's content alone.
  *
  * Writes exactly one file -- the note itself. See the module's
  * eventual-consistency note above for what that means for folder indexes.
@@ -343,8 +291,8 @@ export function updateNoteProvenance(
     // outside the provenance schema belong to the USER and are re-emitted
     // after the managed block rather than dropped (see
     // {@link passthroughKeys}).
-    const managed = serializeFrontmatter(mutate(validated.data));
-    const extra = serializePassthrough(passthroughKeys(parsed));
+    const managed = serializeManagedFrontmatter(mutate(validated.data));
+    const extra = serializePassthroughFrontmatter(passthroughKeys(parsed));
     return `${FRONTMATTER_OPEN}${managed}${extra}${FRONTMATTER_CLOSE}${note.body}`;
   });
 }
