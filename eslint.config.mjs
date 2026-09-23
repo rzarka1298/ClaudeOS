@@ -251,9 +251,25 @@ export default [
   },
   {
     // Overrides (does not merge with) the no-restricted-imports rule above
-    // for plugin files specifically: obsidian is allowed here, but
-    // node:http/node:https are not -- the plugin must speak to the service
-    // exclusively through @ccc/service-api-client.
+    // for plugin files specifically: importing `obsidian` is allowed here --
+    // the plugin is the one element permitted to -- but every network
+    // transport except @ccc/service-api-client is not (ADR-0001).
+    //
+    // Because this OVERRIDES rather than merges, "obsidian is allowed" needs
+    // no restating: omitting the bare `obsidian` path entry is what allows
+    // it. The `importNames` entry below narrows that allowance, banning only
+    // Obsidian's own HTTP helpers -- which the element map cannot see,
+    // since it approves the `obsidian` edge itself (03-RESEARCH.md,
+    // Pitfall 3).
+    //
+    // This list is kept deliberately redundant with
+    // packages/plugin/eslint.config.mjs's NETWORK_ISOLATION_RULES: the two
+    // configs run in different CI jobs (`boundaries` and `obsidianmd`), so
+    // a rule dropped from one is still enforced by the other (ADR-0019's
+    // layered-gate shape). The global `fetch`/`XMLHttpRequest`/`WebSocket`/
+    // `EventSource` half needs no import and so has no expression here; it
+    // is covered by the plugin-scoped config and by
+    // scripts/check-boundaries.sh rule 2.
     files: ["packages/plugin/**/*.ts", "packages/plugin/**/*.tsx"],
     rules: {
       "no-restricted-imports": [
@@ -269,6 +285,27 @@ export default [
               name: "node:https",
               message:
                 "@ccc/plugin must speak to the service only through @ccc/service-api-client.",
+            },
+            {
+              name: "http",
+              message:
+                "@ccc/plugin must speak to the service only through @ccc/service-api-client.",
+            },
+            {
+              name: "https",
+              message:
+                "@ccc/plugin must speak to the service only through @ccc/service-api-client.",
+            },
+            {
+              name: "node:net",
+              message:
+                "ADR-0001: the socket lives in @ccc/service-api-client; the plugin never opens one itself.",
+            },
+            {
+              name: "obsidian",
+              importNames: ["requestUrl", "request"],
+              message:
+                "ADR-0001: Obsidian's own HTTP helpers bypass the service boundary. Use @ccc/service-api-client.",
             },
           ],
         },

@@ -94,6 +94,9 @@ interface Fixture {
   readonly cleanContent: string;
 }
 
+/** Split out of the fixture body below -- see the comment there. */
+const OBSIDIAN_SPECIFIER = "obsidian";
+
 const FIXTURES: readonly Fixture[] = [
   {
     file: "inner-html-assignment.ts",
@@ -124,6 +127,42 @@ const FIXTURES: readonly Fixture[] = [
       "export function MeasuredBar({ width }: { readonly width: string }): VNode {\n" +
       '  return h("div", { class: "ccc-bar" }, <span data-ccc-width={width} />);\n' +
       "}\n",
+  },
+  {
+    file: "global-fetch.ts",
+    ruleId: "no-restricted-globals",
+    messageFragment: "only through @ccc/service-api-client",
+    cleanContent:
+      "export async function loadRemoteStatus(url: string): Promise<string> {\n" +
+      "  return Promise.resolve(url);\n" +
+      "}\n",
+  },
+  {
+    file: "obsidian-request-url.ts",
+    ruleId: "no-restricted-imports",
+    messageFragment: "Obsidian's own HTTP helpers bypass the service boundary",
+    // The control keeps an `obsidian` import and removes only the forbidden
+    // NAME -- that is the discrimination worth proving, since the plugin is
+    // the one element allowed to import `obsidian` at all. The specifier is
+    // interpolated rather than written literally so this line does not
+    // itself read as `from "obsidian"` to scripts/check-boundaries.sh rule 1
+    // ("no file outside packages/plugin imports the Obsidian API"), which
+    // greps literal text and cannot tell a test's string payload from a real
+    // import. Generated file content is unaffected.
+    cleanContent:
+      `import { Notice } from "${OBSIDIAN_SPECIFIER}";\n` +
+      "\n" +
+      "export async function loadRemoteBody(url: string): Promise<string> {\n" +
+      "  new Notice(url);\n" +
+      "  return Promise.resolve(url);\n" +
+      "}\n",
+  },
+  {
+    file: "node-http-import.ts",
+    ruleId: "no-restricted-imports",
+    messageFragment: "only through @ccc/service-api-client",
+    cleanContent:
+      "export function openDirectConnection(host: string): void {\n" + "  void host;\n" + "}\n",
   },
 ];
 
@@ -207,5 +246,43 @@ describe("the production plugin config carries what the fixtures prove (plan 03-
     expect(messages).toContain("innerHTML/outerHTML are forbidden");
     expect(messages).toContain("Inline style assignment is forbidden");
     expect(messages).toContain("Inline style props are forbidden");
+  });
+
+  test("no-restricted-globals is an error and names every network global", () => {
+    const entry = ruleEntry(printProductionConfig(), "no-restricted-globals");
+    expect(isErrorSeverity(entry[0])).toBe(true);
+
+    const names = entry
+      .slice(1)
+      .map((option) => (option as { name?: unknown }).name)
+      .filter((name): name is string => typeof name === "string");
+
+    expect(names).toContain("fetch");
+    expect(names).toContain("XMLHttpRequest");
+    expect(names).toContain("WebSocket");
+    expect(names).toContain("EventSource");
+  });
+
+  test("no-restricted-imports is an error and names the HTTP modules and Obsidian's helpers", () => {
+    const entry = ruleEntry(printProductionConfig(), "no-restricted-imports");
+    expect(isErrorSeverity(entry[0])).toBe(true);
+
+    const paths = (entry[1] as { paths?: unknown }).paths as ReadonlyArray<{
+      name?: unknown;
+      importNames?: unknown;
+    }>;
+    expect(Array.isArray(paths)).toBe(true);
+
+    const names = paths
+      .map((p) => p.name)
+      .filter((name): name is string => typeof name === "string");
+    for (const expected of ["node:http", "node:https", "http", "https", "node:net"]) {
+      expect(names).toContain(expected);
+    }
+
+    const obsidianEntry = paths.find((p) => p.name === "obsidian");
+    expect(obsidianEntry).toBeDefined();
+    expect(obsidianEntry?.importNames).toContain("requestUrl");
+    expect(obsidianEntry?.importNames).toContain("request");
   });
 });

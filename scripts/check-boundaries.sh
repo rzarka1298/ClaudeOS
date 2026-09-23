@@ -13,21 +13,51 @@
 # are filtered out of every match so a header comment describing a rule (for
 # example this file's own prose, or an eslint.config.mjs comment naming
 # "obsidian" or "node:http") can never itself trip the gate it documents.
+#
+# Rule inventory:
+#   1. no file outside packages/plugin imports the Obsidian API
+#   2. no file inside packages/plugin reaches the network by any route other
+#      than @ccc/service-api-client -- http/https/net module imports, the
+#      fetch/XMLHttpRequest/WebSocket/EventSource globals (which need no
+#      import at all), and Obsidian's own requestUrl helper (ADR-0001)
+#   3. only packages/service and packages/operational-store import
+#      better-sqlite3
+#   4. only packages/keychain spawns the macOS security(1) tool
+#   5. no file anywhere references a mail-transport module or SMTP client
+#   6. no file inside packages/plugin uses a DOM HTML-injection sink
+#      (innerHTML/outerHTML/insertAdjacentHTML/dangerouslySetInnerHTML)
+#   7. no file inside packages/plugin assigns an inline style -- state
+#      reaches CSS through data-* attributes and --ccc-* tokens (UI-03)
+#
+# Rules 6 and 7 mirror DOM_SAFETY_RULES, and rule 2 mirrors
+# NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs. The
+# duplication is the point: this script is the layer that still reports when
+# the lint's config silently stops matching.
+#
+# Note on patterns: every pattern below is passed to awk via `-v`, which
+# processes backslash escapes BEFORE awk sees the regex -- `\b` becomes a
+# literal backspace and `\(` becomes an unescaped group opener ("illegal
+# primary in regular expression"). Word boundaries are therefore written as
+# `(^|[^A-Za-z0-9_])` and literal punctuation as a bracket expression
+# (`[(]`, `[.]`), never with a backslash.
 
 set -eu
 
 FAILURES=0
 
 # Every tracked TypeScript source file under packages/, excluding build
-# output and the boundary-violation fixtures (those exist specifically to
-# violate these rules under the lint gate, plan 01-03 task 1, and must not
-# also trip the backstop).
+# output and both fixture trees. `boundary-violations/` (plan 01-03 task 1)
+# and `lint-fixtures/` (plan 03-01 tasks 2-3) exist specifically to violate
+# these rules under their respective lint gates, and each is asserted to fire
+# by a committed test -- so they must not also trip the backstop, which would
+# make this gate permanently red for files that are doing their job.
 list_source_files() {
   git ls-files -z -- 'packages/*.ts' 'packages/*.tsx' 2>/dev/null | \
     tr '\0' '\n' | \
     grep -v '/dist/' | \
     grep -v '/node_modules/' | \
-    grep -v 'boundary-violations/'
+    grep -v 'boundary-violations/' | \
+    grep -v 'lint-fixtures/'
 }
 
 # Prints "file:line:content" for every non-comment line in the given files
@@ -76,12 +106,18 @@ check_rule \
   "from[[:space:]]*[\"']obsidian[\"']" \
   $NON_PLUGIN_FILES
 
-# --- Rule 2: no file inside packages/plugin imports a Node HTTP module ---
+# --- Rule 2: no file inside packages/plugin reaches the network by any route
+# other than @ccc/service-api-client. Widened in plan 03-01 from the former
+# `node:http`/`node:https` import-only pattern, which was blind to the bare
+# `http`/`https`/`node:net` specifiers, to the four network GLOBALS (which
+# need no import at all), and to Obsidian's own `requestUrl` helper -- the
+# plugin is the one element allowed to import `obsidian`, so nothing else in
+# the gate could see it (ADR-0001, 03-RESEARCH.md Pitfall 3). ---
 PLUGIN_FILES=$(printf '%s\n' "$SRC_FILES" | grep '^packages/plugin/' || true)
 # shellcheck disable=SC2086
 check_rule \
-  "a file inside packages/plugin imports a Node HTTP module (must speak only through @ccc/service-api-client)" \
-  "from[[:space:]]*[\"']node:https?[\"']" \
+  "a file inside packages/plugin reaches the network directly (must speak only through @ccc/service-api-client)" \
+  "from[[:space:]]*[\"'](node:)?https?[\"']|from[[:space:]]*[\"']node:net[\"']|(^|[^A-Za-z0-9_])(fetch|XMLHttpRequest|WebSocket|EventSource)[[:space:]]*[(]|new[[:space:]]+(XMLHttpRequest|WebSocket|EventSource)|(^|[^A-Za-z0-9_])requestUrl" \
   $PLUGIN_FILES
 
 # --- Rule 3: nothing outside packages/service or packages/operational-store
@@ -109,6 +145,28 @@ check_rule \
   "a file references a mail-transport module or SMTP client -- no email-send surface may exist at any layer" \
   "(nodemailer|node-smtp|smtp-client|SMTPClient|SmtpClient|SMTP|Smtp|smtp)" \
   $SRC_FILES
+
+# --- Rule 6: no file inside packages/plugin uses a DOM HTML-injection sink.
+# Obsidian's plugin guidelines forbid them outright, and untrusted widget
+# text (mail subjects, issue titles, headlines) is exactly what this phase
+# starts rendering. eslint-plugin-obsidianmd ships NO innerHTML rule, so
+# before plan 03-01 neither layer of this gate could see it. ---
+# shellcheck disable=SC2086
+check_rule \
+  "a file inside packages/plugin uses a DOM HTML-injection sink (use createEl() or JSX so untrusted text is escaped)" \
+  "(inner|outer)HTML[[:space:]]*=|insertAdjacentHTML|dangerouslySetInnerHTML" \
+  $PLUGIN_FILES
+
+# --- Rule 7: no file inside packages/plugin assigns an inline style. State
+# reaches CSS through data-* attributes and --ccc-* custom properties
+# (UI-03), never a style assignment or a style prop -- which is also what
+# keeps the plugin's visuals inside the command-center root container rather
+# than overriding Obsidian's shared chrome. ---
+# shellcheck disable=SC2086
+check_rule \
+  "a file inside packages/plugin assigns an inline style (use a class and a --ccc-* token; state reaches CSS through data-* attributes)" \
+  "[.]style[.][A-Za-z]+[[:space:]]*=|[.]style[[:space:]]*=[^=]|setAttribute[(][[:space:]]*[\"']style[\"']|[[:space:]]style=[{]" \
+  $PLUGIN_FILES
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: scanned ${FILE_COUNT} tracked source files, ${FAILURES} rule(s) violated."

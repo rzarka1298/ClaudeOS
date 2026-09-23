@@ -16,7 +16,7 @@
 // with an `eslint --print-config` assertion against `src/main.ts`.
 import tseslint from "typescript-eslint";
 
-import { DOM_SAFETY_RULES } from "./eslint.config.mjs";
+import { DOM_SAFETY_RULES, NETWORK_ISOLATION_RULES } from "./eslint.config.mjs";
 
 export default [
   {
@@ -30,6 +30,7 @@ export default [
     },
     rules: {
       ...DOM_SAFETY_RULES,
+      ...NETWORK_ISOLATION_RULES,
     },
   },
 ];

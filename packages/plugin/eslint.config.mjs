@@ -112,6 +112,62 @@ export const DOM_SAFETY_RULES = {
   ],
 };
 
+/**
+ * Network-isolation rules (ADR-0001). The plugin reaches the companion
+ * service over one Unix domain socket, owned by `@ccc/service-api-client`,
+ * and reaches nothing else. The `boundaries/dependencies` element map in the
+ * root eslint.config.mjs already restricts `plugin` to `domain` +
+ * `service-api-client`; this table is a NARROWING inside that permitted set,
+ * not a replacement for it -- the constructs below need no forbidden package
+ * import to reach the network.
+ *
+ * Three of these are easy to miss (03-RESEARCH.md, Pitfall 3):
+ *  - `fetch` needs no import at all, so an import-only rule never sees it;
+ *  - the bare `http`/`https`/`node:net` specifiers were not covered by the
+ *    former `node:http`/`node:https` pair;
+ *  - `requestUrl` and `request` are Obsidian's OWN network helpers, and the
+ *    plugin is (uniquely) allowed to import `obsidian` -- so neither the
+ *    element map nor a module-name rule would otherwise see them.
+ *
+ * Exported by name for packages/plugin/eslint.lint-fixtures.config.mjs; the
+ * `--print-config` test in packages/test-fixtures/src/plugin-lint.test.ts
+ * asserts the production config still carries this table.
+ */
+const SOCKET_ONLY =
+  "ADR-0001: the plugin reaches the service only through @ccc/service-api-client, over its Unix domain socket.";
+
+export const NETWORK_ISOLATION_RULES = {
+  "no-restricted-globals": [
+    "error",
+    { name: "fetch", message: SOCKET_ONLY },
+    { name: "XMLHttpRequest", message: SOCKET_ONLY },
+    { name: "WebSocket", message: SOCKET_ONLY },
+    { name: "EventSource", message: SOCKET_ONLY },
+  ],
+  "no-restricted-imports": [
+    "error",
+    {
+      paths: [
+        { name: "node:http", message: SOCKET_ONLY },
+        { name: "node:https", message: SOCKET_ONLY },
+        { name: "http", message: SOCKET_ONLY },
+        { name: "https", message: SOCKET_ONLY },
+        {
+          name: "node:net",
+          message:
+            "ADR-0001: the socket lives in @ccc/service-api-client; the plugin never opens one itself.",
+        },
+        {
+          name: "obsidian",
+          importNames: ["requestUrl", "request"],
+          message:
+            "ADR-0001: Obsidian's own HTTP helpers bypass the service boundary. Use @ccc/service-api-client.",
+        },
+      ],
+    },
+  ],
+};
+
 export default [
   ...obsidianmd.configs.recommended,
   {
@@ -139,6 +195,7 @@ export default [
     files: ["src/**/*.ts", "src/**/*.tsx"],
     rules: {
       ...DOM_SAFETY_RULES,
+      ...NETWORK_ISOLATION_RULES,
     },
   },
   {
