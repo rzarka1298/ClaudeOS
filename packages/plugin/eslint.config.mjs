@@ -55,6 +55,63 @@ const REQUIRED_SEVERITY_OVERRIDES = {
   "obsidianmd/prefer-instanceof": "error",
 };
 
+/**
+ * DOM-safety rules this repository adds on top of
+ * eslint-plugin-obsidianmd@0.4.2, because that plugin does not cover them.
+ *
+ * Verified by reading the installed plugin during Phase 3 research
+ * (03-RESEARCH.md, Pitfall 1): a full enumeration of its 41 rules contains
+ * NO rule mentioning `innerHTML`, `outerHTML` or `insertAdjacentHTML`, and
+ * `obsidianmd/no-static-styles-assignment` returns early unless the
+ * assignment's right-hand side is a `Literal` -- its own header comment says
+ * it "will not flag" `element.style.width = myWidth`. The dynamic case is
+ * precisely the one a token-driven dashboard reaches for, so the escaping
+ * guarantee would rest on a rule that cannot see the violation. Biome does
+ * not close the gap either: `noDangerouslySetInnerHtml` activates only when
+ * `react@>=16` is detected, and this package uses Preact.
+ *
+ * These are the closing selectors. State reaches CSS through `data-*`
+ * attributes and `--ccc-*` custom properties (UI-03), never an inline
+ * style; untrusted text reaches the DOM through Preact's default escaping
+ * or `createEl()`, never an HTML sink (Obsidian plugin guidelines).
+ *
+ * Exported by name so packages/plugin/eslint.lint-fixtures.config.mjs can
+ * apply the identical table to the committed fire-proving fixtures -- the
+ * two configs cannot drift, and
+ * packages/test-fixtures/src/plugin-lint.test.ts asserts via
+ * `eslint --print-config` that the PRODUCTION config still carries them.
+ */
+export const DOM_SAFETY_RULES = {
+  "no-restricted-syntax": [
+    "error",
+    {
+      selector: "AssignmentExpression[left.property.name=/^(inner|outer)HTML$/]",
+      message:
+        "innerHTML/outerHTML are forbidden (Obsidian plugin guidelines). Use createEl() or JSX so untrusted text is escaped.",
+    },
+    {
+      selector: "CallExpression[callee.property.name='insertAdjacentHTML']",
+      message:
+        "insertAdjacentHTML is forbidden (Obsidian plugin guidelines). Use createEl() or JSX so untrusted text is escaped.",
+    },
+    {
+      selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+      message:
+        "dangerouslySetInnerHTML is forbidden. Render escaped children instead.",
+    },
+    {
+      selector: "AssignmentExpression[left.object.property.name='style']",
+      message:
+        "Inline style assignment is forbidden (UI-03). Use a class and a --ccc-* token; state reaches CSS through data-* attributes.",
+    },
+    {
+      selector: "JSXAttribute[name.name='style']",
+      message:
+        "Inline style props are forbidden (UI-03). Use a class and a --ccc-* token; state reaches CSS through data-* attributes.",
+    },
+  ],
+};
+
 export default [
   ...obsidianmd.configs.recommended,
   {
@@ -75,6 +132,24 @@ export default [
     rules: REQUIRED_SEVERITY_OVERRIDES,
   },
   {
-    ignores: ["dist/**", "node_modules/**", "*.tsbuildinfo", "esbuild.config.mjs"],
+    // This repository's own plugin-policy tables, kept separate from
+    // REQUIRED_SEVERITY_OVERRIDES (whose doc comment scopes it to obsidianmd
+    // rule severities) because these are rules obsidianmd does not ship at
+    // all.
+    files: ["src/**/*.ts", "src/**/*.tsx"],
+    rules: {
+      ...DOM_SAFETY_RULES,
+    },
+  },
+  {
+    // lint-fixtures/ exists to VIOLATE the tables above, under
+    // eslint.lint-fixtures.config.mjs. The production run must never see it.
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "*.tsbuildinfo",
+      "esbuild.config.mjs",
+      "lint-fixtures/**",
+    ],
   },
 ];
