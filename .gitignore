@@ -8,6 +8,9 @@ packages/plugin/styles.css
 .env.local
 .claude/settings.local.json
 .privacy-denylist.local
+# Owner-supplied visual reference for the prototype round (D-06): informs the
+# prototypes, is never committed, quoted or transcribed into a tracked file.
+docs/design/prototypes/reference.local.*
 coverage/
 .DS_Store
 .obsidian/

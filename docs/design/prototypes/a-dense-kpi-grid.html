@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en" data-state="live">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Direction A — dense KPI grid</title>
+    <link rel="stylesheet" href="prototype-tokens.css" />
+    <style>
+      /* DIRECTION A: dense KPI grid.
+       *
+       * This block holds ONLY layout and density. Every colour, size and
+       * spacing value is a var(--ccc-*) from the shared palette, so the
+       * three directions cannot be told apart by colour -- the round tests
+       * layout, and only layout (D-02, research Prototype Round step 4).
+       *
+       * Auto-fill with minmax(min(100%, 16rem), 1fr) is what makes one
+       * layout serve a narrow Obsidian side pane and a full window with no
+       * breakpoint: below 16rem of container width the column becomes 100%
+       * instead of overflowing (D-12).
+       */
+
+      .layout {
+        padding: var(--ccc-space-xl);
+        container-type: inline-size;
+      }
+
+      .layout > * + * {
+        margin-top: var(--ccc-space-2xl);
+      }
+
+      .grid {
+        display: grid;
+        gap: var(--ccc-space-md);
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+        grid-auto-flow: dense;
+      }
+
+      /* Density is this direction's whole argument: tight gaps, compact
+         padding, and KPI numerals carried at the Display step so the page
+         reads as an instrument panel rather than a document. */
+      .grid .ccc-card {
+        gap: var(--ccc-space-sm);
+        padding: var(--ccc-space-md);
+      }
+
+      .grid .ccc-card[data-size="wide"] {
+        grid-column: span 2;
+      }
+
+      .grid .ccc-card[data-size="tall"] {
+        grid-row: span 2;
+      }
+
+      .screens {
+        display: grid;
+        gap: var(--ccc-space-md);
+      }
+
+      .screen-heading {
+        margin: 0 0 var(--ccc-space-sm);
+        font-size: var(--ccc-text-heading);
+        font-weight: var(--ccc-weight-strong);
+      }
+
+      @container (max-width: 34rem) {
+        .grid {
+          gap: var(--ccc-space-sm);
+        }
+
+        .grid .ccc-card[data-size="wide"] {
+          grid-column: span 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="ccc-page-header">
+      <div>
+        <p class="ccc-page-kicker">Direction A</p>
+        <h1 class="ccc-page-title">Dense KPI grid</h1>
+      </div>
+      <label class="ccc-switcher">
+        Card state
+        <select id="state-switcher">
+          <option value="live">Live</option>
+          <option value="stale">Stale</option>
+          <option value="empty">Empty</option>
+          <option value="permission-required">Permission required</option>
+          <option value="failure">Failure</option>
+        </select>
+      </label>
+    </header>
+
+    <main class="layout">
+      <section aria-labelledby="overview-label">
+        <p class="ccc-section-label" id="overview-label">Overview</p>
+        <div class="grid" id="overview"></div>
+      </section>
+
+      <section class="screens" aria-labelledby="screens-label">
+        <p class="ccc-section-label" id="screens-label">Destinations</p>
+
+        <section>
+          <h2 class="screen-heading">Projects</h2>
+          <div id="screen-projects"></div>
+        </section>
+
+        <section>
+          <h2 class="screen-heading">Agent runs</h2>
+          <div id="screen-agent-runs"></div>
+        </section>
+
+        <section>
+          <h2 class="screen-heading">Research</h2>
+          <div id="screen-research"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="fixtures.js"></script>
+    <script src="prototype-cards.js"></script>
+    <script>
+      (function () {
+        var overview = document.getElementById("overview");
+        var screens = [
+          ["projects", document.getElementById("screen-projects")],
+          ["agent-runs", document.getElementById("screen-agent-runs")],
+          ["research", document.getElementById("screen-research")],
+        ];
+
+        CCC_PROTO.installStateSwitcher(document.getElementById("state-switcher"), function (state) {
+          CCC_PROTO.renderOverview(overview, state);
+          screens.forEach(function (entry) {
+            CCC_PROTO.renderScreen(entry[1], entry[0], state);
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
