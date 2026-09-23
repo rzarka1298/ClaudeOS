@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en" data-state="live">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Direction B — editorial feed</title>
+    <link rel="stylesheet" href="prototype-tokens.css" />
+    <style>
+      /* DIRECTION B: single-column editorial feed.
+       *
+       * Layout and density only -- every colour, size and spacing value is a
+       * var(--ccc-*) from the shared palette (D-02).
+       *
+       * The argument this direction makes: a command center is read, not
+       * scanned. One column, generous vertical rhythm, prose line-height and
+       * a 68ch measure, so the cards that carry sentences (intelligence
+       * stories, error next-steps) are genuinely readable instead of being
+       * squeezed into a tile.
+       *
+       * No breakpoint anywhere. The column is capped by a ch-based measure
+       * and floored by the viewport, so it reads at 20rem and at 80rem for
+       * the same reason: the measure, not a media query, sets the width
+       * (D-12).
+       */
+
+      .layout {
+        width: min(100% - var(--ccc-space-xl), 72ch);
+        margin-inline: auto;
+        padding-block: var(--ccc-space-xl);
+        container-type: inline-size;
+      }
+
+      .feed {
+        display: flex;
+        flex-direction: column;
+        gap: var(--ccc-space-lg);
+      }
+
+      /* Generous breathing room BETWEEN groups, tighter within them -- the
+         rhythm is what separates a feed from a list. */
+      .layout > * + * {
+        margin-top: var(--ccc-space-2xl);
+      }
+
+      .feed .ccc-card {
+        gap: var(--ccc-space-md);
+        padding: var(--ccc-space-lg);
+      }
+
+      /* Every card is full width here: `wide` and `tall` hints carry no
+         geometry in a single column, which is the honest reading of a hint
+         the container cannot grant. */
+      .feed .ccc-card[data-size] {
+        grid-column: auto;
+        grid-row: auto;
+      }
+
+      /* KPI numerals sit INLINE with their label and the prose that follows,
+         rather than standing alone above a tile. Same Display token, same
+         tabular numerals -- different relationship to the text. */
+      .feed .ccc-kpi {
+        font-size: var(--ccc-text-heading);
+        display: inline;
+        margin-right: var(--ccc-space-sm);
+      }
+
+      .feed .ccc-kpi-label {
+        display: inline;
+      }
+
+      .feed .ccc-card-body {
+        line-height: var(--ccc-leading-prose);
+      }
+
+      .feed .ccc-prose {
+        max-width: 68ch;
+      }
+
+      .feed .ccc-row {
+        padding-bottom: var(--ccc-space-md);
+      }
+
+      .screen-heading {
+        margin: 0 0 var(--ccc-space-md);
+        font-size: var(--ccc-text-heading);
+        font-weight: var(--ccc-weight-strong);
+      }
+
+      /* The one density concession, and it is a container query on the page
+         wrapper rather than a viewport breakpoint: in a narrow Obsidian side
+         pane the card padding steps down so the measure survives. */
+      @container (max-width: 34rem) {
+        .feed .ccc-card {
+          padding: var(--ccc-space-md);
+        }
+
+        .layout > * + * {
+          margin-top: var(--ccc-space-xl);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="ccc-page-header">
+      <div>
+        <p class="ccc-page-kicker">Direction B</p>
+        <h1 class="ccc-page-title">Editorial feed</h1>
+      </div>
+      <label class="ccc-switcher">
+        Card state
+        <select id="state-switcher">
+          <option value="live">Live</option>
+          <option value="stale">Stale</option>
+          <option value="empty">Empty</option>
+          <option value="permission-required">Permission required</option>
+          <option value="failure">Failure</option>
+        </select>
+      </label>
+    </header>
+
+    <main class="layout">
+      <section aria-labelledby="overview-label">
+        <p class="ccc-section-label" id="overview-label">Overview</p>
+        <div class="feed" id="overview"></div>
+      </section>
+
+      <section aria-labelledby="screens-label">
+        <p class="ccc-section-label" id="screens-label">Destinations</p>
+
+        <section class="feed">
+          <div>
+            <h2 class="screen-heading">Projects</h2>
+            <div id="screen-projects"></div>
+          </div>
+
+          <div>
+            <h2 class="screen-heading">Agent runs</h2>
+            <div id="screen-agent-runs"></div>
+          </div>
+
+          <div>
+            <h2 class="screen-heading">Research</h2>
+            <div id="screen-research"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="fixtures.js"></script>
+    <script src="prototype-cards.js"></script>
+    <script>
+      (function () {
+        var overview = document.getElementById("overview");
+        var screens = [
+          ["projects", document.getElementById("screen-projects")],
+          ["agent-runs", document.getElementById("screen-agent-runs")],
+          ["research", document.getElementById("screen-research")],
+        ];
+
+        CCC_PROTO.installStateSwitcher(document.getElementById("state-switcher"), function (state) {
+          CCC_PROTO.renderOverview(overview, state);
+          screens.forEach(function (entry) {
+            CCC_PROTO.renderScreen(entry[1], entry[0], state);
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>

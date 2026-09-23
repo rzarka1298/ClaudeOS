@@ -352,15 +352,24 @@
     while (container.firstChild) container.removeChild(container.firstChild);
   }
 
-  /** Renders every PRD 7.1 panel, in the fixture array's order. The fixture
-   *  array is the SINGLE ordering source -- no page re-sorts it, so all three
-   *  directions show the same panels in the same order (UI-01 ordering). */
-  function renderOverview(container, stateName) {
+  /** Renders the PRD 7.1 panels in the fixture array's order.
+   *
+   *  `panelIds` is an optional SUBSET -- direction C puts three panels in a
+   *  persistent rail and the rest on a canvas. It FILTERS the fixture array
+   *  rather than mapping over the caller's list, so a page can choose which
+   *  panels it shows but never what order they appear in: the fixture array
+   *  stays the single ordering source for all three directions (UI-01
+   *  ordering edge). Omit it to render all eight. */
+  function renderOverview(container, stateName, panelIds) {
     var fixtures = globalThis.CCC_FIXTURES;
     clear(container);
-    fixtures.panels.forEach(function (panel) {
-      container.appendChild(renderCard(panel, stateName, fixtures));
-    });
+    fixtures.panels
+      .filter(function (panel) {
+        return !panelIds || panelIds.indexOf(panel.id) !== -1;
+      })
+      .forEach(function (panel) {
+        container.appendChild(renderCard(panel, stateName, fixtures));
+      });
   }
 
   /** One representative destination screen (D-03), rendered as a single wide

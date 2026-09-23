@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en" data-state="live">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Direction C — split sidebar and canvas</title>
+    <link rel="stylesheet" href="prototype-tokens.css" />
+    <style>
+      /* DIRECTION C: persistent rail plus canvas.
+       *
+       * Layout and density only -- every colour, size and spacing value is a
+       * var(--ccc-*) from the shared palette (D-02).
+       *
+       * The argument this direction makes: three things are always worth
+       * seeing (is the service up, what is due today, what can I launch), so
+       * they live in a rail that never scrolls away, and everything else
+       * shares a canvas that changes. It is the only one of the three where
+       * the destination screens replace content rather than sitting below it.
+       *
+       * The rail is a grid column, not a fixed-position overlay, so it
+       * cannot cover a card at a narrow width. Below 34rem of CONTAINER
+       * width -- a container query on the wrapper, not a viewport media
+       * query, because an Obsidian side pane is narrow while the window is
+       * not -- the two columns collapse into one and the rail sits above the
+       * canvas (D-12).
+       */
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+        gap: var(--ccc-space-xl);
+        align-items: start;
+        padding: var(--ccc-space-xl);
+        container-type: inline-size;
+      }
+
+      .rail {
+        display: flex;
+        position: sticky;
+        top: var(--ccc-space-xl);
+        flex-direction: column;
+        gap: var(--ccc-space-md);
+      }
+
+      /* Rail cards are the compact ones: smaller padding, KPI stepped down
+         to the heading size so a fixed-width column is never overrun. */
+      .rail .ccc-card {
+        gap: var(--ccc-space-sm);
+        padding: var(--ccc-space-md);
+      }
+
+      .rail .ccc-kpi {
+        font-size: var(--ccc-text-heading);
+      }
+
+      .rail-nav {
+        display: flex;
+        flex-direction: column;
+        gap: var(--ccc-space-xs);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .rail-nav button {
+        width: 100%;
+        min-height: var(--ccc-space-lg);
+        padding: var(--ccc-space-sm);
+        border: var(--ccc-border-hairline) solid transparent;
+        border-radius: var(--ccc-radius-sm);
+        background-color: transparent;
+        color: var(--ccc-ink-muted);
+        font-family: inherit;
+        font-size: var(--ccc-text-label);
+        font-weight: var(--ccc-weight-strong);
+        text-align: left;
+        cursor: pointer;
+        transition: border-color var(--ccc-motion-fast) ease;
+      }
+
+      /* The active destination is marked by BOTH an accent underline and the
+         ink step -- never by colour alone (A11Y-04). */
+      .rail-nav button[aria-current="true"] {
+        border-bottom-color: var(--ccc-accent);
+        color: var(--ccc-ink);
+      }
+
+      .canvas {
+        display: flex;
+        flex-direction: column;
+        gap: var(--ccc-space-2xl);
+        min-width: 0;
+      }
+
+      .canvas-grid {
+        display: grid;
+        gap: var(--ccc-space-lg);
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+        grid-auto-flow: dense;
+      }
+
+      /* Roomier than direction A: fewer, larger cards on the canvas, because
+         the rail already carries the at-a-glance duties. */
+      .canvas-grid .ccc-card {
+        padding: var(--ccc-space-lg);
+      }
+
+      .canvas-grid .ccc-card[data-size="wide"] {
+        grid-column: span 2;
+      }
+
+      @container (max-width: 34rem) {
+        .layout {
+          grid-template-columns: minmax(0, 1fr);
+          gap: var(--ccc-space-lg);
+          padding: var(--ccc-space-md);
+        }
+
+        .rail {
+          position: static;
+        }
+
+        .rail-nav {
+          flex-direction: row;
+          flex-wrap: wrap;
+        }
+
+        .rail-nav button {
+          width: auto;
+        }
+
+        .canvas-grid {
+          gap: var(--ccc-space-md);
+        }
+
+        .canvas-grid .ccc-card {
+          padding: var(--ccc-space-md);
+        }
+
+        .canvas-grid .ccc-card[data-size="wide"] {
+          grid-column: span 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="ccc-page-header">
+      <div>
+        <p class="ccc-page-kicker">Direction C</p>
+        <h1 class="ccc-page-title">Split sidebar and canvas</h1>
+      </div>
+      <label class="ccc-switcher">
+        Card state
+        <select id="state-switcher">
+          <option value="live">Live</option>
+          <option value="stale">Stale</option>
+          <option value="empty">Empty</option>
+          <option value="permission-required">Permission required</option>
+          <option value="failure">Failure</option>
+        </select>
+      </label>
+    </header>
+
+    <main class="layout">
+      <aside class="rail" aria-label="Always visible">
+        <div class="rail" id="rail-cards"></div>
+        <nav aria-label="Destinations">
+          <p class="ccc-section-label">Destinations</p>
+          <ul class="rail-nav" id="rail-nav">
+            <li><button type="button" data-screen="projects">Projects</button></li>
+            <li><button type="button" data-screen="agent-runs">Agent runs</button></li>
+            <li><button type="button" data-screen="research">Research</button></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <div class="canvas">
+        <section aria-labelledby="canvas-label">
+          <p class="ccc-section-label" id="canvas-label">Overview</p>
+          <div class="canvas-grid" id="canvas-grid"></div>
+        </section>
+
+        <section aria-labelledby="screen-label">
+          <p class="ccc-section-label" id="screen-label">Destination</p>
+          <div id="screen-slot"></div>
+        </section>
+      </div>
+    </main>
+
+    <script src="fixtures.js"></script>
+    <script src="prototype-cards.js"></script>
+    <script>
+      (function () {
+        var railCards = document.getElementById("rail-cards");
+        var canvasGrid = document.getElementById("canvas-grid");
+        var screenSlot = document.getElementById("screen-slot");
+        var navButtons = [].slice.call(
+          document.getElementById("rail-nav").querySelectorAll("button"),
+        );
+
+        // The rail carries the three always-worth-seeing panels; the canvas
+        // carries the rest. Both lists are passed to the same renderer, which
+        // filters the fixture array -- so this page chooses WHICH panels it
+        // shows without ever choosing the order they appear in.
+        var RAIL_PANELS = ["service-health", "today", "quick-actions"];
+        var CANVAS_PANELS = [
+          "active-sessions",
+          "project-shortcuts",
+          "claude-usage",
+          "tech-intel",
+          "github-discoveries",
+        ];
+
+        var currentScreen = "projects";
+        var currentState = "live";
+
+        function paintNav() {
+          navButtons.forEach(function (button) {
+            button.setAttribute(
+              "aria-current",
+              button.dataset.screen === currentScreen ? "true" : "false",
+            );
+          });
+        }
+
+        function render(state) {
+          currentState = state;
+          CCC_PROTO.renderOverview(railCards, state, RAIL_PANELS);
+          CCC_PROTO.renderOverview(canvasGrid, state, CANVAS_PANELS);
+          CCC_PROTO.renderScreen(screenSlot, currentScreen, state);
+          paintNav();
+        }
+
+        navButtons.forEach(function (button) {
+          button.addEventListener("click", function () {
+            currentScreen = button.dataset.screen;
+            render(currentState);
+          });
+        });
+
+        CCC_PROTO.installStateSwitcher(document.getElementById("state-switcher"), render);
+      })();
+    </script>
+  </body>
+</html>
