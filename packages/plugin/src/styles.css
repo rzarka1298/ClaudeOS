@@ -393,3 +393,221 @@
     width: 100%;
   }
 }
+
+/*
+ * The widget card (UI-06, 03-UI-SPEC "Card Anatomy"). `data-presentation` and
+ * `data-size` are the ONLY styling hooks — no component below ever writes an
+ * inline style, so state reaches CSS through attributes and --ccc-* tokens
+ * alone (UI-SPEC Non-Negotiable 3). The card is its own container so the KPI
+ * numeral's `cqi` clamp and the footer's wrap threshold measure the CARD, not
+ * the pane.
+ */
+.ccc-card {
+  position: relative;
+  z-index: 1;
+  container-type: inline-size;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--ccc-space-sm);
+  overflow: hidden;
+  padding: var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+  box-shadow: var(--ccc-shadow-card);
+}
+
+.ccc-card[data-size="wide"],
+.ccc-card[data-size="tall"] {
+  padding: var(--ccc-space-lg);
+}
+
+.ccc-card-header h3 {
+  margin: 0;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+/* Stale keeps its last-good values fully readable and mutes only the header,
+ * so nothing a card already told the owner becomes harder to read (D-14). */
+.ccc-card[data-presentation="stale"] .ccc-card-header h3 {
+  color: var(--ccc-ink-muted);
+}
+
+.ccc-card-body {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--ccc-text-body);
+}
+
+/* A `tall` card scrolls inside its body slot only — the header and the
+ * provenance footer never scroll away (UI-SPEC E1 overflow row). */
+.ccc-card[data-size="tall"] .ccc-card-body {
+  overflow-y: auto;
+}
+
+/* Disconnected dims the body while last-good values stay legible; the text
+ * itself is never replaced, so nothing the owner already read disappears. */
+.ccc-card-body[data-dimmed="true"] {
+  opacity: 0.55;
+}
+
+.ccc-state-heading {
+  margin: 0;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-state-body,
+.ccc-service-line {
+  margin: var(--ccc-space-xs) 0 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-body);
+  overflow-wrap: anywhere;
+}
+
+.ccc-error-glyph {
+  margin-right: var(--ccc-space-xs);
+  color: var(--ccc-danger);
+}
+
+/* The loading skeleton: muted blocks at the card's real geometry. Its only
+ * animation is one --ccc-motion-slow transition, which the token-level
+ * zeroing turns into a static block under reduced motion for free (D-19). */
+.ccc-skeleton-line {
+  height: var(--ccc-space-md);
+  margin-bottom: var(--ccc-space-sm);
+  border-radius: var(--ccc-radius-sm);
+  background-color: var(--ccc-border);
+  transition: opacity var(--ccc-motion-slow) ease-out;
+}
+
+.ccc-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ccc-space-sm);
+  margin-top: var(--ccc-space-md);
+}
+
+.ccc-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+  padding-top: var(--ccc-space-sm);
+  border-top: var(--ccc-border-hairline) solid var(--ccc-border);
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-card-footer[data-dimmed="true"] {
+  opacity: 0.55;
+}
+
+.ccc-footer-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.ccc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ccc-space-xs);
+  padding: 0 var(--ccc-space-xs);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-sm);
+  color: var(--ccc-ink-muted);
+}
+
+.ccc-badge[data-badge="live"] {
+  color: var(--ccc-ink);
+}
+
+.ccc-badge[data-badge="unavailable"] {
+  color: var(--ccc-danger);
+}
+
+.ccc-source-button,
+.ccc-connect-button {
+  min-width: var(--ccc-space-lg);
+  min-height: var(--ccc-space-lg);
+  margin-left: auto;
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-pill);
+  background: transparent;
+  color: var(--ccc-ink-muted);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-connect-button {
+  margin-left: 0;
+  overflow-wrap: anywhere;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ccc-ink);
+}
+
+.ccc-source-button:hover,
+.ccc-connect-button:hover {
+  color: var(--ccc-ink);
+}
+
+.ccc-source-button[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.ccc-source-button:focus-visible,
+.ccc-connect-button:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-source-panel {
+  flex-basis: 100%;
+  max-height: var(--ccc-space-3xl);
+  overflow-y: auto;
+}
+
+.ccc-source-list {
+  margin: var(--ccc-space-xs) 0 0;
+  padding-left: var(--ccc-space-md);
+}
+
+.ccc-source-row {
+  overflow-wrap: anywhere;
+}
+
+.ccc-visually-hidden {
+  position: absolute;
+  width: var(--ccc-border-hairline);
+  height: var(--ccc-border-hairline);
+  margin: calc(-1 * var(--ccc-border-hairline));
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Below 16rem of CARD width the footer stacks rather than truncating a badge
+ * label (UI-SPEC E2 overflow row). */
+@container (max-width: 16rem) {
+  .ccc-card-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ccc-source-button {
+    margin-left: 0;
+  }
+}

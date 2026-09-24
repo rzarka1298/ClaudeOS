@@ -63,6 +63,7 @@ export function attachEventClient(client: EventClient): void {
     },
     (state: EventClientState) => {
       connectionState.value = mapClientState(state);
+      connectionChangedAt.value = new Date().toISOString();
     },
   );
 }
