@@ -29,6 +29,14 @@ export interface LastEventInfo {
  */
 export const lastEvent = signal<LastEventInfo | undefined>(undefined);
 
+/**
+ * When {@link connectionState} last changed. This is the service-health
+ * widget's `observedAt` before any event has arrived: a card that has only
+ * ever seen a connection transition still has an honest "last updated" time,
+ * rather than an invented one or a blank footer (UI-06, D-16).
+ */
+export const connectionChangedAt = signal<string>(new Date().toISOString());
+
 function mapClientState(state: EventClientState): ConnectionState {
   switch (state.kind) {
     case "connecting":

@@ -4,6 +4,7 @@ export * from "./capability.js";
 export * from "./events.js";
 export * from "./freshness.js";
 export * from "./ids.js";
+export * from "./layout.js";
 export * from "./note-schema.js";
 export * from "./path-containment.js";
 export * from "./run.js";
