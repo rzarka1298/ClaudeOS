@@ -225,6 +225,15 @@ describe("the eight presentations", () => {
     expect(focusableCount(container)).toBe(1);
   });
 
+  it("ready: the full body, the header at full ink and a Live badge", () => {
+    const { container } = renderPanel(READY);
+    const card = container.querySelector("section.ccc-card");
+    expect(card?.getAttribute("data-presentation")).toBe("ready");
+    expect(container.querySelector(".ccc-body-value")?.textContent).toBe("payload");
+    expect(container.querySelector(".ccc-card-body")?.getAttribute("data-dimmed")).toBeNull();
+    expect(container.querySelector(".ccc-badge")?.textContent).toContain("Live");
+  });
+
   it("stale: the last-good values stay readable, the header mutes, the badge reads Stale", () => {
     const { container } = renderPanel({ ...READY, freshness: "stale" });
     const card = container.querySelector("section.ccc-card");
