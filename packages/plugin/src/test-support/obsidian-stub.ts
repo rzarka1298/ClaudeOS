@@ -103,6 +103,107 @@ export class Modal {
   onClose(): void {}
 }
 
+/**
+ * Inert stand-ins for the settings-tab surface `view/settings-tab.ts`
+ * subclasses and constructs at module scope (plan 03-04). Deliberately inert
+ * for the same reason `Modal` is: a hand-written double of Obsidian's own
+ * settings renderer would prove nothing about the real one, so the tab's
+ * rendering is covered by the live-Obsidian UAT and its DECISION logic is
+ * covered by `applyReducedMotionChange`, which touches none of this.
+ */
+export class PluginSettingTab {
+  readonly app: unknown;
+  readonly plugin: unknown;
+  containerEl: StubElement = createStubElement();
+
+  constructor(app: unknown, plugin: unknown) {
+    this.app = app;
+    this.plugin = plugin;
+  }
+
+  getSettingDefinitions(): unknown[] {
+    return [];
+  }
+
+  getControlValue(_key: string): unknown {
+    return undefined;
+  }
+
+  setControlValue(_key: string, _value: unknown): void {}
+
+  update(): void {}
+
+  hide(): void {}
+}
+
+/** The chainable builder, reduced to the calls that keep a chain legal. */
+export class Setting {
+  constructor(_containerEl: unknown) {}
+
+  setName(_name: string | DocumentFragment): this {
+    return this;
+  }
+
+  setDesc(_desc: string | DocumentFragment): this {
+    return this;
+  }
+
+  addDropdown(cb: (component: StubDropdown) => unknown): this {
+    cb(createStubDropdown());
+    return this;
+  }
+
+  addToggle(cb: (component: StubToggle) => unknown): this {
+    cb({ setValue: () => createStubToggle(), onChange: () => createStubToggle() });
+    return this;
+  }
+}
+
+export interface StubDropdown {
+  addOption(value: string, display: string): StubDropdown;
+  setValue(value: string): StubDropdown;
+  onChange(handler: (value: string) => unknown): StubDropdown;
+}
+
+export interface StubToggle {
+  setValue(value: boolean): StubToggle;
+  onChange(handler: (value: boolean) => unknown): StubToggle;
+}
+
+function createStubDropdown(): StubDropdown {
+  const dropdown: StubDropdown = {
+    addOption: () => dropdown,
+    setValue: () => dropdown,
+    onChange: () => dropdown,
+  };
+  return dropdown;
+}
+
+function createStubToggle(): StubToggle {
+  const toggle: StubToggle = {
+    setValue: () => toggle,
+    onChange: () => toggle,
+  };
+  return toggle;
+}
+
+/**
+ * Mirrors obsidian's `normalizePath` closely enough for a path-shape test:
+ * collapses duplicate separators and trims a trailing one. Plan 03-08 needs
+ * it; like every other value here, the real behaviour is Obsidian's.
+ */
+export function normalizePath(path: string): string {
+  return (
+    path
+      .replace(/\\/g, "/")
+      .replace(/\/{2,}/g, "/")
+      .replace(/\/+$/, "") || "/"
+  );
+}
+
+/** Obsidian draws the icon; under test there is nothing to draw. */
+export function setIcon(_element: unknown, _iconId: string): void {}
+
 export class FileSystemAdapter {
   private readonly basePath: string;
 

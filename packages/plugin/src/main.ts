@@ -16,6 +16,7 @@ import {
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
+import { CommandCenterSettingTab } from "./view/settings-tab.js";
 
 /**
  * Structural markup and Obsidian's own CSS variables only in this phase —
@@ -25,6 +26,14 @@ import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
  * directly) so unload completeness is provable, not just assumed — see
  * `host-registry.ts` and the twenty-cycle proof in `lifecycle.test.ts`.
  */
+/**
+ * The OS reduced-motion query, written ONCE in the whole of production code
+ * (D-19, A11Y-03). Every other module reads the already-resolved `motionMode`
+ * signal; `motion.test.ts` walks the real source tree to keep that true as
+ * widgets are added.
+ */
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
 export default class ClaudeCommandCenterPlugin extends Plugin {
   settings: CommandCenterSettings = DEFAULT_SETTINGS;
   client!: AuthenticatedSocketApiClient;
@@ -70,7 +79,7 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     attachOsMotionPreference(
       this.hostRegistry,
       () => this.settings.reducedMotion,
-      window.matchMedia("(prefers-reduced-motion: reduce)"),
+      window.matchMedia(REDUCED_MOTION_QUERY),
     );
 
     this.hostRegistry.view(VIEW_TYPE, (leaf: WorkspaceLeaf) => new CommandCenterView(leaf, this));
@@ -86,6 +95,16 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         void this.revealView();
       },
     });
+
+    // The Settings tab, through the same seam as everything else so its
+    // release on unload is counted rather than assumed (threat T-03-07).
+    this.hostRegistry.settingTab(
+      new CommandCenterSettingTab(this.app, this, {
+        settings: this.settings,
+        saveSettings: () => this.saveSettings(),
+        mql: window.matchMedia(REDUCED_MOTION_QUERY),
+      }),
+    );
 
     // Vault setup (VAULT-01). Registered through the same seam as
     // everything else, and given the authenticated client — the plugin

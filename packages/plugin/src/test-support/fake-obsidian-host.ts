@@ -90,6 +90,7 @@ export interface LiveCounts {
   view: number;
   ribbon: number;
   command: number;
+  settingTab: number;
 }
 
 export interface CommandLike {
@@ -137,6 +138,7 @@ export class FakeObsidianHost {
   private readonly viewTypes = new Map<string, unknown>();
   private ribbonCount = 0;
   private readonly commandIds = new Set<string>();
+  private settingTabCount = 0;
   private data: unknown = null;
   private readonly leaves: FakeWorkspaceLeaf[] = [];
 
@@ -198,6 +200,13 @@ export class FakeObsidianHost {
     };
   }
 
+  addSettingTab(_tab: unknown): Disposer {
+    this.settingTabCount++;
+    return () => {
+      this.settingTabCount--;
+    };
+  }
+
   // ---- event bus (mirrors `workspace.on`/`fireWorkspaceEvent` for the leak test) ----
 
   fireWorkspaceEvent(name: string, payload?: unknown): void {
@@ -247,6 +256,7 @@ export class FakeObsidianHost {
       view: this.viewTypes.size,
       ribbon: this.ribbonCount,
       command: this.commandIds.size,
+      settingTab: this.settingTabCount,
     };
   }
 }

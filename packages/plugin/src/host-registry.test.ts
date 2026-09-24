@@ -3,7 +3,7 @@ import { createHostRegistry, type RegistrationHost } from "./host-registry.js";
 
 function createStubHost(): RegistrationHost & {
   disposers: Record<
-    "event" | "interval" | "domEvent" | "view" | "ribbon" | "command",
+    "event" | "interval" | "domEvent" | "view" | "ribbon" | "command" | "settingTab",
     ReturnType<typeof vi.fn>
   >;
 } {
@@ -14,6 +14,7 @@ function createStubHost(): RegistrationHost & {
     view: vi.fn(),
     ribbon: vi.fn(),
     command: vi.fn(),
+    settingTab: vi.fn(),
   };
   return {
     disposers,
@@ -23,6 +24,7 @@ function createStubHost(): RegistrationHost & {
     registerView: () => disposers.view,
     addRibbonIcon: () => disposers.ribbon,
     addCommand: () => disposers.command,
+    addSettingTab: () => disposers.settingTab,
   };
 }
 

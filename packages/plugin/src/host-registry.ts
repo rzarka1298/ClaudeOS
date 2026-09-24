@@ -1,4 +1,4 @@
-import type { Events, Plugin, ViewCreator } from "obsidian";
+import type { Events, Plugin, PluginSettingTab, ViewCreator } from "obsidian";
 
 /**
  * The single seam every listener, interval, DOM handler, view, ribbon
@@ -39,6 +39,7 @@ export interface RegistrationHost {
   registerView(type: string, factory: (leaf: never) => unknown): Disposer;
   addRibbonIcon(icon: string, title: string, callback: () => void): Disposer;
   addCommand(command: CommandLike): Disposer;
+  addSettingTab(tab: unknown): Disposer;
 }
 
 export interface DisposalFailure {
@@ -52,6 +53,12 @@ export interface HostRegistry {
   view(type: string, factory: (leaf: never) => unknown): void;
   ribbon(icon: string, title: string, callback: () => void): void;
   command(cmd: CommandLike): void;
+  /**
+   * The plugin's Settings tab (plan 03-04). Obsidian's own unload sweep is
+   * what actually removes it; the disposer exists so `liveCount()` stays in
+   * lockstep with `onunload()`, exactly like every other kind here.
+   */
+  settingTab(tab: unknown): void;
   /**
    * Removes every live registration, calling each underlying disposer
    * exactly once in total across however many times `disposeAll()` itself
@@ -85,6 +92,7 @@ const KNOWN_KINDS = [
   "view",
   "ribbon",
   "command",
+  "settingTab",
   "eventStream",
 ] as const;
 type KnownKind = (typeof KNOWN_KINDS)[number];
@@ -125,6 +133,9 @@ export function createHostRegistry(host: RegistrationHost): HostRegistry {
     },
     command(cmd) {
       registerRaw("command", host.addCommand(cmd));
+    },
+    settingTab(tab) {
+      registerRaw("settingTab", host.addSettingTab(tab));
     },
     registerRaw,
     disposeAll(): DisposalFailure[] {
@@ -201,6 +212,10 @@ export function createObsidianHost(plugin: Plugin): RegistrationHost {
     },
     addCommand(command) {
       plugin.addCommand(command);
+      return () => {};
+    },
+    addSettingTab(tab) {
+      plugin.addSettingTab(tab as PluginSettingTab);
       return () => {};
     },
   };

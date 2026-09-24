@@ -56,6 +56,7 @@ function loadCycle(
   registry.interval(() => {}, 60_000);
   registry.domEvent(domTarget, "click", () => {});
   attachOsMotionPreference(registry, () => "auto", MOTION_QUERY);
+  registry.settingTab({});
   return registry;
 }
 
@@ -83,6 +84,7 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
       view: 0,
       ribbon: 0,
       command: 0,
+      settingTab: 0,
     });
   });
 
@@ -112,6 +114,8 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     // Two commands now: "Open overview" and "Set up managed vault". Twenty
     // loads leave exactly one of each, not twenty of each.
     expect(host.liveCounts().command).toBe(2);
+    // One tab after twenty loads, not twenty tabs.
+    expect(host.liveCounts().settingTab).toBe(1);
   });
 
   it("settings saved in the first cycle are present and unchanged in the twentieth, and save is invoked at most once per cycle", async () => {
