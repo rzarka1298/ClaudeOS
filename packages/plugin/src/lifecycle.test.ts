@@ -1,6 +1,7 @@
 import type { SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createHostRegistry, type HostRegistry } from "./host-registry.js";
+import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
 import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js";
 import {
   createFakeDomTarget,
@@ -18,6 +19,9 @@ const NOOP_SETUP_UI: VaultSetupUi = {
   notify: () => {},
   confirmPlan: () => Promise.resolve(false),
 };
+/** A media query that never changes -- this suite counts registrations, never behaviour. */
+const MOTION_QUERY: MediaQueryListLike = { matches: false, ...createFakeDomTarget() };
+
 const NOOP_CLIENT: SocketApiClient = {
   request<T>(_opts: SocketRequestOptions): Promise<{ status: number; body: T }> {
     return Promise.reject(new Error("not called"));
@@ -31,11 +35,12 @@ const NOOP_CLIENT: SocketApiClient = {
  * the registry still must prove leak-proof (event, interval, domEvent),
  * per PITFALLS.md's Pitfall 1 technique.
  *
- * The vault-setup command is registered through the REAL
- * `registerVaultSetupCommand`, not a hand-written stand-in: a stand-in
- * would still pass this suite if the real function ever stopped routing
- * through the registry, which is precisely the regression it is here to
- * catch.
+ * The vault-setup command and the OS reduced-motion subscription are
+ * registered through the REAL `registerVaultSetupCommand` and the REAL
+ * `attachOsMotionPreference`, not hand-written stand-ins: a stand-in would
+ * still pass this suite if the real function ever stopped routing through
+ * the registry, which is precisely the regression it is here to catch
+ * (threat T-03-07 — a matchMedia listener surviving unload).
  */
 function loadCycle(
   host: FakeObsidianHost,
@@ -50,6 +55,7 @@ function loadCycle(
   registry.event(WORKSPACE_EVENT, handler);
   registry.interval(() => {}, 60_000);
   registry.domEvent(domTarget, "click", () => {});
+  attachOsMotionPreference(registry, () => "auto", MOTION_QUERY);
   return registry;
 }
 
@@ -71,6 +77,8 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     expect(host.liveCounts()).toEqual({
       event: 0,
       interval: 0,
+      // Two domEvent registrations per cycle now -- the plain click handler
+      // and the OS reduced-motion subscription -- and both must reach zero.
       domEvent: 0,
       view: 0,
       ribbon: 0,

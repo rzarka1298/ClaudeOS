@@ -7,6 +7,7 @@ import {
 } from "@ccc/service-api-client";
 import { Plugin, type WorkspaceLeaf } from "obsidian";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
+import { attachOsMotionPreference } from "./motion.js";
 import {
   assertNoCredentialFields,
   type CommandCenterSettings,
@@ -59,6 +60,18 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     // is still torn down on unload regardless of whether the command-center
     // view is currently open.
     this.hostRegistry.registerRaw("eventStream", () => this.eventClient.dispose());
+
+    // The ONE place the OS reduced-motion query string is written in
+    // production code (D-19, A11Y-03). Everything downstream reads the
+    // resolved `motionMode` signal, which reaches CSS as a single
+    // `data-motion` attribute on the command-center root -- no component
+    // ever checks the preference itself. `motion.test.ts` walks the real
+    // source tree to keep that true as widgets are added.
+    attachOsMotionPreference(
+      this.hostRegistry,
+      () => this.settings.reducedMotion,
+      window.matchMedia("(prefers-reduced-motion: reduce)"),
+    );
 
     this.hostRegistry.view(VIEW_TYPE, (leaf: WorkspaceLeaf) => new CommandCenterView(leaf, this));
 

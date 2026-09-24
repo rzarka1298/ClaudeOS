@@ -12,6 +12,11 @@ export default defineConfig({
     // Excludes compiled dist/**.test.js so a built package doesn't run its
     // own tests twice (once from src, once from the tsc -b output).
     exclude: ["**/node_modules/**", "**/dist/**"],
+    // jsdom 30 ships no `window.matchMedia`, so any module subscribing to a
+    // media query cannot execute without a stand-in. Same rationale as the
+    // `obsidian` alias below: ONE shared, reviewable double rather than a
+    // per-test stub that can drift. See `src/test-support/jsdom-setup.ts`.
+    setupFiles: ["./src/test-support/jsdom-setup.ts"],
   },
   resolve: {
     // The `obsidian` package is types-only (`"main": ""`) -- the real
