@@ -132,7 +132,11 @@ done < "$DENYLIST"
   done
 } >> .gitignore
 git add .gitignore
-git commit -q -m "chore: guard internal paths in public .gitignore"
+# The guard commit is created AFTER the identity rewrite and AFTER the
+# metadata guard ran, so it must set the noreply identity explicitly —
+# otherwise the branch tip re-introduces the real address the guard exists
+# to keep out.
+git -c user.email="$NOREPLY_EMAIL" commit -q -m "chore: guard internal paths in public .gitignore"
 
 cd "$REPO_ROOT"
 git fetch -f -q "$WORK/filter" HEAD:public/main
