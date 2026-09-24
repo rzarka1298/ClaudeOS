@@ -136,5 +136,5 @@ git commit -q -m "chore: guard internal paths in public .gitignore"
 
 cd "$REPO_ROOT"
 git fetch -f -q "$WORK/filter" HEAD:public/main
-echo "public/main regenerated at $(git rev-parse --short public/main)"
-echo "Publish with: git push --force origin public/main:main"
+echo "public/main regenerated at $(git rev-parse --short refs/heads/public/main)"
+echo "Publish with: git push public   # refspec maps public/main -> main (forced)"
