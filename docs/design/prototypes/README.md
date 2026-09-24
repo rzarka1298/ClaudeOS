@@ -99,3 +99,41 @@ local. It is never committed, quoted or transcribed.
 Where a reference and PRD §8.1's written direction list disagree, **§8.1
 wins** — and where either conflicts with the accessibility floors, the floors
 win and ADR-10 records the deviation.
+
+## Review sheet
+
+One session, one winner, no narrowing round (D-07). Everything below is what
+the session must produce, verbatim from `03-UI-SPEC.md` → `## Deferred to
+ADR-10`. Each line is written into ADR-10 and every token, widget and layout
+plan in this phase starts from it.
+
+| # | What the review decides | The constraint that holds regardless |
+| --- | --- | --- |
+| 1 | **Direction** — `a`, `b` or `c` | One of the three; a fourth direction would be a new plan, never a silent fourth prototype |
+| 2 | **Final palette hex values** | PRD §8.1 (near-black, cream/off-white, pink/magenta, glass panels) **and** the contrast floors. Accessibility wins on conflict (C-12) |
+| 3 | **Card surface treatment** — translucency, blur amount, shadow depth | Thin borders, soft shadows, rounded rectangles; `--ccc-surface` must keep body text ≥ 4.5 : 1 whatever the alpha resolves to |
+| 4 | **Primary visual anchor** — which card is the Overview's focal point | Only a Display-step KPI in a `ready` card may carry the accent until the anchor is named |
+| 5 | **Tweaks** — one line each | Recorded as ADR amendments and applied when the tokens are built. No fourth prototype (D-09) |
+| 6 | **Winning layout composition and density** | One ordered list + `small\|medium\|wide\|tall` size hints on an auto-placing grid (D-12) — the mechanism is fixed whichever density wins |
+
+### Two recorded recommendations to confirm or overrule
+
+| # | Recommendation | Why it is recorded now |
+| --- | --- | --- |
+| 7 | **`permission-required` only for the OAuth-backed Today (Google Calendar and Gmail) and GitHub discoveries panels.** The other five §7.1 panels render `unavailable` ("No source yet") until their owning phase | Later phases flip cards deliberately rather than inventing a state per panel (research OQ4) |
+| 8 | **Screenshot baselines generated on a containerised Linux runner** (Posture A), not macOS | Playwright bakes the platform into baseline filenames, so it must be settled **before** the first baseline is committed (D-22) |
+
+### The reference material (D-06)
+
+`docs/design/prototypes/reference.local.md` was absent when the prototypes were
+built (plan 03-02) and is still absent at review time. If a reference video or
+link exists locally, **name it at the review** — the ADR records only
+`reference: received` or `reference: none`, never the path, the link, or a
+transcription of its contents.
+
+### Worth doing before deciding
+
+Switch every page to **Empty** and confirm no card disappears; switch to
+**Failure** and read the next-step line. Those two states are where a dashboard
+usually lies about its health, and they are the cheapest thing to check with all
+three pages open in the same state.
