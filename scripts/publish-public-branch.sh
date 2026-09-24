@@ -8,7 +8,7 @@
 # produced by this script. Publish with:
 #
 #     sh scripts/publish-public-branch.sh
-#     git push --force origin public/main:main
+#     git push public        # the `public` remote's push refspec maps public/main -> main (forced)
 #
 # Requires git-filter-repo (brew install git-filter-repo).
 set -eu
@@ -16,6 +16,20 @@ set -eu
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+
+# Published commits carry the owner's GitHub NOREPLY address, never a real
+# mailbox: the metadata guard below denylists the real address, so identity
+# rewriting is a requirement of this projection, not a preference. The
+# address is DERIVED at runtime from the `public` remote's GitHub URL --
+# embedding an email-shaped literal here would itself trip ci:privacy.
+PUBLIC_URL="$(git config remote.public.url || true)"
+GH_USER="$(printf '%s' "$PUBLIC_URL" | sed -nE 's#.*github\.com[:/]+([^/]+)/.*#\1#p')"
+if [ -z "$GH_USER" ]; then
+  echo "ERROR: could not derive a GitHub username from remote.public.url ('$PUBLIC_URL')." >&2
+  echo "       The noreply identity rewrite needs it — refusing to produce a public branch." >&2
+  exit 1
+fi
+NOREPLY_EMAIL="${GH_USER}@users.noreply.github.com"
 
 git clone --no-local -q "$REPO_ROOT" "$WORK/filter"
 cd "$WORK/filter"
@@ -39,7 +53,8 @@ for path in $STRIPPED_PATHS; do
 done
 
 # shellcheck disable=SC2086
-git filter-repo --quiet --invert-paths $FILTER_ARGS
+git filter-repo --quiet --invert-paths $FILTER_ARGS \
+  --email-callback "return b'${NOREPLY_EMAIL}'"
 
 # Guard: no denylisted owner identifier may survive anywhere in the filtered
 # history. Patterns live in the UNTRACKED .privacy-denylist.local so this
