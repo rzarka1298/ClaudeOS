@@ -1,7 +1,7 @@
-import { cleanup, render, screen } from "@testing-library/preact";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionChangedAt, connectionState, lastEvent } from "../connection-state.js";
-import type { WidgetDefinition } from "./contract.js";
+import type { QuickActionDescriptor, WidgetDefinition, WidgetState } from "./contract.js";
 import { WidgetFrame } from "./frame.js";
 import { serviceHealthState, serviceHealthWidget } from "./service-health.js";
 
@@ -133,5 +133,181 @@ describe("WidgetFrame ownership of the footer", () => {
     expect(container.querySelector(".ccc-card-body")?.textContent).toBe("");
     expect(container.querySelector(".ccc-card-footer")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Source" })).toBeTruthy();
+  });
+});
+
+/**
+ * Every presentation's copy, verbatim from the UI-SPEC Copywriting Contract,
+ * plus the A11Y-04 floor: the accessible text of the card differs across all
+ * eight presentations, so no two states are distinguishable only by colour.
+ */
+describe("the eight presentations", () => {
+  const PANEL: WidgetDefinition<string> = {
+    id: "test-panel",
+    title: "Test panel",
+    dataKeys: [{ key: "github.discoveries", transport: "service", sourceLabel: "GitHub" }],
+    refresh: { kind: "manual" },
+    minSize: "small",
+    preferredSize: "small",
+    featureFlag: "widget.test-panel",
+    quickActions: [],
+    renderBody: ({ data }) => <p className="ccc-body-value">{data}</p>,
+    renderEmpty: () => null,
+  };
+
+  const READY: WidgetState<string> = {
+    kind: "ready",
+    data: "payload",
+    observedAt: EVENT_AT,
+    freshness: "live",
+    partiality: { partial: false },
+    isEmpty: false,
+  };
+
+  function renderPanel(
+    state: WidgetState<string>,
+    connection: Parameters<typeof renderCard>[1] = { kind: "live" },
+    onQuickAction?: (descriptor: QuickActionDescriptor) => void,
+  ) {
+    return renderCard(state, connection, onQuickAction);
+  }
+
+  function renderCard(
+    state: WidgetState<string>,
+    connection:
+      | { kind: "connecting" }
+      | { kind: "live" }
+      | { kind: "disconnected"; reason: string },
+    onQuickAction?: (descriptor: QuickActionDescriptor) => void,
+  ) {
+    return render(
+      <WidgetFrame
+        definition={PANEL}
+        state={state}
+        connection={connection}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={onQuickAction}
+      />,
+    );
+  }
+
+  function focusableCount(container: HTMLElement): number {
+    return container.querySelectorAll("button, a[href], input, select, textarea, [tabindex]")
+      .length;
+  }
+
+  it("loading: a busy card with three skeleton lines and a hidden Loading line", () => {
+    const { container } = renderPanel({ kind: "loading" });
+    const card = container.querySelector("section.ccc-card");
+    expect(card?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelectorAll(".ccc-skeleton-line")).toHaveLength(3);
+    expect(container.querySelector(".ccc-visually-hidden")?.textContent).toBe("Loading test panel");
+  });
+
+  it("empty: the contract copy, a footer that stays, and exactly one focusable control", () => {
+    const { container } = renderPanel({ ...READY, isEmpty: true });
+    expect(screen.getByText("Nothing here yet")).toBeTruthy();
+    expect(
+      screen.getByText("Test panel has no items right now. New items appear as they arrive."),
+    ).toBeTruthy();
+    expect(container.querySelector(".ccc-card-footer")).toBeTruthy();
+    expect(focusableCount(container)).toBe(1);
+  });
+
+  it("stale: the last-good values stay readable, the header mutes, the badge reads Stale", () => {
+    const { container } = renderPanel({ ...READY, freshness: "stale" });
+    const card = container.querySelector("section.ccc-card");
+    expect(card?.getAttribute("data-presentation")).toBe("stale");
+    expect(container.querySelector(".ccc-body-value")?.textContent).toBe("payload");
+    expect(container.querySelector(".ccc-badge")?.textContent).toContain("Stale");
+  });
+
+  it("disconnected: both lines, a dimmed body and an Unavailable badge", () => {
+    const { container } = renderPanel(READY, {
+      kind: "disconnected",
+      reason: "connect ECONNREFUSED",
+    });
+    expect(screen.getByText("Service disconnected")).toBeTruthy();
+    expect(
+      screen.getByText("Showing the last values received 2 minutes ago. They may be out of date."),
+    ).toBeTruthy();
+    expect(container.querySelector(".ccc-card-body")?.getAttribute("data-dimmed")).toBe("true");
+    expect(container.querySelector(".ccc-badge")?.textContent).toContain("Unavailable");
+  });
+
+  it("error: the contract copy with a decorative glyph, and a failed source in the panel", () => {
+    const { container } = renderPanel({ kind: "error", message: "HTTP 500" });
+    expect(screen.getByText("Couldn't load test panel.")).toBeTruthy();
+    expect(
+      screen.getByText("Check the service in Settings → Diagnostics, then refresh."),
+    ).toBeTruthy();
+    const glyph = container.querySelector(".ccc-error-glyph");
+    expect(glyph?.getAttribute("aria-hidden")).toBe("true");
+    expect(container.querySelector(".ccc-badge")?.textContent).toContain("Unavailable");
+
+    fireEvent.click(screen.getByRole("button", { name: "Source" }));
+    expect(container.querySelector(".ccc-source-panel")?.textContent).toContain("GitHub — failed");
+  });
+
+  it("permission-required: a Connect button that precedes Source and only emits a descriptor", () => {
+    const onQuickAction = vi.fn();
+    const { container } = renderPanel(
+      { kind: "permission-required", capability: "github", sourceLabel: "GitHub" },
+      { kind: "live" },
+      onQuickAction,
+    );
+
+    expect(screen.getByText("GitHub isn't connected")).toBeTruthy();
+    expect(screen.getByText("Connect GitHub to see test panel here.")).toBeTruthy();
+
+    const buttons = [...container.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons).toEqual(["Connect GitHub", "Source"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+    expect(onQuickAction).toHaveBeenCalledTimes(1);
+    expect(onQuickAction).toHaveBeenCalledWith({
+      id: "connect-github",
+      label: "Connect GitHub",
+      capability: "connect:github",
+    });
+  });
+
+  it("unavailable: the no-source-yet copy and an Unavailable badge", () => {
+    const { container } = renderPanel({ kind: "unavailable" });
+    expect(screen.getByText("No source yet")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Test panel has no data source in this build. It fills in once its source is available.",
+      ),
+    ).toBeTruthy();
+    expect(container.querySelector(".ccc-badge")?.textContent).toContain("Unavailable");
+  });
+
+  it("A11Y-04: the accessible text differs across all eight presentations", () => {
+    const cases: [string, WidgetState<string>, Parameters<typeof renderCard>[1]][] = [
+      ["loading", { kind: "loading" }, { kind: "live" }],
+      ["empty", { ...READY, isEmpty: true }, { kind: "live" }],
+      ["ready", READY, { kind: "live" }],
+      ["stale", { ...READY, freshness: "stale" }, { kind: "live" }],
+      ["disconnected", READY, { kind: "disconnected", reason: "connect ECONNREFUSED" }],
+      ["error", { kind: "error", message: "HTTP 500" }, { kind: "live" }],
+      [
+        "permission-required",
+        { kind: "permission-required", capability: "github", sourceLabel: "GitHub" },
+        { kind: "live" },
+      ],
+      ["unavailable", { kind: "unavailable" }, { kind: "live" }],
+    ];
+
+    const texts = cases.map(([, state, connection]) => {
+      const { container, unmount } = renderCard(state, connection);
+      const text = container.querySelector("section.ccc-card")?.textContent ?? "";
+      unmount();
+      return text;
+    });
+
+    expect(new Set(texts).size).toBe(8);
+    for (const text of texts) expect(text.length).toBeGreaterThan(0);
   });
 });
