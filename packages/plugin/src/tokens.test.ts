@@ -38,7 +38,7 @@ const REDUCED_SELECTOR = '[data-motion="reduced"]';
 const GLASS_COMPOSITE = "#1D161E";
 
 /** Classes that must never be reachable without a visible focus ring (A11Y-01). */
-const FOCUSABLE = [".ccc-nav-item", ".ccc-content", ".ccc-source-button"];
+const FOCUSABLE = [".ccc-nav-item", ".ccc-content", ".ccc-source-button", ".ccc-connect-button"];
 
 // ---------------------------------------------------------------------------
 // A small, deliberate CSS reader

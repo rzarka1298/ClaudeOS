@@ -102,11 +102,58 @@ export function WidgetFrame<T>({
           </>
         );
       case "error":
-        return <p className="ccc-state-heading">{`Couldn't load ${panel}.`}</p>;
-      case "permission-required":
-        return <p className="ccc-state-heading">{`${presentation.sourceLabel} isn't connected`}</p>;
+        return (
+          <>
+            <p className="ccc-state-heading">
+              {/* The glyph is decorative reinforcement only — the danger colour
+                  is never the sole signal, and the text stands without it
+                  (A11Y-04). */}
+              <span className="ccc-error-glyph" aria-hidden="true">
+                ▲
+              </span>
+              <span>{`Couldn't load ${panel}.`}</span>
+            </p>
+            <p className="ccc-state-body">
+              Check the service in Settings → Diagnostics, then refresh.
+            </p>
+          </>
+        );
+      case "permission-required": {
+        const source = presentation.sourceLabel;
+        const capability = presentation.capability;
+        return (
+          <>
+            <p className="ccc-state-heading">{`${source} isn't connected`}</p>
+            <p className="ccc-state-body">{`Connect ${source} to see ${panel} here.`}</p>
+            {/* A DESCRIPTOR goes to one handler prop and nothing runs here
+                (C-11, APPR-01, T-03-13). In this phase the dispatcher resolves
+                it to the shell's settings destination; Phase 6/7 replaces that
+                resolution without touching this button or the contract. */}
+            <button
+              type="button"
+              className="ccc-connect-button"
+              onClick={() =>
+                onQuickAction?.({
+                  id: `connect-${capability}`,
+                  label: `Connect ${source}`,
+                  capability: `connect:${capability}`,
+                })
+              }
+            >
+              {`Connect ${source}`}
+            </button>
+          </>
+        );
+      }
       case "unavailable":
-        return <p className="ccc-state-heading">No source yet</p>;
+        return (
+          <>
+            <p className="ccc-state-heading">No source yet</p>
+            <p className="ccc-state-body">
+              {`${definition.title} has no data source in this build. It fills in once its source is available.`}
+            </p>
+          </>
+        );
     }
   })();
 

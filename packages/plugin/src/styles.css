@@ -611,3 +611,21 @@
     margin-left: 0;
   }
 }
+
+/* The partial chip is the SAME shape as the freshness chip on purpose: two
+ * same-shaped, independent signals is what makes ADR-0002's orthogonality
+ * visible rather than merely documented. */
+.ccc-badge[data-badge="partial"] {
+  color: var(--ccc-ink);
+  border-style: dashed;
+}
+
+/* Long values clamp to two lines with the full text still in the DOM, so the
+ * accessible name is never the truncated one (UI-SPEC E1/E5 long-text rows). */
+.ccc-clamp-2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}

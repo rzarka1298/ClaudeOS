@@ -181,18 +181,28 @@ describe("the eight presentations", () => {
     onQuickAction?: (descriptor: QuickActionDescriptor) => void,
   ) {
     return render(
-      <WidgetFrame
-        definition={PANEL}
-        state={state}
-        connection={connection}
-        size="small"
-        now={TWO_MINUTES_LATER}
-        onQuickAction={onQuickAction}
-      />,
+      onQuickAction === undefined ? (
+        <WidgetFrame
+          definition={PANEL}
+          state={state}
+          connection={connection}
+          size="small"
+          now={TWO_MINUTES_LATER}
+        />
+      ) : (
+        <WidgetFrame
+          definition={PANEL}
+          state={state}
+          connection={connection}
+          size="small"
+          now={TWO_MINUTES_LATER}
+          onQuickAction={onQuickAction}
+        />
+      ),
     );
   }
 
-  function focusableCount(container: HTMLElement): number {
+  function focusableCount(container: Element): number {
     return container.querySelectorAll("button, a[href], input, select, textarea, [tabindex]")
       .length;
   }
