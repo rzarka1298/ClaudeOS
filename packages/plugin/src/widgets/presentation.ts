@@ -71,6 +71,23 @@ function sourcesWith(
   return dataKeys.map((key) => ({ label: key.sourceLabel, status }));
 }
 
+/**
+ * The Source panel's row per declared key for a card that DID observe: a key
+ * named in `partiality.missingSources` is reported `missing`, every other key
+ * `ok`. This is what makes the partial badge checkable rather than decorative
+ * (ADR-0002).
+ */
+function observedSources(
+  dataKeys: readonly DataDependencyKey[],
+  partiality: Partiality,
+): readonly FooterSource[] {
+  const missing = new Set(partiality.missingSources ?? []);
+  return dataKeys.map((key) => ({
+    label: key.sourceLabel,
+    status: missing.has(key.sourceLabel) ? ("missing" as const) : ("ok" as const),
+  }));
+}
+
 /** A footer for a card that has no observation to report. */
 function blankFooter(
   dataKeys: readonly DataDependencyKey[],
@@ -110,7 +127,7 @@ export function resolveCardPresentation<T>(
         kind: "permission-required",
         capability: state.capability,
         sourceLabel: state.sourceLabel,
-        footer: blankFooter(dataKeys, null, "ok"),
+        footer: blankFooter(dataKeys, null, "not-connected"),
       };
 
     case "error":
@@ -120,21 +137,21 @@ export function resolveCardPresentation<T>(
       return {
         kind: "error",
         message: state.message,
-        footer: blankFooter(dataKeys, "unavailable", "ok"),
+        footer: blankFooter(dataKeys, "unavailable", "failed"),
       };
 
     case "unavailable":
       if (transportIsDown(connection, dataKeys)) {
         return { kind: "disconnected", reason, lastGood: null };
       }
-      return { kind: "unavailable", footer: blankFooter(dataKeys, "unavailable", "ok") };
+      return { kind: "unavailable", footer: blankFooter(dataKeys, "unavailable", "no-source") };
 
     case "ready": {
       const footer: FooterModel = {
         observedAt: state.observedAt,
         freshness: state.freshness,
         partiality: state.partiality,
-        sources: sourcesWith(dataKeys, "ok"),
+        sources: observedSources(dataKeys, state.partiality),
       };
       if (transportIsDown(connection, dataKeys)) {
         return {
@@ -144,8 +161,21 @@ export function resolveCardPresentation<T>(
           // last-good moment, so "Showing the last values received {relative}"
           // can be honest without the badge claiming currency (UI-SPEC
           // per-state table; truth 5).
-          lastGood: { ...footer, freshness: "unavailable" },
+          lastGood: {
+            ...footer,
+            freshness: "unavailable",
+            sources: dataKeys.map((key) => ({
+              label: key.sourceLabel,
+              status: key.transport === "service" ? ("disconnected" as const) : ("ok" as const),
+            })),
+          },
         };
+      }
+      // An observation whose freshness is `unavailable` is not an observation:
+      // presenting it as `ready` would put a card's last-good values on screen
+      // with a badge that says the source is gone.
+      if (state.freshness === "unavailable") {
+        return { kind: "error", message: "The source reported no usable result.", footer };
       }
       if (state.isEmpty) return { kind: "empty", footer };
       if (state.freshness === "stale") return { kind: "stale", footer };

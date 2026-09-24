@@ -9,11 +9,22 @@
 
 const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
-/** A short "last updated" string, e.g. `2 minutes ago`. */
+/**
+ * A short "last updated" string, e.g. `2 minutes ago`.
+ *
+ * A negative elapsed time is clamped to zero rather than formatted: a
+ * companion service whose clock runs fast must not make a card announce
+ * "in 5 minutes" for an observation that has already arrived.
+ */
 export function formatRelativeTime(iso: string, nowMs: number): string {
-  const elapsedMs = nowMs - Date.parse(iso);
-  const minutes = Math.round(elapsedMs / 60_000);
-  return RELATIVE.format(-minutes, "minute");
+  const elapsedMs = Math.max(0, nowMs - Date.parse(iso));
+  const seconds = Math.floor(elapsedMs / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return RELATIVE.format(-minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return RELATIVE.format(-hours, "hour");
+  return RELATIVE.format(-Math.floor(hours / 24), "day");
 }
 
 /**
