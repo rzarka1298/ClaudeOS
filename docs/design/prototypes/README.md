@@ -137,3 +137,36 @@ Switch every page to **Empty** and confirm no card disappears; switch to
 **Failure** and read the next-step line. Those two states are where a dashboard
 usually lies about its health, and they are the cheapest thing to check with all
 three pages open in the same state.
+
+---
+
+## Selection (recorded 2026-09-23)
+
+The review happened and the owner selected one direction. This section is the
+raw record of that session; the reasoned, binding version is
+[`docs/adr/0023-design-system-and-reduced-motion.md`](../../adr/0023-design-system-and-reduced-motion.md)
+(ADR-10). Where the two disagree, the ADR wins — it is the document downstream
+plans read.
+
+| # | Decision | Recorded answer |
+| --- | --- | --- |
+| 1 | Direction | **`c` — split sidebar plus canvas** (`c-split-sidebar-canvas.html`) |
+| 2 | Final palette hex values | Provisional palette kept for the dark surfaces; a cream surface family and an inverted ink pair added (see ADR-10 `## Token values`) |
+| 3 | Card surface treatment | **Glass** for data and list cards — translucent dark fill, blur, soft shadow. **Opaque cream** for the hero KPI card and the metric tiles |
+| 4 | Primary visual anchor | **Active Claude sessions**, first card on the canvas, in the hero style (large cream card, giant numeral, thin progress line) |
+| 5 | Tweaks | Recorded as ADR-10 `## Review amendments` — one bullet each, applied when the tokens are built. No fourth prototype (D-09) |
+| 6 | Layout composition and density | Direction `c`'s persistent rail plus canvas grid, on the D-12 mechanism unchanged |
+| 7 | `permission-required` vs `unavailable` | **Confirmed as recorded** — Today (`google`) and GitHub discoveries (`github`) only; the other five panels `unavailable` |
+| 8 | Screenshot runner platform | **Confirmed as recorded** — Posture A, containerised Linux |
+
+**Reference material (D-06): `reference: received`.** A reference was supplied
+locally and reviewed. It is not committed, not linked, and not transcribed
+anywhere in this repository; its design implications are written into ADR-10 as
+rules in our own words. Nothing beyond the words `reference: received` crosses
+into git.
+
+**One conflict, resolved against the reference.** Cream card fills mean text and
+glyphs sit on cream, and the bright accent `#FF5FA2` measures **2.47 : 1** on
+`#F4EFE6` — below the 4.5 : 1 floor. Accessibility wins (C-12): cream surfaces
+use a deeper accent and an inverted ink pair instead. ADR-10 records the
+measured numbers.
