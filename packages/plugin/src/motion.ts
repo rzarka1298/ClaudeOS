@@ -24,16 +24,18 @@ export type MotionPreference = "auto" | "reduced";
 export type MotionMode = "full" | "reduced";
 
 /**
- * RED SKELETON (plan 03-04, Task 1). Deliberately unimplemented so the RED run
- * fails on the target tests' own assertions rather than on a module-resolution
- * crash, which the TDD gate classifies as `fixture_or_load_failure` and
- * refuses as evidence. Replaced in the GREEN commit.
+ * The whole decision, in one expression: either input asking to reduce wins.
+ *
+ * `preference` is untrusted input — it arrives from a hand-edited or stale
+ * `data.json` (threat T-03-12) — so anything that is not the literal
+ * `"reduced"` is treated as `auto` and defers to the OS, rather than throwing
+ * or silently forcing reduced motion.
  */
 export function resolveMotionMode(
-  _preference: MotionPreference,
-  _osPrefersReduced: boolean,
+  preference: MotionPreference,
+  osPrefersReduced: boolean,
 ): MotionMode {
-  throw new Error("resolveMotionMode: not implemented");
+  return preference === "reduced" || osPrefersReduced ? "reduced" : "full";
 }
 
 /**

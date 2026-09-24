@@ -1,3 +1,5 @@
+import type { MotionPreference } from "./motion.js";
+
 /**
  * The entire contract for what the plugin persists through Obsidian's own
  * plugin-data storage (`loadData`/`saveData`). PLUG-07 requires that this
@@ -9,11 +11,20 @@
 export interface CommandCenterSettings {
   socketPathOverride: string | null;
   lastOpenedDestination: string;
+  /**
+   * The owner's reduced-motion override (A11Y-03). `auto` defers to the OS.
+   * A widening, not a migration: there is no schema version because
+   * `loadSettings()` merges whatever is on disk over {@link DEFAULT_SETTINGS},
+   * so a `data.json` written before this key existed resolves to `auto`
+   * without a single line of upgrade code.
+   */
+  reducedMotion: MotionPreference;
 }
 
 export const DEFAULT_SETTINGS: CommandCenterSettings = {
   socketPathOverride: null,
   lastOpenedDestination: "overview",
+  reducedMotion: "auto",
 };
 
 /** Case-insensitive: catches `token`, `Token`, `refreshToken`, `INSTALL_SECRET`, etc. */

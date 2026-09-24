@@ -1,6 +1,7 @@
 import { useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
+import { motionMode } from "../motion.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 
 export interface ShellProps {
@@ -26,8 +27,14 @@ function connectionStatusText(state: ConnectionState): string {
  * Renders synchronously from {@link connectionState}'s current signal value
  * and never awaits a client — see `command-center-view.ts` for where the
  * connection probe actually happens, always after this component's first
- * paint. Structural markup and Obsidian's own CSS custom properties only;
- * the visual direction is selected from prototypes in Phase 3.
+ * paint.
+ *
+ * Every visual value comes from the one `--ccc-*` token block in
+ * `styles.css` (ADR-0023, UI-03); this component contributes class names and
+ * `data-*` attributes and nothing else — no inline style, no colour, no
+ * duration. `data-motion` is the single channel by which the resolved
+ * reduced-motion mode reaches CSS (D-19): the component reads the already
+ * resolved signal and never checks the OS preference itself.
  */
 export function Shell({ initialDestination, onDestinationChange }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
@@ -54,7 +61,24 @@ export function Shell({ initialDestination, onDestinationChange }: ShellProps) {
   const event = lastEvent.value;
 
   return (
-    <div className="ccc-command-center">
+    <div className="ccc-command-center" data-motion={motionMode.value}>
+      {/* Decorative atmosphere (D-20): CSS-only gradients plus a fixed set of
+          twinkle points whose positions and delays live entirely in
+          `styles.css`. Announced to nobody, and static under reduced motion. */}
+      <div className="ccc-twinkle" aria-hidden="true">
+        <span className="ccc-twinkle-point" key={0} />
+        <span className="ccc-twinkle-point" key={1} />
+        <span className="ccc-twinkle-point" key={2} />
+        <span className="ccc-twinkle-point" key={3} />
+        <span className="ccc-twinkle-point" key={4} />
+        <span className="ccc-twinkle-point" key={5} />
+        <span className="ccc-twinkle-point" key={6} />
+        <span className="ccc-twinkle-point" key={7} />
+        <span className="ccc-twinkle-point" key={8} />
+        <span className="ccc-twinkle-point" key={9} />
+        <span className="ccc-twinkle-point" key={10} />
+        <span className="ccc-twinkle-point" key={11} />
+      </div>
       <div className="ccc-connection-status" data-state={status.kind}>
         <span className="ccc-status-dot" aria-hidden="true" />
         <span className="ccc-status-text">{connectionStatusText(status)}</span>

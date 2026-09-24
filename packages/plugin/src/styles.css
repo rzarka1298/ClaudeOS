@@ -1,26 +1,271 @@
 /*
- * Structural markup only (Phase 3 owns the visual direction — see
- * PROJECT.md's Phase 3 note and the plan's own threat register). Every
- * color and spacing value below is an Obsidian theme custom property, never
- * a literal value, and no dimension is a fixed pixel width: the shell must
- * be correct in both a narrow side pane and a full-window pane (PLUG-06).
+ * The command center's one and only token block (UI-03, D-18), holding every
+ * value docs/adr/0023-design-system-and-reduced-motion.md recorded for
+ * direction `c`. Nothing below leaks: every selector is a descendant of
+ * `.ccc-command-center`, no rule touches Obsidian's own chrome, no rule
+ * references an Obsidian custom property, and there is no importance
+ * override anywhere — so the command center stays near-black in Obsidian's
+ * light theme and its dark theme alike, and a user snippet can still beat
+ * any token.
+ *
+ * The token block uses `:where()` so its specificity is 0. Every dimension
+ * is rem/em/cqi so Obsidian's own font-size setting still scales the UI and
+ * WCAG 1.4.4 (200% resize) holds; there is no px anywhere.
+ *
+ * `tokens.test.ts` parses this file from disk and asserts all of the above,
+ * plus the ADR's whole measured-contrast matrix. A colour edit that has not
+ * been audited fails at the commit that introduces it.
  */
 
+:where(.ccc-command-center) {
+  /* --- Colour (ADR-0023 "Token values > Colour") --- */
+  --ccc-bg: #0b0b0f;
+  --ccc-surface: #15151b;
+  --ccc-surface-glass: rgba(21, 21, 27, 0.72);
+  --ccc-surface-blur: 0.75rem;
+  --ccc-shadow-card: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.35);
+  --ccc-cream: #f4efe6;
+  --ccc-ink: #f4efe6;
+  --ccc-ink-muted: #9a94a6;
+  --ccc-ink-inverse: #0b0b0f;
+  --ccc-ink-inverse-muted: #5a5650;
+  --ccc-accent: #ff5fa2;
+  --ccc-accent-deep: #c2185b;
+  --ccc-danger: #ff6b6b;
+  --ccc-border: rgba(244, 239, 230, 0.14);
+  --ccc-border-cream: rgba(11, 11, 15, 0.12);
+
+  /* --- Type: exactly four sizes, exactly two weights --- */
+  --ccc-font-ui: -apple-system, blinkmacsystemfont, "Segoe UI", roboto, "Helvetica Neue", arial,
+    sans-serif;
+  --ccc-font-numeric: var(--ccc-font-ui);
+  --ccc-font-mono: ui-monospace, sfmono-regular, "SF Mono", menlo, consolas, "Liberation Mono",
+    monospace;
+  --ccc-text-label: 0.8125rem;
+  --ccc-text-body: 1rem;
+  --ccc-text-heading: 1.125rem;
+  --ccc-text-kpi: clamp(2rem, 8cqi, 3.5rem);
+  --ccc-weight-regular: 400;
+  --ccc-weight-strong: 600;
+  --ccc-tracking-label: 0.08em;
+  --ccc-leading-prose: 1.6;
+
+  /* --- Spacing, strokes, radii --- */
+  --ccc-space-xs: 0.25rem;
+  --ccc-space-sm: 0.5rem;
+  --ccc-space-md: 1rem;
+  --ccc-space-lg: 1.5rem;
+  --ccc-space-xl: 2rem;
+  --ccc-space-2xl: 3rem;
+  --ccc-space-3xl: 4rem;
+  --ccc-border-hairline: 0.0625rem;
+  --ccc-focus-ring: 0.125rem;
+  --ccc-radius-sm: 0.25rem;
+  --ccc-radius-md: 0.75rem;
+  --ccc-radius-pill: 999rem;
+  --ccc-rail-width: 17rem;
+  --ccc-hero-bar-height: 0.25rem;
+
+  /* --- Motion: the only three levers any animation may pull (D-19) --- */
+  --ccc-motion-fast: 120ms;
+  --ccc-motion-slow: 400ms;
+  --ccc-twinkle-duration: 6s;
+}
+
 .ccc-command-center {
+  position: relative;
   container-type: inline-size;
   display: flex;
   flex-direction: column;
   height: 100%;
-  color: var(--text-normal);
-  background-color: var(--background-primary);
+  overflow: hidden;
+  color: var(--ccc-ink);
+  background-color: var(--ccc-bg);
+  font-family: var(--ccc-font-ui);
+  font-size: var(--ccc-text-body);
+  font-weight: var(--ccc-weight-regular);
+  line-height: var(--ccc-leading-prose);
 }
 
+/*
+ * Reduced motion, resolved once in TypeScript (motion.ts) and delivered here
+ * as one attribute — never a per-component media query (D-19, A11Y-03). The
+ * three durations become literally zero, not "nearly" zero, and the two
+ * animated affordances are switched off outright so nothing survives on a
+ * token a future edit forgets to route through.
+ */
+.ccc-command-center[data-motion="reduced"] {
+  --ccc-motion-fast: 0ms;
+  --ccc-motion-slow: 0ms;
+  --ccc-twinkle-duration: 0s;
+}
+
+.ccc-command-center[data-motion="reduced"] .ccc-twinkle,
+.ccc-command-center[data-motion="reduced"] .ccc-twinkle-point {
+  animation: none;
+}
+
+.ccc-command-center[data-motion="reduced"] .ccc-kpi-number {
+  transition: none;
+}
+
+/*
+ * The atmosphere (D-20): layered radial gradients over --ccc-bg, plus a
+ * sparse set of CSS-positioned twinkle points concentrated toward the
+ * top-right. CSS-only — no binary asset enters the repository, so there is
+ * nothing to privacy-check and nothing to fail to load. The whole layer is
+ * decorative and aria-hidden; with zero points the gradients still render.
+ */
+.ccc-command-center::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(
+      60% 45% at 8% 4%,
+      color-mix(in srgb, var(--ccc-accent) 16%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      45% 40% at 92% 12%,
+      color-mix(in srgb, var(--ccc-accent-deep) 12%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      70% 55% at 50% 108%,
+      color-mix(in srgb, var(--ccc-surface) 90%, transparent),
+      transparent 68%
+    );
+}
+
+.ccc-twinkle {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ccc-twinkle-point {
+  position: absolute;
+  width: 0.125rem;
+  height: 0.125rem;
+  border-radius: 50%;
+  background-color: var(--ccc-accent);
+  opacity: 0.2;
+  animation-name: ccc-twinkle;
+  animation-duration: var(--ccc-twinkle-duration);
+  animation-iteration-count: infinite;
+  animation-timing-function: ease-in-out;
+}
+
+/* Twelve fixed positions, weighted top-right per the ADR's amendment, each
+ * with its own delay so the field never pulses in unison. Positions live
+ * here rather than in an inline style attribute: state and geometry reach
+ * CSS through classes and custom properties only (Pitfall 4, UI-SPEC 3). */
+.ccc-twinkle-point:nth-child(1) {
+  top: 6%;
+  left: 71%;
+  animation-delay: 0s;
+}
+
+.ccc-twinkle-point:nth-child(2) {
+  top: 11%;
+  left: 88%;
+  animation-delay: 0.4s;
+}
+
+.ccc-twinkle-point:nth-child(3) {
+  top: 18%;
+  left: 62%;
+  animation-delay: 0.9s;
+}
+
+.ccc-twinkle-point:nth-child(4) {
+  top: 4%;
+  left: 94%;
+  animation-delay: 1.3s;
+}
+
+.ccc-twinkle-point:nth-child(5) {
+  top: 26%;
+  left: 79%;
+  animation-delay: 1.8s;
+}
+
+.ccc-twinkle-point:nth-child(6) {
+  top: 33%;
+  left: 93%;
+  animation-delay: 2.2s;
+}
+
+.ccc-twinkle-point:nth-child(7) {
+  top: 9%;
+  left: 47%;
+  animation-delay: 2.7s;
+}
+
+.ccc-twinkle-point:nth-child(8) {
+  top: 41%;
+  left: 67%;
+  animation-delay: 3.1s;
+}
+
+.ccc-twinkle-point:nth-child(9) {
+  top: 22%;
+  left: 34%;
+  animation-delay: 3.6s;
+}
+
+.ccc-twinkle-point:nth-child(10) {
+  top: 54%;
+  left: 88%;
+  animation-delay: 4s;
+}
+
+.ccc-twinkle-point:nth-child(11) {
+  top: 48%;
+  left: 21%;
+  animation-delay: 4.5s;
+}
+
+.ccc-twinkle-point:nth-child(12) {
+  top: 68%;
+  left: 74%;
+  animation-delay: 5s;
+}
+
+@keyframes ccc-twinkle {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/*
+ * The connection strip — ADR-0023's centred status pill. The dot is
+ * decorative reinforcement only: connectionStatusText() in shell.tsx always
+ * renders the same information as text, so nothing here is conveyed by
+ * colour alone (A11Y-04).
+ */
 .ccc-connection-status {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
-  gap: var(--size-4-1);
-  padding: var(--size-4-2);
-  border-bottom: 0.0625rem solid var(--background-modifier-border);
+  gap: var(--ccc-space-sm);
+  padding: var(--ccc-space-sm) var(--ccc-space-md);
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
+  font-size: var(--ccc-text-label);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+  color: var(--ccc-ink-muted);
 }
 
 .ccc-status-dot {
@@ -29,62 +274,116 @@
   height: 0.6em;
   flex: none;
   border-radius: 50%;
-  background-color: var(--text-muted);
+  background-color: var(--ccc-ink-muted);
+  transition: background-color var(--ccc-motion-fast) ease-out;
 }
 
-/*
- * The dot is decorative reinforcement only — connectionStatusText() in
- * shell.tsx always renders the same information as text, so nothing here
- * is conveyed by color alone (A11Y-04).
- */
 .ccc-connection-status[data-state="live"] .ccc-status-dot {
-  background-color: var(--text-success);
+  background-color: var(--ccc-ink);
+}
+
+.ccc-connection-status[data-state="live"] .ccc-status-text {
+  color: var(--ccc-ink);
 }
 
 .ccc-connection-status[data-state="disconnected"] .ccc-status-dot {
-  background-color: var(--text-error);
+  background-color: var(--ccc-danger);
 }
 
+/* The disconnected strip becomes the global banner, while the tabs beside
+ * it stay fully operable (UI-SPEC E6 error row). */
+.ccc-connection-status[data-state="disconnected"] .ccc-status-text {
+  color: var(--ccc-danger);
+}
+
+.ccc-last-event-text {
+  margin-left: auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ccc-ink-muted);
+  font-family: var(--ccc-font-mono);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* The destination tablist: pill-shaped uppercase tabs directly beneath the
+ * strip, the active one marked by the accent underline plus full-strength
+ * ink — never by colour alone (A11Y-04: aria-selected carries the state). */
 .ccc-nav {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--size-2-2);
-  padding: var(--size-4-2);
-  border-bottom: 0.0625rem solid var(--background-modifier-border);
+  gap: var(--ccc-space-xs);
+  padding: var(--ccc-space-sm) var(--ccc-space-md);
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
 }
 
 .ccc-nav-item {
   flex: 1 1 auto;
   min-width: max-content;
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--ccc-ink-muted);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-regular);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
   border: none;
-  border-bottom: 0.125rem solid transparent;
+  border-bottom: var(--ccc-focus-ring) solid transparent;
+  border-radius: var(--ccc-radius-sm);
   cursor: pointer;
+  transition:
+    color var(--ccc-motion-fast) ease-out,
+    border-bottom-color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-nav-item:hover {
+  color: var(--ccc-ink);
 }
 
 .ccc-nav-item[aria-selected="true"] {
-  color: var(--text-normal);
-  font-weight: var(--font-semibold);
-  border-bottom-color: var(--text-accent);
+  color: var(--ccc-ink);
+  font-weight: var(--ccc-weight-strong);
+  border-bottom-color: var(--ccc-accent);
 }
 
 .ccc-nav-item:focus-visible,
 .ccc-content:focus-visible {
-  outline: 0.125rem solid var(--text-accent);
-  outline-offset: -0.125rem;
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
 }
 
 .ccc-content {
+  position: relative;
+  z-index: 1;
   flex: 1 1 auto;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: var(--size-4-2);
+  padding: var(--ccc-space-lg) var(--ccc-space-md);
 }
 
-/* Below this container width, stack the destination navigation vertically
- * rather than letting it overflow horizontally (PLUG-06). Layout
- * correctness only — no new color, type scale, or motion. */
+/*
+ * The KPI numeral's easing is a CSS transition rather than a
+ * requestAnimationFrame count-up, because a rAF implementation would have to
+ * read the resolved motion mode to know whether to animate — the
+ * per-component check D-19 exists to forbid. Under reduced motion the number
+ * snaps, which is exactly what the setting asks for (ADR-0023).
+ */
+.ccc-kpi-number {
+  font-family: var(--ccc-font-numeric);
+  font-size: var(--ccc-text-kpi);
+  font-weight: var(--ccc-weight-strong);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  transition:
+    opacity var(--ccc-motion-slow) ease-out,
+    transform var(--ccc-motion-slow) ease-out;
+}
+
+/* Below this container width the tablist stacks rather than overflowing, and
+ * labels are never truncated (PLUG-06, UI-SPEC E6 overflow row). */
 @container (max-width: 24rem) {
   .ccc-nav {
     flex-direction: column;

@@ -228,13 +228,12 @@ describe("token block (UI-03, D-18)", () => {
   });
 
   it("names no colour literal outside the token block", () => {
-    const offenders = RULES.filter((rule) => rule.selector !== ROOT_SELECTOR)
-      .flatMap((rule) =>
-        declarationsOf(rule)
-          .filter((declaration) => !declaration.property.startsWith("--ccc-"))
-          .filter((declaration) => /#[0-9a-f]{3,8}\b|\brgba?\s*\(/i.test(declaration.value))
-          .map((declaration) => `${rule.selector} { ${declaration.property} }`),
-      );
+    const offenders = RULES.filter((rule) => rule.selector !== ROOT_SELECTOR).flatMap((rule) =>
+      declarationsOf(rule)
+        .filter((declaration) => !declaration.property.startsWith("--ccc-"))
+        .filter((declaration) => /#[0-9a-f]{3,8}\b|\brgba?\s*\(/i.test(declaration.value))
+        .map((declaration) => `${rule.selector} { ${declaration.property} }`),
+    );
     expect(offenders).toEqual([]);
   });
 });
