@@ -1,17 +1,20 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
+import { motionMode } from "../motion.js";
 import { Shell } from "./shell.js";
 
 afterEach(() => {
   cleanup();
   connectionState.value = { kind: "connecting" };
   lastEvent.value = undefined;
+  motionMode.value = "full";
 });
 
 beforeEach(() => {
   connectionState.value = { kind: "connecting" };
   lastEvent.value = undefined;
+  motionMode.value = "full";
 });
 
 describe("Shell", () => {
@@ -80,5 +83,28 @@ describe("Shell", () => {
     render(<Shell onDestinationChange={onDestinationChange} />);
     fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
     expect(onDestinationChange).toHaveBeenCalledWith("projects");
+  });
+
+  it("carries the resolved motion mode on the root, defaulting to full", () => {
+    const { container } = render(<Shell />);
+    expect(container.querySelector(".ccc-command-center")?.getAttribute("data-motion")).toBe(
+      "full",
+    );
+  });
+
+  it("re-renders the root attribute as reduced when the motion signal flips", () => {
+    motionMode.value = "reduced";
+    const { container } = render(<Shell />);
+    expect(container.querySelector(".ccc-command-center")?.getAttribute("data-motion")).toBe(
+      "reduced",
+    );
+  });
+
+  it("hides the decorative atmosphere from assistive technology", () => {
+    const { container } = render(<Shell />);
+    const twinkle = container.querySelector(".ccc-twinkle");
+    expect(twinkle).toBeTruthy();
+    expect(twinkle?.getAttribute("aria-hidden")).toBe("true");
+    expect(twinkle?.querySelectorAll(".ccc-twinkle-point").length).toBe(12);
   });
 });
