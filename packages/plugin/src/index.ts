@@ -18,8 +18,19 @@ export type {
   WidgetDefinition,
   WidgetState,
 } from "./widgets/contract.js";
+export type { FeatureFlag } from "./widgets/feature-flags.js";
+export { ENABLED_FLAGS, FEATURE_FLAGS } from "./widgets/feature-flags.js";
 export { WidgetFooter } from "./widgets/footer.js";
 export { WidgetFrame } from "./widgets/frame.js";
+export type {
+  ActiveSessionsData,
+  ClaudeUsageData,
+  GithubDiscoveriesData,
+  ProjectShortcutsData,
+  QuickActionsData,
+  TechIntelData,
+  TodayData,
+} from "./widgets/panels.js";
 export type {
   CardPresentation,
   FooterModel,
@@ -27,6 +38,8 @@ export type {
   SourceStatus,
 } from "./widgets/presentation.js";
 export { resolveCardPresentation } from "./widgets/presentation.js";
+export type { AnyWidgetDefinition, WidgetId } from "./widgets/registry.js";
+export { isWidgetId, PRD_PANEL_ORDER, WIDGET_IDS, WIDGETS } from "./widgets/registry.js";
 export { formatAbsoluteTime, formatRelativeTime } from "./widgets/relative-time.js";
 export type { ServiceHealthData } from "./widgets/service-health.js";
 export {
@@ -34,3 +47,8 @@ export {
   serviceHealthStateFor,
   serviceHealthWidget,
 } from "./widgets/service-health.js";
+export {
+  permissionRequiredState,
+  UNAVAILABLE_STATE,
+  widgetStateFor,
+} from "./widgets/widget-data.js";

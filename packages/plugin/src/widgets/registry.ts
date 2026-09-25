@@ -31,9 +31,19 @@ import { serviceHealthWidget } from "./service-health.js";
  * by `satisfies`, and each definition keeps its precise data type at its own
  * declaration site, which is where a body's props actually get checked.
  */
-export type AnyWidgetDefinition = WidgetDefinition<
-  // biome-ignore lint/suspicious/noExplicitAny: the erased payload described above.
-  any>;
+// The lone `any` in this package, and it is load-bearing: see the note above.
+// It cannot be suppressed for `@typescript-eslint/no-explicit-any` either —
+// `eslint-comments/no-restricted-disable` forbids disabling that rule — so the
+// one remaining lint WARNING is the honest record of this variance limit. The
+// durable fix is to narrow `WidgetDefinition`'s two renderer fields from
+// `ComponentType<P>` to a plain function-component signature (this package
+// ships no class component), which removes the invariant `defaultProps` and
+// makes `WidgetDefinition<never>` a real supertype; that edit belongs to a
+// plan that owns `contract.ts`.
+// biome-ignore lint/suspicious/noExplicitAny: the erased body payload described above.
+type ErasedPayload = any;
+
+export type AnyWidgetDefinition = WidgetDefinition<ErasedPayload>;
 
 export const WIDGETS = {
   "service-health": serviceHealthWidget,
