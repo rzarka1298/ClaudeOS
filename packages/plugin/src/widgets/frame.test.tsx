@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConnectionState } from "../connection-state.js";
 import { connectionChangedAt, connectionState, lastEvent } from "../connection-state.js";
 import type { QuickActionDescriptor, WidgetDefinition, WidgetState } from "./contract.js";
 import { WidgetFrame } from "./frame.js";
@@ -328,5 +329,110 @@ describe("the eight presentations", () => {
 
     expect(new Set(texts).size).toBe(8);
     for (const text of texts) expect(text.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Quick actions reach the card only in the two presentations where the card is
+ * actually showing the owner something (UI-SPEC per-state copy: `ready` lists
+ * `Source` + declared quick actions; every other state lists `Source` alone).
+ *
+ * The buttons emit DESCRIPTORS and do nothing else — the frame has no path to
+ * an action's effect, which is what keeps `dispatchQuickAction` the single
+ * choke point Phase 6's approval engine plugs into (C-11, APPR-01, T-03-13).
+ */
+describe("quick-action buttons in the frame (UI-04, A11Y-01)", () => {
+  const RUN_SKILL: QuickActionDescriptor = {
+    id: "run-skill",
+    label: "Run a skill",
+    capability: "skill:run",
+  };
+  const OPEN_DESKTOP: QuickActionDescriptor = {
+    id: "open-claude-desktop",
+    label: "Open Claude Desktop",
+    capability: "app:open",
+  };
+
+  const ACTION_PANEL: WidgetDefinition<string> = {
+    id: "action-panel",
+    title: "Quick actions",
+    dataKeys: [{ key: "skills.registry", transport: "service", sourceLabel: "Skill registry" }],
+    refresh: { kind: "manual" },
+    minSize: "small",
+    preferredSize: "small",
+    featureFlag: "widget.quick-actions",
+    quickActions: [RUN_SKILL, OPEN_DESKTOP],
+    renderBody: ({ data }) => <p className="ccc-body-value">{data}</p>,
+    renderEmpty: () => null,
+  };
+
+  const READY_STATE: WidgetState<string> = {
+    kind: "ready",
+    data: "payload",
+    observedAt: EVENT_AT,
+    freshness: "live",
+    partiality: { partial: false },
+    isEmpty: false,
+  };
+
+  function renderActions(
+    state: WidgetState<string>,
+    connection: ConnectionState = { kind: "live" },
+    onQuickAction: (descriptor: QuickActionDescriptor) => void = vi.fn(),
+  ) {
+    return render(
+      <WidgetFrame
+        definition={ACTION_PANEL}
+        state={state}
+        connection={connection}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={onQuickAction}
+      />,
+    );
+  }
+
+  it("renders every declared action as a keyboard-reachable button in ready", () => {
+    const { container } = renderActions(READY_STATE);
+    const buttons = [...container.querySelectorAll("button.ccc-quick-action")];
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "Run a skill",
+      "Open Claude Desktop",
+    ]);
+    for (const button of buttons) expect(button.getAttribute("type")).toBe("button");
+  });
+
+  it("renders them in stale too, where last-good values are still on screen", () => {
+    const { container } = renderActions({ ...READY_STATE, freshness: "stale" });
+    expect(container.querySelectorAll("button.ccc-quick-action")).toHaveLength(2);
+  });
+
+  it("emits exactly the activated descriptor and does nothing else", () => {
+    const onQuickAction = vi.fn();
+    renderActions(READY_STATE, { kind: "live" }, onQuickAction);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Claude Desktop" }));
+
+    expect(onQuickAction).toHaveBeenCalledTimes(1);
+    expect(onQuickAction).toHaveBeenCalledWith(OPEN_DESKTOP);
+  });
+
+  const LIVE: ConnectionState = { kind: "live" };
+  const SILENT: [string, WidgetState<string>, ConnectionState][] = [
+    ["loading", { kind: "loading" }, LIVE],
+    ["empty", { ...READY_STATE, isEmpty: true }, LIVE],
+    ["error", { kind: "error", message: "HTTP 500" }, LIVE],
+    ["unavailable", { kind: "unavailable" }, LIVE],
+    [
+      "permission-required",
+      { kind: "permission-required", capability: "github", sourceLabel: "GitHub" },
+      LIVE,
+    ],
+    ["disconnected", READY_STATE, { kind: "disconnected", reason: "connect ECONNREFUSED" }],
+  ];
+
+  it.each(SILENT)("renders no quick action in %s", (_name, state, connection) => {
+    const { container } = renderActions(state, connection);
+    expect(container.querySelectorAll("button.ccc-quick-action")).toHaveLength(0);
   });
 });

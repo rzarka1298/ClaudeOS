@@ -38,7 +38,19 @@ const REDUCED_SELECTOR = '[data-motion="reduced"]';
 const GLASS_COMPOSITE = "#1D161E";
 
 /** Classes that must never be reachable without a visible focus ring (A11Y-01). */
-const FOCUSABLE = [".ccc-nav-item", ".ccc-content", ".ccc-source-button", ".ccc-connect-button"];
+const FOCUSABLE = [
+  ".ccc-nav-item",
+  ".ccc-content",
+  ".ccc-source-button",
+  ".ccc-connect-button",
+  ".ccc-quick-action",
+  ".ccc-list-more",
+  // A `tall` card's body scrolls, so it takes a tabindex to stay
+  // keyboard-reachable; plan 03-05 deferred this entry until the first `tall`
+  // widget existed, and plan 03-06 registers two (Active Claude sessions,
+  // Technology and market intelligence).
+  ".ccc-card-body[tabindex]",
+];
 
 // ---------------------------------------------------------------------------
 // A small, deliberate CSS reader
