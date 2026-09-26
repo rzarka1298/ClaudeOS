@@ -73,13 +73,25 @@ export function Shell({
   }
 
   /**
+   * `select()` plus moving keyboard focus to the destination's tab. Used by
+   * every navigation that starts INSIDE the Overview — a `+{n} more` control
+   * or a connect action — because the control the owner just activated is
+   * unmounted with the grid; without this, focus would fall back to the
+   * document body and a keyboard user would lose their place (A11Y-01).
+   */
+  function focusDestination(id: DestinationId): void {
+    select(id);
+    tabRefs.current[id]?.focus();
+  }
+
+  /**
    * Every widget quick action lands here, and only here: the frame emits a
    * descriptor, and {@link dispatchQuickAction} — the single choke point
    * Phase 6's approval check is inserted into — resolves it against a context
    * whose navigation is this tablist's own `select()` (C-11, APPR-01, T-03-13).
    */
   function handleQuickAction(descriptor: QuickActionDescriptor): void {
-    dispatchQuickAction(descriptor, { navigate: select, notify });
+    dispatchQuickAction(descriptor, { navigate: focusDestination, notify });
   }
 
   function handleNavKeyDown(event: KeyboardEvent): void {
@@ -88,9 +100,7 @@ export function Shell({
     else if (event.key === "ArrowLeft" || event.key === "ArrowUp") direction = "previous";
     if (!direction) return;
     event.preventDefault();
-    const nextId = nextDestination(activeId, direction);
-    select(nextId);
-    tabRefs.current[nextId]?.focus();
+    focusDestination(nextDestination(activeId, direction));
   }
 
   const active = DESTINATIONS.find((d) => d.id === activeId) ?? DESTINATIONS[0];
@@ -169,6 +179,7 @@ export function Shell({
             connection={status}
             now={nowTick.value}
             onQuickAction={handleQuickAction}
+            onNavigate={focusDestination}
           />
         ) : (
           <p>{active.description}</p>

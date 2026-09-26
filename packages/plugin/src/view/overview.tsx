@@ -6,6 +6,7 @@ import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js"
 import { WidgetFrame } from "../widgets/frame.js";
 import type { LayoutResolution } from "../widgets/layout.js";
 import { type AnyWidgetDefinition, WIDGETS, type WidgetId } from "../widgets/registry.js";
+import type { DestinationId } from "./destinations.js";
 
 export interface OverviewProps {
   /** The resolved layout — entries only; skipped entries never reach the grid (D-13). */
@@ -15,6 +16,8 @@ export interface OverviewProps {
   readonly connection: ConnectionState;
   readonly now: number;
   readonly onQuickAction?: (descriptor: QuickActionDescriptor) => void;
+  /** Selects and focuses a destination — the `+{n} more` channel into each body. */
+  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
 }
 
 /**
@@ -36,6 +39,7 @@ export function Overview({
   connection,
   now,
   onQuickAction,
+  onNavigate,
 }: OverviewProps): VNode {
   const emptyTitleId = `${useId()}-title`;
   if (layout.entries.length === 0) {
@@ -73,6 +77,7 @@ export function Overview({
             size={entry.size}
             connection={connection}
             now={now}
+            onNavigate={onNavigate}
             {...(onQuickAction === undefined ? {} : { onQuickAction })}
           />
         );

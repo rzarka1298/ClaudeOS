@@ -2,6 +2,7 @@ import type { SizeHint } from "@ccc/domain";
 import type { ComponentChildren, VNode } from "preact";
 import { useId } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
+import type { DestinationId } from "../view/destinations.js";
 import type { QuickActionDescriptor, WidgetDefinition, WidgetState } from "./contract.js";
 import { WidgetFooter } from "./footer.js";
 import type { CardPresentation, FooterModel } from "./presentation.js";
@@ -26,6 +27,8 @@ export interface WidgetFrameProps<T> {
   readonly size?: SizeHint;
   readonly now: number;
   readonly onQuickAction?: (descriptor: QuickActionDescriptor) => void;
+  /** Handed to the body so `+{n} more` can focus the owning destination. */
+  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
 }
 
 /** A title used mid-sentence: `Service health` → `service health`. */
@@ -50,6 +53,7 @@ export function WidgetFrame<T>({
   size,
   now,
   onQuickAction,
+  onNavigate,
 }: WidgetFrameProps<T>): VNode {
   const presentation: CardPresentation = resolveCardPresentation(
     state,
@@ -85,7 +89,9 @@ export function WidgetFrame<T>({
         );
       case "ready":
       case "stale":
-        return state.kind === "ready" ? <Body data={state.data} /> : null;
+        return state.kind === "ready" ? (
+          <Body data={state.data} size={hint} onNavigate={onNavigate} />
+        ) : null;
       case "disconnected":
         return (
           <>
@@ -98,7 +104,9 @@ export function WidgetFrame<T>({
                     now,
                   )}. They may be out of date.`}
             </p>
-            {state.kind === "ready" ? <Body data={state.data} /> : null}
+            {state.kind === "ready" ? (
+              <Body data={state.data} size={hint} onNavigate={onNavigate} />
+            ) : null}
           </>
         );
       case "error":

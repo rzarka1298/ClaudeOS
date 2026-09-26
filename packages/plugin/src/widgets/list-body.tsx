@@ -45,7 +45,8 @@ export interface ListBodyProps<Row> {
   readonly renderMeta: (row: Row) => string;
   /** Where the full list lives — the `+{n} more` control focuses it. */
   readonly moreDestination: DestinationId;
-  readonly onMore?: (destination: DestinationId) => void;
+  /** The shell's destination focus, threaded from the frame via `WidgetBodyProps.onNavigate`. */
+  readonly onMore?: ((destination: DestinationId) => void) | undefined;
 }
 
 export function ListBody<Row>({
