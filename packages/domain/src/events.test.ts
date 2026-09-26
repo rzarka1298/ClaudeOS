@@ -128,6 +128,51 @@ describe("SnapshotResponseSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("parses a snapshot carrying usage and claudeIntegration and keeps them (Task 2 Test 7)", () => {
+    const input = {
+      lastEventId: 9,
+      state: {
+        serviceStartedAt: "2026-09-26T13:00:00.000Z",
+        usage: {
+          capacity: { kind: "unavailable", reason: "wrapper-not-installed", version: null },
+          ranges: {
+            today: {
+              activity: { kind: "unavailable", reason: "analysis-off", version: null },
+              cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+            },
+            "last-7-days": {
+              activity: { kind: "unavailable", reason: "analysis-off", version: null },
+              cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+            },
+            "this-month": {
+              activity: { kind: "unavailable", reason: "analysis-off", version: null },
+              cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+            },
+          },
+          analysis: { enabled: false, firstScanPending: false },
+          observedAt: "2026-09-26T13:00:00.000Z",
+        },
+        claudeIntegration: {
+          hooks: "not-installed",
+          hookRuntimeMissing: false,
+          disableAllHooks: null,
+          lastEventAt: null,
+          telemetry: { kind: "ok" },
+          detectedClaudeVersion: null,
+          statusLine: "not-installed",
+          statusLineReported: false,
+          transcriptAnalysis: { enabled: false },
+          spoolDropCount: 0,
+          unknownEventCount: 0,
+          cleanupPeriodDays: 30,
+        },
+      },
+    };
+    const result = SnapshotResponseSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(input);
+  });
+
   it("rejects a snapshot missing state", () => {
     const result = SnapshotResponseSchema.safeParse({ lastEventId: 3 });
     expect(result.success).toBe(false);
