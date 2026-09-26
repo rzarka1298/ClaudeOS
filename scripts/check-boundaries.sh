@@ -29,7 +29,8 @@
 #   7. no file inside packages/plugin assigns an inline style -- state
 #      reaches CSS through data-* attributes and --ccc-* tokens (UI-03)
 #   8. no file in packages/launchers or packages/service starts a process
-#      through a shell (exec/execSync, shell: true) -- D-18
+#      through a shell (exec/execSync, a `shell:` option whose value is not
+#      false, a dynamic import of child_process) -- D-18
 #
 # Rules 6 and 7 mirror DOM_SAFETY_RULES, and rule 2 mirrors
 # NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs; rule 8
@@ -182,12 +183,21 @@ check_rule \
 # array and no `shell` option. The `.` in the negated class keeps a method
 # call such as a RegExp's or a SQLite handle's `.exec(` from tripping the
 # rule -- only a bare `exec(`/`execSync(` (the child_process import) does.
-# The lint sees import shapes; this sees the call text. ---
+# A `shell` key (bare or double-quoted) followed by any value that does not
+# begin with the word `false` trips the rule: `true`, a shell path and a
+# variable all run a shell. ERE has no negative lookahead, so "not false"
+# is spelled out prefix by prefix. A dynamic `import(` of child_process is
+# refused outright, which also covers `(await import(...)).exec(`: the
+# method call there is preceded by `.`, so the bare-call alternative cannot
+# see it. The lint sees import shapes; this sees the call text. ---
 SPAWN_OWNER_FILES=$(printf '%s\n' "$SRC_FILES" | grep -E '^packages/(launchers|service)/' || true)
+RULE8_BARE_EXEC='(^|[^A-Za-z0-9_.])(exec|execSync)[(]'
+RULE8_SHELL_OPTION='(^|[^A-Za-z0-9_.])["]?shell["]?[[:space:]]*:[[:space:]]*([^f[:space:]]|f[^a]|fa[^l]|fal[^s]|fals[^e]|false[A-Za-z0-9_])'
+RULE8_DYNAMIC_IMPORT='(^|[^A-Za-z0-9_.])import[(][[:space:]]*[^A-Za-z0-9_[:space:]](node:)?child_process'
 # shellcheck disable=SC2086
 check_rule \
   "a file in packages/launchers or packages/service starts a process through a shell (use execFile/spawn with an argv array and no shell option, D-18)" \
-  "(^|[^A-Za-z0-9_.])(exec|execSync)[(]|shell:[[:space:]]*true" \
+  "${RULE8_BARE_EXEC}|${RULE8_SHELL_OPTION}|${RULE8_DYNAMIC_IMPORT}" \
   $SPAWN_OWNER_FILES
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)

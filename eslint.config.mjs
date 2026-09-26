@@ -325,8 +325,9 @@ export default [
     // "only @ccc/plugin may import obsidian" ban for these files (SC-4).
     // A distinct rule id leaves that ban in force.
     //
-    // The namespace/default-import selector closes the `cp.exec(...)` route
-    // that a named-import check cannot see. scripts/check-boundaries.sh
+    // The namespace/default-import and dynamic-import selectors close the
+    // `cp.exec(...)` and `(await import(...)).exec(...)` routes that a
+    // named-import check cannot see. scripts/check-boundaries.sh
     // rule 8 is the independent literal-grep layer under this one.
     files: [
       "packages/launchers/**/*.ts",
@@ -353,8 +354,20 @@ export default [
             "D-18: import child_process functions by name (execFile, spawn) so a shell-running call cannot hide behind a namespace.",
         },
         {
-          selector: 'Property[key.name="shell"][value.value=true]',
-          message: "D-18: `shell: true` routes the argv through a shell -- remove the option.",
+          // Any `shell` property (identifier, shorthand or quoted key) whose
+          // value is not the literal `false`: `true`, a shell path, a
+          // variable, or even the truthy string "false" all run a shell.
+          selector:
+            'Property:matches([key.name="shell"], [key.value="shell"]):not([value.type="Literal"][value.raw="false"])',
+          message:
+            "D-18: a `shell` option other than the literal false routes the argv through a shell -- remove the option.",
+        },
+        {
+          // A dynamic import hides the imported function from the named-import
+          // checks above, e.g. `(await import("node:child_process")).exec(...)`.
+          selector: "ImportExpression[source.value=/^(node:)?child_process$/]",
+          message:
+            "D-18: import child_process statically, by name (execFile, spawn) -- never through a dynamic import.",
         },
       ],
     },
