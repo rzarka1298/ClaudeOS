@@ -98,20 +98,20 @@ const ROWS: readonly Row[] = [
     },
   },
   {
-    name: "unavailable with a reason (SESS-18, D-12) carries that reason through unchanged",
+    name: "unavailable with a reason (SESS-18, D-12) carries that reason code through unchanged",
     state: {
       kind: "unavailable",
-      reason:
-        "Claude Code 2.1.300 reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.",
+      reason: { code: "session-telemetry-changed", version: "2.1.300" },
     },
     connection: LIVE,
     keys: [SERVICE_KEY],
     expected: "unavailable",
     check: (presentation) => {
       if (presentation.kind !== "unavailable") throw new Error("wrong kind");
-      expect(presentation.reason).toBe(
-        "Claude Code 2.1.300 reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.",
-      );
+      expect(presentation.reason).toEqual({
+        code: "session-telemetry-changed",
+        version: "2.1.300",
+      });
     },
   },
   {

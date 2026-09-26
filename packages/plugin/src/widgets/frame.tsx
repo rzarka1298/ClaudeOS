@@ -7,6 +7,8 @@ import type {
   DataDependencyKey,
   HeroMetric,
   QuickActionDescriptor,
+  UnavailableReason,
+  UnavailableReasonCode,
   WidgetDefinition,
   WidgetState,
 } from "./contract.js";
@@ -99,8 +101,53 @@ const PERMISSION_COPY: Partial<
   },
 };
 
-/** UI-SPEC "Telemetry shape changed (SESS-18, D-12)" heading. */
-const TELEMETRY_UNAVAILABLE_HEADING = "Session tracking paused";
+/**
+ * A Claude Code version as the copy may show it: dotted digits only. Anything
+ * else (a path, a message, markup) is replaced by a neutral phrase, so the
+ * one datum a reason carries into copy cannot smuggle text onto the card.
+ */
+const VERSION_SHAPE = /^\d{1,6}(?:\.\d{1,6}){0,3}$/;
+
+function claudeCodeVersion(version: string): string {
+  return VERSION_SHAPE.test(version) ? `Claude Code ${version}` : "Your Claude Code version";
+}
+
+/**
+ * Plugin-owned copy for each {@link UnavailableReasonCode} (UI-SPEC
+ * "Telemetry shape changed (SESS-18, D-12)"). The heading is keyed by code,
+ * so "Session tracking paused" is only ever said about session tracking; the
+ * body is built from the reason's version and nothing else.
+ */
+const UNAVAILABLE_COPY: Record<
+  UnavailableReasonCode,
+  { readonly heading: string; readonly body: (version: string) => string }
+> = {
+  "session-telemetry-changed": {
+    heading: "Session tracking paused",
+    body: (version) =>
+      `${claudeCodeVersion(version)} reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.`,
+  },
+  "claude-version-unsupported": {
+    heading: "Session tracking paused",
+    body: (version) => `${claudeCodeVersion(version)} is older than the minimum supported 2.1.214.`,
+  },
+};
+
+/**
+ * The copy for an unavailable reason, or null when there is none to show.
+ * An erased widget's state is unvalidated at runtime (see {@link FrameState}),
+ * so a reason whose code has no copy — a free string, a future code — is
+ * treated as no reason: it reads "No source yet" and is never rendered.
+ */
+function unavailableCopy(
+  reason: UnavailableReason | undefined,
+): { readonly heading: string; readonly body: string } | null {
+  if (typeof reason !== "object" || reason === null) return null;
+  if (!Object.hasOwn(UNAVAILABLE_COPY, reason.code)) return null;
+  const copy = UNAVAILABLE_COPY[reason.code];
+  const version = typeof reason.version === "string" ? reason.version : "";
+  return { heading: copy.heading, body: copy.body(version) };
+}
 
 /**
  * The surface a hero-variant card renders on, derived from the presentation
@@ -295,18 +342,18 @@ export function WidgetFrame<T>({
           </>
         );
       }
-      case "unavailable":
+      case "unavailable": {
+        const copy = unavailableCopy(presentation.reason);
         return (
           <>
-            <p className="ccc-state-heading">
-              {presentation.reason === undefined ? "No source yet" : TELEMETRY_UNAVAILABLE_HEADING}
-            </p>
+            <p className="ccc-state-heading">{copy?.heading ?? "No source yet"}</p>
             <p className="ccc-state-body">
-              {presentation.reason ??
+              {copy?.body ??
                 `${definition.title} has no data source in this build. It fills in once its source is available.`}
             </p>
           </>
         );
+      }
     }
   })();
 

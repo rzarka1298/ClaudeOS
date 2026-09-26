@@ -1,6 +1,6 @@
 import type { Freshness, Partiality } from "@ccc/domain";
 import type { ConnectionState } from "../connection-state.js";
-import type { DataDependencyKey, WidgetState } from "./contract.js";
+import type { DataDependencyKey, UnavailableReason, WidgetState } from "./contract.js";
 
 /**
  * The one place a card's visual state is decided (UI-05).
@@ -65,7 +65,7 @@ export type CardPresentation =
       readonly kind: "unavailable";
       readonly footer: FooterModel;
       /** Carried unchanged from `WidgetState`'s `unavailable.reason` (SESS-18, D-12). */
-      readonly reason?: string | undefined;
+      readonly reason?: UnavailableReason | undefined;
     };
 
 /** Every declared key reported with the same status. */

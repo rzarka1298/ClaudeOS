@@ -88,6 +88,19 @@ export interface QuickActionDescriptor {
 }
 
 /**
+ * Why a source is unavailable for a reportable reason (SESS-18, D-12). A
+ * reason is a code plus the facts its copy needs — never prose: the frame
+ * owns every word it renders, keyed by `code`, so no free string from a
+ * payload can reach the card verbatim.
+ */
+export type UnavailableReason =
+  /** Claude Code at `version` sends hook events in a shape this build does not recognise. */
+  | { readonly code: "session-telemetry-changed"; readonly version: string }
+  /** Claude Code at `version` is below the supported floor. */
+  | { readonly code: "claude-version-unsupported"; readonly version: string };
+export type UnavailableReasonCode = UnavailableReason["code"];
+
+/**
  * What a widget currently knows. `ready` is the only member carrying data, and
  * it cannot be built without provenance.
  *
@@ -111,7 +124,7 @@ export type WidgetState<T> =
        * (SESS-18, D-12) — rather than simply having no route yet. Absent
        * keeps Phase 3's "No source yet" copy unchanged.
        */
-      readonly reason?: string | undefined;
+      readonly reason?: UnavailableReason | undefined;
     }
   | {
       readonly kind: "ready";

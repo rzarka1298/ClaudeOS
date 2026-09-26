@@ -720,20 +720,87 @@ describe("setup-state copy, unavailable reason and body quick-action (D-53, SESS
     expect(screen.getByRole("button", { name: "Connect GitHub" })).toBeTruthy();
   });
 
-  it("Test 3: an unavailable state with a reason reads Session tracking paused plus that reason", () => {
-    const reason =
-      "Claude Code 2.1.300 reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.";
+  it("Test 3: a session-telemetry-changed reason reads Session tracking paused plus plugin-owned copy", () => {
     render(
       <WidgetFrame
         definition={COPY_PANEL}
-        state={{ kind: "unavailable", reason }}
+        state={{
+          kind: "unavailable",
+          reason: { code: "session-telemetry-changed", version: "2.1.300" },
+        }}
         connection={{ kind: "live" }}
         size="small"
         now={TWO_MINUTES_LATER}
       />,
     );
     expect(screen.getByText("Session tracking paused")).toBeTruthy();
-    expect(screen.getByText(reason)).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Claude Code 2.1.300 reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("Test 3: a claude-version-unsupported reason reads Session tracking paused plus the floor copy", () => {
+    render(
+      <WidgetFrame
+        definition={COPY_PANEL}
+        state={{
+          kind: "unavailable",
+          reason: { code: "claude-version-unsupported", version: "2.1.100" },
+        }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    expect(screen.getByText("Session tracking paused")).toBeTruthy();
+    expect(
+      screen.getByText("Claude Code 2.1.100 is older than the minimum supported 2.1.214."),
+    ).toBeTruthy();
+  });
+
+  it("Test 3: a version that is not version-shaped is never rendered", () => {
+    const smuggled = "2.1.300 /Users/USERNAME/secret";
+    const { container } = render(
+      <WidgetFrame
+        definition={COPY_PANEL}
+        state={{
+          kind: "unavailable",
+          reason: { code: "session-telemetry-changed", version: smuggled },
+        }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    expect(container.textContent).not.toContain("/Users");
+    expect(
+      screen.getByText(
+        "Your Claude Code version reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("Test 3: a free-string or unknown-code reason is never rendered verbatim and never says Session tracking paused", () => {
+    const free = "connect ECONNREFUSED /Users/USERNAME/.ccc/service.sock";
+    for (const reason of [free, { code: "some-future-code", version: "1.0.0" }]) {
+      const { container, unmount } = render(
+        <WidgetFrame
+          definition={COPY_PANEL}
+          // An erased widget's state is unvalidated at runtime (FrameState),
+          // so the frame must survive a reason the type does not allow.
+          state={{ kind: "unavailable", reason } as unknown as WidgetState<string>}
+          connection={{ kind: "live" }}
+          size="small"
+          now={TWO_MINUTES_LATER}
+        />,
+      );
+      expect(container.textContent).not.toContain("ECONNREFUSED");
+      expect(container.textContent).not.toContain("Session tracking paused");
+      expect(screen.getByText("No source yet")).toBeTruthy();
+      unmount();
+    }
   });
 
   it("Test 3: an unavailable state without a reason keeps the unchanged 'No source yet' copy", () => {
