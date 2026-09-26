@@ -111,10 +111,24 @@ describe("sessionDisplayName (Test 6)", () => {
     expect(sessionDisplayName(toSessionView(run(), null))).toBe("Session 0f3c2a8e");
   });
 
-  it("falls back to the runId when no Claude session id is known yet", () => {
+  it("falls back to the runId's random suffix when no Claude session id is known yet", () => {
     expect(sessionDisplayName(toSessionView(run({ claudeSessionId: null }), null))).toBe(
-      "Session 0mfk1a2b",
+      "Session a8b9c0d1",
     );
+  });
+
+  it("gives near-simultaneous dashboard launches distinct fallback names", () => {
+    // Same millisecond prefix, different random suffix: the timestamp
+    // prefix would name both "Session 0mfk1a2b".
+    const first = toSessionView(
+      run({ claudeSessionId: null, runId: "0mfk1a2b3000000000000aaaa" as RunId }),
+      null,
+    );
+    const second = toSessionView(
+      run({ claudeSessionId: null, runId: "0mfk1a2b3000000000000bbbb" as RunId }),
+      null,
+    );
+    expect(sessionDisplayName(first)).not.toBe(sessionDisplayName(second));
   });
 });
 

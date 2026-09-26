@@ -204,11 +204,13 @@ export const NOT_REPORTED = "Not reported";
 
 /**
  * The name a Session is shown under: the reported name, else `Session` plus
- * the first eight characters of the Claude session ID, else of the RunId
- * (a dashboard launch can exist before Claude reports its ID).
+ * the first eight characters of the Claude session ID, else the last eight
+ * of the RunId (a dashboard launch can exist before Claude reports its ID).
+ * A RunId opens with a millisecond timestamp, so its first eight characters
+ * would name two near-simultaneous launches alike; its tail is random.
  */
 export function sessionDisplayName(view: SessionView): string {
   if (view.name !== null && view.name.trim().length > 0) return view.name;
-  const id = view.claudeSessionId ?? view.runId;
-  return `Session ${id.slice(0, 8)}`;
+  const id8 = view.claudeSessionId?.slice(0, 8) ?? view.runId.slice(-8);
+  return `Session ${id8}`;
 }
