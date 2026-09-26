@@ -21,6 +21,7 @@ import {
   createAdapterLayoutSource,
   type LayoutFileSource,
   type LayoutPoller,
+  parseLayoutOverride,
   startLayoutPolling,
 } from "./layout-source.js";
 import { WIDGETS } from "./registry.js";
@@ -261,7 +262,7 @@ describe("a bad layout file never blanks the Overview (D-13; UI-SPEC E3 error ro
     await expect(poller.tick()).resolves.toBeUndefined();
 
     expect(resolvedIds()).toEqual(["today", "service-health"]);
-    // Recorded once for this stat, not once per second.
+    // Recorded once per run of failures, not once per retry.
     expect(diagnostics.value.map((d) => [d.source, d.code])).toEqual([
       ["layout", "override-unreadable"],
     ]);
@@ -392,5 +393,238 @@ describe("supported APIs only (research Pitfall 4; supported-API constraint)", (
   it("subscribes to no vault event, documented or not", () => {
     const code = codeLines(readFileSync(SOURCE_FILE, "utf8"));
     expect(code.filter((line) => /\.on\(\s*["'`]|\bvault\.on\b/.test(line))).toEqual([]);
+  });
+});
+
+describe("a parse diagnostic carries no file-supplied text (T-03-15)", () => {
+  /** A key or value no schema would ever name: it can only have come from the file. */
+  const SECRET = "sk-FILESECRET0123456789abcdef";
+
+  function detailOf(document: unknown): string {
+    const result = parseLayoutOverride(JSON.stringify(document));
+    if (result.ok) throw new Error("expected the document to be rejected");
+    return result.detail;
+  }
+
+  it("counts an unknown top-level key instead of naming it", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: [], [SECRET]: 1 });
+    expect(detail).toBe("(document): 1 unknown field");
+  });
+
+  it("counts several unknown keys in one object", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: [], [SECRET]: 1, [`${SECRET}2`]: 2 });
+    expect(detail).toBe("(document): 2 unknown fields");
+  });
+
+  it("names an unknown key inside an entry by the entry's schema path only", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: [{ widgetId: "today", [SECRET]: 1 }] });
+    expect(detail).toBe("entries.0: 1 unknown field");
+  });
+
+  it("names a wrong value by its schema path, never by the value", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: [{ widgetId: "today", size: SECRET }] });
+    expect(detail).toBe("entries.0.size: not an allowed value");
+  });
+
+  it("names a wrong-typed field without quoting what the file held", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: SECRET });
+    expect(detail).toMatch(/^entries: wrong type/);
+    expect(detail).not.toContain(SECRET);
+  });
+
+  it("states a schema bound, which comes from the schema rather than the file", () => {
+    const entries = Array.from({ length: 65 }, () => ({ widgetId: "today" }));
+    expect(detailOf({ schemaVersion: 1, entries })).toBe("entries: too many items (maximum 64)");
+    expect(detailOf({ schemaVersion: 1, entries: [{ widgetId: "" }] })).toBe(
+      "entries.0.widgetId: too short (minimum 1)",
+    );
+  });
+
+  it("counts the remaining problems after the first", () => {
+    const detail = detailOf({
+      schemaVersion: 2,
+      entries: [{ widgetId: "today", size: SECRET }],
+      [SECRET]: 1,
+    });
+    expect(detail).toMatch(/^schemaVersion: not an allowed value \(and 2 more problems\)$/);
+  });
+
+  it("never lets a file-supplied string into the detail, whatever the problem", () => {
+    const documents: unknown[] = [
+      SECRET,
+      [SECRET],
+      { [SECRET]: { [SECRET]: SECRET } },
+      { schemaVersion: SECRET, entries: [{ [SECRET]: SECRET }] },
+      { schemaVersion: 1, entries: [{ widgetId: SECRET.repeat(4) }] },
+      { schemaVersion: 1, entries: [{ widgetId: 1, size: SECRET }], [SECRET]: [SECRET] },
+    ];
+    for (const document of documents) {
+      expect(detailOf(document)).not.toContain("FILESECRET");
+    }
+  });
+});
+
+describe("a transient read failure is retried, a bad file is not", () => {
+  /** A source whose stat never changes and whose reads follow a script. */
+  function scriptedSource(reads: (() => Promise<string>)[]): {
+    source: LayoutFileSource;
+    readCount: () => number;
+  } {
+    let count = 0;
+    return {
+      source: {
+        stat: () => Promise.resolve({ mtime: 5000, size: 10 }),
+        read: () => {
+          const next = reads[Math.min(count, reads.length - 1)];
+          count++;
+          return next === undefined ? Promise.reject(new Error("no script")) : next();
+        },
+      },
+      readCount: () => count,
+    };
+  }
+
+  it("applies a valid file on the next tick after a read failed, with (mtime, size) unchanged", async () => {
+    const { source, readCount } = scriptedSource([
+      () => Promise.reject(new Error("EBUSY")),
+      () => Promise.resolve(layoutJson("quick-actions")),
+    ]);
+    const { poller } = start(new FakeDataAdapter(), source);
+    await settle();
+    expect(diagnostics.value.map((d) => d.code)).toEqual(["override-unreadable"]);
+
+    await poller.tick();
+
+    expect(readCount()).toBe(2);
+    expect(resolvedIds()).toEqual(["quick-actions"]);
+    // Once applied, the unchanged file is not read again.
+    await poller.tick();
+    expect(readCount()).toBe(2);
+  });
+
+  it("records a read failure once per run of failures, however many retries it takes", async () => {
+    const { source, readCount } = scriptedSource([
+      () => Promise.reject(new Error("EBUSY")),
+      () => Promise.reject(new Error("EBUSY")),
+      () => Promise.reject(new Error("EBUSY")),
+      () => Promise.resolve(layoutJson("today")),
+    ]);
+    const { poller } = start(new FakeDataAdapter(), source);
+    await settle();
+    await poller.tick();
+    await poller.tick();
+    await poller.tick();
+
+    expect(readCount()).toBe(4);
+    expect(resolvedIds()).toEqual(["today"]);
+    expect(diagnostics.value.map((d) => d.code)).toEqual(["override-unreadable"]);
+  });
+
+  it("records again when reads start failing after one succeeded", async () => {
+    const adapter = new FakeDataAdapter();
+    adapter.setFile(layoutJson("today"), 1000);
+    let failReads = true;
+    const inner = createAdapterLayoutSource({ configDir: CONFIG_DIR, adapter }, PLUGIN_ID);
+    const source: LayoutFileSource = {
+      stat: () => inner.stat(),
+      read: () => (failReads ? Promise.reject(new Error("EBUSY")) : inner.read()),
+    };
+    const { poller } = start(adapter, source);
+    await settle();
+    failReads = false;
+    await poller.tick();
+    expect(resolvedIds()).toEqual(["today"]);
+
+    failReads = true;
+    adapter.setFile(layoutJson("quick-actions"), 2000);
+    await poller.tick();
+
+    expect(diagnostics.value.map((d) => d.code)).toEqual([
+      "override-unreadable",
+      "override-unreadable",
+    ]);
+  });
+
+  it("still reads a file that fails to parse only once while it is unchanged", async () => {
+    const { source, readCount } = scriptedSource([() => Promise.resolve("{")]);
+    const { poller } = start(new FakeDataAdapter(), source);
+    await settle();
+    await poller.tick();
+    await poller.tick();
+
+    expect(readCount()).toBe(1);
+    expect(diagnostics.value.map((d) => d.code)).toEqual(["override-invalid"]);
+  });
+});
+
+describe("a throwing apply never escapes the tick", () => {
+  const APPLY_SECRET = "APPLY-FAILURE-PRIVATE-DETAIL";
+
+  function startThrowing(source: LayoutFileSource): {
+    poller: LayoutPoller;
+    calls: () => number;
+    dispose: () => void;
+  } {
+    const registry = createHostRegistry(new FakeObsidianHost());
+    let count = 0;
+    const poller = startLayoutPolling({
+      registry,
+      source,
+      apply: () => {
+        count++;
+        throw new Error(APPLY_SECRET);
+      },
+    });
+    return { poller, calls: () => count, dispose: () => registry.disposeAll() };
+  }
+
+  it("resolves the tick and records a diagnostic when applying a valid file throws", async () => {
+    const adapter = new FakeDataAdapter();
+    adapter.setFile(layoutJson("today"), 1000);
+    const { poller, calls } = startThrowing(
+      createAdapterLayoutSource({ configDir: CONFIG_DIR, adapter }, PLUGIN_ID),
+    );
+    await settle();
+
+    await expect(poller.tick()).resolves.toBeUndefined();
+
+    expect(calls()).toBe(1);
+    expect(diagnostics.value.map((d) => [d.source, d.code])).toEqual([
+      ["layout", "override-apply-failed"],
+    ]);
+    expect(JSON.stringify(diagnostics.value)).not.toContain(APPLY_SECRET);
+  });
+
+  it("resolves the tick and records a diagnostic when applying the default throws", async () => {
+    const { poller, calls } = startThrowing({
+      stat: () => Promise.resolve(null),
+      read: () => Promise.reject(new Error("unreachable")),
+    });
+    await settle();
+
+    await expect(poller.tick()).resolves.toBeUndefined();
+
+    expect(calls()).toBe(1);
+    expect(diagnostics.value.map((d) => d.code)).toEqual(["override-apply-failed"]);
+  });
+
+  it("an interval-driven tick with a throwing apply produces no unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    const adapter = new FakeDataAdapter();
+    adapter.setFile(layoutJson("today"), 1000);
+    const { dispose } = startThrowing(
+      createAdapterLayoutSource({ configDir: CONFIG_DIR, adapter }, PLUGIN_ID),
+    );
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      dispose();
+    }
+    expect(unhandled).toEqual([]);
   });
 });

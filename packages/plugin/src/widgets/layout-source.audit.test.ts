@@ -113,7 +113,7 @@ describe("change detection edges", () => {
 });
 
 describe("failure is recorded once, never per tick", () => {
-  it("a read that keeps failing for an unchanged stat is read and recorded once", async () => {
+  it("a read that keeps failing for an unchanged stat is retried each tick and recorded once", async () => {
     let reads = 0;
     const poller = await start({
       stat: () => Promise.resolve({ mtime: 5, size: 5 }),
@@ -124,7 +124,8 @@ describe("failure is recorded once, never per tick", () => {
     });
     await poller.tick();
     await poller.tick();
-    expect(reads).toBe(1);
+    // Fix-up round 2: an I/O failure is transient, so each tick retries it.
+    expect(reads).toBe(3);
     expect(diagnostics.value.map((d) => d.code)).toEqual(["override-unreadable"]);
     expect(JSON.stringify(diagnostics.value)).not.toContain(SECRET);
   });
@@ -190,8 +191,7 @@ describe("T-03-15: no file content in any diagnostic", () => {
     });
   }
 
-  // AUDIT-BUG: parseLayoutOverride quotes zod's "Unrecognized key" message, so a key name from the file reaches the diagnostic.
-  it.skip("never records the file content: secret as an unrecognized key", async () => {
+  it("never records the file content: secret as an unrecognized key", async () => {
     const adapter = new FakeDataAdapter();
     adapter.setFile(JSON.stringify({ schemaVersion: 1, entries: [], [SECRET]: 1 }), 1000);
     await start(adapterSource(adapter));

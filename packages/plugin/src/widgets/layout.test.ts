@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type LayoutOverride, layoutOverrideSchema } from "@ccc/domain";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { clearDiagnostics, diagnostics } from "../diagnostics.js";
 import { ENABLED_FLAGS } from "./feature-flags.js";
-import { composeLayout, DEFAULT_LAYOUT } from "./layout.js";
+import { composeLayout, DEFAULT_LAYOUT, layoutOverride, setLayoutOverride } from "./layout.js";
 import { WIDGETS } from "./registry.js";
 
 /**
@@ -151,5 +152,44 @@ describe("resolution is lookup-only (T-03-02)", () => {
 
   it("resolves ids through isWidgetId", () => {
     expect(code).toMatch(/\bisWidgetId\(widgetId\)/);
+  });
+});
+
+describe("a skip diagnostic echoes only a widget-id-shaped id (T-03-15)", () => {
+  afterEach(() => {
+    layoutOverride.value = undefined;
+    clearDiagnostics();
+  });
+
+  function skipMessages(...widgetIds: string[]): string[] {
+    setLayoutOverride(override(...widgetIds.map((widgetId) => ({ widgetId }))));
+    return diagnostics.value.map((d) => d.message);
+  }
+
+  it("never echoes a secret-looking id from the file", () => {
+    const secret = "sk-AUDITSECRET0123456789abcdef";
+    const [message] = skipMessages(secret);
+    expect(message).not.toContain(secret);
+    expect(message).toContain("an unknown widget id");
+  });
+
+  it("never echoes a long id even when it is lowercase, digits and hyphens", () => {
+    const long = "abcdefghij-0123456789-abcdefghij-0123456789";
+    const [message] = skipMessages(long);
+    expect(message).not.toContain(long);
+    expect(message).toContain("an unknown widget id");
+  });
+
+  it("never echoes an id with characters outside the widget-id pattern", () => {
+    const [message] = skipMessages("Name With Spaces");
+    expect(message).not.toContain("Name With Spaces");
+  });
+
+  it("still names a short, widget-id-shaped id so a typo stays findable", () => {
+    expect(skipMessages("todya")).toEqual(['Layout entry "todya" skipped (unknown-widget).']);
+  });
+
+  it("still names a registered id skipped as a duplicate", () => {
+    expect(skipMessages("today", "today")).toEqual(['Layout entry "today" skipped (duplicate).']);
   });
 });
