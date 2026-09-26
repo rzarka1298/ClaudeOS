@@ -56,16 +56,37 @@ for (const widgetId of WIDGET_IDS) {
 
 // The four motion cells (A11Y-03, D-19). Reduced motion is one `data-motion`
 // attribute on the root that zeroes the motion tokens and switches the twinkle
-// field off; these cells make a regression in that single switch visible —
-// for the atmosphere (the whole viewport-sized root) and for a card.
+// field off; these cells guard that single switch — for the atmosphere (the
+// whole viewport-sized root) and for a card.
+//
+// Pixels alone cannot guard it (found in plan 03-10). Reduced motion removes
+// MOTION, not static appearance, and `animations: "disabled"` finishes every
+// transition and rewinds every infinite animation before the shot. So the two
+// service-health cards are byte-identical, and the two backgrounds differ by a
+// few twinkle pixels, far under `maxDiffPixelRatio`. Each cell therefore also
+// asserts the switch itself through computed style, which differs by mode,
+// before taking its screenshot.
+const TWINKLE_ANIMATION = { full: "ccc-twinkle", reduced: "none" } as const;
+// `.ccc-kpi-number` eases opacity and transform over --ccc-motion-slow (400ms);
+// reduced motion sets `transition: none`.
+const KPI_TRANSITION = { full: "0.4s, 0.4s", reduced: "0s" } as const;
+
 for (const motion of ["full", "reduced"] as const) {
   test(`background — ${motion}`, async ({ page }) => {
     await page.goto(harnessUrl({ widget: "background", motion }));
+    await expect(page.locator(".ccc-twinkle-point").first()).toHaveCSS(
+      "animation-name",
+      TWINKLE_ANIMATION[motion],
+    );
     await expect(page.locator(".ccc-command-center")).toHaveScreenshot(`background-${motion}.png`);
   });
 
   test(`service-health — ready — motion ${motion}`, async ({ page }) => {
     await page.goto(harnessUrl({ widget: "service-health", state: "ready", motion }));
+    await expect(page.locator(".ccc-card .ccc-kpi-number")).toHaveCSS(
+      "transition-duration",
+      KPI_TRANSITION[motion],
+    );
     await expect(page.locator(".ccc-card")).toHaveScreenshot(
       `service-health-ready-motion-${motion}.png`,
     );

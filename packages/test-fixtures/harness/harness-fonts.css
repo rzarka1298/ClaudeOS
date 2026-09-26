@@ -3,9 +3,14 @@
  *
  * Linked by index.html AND injected by Playwright's `stylePath` on every
  * screenshot, so a baseline never depends on which fonts the host happens to
- * have: the stack names only DejaVu Sans and Liberation Sans, both shipped in
- * the pinned Playwright noble image. If a baseline ever shows a fallback glyph
- * set, the fix belongs here — never in the plugin stylesheet.
+ * have. In the pinned `mcr.microsoft.com/playwright:v1.63.0-noble` image the
+ * stack resolves to Liberation Sans: the image ships Liberation, FreeSans and
+ * Noto Color Emoji but NOT DejaVu (checked with `fc-list` in plan 03-10), so
+ * the DejaVu entry only matters on a Linux host that is not the container —
+ * which never writes a baseline. Glyphs Liberation lacks (the state symbols)
+ * fall back to the image's other families, identically on every run. If a
+ * baseline ever shows a fallback glyph set, the fix belongs here — never in
+ * the plugin stylesheet.
  *
  * Everything below the font rule is harness page chrome: it sizes the page and
  * the single card cell. None of it styles a production component.
