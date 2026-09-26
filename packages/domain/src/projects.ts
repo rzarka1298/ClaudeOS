@@ -268,3 +268,32 @@ export function compareProjectViews(a: ProjectOrderKey, b: ProjectOrderKey): num
   }
   return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" });
 }
+
+// ---------------------------------------------------------------------------
+// RED skeleton (plan 04-01 Task 3): management and scan contracts. Every
+// schema rejects everything so the failing tests fail on their assertions.
+
+function pendingContract(): z.ZodType<unknown> {
+  return z.custom<unknown>(() => false);
+}
+
+export const PROJECT_REMOVE_PATH = `${API_BASE}/pending/remove`;
+export const PROJECT_RENAME_PATH = `${API_BASE}/pending/rename`;
+export const PROJECT_PIN_PATH = `${API_BASE}/pending/pin`;
+export const PROJECT_GITHUB_LINK_PATH = `${API_BASE}/pending/github-link`;
+export const PROJECTS_REFRESH_PATH = `${API_BASE}/pending/refresh`;
+export const SCAN_ROOTS_ADD_PATH = `${API_BASE}/pending/scan-add`;
+export const SCAN_ROOTS_REMOVE_PATH = `${API_BASE}/pending/scan-remove`;
+export const SCAN_ROOTS_RESCAN_PATH = `${API_BASE}/pending/scan-rescan`;
+export const SCAN_ROOTS_LIST_PATH = `${API_BASE}/pending/scan-list`;
+export const SUGGESTION_REGISTER_PATH = `${API_BASE}/pending/suggestion-register`;
+export const SUGGESTION_DISMISS_PATH = `${API_BASE}/pending/suggestion-dismiss`;
+export const DisplayNameSchema = pendingContract();
+export const GithubLinkSchema = pendingContract();
+export const RemoveProjectRequestSchema = pendingContract();
+export const RenameProjectRequestSchema = pendingContract();
+export const PinProjectRequestSchema = pendingContract();
+export const SetGithubLinkRequestSchema = pendingContract();
+export const ProjectMutationResponseSchema = pendingContract();
+export const AddScanRootRequestSchema = pendingContract();
+export const ScanStateResponseSchema = pendingContract();

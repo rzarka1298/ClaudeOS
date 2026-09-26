@@ -1,15 +1,35 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectId } from "./ids.js";
 import {
+  AddScanRootRequestSchema,
   compareProjectViews,
+  DisplayNameSchema,
   EMPTY_PROJECTS_SNAPSHOT,
+  GithubLinkSchema,
+  PinProjectRequestSchema,
+  PROJECT_GITHUB_LINK_PATH,
+  PROJECT_PIN_PATH,
   PROJECT_REGISTER_PATH,
+  PROJECT_REMOVE_PATH,
+  PROJECT_RENAME_PATH,
+  PROJECTS_REFRESH_PATH,
+  ProjectMutationResponseSchema,
   ProjectsSnapshotSchema,
   ProjectsUpdatedPayloadSchema,
   type ProjectView,
   ProjectViewSchema,
   RegisterProjectRequestSchema,
   RegisterProjectResponseSchema,
+  RemoveProjectRequestSchema,
+  RenameProjectRequestSchema,
+  SCAN_ROOTS_ADD_PATH,
+  SCAN_ROOTS_LIST_PATH,
+  SCAN_ROOTS_REMOVE_PATH,
+  SCAN_ROOTS_RESCAN_PATH,
+  ScanStateResponseSchema,
+  SetGithubLinkRequestSchema,
+  SUGGESTION_DISMISS_PATH,
+  SUGGESTION_REGISTER_PATH,
 } from "./projects.js";
 
 /**
@@ -313,5 +333,117 @@ describe("compareProjectViews (UI-SPEC S1 Order, PROJ-15)", () => {
     const parsed = ProjectViewSchema.parse(exampleView());
     const id: ProjectId = parsed.projectId;
     expect(id).toBe(EXAMPLE_PROJECT_ID);
+  });
+});
+
+describe("project management contracts", () => {
+  it("places every management and scan route under the versioned API base, all distinct", () => {
+    const paths = [
+      PROJECT_REGISTER_PATH,
+      PROJECT_REMOVE_PATH,
+      PROJECT_RENAME_PATH,
+      PROJECT_PIN_PATH,
+      PROJECT_GITHUB_LINK_PATH,
+      PROJECTS_REFRESH_PATH,
+      SCAN_ROOTS_ADD_PATH,
+      SCAN_ROOTS_REMOVE_PATH,
+      SCAN_ROOTS_RESCAN_PATH,
+      SCAN_ROOTS_LIST_PATH,
+      SUGGESTION_REGISTER_PATH,
+      SUGGESTION_DISMISS_PATH,
+    ];
+    for (const route of paths) {
+      expect(route.startsWith("/api/v1/")).toBe(true);
+    }
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it("DisplayNameSchema trims and enforces 1..64 characters with no control characters (RR-11)", () => {
+    expect(DisplayNameSchema.parse("  demo-api  ")).toBe("demo-api");
+    expect(DisplayNameSchema.safeParse("x".repeat(64)).success).toBe(true);
+    expect(DisplayNameSchema.safeParse("x".repeat(65)).success).toBe(false);
+    expect(DisplayNameSchema.safeParse("   ").success).toBe(false);
+    expect(DisplayNameSchema.safeParse(`demo${String.fromCharCode(7)}api`).success).toBe(false);
+  });
+
+  it("GithubLinkSchema accepts null or https://github.com/owner/repo only (RR-12)", () => {
+    expect(GithubLinkSchema.safeParse(null).success).toBe(true);
+    expect(GithubLinkSchema.safeParse("https://github.com/owner/repo").success).toBe(true);
+    expect(GithubLinkSchema.safeParse("https://github.com/owner/repo.name_x-y").success).toBe(true);
+    for (const bad of [
+      "http://github.com/owner/repo",
+      "https://gitlab.com/owner/repo",
+      "https://github.com/owner",
+      "https://github.com/owner/repo/issues",
+      "https://user:token@github.com/owner/repo",
+      "https://github.com.example.com/owner/repo",
+      "javascript:alert(1)",
+    ]) {
+      expect(GithubLinkSchema.safeParse(bad).success, bad).toBe(false);
+    }
+  });
+
+  it("management bodies address a project by id only and are strict", () => {
+    expect(RemoveProjectRequestSchema.safeParse({ projectId: EXAMPLE_PROJECT_ID }).success).toBe(
+      true,
+    );
+    expect(
+      RemoveProjectRequestSchema.safeParse({ projectId: EXAMPLE_PROJECT_ID, path: EXAMPLE_PATH })
+        .success,
+    ).toBe(false);
+    expect(
+      RenameProjectRequestSchema.safeParse({
+        projectId: EXAMPLE_PROJECT_ID,
+        displayName: "demo-api",
+      }).success,
+    ).toBe(true);
+    expect(
+      PinProjectRequestSchema.safeParse({ projectId: EXAMPLE_PROJECT_ID, pinned: true }).success,
+    ).toBe(true);
+    expect(
+      SetGithubLinkRequestSchema.safeParse({ projectId: EXAMPLE_PROJECT_ID, url: null }).success,
+    ).toBe(true);
+    expect(ProjectMutationResponseSchema.safeParse({ ok: true }).success).toBe(true);
+  });
+
+  it("a scan-root add body carries an absolute path and an optional depth of 1..3", () => {
+    expect(AddScanRootRequestSchema.safeParse({ path: "/Users/USERNAME/code" }).success).toBe(true);
+    expect(
+      AddScanRootRequestSchema.safeParse({ path: "/Users/USERNAME/code", depth: 3 }).success,
+    ).toBe(true);
+    expect(
+      AddScanRootRequestSchema.safeParse({ path: "/Users/USERNAME/code", depth: 4 }).success,
+    ).toBe(false);
+    expect(AddScanRootRequestSchema.safeParse({ path: "code" }).success).toBe(false);
+  });
+
+  it("ScanStateResponseSchema parses scan roots (depth 1..3) and suggestions", () => {
+    const scanRootId = "0000000000abcdefabcdefabc";
+    const state = {
+      scanRoots: [
+        {
+          scanRootId,
+          displayPath: "~/code",
+          depth: 2,
+          addedAt: "2026-09-01T00:00:00.000Z",
+          lastScannedAt: null,
+        },
+      ],
+      suggestions: [
+        {
+          suggestionId: "0000000000abcdefabcdef012",
+          scanRootId,
+          folderName: "sample-notes",
+          displayPath: "~/code/sample-notes",
+        },
+      ],
+      partial: false,
+    };
+    expect(ScanStateResponseSchema.safeParse(state).success).toBe(true);
+    expect(
+      ScanStateResponseSchema.safeParse({ ...state, protectedLocation: "documents" }).success,
+    ).toBe(true);
+    const deep = { ...state, scanRoots: [{ ...state.scanRoots[0], depth: 4 }] };
+    expect(ScanStateResponseSchema.safeParse(deep).success).toBe(false);
   });
 });

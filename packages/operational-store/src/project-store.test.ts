@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   EMPTY_PROJECTS_SNAPSHOT,
+  LAUNCHER_IDS,
   type ProjectId,
   ProjectsSnapshotSchema,
   type ProjectView,
@@ -29,6 +30,7 @@ import {
   removeProject,
   removeScanRoot,
   renameProject,
+  STORED_LAUNCHER_IDS,
   saveLauncherConfig,
   setGithubUrlOverride,
   setProjectPinned,
@@ -371,5 +373,11 @@ describe("launcher config (D-22, D-46)", () => {
         .map((row) => row.launcherId)
         .sort(),
     ).toEqual(["antigravity", "claude-desktop"]);
+  });
+});
+
+describe("STORED_LAUNCHER_IDS", () => {
+  it("equals the domain LAUNCHER_IDS", () => {
+    expect([...STORED_LAUNCHER_IDS]).toEqual([...LAUNCHER_IDS]);
   });
 });
