@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { OPEN } from "./app-actions.js";
 import {
   FORBIDDEN_CLAUDE_FLAGS,
+  FORBIDDEN_PERMISSION_TOKENS,
   MAX_TEMPLATE_ARGS,
   PLACEHOLDERS,
   renderCommandTemplate,
@@ -113,6 +114,60 @@ describe("validateCommandTemplate (D-22, PROJ-10)", () => {
         reason: "forbidden-flag",
         index: 1,
       });
+    }
+  });
+
+  it("refuses the permission bypass in every spelling once case and punctuation are stripped", () => {
+    expect([...FORBIDDEN_PERMISSION_TOKENS]).toEqual([
+      "dangerouslyskippermissions",
+      "bypasspermissions",
+    ]);
+    for (const spelling of [
+      "--dangerously_skip_permissions",
+      "--Dangerously.Skip.Permissions",
+      "--dangerously skip permissions",
+      "--permission-mode=bypassPermissions",
+      "--permission-mode=bypass-permissions",
+      "bypassPermissions",
+    ]) {
+      expect(refusal([CLAUDE, spelling], "claude-code")).toEqual({
+        reason: "forbidden-flag",
+        index: 1,
+      });
+    }
+  });
+
+  it("refuses --permission-mode followed by bypassPermissions as a separate element", () => {
+    expect(refusal([CLAUDE, "--permission-mode", "bypassPermissions"], "claude-code")).toEqual({
+      reason: "forbidden-flag",
+      index: 2,
+    });
+    expect(refusal([WEZTERM, "{script}", "--permission-mode", "BYPASS_PERMISSIONS"])).toEqual({
+      reason: "forbidden-flag",
+      index: 3,
+    });
+  });
+
+  it("refuses a --settings JSON value that sets defaultMode to bypassPermissions", () => {
+    const settings = '{"permissions":{"defaultMode":"bypassPermissions"}}';
+    expect(refusal([CLAUDE, "--settings", settings], "claude-code")).toEqual({
+      reason: "forbidden-flag",
+      index: 2,
+    });
+    expect(refusal([CLAUDE, `--settings=${settings}`], "claude-code")).toEqual({
+      reason: "forbidden-flag",
+      index: 1,
+    });
+  });
+
+  it("still accepts the non-bypass permission modes -- the check discriminates", () => {
+    for (const mode of ["default", "acceptEdits", "plan"]) {
+      expect(
+        validateCommandTemplate([CLAUDE, "--permission-mode", mode], {
+          kind: "claude-code",
+          isExecutable: always,
+        }).ok,
+      ).toBe(true);
     }
   });
 
@@ -234,10 +289,11 @@ describe("TERMINAL_PRESETS (D-23)", () => {
     for (const preset of TERMINAL_PRESETS) expect(preset.verified).toBe(false);
   });
 
-  it("no preset element contains the forbidden flag", () => {
+  it("no preset element contains a forbidden permission token", () => {
     for (const preset of TERMINAL_PRESETS) {
       for (const element of preset.argv) {
-        expect(element).not.toContain("dangerously-skip-permissions");
+        const normalised = element.toLowerCase().replace(/[^a-z0-9]/g, "");
+        for (const token of FORBIDDEN_PERMISSION_TOKENS) expect(normalised).not.toContain(token);
       }
     }
   });
