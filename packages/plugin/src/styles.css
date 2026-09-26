@@ -572,6 +572,82 @@
   outline-offset: calc(-1 * var(--ccc-focus-ring));
 }
 
+/* List-bearing panels (UI-SPEC surface E4). Rows are capped by ListBody's
+ * row budget, so a card never grows past its grid span; `min-width: 0` plus
+ * `overflow-wrap` keep a long value wrapping instead of scrolling the card
+ * sideways. */
+.ccc-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ccc-list-row {
+  min-width: 0;
+  padding: var(--ccc-space-xs) 0;
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-list-row:last-child {
+  border-bottom: 0;
+}
+
+.ccc-list-overflow {
+  padding-top: var(--ccc-space-xs);
+}
+
+.ccc-list-primary {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+}
+
+.ccc-list-meta {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+/* The quick-action button and the `+{n} more` overflow control: one Label-step
+ * pill each, a hairline outline, and a hit area no smaller than
+ * `--ccc-space-lg` in either direction. */
+.ccc-quick-action,
+.ccc-list-more {
+  min-width: var(--ccc-space-lg);
+  min-height: var(--ccc-space-lg);
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  overflow-wrap: anywhere;
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-pill);
+  background: transparent;
+  color: var(--ccc-ink);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  cursor: pointer;
+  transition: color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-list-more {
+  color: var(--ccc-ink-muted);
+}
+
+.ccc-quick-action:hover,
+.ccc-list-more:hover {
+  color: var(--ccc-ink);
+}
+
+/* A `tall` card's body scrolls, so it carries a tabindex to stay reachable
+ * without a mouse — and therefore needs the same visible ring every other
+ * focusable control has (A11Y-01). */
+.ccc-quick-action:focus-visible,
+.ccc-list-more:focus-visible,
+.ccc-card-body[tabindex]:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
 .ccc-source-panel {
   flex-basis: 100%;
   max-height: var(--ccc-space-3xl);

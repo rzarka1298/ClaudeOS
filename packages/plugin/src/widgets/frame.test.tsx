@@ -113,6 +113,33 @@ describe("WidgetFrame ownership of the footer", () => {
     renderEmpty: () => null,
   };
 
+  it("puts a tall card's scrollable body in the tab order, and no other card's", () => {
+    const state: WidgetState<null> = {
+      kind: "ready",
+      data: null,
+      observedAt: EVENT_AT,
+      freshness: "live",
+      partiality: { partial: false },
+      isEmpty: false,
+    };
+    const body = (size: "small" | "tall"): Element | null =>
+      render(
+        <WidgetFrame
+          definition={EMPTY_BODY_WIDGET}
+          state={state}
+          connection={{ kind: "live" }}
+          size={size}
+          now={TWO_MINUTES_LATER}
+        />,
+      ).container.querySelector(".ccc-card-body");
+
+    // Only `tall` scrolls (`overflow-y: auto`), and a scroll container outside
+    // the tab order cannot be scrolled without a mouse (A11Y-01).
+    expect(body("tall")?.getAttribute("tabindex")).toBe("0");
+    cleanup();
+    expect(body("small")?.hasAttribute("tabindex")).toBe(false);
+  });
+
   it("renders the footer even when a widget's body renders nothing at all", () => {
     const { container } = render(
       <WidgetFrame

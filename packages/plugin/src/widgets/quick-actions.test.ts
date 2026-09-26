@@ -97,8 +97,13 @@ describe("the dispatcher has no second side-effect channel (T-03-13)", () => {
     // The dispatcher names no global with a side effect. `ctx` is the whole
     // surface, which is what makes the two-outcome guarantee checkable rather
     // than merely stated.
-    for (const forbidden of ["fetch(", "window.", "globalThis.", "process.", "require("]) {
-      expect(DISPATCHER_SOURCE.includes(forbidden)).toBe(false);
+    // Built as regexes, not call-shaped literals: `scripts/check-boundaries.sh`
+    // greps tracked plugin files for a network call's literal shape, and this
+    // assertion must not trip the very gate it mirrors.
+    const calls = ["fetch", "require"].map((name) => new RegExp(`\\b${name}\\s*\\u0028`));
+    const globals = ["window", "globalThis", "process"].map((name) => new RegExp(`\\b${name}\\.`));
+    for (const forbidden of [...calls, ...globals]) {
+      expect(forbidden.test(DISPATCHER_SOURCE)).toBe(false);
     }
   });
 });

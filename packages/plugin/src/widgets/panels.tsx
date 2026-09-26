@@ -1,5 +1,6 @@
 import type { VNode } from "preact";
 import type { WidgetDefinition } from "./contract.js";
+import { ListBody } from "./list-body.js";
 
 /**
  * The seven PRD §7.1 panels, in the PRD's own desktop ordering.
@@ -61,6 +62,14 @@ function TodayBody({ data }: { readonly data: TodayData }): VNode {
         {count(data.dueTasks.length, "task due", "tasks due")} ·{" "}
         {count(data.overdueTasks.length, "overdue task", "overdue tasks")}
       </p>
+      <ListBody<TodayTask>
+        rows={[...data.overdueTasks, ...data.dueTasks]}
+        size="wide"
+        keyOf={(task) => `${task.dueAt}-${task.title}`}
+        renderPrimary={(task) => task.title}
+        renderMeta={(task) => `Due ${task.dueAt}`}
+        moreDestination="tasks"
+      />
       {data.unreadSummary === null ? null : (
         <p className="ccc-state-body ccc-clamp-2">{data.unreadSummary}</p>
       )}
@@ -117,16 +126,16 @@ export interface ActiveSessionsData {
   readonly rows: readonly SessionRow[];
 }
 
-function ActiveSessionsBody({ data }: { readonly data: ActiveSessionsData }): VNode {
+function ActiveSessionsBody({ data }: { readonly data: ActiveSessionsData }): VNode | null {
   return (
-    <ul className="ccc-list">
-      {data.rows.map((row) => (
-        <li className="ccc-list-row" key={row.id}>
-          <p className="ccc-list-primary ccc-clamp-2">{`${row.project} · ${row.name}`}</p>
-          <p className="ccc-list-meta">{`${row.status} · ${row.elapsed} · ${row.lastActivity}`}</p>
-        </li>
-      ))}
-    </ul>
+    <ListBody<SessionRow>
+      rows={data.rows}
+      size="tall"
+      keyOf={(row) => row.id}
+      renderPrimary={(row) => `${row.project} · ${row.name}`}
+      renderMeta={(row) => `${row.status} · ${row.elapsed} · ${row.lastActivity}`}
+      moreDestination="agent-runs"
+    />
   );
 }
 
@@ -163,22 +172,22 @@ export interface ProjectShortcutsData {
   readonly projects: readonly ProjectRow[];
 }
 
-function ProjectShortcutsBody({ data }: { readonly data: ProjectShortcutsData }): VNode {
+function ProjectShortcutsBody({ data }: { readonly data: ProjectShortcutsData }): VNode | null {
   return (
-    <ul className="ccc-list">
-      {data.projects.map((project) => (
-        <li className="ccc-list-row" key={project.id}>
-          <p className="ccc-list-primary ccc-clamp-2">{project.name}</p>
-          <p className="ccc-list-meta">
-            {`${project.branch}${project.dirty ? " · uncommitted changes" : ""} · ${count(
-              project.openItems,
-              "open item",
-              "open items",
-            )}`}
-          </p>
-        </li>
-      ))}
-    </ul>
+    <ListBody<ProjectRow>
+      rows={data.projects}
+      size="medium"
+      keyOf={(project) => project.id}
+      renderPrimary={(project) => project.name}
+      renderMeta={(project) =>
+        `${project.branch}${project.dirty ? " · uncommitted changes" : ""} · ${count(
+          project.openItems,
+          "open item",
+          "open items",
+        )}`
+      }
+      moreDestination="projects"
+    />
   );
 }
 
@@ -281,16 +290,16 @@ export interface TechIntelData {
 function TechIntelBody({ data }: { readonly data: TechIntelData }): VNode {
   return (
     <>
-      <ul className="ccc-list">
-        {data.stories.map((story) => (
-          <li className="ccc-list-row" key={story.id}>
-            <p className="ccc-list-primary ccc-clamp-2">{story.headline}</p>
-            <p className="ccc-list-meta">
-              {`${story.category} · ${count(story.sourceCount, "source", "sources")}`}
-            </p>
-          </li>
-        ))}
-      </ul>
+      <ListBody<IntelStory>
+        rows={data.stories}
+        size="tall"
+        keyOf={(story) => story.id}
+        renderPrimary={(story) => story.headline}
+        renderMeta={(story) =>
+          `${story.category} · ${count(story.sourceCount, "source", "sources")}`
+        }
+        moreDestination="research"
+      />
       {data.marketSummary === null ? null : (
         <p className="ccc-state-body ccc-clamp-2">{data.marketSummary}</p>
       )}
@@ -328,18 +337,18 @@ export interface GithubDiscoveriesData {
   readonly repos: readonly DiscoveredRepo[];
 }
 
-function GithubDiscoveriesBody({ data }: { readonly data: GithubDiscoveriesData }): VNode {
+function GithubDiscoveriesBody({ data }: { readonly data: GithubDiscoveriesData }): VNode | null {
   return (
-    <ul className="ccc-list">
-      {data.repos.map((repo) => (
-        <li className="ccc-list-row" key={repo.id}>
-          <p className="ccc-list-primary ccc-clamp-2">{repo.name}</p>
-          <p className="ccc-list-meta">
-            {`${count(repo.stars, "star", "stars")} · ${repo.growth} · ${repo.reason}`}
-          </p>
-        </li>
-      ))}
-    </ul>
+    <ListBody<DiscoveredRepo>
+      rows={data.repos}
+      size="medium"
+      keyOf={(repo) => repo.id}
+      renderPrimary={(repo) => repo.name}
+      renderMeta={(repo) =>
+        `${count(repo.stars, "star", "stars")} · ${repo.growth} · ${repo.reason}`
+      }
+      moreDestination="research"
+    />
   );
 }
 

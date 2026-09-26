@@ -182,15 +182,24 @@ export function WidgetFrame<T>({
       <div
         className="ccc-card-body"
         data-dimmed={presentation.kind === "disconnected" ? "true" : undefined}
+        // A `tall` card's body is the one scrollable region in the card
+        // (`overflow-y: auto` in styles.css). A scroll container that is not
+        // in the tab order cannot be scrolled without a mouse, so it takes a
+        // tabindex — and the focus ring that goes with it (A11Y-01).
+        tabIndex={hint === "tall" ? 0 : undefined}
       >
         {body}
         {showsActions && (
           <div className="ccc-card-actions">
+            {/* A DESCRIPTOR goes to one handler prop; the frame runs nothing.
+                `dispatchQuickAction` is the single place that descriptor is
+                resolved, and the single place Phase 6's approval check is
+                inserted (C-11, APPR-01, T-03-13). */}
             {definition.quickActions.map((action) => (
               <button
                 key={action.id}
                 type="button"
-                className="ccc-connect-button"
+                className="ccc-quick-action"
                 onClick={() => onQuickAction?.(action)}
               >
                 {action.label}
