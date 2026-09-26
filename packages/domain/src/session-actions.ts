@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
-import type { GuardConflict } from "./ports.js";
+import type { GuardConflict, LaunchPortFailure } from "./ports.js";
 import { RUN_STATES } from "./run.js";
 import { RunIdSchema } from "./session.js";
 
@@ -180,8 +180,30 @@ export const SESSION_ACTION_ERROR_CODES = [
   "invalid-state",
   "approval-unavailable",
   "project-not-registered",
+  // Terminal-launch failures (resume and branch), one per LaunchPortFailure.
+  "folder-access-denied",
+  "spawn-failed",
+  "project-moved",
+  "app-not-found",
 ] as const;
 export type SessionActionErrorCode = (typeof SESSION_ACTION_ERROR_CODES)[number];
+
+/**
+ * The error code a resume or branch reports when the terminal launcher
+ * fails. Exhaustive over {@link LaunchPortFailure}: adding a failure kind
+ * without a code is a compile error, so no launch failure is ever
+ * mislabelled as a different reason.
+ */
+export const LAUNCH_PORT_FAILURE_ERROR_CODES = {
+  "launcher-not-configured": "launcher-not-configured",
+  "app-not-found": "app-not-found",
+  "project-missing": "project-missing",
+  "project-moved": "project-moved",
+  "automation-denied": "automation-denied",
+  "folder-access-denied": "folder-access-denied",
+  timeout: "timeout",
+  "spawn-failed": "spawn-failed",
+} as const satisfies Record<LaunchPortFailure, SessionActionErrorCode>;
 
 export const SessionActionErrorBodySchema = z.strictObject({
   error: z.enum(SESSION_ACTION_ERROR_CODES),

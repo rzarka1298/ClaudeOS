@@ -31,10 +31,16 @@ export interface SessionProjectLookup {
   list(): readonly ProjectRef[];
 }
 
-/** Why a terminal launch failed. Mirrors Phase 4's launch-error enum (04 D-26); no reason carries a path. */
+/**
+ * Why a terminal launch failed. Mirrors every launch-time kind in Phase 4's
+ * launch-error enum (04 D-26), so a Phase 4 adapter's failure always has a
+ * Phase 5 code; no reason carries a path.
+ */
 export type LaunchPortFailure =
   | "launcher-not-configured"
+  | "app-not-found"
   | "project-missing"
+  | "project-moved"
   | "automation-denied"
   | "folder-access-denied"
   | "timeout"

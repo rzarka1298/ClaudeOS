@@ -6,6 +6,7 @@ import {
   BranchRequestSchema,
   BranchResponseSchema,
   FocusResponseSchema,
+  LAUNCH_PORT_FAILURE_ERROR_CODES,
   LaunchChoiceSchema,
   OpenTranscriptRequestSchema,
   ResumeRequestSchema,
@@ -221,7 +222,7 @@ describe("responses and errors (Tests 4-5)", () => {
   });
 
   it("accepts only the fixed error codes", () => {
-    expect(SESSION_ACTION_ERROR_CODES).toHaveLength(14);
+    expect(SESSION_ACTION_ERROR_CODES).toHaveLength(18);
     for (const error of SESSION_ACTION_ERROR_CODES) {
       expect(SessionActionErrorBodySchema.safeParse({ error }).success).toBe(true);
     }
@@ -240,5 +241,29 @@ describe("responses and errors (Tests 4-5)", () => {
       FocusResponseSchema.safeParse({ outcome: "activated", terminalApp: "Terminal" }).success,
     ).toBe(true);
     expect(FocusResponseSchema.safeParse({ outcome: "activated" }).success).toBe(false);
+  });
+});
+
+describe("launch port failures map onto session action error codes", () => {
+  it("maps every LaunchPortFailure, including Phase 4's, to its own error code", () => {
+    // Phase 4's launch-error enum (04 D-26) as the terminal launcher reports it.
+    const failures = [
+      "launcher-not-configured",
+      "app-not-found",
+      "project-missing",
+      "project-moved",
+      "automation-denied",
+      "folder-access-denied",
+      "timeout",
+      "spawn-failed",
+    ];
+    expect(Object.keys(LAUNCH_PORT_FAILURE_ERROR_CODES).sort()).toEqual([...failures].sort());
+    for (const failure of failures) {
+      const code = (LAUNCH_PORT_FAILURE_ERROR_CODES as Record<string, string>)[failure];
+      expect(SESSION_ACTION_ERROR_CODES as readonly string[]).toContain(code);
+      expect(SessionActionErrorBodySchema.safeParse({ error: code }).success).toBe(true);
+      // One-to-one: no failure is relabelled as a different reason.
+      expect(code).toBe(failure);
+    }
   });
 });
