@@ -13,7 +13,9 @@
 #      the one directory the pinned Linux container writes to;
 #   4. the owner looks at every committed baseline (03-UAT.md item 10).
 #
-# The rule: every tracked png/jpg/jpeg/gif/webp/mp4/mov/webm (any case) must
+# The rule: every tracked image, document or video (IMAGE_EXTENSIONS below,
+# any case — a screenshot can arrive as a phone's .heic, a scanner's .tiff or
+# a printed .pdf just as easily as a .png) must
 # be a direct child of ALLOWED_PREFIX and named `*-chromium-linux.png` — the
 # only name Playwright gives a baseline written on Linux (D-22). Anything
 # else, including a macOS `*-chromium-darwin.png` in the right directory, is a
@@ -29,6 +31,10 @@ set -eu
 
 ALLOWED_PREFIX="packages/test-fixtures/visual/widgets.spec.ts-snapshots/"
 BASELINE_SUFFIX="-chromium-linux.png"
+# Every raster, vector and document format a screenshot or a scan of personal
+# content can take, plus the video formats a screen recording can (judge-r1
+# finding 3). Matched case-insensitively.
+IMAGE_EXTENSIONS="png|jpg|jpeg|gif|webp|avif|heic|heif|tif|tiff|bmp|svg|pdf|ico|mp4|mov|webm"
 
 FILELIST=$(mktemp "${TMPDIR:-/tmp}/ccc-image-files.XXXXXX")
 trap 'rm -f "$FILELIST"' EXIT
@@ -44,7 +50,7 @@ fi
 # image, so the exclusion only guards against a future rename).
 git ls-files -z | tr '\0' '\n' \
   | grep -v '^scripts/check-images\.sh$' \
-  | grep -i -E '\.(png|jpg|jpeg|gif|webp|mp4|mov|webm)$' > "$FILELIST" || true
+  | grep -i -E "\\.(${IMAGE_EXTENSIONS})\$" > "$FILELIST" || true
 
 SCANNED=0
 VIOLATIONS=0

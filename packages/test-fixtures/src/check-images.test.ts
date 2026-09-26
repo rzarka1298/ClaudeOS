@@ -82,6 +82,42 @@ describe("check-images.sh (PRIV-04 layer 3)", () => {
     expect(result.out).toContain("scanned 8 tracked image(s), 8 outside the allowlist.");
   });
 
+  it("fails on a planted iPhone photo (.heic), naming it (judge-r1 finding 3)", () => {
+    const result = gate(repoTracking(["docs/IMG_0001.HEIC"]));
+    expect(result.status).toBe(1);
+    expect(result.out).toContain("IMAGE OUTSIDE ALLOWLIST: docs/IMG_0001.HEIC");
+  });
+
+  it("catches every image and document type, in any case (judge-r1 finding 3)", () => {
+    const extensions = [
+      "png",
+      "jpg",
+      "jpeg",
+      "gif",
+      "webp",
+      "avif",
+      "heic",
+      "heif",
+      "tif",
+      "tiff",
+      "bmp",
+      "svg",
+      "pdf",
+      "ico",
+      "mp4",
+      "mov",
+      "webm",
+    ];
+    const names = extensions.flatMap((ext, i) => [
+      `lower${i}.${ext}`,
+      `upper${i}.${ext.toUpperCase()}`,
+    ]);
+    const result = gate(repoTracking(names.map((name) => `media/${name}`)));
+    expect(result.status).toBe(1);
+    const n = names.length;
+    expect(result.out).toContain(`scanned ${n} tracked image(s), ${n} outside the allowlist.`);
+  });
+
   it("does not let a space in a filename split one image into two unchecked paths", () => {
     const result = gate(repoTracking(["docs/my vault shot.png"]));
     expect(result.status).toBe(1);
