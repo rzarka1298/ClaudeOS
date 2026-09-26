@@ -134,6 +134,26 @@ function sameOverride(a: LayoutOverride | undefined, b: LayoutOverride | undefin
 }
 
 /**
+ * The shape of a registered widget id, and the longest one a diagnostic will
+ * repeat. Every registered id fits comfortably.
+ */
+const ECHOABLE_WIDGET_ID = /^[a-z0-9-]+$/;
+const MAX_ECHOED_WIDGET_ID_LENGTH = 32;
+
+/**
+ * How a skip diagnostic refers to an entry's id. The id came from the
+ * owner's file, so it is repeated only when it looks like a widget id (short,
+ * lowercase letters, digits and hyphens) -- enough to find a typo such as
+ * `todya` -- and anything else (a pasted token, a long string) is referred to
+ * generically, so a file's arbitrary text never reaches diagnostics (T-03-15).
+ */
+function describeWidgetId(widgetId: string): string {
+  return widgetId.length <= MAX_ECHOED_WIDGET_ID_LENGTH && ECHOABLE_WIDGET_ID.test(widgetId)
+    ? `"${widgetId}"`
+    : "with an unknown widget id";
+}
+
+/**
  * Applies a validated override — or `undefined` to return to the in-code
  * default — and records one `layout` diagnostic per entry it had to skip
  * (D-13). Returns the resolution the Overview will now render.
@@ -153,7 +173,7 @@ export function setLayoutOverride(next: LayoutOverride | undefined): LayoutResol
     recordDiagnostic({
       source: "layout",
       code: reason,
-      message: `Layout entry "${widgetId}" skipped (${reason}).`,
+      message: `Layout entry ${describeWidgetId(widgetId)} skipped (${reason}).`,
       at,
     });
   }
