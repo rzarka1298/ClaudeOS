@@ -1,11 +1,13 @@
 import { createSocketApiClient } from "@ccc/service-api-client";
-import { type ReadonlySignal, signal } from "@preact/signals";
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { type ReadonlySignal, type Signal, signal } from "@preact/signals";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { options } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import type { WidgetState } from "../widgets/contract.js";
 import { ENABLED_FLAGS } from "../widgets/feature-flags.js";
+import { WidgetFrame } from "../widgets/frame.js";
 import { composeLayout, DEFAULT_LAYOUT } from "../widgets/layout.js";
 import { WIDGET_IDS, WIDGETS, type WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
@@ -302,6 +304,52 @@ describe("PERF-03: a slow integration blocks neither its siblings nor navigation
       "true",
     );
     expect(overviewCards(container)).toHaveLength(8);
+  });
+});
+
+describe("per-card signal isolation: one widget's update re-renders only its card", () => {
+  it("re-renders the updated card and no sibling", () => {
+    const states: Record<WidgetId, Signal<WidgetState<unknown>>> = {} as Record<
+      WidgetId,
+      Signal<WidgetState<unknown>>
+    >;
+    for (const id of WIDGET_IDS) states[id] = signal(cachedReady(id));
+
+    // Every WidgetFrame diff, by widget id — Preact's own post-diff hook,
+    // chained so @preact/signals' hook keeps running.
+    const renders: string[] = [];
+    const previous = options.diffed;
+    options.diffed = (vnode) => {
+      if (vnode.type === WidgetFrame) {
+        renders.push((vnode.props as { definition: { id: string } }).definition.id);
+      }
+      previous?.(vnode);
+    };
+    try {
+      const { container } = render(
+        <Overview
+          layout={composeLayout(DEFAULT_LAYOUT, undefined, WIDGETS, ENABLED_FLAGS)}
+          stateFor={(id) => states[id]}
+          connection={{ kind: "live" }}
+          now={Date.parse("2026-09-25T12:00:00Z")}
+        />,
+      );
+      expect(renders).toHaveLength(8);
+      renders.length = 0;
+
+      act(() => {
+        states["tech-intel"].value = { kind: "error", message: "boom" };
+      });
+
+      expect(renders).toEqual(["tech-intel"]);
+      expect(
+        cardNamed(container, "Technology and market intelligence").getAttribute(
+          "data-presentation",
+        ),
+      ).toBe("error");
+    } finally {
+      options.diffed = previous;
+    }
   });
 });
 
