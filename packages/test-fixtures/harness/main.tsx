@@ -139,9 +139,12 @@ function list(value: unknown): readonly Fields[] {
 }
 
 /** "4.2K stars" → 4200, "1.84M" → 1840000, "830 stars" → 830, "4 open" → 4. */
-function quantity(value: unknown): number {
+// A fixture string with no number in it ("Issue count unavailable") is an
+// unavailable value: it maps to null, never 0, so the harness renders the same
+// "unavailable" copy the production cards do.
+function quantity(value: unknown): number | null {
   const match = /(\d+(?:\.\d+)?)\s*([KM])?/i.exec(text(value));
-  if (match === null) return 0;
+  if (match === null) return null;
   const scale = match[2]?.toUpperCase() === "M" ? 1e6 : match[2]?.toUpperCase() === "K" ? 1e3 : 1;
   return Math.round(Number(match[1]) * scale);
 }
@@ -249,7 +252,7 @@ function adaptTechIntel(data: Fields): TechIntelData {
       headline: text(row.headline),
       category: text(row.category),
       summary: text(row.summary),
-      sourceCount: quantity(row.sourceCount),
+      sourceCount: quantity(row.sourceCount) ?? 1, // a story always has at least one source
     })),
     marketSummary: typeof data.marketLine === "string" ? data.marketLine : null,
   };
