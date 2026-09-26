@@ -73,6 +73,56 @@ describe("setLayoutOverride records every skip (D-13)", () => {
     expect(Number.isNaN(Date.parse(diagnostics.value[0]?.at ?? ""))).toBe(false);
   });
 
+  it("records nothing new when an identical override is applied again (03-07 review: no flooding)", () => {
+    const next = {
+      schemaVersion: 1 as const,
+      entries: [{ widgetId: "today" }, { widgetId: "not-a-widget" }],
+    };
+    setLayoutOverride(next);
+    const recorded = diagnostics.value;
+
+    // A distinct object with equal content: what a re-read of an unchanged
+    // file, or a re-save of the same bytes, produces.
+    const resolution = setLayoutOverride(structuredClone(next));
+
+    expect(diagnostics.value).toBe(recorded);
+    expect(diagnostics.value).toHaveLength(1);
+    expect(resolution.entries.map((e) => e.widgetId)).toEqual(["today"]);
+  });
+
+  it("does not push an older, different record out of the buffer by re-applying one override", () => {
+    recordDiagnostic(record(1));
+    const next = { schemaVersion: 1 as const, entries: [{ widgetId: "not-a-widget" }] };
+
+    for (let n = 0; n < DIAGNOSTICS_CAPACITY + 1; n++) setLayoutOverride(structuredClone(next));
+
+    expect(diagnostics.value[0]).toEqual(record(1));
+    expect(diagnostics.value).toHaveLength(2);
+  });
+
+  it("records again once the override really changes, including a change back", () => {
+    const withSkip = { schemaVersion: 1 as const, entries: [{ widgetId: "not-a-widget" }] };
+    const clean = { schemaVersion: 1 as const, entries: [{ widgetId: "today" }] };
+
+    setLayoutOverride(withSkip);
+    setLayoutOverride(clean);
+    setLayoutOverride(structuredClone(withSkip));
+
+    expect(diagnostics.value.map((d) => d.code)).toEqual(["unknown-widget", "unknown-widget"]);
+  });
+
+  it("treats a changed size as a change", () => {
+    setLayoutOverride({ schemaVersion: 1, entries: [{ widgetId: "today", size: "wide" }] });
+
+    const resolution = setLayoutOverride({
+      schemaVersion: 1,
+      entries: [{ widgetId: "today", size: "small" }],
+    });
+
+    expect(resolution.entries).toEqual([{ widgetId: "today", size: "small" }]);
+    expect(layoutOverride.value?.entries[0]?.size).toBe("small");
+  });
+
   it("restores the in-code default on undefined and records nothing for it", () => {
     setLayoutOverride({ schemaVersion: 1, entries: [{ widgetId: "today" }] });
 
