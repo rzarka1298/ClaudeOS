@@ -1,7 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 import { API_BASE } from "./api.js";
-import type { ProjectId } from "./ids.js";
+import type { ProjectId, ScanRootId } from "./ids.js";
 
 /**
  * Project, scan-root and projects-snapshot contracts (Phase 4, ADR-0003).
@@ -270,30 +270,160 @@ export function compareProjectViews(a: ProjectOrderKey, b: ProjectOrderKey): num
 }
 
 // ---------------------------------------------------------------------------
-// RED skeleton (plan 04-01 Task 3): management and scan contracts. Every
-// schema rejects everything so the failing tests fail on their assertions.
+// Project management (PROJ-11, D-08, RR-11, RR-12)
+//
+// Every route is a POST with a JSON body: the service's route table is
+// exact-match with no path parameters (RESEARCH "Exact Seams"), and an ID in
+// a body stays out of access logs the way a path in a URL would not. Every
+// body is `.strict()` and addresses a project by ProjectId only.
 
-function pendingContract(): z.ZodType<unknown> {
-  return z.custom<unknown>(() => false);
-}
+/** `POST /api/v1/projects/remove` — remove from projects; never touches disk (D-08). */
+export const PROJECT_REMOVE_PATH = `${API_BASE}/projects/remove`;
+/** `POST /api/v1/projects/rename` — change the display name (RR-11). */
+export const PROJECT_RENAME_PATH = `${API_BASE}/projects/rename`;
+/** `POST /api/v1/projects/pin` — pin or unpin (PROJ-15). */
+export const PROJECT_PIN_PATH = `${API_BASE}/projects/pin`;
+/** `POST /api/v1/projects/github-link` — set or clear the GitHub link override (RR-12). */
+export const PROJECT_GITHUB_LINK_PATH = `${API_BASE}/projects/github-link`;
+/** `POST /api/v1/projects/refresh` — re-read git state now, for one project or all (D-42). */
+export const PROJECTS_REFRESH_PATH = `${API_BASE}/projects/refresh`;
 
-export const PROJECT_REMOVE_PATH = `${API_BASE}/pending/remove`;
-export const PROJECT_RENAME_PATH = `${API_BASE}/pending/rename`;
-export const PROJECT_PIN_PATH = `${API_BASE}/pending/pin`;
-export const PROJECT_GITHUB_LINK_PATH = `${API_BASE}/pending/github-link`;
-export const PROJECTS_REFRESH_PATH = `${API_BASE}/pending/refresh`;
-export const SCAN_ROOTS_ADD_PATH = `${API_BASE}/pending/scan-add`;
-export const SCAN_ROOTS_REMOVE_PATH = `${API_BASE}/pending/scan-remove`;
-export const SCAN_ROOTS_RESCAN_PATH = `${API_BASE}/pending/scan-rescan`;
-export const SCAN_ROOTS_LIST_PATH = `${API_BASE}/pending/scan-list`;
-export const SUGGESTION_REGISTER_PATH = `${API_BASE}/pending/suggestion-register`;
-export const SUGGESTION_DISMISS_PATH = `${API_BASE}/pending/suggestion-dismiss`;
-export const DisplayNameSchema = pendingContract();
-export const GithubLinkSchema = pendingContract();
-export const RemoveProjectRequestSchema = pendingContract();
-export const RenameProjectRequestSchema = pendingContract();
-export const PinProjectRequestSchema = pendingContract();
-export const SetGithubLinkRequestSchema = pendingContract();
-export const ProjectMutationResponseSchema = pendingContract();
-export const AddScanRootRequestSchema = pendingContract();
-export const ScanStateResponseSchema = pendingContract();
+/** A project display name (RR-11): trimmed, 1..64 characters, no control characters. */
+export const DisplayNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .refine((value) => !hasControlCharacter(value), {
+    message: "display name must not contain a control character",
+  });
+
+/**
+ * The owner-typed GitHub link (RR-12): exactly `https://github.com/owner/repo`
+ * (GitHub's own owner and repository name character sets and lengths), or
+ * `null` to clear it. No userinfo, no other host, no deeper path — the
+ * service opens exactly this URL (D-19), so the shape is the whole check.
+ */
+export const GithubLinkSchema = z
+  .string()
+  .regex(/^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/)
+  .refine((value) => !/\/\.{1,2}$/.test(value), {
+    message: "repository name must not be . or ..",
+  })
+  .nullable();
+
+export const RemoveProjectRequestSchema = z.object({ projectId: ProjectIdSchema }).strict();
+export type RemoveProjectRequest = z.infer<typeof RemoveProjectRequestSchema>;
+
+export const RenameProjectRequestSchema = z
+  .object({ projectId: ProjectIdSchema, displayName: DisplayNameSchema })
+  .strict();
+export type RenameProjectRequest = z.infer<typeof RenameProjectRequestSchema>;
+
+export const PinProjectRequestSchema = z
+  .object({ projectId: ProjectIdSchema, pinned: z.boolean() })
+  .strict();
+export type PinProjectRequest = z.infer<typeof PinProjectRequestSchema>;
+
+export const SetGithubLinkRequestSchema = z
+  .object({ projectId: ProjectIdSchema, url: GithubLinkSchema })
+  .strict();
+export type SetGithubLinkRequest = z.infer<typeof SetGithubLinkRequestSchema>;
+
+/** Refresh one project's git state, or every project's when `projectId` is absent. */
+export const RefreshProjectsRequestSchema = z
+  .object({ projectId: ProjectIdSchema.optional() })
+  .strict();
+export type RefreshProjectsRequest = z.infer<typeof RefreshProjectsRequestSchema>;
+
+/** Every management route's success body; the new state arrives as a `projects.updated` delta. */
+export const ProjectMutationResponseSchema = z.object({ ok: z.literal(true) });
+export type ProjectMutationResponse = z.infer<typeof ProjectMutationResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Scan folders and suggestions (PROJ-02, D-07)
+//
+// A scan root is addressed by its ScanRootId and a suggestion by its
+// suggestionId after it is added — never by a path — so a rescan or a
+// register-from-suggestion request cannot name an arbitrary directory.
+
+/** `POST /api/v1/scan-roots/add` — nominate a folder and scan it once. */
+export const SCAN_ROOTS_ADD_PATH = `${API_BASE}/scan-roots/add`;
+/** `POST /api/v1/scan-roots/remove` — stop scanning; registered projects stay. */
+export const SCAN_ROOTS_REMOVE_PATH = `${API_BASE}/scan-roots/remove`;
+/** `POST /api/v1/scan-roots/rescan` — rescan one root, optionally at a new depth. */
+export const SCAN_ROOTS_RESCAN_PATH = `${API_BASE}/scan-roots/rescan`;
+/** `POST /api/v1/scan-roots/list` — scan roots plus current suggestions. */
+export const SCAN_ROOTS_LIST_PATH = `${API_BASE}/scan-roots/list`;
+/** `POST /api/v1/scan-roots/suggestions/register` — register a suggested folder. */
+export const SUGGESTION_REGISTER_PATH = `${API_BASE}/scan-roots/suggestions/register`;
+/** `POST /api/v1/scan-roots/suggestions/dismiss` — hide a suggestion until the next rescan. */
+export const SUGGESTION_DISMISS_PATH = `${API_BASE}/scan-roots/suggestions/dismiss`;
+
+/** How many levels below a scan root to look (D-07): default 1, at most 3. */
+export const ScanDepthSchema = z.number().int().min(1).max(3);
+
+/** A ScanRootId on the wire: the {@link newScanRootId} shape, branded on the way in. */
+export const ScanRootIdSchema = z
+  .string()
+  .regex(/^[0-9a-z]{9}[0-9a-f]{16}$/)
+  .transform((value) => value as ScanRootId);
+
+/** An in-memory suggestion's opaque identity, minted by the service per scan. */
+export const SuggestionIdSchema = z.string().regex(/^[0-9a-z]{1,64}$/);
+
+export const AddScanRootRequestSchema = z
+  .object({
+    path: AbsolutePathSchema,
+    depth: ScanDepthSchema.optional(),
+    acknowledgeProtectedLocation: z.boolean().optional(),
+  })
+  .strict();
+export type AddScanRootRequest = z.infer<typeof AddScanRootRequestSchema>;
+
+export const RemoveScanRootRequestSchema = z.object({ scanRootId: ScanRootIdSchema }).strict();
+export type RemoveScanRootRequest = z.infer<typeof RemoveScanRootRequestSchema>;
+
+export const RescanScanRootRequestSchema = z
+  .object({ scanRootId: ScanRootIdSchema, depth: ScanDepthSchema.optional() })
+  .strict();
+export type RescanScanRootRequest = z.infer<typeof RescanScanRootRequestSchema>;
+
+export const ListScanRootsRequestSchema = z.object({}).strict();
+
+export const SuggestionActionRequestSchema = z
+  .object({ suggestionId: SuggestionIdSchema })
+  .strict();
+export type SuggestionActionRequest = z.infer<typeof SuggestionActionRequestSchema>;
+
+/** A scan root as the plugin sees it: home-abbreviated display path only. */
+export const ScanRootViewSchema = z.object({
+  scanRootId: ScanRootIdSchema,
+  displayPath: z.string().max(MAX_PATH_LENGTH),
+  depth: ScanDepthSchema,
+  addedAt: z.string(),
+  lastScannedAt: z.string().nullable(),
+});
+export type ScanRootView = z.infer<typeof ScanRootViewSchema>;
+
+/** A Git folder a scan found that is not yet registered. */
+export const SuggestionViewSchema = z.object({
+  suggestionId: SuggestionIdSchema,
+  scanRootId: ScanRootIdSchema,
+  folderName: z.string().min(1).max(255),
+  displayPath: z.string().max(MAX_PATH_LENGTH),
+});
+export type SuggestionView = z.infer<typeof SuggestionViewSchema>;
+
+/**
+ * Every scan route's response. `partial` is ADR-0002's orthogonal flag: a
+ * scan that could not read some child folders still returns what it found.
+ * `protectedLocation` asks the plugin to confirm adding a protected folder.
+ */
+export const ScanStateResponseSchema = z.object({
+  scanRoots: z.array(ScanRootViewSchema),
+  suggestions: z.array(SuggestionViewSchema),
+  partial: z.boolean(),
+  protectedLocation: ProtectedLocationSchema.optional(),
+});
+export type ScanStateResponse = z.infer<typeof ScanStateResponseSchema>;

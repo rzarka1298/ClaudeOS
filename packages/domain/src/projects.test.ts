@@ -39,6 +39,7 @@ import {
  * file pure ASCII while the value under test is still the real character.
  */
 const NUL_BYTE = String.fromCharCode(0);
+const AT_SIGN = "@";
 
 const EXAMPLE_PATH = "/Users/USERNAME/code/example-project";
 const EXAMPLE_PROJECT_ID = "0000000000123456789abcdef";
@@ -375,9 +376,12 @@ describe("project management contracts", () => {
       "https://gitlab.com/owner/repo",
       "https://github.com/owner",
       "https://github.com/owner/repo/issues",
-      "https://user:token@github.com/owner/repo",
+      // Userinfo form built with an interpolated "@" so the source carries no
+      // email-shaped literal (scripts/check-privacy.sh's address rule).
+      `https://user:token${AT_SIGN}github.com/owner/repo`,
       "https://github.com.example.com/owner/repo",
       "javascript:alert(1)",
+      "https://github.com/owner/..",
     ]) {
       expect(GithubLinkSchema.safeParse(bad).success, bad).toBe(false);
     }
