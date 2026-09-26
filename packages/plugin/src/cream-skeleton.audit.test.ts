@@ -7,11 +7,10 @@ import { describe, expect, it } from "vitest";
  * Audit (05-02 truth 2, UI-SPEC surface table + E1 loading row): the cream
  * hero's loading skeleton must draw its three blocks in --ccc-border-cream.
  *
- * AUDIT-BUG (05-audit-w1, MAJOR): styles.css has no cream-scoped
- * .ccc-skeleton-line rule, so the blocks inherit --ccc-border, a light
- * translucent tone that is invisible on the cream card. The loading hero
- * renders as an empty cream box (seen in the wave-1 harness capture).
- * Skipped until the product CSS adds the cream override.
+ * Guards the 05-audit-w1 AUDIT-BUG (MAJOR): without a cream-scoped
+ * .ccc-skeleton-line rule the blocks inherit --ccc-border, a light
+ * translucent tone that is invisible on the cream card, and the loading
+ * hero renders as an empty cream box.
  */
 
 const CSS = readFileSync(
@@ -20,12 +19,12 @@ const CSS = readFileSync(
 ).replace(/\/\*[\s\S]*?\*\//g, "");
 
 describe("cream hero loading skeleton (audit)", () => {
-  it.skip("a [data-surface='cream'] rule targets .ccc-skeleton-line with --ccc-border-cream", () => {
+  it("a [data-surface='cream'] rule targets .ccc-skeleton-line with --ccc-border-cream", () => {
     const rules = [...CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(
       ([, selector, body]) =>
         selector?.includes('[data-surface="cream"]') &&
         selector.includes(".ccc-skeleton-line") &&
-        body?.includes("--ccc-border-cream"),
+        /background(?:-color)?\s*:\s*var\(--ccc-border-cream\)/.test(body ?? ""),
     );
     expect(rules.length).toBeGreaterThan(0);
   });

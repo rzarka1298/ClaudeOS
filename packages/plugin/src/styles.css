@@ -562,6 +562,13 @@
   border-color: var(--ccc-border-cream);
 }
 
+/* The loading skeleton's blocks are filled with the cream hairline tone:
+ * the glass --ccc-border fill is a light translucent tone that vanishes on
+ * cream, leaving the loading hero an empty box (UI-SPEC S1 loading row). */
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-skeleton-line {
+  background-color: var(--ccc-border-cream);
+}
+
 /* Focus rings on cream use the deep accent (5.13:1) — the bright accent
  * cannot identify a control there (ADR-0023 "the bright accent on cream at
  * 2.47:1 and cannot carry text or identify a control"). */
