@@ -29,6 +29,21 @@ if [ -z "$GH_USER" ]; then
   echo "       The noreply identity rewrite needs it — refusing to produce a public branch." >&2
   exit 1
 fi
+# GH_USER is spliced into the Python expression git-filter-repo evaluates for
+# --email-callback below, so a quote in it would end the bytes literal and run
+# the rest of the remote URL as Python (judge-r1 finding 8). GitHub usernames
+# are letters, digits and hyphens only; anything else is refused before any
+# clone or filter runs. A `case` over an explicit ASCII alphabet, not a grep:
+# `grep -q` passes a multi-line value if any ONE line matches, and a bracket
+# range can admit non-ASCII letters under a non-C locale. This is exactly
+# ^[A-Za-z0-9-]+$ over the whole value.
+case "$GH_USER" in
+  '' | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-]*)
+    echo "ERROR: '$GH_USER' (from remote.public.url) is not a valid GitHub username" >&2
+    echo "       (letters, digits and hyphens only) — refusing to produce a public branch." >&2
+    exit 1
+    ;;
+esac
 NOREPLY_EMAIL="${GH_USER}@users.noreply.github.com"
 
 git clone --no-local -q "$REPO_ROOT" "$WORK/filter"
