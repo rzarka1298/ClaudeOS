@@ -321,7 +321,7 @@ describe("per-card signal isolation: one widget's update re-renders only its car
     const previous = options.diffed;
     options.diffed = (vnode) => {
       if (vnode.type === WidgetFrame) {
-        renders.push((vnode.props as { definition: { id: string } }).definition.id);
+        renders.push((vnode.props as unknown as { definition: { id: string } }).definition.id);
       }
       previous?.(vnode);
     };
@@ -342,13 +342,13 @@ describe("per-card signal isolation: one widget's update re-renders only its car
       });
 
       expect(renders).toEqual(["tech-intel"]);
-      expect(
-        cardNamed(container, "Technology and market intelligence").getAttribute(
-          "data-presentation",
-        ),
-      ).toBe("error");
+      const updated = Array.from(container.querySelectorAll(".ccc-overview-grid > section")).find(
+        (card) => cardTitle(card) === "Technology and market intelligence",
+      );
+      expect(updated?.getAttribute("data-presentation")).toBe("error");
     } finally {
-      options.diffed = previous;
+      if (previous === undefined) delete options.diffed;
+      else options.diffed = previous;
     }
   });
 });
