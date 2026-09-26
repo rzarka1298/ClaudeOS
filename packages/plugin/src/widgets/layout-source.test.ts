@@ -21,6 +21,7 @@ import {
   createAdapterLayoutSource,
   type LayoutFileSource,
   type LayoutPoller,
+  parseLayoutOverride,
   startLayoutPolling,
 } from "./layout-source.js";
 import { WIDGETS } from "./registry.js";
@@ -392,5 +393,73 @@ describe("supported APIs only (research Pitfall 4; supported-API constraint)", (
   it("subscribes to no vault event, documented or not", () => {
     const code = codeLines(readFileSync(SOURCE_FILE, "utf8"));
     expect(code.filter((line) => /\.on\(\s*["'`]|\bvault\.on\b/.test(line))).toEqual([]);
+  });
+});
+
+describe("a parse diagnostic carries no file-supplied text (T-03-15)", () => {
+  /** A key or value no schema would ever name: it can only have come from the file. */
+  const SECRET = "sk-FILESECRET0123456789abcdef";
+
+  function detailOf(document: unknown): string {
+    const result = parseLayoutOverride(JSON.stringify(document));
+    if (result.ok) throw new Error("expected the document to be rejected");
+    return result.detail;
+  }
+
+  it("counts an unknown top-level key instead of naming it", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: [], [SECRET]: 1 });
+    expect(detail).toBe("(document): 1 unknown field");
+  });
+
+  it("counts several unknown keys in one object", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: [], [SECRET]: 1, [`${SECRET}2`]: 2 });
+    expect(detail).toBe("(document): 2 unknown fields");
+  });
+
+  it("names an unknown key inside an entry by the entry's schema path only", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: [{ widgetId: "today", [SECRET]: 1 }] });
+    expect(detail).toBe("entries.0: 1 unknown field");
+  });
+
+  it("names a wrong value by its schema path, never by the value", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: [{ widgetId: "today", size: SECRET }] });
+    expect(detail).toBe("entries.0.size: not an allowed value");
+  });
+
+  it("names a wrong-typed field without quoting what the file held", () => {
+    const detail = detailOf({ schemaVersion: 1, entries: SECRET });
+    expect(detail).toMatch(/^entries: wrong type/);
+    expect(detail).not.toContain(SECRET);
+  });
+
+  it("states a schema bound, which comes from the schema rather than the file", () => {
+    const entries = Array.from({ length: 65 }, () => ({ widgetId: "today" }));
+    expect(detailOf({ schemaVersion: 1, entries })).toBe("entries: too many items (maximum 64)");
+    expect(detailOf({ schemaVersion: 1, entries: [{ widgetId: "" }] })).toBe(
+      "entries.0.widgetId: too short (minimum 1)",
+    );
+  });
+
+  it("counts the remaining problems after the first", () => {
+    const detail = detailOf({
+      schemaVersion: 2,
+      entries: [{ widgetId: "today", size: SECRET }],
+      [SECRET]: 1,
+    });
+    expect(detail).toMatch(/^schemaVersion: not an allowed value \(and 2 more problems\)$/);
+  });
+
+  it("never lets a file-supplied string into the detail, whatever the problem", () => {
+    const documents: unknown[] = [
+      SECRET,
+      [SECRET],
+      { [SECRET]: { [SECRET]: SECRET } },
+      { schemaVersion: SECRET, entries: [{ [SECRET]: SECRET }] },
+      { schemaVersion: 1, entries: [{ widgetId: SECRET.repeat(4) }] },
+      { schemaVersion: 1, entries: [{ widgetId: 1, size: SECRET }], [SECRET]: [SECRET] },
+    ];
+    for (const document of documents) {
+      expect(detailOf(document)).not.toContain("FILESECRET");
+    }
   });
 });

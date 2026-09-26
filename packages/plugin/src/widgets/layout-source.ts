@@ -26,8 +26,9 @@ import { setLayoutOverride } from "./layout.js";
  * routinely malformed mid-typing. A file that fails to parse or validate is
  * ignored: the previous resolution (or the typed default) keeps rendering, the
  * Overview is never blanked or given a placeholder, and the reason goes to
- * diagnostics instead -- naming the parser position or the schema issue, never
- * the file's content (T-03-15).
+ * diagnostics instead -- naming the parser position or the schema issue's
+ * location and kind, never the file's content: not a value, not an unknown
+ * key's name (T-03-15).
  */
 
 export const LAYOUT_FILENAME = "layout.json";
@@ -113,12 +114,26 @@ export type LayoutParseResult =
   | { readonly ok: false; readonly detail: string };
 
 /**
- * The longest parser/schema detail a diagnostic carries. Zod's message for an
- * unrecognized key names the key, which came from the file; the bound keeps
- * that naming useful (a `sise` typo) without letting a hostile file push an
- * arbitrarily long string into the record (T-03-15).
+ * The longest parser/schema detail a diagnostic carries. Every detail is built
+ * from fixed phrases, schema-known keys and numbers, so this bound is a
+ * backstop rather than the privacy control (T-03-15).
  */
 const MAX_DETAIL_LENGTH = 160;
+
+/**
+ * Every key the schema itself defines. A path segment is echoed only when it
+ * is one of these (or an array index); anything else could only have come
+ * from the file, so it is replaced by `?` (T-03-15).
+ */
+const SCHEMA_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(layoutOverrideSchema.shape),
+  ...Object.keys(layoutOverrideSchema.shape.entries.element.shape),
+]);
+
+/** One schema issue, typed from the schema's own parse result (no direct zod import). */
+type LayoutIssue = NonNullable<
+  ReturnType<typeof layoutOverrideSchema.safeParse>["error"]
+>["issues"][number];
 
 /**
  * JSON.parse's own message can quote a slice of the input it failed on, and
@@ -131,11 +146,53 @@ function describeJsonError(error: unknown): string {
   return where === null ? "it is not valid JSON" : `it is not valid JSON (${where[0]})`;
 }
 
+/** An issue's location, from schema-known keys and array indices only. */
+function describePath(path: readonly PropertyKey[]): string {
+  if (path.length === 0) return "(document)";
+  return path
+    .map((segment) =>
+      typeof segment === "number" || (typeof segment === "string" && SCHEMA_KEYS.has(segment))
+        ? String(segment)
+        : "?",
+    )
+    .join(".");
+}
+
+/**
+ * What went wrong, as a fixed phrase. Zod's own `message` is never used: for
+ * an unrecognized key it quotes the key, which is file content (T-03-15). The
+ * only variable parts are a count and a bound the schema itself declares.
+ */
+function describeProblem(issue: LayoutIssue): string {
+  switch (issue.code) {
+    case "unrecognized_keys": {
+      const count = issue.keys.length;
+      return `${count} unknown field${count === 1 ? "" : "s"}`;
+    }
+    case "invalid_type":
+      return "wrong type";
+    case "invalid_value":
+      return "not an allowed value";
+    case "too_big":
+      return issue.origin === "array"
+        ? `too many items (maximum ${String(issue.maximum)})`
+        : `too long (maximum ${String(issue.maximum)})`;
+    case "too_small":
+      return issue.origin === "array"
+        ? `too few items (minimum ${String(issue.minimum)})`
+        : `too short (minimum ${String(issue.minimum)})`;
+    default:
+      return "does not match the layout schema";
+  }
+}
+
 /**
  * Parses and validates the file's text against the `@ccc/domain` schema
  * (strict, bounded, `schemaVersion` literal -- T-03-02). The detail names the
- * first problem: a JSON syntax position, or the first schema issue's path and
- * message. It never contains the file's text.
+ * first problem -- a JSON syntax position, or the first schema issue's
+ * location and kind -- plus how many more there are. It is built only from
+ * fixed phrases, schema-known keys and numbers, so no text the file supplied
+ * (a value, an unknown key's name) can reach it (T-03-15).
  */
 export function parseLayoutOverride(text: string): LayoutParseResult {
   let json: unknown;
@@ -146,12 +203,14 @@ export function parseLayoutOverride(text: string): LayoutParseResult {
   }
   const parsed = layoutOverrideSchema.safeParse(json);
   if (parsed.success) return { ok: true, override: parsed.data };
-  const issue = parsed.error.issues[0];
-  const path =
-    issue === undefined || issue.path.length === 0
-      ? "(document)"
-      : issue.path.map(String).join(".");
-  const detail = `${path}: ${issue?.message ?? "it does not match the layout schema"}`;
+  const [first, ...rest] = parsed.error.issues;
+  const head =
+    first === undefined
+      ? "(document): does not match the layout schema"
+      : `${describePath(first.path)}: ${describeProblem(first)}`;
+  const more =
+    rest.length === 0 ? "" : ` (and ${rest.length} more problem${rest.length === 1 ? "" : "s"})`;
+  const detail = `${head}${more}`;
   return {
     ok: false,
     detail:

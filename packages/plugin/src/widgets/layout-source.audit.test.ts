@@ -190,8 +190,7 @@ describe("T-03-15: no file content in any diagnostic", () => {
     });
   }
 
-  // AUDIT-BUG: parseLayoutOverride quotes zod's "Unrecognized key" message, so a key name from the file reaches the diagnostic.
-  it.skip("never records the file content: secret as an unrecognized key", async () => {
+  it("never records the file content: secret as an unrecognized key", async () => {
     const adapter = new FakeDataAdapter();
     adapter.setFile(JSON.stringify({ schemaVersion: 1, entries: [], [SECRET]: 1 }), 1000);
     await start(adapterSource(adapter));
