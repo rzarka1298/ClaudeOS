@@ -34,6 +34,18 @@ import { ListBody } from "./list-body.js";
 export type MaybeCount = number | null;
 
 /**
+ * Digit grouping for every number a panel prints (`1,210,000`, never
+ * `1210000`). The locale is pinned to en-US on purpose: the product copy is
+ * English, and the visual harness pins the same locale, so a card reads the
+ * same in the app and in its screenshot baseline.
+ */
+const GROUPED = new Intl.NumberFormat("en-US", { useGrouping: true, maximumFractionDigits: 0 });
+
+function grouped(n: number): string {
+  return GROUPED.format(n);
+}
+
+/**
  * `n` with a plural-safe noun: never `1 items` (UI-SPEC zero-one-many row).
  * An unavailable `n` reads `{unavailable}` — by default `{plural} unavailable`
  * — and never a digit, `null` or `0`.
@@ -45,12 +57,12 @@ function count(
   unavailable = `${plural} unavailable`,
 ): string {
   if (n === null) return unavailable;
-  return `${n} ${n === 1 ? singular : plural}`;
+  return `${grouped(n)} ${n === 1 ? singular : plural}`;
 }
 
 /** A number shown bare (`output 20`); unavailable reads `unavailable`. */
 function amount(n: MaybeCount): string {
-  return n === null ? "unavailable" : `${n}`;
+  return n === null ? "unavailable" : grouped(n);
 }
 
 /** Sentence case for a line assembled from mid-sentence pieces. */
@@ -306,7 +318,7 @@ function ClaudeUsageBody({ data }: { readonly data: ClaudeUsageData }): VNode {
                   data-integrity rule in the project constraints. */}
               {bar.used === null || bar.limit === null
                 ? "Capacity unavailable"
-                : `${bar.used} of ${bar.limit}`}
+                : `${grouped(bar.used)} of ${grouped(bar.limit)}`}
             </p>
           </li>
         ))}
