@@ -37,7 +37,7 @@ describe("widgetStateFor is one signal per widget", () => {
 
 describe("feature flags are one in-code flag per widget", () => {
   it("each widget owns a distinct flag, and ENABLED_FLAGS is exactly those", () => {
-    const flags = WIDGET_IDS.map((id) => WIDGETS[id].featureFlag as string);
+    const flags = WIDGET_IDS.map((id) => WIDGETS[id].featureFlag);
     expect(new Set(flags).size).toBe(WIDGET_IDS.length);
     expect([...ENABLED_FLAGS].sort()).toEqual([...flags].sort());
     expect(Object.keys(FEATURE_FLAGS).sort()).toEqual([...flags].sort());
