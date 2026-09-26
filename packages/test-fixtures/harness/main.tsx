@@ -222,20 +222,39 @@ function adaptProjectShortcuts(data: Fields): ProjectShortcutsData {
   };
 }
 
-function adaptClaudeUsage(data: Fields): ClaudeUsageData {
+/**
+ * A bar's capacity, derived from the fixture's OWN percentage: `used` is
+ * `pct` percent of the limit, so the limit is `used × 100 ÷ pct`. Nothing is
+ * invented — a bar with no usable percentage or no usable amount has an
+ * unknown limit (`null`, rendered "Capacity unavailable").
+ */
+function limitFromPercent(used: number | null, pct: unknown): number | null {
+  if (used === null || typeof pct !== "number" || !(pct > 0)) return null;
+  return Math.round((used * 100) / pct);
+}
+
+function adaptClaudeUsage(data: Fields, variant: FixtureStateKey): ClaudeUsageData {
   const tokens = data.tokens as Fields | null | undefined;
   const estimate = data.estimate as Fields | null | undefined;
   return {
-    // The fixture's capacity note says account capacity is unavailable, so
-    // every limit is `null` — rendered "Capacity unavailable", never zero.
-    bars: list(data.bars).map((bar) => ({
-      label: text(bar.label),
-      used: quantity(bar.valueText),
-      limit: null,
-    })),
+    // Both capacity paths are screenshotted (03-09 review MINOR): the ready
+    // (`live`) cell derives each limit from the bar's own percentage, so the
+    // known-capacity `used of limit` line is drawn; every other variant keeps
+    // the prototype's "Account capacity unavailable" note, so its limits are
+    // `null` and read "Capacity unavailable" — never zero.
+    bars: list(data.bars).map((bar) => {
+      const used = quantity(bar.valueText);
+      return {
+        label: text(bar.label),
+        used,
+        limit: variant === "live" ? limitFromPercent(used, bar.pct) : null,
+      };
+    }),
+    // A fixture with no token block is three UNKNOWN counts, never three
+    // zeroes (null-not-0; 03-09 review MINOR).
     tokens:
       tokens === null || tokens === undefined
-        ? { input: 0, output: 0, cache: 0 }
+        ? { input: null, output: null, cache: null }
         : {
             input: quantity(tokens.input),
             output: quantity(tokens.output),
@@ -275,7 +294,10 @@ function adaptQuickActions(): QuickActionsData {
   return {};
 }
 
-const ADAPTERS: { readonly [K in WidgetId]: (data: Fields) => unknown } = {
+/** Every adapter sees which fixture variant it is reshaping; most ignore it. */
+type Adapter = (data: Fields, variant: FixtureStateKey) => unknown;
+
+const ADAPTERS: { readonly [K in WidgetId]: Adapter } = {
   "service-health": adaptServiceHealth,
   today: adaptToday,
   "active-sessions": adaptActiveSessions,
@@ -299,10 +321,16 @@ interface CellInputs {
 
 const LIVE: ConnectionState = { kind: "live" };
 
-function readyFrom(id: WidgetId, variant: FixtureVariant, isEmpty: boolean): WidgetState<unknown> {
+function readyFrom(
+  id: WidgetId,
+  states: FixturePanel["states"],
+  key: FixtureStateKey,
+  isEmpty: boolean,
+): WidgetState<unknown> {
+  const variant = states[key];
   return {
     kind: "ready",
-    data: ADAPTERS[id](variant.data),
+    data: ADAPTERS[id](variant.data, key),
     observedAt: variant.observedAt,
     freshness: variant.freshness,
     partiality:
@@ -324,11 +352,11 @@ function cellFor(id: WidgetId, panel: FixturePanel, presentation: Presentation):
     case "unavailable":
       return { state: { kind: "unavailable" }, connection: LIVE };
     case "ready":
-      return { state: readyFrom(id, states.live, false), connection: LIVE };
+      return { state: readyFrom(id, states, "live", false), connection: LIVE };
     case "stale":
-      return { state: readyFrom(id, states.stale, false), connection: LIVE };
+      return { state: readyFrom(id, states, "stale", false), connection: LIVE };
     case "empty":
-      return { state: readyFrom(id, states.empty, true), connection: LIVE };
+      return { state: readyFrom(id, states, "empty", true), connection: LIVE };
     case "error":
       return {
         state: { kind: "error", message: text(states.failure.message, "The source failed.") },
@@ -356,7 +384,7 @@ function cellFor(id: WidgetId, panel: FixturePanel, presentation: Presentation):
           connection,
         };
       }
-      return { state: readyFrom(id, states.live, false), connection };
+      return { state: readyFrom(id, states, "live", false), connection };
     }
   }
 }
@@ -431,9 +459,13 @@ function HarnessCell() {
   const cell = cellFor(widget, panel, state);
   connectionState.value = cell.connection;
 
+  // The cell IS a production `.ccc-overview-grid`, so the card is sized by
+  // the real grid rules (16rem-minimum columns, `wide` spanning two and
+  // collapsing to one below 34rem) rather than by a harness-fixed width that
+  // clips on a narrow page (03-09 visual audit MINOR).
   return (
     <Root motion={motionMode.value}>
-      <div className="ccc-harness-cell" data-size={definition.preferredSize}>
+      <div className="ccc-overview-grid ccc-harness-cell">
         <WidgetFrame
           definition={definition}
           state={cell.state}

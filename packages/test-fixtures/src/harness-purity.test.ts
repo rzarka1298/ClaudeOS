@@ -25,6 +25,13 @@ const HARNESS_DIR = join(REPO_ROOT, "packages", "test-fixtures", "harness");
 const MAIN_PATH = join(HARNESS_DIR, "main.tsx");
 const BUILD_PATH = join(HARNESS_DIR, "build.mjs");
 const INDEX_PATH = join(HARNESS_DIR, "index.html");
+/** The Playwright spec: it runs in Node with the full filesystem and network
+ * available, which is exactly why the prohibition names it too (03-09 review
+ * MINOR, closed in plan 03-10). */
+const SPEC_PATH = join(REPO_ROOT, "packages", "test-fixtures", "visual", "widgets.spec.ts");
+
+/** The exact set of modules the visual spec may import. */
+const SPEC_ALLOWED_IMPORTS = ["@ccc/plugin", "@playwright/test"] as const;
 
 /** The file plan 03-02's determinism test (`widget-fixtures.test.ts`) reads. */
 const DETERMINISM_FIXTURE_PATH = join(
@@ -112,6 +119,43 @@ describe("visual harness purity (PRIV-04 layer 1, T-03-03)", () => {
 
     expect(fixtureSpecifier).toBeDefined();
     expect(resolve(HARNESS_DIR, fixtureSpecifier ?? "")).toBe(DETERMINISM_FIXTURE_PATH);
+  });
+
+  it("the visual spec imports exactly @ccc/plugin and @playwright/test — no node:*, no client", () => {
+    expect(existsSync(SPEC_PATH)).toBe(true);
+
+    expect(importSpecifiers(readIfPresent(SPEC_PATH))).toEqual([...SPEC_ALLOWED_IMPORTS].sort());
+  });
+
+  it("the visual spec reaches no network and navigates only to the file:// harness", () => {
+    const code = codeLines(readIfPresent(SPEC_PATH));
+
+    expect(code.filter((line) => /\bfetch\s*\(/.test(line))).toEqual([]);
+    expect(
+      code.filter((line) => /\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b/.test(line)),
+    ).toEqual([]);
+    expect(code.filter((line) => line.includes("obsidian"))).toEqual([]);
+    expect(code.filter((line) => line.includes("@ccc/service-api-client"))).toEqual([]);
+    // No URL literal with a scheme. Read before `//` comment stripping (which
+    // would cut "https://…" at its own slashes); whole-line `//` comments
+    // are dropped instead.
+    const literals = readIfPresent(SPEC_PATH)
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"));
+    expect(literals.filter((line) => /["'`][a-z][a-z0-9+.-]*:\/\//i.test(line))).toEqual([]);
+    // No Playwright API-request fixture and no request routing.
+    expect(
+      code.filter((line) => /\brequest\b|\bpage\.route\b|\bcontext\.route\b/.test(line)),
+    ).toEqual([]);
+    // Every navigation goes through harnessUrl(), which builds a URL on the
+    // local harness page and nothing else.
+    const gotos = code.filter((line) => /\.goto\s*\(/.test(line));
+    expect(gotos.length).toBeGreaterThan(0);
+    expect(gotos.filter((line) => !/\.goto\s*\(\s*harnessUrl\s*\(/.test(line))).toEqual([]);
+    expect(code.join("\n")).toMatch(
+      /const HARNESS_PAGE = new URL\("\.\.\/harness\/index\.html", import\.meta\.url\)/,
+    );
   });
 
   it("loads only local files from its page — no remote reference of any kind (T-03-06)", () => {

@@ -148,6 +148,51 @@ describe("Claude usage: capacity, tokens and cost", () => {
     expectNoLeak(text);
     expect(text).toMatch(/Estimated API-equivalent cost unavailable/);
   });
+
+  it("token counts print with digit grouping, never as a bare run of digits", () => {
+    const text = cardText("claude-usage", {
+      bars: [],
+      tokens: { input: 1_210_000, output: 430_000, cache: 198_000 },
+      estimate: "$18.40",
+    });
+    expect(text).toMatch(/Input 1,210,000 · output 430,000 · cache 198,000/);
+    expect(text).not.toMatch(/\d{4,}/);
+  });
+
+  it("a known capacity reads `used of limit` with digit grouping", () => {
+    const text = cardText("claude-usage", {
+      bars: [{ label: "Session", used: 312_000, limit: 821_053 }],
+      tokens,
+      estimate: "$1.00",
+    });
+    expectNoLeak(text);
+    expect(text).toMatch(/Session312,000 of 821,053/);
+  });
+});
+
+describe("counted nouns: digit grouping", () => {
+  it("a four-digit star count is grouped (`4,200 stars`)", () => {
+    const text = cardText("github-discoveries", {
+      repos: [{ id: "r", name: "example/repo", stars: 4_200, growth: "+12%", reason: "Fast" }],
+    });
+    expect(text).toMatch(/4,200 stars · \+12% · Fast/);
+  });
+
+  it("a four-digit open-item count is grouped (`1,200 open items`)", () => {
+    const project = {
+      id: "p",
+      name: "example",
+      pinned: true,
+      branch: "main",
+      dirty: false,
+      openItems: 1_200,
+      sessionCount: null,
+      nextTask: null,
+    };
+    expect(cardText("project-shortcuts", { projects: [project] })).toMatch(
+      /main · 1,200 open items/,
+    );
+  });
 });
 
 describe("GitHub discoveries: stars", () => {

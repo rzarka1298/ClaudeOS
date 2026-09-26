@@ -3,9 +3,14 @@
  *
  * Linked by index.html AND injected by Playwright's `stylePath` on every
  * screenshot, so a baseline never depends on which fonts the host happens to
- * have: the stack names only DejaVu Sans and Liberation Sans, both shipped in
- * the pinned Playwright noble image. If a baseline ever shows a fallback glyph
- * set, the fix belongs here — never in the plugin stylesheet.
+ * have. In the pinned `mcr.microsoft.com/playwright:v1.63.0-noble` image the
+ * stack resolves to Liberation Sans: the image ships Liberation, FreeSans and
+ * Noto Color Emoji but NOT DejaVu (checked with `fc-list` in plan 03-10), so
+ * the DejaVu entry only matters on a Linux host that is not the container —
+ * which never writes a baseline. Glyphs Liberation lacks (the state symbols)
+ * fall back to the image's other families, identically on every run. If a
+ * baseline ever shows a fallback glyph set, the fix belongs here — never in
+ * the plugin stylesheet.
  *
  * Everything below the font rule is harness page chrome: it sizes the page and
  * the single card cell. None of it styles a production component.
@@ -27,21 +32,22 @@ body,
   height: 100%;
 }
 
-/* One card per page, at a stable width per size hint, above the atmosphere. */
+/*
+ * One card per page, above the atmosphere. The cell is also a production
+ * `.ccc-overview-grid` (main.tsx), so the CARD's width comes from the shipped
+ * grid rules, not from here: this rule only bounds the grid. At the matrix's
+ * 1024px viewport the grid is 44rem, i.e. two 21.25rem columns — a medium or
+ * tall card takes one, a wide card spans both. On a page narrower than about
+ * 37rem the grid's own 34rem container query collapses a wide card to one
+ * column, so nothing clips at 360px either.
+ */
 .ccc-harness-cell {
   position: relative;
   z-index: 1;
   box-sizing: border-box;
-  width: 22rem;
+  width: 100%;
+  max-width: 47rem;
   padding: 1.5rem;
-}
-
-.ccc-harness-cell[data-size="wide"] {
-  width: 44rem;
-}
-
-.ccc-harness-cell[data-size="tall"] {
-  width: 22rem;
 }
 
 .ccc-harness-error {

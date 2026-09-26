@@ -15,15 +15,23 @@ import { defineConfig, devices } from "@playwright/test";
  * WHERE BASELINES COME FROM. Linux only (D-22). Font rasterisation differs
  * between macOS and Linux Chromium, so a macOS-generated PNG would fail on CI
  * forever and "fixing" it by raising the threshold is exactly research
- * Pitfall 5. Three things enforce this:
+ * Pitfall 5. Enforced in depth (plan 03-10 closed the 03-09 review's MAJOR):
  *   - `snapshotPathTemplate` puts `{platform}` in every baseline name, so a
  *     macOS file (`*-darwin.png`) can never be mistaken for the Linux one;
  *   - `widgets.spec.ts` skips on a non-Linux host unless
  *     `CCC_VISUAL_ALLOW_LOCAL=1` is set, and that override is meant for
  *     `--ignore-snapshots` smoke runs only;
- *   - on CI `updateSnapshots` is `"none"`, so a missing baseline FAILS rather
- *     than being silently written. Baselines are generated in the pinned
- *     `mcr.microsoft.com/playwright:v1.63.0-noble` container (plan 03-10).
+ *   - `updateSnapshots` is `"none"` EVERYWHERE, so a missing baseline FAILS
+ *     rather than being silently written — on CI, on a Mac, and on a plain
+ *     comparison run inside the container alike;
+ *   - `--update-snapshots` is refused at config load unless this process is
+ *     inside the pinned `mcr.microsoft.com/playwright:v1.63.0-noble` image as
+ *     launched by `scripts/ci/visual-in-container.sh` (see
+ *     `IN_PINNED_CONTAINER`), so neither a Mac nor a Linux host with its own
+ *     fonts can write a baseline;
+ *   - `.gitignore` admits only `*-chromium-linux.png` into the snapshot
+ *     directory, and `scripts/check-images.sh` (`ci:images`) fails on any
+ *     other tracked image.
  *
  * WHAT MAKES A RUN DETERMINISTIC.
  *   - `animations: "disabled"` finishes CSS animations/transitions (the twinkle
@@ -43,6 +51,30 @@ import { defineConfig, devices } from "@playwright/test";
 const HARNESS_FONTS = fileURLToPath(
   new URL("./packages/test-fixtures/harness/harness-fonts.css", import.meta.url),
 );
+
+/**
+ * True only inside the pinned Playwright image as `visual-in-container.sh`
+ * launches it: a Linux process, with the marker that script passes to
+ * `docker run`, and with the browser path the official image bakes in. The
+ * marker alone is not trusted — a Linux laptop that exported it by accident
+ * would still render with its own fonts.
+ */
+const IN_PINNED_CONTAINER =
+  process.platform === "linux" &&
+  process.env.CCC_VISUAL_CONTAINER === "1" &&
+  process.env.PLAYWRIGHT_BROWSERS_PATH === "/ms-playwright";
+
+/** `-u`, `-u=changed`, `--update-snapshots`, `--update-snapshots=all`, … */
+const WANTS_BASELINE_WRITE = process.argv.some(
+  (arg) => arg === "-u" || arg.startsWith("-u=") || arg.startsWith("--update-snapshots"),
+);
+
+if (WANTS_BASELINE_WRITE && !IN_PINNED_CONTAINER) {
+  throw new Error(
+    "Visual baselines are written only inside the pinned Linux container (D-22). " +
+      "Run: sh scripts/ci/visual-in-container.sh --update-snapshots",
+  );
+}
 
 export default defineConfig({
   testDir: "packages/test-fixtures/visual",
@@ -78,5 +110,7 @@ export default defineConfig({
     },
   },
   snapshotPathTemplate: "{testDir}/{testFileName}-snapshots/{arg}-{projectName}-{platform}{ext}",
-  updateSnapshots: process.env.CI ? "none" : "missing",
+  // Never write implicitly. The only way a baseline is written is an explicit
+  // `--update-snapshots` inside the pinned container (guard above).
+  updateSnapshots: "none",
 });

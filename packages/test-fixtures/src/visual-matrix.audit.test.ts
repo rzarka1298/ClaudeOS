@@ -49,7 +49,9 @@ describe("visual matrix (audit)", () => {
     expect(config.match(/deviceScaleFactor: 1,/g)?.length).toBe(2);
     expect(config).toContain('animations: "disabled"');
     expect(config).toContain("{platform}");
-    expect(config).toMatch(/updateSnapshots: process\.env\.CI \? "none"/);
+    // Plan 03-10: "none" everywhere, not only on CI (visual-baseline-guard.test.ts
+    // proves the resolved value and the --update-snapshots refusal).
+    expect(config).toContain('updateSnapshots: "none"');
   });
 
   it("skips the whole spec on a non-Linux host unless the local override is set", () => {
