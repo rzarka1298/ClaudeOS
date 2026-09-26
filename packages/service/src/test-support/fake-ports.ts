@@ -4,14 +4,14 @@
 // integration tests; keep the two in step.
 
 import type {
-  LaunchGuard,
   LaunchGuardResult,
   LaunchGuardTarget,
   LaunchPortResult,
-  ProjectLookup,
   ProjectRef,
   ProposeForceTerminate,
-  TerminalLauncher,
+  SessionLaunchGuard,
+  SessionProjectLookup,
+  SessionTerminalLauncher,
   TerminalLaunchRequest,
 } from "@ccc/domain";
 
@@ -21,7 +21,7 @@ import type {
  * matching whole path segments only: `/code/alpha-2` is not inside
  * `/code/alpha`.
  */
-export class FakeProjectLookup implements ProjectLookup {
+export class FakeSessionProjectLookup implements SessionProjectLookup {
   readonly #projects: readonly ProjectRef[];
 
   constructor(projects: readonly ProjectRef[] = []) {
@@ -46,7 +46,7 @@ export class FakeProjectLookup implements ProjectLookup {
 }
 
 /** Records every launch request and answers with a configurable result. */
-export class FakeTerminalLauncher implements TerminalLauncher {
+export class FakeSessionTerminalLauncher implements SessionTerminalLauncher {
   readonly requests: TerminalLaunchRequest[] = [];
   result: LaunchPortResult;
 
@@ -61,7 +61,7 @@ export class FakeTerminalLauncher implements TerminalLauncher {
 }
 
 /** Records every guard check and answers with a configurable result. */
-export class FakeLaunchGuard implements LaunchGuard {
+export class FakeSessionLaunchGuard implements SessionLaunchGuard {
   readonly targets: LaunchGuardTarget[] = [];
   result: LaunchGuardResult;
 

@@ -8,9 +8,11 @@ import type { RunState } from "./run.js";
 // against package-local fakes, so it never waits on either phase.
 //
 // PR-17 base check: `packages/domain/src/launch.ts` (Phase 4's port file) was
-// not on the base when 05-01 ran, so TerminalLauncher and ProjectLookup are
-// declared here. The second of the two phases to merge reconciles them into
-// one file (04-PATTERNS "Parallel-Phase Ownership Map").
+// not on the base when 05-01 ran. Phase 4 declares `TerminalLauncher`,
+// `ProjectLookup` and `LaunchGuard` there with different shapes, and
+// `index.ts` re-exports both files with `export *`, so the Phase 5 ports
+// carry a `Session` prefix to keep the merge free of TS2308 ambiguous
+// re-exports. Plan 05-16 reconciles them with Phase 4's launch.ts.
 
 /** A registered project as the session pipeline needs it. `root` is private and never leaves the service. */
 export interface ProjectRef {
@@ -19,8 +21,11 @@ export interface ProjectRef {
   readonly root: string;
 }
 
-/** Resolves a Session's working directory to a registered project. */
-export interface ProjectLookup {
+/**
+ * Resolves a Session's working directory to a registered project. Phase 5's
+ * counterpart of Phase 4's `ProjectLookup`; plan 05-16 reconciles the two.
+ */
+export interface SessionProjectLookup {
   /** The registered project whose root contains `realPath` (longest root wins), or null. */
   resolveByPath(realPath: string): ProjectRef | null;
   list(): readonly ProjectRef[];
@@ -46,8 +51,12 @@ export interface TerminalLaunchRequest {
   readonly env?: Readonly<Record<string, string>> | undefined;
 }
 
-/** Opens a new terminal window running `argv` in `cwd` (Phase 4 owns the adapters). */
-export interface TerminalLauncher {
+/**
+ * Opens a new terminal window running `argv` in `cwd` (Phase 4 owns the
+ * adapters). Phase 5's counterpart of Phase 4's `TerminalLauncher`; plan
+ * 05-16 reconciles the two.
+ */
+export interface SessionTerminalLauncher {
   launch(request: TerminalLaunchRequest): Promise<LaunchPortResult>;
 }
 
@@ -68,8 +77,12 @@ export type LaunchGuardResult =
   | { readonly kind: "clear" }
   | { readonly kind: "conflict"; readonly conflicts: readonly GuardConflict[] };
 
-/** The concurrent-write guard every Claude launch passes through (D-27). */
-export interface LaunchGuard {
+/**
+ * The concurrent-write guard every Claude launch passes through (D-27).
+ * Phase 5's counterpart of Phase 4's `LaunchGuard` seam; plan 05-16
+ * reconciles the two.
+ */
+export interface SessionLaunchGuard {
   check(target: LaunchGuardTarget): Promise<LaunchGuardResult>;
 }
 

@@ -3,10 +3,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  FakeLaunchGuard,
-  FakeProjectLookup,
   FakeProposeForceTerminate,
-  FakeTerminalLauncher,
+  FakeSessionLaunchGuard,
+  FakeSessionProjectLookup,
+  FakeSessionTerminalLauncher,
 } from "./fake-ports.js";
 
 /**
@@ -22,10 +22,10 @@ function body(path: string): string {
 }
 
 describe("Phase 5 port fakes (audit)", () => {
-  it("FakeProjectLookup resolves the longest whole-segment root and nothing else", () => {
+  it("FakeSessionProjectLookup resolves the longest whole-segment root and nothing else", () => {
     const alpha = { id: "p-alpha", name: "alpha", root: "/code/alpha" };
     const nested = { id: "p-nested", name: "nested", root: "/code/alpha/sub/" };
-    const lookup = new FakeProjectLookup([alpha, nested] as never);
+    const lookup = new FakeSessionProjectLookup([alpha, nested] as never);
     expect(lookup.resolveByPath("/code/alpha")?.root).toBe("/code/alpha");
     expect(lookup.resolveByPath("/code/alpha/src/x.ts")?.root).toBe("/code/alpha");
     expect(lookup.resolveByPath("/code/alpha/sub/deep")?.root).toBe("/code/alpha/sub/");
@@ -33,13 +33,13 @@ describe("Phase 5 port fakes (audit)", () => {
     expect(lookup.list()).toHaveLength(2);
   });
 
-  it("FakeTerminalLauncher and FakeLaunchGuard record every call and return the configured result", async () => {
-    const launcher = new FakeTerminalLauncher();
+  it("FakeSessionTerminalLauncher and FakeSessionLaunchGuard record every call and return the configured result", async () => {
+    const launcher = new FakeSessionTerminalLauncher();
     const request = { cwd: "/code/alpha" } as never;
     expect(await launcher.launch(request)).toEqual({ ok: true });
     expect(launcher.requests).toEqual([request]);
 
-    const guard = new FakeLaunchGuard();
+    const guard = new FakeSessionLaunchGuard();
     expect(await guard.check({ cwd: "/code/alpha" } as never)).toEqual({ kind: "clear" });
     expect(guard.targets).toHaveLength(1);
   });
