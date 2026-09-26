@@ -15,7 +15,8 @@
     "build": "tsc -b",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "lint": "biome check ."
+    "lint": "biome check .",
+    "harness:build": "node harness/build.mjs && tsc -p harness/tsconfig.json --noEmit"
   },
   "dependencies": {
     "@ccc/domain": "workspace:*",
@@ -27,6 +28,9 @@
   "devDependencies": {
     "@types/node": "24.13.4",
     "@ccc/adapters": "workspace:*",
-    "@ccc/plugin": "workspace:*"
+    "@ccc/plugin": "workspace:*",
+    "@preact/signals": "2.11.2",
+    "esbuild": "0.28.2",
+    "preact": "10.29.8"
   }
 }

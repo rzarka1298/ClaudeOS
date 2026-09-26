@@ -198,9 +198,18 @@ importers:
       '@ccc/plugin':
         specifier: workspace:*
         version: link:../plugin
+      '@preact/signals':
+        specifier: 2.11.2
+        version: 2.11.2(preact@10.29.8)
       '@types/node':
         specifier: 24.13.4
         version: 24.13.4
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      preact:
+        specifier: 10.29.8
+        version: 10.29.8
 
   packages/vault-repo:
     dependencies:

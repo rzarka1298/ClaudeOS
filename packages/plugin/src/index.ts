@@ -10,6 +10,8 @@ export {
   connectionState,
   lastEvent,
 } from "./connection-state.js";
+export type { MotionMode } from "./motion.js";
+export { motionMode } from "./motion.js";
 export type {
   DataDependencyKey,
   QuickActionDescriptor,
