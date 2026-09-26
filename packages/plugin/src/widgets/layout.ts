@@ -120,11 +120,32 @@ export const resolvedLayout = computed<LayoutResolution>(() =>
 );
 
 /**
+ * Whether two overrides say the same thing: same version, same entries in the
+ * same order with the same sizes. `undefined` (the default) equals only
+ * itself.
+ */
+function sameOverride(a: LayoutOverride | undefined, b: LayoutOverride | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.schemaVersion !== b.schemaVersion || a.entries.length !== b.entries.length) return false;
+  return a.entries.every((entry, i) => {
+    const other = b.entries[i];
+    return other !== undefined && entry.widgetId === other.widgetId && entry.size === other.size;
+  });
+}
+
+/**
  * Applies a validated override — or `undefined` to return to the in-code
  * default — and records one `layout` diagnostic per entry it had to skip
  * (D-13). Returns the resolution the Overview will now render.
+ *
+ * Idempotent for an equal override: applying one that says the same thing as
+ * the current one changes nothing and records nothing. The layout file's
+ * poller re-applies whenever the file is rewritten, and a re-save of the same
+ * content would otherwise re-record every skip and push older, different
+ * records out of the bounded diagnostics buffer (03-07 wave review).
  */
 export function setLayoutOverride(next: LayoutOverride | undefined): LayoutResolution {
+  if (sameOverride(layoutOverride.value, next)) return resolvedLayout.value;
   layoutOverride.value = next;
   const resolution = resolvedLayout.value;
   const at = new Date().toISOString();
