@@ -12,6 +12,9 @@
 #      .privacy-denylist.local, when that file exists -- untracked and
 #      gitignored, so the maintained list of the owner's real project names
 #      and aliases never becomes the leak it exists to prevent.
+#   4. owner-state files that must never be tracked -- the plugin's own
+#      data.json and layout.json, which Obsidian writes into the plugin
+#      folder the dev vault symlinks into this repository (D-44, PR-03).
 #
 # Rule 2 (email) is not applied to GSD planning documents
 # (.planning/phases/**/*.md): a PLAN.md's own <verify> text routinely quotes
@@ -165,6 +168,18 @@ if [ -f .privacy-denylist.local ]; then
     done < "$FILELIST"
   fi
 fi
+
+# --- Rule 4: owner-state files that must never be tracked (D-44, PR-03).
+# Obsidian writes plugin settings and the Overview layout override into the
+# plugin folder, which the dev vault symlinks into this repository; both are
+# gitignored, and this rule fails the gate if either is ever force-added or
+# the ignore line is lost. ---
+for f in packages/plugin/data.json packages/plugin/layout.json; do
+  if git ls-files --error-unmatch -- "$f" > /dev/null 2>&1; then
+    echo "$f: owner state is tracked (D-44)"
+    VIOLATIONS=$((VIOLATIONS + 1))
+  fi
+done
 
 echo "scripts/check-privacy.sh: scanned ${FILE_COUNT} tracked files, ${VIOLATIONS} violation(s) found."
 
