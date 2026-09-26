@@ -365,6 +365,33 @@ describe("launcher config (D-22, D-46)", () => {
     expect(getLauncherConfig(db, "claude-desktop")).toBeNull();
   });
 
+  it("reads a row whose config_json is corrupt as not configured, for that launcher only", () => {
+    saveLauncherConfig(db, "claude-desktop", { bundleId: "com.example.desktop" });
+    db.prepare(
+      "INSERT INTO launcher_config (launcher_id, config_json, tested, updated_at) VALUES ('antigravity', '{not json', 'true', '2026-09-01T00:00:00.000Z')",
+    ).run();
+
+    expect(() => getLauncherConfig(db, "antigravity")).not.toThrow();
+    expect(getLauncherConfig(db, "antigravity")).toBeNull();
+    expect(getLauncherConfig(db, "claude-desktop")?.config).toEqual({
+      bundleId: "com.example.desktop",
+    });
+    expect(listLauncherConfigs(db).map((row) => row.launcherId)).toEqual(["claude-desktop"]);
+    // A corrupt row is not a configuration that can be marked tested.
+    expect(markLauncherTested(db, "antigravity")).toBe(false);
+
+    // Saving over it repairs the launcher.
+    saveLauncherConfig(db, "antigravity", { bundleId: "com.example.app" });
+    expect(getLauncherConfig(db, "antigravity")?.config).toEqual({ bundleId: "com.example.app" });
+  });
+
+  it("skips a stored row whose launcher id is not a stored launcher", () => {
+    db.prepare(
+      "INSERT INTO launcher_config (launcher_id, config_json, tested, updated_at) VALUES ('finder', '{}', 'false', '2026-09-01T00:00:00.000Z')",
+    ).run();
+    expect(listLauncherConfigs(db)).toEqual([]);
+  });
+
   it("lists every saved row", () => {
     saveLauncherConfig(db, "antigravity", { bundleId: "com.example.app" });
     saveLauncherConfig(db, "claude-desktop", { bundleId: "com.example.desktop" });
