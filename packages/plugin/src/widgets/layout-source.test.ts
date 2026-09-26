@@ -262,7 +262,7 @@ describe("a bad layout file never blanks the Overview (D-13; UI-SPEC E3 error ro
     await expect(poller.tick()).resolves.toBeUndefined();
 
     expect(resolvedIds()).toEqual(["today", "service-health"]);
-    // Recorded once for this stat, not once per second.
+    // Recorded once per run of failures, not once per retry.
     expect(diagnostics.value.map((d) => [d.source, d.code])).toEqual([
       ["layout", "override-unreadable"],
     ]);
@@ -461,5 +461,98 @@ describe("a parse diagnostic carries no file-supplied text (T-03-15)", () => {
     for (const document of documents) {
       expect(detailOf(document)).not.toContain("FILESECRET");
     }
+  });
+});
+
+describe("a transient read failure is retried, a bad file is not", () => {
+  /** A source whose stat never changes and whose reads follow a script. */
+  function scriptedSource(reads: (() => Promise<string>)[]): {
+    source: LayoutFileSource;
+    readCount: () => number;
+  } {
+    let count = 0;
+    return {
+      source: {
+        stat: () => Promise.resolve({ mtime: 5000, size: 10 }),
+        read: () => {
+          const next = reads[Math.min(count, reads.length - 1)];
+          count++;
+          return next === undefined ? Promise.reject(new Error("no script")) : next();
+        },
+      },
+      readCount: () => count,
+    };
+  }
+
+  it("applies a valid file on the next tick after a read failed, with (mtime, size) unchanged", async () => {
+    const { source, readCount } = scriptedSource([
+      () => Promise.reject(new Error("EBUSY")),
+      () => Promise.resolve(layoutJson("quick-actions")),
+    ]);
+    const { poller } = start(new FakeDataAdapter(), source);
+    await settle();
+    expect(diagnostics.value.map((d) => d.code)).toEqual(["override-unreadable"]);
+
+    await poller.tick();
+
+    expect(readCount()).toBe(2);
+    expect(resolvedIds()).toEqual(["quick-actions"]);
+    // Once applied, the unchanged file is not read again.
+    await poller.tick();
+    expect(readCount()).toBe(2);
+  });
+
+  it("records a read failure once per run of failures, however many retries it takes", async () => {
+    const { source, readCount } = scriptedSource([
+      () => Promise.reject(new Error("EBUSY")),
+      () => Promise.reject(new Error("EBUSY")),
+      () => Promise.reject(new Error("EBUSY")),
+      () => Promise.resolve(layoutJson("today")),
+    ]);
+    const { poller } = start(new FakeDataAdapter(), source);
+    await settle();
+    await poller.tick();
+    await poller.tick();
+    await poller.tick();
+
+    expect(readCount()).toBe(4);
+    expect(resolvedIds()).toEqual(["today"]);
+    expect(diagnostics.value.map((d) => d.code)).toEqual(["override-unreadable"]);
+  });
+
+  it("records again when reads start failing after one succeeded", async () => {
+    const adapter = new FakeDataAdapter();
+    adapter.setFile(layoutJson("today"), 1000);
+    let failReads = true;
+    const inner = createAdapterLayoutSource({ configDir: CONFIG_DIR, adapter }, PLUGIN_ID);
+    const source: LayoutFileSource = {
+      stat: () => inner.stat(),
+      read: () => (failReads ? Promise.reject(new Error("EBUSY")) : inner.read()),
+    };
+    const { poller } = start(adapter, source);
+    await settle();
+    failReads = false;
+    await poller.tick();
+    expect(resolvedIds()).toEqual(["today"]);
+
+    failReads = true;
+    adapter.setFile(layoutJson("quick-actions"), 2000);
+    await poller.tick();
+
+    expect(diagnostics.value.map((d) => d.code)).toEqual([
+      "override-unreadable",
+      "override-unreadable",
+    ]);
+  });
+
+  it("still reads a file that fails to parse only once while it is unchanged", async () => {
+    const { source, readCount } = scriptedSource([() => Promise.resolve("{")]);
+    const { poller } = start(new FakeDataAdapter(), source);
+    await settle();
+    await poller.tick();
+    await poller.tick();
+
+    expect(readCount()).toBe(1);
+    expect(diagnostics.value.map((d) => d.code)).toEqual(["override-invalid"]);
   });
 });

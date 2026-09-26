@@ -235,11 +235,15 @@ function recordLayoutProblem(
  *   absent (at load, or after a removal), not every second.
  * - Present and `(mtime, size)` unchanged since the last tick: nothing; one
  *   stat is the whole cost.
- * - Present and changed: read, parse, validate. Valid → apply. Invalid or
- *   unreadable → the previous resolution keeps rendering and ONE diagnostic
- *   names the problem (D-13). The new `(mtime, size)` is remembered either
- *   way, so a bad file is read once rather than every second while the owner
- *   is mid-edit, and the next save is picked up on the next tick.
+ * - Present and changed: read, parse, validate. Valid → apply. Invalid →
+ *   the previous resolution keeps rendering and ONE diagnostic names the
+ *   problem (D-13); the new `(mtime, size)` is remembered, so a bad file is
+ *   read once rather than every second while the owner is mid-edit, and the
+ *   next save is picked up on the next tick.
+ * - Present, changed, and the read itself fails: the previous resolution
+ *   keeps rendering, ONE diagnostic is recorded for the run of failures, and
+ *   the `(mtime, size)` is NOT remembered -- an I/O failure is transient, so
+ *   the read is retried on the next tick until it succeeds.
  *
  * Overlapping ticks never stack: a tick that finds another still in flight
  * returns at once, so a slow disk cannot pile reads up behind the interval.
@@ -254,6 +258,7 @@ export function startLayoutPolling({
   let seen: LayoutFileStat | "absent" | undefined;
   let inFlight = false;
   let statFailing = false;
+  let readFailing = false;
 
   async function poll(): Promise<void> {
     let stat: LayoutFileStat | null;
@@ -287,16 +292,26 @@ export function startLayoutPolling({
     ) {
       return;
     }
+    const previous = seen;
     seen = { mtime: stat.mtime, size: stat.size };
 
     let text: string;
     try {
       text = await source.read();
+      readFailing = false;
     } catch {
-      recordLayoutProblem(
-        "override-unreadable",
-        `${LAYOUT_FILENAME} could not be read; the current layout stays.`,
-      );
+      // An I/O failure says nothing about the file's content (a lock, a sync
+      // mid-write), so forget this stat and read again on the next tick --
+      // otherwise a valid save could stay unapplied until the owner saves
+      // again. Recorded once per run of failures, not once per retry.
+      seen = previous;
+      if (!readFailing) {
+        readFailing = true;
+        recordLayoutProblem(
+          "override-unreadable",
+          `${LAYOUT_FILENAME} could not be read; the current layout stays.`,
+        );
+      }
       return;
     }
 

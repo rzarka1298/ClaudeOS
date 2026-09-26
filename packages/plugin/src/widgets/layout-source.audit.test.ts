@@ -113,7 +113,7 @@ describe("change detection edges", () => {
 });
 
 describe("failure is recorded once, never per tick", () => {
-  it("a read that keeps failing for an unchanged stat is read and recorded once", async () => {
+  it("a read that keeps failing for an unchanged stat is retried each tick and recorded once", async () => {
     let reads = 0;
     const poller = await start({
       stat: () => Promise.resolve({ mtime: 5, size: 5 }),
@@ -124,7 +124,8 @@ describe("failure is recorded once, never per tick", () => {
     });
     await poller.tick();
     await poller.tick();
-    expect(reads).toBe(1);
+    // Fix-up round 2: an I/O failure is transient, so each tick retries it.
+    expect(reads).toBe(3);
     expect(diagnostics.value.map((d) => d.code)).toEqual(["override-unreadable"]);
     expect(JSON.stringify(diagnostics.value)).not.toContain(SECRET);
   });
