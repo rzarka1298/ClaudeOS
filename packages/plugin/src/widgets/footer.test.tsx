@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 import { WidgetFooter } from "./footer.js";
 import type { FooterModel } from "./presentation.js";
@@ -91,6 +91,91 @@ describe("the Source disclosure (A11Y-01)", () => {
 
     fireEvent.keyDown(button, { key: "Enter" });
     expect(button.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+/**
+ * One press of Tab: moves focus to the next element in sequential focus
+ * order, the way a browser does for elements without a positive tabindex —
+ * document order over everything that is focusable, not disabled, not inside
+ * a `hidden` subtree and not given `tabindex="-1"`. jsdom performs no focus
+ * navigation of its own, and user-event is not a dependency here, so this is
+ * the smallest faithful stand-in: a `<time>` without a tabindex is skipped by
+ * it exactly as a browser skips it (judge-r1 finding 2).
+ */
+function pressTab(): Element | null {
+  const candidates = [
+    ...document.querySelectorAll<HTMLElement>(
+      "a[href], button, input, select, textarea, [tabindex]",
+    ),
+  ].filter(
+    (element) =>
+      element.tabIndex >= 0 &&
+      !element.hasAttribute("disabled") &&
+      element.closest("[hidden]") === null,
+  );
+  const current = document.activeElement;
+  const from = current instanceof HTMLElement ? candidates.indexOf(current) : -1;
+  const next = candidates[from + 1];
+  current?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+  // jsdom's focus() and blur() fire the focus/blur events a real Tab would;
+  // act() flushes the render those events schedule, as fireEvent does. The
+  // callback is synchronous, so the flush completes before act returns and
+  // its thenable carries nothing to await.
+  void act(() => {
+    if (next !== undefined) {
+      next.focus();
+    } else if (current instanceof HTMLElement) {
+      current.blur();
+    }
+  });
+  return document.activeElement;
+}
+
+describe("the absolute timestamp is reachable by keyboard (D-16, A11Y-01; judge-r1 finding 2)", () => {
+  function renderAfterAnchor(overrides: Partial<FooterModel> = {}) {
+    return render(
+      <div>
+        <button type="button">Before</button>
+        <WidgetFooter model={model(overrides)} panelTitle="test panel" now={NOW} />
+      </div>,
+    );
+  }
+
+  it("takes focus on Tab, straight after the control before the footer", () => {
+    const { container } = renderAfterAnchor();
+    screen.getByRole("button", { name: "Before" }).focus();
+
+    const focused = pressTab();
+
+    expect(focused).toBe(container.querySelector("time.ccc-footer-time"));
+  });
+
+  it("reveals the absolute time visibly while focused, and hides it again on the next Tab", () => {
+    const { container } = renderAfterAnchor();
+    const absolute = formatAbsoluteTime(OBSERVED_AT);
+    const time = container.querySelector("time.ccc-footer-time");
+    const target = () => container.querySelector(`#${time?.getAttribute("aria-describedby")}`);
+
+    expect(target()?.classList.contains("ccc-visually-hidden")).toBe(true);
+
+    screen.getByRole("button", { name: "Before" }).focus();
+    pressTab();
+    expect(document.activeElement).toBe(time);
+    expect(target()?.textContent).toBe(absolute);
+    expect(target()?.classList.contains("ccc-visually-hidden")).toBe(false);
+    expect(target()?.classList.contains("ccc-footer-absolute")).toBe(true);
+
+    expect(pressTab()).toBe(screen.getByRole("button", { name: "Source" }));
+    expect(target()?.classList.contains("ccc-visually-hidden")).toBe(true);
+  });
+
+  it("stays out of the tab order when there is no timestamp to reveal", () => {
+    const { container } = renderAfterAnchor({ observedAt: null, freshness: null });
+    screen.getByRole("button", { name: "Before" }).focus();
+
+    expect(pressTab()).toBe(screen.getByRole("button", { name: "Source" }));
+    expect(container.querySelector("time.ccc-footer-time")?.hasAttribute("tabindex")).toBe(false);
   });
 });
 

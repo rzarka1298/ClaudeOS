@@ -244,14 +244,19 @@ describe("the eight presentations", () => {
     expect(container.querySelector(".ccc-visually-hidden")?.textContent).toBe("Loading test panel");
   });
 
-  it("empty: the contract copy, a footer that stays, and exactly one focusable control", () => {
+  it("empty: the contract copy, a footer that stays, and no control beyond the footer's two stops", () => {
     const { container } = renderPanel({ ...READY, isEmpty: true });
     expect(screen.getByText("Nothing here yet")).toBeTruthy();
     expect(
       screen.getByText("Test panel has no items right now. New items appear as they arrive."),
     ).toBeTruthy();
     expect(container.querySelector(".ccc-card-footer")).toBeTruthy();
-    expect(focusableCount(container)).toBe(1);
+    // The footer's two keyboard stops and nothing else: the "last updated"
+    // time (focusable so its absolute timestamp is reachable, D-16, judge-r1
+    // finding 2) and the Source disclosure. An empty card offers no action.
+    expect(focusableCount(container)).toBe(2);
+    expect(container.querySelector(".ccc-card-footer time[tabindex='0']")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Source" })).toBeTruthy();
   });
 
   it("ready: the full body, the header at full ink and a Live badge", () => {

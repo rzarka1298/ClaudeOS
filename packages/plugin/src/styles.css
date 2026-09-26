@@ -509,6 +509,17 @@
 }
 
 .ccc-footer-time {
+  border-radius: var(--ccc-radius-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The absolute "last updated" time, revealed as visible text while the time
+ * above holds keyboard focus (D-16, judge-r1 finding 2). Full ink at the
+ * footer's Label step, so the revealed value reads as the focused thing; ink
+ * on the card surface is a pair the contrast matrix already audits. It appears
+ * without any transition, so reduced motion needs no rule of its own. */
+.ccc-footer-absolute {
+  color: var(--ccc-ink);
   font-variant-numeric: tabular-nums;
 }
 
@@ -567,7 +578,8 @@
 }
 
 .ccc-source-button:focus-visible,
-.ccc-connect-button:focus-visible {
+.ccc-connect-button:focus-visible,
+.ccc-footer-time:focus-visible {
   outline: var(--ccc-focus-ring) solid var(--ccc-accent);
   outline-offset: calc(-1 * var(--ccc-focus-ring));
 }

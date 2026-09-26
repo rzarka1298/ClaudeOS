@@ -53,6 +53,9 @@ const FOCUSABLE = [
   // widget existed, and plan 03-06 registers two (Active Claude sessions,
   // Technology and market intelligence).
   ".ccc-card-body[tabindex]",
+  // The footer's "last updated" time takes focus so the absolute timestamp is
+  // reachable without a mouse (D-16; judge-r1 finding 2).
+  ".ccc-footer-time",
 ];
 
 // ---------------------------------------------------------------------------
