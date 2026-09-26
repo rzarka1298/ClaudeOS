@@ -166,7 +166,7 @@ describe("classifyHookRecord — unknown and envelope-invalid (Test 2)", () => {
     });
   });
 
-  it("parses the envelope permissively so unknown keys survive to classification", () => {
+  it("parses the envelope permissively so a record with unknown keys still classifies", () => {
     const parsed = HookRecordEnvelopeSchema.safeParse(minimalRecord("Stop", { extra: 1 }));
     expect(parsed.success).toBe(true);
   });
@@ -245,11 +245,33 @@ describe("classifyHookRecord — shape-invalid lists paths, never values (Test 3
 });
 
 describe("classifyHookRecord — passthrough and no defaults (Test 4, D-12)", () => {
-  it("tolerates unknown extra keys on a known event and keeps them", () => {
+  it("tolerates unknown extra keys on a known event and drops them", () => {
     const result = classifyHookRecord(minimalRecord("PostToolUse", { some_new_field: "x" }));
     expect(result.kind).toBe("known");
     if (result.kind === "known") {
-      expect((result.record as Record<string, unknown>).some_new_field).toBe("x");
+      expect("some_new_field" in result.record).toBe(false);
+    }
+  });
+
+  it("never carries a prompt, tool_input or unknown env key on a known record (PR-04)", () => {
+    for (const event of KNOWN_HOOK_EVENTS) {
+      const result = classifyHookRecord(
+        minimalRecord(event, {
+          prompt: SENTINEL,
+          tool_input: { command: SENTINEL },
+          tool_response: SENTINEL,
+          env: { CLAUDE_PID: "4242", ANTHROPIC_API_KEY: SENTINEL, HOME: SENTINEL },
+        }),
+      );
+      expect(result.kind).toBe("known");
+      if (result.kind === "known") {
+        const record = result.record as Record<string, unknown>;
+        expect("prompt" in record).toBe(false);
+        expect("tool_input" in record).toBe(false);
+        expect("tool_response" in record).toBe(false);
+        expect(record.env).toEqual({ CLAUDE_PID: "4242" });
+        expect(JSON.stringify(record)).not.toContain(SENTINEL);
+      }
     }
   });
 

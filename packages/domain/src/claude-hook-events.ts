@@ -93,11 +93,12 @@ const AbsolutePathSchema = z
 
 /**
  * The permissive envelope every forwarded record must carry before it can be
- * classified at all. Loose on purpose: it is what lets the service tell an
- * event it does not know (`unknown`, counted) from a known event whose shape
- * changed (`shape-invalid`, flips the source to unavailable).
+ * classified at all. Permissive on purpose: unknown keys are tolerated (and
+ * stripped), which is what lets the service tell an event it does not know
+ * (`unknown`, counted) from a known event whose shape changed
+ * (`shape-invalid`, flips the source to unavailable).
  */
-export const HookRecordEnvelopeSchema = z.looseObject({
+export const HookRecordEnvelopeSchema = z.object({
   eventId: z.uuid(),
   observedAt: z.iso.datetime({ offset: true }),
   hook_event_name: z.string().min(1).max(64),
@@ -106,9 +107,10 @@ export type HookRecordEnvelope = z.infer<typeof HookRecordEnvelopeSchema>;
 
 /**
  * The environment facts the hook forwards. Each is an optional hint; none is
- * ever filled in when absent.
+ * ever filled in when absent. Any other env key is tolerated but dropped, so
+ * a secret-bearing variable can never ride along on a record (PR-04).
  */
-const HookEnvSchema = z.looseObject({
+const HookEnvSchema = z.object({
   CLAUDE_PID: z
     .string()
     .regex(/^\d{1,10}$/, { message: "must be decimal digits" })
@@ -150,14 +152,18 @@ const COMMON_SHAPE = {
 };
 
 /**
- * One known event's schema: strict on the needed fields, passthrough on the
- * rest (D-12). The literal event name makes the union discriminable.
+ * One known event's schema: strict on the needed fields, tolerant of the
+ * rest (D-12) — but tolerant means stripped, never kept. An unlisted key
+ * (a prompt, `tool_input`, a future field) parses without error and is
+ * absent from the validated record, so nothing the schema does not name can
+ * be persisted or spooled downstream (PR-04). The literal event name makes
+ * the union discriminable.
  */
 function hookRecordSchema<TEvent extends KnownHookEvent, TNeeded extends z.ZodRawShape>(
   event: TEvent,
   needed: TNeeded,
 ) {
-  return z.looseObject({ ...COMMON_SHAPE, hook_event_name: z.literal(event), ...needed });
+  return z.object({ ...COMMON_SHAPE, hook_event_name: z.literal(event), ...needed });
 }
 
 /** Every known event's schema. Total over {@link KNOWN_HOOK_EVENTS}. */
