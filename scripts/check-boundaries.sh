@@ -51,13 +51,17 @@ FAILURES=0
 # these rules under their respective lint gates, and each is asserted to fire
 # by a committed test -- so they must not also trip the backstop, which would
 # make this gate permanently red for files that are doing their job.
+# Both exclusions are anchored to the fixture trees' REAL paths (judge-r1
+# finding 9): an unanchored substring match skipped every other path that
+# merely contained `lint-fixtures/` or `boundary-violations/`, so a file could
+# escape the backstop by the name of its directory.
 list_source_files() {
   git ls-files -z -- 'packages/*.ts' 'packages/*.tsx' 2>/dev/null | \
     tr '\0' '\n' | \
     grep -v '/dist/' | \
     grep -v '/node_modules/' | \
-    grep -v 'boundary-violations/' | \
-    grep -v 'lint-fixtures/'
+    grep -v '^packages/test-fixtures/boundary-violations/' | \
+    grep -v '^packages/plugin/lint-fixtures/'
 }
 
 # Prints "file:line:content" for every non-comment line in the given files
