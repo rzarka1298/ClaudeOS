@@ -132,6 +132,45 @@ describe("sessionDisplayName (Test 6)", () => {
   });
 });
 
+describe("SessionViewSchema timestamps and text caps", () => {
+  const view = (): SessionView =>
+    toSessionView(run({ endedAt: "2026-09-26T13:09:00.000Z" }), "Alpha");
+
+  it("rejects a timestamp that is not an ISO date-time", () => {
+    for (const field of ["startedAt", "endedAt", "lastActivityAt"] as const) {
+      for (const bad of ["yesterday", "", "2026-09-26", "Sat Sep 26 13:00:00 2026"]) {
+        const result = SessionViewSchema.safeParse({ ...view(), [field]: bad });
+        expect(result.success, `${field}=${bad}`).toBe(false);
+      }
+    }
+  });
+
+  it("caps every free-text field", () => {
+    const tooLong = "x".repeat(4097);
+    for (const field of [
+      "projectId",
+      "projectName",
+      "name",
+      "model",
+      "effort",
+      "permissionMode",
+      "claudeVersion",
+    ] as const) {
+      expect(SessionViewSchema.safeParse({ ...view(), [field]: tooLong }).success, field).toBe(
+        false,
+      );
+    }
+    expect(
+      SessionViewSchema.safeParse({ ...view(), subagents: { active: 0, lastType: tooLong } })
+        .success,
+    ).toBe(false);
+  });
+
+  it("accepts a session title at the hook's 256-character cap", () => {
+    expect(SessionViewSchema.safeParse({ ...view(), name: "n".repeat(256) }).success).toBe(true);
+  });
+});
+
 describe("toSessionView (Test 8, D-26, PR-28)", () => {
   it("keeps basenames only and never lets a full path reach the view", () => {
     const view = toSessionView(run(), "Alpha");

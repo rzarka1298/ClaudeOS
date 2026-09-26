@@ -251,10 +251,20 @@ export const UsageSummarySchema = z.strictObject({
 });
 export type UsageSummary = z.infer<typeof UsageSummarySchema>;
 
-/** Per-Session usage for the Agent runs detail pane. */
+/**
+ * Per-Session usage for the Agent runs detail pane. An available activity or
+ * cost here covers the one Session, so its range is pinned to `session`; a
+ * summary range under a runId would be a mislabelled value.
+ */
 export const SessionUsageSchema = z.strictObject({
   runId: RunIdSchema,
-  activity: TokenActivitySchema,
-  cost: EstimatedApiCostSchema,
+  activity: TokenActivitySchema.refine(
+    (activity) => activity.kind === "unavailable" || activity.range === "session",
+    { message: "per-Session activity covers range 'session'", path: ["range"] },
+  ),
+  cost: EstimatedApiCostSchema.refine(
+    (cost) => cost.kind === "unavailable" || cost.range === "session",
+    { message: "per-Session cost covers range 'session'", path: ["range"] },
+  ),
 });
 export type SessionUsage = z.infer<typeof SessionUsageSchema>;

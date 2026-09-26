@@ -33,9 +33,17 @@ const BasenameSchema = z
     message: "must be a basename, not a path",
   });
 
+/** A wire timestamp: an ISO 8601 date-time (the service writes `toISOString()`). */
+const TimestampSchema = z.iso.datetime({ offset: true });
+
+/** Bounded free text. The caps mirror the hook record's (claude-hook-events.ts). */
+const text = (max: number) => z.string().max(max);
+
 /**
  * What the plugin sees of one Run. Strict: a key the service did not mean to
  * send (a full `cwd`, a transcript path) fails rather than riding along.
+ * Every timestamp is an ISO date-time and every free-text field is
+ * length-capped, so a malformed or oversized value fails at the boundary.
  */
 export const SessionViewSchema = z.strictObject({
   runId: RunIdSchema,
@@ -43,20 +51,20 @@ export const SessionViewSchema = z.strictObject({
   claudeSessionId: z.string().min(1).max(128).nullable(),
   state: z.enum(RUN_STATES),
   activity: z.enum(SESSION_ACTIVITIES).nullable(),
-  projectId: z.string().min(1).nullable(),
-  projectName: z.string().nullable(),
-  name: z.string().nullable(),
-  model: z.string().nullable(),
-  effort: z.string().nullable(),
+  projectId: text(128).min(1).nullable(),
+  projectName: text(256).nullable(),
+  name: text(256).nullable(),
+  model: text(128).nullable(),
+  effort: text(32).nullable(),
   launchSource: z.enum(LAUNCH_SOURCES).nullable(),
-  permissionMode: z.string().nullable(),
-  claudeVersion: z.string().nullable(),
-  startedAt: z.string(),
-  endedAt: z.string().nullable(),
-  lastActivityAt: z.string().nullable(),
+  permissionMode: text(32).nullable(),
+  claudeVersion: text(64).nullable(),
+  startedAt: TimestampSchema,
+  endedAt: TimestampSchema.nullable(),
+  lastActivityAt: TimestampSchema.nullable(),
   subagents: z.strictObject({
     active: z.number().int().nonnegative(),
-    lastType: z.string().nullable(),
+    lastType: text(128).nullable(),
   }),
   lastError: z.enum(STOP_FAILURE_ERRORS).nullable(),
   linkKind: z.enum(RUN_LINK_KINDS).nullable(),

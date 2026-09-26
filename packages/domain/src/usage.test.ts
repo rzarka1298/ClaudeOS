@@ -292,6 +292,27 @@ describe("UsageSummarySchema (Test 5, PR-23)", () => {
     expect(result.success).toBe(true);
   });
 
+  it("pins per-Session usage to range 'session', never a summary range", () => {
+    for (const range of USAGE_RANGES) {
+      for (const [activity, cost] of [
+        [availableActivity(range), availableCost("session")],
+        [availableActivity("session"), availableCost(range)],
+      ]) {
+        expect(
+          SessionUsageSchema.safeParse({ runId: "0mfk1a2b3c4d5e6f7a8b9c0d1", activity, cost })
+            .success,
+        ).toBe(false);
+      }
+    }
+    expect(
+      SessionUsageSchema.safeParse({
+        runId: "0mfk1a2b3c4d5e6f7a8b9c0d1",
+        activity: { kind: "unavailable", reason: "analysis-off", version: null },
+        cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+      }).success,
+    ).toBe(true);
+  });
+
   it("orders bounds: start after end is rejected", () => {
     expect(
       UsageBoundsSchema.safeParse({ start: OBSERVED_AT, end: "2026-09-26T00:00:00.000Z" }).success,
