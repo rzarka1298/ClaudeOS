@@ -18,6 +18,7 @@ import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 import { CommandCenterSettingTab } from "./view/settings-tab.js";
 import { startClock } from "./widgets/clock.js";
+import { createAdapterLayoutSource, startLayoutPolling } from "./widgets/layout-source.js";
 
 /**
  * Structural markup and Obsidian's own CSS variables only in this phase —
@@ -75,6 +76,16 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     // 60-second interval, registered through the seam so unload releases it
     // (threat T-03-07; counted in lifecycle.test.ts).
     startClock(this.hostRegistry);
+
+    // The Overview's layout override file, watched live (UI-07, D-11): a
+    // one-second stat poll of `<configDir>/plugins/<this plugin's id>/layout.json`
+    // through the public DataAdapter, registered through the seam so unload
+    // releases it (threat T-03-07; counted in lifecycle.test.ts). A file that
+    // fails to parse keeps the previous layout rendering (D-13).
+    startLayoutPolling({
+      registry: this.hostRegistry,
+      source: createAdapterLayoutSource(this.app.vault, this.manifest.id),
+    });
 
     // The ONE place the OS reduced-motion query string is written in
     // production code (D-19, A11Y-03). Everything downstream reads the

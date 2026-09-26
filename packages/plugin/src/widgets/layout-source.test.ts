@@ -127,7 +127,7 @@ describe("editing layout.json re-composes the Overview (UI-07, D-11)", () => {
     const { poller } = start(adapter);
     await settle();
 
-    const { container } = render(h(Shell, {}));
+    const { container } = render(h(Shell, null));
     const grid = container.querySelector(".ccc-overview-grid");
     expect(overviewCardTitles(container)).toEqual(["Today", "Service health"]);
 
