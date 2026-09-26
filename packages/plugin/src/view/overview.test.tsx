@@ -5,6 +5,8 @@ import { motionMode } from "../motion.js";
 import { ENABLED_FLAGS } from "../widgets/feature-flags.js";
 import { composeLayout, DEFAULT_LAYOUT } from "../widgets/layout.js";
 import { WIDGETS } from "../widgets/registry.js";
+import { widgetStateFor } from "../widgets/widget-data.js";
+import { Overview } from "./overview.js";
 import { Shell } from "./shell.js";
 
 /**
@@ -103,5 +105,49 @@ describe("the Overview renders the default layout (UI-07, D-12)", () => {
       { widgetId: "quick-actions", size: "small" },
     ]);
     expect(resolution.skipped).toEqual([]);
+  });
+});
+
+describe("zero, one and many widgets (UI-SPEC E3 empty and zero-one-many rows)", () => {
+  const NOW = Date.parse("2026-09-25T12:00:00Z");
+
+  it("shows a single one-column Nothing here yet card when the layout resolves to nothing", () => {
+    const { container } = render(
+      <Overview
+        layout={{ entries: [], skipped: [{ widgetId: "not-a-widget", reason: "unknown-widget" }] }}
+        stateFor={widgetStateFor}
+        connection={{ kind: "connecting" }}
+        now={NOW}
+      />,
+    );
+
+    const cards = container.querySelectorAll(".ccc-overview-grid > section.ccc-card");
+    expect(cards).toHaveLength(1);
+    const empty = container.querySelectorAll(".ccc-layout-empty");
+    expect(empty).toHaveLength(1);
+    expect(empty[0]?.getAttribute("data-size")).toBe("small");
+    expect(cardTitle(empty[0] as Element)).toBe("Nothing here yet");
+    expect(empty[0]?.textContent).toContain(
+      "The Overview layout has no widgets to show. Check the layout file in the plugin data folder.",
+    );
+    // A skipped id is never rendered as a placeholder or error tile (D-13).
+    expect(container.textContent).not.toContain("not-a-widget");
+  });
+
+  it("renders one card at its resolved size when the layout holds one widget", () => {
+    const { container } = render(
+      <Overview
+        layout={{ entries: [{ widgetId: "claude-usage", size: "wide" }], skipped: [] }}
+        stateFor={widgetStateFor}
+        connection={{ kind: "connecting" }}
+        now={NOW}
+      />,
+    );
+
+    const cards = container.querySelectorAll(".ccc-overview-grid > section.ccc-card");
+    expect(cards).toHaveLength(1);
+    expect(container.querySelector(".ccc-layout-empty")).toBeNull();
+    expect(cardTitle(cards[0] as Element)).toBe("Claude usage");
+    expect(cards[0]?.getAttribute("data-size")).toBe("wide");
   });
 });

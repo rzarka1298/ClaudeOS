@@ -115,3 +115,10 @@ export const layoutOverride = signal<LayoutOverride | undefined>(undefined);
 export const resolvedLayout = computed<LayoutResolution>(() =>
   composeLayout(DEFAULT_LAYOUT, layoutOverride.value, WIDGETS, ENABLED_FLAGS),
 );
+
+/** RED skeleton (plan 03-07 Task 2). */
+export function setLayoutOverride(next: LayoutOverride | undefined): LayoutResolution {
+  layoutOverride.value = next;
+  // Not written yet: skipped entries are not recorded.
+  return resolvedLayout.value;
+}
