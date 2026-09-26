@@ -56,7 +56,17 @@ scan_file() {
   f="$1"
   check_email="$2"
   [ -f "$f" ] || return 0
-  awk -v fname="$f" -v check_email="$check_email" '
+  # Binary-safe (plan 03-10, when the first PNG baselines became tracked).
+  # Under a UTF-8 locale macOS awk aborted on the first record of a binary
+  # file ("towc: multibyte conversion failure"), and the caller's `|| true`
+  # turned that abort into a silent CLEAN result; awk also truncates a record
+  # at a NUL byte, so text after the first NUL was never read. So: NULs become
+  # newlines before awk sees the bytes, and awk runs in the C locale. A path or
+  # address in a PNG text chunk is now actually scanned (pixel data is
+  # compressed and stays unreadable -- research Pitfall 8, check-images.sh).
+  # Text files contain no NUL, so their line numbers are unchanged, and Rules
+  # 1 and 2 use ASCII-only patterns, so they match text exactly as before.
+  LC_ALL=C tr '\000' '\n' < "$f" | LC_ALL=C awk -v fname="$f" -v check_email="$check_email" '
     {
       line = $0
       violated = 0
@@ -94,7 +104,7 @@ scan_file() {
         print fname ":" NR ":" line
       }
     }
-  ' "$f"
+  '
 }
 
 FILE_COUNT=0
