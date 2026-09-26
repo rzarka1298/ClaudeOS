@@ -10,6 +10,7 @@ import {
   SESSION_END_REASONS,
   SESSION_START_SOURCES,
   STOP_FAILURE_ERRORS,
+  UNKNOWN_HOOK_EVENT_NAME_PLACEHOLDER,
 } from "./claude-hook-events.js";
 
 /**
@@ -139,6 +140,24 @@ describe("classifyHookRecord — unknown and envelope-invalid (Test 2)", () => {
   it("classifies an event name outside the subscription set as unknown, never an error", () => {
     const result = classifyHookRecord(minimalRecord("SomeFutureEvent"));
     expect(result).toEqual({ kind: "unknown", eventName: "SomeFutureEvent" });
+  });
+
+  it("echoes an unknown event name only when it is letters-only, else a fixed placeholder", () => {
+    expect(classifyHookRecord(minimalRecord("E".repeat(64)))).toEqual({
+      kind: "unknown",
+      eventName: "E".repeat(64),
+    });
+    for (const name of [
+      "Some Future Event",
+      "/Users/USERNAME/secret",
+      `${SENTINEL}`,
+      "Event_2",
+      "<script>",
+    ]) {
+      const result = classifyHookRecord(minimalRecord(name));
+      expect(result).toEqual({ kind: "unknown", eventName: UNKNOWN_HOOK_EVENT_NAME_PLACEHOLDER });
+      expect(JSON.stringify(result)).not.toContain(name);
+    }
   });
 
   it.each([[null], ["a string"], [42], [[1, 2, 3]], [undefined]])(

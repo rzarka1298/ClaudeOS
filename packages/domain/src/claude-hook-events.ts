@@ -204,6 +204,7 @@ export type MinimalHookRecord = {
  */
 export type HookRecordClassification =
   | { readonly kind: "known"; readonly event: KnownHookEvent; readonly record: MinimalHookRecord }
+  /** `eventName` is the forwarded name if letters-only, else {@link UNKNOWN_HOOK_EVENT_NAME_PLACEHOLDER}. */
   | { readonly kind: "unknown"; readonly eventName: string }
   | {
       readonly kind: "shape-invalid";
@@ -211,6 +212,17 @@ export type HookRecordClassification =
       readonly issuePaths: readonly string[];
     }
   | { readonly kind: "envelope-invalid" };
+
+/**
+ * What an `unknown` classification reports as the event name when the
+ * forwarded name is not letters-only. It deliberately fails the
+ * {@link ECHOABLE_EVENT_NAME} shape, so it can never be mistaken for a real
+ * event, and it keeps an arbitrary forwarded string out of counts and logs.
+ */
+export const UNKNOWN_HOOK_EVENT_NAME_PLACEHOLDER = "(unrecognised-name)";
+
+/** The only event-name shape an `unknown` result echoes: a hook event name is PascalCase letters. */
+const ECHOABLE_EVENT_NAME = /^[A-Za-z]{1,64}$/;
 
 function isKnownHookEvent(name: string): name is KnownHookEvent {
   return (KNOWN_HOOK_EVENTS as readonly string[]).includes(name);
@@ -236,7 +248,12 @@ export function classifyHookRecord(input: unknown): HookRecordClassification {
   }
   const eventName = envelope.data.hook_event_name;
   if (!isKnownHookEvent(eventName)) {
-    return { kind: "unknown", eventName };
+    return {
+      kind: "unknown",
+      eventName: ECHOABLE_EVENT_NAME.test(eventName)
+        ? eventName
+        : UNKNOWN_HOOK_EVENT_NAME_PLACEHOLDER,
+    };
   }
   const parsed = HOOK_RECORD_SCHEMAS[eventName].safeParse(input);
   if (!parsed.success) {
