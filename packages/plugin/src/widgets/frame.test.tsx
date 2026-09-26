@@ -4,6 +4,7 @@ import type { ConnectionState } from "../connection-state.js";
 import { connectionChangedAt, connectionState, lastEvent } from "../connection-state.js";
 import type { QuickActionDescriptor, WidgetDefinition, WidgetState } from "./contract.js";
 import { WidgetFrame } from "./frame.js";
+import { type AnyWidgetDefinition, WIDGET_IDS, WIDGETS, type WidgetId } from "./registry.js";
 import { serviceHealthState, serviceHealthWidget } from "./service-health.js";
 
 /**
@@ -461,5 +462,57 @@ describe("quick-action buttons in the frame (UI-04, A11Y-01)", () => {
   it.each(SILENT)("renders no quick action in %s", (_name, state, connection) => {
     const { container } = renderActions(state, connection);
     expect(container.querySelectorAll("button.ccc-quick-action")).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `{panel}` mid-sentence keeps proper nouns (UI-SPEC Copywriting Contract:
+// sentence case, "Proper nouns keep their capitals"). Wave-6 finding:
+// `lowerFirst` rendered "Loading gitHub discoveries".
+// ---------------------------------------------------------------------------
+
+describe("a panel title used mid-sentence keeps its proper nouns", () => {
+  const MID_SENTENCE: Record<WidgetId, string> = {
+    "service-health": "service health",
+    today: "today",
+    "active-sessions": "active Claude sessions",
+    "project-shortcuts": "project shortcuts",
+    "claude-usage": "Claude usage",
+    "tech-intel": "technology and market intelligence",
+    "github-discoveries": "GitHub discoveries",
+    "quick-actions": "quick actions",
+  };
+
+  it("covers every registered widget", () => {
+    expect(Object.keys(MID_SENTENCE).sort()).toEqual([...WIDGET_IDS].sort());
+  });
+
+  it.each(WIDGET_IDS)("%s reads correctly in the loading and error copy", (id) => {
+    const definition: AnyWidgetDefinition = WIDGETS[id];
+    const panel = MID_SENTENCE[id];
+
+    const loading = render(
+      <WidgetFrame
+        definition={definition}
+        state={{ kind: "loading" }}
+        connection={{ kind: "live" }}
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    expect(
+      loading.container.querySelector(".ccc-card-body .ccc-visually-hidden")?.textContent,
+    ).toBe(`Loading ${panel}`);
+    cleanup();
+
+    render(
+      <WidgetFrame
+        definition={definition}
+        state={{ kind: "error", message: "boom" }}
+        connection={{ kind: "live" }}
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    expect(screen.getByText(`Couldn't load ${panel}.`)).toBeTruthy();
+    expect(screen.getByText(`Sources for ${panel}`)).toBeTruthy();
   });
 });

@@ -714,8 +714,16 @@
  * below 16rem instead of overflowing, and `dense` stops a `wide` card
  * stranding a hole. The grid scrolls vertically inside `.ccc-content`, never
  * horizontally.
+ *
+ * The grid is its OWN query container, so the `wide` collapse below measures
+ * the exact box the columns are laid out in. Measured against the command-
+ * center root instead, the query saw a box wider than the grid by
+ * `.ccc-content`'s padding and any classic scrollbar, and a `wide` card still
+ * spanned two columns in a one-column grid (phase-3 remediation). The cards'
+ * own descendants are unaffected: every card is a container itself.
  */
 .ccc-overview-grid {
+  container-type: inline-size;
   display: grid;
   gap: var(--ccc-space-lg);
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
@@ -730,10 +738,13 @@
   grid-row: span 2;
 }
 
-/* A container query against the command-center root, not a viewport media
- * query: the same view can be any width at any viewport size. Under 34rem a
- * `wide` card falls back to one column; `tall` keeps its two rows because
- * vertical space scrolls. */
+/* A container query, not a viewport media query: the same view can be any
+ * width at any viewport size. Each rule resolves against ITS element's nearest
+ * container — a card's is the grid (so the collapse reads the grid's own
+ * width), the grid's is the command-center root. Under 34rem of grid a `wide`
+ * card falls back to one column; above it two columns always exist, since two
+ * 16rem columns need at most 32rem plus the largest (1.5rem) gap. `tall` keeps
+ * its two rows because vertical space scrolls. */
 @container (max-width: 34rem) {
   .ccc-overview-grid {
     gap: var(--ccc-space-md);

@@ -1,8 +1,11 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cleanup, render } from "@testing-library/preact";
+import { h } from "preact";
 import { describe, expect, it } from "vitest";
 import { contrastRatio } from "./contrast.js";
+import { Shell } from "./view/shell.js";
 
 /**
  * The A11Y-02 / UI-03 / D-18 audit of the real stylesheet.
@@ -374,5 +377,134 @@ describe("reduced motion at the token level (A11Y-03, D-19)", () => {
         .map((declaration) => `${rule.selector} { ${declaration.property}: ${declaration.value} }`),
     );
     expect(offenders).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The wide collapse measures the grid's own box (UI-SPEC E3 overflow row)
+// ---------------------------------------------------------------------------
+
+/**
+ * "The grid never scrolls horizontally at any container width" rests on one
+ * inequality: a `wide` card may span two columns only when two columns exist.
+ * The collapse is a container query, so it is evaluated against the card's
+ * nearest query container — and if that box is wider than the grid (the grid
+ * sits inside `.ccc-content`'s padding and, with classic scrollbars, beside a
+ * scrollbar), there is a band of widths where the query still says "wide" but
+ * the grid already has one column (phase-3 remediation, 03-07 review MAJOR).
+ *
+ * jsdom does no layout, so this is measured the way the browser decides it:
+ * the REAL shell DOM names the query container, the REAL stylesheet names the
+ * insets between it and the grid, the threshold, the column minimum and every
+ * gap, and a sweep across grid widths in 1px steps (overlay and classic
+ * scrollbars) checks `span <= columns` at every width, boundary included.
+ */
+describe("the wide collapse never spans more columns than the grid has (UI-SPEC E3)", () => {
+  const BASE_RULES = RULES.filter((rule) => rule.atStack.length === 0);
+  const PX = 1 / 16;
+  /** A classic (non-overlay) macOS scrollbar is 15px wide. */
+  const CLASSIC_SCROLLBAR = 15 * PX;
+
+  /** Resolves `var(--ccc-*)` through the token block and returns rem. */
+  function rem(value: string): number {
+    const token = /^var\((--ccc-[\w-]+)\)$/.exec(value.trim());
+    if (token?.[1] !== undefined) {
+      const resolved = TOKENS[token[1]];
+      if (resolved === undefined) throw new Error(`no token ${token[1]}`);
+      return rem(resolved);
+    }
+    if (value.trim() === "0") return 0;
+    const match = /^(-?\d*\.?\d+)rem$/.exec(value.trim());
+    if (!match?.[1]) throw new Error(`not a rem length: ${value}`);
+    return Number(match[1]);
+  }
+
+  function selectorsOf(rule: StyleRule): string[] {
+    return rule.selector.split(",").map((selector) => selector.trim());
+  }
+
+  /** Unconditional declarations of `property` on rules matching `element`, in source order. */
+  function matchingDeclarations(element: Element, property: RegExp): Declaration[] {
+    return BASE_RULES.filter((rule) => selectorsOf(rule).some((s) => element.matches(s))).flatMap(
+      (rule) => declarationsOf(rule).filter((declaration) => property.test(declaration.property)),
+    );
+  }
+
+  /** The nearest ancestor the stylesheet makes a size query container. */
+  function queryContainerOf(element: Element): Element | null {
+    for (let node = element.parentElement; node !== null; node = node.parentElement) {
+      const declared = matchingDeclarations(node, /^container-type$/).at(-1);
+      if (declared !== undefined && declared.value !== "normal") return node;
+    }
+    return null;
+  }
+
+  /** Left + right from the element's last matching `padding` shorthand. */
+  function horizontalPadding(element: Element): number {
+    const declared = matchingDeclarations(element, /^padding$/).at(-1);
+    if (declared === undefined) return 0;
+    const [top = "0", right = top, , left = right] = declared.value.split(/\s+(?![^(]*\))/);
+    return rem(right) + rem(left);
+  }
+
+  function scrollsVertically(element: Element): boolean {
+    return matchingDeclarations(element, /^overflow(-y)?$/).some((declaration) =>
+      /\b(auto|scroll)\b/.test(declaration.value),
+    );
+  }
+
+  it("keeps a wide card's span within the grid's columns at every width", () => {
+    render(h(Shell, null));
+    const grid = document.querySelector(".ccc-overview-grid");
+    const wide = grid?.querySelector(':scope > .ccc-card[data-size="wide"]');
+    if (!grid || !wide) throw new Error("the default Overview renders no wide card");
+
+    // What lies between the query container's content box and the grid's
+    // content box (where the tracks live). The container is an ancestor of
+    // the card, so it is the grid itself or an ancestor of the grid.
+    const container = queryContainerOf(wide);
+    let padding = 0;
+    let scrollbars = 0;
+    for (let node: Element | null = grid; node !== null && node !== container; ) {
+      padding += horizontalPadding(node);
+      if (scrollsVertically(node)) scrollbars++;
+      node = node.parentElement;
+    }
+    cleanup();
+
+    const collapse = RULES.filter(
+      (rule) =>
+        rule.selector.includes('[data-size="wide"]') &&
+        /grid-column:\s*span 1/.test(rule.body) &&
+        rule.atStack.some((at) => at.startsWith("@container")),
+    );
+    expect(collapse).toHaveLength(1);
+    const threshold = rem(
+      /max-width:\s*([^)]+)\)/.exec(collapse[0]?.atStack.at(-1) ?? "")?.[1] ?? "",
+    );
+
+    const gridDeclarations = RULES.filter((rule) => rule.selector === ".ccc-overview-grid").flatMap(
+      declarationsOf,
+    );
+    const columns = gridDeclarations.find((d) => d.property === "grid-template-columns");
+    const columnMin = rem(/min\(100%,\s*([^)]+)\)/.exec(columns?.value ?? "")?.[1] ?? "");
+    const gaps = gridDeclarations.filter((d) => d.property === "gap").map((d) => rem(d.value));
+    expect(gaps.length).toBeGreaterThan(0);
+
+    const violations: string[] = [];
+    for (let step = 0; step <= 64 * 16; step++) {
+      const width = step * PX;
+      for (const scrollbar of [0, CLASSIC_SCROLLBAR]) {
+        // No query container at all means the collapse never applies.
+        const measured =
+          container === null ? Number.POSITIVE_INFINITY : width + padding + scrollbars * scrollbar;
+        const span = measured <= threshold ? 1 : 2;
+        for (const gap of gaps) {
+          const fit = Math.max(1, Math.floor((width + gap) / (columnMin + gap)));
+          if (span > fit) violations.push(`grid ${width}rem, gap ${gap}rem, bar ${scrollbar}rem`);
+        }
+      }
+    }
+    expect(violations.slice(0, 3)).toEqual([]);
   });
 });

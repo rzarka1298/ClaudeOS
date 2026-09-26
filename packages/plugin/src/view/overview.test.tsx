@@ -1,10 +1,13 @@
-import { type ReadonlySignal, signal } from "@preact/signals";
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { createSocketApiClient } from "@ccc/service-api-client";
+import { type ReadonlySignal, type Signal, signal } from "@preact/signals";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { options } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import type { WidgetState } from "../widgets/contract.js";
 import { ENABLED_FLAGS } from "../widgets/feature-flags.js";
+import { WidgetFrame } from "../widgets/frame.js";
 import { composeLayout, DEFAULT_LAYOUT } from "../widgets/layout.js";
 import { WIDGET_IDS, WIDGETS, type WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
@@ -16,6 +19,32 @@ import { Shell } from "./shell.js";
  * from the in-code default layout, rendering one real card per resolved entry
  * (UI-07, D-12, UI-SPEC E3).
  */
+
+/**
+ * The one seam a client is reached through is the `@ccc/service-api-client`
+ * package, so every factory it exports is replaced by a recorder that also
+ * throws: if anything the Overview renders ever constructs a client — directly
+ * or through a module it imports — `clientSpy` sees it and the "never reaches
+ * for a client" test below fails (wave-6 review: the old spy was never wired).
+ */
+const clientSpy = vi.hoisted(() => vi.fn());
+vi.mock("@ccc/service-api-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@ccc/service-api-client")>();
+  const recorder =
+    (name: string) =>
+    (..._args: unknown[]): never => {
+      clientSpy(name);
+      throw new Error(`${name} reached from the Overview render path`);
+    };
+  return {
+    ...actual,
+    createEventClient: recorder("createEventClient"),
+    createAuthenticatedClient: recorder("createAuthenticatedClient"),
+    createSocketApiClient: recorder("createSocketApiClient"),
+    requestVaultSetupPlan: recorder("requestVaultSetupPlan"),
+    requestVaultSetup: recorder("requestVaultSetup"),
+  };
+});
 
 function resetSignals(): void {
   connectionState.value = { kind: "connecting" };
@@ -278,12 +307,69 @@ describe("PERF-03: a slow integration blocks neither its siblings nor navigation
   });
 });
 
+describe("per-card signal isolation: one widget's update re-renders only its card", () => {
+  it("re-renders the updated card and no sibling", () => {
+    const states: Record<WidgetId, Signal<WidgetState<unknown>>> = {} as Record<
+      WidgetId,
+      Signal<WidgetState<unknown>>
+    >;
+    for (const id of WIDGET_IDS) states[id] = signal(cachedReady(id));
+
+    // Every WidgetFrame diff, by widget id — Preact's own post-diff hook,
+    // chained so @preact/signals' hook keeps running.
+    const renders: string[] = [];
+    const original = Object.getOwnPropertyDescriptor(options, "diffed");
+    const chained = options.diffed?.bind(options);
+    options.diffed = (vnode) => {
+      if (vnode.type === WidgetFrame) {
+        renders.push((vnode.props as unknown as { definition: { id: string } }).definition.id);
+      }
+      chained?.(vnode);
+    };
+    try {
+      const { container } = render(
+        <Overview
+          layout={composeLayout(DEFAULT_LAYOUT, undefined, WIDGETS, ENABLED_FLAGS)}
+          stateFor={(id) => states[id]}
+          connection={{ kind: "live" }}
+          now={Date.parse("2026-09-25T12:00:00Z")}
+        />,
+      );
+      expect(renders).toHaveLength(8);
+      renders.length = 0;
+
+      void act(() => {
+        states["tech-intel"].value = { kind: "error", message: "boom" };
+      });
+
+      expect(renders).toEqual(["tech-intel"]);
+      const updated = Array.from(container.querySelectorAll(".ccc-overview-grid > section")).find(
+        (card) => cardTitle(card) === "Technology and market intelligence",
+      );
+      expect(updated?.getAttribute("data-presentation")).toBe("error");
+    } finally {
+      if (original === undefined) delete options.diffed;
+      else Object.defineProperty(options, "diffed", original);
+    }
+  });
+});
+
 describe("the Overview path never reaches for a client (PERF-01 extended)", () => {
-  it("renders every card without ever calling a client", () => {
-    // Structural, like shell.test.tsx: nothing in the Overview's render path
-    // imports or receives a client, so this stand-in can never be reached.
-    const clientSpy = vi.fn();
-    const { container } = render(<Shell />);
+  beforeEach(() => clientSpy.mockClear());
+
+  it("the spy is wired: constructing a client through the package is recorded", () => {
+    // The control that makes the next test able to fail: every client
+    // factory in this file IS the spy (see the `vi.mock` above).
+    expect(() => createSocketApiClient({} as never)).toThrow(/Overview render path/);
+    expect(clientSpy).toHaveBeenCalledWith("createSocketApiClient");
+  });
+
+  it("renders every card, navigates and refreshes without constructing a client", () => {
+    const { container, rerender } = render(<Shell />);
+    expect(overviewCards(container)).toHaveLength(8);
+    fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    rerender(<Shell />);
     expect(overviewCards(container)).toHaveLength(8);
     expect(clientSpy).not.toHaveBeenCalled();
   });

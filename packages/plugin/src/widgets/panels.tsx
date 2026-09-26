@@ -23,9 +23,39 @@ import { ListBody } from "./list-body.js";
  * Nothing here imports `obsidian`, and nothing here imports a fixture.
  */
 
-/** `n` with a plural-safe noun: never `1 items` (UI-SPEC zero-one-many row). */
-function count(n: number, singular: string, plural: string): string {
+/**
+ * A number whose source can fail on its own. `null` means UNAVAILABLE — the
+ * source did not say — and is never the same thing as zero (project
+ * constraint "Data integrity": unavailable shows `unavailable`, never zero).
+ * Every numeric field below that comes from a source which can be
+ * independently unreachable is typed this way, so the compiler forces the
+ * body to decide what an unknown value reads as.
+ */
+export type MaybeCount = number | null;
+
+/**
+ * `n` with a plural-safe noun: never `1 items` (UI-SPEC zero-one-many row).
+ * An unavailable `n` reads `{unavailable}` — by default `{plural} unavailable`
+ * — and never a digit, `null` or `0`.
+ */
+function count(
+  n: MaybeCount,
+  singular: string,
+  plural: string,
+  unavailable = `${plural} unavailable`,
+): string {
+  if (n === null) return unavailable;
   return `${n} ${n === 1 ? singular : plural}`;
+}
+
+/** A number shown bare (`output 20`); unavailable reads `unavailable`. */
+function amount(n: MaybeCount): string {
+  return n === null ? "unavailable" : `${n}`;
+}
+
+/** Sentence case for a line assembled from mid-sentence pieces. */
+function upperFirst(line: string): string {
+  return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -42,13 +72,19 @@ export interface TodayTask {
   readonly dueAt: string;
 }
 
+/**
+ * Four independent sources (see `dataKeys`), any of which can be unreachable
+ * while the others answer. A `null` list or count is "that source did not
+ * say", rendered as unavailable — never an empty list that would read as
+ * `0 tasks due` or as no failures.
+ */
 export interface TodayData {
   readonly nextEvent: TodayEvent | null;
-  readonly remainingCount: number;
-  readonly dueTasks: readonly TodayTask[];
-  readonly overdueTasks: readonly TodayTask[];
+  readonly remainingCount: MaybeCount;
+  readonly dueTasks: readonly TodayTask[] | null;
+  readonly overdueTasks: readonly TodayTask[] | null;
   readonly unreadSummary: string | null;
-  readonly failures: readonly string[];
+  readonly failures: readonly string[] | null;
 }
 
 function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNode {
@@ -58,12 +94,21 @@ function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNod
         {data.nextEvent === null ? "Nothing else on the calendar today." : data.nextEvent.title}
       </p>
       <p className="ccc-state-body">
-        {count(data.remainingCount, "commitment left", "commitments left")} ·{" "}
-        {count(data.dueTasks.length, "task due", "tasks due")} ·{" "}
-        {count(data.overdueTasks.length, "overdue task", "overdue tasks")}
+        {upperFirst(
+          [
+            count(
+              data.remainingCount,
+              "commitment left",
+              "commitments left",
+              "commitments unavailable",
+            ),
+            count(data.dueTasks?.length ?? null, "task due", "tasks due", "due tasks unavailable"),
+            count(data.overdueTasks?.length ?? null, "overdue task", "overdue tasks"),
+          ].join(" · "),
+        )}
       </p>
       <ListBody<TodayTask>
-        rows={[...data.overdueTasks, ...data.dueTasks]}
+        rows={[...(data.overdueTasks ?? []), ...(data.dueTasks ?? [])]}
         size={size}
         keyOf={(task) => `${task.dueAt}-${task.title}`}
         renderPrimary={(task) => task.title}
@@ -74,7 +119,9 @@ function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNod
       {data.unreadSummary === null ? null : (
         <p className="ccc-state-body ccc-clamp-2">{data.unreadSummary}</p>
       )}
-      {data.failures.length === 0 ? null : (
+      {data.failures === null ? (
+        <p className="ccc-state-body">Failure status unavailable</p>
+      ) : data.failures.length === 0 ? null : (
         <p className="ccc-state-body">
           {count(data.failures.length, "failure needs attention", "failures need attention")}
         </p>
@@ -169,8 +216,10 @@ export interface ProjectRow {
   readonly pinned: boolean;
   readonly branch: string;
   readonly dirty: boolean;
-  readonly openItems: number;
-  readonly sessionCount: number;
+  /** Issue/task count from a source that can fail independently of git status. */
+  readonly openItems: MaybeCount;
+  /** From Claude Code hooks; unknown when no lifecycle event has arrived. */
+  readonly sessionCount: MaybeCount;
   readonly nextTask: string | null;
 }
 
@@ -225,20 +274,23 @@ export const projectShortcutsWidget: WidgetDefinition<ProjectShortcutsData> = {
 
 export interface UsageBar {
   readonly label: string;
-  readonly used: number;
-  readonly limit: number | null;
+  readonly used: MaybeCount;
+  readonly limit: MaybeCount;
 }
 
 export interface UsageTokens {
-  readonly input: number;
-  readonly output: number;
-  readonly cache: number;
+  readonly input: MaybeCount;
+  readonly output: MaybeCount;
+  readonly cache: MaybeCount;
 }
 
 export interface ClaudeUsageData {
   readonly bars: readonly UsageBar[];
   readonly tokens: UsageTokens;
-  /** Always rendered as an ESTIMATE — subscription spend is the plan price. */
+  /**
+   * Always rendered as an ESTIMATE — subscription spend is the plan price.
+   * `null` is an estimate that could not be computed, and reads unavailable.
+   */
   readonly estimate: string | null;
 }
 
@@ -252,17 +304,23 @@ function ClaudeUsageBody({ data }: { readonly data: ClaudeUsageData }): VNode {
             <p className="ccc-list-meta">
               {/* An unknown limit reads `unavailable`, never zero — the
                   data-integrity rule in the project constraints. */}
-              {bar.limit === null ? "Capacity unavailable" : `${bar.used} of ${bar.limit}`}
+              {bar.used === null || bar.limit === null
+                ? "Capacity unavailable"
+                : `${bar.used} of ${bar.limit}`}
             </p>
           </li>
         ))}
       </ul>
       <p className="ccc-state-body">
-        {`Input ${data.tokens.input} · output ${data.tokens.output} · cache ${data.tokens.cache}`}
+        {`Input ${amount(data.tokens.input)} · output ${amount(data.tokens.output)} · cache ${amount(
+          data.tokens.cache,
+        )}`}
       </p>
-      {data.estimate === null ? null : (
-        <p className="ccc-state-body">{`Estimated API-equivalent cost: ${data.estimate}`}</p>
-      )}
+      <p className="ccc-state-body">
+        {data.estimate === null
+          ? "Estimated API-equivalent cost unavailable"
+          : `Estimated API-equivalent cost: ${data.estimate}`}
+      </p>
     </>
   );
 }
@@ -290,6 +348,11 @@ export interface IntelStory {
   readonly headline: string;
   readonly category: string;
   readonly summary: string;
+  /**
+   * Counted by the research pipeline from the sources it actually collected
+   * for this story, so it is always known — a story with no sources is not
+   * emitted. Deliberately NOT a {@link MaybeCount}.
+   */
   readonly sourceCount: number;
 }
 
@@ -340,7 +403,8 @@ export const techIntelWidget: WidgetDefinition<TechIntelData> = {
 export interface DiscoveredRepo {
   readonly id: string;
   readonly name: string;
-  readonly stars: number;
+  /** A star snapshot can fail per repo (rate limit) while the report still lists it. */
+  readonly stars: MaybeCount;
   readonly growth: string;
   readonly reason: string;
 }

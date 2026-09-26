@@ -21,29 +21,17 @@ import { serviceHealthWidget } from "./service-health.js";
  * second list of widget ids anywhere — an enum, a layout default, a
  * diagnostics table — would be a place for the two to disagree.
  *
- * {@link AnyWidgetDefinition} — not `WidgetDefinition<never>` — is the bound,
- * for a concrete variance reason worth recording: `ComponentType<P>` includes
- * `ComponentClass<P>`, whose `defaultProps?: Partial<P>` puts `P` in an
- * INVARIANT position under `exactOptionalPropertyTypes`, so no single concrete
- * argument (`never`, `unknown`) is a supertype of every widget's data type.
- * Erasing ONLY the body's payload keeps every other contract field — id,
- * title, dataKeys, refresh, sizes, featureFlag, quickActions — fully checked
- * by `satisfies`, and each definition keeps its precise data type at its own
- * declaration site, which is where a body's props actually get checked.
+ * {@link AnyWidgetDefinition} is `WidgetDefinition<never>`, and nothing is
+ * erased. `WidgetDefinition`'s renderers are plain function signatures (see
+ * `contract.ts`), so a definition is contravariant in its payload and
+ * `never` makes it the supertype of every registered widget: `satisfies`
+ * checks every contract field, each entry keeps its precise data type, and
+ * an erased definition can be neither called with a payload directly nor
+ * passed off as a typed one (`contract.types.test.tsx`). The one place an
+ * erased definition meets its widget's unvalidated state is `WidgetFrame`,
+ * which says so in its own props type.
  */
-// The lone `any` in this package, and it is load-bearing: see the note above.
-// It cannot be suppressed for `@typescript-eslint/no-explicit-any` either —
-// `eslint-comments/no-restricted-disable` forbids disabling that rule — so the
-// one remaining lint WARNING is the honest record of this variance limit. The
-// durable fix is to narrow `WidgetDefinition`'s two renderer fields from
-// `ComponentType<P>` to a plain function-component signature (this package
-// ships no class component), which removes the invariant `defaultProps` and
-// makes `WidgetDefinition<never>` a real supertype; that edit belongs to a
-// plan that owns `contract.ts`.
-// biome-ignore lint/suspicious/noExplicitAny: the erased body payload described above.
-type ErasedPayload = any;
-
-export type AnyWidgetDefinition = WidgetDefinition<ErasedPayload>;
+export type AnyWidgetDefinition = WidgetDefinition<never>;
 
 export const WIDGETS = {
   "service-health": serviceHealthWidget,

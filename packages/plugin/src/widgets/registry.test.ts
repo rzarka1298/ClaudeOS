@@ -195,11 +195,13 @@ describe("honest panel states (D-17, ADR-0023 Panel state assignment)", () => {
 
 describe("a registered panel renders its honest state through the shared frame", () => {
   function renderWidget(id: WidgetId) {
-    // The registry hands out `AnyWidgetDefinition` (payload erased — see
-    // registry.ts), which is exactly what plan 03-07's grid will render.
+    // The registry hands out `AnyWidgetDefinition` (`WidgetDefinition<never>`
+    // — see registry.ts), which is exactly what the Overview grid renders. The
+    // frame is instantiated at `never` explicitly because `h()` cannot infer a
+    // generic component's parameter from its props.
     const definition: AnyWidgetDefinition = WIDGETS[id];
     return render(
-      h(WidgetFrame, {
+      h(WidgetFrame<never>, {
         definition,
         state: widgetStateFor(id).value,
         connection: { kind: "live" },

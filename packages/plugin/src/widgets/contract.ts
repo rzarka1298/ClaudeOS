@@ -1,5 +1,5 @@
 import type { Freshness, Partiality, SizeHint } from "@ccc/domain";
-import type { ComponentType } from "preact";
+import type { VNode } from "preact";
 import type { DestinationId } from "../view/destinations.js";
 
 /**
@@ -117,6 +117,16 @@ export interface WidgetBodyProps<T> {
  * ship a card without a last-updated time, a freshness badge, the independent
  * partial badge and a Source affordance — they never render a card at all
  * (UI-06, D-16).
+ *
+ * Both renderers are PLAIN FUNCTION SIGNATURES, not `ComponentType<P>`, and
+ * that is load-bearing for the registry's types. `ComponentType<P>` includes
+ * `ComponentClass<P>`, whose `defaultProps?: Partial<P>` makes `P` invariant
+ * under `exactOptionalPropertyTypes`, so no definition type was a supertype
+ * of every widget's and the registry had to erase the payload to `any`. A
+ * function property is contravariant in its props, so `WidgetDefinition<never>`
+ * is a real supertype of every `WidgetDefinition<T>` — the registry's bound —
+ * and nothing is erased. This package ships no class component, and a plain
+ * function is still a valid Preact function component.
  */
 export interface WidgetDefinition<T> {
   readonly id: string;
@@ -128,6 +138,6 @@ export interface WidgetDefinition<T> {
   readonly preferredSize: SizeHint;
   readonly featureFlag: string;
   readonly quickActions: readonly QuickActionDescriptor[];
-  readonly renderBody: ComponentType<WidgetBodyProps<T>>;
-  readonly renderEmpty: ComponentType<Record<string, never>>;
+  readonly renderBody: (props: WidgetBodyProps<T>) => VNode | null;
+  readonly renderEmpty: (props: Record<string, never>) => VNode | null;
 }

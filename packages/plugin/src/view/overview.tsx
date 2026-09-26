@@ -1,3 +1,4 @@
+import type { SizeHint } from "@ccc/domain";
 import type { ReadonlySignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useId } from "preact/hooks";
@@ -67,21 +68,58 @@ export function Overview({
 
   return (
     <div className="ccc-overview-grid">
-      {layout.entries.map((entry) => {
-        const definition: AnyWidgetDefinition = WIDGETS[entry.widgetId];
-        return (
-          <WidgetFrame
-            key={entry.widgetId}
-            definition={definition}
-            state={stateFor(entry.widgetId).value}
-            size={entry.size}
-            connection={connection}
-            now={now}
-            onNavigate={onNavigate}
-            {...(onQuickAction === undefined ? {} : { onQuickAction })}
-          />
-        );
-      })}
+      {layout.entries.map((entry) => (
+        <OverviewCard
+          key={entry.widgetId}
+          definition={WIDGETS[entry.widgetId]}
+          // The SIGNAL is handed down, never its value: reading `.value` here
+          // would subscribe the whole grid to every widget.
+          state={stateFor(entry.widgetId)}
+          size={entry.size}
+          connection={connection}
+          now={now}
+          onNavigate={onNavigate}
+          onQuickAction={onQuickAction}
+        />
+      ))}
     </div>
+  );
+}
+
+interface OverviewCardProps {
+  readonly definition: AnyWidgetDefinition;
+  readonly state: ReadonlySignal<WidgetState<unknown>>;
+  readonly size: SizeHint;
+  readonly connection: ConnectionState;
+  readonly now: number;
+  readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
+  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+}
+
+/**
+ * One grid cell, and the ONLY place its widget's signal is read. Because the
+ * `.value` read happens in this component's render, @preact/signals
+ * subscribes this card alone: a widget's update re-renders its own card and
+ * no sibling, and never the grid (per-card isolation, research Pattern 8).
+ */
+function OverviewCard({
+  definition,
+  state,
+  size,
+  connection,
+  now,
+  onQuickAction,
+  onNavigate,
+}: OverviewCardProps): VNode {
+  return (
+    <WidgetFrame
+      definition={definition}
+      state={state.value}
+      size={size}
+      connection={connection}
+      now={now}
+      onNavigate={onNavigate}
+      {...(onQuickAction === undefined ? {} : { onQuickAction })}
+    />
   );
 }

@@ -112,7 +112,7 @@ describe("PERF-03: a slow source settling later changes only its own card", () =
       "loading",
     );
 
-    act(() => {
+    void act(() => {
       slow.value = ready({ repos: [] });
     });
 
@@ -144,7 +144,7 @@ describe("the relative-time footer follows the one clock signal (T-03-07)", () =
   it("re-renders a footer when nowTick advances, with no other input", () => {
     const states = loadingStates();
     states["github-discoveries"] = signal(ready({ repos: [] }));
-    act(() => {
+    void act(() => {
       nowTick.value = Date.parse(OBSERVED) + 60_000;
     });
     const { container } = render(<Shell stateFor={(id) => states[id]} />);
@@ -152,7 +152,7 @@ describe("the relative-time footer follows the one clock signal (T-03-07)", () =
       cardNamed(container, "GitHub discoveries").querySelector(".ccc-footer-time")?.textContent;
     const first = time();
 
-    act(() => {
+    void act(() => {
       nowTick.value = Date.parse(OBSERVED) + 3 * 60 * 60_000;
     });
 
@@ -180,8 +180,7 @@ describe("the grid CSS is the one auto-placement contract (D-12, UI-SPEC E3)", (
 });
 
 describe("honest data: an unavailable count never reads as zero", () => {
-  // AUDIT-BUG: ProjectRow.openItems is `number`; an unknown count renders as "null open items" / cannot be expressed, so the wave-6 MAJOR ("0 open items") still reproduces.
-  it.skip("a project whose open-item count is unavailable does not render a number", () => {
+  it("a project whose open-item count is unavailable does not render a number", () => {
     const states = loadingStates();
     const { container } = render(
       <Overview
