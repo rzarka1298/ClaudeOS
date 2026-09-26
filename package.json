@@ -24,7 +24,7 @@
     "ci:typecheck": "turbo run typecheck",
     "ci:test": "turbo run test",
     "ci:privacy": "sh scripts/check-privacy.sh",
-    "ci:visual": "pnpm --filter @ccc/test-fixtures run harness:build && playwright test"
+    "ci:visual": "turbo run harness:build --filter=@ccc/test-fixtures && playwright test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
