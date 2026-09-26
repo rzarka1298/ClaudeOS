@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
+import { ProjectsSnapshotSchema } from "./projects.js";
 
 /** `GET /api/v1/events` — the authenticated event-stream endpoint (SVC-07). */
 export const EVENTS_PATH = `${API_BASE}/events`;
@@ -53,6 +54,7 @@ export const SERVICE_EVENT_TYPES = [
   "service.heartbeat",
   "connection.state",
   "stream.resync",
+  "projects.updated",
 ] as const;
 export type ServiceEventType = (typeof SERVICE_EVENT_TYPES)[number];
 
@@ -83,6 +85,7 @@ export const SnapshotResponseSchema = z.object({
   lastEventId: z.number().int().nonnegative(),
   state: z.object({
     serviceStartedAt: z.string(),
+    projects: ProjectsSnapshotSchema,
   }),
 });
 export type SnapshotResponse = z.infer<typeof SnapshotResponseSchema>;

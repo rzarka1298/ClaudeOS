@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import http from "node:http";
-import { SNAPSHOT_PATH } from "@ccc/domain";
+import { EMPTY_PROJECTS_SNAPSHOT, SNAPSHOT_PATH } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEventClient, type EventClientState } from "./event-client.js";
 
@@ -158,12 +158,19 @@ describe("createEventClient", () => {
     snapshotCall?.respond();
     snapshotCall?.res.emit(
       "data",
-      Buffer.from(JSON.stringify({ lastEventId: 5, state: { serviceStartedAt: "t" } })),
+      Buffer.from(
+        JSON.stringify({
+          lastEventId: 5,
+          state: { serviceStartedAt: "t", projects: EMPTY_PROJECTS_SNAPSHOT },
+        }),
+      ),
     );
     snapshotCall?.res.emit("end");
     await flush();
 
-    expect(snapshots).toEqual([{ lastEventId: 5, state: { serviceStartedAt: "t" } }]);
+    expect(snapshots).toEqual([
+      { lastEventId: 5, state: { serviceStartedAt: "t", projects: EMPTY_PROJECTS_SNAPSHOT } },
+    ]);
     expect(events).toHaveLength(1);
     expect((events[0] as { id: number }).id).toBe(6);
     client.dispose();

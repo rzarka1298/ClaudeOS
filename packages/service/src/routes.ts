@@ -2,6 +2,7 @@ import type { IncomingMessage, RequestListener, ServerResponse } from "node:http
 import {
   API_BASE,
   type ApiErrorBody,
+  EMPTY_PROJECTS_SNAPSHOT,
   EVENTS_PATH,
   HANDSHAKE_PATH,
   type HandshakeResponse,
@@ -128,7 +129,9 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
   const startedAt = ctx.store.readServiceMeta("started_at") ?? new Date(0).toISOString();
   const body: SnapshotResponse = {
     lastEventId: ctx.eventBus.buffer.latestId(),
-    state: { serviceStartedAt: startedAt },
+    // Plan 04-04 replaces this with the live projects snapshot; until the
+    // project services are wired the snapshot answers with the empty one.
+    state: { serviceStartedAt: startedAt, projects: EMPTY_PROJECTS_SNAPSHOT },
   };
   sendJson(res, 200, body);
 };

@@ -85,15 +85,28 @@ export function newWorkspaceId(): WorkspaceId {
   return `${time}${random}` as WorkspaceId;
 }
 
-/** RED skeleton (plan 04-01 Task 1). */
+/**
+ * Mints a sortable, opaque ProjectId — same shape as {@link newRunId}. This
+ * is the only ProjectId minting site; display names and paths never reach
+ * the ID. Like {@link newWorkspaceId} it takes no arguments, so renaming a
+ * project or moving its folder can never change its identity, and nothing
+ * about the folder is recoverable from the ID the plugin holds (D-01, D-43).
+ */
 export function newProjectId(): ProjectId {
-  throw new Error("newProjectId is not implemented yet (packages/domain/src/ids.ts)");
+  const time = Date.now().toString(36).padStart(9, "0");
+  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  return `${time}${random}` as ProjectId;
 }
 
-/** A registered scan folder's opaque identity (plan 04-01, D-02). */
+/**
+ * A registered scan folder's opaque identity (D-02). Suggestions and
+ * scan-folder actions address a scan root by this ID, never by its path.
+ */
 export type ScanRootId = Brand<string, "ScanRootId">;
 
-/** RED skeleton (plan 04-01 Task 1). */
+/** Mints a ScanRootId — the one minting home for scan-root IDs, same shape as {@link newProjectId}. */
 export function newScanRootId(): ScanRootId {
-  throw new Error("newScanRootId is not implemented yet (packages/domain/src/ids.ts)");
+  const time = Date.now().toString(36).padStart(9, "0");
+  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  return `${time}${random}` as ScanRootId;
 }
