@@ -449,6 +449,149 @@
   font-size: var(--ccc-text-body);
 }
 
+/*
+ * The hero head (UI-SPEC S1 "Anatomy", ADR-0023, D-50): a Display-step
+ * numeral, a hidden screen-reader label, a sub-caption and a decorative
+ * meter, rendered by the frame between the header and the body when a
+ * widget declares `variant: { kind: "hero" }`. It never appears without
+ * `data-variant="hero"`, so nothing here touches a card that has not opted
+ * in.
+ */
+.ccc-hero-head {
+  display: flex;
+  flex-direction: column;
+}
+
+.ccc-hero-head .ccc-kpi-number,
+.ccc-hero-head .ccc-hero-caption {
+  margin: 0;
+}
+
+.ccc-hero-caption {
+  font-size: var(--ccc-text-body);
+}
+
+.ccc-hero-head .ccc-hero-caption {
+  margin-top: var(--ccc-space-xs);
+}
+
+.ccc-hero-meter {
+  appearance: none;
+  width: 100%;
+  height: var(--ccc-hero-bar-height);
+  margin-top: var(--ccc-space-sm);
+  border: none;
+}
+
+/* A card that owns a hero head needs a fourth grid row for it — scoped to
+ * the cream surface only, because that is the one presentation set where the
+ * head actually renders (UI-SPEC "Surface by presentation"); every glass
+ * presentation of a hero widget keeps the plain three-row template with no
+ * `.ccc-hero-head` node in the DOM at all. */
+.ccc-card[data-variant="hero"][data-surface="cream"] {
+  grid-template-rows: auto auto 1fr auto;
+  background-color: var(--ccc-cream);
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] > .ccc-card-header {
+  grid-row: 1;
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] > .ccc-hero-head {
+  grid-row: 2;
+  /* Grid `gap` already supplies --ccc-space-sm between every row (matching
+   * "title → numeral"); this adds the extra delta the UI-SPEC's
+   * "meter → row list" gap needs on top of that shared gap. */
+  margin-bottom: calc(var(--ccc-space-md) - var(--ccc-space-sm));
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] > .ccc-card-body {
+  grid-row: 3;
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] > .ccc-card-footer {
+  grid-row: 4;
+}
+
+/* Every text descendant of the cream hero switches ink per the UI-SPEC
+ * "Ink pairs by surface" table. Primary text and the numeral use the
+ * stronger inverse ink; everything else (labels, meta, footer, sub-caption,
+ * badges, the Source button) uses the muted inverse ink. Neither
+ * `--ccc-accent` nor `--ccc-danger` is ever referenced here (Non-Negotiable
+ * 2): the progress line and every focus ring use `--ccc-accent-deep`
+ * instead, and a card that would need danger red renders on glass, never
+ * cream. */
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-card-header h3,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-hero-caption,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-state-body,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-service-line,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-meta,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-badge,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-source-button,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-more,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-row-action,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-card-footer,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-footer-time {
+  color: var(--ccc-ink-inverse-muted);
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-kpi-number,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-state-heading,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-primary,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-session-row-link,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-footer-absolute,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-badge[data-badge="live"],
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-badge[data-badge="partial"],
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-quick-action {
+  color: var(--ccc-ink-inverse);
+}
+
+/* Hairlines: the card boundary, row separators, badge outlines and control
+ * outlines all switch to the cream-audited hairline. */
+.ccc-card[data-variant="hero"][data-surface="cream"] {
+  border-color: var(--ccc-border-cream);
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-row,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-card-footer,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-badge,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-source-button,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-more,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-row-action,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-quick-action {
+  border-color: var(--ccc-border-cream);
+}
+
+/* Focus rings on cream use the deep accent (5.13:1) — the bright accent
+ * cannot identify a control there (ADR-0023 "the bright accent on cream at
+ * 2.47:1 and cannot carry text or identify a control"). */
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-source-button:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-more:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-quick-action:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-row-action:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-session-row-link:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-footer-time:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-card-body[tabindex]:focus-visible {
+  outline-color: var(--ccc-accent-deep);
+}
+
+/* The progress line: track and fill both come from the cream-safe pair, and
+ * neither pseudo-element declares a transition — the fill never animates
+ * (UI-SPEC "the fill does not animate"). */
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-hero-meter::-webkit-meter-bar {
+  background: var(--ccc-border-cream);
+  border-radius: var(--ccc-radius-pill);
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"]
+  .ccc-hero-meter::-webkit-meter-optimum-value,
+.ccc-card[data-variant="hero"][data-surface="cream"]
+  .ccc-hero-meter::-webkit-meter-suboptimum-value,
+.ccc-card[data-variant="hero"][data-surface="cream"]
+  .ccc-hero-meter::-webkit-meter-even-less-good-value {
+  background: var(--ccc-accent-deep);
+}
+
 /* A `tall` card scrolls inside its body slot only — the header and the
  * provenance footer never scroll away (UI-SPEC E1 overflow row). */
 .ccc-card[data-size="tall"] .ccc-card-body {

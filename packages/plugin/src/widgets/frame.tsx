@@ -5,6 +5,7 @@ import type { ConnectionState } from "../connection-state.js";
 import type { DestinationId } from "../view/destinations.js";
 import type {
   DataDependencyKey,
+  HeroMetric,
   QuickActionDescriptor,
   WidgetDefinition,
   WidgetState,
@@ -70,6 +71,61 @@ function midSentenceTitle(title: string): string {
   return title.charAt(0).toLowerCase() + title.slice(1);
 }
 
+/**
+ * The surface a hero-variant card renders on, derived from the presentation
+ * (UI-SPEC S1 "Surface by presentation"). Cream is reserved for the four
+ * presentations that carry last-good numbers; every presentation that needs
+ * `--ccc-danger`, the disconnected dim, or the connect-button styling
+ * renders on glass, where those treatments are audited.
+ */
+const CREAM_PRESENTATIONS: ReadonlySet<CardPresentation["kind"]> = new Set([
+  "loading",
+  "ready",
+  "empty",
+  "stale",
+]);
+
+function heroSurfaceFor(presentationKind: CardPresentation["kind"]): "cream" | "glass" {
+  return CREAM_PRESENTATIONS.has(presentationKind) ? "cream" : "glass";
+}
+
+/**
+ * The frame-owned hero head (UI-SPEC S1 "Anatomy", D-50): a Display-step
+ * numeral, its screen-reader label, a sub-caption and a decorative meter.
+ * Loading renders three skeleton lines instead — never both, so a
+ * hero-variant widget's loading card shows exactly three skeleton lines in
+ * total, not six.
+ */
+function HeroHead({ metric }: { readonly metric: HeroMetric }): VNode {
+  return (
+    <div className="ccc-hero-head">
+      <p className="ccc-kpi-number">{metric.value}</p>
+      <span className="ccc-visually-hidden">{metric.srLabel}</span>
+      <p className="ccc-hero-caption">{metric.caption}</p>
+      {metric.share !== null && (
+        <meter
+          className="ccc-hero-meter"
+          min={0}
+          max={metric.share.max}
+          value={metric.share.value}
+          aria-hidden="true"
+        />
+      )}
+    </div>
+  );
+}
+
+function HeroHeadSkeleton({ panel }: { readonly panel: string }): VNode {
+  return (
+    <div className="ccc-hero-head">
+      <div className="ccc-skeleton-line" />
+      <div className="ccc-skeleton-line" />
+      <div className="ccc-skeleton-line" />
+      <span className="ccc-visually-hidden">{`Loading ${panel}`}</span>
+    </div>
+  );
+}
+
 /** The footer a card shows before its first observation has arrived. */
 function pendingFooter(dataKeys: readonly DataDependencyKey[]): FooterModel {
   return {
@@ -107,7 +163,9 @@ export function WidgetFrame<T>({
   const body: ComponentChildren = ((): ComponentChildren => {
     switch (presentation.kind) {
       case "loading":
-        return (
+        // A hero-variant widget's skeleton lives in the hero head (below),
+        // so the generic body skeleton would otherwise duplicate it.
+        return definition.variant ? null : (
           <>
             <div className="ccc-skeleton-line" />
             <div className="ccc-skeleton-line" />
@@ -214,17 +272,40 @@ export function WidgetFrame<T>({
     definition.quickActions.length > 0 &&
     (presentation.kind === "ready" || presentation.kind === "stale");
 
+  // The hero head (UI-SPEC S1, D-50): absent means the existing glass card,
+  // so no other widget's render tree changes at all.
+  const surface: "cream" | "glass" | undefined = definition.variant
+    ? heroSurfaceFor(presentation.kind)
+    : undefined;
+
+  const heroHead: ComponentChildren = ((): ComponentChildren => {
+    if (!definition.variant) return null;
+    if (presentation.kind === "loading") return <HeroHeadSkeleton panel={panel} />;
+    if (
+      (presentation.kind === "ready" ||
+        presentation.kind === "empty" ||
+        presentation.kind === "stale") &&
+      state.kind === "ready"
+    ) {
+      return <HeroHead metric={definition.variant.metric(state.data)} />;
+    }
+    return null;
+  })();
+
   return (
     <section
       className="ccc-card"
       data-presentation={presentation.kind}
       data-size={hint}
+      data-variant={definition.variant ? "hero" : undefined}
+      data-surface={surface}
       aria-labelledby={titleId}
       aria-busy={presentation.kind === "loading" ? "true" : undefined}
     >
       <header className="ccc-card-header">
         <h3 id={titleId}>{definition.title}</h3>
       </header>
+      {heroHead}
       <div
         className="ccc-card-body"
         data-dimmed={presentation.kind === "disconnected" ? "true" : undefined}

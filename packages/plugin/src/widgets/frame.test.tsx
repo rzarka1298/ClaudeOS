@@ -486,7 +486,7 @@ describe("hero variant (D-50, UI-SPEC S1)", () => {
   const HERO_WIDGET: WidgetDefinition<HeroFixtureData> = {
     id: "hero-fixture",
     title: "Test hero panel",
-    dataKeys: [{ key: "hero.fixture", transport: "local", sourceLabel: "Fixture" }],
+    dataKeys: [{ key: "hero.fixture", transport: "service", sourceLabel: "Fixture" }],
     refresh: { kind: "manual" },
     minSize: "tall",
     preferredSize: "tall",
@@ -560,7 +560,7 @@ describe("hero variant (D-50, UI-SPEC S1)", () => {
   });
 
   it.each([
-    ["loading", { kind: "loading" } as WidgetState<HeroFixtureData>, { kind: "live" } as const, "cream"],
+    ["loading", { kind: "loading" }, { kind: "live" } as const, "cream"],
     ["ready", HERO_READY, { kind: "live" } as const, "cream"],
     ["empty", { ...HERO_READY, isEmpty: true }, { kind: "live" } as const, "cream"],
     ["stale", { ...HERO_READY, freshness: "stale" }, { kind: "live" } as const, "cream"],
@@ -593,7 +593,7 @@ describe("hero variant (D-50, UI-SPEC S1)", () => {
     const head = container.querySelector(".ccc-hero-head");
     expect(head?.querySelectorAll(".ccc-skeleton-line")).toHaveLength(3);
     expect(head?.querySelector(".ccc-visually-hidden")?.textContent).toBe(
-      "Loading Test hero panel",
+      "Loading test hero panel",
     );
     // Not duplicated: the generic body loading branch does not also render a skeleton.
     expect(container.querySelectorAll(".ccc-skeleton-line")).toHaveLength(3);
