@@ -1,5 +1,5 @@
 import type { AuthenticatedSocketApiClient, EventClient } from "@ccc/service-api-client";
-import { ItemView, type WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
 import { attachEventClient } from "../connection-state.js";
 import type { CommandCenterSettings } from "../settings.js";
@@ -63,6 +63,11 @@ export class CommandCenterView extends ItemView {
           if (this.host.settings.lastOpenedDestination === id) return;
           this.host.settings.lastOpenedDestination = id;
           void this.host.saveSettings();
+        },
+        // The shell imports nothing from `obsidian`; the view host is where a
+        // quick action's message becomes an Obsidian Notice (C-11).
+        notify: (message: string) => {
+          new Notice(message);
         },
       }),
       this.contentEl,

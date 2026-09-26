@@ -9,5 +9,15 @@ import type { HostRegistry } from "../host-registry.js";
  */
 export const nowTick = signal<number>(Date.now());
 
-/** RED skeleton (plan 03-07 Task 3): the signature is final, the interval is not registered yet. */
-export function startClock(_registry: HostRegistry, _everyMs = 60_000): void {}
+/**
+ * Starts the one timer that keeps {@link nowTick} current: a single interval,
+ * every 60 seconds by default — the resolution the relative-time copy
+ * actually shows. It is registered through the host-registry seam, never a
+ * bare `setInterval`, so its release on unload is counted by the twenty-cycle
+ * proof in `lifecycle.test.ts` rather than assumed (threat T-03-07).
+ */
+export function startClock(registry: HostRegistry, everyMs = 60_000): void {
+  registry.interval(() => {
+    nowTick.value = Date.now();
+  }, everyMs);
+}

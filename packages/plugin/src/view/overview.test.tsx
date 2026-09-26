@@ -190,9 +190,13 @@ const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
 };
 
 function cachedReady(id: WidgetId): WidgetState<unknown> {
+  return cachedReadyWith(MINIMAL_DATA[id]);
+}
+
+function cachedReadyWith(data: unknown): WidgetState<unknown> {
   return {
     kind: "ready",
-    data: MINIMAL_DATA[id],
+    data,
     observedAt: "2026-09-25T11:58:00Z",
     freshness: "cached",
     partiality: { partial: false },
@@ -244,7 +248,7 @@ describe("PERF-03: a slow integration blocks neither its siblings nor navigation
     // A source whose request never settles: its card stays loading forever.
     const pending = signal<WidgetState<unknown>>({ kind: "loading" });
     void new Promise<unknown>(() => {}).then((data) => {
-      pending.value = { ...cachedReady("tech-intel"), data };
+      pending.value = cachedReadyWith(data);
     });
     states["tech-intel"] = pending;
 
