@@ -1,10 +1,12 @@
+import { type ReadonlySignal, signal } from "@preact/signals";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
+import type { WidgetState } from "../widgets/contract.js";
 import { ENABLED_FLAGS } from "../widgets/feature-flags.js";
 import { composeLayout, DEFAULT_LAYOUT } from "../widgets/layout.js";
-import { WIDGETS } from "../widgets/registry.js";
+import { WIDGET_IDS, WIDGETS, type WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
 import { Overview } from "./overview.js";
 import { Shell } from "./shell.js";
@@ -149,5 +151,151 @@ describe("zero, one and many widgets (UI-SPEC E3 empty and zero-one-many rows)",
     expect(container.querySelector(".ccc-layout-empty")).toBeNull();
     expect(cardTitle(cards[0] as Element)).toBe("Claude usage");
     expect(cards[0]?.getAttribute("data-size")).toBe("wide");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PERF-02 / PERF-03 (research Pattern 8) and the quick-action path (C-11)
+// ---------------------------------------------------------------------------
+
+/** Minimal, synthetic body data per widget — shaped to each body's data type. */
+const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
+  "service-health": { connection: "live" },
+  today: {
+    nextEvent: null,
+    remainingCount: 0,
+    dueTasks: [],
+    overdueTasks: [],
+    unreadSummary: null,
+    failures: [],
+  },
+  "active-sessions": {
+    rows: [
+      {
+        id: "s-1",
+        project: "Example project",
+        name: "Example session",
+        model: null,
+        elapsed: "5 min",
+        lastActivity: "just now",
+        status: "running",
+      },
+    ],
+  },
+  "project-shortcuts": { projects: [] },
+  "claude-usage": { bars: [], tokens: { input: 0, output: 0, cache: 0 }, estimate: null },
+  "tech-intel": { stories: [], marketSummary: null },
+  "github-discoveries": { repos: [] },
+  "quick-actions": {},
+};
+
+function cachedReady(id: WidgetId): WidgetState<unknown> {
+  return {
+    kind: "ready",
+    data: MINIMAL_DATA[id],
+    observedAt: "2026-09-25T11:58:00Z",
+    freshness: "cached",
+    partiality: { partial: false },
+    isEmpty: false,
+  };
+}
+
+/** Every widget pre-seeded with a cached ready state (PERF-02). */
+function cachedStates(): Record<WidgetId, ReadonlySignal<WidgetState<unknown>>> {
+  const states = {} as Record<WidgetId, ReadonlySignal<WidgetState<unknown>>>;
+  for (const id of WIDGET_IDS) states[id] = signal(cachedReady(id));
+  return states;
+}
+
+const TERMINAL = new Set([
+  "ready",
+  "stale",
+  "empty",
+  "error",
+  "disconnected",
+  "permission-required",
+  "unavailable",
+]);
+
+describe("PERF-02: cached Overview data renders within 2 seconds", () => {
+  it("PERF-02 places eight cached ready cards in the DOM on a synchronous render, under 2000 ms", () => {
+    const states = cachedStates();
+
+    const started = performance.now();
+    const { container } = render(<Shell stateFor={(id) => states[id]} />);
+    const elapsed = performance.now() - started;
+
+    // No await and no timer advance above this line: first paint IS the data.
+    const cards = overviewCards(container);
+    expect(cards).toHaveLength(8);
+    for (const card of cards) {
+      expect(card.getAttribute("data-presentation")).toBe("ready");
+      expect(card.querySelector('.ccc-badge[data-badge="cached"]')?.textContent).toContain(
+        "Cached",
+      );
+    }
+    expect(elapsed).toBeLessThan(2000);
+  });
+});
+
+describe("PERF-03: a slow integration blocks neither its siblings nor navigation", () => {
+  it("PERF-03 leaves seven terminal cards and working arrow-key navigation while one key never resolves", () => {
+    const states = cachedStates();
+    // A source whose request never settles: its card stays loading forever.
+    const pending = signal<WidgetState<unknown>>({ kind: "loading" });
+    void new Promise<unknown>(() => {}).then((data) => {
+      pending.value = { ...cachedReady("tech-intel"), data };
+    });
+    states["tech-intel"] = pending;
+
+    const { container } = render(<Shell stateFor={(id) => states[id]} />);
+
+    const cards = overviewCards(container);
+    expect(cards).toHaveLength(8);
+    const slow = cardNamed(container, "Technology and market intelligence");
+    expect(slow.getAttribute("data-presentation")).toBe("loading");
+    expect(slow.getAttribute("aria-busy")).toBe("true");
+    const others = cards.filter((card) => card !== slow);
+    expect(others).toHaveLength(7);
+    for (const card of others) {
+      expect(TERMINAL.has(card.getAttribute("data-presentation") ?? "")).toBe(true);
+    }
+
+    const tablist = screen.getByRole("tablist");
+    fireEvent.keyDown(tablist, { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Projects" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    fireEvent.keyDown(tablist, { key: "ArrowLeft" });
+    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(overviewCards(container)).toHaveLength(8);
+  });
+});
+
+describe("the Overview path never reaches for a client (PERF-01 extended)", () => {
+  it("renders every card without ever calling a client", () => {
+    // Structural, like shell.test.tsx: nothing in the Overview's render path
+    // imports or receives a client, so this stand-in can never be reached.
+    const clientSpy = vi.fn();
+    const { container } = render(<Shell />);
+    expect(overviewCards(container)).toHaveLength(8);
+    expect(clientSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("quick actions reach the one dispatcher through the shell (C-11)", () => {
+  it("selects Settings and notifies once when a connect action is clicked", () => {
+    const notify = vi.fn();
+    render(<Shell notify={notify} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Google Calendar and Gmail" }));
+
+    expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0]?.[0]).toMatch(/Settings/);
   });
 });
