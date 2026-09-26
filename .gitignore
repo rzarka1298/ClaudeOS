@@ -32,3 +32,6 @@ PRIVACY-GATE-REPORT.md
 
 # GSD local runtime state (isolation sentinels, never shared)
 .gsd/
+
+# Owner UAT layout override (dev vault symlinks this folder) — never commit
+packages/plugin/layout.json
