@@ -1,5 +1,6 @@
 import type { LayoutOverride, SizeHint } from "@ccc/domain";
 import { computed, signal } from "@preact/signals";
+import { recordDiagnostic } from "../diagnostics.js";
 import { ENABLED_FLAGS } from "./feature-flags.js";
 import { isWidgetId, WIDGETS, type WidgetId } from "./registry.js";
 
@@ -25,7 +26,9 @@ import { isWidgetId, WIDGETS, type WidgetId } from "./registry.js";
  * feature flag is off, and a second occurrence of an id already placed each go
  * to `skipped` with a reason and never to `entries`. The Overview renders
  * `entries` only, so there is no broken slot, placeholder tile or error card for
- * a missing widget; the skip is recorded in diagnostics instead.
+ * a missing widget; the skip is recorded in diagnostics instead — one record
+ * per skipped entry, written by {@link setLayoutOverride} (the only writer of
+ * the override signal), so `composeLayout` itself stays pure.
  */
 
 export interface LayoutEntry {
@@ -116,9 +119,22 @@ export const resolvedLayout = computed<LayoutResolution>(() =>
   composeLayout(DEFAULT_LAYOUT, layoutOverride.value, WIDGETS, ENABLED_FLAGS),
 );
 
-/** RED skeleton (plan 03-07 Task 2). */
+/**
+ * Applies a validated override — or `undefined` to return to the in-code
+ * default — and records one `layout` diagnostic per entry it had to skip
+ * (D-13). Returns the resolution the Overview will now render.
+ */
 export function setLayoutOverride(next: LayoutOverride | undefined): LayoutResolution {
   layoutOverride.value = next;
-  // Not written yet: skipped entries are not recorded.
-  return resolvedLayout.value;
+  const resolution = resolvedLayout.value;
+  const at = new Date().toISOString();
+  for (const { widgetId, reason } of resolution.skipped) {
+    recordDiagnostic({
+      source: "layout",
+      code: reason,
+      message: `Layout entry "${widgetId}" skipped (${reason}).`,
+      at,
+    });
+  }
+  return resolution;
 }
