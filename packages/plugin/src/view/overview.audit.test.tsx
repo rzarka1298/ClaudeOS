@@ -180,8 +180,7 @@ describe("the grid CSS is the one auto-placement contract (D-12, UI-SPEC E3)", (
 });
 
 describe("honest data: an unavailable count never reads as zero", () => {
-  // AUDIT-BUG: ProjectRow.openItems is `number`; an unknown count renders as "null open items" / cannot be expressed, so the wave-6 MAJOR ("0 open items") still reproduces.
-  it.skip("a project whose open-item count is unavailable does not render a number", () => {
+  it("a project whose open-item count is unavailable does not render a number", () => {
     const states = loadingStates();
     const { container } = render(
       <Overview
