@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
+import { ClaudeIntegrationStatusSchema } from "./claude-integration.js";
 import { SessionViewSchema } from "./session.js";
+import { UsageSummarySchema } from "./usage.js";
 
 /** `GET /api/v1/events` — the authenticated event-stream endpoint (SVC-07). */
 export const EVENTS_PATH = `${API_BASE}/events`;
@@ -92,6 +94,8 @@ export const SnapshotResponseSchema = z.object({
     // Phase 5 (append-only, D-59). Optional so an older service's snapshot
     // still parses (Pitfall 17).
     sessions: z.array(SessionViewSchema).optional(),
+    usage: UsageSummarySchema.optional(),
+    claudeIntegration: ClaudeIntegrationStatusSchema.optional(),
   }),
 });
 export type SnapshotResponse = z.infer<typeof SnapshotResponseSchema>;
