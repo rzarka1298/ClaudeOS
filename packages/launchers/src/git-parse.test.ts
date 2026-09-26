@@ -1,9 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  type ConfigScopeEntry,
   hasLocalExecutableConfig,
   LOCAL_EXEC_KEY_PATTERN,
   LOCAL_EXEC_KEY_REGEX,
+  LOCAL_EXEC_PREFLIGHT_ARGS,
   parseConfigScopeLines,
   parseLogRecords,
   parseRemoteLines,
@@ -209,38 +213,90 @@ describe("parseRemoteLines and selectRemote", () => {
 });
 
 describe("git config preflight (D-09, PR-05)", () => {
-  it("parses a scope line into scope, name and value", () => {
-    expect(parseConfigScopeLines("local\tfilter.x.clean some-cmd\n")).toEqual([
+  /** Builds `git config -z --show-scope --get-regexp` output: `scope NUL key LF value NUL` per entry. */
+  const z = (...entries: ReadonlyArray<readonly [string, string, (string | null)?]>): string =>
+    entries
+      .map(([scope, name, value = "cmd"]) =>
+        value === null ? `${scope}${NUL}${name}${NUL}` : `${scope}${NUL}${name}\n${value}${NUL}`,
+      )
+      .join("");
+
+  it("exposes the exact argv the preflight must run: -z, scopes and values, no --name-only", () => {
+    expect(LOCAL_EXEC_PREFLIGHT_ARGS).toEqual([
+      "config",
+      "-z",
+      "--show-scope",
+      "--includes",
+      "--get-regexp",
+      LOCAL_EXEC_KEY_PATTERN,
+    ]);
+    expect(Object.isFrozen(LOCAL_EXEC_PREFLIGHT_ARGS)).toBe(true);
+  });
+
+  it("parses -z output into scope, name and value", () => {
+    expect(parseConfigScopeLines(z(["local", "filter.x.clean", "some-cmd"]))).toEqual([
       { scope: "local", name: "filter.x.clean", value: "some-cmd" },
     ]);
   });
 
-  it("parses a name-only line with a null value", () => {
-    expect(parseConfigScopeLines("worktree\tcore.fsmonitor\n")).toEqual([
+  it("parses a -z entry with no value (a bare boolean key) as a null value", () => {
+    expect(parseConfigScopeLines(z(["worktree", "core.fsmonitor", null]))).toEqual([
       { scope: "worktree", name: "core.fsmonitor", value: null },
     ]);
   });
 
-  it("parses -z output (scope NUL key LF value NUL), where a value cannot forge a second entry", () => {
-    const out = [
-      "local",
-      "filter.lfs.clean\ngit-lfs clean -- %f",
-      "local",
-      "filter.x.clean\na\nglobal\tfilter.y.clean b",
-      "",
-    ].join(NUL);
-    const entries = parseConfigScopeLines(out);
-    expect(entries).toEqual([
+  it("parses -z output, where a value cannot forge a second entry", () => {
+    const out = z(
+      ["local", "filter.lfs.clean", "git-lfs clean -- %f"],
+      ["local", "filter.x.clean", "a\nglobal\tfilter.y.clean b"],
+    );
+    expect(parseConfigScopeLines(out)).toEqual([
       { scope: "local", name: "filter.lfs.clean", value: "git-lfs clean -- %f" },
       { scope: "local", name: "filter.x.clean", value: "a\nglobal\tfilter.y.clean b" },
     ]);
-    expect(hasLocalExecutableConfig(entries)).toBe(true);
+    expect(hasLocalExecutableConfig(out)).toBe(true);
   });
 
-  const entry = (scope: string, name: string, value: string | null = "cmd"): ConfigScopeEntry => ({
-    scope,
-    name,
-    value,
+  it("refuses to parse line-format (non -z) or truncated output", () => {
+    expect(parseConfigScopeLines("local\tfilter.x.clean some-cmd\n")).toBeNull();
+    expect(parseConfigScopeLines(`local${NUL}filter.x.clean\ncmd`)).toBeNull();
+    expect(parseConfigScopeLines(`local${NUL}`)).toBeNull();
+    expect(parseConfigScopeLines(`${NUL}filter.x.clean\ncmd${NUL}`)).toBeNull();
+    expect(parseConfigScopeLines("")).toEqual([]);
+  });
+
+  it("treats empty output (git exit 1, nothing matched) as safe", () => {
+    expect(hasLocalExecutableConfig("")).toBe(false);
+  });
+
+  it("fails closed on line-format output, even when it looks canonical (multi-line value)", () => {
+    // `filter.lfs.clean = "git-lfs clean -- %f\ntouch PWNED"` in line format:
+    // the first line is the canonical value and the second imitates nothing
+    // git would print -- but git runs both lines.
+    const lineFormat = "local\tfilter.lfs.clean git-lfs clean -- %f\ntouch PWNED\n";
+    expect(hasLocalExecutableConfig(lineFormat)).toBe(true);
+    expect(hasLocalExecutableConfig("local\tfilter.lfs.clean git-lfs clean -- %f\n")).toBe(true);
+    expect(hasLocalExecutableConfig("global\tcore.pager less\n")).toBe(true);
+  });
+
+  it("flags a multi-line value in -z output, including one whose first line is canonical", () => {
+    expect(
+      hasLocalExecutableConfig(
+        z(["local", "filter.lfs.clean", "git-lfs clean -- %f\ntouch PWNED"]),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags any value containing a line feed or carriage return, in every scope", () => {
+    for (const scope of ["local", "worktree", "global", "system", "command"]) {
+      expect(hasLocalExecutableConfig(z([scope, "core.pager", "less\ntouch PWNED"]))).toBe(true);
+      expect(hasLocalExecutableConfig(z([scope, "core.pager", "less\rtouch PWNED"]))).toBe(true);
+    }
+  });
+
+  it("fails closed on truncated -z output", () => {
+    const truncated = z(["global", "core.pager", "less"]).slice(0, -1);
+    expect(hasLocalExecutableConfig(truncated)).toBe(true);
   });
 
   const executableKeys = [
@@ -264,30 +320,33 @@ describe("git config preflight (D-09, PR-05)", () => {
   ];
 
   it.each(executableKeys)("flags %s at local and worktree scope", (key) => {
-    expect(hasLocalExecutableConfig([entry("local", key)])).toBe(true);
-    expect(hasLocalExecutableConfig([entry("worktree", key)])).toBe(true);
+    expect(hasLocalExecutableConfig(z(["local", key]))).toBe(true);
+    expect(hasLocalExecutableConfig(z(["worktree", key]))).toBe(true);
+    expect(hasLocalExecutableConfig(z(["local", key, null]))).toBe(true);
   });
 
   it.each(executableKeys)("does not flag %s at global, system or command scope", (key) => {
     for (const scope of ["global", "system", "command"]) {
-      expect(hasLocalExecutableConfig([entry(scope, key)])).toBe(false);
+      expect(hasLocalExecutableConfig(z([scope, key]))).toBe(false);
     }
   });
 
   it("matches keys case-insensitively", () => {
-    expect(hasLocalExecutableConfig([entry("local", "core.fsMonitor")])).toBe(true);
-    expect(hasLocalExecutableConfig([entry("local", "Core.SSHCommand")])).toBe(true);
-    expect(hasLocalExecutableConfig([entry("local", "GPG.Program")])).toBe(true);
+    expect(hasLocalExecutableConfig(z(["local", "core.fsMonitor"]))).toBe(true);
+    expect(hasLocalExecutableConfig(z(["local", "Core.SSHCommand"]))).toBe(true);
+    expect(hasLocalExecutableConfig(z(["local", "GPG.Program"]))).toBe(true);
     expect(LOCAL_EXEC_KEY_REGEX.test("SEQUENCE.EDITOR")).toBe(true);
   });
 
   it("allows only the canonical git-lfs filter values", () => {
     expect(
-      hasLocalExecutableConfig([
-        entry("local", "filter.lfs.clean", "git-lfs clean -- %f"),
-        entry("local", "filter.lfs.smudge", "git-lfs smudge -- %f"),
-        entry("local", "filter.lfs.process", "git-lfs filter-process"),
-      ]),
+      hasLocalExecutableConfig(
+        z(
+          ["local", "filter.lfs.clean", "git-lfs clean -- %f"],
+          ["local", "filter.lfs.smudge", "git-lfs smudge -- %f"],
+          ["local", "filter.lfs.process", "git-lfs filter-process"],
+        ),
+      ),
     ).toBe(false);
     for (const [name, value] of [
       ["filter.lfs.clean", "git-lfs clean -- %f; touch PWNED"],
@@ -296,22 +355,24 @@ describe("git config preflight (D-09, PR-05)", () => {
       ["filter.lfs.clean", null],
       ["filter.notlfs.clean", "git-lfs clean -- %f"],
     ] as const) {
-      expect(hasLocalExecutableConfig([entry("local", name, value)])).toBe(true);
+      expect(hasLocalExecutableConfig(z(["local", name, value]))).toBe(true);
     }
   });
 
   it("treats an unknown scope as untrusted", () => {
-    expect(hasLocalExecutableConfig([entry("unknown", "core.fsmonitor")])).toBe(true);
+    expect(hasLocalExecutableConfig(z(["unknown", "core.fsmonitor"]))).toBe(true);
   });
 
   it("does not flag unrelated local keys", () => {
     expect(
-      hasLocalExecutableConfig([
-        entry("local", "core.bare", "false"),
-        entry("local", "remote.origin.url", "x"),
-        entry("local", "filter.lfs.required", "true"),
-        entry("local", "user.name", "x"),
-      ]),
+      hasLocalExecutableConfig(
+        z(
+          ["local", "core.bare", "false"],
+          ["local", "remote.origin.url", "x"],
+          ["local", "filter.lfs.required", "true"],
+          ["local", "user.name", "x"],
+        ),
+      ),
     ).toBe(false);
   });
 
@@ -322,5 +383,57 @@ describe("git config preflight (D-09, PR-05)", () => {
     for (const key of executableKeys)
       expect(new RegExp(LOCAL_EXEC_KEY_PATTERN).test(key)).toBe(true);
     expect(new RegExp(LOCAL_EXEC_KEY_PATTERN).test("core.bare")).toBe(false);
+  });
+});
+
+describe("git config preflight against real git (PR-05)", () => {
+  let repo: string;
+  const isolated = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_COUNT: "0",
+  };
+  const git = (args: readonly string[]): string => {
+    try {
+      return execFileSync("/usr/bin/git", args, { cwd: repo, env: isolated, encoding: "utf8" });
+    } catch (err) {
+      // `git config --get-regexp` exits 1 when nothing matches.
+      if ((err as { status?: number }).status === 1) return "";
+      throw err;
+    }
+  };
+
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), "ccc-preflight-"));
+    git(["init", "-q", "."]);
+  });
+  afterAll(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("flags a multi-line local lfs value whose first line is canonical, in the exact argv", () => {
+    writeFileSync(
+      join(repo, ".git", "config"),
+      '[core]\n\tbare = false\n[filter "lfs"]\n\tclean = "git-lfs clean -- %f\\ntouch PWNED"\n',
+    );
+    const zOut = git(LOCAL_EXEC_PREFLIGHT_ARGS);
+    expect(zOut).toContain(NUL);
+    expect(hasLocalExecutableConfig(zOut)).toBe(true);
+    // The same config in line format also fails closed.
+    const lineOut = git(LOCAL_EXEC_PREFLIGHT_ARGS.filter((arg) => arg !== "-z"));
+    expect(lineOut).not.toContain(NUL);
+    expect(hasLocalExecutableConfig(lineOut)).toBe(true);
+  });
+
+  it("accepts exactly what git lfs install writes, and a repo with no executable keys", () => {
+    writeFileSync(
+      join(repo, ".git", "config"),
+      '[core]\n\tbare = false\n[filter "lfs"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n',
+    );
+    expect(hasLocalExecutableConfig(git(LOCAL_EXEC_PREFLIGHT_ARGS))).toBe(false);
+    writeFileSync(join(repo, ".git", "config"), "[core]\n\tbare = false\n");
+    expect(git(LOCAL_EXEC_PREFLIGHT_ARGS)).toBe("");
+    expect(hasLocalExecutableConfig(git(LOCAL_EXEC_PREFLIGHT_ARGS))).toBe(false);
   });
 });
