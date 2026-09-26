@@ -31,8 +31,24 @@ export interface WidgetFrameProps<T> {
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
 }
 
-/** A title used mid-sentence: `Service health` → `service health`. */
-function lowerFirst(title: string): string {
+/**
+ * Product and service names that open a widget title. A proper noun keeps its
+ * capitals mid-sentence (UI-SPEC Copywriting Contract), and a single-capital
+ * name like `Claude` is indistinguishable from an ordinary sentence-case word
+ * by shape alone, so it has to be named.
+ */
+const PROPER_NOUNS: ReadonlySet<string> = new Set(["Claude", "GitHub", "Gmail", "Google"]);
+
+/**
+ * A title used mid-sentence: `Service health` → `service health`, but
+ * `GitHub discoveries` and `Claude usage` stay as they are. Only the first
+ * word can carry sentence-case capitalisation, so only it is considered: it
+ * keeps its case when it is a listed proper noun or carries a capital past its
+ * first letter (`GitHub`, `API`) — shapes an ordinary word never has.
+ */
+function midSentenceTitle(title: string): string {
+  const firstWord = title.split(" ", 1)[0] ?? "";
+  if (PROPER_NOUNS.has(firstWord) || /[A-Z]/.test(firstWord.slice(1))) return title;
   return title.charAt(0).toLowerCase() + title.slice(1);
 }
 
@@ -62,7 +78,7 @@ export function WidgetFrame<T>({
   );
   const hint: SizeHint = size ?? definition.preferredSize;
   const titleId = `${useId()}-title`;
-  const panel = lowerFirst(definition.title);
+  const panel = midSentenceTitle(definition.title);
   const Body = definition.renderBody;
   const Empty = definition.renderEmpty;
 
