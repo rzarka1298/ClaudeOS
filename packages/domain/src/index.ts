@@ -10,6 +10,8 @@ export * from "./ids.js";
 export * from "./layout.js";
 export * from "./note-schema.js";
 export * from "./path-containment.js";
+export * from "./ports.js";
 export * from "./run.js";
 export * from "./session.js";
+export * from "./session-actions.js";
 export * from "./usage.js";
