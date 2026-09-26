@@ -206,7 +206,36 @@ export type HookRecordClassification =
     }
   | { readonly kind: "envelope-invalid" };
 
-/** Signature stub (RED): classifies nothing yet. */
-export function classifyHookRecord(_input: unknown): HookRecordClassification {
-  return { kind: "envelope-invalid" };
+function isKnownHookEvent(name: string): name is KnownHookEvent {
+  return (KNOWN_HOOK_EVENTS as readonly string[]).includes(name);
+}
+
+/**
+ * The zod issue path as a dotted string — the field's location, which is all
+ * a diagnostic may name. The offending value is never read from the issue.
+ */
+function issuePath(issue: z.core.$ZodIssue): string {
+  return issue.path.length === 0 ? "(root)" : issue.path.map(String).join(".");
+}
+
+/**
+ * Classifies one forwarded hook record. Never throws and never defaults a
+ * missing field: a record either validates as-is against its event's schema
+ * or reports which field paths failed (D-12).
+ */
+export function classifyHookRecord(input: unknown): HookRecordClassification {
+  const envelope = HookRecordEnvelopeSchema.safeParse(input);
+  if (!envelope.success) {
+    return { kind: "envelope-invalid" };
+  }
+  const eventName = envelope.data.hook_event_name;
+  if (!isKnownHookEvent(eventName)) {
+    return { kind: "unknown", eventName };
+  }
+  const parsed = HOOK_RECORD_SCHEMAS[eventName].safeParse(input);
+  if (!parsed.success) {
+    const issuePaths = [...new Set(parsed.error.issues.map(issuePath))];
+    return { kind: "shape-invalid", event: eventName, issuePaths };
+  }
+  return { kind: "known", event: eventName, record: parsed.data };
 }

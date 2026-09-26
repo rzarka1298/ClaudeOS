@@ -111,7 +111,25 @@ export interface SessionRun {
   readonly endObservedAt: string | null;
 }
 
-/** Signature stub (RED). */
+/**
+ * The last path segment, or null. Accepts only an absolute path's final
+ * segment; a bare `/` or an empty string has no basename worth showing.
+ */
+function lastSegment(fullPath: string | null): string | null {
+  if (fullPath === null) return null;
+  const segment = fullPath
+    .split("/")
+    .filter((part) => part.length > 0)
+    .pop();
+  return segment ?? null;
+}
+
+/**
+ * The one crossing from the private {@link SessionRun} to the plugin-facing
+ * {@link SessionView}. Pure. Full `cwd`, `worktreeRoot` and `transcriptPath`
+ * never cross: only their basenames and a has-transcript flag do (D-26,
+ * PR-28), and `pid` facts stay in the store.
+ */
 export function toSessionView(run: SessionRun, projectName: string | null): SessionView {
   return {
     runId: run.runId,
@@ -130,14 +148,14 @@ export function toSessionView(run: SessionRun, projectName: string | null): Sess
     startedAt: run.startedAt,
     endedAt: run.endedAt,
     lastActivityAt: run.lastActivityAt,
-    subagents: { active: 0, lastType: null },
+    subagents: { active: run.subagentActiveIds.length, lastType: run.subagentLastType },
     lastError: run.lastError,
     linkKind: run.linkKind,
     linkedFromRunId: run.linkedFromRunId,
-    cwdBasename: run.cwd,
-    worktreeBasename: run.worktreeRoot,
-    hasTranscript: false,
-    terminateRequested: false,
+    cwdBasename: lastSegment(run.cwd),
+    worktreeBasename: lastSegment(run.worktreeRoot),
+    hasTranscript: run.transcriptPath !== null,
+    terminateRequested: run.terminateRequestedAt !== null,
   };
 }
 
@@ -148,32 +166,49 @@ export interface RunStateDisplay {
   readonly group: "active" | "ended";
 }
 
-/** Signature stub (RED). */
+/**
+ * The single display mapping for the eight run states (UI-SPEC "Run-state
+ * vocabulary", D-16). `stale` reads as unknown with `?`, never as "Stale":
+ * that word and the `● ◐ ◔ ○` glyphs belong to freshness, and the two
+ * meanings of "stale" never share a label or a glyph. Every glyph here is a
+ * text-presentation code point.
+ */
 export const RUN_STATE_DISPLAY: Readonly<Record<RunState, RunStateDisplay>> = {
-  queued: { label: "", glyph: "", group: "active" },
-  starting: { label: "", glyph: "", group: "active" },
-  running: { label: "", glyph: "", group: "active" },
-  "waiting-for-approval": { label: "", glyph: "", group: "active" },
-  stale: { label: "", glyph: "", group: "active" },
-  completed: { label: "", glyph: "", group: "ended" },
-  failed: { label: "", glyph: "", group: "ended" },
-  cancelled: { label: "", glyph: "", group: "ended" },
+  queued: { label: "Queued", glyph: "◦", group: "active" },
+  starting: { label: "Starting", glyph: "▹", group: "active" },
+  running: { label: "Running", glyph: "▸", group: "active" },
+  "waiting-for-approval": { label: "Waiting for approval", glyph: "◆", group: "active" },
+  stale: { label: "Unknown — ended without reporting", glyph: "?", group: "active" },
+  completed: { label: "Completed", glyph: "✓", group: "ended" },
+  failed: { label: "Failed", glyph: "✕", group: "ended" },
+  cancelled: { label: "Cancelled", glyph: "⊘", group: "ended" },
 };
 
+/**
+ * The states a Run never leaves. `stale` is deliberately absent: it is the
+ * absence of evidence, and a later event or a live process can revive it.
+ */
 export const TERMINAL_RUN_STATES = ["completed", "failed", "cancelled"] as const;
+export type TerminalRunState = (typeof TERMINAL_RUN_STATES)[number];
 
-/** Signature stub (RED). */
-export function isTerminalRunState(_state: RunState): boolean {
-  return false;
+export function isTerminalRunState(state: RunState): state is TerminalRunState {
+  return (TERMINAL_RUN_STATES as readonly RunState[]).includes(state);
 }
 
-/** Signature stub (RED). */
-export const STALE_RUN_EXPLANATION = "";
+/** Shown under a stale Run's state in the detail pane (UI-SPEC, fixed string). */
+export const STALE_RUN_EXPLANATION =
+  "No end event arrived and the process is gone. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.";
 
-/** Signature stub (RED). */
-export const NOT_REPORTED = "";
+/** Shown for any field the source did not provide. Never blank, never `0`, never a dash. */
+export const NOT_REPORTED = "Not reported";
 
-/** Signature stub (RED). */
-export function sessionDisplayName(_view: SessionView): string {
-  return "";
+/**
+ * The name a Session is shown under: the reported name, else `Session` plus
+ * the first eight characters of the Claude session ID, else of the RunId
+ * (a dashboard launch can exist before Claude reports its ID).
+ */
+export function sessionDisplayName(view: SessionView): string {
+  if (view.name !== null && view.name.trim().length > 0) return view.name;
+  const id = view.claudeSessionId ?? view.runId;
+  return `Session ${id.slice(0, 8)}`;
 }
