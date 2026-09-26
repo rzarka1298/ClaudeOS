@@ -1,5 +1,6 @@
 import { type LayoutOverride, layoutOverrideSchema } from "@ccc/domain";
 import { normalizePath } from "obsidian";
+import { recordDiagnostic } from "../diagnostics.js";
 import type { HostRegistry } from "../host-registry.js";
 import { setLayoutOverride } from "./layout.js";
 
@@ -20,6 +21,13 @@ import { setLayoutOverride } from "./layout.js";
  * **Why never a literal config-directory name.** Obsidian lets the owner
  * rename the config directory, so the path is built from `vault.configDir`
  * through `normalizePath` (`obsidianmd/hardcoded-config-path` is at `error`).
+ *
+ * **Why a bad edit costs nothing (D-13).** The file is hand-edited, so it is
+ * routinely malformed mid-typing. A file that fails to parse or validate is
+ * ignored: the previous resolution (or the typed default) keeps rendering, the
+ * Overview is never blanked or given a placeholder, and the reason goes to
+ * diagnostics instead -- naming the parser position or the schema issue, never
+ * the file's content (T-03-15).
  */
 
 export const LAYOUT_FILENAME = "layout.json";
@@ -91,14 +99,91 @@ export interface LayoutPollingOptions {
 }
 
 export interface LayoutPoller {
-  /** One poll: stat, and re-read, validate and apply only on change. */
+  /**
+   * One poll: stat, and re-read, validate and apply only on change. Always
+   * resolves -- a failure is recorded in diagnostics, never thrown, because
+   * the interval callback that drives it has nowhere to send a rejection.
+   */
   tick(): Promise<void>;
+}
+
+/** The result of validating the file's text: an override, or why not. */
+export type LayoutParseResult =
+  | { readonly ok: true; readonly override: LayoutOverride }
+  | { readonly ok: false; readonly detail: string };
+
+/**
+ * The longest parser/schema detail a diagnostic carries. Zod's message for an
+ * unrecognized key names the key, which came from the file; the bound keeps
+ * that naming useful (a `sise` typo) without letting a hostile file push an
+ * arbitrarily long string into the record (T-03-15).
+ */
+const MAX_DETAIL_LENGTH = 160;
+
+/**
+ * JSON.parse's own message can quote a slice of the input it failed on, and
+ * the file's content must never reach a diagnostic (T-03-15). Keep only the
+ * position, which is what the owner needs to find the typo.
+ */
+function describeJsonError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  const where = /at position \d+(?: \(line \d+ column \d+\))?/.exec(message);
+  return where === null ? "it is not valid JSON" : `it is not valid JSON (${where[0]})`;
+}
+
+/**
+ * Parses and validates the file's text against the `@ccc/domain` schema
+ * (strict, bounded, `schemaVersion` literal -- T-03-02). The detail names the
+ * first problem: a JSON syntax position, or the first schema issue's path and
+ * message. It never contains the file's text.
+ */
+export function parseLayoutOverride(text: string): LayoutParseResult {
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch (error) {
+    return { ok: false, detail: describeJsonError(error) };
+  }
+  const parsed = layoutOverrideSchema.safeParse(json);
+  if (parsed.success) return { ok: true, override: parsed.data };
+  const issue = parsed.error.issues[0];
+  const path =
+    issue === undefined || issue.path.length === 0
+      ? "(document)"
+      : issue.path.map(String).join(".");
+  const detail = `${path}: ${issue?.message ?? "it does not match the layout schema"}`;
+  return {
+    ok: false,
+    detail:
+      detail.length > MAX_DETAIL_LENGTH ? `${detail.slice(0, MAX_DETAIL_LENGTH - 1)}…` : detail,
+  };
+}
+
+function recordLayoutProblem(
+  code: "override-invalid" | "override-unreadable",
+  message: string,
+): void {
+  recordDiagnostic({ source: "layout", code, message, at: new Date().toISOString() });
 }
 
 /**
  * Starts watching the layout file: registers the poll interval through the
  * host registry and runs one tick immediately, so an override applies at load
  * without waiting a whole interval.
+ *
+ * **What a tick does with each state of the file.**
+ * - Absent: apply the typed default -- once, on the first tick that finds it
+ *   absent (at load, or after a removal), not every second.
+ * - Present and `(mtime, size)` unchanged since the last tick: nothing; one
+ *   stat is the whole cost.
+ * - Present and changed: read, parse, validate. Valid → apply. Invalid or
+ *   unreadable → the previous resolution keeps rendering and ONE diagnostic
+ *   names the problem (D-13). The new `(mtime, size)` is remembered either
+ *   way, so a bad file is read once rather than every second while the owner
+ *   is mid-edit, and the next save is picked up on the next tick.
+ *
+ * Overlapping ticks never stack: a tick that finds another still in flight
+ * returns at once, so a slow disk cannot pile reads up behind the interval.
  */
 export function startLayoutPolling({
   registry,
@@ -106,23 +191,75 @@ export function startLayoutPolling({
   apply = setLayoutOverride,
   pollMs = LAYOUT_POLL_MS,
 }: LayoutPollingOptions): LayoutPoller {
-  let last: LayoutFileStat | null = null;
+  /** The last stat acted on; `"absent"` once the default is applied; `undefined` before the first tick. */
+  let seen: LayoutFileStat | "absent" | undefined;
+  let inFlight = false;
+  let statFailing = false;
 
-  async function tick(): Promise<void> {
-    const stat = await source.stat();
-    if (stat === null) return;
-    if (last !== null && last.mtime === stat.mtime && last.size === stat.size) return;
-    last = { mtime: stat.mtime, size: stat.size };
-
-    const text = await source.read();
-    let json: unknown;
+  async function poll(): Promise<void> {
+    let stat: LayoutFileStat | null;
     try {
-      json = JSON.parse(text);
+      stat = await source.stat();
+      statFailing = false;
     } catch {
+      // Recorded once per run of failures, not once per second.
+      if (!statFailing) {
+        statFailing = true;
+        recordLayoutProblem(
+          "override-unreadable",
+          `${LAYOUT_FILENAME} could not be checked; the current layout stays.`,
+        );
+      }
       return;
     }
-    const parsed = layoutOverrideSchema.safeParse(json);
-    if (parsed.success) apply(parsed.data);
+
+    if (stat === null) {
+      if (seen !== "absent") {
+        seen = "absent";
+        apply(undefined);
+      }
+      return;
+    }
+    if (
+      seen !== undefined &&
+      seen !== "absent" &&
+      seen.mtime === stat.mtime &&
+      seen.size === stat.size
+    ) {
+      return;
+    }
+    seen = { mtime: stat.mtime, size: stat.size };
+
+    let text: string;
+    try {
+      text = await source.read();
+    } catch {
+      recordLayoutProblem(
+        "override-unreadable",
+        `${LAYOUT_FILENAME} could not be read; the current layout stays.`,
+      );
+      return;
+    }
+
+    const result = parseLayoutOverride(text);
+    if (result.ok) {
+      apply(result.override);
+    } else {
+      recordLayoutProblem(
+        "override-invalid",
+        `${LAYOUT_FILENAME} could not be applied: ${result.detail}`,
+      );
+    }
+  }
+
+  async function tick(): Promise<void> {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      await poll();
+    } finally {
+      inFlight = false;
+    }
   }
 
   registry.interval(() => {
