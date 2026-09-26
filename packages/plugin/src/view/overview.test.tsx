@@ -303,3 +303,113 @@ describe("quick actions reach the one dispatcher through the shell (C-11)", () =
     expect(notify.mock.calls[0]?.[0]).toMatch(/Settings/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wave-5 review carry-forwards: the `+{n} more` channel (MAJOR 1) and the
+// layout, not the panel, deciding a list body's row budget (MAJOR 2).
+// ---------------------------------------------------------------------------
+
+function sessions(n: number): unknown {
+  return {
+    rows: Array.from({ length: n }, (_, i) => ({
+      id: `s-${i}`,
+      project: "Example project",
+      name: `Session ${i}`,
+      model: null,
+      elapsed: "5 min",
+      lastActivity: "just now",
+      status: "running",
+    })),
+  };
+}
+
+function stories(n: number): unknown {
+  return {
+    stories: Array.from({ length: n }, (_, i) => ({
+      id: `story-${i}`,
+      headline: `Headline ${i}`,
+      category: "Tools",
+      summary: "A synthetic summary.",
+      sourceCount: 2,
+    })),
+    marketSummary: null,
+  };
+}
+
+function projects(n: number): unknown {
+  return {
+    projects: Array.from({ length: n }, (_, i) => ({
+      id: `p-${i}`,
+      name: `Project ${i}`,
+      pinned: false,
+      branch: "main",
+      dirty: false,
+      openItems: 0,
+      sessionCount: 0,
+      nextTask: null,
+    })),
+  };
+}
+
+describe("+{n} more focuses the destination that owns the full list (review MAJOR 1)", () => {
+  it("selects and focuses Agent runs when an over-budget sessions card's more control is used", () => {
+    const states = cachedStates();
+    states["active-sessions"] = signal(cachedReadyWith(sessions(12)));
+    const { container } = render(<Shell stateFor={(id) => states[id]} />);
+
+    const card = cardNamed(container, "Active Claude sessions");
+    const more = card.querySelector<HTMLButtonElement>("button.ccc-list-more");
+    expect(more?.textContent).toBe("+2 more");
+    fireEvent.click(more as HTMLButtonElement);
+
+    const agentRuns = screen.getByRole("tab", { name: "Agent runs" });
+    expect(agentRuns.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(agentRuns);
+  });
+});
+
+describe("the layout decides each list body's row budget (review MAJOR 2)", () => {
+  const NOW = Date.parse("2026-09-25T12:00:00Z");
+
+  function renderPlaced(entries: { widgetId: WidgetId; size: "small" | "medium" | "tall" }[]) {
+    const states = cachedStates();
+    states["active-sessions"] = signal(cachedReadyWith(sessions(12)));
+    states["tech-intel"] = signal(cachedReadyWith(stories(12)));
+    states["project-shortcuts"] = signal(cachedReadyWith(projects(12)));
+    return render(
+      <Overview
+        layout={{ entries, skipped: [] }}
+        stateFor={(id) => states[id]}
+        connection={{ kind: "live" }}
+        now={NOW}
+      />,
+    );
+  }
+
+  function rowsAndMore(container: Element, title: string): [number, string | undefined] {
+    // A bare Overview has no tabpanel around it, so look the card up by grid.
+    const card = Array.from(
+      container.querySelectorAll(".ccc-overview-grid > section.ccc-card"),
+    ).find((c) => cardTitle(c) === title);
+    if (!card) throw new Error(`no card titled ${title}`);
+    return [
+      card.querySelectorAll(".ccc-list-row").length,
+      card.querySelector(".ccc-list-more")?.textContent ?? undefined,
+    ];
+  }
+
+  it("caps a tall-preferring list at the medium budget when the layout places it medium", () => {
+    const { container } = renderPlaced([
+      { widgetId: "active-sessions", size: "medium" },
+      { widgetId: "tech-intel", size: "medium" },
+    ]);
+
+    expect(rowsAndMore(container, "Active Claude sessions")).toEqual([6, "+6 more"]);
+    expect(rowsAndMore(container, "Technology and market intelligence")).toEqual([6, "+6 more"]);
+  });
+
+  it("grants a medium-preferring list the tall budget when the layout places it tall", () => {
+    const { container } = renderPlaced([{ widgetId: "project-shortcuts", size: "tall" }]);
+    expect(rowsAndMore(container, "Project shortcuts")).toEqual([10, "+2 more"]);
+  });
+});
