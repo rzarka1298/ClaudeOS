@@ -1,5 +1,5 @@
 import type { VNode } from "preact";
-import type { WidgetDefinition } from "./contract.js";
+import type { WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { ListBody } from "./list-body.js";
 
 /**
@@ -51,7 +51,7 @@ export interface TodayData {
   readonly failures: readonly string[];
 }
 
-function TodayBody({ data }: { readonly data: TodayData }): VNode {
+function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNode {
   return (
     <>
       <p className="ccc-state-body ccc-clamp-2">
@@ -64,11 +64,12 @@ function TodayBody({ data }: { readonly data: TodayData }): VNode {
       </p>
       <ListBody<TodayTask>
         rows={[...data.overdueTasks, ...data.dueTasks]}
-        size="wide"
+        size={size}
         keyOf={(task) => `${task.dueAt}-${task.title}`}
         renderPrimary={(task) => task.title}
         renderMeta={(task) => `Due ${task.dueAt}`}
         moreDestination="tasks"
+        onMore={onNavigate}
       />
       {data.unreadSummary === null ? null : (
         <p className="ccc-state-body ccc-clamp-2">{data.unreadSummary}</p>
@@ -126,15 +127,20 @@ export interface ActiveSessionsData {
   readonly rows: readonly SessionRow[];
 }
 
-function ActiveSessionsBody({ data }: { readonly data: ActiveSessionsData }): VNode | null {
+function ActiveSessionsBody({
+  data,
+  size,
+  onNavigate,
+}: WidgetBodyProps<ActiveSessionsData>): VNode | null {
   return (
     <ListBody<SessionRow>
       rows={data.rows}
-      size="tall"
+      size={size}
       keyOf={(row) => row.id}
       renderPrimary={(row) => `${row.project} · ${row.name}`}
       renderMeta={(row) => `${row.status} · ${row.elapsed} · ${row.lastActivity}`}
       moreDestination="agent-runs"
+      onMore={onNavigate}
     />
   );
 }
@@ -172,11 +178,16 @@ export interface ProjectShortcutsData {
   readonly projects: readonly ProjectRow[];
 }
 
-function ProjectShortcutsBody({ data }: { readonly data: ProjectShortcutsData }): VNode | null {
+function ProjectShortcutsBody({
+  data,
+  size,
+  onNavigate,
+}: WidgetBodyProps<ProjectShortcutsData>): VNode | null {
   return (
     <ListBody<ProjectRow>
       rows={data.projects}
-      size="medium"
+      size={size}
+      onMore={onNavigate}
       keyOf={(project) => project.id}
       renderPrimary={(project) => project.name}
       renderMeta={(project) =>
@@ -287,12 +298,13 @@ export interface TechIntelData {
   readonly marketSummary: string | null;
 }
 
-function TechIntelBody({ data }: { readonly data: TechIntelData }): VNode {
+function TechIntelBody({ data, size, onNavigate }: WidgetBodyProps<TechIntelData>): VNode {
   return (
     <>
       <ListBody<IntelStory>
         rows={data.stories}
-        size="tall"
+        size={size}
+        onMore={onNavigate}
         keyOf={(story) => story.id}
         renderPrimary={(story) => story.headline}
         renderMeta={(story) =>
@@ -337,11 +349,16 @@ export interface GithubDiscoveriesData {
   readonly repos: readonly DiscoveredRepo[];
 }
 
-function GithubDiscoveriesBody({ data }: { readonly data: GithubDiscoveriesData }): VNode | null {
+function GithubDiscoveriesBody({
+  data,
+  size,
+  onNavigate,
+}: WidgetBodyProps<GithubDiscoveriesData>): VNode | null {
   return (
     <ListBody<DiscoveredRepo>
       rows={data.repos}
-      size="medium"
+      size={size}
+      onMore={onNavigate}
       keyOf={(repo) => repo.id}
       renderPrimary={(repo) => repo.name}
       renderMeta={(repo) =>

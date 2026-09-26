@@ -17,6 +17,7 @@ import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-c
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 import { CommandCenterSettingTab } from "./view/settings-tab.js";
+import { startClock } from "./widgets/clock.js";
 
 /**
  * Structural markup and Obsidian's own CSS variables only in this phase —
@@ -69,6 +70,11 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     // is still torn down on unload regardless of whether the command-center
     // view is currently open.
     this.hostRegistry.registerRaw("eventStream", () => this.eventClient.dispose());
+
+    // The one relative-time clock behind every card footer: a single
+    // 60-second interval, registered through the seam so unload releases it
+    // (threat T-03-07; counted in lifecycle.test.ts).
+    startClock(this.hostRegistry);
 
     // The ONE place the OS reduced-motion query string is written in
     // production code (D-19, A11Y-03). Everything downstream reads the

@@ -1,15 +1,37 @@
+import type { ReadonlySignal } from "@preact/signals";
 import { useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
+import { nowTick } from "../widgets/clock.js";
+import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
+import { resolvedLayout } from "../widgets/layout.js";
+import { dispatchQuickAction } from "../widgets/quick-actions.js";
+import type { WidgetId } from "../widgets/registry.js";
+import { widgetStateFor } from "../widgets/widget-data.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
+import { Overview } from "./overview.js";
 
 export interface ShellProps {
   /** The destination selected before this render — usually the last-saved one (PLUG-05). */
   initialDestination?: DestinationId;
   /** Called whenever the user selects a different destination, so the host can persist it. */
   onDestinationChange?: (id: DestinationId) => void;
+  /**
+   * Each widget's state signal. Defaults to {@link widgetStateFor} — the one
+   * production seam. This prop is the injection point the PERF-02/PERF-03
+   * tests use; production never passes fixture data through it (D-17).
+   */
+  stateFor?: (id: WidgetId) => ReadonlySignal<WidgetState<unknown>>;
+  /**
+   * Shows a transient message to the owner. The view host passes Obsidian's
+   * `Notice`; the default is a no-op so this component imports nothing from
+   * `obsidian` and stays renderable anywhere (C-11).
+   */
+  notify?: (message: string) => void;
 }
+
+function noNotify(_message: string): void {}
 
 function connectionStatusText(state: ConnectionState): string {
   switch (state.kind) {
@@ -36,7 +58,12 @@ function connectionStatusText(state: ConnectionState): string {
  * reduced-motion mode reaches CSS (D-19): the component reads the already
  * resolved signal and never checks the OS preference itself.
  */
-export function Shell({ initialDestination, onDestinationChange }: ShellProps) {
+export function Shell({
+  initialDestination,
+  onDestinationChange,
+  stateFor = widgetStateFor,
+  notify = noNotify,
+}: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
   const tabRefs = useRef<Partial<Record<DestinationId, HTMLButtonElement>>>({});
 
@@ -45,15 +72,35 @@ export function Shell({ initialDestination, onDestinationChange }: ShellProps) {
     onDestinationChange?.(id);
   }
 
+  /**
+   * `select()` plus moving keyboard focus to the destination's tab. Used by
+   * every navigation that starts INSIDE the Overview — a `+{n} more` control
+   * or a connect action — because the control the owner just activated is
+   * unmounted with the grid; without this, focus would fall back to the
+   * document body and a keyboard user would lose their place (A11Y-01).
+   */
+  function focusDestination(id: DestinationId): void {
+    select(id);
+    tabRefs.current[id]?.focus();
+  }
+
+  /**
+   * Every widget quick action lands here, and only here: the frame emits a
+   * descriptor, and {@link dispatchQuickAction} — the single choke point
+   * Phase 6's approval check is inserted into — resolves it against a context
+   * whose navigation is this tablist's own `select()` (C-11, APPR-01, T-03-13).
+   */
+  function handleQuickAction(descriptor: QuickActionDescriptor): void {
+    dispatchQuickAction(descriptor, { navigate: focusDestination, notify });
+  }
+
   function handleNavKeyDown(event: KeyboardEvent): void {
     let direction: "next" | "previous" | null = null;
     if (event.key === "ArrowRight" || event.key === "ArrowDown") direction = "next";
     else if (event.key === "ArrowLeft" || event.key === "ArrowUp") direction = "previous";
     if (!direction) return;
     event.preventDefault();
-    const nextId = nextDestination(activeId, direction);
-    select(nextId);
-    tabRefs.current[nextId]?.focus();
+    focusDestination(nextDestination(activeId, direction));
   }
 
   const active = DESTINATIONS.find((d) => d.id === activeId) ?? DESTINATIONS[0];
@@ -125,7 +172,18 @@ export function Shell({ initialDestination, onDestinationChange }: ShellProps) {
         tabIndex={0}
       >
         <h2>{active.label}</h2>
-        <p>{active.description}</p>
+        {active.id === "overview" ? (
+          <Overview
+            layout={resolvedLayout.value}
+            stateFor={stateFor}
+            connection={status}
+            now={nowTick.value}
+            onQuickAction={handleQuickAction}
+            onNavigate={focusDestination}
+          />
+        ) : (
+          <p>{active.description}</p>
+        )}
       </div>
     </div>
   );

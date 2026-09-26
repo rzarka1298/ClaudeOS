@@ -1,5 +1,5 @@
 import type { SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHostRegistry, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
 import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js";
@@ -8,6 +8,7 @@ import {
   type EventTargetLike,
   FakeObsidianHost,
 } from "./test-support/fake-obsidian-host.js";
+import { nowTick, startClock } from "./widgets/clock.js";
 
 const VIEW_TYPE = "claude-command-center-view";
 const COMMAND_ID = "open-overview";
@@ -56,6 +57,10 @@ function loadCycle(
   registry.interval(() => {}, 60_000);
   registry.domEvent(domTarget, "click", () => {});
   attachOsMotionPreference(registry, () => "auto", MOTION_QUERY);
+  // The REAL relative-time clock, for the same reason as the two above: a
+  // stand-in would keep passing if startClock ever stopped using the seam
+  // (threat T-03-07 — a 60-second interval surviving unload).
+  startClock(registry);
   registry.settingTab({});
   return registry;
 }
@@ -131,5 +136,39 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
 
     expect(host.saveDataCallCount).toBe(savesBefore);
     expect(await host.loadData()).toEqual({ lastOpenedDestination: "overview" });
+  });
+});
+
+/** Records each interval callback so the clock's tick can be driven by hand. */
+class IntervalCapturingHost extends FakeObsidianHost {
+  readonly intervals: { callback: () => void; ms: number }[] = [];
+
+  override registerInterval(callback: () => void, ms: number) {
+    this.intervals.push({ callback, ms });
+    return super.registerInterval(callback, ms);
+  }
+}
+
+describe("the relative-time clock (T-03-07)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("registers one 60-second interval through the seam that advances nowTick", () => {
+    const host = new IntervalCapturingHost();
+    const registry = createHostRegistry(host);
+
+    startClock(registry);
+
+    expect(host.intervals.map((i) => i.ms)).toEqual([60_000]);
+    expect(host.liveCounts().interval).toBe(1);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-25T12:34:00Z"));
+    host.intervals[0]?.callback();
+    expect(nowTick.value).toBe(Date.parse("2026-09-25T12:34:00Z"));
+
+    registry.disposeAll();
+    expect(host.liveCounts().interval).toBe(0);
   });
 });

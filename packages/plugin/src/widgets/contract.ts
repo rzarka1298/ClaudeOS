@@ -1,5 +1,6 @@
 import type { Freshness, Partiality, SizeHint } from "@ccc/domain";
 import type { ComponentType } from "preact";
+import type { DestinationId } from "../view/destinations.js";
 
 /**
  * The widget contract (UI-04, UI-06, ADR-0002).
@@ -89,6 +90,26 @@ export type WidgetState<T> =
     };
 
 /**
+ * What a widget BODY is rendered with.
+ *
+ * `size` is the size the LAYOUT placed the card at — not the definition's
+ * preference — so a body that caps its own content (every `ListBody`) caps it
+ * at the footprint the card actually has. A body that hardcoded its size would
+ * clip rows, and the more-control with them, whenever the layout chose
+ * differently (wave-5 review MAJOR 2).
+ *
+ * `onNavigate` is the one channel a body has out of its card: it selects and
+ * focuses a shell destination, which is how `+{n} more` reaches the page that
+ * owns the full list (MAJOR 1). It navigates and does nothing else; anything
+ * consequential is a quick-action DESCRIPTOR, never a body callback (C-11).
+ */
+export interface WidgetBodyProps<T> {
+  readonly data: T;
+  readonly size: SizeHint;
+  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+}
+
+/**
  * A registered widget.
  *
  * `renderBody` renders the BODY ONLY (Pattern 4). The shared `WidgetFrame`
@@ -107,6 +128,6 @@ export interface WidgetDefinition<T> {
   readonly preferredSize: SizeHint;
   readonly featureFlag: string;
   readonly quickActions: readonly QuickActionDescriptor[];
-  readonly renderBody: ComponentType<{ readonly data: T }>;
+  readonly renderBody: ComponentType<WidgetBodyProps<T>>;
   readonly renderEmpty: ComponentType<Record<string, never>>;
 }
