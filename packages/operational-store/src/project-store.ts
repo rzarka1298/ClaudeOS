@@ -1,4 +1,4 @@
-import { newProjectId, type ProjectId } from "@ccc/domain";
+import { newProjectId, type ProjectId, type ScanRootId } from "@ccc/domain";
 import type Database from "better-sqlite3";
 
 /**
@@ -150,4 +150,114 @@ export function insertProject(db: Database.Database, input: NewProject): InsertP
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// RED skeleton (plan 04-01 Task 2): typed exports only, so the failing tests
+// fail on their assertions rather than on a missing export.
+
+export class ProjectStoreValidationError extends Error {
+  readonly field: string;
+  constructor(field: string) {
+    super(`invalid ${field}`);
+    this.name = "ProjectStoreValidationError";
+    this.field = field;
+  }
+}
+
+function pendingTask2(name: string): never {
+  throw new Error(
+    `${name} is not implemented yet (packages/operational-store/src/project-store.ts)`,
+  );
+}
+
+export function setProjectPinned(
+  _db: Database.Database,
+  _id: ProjectId,
+  _pinned: boolean,
+): boolean {
+  return pendingTask2("setProjectPinned");
+}
+export function renameProject(_db: Database.Database, _id: ProjectId, _name: string): boolean {
+  return pendingTask2("renameProject");
+}
+export function setGithubUrlOverride(
+  _db: Database.Database,
+  _id: ProjectId,
+  _url: string | null,
+): boolean {
+  return pendingTask2("setGithubUrlOverride");
+}
+export function touchLastOpened(_db: Database.Database, _id: ProjectId, _at?: string): boolean {
+  return pendingTask2("touchLastOpened");
+}
+export function removeProject(_db: Database.Database, _id: ProjectId): boolean {
+  return pendingTask2("removeProject");
+}
+
+export interface ScanRootRecord {
+  readonly scanRootId: ScanRootId;
+  readonly path: string;
+  readonly depth: number;
+  readonly addedAt: string;
+  readonly lastScannedAt: string | null;
+}
+export interface NewScanRoot {
+  readonly path: string;
+  readonly depth: number;
+  readonly addedAt?: string;
+}
+export interface InsertScanRootResult {
+  readonly created: boolean;
+  readonly record: ScanRootRecord;
+}
+export function insertScanRoot(_db: Database.Database, _input: NewScanRoot): InsertScanRootResult {
+  return pendingTask2("insertScanRoot");
+}
+export function findScanRootByPath(_db: Database.Database, _path: string): ScanRootRecord | null {
+  return pendingTask2("findScanRootByPath");
+}
+export function getScanRoot(_db: Database.Database, _id: ScanRootId): ScanRootRecord | null {
+  return pendingTask2("getScanRoot");
+}
+export function listScanRoots(_db: Database.Database): ScanRootRecord[] {
+  return pendingTask2("listScanRoots");
+}
+export function setScanRootDepth(_db: Database.Database, _id: ScanRootId, _depth: number): boolean {
+  return pendingTask2("setScanRootDepth");
+}
+export function touchScanned(_db: Database.Database, _id: ScanRootId, _at?: string): boolean {
+  return pendingTask2("touchScanned");
+}
+export function removeScanRoot(_db: Database.Database, _id: ScanRootId): boolean {
+  return pendingTask2("removeScanRoot");
+}
+
+export const STORED_LAUNCHER_IDS = ["antigravity", "claude-code", "claude-desktop"] as const;
+export type StoredLauncherId = (typeof STORED_LAUNCHER_IDS)[number];
+export interface LauncherConfigRecord {
+  readonly launcherId: StoredLauncherId;
+  readonly config: unknown;
+  readonly tested: boolean;
+  readonly updatedAt: string;
+}
+export function saveLauncherConfig(
+  _db: Database.Database,
+  _launcherId: string,
+  _config: unknown,
+  _updatedAt?: string,
+): LauncherConfigRecord {
+  return pendingTask2("saveLauncherConfig");
+}
+export function getLauncherConfig(
+  _db: Database.Database,
+  _launcherId: string,
+): LauncherConfigRecord | null {
+  return pendingTask2("getLauncherConfig");
+}
+export function listLauncherConfigs(_db: Database.Database): LauncherConfigRecord[] {
+  return pendingTask2("listLauncherConfigs");
+}
+export function markLauncherTested(_db: Database.Database, _launcherId: string): boolean {
+  return pendingTask2("markLauncherTested");
 }
