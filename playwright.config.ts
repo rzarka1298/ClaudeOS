@@ -24,11 +24,15 @@ import { defineConfig, devices } from "@playwright/test";
  *   - `updateSnapshots` is `"none"` EVERYWHERE, so a missing baseline FAILS
  *     rather than being silently written — on CI, on a Mac, and on a plain
  *     comparison run inside the container alike;
- *   - `--update-snapshots` is refused at config load unless this process is
- *     inside the pinned `mcr.microsoft.com/playwright:v1.63.0-noble` image as
- *     launched by `scripts/ci/visual-in-container.sh` (see
- *     `IN_PINNED_CONTAINER`), so neither a Mac nor a Linux host with its own
- *     fonts can write a baseline;
+ *   - `--update-snapshots` is refused at config load unless the process
+ *     looks like the pinned `mcr.microsoft.com/playwright:v1.63.0-noble` image
+ *     as launched by `scripts/ci/visual-in-container.sh` (see
+ *     `IN_PINNED_CONTAINER`). This prevents ACCIDENTAL baseline writes outside
+ *     the container — a plain `-u` on a Mac, or on a Linux host that has not
+ *     been set up to look like the image. It is a guard against mistakes, not a
+ *     security boundary: a Linux host that deliberately sets the same
+ *     environment can still write one, which is why review of every baseline
+ *     commit and `ci:images` remain layers of their own;
  *   - `.gitignore` admits only `*-chromium-linux.png` into the snapshot
  *     directory, and `scripts/check-images.sh` (`ci:images`) fails on any
  *     other tracked image.
@@ -53,11 +57,13 @@ const HARNESS_FONTS = fileURLToPath(
 );
 
 /**
- * True only inside the pinned Playwright image as `visual-in-container.sh`
- * launches it: a Linux process, with the marker that script passes to
- * `docker run`, and with the browser path the official image bakes in. The
- * marker alone is not trusted — a Linux laptop that exported it by accident
- * would still render with its own fonts.
+ * True when the process looks like the pinned Playwright image as
+ * `visual-in-container.sh` launches it: a Linux process, with the marker that
+ * script passes to `docker run`, and with the browser path the official image
+ * bakes in. Requiring all three means a Linux laptop that exported the marker
+ * by accident is still refused. Every signal here is environment the caller
+ * controls, so this prevents accidental writes; it cannot stop a host that
+ * sets all three on purpose.
  */
 const IN_PINNED_CONTAINER =
   process.platform === "linux" &&
