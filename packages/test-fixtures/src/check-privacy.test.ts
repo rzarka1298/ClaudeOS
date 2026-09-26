@@ -12,7 +12,7 @@ import { type GateRepo, gateRepo } from "./gate-repo.js";
 const SCRIPT = "scripts/check-privacy.sh";
 
 // Assembled at runtime so this file is not itself a privacy-gate hit.
-const HOME_PATH = `/Users/${"realperson"}/notes`;
+const HOME_PATH = ["", "Users", "realperson", "notes"].join("/");
 
 const repos: GateRepo[] = [];
 afterEach(() => {
