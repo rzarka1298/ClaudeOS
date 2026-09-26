@@ -454,7 +454,7 @@ describe("the wide collapse never spans more columns than the grid has (UI-SPEC 
   }
 
   it("keeps a wide card's span within the grid's columns at every width", () => {
-    render(h(Shell, {}));
+    render(h(Shell, null));
     const grid = document.querySelector(".ccc-overview-grid");
     const wide = grid?.querySelector(':scope > .ccc-card[data-size="wide"]');
     if (!grid || !wide) throw new Error("the default Overview renders no wide card");
