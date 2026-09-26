@@ -43,7 +43,8 @@ VIOLATIONS=0
 # like `git ls-files` output. A tracked filename containing a NEWLINE is
 # refused outright rather than half-scanned.
 FILELIST=$(mktemp "${TMPDIR:-/tmp}/ccc-privacy-files.XXXXXX")
-trap 'rm -f "$FILELIST" "${DENYLIST_CLEAN:-}"' EXIT
+SCANBUF=$(mktemp "${TMPDIR:-/tmp}/ccc-privacy-buf.XXXXXX")
+trap 'rm -f "$FILELIST" "$SCANBUF" "${DENYLIST_CLEAN:-}"' EXIT
 NUL_COUNT=$(git ls-files -z | tr -cd '\0' | wc -c | tr -d ' ')
 NL_COUNT=$(git ls-files | wc -l | tr -d ' ')
 if [ "$NUL_COUNT" != "$NL_COUNT" ]; then
@@ -66,7 +67,16 @@ scan_file() {
   # compressed and stays unreadable -- research Pitfall 8, check-images.sh).
   # Text files contain no NUL, so their line numbers are unchanged, and Rules
   # 1 and 2 use ASCII-only patterns, so they match text exactly as before.
-  LC_ALL=C tr '\000' '\n' < "$f" | LC_ALL=C awk -v fname="$f" -v check_email="$check_email" '
+  #
+  # A READ failure is a gate failure (judge-r1 finding 5). This used to be one
+  # `tr < file | awk` pipeline, whose status is awk's: an unreadable file fed
+  # awk nothing and counted as clean. POSIX sh has no portable pipefail, so the
+  # two stages are split through a buffer file and each status is checked; a
+  # non-zero return from here makes the caller count the file as a failure.
+  if ! LC_ALL=C tr '\000' '\n' < "$f" > "$SCANBUF"; then
+    return 2
+  fi
+  LC_ALL=C awk -v fname="$f" -v check_email="$check_email" '
     {
       line = $0
       violated = 0
@@ -104,7 +114,7 @@ scan_file() {
         print fname ":" NR ":" line
       }
     }
-  '
+  ' "$SCANBUF"
 }
 
 FILE_COUNT=0
@@ -115,7 +125,13 @@ while IFS= read -r f; do
     .planning/phases/*/*.md) check_email=0 ;;
     *) check_email=1 ;;
   esac
-  hits=$(scan_file "$f" "$check_email" || true)
+  # No `|| true`: a file that could not be read (or an awk that failed on
+  # it) is a violation in its own right, never a silent clean result.
+  if ! hits=$(scan_file "$f" "$check_email"); then
+    echo "READ FAILURE: could not read $f; an unscanned file cannot pass the gate." >&2
+    VIOLATIONS=$((VIOLATIONS + 1))
+    continue
+  fi
   if [ -n "$hits" ]; then
     echo "$hits"
     VIOLATIONS=$((VIOLATIONS + 1))
@@ -132,7 +148,16 @@ if [ -f .privacy-denylist.local ]; then
   if [ -s "$DENYLIST_CLEAN" ]; then
     while IFS= read -r f; do
       [ -f "$f" ] || continue
-      hits=$(grep -nF -f "$DENYLIST_CLEAN" -- "$f" 2>/dev/null | sed "s|^|$f:|" || true)
+      # grep exits 0 on a match, 1 on none and 2 on an error (an unreadable
+      # file among them); only the first two are results.
+      grep_status=0
+      raw=$(grep -nF -f "$DENYLIST_CLEAN" -- "$f") || grep_status=$?
+      if [ "$grep_status" -gt 1 ]; then
+        echo "READ FAILURE: could not read $f for the denylist pass; an unscanned file cannot pass the gate." >&2
+        VIOLATIONS=$((VIOLATIONS + 1))
+        continue
+      fi
+      hits=$(printf '%s' "$raw" | sed "s|^|$f:|")
       if [ -n "$hits" ]; then
         echo "$hits"
         VIOLATIONS=$((VIOLATIONS + 1))
