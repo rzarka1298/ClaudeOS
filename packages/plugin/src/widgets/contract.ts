@@ -33,7 +33,7 @@ export type { SizeHint } from "@ccc/domain";
  * data *is* the connection; see `service-health.tsx`).
  *
  * `sourceLabel` is a DISPLAY NAME shown in the Source panel, never a path.
- * A label containing a path separator would put `/Users/<name>/…` into every
+ * A label containing a path separator would put `/Users/USERNAME/…` into every
  * committed baseline screenshot (PRIV-04); plan 03-06's registry table test
  * asserts the absence.
  */
