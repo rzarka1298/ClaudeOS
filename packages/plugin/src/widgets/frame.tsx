@@ -3,7 +3,12 @@ import type { ComponentChildren, VNode } from "preact";
 import { useId } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import type { DestinationId } from "../view/destinations.js";
-import type { QuickActionDescriptor, WidgetDefinition, WidgetState } from "./contract.js";
+import type {
+  DataDependencyKey,
+  QuickActionDescriptor,
+  WidgetDefinition,
+  WidgetState,
+} from "./contract.js";
 import { WidgetFooter } from "./footer.js";
 import type { CardPresentation, FooterModel } from "./presentation.js";
 import { resolveCardPresentation } from "./presentation.js";
@@ -20,9 +25,22 @@ import { formatRelativeTime } from "./relative-time.js";
  * command center's visuals inside its own root (UI-SPEC Non-Negotiables 1–3).
  */
 
+/**
+ * The state a frame may be handed for a definition whose payload is `T`.
+ *
+ * A TYPED definition takes only a state of its own payload, so a wrong-shaped
+ * ready payload does not compile. An ERASED definition (`T = never`: a
+ * registry entry reached by a dynamic id, as the Overview grid does) takes its
+ * widget's state as the state signal actually holds it — `unknown` until the
+ * owning phase (4–7) feeds a typed, validated signal. That is the one
+ * unchecked step between a source and a body, and it is named here rather
+ * than hidden in an `any` on the registry.
+ */
+export type FrameState<T> = [T] extends [never] ? WidgetState<unknown> : WidgetState<T>;
+
 export interface WidgetFrameProps<T> {
   readonly definition: WidgetDefinition<T>;
-  readonly state: WidgetState<T>;
+  readonly state: FrameState<T>;
   readonly connection: ConnectionState;
   readonly size?: SizeHint;
   readonly now: number;
@@ -53,24 +71,28 @@ function midSentenceTitle(title: string): string {
 }
 
 /** The footer a card shows before its first observation has arrived. */
-function pendingFooter(definition: WidgetDefinition<unknown>): FooterModel {
+function pendingFooter(dataKeys: readonly DataDependencyKey[]): FooterModel {
   return {
     observedAt: null,
     freshness: null,
     partiality: null,
-    sources: definition.dataKeys.map((key) => ({ label: key.sourceLabel, status: "ok" as const })),
+    sources: dataKeys.map((key) => ({ label: key.sourceLabel, status: "ok" as const })),
   };
 }
 
 export function WidgetFrame<T>({
   definition,
-  state,
+  state: handed,
   connection,
   size,
   now,
   onQuickAction,
   onNavigate,
 }: WidgetFrameProps<T>): VNode {
+  // `FrameState<T>` IS `WidgetState<T>` for a typed definition. For an erased
+  // one it is the signal's unvalidated state, which the body has always
+  // received at runtime; this names that step instead of typing it away.
+  const state = handed as WidgetState<T>;
   const presentation: CardPresentation = resolveCardPresentation(
     state,
     connection,
@@ -183,9 +205,9 @@ export function WidgetFrame<T>({
 
   const footerModel: FooterModel =
     presentation.kind === "loading"
-      ? pendingFooter(definition as WidgetDefinition<unknown>)
+      ? pendingFooter(definition.dataKeys)
       : presentation.kind === "disconnected"
-        ? (presentation.lastGood ?? pendingFooter(definition as WidgetDefinition<unknown>))
+        ? (presentation.lastGood ?? pendingFooter(definition.dataKeys))
         : presentation.footer;
 
   const showsActions =
