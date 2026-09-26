@@ -465,10 +465,23 @@ function assertStoredLauncherId(value: string): asserts value is StoredLauncherI
   }
 }
 
-function rowToLauncherConfigRecord(row: LauncherConfigRow): LauncherConfigRecord {
+/**
+ * `null` when the row cannot be read: an unknown launcher id or a
+ * `config_json` that is not JSON. Such a row reads as "not configured" for
+ * that launcher only, so one damaged row never breaks every launcher;
+ * saving the launcher again replaces it.
+ */
+function rowToLauncherConfigRecord(row: LauncherConfigRow): LauncherConfigRecord | null {
+  if (!(STORED_LAUNCHER_IDS as readonly string[]).includes(row.launcher_id)) return null;
+  let config: unknown;
+  try {
+    config = JSON.parse(row.config_json) as unknown;
+  } catch {
+    return null;
+  }
   return {
     launcherId: row.launcher_id as StoredLauncherId,
-    config: JSON.parse(row.config_json) as unknown,
+    config,
     tested: row.tested === "true",
     updatedAt: row.updated_at,
   };
@@ -501,7 +514,7 @@ export function saveLauncherConfig(
   return { launcherId, config: JSON.parse(configJson) as unknown, tested: false, updatedAt };
 }
 
-/** A launcher's saved configuration, or `null` when it has never been set up. */
+/** A launcher's saved configuration, or `null` when it has never been set up or its row is unreadable. */
 export function getLauncherConfig(
   db: Database.Database,
   launcherId: string,
@@ -515,21 +528,26 @@ export function getLauncherConfig(
   return row ? rowToLauncherConfigRecord(row) : null;
 }
 
-/** Every saved launcher configuration. */
+/** Every readable saved launcher configuration; unreadable rows are skipped. */
 export function listLauncherConfigs(db: Database.Database): LauncherConfigRecord[] {
   const rows = db
     .prepare(
       "SELECT launcher_id, config_json, tested, updated_at FROM launcher_config ORDER BY launcher_id",
     )
     .all() as LauncherConfigRow[];
-  return rows.map(rowToLauncherConfigRecord);
+  return rows.flatMap((row) => {
+    const record = rowToLauncherConfigRecord(row);
+    return record === null ? [] : [record];
+  });
 }
 
-/** Marks a saved configuration as tested (RR-14). Returns `false` when nothing is saved for it. */
+/** Marks a saved configuration as tested (RR-14). Returns `false` when nothing readable is saved for it. */
 export function markLauncherTested(db: Database.Database, launcherId: string): boolean {
   assertStoredLauncherId(launcherId);
   const result = db
-    .prepare("UPDATE launcher_config SET tested = 'true' WHERE launcher_id = @launcherId")
+    .prepare(
+      "UPDATE launcher_config SET tested = 'true' WHERE launcher_id = @launcherId AND json_valid(config_json)",
+    )
     .run({ launcherId });
   return result.changes > 0;
 }
