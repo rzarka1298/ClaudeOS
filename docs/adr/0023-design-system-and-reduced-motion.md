@@ -251,7 +251,10 @@ instead of overflowing. `grid-auto-flow: dense` stops a `wide` card stranding a
 hole. `tall` keeps its two-row span at every width — vertical space scrolls,
 horizontal space does not. The container query is a container query, not a
 viewport media query, because the same view can be any width at any viewport
-size.
+size. The size container for the grid collapse is the grid itself
+(`.ccc-overview-grid`), not `.ccc-command-center`: the root is wider than the
+grid by content padding and any scrollbar, and measuring it let a `wide` card
+span two columns in a one-column grid (amended 2026-09-26, phase-3 fix-up).
 
 **Direction `c`'s shell chrome, above the grid.** A `--ccc-rail-width` rail sits
 left of the canvas and carries service health, Today and Quick actions; below
