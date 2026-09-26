@@ -219,7 +219,7 @@ export function parseLayoutOverride(text: string): LayoutParseResult {
 }
 
 function recordLayoutProblem(
-  code: "override-invalid" | "override-unreadable",
+  code: "override-invalid" | "override-unreadable" | "override-apply-failed",
   message: string,
 ): void {
   recordDiagnostic({ source: "layout", code, message, at: new Date().toISOString() });
@@ -260,6 +260,24 @@ export function startLayoutPolling({
   let statFailing = false;
   let readFailing = false;
 
+  /**
+   * Hands a resolution to `apply`, which must never take the tick down with
+   * it: a throw is recorded -- without its message, which is not ours to
+   * vouch for (T-03-15) -- and the previous layout keeps rendering. The stat
+   * that led here stays remembered, so a deterministic throw is recorded once
+   * rather than every second.
+   */
+  function applySafely(next: LayoutOverride | undefined): void {
+    try {
+      apply(next);
+    } catch {
+      recordLayoutProblem(
+        "override-apply-failed",
+        `${LAYOUT_FILENAME} could not be applied; the current layout stays.`,
+      );
+    }
+  }
+
   async function poll(): Promise<void> {
     let stat: LayoutFileStat | null;
     try {
@@ -280,7 +298,7 @@ export function startLayoutPolling({
     if (stat === null) {
       if (seen !== "absent") {
         seen = "absent";
-        apply(undefined);
+        applySafely(undefined);
       }
       return;
     }
@@ -317,7 +335,7 @@ export function startLayoutPolling({
 
     const result = parseLayoutOverride(text);
     if (result.ok) {
-      apply(result.override);
+      applySafely(result.override);
     } else {
       recordLayoutProblem(
         "override-invalid",
@@ -331,6 +349,14 @@ export function startLayoutPolling({
     inFlight = true;
     try {
       await poll();
+    } catch {
+      // Backstop for the "always resolves" contract: poll catches each
+      // failure it knows about, and anything else is recorded, not thrown
+      // into a `void tick()` that has nowhere to send it.
+      recordLayoutProblem(
+        "override-unreadable",
+        `${LAYOUT_FILENAME} could not be checked; the current layout stays.`,
+      );
     } finally {
       inFlight = false;
     }

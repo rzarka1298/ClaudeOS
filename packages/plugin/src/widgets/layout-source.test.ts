@@ -556,3 +556,75 @@ describe("a transient read failure is retried, a bad file is not", () => {
     expect(diagnostics.value.map((d) => d.code)).toEqual(["override-invalid"]);
   });
 });
+
+describe("a throwing apply never escapes the tick", () => {
+  const APPLY_SECRET = "APPLY-FAILURE-PRIVATE-DETAIL";
+
+  function startThrowing(source: LayoutFileSource): {
+    poller: LayoutPoller;
+    calls: () => number;
+    dispose: () => void;
+  } {
+    const registry = createHostRegistry(new FakeObsidianHost());
+    let count = 0;
+    const poller = startLayoutPolling({
+      registry,
+      source,
+      apply: () => {
+        count++;
+        throw new Error(APPLY_SECRET);
+      },
+    });
+    return { poller, calls: () => count, dispose: () => registry.disposeAll() };
+  }
+
+  it("resolves the tick and records a diagnostic when applying a valid file throws", async () => {
+    const adapter = new FakeDataAdapter();
+    adapter.setFile(layoutJson("today"), 1000);
+    const { poller, calls } = startThrowing(
+      createAdapterLayoutSource({ configDir: CONFIG_DIR, adapter }, PLUGIN_ID),
+    );
+    await settle();
+
+    await expect(poller.tick()).resolves.toBeUndefined();
+
+    expect(calls()).toBe(1);
+    expect(diagnostics.value.map((d) => [d.source, d.code])).toEqual([
+      ["layout", "override-apply-failed"],
+    ]);
+    expect(JSON.stringify(diagnostics.value)).not.toContain(APPLY_SECRET);
+  });
+
+  it("resolves the tick and records a diagnostic when applying the default throws", async () => {
+    const { poller, calls } = startThrowing({
+      stat: () => Promise.resolve(null),
+      read: () => Promise.reject(new Error("unreachable")),
+    });
+    await settle();
+
+    await expect(poller.tick()).resolves.toBeUndefined();
+
+    expect(calls()).toBe(1);
+    expect(diagnostics.value.map((d) => d.code)).toEqual(["override-apply-failed"]);
+  });
+
+  it("an interval-driven tick with a throwing apply produces no unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    const adapter = new FakeDataAdapter();
+    adapter.setFile(layoutJson("today"), 1000);
+    const { dispose } = startThrowing(
+      createAdapterLayoutSource({ configDir: CONFIG_DIR, adapter }, PLUGIN_ID),
+    );
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      dispose();
+    }
+    expect(unhandled).toEqual([]);
+  });
+});
