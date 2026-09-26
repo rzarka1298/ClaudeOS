@@ -35,6 +35,14 @@ void freshnessIsExhaustive;
 
 export const FreshnessSchema = z.enum(FRESHNESS_VALUES);
 
+/**
+ * The freshness an `available` usage value may carry: anything but
+ * `unavailable`. An unavailable value is its own variant with a reason
+ * (D-38), so an `available` one claiming `unavailable` would say both at
+ * once — the contradiction ADR-0002 closed.
+ */
+const AvailableFreshnessSchema = FreshnessSchema.exclude(["unavailable"]);
+
 /** Runtime mirror of {@link Partiality}; orthogonal to freshness. */
 export const PartialitySchema = z.strictObject({
   partial: z.boolean(),
@@ -104,7 +112,7 @@ export const PlanCapacitySchema = z.discriminatedUnion("kind", [
       }),
     observedAt: IsoDateTimeSchema,
     source: z.literal("claude-code-status-line"),
-    freshness: FreshnessSchema,
+    freshness: AvailableFreshnessSchema,
     partiality: PartialitySchema,
   }),
   z.strictObject({
@@ -158,7 +166,7 @@ export const TokenActivitySchema = z.discriminatedUnion("kind", [
     ),
     observedAt: IsoDateTimeSchema,
     source: z.literal("local-transcript-analysis"),
-    freshness: FreshnessSchema,
+    freshness: AvailableFreshnessSchema,
     partiality: PartialitySchema,
     coverage: CoverageSchema,
   }),
@@ -195,7 +203,7 @@ export const EstimatedApiCostSchema = z.discriminatedUnion("kind", [
       excludedModelCount: CountSchema,
       observedAt: IsoDateTimeSchema,
       source: z.literal("claude-code-estimates-and-list-prices"),
-      freshness: FreshnessSchema,
+      freshness: AvailableFreshnessSchema,
       partiality: PartialitySchema,
     })
     .refine((cost) => cost.basis === "claude-code-estimates" || cost.priceTableDate !== null, {

@@ -215,6 +215,26 @@ describe("EstimatedApiCostSchema (Test 4, D-42)", () => {
   });
 });
 
+describe("available usage values are never freshness unavailable (ADR-0002)", () => {
+  it.each([
+    ["PlanCapacitySchema", PlanCapacitySchema, () => availableCapacity([FIVE_HOUR])],
+    ["TokenActivitySchema", TokenActivitySchema, () => availableActivity()],
+    ["EstimatedApiCostSchema", EstimatedApiCostSchema, () => availableCost()],
+  ] as const)(
+    "%s rejects an available value whose freshness is unavailable",
+    (_, schema, build) => {
+      for (const freshness of ["live", "cached", "stale"]) {
+        expect(schema.safeParse({ ...build(), freshness }).success).toBe(true);
+      }
+      const result = schema.safeParse({ ...build(), freshness: "unavailable" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.map((issue) => issue.path.join("."))).toContain("freshness");
+      }
+    },
+  );
+});
+
 describe("UsageSummarySchema (Test 5, PR-23)", () => {
   function summary() {
     return {
