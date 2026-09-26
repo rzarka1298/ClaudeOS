@@ -150,6 +150,12 @@ const execFileAsync = promisify(execFile);
 let root = "";
 let stubPath = "";
 let fallbackDir = "";
+/**
+ * The directory each script is started in. Lines that run before the
+ * script's own `cd` (the exports) execute here, so a canary created by a
+ * broken export lands inside the temp root instead of the test runner's cwd.
+ */
+let originDir = "";
 let caseCounter = 0;
 let executedCases = 0;
 
@@ -226,6 +232,7 @@ async function runProof(
   let exitError: string | null = null;
   try {
     await execFileAsync(scriptPath, [], {
+      cwd: originDir,
       env: { PATH: "/usr/bin:/bin", SHELL: "/usr/bin/true" },
       timeout: 10_000,
     });
@@ -247,7 +254,7 @@ async function runProof(
     cwd: rawCwd?.endsWith("\n") ? rawCwd.slice(0, -1) : rawCwd,
     expectedCwd: realpathSync.native(cwd),
     scriptStillExists: existsSync(scriptPath),
-    canaries: [...findCanaries(caseRoot), ...findCanaries(fallbackDir)],
+    canaries: [...findCanaries(caseRoot), ...findCanaries(fallbackDir), ...findCanaries(originDir)],
   };
 }
 
@@ -274,6 +281,8 @@ beforeAll(() => {
   fallbackDir = join(root, "plain dir 'q'");
   mkdirSync(fallbackDir);
   mkdirSync(join(root, "pool"));
+  originDir = join(root, "origin");
+  mkdirSync(originDir);
 });
 
 afterAll(() => {
@@ -337,6 +346,7 @@ describe("launch script injection proof (D-17, PROJ-13)", () => {
     let stdout = "";
     try {
       await execFileAsync(scriptPath, [], {
+        cwd: originDir,
         env: { PATH: "/usr/bin:/bin", SHELL: "/usr/bin/true" },
       });
     } catch (err: unknown) {
@@ -348,6 +358,7 @@ describe("launch script injection proof (D-17, PROJ-13)", () => {
     expect(existsSync(argsFile)).toBe(false);
     expect(existsSync(scriptPath)).toBe(false);
     expect(findCanaries(caseRoot)).toEqual([]);
+    expect(findCanaries(originDir)).toEqual([]);
   });
 
   it("refuses NUL, CR and LF before any script exists", () => {
