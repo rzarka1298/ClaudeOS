@@ -470,6 +470,171 @@ describe("quick-action buttons in the frame (UI-04, A11Y-01)", () => {
   });
 });
 
+/**
+ * The hero variant (UI-SPEC S1 "Contract field", D-50): a definition that
+ * declares `variant: { kind: "hero", metric }` gets a frame-owned cream head
+ * — one Display-step numeral, a hidden screen-reader label, a sub-caption and
+ * a decorative meter — rendered between the header and the body. Nothing
+ * about a non-hero widget changes (Test 4 below, and every case in "the eight
+ * presentations" above).
+ */
+describe("hero variant (D-50, UI-SPEC S1)", () => {
+  interface HeroFixtureData {
+    readonly value: number;
+  }
+
+  const HERO_WIDGET: WidgetDefinition<HeroFixtureData> = {
+    id: "hero-fixture",
+    title: "Test hero panel",
+    dataKeys: [{ key: "hero.fixture", transport: "local", sourceLabel: "Fixture" }],
+    refresh: { kind: "manual" },
+    minSize: "tall",
+    preferredSize: "tall",
+    featureFlag: "widget.hero-fixture",
+    quickActions: [],
+    variant: {
+      kind: "hero",
+      metric: (data) => ({
+        value: data.value,
+        caption:
+          data.value === 3
+            ? "1 waiting for approval · 1 unknown"
+            : "0 waiting for approval · 0 unknown",
+        share: data.value === 3 ? { value: 1, max: 3 } : null,
+        srLabel: `${data.value} active sessions, running or waiting for approval`,
+      }),
+    },
+    renderBody: () => <p className="ccc-hero-fixture-body">rows</p>,
+    renderEmpty: () => null,
+  };
+
+  const HERO_READY: WidgetState<HeroFixtureData> = {
+    kind: "ready",
+    data: { value: 3 },
+    observedAt: EVENT_AT,
+    freshness: "live",
+    partiality: { partial: false },
+    isEmpty: false,
+  };
+
+  function renderHero(
+    state: WidgetState<HeroFixtureData>,
+    connection: ConnectionState = { kind: "live" },
+  ) {
+    return render(
+      <WidgetFrame
+        definition={HERO_WIDGET}
+        state={state}
+        connection={connection}
+        size="tall"
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+  }
+
+  it("Test 1: renders the numeral, its hidden label, the caption and a backed meter", () => {
+    const { container } = renderHero(HERO_READY);
+    const card = container.querySelector("section.ccc-card");
+    expect(card?.getAttribute("data-variant")).toBe("hero");
+    expect(card?.getAttribute("data-surface")).toBe("cream");
+
+    const numeral = container.querySelector(".ccc-hero-head .ccc-kpi-number");
+    expect(numeral?.textContent).toBe("3");
+    expect(numeral?.nextElementSibling?.classList.contains("ccc-visually-hidden")).toBe(true);
+    expect(numeral?.nextElementSibling?.textContent).toBe(
+      "3 active sessions, running or waiting for approval",
+    );
+    expect(screen.getByText("1 waiting for approval · 1 unknown")).toBeTruthy();
+
+    const meter = container.querySelector(".ccc-hero-head meter.ccc-hero-meter");
+    expect(meter?.getAttribute("min")).toBe("0");
+    expect(meter?.getAttribute("max")).toBe("3");
+    expect(meter?.getAttribute("value")).toBe("1");
+    expect(meter?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("Test 2: renders no meter at all when share is null", () => {
+    const { container } = renderHero({ ...HERO_READY, data: { value: 0 } });
+    expect(screen.getByText("0 waiting for approval · 0 unknown")).toBeTruthy();
+    expect(container.querySelector(".ccc-hero-meter")).toBeNull();
+  });
+
+  it.each([
+    ["loading", { kind: "loading" } as WidgetState<HeroFixtureData>, { kind: "live" } as const, "cream"],
+    ["ready", HERO_READY, { kind: "live" } as const, "cream"],
+    ["empty", { ...HERO_READY, isEmpty: true }, { kind: "live" } as const, "cream"],
+    ["stale", { ...HERO_READY, freshness: "stale" }, { kind: "live" } as const, "cream"],
+    [
+      "disconnected",
+      HERO_READY,
+      { kind: "disconnected", reason: "connect ECONNREFUSED" } as const,
+      "glass",
+    ],
+    ["error", { kind: "error", message: "boom" }, { kind: "live" } as const, "glass"],
+    [
+      "permission-required",
+      { kind: "permission-required", capability: "claude-hooks", sourceLabel: "Claude Code hooks" },
+      { kind: "live" } as const,
+      "glass",
+    ],
+    ["unavailable", { kind: "unavailable" }, { kind: "live" } as const, "glass"],
+  ] as const)(
+    "Test 3: the %s presentation resolves to the %s surface",
+    (_name, state, connection, surface) => {
+      const { container } = renderHero(state, connection);
+      expect(container.querySelector("section.ccc-card")?.getAttribute("data-surface")).toBe(
+        surface,
+      );
+    },
+  );
+
+  it("Test 3: loading renders exactly three skeleton lines inside the hero head, with the panel's hidden loading text", () => {
+    const { container } = renderHero({ kind: "loading" });
+    const head = container.querySelector(".ccc-hero-head");
+    expect(head?.querySelectorAll(".ccc-skeleton-line")).toHaveLength(3);
+    expect(head?.querySelector(".ccc-visually-hidden")?.textContent).toBe(
+      "Loading Test hero panel",
+    );
+    // Not duplicated: the generic body loading branch does not also render a skeleton.
+    expect(container.querySelectorAll(".ccc-skeleton-line")).toHaveLength(3);
+  });
+
+  it("Test 4: a definition without a variant renders no data-variant or data-surface attribute", () => {
+    const { container } = render(
+      <WidgetFrame
+        definition={
+          {
+            id: "no-variant-fixture",
+            title: "No variant fixture",
+            dataKeys: [{ key: "test.key", transport: "local", sourceLabel: "Test source" }],
+            refresh: { kind: "manual" },
+            minSize: "small",
+            preferredSize: "small",
+            featureFlag: "widget.no-variant-fixture",
+            quickActions: [],
+            renderBody: () => null,
+            renderEmpty: () => null,
+          } satisfies WidgetDefinition<null>
+        }
+        state={{
+          kind: "ready",
+          data: null,
+          observedAt: EVENT_AT,
+          freshness: "live",
+          partiality: { partial: false },
+          isEmpty: false,
+        }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    const card = container.querySelector("section.ccc-card");
+    expect(card?.hasAttribute("data-variant")).toBe(false);
+    expect(card?.hasAttribute("data-surface")).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // `{panel}` mid-sentence keeps proper nouns (UI-SPEC Copywriting Contract:
 // sentence case, "Proper nouns keep their capitals"). Wave-6 finding:

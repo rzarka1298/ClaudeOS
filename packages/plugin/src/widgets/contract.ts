@@ -50,6 +50,23 @@ export type RefreshPolicy =
   | { readonly kind: "manual" };
 
 /**
+ * The metric a `variant: { kind: "hero" }` widget's frame-owned head renders
+ * (UI-SPEC S1 "Contract field", D-50).
+ *
+ * `value` is the numeral (Display step); `caption` is the sub-caption text
+ * beneath it; `share` drives the decorative progress line and is `null` when
+ * there is nothing to show a ratio of (the meter is omitted, never shown at
+ * zero); `srLabel` is the screen-reader text that follows the numeral, so an
+ * assistive-technology user hears the same number the sighted numeral shows.
+ */
+export interface HeroMetric {
+  readonly value: number;
+  readonly caption: string;
+  readonly share: { readonly value: number; readonly max: number } | null;
+  readonly srLabel: string;
+}
+
+/**
  * A quick action is DATA, never a callback (C-11, APPR-01, PATTERNS Pitfall 6).
  *
  * `WidgetFrame` emits the descriptor to a single handler prop and executes
@@ -140,4 +157,17 @@ export interface WidgetDefinition<T> {
   readonly quickActions: readonly QuickActionDescriptor[];
   readonly renderBody: (props: WidgetBodyProps<T>) => VNode | null;
   readonly renderEmpty: (props: Record<string, never>) => VNode | null;
+  /**
+   * Declares a frame-owned hero head (UI-SPEC S1, D-50): absent means the
+   * existing glass card, so no other widget changes. `WidgetFrame` reads this
+   * field and renders the head itself — the body still renders only its rows
+   * (Phase 3 D-13..D-17 "frame owns the card, widget owns the body").
+   *
+   * `metric` is a PLAIN FUNCTION SIGNATURE, matching `renderBody` (`:121-130`
+   * docblock), so it stays contravariant in `T` and `WidgetDefinition<never>`
+   * remains a real supertype of every hero-variant `WidgetDefinition<T>`.
+   */
+  readonly variant?:
+    | { readonly kind: "hero"; readonly metric: (data: T) => HeroMetric }
+    | undefined;
 }
