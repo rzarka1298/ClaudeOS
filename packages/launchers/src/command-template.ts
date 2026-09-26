@@ -16,8 +16,10 @@
  *   - A placeholder embedded in a larger element (`--cwd={projectPath}`) is
  *     refused: substituting inside an element is how a value starts being
  *     parsed by whatever reads that element.
- *   - The Claude Code permission-bypass flag is refused in any form, in
- *     either kind of template (CLAUDE.md prohibition).
+ *   - The Claude Code permission bypass is refused in any form -- the
+ *     `--dangerously-skip-permissions` flag and the `bypassPermissions`
+ *     permission mode, however spelled -- in either kind of template
+ *     (CLAUDE.md prohibition, {@link FORBIDDEN_PERMISSION_TOKENS}).
  *
  * Presets route through `/usr/bin/open` or `/usr/bin/osascript`, which
  * return once the terminal has been handed the script, so exit status 0
@@ -33,8 +35,21 @@ import { OPEN } from "./app-actions.js";
 export const PLACEHOLDERS = ["{projectPath}", "{script}"] as const;
 export type Placeholder = (typeof PLACEHOLDERS)[number];
 
-/** Refused in every template. Matching is by substring, so `=value` and prefixed variants are refused too. */
+/** The Claude Code permission-bypass flag, as documented. Refused in every template. */
 export const FORBIDDEN_CLAUDE_FLAGS = ["--dangerously-skip-permissions"] as const;
+
+/**
+ * What the validator actually matches. Each argv element is normalised
+ * (NFKC, lower-cased, every non-alphanumeric removed) and refused when it
+ * contains either token, so `--dangerously_skip_permissions`,
+ * `--permission-mode=bypassPermissions`, a bare `bypassPermissions` after
+ * `--permission-mode`, and a `--settings` JSON value whose `defaultMode` is
+ * `bypassPermissions` are all refused.
+ */
+export const FORBIDDEN_PERMISSION_TOKENS = [
+  "dangerouslyskippermissions",
+  "bypasspermissions",
+] as const;
 
 /** Executable plus arguments never exceed this many elements (UI-SPEC S7). */
 export const MAX_TEMPLATE_ARGS = MAX_TEMPLATE_ARGUMENTS;
@@ -88,11 +103,24 @@ function hasLineBreak(element: string): boolean {
   return element.includes("\n") || element.includes("\r") || element.includes(NUL);
 }
 
-function containsForbiddenFlag(element: string): boolean {
-  const lower = element.toLowerCase();
-  // "--dangerously-skip-permissions" without its leading dashes, so the bare flag,
-  // "=value" and prefixed spellings all match.
-  return FORBIDDEN_CLAUDE_FLAGS.some((flag) => lower.includes(flag.replace(/^-+/, "")));
+function normaliseForFlagMatch(element: string): string {
+  return element
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/** `previous` is the element before this one, for the `--permission-mode <mode>` form. */
+function containsForbiddenFlag(element: string, previous: string | undefined): boolean {
+  const normalised = normaliseForFlagMatch(element);
+  if (FORBIDDEN_PERMISSION_TOKENS.some((token) => normalised.includes(token))) return true;
+  // Subsumed by the token check today; kept explicit so the two-element
+  // `--permission-mode bypassPermissions` form stays refused if the tokens change.
+  return (
+    previous !== undefined &&
+    normaliseForFlagMatch(previous) === "permissionmode" &&
+    normalised === "bypasspermissions"
+  );
 }
 
 function refuse(reason: TemplateRefusal, index: number | null): TemplateValidation {
@@ -114,7 +142,7 @@ export function validateCommandTemplate(
   for (const [index, element] of argv.entries()) {
     if (hasLineBreak(element)) return refuse("line-break", index);
     if (element === "") return refuse("empty-argument", index);
-    if (containsForbiddenFlag(element)) return refuse("forbidden-flag", index);
+    if (containsForbiddenFlag(element, argv[index - 1])) return refuse("forbidden-flag", index);
 
     if (index === 0) {
       if (!element.startsWith("/")) return refuse("executable-not-absolute", 0);
