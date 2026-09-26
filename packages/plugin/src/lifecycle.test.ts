@@ -6,9 +6,12 @@ import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js
 import {
   createFakeDomTarget,
   type EventTargetLike,
+  FakeDataAdapter,
   FakeObsidianHost,
 } from "./test-support/fake-obsidian-host.js";
 import { nowTick, startClock } from "./widgets/clock.js";
+import { layoutOverride, setLayoutOverride } from "./widgets/layout.js";
+import { createAdapterLayoutSource, startLayoutPolling } from "./widgets/layout-source.js";
 
 const VIEW_TYPE = "claude-command-center-view";
 const COMMAND_ID = "open-overview";
@@ -47,6 +50,8 @@ function loadCycle(
   host: FakeObsidianHost,
   domTarget: EventTargetLike,
   handler: (payload?: unknown) => void,
+  adapter: FakeDataAdapter = new FakeDataAdapter(),
+  apply: Parameters<typeof startLayoutPolling>[0]["apply"] = setLayoutOverride,
 ): HostRegistry {
   const registry = createHostRegistry(host);
   registry.view(VIEW_TYPE, () => ({}));
@@ -61,6 +66,16 @@ function loadCycle(
   // stand-in would keep passing if startClock ever stopped using the seam
   // (threat T-03-07 — a 60-second interval surviving unload).
   startClock(registry);
+  // The REAL layout-file poller (plan 03-08): a one-second interval through
+  // the seam, whose own immediate tick runs against an absent file here.
+  startLayoutPolling({
+    registry,
+    source: createAdapterLayoutSource(
+      { configDir: "test-config", adapter },
+      "claude-command-center",
+    ),
+    apply,
+  });
   registry.settingTab({});
   return registry;
 }
@@ -72,6 +87,36 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
   beforeEach(() => {
     host = new FakeObsidianHost();
     domTarget = createFakeDomTarget();
+    layoutOverride.value = undefined;
+  });
+
+  afterEach(() => {
+    layoutOverride.value = undefined;
+  });
+
+  it("each cycle's layout poll ticks once at load, applies the default for an absent file, and is released", async () => {
+    const adapter = new FakeDataAdapter();
+    const applied: unknown[] = [];
+
+    for (let i = 0; i < 20; i++) {
+      const registry = loadCycle(
+        host,
+        domTarget,
+        () => {},
+        adapter,
+        (next) => {
+          applied.push(next);
+          return setLayoutOverride(next);
+        },
+      );
+      for (let n = 0; n < 10; n++) await Promise.resolve();
+      registry.disposeAll();
+    }
+
+    expect(adapter.statCallCount).toBe(20);
+    expect(adapter.readCallCount).toBe(0);
+    expect(applied).toEqual(Array.from({ length: 20 }, () => undefined));
+    expect(host.liveCounts().interval).toBe(0);
   });
 
   it("leaves zero live registrations of every kind after twenty load and unload cycles", () => {
