@@ -147,3 +147,130 @@ describe("row anatomy (UI-SPEC populated and long-text rows)", () => {
     expect(primary?.getAttribute("title")).toBe(long);
   });
 });
+
+describe("the optional row action (UI-SPEC S1 row action, C-11, A11Y floor 6)", () => {
+  interface ActionRow {
+    readonly id: string;
+    readonly primary: string;
+    readonly meta: string;
+    readonly canAct: boolean;
+  }
+
+  const ACTION_ROWS: readonly ActionRow[] = [
+    { id: "r1", primary: "alpha", meta: "meta 1", canAct: true },
+    { id: "r2", primary: "beta", meta: "meta 2", canAct: false },
+  ];
+
+  it("Test 5: renders one action button per row whose renderAction returns a descriptor, none for a null row", () => {
+    const onAction = vi.fn();
+    const { container } = render(
+      <ListBody<ActionRow>
+        rows={ACTION_ROWS}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        moreDestination="agent-runs"
+        renderAction={(row) =>
+          row.canAct
+            ? { id: `focus-${row.id}`, label: "Focus", capability: "session:focus", target: { runId: row.id } }
+            : null
+        }
+        renderActionLabel={(row) => `Focus terminal for ${row.primary}`}
+        onAction={onAction}
+      />,
+    );
+
+    const buttons = container.querySelectorAll("button.ccc-row-action");
+    expect(buttons).toHaveLength(1);
+    const button = screen.getByRole("button", { name: "Focus terminal for alpha" });
+    expect(button.textContent).toBe("Focus");
+
+    fireEvent.click(button);
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onAction).toHaveBeenCalledWith({
+      id: "focus-r1",
+      label: "Focus",
+      capability: "session:focus",
+      target: { runId: "r1" },
+    });
+  });
+
+  it("keeps ROW_BUDGET and the +{n} more control when a row action is present", () => {
+    const rowsPastBudget = Array.from({ length: 9 }, (_, i) => ({
+      id: `row-${i}`,
+      primary: `Row ${i}`,
+      meta: "meta",
+      canAct: true,
+    }));
+    const { container } = render(
+      <ListBody<ActionRow>
+        rows={rowsPastBudget}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        moreDestination="agent-runs"
+        renderAction={(row) => ({ id: `focus-${row.id}`, label: "Focus", capability: "session:focus" })}
+        renderActionLabel={(row) => `Focus terminal for ${row.primary}`}
+      />,
+    );
+    expect(container.querySelectorAll("li.ccc-list-row")).toHaveLength(6);
+    expect(container.querySelectorAll("button.ccc-row-action")).toHaveLength(6);
+    expect(screen.getByRole("button", { name: "+3 more" })).toBeTruthy();
+  });
+});
+
+describe("the optional onSelectRow primary-line link (UI-SPEC S1 primary line)", () => {
+  interface SelectRow {
+    readonly id: string;
+    readonly primary: string;
+    readonly meta: string;
+  }
+
+  const SELECT_ROWS: readonly SelectRow[] = [
+    { id: "r1", primary: "alpha", meta: "meta 1" },
+    { id: "r2", primary: "beta", meta: "meta 2" },
+  ];
+
+  it("Test 6: with onSelectRow, the primary line is a button that calls it with that row", () => {
+    const onSelectRow = vi.fn();
+    const { container } = render(
+      <ListBody<SelectRow>
+        rows={SELECT_ROWS}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        moreDestination="agent-runs"
+        onSelectRow={onSelectRow}
+      />,
+    );
+
+    const link = container.querySelector("button.ccc-session-row-link");
+    expect(link?.textContent).toBe("alpha");
+    expect(link?.getAttribute("title")).toBe("alpha");
+    expect(container.querySelector("p.ccc-list-primary")).toBeNull();
+
+    fireEvent.click(link as Element);
+    expect(onSelectRow).toHaveBeenCalledTimes(1);
+    expect(onSelectRow).toHaveBeenCalledWith(SELECT_ROWS[0]);
+  });
+
+  it("Test 6: without onSelectRow, the primary line stays the existing <p>, unchanged", () => {
+    const { container } = render(
+      <ListBody<SelectRow>
+        rows={SELECT_ROWS}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        moreDestination="agent-runs"
+      />,
+    );
+    expect(container.querySelector("button.ccc-session-row-link")).toBeNull();
+    const primary = container.querySelector("p.ccc-list-primary");
+    expect(primary?.textContent).toBe("alpha");
+    expect(primary?.classList.contains("ccc-clamp-2")).toBe(true);
+  });
+});

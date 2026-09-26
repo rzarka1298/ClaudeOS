@@ -78,6 +78,13 @@ export interface QuickActionDescriptor {
   readonly id: string;
   readonly label: string;
   readonly capability: string;
+  /**
+   * What the descriptor refers to (PR-20). Optional: most descriptors (card-
+   * level quick actions, `connect:*`) name nothing beyond the capability.
+   * `ListBody`'s row action fills this with `{ runId }` so the single
+   * dispatcher can resolve which session a `session:*` capability targets.
+   */
+  readonly target?: { readonly projectId: string } | { readonly runId: string } | undefined;
 }
 
 /**
@@ -96,7 +103,16 @@ export type WidgetState<T> =
       readonly sourceLabel: string;
     }
   | { readonly kind: "error"; readonly message: string }
-  | { readonly kind: "unavailable" }
+  | {
+      readonly kind: "unavailable";
+      /**
+       * Set when the source is unavailable for a reportable reason — a
+       * telemetry-shape change, or a Claude Code version below the floor
+       * (SESS-18, D-12) — rather than simply having no route yet. Absent
+       * keeps Phase 3's "No source yet" copy unchanged.
+       */
+      readonly reason?: string | undefined;
+    }
   | {
       readonly kind: "ready";
       readonly data: T;
@@ -119,11 +135,22 @@ export type WidgetState<T> =
  * focuses a shell destination, which is how `+{n} more` reaches the page that
  * owns the full list (MAJOR 1). It navigates and does nothing else; anything
  * consequential is a quick-action DESCRIPTOR, never a body callback (C-11).
+ * The optional `selection` lets a body ask the destination to focus one item
+ * — the S1 row link uses it to select a Run in Agent runs — without adding a
+ * second navigation channel.
+ *
+ * `onQuickAction` lets a body EMIT a descriptor (the S1 row action), exactly
+ * like the frame's own card-level quick actions: the body still executes
+ * nothing, and the same single dispatcher resolves whatever it emits (C-11,
+ * APPR-01).
  */
 export interface WidgetBodyProps<T> {
   readonly data: T;
   readonly size: SizeHint;
-  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+  readonly onNavigate?:
+    | ((destination: DestinationId, selection?: { readonly runId: string }) => void)
+    | undefined;
+  readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }
 
 /**

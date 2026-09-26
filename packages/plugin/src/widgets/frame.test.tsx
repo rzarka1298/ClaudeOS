@@ -635,6 +635,183 @@ describe("hero variant (D-50, UI-SPEC S1)", () => {
   });
 });
 
+/**
+ * Setup-state copy, the unavailable reason, and the body quick-action
+ * channel (UI-SPEC "Setup state: hooks not installed (D-53)", "Telemetry
+ * shape changed (SESS-18, D-12)", 04-PATTERNS `onQuickAction` body channel).
+ */
+describe("setup-state copy, unavailable reason and body quick-action (D-53, SESS-18)", () => {
+  const COPY_PANEL: WidgetDefinition<string> = {
+    id: "copy-panel",
+    title: "Copy panel",
+    dataKeys: [{ key: "test.key", transport: "service", sourceLabel: "Test source" }],
+    refresh: { kind: "manual" },
+    minSize: "small",
+    preferredSize: "small",
+    featureFlag: "widget.copy-panel",
+    quickActions: [],
+    renderBody: () => null,
+    renderEmpty: () => null,
+  };
+
+  it("Test 1: the claude-hooks permission-required card uses the per-capability setup copy and descriptor", () => {
+    const onQuickAction = vi.fn();
+    render(
+      <WidgetFrame
+        definition={COPY_PANEL}
+        state={{ kind: "permission-required", capability: "claude-hooks", sourceLabel: "Claude Code hooks" }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={onQuickAction}
+      />,
+    );
+
+    expect(screen.getByText("Claude Code hooks aren't installed")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Install the optional hook package to see your Claude Code sessions here. Obsidian settings → Claude command center → Claude shows the command to run.",
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Set up Claude hooks" }));
+    expect(onQuickAction).toHaveBeenCalledTimes(1);
+    expect(onQuickAction).toHaveBeenCalledWith({
+      id: "connect-claude-hooks",
+      label: "Connect Claude Code hooks",
+      capability: "connect:claude-hooks",
+    });
+  });
+
+  it("Test 2: every other capability keeps the unchanged Phase 3 template", () => {
+    render(
+      <WidgetFrame
+        definition={COPY_PANEL}
+        state={{ kind: "permission-required", capability: "github", sourceLabel: "GitHub" }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    expect(screen.getByText("GitHub isn't connected")).toBeTruthy();
+    expect(screen.getByText("Connect GitHub to see copy panel here.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect GitHub" })).toBeTruthy();
+  });
+
+  it("Test 3: an unavailable state with a reason reads Session tracking paused plus that reason", () => {
+    const reason =
+      "Claude Code 2.1.300 reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.";
+    render(
+      <WidgetFrame
+        definition={COPY_PANEL}
+        state={{ kind: "unavailable", reason }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    expect(screen.getByText("Session tracking paused")).toBeTruthy();
+    expect(screen.getByText(reason)).toBeTruthy();
+  });
+
+  it("Test 3: an unavailable state without a reason keeps the unchanged 'No source yet' copy", () => {
+    render(
+      <WidgetFrame
+        definition={COPY_PANEL}
+        state={{ kind: "unavailable" }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    expect(screen.getByText("No source yet")).toBeTruthy();
+  });
+
+  const ROW_ACTION: QuickActionDescriptor = {
+    id: "row-action",
+    label: "Focus",
+    capability: "session:focus",
+    target: { runId: "run-1" },
+  };
+
+  function CapturingBody({ onQuickAction }: { readonly onQuickAction?: (d: QuickActionDescriptor) => void }) {
+    return (
+      <button type="button" className="ccc-capturing-body-button" onClick={() => onQuickAction?.(ROW_ACTION)}>
+        emit
+      </button>
+    );
+  }
+
+  const BODY_WIDGET: WidgetDefinition<string> = {
+    id: "body-quick-action-fixture",
+    title: "Body quick action fixture",
+    dataKeys: [{ key: "test.key", transport: "service", sourceLabel: "Test source" }],
+    refresh: { kind: "manual" },
+    minSize: "small",
+    preferredSize: "small",
+    featureFlag: "widget.body-quick-action-fixture",
+    quickActions: [],
+    renderBody: CapturingBody,
+    renderEmpty: () => null,
+  };
+
+  const BODY_READY: WidgetState<string> = {
+    kind: "ready",
+    data: "x",
+    observedAt: EVENT_AT,
+    freshness: "live",
+    partiality: { partial: false },
+    isEmpty: false,
+  };
+
+  it("Test 4: the frame threads onQuickAction into the body in ready, stale and disconnected, and calls nothing else itself", () => {
+    const onQuickAction = vi.fn();
+    const { rerender } = render(
+      <WidgetFrame
+        definition={BODY_WIDGET}
+        state={BODY_READY}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={onQuickAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "emit" }));
+    expect(onQuickAction).toHaveBeenCalledTimes(1);
+    expect(onQuickAction).toHaveBeenCalledWith(ROW_ACTION);
+    onQuickAction.mockClear();
+
+    rerender(
+      <WidgetFrame
+        definition={BODY_WIDGET}
+        state={{ ...BODY_READY, freshness: "stale" }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={onQuickAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "emit" }));
+    expect(onQuickAction).toHaveBeenCalledTimes(1);
+    expect(onQuickAction).toHaveBeenCalledWith(ROW_ACTION);
+    onQuickAction.mockClear();
+
+    rerender(
+      <WidgetFrame
+        definition={BODY_WIDGET}
+        state={BODY_READY}
+        connection={{ kind: "disconnected", reason: "connect ECONNREFUSED" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={onQuickAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "emit" }));
+    expect(onQuickAction).toHaveBeenCalledTimes(1);
+    expect(onQuickAction).toHaveBeenCalledWith(ROW_ACTION);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // `{panel}` mid-sentence keeps proper nouns (UI-SPEC Copywriting Contract:
 // sentence case, "Proper nouns keep their capitals"). Wave-6 finding:

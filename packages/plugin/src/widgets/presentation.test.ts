@@ -94,6 +94,24 @@ const ROWS: readonly Row[] = [
       if (presentation.kind !== "unavailable") throw new Error("wrong kind");
       expect(presentation.footer.freshness).toBe("unavailable");
       expect(presentation.footer.sources).toEqual([{ label: "GitHub", status: "no-source" }]);
+      expect(presentation.reason).toBeUndefined();
+    },
+  },
+  {
+    name: "unavailable with a reason (SESS-18, D-12) carries that reason through unchanged",
+    state: {
+      kind: "unavailable",
+      reason:
+        "Claude Code 2.1.300 reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.",
+    },
+    connection: LIVE,
+    keys: [SERVICE_KEY],
+    expected: "unavailable",
+    check: (presentation) => {
+      if (presentation.kind !== "unavailable") throw new Error("wrong kind");
+      expect(presentation.reason).toBe(
+        "Claude Code 2.1.300 reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.",
+      );
     },
   },
   {
