@@ -225,11 +225,12 @@ describe("responses and errors (Tests 4-5)", () => {
     for (const error of SESSION_ACTION_ERROR_CODES) {
       expect(SessionActionErrorBodySchema.safeParse({ error }).success).toBe(true);
     }
-    expect(SessionActionErrorBodySchema.safeParse({ error: "ENOENT /Users/x" }).success).toBe(
-      false,
-    );
     expect(
-      SessionActionErrorBodySchema.safeParse({ error: "timeout", path: "/Users/x" }).success,
+      SessionActionErrorBodySchema.safeParse({ error: "ENOENT /Users/USERNAME/x" }).success,
+    ).toBe(false);
+    expect(
+      SessionActionErrorBodySchema.safeParse({ error: "timeout", path: "/Users/USERNAME/x" })
+        .success,
     ).toBe(false);
   });
 
