@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectId } from "./ids.js";
 import {
+  DetectionResponseSchema,
   LAUNCH_ACTIONS,
   LAUNCH_ERROR_KINDS,
   LAUNCH_PATH,
@@ -199,6 +200,49 @@ describe("SaveLauncherConfigRequestSchema (D-19, D-22, UI-SPEC S7)", () => {
         launcherId: "antigravity",
         bundleId: "com.example.app",
         command: "open",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("DetectionResponseSchema terminal presets (D-23, D-27)", () => {
+  const apps = {
+    antigravity: [],
+    "claude-desktop": [],
+    iterm2: [],
+    ghostty: [],
+    wezterm: [],
+    terminal: [],
+  };
+  const detection = (argv: string[]) => ({
+    detectedAt: "2026-09-26T00:00:00.000Z",
+    apps,
+    claudeExecutables: [],
+    terminalPresets: [{ id: "blank", label: "Blank template", argv, verified: false }],
+    git: "available",
+  });
+
+  it("carries the blank preset's empty executable placeholder", () => {
+    expect(DetectionResponseSchema.safeParse(detection(["", "{script}"])).success).toBe(true);
+  });
+
+  it("still refuses a line break or control character in a preset element", () => {
+    expect(DetectionResponseSchema.safeParse(detection(["/bin/x\n", "{script}"])).success).toBe(
+      false,
+    );
+    expect(
+      DetectionResponseSchema.safeParse(detection([`/bin/${String.fromCharCode(7)}`, "{script}"]))
+        .success,
+    ).toBe(false);
+  });
+
+  it("a saved custom terminal still refuses the empty placeholder", () => {
+    expect(
+      SaveLauncherConfigRequestSchema.safeParse({
+        launcherId: "claude-code",
+        executable: { kind: "candidate", candidateId: "c0" },
+        args: [],
+        terminal: { kind: "custom", preset: "blank", argv: ["", "{script}"] },
       }).success,
     ).toBe(false);
   });

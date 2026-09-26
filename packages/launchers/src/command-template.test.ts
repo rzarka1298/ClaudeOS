@@ -1,4 +1,8 @@
-import { TEMPLATE_REFUSAL_REASONS, TERMINAL_PRESET_IDS } from "@ccc/domain";
+import {
+  DetectionResponseSchema,
+  TEMPLATE_REFUSAL_REASONS,
+  TERMINAL_PRESET_IDS,
+} from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import { OPEN } from "./app-actions.js";
 import {
@@ -304,6 +308,31 @@ describe("TERMINAL_PRESETS (D-23)", () => {
     expect(
       validateCommandTemplate(blank?.argv ?? [], { kind: "terminal", isExecutable: always }).ok,
     ).toBe(false);
+  });
+
+  it("every preset, including blank, travels in a DetectionResponse that parses (D-27)", () => {
+    const response = {
+      detectedAt: "2026-09-26T00:00:00.000Z",
+      apps: {
+        antigravity: [],
+        "claude-desktop": [],
+        iterm2: [],
+        ghostty: [],
+        wezterm: [],
+        terminal: [],
+      },
+      claudeExecutables: [],
+      terminalPresets: TERMINAL_PRESETS.map(({ id, label, argv, verified }) => ({
+        id,
+        label,
+        argv: [...argv],
+        verified,
+      })),
+      git: "available",
+    };
+    const parsed = DetectionResponseSchema.safeParse(response);
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    expect(parsed.data?.terminalPresets.map((p) => p.id)).toEqual([...TERMINAL_PRESET_IDS]);
   });
 
   it("the iTerm2 preset passes the script as an AppleScript argv item, never inside the source", () => {
