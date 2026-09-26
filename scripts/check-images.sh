@@ -9,48 +9,82 @@
 #   1. the visual harness may only import the synthetic fixtures
 #      (packages/test-fixtures/src/harness-purity.test.ts);
 #   2. ci:privacy clears the fixture TEXT that becomes pixels;
-#   3. THIS gate: the only images git may track are the visual baselines, in
-#      the one directory the pinned Linux container writes to;
+#   3. THIS gate: the only images git may track are the visual baselines the
+#      Playwright tests declare, in the one directory the pinned Linux
+#      container writes to;
 #   4. the owner looks at every committed baseline (03-UAT.md item 10).
 #
-# The rule: every tracked image, document or video (IMAGE_EXTENSIONS below,
+# The rule. Every tracked image, document or video (IMAGE_EXTENSIONS below,
 # any case — a screenshot can arrive as a phone's .heic, a scanner's .tiff or
-# a printed .pdf just as easily as a .png) must
-# be a direct child of ALLOWED_PREFIX and named `*-chromium-linux.png` — the
-# only name Playwright gives a baseline written on Linux (D-22). Anything
-# else, including a macOS `*-chromium-darwin.png` in the right directory, is a
-# violation. `.gitignore` enforces the same allowlist at staging time; this
-# gate is the half that also catches a force-add.
+# a printed .pdf just as easily as a .png) must be a direct child of
+# ALLOWED_PREFIX AND be on the EXPECTED list: the exact baseline file names
+# `scripts/list-visual-baselines.mjs` derives from the tests themselves
+# (`playwright test --list`, one `baseline` annotation per screenshot cell).
+# The directory is never the source of truth (judge-r1 finding 1): a vault
+# screenshot renamed `something-chromium-linux.png` is an ORPHAN, not a
+# baseline. Conversely every expected baseline must be tracked — a MISSING one
+# fails too, so the set git tracks and the set the tests compare are equal.
+# `.gitignore` admits only `*-chromium-linux.png` at staging time; this gate
+# is the half that also catches a force-add and a well-named impostor.
 #
-# The tracked-file walk is the NUL-safe one from check-privacy.sh: a filename
-# containing a newline is refused outright rather than split into two paths
-# that each escape the check. Prints one line per violation and a summary
-# with the number of images scanned, so an empty scan is visible as "0".
+# Refusals (judge-r1 finding 4): a failing `git ls-files`, a failing or empty
+# lister, and a scan of zero images while baselines are expected all fail the
+# gate — an empty result is never a clean one.
+#
+# The lister needs the workspace built (the spec imports @ccc/plugin's dist),
+# which is why `ci:images` builds first.
+#
+# The tracked-file walk is NUL-safe: a filename containing a newline is
+# refused outright rather than split into two paths that each escape the
+# check. Prints one line per violation and a summary with the number of
+# images scanned.
 
 set -eu
 
 ALLOWED_PREFIX="packages/test-fixtures/visual/widgets.spec.ts-snapshots/"
-BASELINE_SUFFIX="-chromium-linux.png"
+LISTER="scripts/list-visual-baselines.mjs"
 # Every raster, vector and document format a screenshot or a scan of personal
 # content can take, plus the video formats a screen recording can (judge-r1
 # finding 3). Matched case-insensitively.
 IMAGE_EXTENSIONS="png|jpg|jpeg|gif|webp|avif|heic|heif|tif|tiff|bmp|svg|pdf|ico|mp4|mov|webm"
 
+ZLIST=$(mktemp "${TMPDIR:-/tmp}/ccc-image-z.XXXXXX")
 FILELIST=$(mktemp "${TMPDIR:-/tmp}/ccc-image-files.XXXXXX")
-trap 'rm -f "$FILELIST"' EXIT
+EXPECTED=$(mktemp "${TMPDIR:-/tmp}/ccc-image-expected.XXXXXX")
+trap 'rm -f "$ZLIST" "$FILELIST" "$EXPECTED"' EXIT
 
-NUL_COUNT=$(git ls-files -z | tr -cd '\0' | wc -c | tr -d ' ')
-NL_COUNT=$(git ls-files | wc -l | tr -d ' ')
-if [ "$NUL_COUNT" != "$NL_COUNT" ]; then
+# --- The tracked-file list. Captured to a file so git's own exit status is
+# checked; inside a pipeline it was the last stage's status that counted. ---
+if ! git ls-files -z > "$ZLIST"; then
+  echo "scripts/check-images.sh: FATAL: git ls-files failed; refusing to report an unscanned tree as clean." >&2
+  exit 2
+fi
+if [ "$(tr -cd '\n' < "$ZLIST" | wc -c | tr -d ' ')" != "0" ]; then
   echo "scripts/check-images.sh: FATAL: a tracked filename contains a newline; refusing to scan a splittable list." >&2
   exit 2
 fi
-
-# Self-excluded like check-privacy.sh excludes itself (this script is not an
-# image, so the exclusion only guards against a future rename).
-git ls-files -z | tr '\0' '\n' \
+tr '\0' '\n' < "$ZLIST" \
   | grep -v '^scripts/check-images\.sh$' \
   | grep -i -E "\\.(${IMAGE_EXTENSIONS})\$" > "$FILELIST" || true
+
+# --- The expected set, from the tests. ---
+if ! node "$LISTER" > "$EXPECTED"; then
+  echo "scripts/check-images.sh: FATAL: could not derive the expected baselines from the visual tests ($LISTER failed); refusing to fall back to a name rule." >&2
+  exit 2
+fi
+EXPECTED_COUNT=$(grep -c . "$EXPECTED" || true)
+if [ "$EXPECTED_COUNT" -eq 0 ]; then
+  echo "scripts/check-images.sh: FATAL: $LISTER declares no baselines; an empty allowlist cannot be enforced." >&2
+  exit 2
+fi
+
+is_expected() {
+  grep -qxF -- "$1" "$EXPECTED"
+}
+
+is_tracked() {
+  grep -qxF -- "$1" "$FILELIST"
+}
 
 SCANNED=0
 VIOLATIONS=0
@@ -64,11 +98,11 @@ while IFS= read -r f; do
           echo "IMAGE OUTSIDE ALLOWLIST: $f (nested below the snapshot directory)"
           VIOLATIONS=$((VIOLATIONS + 1))
           ;;
-        *"$BASELINE_SUFFIX")
-          ;;
         *)
-          echo "IMAGE OUTSIDE ALLOWLIST: $f (not a *${BASELINE_SUFFIX} baseline)"
-          VIOLATIONS=$((VIOLATIONS + 1))
+          if ! is_expected "$name"; then
+            echo "ORPHAN BASELINE: $f (no visual test declares it; only the names $LISTER prints may be tracked)"
+            VIOLATIONS=$((VIOLATIONS + 1))
+          fi
           ;;
       esac
       ;;
@@ -79,8 +113,21 @@ while IFS= read -r f; do
   esac
 done < "$FILELIST"
 
-echo "scripts/check-images.sh: scanned ${SCANNED} tracked image(s), ${VIOLATIONS} outside the allowlist."
+MISSING=0
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  if ! is_tracked "${ALLOWED_PREFIX}${name}"; then
+    echo "MISSING BASELINE: ${ALLOWED_PREFIX}${name} (a visual test declares it, but git does not track it)"
+    MISSING=$((MISSING + 1))
+  fi
+done < "$EXPECTED"
 
-if [ "$VIOLATIONS" -gt 0 ]; then
+echo "scripts/check-images.sh: scanned ${SCANNED} tracked image(s), ${VIOLATIONS} outside the allowlist; ${EXPECTED_COUNT} baseline(s) are expected, ${MISSING} missing."
+
+if [ "$SCANNED" -eq 0 ]; then
+  echo "scripts/check-images.sh: FAIL: scanned 0 tracked image(s) while ${EXPECTED_COUNT} baseline(s) are expected." >&2
+  exit 1
+fi
+if [ "$VIOLATIONS" -gt 0 ] || [ "$MISSING" -gt 0 ]; then
   exit 1
 fi

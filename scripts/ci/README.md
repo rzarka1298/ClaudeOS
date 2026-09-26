@@ -16,7 +16,7 @@ local checkout — that's the rule, not just a convention.
 | `typecheck`    | `pnpm run ci:typecheck` (`turbo run typecheck`)                             | Every package's `tsc -b` project-reference build. |
 | `test`         | `pnpm run ci:test` (`turbo run test`)                                      | Every package's Vitest suite. |
 | `privacy`      | `pnpm run ci:privacy` (`sh scripts/check-privacy.sh`)                       | No tracked file carries the owner's home-directory prefix, email address, or a maintained denylist pattern (PRIV-01/PRIV-02). |
-| `images`       | `pnpm run ci:images` (`sh scripts/check-images.sh`)                         | The only tracked images are Linux visual baselines: every tracked png/jpg/jpeg/gif/webp/mp4/mov/webm must be a `*-chromium-linux.png` directly under `packages/test-fixtures/visual/widgets.spec.ts-snapshots/` (PRIV-04 layer 3 — a text scan cannot read pixels). |
+| `images`       | `pnpm run ci:images` (builds `@ccc/plugin`, then `sh scripts/check-images.sh`) | The only tracked images are the visual baselines the tests declare: every tracked image, document or video (png jpg jpeg gif webp avif heic heif tif tiff bmp svg pdf ico mp4 mov webm, any case) must sit directly under `packages/test-fixtures/visual/widgets.spec.ts-snapshots/` AND be on the exact list `scripts/list-visual-baselines.mjs` derives from `playwright test --list`; every name on that list must be tracked (PRIV-04 layer 3 — a text scan cannot read pixels). |
 | `visual`       | `pnpm run ci:visual` (`turbo run harness:build --filter=@ccc/test-fixtures && playwright test`) — run it locally as `sh scripts/ci/visual-in-container.sh`, which is the identical container | Every widget × presentation cell, plus the four reduced-motion cells, matches its committed Linux baseline (UI-08, A11Y-03). Runs on `ubuntu-latest` inside `mcr.microsoft.com/playwright:v1.63.0-noble`; on a Mac, `ci:visual` itself skips all cells by design, so the container script is the local command. |
 | `secrets`      | `gitleaks detect --no-git --source . --config .gitleaks.toml` (the CI job itself uses the official `gitleaks/gitleaks-action@v2` over full git history, `fetch-depth: 0`) | No credential-shaped string, including this project's own `v1.<payload>.<signature>` bearer-token shape, appears anywhere in the repository's committed history. |
 
@@ -40,10 +40,12 @@ only (D-22, `docs/adr/0023-design-system-and-reduced-motion.md`).
 run is always its own standalone commit that contains nothing but baseline
 images and states why the pixels changed — never folded into a feature
 commit, so every pixel change is a reviewable diff (research Pitfall 5).
-Baselines can only be written inside the pinned container:
-`playwright.config.ts` refuses `--update-snapshots` anywhere else, and
-`.gitignore` plus `ci:images` admit only `*-chromium-linux.png` into the
-snapshot directory.
+Baselines are written only inside the pinned container:
+`playwright.config.ts` refuses an accidental `--update-snapshots` anywhere
+else, `.gitignore` admits only `*-chromium-linux.png` into the snapshot
+directory, and `ci:images` admits exactly the baselines a visual test declares
+(a new screenshot cell must be registered through `cell()` in
+`widgets.spec.ts`, whose `baseline` annotation is what the gate lists).
 
 No job in `.github/workflows/ci.yml` sets a soft-fail/tolerate-failure
 setting on any step. A red job is always a red build.

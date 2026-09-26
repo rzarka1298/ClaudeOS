@@ -1,67 +1,79 @@
 // scripts/check-images.sh — the tracked-image allowlist (PRIV-04 layer 3,
-// plan 03-10). Each case builds a throwaway git repository holding a copy of
-// the real script, stages some files, and runs the gate there, so the test
-// measures what git actually tracks rather than a mocked file list.
+// plan 03-10; judge-r1 findings 1, 3 and 4). Each case builds a throwaway git
+// repository holding a copy of the real gate, stages some files, and runs the
+// gate there, so the test measures what git actually tracks rather than a
+// mocked file list.
+//
+// The gate's allowlist is the exact set of baselines the Playwright tests
+// declare, printed by `scripts/list-visual-baselines.mjs`. In a throwaway
+// repository that lister is replaced by a stub that prints a fixed list (or
+// fails), so these cases pin the gate's own logic; the last describe block
+// runs the REAL lister against the real suite and the committed baselines.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { type GateRepo, gateRepo, REPO_ROOT } from "./gate-repo.js";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SCRIPT = resolve(HERE, "..", "..", "..", "scripts", "check-images.sh");
+const SCRIPT = "scripts/check-images.sh";
+const LISTER = "scripts/list-visual-baselines.mjs";
 const SNAPSHOTS = "packages/test-fixtures/visual/widgets.spec.ts-snapshots";
 
-const repos: string[] = [];
+/** The baselines the stub lister declares unless a case says otherwise. */
+const DECLARED = ["background-full-chromium-linux.png", "today-ready-chromium-linux.png"];
+const DECLARED_PATHS = DECLARED.map((name) => `${SNAPSHOTS}/${name}`);
 
+const repos: GateRepo[] = [];
 afterEach(() => {
-  for (const repo of repos.splice(0)) rmSync(repo, { recursive: true, force: true });
+  for (const repo of repos.splice(0)) repo.dispose();
 });
 
-/** A repository tracking `paths` (each written as a few bytes), plus the gate. */
-function repoTracking(paths: readonly string[]): string {
-  const repo = mkdtempSync(join(tmpdir(), "ccc-check-images-"));
-  repos.push(repo);
-  const git = (...args: string[]) => {
-    const run = spawnSync("git", args, { cwd: repo, encoding: "utf8" });
-    if (run.status !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr}`);
-  };
-  git("init", "-q");
-  mkdirSync(join(repo, "scripts"));
-  copyFileSync(SCRIPT, join(repo, "scripts", "check-images.sh"));
-  for (const path of paths) {
-    mkdirSync(dirname(join(repo, path)), { recursive: true });
-    writeFileSync(join(repo, path), "not really an image\n");
+/** A stub lister printing `names`, or failing with exit 2 when `names` is null. */
+function stubLister(names: readonly string[] | null): string {
+  if (names === null) {
+    return 'process.stderr.write("stub lister: playwright failed\\n");\nprocess.exit(2);\n';
   }
-  git("add", "--", "scripts/check-images.sh", ...paths);
+  return `process.stdout.write(${JSON.stringify(names.map((name) => `${name}\n`).join(""))});\n`;
+}
+
+/**
+ * A repository tracking the declared baselines plus `paths` (each a few
+ * bytes), with the gate and a stub lister declaring `declared`.
+ */
+function repoTracking(
+  paths: readonly string[],
+  declared: readonly string[] | null = DECLARED,
+  trackDeclared = true,
+): GateRepo {
+  const files: Record<string, string> = { [LISTER]: stubLister(declared) };
+  const tracked = trackDeclared ? [...DECLARED_PATHS, ...paths] : [...paths];
+  for (const path of tracked) files[path] = "not really an image\n";
+  const repo = gateRepo([SCRIPT], files);
+  repos.push(repo);
   return repo;
 }
 
-function gate(repo: string) {
-  const run = spawnSync("sh", ["scripts/check-images.sh"], { cwd: repo, encoding: "utf8" });
-  return { status: run.status, out: `${run.stdout}${run.stderr}` };
+function gate(repo: GateRepo) {
+  return repo.run(SCRIPT);
 }
 
 describe("check-images.sh (PRIV-04 layer 3)", () => {
-  it("passes on Linux baselines in the snapshot directory and counts them", () => {
-    const result = gate(
-      repoTracking([
-        `${SNAPSHOTS}/today-ready-chromium-linux.png`,
-        `${SNAPSHOTS}/background-full-chromium-linux.png`,
-        "README.md",
-      ]),
-    );
+  it("passes when the tracked baselines are exactly the declared set, and counts them", () => {
+    const result = gate(repoTracking(["README.md"]));
     expect(result.status).toBe(0);
-    expect(result.out).toContain("scanned 2 tracked image(s), 0 outside the allowlist.");
+    expect(result.out).toContain(
+      "scanned 2 tracked image(s), 0 outside the allowlist; 2 baseline(s) are expected, 0 missing.",
+    );
   });
 
   it("fails on an image anywhere else, naming it", () => {
     const result = gate(repoTracking(["docs/vault-screenshot.png"]));
     expect(result.status).toBe(1);
     expect(result.out).toContain("IMAGE OUTSIDE ALLOWLIST: docs/vault-screenshot.png");
-    expect(result.out).toContain("scanned 1 tracked image(s), 1 outside the allowlist.");
+    expect(result.out).toContain(
+      "scanned 3 tracked image(s), 1 outside the allowlist; 2 baseline(s) are expected, 0 missing.",
+    );
   });
 
   it("fails on a macOS baseline even inside the snapshot directory (D-22)", () => {
@@ -73,13 +85,6 @@ describe("check-images.sh (PRIV-04 layer 3)", () => {
   it("fails on an image nested below the snapshot directory", () => {
     const result = gate(repoTracking([`${SNAPSHOTS}/extra/x-chromium-linux.png`]));
     expect(result.status).toBe(1);
-  });
-
-  it("matches every listed extension case-insensitively", () => {
-    const names = ["a.PNG", "b.jpg", "c.JPEG", "d.gif", "e.webp", "f.mp4", "g.MOV", "h.webm"];
-    const result = gate(repoTracking(names.map((name) => `media/${name}`)));
-    expect(result.status).toBe(1);
-    expect(result.out).toContain("scanned 8 tracked image(s), 8 outside the allowlist.");
   });
 
   it("fails on a planted iPhone photo (.heic), naming it (judge-r1 finding 3)", () => {
@@ -115,7 +120,9 @@ describe("check-images.sh (PRIV-04 layer 3)", () => {
     const result = gate(repoTracking(names.map((name) => `media/${name}`)));
     expect(result.status).toBe(1);
     const n = names.length;
-    expect(result.out).toContain(`scanned ${n} tracked image(s), ${n} outside the allowlist.`);
+    expect(result.out).toContain(
+      `scanned ${n + 2} tracked image(s), ${n} outside the allowlist; 2 baseline(s) are expected, 0 missing.`,
+    );
   });
 
   it("does not let a space in a filename split one image into two unchecked paths", () => {
@@ -123,4 +130,62 @@ describe("check-images.sh (PRIV-04 layer 3)", () => {
     expect(result.status).toBe(1);
     expect(result.out).toContain("IMAGE OUTSIDE ALLOWLIST: docs/my vault shot.png");
   });
+});
+
+describe("the allowlist is the set the tests declare, not a name shape (judge-r1 finding 1)", () => {
+  it("fails on an orphan *-chromium-linux.png that no visual test declares", () => {
+    const orphan = `${SNAPSHOTS}/my-vault-inbox-chromium-linux.png`;
+    const result = gate(repoTracking([orphan]));
+    expect(result.status).toBe(1);
+    expect(result.out).toContain(`ORPHAN BASELINE: ${orphan}`);
+  });
+
+  it("fails when a declared baseline is not tracked, naming it", () => {
+    const result = gate(repoTracking([], [...DECLARED, "github-ready-chromium-linux.png"]));
+    expect(result.status).toBe(1);
+    expect(result.out).toContain(`MISSING BASELINE: ${SNAPSHOTS}/github-ready-chromium-linux.png`);
+  });
+
+  it("fails, and does not pass on the old name rule, when the lister cannot run", () => {
+    const result = gate(repoTracking([], null));
+    expect(result.status).not.toBe(0);
+    expect(result.out).toContain("could not derive the expected baselines");
+  });
+
+  it("fails when the lister declares nothing", () => {
+    const result = gate(repoTracking([], []));
+    expect(result.status).not.toBe(0);
+    expect(result.out).toContain("declares no baselines");
+  });
+});
+
+describe("an empty scan never passes (judge-r1 finding 4)", () => {
+  it("fails when no image is tracked while baselines are expected", () => {
+    const result = gate(repoTracking(["README.md"], DECLARED, false));
+    expect(result.status).toBe(1);
+    expect(result.out).toContain("scanned 0 tracked image(s)");
+    expect(result.out).toContain("2 baseline(s) are expected");
+  });
+
+  it("fails when git ls-files fails (not a repository)", () => {
+    const repo = repoTracking(["README.md"]);
+    // Removing .git makes every `git ls-files` in the gate fail.
+    spawnSync("rm", ["-rf", join(repo.root, ".git")]);
+    const result = gate(repo);
+    expect(result.status).not.toBe(0);
+    expect(result.out).toContain("git ls-files failed");
+  });
+});
+
+describe("the real lister against the real suite", () => {
+  it("declares exactly the committed baselines", () => {
+    const run = spawnSync("node", [join(REPO_ROOT, LISTER)], { cwd: REPO_ROOT, encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    const listed = run.stdout.split("\n").filter((line) => line.length > 0);
+    const committed = readdirSync(join(REPO_ROOT, SNAPSHOTS)).filter((name) =>
+      name.endsWith("-chromium-linux.png"),
+    );
+    expect(listed.length).toBeGreaterThan(0);
+    expect(listed).toEqual([...committed].sort());
+  }, 60_000);
 });
