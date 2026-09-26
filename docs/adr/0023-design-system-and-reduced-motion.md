@@ -107,6 +107,7 @@ the block as amendments from this review.
 | `--ccc-danger` | `#FF6B6B` | Error and disconnected states only |
 | `--ccc-border` | `rgba(244, 239, 230, 0.14)` | Hairline card boundary — decorative; the surface delta carries the boundary |
 | `--ccc-border-cream` *(new)* | `rgba(11, 11, 15, 0.12)` | Hairline inside cream panels — decorative |
+| `--ccc-dim-opacity` *(judge-r1)* | `0.85` | Opacity of a disconnected card's body and footer — a contrast decision, audited below |
 
 **Measured contrast.** Every ratio below was computed with `contrastRatio()`
 from `packages/plugin/src/contrast.ts` against the final values in the table
@@ -140,6 +141,19 @@ fortiori.
 | `--ccc-accent` focus ring on `--ccc-bg` (non-text) | 6.93 : 1 | 3.0 | pass |
 | `--ccc-accent-deep` focus ring on `--ccc-cream` (non-text) | 5.13 : 1 | 3.0 | pass |
 | ~~`--ccc-accent` on `--ccc-cream`~~ | **2.47 : 1** | 4.5 | **fail — rejected** |
+| `--ccc-ink` dimmed (`--ccc-dim-opacity` 0.85) on glass (`#1D161E`) | 11.35 : 1 | 4.5 | pass |
+| `--ccc-ink-muted` dimmed (0.85) on `--ccc-bg` / `--ccc-surface` / glass | 5.08 / 4.82 / 4.71 : 1 | 4.5 | pass |
+| `--ccc-accent` dimmed (0.85) on glass | 4.84 : 1 | 4.5 | pass |
+| `--ccc-danger` dimmed (0.85) on glass | 4.93 : 1 | 4.5 | pass |
+| ~~`--ccc-ink-muted` dimmed at opacity 0.55~~ on glass | **2.72 : 1** | 4.5 | **fail — replaced by 0.85** |
+
+The dimmed rows were added in the Phase 3 judge-panel remediation. Opacity
+composites text toward the surface in sRGB, so the disconnected dim is a
+contrast decision rather than a styling one. The first value, `0.55`, took muted
+ink to 2.72 : 1 and the dimmed `Unavailable` badge (`--ccc-danger`) to 2.78 : 1,
+against a UI-SPEC promise of "last-good values still legible ≥ 4.5 : 1". The
+dim now lives in one token, and `tokens.test.ts` recomputes every dimmed text
+pair from it.
 
 The last row is the one conflict this review produced, and it is recorded rather
 than quietly fixed. The reference puts a pink glyph and a pink progress line on

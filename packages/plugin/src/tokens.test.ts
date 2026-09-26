@@ -308,6 +308,78 @@ describe("contrast floors (A11Y-02)", () => {
   });
 });
 
+/**
+ * The colour a browser paints for `fg` drawn inside an element with
+ * `opacity: alpha` over an opaque `bg`: opacity composites in sRGB, channel by
+ * channel. Returned unrounded so the audit measures the real mix.
+ */
+function composite(fg: string, bg: string, alpha: number): string {
+  const channels = (colour: string): number[] => {
+    const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(colour.trim());
+    if (!match) throw new Error(`composite: expected #rrggbb, got "${colour}"`);
+    return [match[1], match[2], match[3]].map((pair) => Number.parseInt(pair ?? "", 16));
+  };
+  const front = channels(fg);
+  const back = channels(bg);
+  const mixed = front.map((channel, i) => alpha * channel + (1 - alpha) * (back[i] ?? 0));
+  return `rgb(${mixed.join(", ")})`;
+}
+
+/** Every rule that dims the disconnected presentation (`data-dimmed="true"`). */
+const DIMMED_RULES = RULES.filter((rule) => rule.selector.includes("[data-dimmed"));
+
+/** The text ink that can appear inside a dimmed body or footer. */
+const DIMMED_TEXT_INKS = ["--ccc-ink", "--ccc-ink-muted", "--ccc-accent", "--ccc-danger"];
+/** The opaque surfaces (and the glass worst case) a card is drawn over. */
+const DIMMED_SURFACES = ["--ccc-bg", "--ccc-surface", GLASS_COMPOSITE];
+
+describe("the disconnected dimming keeps text legible (A11Y-02; UI-SPEC disconnected row)", () => {
+  it("dims the body and the footer through one audited opacity token", () => {
+    expect(DIMMED_RULES.map((rule) => rule.selector).sort()).toEqual([
+      '.ccc-card-body[data-dimmed="true"]',
+      '.ccc-card-footer[data-dimmed="true"]',
+    ]);
+    for (const rule of DIMMED_RULES) {
+      const opacity = declarationsOf(rule).find(
+        (declaration) => declaration.property === "opacity",
+      );
+      expect(opacity?.value, rule.selector).toBe("var(--ccc-dim-opacity)");
+    }
+  });
+
+  const dimAlpha = (): number => Number.parseFloat(colourOf("--ccc-dim-opacity"));
+
+  it.each(DIMMED_TEXT_INKS.flatMap((fg) => DIMMED_SURFACES.map((bg) => ({ fg, bg }))))(
+    "dimmed $fg on $bg still clears 4.5:1",
+    ({ fg, bg }) => {
+      const alpha = dimAlpha();
+      expect(alpha).toBeGreaterThan(0);
+      expect(alpha).toBeLessThan(1);
+      const surface = colourOf(bg);
+      expect(
+        contrastRatio(composite(colourOf(fg), surface, alpha), surface),
+      ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it("dimmed focus ring still clears the 3:1 non-text floor", () => {
+    const alpha = dimAlpha();
+    for (const bg of DIMMED_SURFACES) {
+      const surface = colourOf(bg);
+      expect(
+        contrastRatio(composite(colourOf("--ccc-accent"), surface, alpha), surface),
+      ).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("records why 0.55 was replaced: muted ink fell to about 2.7:1", () => {
+    const surface = GLASS_COMPOSITE;
+    const ratio = contrastRatio(composite(colourOf("--ccc-ink-muted"), surface, 0.55), surface);
+    expect(ratio).toBeLessThan(4.5);
+    expect(ratio).toBeCloseTo(2.72, 1);
+  });
+});
+
 describe("type and dimension floors (A11Y-02, WCAG 1.4.4)", () => {
   it("keeps every text token at or above 0.8125rem", () => {
     const textTokens = Object.entries(TOKENS).filter(([name]) => name.startsWith("--ccc-text-"));

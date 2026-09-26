@@ -34,6 +34,12 @@
   --ccc-danger: #ff6b6b;
   --ccc-border: rgba(244, 239, 230, 0.14);
   --ccc-border-cream: rgba(11, 11, 15, 0.12);
+  /* The disconnected dim (D-15). Opacity composites text toward the surface,
+   * so this value is a CONTRAST decision: at 0.55 muted ink fell to 2.72 : 1
+   * on glass. 0.85 is the lowest round step at which every text ink still
+   * clears 4.5 : 1 on every audited surface (muted on glass: 4.71 : 1);
+   * tokens.test.ts recomputes each pair from this value. */
+  --ccc-dim-opacity: 0.85;
 
   /* --- Type: exactly four sizes, exactly two weights --- */
   --ccc-font-ui: -apple-system, blinkmacsystemfont, "Segoe UI", roboto, "Helvetica Neue", arial,
@@ -450,9 +456,11 @@
 }
 
 /* Disconnected dims the body while last-good values stay legible; the text
- * itself is never replaced, so nothing the owner already read disappears. */
+ * itself is never replaced, so nothing the owner already read disappears.
+ * "Legible" is measured, not asserted: the dim is the audited
+ * --ccc-dim-opacity token, never a literal (A11Y-02). */
 .ccc-card-body[data-dimmed="true"] {
-  opacity: 0.55;
+  opacity: var(--ccc-dim-opacity);
 }
 
 .ccc-state-heading {
@@ -505,7 +513,7 @@
 }
 
 .ccc-card-footer[data-dimmed="true"] {
-  opacity: 0.55;
+  opacity: var(--ccc-dim-opacity);
 }
 
 .ccc-footer-time {
