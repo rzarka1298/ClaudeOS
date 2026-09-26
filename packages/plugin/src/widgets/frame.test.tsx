@@ -633,6 +633,24 @@ describe("hero variant (D-50, UI-SPEC S1)", () => {
     expect(card?.hasAttribute("data-variant")).toBe(false);
     expect(card?.hasAttribute("data-surface")).toBe(false);
   });
+
+  it("Test 4 (Task 3): every rendered meter has its value and max backed by digits in nearby text", () => {
+    const { container } = renderHero(HERO_READY);
+    const head = container.querySelector(".ccc-hero-head");
+    const meter = head?.querySelector("meter.ccc-hero-meter");
+    expect(meter).toBeTruthy();
+    const value = meter?.getAttribute("value");
+    const max = meter?.getAttribute("max");
+    expect(value).not.toBeNull();
+    expect(max).not.toBeNull();
+    const headText = head?.textContent ?? "";
+    // The numeral (.ccc-kpi-number) carries the meter's max, and the caption
+    // carries its value — the meter is decorative precisely because these
+    // digits already appear as real text (UI-SPEC "the meter is decorative
+    // because the sub-caption states the same numbers in text").
+    expect(head?.querySelector(".ccc-kpi-number")?.textContent).toBe(max);
+    expect(headText).toContain(String(value));
+  });
 });
 
 /**
