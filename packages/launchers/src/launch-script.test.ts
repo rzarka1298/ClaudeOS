@@ -12,7 +12,7 @@ describe("renderLaunchScript (D-17, D-20)", () => {
   const script = renderLaunchScript({
     cwd: CWD,
     argv: ["/opt/homebrew/bin/claude", "--resume", "it's"],
-    env: { FIRST_KEY: "one", SECOND: "two words" },
+    env: { CCC_RUN_ID: "one", CCC_LAUNCH_SOURCE: "two words" },
   });
   const lines = linesOf(script);
 
@@ -25,8 +25,8 @@ describe("renderLaunchScript (D-17, D-20)", () => {
   });
 
   it("exports one single-quoted line per env entry", () => {
-    expect(lines).toContain("export FIRST_KEY='one'");
-    expect(lines).toContain("export SECOND='two words'");
+    expect(lines).toContain("export CCC_RUN_ID='one'");
+    expect(lines).toContain("export CCC_LAUNCH_SOURCE='two words'");
   });
 
   it("changes into the quoted cwd or prints the fixed folder message and exits 1", () => {
@@ -68,8 +68,30 @@ describe("renderLaunchScript (D-17, D-20)", () => {
     expect(linesOf(bare).some((l) => l.startsWith("export "))).toBe(false);
   });
 
-  it("refuses an env key outside ^[A-Z_][A-Z0-9_]*$ with reason env-key", () => {
-    for (const key of ["lower", "1ABC", "A-B", "A B", "A;touch", ""]) {
+  it("refuses an env key outside ^CCC_[A-Z0-9_]+$ with reason env-key", () => {
+    for (const key of [
+      "lower",
+      "1ABC",
+      "A-B",
+      "A B",
+      "A;touch",
+      "",
+      // Well-formed names outside the CCC_ namespace: exporting these would
+      // change how the shell, the loader or Claude Code itself behaves.
+      "PATH",
+      "HOME",
+      "SHELL",
+      "IFS",
+      "ENV",
+      "BASH_ENV",
+      "DYLD_INSERT_LIBRARIES",
+      "NODE_OPTIONS",
+      "ANTHROPIC_API_KEY",
+      "_CCC_RUN_ID",
+      "CCC_",
+      "ccc_run_id",
+      "CCC_RUN-ID",
+    ]) {
       let caught: unknown;
       try {
         renderLaunchScript({ cwd: CWD, argv: ["/usr/bin/true"], env: { [key]: "v" } });
@@ -81,6 +103,21 @@ describe("renderLaunchScript (D-17, D-20)", () => {
     }
   });
 
+  it("accepts the keys Phase 5 passes (CCC_RUN_ID, CCC_LAUNCH_SOURCE) and other CCC_ names", () => {
+    const text = renderLaunchScript({
+      cwd: CWD,
+      argv: ["/usr/bin/true"],
+      env: { CCC_RUN_ID: "r1", CCC_LAUNCH_SOURCE: "dashboard", CCC_PROOF_2: "x" },
+    });
+    expect(linesOf(text)).toEqual(
+      expect.arrayContaining([
+        "export CCC_RUN_ID='r1'",
+        "export CCC_LAUNCH_SOURCE='dashboard'",
+        "export CCC_PROOF_2='x'",
+      ]),
+    );
+  });
+
   it("refuses a line break in the cwd, an argv element or an env value", () => {
     expect(() => renderLaunchScript({ cwd: "/tmp/a\nb", argv: ["/usr/bin/true"] })).toThrow(
       UnsafeScriptArgumentError,
@@ -89,7 +126,7 @@ describe("renderLaunchScript (D-17, D-20)", () => {
       UnsafeScriptArgumentError,
     );
     expect(() =>
-      renderLaunchScript({ cwd: CWD, argv: ["/usr/bin/true"], env: { KEY: "a\nb" } }),
+      renderLaunchScript({ cwd: CWD, argv: ["/usr/bin/true"], env: { CCC_KEY: "a\nb" } }),
     ).toThrow(UnsafeScriptArgumentError);
   });
 
