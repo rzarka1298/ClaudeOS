@@ -116,13 +116,15 @@ export const BundleIdSchema = z
   .regex(/^[A-Za-z0-9.-]+$/);
 
 /**
- * One argv element of a template (D-22): 1..4096 characters, no NUL, no
- * line break, no other control character. A line break is the one way an
- * argument can become two lines of a generated script (T-04-01).
+ * One argv element of a preset as the service offers it (D-23, D-27): at
+ * most 4096 characters, no NUL, no line break, no other control character
+ * -- and, unlike {@link ArgvElementSchema}, it may be empty. The blank
+ * preset's executable is an empty placeholder the owner fills in; it can
+ * travel in a detection response but can never be saved, because every
+ * save schema uses ArgvElementSchema.
  */
-export const ArgvElementSchema = z
+export const PresetArgvElementSchema = z
   .string()
-  .min(1)
   .max(4096)
   .refine((value) => !value.includes("\n") && !value.includes("\r"), {
     message: "argument must not contain a line break",
@@ -130,6 +132,13 @@ export const ArgvElementSchema = z
   .refine((value) => !hasControlCharacter(value), {
     message: "argument must not contain a control character",
   });
+
+/**
+ * One argv element of a template (D-22): 1..4096 characters, no NUL, no
+ * line break, no other control character. A line break is the one way an
+ * argument can become two lines of a generated script (T-04-01).
+ */
+export const ArgvElementSchema = PresetArgvElementSchema.min(1);
 
 /** Executable plus arguments never exceed this many elements (UI-SPEC S7). */
 export const MAX_TEMPLATE_ARGUMENTS = 32;
@@ -342,7 +351,7 @@ export const DetectionResponseSchema = z.object({
       z.object({
         id: terminalPresetIdSchema,
         label: z.string().min(1).max(64),
-        argv: z.array(ArgvElementSchema).max(MAX_TEMPLATE_ARGUMENTS),
+        argv: z.array(PresetArgvElementSchema).max(MAX_TEMPLATE_ARGUMENTS),
         verified: z.boolean(),
       }),
     )
