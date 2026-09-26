@@ -20,6 +20,12 @@ packages/test-fixtures/harness/dist/
 # committed only from the Linux container (plan 03-10); reports never are.
 test-results/
 playwright-report/
+# The snapshot directory is an allowlist (D-22, plan 03-10): only the pinned
+# Linux container's `*-chromium-linux.png` may be tracked. A `*-darwin.png` or
+# `*-win32.png` from a host run — or anything else written there — is ignored,
+# so it cannot be staged by accident. `scripts/check-images.sh` is the CI half.
+packages/test-fixtures/visual/widgets.spec.ts-snapshots/*
+!packages/test-fixtures/visual/widgets.spec.ts-snapshots/*-chromium-linux.png
 .DS_Store
 .obsidian/
 PRIVACY-GATE-REPORT.md
