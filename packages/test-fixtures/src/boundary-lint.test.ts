@@ -118,3 +118,43 @@ describe("import-boundary lint fixtures (REPO-03)", () => {
     });
   }
 });
+
+// D-18 (PROJ-13): the root config's process-spawn `no-restricted-syntax`
+// block for packages/launchers and packages/service also covers
+// boundary-violations/service/, so the committed fixture there must fire it,
+// and the same file rewritten to execFile with an argv array must not.
+const SHELL_EXEC_FIXTURE = join(FIXTURES_DIR, "service", "shell-exec-in-service.ts");
+const SHELL_FREE_BODY = `import { execFile } from "node:child_process";
+
+export function listProjectFolder(): void {
+  execFile("ls", ["-la"], () => {});
+}
+`;
+
+function restrictedSyntaxMessages(results: EslintFileResult[]): EslintMessage[] {
+  return results.flatMap((r) => r.messages).filter((m) => m.ruleId === "no-restricted-syntax");
+}
+
+describe("process-spawn lint (D-18)", () => {
+  const restorers: Array<() => void> = [];
+  afterEach(() => {
+    while (restorers.length > 0) restorers.pop()?.();
+  });
+
+  test("shell-exec-in-service.ts (as committed) fires the named-import and bare-call selectors", () => {
+    const original = readFileSync(SHELL_EXEC_FIXTURE, "utf8");
+    expect(original).toContain('from "node:child_process"');
+
+    const messages = restrictedSyntaxMessages(runEslintJson(SHELL_EXEC_FIXTURE));
+    expect(messages.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("shell-exec-in-service.ts rewritten to execFile with an argv array passes -- the rule discriminates", () => {
+    const original = readFileSync(SHELL_EXEC_FIXTURE, "utf8");
+    writeFileSync(SHELL_EXEC_FIXTURE, SHELL_FREE_BODY);
+    restorers.push(() => writeFileSync(SHELL_EXEC_FIXTURE, original));
+
+    const messages = restrictedSyntaxMessages(runEslintJson(SHELL_EXEC_FIXTURE));
+    expect(messages).toHaveLength(0);
+  });
+});

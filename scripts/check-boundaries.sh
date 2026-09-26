@@ -28,11 +28,14 @@
 #      (innerHTML/outerHTML/insertAdjacentHTML/dangerouslySetInnerHTML)
 #   7. no file inside packages/plugin assigns an inline style -- state
 #      reaches CSS through data-* attributes and --ccc-* tokens (UI-03)
+#   8. no file in packages/launchers or packages/service starts a process
+#      through a shell (exec/execSync, shell: true) -- D-18
 #
 # Rules 6 and 7 mirror DOM_SAFETY_RULES, and rule 2 mirrors
-# NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs. The
-# duplication is the point: this script is the layer that still reports when
-# the lint's config silently stops matching.
+# NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs; rule 8
+# mirrors the process-spawn no-restricted-syntax block in the root
+# eslint.config.mjs. The duplication is the point: this script is the layer
+# that still reports when the lint's config silently stops matching.
 #
 # Note on patterns: every pattern below is passed to awk via `-v`, which
 # processes backslash escapes BEFORE awk sees the regex -- `\b` becomes a
@@ -171,6 +174,21 @@ check_rule \
   "a file inside packages/plugin assigns an inline style (use a class and a --ccc-* token; state reaches CSS through data-* attributes)" \
   "[.]style[.][A-Za-z]+[[:space:]]*=|[.]style[[:space:]]*=[^=]|setAttribute[(][[:space:]]*[\"']style[\"']|[[:space:]]style=[{]" \
   $PLUGIN_FILES
+
+# --- Rule 8: no file in packages/launchers or packages/service starts a
+# process through a shell (D-18, PROJ-13). A project path or command
+# template that reaches a shell string is an injection; every spawn in the
+# two packages that start processes must be execFile/spawn with an argv
+# array and no `shell` option. The `.` in the negated class keeps a method
+# call such as a RegExp's or a SQLite handle's `.exec(` from tripping the
+# rule -- only a bare `exec(`/`execSync(` (the child_process import) does.
+# The lint sees import shapes; this sees the call text. ---
+SPAWN_OWNER_FILES=$(printf '%s\n' "$SRC_FILES" | grep -E '^packages/(launchers|service)/' || true)
+# shellcheck disable=SC2086
+check_rule \
+  "a file in packages/launchers or packages/service starts a process through a shell (use execFile/spawn with an argv array and no shell option, D-18)" \
+  "(^|[^A-Za-z0-9_.])(exec|execSync)[(]|shell:[[:space:]]*true" \
+  $SPAWN_OWNER_FILES
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: scanned ${FILE_COUNT} tracked source files, ${FAILURES} rule(s) violated."

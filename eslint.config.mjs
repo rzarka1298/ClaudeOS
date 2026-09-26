@@ -312,4 +312,51 @@ export default [
       ],
     },
   },
+  {
+    // D-18 (PROJ-13): nothing in the two packages that start processes may
+    // start one through a shell. A project path or a command template that
+    // reaches a shell string is an injection; every spawn must be
+    // execFile/spawn with an argv array and no `shell` option.
+    //
+    // This deliberately uses `no-restricted-syntax`, never
+    // `no-restricted-imports`: a repeated rule id in a later flat-config
+    // block OVERRIDES (does not merge with) the earlier one, so a second
+    // `no-restricted-imports` entry here would silently drop the
+    // "only @ccc/plugin may import obsidian" ban for these files (SC-4).
+    // A distinct rule id leaves that ban in force.
+    //
+    // The namespace/default-import selector closes the `cp.exec(...)` route
+    // that a named-import check cannot see. scripts/check-boundaries.sh
+    // rule 8 is the independent literal-grep layer under this one.
+    files: [
+      "packages/launchers/**/*.ts",
+      "packages/service/**/*.ts",
+      "packages/test-fixtures/boundary-violations/service/**/*.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportSpecifier[imported.name=/^exec(Sync)?$/]",
+          message:
+            "D-18: never import exec/execSync -- use execFile or spawn with an argv array and no shell.",
+        },
+        {
+          selector: 'CallExpression[callee.type="Identifier"][callee.name=/^exec(Sync)?$/]',
+          message:
+            "D-18: never start a process through a shell -- use execFile or spawn with an argv array.",
+        },
+        {
+          selector:
+            "ImportDeclaration[source.value=/^(node:)?child_process$/] > :matches(ImportNamespaceSpecifier, ImportDefaultSpecifier)",
+          message:
+            "D-18: import child_process functions by name (execFile, spawn) so a shell-running call cannot hide behind a namespace.",
+        },
+        {
+          selector: 'Property[key.name="shell"][value.value=true]',
+          message: "D-18: `shell: true` routes the argv through a shell -- remove the option.",
+        },
+      ],
+    },
+  },
 ];
