@@ -44,7 +44,15 @@ importers:
 
   packages/adapters: {}
 
-  packages/collectors: {}
+  packages/collectors:
+    dependencies:
+      '@ccc/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.4
+        version: 24.13.4
 
   packages/domain:
     dependencies:

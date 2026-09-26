@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
+import type { GuardConflict } from "./ports.js";
+import { RUN_STATES } from "./run.js";
+import { RunIdSchema } from "./session.js";
 
 // Route constants: fixed paths under API_BASE, never a ':param' segment. The
 // route table matches exact paths only, so a runId travels in the JSON body
@@ -32,18 +35,155 @@ export const SESSION_ASSOCIATE_PATH = `${API_BASE}/sessions/associate`;
 /** `POST` — send a force-terminate request to the approval inbox. */
 export const SESSION_TERMINATE_REQUEST_PATH = `${API_BASE}/sessions/terminate-request`;
 
-/** Signature stubs (RED): request schemas accept only `{}`; the rest reject everything. */
-export const SessionActionRequestSchema = z.strictObject({});
-export const LaunchChoiceSchema = z.never();
-export const ResumeRequestSchema = z.strictObject({});
-export const BranchRequestSchema = z.strictObject({});
-export const OpenTranscriptRequestSchema = z.strictObject({});
-export const AssociateRequestSchema = z.strictObject({});
-export const TranscriptAnalysisRequestSchema = z.strictObject({});
-export const ResumeResponseSchema = z.never();
-export const BranchResponseSchema = z.never();
-export const WorktreeListResponseSchema = z.never();
-export const FocusResponseSchema = z.never();
-export const TerminateRequestResponseSchema = z.never();
-export const SESSION_ACTION_ERROR_CODES = [] as const;
-export const SessionActionErrorBodySchema = z.never();
+// Request bodies are strict: an unknown key from the plugin is a bug, and a
+// smuggled filesystem path must fail rather than ride along. No request
+// schema has a path field at all (T-05-03): the service resolves every path
+// from its own records by runId or projectId.
+
+/** The body of every action that addresses one Session. */
+export const SessionActionRequestSchema = z.strictObject({ runId: RunIdSchema });
+export type SessionActionRequest = z.infer<typeof SessionActionRequestSchema>;
+
+/** An existing worktree is addressed by the opaque id the worktree list returned, never by path. */
+const WorktreeIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, {
+  message: "must be an opaque worktree id",
+});
+
+/**
+ * A new worktree's name. Claude Code creates it (`--worktree <name>`); the
+ * dashboard runs no Git write (D-28, D-30). The character set rules out
+ * separators and traversal (UI-SPEC S4-a validation).
+ */
+export const WORKTREE_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** How a launch should run when the guard offers choices (UI-SPEC S4-a). */
+export const LaunchChoiceSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("continue") }),
+  z.strictObject({ kind: z.literal("plan") }),
+  z.strictObject({ kind: z.literal("existing-worktree"), worktreeId: WorktreeIdSchema }),
+  z.strictObject({
+    kind: z.literal("new-worktree"),
+    name: z
+      .string()
+      .regex(WORKTREE_NAME_PATTERN, { message: "must be a worktree name" })
+      .refine((name) => name !== "." && name !== "..", { message: "must be a worktree name" }),
+  }),
+]);
+export type LaunchChoice = z.infer<typeof LaunchChoiceSchema>;
+
+export const ResumeRequestSchema = z.strictObject({
+  runId: RunIdSchema,
+  choice: LaunchChoiceSchema.optional(),
+});
+export type ResumeRequest = z.infer<typeof ResumeRequestSchema>;
+
+export const BranchRequestSchema = z.strictObject({
+  runId: RunIdSchema,
+  choice: LaunchChoiceSchema.optional(),
+});
+export type BranchRequest = z.infer<typeof BranchRequestSchema>;
+
+/** `reveal` shows the transcript in Finder; `open` hands it to the default app (UI-SPEC S4-b). */
+export const OpenTranscriptRequestSchema = z.strictObject({
+  runId: RunIdSchema,
+  mode: z.enum(["reveal", "open"]),
+});
+export type OpenTranscriptRequest = z.infer<typeof OpenTranscriptRequestSchema>;
+
+export const AssociateRequestSchema = z.strictObject({
+  runId: RunIdSchema,
+  projectId: z.string().min(1).max(128),
+});
+export type AssociateRequest = z.infer<typeof AssociateRequestSchema>;
+
+export const TranscriptAnalysisRequestSchema = z.strictObject({ enabled: z.boolean() });
+export type TranscriptAnalysisRequest = z.infer<typeof TranscriptAnalysisRequestSchema>;
+
+/** A Run the concurrent-write guard found in the target directory (D-27). */
+export const GuardConflictSchema = z.strictObject({
+  runId: RunIdSchema,
+  sessionName: z.string().min(1).max(256),
+  state: z.enum(RUN_STATES),
+  lastActivityAt: z.iso.datetime({ offset: true }).nullable(),
+}) satisfies z.ZodType<GuardConflict, unknown>;
+
+const ConflictOutcomeSchema = z.strictObject({
+  outcome: z.literal("conflict"),
+  projectName: z.string().min(1).max(256),
+  conflicts: z.array(GuardConflictSchema).min(1),
+});
+
+export const ResumeResponseSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({ outcome: z.literal("launched") }),
+  ConflictOutcomeSchema,
+]);
+export type ResumeResponse = z.infer<typeof ResumeResponseSchema>;
+
+/** A branch launch also returns the child Run pre-registered for the fork. */
+export const BranchResponseSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({ outcome: z.literal("launched"), childRunId: RunIdSchema }),
+  ConflictOutcomeSchema,
+]);
+export type BranchResponse = z.infer<typeof BranchResponseSchema>;
+
+/** Existing worktrees, by opaque id, branch and folder basename only — never a path. */
+export const WorktreeListResponseSchema = z.strictObject({
+  worktrees: z.array(
+    z.strictObject({
+      worktreeId: WorktreeIdSchema,
+      branch: z.string().min(1).max(256),
+      folderBasename: z
+        .string()
+        .min(1)
+        .max(255)
+        .refine((value) => !value.includes("/") && !value.includes("\0"), {
+          message: "must be a basename, not a path",
+        }),
+    }),
+  ),
+});
+export type WorktreeListResponse = z.infer<typeof WorktreeListResponseSchema>;
+
+/**
+ * `focused` selected the Session's own tab; `activated` could only bring the
+ * terminal app forward (its display name, e.g. "Terminal").
+ */
+export const FocusResponseSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({ outcome: z.literal("focused") }),
+  z.strictObject({ outcome: z.literal("activated"), terminalApp: z.string().min(1).max(64) }),
+]);
+export type FocusResponse = z.infer<typeof FocusResponseSchema>;
+
+export const TerminateRequestResponseSchema = z.strictObject({
+  outcome: z.literal("proposed"),
+  proposalId: z.string().min(1).max(128),
+});
+export type TerminateRequestResponse = z.infer<typeof TerminateRequestResponseSchema>;
+
+/**
+ * Why a session action failed. Each code maps one-to-one onto the UI-SPEC
+ * reason vocabulary; the plugin owns the copy, so no body ever carries a
+ * message or a path.
+ */
+export const SESSION_ACTION_ERROR_CODES = [
+  "service-disconnected",
+  "timeout",
+  "process-ended",
+  "terminal-unsupported",
+  "background-session",
+  "automation-denied",
+  "transcript-missing",
+  "transcript-outside-root",
+  "project-missing",
+  "launcher-not-configured",
+  "run-not-found",
+  "invalid-state",
+  "approval-unavailable",
+  "project-not-registered",
+] as const;
+export type SessionActionErrorCode = (typeof SESSION_ACTION_ERROR_CODES)[number];
+
+export const SessionActionErrorBodySchema = z.strictObject({
+  error: z.enum(SESSION_ACTION_ERROR_CODES),
+});
+export type SessionActionErrorBody = z.infer<typeof SessionActionErrorBodySchema>;
