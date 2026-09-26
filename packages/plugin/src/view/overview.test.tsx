@@ -318,12 +318,13 @@ describe("per-card signal isolation: one widget's update re-renders only its car
     // Every WidgetFrame diff, by widget id — Preact's own post-diff hook,
     // chained so @preact/signals' hook keeps running.
     const renders: string[] = [];
-    const previous = options.diffed;
+    const original = Object.getOwnPropertyDescriptor(options, "diffed");
+    const chained = options.diffed?.bind(options);
     options.diffed = (vnode) => {
       if (vnode.type === WidgetFrame) {
         renders.push((vnode.props as unknown as { definition: { id: string } }).definition.id);
       }
-      previous?.(vnode);
+      chained?.(vnode);
     };
     try {
       const { container } = render(
@@ -337,7 +338,7 @@ describe("per-card signal isolation: one widget's update re-renders only its car
       expect(renders).toHaveLength(8);
       renders.length = 0;
 
-      act(() => {
+      void act(() => {
         states["tech-intel"].value = { kind: "error", message: "boom" };
       });
 
@@ -347,8 +348,8 @@ describe("per-card signal isolation: one widget's update re-renders only its car
       );
       expect(updated?.getAttribute("data-presentation")).toBe("error");
     } finally {
-      if (previous === undefined) delete options.diffed;
-      else options.diffed = previous;
+      if (original === undefined) delete options.diffed;
+      else Object.defineProperty(options, "diffed", original);
     }
   });
 });
