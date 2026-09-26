@@ -42,6 +42,12 @@ describe("normaliseRemote (D-13, PROJ-08)", () => {
     expect(serialised).not.toContain("user");
   });
 
+  it("strips a user:password userinfo from the scp-like form", () => {
+    const result = normaliseRemote(`deploy:scp-token${AT}gitlab.com:group/repo.git`);
+    expect(result).toEqual({ kind: "other", host: "gitlab.com", path: "group/repo" });
+    expect(JSON.stringify(result)).not.toContain("scp-token");
+  });
+
   it("strips userinfo from a non-GitHub remote as well", () => {
     const result = normaliseRemote(`https://deploy:another-token${AT}gitlab.com/group/repo.git`);
     expect(result).toEqual({ kind: "other", host: "gitlab.com", path: "group/repo" });

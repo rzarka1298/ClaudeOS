@@ -8,5 +8,7 @@
 
 export * from "./app-actions.js";
 export * from "./command-template.js";
+export * from "./git-parse.js";
+export * from "./github-url.js";
 export * from "./launch-script.js";
 export * from "./sh-quote.js";
