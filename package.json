@@ -23,10 +23,12 @@
     "ci:obsidianmd": "cd packages/plugin && pnpm exec eslint --config eslint.config.mjs src --ext .ts,.tsx",
     "ci:typecheck": "turbo run typecheck",
     "ci:test": "turbo run test",
-    "ci:privacy": "sh scripts/check-privacy.sh"
+    "ci:privacy": "sh scripts/check-privacy.sh",
+    "ci:visual": "pnpm --filter @ccc/test-fixtures run harness:build && playwright test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
+    "@playwright/test": "1.63.0",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.13.4",
     "@typescript-eslint/eslint-plugin": "8.70.0",

@@ -1,0 +1,73 @@
+import { WIDGET_IDS } from "@ccc/plugin";
+import { expect, test } from "@playwright/test";
+
+/**
+ * The widget visual matrix (UI-08, A11Y-03), rendered by the isolated harness
+ * in `../harness/` (see `playwright.config.ts` for the determinism contract).
+ *
+ * Baselines are Linux-container artifacts only (D-22). On any other host the
+ * whole file skips, unless `CCC_VISUAL_ALLOW_LOCAL=1` is set for a smoke run —
+ * and a smoke run passes `--ignore-snapshots`, so it proves the harness builds,
+ * loads from `file://`, mounts the card and reaches the screenshot assertion
+ * without ever writing or comparing a macOS PNG.
+ */
+test.skip(
+  process.platform !== "linux" && !process.env.CCC_VISUAL_ALLOW_LOCAL,
+  "baselines are Linux-only (D-22) — run scripts/ci/visual-in-container.sh",
+);
+
+const HARNESS_PAGE = new URL("../harness/index.html", import.meta.url);
+
+/** The harness page for one cell, as a `file://` URL with its query string. */
+function harnessUrl(params: Readonly<Record<string, string>>): string {
+  const url = new URL(HARNESS_PAGE);
+  url.search = new URLSearchParams(params).toString();
+  return url.href;
+}
+
+/**
+ * Every presentation a card can take (UI-SPEC per-state table). `stale` and
+ * `disconnected` are presentations `resolveCardPresentation()` derives, not
+ * widget states — the harness hands the real frame a state plus a connection
+ * and lets the production resolver decide what is drawn.
+ */
+const PRESENTATIONS = [
+  "loading",
+  "empty",
+  "ready",
+  "stale",
+  "disconnected",
+  "error",
+  "permission-required",
+  "unavailable",
+] as const;
+
+// 8 registered widgets x 8 presentations. The ids come from the registry
+// itself, never a hand-typed list, so a widget a later phase registers joins
+// the matrix — and needs a baseline — automatically.
+for (const widgetId of WIDGET_IDS) {
+  for (const presentation of PRESENTATIONS) {
+    test(`${widgetId} — ${presentation}`, async ({ page }) => {
+      await page.goto(harnessUrl({ widget: widgetId, state: presentation, motion: "full" }));
+      await expect(page.locator(".ccc-card")).toHaveScreenshot(`${widgetId}-${presentation}.png`);
+    });
+  }
+}
+
+// The four motion cells (A11Y-03, D-19). Reduced motion is one `data-motion`
+// attribute on the root that zeroes the motion tokens and switches the twinkle
+// field off; these cells make a regression in that single switch visible —
+// for the atmosphere (the whole viewport-sized root) and for a card.
+for (const motion of ["full", "reduced"] as const) {
+  test(`background — ${motion}`, async ({ page }) => {
+    await page.goto(harnessUrl({ widget: "background", motion }));
+    await expect(page.locator(".ccc-command-center")).toHaveScreenshot(`background-${motion}.png`);
+  });
+
+  test(`service-health — ready — motion ${motion}`, async ({ page }) => {
+    await page.goto(harnessUrl({ widget: "service-health", state: "ready", motion }));
+    await expect(page.locator(".ccc-card")).toHaveScreenshot(
+      `service-health-ready-motion-${motion}.png`,
+    );
+  });
+}

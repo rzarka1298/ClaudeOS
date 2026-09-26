@@ -16,6 +16,10 @@
     "lint": {
       "outputs": []
     },
+    "harness:build": {
+      "dependsOn": ["^build"],
+      "outputs": ["harness/dist/**"]
+    },
     "dev": {
       "cache": false,
       "persistent": true

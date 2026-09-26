@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Widget harness</title>
+    <!-- Local files only (T-03-06): the production stylesheet, then the frozen
+         font stack Playwright also injects through stylePath. -->
+    <link rel="stylesheet" href="./dist/styles.css" />
+    <link rel="stylesheet" href="./harness-fonts.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- A classic script, not type="module": Chromium blocks module scripts on
+         file:// origins, so build.mjs emits an iife. -->
+    <script src="./dist/main.js"></script>
+  </body>
+</html>

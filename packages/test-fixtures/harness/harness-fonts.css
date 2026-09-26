@@ -1,0 +1,51 @@
+/*
+ * The harness's frozen presentation layer (D-22, research Pattern 6/Pitfall 5).
+ *
+ * Linked by index.html AND injected by Playwright's `stylePath` on every
+ * screenshot, so a baseline never depends on which fonts the host happens to
+ * have: the stack names only DejaVu Sans and Liberation Sans, both shipped in
+ * the pinned Playwright noble image. If a baseline ever shows a fallback glyph
+ * set, the fix belongs here — never in the plugin stylesheet.
+ *
+ * Everything below the font rule is harness page chrome: it sizes the page and
+ * the single card cell. None of it styles a production component.
+ */
+
+.ccc-command-center {
+  --ccc-font-ui: "DejaVu Sans", "Liberation Sans", sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  background: #0b0b0f;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* One card per page, at a stable width per size hint, above the atmosphere. */
+.ccc-harness-cell {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 22rem;
+  padding: 1.5rem;
+}
+
+.ccc-harness-cell[data-size="wide"] {
+  width: 44rem;
+}
+
+.ccc-harness-cell[data-size="tall"] {
+  width: 22rem;
+}
+
+.ccc-harness-error {
+  margin: 1rem;
+  font: 1rem sans-serif;
+  color: #ff6b6b;
+}
