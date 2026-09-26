@@ -48,3 +48,9 @@ export function assertNoCredentialFields(value: unknown): void {
     }
   }
 }
+
+/** Keys whose value is legitimately a local filesystem path (D-43, Pitfall 9). */
+export const PATH_VALUED_KEYS: ReadonlySet<string> = new Set(["socketPathOverride"]);
+
+/** RED skeleton (plan 04-03 task 3): refuses nothing yet. */
+export function assertNoPrivatePathValues(_value: unknown): void {}
