@@ -8,6 +8,9 @@ export default defineConfig({
     // real service subprocess several times.
     testTimeout: 20000,
     hookTimeout: 20000,
-    exclude: ["**/node_modules/**", "**/dist/**"],
+    // visual/ holds Playwright specs (plan 03-09), run by `pnpm exec playwright
+    // test`, never by vitest: vitest would execute test.skip() at module scope
+    // and fail the whole package.
+    exclude: ["**/node_modules/**", "**/dist/**", "visual/**"],
   },
 });
