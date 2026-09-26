@@ -173,7 +173,12 @@ describe("the optional row action (UI-SPEC S1 row action, C-11, A11Y floor 6)", 
         moreDestination="agent-runs"
         renderAction={(row) =>
           row.canAct
-            ? { id: `focus-${row.id}`, label: "Focus", capability: "session:focus", target: { runId: row.id } }
+            ? {
+                id: `focus-${row.id}`,
+                label: "Focus",
+                capability: "session:focus",
+                target: { runId: row.id },
+              }
             : null
         }
         renderActionLabel={(row) => `Focus terminal for ${row.primary}`}
@@ -211,7 +216,11 @@ describe("the optional row action (UI-SPEC S1 row action, C-11, A11Y floor 6)", 
         renderPrimary={(row) => row.primary}
         renderMeta={(row) => row.meta}
         moreDestination="agent-runs"
-        renderAction={(row) => ({ id: `focus-${row.id}`, label: "Focus", capability: "session:focus" })}
+        renderAction={(row) => ({
+          id: `focus-${row.id}`,
+          label: "Focus",
+          capability: "session:focus",
+        })}
         renderActionLabel={(row) => `Focus terminal for ${row.primary}`}
       />,
     );

@@ -766,6 +766,21 @@
   font-size: var(--ccc-text-body);
 }
 
+/* A button-reset variant of `.ccc-list-primary`, used only when a list body
+ * is given `onSelectRow` (UI-SPEC S1 "Primary line"). It carries the same
+ * ink, size and clamp classes; the reset below removes button chrome so it
+ * reads identically to the plain `<p>` it replaces. */
+.ccc-session-row-link {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .ccc-list-meta {
   margin: 0;
   overflow-wrap: anywhere;
@@ -773,14 +788,43 @@
   font-size: var(--ccc-text-label);
 }
 
-/* The quick-action button and the `+{n} more` overflow control: one Label-step
- * pill each, a hairline outline, and a hit area no smaller than
- * `--ccc-space-lg` in either direction. */
+/* Only a row that actually uses the optional row action (UI-SPEC S1 row
+ * action) switches its layout: the primary and meta lines stay in a left
+ * column, and the action pill sits in a right column spanning both text
+ * rows. Every existing widget — none of which pass `renderAction` — keeps
+ * its current block layout untouched, so no committed visual baseline is
+ * affected by this rule (05-06 is the first widget to opt in). */
+.ccc-list-row:has(.ccc-row-action) {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: var(--ccc-space-sm);
+  align-items: center;
+}
+
+.ccc-list-row:has(.ccc-row-action) > .ccc-list-primary,
+.ccc-list-row:has(.ccc-row-action) > .ccc-session-row-link,
+.ccc-list-row:has(.ccc-row-action) > .ccc-list-meta {
+  grid-column: 1;
+}
+
+.ccc-list-row:has(.ccc-row-action) > .ccc-row-action {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  margin-left: 0;
+}
+
+/* The quick-action button, the `+{n} more` overflow control and the S1 row
+ * action: one Label-step pill each, a hairline outline, and a hit area no
+ * smaller than `--ccc-space-lg` in either direction. The row action's only
+ * animated property is colour, on `--ccc-motion-fast` (UI-SPEC S1 row
+ * action). */
 .ccc-quick-action,
-.ccc-list-more {
+.ccc-list-more,
+.ccc-row-action {
   min-width: var(--ccc-space-lg);
   min-height: var(--ccc-space-lg);
   padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  margin-left: auto;
   overflow-wrap: anywhere;
   border: var(--ccc-border-hairline) solid var(--ccc-border);
   border-radius: var(--ccc-radius-pill);
@@ -797,7 +841,8 @@
 }
 
 .ccc-quick-action:hover,
-.ccc-list-more:hover {
+.ccc-list-more:hover,
+.ccc-row-action:hover {
   color: var(--ccc-ink);
 }
 
@@ -806,6 +851,8 @@
  * focusable control has (A11Y-01). */
 .ccc-quick-action:focus-visible,
 .ccc-list-more:focus-visible,
+.ccc-row-action:focus-visible,
+.ccc-session-row-link:focus-visible,
 .ccc-card-body[tabindex]:focus-visible {
   outline: var(--ccc-focus-ring) solid var(--ccc-accent);
   outline-offset: calc(-1 * var(--ccc-focus-ring));

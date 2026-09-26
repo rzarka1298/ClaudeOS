@@ -61,7 +61,12 @@ export type CardPresentation =
       readonly sourceLabel: string;
       readonly footer: FooterModel;
     }
-  | { readonly kind: "unavailable"; readonly footer: FooterModel };
+  | {
+      readonly kind: "unavailable";
+      readonly footer: FooterModel;
+      /** Carried unchanged from `WidgetState`'s `unavailable.reason` (SESS-18, D-12). */
+      readonly reason?: string | undefined;
+    };
 
 /** Every declared key reported with the same status. */
 function sourcesWith(
@@ -144,7 +149,11 @@ export function resolveCardPresentation<T>(
       if (transportIsDown(connection, dataKeys)) {
         return { kind: "disconnected", reason, lastGood: null };
       }
-      return { kind: "unavailable", footer: blankFooter(dataKeys, "unavailable", "no-source") };
+      return {
+        kind: "unavailable",
+        footer: blankFooter(dataKeys, "unavailable", "no-source"),
+        reason: state.reason,
+      };
 
     case "ready": {
       const footer: FooterModel = {

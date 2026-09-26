@@ -659,7 +659,11 @@ describe("setup-state copy, unavailable reason and body quick-action (D-53, SESS
     render(
       <WidgetFrame
         definition={COPY_PANEL}
-        state={{ kind: "permission-required", capability: "claude-hooks", sourceLabel: "Claude Code hooks" }}
+        state={{
+          kind: "permission-required",
+          capability: "claude-hooks",
+          sourceLabel: "Claude Code hooks",
+        }}
         connection={{ kind: "live" }}
         size="small"
         now={TWO_MINUTES_LATER}
@@ -734,9 +738,17 @@ describe("setup-state copy, unavailable reason and body quick-action (D-53, SESS
     target: { runId: "run-1" },
   };
 
-  function CapturingBody({ onQuickAction }: { readonly onQuickAction?: (d: QuickActionDescriptor) => void }) {
+  function CapturingBody({
+    onQuickAction,
+  }: {
+    readonly onQuickAction?: ((d: QuickActionDescriptor) => void) | undefined;
+  }) {
     return (
-      <button type="button" className="ccc-capturing-body-button" onClick={() => onQuickAction?.(ROW_ACTION)}>
+      <button
+        type="button"
+        className="ccc-capturing-body-button"
+        onClick={() => onQuickAction?.(ROW_ACTION)}
+      >
         emit
       </button>
     );

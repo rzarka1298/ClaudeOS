@@ -72,6 +72,37 @@ function midSentenceTitle(title: string): string {
 }
 
 /**
+ * Per-capability override of the generic `permission-required` template
+ * (UI-SPEC "Setup state: hooks not installed", D-53). The generic template
+ * ("{source} isn't connected") is ungrammatical for "Claude Code hooks", so
+ * this is the one exception; every other capability falls back to it
+ * unchanged. `descriptorLabel` is what `dispatchQuickAction`'s existing
+ * `connect:*` resolution shows in its Notice — it stays a real English
+ * phrase ("Connect Claude Code hooks"), not the heading.
+ */
+const PERMISSION_COPY: Partial<
+  Record<
+    string,
+    {
+      readonly heading: string;
+      readonly body: string;
+      readonly button: string;
+      readonly descriptorLabel: string;
+    }
+  >
+> = {
+  "claude-hooks": {
+    heading: "Claude Code hooks aren't installed",
+    body: "Install the optional hook package to see your Claude Code sessions here. Obsidian settings → Claude command center → Claude shows the command to run.",
+    button: "Set up Claude hooks",
+    descriptorLabel: "Connect Claude Code hooks",
+  },
+};
+
+/** UI-SPEC "Telemetry shape changed (SESS-18, D-12)" heading. */
+const TELEMETRY_UNAVAILABLE_HEADING = "Session tracking paused";
+
+/**
  * The surface a hero-variant card renders on, derived from the presentation
  * (UI-SPEC S1 "Surface by presentation"). Cream is reserved for the four
  * presentations that carry last-good numbers; every presentation that needs
@@ -186,7 +217,12 @@ export function WidgetFrame<T>({
       case "ready":
       case "stale":
         return state.kind === "ready" ? (
-          <Body data={state.data} size={hint} onNavigate={onNavigate} />
+          <Body
+            data={state.data}
+            size={hint}
+            onNavigate={onNavigate}
+            onQuickAction={onQuickAction}
+          />
         ) : null;
       case "disconnected":
         return (
@@ -201,7 +237,12 @@ export function WidgetFrame<T>({
                   )}. They may be out of date.`}
             </p>
             {state.kind === "ready" ? (
-              <Body data={state.data} size={hint} onNavigate={onNavigate} />
+              <Body
+                data={state.data}
+                size={hint}
+                onNavigate={onNavigate}
+                onQuickAction={onQuickAction}
+              />
             ) : null}
           </>
         );
@@ -225,10 +266,15 @@ export function WidgetFrame<T>({
       case "permission-required": {
         const source = presentation.sourceLabel;
         const capability = presentation.capability;
+        const override = PERMISSION_COPY[capability];
+        const heading = override?.heading ?? `${source} isn't connected`;
+        const bodyText = override?.body ?? `Connect ${source} to see ${panel} here.`;
+        const buttonLabel = override?.button ?? `Connect ${source}`;
+        const descriptorLabel = override?.descriptorLabel ?? `Connect ${source}`;
         return (
           <>
-            <p className="ccc-state-heading">{`${source} isn't connected`}</p>
-            <p className="ccc-state-body">{`Connect ${source} to see ${panel} here.`}</p>
+            <p className="ccc-state-heading">{heading}</p>
+            <p className="ccc-state-body">{bodyText}</p>
             {/* A DESCRIPTOR goes to one handler prop and nothing runs here
                 (C-11, APPR-01, T-03-13). In this phase the dispatcher resolves
                 it to the shell's settings destination; Phase 6/7 replaces that
@@ -239,12 +285,12 @@ export function WidgetFrame<T>({
               onClick={() =>
                 onQuickAction?.({
                   id: `connect-${capability}`,
-                  label: `Connect ${source}`,
+                  label: descriptorLabel,
                   capability: `connect:${capability}`,
                 })
               }
             >
-              {`Connect ${source}`}
+              {buttonLabel}
             </button>
           </>
         );
@@ -252,9 +298,12 @@ export function WidgetFrame<T>({
       case "unavailable":
         return (
           <>
-            <p className="ccc-state-heading">No source yet</p>
+            <p className="ccc-state-heading">
+              {presentation.reason === undefined ? "No source yet" : TELEMETRY_UNAVAILABLE_HEADING}
+            </p>
             <p className="ccc-state-body">
-              {`${definition.title} has no data source in this build. It fills in once its source is available.`}
+              {presentation.reason ??
+                `${definition.title} has no data source in this build. It fills in once its source is available.`}
             </p>
           </>
         );
