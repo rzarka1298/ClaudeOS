@@ -103,6 +103,19 @@ describe("validateCommandTemplate (D-22, PROJ-10)", () => {
     expect(FORBIDDEN_CLAUDE_FLAGS).toContain("--dangerously-skip-permissions");
   });
 
+  it("refuses prefixed and differently-cased spellings of the permission-bypass flag", () => {
+    for (const spelling of [
+      "--allow-dangerously-skip-permissions",
+      "--DANGEROUSLY-SKIP-PERMISSIONS",
+      "-dangerously-skip-permissions",
+    ]) {
+      expect(refusal([CLAUDE, spelling], "claude-code")).toEqual({
+        reason: "forbidden-flag",
+        index: 1,
+      });
+    }
+  });
+
   it("refuses a carriage return as a line break", () => {
     expect(refusal([WEZTERM, "a\rb", "{script}"])).toEqual({ reason: "line-break", index: 1 });
   });

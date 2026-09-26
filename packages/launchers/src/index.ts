@@ -6,5 +6,7 @@
 // owns every side effect. The only internal import allowed is @ccc/domain
 // (eslint.config.mjs boundary map, SC-7).
 
+export * from "./app-actions.js";
+export * from "./command-template.js";
 export * from "./launch-script.js";
 export * from "./sh-quote.js";

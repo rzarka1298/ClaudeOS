@@ -1,11 +1,51 @@
+/**
+ * Owner-authored command templates (D-22, PROJ-10) and the custom-terminal
+ * presets (D-23).
+ *
+ * A template is an argv array, never a string. Placeholders (`{projectPath}`,
+ * `{script}`) are whole elements only and are replaced element-for-element;
+ * rendering never splits, joins or re-parses an element, so a project path
+ * full of spaces and quotes is still exactly one argument.
+ *
+ * The validator stays strict on purpose (E-6). Templates are owner-authored,
+ * but a permissive validator turns a typo into a different program:
+ *   - `argv[0]` must be absolute and executable — no `PATH` lookup, so the
+ *     program that runs is the one the owner saw in the preview. The
+ *     executable check needs `fs`, so it is injected (`isExecutable`) and
+ *     this package stays free of filesystem access.
+ *   - A placeholder embedded in a larger element (`--cwd={projectPath}`) is
+ *     refused: substituting inside an element is how a value starts being
+ *     parsed by whatever reads that element.
+ *   - The Claude Code permission-bypass flag is refused in any form, in
+ *     either kind of template (CLAUDE.md prohibition).
+ *
+ * Presets route through `/usr/bin/open` or `/usr/bin/osascript`, which
+ * return once the terminal has been handed the script, so exit status 0
+ * means "handed off" (RESEARCH Pattern 1). A preset that ran the terminal
+ * binary directly would stay running and hit the launch deadline even though
+ * its window opened. Every preset ships `verified: false` until the owner
+ * tests it (D-23).
+ */
 import type { TemplateRefusalReason, TerminalPresetId } from "@ccc/domain";
 import { MAX_TEMPLATE_ARGUMENTS } from "@ccc/domain";
+import { OPEN } from "./app-actions.js";
 
 export const PLACEHOLDERS = ["{projectPath}", "{script}"] as const;
 export type Placeholder = (typeof PLACEHOLDERS)[number];
+
+/** Refused in every template. Matching is by substring, so `=value` and prefixed variants are refused too. */
 export const FORBIDDEN_CLAUDE_FLAGS = ["--dangerously-skip-permissions"] as const;
+
+/** Executable plus arguments never exceed this many elements (UI-SPEC S7). */
 export const MAX_TEMPLATE_ARGS = MAX_TEMPLATE_ARGUMENTS;
+
+/**
+ * `terminal`: a custom terminal command; must contain `{script}` and may use `{projectPath}`.
+ * `claude-code`: the `claude` command line; may use `{projectPath}` only. In both, `argv[0]` is the executable.
+ */
 export type TemplateKind = "terminal" | "claude-code";
+
+/** The refusals this pure validator can decide; the bundle and executable lookups are service-side. */
 export type TemplateRefusal = Exclude<
   TemplateRefusalReason,
   "bundle-not-found" | "executable-not-found"
@@ -13,9 +53,11 @@ export type TemplateRefusal = Exclude<
 
 export interface ValidateTemplateOptions {
   readonly kind: TemplateKind;
+  /** The service passes an `accessSync(path, X_OK)` check. Called with `argv[0]` only. */
   readonly isExecutable: (path: string) => boolean;
 }
 
+/** `index` is the offending element, or `null` when the refusal is about the template as a whole. */
 export type TemplateValidation =
   | { readonly ok: true; readonly argv: readonly string[] }
   | { readonly ok: false; readonly reason: TemplateRefusal; readonly index: number | null };
@@ -33,21 +75,134 @@ export interface TerminalPreset {
   readonly note: string;
 }
 
-/** RED skeleton (plan 04-02 task 2): refuses everything. */
+const ALLOWED_PLACEHOLDERS: Readonly<Record<TemplateKind, readonly Placeholder[]>> = {
+  terminal: ["{projectPath}", "{script}"],
+  "claude-code": ["{projectPath}"],
+};
+
+/** An element that is entirely one brace-wrapped name, e.g. `{script}` or a typo like `{scrpt}`. */
+const WHOLE_TOKEN_PLACEHOLDER = /^\{[A-Za-z][A-Za-z0-9]*\}$/;
+const NUL = String.fromCharCode(0);
+
+function hasLineBreak(element: string): boolean {
+  return element.includes("\n") || element.includes("\r") || element.includes(NUL);
+}
+
+function containsForbiddenFlag(element: string): boolean {
+  const lower = element.toLowerCase();
+  // "--dangerously-skip-permissions" without its leading dashes, so the bare flag,
+  // "=value" and prefixed spellings all match.
+  return FORBIDDEN_CLAUDE_FLAGS.some((flag) => lower.includes(flag.replace(/^-+/, "")));
+}
+
+function refuse(reason: TemplateRefusal, index: number | null): TemplateValidation {
+  return { ok: false, reason, index };
+}
+
+/**
+ * Validates a command template (D-22). Total: never throws. Element checks
+ * run in index order, so the first offending element is reported.
+ */
 export function validateCommandTemplate(
-  _argv: readonly string[],
-  _options: ValidateTemplateOptions,
+  argv: readonly string[],
+  options: ValidateTemplateOptions,
 ): TemplateValidation {
-  return { ok: false, reason: "empty-argument", index: null };
+  if (argv.length > MAX_TEMPLATE_ARGS) return refuse("too-many-arguments", MAX_TEMPLATE_ARGS);
+  if (argv.length === 0) return refuse("executable-not-absolute", 0);
+
+  const allowed = ALLOWED_PLACEHOLDERS[options.kind];
+  for (const [index, element] of argv.entries()) {
+    if (hasLineBreak(element)) return refuse("line-break", index);
+    if (element === "") return refuse("empty-argument", index);
+    if (containsForbiddenFlag(element)) return refuse("forbidden-flag", index);
+
+    if (index === 0) {
+      if (!element.startsWith("/")) return refuse("executable-not-absolute", 0);
+      if (!options.isExecutable(element)) return refuse("executable-not-executable", 0);
+      continue;
+    }
+
+    if (WHOLE_TOKEN_PLACEHOLDER.test(element)) {
+      if (!(allowed as readonly string[]).includes(element)) {
+        return refuse("unknown-placeholder", index);
+      }
+      continue;
+    }
+    if (PLACEHOLDERS.some((placeholder) => element.includes(placeholder))) {
+      return refuse("embedded-placeholder", index);
+    }
+  }
+
+  if (options.kind === "terminal" && !argv.includes("{script}")) {
+    return refuse("missing-script-placeholder", null);
+  }
+  return { ok: true, argv };
 }
 
-/** RED skeleton. */
+/**
+ * Replaces whole-token placeholders, element for element; every other
+ * element is returned unchanged. Throws when the template uses a
+ * placeholder whose value was not supplied. Validate first.
+ */
 export function renderCommandTemplate(
-  _argv: readonly string[],
-  _values: TemplateValues,
+  argv: readonly string[],
+  values: TemplateValues,
 ): readonly string[] {
-  return [];
+  return argv.map((element) => {
+    if (element === "{script}") {
+      if (values.script === undefined)
+        throw new RangeError("no value for the {script} placeholder");
+      return values.script;
+    }
+    if (element === "{projectPath}") {
+      if (values.projectPath === undefined) {
+        throw new RangeError("no value for the {projectPath} placeholder");
+      }
+      return values.projectPath;
+    }
+    return element;
+  });
 }
 
-/** RED skeleton. */
-export const TERMINAL_PRESETS: readonly TerminalPreset[] = [];
+export const OSASCRIPT = "/usr/bin/osascript";
+
+/** Custom-terminal presets (RESEARCH "Terminal Presets"). All unverified until the owner's Test step succeeds. */
+export const TERMINAL_PRESETS: readonly TerminalPreset[] = [
+  {
+    id: "iterm2",
+    label: "iTerm2",
+    argv: [
+      OSASCRIPT,
+      "-e",
+      "on run argv",
+      "-e",
+      'tell application id "com.googlecode.iterm2" to create window with default profile command (item 1 of argv)',
+      "-e",
+      "end run",
+      "{script}",
+    ],
+    verified: false,
+    note: "The script path reaches AppleScript as an argument, never inside the script source. macOS asks once for Automation permission to control iTerm2.",
+  },
+  {
+    id: "ghostty",
+    label: "Ghostty",
+    argv: [OPEN, "-na", "Ghostty", "--args", "-e", "{script}"],
+    verified: false,
+    note: "Ghostty may run the command a second time as typed text; the launch script has already deleted itself, so the second run does nothing.",
+  },
+  {
+    id: "wezterm",
+    label: "WezTerm",
+    argv: [OPEN, "-na", "WezTerm", "--args", "start", "--cwd", "{projectPath}", "--", "{script}"],
+    verified: false,
+    note: "Starts through open so the launch is reported as soon as WezTerm receives it.",
+  },
+  {
+    id: "blank",
+    label: "Blank template",
+    argv: ["", "{script}"],
+    verified: false,
+    note: "Fill in the full path of your terminal's executable before saving.",
+  },
+];
