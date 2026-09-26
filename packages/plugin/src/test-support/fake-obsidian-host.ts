@@ -83,6 +83,89 @@ export class FakeVault {
   }
 }
 
+/** The `Stat` shape Obsidian's `DataAdapter.stat()` resolves with. */
+export interface FakeStat {
+  readonly type: "file" | "folder";
+  readonly ctime: number;
+  readonly mtime: number;
+  readonly size: number;
+}
+
+/**
+ * An in-memory stand-in for the two `DataAdapter` methods the layout-file
+ * poller uses, `stat()` and `read()` -- the {@link FakeVault} technique applied
+ * to the plugin data folder, which vault events do not cover (plan 03-08).
+ *
+ * It holds ONE file, because the poller only ever asks about one path, and it
+ * records the path of every call so a test can prove the poller asked about
+ * the right one. The two counters make the poller's cost claims assertable
+ * rather than assumed: {@link statCallCount} makes "one stat per interval" a
+ * counted fact, and {@link readCallCount} makes "re-read only when the file
+ * changed" a counted fact.
+ *
+ * `stat()` and `read()` can be held open with {@link holdNextStat}, so a test
+ * can overlap two ticks against one slow stat.
+ */
+export class FakeDataAdapter {
+  private file: { content: string; mtime: number; size: number } | null = null;
+  private heldStat: Promise<void> | null = null;
+
+  /** Number of `stat()` invocations since construction. */
+  statCallCount = 0;
+
+  /** Number of `read()` invocations since construction. */
+  readCallCount = 0;
+
+  /** Every path `stat()` or `read()` was asked about, in call order. */
+  readonly requestedPaths: string[] = [];
+
+  /**
+   * Replaces the file, the way an editor save or an atomic rename would.
+   * `size` is the UTF-8 byte length, as a real filesystem reports it.
+   */
+  setFile(content: string, mtime: number): void {
+    this.file = { content, mtime, size: new TextEncoder().encode(content).byteLength };
+  }
+
+  /** Deletes the file. */
+  remove(): void {
+    this.file = null;
+  }
+
+  /**
+   * Makes the next `stat()` wait until the returned function is called --
+   * the fake's way of staging a slow disk.
+   */
+  holdNextStat(): () => void {
+    let release: () => void = () => {};
+    this.heldStat = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
+
+  /** Mirrors `DataAdapter.stat()`: the file's stat, or `null` when absent. */
+  async stat(path: string): Promise<FakeStat | null> {
+    this.statCallCount++;
+    this.requestedPaths.push(path);
+    const held = this.heldStat;
+    this.heldStat = null;
+    if (held !== null) await held;
+    if (this.file === null) return null;
+    return { type: "file", ctime: 0, mtime: this.file.mtime, size: this.file.size };
+  }
+
+  /** Mirrors `DataAdapter.read()`: the file's text. Throws when absent. */
+  async read(path: string): Promise<string> {
+    this.readCallCount++;
+    this.requestedPaths.push(path);
+    if (this.file === null) {
+      throw new Error(`fake data adapter: no file at ${path}`);
+    }
+    return this.file.content;
+  }
+}
+
 export interface LiveCounts {
   event: number;
   interval: number;
