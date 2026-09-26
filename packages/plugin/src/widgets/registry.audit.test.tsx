@@ -1,0 +1,121 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { cleanup, fireEvent, render } from "@testing-library/preact";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { QuickActionDescriptor } from "./contract.js";
+import { ENABLED_FLAGS, FEATURE_FLAGS } from "./feature-flags.js";
+import { WidgetFrame } from "./frame.js";
+import { dispatchQuickAction } from "./quick-actions.js";
+import { type AnyWidgetDefinition, PRD_PANEL_ORDER, WIDGET_IDS, WIDGETS } from "./registry.js";
+import { widgetStateFor } from "./widget-data.js";
+
+/**
+ * Test-audit additions for plan 03-06: seams the original suite touched only
+ * by value, re-checked by identity, by source scan and end to end.
+ */
+
+const SRC_DIR = dirname(fileURLToPath(import.meta.url));
+const NOW = Date.parse("2026-09-15T00:10:00.000Z");
+
+afterEach(cleanup);
+
+describe("widgetStateFor is one signal per widget", () => {
+  it.each(WIDGET_IDS)("%s: repeated reads return the same signal", (id) => {
+    expect(widgetStateFor(id)).toBe(widgetStateFor(id));
+  });
+
+  it("gives every widget its own signal", () => {
+    const signals = WIDGET_IDS.map((id) => widgetStateFor(id));
+    expect(new Set(signals).size).toBe(WIDGET_IDS.length);
+  });
+
+  it.each(PRD_PANEL_ORDER)("%s: never holds a ready payload (D-17)", (id) => {
+    expect(["permission-required", "unavailable"]).toContain(widgetStateFor(id).value.kind);
+  });
+});
+
+describe("feature flags are one in-code flag per widget", () => {
+  it("each widget owns a distinct flag, and ENABLED_FLAGS is exactly those", () => {
+    const flags = WIDGET_IDS.map((id) => WIDGETS[id].featureFlag as string);
+    expect(new Set(flags).size).toBe(WIDGET_IDS.length);
+    expect([...ENABLED_FLAGS].sort()).toEqual([...flags].sort());
+    expect(Object.keys(FEATURE_FLAGS).sort()).toEqual([...flags].sort());
+  });
+
+  it("nothing in the widget layer persists or reads flags from storage", () => {
+    for (const file of ["feature-flags.ts", "registry.ts", "widget-data.ts"]) {
+      const source = readFileSync(join(SRC_DIR, file), "utf8");
+      expect(source).not.toMatch(/loadData|saveData|localStorage|sessionStorage/);
+    }
+  });
+});
+
+describe("no plugin card is backed by fixture data (D-17)", () => {
+  it.each(["panels.tsx", "registry.ts", "widget-data.ts", "list-body.tsx", "frame.tsx"])(
+    "%s imports no fixture module",
+    (file) => {
+      const imports = readFileSync(join(SRC_DIR, file), "utf8")
+        .split("\n")
+        .filter((line) => /^\s*import\b|from\s+["']/.test(line));
+      for (const line of imports) expect(line).not.toMatch(/fixture|mock/i);
+    },
+  );
+});
+
+describe("every button on every registered card routes through the dispatcher", () => {
+  it.each(WIDGET_IDS.filter((id) => id !== "service-health"))(
+    "%s: clicking every action only ever navigates to settings",
+    (id) => {
+      const definition: AnyWidgetDefinition = WIDGETS[id];
+      const ctx = { navigate: vi.fn(), notify: vi.fn() };
+      const emitted: QuickActionDescriptor[] = [];
+      const { container } = render(
+        <WidgetFrame
+          definition={definition}
+          state={widgetStateFor(id).value}
+          connection={{ kind: "live" }}
+          now={NOW}
+          onQuickAction={(descriptor) => {
+            emitted.push(descriptor);
+            dispatchQuickAction(descriptor, ctx);
+          }}
+        />,
+      );
+      for (const button of container.querySelectorAll(
+        "button.ccc-connect-button, button.ccc-quick-action",
+      )) {
+        fireEvent.click(button);
+      }
+      for (const call of ctx.navigate.mock.calls) expect(call).toEqual(["settings"]);
+      expect(ctx.notify).toHaveBeenCalledTimes(emitted.length);
+      const connects = emitted.filter((d) => d.capability.startsWith("connect:"));
+      expect(ctx.navigate).toHaveBeenCalledTimes(connects.length);
+    },
+  );
+
+  it("Today's Connect button lands on settings and names Google Calendar and Gmail", () => {
+    const ctx = { navigate: vi.fn(), notify: vi.fn() };
+    const { getByRole } = render(
+      <WidgetFrame
+        definition={WIDGETS.today as AnyWidgetDefinition}
+        state={widgetStateFor("today").value}
+        connection={{ kind: "live" }}
+        now={NOW}
+        onQuickAction={(descriptor) => dispatchQuickAction(descriptor, ctx)}
+      />,
+    );
+    fireEvent.click(getByRole("button", { name: "Connect Google Calendar and Gmail" }));
+    expect(ctx.navigate).toHaveBeenCalledExactlyOnceWith("settings");
+    expect(ctx.notify.mock.calls[0]?.[0]).toMatch(/Google Calendar and Gmail.*Settings/);
+  });
+
+  it("every PRD quick action reports unavailable and never navigates", () => {
+    for (const action of WIDGETS["quick-actions"].quickActions) {
+      const ctx = { navigate: vi.fn(), notify: vi.fn() };
+      expect(dispatchQuickAction(action, ctx)).toEqual({ kind: "unavailable" });
+      expect(ctx.navigate).not.toHaveBeenCalled();
+      expect(ctx.notify).toHaveBeenCalledWith(`${action.label} isn't available yet.`);
+    }
+  });
+});
