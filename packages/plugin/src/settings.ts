@@ -49,8 +49,75 @@ export function assertNoCredentialFields(value: unknown): void {
   }
 }
 
-/** Keys whose value is legitimately a local filesystem path (D-43, Pitfall 9). */
+/**
+ * Keys whose value is legitimately a local filesystem path, and so may hold a
+ * home-absolute string. Only the socket path override qualifies: a custom
+ * socket location under the owner's home is exactly what that setting is for
+ * (04-RESEARCH.md Pitfall 9), and it names the service's runtime directory,
+ * never a project. Matched by key name at any depth.
+ */
 export const PATH_VALUED_KEYS: ReadonlySet<string> = new Set(["socketPathOverride"]);
 
-/** RED skeleton (plan 04-03 task 3): refuses nothing yet. */
-export function assertNoPrivatePathValues(_value: unknown): void {}
+/** A home-absolute or home-relative path: the shape every project path takes. */
+const PRIVATE_PATH_VALUE = /^(\/Users\/|~\/)/;
+
+/** Case-insensitive: `projects`, `projectPaths`, `scanRoots`, `launcherConfig`, `recentProjects`. */
+const PROJECT_KEY_PATTERN = /project|scanroot|launcher/i;
+
+/** Deeper than any settings shape this plugin has; a deeper value is refused, not skipped. */
+const MAX_SETTINGS_DEPTH = 8;
+
+function refusePrivate(key: string): never {
+  throw new Error(
+    `Refusing to persist plugin settings: key "${key}" holds a private path or project data.`,
+  );
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function walkSettingsValue(key: string, value: unknown, depth: number): void {
+  if (typeof value === "string") {
+    if (!PATH_VALUED_KEYS.has(key) && PRIVATE_PATH_VALUE.test(value)) refusePrivate(key);
+    return;
+  }
+  if (!Array.isArray(value) && !isPlainObject(value)) return;
+  // Fail closed: a value nested too deep to scan is never persisted unscanned.
+  if (depth >= MAX_SETTINGS_DEPTH) refusePrivate(key);
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      walkSettingsValue(`${key}[${index}]`, item, depth + 1);
+    });
+    return;
+  }
+  for (const [childKey, childValue] of Object.entries(value)) {
+    if (PROJECT_KEY_PATTERN.test(childKey)) refusePrivate(childKey);
+    walkSettingsValue(childKey, childValue, depth + 1);
+  }
+}
+
+/**
+ * Throws if `value` -- about to be handed to `saveData` -- carries a private
+ * path or project data (D-43, PROJ-14). Project data lives only in the
+ * service's operational store; the plugin's data file sits in a plugin folder
+ * the dev vault symlinks into this repository, so nothing project-shaped may
+ * ever reach it.
+ *
+ * This is the save-time backstop and the value-based sibling of PLUG-07's key
+ * guard ({@link assertNoCredentialFields}). It walks own keys of plain
+ * objects and array items recursively (depth-capped, failing closed) and
+ * refuses:
+ *   - any key matching `project`, `scanroot` or `launcher`, whatever its value;
+ *   - any string starting with `/Users/` or `~/` under a key outside
+ *     {@link PATH_VALUED_KEYS} (only `socketPathOverride`, Pitfall 9).
+ *
+ * The error names the offending key and never the value, so the refusal
+ * itself cannot become the leak (a Notice, a log line, a test report).
+ */
+export function assertNoPrivatePathValues(value: unknown): void {
+  if (!Array.isArray(value) && !isPlainObject(value)) return;
+  walkSettingsValue("(settings)", value, 0);
+}

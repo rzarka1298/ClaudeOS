@@ -10,6 +10,7 @@ import { createHostRegistry, createObsidianHost, type HostRegistry } from "./hos
 import { attachOsMotionPreference } from "./motion.js";
 import {
   assertNoCredentialFields,
+  assertNoPrivatePathValues,
   type CommandCenterSettings,
   DEFAULT_SETTINGS,
 } from "./settings.js";
@@ -150,9 +151,10 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     this.settings = { ...DEFAULT_SETTINGS, ...loaded };
   }
 
-  /** The plugin's only write path to Obsidian's plugin-data storage — always guarded (PLUG-07). */
+  /** The plugin's only write path to Obsidian's plugin-data storage — always guarded (PLUG-07, D-43). */
   async saveSettings(): Promise<void> {
     assertNoCredentialFields(this.settings);
+    assertNoPrivatePathValues(this.settings);
     await this.saveData(this.settings);
   }
 
