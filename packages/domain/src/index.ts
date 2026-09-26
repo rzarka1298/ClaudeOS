@@ -7,4 +7,5 @@ export * from "./ids.js";
 export * from "./layout.js";
 export * from "./note-schema.js";
 export * from "./path-containment.js";
+export * from "./projects.js";
 export * from "./run.js";

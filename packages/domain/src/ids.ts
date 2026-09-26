@@ -84,3 +84,16 @@ export function newWorkspaceId(): WorkspaceId {
   const random = randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as WorkspaceId;
 }
+
+/** RED skeleton (plan 04-01 Task 1). */
+export function newProjectId(): ProjectId {
+  throw new Error("newProjectId is not implemented yet (packages/domain/src/ids.ts)");
+}
+
+/** A registered scan folder's opaque identity (plan 04-01, D-02). */
+export type ScanRootId = Brand<string, "ScanRootId">;
+
+/** RED skeleton (plan 04-01 Task 1). */
+export function newScanRootId(): ScanRootId {
+  throw new Error("newScanRootId is not implemented yet (packages/domain/src/ids.ts)");
+}

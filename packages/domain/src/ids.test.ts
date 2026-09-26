@@ -4,7 +4,7 @@
 // takes no argument — the structural reason a workspace rename cannot move
 // its directory.
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { newNoteId, newRunId, newWorkspaceId } from "./ids.js";
+import { newNoteId, newProjectId, newRunId, newScanRootId, newWorkspaceId } from "./ids.js";
 
 /** Nine base-36 timestamp characters followed by sixteen hex characters. */
 const ID_SHAPE = /^[0-9a-z]{9}[0-9a-f]{16}$/;
@@ -99,5 +99,28 @@ describe("newWorkspaceId", () => {
     }
 
     expect(minted.size).toBe(1000);
+  });
+});
+
+describe("newProjectId", () => {
+  test("mints the fixed 25-character shape and two calls differ", () => {
+    const first = newProjectId();
+    const second = newProjectId();
+    expect(first).toMatch(ID_SHAPE);
+    expect(second).toMatch(ID_SHAPE);
+    expect(first).not.toBe(second);
+  });
+
+  test("takes no arguments, so no display name or path can reach the ID", () => {
+    expect(newProjectId.length).toBe(0);
+  });
+});
+
+describe("newScanRootId", () => {
+  test("mints the fixed 25-character shape and two calls differ", () => {
+    const first = newScanRootId();
+    expect(first).toMatch(ID_SHAPE);
+    expect(first).not.toBe(newScanRootId());
+    expect(newScanRootId.length).toBe(0);
   });
 });
