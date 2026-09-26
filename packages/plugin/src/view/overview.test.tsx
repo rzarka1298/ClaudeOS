@@ -31,12 +31,12 @@ function cardTitle(card: Element): string {
   return document.getElementById(id)?.textContent ?? "";
 }
 
-function overviewCards(container: HTMLElement): Element[] {
+function overviewCards(container: Element): Element[] {
   const grid = container.querySelector('[role="tabpanel"] div.ccc-overview-grid');
   return grid ? Array.from(grid.querySelectorAll(":scope > section.ccc-card")) : [];
 }
 
-function cardNamed(container: HTMLElement, title: string): Element {
+function cardNamed(container: Element, title: string): Element {
   const card = overviewCards(container).find((c) => cardTitle(c) === title);
   if (!card) throw new Error(`no card titled ${title}`);
   return card;

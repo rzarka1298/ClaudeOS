@@ -705,3 +705,47 @@
   -webkit-line-clamp: 2;
   line-clamp: 2;
 }
+
+/*
+ * The Overview grid (UI-07, D-12, UI-SPEC "Layout and Grid Contract",
+ * ADR-0023 "Layout rules"). One ordered list plus size hints, auto-placed: no
+ * coordinates and no breakpoint layouts, so the same rules serve a narrow side
+ * pane and a full window. `min(100%, 16rem)` makes the column the full width
+ * below 16rem instead of overflowing, and `dense` stops a `wide` card
+ * stranding a hole. The grid scrolls vertically inside `.ccc-content`, never
+ * horizontally.
+ */
+.ccc-overview-grid {
+  display: grid;
+  gap: var(--ccc-space-lg);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  grid-auto-flow: dense;
+}
+
+.ccc-card[data-size="wide"] {
+  grid-column: span 2;
+}
+
+.ccc-card[data-size="tall"] {
+  grid-row: span 2;
+}
+
+/* A container query against the command-center root, not a viewport media
+ * query: the same view can be any width at any viewport size. Under 34rem a
+ * `wide` card falls back to one column; `tall` keeps its two rows because
+ * vertical space scrolls. */
+@container (max-width: 34rem) {
+  .ccc-overview-grid {
+    gap: var(--ccc-space-md);
+  }
+
+  .ccc-card[data-size="wide"] {
+    grid-column: span 1;
+  }
+}
+
+/* The single card an Overview with no renderable widgets shows (UI-SPEC E3
+ * empty row) — one column, never a stretched banner. */
+.ccc-layout-empty {
+  grid-column: span 1;
+}

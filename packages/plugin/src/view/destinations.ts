@@ -15,7 +15,7 @@ export const DESTINATIONS = [
   {
     id: "overview",
     label: "Overview",
-    description: "The command-center summary. Filled in a later phase.",
+    description: "The command-center summary.",
   },
   {
     id: "projects",

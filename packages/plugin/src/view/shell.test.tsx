@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
@@ -52,8 +52,12 @@ describe("Shell", () => {
 
   it("renders the live state as text", () => {
     connectionState.value = { kind: "live" };
-    render(<Shell />);
-    expect(screen.getByText(/^Live$/)).toBeTruthy();
+    const { container } = render(<Shell />);
+    // Scoped to the connection strip: the Overview's service-health card
+    // also reads "Live" as its KPI, and that is a second, correct answer.
+    const strip = container.querySelector<HTMLElement>(".ccc-connection-status");
+    if (!strip) throw new Error("no connection strip");
+    expect(within(strip).getByText(/^Live$/)).toBeTruthy();
   });
 
   it("renders the most recent event's type and timestamp beneath the connection state, once one has arrived", () => {
