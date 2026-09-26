@@ -38,7 +38,7 @@ export interface ParsedRemote {
   readonly remote: NormalisedRemote;
 }
 
-/** One `git config --show-scope --get-regexp` entry. `value` is `null` for `--name-only` output. */
+/** One `git config -z --show-scope --get-regexp` entry. `value` is `null` for a bare boolean key. */
 export interface ConfigScopeEntry {
   readonly scope: string;
   readonly name: string;
@@ -186,50 +186,72 @@ const GIT_LFS_CANONICAL: Readonly<Record<string, string>> = {
   "filter.lfs.process": "git-lfs filter-process",
 };
 
-function parseEntryBody(scope: string, body: string, separator: string): ConfigScopeEntry | null {
-  const at = body.indexOf(separator);
-  const name = at < 0 ? body : body.slice(0, at);
-  if (scope === "" || name === "") return null;
-  return { scope, name, value: at < 0 ? null : body.slice(at + 1) };
-}
+/**
+ * The exact arguments (after the git executable and any `-c` overrides)
+ * the preflight runs. `-z` is what makes the output unambiguous: a config
+ * value may contain a newline, and in line format a multi-line value shows
+ * only its first line where the entry is printed, so
+ * `filter.lfs.clean = "git-lfs clean -- %f\ntouch PWNED"` would look
+ * canonical while git runs both lines. `--name-only` is deliberately absent:
+ * the git-lfs allowlist needs the values. Exit status 1 with empty output
+ * means nothing matched.
+ */
+export const LOCAL_EXEC_PREFLIGHT_ARGS: readonly string[] = Object.freeze([
+  "config",
+  "-z",
+  "--show-scope",
+  "--includes",
+  "--get-regexp",
+  LOCAL_EXEC_KEY_PATTERN,
+]);
 
 /**
- * Parses `git config --show-scope --includes --get-regexp` output.
+ * Parses the output of {@link LOCAL_EXEC_PREFLIGHT_ARGS}: `-z` format only,
+ * `scope NUL key LF value NUL` per entry (`scope NUL key NUL` for a bare
+ * boolean key). Empty output parses to no entries.
  *
- * Two formats are accepted:
- *   - `-z` (what the service should run): `scope NUL key LF value NUL`.
- *     Unambiguous — a multi-line value stays inside its entry.
- *   - line format: `scope TAB key SP value LF` (or `scope TAB key` with
- *     `--name-only`). A config value may contain a newline, and its second
- *     line can then imitate another entry, so this format must not be used
- *     for the security decision when values matter.
+ * Returns `null` for anything else -- line-format output, truncated output
+ * (no trailing NUL, or an odd number of fields), or an entry with an empty
+ * scope or key. Line format is refused outright because it cannot be read
+ * safely (see LOCAL_EXEC_PREFLIGHT_ARGS); a caller must treat `null` as
+ * unsafe, which {@link hasLocalExecutableConfig} does.
  */
-export function parseConfigScopeLines(stdout: string): ConfigScopeEntry[] {
+export function parseConfigScopeLines(stdout: string): ConfigScopeEntry[] | null {
+  if (stdout === "") return [];
+  if (!stdout.endsWith(NUL)) return null;
+  const fields = stdout.slice(0, -1).split(NUL);
+  if (fields.length % 2 !== 0) return null;
   const entries: ConfigScopeEntry[] = [];
-  if (stdout.includes(NUL)) {
-    const fields = stdout.split(NUL);
-    for (let i = 0; i + 1 < fields.length; i += 2) {
-      const entry = parseEntryBody(fields[i] ?? "", fields[i + 1] ?? "", "\n");
-      if (entry !== null) entries.push(entry);
-    }
-    return entries;
-  }
-  for (const line of stdout.split("\n")) {
-    const tab = line.indexOf("\t");
-    if (tab < 0) continue;
-    const entry = parseEntryBody(line.slice(0, tab), line.slice(tab + 1), " ");
-    if (entry !== null) entries.push(entry);
+  for (let i = 0; i < fields.length; i += 2) {
+    const scope = fields[i] ?? "";
+    const body = fields[i + 1] ?? "";
+    const newline = body.indexOf("\n");
+    const name = newline < 0 ? body : body.slice(0, newline);
+    if (scope === "" || name === "") return null;
+    entries.push({ scope, name, value: newline < 0 ? null : body.slice(newline + 1) });
   }
   return entries;
 }
 
+function hasLineBreak(value: string | null): boolean {
+  return value !== null && (value.includes("\n") || value.includes("\r"));
+}
+
 /**
- * True when any repository-supplied (non-trusted-scope) entry names a
- * command git could run on read, other than the three canonical git-lfs
- * filter values. The service skips such a repository entirely (PR-05, E-2).
+ * Decides the preflight from the raw stdout of
+ * `git <-c overrides> ...LOCAL_EXEC_PREFLIGHT_ARGS`. Fails closed: true
+ * (skip the repository, PR-05, E-2) when
+ *   - the output is not well-formed `-z` output (line format, truncated),
+ *   - any value, in any scope, contains a line feed or carriage return, or
+ *   - any repository-supplied (non-trusted-scope) entry names a command git
+ *     could run on read, other than the three canonical git-lfs values.
+ * Empty output (git exit 1: nothing matched) is safe.
  */
-export function hasLocalExecutableConfig(entries: readonly ConfigScopeEntry[]): boolean {
+export function hasLocalExecutableConfig(stdout: string): boolean {
+  const entries = parseConfigScopeLines(stdout);
+  if (entries === null) return true;
   return entries.some((entry) => {
+    if (hasLineBreak(entry.value)) return true;
     if (TRUSTED_SCOPES.has(entry.scope)) return false;
     if (!LOCAL_EXEC_KEY_REGEX.test(entry.name)) return false;
     const canonical = GIT_LFS_CANONICAL[entry.name.toLowerCase()];
