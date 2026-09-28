@@ -72,7 +72,9 @@ describe("applyProjectsSnapshot", () => {
 
 describe("applyProjectsDelta", () => {
   it("is a no-op when no snapshot has arrived yet", () => {
-    applyProjectsDelta(projectsUpdatedEvent({ upserted: [exampleView(PROJECT_ID_A)], removed: [] }));
+    applyProjectsDelta(
+      projectsUpdatedEvent({ upserted: [exampleView(PROJECT_ID_A)], removed: [] }),
+    );
     expect(projectsSnapshot.value).toBeUndefined();
   });
 
@@ -127,5 +129,29 @@ describe("applyProjectsDelta", () => {
     const before = projectsSnapshot.value;
     applyProjectsDelta(projectsUpdatedEvent({ upserted: "not-an-array", removed: [] }));
     expect(projectsSnapshot.value).toEqual(before);
+  });
+
+  it("re-sorts after an upsert into the PROJ-15 order: pinned, then most recently opened, then name", () => {
+    applyProjectsSnapshot(snapshotResponse());
+    const PROJECT_ID_C = "2222222222123456789abcdef";
+    applyProjectsDelta(
+      projectsUpdatedEvent({
+        upserted: [
+          exampleView(PROJECT_ID_B, {
+            displayName: "beta",
+            lastOpenedAt: "2026-09-10T00:00:00.000Z",
+          }),
+          exampleView(PROJECT_ID_C, { displayName: "gamma", pinned: true }),
+        ],
+        removed: [],
+      }),
+    );
+    // A pinned project and a recently opened one land AHEAD of the
+    // never-opened survivor, not appended after it.
+    expect(projectsSnapshot.value?.projects.map((p) => p.projectId)).toEqual([
+      PROJECT_ID_C,
+      PROJECT_ID_B,
+      PROJECT_ID_A,
+    ]);
   });
 });
