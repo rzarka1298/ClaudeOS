@@ -1,16 +1,35 @@
-import type {
-  LaunchAction,
-  LaunchErrorKind,
-  LaunchGuard,
-  LaunchRequest,
-  LaunchResult,
-  ProjectGitState,
-  ProjectId,
-  ProjectLookup,
+import { accessSync, constants } from "node:fs";
+import {
+  type LaunchAction,
+  type LaunchErrorKind,
+  type LaunchGuard,
+  type LaunchRequest,
+  type LaunchResult,
+  type ProjectGitState,
+  type ProjectId,
+  type ProjectLookup,
+  parseStoredLauncherConfig,
+  type TerminalLauncher,
 } from "@ccc/domain";
-import { revealInFinder } from "@ccc/launchers";
-import { type OperationalStore, touchLastOpened } from "@ccc/operational-store";
-import type { Spawner, SpawnOutcome } from "./spawner.js";
+import {
+  activateApp,
+  githubRepoUrl,
+  mapLaunchFailure,
+  normaliseRemote,
+  openInApp,
+  openUrl,
+  parseGithubOverride,
+  renderCommandTemplate,
+  revealInFinder,
+  validateCommandTemplate,
+} from "@ccc/launchers";
+import {
+  getLauncherConfig,
+  getProject,
+  type OperationalStore,
+  touchLastOpened,
+} from "@ccc/operational-store";
+import type { Spawner } from "./spawner.js";
 
 /**
  * The launch pipeline (D-06, D-19, D-26, D-40, D-42, D-49): one request
@@ -18,7 +37,20 @@ import type { Spawner, SpawnOutcome } from "./spawner.js";
  *
  *   resolve (store path, re-checked on disk) → guard → argv (pure builders
  *   in `@ccc/launchers`) → spawn (injected {@link Spawner}) → map the
- *   outcome to a D-26 kind.
+ *   outcome to a D-26 kind with `mapLaunchFailure`.
+ *
+ * What each action may open (D-19, D-13) — the route is never a general
+ * URL or application opener:
+ * - `finder`: `open -R <store-resolved folder>`;
+ * - `antigravity`: `open -b <saved bundle ID> <store-resolved folder>`;
+ * - `claude-desktop`: `open -b <saved bundle ID>` — no project at all;
+ * - `github`: `open https://github.com/{owner}/{repo}`, rebuilt from the
+ *   owner's validated override or else the collector's last-good github.com
+ *   remote (in memory; git is never run here);
+ * - `claude-code`: the injected {@link TerminalLauncher} (plan 04-09);
+ *   without one it is `launcher-not-configured`.
+ * A launcher with no saved configuration, or one whose stored JSON no
+ * longer matches the domain schema, is `launcher-not-configured`.
  *
  * The whole pipeline runs under {@link LAUNCH_CAP_MS}: whatever happens
  * inside, the caller has a result within 4 s, leaving the plugin's 5 s
@@ -73,6 +105,8 @@ export interface LaunchServiceDeps {
   readonly guard?: LaunchGuard;
   /** Defaults to {@link LAUNCH_CAP_MS}; tests may shorten it. */
   readonly capMs?: number;
+  /** The Claude Code terminal hand-off (plan 04-09). Absent: Claude Code is not configured. */
+  readonly terminalLauncher?: TerminalLauncher;
 }
 
 export interface LaunchService {
@@ -82,6 +116,7 @@ export interface LaunchService {
 /** What a resolved action hands to the spawn step. */
 type Prepared =
   | { readonly kind: "spawn"; readonly argv: readonly string[] }
+  | { readonly kind: "delegate"; readonly run: () => Promise<LaunchResult> }
   | { readonly kind: "refuse"; readonly error: LaunchErrorKind };
 
 /** Tracks one launch so a spawn that finishes after the cap cannot act as a success. */
@@ -97,27 +132,91 @@ function failure(error: LaunchErrorKind): LaunchResult {
   return { ok: false, error };
 }
 
-/** Task 1 mapping: exit 0 is success; the full D-26 taxonomy lands with `mapLaunchFailure`. */
-function mapOutcome(outcome: SpawnOutcome): LaunchErrorKind {
-  return outcome.timedOut ? "timeout" : "spawn-failed";
+function refuse(error: LaunchErrorKind): Prepared {
+  return { kind: "refuse", error };
+}
+
+/** `accessSync(X_OK)` as a boolean, for the template validator (D-22). */
+function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The GitHub repository a git state's remote points at, when it is github.com. */
+function githubFromGit(git: ProjectGitState | null): { owner: string; repo: string } | null {
+  if (git === null || git.kind !== "repo" || git.remote === null) return null;
+  // The remote was already reduced to host + path by the git runner; it is
+  // normalised again here so only GitHub's own name patterns get through.
+  const remote = normaliseRemote(`https://${git.remote.host}/${git.remote.path}`);
+  return remote.kind === "github" ? { owner: remote.owner, repo: remote.repo } : null;
 }
 
 export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
   const guard = deps.guard ?? ALLOW_ALL_GUARD;
   const capMs = deps.capMs ?? LAUNCH_CAP_MS;
 
+  /** A saved app launcher's bundle ID, or `null` when unset or unreadable. */
+  const savedBundleId = (launcherId: "antigravity" | "claude-desktop"): string | null => {
+    const record = getLauncherConfig(deps.store.db, launcherId);
+    if (record === null) return null;
+    return parseStoredLauncherConfig(launcherId, record.config)?.bundleId ?? null;
+  };
+
+  const prepareGithub = (projectId: ProjectId): Prepared => {
+    const record = getProject(deps.store.db, projectId);
+    if (record === null) return refuse("project-missing");
+    const override =
+      record.githubUrlOverride === null ? null : parseGithubOverride(record.githubUrlOverride);
+    const target = override ?? githubFromGit(deps.collector.gitState(projectId));
+    if (target === null) return refuse("no-github-remote");
+    return { kind: "spawn", argv: openUrl(githubRepoUrl(target.owner, target.repo)) };
+  };
+
+  const prepareClaudeCode = (projectId: ProjectId): Prepared => {
+    const terminalLauncher = deps.terminalLauncher;
+    if (terminalLauncher === undefined) return refuse("launcher-not-configured");
+    const record = getLauncherConfig(deps.store.db, "claude-code");
+    const config = record === null ? null : parseStoredLauncherConfig("claude-code", record.config);
+    if (config === null) return refuse("launcher-not-configured");
+    const project = deps.lookup.resolve(projectId);
+    if ("error" in project) return refuse(project.error);
+    const template = [config.executablePath, ...config.args];
+    // The stored template is validated again at launch: a row written before
+    // a validator change must not run a forbidden flag (D-22).
+    if (!validateCommandTemplate(template, { kind: "claude-code", isExecutable }).ok) {
+      return refuse("spawn-failed");
+    }
+    const argv = renderCommandTemplate(template, { projectPath: project.path });
+    return { kind: "delegate", run: () => terminalLauncher.launch({ cwd: project.path, argv }) };
+  };
+
   const prepare = (request: LaunchRequest): Prepared => {
     switch (request.action) {
       case "finder": {
         const project = deps.lookup.resolve(request.projectId);
-        if ("error" in project) return { kind: "refuse", error: project.error };
+        if ("error" in project) return refuse(project.error);
         return { kind: "spawn", argv: revealInFinder(project.path) };
       }
-      case "antigravity":
+      case "antigravity": {
+        const bundleId = savedBundleId("antigravity");
+        if (bundleId === null) return refuse("launcher-not-configured");
+        const project = deps.lookup.resolve(request.projectId);
+        if ("error" in project) return refuse(project.error);
+        return { kind: "spawn", argv: openInApp(bundleId, project.path) };
+      }
+      case "claude-desktop": {
+        const bundleId = savedBundleId("claude-desktop");
+        if (bundleId === null) return refuse("launcher-not-configured");
+        return { kind: "spawn", argv: activateApp(bundleId) };
+      }
       case "github":
-      case "claude-desktop":
+        return prepareGithub(request.projectId);
       case "claude-code":
-        return { kind: "refuse", error: "launcher-not-configured" };
+        return prepareClaudeCode(request.projectId);
     }
   };
 
@@ -136,9 +235,15 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     const decision = await guard.check({ projectId, action: request.action });
     if (!decision.ok) return failure(decision.error);
     if (state.cancelled) return failure("timeout");
-    const outcome = await deps.spawner.run(prepared.argv, { timeoutMs: capMs });
-    if (state.cancelled) return failure("timeout");
-    if (outcome.exitCode !== 0) return failure(mapOutcome(outcome));
+    if (prepared.kind === "delegate") {
+      const delegated = await prepared.run();
+      if (state.cancelled) return failure("timeout");
+      if (!delegated.ok) return delegated;
+    } else {
+      const outcome = await deps.spawner.run(prepared.argv, { timeoutMs: capMs });
+      if (state.cancelled) return failure("timeout");
+      if (outcome.exitCode !== 0) return failure(mapLaunchFailure(outcome));
+    }
     try {
       afterSuccess(projectId);
     } catch {

@@ -4,9 +4,12 @@ import { join } from "node:path";
 import type {
   LaunchGuard,
   LaunchGuardInput,
+  LaunchResult,
   ProjectGitState,
   ProjectId,
   ProjectLookup,
+  TerminalLauncher,
+  TerminalLaunchInput,
 } from "@ccc/domain";
 import {
   applyMigrations,
@@ -283,6 +286,60 @@ describe("Claude Code waits for its terminal launcher (plan 04-09)", () => {
       error: "launcher-not-configured",
     });
     expect(spawner.calls).toHaveLength(0);
+  });
+});
+
+describe("Claude Code with an injected terminal launcher (the 04-09 seam)", () => {
+  function terminalSpy(result: LaunchResult = { ok: true }) {
+    const inputs: TerminalLaunchInput[] = [];
+    const launcher: TerminalLauncher = {
+      launch(input) {
+        inputs.push(input);
+        return Promise.resolve(result);
+      },
+    };
+    return { inputs, launcher };
+  }
+
+  it("hands the rendered argv and the project folder to the terminal launcher", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: ["--add-dir", "{projectPath}"],
+      terminal: { kind: "terminal-app" },
+    });
+    const { inputs, launcher } = terminalSpy();
+    await expect(
+      service({ terminalLauncher: launcher }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: true });
+    expect(inputs).toEqual([{ cwd: projectDir, argv: ["/usr/bin/true", "--add-dir", projectDir] }]);
+    expect(spawner.calls).toHaveLength(0);
+    expect(getProject(store.db, projectId)?.lastOpenedAt).not.toBeNull();
+  });
+
+  it("refuses a stored template carrying a permission-bypass flag, launching nothing", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: ["--permission-mode", "bypassPermissions"],
+      terminal: { kind: "terminal-app" },
+    });
+    const { inputs, launcher } = terminalSpy();
+    await expect(
+      service({ terminalLauncher: launcher }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: false, error: "spawn-failed" });
+    expect(inputs).toHaveLength(0);
+  });
+
+  it("passes the terminal launcher's own failure kind through", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    const { launcher } = terminalSpy({ ok: false, error: "automation-denied" });
+    await expect(
+      service({ terminalLauncher: launcher }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: false, error: "automation-denied" });
+    expect(getProject(store.db, projectId)?.lastOpenedAt).toBeNull();
   });
 });
 

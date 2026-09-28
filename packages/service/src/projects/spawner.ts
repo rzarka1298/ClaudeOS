@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { classifyStderr, type StderrClass } from "@ccc/launchers";
 import type { CommandRunner } from "./command-runner.js";
 
 /**
@@ -20,19 +21,7 @@ import type { CommandRunner } from "./command-runner.js";
  *   never returned, logged or forwarded (Pitfall 7, D-46).
  */
 
-/** What `classifyStderr` reduces `open(1)` stderr to. Replaced by the `@ccc/launchers` classifier in Task 2. */
-export type StderrClass =
-  | "none"
-  | "bundle-not-found"
-  | "path-missing"
-  | "automation-denied"
-  | "permission-denied"
-  | "other";
-
-/** Task 1 placeholder: every stderr is `other`. Replaced (not extended) by the real classifier. */
-function classifyStderr(_text: string): StderrClass {
-  return "other";
-}
+export type { StderrClass };
 
 export interface SpawnOptions {
   /** Hard deadline; the child is killed when it passes. */
