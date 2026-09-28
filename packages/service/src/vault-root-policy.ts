@@ -46,6 +46,60 @@ const FORBIDDEN_ROOTS: readonly string[] = [
   homedir(),
 ];
 
+/**
+ * System trees that are never a vault or a project, in addition to
+ * {@link FORBIDDEN_ROOTS}. On macOS `/etc`, `/tmp` and `/var` are symlinks
+ * into `/private`, so the `/private` forms are what a realpath'd candidate
+ * actually looks like.
+ */
+const SYSTEM_ROOTS: readonly string[] = [
+  "/private",
+  "/private/etc",
+  "/private/var",
+  "/private/tmp",
+  "/usr",
+  "/bin",
+  "/sbin",
+  "/opt",
+];
+
+/** The forbidden set in realpath form, computed once on first use. */
+let resolvedForbiddenRoots: ReadonlySet<string> | null = null;
+
+function forbiddenRootSet(): ReadonlySet<string> {
+  if (resolvedForbiddenRoots === null) {
+    const roots = new Set<string>();
+    for (const literal of [...FORBIDDEN_ROOTS, ...SYSTEM_ROOTS]) {
+      roots.add(literal);
+      try {
+        roots.add(realpathSync.native(literal));
+      } catch {
+        // An entry that does not resolve on this machine stays in literal
+        // form only; nothing can realpath to it anyway.
+      }
+    }
+    resolvedForbiddenRoots = roots;
+  }
+  return resolvedForbiddenRoots;
+}
+
+/**
+ * True when `resolved` — an already-`realpathSync.native`'d path — is a
+ * location this service will never adopt as a vault root or a project
+ * (E-3, PR-06): any {@link FORBIDDEN_ROOTS} entry, the system trees above,
+ * or a filesystem root (`dirname(x) === x`, which catches a volume root no
+ * list names).
+ *
+ * The comparison is against the REALPATH form of every entry. The old check
+ * compared a realpath'd candidate against the literals, and on macOS
+ * `realpath("/etc")` is `/private/etc` — so the `/etc` entry could never
+ * match and was inert. Resolving the list once, the same way the candidate
+ * is resolved, makes both sides comparable.
+ */
+export function isForbiddenRoot(resolved: string): boolean {
+  return dirname(resolved) === resolved || forbiddenRootSet().has(resolved);
+}
+
 /** The directory Obsidian itself creates in every vault. Its presence is
  * the only cheap, local, non-guessing evidence that a directory is a vault
  * rather than an arbitrary folder the caller happened to name. */
@@ -83,18 +137,11 @@ export function assertUsableVaultRoot(vaultRoot: string): void {
     return;
   }
 
-  // `dirname(x) === x` only at a filesystem root, which catches a volume
-  // root the hard-coded list does not name.
-  if (FORBIDDEN_ROOTS.includes(resolved) || dirname(resolved) === resolved) {
+  if (isForbiddenRoot(resolved)) {
     throw new VaultRootRefusedError(resolved, "forbidden-location");
   }
 
   if (!existsSync(join(resolved, OBSIDIAN_MARKER))) {
     throw new VaultRootRefusedError(resolved, "not-an-obsidian-vault");
   }
-}
-
-// RED skeleton (plan 04-04 Task 2): realpath-form forbidden-root check.
-export function isForbiddenRoot(_resolved: string): boolean {
-  return false;
 }

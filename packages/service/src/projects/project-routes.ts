@@ -1,15 +1,33 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { homedir } from "node:os";
 import { basename } from "node:path";
 import {
   type ApiErrorBody,
+  PinProjectRequestSchema,
+  PROJECT_GITHUB_LINK_PATH,
+  PROJECT_PIN_PATH,
   PROJECT_REGISTER_PATH,
+  PROJECT_REMOVE_PATH,
+  PROJECT_RENAME_PATH,
   type ProjectId,
+  type ProjectMutationResponse,
   type ProjectsSnapshot,
   RegisterProjectRequestSchema,
   type RegisterProjectResponse,
+  RemoveProjectRequestSchema,
+  RenameProjectRequestSchema,
+  SetGithubLinkRequestSchema,
 } from "@ccc/domain";
-import { insertProject } from "@ccc/operational-store";
+import {
+  insertProject,
+  removeProject,
+  renameProject,
+  setGithubUrlOverride,
+  setProjectPinned,
+} from "@ccc/operational-store";
 import { logger } from "../logging.js";
+import { resolveRuntimeDir } from "../paths.js";
+import type { BodyParser } from "../request-body.js";
 import { readJsonBody } from "../request-body.js";
 import {
   type Handler,
@@ -19,8 +37,13 @@ import {
   sendJson,
   withAuth,
 } from "../route-kit.js";
-import { recomputeApprovedRoots } from "./approved-roots.js";
-import { ProjectRefusedError, validateProjectCandidate } from "./registration.js";
+import { recomputeApprovedRoots, VAULT_ROOT_META_KEY } from "./approved-roots.js";
+import {
+  detectProtectedLocation,
+  ProjectRefusedError,
+  type RegistrationPolicyContext,
+  validateProjectCandidate,
+} from "./registration.js";
 
 /**
  * The project routes (PROJ-01, D-04, D-08): register a folder by path, and —
@@ -54,6 +77,25 @@ export interface ProjectServices {
 /** The one refusal body for a folder that cannot be registered, whatever the reason (D-04). */
 export const PROJECT_REFUSED_BODY: ApiErrorBody = { error: "folder cannot be registered" };
 
+/** The one body for a ProjectId the store does not hold. */
+export const NO_SUCH_PROJECT_BODY: ApiErrorBody = { error: "no such project" };
+
+/** Every management route's success body; the new state arrives as a `projects.updated` delta. */
+const MUTATION_OK: ProjectMutationResponse = { ok: true };
+
+/**
+ * The locations a candidate is judged against. Without project services
+ * (a partial composition) the real home and runtime directory apply.
+ */
+function policyContext(ctx: RouteContext): RegistrationPolicyContext {
+  const vaultRoot = ctx.store.readServiceMeta(VAULT_ROOT_META_KEY);
+  return {
+    homeDir: ctx.projects?.homeDir ?? homedir(),
+    runtimeDir: ctx.projects?.runtimeDir ?? resolveRuntimeDir(),
+    vaultRoot: vaultRoot !== null && vaultRoot.length > 0 ? vaultRoot : null,
+  };
+}
+
 /** The longest display name the store accepts (RR-11). */
 const MAX_DISPLAY_NAME_LENGTH = 64;
 
@@ -86,8 +128,33 @@ async function handleRegister(
     sendJson(res, 400, INVALID_BODY_BODY);
     return;
   }
+  const policy = policyContext(ctx);
+  const acknowledged = parsed.value.acknowledgeProtectedLocation === true;
+  // D-29 / PR-10: nothing under a protected folder is read before the owner
+  // acknowledges — the lexical check runs before any filesystem call.
+  const lexicalLocation = acknowledged
+    ? null
+    : detectProtectedLocation(parsed.value.path, policy.homeDir);
+  if (lexicalLocation !== null) {
+    const body: RegisterProjectResponse = { kind: "protected-location", location: lexicalLocation };
+    sendJson(res, 200, body);
+    return;
+  }
   try {
-    const resolved = validateProjectCandidate(parsed.value.path);
+    const resolved = validateProjectCandidate(parsed.value.path, policy);
+    // A symlink outside the protected folders can still resolve into one;
+    // the realpath is judged too before anything is stored.
+    const resolvedLocation = acknowledged
+      ? null
+      : detectProtectedLocation(resolved, policy.homeDir);
+    if (resolvedLocation !== null) {
+      const body: RegisterProjectResponse = {
+        kind: "protected-location",
+        location: resolvedLocation,
+      };
+      sendJson(res, 200, body);
+      return;
+    }
     const { created, record } = insertProject(ctx.store.db, {
       path: resolved,
       displayName: defaultDisplayName(resolved),
@@ -117,6 +184,81 @@ const registerHandler: Handler = (req, res, ctx) => {
   void handleRegister(req, res, ctx);
 };
 
+/**
+ * Builds a management handler: parse the strict body (constant 400), apply
+ * the store change, answer the constant 404 when the ProjectId is unknown,
+ * otherwise tell the project services and answer `{ ok: true }`. None of
+ * these handlers touches the filesystem (D-08): remove deletes the store row
+ * only, and the folder on disk is never moved, modified or deleted.
+ */
+function manageHandler<T extends { projectId: ProjectId }>(
+  route: string,
+  schema: BodyParser<T>,
+  apply: (ctx: RouteContext, body: T) => boolean,
+  options: { pathSetChanges: boolean },
+): Handler {
+  const handle = async (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => {
+    const parsed = await readJsonBody(req, schema);
+    if (!parsed.ok) {
+      logger.warn({ route, reason: parsed.reason }, "rejected request body");
+      sendJson(res, 400, INVALID_BODY_BODY);
+      return;
+    }
+    const { projectId } = parsed.value;
+    try {
+      if (!apply(ctx, parsed.value)) {
+        logger.warn({ route, projectId }, "no such project");
+        sendJson(res, 404, NO_SUCH_PROJECT_BODY);
+        return;
+      }
+      if (options.pathSetChanges) {
+        // D-05: a removed project's files are refused again immediately.
+        recomputeApprovedRoots(ctx.store);
+      }
+      ctx.projects?.onRegistryChanged();
+      logger.info({ route, projectId }, "project updated");
+      sendJson(res, 200, MUTATION_OK);
+    } catch (err: unknown) {
+      sendInternalError(res, route, err);
+    }
+  };
+  return withAuth((req, res, ctx) => {
+    void handle(req, res, ctx);
+  });
+}
+
 export const projectRoutes: Record<string, Record<string, Handler>> = {
   [PROJECT_REGISTER_PATH]: { POST: withAuth(registerHandler) },
+  [PROJECT_REMOVE_PATH]: {
+    POST: manageHandler(
+      PROJECT_REMOVE_PATH,
+      RemoveProjectRequestSchema,
+      (ctx, body) => removeProject(ctx.store.db, body.projectId),
+      { pathSetChanges: true },
+    ),
+  },
+  [PROJECT_RENAME_PATH]: {
+    POST: manageHandler(
+      PROJECT_RENAME_PATH,
+      RenameProjectRequestSchema,
+      (ctx, body) => renameProject(ctx.store.db, body.projectId, body.displayName),
+      { pathSetChanges: false },
+    ),
+  },
+  [PROJECT_PIN_PATH]: {
+    POST: manageHandler(
+      PROJECT_PIN_PATH,
+      PinProjectRequestSchema,
+      (ctx, body) => setProjectPinned(ctx.store.db, body.projectId, body.pinned),
+      { pathSetChanges: false },
+    ),
+  },
+  [PROJECT_GITHUB_LINK_PATH]: {
+    POST: manageHandler(
+      PROJECT_GITHUB_LINK_PATH,
+      SetGithubLinkRequestSchema,
+      (ctx, body) => setGithubUrlOverride(ctx.store.db, body.projectId, body.url),
+      { pathSetChanges: false },
+    ),
+  },
 };
