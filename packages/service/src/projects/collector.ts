@@ -52,6 +52,11 @@ export interface ProjectsCollector {
   onRegistryChanged(): void;
   /** The whole projects picture, in the PROJ-15 order. */
   snapshot(): ProjectsSnapshot;
+  /**
+   * One project's last-good git state from memory, or `null` for an unknown
+   * project. Never reads git: the launch path uses it (D-42).
+   */
+  gitState(projectId: ProjectId): ProjectGitState | null;
 }
 
 type IntervalHandle = ReturnType<typeof setInterval>;
@@ -229,6 +234,9 @@ export function createProjectsCollector(options: ProjectsCollectorOptions): Proj
     refresh,
     onRegistryChanged() {
       publish(syncRecords());
+    },
+    gitState(projectId) {
+      return entries.get(projectId)?.git ?? null;
     },
     snapshot() {
       const projects = [...entries.values()].map(viewOf).sort(compareProjectViews);

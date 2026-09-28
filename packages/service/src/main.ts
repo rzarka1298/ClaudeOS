@@ -23,8 +23,11 @@ import { recomputeApprovedRoots } from "./projects/approved-roots.js";
 import { createProjectsCollector } from "./projects/collector.js";
 import { createExecFileCommandRunner } from "./projects/command-runner.js";
 import { createGitRunner, resolveGit } from "./projects/git-runner.js";
+import { createLaunchService } from "./projects/launch-service.js";
+import { createStoreProjectLookup } from "./projects/project-lookup.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 import { resolveHomeDir } from "./projects/project-views.js";
+import { createCommandSpawner } from "./projects/spawner.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
@@ -144,11 +147,29 @@ async function main(): Promise<void> {
     runtimeDir,
   };
 
+  // --- Phase 4 (projects and launchers): the launch pipeline ------------
+  // Every app launch goes through this one spawner (D-18): execFile with an
+  // argv array, a fixed environment, stderr classified and dropped (D-46).
+  // The launch service reads the collector's in-memory state only and never
+  // waits on git (D-42); Phase 4's guard allows everything (D-49).
+  const launch = createLaunchService({
+    store,
+    spawner: createCommandSpawner(commandRunner),
+    lookup: createStoreProjectLookup(store),
+    collector: {
+      refresh: (projectId) => projectsCollector.refresh(projectId),
+      onRegistryChanged: () => projectsCollector.onRegistryChanged(),
+      gitState: (projectId) => projectsCollector.gitState(projectId),
+    },
+    logger,
+  });
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
     eventBus,
     projects,
+    launch,
   });
   const server = await startSocketServer({ socketPath, requestListener });
 
