@@ -1,4 +1,4 @@
-import { accessSync, constants, lstatSync } from "node:fs";
+import { accessSync, constants, lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ProjectGitState } from "@ccc/domain";
@@ -38,6 +38,10 @@ import type { CommandOutcome, CommandRunner } from "./command-runner.js";
  * 5. `lstat(<root>/.git)` before any spawn: a folder without `.git` is
  *    not-a-repo and git never runs in it, so an embedded bare repository or
  *    a subfolder of another repository is never discovered.
+ * 6. The D-06 re-check before anything else: the stored root must still
+ *    realpath to itself and be a directory. A root replaced by a symlink
+ *    (to another repository, or to where the folder moved) or by a file
+ *    reads `folder-missing` and git never runs.
  *
  * Only `config`, `status`, `log` and `remote` run. No `fetch`, no network,
  * and no `worktree` subcommand — worktrees belong to Phase 5 (D-16). Output
@@ -156,14 +160,33 @@ export class GitReadError extends Error {
 
 type FsProbe = "present" | "missing" | "denied";
 
+function isAccessError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "EPERM" || code === "EACCES";
+}
+
 function probe(path: string): FsProbe {
   try {
     lstatSync(path);
     return "present";
   } catch (err: unknown) {
-    const code = (err as { code?: unknown } | null)?.code;
-    if (code === "EPERM" || code === "EACCES") return "denied";
-    return "missing";
+    return isAccessError(err) ? "denied" : "missing";
+  }
+}
+
+/**
+ * The stored root is present only when it is STILL the folder that was
+ * registered (D-06): its native realpath equals the stored realpath and it
+ * is a directory. A root that now resolves elsewhere (replaced by a symlink,
+ * moved and linked back) or is no longer a directory is `missing` — the
+ * project moved, and git must not run in whatever sits there now.
+ */
+function probeRoot(root: string): FsProbe {
+  try {
+    if (realpathSync.native(root) !== root) return "missing";
+    return statSync(root).isDirectory() ? "present" : "missing";
+  } catch (err: unknown) {
+    return isAccessError(err) ? "denied" : "missing";
   }
 }
 
@@ -173,7 +196,7 @@ export function createGitRunner(options: GitRunnerOptions): GitRunner {
 
   return {
     async readProject(root) {
-      const folder = probe(root);
+      const folder = probeRoot(root);
       if (folder === "missing") return { kind: "folder-missing" };
       if (folder === "denied") return { kind: "folder-access-denied" };
       if (options.git.kind === "unavailable") return { kind: "git-unavailable" };
