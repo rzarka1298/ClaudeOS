@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProjectGitState } from "@ccc/domain";
-import { LOCAL_EXEC_PREFLIGHT_ARGS } from "@ccc/launchers";
+import { LOCAL_EXEC_PREFLIGHT_ARGS, NEUTRALISING_OVERRIDES } from "@ccc/launchers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createFakeCommandRunner } from "../test-support/fake-command-runner.js";
 import {
@@ -220,14 +220,45 @@ describe("hostile repository configuration (PR-05, threat T-04-06)", () => {
     expect(out).toBe(`local${NUL}filter.evil.clean\ntouch marker; cat${NUL}`);
   });
 
-  it("core.fsmonitor: fires under plain git status, never under readProject", async () => {
+  it("every key the preflight exempts is overridden, with that exact value, in command scope", () => {
+    for (const [key, value] of Object.entries(NEUTRALISING_OVERRIDES)) {
+      expect(GIT_OVERRIDES).toContain(`${key}=${value}`);
+    }
+  });
+
+  it("core.fsmonitor: fires under plain git status; readProject reads the repository and it never fires", async () => {
     const control = fx.repo("control-fsmonitor", 1);
     plantFsmonitor(fx, control, fx.marker("fsmonitor-control"));
     fx.gitUnchecked(control, ["status"]);
     expect(markerExists(fx.marker("fsmonitor-control"))).toBe(true);
 
+    // The command-scope core.fsmonitor=false override neutralises the local
+    // value, so the repository is read (not skipped) and nothing runs.
     const root = fx.repo("example-project", 1);
     const marker = fx.marker("fsmonitor");
+    plantFsmonitor(fx, root, marker);
+    expect(await realRunner().git.readProject(root)).toMatchObject({
+      kind: "repo",
+      branch: "main",
+      dirty: false,
+    });
+    expect(markerExists(marker)).toBe(false);
+  });
+
+  it("core.pager: readProject reads the repository and the pager never runs", async () => {
+    const root = fx.repo("example-project", 2);
+    const marker = fx.marker("pager");
+    fx.git(root, ["config", "core.pager", `touch ${marker}; cat`]);
+    expect(await realRunner().git.readProject(root)).toMatchObject({ kind: "repo" });
+    expect(markerExists(marker)).toBe(false);
+  });
+
+  it("core.fsmonitor alongside a non-neutralised command key still skips the repository", async () => {
+    const root = fx.repo("example-project", 1);
+    const marker = fx.marker("fsmonitor-and-filter");
+    // Filter first: planting it commits through plain git, which would fire
+    // an already-planted fsmonitor.
+    plantCleanFilter(fx, root, marker);
     plantFsmonitor(fx, root, marker);
     expect(await realRunner().git.readProject(root)).toEqual(SKIPPED);
     expect(markerExists(marker)).toBe(false);

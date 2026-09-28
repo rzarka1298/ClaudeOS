@@ -8,6 +8,7 @@ import {
   LOCAL_EXEC_KEY_PATTERN,
   LOCAL_EXEC_KEY_REGEX,
   LOCAL_EXEC_PREFLIGHT_ARGS,
+  NEUTRALISING_OVERRIDES,
   parseConfigScopeLines,
   parseLogRecords,
   parseRemoteLines,
@@ -319,11 +320,39 @@ describe("git config preflight (D-09, PR-05)", () => {
     "sequence.editor",
   ];
 
-  it.each(executableKeys)("flags %s at local and worktree scope", (key) => {
-    expect(hasLocalExecutableConfig(z(["local", key]))).toBe(true);
-    expect(hasLocalExecutableConfig(z(["worktree", key]))).toBe(true);
-    expect(hasLocalExecutableConfig(z(["local", key, null]))).toBe(true);
+  /** Keys the git runner overrides in command scope; a local value never takes effect. */
+  const neutralisedKeys = ["core.fsmonitor", "core.pager"];
+
+  it("names exactly core.fsmonitor and core.pager as neutralised, each with its override value", () => {
+    expect(Object.keys(NEUTRALISING_OVERRIDES).sort()).toEqual(neutralisedKeys);
+    expect(NEUTRALISING_OVERRIDES).toEqual({ "core.fsmonitor": "false", "core.pager": "cat" });
+    expect(Object.isFrozen(NEUTRALISING_OVERRIDES)).toBe(true);
   });
+
+  it.each(neutralisedKeys)("does not skip a repository for a single-line local %s", (key) => {
+    expect(hasLocalExecutableConfig(z(["local", key, "touch PWNED"]))).toBe(false);
+    expect(hasLocalExecutableConfig(z(["worktree", key, "touch PWNED"]))).toBe(false);
+    expect(hasLocalExecutableConfig(z(["local", key.toUpperCase(), "touch PWNED"]))).toBe(false);
+    expect(hasLocalExecutableConfig(z(["local", key, null]))).toBe(false);
+  });
+
+  it.each(neutralisedKeys)("still fails closed on a multi-line %s value in any scope", (key) => {
+    expect(hasLocalExecutableConfig(z(["local", key, "true\ntouch PWNED"]))).toBe(true);
+    expect(hasLocalExecutableConfig(z(["local", key, "true\rtouch PWNED"]))).toBe(true);
+  });
+
+  it("still fails closed on line-format output naming a neutralised key", () => {
+    expect(hasLocalExecutableConfig("local\tcore.fsmonitor true\n")).toBe(true);
+  });
+
+  it.each(executableKeys.filter((key) => !neutralisedKeys.includes(key)))(
+    "flags %s at local and worktree scope",
+    (key) => {
+      expect(hasLocalExecutableConfig(z(["local", key]))).toBe(true);
+      expect(hasLocalExecutableConfig(z(["worktree", key]))).toBe(true);
+      expect(hasLocalExecutableConfig(z(["local", key, null]))).toBe(true);
+    },
+  );
 
   it.each(executableKeys)("does not flag %s at global, system or command scope", (key) => {
     for (const scope of ["global", "system", "command"]) {
@@ -332,7 +361,7 @@ describe("git config preflight (D-09, PR-05)", () => {
   });
 
   it("matches keys case-insensitively", () => {
-    expect(hasLocalExecutableConfig(z(["local", "core.fsMonitor"]))).toBe(true);
+    expect(hasLocalExecutableConfig(z(["local", "Diff.External"]))).toBe(true);
     expect(hasLocalExecutableConfig(z(["local", "Core.SSHCommand"]))).toBe(true);
     expect(hasLocalExecutableConfig(z(["local", "GPG.Program"]))).toBe(true);
     expect(LOCAL_EXEC_KEY_REGEX.test("SEQUENCE.EDITOR")).toBe(true);
@@ -360,7 +389,7 @@ describe("git config preflight (D-09, PR-05)", () => {
   });
 
   it("treats an unknown scope as untrusted", () => {
-    expect(hasLocalExecutableConfig(z(["unknown", "core.fsmonitor"]))).toBe(true);
+    expect(hasLocalExecutableConfig(z(["unknown", "core.sshcommand"]))).toBe(true);
   });
 
   it("does not flag unrelated local keys", () => {
