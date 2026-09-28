@@ -16,6 +16,8 @@ import {
   RegisterProjectResponseSchema,
   SNAPSHOT_PATH,
   SnapshotResponseSchema,
+  VAULT_SETUP_PATH,
+  VAULT_SETUP_PLAN_PATH,
 } from "@ccc/domain";
 import {
   applyMigrations,
@@ -26,6 +28,7 @@ import {
   openStore,
 } from "@ccc/operational-store";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { VAULT_ROOT_META_KEY } from "./approved-roots.js";
 
 // `../routes.js` imports the service's redacting singleton logger, which
 // resolves its log file from `CCC_RUNTIME_DIR` at import time. Point it at a
@@ -476,5 +479,64 @@ describe("refresh (D-42)", () => {
     });
     expect(anonymous.status).toBe(401);
     expect(refreshCalls).toEqual([]);
+  });
+});
+
+describe("vault root never overlaps a registered project, in either order (D-04)", () => {
+  const VAULT_REFUSED = JSON.stringify({
+    error: "vault root is not an Obsidian vault this service will manage",
+  });
+
+  /** Makes `path` look like an Obsidian vault, so only the overlap rule can refuse it. */
+  function makeVault(path: string): string {
+    mkdirSync(join(path, ".obsidian"), { recursive: true });
+    return path;
+  }
+
+  it("vault setup refuses a root equal to, inside, or above a registered project", async () => {
+    const outer = join(dir, "outer");
+    const inner = join(outer, "inner");
+    mkdirSync(inner, { recursive: true });
+    await registerId(inner);
+
+    const candidates = [makeVault(inner), makeVault(join(inner, "notes")), makeVault(outer)];
+    for (const candidate of candidates) {
+      for (const route of [VAULT_SETUP_PLAN_PATH, VAULT_SETUP_PATH]) {
+        const res = await request<unknown>(socketPath, {
+          method: "POST",
+          path: route,
+          body: { vaultRoot: candidate },
+          token,
+        });
+        expect(res.status).toBe(422);
+        expect(res.raw).toBe(VAULT_REFUSED);
+      }
+    }
+    expect(store.readServiceMeta(VAULT_ROOT_META_KEY)).toBeNull();
+    // A refused apply created nothing: the managed tree was never written.
+    expect(existsSync(join(outer, "inbox"))).toBe(false);
+  });
+
+  it("vault setup still accepts a root beside a registered project", async () => {
+    await registerId(projectDir);
+    const beside = makeVault(join(dir, "beside-vault"));
+    const res = await post(VAULT_SETUP_PATH, { vaultRoot: beside });
+    expect(res.status).toBe(200);
+  });
+
+  it("project registration refuses a folder equal to, inside, or above the set-up vault", async () => {
+    const outer = join(dir, "vault-parent");
+    const vault = makeVault(join(outer, "vault"));
+    const setup = await post(VAULT_SETUP_PATH, { vaultRoot: vault });
+    expect(setup.status).toBe(200);
+
+    const inside = join(vault, "sub");
+    mkdirSync(inside);
+    for (const candidate of [vault, inside, outer]) {
+      const res = await register(candidate);
+      expect(res.status).toBe(422);
+      expect(res.raw).toBe(JSON.stringify({ error: "folder cannot be registered" }));
+    }
+    expect(listProjects(store.db)).toHaveLength(0);
   });
 });
