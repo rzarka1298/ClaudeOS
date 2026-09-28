@@ -46,20 +46,32 @@ function remainingBudgetMs(): number {
 }
 
 async function main(): Promise<void> {
+  // D-10 rule 3: a hook invoked from inside a hook does nothing. The marker
+  // is set for this process too (it spawns nothing, so it reaches nothing).
+  if (process.env.CCC_HOOK === "1") return;
+  process.env.CCC_HOOK = "1";
+  // D-10 rule 4: events from a Command Center-internal process are dropped.
+  if (process.env.CCC_INTERNAL === "1") return;
   const runtimeDir = argValue("--runtime-dir");
   if (runtimeDir === undefined || runtimeDir.length === 0) return;
   const stdin = await readStdinCapped();
-  const record = minimizeHookInput(stdin.overflowed ? null : stdin.text, process.env, {
-    eventId: randomUUID(),
-    observedAt: new Date().toISOString(),
-  });
+  const record = minimizeHookInput(
+    stdin.text,
+    process.env,
+    { eventId: randomUUID(), observedAt: new Date().toISOString() },
+    { overflowed: stdin.overflowed },
+  );
   if (record === null) return;
+  const line = JSON.stringify(record);
+  // Write-ahead (D-08): a SessionEnd is spooled BEFORE the socket attempt,
+  // because at teardown the hook may not live to see the reply. Ingest is
+  // idempotent on eventId, so a delivered-and-spooled SessionEnd is safe.
+  const writeAhead = record.hook_event_name === "SessionEnd";
+  if (writeAhead) appendSpool(runtimeDir, line);
   const delivered = await deliver(runtimeDir, HOOK_EVENTS_PATH, record, {
     deadlineMs: remainingBudgetMs(),
   });
-  if (!delivered) {
-    appendSpool(runtimeDir, JSON.stringify(record));
-  }
+  if (!delivered && !writeAhead) appendSpool(runtimeDir, line);
 }
 
 // A stray error from a destroyed socket or a late callback must not surface

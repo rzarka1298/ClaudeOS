@@ -283,8 +283,8 @@ describe("the 4 KiB record cap drops optional fields in a fixed order", () => {
     const record = minimize(
       buildHookStdin("SessionStart", {
         overrides: {
-          cwd: `/Users/USERNAME/${"c".repeat(1800)}`,
-          transcript_path: `/Users/USERNAME/${"p".repeat(1800)}`,
+          cwd: `/Users/USERNAME/${"c".repeat(1700)}`,
+          transcript_path: `/Users/USERNAME/${"p".repeat(1700)}`,
           session_title: "é".repeat(256),
         },
       }),
@@ -299,8 +299,8 @@ describe("the 4 KiB record cap drops optional fields in a fixed order", () => {
     const record = minimize(
       buildHookStdin("SessionStart", {
         overrides: {
-          cwd: `/Users/USERNAME/${"c".repeat(3000)}`,
-          transcript_path: `/Users/USERNAME/${"p".repeat(3000)}`,
+          cwd: `/Users/USERNAME/${"c".repeat(3700)}`,
+          transcript_path: `/Users/USERNAME/${"p".repeat(3700)}`,
         },
       }),
     );

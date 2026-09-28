@@ -3,7 +3,14 @@
 import { appendFileSync, chmodSync, mkdirSync, statSync } from "node:fs";
 import http from "node:http";
 import { join } from "node:path";
-import { HANDSHAKE_PATH, SOCKET_FILE_NAME, SPOOL_DIR_NAME, SPOOL_FILE_NAME } from "./limits.js";
+import {
+  HANDSHAKE_PATH,
+  SOCKET_FILE_NAME,
+  SPOOL_DIR_NAME,
+  SPOOL_DROP_FILE_NAME,
+  SPOOL_FILE_NAME,
+  SPOOL_MAX_BYTES,
+} from "./limits.js";
 
 /** Group/other permission bits; any of them set on the spool dir or file is repaired. */
 const GROUP_OTHER_PERMISSION_MASK = 0o077;
@@ -108,18 +115,40 @@ export function deliver(
   });
 }
 
+/** The current size of `path`, or 0 when it does not exist yet. */
+function sizeOrZero(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
 /**
- * Appends one line to `<runtimeDir>/spool/hooks.ndjson`: the spool dir is
- * created `0700` (and repaired to it), the file `0600`, one `appendFileSync`
- * per record (D-08). Returns whether the line was written.
+ * Appends one line to `<runtimeDir>/spool/hooks.ndjson` (D-08): the spool dir
+ * is created `0700` (and repaired to it), the file `0600`, one
+ * `appendFileSync` per record, which is one `O_APPEND` write. When the line
+ * would take the file past {@link SPOOL_MAX_BYTES}, the line is dropped and
+ * one byte is appended to `hooks.dropped` instead, so the file's size is the
+ * drop count (T-05-10). Every filesystem error is swallowed: fail open means
+ * the hook never surfaces one. Returns whether the line was written.
  */
 export function appendSpool(runtimeDir: string, line: string): boolean {
-  const spoolDir = join(runtimeDir, SPOOL_DIR_NAME);
-  mkdirSync(spoolDir, { recursive: true, mode: 0o700 });
-  if ((statSync(spoolDir).mode & GROUP_OTHER_PERMISSION_MASK) !== 0) {
-    chmodSync(spoolDir, 0o700);
+  try {
+    const spoolDir = join(runtimeDir, SPOOL_DIR_NAME);
+    mkdirSync(spoolDir, { recursive: true, mode: 0o700 });
+    if ((statSync(spoolDir).mode & GROUP_OTHER_PERMISSION_MASK) !== 0) {
+      chmodSync(spoolDir, 0o700);
+    }
+    const text = line.endsWith("\n") ? line : `${line}\n`;
+    const spoolFile = join(spoolDir, SPOOL_FILE_NAME);
+    if (sizeOrZero(spoolFile) + Buffer.byteLength(text) > SPOOL_MAX_BYTES) {
+      appendFileSync(join(spoolDir, SPOOL_DROP_FILE_NAME), "x", { flag: "a", mode: 0o600 });
+      return false;
+    }
+    appendFileSync(spoolFile, text, { flag: "a", mode: 0o600 });
+    return true;
+  } catch {
+    return false;
   }
-  const text = line.endsWith("\n") ? line : `${line}\n`;
-  appendFileSync(join(spoolDir, SPOOL_FILE_NAME), text, { flag: "a", mode: 0o600 });
-  return true;
 }

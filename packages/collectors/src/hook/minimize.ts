@@ -2,6 +2,7 @@
 // @ccc/domain (erased at compile time). A value import would pull zod into
 // the hook and break purity (PATTERNS Group A, purity.test.ts).
 import type { KnownHookEvent, StopFailureError } from "@ccc/domain";
+import { MAX_RECORD_BYTES, STDIN_RETAIN_BYTES } from "./limits.js";
 
 /**
  * The hook events this build knows, mirrored as a value from
@@ -153,19 +154,90 @@ function outputValue(inputKey: string, value: unknown): unknown {
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * The domain schema's length caps for free-text fields (claude-hook-events.ts
+ * `COMMON_SHAPE` and `HookEnvSchema`). An over-long value is cut to its cap
+ * rather than forwarded: one long session title or tool name must never make
+ * a known event classify shape-invalid and pause tracking (wave 1 review).
+ * Identifier- and path-shaped fields are NOT cut: a value of the wrong shape
+ * there is exactly the telemetry-shape change the service must detect.
+ */
+const FREE_TEXT_CAPS: Readonly<Record<string, number>> = {
+  session_title: 256,
+  model: 128,
+  tool_name: 128,
+  agent_id: 128,
+  agent_type: 128,
+  from_model: 128,
+  to_model: 128,
+};
+
+/** `TERM_PROGRAM` is free text too (HookEnvSchema caps it at 64). */
+const ENV_CAPS: Readonly<Record<string, number>> = { TERM_PROGRAM: 64 };
+
+/** The envelope's event-name cap; an unknown name is cut to it and still counted. */
+const EVENT_NAME_CAP = 64;
+
+/**
+ * The order optional fields are dropped in when a record exceeds
+ * {@link MAX_RECORD_BYTES}: the plan's fixed order first, then the remaining
+ * optional fields, and `session_id` only as the very last resort. The
+ * envelope (`eventId`, `observedAt`, `hook_event_name`) is never dropped.
+ */
+const DROP_ORDER = [
+  "session_title",
+  "transcript_path",
+  "cwd",
+  "model",
+  "to_model",
+  "from_model",
+  "agent_type",
+  "agent_id",
+  "permission_mode",
+  "env",
+  "notification_type",
+  "reason",
+  "source",
+  "switch_source",
+  "stop_error",
+  "effort_level",
+  "tool_name",
+  "is_interrupt",
+  "session_id",
+] as const;
+
+/**
+ * The bounded scan used when stdin overflowed the retain cap or does not
+ * parse. Each pattern matches a top-level-looking `"key":"value"` pair whose
+ * opening quote is not escaped, with a value restricted to identifier
+ * characters and length-capped, so the scan is linear and can capture
+ * nothing but the identifier. The first match wins: Claude Code writes the
+ * common fields and the event name before any tool payload.
+ */
+const SCAN_EVENT_NAME = /(?<![\\\w])"hook_event_name"\s*:\s*"([A-Za-z]{1,64})"/;
+const SCAN_SESSION_ID = /(?<![\\\w])"session_id"\s*:\s*"([A-Za-z0-9_-]{1,128})"/;
+
+/** Cuts `value` to at most `cap` UTF-16 units without splitting a surrogate pair. */
+function truncate(value: string, cap: number): string {
+  if (value.length <= cap) return value;
+  const cut = value.slice(0, cap);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
 function pickEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
   const picked: Record<string, string> = {};
   for (const key of ENV_KEPT) {
     const value = env[key];
     if (typeof value === "string") {
-      picked[key] = value;
+      const cap = ENV_CAPS[key];
+      picked[key] = cap === undefined ? value : truncate(value, cap);
     }
   }
   return picked;
 }
 
-function parsePayload(raw: string | null): Record<string, unknown> | null {
-  if (raw === null) return null;
+function parsePayload(raw: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(raw);
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
@@ -177,19 +249,58 @@ function parsePayload(raw: string | null): Record<string, unknown> | null {
 }
 
 /**
+ * The only two scalars recoverable from an overflowed or unparseable stdin,
+ * scanned from at most {@link STDIN_RETAIN_BYTES} of it. Nothing else of the
+ * payload is kept.
+ */
+function scanIdentifiers(raw: string): Record<string, unknown> | null {
+  const text = raw.length > STDIN_RETAIN_BYTES ? raw.slice(0, STDIN_RETAIN_BYTES) : raw;
+  const eventName = SCAN_EVENT_NAME.exec(text)?.[1];
+  if (eventName === undefined) return null;
+  const sessionId = SCAN_SESSION_ID.exec(text)?.[1];
+  return sessionId === undefined
+    ? { hook_event_name: eventName }
+    : { hook_event_name: eventName, session_id: sessionId };
+}
+
+function serializedBytes(record: Record<string, unknown>): number {
+  return Buffer.byteLength(JSON.stringify(record));
+}
+
+/** Drops optional fields in {@link DROP_ORDER} until the record fits {@link MAX_RECORD_BYTES}. */
+function capRecord(record: Record<string, unknown>): Record<string, unknown> {
+  for (const key of DROP_ORDER) {
+    if (serializedBytes(record) <= MAX_RECORD_BYTES) break;
+    delete record[key];
+  }
+  return record;
+}
+
+export interface MinimizeOptions {
+  /** Stdin exceeded the retain cap, so `raw` is only its prefix: use the bounded scan. */
+  readonly overflowed?: boolean;
+}
+
+/**
  * Turns the retained stdin text of one hook invocation into the minimized
  * record (D-09, PR-04). The record is BUILT from the allowlist, never
- * filtered from the payload, so an unlisted key cannot survive. An event
- * name outside {@link HOOK_KNOWN_EVENTS} still yields the minimal envelope
- * plus `session_id`, so the service can count it (D-12). Returns `null` only
- * when no `hook_event_name` can be found.
+ * filtered from the payload, so an unlisted key cannot survive. Free-text
+ * fields are cut to the domain caps and the whole record to
+ * {@link MAX_RECORD_BYTES}. An overflowed or unparseable stdin yields only
+ * `hook_event_name` and `session_id` from a bounded scan. An event name
+ * outside {@link HOOK_KNOWN_EVENTS} yields the envelope plus `session_id`,
+ * so the service can count it (D-12). Returns `null` only when no
+ * `hook_event_name` can be found.
  */
 export function minimizeHookInput(
   raw: string | null,
   env: Readonly<Record<string, string | undefined>>,
   meta: HookRecordMeta,
+  options: MinimizeOptions = {},
 ): MinimizedHookRecord | null {
-  const payload = parsePayload(raw);
+  if (raw === null) return null;
+  const parsed = options.overflowed === true ? null : parsePayload(raw);
+  const payload = parsed ?? scanIdentifiers(raw);
   const eventName = payload?.hook_event_name;
   if (payload === null || typeof eventName !== "string" || eventName.length === 0) {
     return null;
@@ -197,23 +308,24 @@ export function minimizeHookInput(
   const record: Record<string, unknown> = {
     eventId: meta.eventId,
     observedAt: meta.observedAt,
-    hook_event_name: eventName,
+    hook_event_name: truncate(eventName, EVENT_NAME_CAP),
   };
   if (!isKnownEvent(eventName)) {
     if (typeof payload.session_id === "string") {
       record.session_id = payload.session_id;
     }
-    return record as MinimizedHookRecord;
+    return capRecord(record) as MinimizedHookRecord;
   }
   for (const inputKey of KEPT_FIELDS[eventName]) {
     const value = outputValue(inputKey, payload[inputKey]);
-    if (value !== undefined) {
-      record[outputKey(eventName, inputKey)] = value;
-    }
+    if (value === undefined) continue;
+    const key = outputKey(eventName, inputKey);
+    const cap = FREE_TEXT_CAPS[key];
+    record[key] = cap !== undefined && typeof value === "string" ? truncate(value, cap) : value;
   }
   const pickedEnv = pickEnv(env);
   if (Object.keys(pickedEnv).length > 0) {
     record.env = pickedEnv;
   }
-  return record as MinimizedHookRecord;
+  return capRecord(record) as MinimizedHookRecord;
 }
