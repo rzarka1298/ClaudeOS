@@ -57,7 +57,8 @@ export class InvalidRunStateError extends Error {
   }
 }
 
-function assertValidRunState(state: string): asserts state is RunState {
+/** Throws {@link InvalidRunStateError} unless `state` is one of the eight `RunState` members. Shared with `session-store.ts`. */
+export function assertValidRunState(state: string): asserts state is RunState {
   if (!RUN_STATES.includes(state as RunState)) {
     throw new InvalidRunStateError(state);
   }
