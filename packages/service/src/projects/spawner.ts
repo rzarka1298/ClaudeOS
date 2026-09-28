@@ -26,6 +26,8 @@ export type { StderrClass };
 export interface SpawnOptions {
   /** Hard deadline; the child is killed when it passes. */
   readonly timeoutMs: number;
+  /** Aborting kills a still-running child (the launch service's 4 s cap). */
+  readonly signal?: AbortSignal;
 }
 
 /** A spawn's result with the stderr text already classified away. */
@@ -67,6 +69,7 @@ export function createCommandSpawner(runner: CommandRunner): Spawner {
         timeoutMs: opts.timeoutMs,
         env: spawnEnv(),
         maxBufferBytes: MAX_OUTPUT_BYTES,
+        ...(opts.signal === undefined ? {} : { signal: opts.signal }),
       });
       // The raw stderr ends here: only its class leaves this function.
       return {

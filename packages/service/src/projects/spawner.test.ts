@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakeCommandRunner } from "../test-support/fake-command-runner.js";
+import { createExecFileCommandRunner } from "./command-runner.js";
 import { createCommandSpawner } from "./spawner.js";
 
 const MISSING_PATH_STDERR = "The file /Users/USERNAME/code/example-project does not exist.";
@@ -55,5 +56,22 @@ describe("createCommandSpawner (D-18, D-46, T-04-19)", () => {
       errno: "EINVAL",
     });
     expect(runner.calls).toHaveLength(0);
+  });
+
+  it("an abort kills a still-running child promptly (the launch cap, D-40)", async () => {
+    // A real child that would outlive the test: /bin/sleep, never /usr/bin/open.
+    const spawner = createCommandSpawner(createExecFileCommandRunner());
+    const controller = new AbortController();
+    const started = performance.now();
+    const pending = spawner.run(["/bin/sleep", "30"], {
+      timeoutMs: 20_000,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 50);
+    const outcome = await pending;
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(outcome.exitCode).toBeNull();
+    expect(outcome.errno).toBe("ABORT_ERR");
+    expect(outcome.timedOut).toBe(false);
   });
 });

@@ -31,6 +31,8 @@ export interface CommandRunOptions {
   readonly cwd?: string;
   /** Output cap per stream; defaults to 1 MiB. Past it the child is killed and `truncated` is set. */
   readonly maxBufferBytes?: number;
+  /** Aborting kills the child with SIGKILL; the outcome reports errno `ABORT_ERR`. */
+  readonly signal?: AbortSignal;
 }
 
 export interface CommandOutcome {
@@ -76,6 +78,7 @@ export function createExecFileCommandRunner(): CommandRunner {
             windowsHide: true,
             encoding: "utf8",
             ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
           },
           (error, stdout, stderr) => {
             if (error === null) {

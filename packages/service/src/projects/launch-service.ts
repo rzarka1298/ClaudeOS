@@ -122,6 +122,8 @@ type Prepared =
 /** Tracks one launch so a spawn that finishes after the cap cannot act as a success. */
 interface Attempt {
   cancelled: boolean;
+  /** Fires when the cap does; the spawner kills a still-running child on it. */
+  readonly signal: AbortSignal;
 }
 
 function projectIdOf(request: LaunchRequest): ProjectId | null {
@@ -240,7 +242,10 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
       if (state.cancelled) return failure("timeout");
       if (!delegated.ok) return delegated;
     } else {
-      const outcome = await deps.spawner.run(prepared.argv, { timeoutMs: capMs });
+      const outcome = await deps.spawner.run(prepared.argv, {
+        timeoutMs: capMs,
+        signal: state.signal,
+      });
       if (state.cancelled) return failure("timeout");
       if (outcome.exitCode !== 0) return failure(mapLaunchFailure(outcome));
     }
@@ -254,11 +259,15 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
 
   return {
     async launch(request) {
-      const state: Attempt = { cancelled: false };
+      // The cap both answers the caller and aborts the spawn, so a hung
+      // LaunchServices hand-off is killed rather than left running (D-40).
+      const controller = new AbortController();
+      const state: Attempt = { cancelled: false, signal: controller.signal };
       let timer: ReturnType<typeof setTimeout> | undefined;
       const cap = new Promise<LaunchResult>((resolve) => {
         timer = setTimeout(() => {
           state.cancelled = true;
+          controller.abort();
           resolve(failure("timeout"));
         }, capMs);
       });

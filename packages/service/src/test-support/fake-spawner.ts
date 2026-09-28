@@ -56,7 +56,7 @@ export function createFakeSpawner(initial: FakeSpawnMode = { kind: "succeed" }):
     run(argv, opts) {
       calls.push({ argv: [...argv], opts });
       const mode = fake.mode;
-      const signal = (opts as { readonly signal?: AbortSignal }).signal;
+      const signal = opts.signal;
       switch (mode.kind) {
         case "succeed": {
           const delayMs = mode.delayMs ?? 0;
