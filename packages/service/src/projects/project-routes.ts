@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { homedir } from "node:os";
 import { basename } from "node:path";
 import {
   type ApiErrorBody,
@@ -41,6 +40,7 @@ import {
   withAuth,
 } from "../route-kit.js";
 import { recomputeApprovedRoots, VAULT_ROOT_META_KEY } from "./approved-roots.js";
+import { resolveHomeDir } from "./project-views.js";
 import {
   detectProtectedLocation,
   ProjectRefusedError,
@@ -71,7 +71,10 @@ export interface ProjectServices {
   onRegistryChanged(): void;
   /** Re-read git state now for one project (or all), without awaiting it (D-42). */
   refresh(projectId?: ProjectId): void;
-  /** The home directory displayPaths abbreviate against and protected locations sit under. */
+  /**
+   * The home directory displayPaths abbreviate against and protected
+   * locations sit under, in `resolveHomeDir` form (resolved once, D-43).
+   */
   readonly homeDir: string;
   /** The service's own runtime directory, which can never be a project. */
   readonly runtimeDir: string;
@@ -93,7 +96,7 @@ const MUTATION_OK: ProjectMutationResponse = { ok: true };
 function policyContext(ctx: RouteContext): RegistrationPolicyContext {
   const vaultRoot = ctx.store.readServiceMeta(VAULT_ROOT_META_KEY);
   return {
-    homeDir: ctx.projects?.homeDir ?? homedir(),
+    homeDir: ctx.projects?.homeDir ?? resolveHomeDir(),
     runtimeDir: ctx.projects?.runtimeDir ?? resolveRuntimeDir(),
     vaultRoot: vaultRoot !== null && vaultRoot.length > 0 ? vaultRoot : null,
   };

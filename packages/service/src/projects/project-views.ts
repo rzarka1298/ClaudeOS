@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import {
   type GithubTarget,
   type LauncherStatus,
@@ -24,6 +27,22 @@ import type { LauncherConfigRecord, ProjectRecord } from "@ccc/operational-store
  * service rebuilds the URL from its own stored data at launch time
  * (PROJ-14), so no URL string crosses the wire.
  */
+
+/**
+ * The home directory in the one form every home comparison uses: its native
+ * realpath (the lexical form when it does not resolve). Stored project paths
+ * are realpaths, so `toDisplayPath` and `detectProtectedLocation` only agree
+ * with the store when they are handed this form. Resolved ONCE at
+ * composition (`main.ts`) and passed to both, never per call: the protected
+ * check must stay free of filesystem reads (PR-04).
+ */
+export function resolveHomeDir(homeDir: string = homedir()): string {
+  try {
+    return realpathSync.native(homeDir);
+  } catch {
+    return path.resolve(homeDir);
+  }
+}
 
 /**
  * `~` for the home directory itself, `~/rest` for anything strictly inside

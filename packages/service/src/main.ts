@@ -1,5 +1,4 @@
 import { existsSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "@ccc/domain";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
 import {
@@ -25,6 +24,7 @@ import { createProjectsCollector } from "./projects/collector.js";
 import { createExecFileCommandRunner } from "./projects/command-runner.js";
 import { createGitRunner, resolveGit } from "./projects/git-runner.js";
 import type { ProjectServices } from "./projects/project-routes.js";
+import { resolveHomeDir } from "./projects/project-views.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
@@ -124,12 +124,15 @@ async function main(): Promise<void> {
   const gitRunner = createGitRunner({ runner: commandRunner, git: gitResolution });
   // Git state lives in memory only (D-11); every project starts `pending`
   // and is read on the first tick with a subscriber, or on refresh.
+  // One resolved home for every home comparison: display paths and
+  // protected-location detection both judge realpaths (D-43, D-29).
+  const homeDir = resolveHomeDir();
   const projectsCollector = createProjectsCollector({
     eventBus,
     gitRunner,
     readRecords: () => listProjects(store.db),
     readLauncherConfigs: () => listLauncherConfigs(store.db),
-    homeDir: homedir(),
+    homeDir,
   });
   projectsCollector.start();
   // The routes see the collector only through this narrow port (SC-2).
@@ -137,7 +140,7 @@ async function main(): Promise<void> {
     snapshot: () => projectsCollector.snapshot(),
     onRegistryChanged: () => projectsCollector.onRegistryChanged(),
     refresh: (projectId) => projectsCollector.refresh(projectId),
-    homeDir: homedir(),
+    homeDir,
     runtimeDir,
   };
 
