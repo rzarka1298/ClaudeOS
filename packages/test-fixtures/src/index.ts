@@ -1,3 +1,9 @@
+export {
+  FakeProposeForceTerminate,
+  FakeSessionLaunchGuard,
+  FakeSessionProjectLookup,
+  FakeSessionTerminalLauncher,
+} from "./fake-ports.js";
 export type { StartServiceForTestOptions, TestServiceHandle } from "./service-harness.js";
 export {
   requestOverSocket,
