@@ -9,9 +9,11 @@ import {
   PROJECT_REGISTER_PATH,
   PROJECT_REMOVE_PATH,
   PROJECT_RENAME_PATH,
+  PROJECTS_REFRESH_PATH,
   type ProjectId,
   type ProjectMutationResponse,
   type ProjectsSnapshot,
+  RefreshProjectsRequestSchema,
   RegisterProjectRequestSchema,
   type RegisterProjectResponse,
   RemoveProjectRequestSchema,
@@ -19,6 +21,7 @@ import {
   SetGithubLinkRequestSchema,
 } from "@ccc/domain";
 import {
+  getProject,
   insertProject,
   removeProject,
   renameProject,
@@ -162,6 +165,10 @@ async function handleRegister(
     if (created) {
       recomputeApprovedRoots(ctx.store);
       ctx.projects?.onRegistryChanged();
+      // Read the new project's git state now, without waiting for it: the
+      // reply goes out while git runs, and the result arrives as a
+      // `projects.updated` delta (D-42).
+      ctx.projects?.refresh(record.projectId);
     }
     logger.info({ projectId: record.projectId, created }, "project registered");
     const body: RegisterProjectResponse = created
@@ -227,7 +234,41 @@ function manageHandler<T extends { projectId: ProjectId }>(
   });
 }
 
+/**
+ * `POST /api/v1/projects/refresh` — queue a git read for one project (or
+ * all) and answer at once; the result arrives as a `projects.updated`
+ * delta. Every Phase 4 success is a 200, so the client has one success path.
+ */
+async function handleRefresh(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: RouteContext,
+): Promise<void> {
+  const parsed = await readJsonBody(req, RefreshProjectsRequestSchema);
+  if (!parsed.ok) {
+    logger.warn({ route: PROJECTS_REFRESH_PATH, reason: parsed.reason }, "rejected request body");
+    sendJson(res, 400, INVALID_BODY_BODY);
+    return;
+  }
+  const { projectId } = parsed.value;
+  try {
+    if (projectId !== undefined && getProject(ctx.store.db, projectId) === null) {
+      sendJson(res, 404, NO_SUCH_PROJECT_BODY);
+      return;
+    }
+    ctx.projects?.refresh(projectId);
+    sendJson(res, 200, MUTATION_OK);
+  } catch (err: unknown) {
+    sendInternalError(res, PROJECTS_REFRESH_PATH, err);
+  }
+}
+
+const refreshHandler: Handler = (req, res, ctx) => {
+  void handleRefresh(req, res, ctx);
+};
+
 export const projectRoutes: Record<string, Record<string, Handler>> = {
+  [PROJECTS_REFRESH_PATH]: { POST: withAuth(refreshHandler) },
   [PROJECT_REGISTER_PATH]: { POST: withAuth(registerHandler) },
   [PROJECT_REMOVE_PATH]: {
     POST: manageHandler(

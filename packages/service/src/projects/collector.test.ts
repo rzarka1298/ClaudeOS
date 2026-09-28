@@ -64,7 +64,7 @@ function makeCollector() {
     eventBus: {
       publish: (type, payload) => {
         published.push({ type, payload });
-        return { id: published.length, type, at: "2026-09-01T00:00:00.000Z", payload };
+        return { id: published.length, type, occurredAt: "2026-09-01T00:00:00.000Z", payload };
       },
       subscriberCount: () => subscribers,
     },
@@ -171,6 +171,33 @@ describe("createProjectsCollector: what it publishes (D-12, RESEARCH Pattern 4)"
       upserted: [expect.objectContaining({ projectId: id(1), git: repoState("feature") })],
       removed: [],
     });
+  });
+
+  it("publishes nothing for an unchanged re-read even though observedAt moved on", async () => {
+    let clock = Date.parse("2026-09-01T00:00:00.000Z");
+    const collector = createProjectsCollector({
+      eventBus: {
+        publish: (type, payload) => {
+          published.push({ type, payload });
+          return { id: published.length, type, occurredAt: "2026-09-01T00:00:00.000Z", payload };
+        },
+        subscriberCount: () => subscribers,
+      },
+      gitRunner,
+      readRecords: () => records,
+      readLauncherConfigs: (): LauncherConfigRecord[] => [],
+      homeDir: HOME,
+      now: () => new Date(clock),
+    });
+    collector.refresh(id(1));
+    await settle();
+    expect(published).toHaveLength(1);
+    clock += 60_000;
+    collector.refresh(id(1));
+    await settle();
+    expect(published).toHaveLength(1);
+    const view = collector.snapshot().projects.find((v) => v.projectId === id(1));
+    expect(view?.observedAt).toBe(new Date(clock).toISOString());
   });
 
   it("keeps the last good git state with gitReadFailed true when a read fails", async () => {

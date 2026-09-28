@@ -1,7 +1,13 @@
 import { existsSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "@ccc/domain";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
-import { applyMigrations, openStore } from "@ccc/operational-store";
+import {
+  applyMigrations,
+  listLauncherConfigs,
+  listProjects,
+  openStore,
+} from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
 import { createEventBus } from "./events/event-bus.js";
 import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
@@ -15,6 +21,10 @@ import {
   resolveSpoolPath,
 } from "./paths.js";
 import { recomputeApprovedRoots } from "./projects/approved-roots.js";
+import { createProjectsCollector } from "./projects/collector.js";
+import { createExecFileCommandRunner } from "./projects/command-runner.js";
+import { createGitRunner, resolveGit } from "./projects/git-runner.js";
+import type { ProjectServices } from "./projects/project-routes.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
@@ -99,10 +109,43 @@ async function main(): Promise<void> {
     eventBus.publish("service.heartbeat", { at: new Date().toISOString() });
   }, heartbeatIntervalMs);
 
+  // --- Phase 4 (projects and launchers): git status collection ---------
+  // Built after the event bus because the collector publishes into it and
+  // gates its interval on `eventBus.subscriberCount()` (D-11).
+  //
+  // One process port for every child the projects code starts; `main.ts` is
+  // the only place a real one is constructed (Shared Pattern 3).
+  const commandRunner = createExecFileCommandRunner();
+  // Resolved once: `/usr/bin/git` is a shim that opens the Command Line
+  // Tools installer when no developer directory is selected, so it is only
+  // used when `xcode-select -p` succeeds (D-10).
+  const gitResolution = await resolveGit(commandRunner);
+  logger.info({ gitAvailable: gitResolution.kind === "available" }, "startup: resolved git");
+  const gitRunner = createGitRunner({ runner: commandRunner, git: gitResolution });
+  // Git state lives in memory only (D-11); every project starts `pending`
+  // and is read on the first tick with a subscriber, or on refresh.
+  const projectsCollector = createProjectsCollector({
+    eventBus,
+    gitRunner,
+    readRecords: () => listProjects(store.db),
+    readLauncherConfigs: () => listLauncherConfigs(store.db),
+    homeDir: homedir(),
+  });
+  projectsCollector.start();
+  // The routes see the collector only through this narrow port (SC-2).
+  const projects: ProjectServices = {
+    snapshot: () => projectsCollector.snapshot(),
+    onRegistryChanged: () => projectsCollector.onRegistryChanged(),
+    refresh: (projectId) => projectsCollector.refresh(projectId),
+    homeDir: homedir(),
+    runtimeDir,
+  };
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
     eventBus,
+    projects,
   });
   const server = await startSocketServer({ socketPath, requestListener });
 
@@ -110,6 +153,7 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     clearInterval(heartbeatTimer);
+    projectsCollector.stop();
     server.close(() => {
       store.close();
       if (existsSync(socketPath)) {
