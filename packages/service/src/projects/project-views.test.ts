@@ -1,8 +1,17 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ProjectGitState, ProjectId } from "@ccc/domain";
 import { ProjectViewSchema } from "@ccc/domain";
 import type { LauncherConfigRecord, ProjectRecord } from "@ccc/operational-store";
 import { describe, expect, it } from "vitest";
-import { buildProjectView, launchersSummary, toDisplayPath } from "./project-views.js";
+import {
+  buildProjectView,
+  launchersSummary,
+  resolveHomeDir,
+  toDisplayPath,
+} from "./project-views.js";
+import { detectProtectedLocation } from "./registration.js";
 
 /** Synthetic fixture values only (Shared Pattern 8, D-45). */
 const HOME = "/Users/USERNAME";
@@ -42,6 +51,37 @@ describe("toDisplayPath (D-43)", () => {
     expect(toDisplayPath("/Users/USERNAME/code-archive/x", "/Users/USERNAME/code")).toBe(
       "/Users/USERNAME/code-archive/x",
     );
+  });
+});
+
+describe("resolveHomeDir: one home form for display and protection (D-43, D-29)", () => {
+  it("resolves a symlinked home once, so stored realpaths abbreviate and protected folders are named", () => {
+    const base = realpathSync.native(mkdtempSync(join(tmpdir(), "ccc-home-")));
+    try {
+      const realHome = join(base, "real-home");
+      const project = join(realHome, "code", "example-project");
+      const inDocuments = join(realHome, "Documents", "example-project");
+      mkdirSync(project, { recursive: true });
+      mkdirSync(inDocuments, { recursive: true });
+      const linkedHome = join(base, "linked-home");
+      symlinkSync(realHome, linkedHome);
+
+      const home = resolveHomeDir(linkedHome);
+      expect(home).toBe(realHome);
+      // Stored paths are realpaths (registration): both consumers agree only
+      // when they are handed the resolved home.
+      expect(toDisplayPath(project, home)).toBe("~/code/example-project");
+      expect(detectProtectedLocation(inDocuments, home)).toBe("documents");
+      // Control: the unresolved home abbreviates nothing and names nothing.
+      expect(toDisplayPath(project, linkedHome)).toBe(project);
+      expect(detectProtectedLocation(inDocuments, linkedHome)).toBeNull();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the lexical form for a home that does not resolve", () => {
+    expect(resolveHomeDir("/Users/USERNAME/../USERNAME")).toBe("/Users/USERNAME");
   });
 });
 
