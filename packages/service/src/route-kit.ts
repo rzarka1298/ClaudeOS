@@ -3,6 +3,7 @@ import type { ApiErrorBody } from "@ccc/domain";
 import type { OperationalStore } from "@ccc/operational-store";
 import { requireToken } from "./auth/require-token.js";
 import type { EventBus } from "./events/event-bus.js";
+import type { LaunchService } from "./projects/launch-service.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 
 /**
@@ -32,6 +33,8 @@ export interface RouteContext {
   eventBus: EventBus;
   /** The live project services (snapshot, refresh, registry-change hook); plan 04-04. */
   readonly projects?: ProjectServices | undefined;
+  /** The launch pipeline behind `POST /api/v1/projects/launch`; plan 04-06. */
+  readonly launch?: LaunchService | undefined;
 }
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;

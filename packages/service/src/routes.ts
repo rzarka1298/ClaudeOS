@@ -24,6 +24,7 @@ import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
 import { registeredProjectPaths } from "./projects/approved-roots.js";
+import { launchRoutes } from "./projects/launch-routes.js";
 import { projectRoutes } from "./projects/project-routes.js";
 import { readJsonBody } from "./request-body.js";
 import {
@@ -274,6 +275,7 @@ const routeTable: Record<string, Record<string, Handler>> = {
   [EVENTS_PATH]: { GET: withAuth(eventsHandler) },
   [SNAPSHOT_PATH]: { GET: withAuth(snapshotHandler) },
   ...projectRoutes,
+  ...launchRoutes,
 };
 
 /**
