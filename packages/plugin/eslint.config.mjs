@@ -25,6 +25,13 @@ import obsidianmd from "eslint-plugin-obsidianmd";
  * option is set. This list is the installed rule's own `DEFAULT_BRANDS`
  * (`dist/lib/rules/ui/brands.js`) plus the proper nouns Phase 4's launcher
  * and Settings copy uses (04-UI-SPEC.md; D-39).
+ *
+ * Only product names belong here. A brand is accepted capitalised ANYWHERE
+ * in a string, so a bare common word ("Terminal", "Desktop", "Documents",
+ * "Downloads", "Automation") would license Title Case for that word in every
+ * UI string — exactly what the rule exists to catch. Copy that names one of
+ * those macOS folders or apps mid-sentence carries a scoped, commented
+ * `eslint-disable-next-line` instead, so each use is a reviewed decision.
  */
 const SENTENCE_CASE_BRANDS = [
   // eslint-plugin-obsidianmd@0.4.2's own defaults, restated in full because
@@ -95,17 +102,12 @@ const SENTENCE_CASE_BRANDS = [
   "Claude Code",
   "Claude Desktop",
   "Finder",
-  "Terminal",
   "iTerm2",
   "Ghostty",
   "WezTerm",
   "System Settings",
   "Privacy & Security",
-  "Automation",
   "Files & Folders",
-  "Documents",
-  "Desktop",
-  "Downloads",
   "Xcode",
 ];
 
