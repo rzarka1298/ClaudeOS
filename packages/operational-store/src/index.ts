@@ -33,6 +33,35 @@ export {
   setSessionOverride,
   upsertSessionRun,
 } from "./session-store.js";
+export type {
+  AnalysisToggle,
+  CapacitySnapshot,
+  CostSnapshot,
+  CoverageDay,
+  CoverageStatus,
+  TokenActivityQuery,
+  TokenActivityRows,
+  TranscriptCursor,
+  UsageRecordInput,
+} from "./usage-store.js";
+export {
+  appendToggleLog,
+  deleteUsageAnalytics,
+  getCollectorSetting,
+  InvalidUsageRecordError,
+  latestCapacity,
+  listCostSnapshots,
+  listToggleLog,
+  markDayCovered,
+  queryCoverage,
+  queryTokenActivity,
+  readCursor,
+  recordUsage,
+  setCollectorSetting,
+  upsertCapacitySnapshot,
+  upsertCostSnapshot,
+  writeCursor,
+} from "./usage-store.js";
 export type { VaultNoteQuery, VaultNoteRecord } from "./vault-notes-store.js";
 export {
   assertValidVaultNoteRecord,
