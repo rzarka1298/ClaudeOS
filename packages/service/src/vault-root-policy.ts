@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { checkPathContainment } from "@ccc/domain";
 
 /**
  * Thrown when a caller names a directory that is real, absolute, and
@@ -25,7 +26,10 @@ export class VaultRootRefusedError extends Error {
 }
 
 /** Why a root was refused — logged locally, never returned. */
-export type VaultRootRefusalReason = "forbidden-location" | "not-an-obsidian-vault";
+export type VaultRootRefusalReason =
+  | "forbidden-location"
+  | "not-an-obsidian-vault"
+  | "overlaps-project";
 
 /**
  * Directories that are categorically not a personal knowledge vault.
@@ -125,8 +129,14 @@ const OBSIDIAN_MARKER = ".obsidian";
  * Applied by BOTH vault-setup routes, because a plan that described a
  * vault the apply would refuse would break VAULT-01's "the modal shows
  * exactly what setup will write".
+ *
+ * `projectRoots` is every registered project's stored realpath. The vault
+ * must be none of them, inside none of them and above none of them (D-04):
+ * project registration enforces the same rule against the vault, but only
+ * once a vault exists — so without this side a project registered BEFORE
+ * setup would silently end up sharing a tree with the managed vault.
  */
-export function assertUsableVaultRoot(vaultRoot: string): void {
+export function assertUsableVaultRoot(vaultRoot: string, projectRoots: readonly string[]): void {
   let resolved: string;
   try {
     resolved = realpathSync.native(vaultRoot);
@@ -141,7 +151,28 @@ export function assertUsableVaultRoot(vaultRoot: string): void {
     throw new VaultRootRefusedError(resolved, "forbidden-location");
   }
 
+  if (projectRoots.some((projectRoot) => overlaps(resolved, projectRoot))) {
+    throw new VaultRootRefusedError(resolved, "overlaps-project");
+  }
+
   if (!existsSync(join(resolved, OBSIDIAN_MARKER))) {
     throw new VaultRootRefusedError(resolved, "not-an-obsidian-vault");
   }
+}
+
+/** True when `resolved` (a realpath) is `other`, inside it, or above it. */
+function overlaps(resolved: string, other: string): boolean {
+  let otherResolved: string;
+  try {
+    otherResolved = realpathSync.native(other);
+  } catch {
+    // A registered folder that has since moved: compare its stored form,
+    // which is still where the owner's project lived.
+    otherResolved = other;
+  }
+  return (
+    resolved === otherResolved ||
+    checkPathContainment(resolved, otherResolved).contained ||
+    checkPathContainment(otherResolved, resolved).contained
+  );
 }

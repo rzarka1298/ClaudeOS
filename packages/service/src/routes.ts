@@ -23,6 +23,7 @@ import { mintToken } from "./auth/token.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
+import { registeredProjectPaths } from "./projects/approved-roots.js";
 import { projectRoutes } from "./projects/project-routes.js";
 import { readJsonBody } from "./request-body.js";
 import {
@@ -186,7 +187,11 @@ function sendVaultSetupFailure(res: ServerResponse, err: unknown, route: string)
  * `computeSetupEntries`), which is what makes "the modal shows exactly
  * what setup will write" a structural fact rather than a promise.
  */
-async function handleVaultSetupPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleVaultSetupPlan(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: RouteContext,
+): Promise<void> {
   const parsed = await readJsonBody(req, VaultSetupRequestSchema);
   if (!parsed.ok) {
     logger.warn({ route: VAULT_SETUP_PLAN_PATH, reason: parsed.reason }, "rejected request body");
@@ -196,7 +201,7 @@ async function handleVaultSetupPlan(req: IncomingMessage, res: ServerResponse): 
   try {
     // Both routes assert this, in the same order, so a plan can never
     // describe a vault the corresponding apply would refuse.
-    assertUsableVaultRoot(parsed.value.vaultRoot);
+    assertUsableVaultRoot(parsed.value.vaultRoot, registeredProjectPaths(ctx.store));
     const plan = planVaultSetup(parsed.value.vaultRoot);
     const body: VaultSetupPlanResponse = {
       vaultRoot: plan.vaultRoot,
@@ -235,7 +240,7 @@ async function handleVaultSetup(
   }
   const { vaultRoot } = parsed.value;
   try {
-    assertUsableVaultRoot(vaultRoot);
+    assertUsableVaultRoot(vaultRoot, registeredProjectPaths(ctx.store));
     const result = initializeVault(vaultRoot);
     persistVaultRoot(ctx.store, vaultRoot);
     const body: VaultSetupResponse = {
@@ -248,12 +253,12 @@ async function handleVaultSetup(
   }
 }
 
-const vaultSetupPlanHandler: Handler = (req, res) => {
+const vaultSetupPlanHandler: Handler = (req, res, ctx) => {
   // `Handler` is synchronous by contract (it writes to `res` and returns);
   // the body read is not. Every failure path inside resolves to a written
   // response, so the floating promise carries nothing a caller could act
   // on — `void` says that deliberately rather than by omission.
-  void handleVaultSetupPlan(req, res);
+  void handleVaultSetupPlan(req, res, ctx);
 };
 
 const vaultSetupHandler: Handler = (req, res, ctx) => {

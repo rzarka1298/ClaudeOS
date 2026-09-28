@@ -32,10 +32,19 @@ export function recomputeApprovedRoots(store: OperationalStore): readonly string
   const vaultRoot = store.readServiceMeta(VAULT_ROOT_META_KEY);
   const roots = [
     ...(vaultRoot !== null && vaultRoot.length > 0 ? [vaultRoot] : []),
-    ...(hasProjectsTable(store) ? listProjects(store.db).map((project) => project.path) : []),
+    ...registeredProjectPaths(store),
   ];
   setApprovedRoots(roots);
   return roots;
+}
+
+/**
+ * Every registered project's stored realpath, or none on a store that has
+ * not been migrated to hold projects. Vault setup judges a candidate root
+ * against these (D-04).
+ */
+export function registeredProjectPaths(store: OperationalStore): readonly string[] {
+  return hasProjectsTable(store) ? listProjects(store.db).map((project) => project.path) : [];
 }
 
 /**
