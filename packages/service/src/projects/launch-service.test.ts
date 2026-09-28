@@ -14,8 +14,10 @@ import {
   insertProject,
   type OperationalStore,
   openStore,
+  saveLauncherConfig,
+  setGithubUrlOverride,
 } from "@ccc/operational-store";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSpawner, type FakeSpawner } from "../test-support/fake-spawner.js";
 import {
   ALLOW_ALL_GUARD,
@@ -155,5 +157,182 @@ describe("project resolution goes through the lookup (D-06)", () => {
   it("logs only { projectId, action, kind }", async () => {
     await service().launch({ projectId, action: "finder" });
     expect(logged).toEqual([{ projectId, action: "finder", kind: "ok" }]);
+  });
+});
+
+function repoWithRemote(host: string, path: string): ProjectGitState {
+  return {
+    kind: "repo",
+    branch: "main",
+    detached: false,
+    dirty: false,
+    commits: [],
+    remote: { host, path },
+  };
+}
+
+describe("Antigravity opens the project by bundle ID (PROJ-05, D-19)", () => {
+  it("spawns open -b <configured bundle ID> <project path>", async () => {
+    saveLauncherConfig(store.db, "antigravity", { bundleId: "com.google.antigravity" });
+    await expect(service().launch({ projectId, action: "antigravity" })).resolves.toEqual({
+      ok: true,
+    });
+    expect(spawner.calls.map((c) => c.argv)).toEqual([
+      ["/usr/bin/open", "-b", "com.google.antigravity", projectDir],
+    ]);
+  });
+
+  it("answers launcher-not-configured with no saved configuration, and spawns nothing", async () => {
+    await expect(service().launch({ projectId, action: "antigravity" })).resolves.toEqual({
+      ok: false,
+      error: "launcher-not-configured",
+    });
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("reads a stored configuration that fails the domain schema as not configured", async () => {
+    saveLauncherConfig(store.db, "antigravity", { bundleId: "not a bundle id; rm -rf" });
+    await expect(service().launch({ projectId, action: "antigravity" })).resolves.toEqual({
+      ok: false,
+      error: "launcher-not-configured",
+    });
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("maps open(1)'s unknown-bundle failure to app-not-found", async () => {
+    saveLauncherConfig(store.db, "antigravity", { bundleId: "com.google.antigravity" });
+    spawner.mode = { kind: "fail", outcome: { exitCode: 1, stderrClass: "bundle-not-found" } };
+    await expect(service().launch({ projectId, action: "antigravity" })).resolves.toEqual({
+      ok: false,
+      error: "app-not-found",
+    });
+  });
+});
+
+describe("Claude Desktop is brought forward by bundle ID, with no project (PROJ-09)", () => {
+  it("spawns open -b <configured bundle ID> and never looks up a project", async () => {
+    saveLauncherConfig(store.db, "claude-desktop", { bundleId: "com.anthropic.claudefordesktop" });
+    const resolve = vi.fn();
+    const result = await service({ lookup: { resolve } }).launch({ action: "claude-desktop" });
+    expect(result).toEqual({ ok: true });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(spawner.calls.map((c) => c.argv)).toEqual([
+      ["/usr/bin/open", "-b", "com.anthropic.claudefordesktop"],
+    ]);
+    expect(refreshCalls).toEqual([]);
+  });
+
+  it("answers launcher-not-configured with no saved configuration", async () => {
+    await expect(service().launch({ action: "claude-desktop" })).resolves.toEqual({
+      ok: false,
+      error: "launcher-not-configured",
+    });
+    expect(spawner.calls).toHaveLength(0);
+  });
+});
+
+describe("GitHub opens a URL rebuilt from validated parts (PROJ-08, D-13)", () => {
+  it("uses the owner's override", async () => {
+    setGithubUrlOverride(store.db, projectId, "https://github.com/owner/repo");
+    await expect(service().launch({ projectId, action: "github" })).resolves.toEqual({ ok: true });
+    expect(spawner.calls.map((c) => c.argv)).toEqual([
+      ["/usr/bin/open", "https://github.com/owner/repo"],
+    ]);
+  });
+
+  it("falls back to the collector's last-good github.com remote", async () => {
+    gitStates.set(projectId, repoWithRemote("github.com", "owner/repo"));
+    await expect(service().launch({ projectId, action: "github" })).resolves.toEqual({ ok: true });
+    expect(spawner.calls.map((c) => c.argv)).toEqual([
+      ["/usr/bin/open", "https://github.com/owner/repo"],
+    ]);
+  });
+
+  it("answers no-github-remote for a non-GitHub remote and no override, and spawns nothing", async () => {
+    gitStates.set(projectId, repoWithRemote("gitlab.com", "owner/repo"));
+    await expect(service().launch({ projectId, action: "github" })).resolves.toEqual({
+      ok: false,
+      error: "no-github-remote",
+    });
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("answers no-github-remote before git has been read", async () => {
+    await expect(service().launch({ projectId, action: "github" })).resolves.toEqual({
+      ok: false,
+      error: "no-github-remote",
+    });
+  });
+
+  it("answers project-missing for an unknown ProjectId", async () => {
+    await expect(
+      service().launch({ projectId: "0000000000123456789abcdef" as ProjectId, action: "github" }),
+    ).resolves.toEqual({ ok: false, error: "project-missing" });
+  });
+});
+
+describe("Claude Code waits for its terminal launcher (plan 04-09)", () => {
+  it("answers launcher-not-configured while no terminal launcher is injected", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    await expect(service().launch({ projectId, action: "claude-code" })).resolves.toEqual({
+      ok: false,
+      error: "launcher-not-configured",
+    });
+    expect(spawner.calls).toHaveLength(0);
+  });
+});
+
+describe("spawn outcomes map to D-26 kinds (PROJ-12)", () => {
+  it("maps a timed-out spawn to timeout", async () => {
+    spawner.mode = { kind: "fail", outcome: { exitCode: null, timedOut: true } };
+    await expect(service().launch({ projectId, action: "finder" })).resolves.toEqual({
+      ok: false,
+      error: "timeout",
+    });
+  });
+
+  it("maps open -R's missing-path failure to project-missing", async () => {
+    spawner.mode = { kind: "fail", outcome: { exitCode: 1, stderrClass: "path-missing" } };
+    await expect(service().launch({ projectId, action: "finder" })).resolves.toEqual({
+      ok: false,
+      error: "project-missing",
+    });
+  });
+
+  it("maps a spawn errno to spawn-failed", async () => {
+    spawner.mode = { kind: "fail", outcome: { exitCode: null, errno: "ENOENT" } };
+    await expect(service().launch({ projectId, action: "finder" })).resolves.toEqual({
+      ok: false,
+      error: "spawn-failed",
+    });
+  });
+
+  it("the logger only ever receives { projectId, action, kind }, and no value contains a slash (D-46)", async () => {
+    saveLauncherConfig(store.db, "antigravity", { bundleId: "com.google.antigravity" });
+    setGithubUrlOverride(store.db, projectId, "https://github.com/owner/repo");
+    await service().launch({ projectId, action: "finder" });
+    await service().launch({ projectId, action: "antigravity" });
+    await service().launch({ projectId, action: "github" });
+    spawner.mode = { kind: "fail", outcome: { exitCode: 1, stderrClass: "path-missing" } };
+    await service().launch({ projectId, action: "finder" });
+    await service().launch({ action: "claude-desktop" });
+    expect(logged).toHaveLength(5);
+    for (const fields of logged) {
+      expect(Object.keys(fields).sort()).toEqual(["action", "kind", "projectId"]);
+      for (const value of Object.values(fields)) {
+        expect(String(value)).not.toContain("/");
+      }
+    }
+    expect(logged.map((f) => f.kind)).toEqual([
+      "ok",
+      "ok",
+      "ok",
+      "project-missing",
+      "launcher-not-configured",
+    ]);
   });
 });
