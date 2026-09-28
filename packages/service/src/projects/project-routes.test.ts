@@ -10,6 +10,7 @@ import {
   PROJECT_REGISTER_PATH,
   PROJECT_REMOVE_PATH,
   PROJECT_RENAME_PATH,
+  PROJECTS_REFRESH_PATH,
   type ProjectId,
   type ProjectsSnapshot,
   RegisterProjectResponseSchema,
@@ -114,7 +115,9 @@ function storeBackedProjects(store: OperationalStore, getHome: () => string): Pr
     onRegistryChanged() {
       registryChanges += 1;
     },
-    refresh() {},
+    refresh(projectId) {
+      refreshCalls.push(projectId);
+    },
     get homeDir() {
       return getHome();
     },
@@ -131,11 +134,13 @@ let projectDir: string;
 /** The home directory the project services report; a test may point it at a fake home. */
 let servicesHome: string;
 let registryChanges: number;
+let refreshCalls: Array<ProjectId | undefined>;
 
 beforeEach(async () => {
   clearApprovedRoots();
   servicesHome = homedir();
   registryChanges = 0;
+  refreshCalls = [];
   mkdirSync(TEST_BASE, { recursive: true });
   dir = realpathSync.native(mkdtempSync(join(TEST_BASE, "prj-")));
   socketPath = join(dir, "t.sock");
@@ -438,5 +443,38 @@ describe("manage routes (D-08, PROJ-15)", () => {
       const res = await request<unknown>(socketPath, { method: "POST", path, body: {} });
       expect(res.status).toBe(401);
     }
+  });
+});
+
+describe("refresh (D-42)", () => {
+  it("a new registration asks for that project's git state without waiting for it", async () => {
+    const id = await registerId(projectDir);
+    expect(refreshCalls).toEqual([id]);
+    await register(projectDir);
+    expect(refreshCalls).toEqual([id]);
+  });
+
+  it("POST refresh asks for every project, or one, and answers ok immediately", async () => {
+    const id = await registerId(projectDir);
+    refreshCalls = [];
+    const all = await post(PROJECTS_REFRESH_PATH, {});
+    expect(all.status).toBe(200);
+    expect(all.body).toEqual({ ok: true });
+    const one = await post(PROJECTS_REFRESH_PATH, { projectId: id });
+    expect(one.status).toBe(200);
+    expect(refreshCalls).toEqual([undefined, id]);
+  });
+
+  it("answers an unknown projectId with the constant 404 and requires authentication", async () => {
+    const unknown = await post(PROJECTS_REFRESH_PATH, { projectId: "zzzzzzzzz0123456789abcdef" });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body).toEqual({ error: "no such project" });
+    const anonymous = await request<unknown>(socketPath, {
+      method: "POST",
+      path: PROJECTS_REFRESH_PATH,
+      body: {},
+    });
+    expect(anonymous.status).toBe(401);
+    expect(refreshCalls).toEqual([]);
   });
 });
