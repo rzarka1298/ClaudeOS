@@ -1,11 +1,12 @@
-import type {
-  LaunchSource,
-  RunId,
-  RunLinkKind,
-  RunState,
-  SessionActivity,
-  SessionRun,
-  StopFailureError,
+import {
+  type LaunchSource,
+  type RunId,
+  type RunLinkKind,
+  type RunState,
+  type SessionActivity,
+  type SessionRun,
+  type StopFailureError,
+  TERMINAL_RUN_STATES,
 } from "@ccc/domain";
 import type Database from "better-sqlite3";
 import { assertValidRunState } from "./run-store.js";
@@ -216,46 +217,153 @@ export function findRunByIdentity(
   return row ? rowToSessionRun(row) : null;
 }
 
-// RED signature stubs (05-05 Task 2): the behavior lands in the GREEN commit.
+/** Thrown by {@link setSessionOverride} when the chosen project has no `projects` row (D-24). */
+export class ProjectNotRegisteredError extends Error {
+  constructor(projectId: string) {
+    super(`Project "${projectId}" is not registered`);
+    this.name = "ProjectNotRegisteredError";
+  }
+}
 
-export class ProjectNotRegisteredError extends Error {}
-
+/** A registered project as Phase 5 reads it (D-57): identity, root and display name. */
 export interface RegisteredProject {
   readonly projectId: string;
+  /** The project's private absolute root. It never crosses to the plugin. */
   readonly root: string;
   readonly name: string;
 }
 
-export function listRevivableRuns(_db: Database.Database, _nowIso: string): SessionRun[] {
-  return [];
+/** Binds a constant state list as positional parameters, as `run-store.ts` does. */
+function placeholders(values: readonly string[]): string {
+  return values.map(() => "?").join(", ");
 }
 
+/** The four states a Run leaves only by evidence, stale excluded. */
+const ACTIVE_STATES: readonly RunState[] = [
+  "queued",
+  "starting",
+  "running",
+  "waiting-for-approval",
+];
+
+/** D-27: a Run in one of these states may be writing to its working tree. */
+const CONFLICT_STATES: readonly RunState[] = [
+  "starting",
+  "running",
+  "waiting-for-approval",
+  "stale",
+];
+
+/** How long a stale Run with a pid stays a revival candidate (PR-12). */
+const REVIVAL_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function allRows(db: Database.Database, sql: string, ...params: unknown[]): SessionRun[] {
+  return (db.prepare(sql).all(...params) as SessionRunRow[]).map(rowToSessionRun);
+}
+
+function oneRow(db: Database.Database, sql: string, ...params: unknown[]): SessionRun | null {
+  const row = db.prepare(sql).get(...params) as SessionRunRow | undefined;
+  return row ? rowToSessionRun(row) : null;
+}
+
+/**
+ * The Runs the liveness sweep checks after restart recovery (D-22, PR-12):
+ * every active session Run, plus stale ones that still name a pid, have no
+ * end time, and were last active (or started) within 24 h of `nowIso`. A new
+ * query on purpose: `listNonTerminalRuns` must keep excluding `stale`, or
+ * SVC-11 recovery would stop being idempotent (Pitfall 8). Timestamps are
+ * compared as the `toISOString()` strings the service writes.
+ */
+export function listRevivableRuns(db: Database.Database, nowIso: string): SessionRun[] {
+  const cutoff = new Date(Date.parse(nowIso) - REVIVAL_WINDOW_MS).toISOString();
+  return allRows(
+    db,
+    `SELECT * FROM runs WHERE kind = 'session' AND (
+       state IN (${placeholders(ACTIVE_STATES)})
+       OR (state = 'stale' AND pid IS NOT NULL AND ended_at IS NULL
+           AND COALESCE(last_activity_at, started_at) >= ?)
+     ) ${LATEST_FIRST}`,
+    ...ACTIVE_STATES,
+    cutoff,
+  );
+}
+
+/**
+ * The session Runs a view shows (UI-SPEC R-07, R-08): every non-terminal
+ * Run (stale included) plus terminal Runs that ended on or after
+ * `endedSince`. Automation Runs never appear.
+ */
 export function listSessionRunsForView(
-  _db: Database.Database,
-  _options: { readonly endedSince: string },
+  db: Database.Database,
+  options: { readonly endedSince: string },
 ): SessionRun[] {
-  return [];
+  return allRows(
+    db,
+    `SELECT * FROM runs WHERE kind = 'session' AND (
+       state NOT IN (${placeholders(TERMINAL_RUN_STATES)})
+       OR (ended_at IS NOT NULL AND ended_at >= ?)
+     ) ${LATEST_FIRST}`,
+    ...TERMINAL_RUN_STATES,
+    options.endedSince,
+  );
 }
 
-export function listConflictCandidates(_db: Database.Database): SessionRun[] {
-  return [];
+/**
+ * The Runs a launch into the same working tree could collide with (D-27):
+ * starting, running, waiting or stale, not in plan mode (an unknown mode
+ * counts as write-capable), and with a known working tree. The caller
+ * compares `worktreeRoot` with the launch target's.
+ */
+export function listConflictCandidates(db: Database.Database): SessionRun[] {
+  return allRows(
+    db,
+    `SELECT * FROM runs WHERE kind = 'session'
+       AND state IN (${placeholders(CONFLICT_STATES)})
+       AND (permission_mode IS NULL OR permission_mode <> 'plan')
+       AND worktree_root IS NOT NULL
+     ${LATEST_FIRST}`,
+    ...CONFLICT_STATES,
+  );
 }
 
+/** The latest session Run of this Claude session, in any state. */
 export function latestRunBySession(
-  _db: Database.Database,
-  _claudeSessionId: string,
+  db: Database.Database,
+  claudeSessionId: string,
 ): SessionRun | null {
-  return null;
+  return oneRow(
+    db,
+    `SELECT * FROM runs WHERE kind = 'session' AND claude_session_id = ? ${LATEST_FIRST} LIMIT 1`,
+    claudeSessionId,
+  );
 }
 
-export function findLiveRunByPid(_db: Database.Database, _pid: number): SessionRun | null {
-  return null;
+/** The latest non-terminal (stale included) session Run attached to this pid. */
+export function findLiveRunByPid(db: Database.Database, pid: number): SessionRun | null {
+  return oneRow(
+    db,
+    `SELECT * FROM runs WHERE kind = 'session' AND pid = ?
+       AND state NOT IN (${placeholders(TERMINAL_RUN_STATES)})
+     ${LATEST_FIRST} LIMIT 1`,
+    pid,
+    ...TERMINAL_RUN_STATES,
+  );
 }
 
-export function latestRunByPid(_db: Database.Database, _pid: number): SessionRun | null {
-  return null;
+/** The latest session Run attached to this pid, in any state (links a `/clear` after its SessionEnd). */
+export function latestRunByPid(db: Database.Database, pid: number): SessionRun | null {
+  return oneRow(
+    db,
+    `SELECT * FROM runs WHERE kind = 'session' AND pid = ? ${LATEST_FIRST} LIMIT 1`,
+    pid,
+  );
 }
 
+/**
+ * The five lookups the collectors reducer's `RunIndex` needs (05-04),
+ * declared here structurally because the store may import domain only.
+ * `sessionRunIndex(db)` satisfies `RunIndex` from `@ccc/collectors`.
+ */
 export interface SessionRunIndex {
   byRunId(runId: RunId): SessionRun | null;
   byIdentity(claudeSessionId: string, pid: number | null): SessionRun | null;
@@ -264,30 +372,66 @@ export interface SessionRunIndex {
   latestByPid(pid: number): SessionRun | null;
 }
 
-export function sessionRunIndex(_db: Database.Database): SessionRunIndex {
+/** A {@link SessionRunIndex} reading the store on every call, so it is never stale. */
+export function sessionRunIndex(db: Database.Database): SessionRunIndex {
   return {
-    byRunId: () => null,
-    byIdentity: () => null,
-    latestBySession: () => null,
-    liveByPid: () => null,
-    latestByPid: () => null,
+    byRunId: (runId) => getSessionRun(db, runId),
+    byIdentity: (claudeSessionId, pid) => findRunByIdentity(db, claudeSessionId, pid),
+    latestBySession: (claudeSessionId) => latestRunBySession(db, claudeSessionId),
+    liveByPid: (pid) => findLiveRunByPid(db, pid),
+    latestByPid: (pid) => latestRunByPid(db, pid),
   };
 }
 
+/**
+ * Records the owner's project choice for a Claude session (SESS-17, D-24),
+ * replacing any earlier choice. The project must already be registered:
+ * the check and the write share one transaction, and an unregistered ID
+ * throws {@link ProjectNotRegisteredError} with nothing written. Only
+ * `session_overrides` is written; nothing reaches the vault or `projects`.
+ */
 export function setSessionOverride(
-  _db: Database.Database,
-  _claudeSessionId: string,
-  _projectId: string,
-  _associatedAt: string,
-): void {}
-
-export function getSessionOverride(
-  _db: Database.Database,
-  _claudeSessionId: string,
-): string | null {
-  return null;
+  db: Database.Database,
+  claudeSessionId: string,
+  projectId: string,
+  associatedAt: string,
+): void {
+  db.transaction(() => {
+    const registered = db.prepare("SELECT 1 FROM projects WHERE project_id = ?").get(projectId);
+    if (registered === undefined) {
+      throw new ProjectNotRegisteredError(projectId);
+    }
+    db.prepare(
+      `INSERT INTO session_overrides (claude_session_id, project_id, associated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(claude_session_id) DO UPDATE SET
+         project_id = excluded.project_id, associated_at = excluded.associated_at`,
+    ).run(claudeSessionId, projectId, associatedAt);
+  })();
 }
 
-export function listRegisteredProjects(_db: Database.Database): RegisteredProject[] {
-  return [];
+/** The project the owner chose for this Claude session, or null when none was chosen. */
+export function getSessionOverride(db: Database.Database, claudeSessionId: string): string | null {
+  const row = db
+    .prepare("SELECT project_id FROM session_overrides WHERE claude_session_id = ?")
+    .get(claudeSessionId) as { project_id: string } | undefined;
+  return row?.project_id ?? null;
+}
+
+/**
+ * Every registered project, by display name. Read-only by design (D-57):
+ * Phase 4 owns project registration, and no Phase 5 code writes `projects`
+ * (a source-scan test enforces it for this file).
+ */
+export function listRegisteredProjects(db: Database.Database): RegisteredProject[] {
+  const rows = db
+    .prepare(
+      "SELECT project_id, path, display_name FROM projects ORDER BY display_name, project_id",
+    )
+    .all() as Array<{ project_id: string; path: string; display_name: string }>;
+  return rows.map((row) => ({
+    projectId: row.project_id,
+    root: row.path,
+    name: row.display_name,
+  }));
 }

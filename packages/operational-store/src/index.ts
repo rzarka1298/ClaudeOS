@@ -10,6 +10,29 @@ export {
   listNonTerminalRuns,
   updateRunState,
 } from "./run-store.js";
+export type {
+  RegisteredProject,
+  SessionRunIndex,
+  SessionRunRow,
+} from "./session-store.js";
+export {
+  findLiveRunByPid,
+  findRunByIdentity,
+  getSessionOverride,
+  getSessionRun,
+  InvalidSessionRunError,
+  latestRunByPid,
+  latestRunBySession,
+  listConflictCandidates,
+  listRegisteredProjects,
+  listRevivableRuns,
+  listSessionRunsForView,
+  ProjectNotRegisteredError,
+  rowToSessionRun,
+  sessionRunIndex,
+  setSessionOverride,
+  upsertSessionRun,
+} from "./session-store.js";
 export type { VaultNoteQuery, VaultNoteRecord } from "./vault-notes-store.js";
 export {
   assertValidVaultNoteRecord,
