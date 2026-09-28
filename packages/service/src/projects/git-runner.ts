@@ -5,6 +5,7 @@ import type { ProjectGitState } from "@ccc/domain";
 import {
   hasLocalExecutableConfig,
   LOCAL_EXEC_PREFLIGHT_ARGS,
+  NEUTRALISING_OVERRIDES,
   parseLogRecords,
   parseRemoteLines,
   parseStatusPorcelainV2,
@@ -34,7 +35,8 @@ import type { CommandOutcome, CommandRunner } from "./command-runner.js";
  *    somewhere else.
  * 4. A preflight (`LOCAL_EXEC_PREFLIGHT_ARGS`, `-z` output only) that SKIPS
  *    any repository whose repository-supplied config names a command git
- *    could run on read — except the three canonical git-lfs values.
+ *    could run on read — except the three canonical git-lfs values and the
+ *    keys layer 1 already overrides (`NEUTRALISING_OVERRIDES`).
  * 5. `lstat(<root>/.git)` before any spawn: a folder without `.git` is
  *    not-a-repo and git never runs in it, so an embedded bare repository or
  *    a subfolder of another repository is never discovered.
@@ -56,11 +58,13 @@ import type { CommandOutcome, CommandRunner } from "./command-runner.js";
 
 /** Command-scope overrides; they outrank anything in the repository's local config. */
 export const GIT_OVERRIDES: readonly string[] = Object.freeze([
-  "core.fsmonitor=false",
+  // core.fsmonitor=false and core.pager=cat: the preflight exempts exactly
+  // these keys BECAUSE they are overridden here, so they come from the one
+  // shared list rather than being restated.
+  ...Object.entries(NEUTRALISING_OVERRIDES).map(([key, value]) => `${key}=${value}`),
   "core.hooksPath=/dev/null",
   "safe.bareRepository=explicit",
   "log.showSignature=false",
-  "core.pager=cat",
   "color.ui=false",
 ]);
 

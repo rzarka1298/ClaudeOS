@@ -187,6 +187,23 @@ const GIT_LFS_CANONICAL: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Executable keys the git runner overrides in COMMAND scope on every call,
+ * with the value it sets. Command scope outranks the repository's local and
+ * worktree scopes, so a repository-supplied value for one of these keys
+ * never takes effect: skipping the repository for it would only hide common
+ * macOS repositories (Watchman / built-in fsmonitor users) for no gain.
+ *
+ * This is the SINGLE source of those overrides: the service builds its `-c`
+ * list from it, so a key can only be exempted here by being overridden
+ * there. Anything not listed — every other executable key — stays
+ * fail-closed, and a multi-line value is still refused in every scope.
+ */
+export const NEUTRALISING_OVERRIDES: Readonly<Record<string, string>> = Object.freeze({
+  "core.fsmonitor": "false",
+  "core.pager": "cat",
+});
+
+/**
  * The exact arguments (after the git executable and any `-c` overrides)
  * the preflight runs. `-z` is what makes the output unambiguous: a config
  * value may contain a newline, and in line format a multi-line value shows
@@ -244,7 +261,8 @@ function hasLineBreak(value: string | null): boolean {
  *   - the output is not well-formed `-z` output (line format, truncated),
  *   - any value, in any scope, contains a line feed or carriage return, or
  *   - any repository-supplied (non-trusted-scope) entry names a command git
- *     could run on read, other than the three canonical git-lfs values.
+ *     could run on read, other than the three canonical git-lfs values and
+ *     the keys in {@link NEUTRALISING_OVERRIDES}.
  * Empty output (git exit 1: nothing matched) is safe.
  */
 export function hasLocalExecutableConfig(stdout: string): boolean {
@@ -254,7 +272,9 @@ export function hasLocalExecutableConfig(stdout: string): boolean {
     if (hasLineBreak(entry.value)) return true;
     if (TRUSTED_SCOPES.has(entry.scope)) return false;
     if (!LOCAL_EXEC_KEY_REGEX.test(entry.name)) return false;
-    const canonical = GIT_LFS_CANONICAL[entry.name.toLowerCase()];
+    const key = entry.name.toLowerCase();
+    if (Object.hasOwn(NEUTRALISING_OVERRIDES, key)) return false;
+    const canonical = GIT_LFS_CANONICAL[key];
     return canonical === undefined || entry.value !== canonical;
   });
 }
