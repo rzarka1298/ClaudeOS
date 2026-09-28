@@ -94,3 +94,15 @@ describe("Test 8: the compiled hook is dependency-free and cannot spawn", () => 
     expect(mentions.map((f) => f.name)).toEqual([]);
   });
 });
+
+describe("the compiled status-line wrapper is dependency-free", () => {
+  it('imports only "node:" builtins and relative files, including "../hook/"', () => {
+    const wrapperFiles = compiledFiles("statusline");
+    expect(wrapperFiles.map((f) => f.name)).toEqual(
+      expect.arrayContaining(["minimize-status.js", "wrapper.js"]),
+    );
+    expect(wrapperFiles.flatMap((f) => specifiersOf(f.source))).toContain("../hook/deliver.js");
+    expect(impureSpecifiers(wrapperFiles, ["./", "../hook/"])).toEqual([]);
+    expect(wrapperFiles.filter((f) => OPAQUE_LOAD.test(f.source)).map((f) => f.name)).toEqual([]);
+  });
+});
