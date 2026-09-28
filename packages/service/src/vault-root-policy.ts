@@ -93,3 +93,8 @@ export function assertUsableVaultRoot(vaultRoot: string): void {
     throw new VaultRootRefusedError(resolved, "not-an-obsidian-vault");
   }
 }
+
+// RED skeleton (plan 04-04 Task 2): realpath-form forbidden-root check.
+export function isForbiddenRoot(_resolved: string): boolean {
+  return false;
+}

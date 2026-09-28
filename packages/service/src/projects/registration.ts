@@ -1,7 +1,15 @@
 import { realpathSync, statSync } from "node:fs";
 
 /** Why a candidate folder was refused — logged locally, never returned. */
-export type ProjectRefusalReason = "missing" | "not-a-directory";
+export type ProjectRefusalReason =
+  | "missing"
+  | "not-a-directory"
+  | "forbidden-location"
+  | "inside-vault"
+  | "above-vault"
+  | "runtime-dir"
+  | "access-denied"
+  | "control-characters";
 
 /**
  * Thrown when a candidate folder cannot be registered as a project. The
@@ -37,4 +45,12 @@ export function validateProjectCandidate(candidate: string): string {
     throw new ProjectRefusedError(candidate, "not-a-directory");
   }
   return resolved;
+}
+
+// RED skeleton (plan 04-04 Task 2): lexical protected-location detection.
+export function detectProtectedLocation(
+  _candidate: string,
+  _homeDir: string,
+): "documents" | "desktop" | "downloads" | "icloud-drive" | null {
+  return null;
 }
