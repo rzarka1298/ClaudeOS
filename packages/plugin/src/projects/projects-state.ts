@@ -1,5 +1,5 @@
 import type { ProjectsSnapshot, ServiceEvent, SnapshotResponse } from "@ccc/domain";
-import { ProjectsUpdatedPayloadSchema } from "@ccc/domain";
+import { compareProjectViews, ProjectsUpdatedPayloadSchema } from "@ccc/domain";
 import { signal } from "@preact/signals";
 
 /**
@@ -22,8 +22,9 @@ export function applyProjectsSnapshot(snapshot: SnapshotResponse): void {
 
 /**
  * Applies a `projects.updated` delta: upserts by `projectId`, removes
- * listed ids, and replaces `launchers` only when the delta carries it —
- * keeping the previous value otherwise. A delta arriving before any
+ * listed ids, re-sorts with `compareProjectViews` (PROJ-15 — a delta's
+ * arrival order is not the display order), and replaces `launchers` only
+ * when the delta carries it — keeping the previous value otherwise. A delta arriving before any
  * snapshot, or one that fails validation, is a no-op (D-11, the
  * zod-before-read rule): the last-good value is kept either way.
  */
@@ -42,7 +43,7 @@ export function applyProjectsDelta(event: ServiceEvent): void {
   );
 
   projectsSnapshot.value = {
-    projects: [...survivors, ...upserted],
+    projects: [...survivors, ...upserted].sort(compareProjectViews),
     launchers: launchers ?? current.launchers,
   };
 }
