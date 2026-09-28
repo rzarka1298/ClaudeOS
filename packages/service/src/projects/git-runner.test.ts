@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProjectGitState } from "@ccc/domain";
 import { LOCAL_EXEC_PREFLIGHT_ARGS } from "@ccc/launchers";
@@ -175,6 +175,36 @@ describe("readProject against real repositories (PROJ-04)", () => {
   it("reads a missing folder as folder-missing", async () => {
     const { runner, git } = realRunner();
     expect(await git.readProject(join(fx.base, "gone"))).toEqual({ kind: "folder-missing" });
+    expect(runner.calls).toHaveLength(0);
+  });
+});
+
+describe("the stored root must still be the folder it named (D-06)", () => {
+  it("reads a root replaced by a symlink to another repository as folder-missing without spawning git", async () => {
+    const root = fx.repo("example-project", 1);
+    const elsewhere = fx.repo("other-project", 2);
+    rmSync(root, { recursive: true, force: true });
+    symlinkSync(elsewhere, root);
+    const { runner, git } = realRunner();
+    expect(await git.readProject(root)).toEqual({ kind: "folder-missing" });
+    expect(runner.calls).toHaveLength(0);
+  });
+
+  it("reads a root moved away and replaced by a symlink back to it as folder-missing", async () => {
+    const root = fx.repo("example-project", 1);
+    const moved = join(fx.base, "moved-project");
+    renameSync(root, moved);
+    symlinkSync(moved, root);
+    const { runner, git } = realRunner();
+    expect(await git.readProject(root)).toEqual({ kind: "folder-missing" });
+    expect(runner.calls).toHaveLength(0);
+  });
+
+  it("reads a root replaced by a regular file as folder-missing, not not-a-repo", async () => {
+    const root = join(fx.base, "example-project");
+    writeFileSync(root, "not a folder");
+    const { runner, git } = realRunner();
+    expect(await git.readProject(root)).toEqual({ kind: "folder-missing" });
     expect(runner.calls).toHaveLength(0);
   });
 });
