@@ -311,6 +311,17 @@ describe("registration policy at the route (D-04, PR-06)", () => {
     expect(listProjects(store.db)).toHaveLength(0);
   });
 
+  it("refuses a symlink into a folder whose name carries a control character with the constant 422", async () => {
+    const hostile = join(dir, `bad${String.fromCharCode(7)}name`);
+    mkdirSync(hostile);
+    const link = join(dir, "clean-looking-link");
+    symlinkSync(hostile, link);
+    const res = await register(link);
+    expect(res.status).toBe(422);
+    expect(res.raw).toBe(JSON.stringify({ error: "folder cannot be registered" }));
+    expect(listProjects(store.db)).toHaveLength(0);
+  });
+
   it("asks for acknowledgement before registering a folder under Documents, and inserts nothing", async () => {
     servicesHome = join(dir, "home");
     const inDocuments = join(servicesHome, "Documents", "example-project");

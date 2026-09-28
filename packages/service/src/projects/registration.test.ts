@@ -26,6 +26,7 @@ const REASONS: readonly ProjectRefusalReason[] = [
   "above-vault",
   "runtime-dir",
   "access-denied",
+  "control-characters",
 ];
 
 let base: string;
@@ -157,6 +158,14 @@ describe("validateProjectCandidate: what the path must be", () => {
     expect(validateProjectCandidate(upper, policy())).toBe(control);
   });
 
+  it("refuses a symlink whose target name carries a control character, judging the realpath too (D-04)", () => {
+    const hostile = join(base, `bad${String.fromCharCode(7)}name`);
+    mkdirSync(hostile);
+    const link = join(base, "clean-looking-link");
+    symlinkSync(hostile, link);
+    expectRefused(link, "control-characters");
+  });
+
   it("accepts a project when no vault root is set up yet", () => {
     expect(validateProjectCandidate(control, { ...policy(), vaultRoot: null })).toBe(control);
   });
@@ -172,6 +181,7 @@ describe("detectProtectedLocation (D-29, PR-04, PR-10)", () => {
     [`${HOME}/Desktop/example-project`, "desktop"],
     [`${HOME}/Downloads/example-project`, "downloads"],
     [`${HOME}/Library/Mobile Documents/com~apple~CloudDocs/x`, "icloud-drive"],
+    [`${HOME}/Library/CloudStorage/Example-Provider/x`, "cloud-storage"],
     [`${HOME}/documents/example-project`, "documents"],
   ] as const)("names %s as %s", (candidate, location) => {
     expect(detectProtectedLocation(candidate, HOME)).toBe(location);

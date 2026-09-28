@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -93,6 +93,49 @@ describe("EPERM is refused as access-denied, never propagated (D-29, PR-10)", ()
     fault.code = "EIO";
     fault.on = "realpath";
     expect(reasonFor(project)).toBe("missing");
+  });
+});
+
+describe("EPERM through a symlink names the protected location it leads into (PR-10)", () => {
+  function refusalFor(candidate: string, homeDir: string) {
+    try {
+      validateProjectCandidate(candidate, { ...policy(), homeDir });
+    } catch (err) {
+      expect(err).toBeInstanceOf(ProjectRefusedError);
+      return err as { reason: string; protectedLocation: string | null };
+    }
+    throw new Error("expected a refusal");
+  }
+
+  it("a symlink to a folder under Documents", () => {
+    const home = join(base, "home");
+    const inDocuments = join(home, "Documents", "example-project");
+    mkdirSync(inDocuments, { recursive: true });
+    const link = join(base, "link-to-project");
+    symlinkSync(inDocuments, link);
+    fault.code = "EPERM";
+    fault.on = "realpath";
+    const refusal = refusalFor(link, home);
+    expect(refusal.reason).toBe("access-denied");
+    expect(refusal.protectedLocation).toBe("documents");
+  });
+
+  it("a folder reached through a symlinked ancestor that points into Desktop", () => {
+    const home = join(base, "home");
+    mkdirSync(join(home, "Desktop", "example-project"), { recursive: true });
+    const linkedParent = join(base, "linked-desktop");
+    symlinkSync(join(home, "Desktop"), linkedParent);
+    fault.code = "EPERM";
+    fault.on = "realpath";
+    expect(refusalFor(join(linkedParent, "example-project"), home).protectedLocation).toBe(
+      "desktop",
+    );
+  });
+
+  it("control: EPERM on a plain folder names no location", () => {
+    fault.code = "EPERM";
+    fault.on = "realpath";
+    expect(refusalFor(project, join(base, "home")).protectedLocation).toBeNull();
   });
 });
 
