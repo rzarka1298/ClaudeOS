@@ -1,4 +1,6 @@
+import type { LaunchAction, ProjectId } from "@ccc/domain";
 import type { ReadonlySignal } from "@preact/signals";
+import type { VNode } from "preact";
 import { useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
@@ -29,9 +31,48 @@ export interface ShellProps {
    * `obsidian` and stays renderable anywhere (C-11).
    */
   notify?: (message: string) => void;
+  /**
+   * Requests a launch for the given project (`null` for `claude-desktop`,
+   * D-06) and action. The view host wires this to the service client; the
+   * default is a no-op so this component never imports
+   * `@ccc/service-api-client` itself (D-24).
+   */
+  requestLaunch?: (projectId: ProjectId | null, action: LaunchAction) => void;
+  /** Opens the Claude Code quick switcher, prefilled. The default is a no-op. */
+  openSwitcher?: (prefill: string) => void;
 }
 
 function noNotify(_message: string): void {}
+function noRequestLaunch(_projectId: ProjectId | null, _action: LaunchAction): void {}
+function noOpenSwitcher(_prefill: string): void {}
+
+/**
+ * Per-destination content beyond Overview (PR-12). A destination absent from
+ * this map falls back to its own description paragraph — the same fallback
+ * every destination used before this map existed — so
+ * plans 04-08 and 04-12 (`projects`, `settings`) and Phase 5 (`agent-runs`)
+ * each add one line here without touching any other destination's rendering.
+ */
+export interface DestinationViewProps {
+  readonly stateFor: (id: WidgetId) => ReadonlySignal<WidgetState<unknown>>;
+  readonly connection: ConnectionState;
+  readonly now: number;
+  readonly onQuickAction: (descriptor: QuickActionDescriptor) => void;
+  readonly onNavigate: (destination: DestinationId) => void;
+}
+
+const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewProps) => VNode>> = {
+  overview: ({ stateFor, connection, now, onQuickAction, onNavigate }) => (
+    <Overview
+      layout={resolvedLayout.value}
+      stateFor={stateFor}
+      connection={connection}
+      now={now}
+      onQuickAction={onQuickAction}
+      onNavigate={onNavigate}
+    />
+  ),
+};
 
 function connectionStatusText(state: ConnectionState): string {
   switch (state.kind) {
@@ -63,6 +104,8 @@ export function Shell({
   onDestinationChange,
   stateFor = widgetStateFor,
   notify = noNotify,
+  requestLaunch = noRequestLaunch,
+  openSwitcher = noOpenSwitcher,
 }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
   const tabRefs = useRef<Partial<Record<DestinationId, HTMLButtonElement>>>({});
@@ -91,7 +134,12 @@ export function Shell({
    * whose navigation is this tablist's own `select()` (C-11, APPR-01, T-03-13).
    */
   function handleQuickAction(descriptor: QuickActionDescriptor): void {
-    dispatchQuickAction(descriptor, { navigate: focusDestination, notify });
+    dispatchQuickAction(descriptor, {
+      navigate: focusDestination,
+      notify,
+      requestLaunch,
+      openSwitcher,
+    });
   }
 
   function handleNavKeyDown(event: KeyboardEvent): void {
@@ -172,18 +220,20 @@ export function Shell({
         tabIndex={0}
       >
         <h2>{active.label}</h2>
-        {active.id === "overview" ? (
-          <Overview
-            layout={resolvedLayout.value}
-            stateFor={stateFor}
-            connection={status}
-            now={nowTick.value}
-            onQuickAction={handleQuickAction}
-            onNavigate={focusDestination}
-          />
-        ) : (
-          <p>{active.description}</p>
-        )}
+        {(() => {
+          const DestinationView = DESTINATION_VIEWS[active.id];
+          return DestinationView ? (
+            <DestinationView
+              stateFor={stateFor}
+              connection={status}
+              now={nowTick.value}
+              onQuickAction={handleQuickAction}
+              onNavigate={focusDestination}
+            />
+          ) : (
+            <p>{active.description}</p>
+          );
+        })()}
       </div>
     </div>
   );

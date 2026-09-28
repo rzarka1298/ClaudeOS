@@ -501,7 +501,7 @@ describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
     return {
       id: "body-widget",
       title: "Body widget",
-      dataKeys: [{ key: "test.key", transport: "local", sourceLabel: "Test source" }],
+      dataKeys: [{ key: "test.key", transport: "service", sourceLabel: "Test source" }],
       refresh: { kind: "manual" },
       minSize: "small",
       preferredSize: "small",
@@ -551,7 +551,7 @@ describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
   });
 
   it("hands the body onQuickAction === undefined when disconnected — no launch control may render", () => {
-    const bodySpy = vi.fn(() => <p>disconnected-body</p>);
+    const bodySpy = vi.fn((_props: { onQuickAction?: unknown }) => <p>disconnected-body</p>);
     render(
       <WidgetFrame
         definition={bodyWidget({ renderBody: bodySpy })}
@@ -563,8 +563,7 @@ describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
       />,
     );
     expect(bodySpy).toHaveBeenCalled();
-    const props = bodySpy.mock.calls[0]?.[0] as { onQuickAction?: unknown };
-    expect(props.onQuickAction).toBeUndefined();
+    expect(bodySpy.mock.calls[0]?.[0].onQuickAction).toBeUndefined();
   });
 
   it("skips the generic .ccc-card-actions row when actionsInBody is true, while still threading the channel", () => {
@@ -597,7 +596,7 @@ describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
   });
 
   it("passes onNavigate to renderEmpty", () => {
-    const emptySpy = vi.fn(() => null);
+    const emptySpy = vi.fn((_props: { onNavigate?: unknown }) => null);
     const onNavigate = vi.fn();
     render(
       <WidgetFrame
@@ -609,7 +608,7 @@ describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
         onNavigate={onNavigate}
       />,
     );
-    expect(emptySpy).toHaveBeenCalledWith({ onNavigate });
+    expect(emptySpy.mock.calls[0]?.[0]).toEqual({ onNavigate });
   });
 });
 
