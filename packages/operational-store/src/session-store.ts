@@ -215,3 +215,79 @@ export function findRunByIdentity(
     .get(claudeSessionId, pid) as SessionRunRow | undefined;
   return row ? rowToSessionRun(row) : null;
 }
+
+// RED signature stubs (05-05 Task 2): the behavior lands in the GREEN commit.
+
+export class ProjectNotRegisteredError extends Error {}
+
+export interface RegisteredProject {
+  readonly projectId: string;
+  readonly root: string;
+  readonly name: string;
+}
+
+export function listRevivableRuns(_db: Database.Database, _nowIso: string): SessionRun[] {
+  return [];
+}
+
+export function listSessionRunsForView(
+  _db: Database.Database,
+  _options: { readonly endedSince: string },
+): SessionRun[] {
+  return [];
+}
+
+export function listConflictCandidates(_db: Database.Database): SessionRun[] {
+  return [];
+}
+
+export function latestRunBySession(
+  _db: Database.Database,
+  _claudeSessionId: string,
+): SessionRun | null {
+  return null;
+}
+
+export function findLiveRunByPid(_db: Database.Database, _pid: number): SessionRun | null {
+  return null;
+}
+
+export function latestRunByPid(_db: Database.Database, _pid: number): SessionRun | null {
+  return null;
+}
+
+export interface SessionRunIndex {
+  byRunId(runId: RunId): SessionRun | null;
+  byIdentity(claudeSessionId: string, pid: number | null): SessionRun | null;
+  latestBySession(claudeSessionId: string): SessionRun | null;
+  liveByPid(pid: number): SessionRun | null;
+  latestByPid(pid: number): SessionRun | null;
+}
+
+export function sessionRunIndex(_db: Database.Database): SessionRunIndex {
+  return {
+    byRunId: () => null,
+    byIdentity: () => null,
+    latestBySession: () => null,
+    liveByPid: () => null,
+    latestByPid: () => null,
+  };
+}
+
+export function setSessionOverride(
+  _db: Database.Database,
+  _claudeSessionId: string,
+  _projectId: string,
+  _associatedAt: string,
+): void {}
+
+export function getSessionOverride(
+  _db: Database.Database,
+  _claudeSessionId: string,
+): string | null {
+  return null;
+}
+
+export function listRegisteredProjects(_db: Database.Database): RegisteredProject[] {
+  return [];
+}
