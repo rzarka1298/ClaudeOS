@@ -108,6 +108,11 @@ describe("validateProjectCandidate: forbidden locations in realpath form (E-3, P
     expect(isForbiddenRoot("/private/tmp")).toBe(true);
     expect(isForbiddenRoot(control)).toBe(false);
   });
+
+  it("isForbiddenRoot refuses a mounted volume's root under /Volumes, but not a folder inside it", () => {
+    expect(isForbiddenRoot("/Volumes/Example-Drive")).toBe(true);
+    expect(isForbiddenRoot("/Volumes/Example-Drive/code/example-project")).toBe(false);
+  });
 });
 
 describe("validateProjectCandidate: the service's own directories (D-04, A-06)", () => {
