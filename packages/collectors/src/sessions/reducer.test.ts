@@ -185,6 +185,28 @@ describe("session reducer — identity and linking (D-21)", () => {
       },
     },
     {
+      name: "/clear after the old session's own SessionEnd(clear) still links the new Run to it",
+      initial: [seedRun({ runId: R1, state: "running" })],
+      evidence: [
+        hook("SessionEnd", { observedAt: at(19), fields: { reason: "clear" } }),
+        sessionStart("clear", { sessionId: SESSION_B, observedAt: at(20) }),
+      ],
+      check: (o, initial) => {
+        expect(o.run(R1)).toMatchObject({ state: "completed", endedAt: at(19), revision: 2 });
+        expect(created(o, initial)).toMatchObject({ linkKind: "clear", linkedFromRunId: R1 });
+      },
+    },
+    {
+      name: "a fork on a reused PID (a different process start) is not linked to the old Run",
+      initial: [
+        seedRun({ runId: R1, state: "completed", pidStartedAt: "Sun Sep 27 09:00:00 2026" }),
+      ],
+      evidence: [sessionStart("fork", { sessionId: SESSION_B })],
+      check: (o, initial) => {
+        expect(created(o, initial)).toMatchObject({ linkKind: "fork", linkedFromRunId: null });
+      },
+    },
+    {
       name: "an activity event for a session with no Run (hook installed mid-session) opens a running Run",
       initial: [],
       evidence: [hook("PostToolUse", { sessionId: SESSION_C, observedAt: at(3) })],

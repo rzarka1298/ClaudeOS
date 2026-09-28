@@ -259,6 +259,10 @@ export class InMemoryRunIndex implements RunIndex {
     return this.latest((run) => run.pid === pid && !isTerminalRunState(run.state));
   }
 
+  latestByPid(pid: number): SessionRun | null {
+    return this.latest((run) => run.pid === pid);
+  }
+
   private latest(predicate: (run: SessionRun) => boolean): SessionRun | null {
     let found: SessionRun | null = null;
     for (const run of this.runs.values()) if (predicate(run)) found = run;
