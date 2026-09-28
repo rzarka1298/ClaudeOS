@@ -151,6 +151,9 @@ importers:
       '@ccc/keychain':
         specifier: workspace:*
         version: link:../keychain
+      '@ccc/launchers':
+        specifier: workspace:*
+        version: link:../launchers
       '@ccc/operational-store':
         specifier: workspace:*
         version: link:../operational-store

@@ -14,6 +14,7 @@ import {
   resolveSocketPath,
   resolveSpoolPath,
 } from "./paths.js";
+import { recomputeApprovedRoots } from "./projects/approved-roots.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
@@ -71,6 +72,17 @@ async function main(): Promise<void> {
     { registered: vaultRoot !== null },
     "startup: reloaded managed vault root into the path allowlist",
   );
+
+  // --- Phase 4 (projects and launchers) startup block -------------------
+  // Phase 5 appends its own block after this one; keep Phase 4's calls
+  // together here.
+  //
+  // The approved roots are a pure function of the store (D-05): the vault
+  // root plus every registered project. Recomputed here, after migrations
+  // and the vault-root reload, so a restart restores project access exactly
+  // as persisted. Only the count is logged — never a path (D-46).
+  const approvedRoots = recomputeApprovedRoots(store);
+  logger.info({ count: approvedRoots.length }, "startup: recomputed approved path roots");
 
   const secretStore = createSecurityCliSecretStore();
   const installSecret = await getInstallSecret(secretStore);

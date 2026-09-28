@@ -17,32 +17,29 @@ import {
   VaultSetupRequestSchema,
   type VaultSetupResponse,
 } from "@ccc/domain";
-import { listAllRuns, type OperationalStore } from "@ccc/operational-store";
+import { listAllRuns } from "@ccc/operational-store";
 import { initializeVault, planVaultSetup, VaultRootMissingError } from "@ccc/vault-repo";
-import { requireToken } from "./auth/require-token.js";
 import { mintToken } from "./auth/token.js";
-import type { EventBus } from "./events/event-bus.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
+import { projectRoutes } from "./projects/project-routes.js";
 import { readJsonBody } from "./request-body.js";
+import {
+  type Handler,
+  INTERNAL_ERROR_BODY,
+  INVALID_BODY_BODY,
+  type RouteContext,
+  sendJson,
+  withAuth,
+} from "./route-kit.js";
 import { persistVaultRoot } from "./vault-root.js";
 import { assertUsableVaultRoot, VaultRootRefusedError } from "./vault-root-policy.js";
 
-export interface RouteContext {
-  store: OperationalStore;
-  /** Returns the per-install secret used to mint and verify bearer tokens. */
-  getSecret: () => Buffer;
-  eventBus: EventBus;
-}
-
-type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(payload);
-}
+// `RouteContext`, `Handler`, `sendJson`, `withAuth` and the shared constant
+// bodies live in `route-kit.ts` (SC-1), so feature route files can use them
+// without importing this module. Re-exported for existing importers.
+export type { RouteContext } from "./route-kit.js";
 
 const healthHandler: Handler = (_req, res, ctx) => {
   const startedAt = ctx.store.readServiceMeta("started_at");
@@ -101,11 +98,6 @@ export function sendPathNotAllowed(res: ServerResponse, err: PathNotAllowedError
   sendJson(res, 403, body);
 }
 
-/** Wraps a route `Handler` in the bearer-token requirement. Every route this plan and later plans add other than the handshake itself is registered through this. */
-function withAuth(handler: Handler): Handler {
-  return (req, res, ctx) => requireToken(ctx.getSecret, (r, s) => handler(r, s, ctx))(req, res);
-}
-
 /**
  * `GET /api/v1/events` — the same token requirement as every other
  * non-handshake route (SVC-07's own threat register, T-01-31). The stream
@@ -129,9 +121,14 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
   const startedAt = ctx.store.readServiceMeta("started_at") ?? new Date(0).toISOString();
   const body: SnapshotResponse = {
     lastEventId: ctx.eventBus.buffer.latestId(),
-    // Plan 04-04 replaces this with the live projects snapshot; until the
-    // project services are wired the snapshot answers with the empty one.
-    state: { serviceStartedAt: startedAt, projects: EMPTY_PROJECTS_SNAPSHOT },
+    // The projects state is read synchronously in this same tick, like
+    // `lastEventId` above: the collector publishes only from its own async
+    // callbacks, so no `projects.updated` event can land between the two
+    // reads. A context with no project services answers the empty state.
+    state: {
+      serviceStartedAt: startedAt,
+      projects: ctx.projects?.snapshot() ?? EMPTY_PROJECTS_SNAPSHOT,
+    },
   };
   sendJson(res, 200, body);
 };
@@ -143,7 +140,6 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
  * of this machine's filesystem layout; the specific candidate stays in the
  * local redacting log, exactly as it does for a denied path.
  */
-const INVALID_BODY_BODY: ApiErrorBody = { error: "invalid request body" };
 const VAULT_ROOT_MISSING_BODY: ApiErrorBody = { error: "vault root does not exist" };
 /** Constant like its neighbours: it names neither the candidate nor the
  * refused locations, so a caller cannot use the response to map this
@@ -151,7 +147,6 @@ const VAULT_ROOT_MISSING_BODY: ApiErrorBody = { error: "vault root does not exis
 const VAULT_ROOT_REFUSED_BODY: ApiErrorBody = {
   error: "vault root is not an Obsidian vault this service will manage",
 };
-const INTERNAL_ERROR_BODY: ApiErrorBody = { error: "internal error" };
 
 /**
  * Maps a vault-setup failure onto its response. `VaultRootMissingError` is
@@ -273,6 +268,7 @@ const routeTable: Record<string, Record<string, Handler>> = {
   [RUNS_PATH]: { GET: withAuth(listRunsHandler) },
   [EVENTS_PATH]: { GET: withAuth(eventsHandler) },
   [SNAPSHOT_PATH]: { GET: withAuth(snapshotHandler) },
+  ...projectRoutes,
 };
 
 /**
