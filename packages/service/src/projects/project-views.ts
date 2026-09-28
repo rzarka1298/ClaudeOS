@@ -28,7 +28,8 @@ import type { LauncherConfigRecord, ProjectRecord } from "@ccc/operational-store
 /**
  * `~` for the home directory itself, `~/rest` for anything strictly inside
  * it, and the path unchanged otherwise. A sibling that merely shares the
- * home prefix (`/Users/USERNAME2`) is outside home.
+ * home's name as a prefix (`code-archive` beside a home of `code`) is
+ * outside home.
  */
 export function toDisplayPath(absolutePath: string, homeDir: string): string {
   if (homeDir.length === 0 || homeDir === "/") return absolutePath;

@@ -37,8 +37,10 @@ describe("toDisplayPath (D-43)", () => {
   });
 
   it("does not treat a sibling that merely shares the home prefix as inside home", () => {
-    expect(toDisplayPath("/Users/USERNAME2/code/x", "/Users/USERNAME")).toBe(
-      "/Users/USERNAME2/code/x",
+    // A home of /Users/USERNAME/code stands in for any home whose name is a
+    // prefix of a sibling folder's name.
+    expect(toDisplayPath("/Users/USERNAME/code-archive/x", "/Users/USERNAME/code")).toBe(
+      "/Users/USERNAME/code-archive/x",
     );
   });
 });
