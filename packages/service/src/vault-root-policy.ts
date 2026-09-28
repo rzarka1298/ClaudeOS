@@ -67,6 +67,9 @@ const SYSTEM_ROOTS: readonly string[] = [
   "/opt",
 ];
 
+/** Where macOS mounts every volume other than the boot volume. */
+const VOLUMES_DIR = "/Volumes";
+
 /** The forbidden set in realpath form, computed once on first use. */
 let resolvedForbiddenRoots: ReadonlySet<string> | null = null;
 
@@ -91,8 +94,11 @@ function forbiddenRootSet(): ReadonlySet<string> {
  * True when `resolved` — an already-`realpathSync.native`'d path — is a
  * location this service will never adopt as a vault root or a project
  * (E-3, PR-06): any {@link FORBIDDEN_ROOTS} entry, the system trees above,
- * or a filesystem root (`dirname(x) === x`, which catches a volume root no
- * list names).
+ * a filesystem root (`dirname(x) === x`), or a mounted volume's root
+ * (`/Volumes/<name>`). On macOS every non-boot volume mounts at
+ * `/Volumes/<name>` and realpaths there — it is never `dirname(x) === x` —
+ * so the filesystem-root test alone let a whole external or network drive
+ * through. A folder INSIDE a volume stays allowed.
  *
  * The comparison is against the REALPATH form of every entry. The old check
  * compared a realpath'd candidate against the literals, and on macOS
@@ -101,7 +107,8 @@ function forbiddenRootSet(): ReadonlySet<string> {
  * is resolved, makes both sides comparable.
  */
 export function isForbiddenRoot(resolved: string): boolean {
-  return dirname(resolved) === resolved || forbiddenRootSet().has(resolved);
+  const parent = dirname(resolved);
+  return parent === resolved || parent === VOLUMES_DIR || forbiddenRootSet().has(resolved);
 }
 
 /** The directory Obsidian itself creates in every vault. Its presence is
