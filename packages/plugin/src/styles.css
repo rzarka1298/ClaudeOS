@@ -780,3 +780,328 @@
 .ccc-layout-empty {
   grid-column: span 1;
 }
+
+/* ===========================================================================
+ * Phase 4 — Projects & Launchers (04-UI-SPEC.md)
+ *
+ * Every selector below is a descendant of `.ccc-command-center`, reuses the
+ * one token block above and declares no new `--ccc-*` custom property (D-39).
+ * The classes named here are the complete Phase 4 vocabulary: plans 04-06
+ * through 04-14 use exactly these names and add none of their own.
+ * ========================================================================= */
+
+/* S2 Dispatch: a card whose body lays out its own actions (`actionsInBody`,
+ * PR-12) reuses the generic actions row's own flex declaration verbatim, so
+ * a launch toolbar and the frame's `.ccc-card-actions` read identically. */
+.ccc-launch-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ccc-space-sm);
+  margin-top: var(--ccc-space-md);
+}
+
+/* A launch in flight or a momentarily unavailable action: dimmed, the
+ * default cursor, but never actually disabled — the button stays in the tab
+ * order and keeps its click handler, so a screen reader and a keyboard user
+ * are told the same thing sighted opacity tells everyone else (A11Y-04). */
+.ccc-quick-action[data-launch-state="opening"],
+.ccc-quick-action[aria-disabled="true"],
+.ccc-connect-button[aria-disabled="true"],
+.ccc-list-more[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* The persistent `role="status"` line beside a launch toolbar (S2). Tone is
+ * carried by colour AND by the status text itself, never by colour alone. */
+.ccc-launch-status {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-launch-status[data-tone="error"] {
+  color: var(--ccc-danger);
+}
+
+.ccc-launch-status[data-tone="success"] {
+  color: var(--ccc-ink);
+}
+
+/* A project card's git-state line: a row of short segments (branch, dirty
+ * flag, ahead/behind) each led by a decorative glyph (UI-SPEC Glyph
+ * Vocabulary) — the glyph reinforces, the segment's own text always carries
+ * the meaning (A11Y-04). */
+.ccc-meta-segments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-xs);
+  overflow-wrap: anywhere;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-meta-glyph {
+  color: var(--ccc-ink-muted);
+}
+
+/* S3 Projects destination grid — the Overview grid declaration verbatim
+ * (D-12's one auto-placement contract applies here too), its own inline-size
+ * container so the collapse below measures this grid's own box. */
+.ccc-projects-grid {
+  container-type: inline-size;
+  display: grid;
+  gap: var(--ccc-space-lg);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  grid-auto-flow: dense;
+}
+
+@container (max-width: 34rem) {
+  .ccc-projects-grid {
+    gap: var(--ccc-space-md);
+  }
+}
+
+.ccc-projects-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+}
+
+.ccc-project-card {
+  padding: var(--ccc-space-lg);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+  box-shadow: var(--ccc-shadow-card);
+}
+
+/* Long project names clamp to two lines with the full text still in the DOM
+ * (the same technique as `.ccc-clamp-2`, UI-SPEC E1/E5 long-text rows). */
+.ccc-project-card-name {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-heading);
+  font-weight: var(--ccc-weight-strong);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.ccc-mono-label {
+  font-family: var(--ccc-font-mono);
+  font-size: var(--ccc-text-label);
+}
+
+/* A home-abbreviated display path (PROJ-14) — never the absolute path, which
+ * never leaves the service. */
+.ccc-display-path {
+  overflow-wrap: anywhere;
+  color: var(--ccc-ink-muted);
+  font-family: var(--ccc-font-mono);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-commit-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ccc-commit-row {
+  min-width: 0;
+  padding: var(--ccc-space-xs) 0;
+  overflow-wrap: anywhere;
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-commit-row:last-child {
+  border-bottom: 0;
+}
+
+/* Fields a card defers to the Manage panel rather than showing on the grid
+ * card itself (S3/S4 "Later" fields). */
+.ccc-later-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-manage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ccc-space-sm);
+}
+
+/* S10 setup callout — a glass panel one step quieter than a card, since it is
+ * guidance rather than data. */
+.ccc-setup-callout {
+  padding: var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+}
+
+.ccc-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+  padding: var(--ccc-space-sm) var(--ccc-space-md);
+  overflow-wrap: anywhere;
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-sm);
+  color: var(--ccc-ink-muted);
+}
+
+.ccc-inline-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-field-label {
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+}
+
+/* The one text-input shape in this phase (S5/S7/S9 forms). Its border is an
+ * OPAQUE ink token, not the translucent `--ccc-border` every card boundary
+ * uses, because a form control's own edge is audited as a real 3:1 non-text
+ * pair rather than composited over an unknown surface (UI-SPEC Color). */
+.ccc-text-input {
+  min-block-size: var(--ccc-space-lg);
+  min-inline-size: var(--ccc-space-lg);
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  overflow-wrap: anywhere;
+  border: var(--ccc-border-hairline) solid var(--ccc-ink-muted);
+  border-radius: var(--ccc-radius-sm);
+  background-color: var(--ccc-surface);
+  color: var(--ccc-ink);
+  font-family: inherit;
+  font-size: var(--ccc-text-body);
+  transition: border-color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-text-input--mono {
+  font-family: var(--ccc-font-mono);
+}
+
+.ccc-text-input[aria-invalid="true"] {
+  border-color: var(--ccc-danger);
+}
+
+.ccc-text-input:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-field-help {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-field-error {
+  margin: 0;
+  color: var(--ccc-danger);
+  font-size: var(--ccc-text-label);
+}
+
+/* The two removal confirmations (S4 remove project, S6 launcher reset) share
+ * this one danger affordance: danger text and border, never a danger fill —
+ * the pill still reads as a button, not an alarm. */
+.ccc-button-danger {
+  min-block-size: var(--ccc-space-lg);
+  min-inline-size: var(--ccc-space-lg);
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  border: var(--ccc-border-hairline) solid var(--ccc-danger);
+  border-radius: var(--ccc-radius-sm);
+  background: transparent;
+  color: var(--ccc-danger);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  cursor: pointer;
+  transition: color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-button-danger:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-launcher-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+}
+
+.ccc-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+}
+
+.ccc-radio-group input {
+  min-block-size: var(--ccc-space-lg);
+  min-inline-size: var(--ccc-space-lg);
+  accent-color: var(--ccc-ink);
+}
+
+.ccc-radio-group input:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-template-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-template-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+}
+
+/* The argv preview (S7 template editor) — mono, so the owner reads exactly
+ * what will run, and wrapping rather than scrolling a long element. */
+.ccc-preview-list {
+  margin: 0;
+  padding: 0;
+  overflow-wrap: anywhere;
+  list-style: none;
+  color: var(--ccc-ink-muted);
+  font-family: var(--ccc-font-mono);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-scan-folder-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+  padding: var(--ccc-space-xs) 0;
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-scan-folder-row:last-child {
+  border-bottom: 0;
+}
+
+.ccc-suggestion-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+  padding: var(--ccc-space-xs) 0;
+}
+
+/* The Settings destination's own section width — prose-measure, so a
+ * paragraph of launcher help text does not stretch edge to edge. */
+.ccc-settings-section {
+  max-width: 68ch;
+}
