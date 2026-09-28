@@ -1,8 +1,48 @@
+import { signal } from "@preact/signals";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
+import type { WidgetState } from "../widgets/contract.js";
+import type { WidgetId } from "../widgets/registry.js";
+import { widgetStateFor } from "../widgets/widget-data.js";
 import { Shell } from "./shell.js";
+
+/**
+ * A test double for the "quick-actions" widget whose body lays out its own
+ * actions (`actionsInBody`, PR-12) and emits a `launch:finder` descriptor
+ * with a project target — the only way to prove `Shell` threads
+ * `requestLaunch` through the dispatcher (D-24, PR-08) without waiting for a
+ * later plan to wire a real launch-capable widget body.
+ */
+vi.mock("../widgets/registry.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../widgets/registry.js")>();
+  const testWidget = {
+    ...actual.WIDGETS["quick-actions"],
+    actionsInBody: true,
+    quickActions: [],
+    renderBody: ({
+      onQuickAction,
+    }: {
+      onQuickAction?: (descriptor: unknown) => void;
+    }) => (
+      <button
+        type="button"
+        onClick={() =>
+          onQuickAction?.({
+            id: "test-launch-finder",
+            label: "Launch Finder",
+            capability: "launch:finder",
+            target: { projectId: "project-1" },
+          })
+        }
+      >
+        Launch Finder
+      </button>
+    ),
+  };
+  return { ...actual, WIDGETS: { ...actual.WIDGETS, "quick-actions": testWidget } };
+});
 
 afterEach(() => {
   cleanup();
@@ -110,5 +150,37 @@ describe("Shell", () => {
     expect(twinkle).toBeTruthy();
     expect(twinkle?.getAttribute("aria-hidden")).toBe("true");
     expect(twinkle?.querySelectorAll(".ccc-twinkle-point").length).toBe(12);
+  });
+
+  it("renders with no-op defaults when requestLaunch and openSwitcher are not provided (D-24)", () => {
+    render(<Shell />);
+    expect(screen.getAllByRole("tab")).toHaveLength(8);
+  });
+
+  it("renders the destination's own description when no entry exists in the view map (DESTINATION_VIEWS)", () => {
+    render(<Shell />);
+    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+    expect(
+      screen.getByText("Cited reports and the knowledge lifecycle. Filled in a later phase."),
+    ).toBeTruthy();
+  });
+
+  it("threads requestLaunch through the one dispatcher when a widget body emits a launch descriptor (D-24, PR-08)", () => {
+    const requestLaunch = vi.fn();
+    const readyQuickActions = signal<WidgetState<unknown>>({
+      kind: "ready",
+      data: null,
+      observedAt: "2026-09-15T00:00:00.000Z",
+      freshness: "live",
+      partiality: { partial: false },
+      isEmpty: false,
+    });
+    const stateFor = (id: WidgetId) => (id === "quick-actions" ? readyQuickActions : widgetStateFor(id));
+
+    render(<Shell requestLaunch={requestLaunch} stateFor={stateFor} />);
+    fireEvent.click(screen.getByRole("button", { name: "Launch Finder" }));
+
+    expect(requestLaunch).toHaveBeenCalledTimes(1);
+    expect(requestLaunch).toHaveBeenCalledWith("project-1", "finder");
   });
 });
