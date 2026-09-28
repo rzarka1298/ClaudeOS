@@ -67,8 +67,17 @@ export const AbsolutePathSchema = z
  * Folders macOS guards with TCC or that are rarely a project's real home;
  * registering one needs an explicit acknowledgement (D-03). A location is
  * named by this enum, never by its path, when it crosses the wire.
+ * `cloud-storage` is `~/Library/CloudStorage`, where File Provider clients
+ * (third-party cloud drives) mount — a TCC category of its own (RESEARCH
+ * D-29 list).
  */
-export const PROTECTED_LOCATIONS = ["documents", "desktop", "downloads", "icloud-drive"] as const;
+export const PROTECTED_LOCATIONS = [
+  "documents",
+  "desktop",
+  "downloads",
+  "icloud-drive",
+  "cloud-storage",
+] as const;
 export type ProtectedLocation = (typeof PROTECTED_LOCATIONS)[number];
 export const ProtectedLocationSchema = z.enum(PROTECTED_LOCATIONS);
 

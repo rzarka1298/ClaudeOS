@@ -1,4 +1,4 @@
-import { realpathSync, statSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { checkPathContainment, hasControlCharacter, type ProtectedLocation } from "@ccc/domain";
 import { isForbiddenRoot } from "../vault-root-policy.js";
@@ -26,12 +26,14 @@ import { isForbiddenRoot } from "../vault-root-policy.js";
  *   approved and has its own rules) or anything above it.
  *
  * Protected locations (D-29 as amended by PR-04/PR-10): a launchd-run
- * service is SILENTLY blocked by TCC under Documents, Desktop, Downloads and
- * iCloud Drive — there is no prompt to explain. So `detectProtectedLocation`
+ * service is SILENTLY blocked by TCC under Documents, Desktop, Downloads,
+ * iCloud Drive and File Provider cloud storage — there is no prompt to
+ * explain. So `detectProtectedLocation`
  * is lexical only and runs before anything touches the filesystem; nothing
  * is read until the owner acknowledges. When a read does happen and TCC
  * refuses it, the EPERM/EACCES is classified as `access-denied`, never
- * propagated.
+ * propagated — and when the candidate reached a protected folder through a
+ * symlink, the refusal names that folder so the route can explain it.
  *
  * Rejected alternative: refusing protected locations outright. Some owners
  * keep code under Documents on purpose; the acknowledgement lets them choose
@@ -57,12 +59,24 @@ export type ProjectRefusalReason =
 export class ProjectRefusedError extends Error {
   readonly candidate: string;
   readonly reason: ProjectRefusalReason;
+  /**
+   * For an `access-denied` refusal: the protected location the candidate
+   * leads into through a symlink, when one can be named without reading
+   * inside it (PR-10). The route turns this into the protected-location
+   * explanation instead of the bare refusal. `null` otherwise.
+   */
+  readonly protectedLocation: ProtectedLocation | null;
 
-  constructor(candidate: string, reason: ProjectRefusalReason) {
+  constructor(
+    candidate: string,
+    reason: ProjectRefusalReason,
+    protectedLocation: ProtectedLocation | null = null,
+  ) {
     super("project refused");
     this.name = "ProjectRefusedError";
     this.candidate = candidate;
     this.reason = reason;
+    this.protectedLocation = protectedLocation;
   }
 }
 
@@ -116,7 +130,22 @@ export function validateProjectCandidate(
   try {
     resolved = realpathSync.native(candidate);
   } catch (err: unknown) {
-    throw new ProjectRefusedError(candidate, isAccessError(err) ? "access-denied" : "missing");
+    if (!isAccessError(err)) throw new ProjectRefusedError(candidate, "missing");
+    // TCC refused the resolve. The lexical check already passed, so if the
+    // candidate reaches a protected folder it does so through a symlink:
+    // name that folder so the owner gets the explanation, not a bare refusal.
+    throw new ProjectRefusedError(
+      candidate,
+      "access-denied",
+      detectProtectedLocation(followLinksLexically(candidate), context.homeDir),
+    );
+  }
+
+  // The realpath is a DIFFERENT string when a symlink was followed: the
+  // target's name is as capable of carrying a control character as the
+  // candidate's, and it is the realpath that gets stored and logged.
+  if (hasControlCharacter(resolved)) {
+    throw new ProjectRefusedError(candidate, "control-characters");
   }
 
   let isDirectory: boolean;
@@ -156,12 +185,53 @@ export function validateProjectCandidate(
   return resolved;
 }
 
+/** How many symlinks {@link followLinksLexically} follows before giving up (the kernel's own order of magnitude). */
+const MAX_LINK_HOPS = 32;
+
+/**
+ * Resolves `candidate`'s symlinks one component at a time using only
+ * `lstat` and `readlink` on the components themselves, stopping at the first
+ * component that cannot be examined (TCC refuses to look inside a protected
+ * folder, which is where this is used) and appending the rest lexically.
+ * Never reads a directory's contents or follows anything past a refusal, so
+ * it names where a link LEADS without reading what is there.
+ */
+function followLinksLexically(candidate: string): string {
+  const pending = path
+    .resolve(candidate)
+    .split("/")
+    .filter((part) => part.length > 0);
+  let current = "/";
+  let hops = 0;
+  while (pending.length > 0) {
+    const part = pending.shift() as string;
+    const next = path.join(current, part);
+    let target: string | null = null;
+    try {
+      if (lstatSync(next).isSymbolicLink()) target = readlinkSync(next);
+    } catch {
+      return path.join(next, ...pending);
+    }
+    if (target === null) {
+      current = next;
+      continue;
+    }
+    hops += 1;
+    if (hops > MAX_LINK_HOPS) return path.join(next, ...pending);
+    const linked = path.resolve(current, target);
+    pending.unshift(...linked.split("/").filter((p) => p.length > 0));
+    current = "/";
+  }
+  return current;
+}
+
 /** Home-relative folders macOS guards with TCC, in match order. */
 const PROTECTED_FOLDERS: ReadonlyArray<readonly [string, ProtectedLocation]> = [
   ["Documents", "documents"],
   ["Desktop", "desktop"],
   ["Downloads", "downloads"],
   ["Library/Mobile Documents", "icloud-drive"],
+  ["Library/CloudStorage", "cloud-storage"],
 ];
 
 /**

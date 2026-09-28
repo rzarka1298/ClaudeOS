@@ -178,6 +178,18 @@ async function handleRegister(
   } catch (err: unknown) {
     if (err instanceof ProjectRefusedError) {
       logger.warn({ reason: err.reason, candidate: err.candidate }, "project refused");
+      // PR-10: TCC refused a candidate that leads into a protected folder
+      // through a symlink. Before acknowledgement that is the explanation the
+      // owner needs, exactly as for a lexically protected path; after it,
+      // macOS blocked the read and the constant refusal stands.
+      if (err.protectedLocation !== null && !acknowledged) {
+        const body: RegisterProjectResponse = {
+          kind: "protected-location",
+          location: err.protectedLocation,
+        };
+        sendJson(res, 200, body);
+        return;
+      }
       sendJson(res, 422, PROJECT_REFUSED_BODY);
       return;
     }
