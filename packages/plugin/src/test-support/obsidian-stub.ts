@@ -215,3 +215,100 @@ export class FileSystemAdapter {
     return this.basePath;
   }
 }
+
+/**
+ * Inert stand-ins for the quick-switcher surface (`view/quick-switcher.ts`,
+ * plan 04-05 SC-5). The real `SuggestModal`/`FuzzySuggestModal` render a
+ * search UI and drive keyboard selection through Obsidian's own internals —
+ * none of that is reproducible here, so like `Modal` these exist only so a
+ * module that subclasses them loads under Vitest. `command-center-view.ts`'s
+ * `Mod+K` binding is tested through `registerSwitcherScope`, a pure function
+ * that touches none of this (SC-5).
+ */
+export class SuggestModal<T> extends Modal {
+  limit = 100;
+  emptyStateText = "No matches found";
+  inputEl: { value: string } = { value: "" };
+  resultContainerEl: StubElement = createStubElement();
+
+  setPlaceholder(_placeholder: string): void {}
+
+  setInstructions(_instructions: unknown[]): void {}
+
+  onNoSuggestion(): void {}
+
+  selectSuggestion(_value: T, _evt: MouseEvent | KeyboardEvent): void {}
+
+  selectActiveSuggestion(_evt: MouseEvent | KeyboardEvent): void {}
+}
+
+export abstract class FuzzySuggestModal<T> extends SuggestModal<{ item: T; match: unknown }> {
+  abstract getItems(): T[];
+  abstract getItemText(item: T): string;
+  abstract onChooseItem(item: T, evt: MouseEvent | KeyboardEvent): void;
+
+  getSuggestions(_query: string): { item: T; match: unknown }[] {
+    return [];
+  }
+
+  renderSuggestion(_item: { item: T; match: unknown }, _el: unknown): void {}
+
+  onChooseSuggestion(
+    match: { item: T; match: unknown },
+    evt: MouseEvent | KeyboardEvent,
+  ): void {
+    this.onChooseItem(match.item, evt);
+  }
+}
+
+/**
+ * Records every `register()` call rather than reproducing Obsidian's real
+ * hotkey dispatch — a plugin module constructs a `Scope` and registers a
+ * binding on it (`command-center-view.ts`'s `Mod+K`), and this stub proves
+ * only that the registration happened, in the same inert style as `Modal`.
+ */
+export interface RecordedRegistration {
+  readonly modifiers: readonly string[] | null;
+  readonly key: string | null;
+  readonly func: (...args: unknown[]) => unknown;
+}
+
+export class Scope {
+  readonly registrations: RecordedRegistration[] = [];
+
+  constructor(_parent?: Scope) {}
+
+  register(
+    modifiers: string[] | null,
+    key: string | null,
+    func: (...args: unknown[]) => unknown,
+  ): RecordedRegistration {
+    const registration: RecordedRegistration = { modifiers, key, func };
+    this.registrations.push(registration);
+    return registration;
+  }
+
+  unregister(handler: RecordedRegistration): void {
+    const index = this.registrations.indexOf(handler);
+    if (index >= 0) this.registrations.splice(index, 1);
+  }
+}
+
+/**
+ * A simple case-insensitive subsequence scorer — faithful enough for a
+ * shape test (does a query's characters appear in order), not Obsidian's
+ * real fuzzy-match ranking, which lives entirely in the host application.
+ */
+export function prepareFuzzySearch(query: string): (text: string) => { score: number } | null {
+  const needle = query.toLowerCase();
+  return (text: string) => {
+    const haystack = text.toLowerCase();
+    let index = 0;
+    for (const char of needle) {
+      const found = haystack.indexOf(char, index);
+      if (found === -1) return null;
+      index = found + 1;
+    }
+    return { score: -needle.length };
+  };
+}
