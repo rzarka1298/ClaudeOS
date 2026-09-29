@@ -286,15 +286,15 @@
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "unavailable",
           "partiality": { "partial": false },
-          "sources": [{ "label": "Claude Code session events", "status": "Not connected" }],
-          "capability": "claude-code",
+          "sources": [{ "label": "Claude Code hooks", "status": "Not connected" }],
+          "capability": "claude-hooks",
           "data": {}
         },
         "failure": {
           "observedAt": "2026-09-22T11:30:00.000Z",
           "freshness": "unavailable",
           "partiality": { "partial": false },
-          "sources": [{ "label": "Claude Code session events", "status": "Error" }],
+          "sources": [{ "label": "Claude Code hooks", "status": "Error" }],
           "message": "The session collector stopped reporting and did not restart.",
           "data": {}
         }

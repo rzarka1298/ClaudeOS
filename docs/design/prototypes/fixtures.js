@@ -438,11 +438,11 @@ globalThis.CCC_FIXTURES = {
           },
           "sources": [
             {
-              "label": "Claude Code session events",
+              "label": "Claude Code hooks",
               "status": "Not connected"
             }
           ],
-          "capability": "claude-code",
+          "capability": "claude-hooks",
           "data": {}
         },
         "failure": {
@@ -453,7 +453,7 @@ globalThis.CCC_FIXTURES = {
           },
           "sources": [
             {
-              "label": "Claude Code session events",
+              "label": "Claude Code hooks",
               "status": "Error"
             }
           ],
