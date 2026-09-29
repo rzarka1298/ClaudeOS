@@ -556,7 +556,7 @@ describe("CommandCenterSettingTab -- status freshness and control safety (wave 2
     expect(hookRow(tab)).toContain("Installed");
   });
 
-  it("its own update() after a fetch does not start another fetch (no refresh loop)", async () => {
+  it("its own update() after a status read starts no further read, so there is no refresh loop", async () => {
     const getIntegration = vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS);
     const tab = new CommandCenterSettingTab(
       {} as never,
