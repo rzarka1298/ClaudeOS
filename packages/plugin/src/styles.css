@@ -628,6 +628,15 @@
   overflow-wrap: anywhere;
 }
 
+/* The disconnected hero keeps its last-good rows under the "Service
+ * disconnected" copy. With no hero head in that state, the copy stands where
+ * the meter would, so it takes the UI-SPEC's "meter → row list" gap
+ * (--ccc-space-md) above the first row instead of butting against it (wave 2
+ * visual audit). */
+.ccc-card[data-variant="hero"][data-presentation="disconnected"] .ccc-state-body + * {
+  margin-top: var(--ccc-space-md);
+}
+
 .ccc-error-glyph {
   margin-right: var(--ccc-space-xs);
   color: var(--ccc-danger);
