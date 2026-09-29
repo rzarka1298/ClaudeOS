@@ -165,6 +165,33 @@ describe("Shell", () => {
     ).toBeTruthy();
   });
 
+  it("threads pickFolder and projectsActions to the Projects destination (D-03, D-24)", async () => {
+    const pickFolder = vi.fn().mockResolvedValue({ kind: "cancelled" });
+    const projectsActions = {
+      register: vi.fn(),
+      remove: vi.fn(),
+      rename: vi.fn(),
+      pin: vi.fn(),
+      setGithubLink: vi.fn(),
+      refresh: vi.fn(),
+    };
+
+    render(<Shell pickFolder={pickFolder} projectsActions={projectsActions} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
+    fireEvent.click(screen.getByRole("button", { name: "Register a project" }));
+
+    await vi.waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+    expect(projectsActions.register).not.toHaveBeenCalled();
+  });
+
+  it("renders the Projects destination with no-op defaults when projectsActions and pickFolder are not provided (D-24)", () => {
+    render(<Shell />);
+    fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Registered projects" }),
+    ).toBeTruthy();
+  });
+
   it("threads requestLaunch through the one dispatcher when a widget body emits a launch descriptor (D-24, PR-08)", () => {
     const requestLaunch = vi.fn();
     const readyQuickActions = signal<WidgetState<unknown>>({

@@ -104,7 +104,11 @@ describe("the Overview renders the default layout (UI-07, D-12)", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
     expect(container.querySelector(".ccc-overview-grid")).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "Projects" })).toBeTruthy();
-    expect(screen.getByText(/Registered project shortcuts and their git status/)).toBeTruthy();
+    // SC-6 (plan 04-08): the Projects destination now renders the real S3
+    // view (Shell's no-op `projectsActions`/`pickFolder` defaults let it
+    // render with no host, D-24) instead of the placeholder description this
+    // test used to assert.
+    expect(screen.getByRole("heading", { level: 3, name: "Registered projects" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
     expect(overviewCards(container)).toHaveLength(8);
