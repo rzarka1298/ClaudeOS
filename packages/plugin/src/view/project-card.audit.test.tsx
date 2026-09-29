@@ -77,8 +77,8 @@ describe("audit: ProjectCard anatomy (04-08 truth 5, D-36)", () => {
 
   // AUDIT-BUG (04-08): UI-SPEC S3 "GitHub link override row: `GitHub link` label +
   // `github.com/owner/repo` when an override is set" — project-card.tsx never reads
-  // row.github, so the card shows no GitHub link at all. Un-skip once fixed.
-  it.skip("shows the GitHub link row when an override is set", () => {
+  // row.github, so the card shows no GitHub link at all (fixed in 04-wave4).
+  it("shows the GitHub link row when an override is set", () => {
     const container = show(
       row({
         git: repo(1),
@@ -87,5 +87,27 @@ describe("audit: ProjectCard anatomy (04-08 truth 5, D-36)", () => {
     );
     expect(container.textContent ?? "").toContain("GitHub link");
     expect(container.textContent ?? "").toContain("github.com/other/linked");
+  });
+
+  it("shows the GitHub link row for an override even when the folder is not a repository", () => {
+    const container = show(
+      row({
+        git: { kind: "not-a-repo" },
+        github: { kind: "github", label: "github.com/other/linked", source: "override" },
+      }),
+    );
+    expect(container.textContent ?? "").toContain("GitHub link");
+    expect(container.textContent ?? "").toContain("github.com/other/linked");
+  });
+
+  it("shows no GitHub link row when the link is derived from the remote", () => {
+    const container = show(
+      row({
+        git: repo(1),
+        github: { kind: "github", label: "github.com/owner/repo", source: "remote" },
+      }),
+    );
+    expect(container.querySelector(".ccc-github-link-row")).toBeNull();
+    expect(container.textContent ?? "").not.toContain("GitHub linkgithub.com");
   });
 });

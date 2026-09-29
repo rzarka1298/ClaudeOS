@@ -28,7 +28,7 @@ afterEach(() => {
 describe("audit: the Projects empty state (S3)", () => {
   // AUDIT-BUG (04-08): the empty state renders only the body line; the
   // "Nothing here yet" title the truth and UI-SPEC S3 name is missing.
-  it.skip("shows Nothing here yet above the body copy, with Register a project", () => {
+  it("shows Nothing here yet above the body copy, with Register a project", () => {
     projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
     const { container, getByRole } = render(
       <ProjectsView
