@@ -86,10 +86,7 @@ process.on("unhandledRejection", () => process.exit(0));
 
 // The overall deadline: stdin that never reaches EOF must not hold Claude
 // Code. Unref'd, so it never keeps an otherwise finished process alive.
-setTimeout(
-  () => process.exit(0),
-  Math.max(0, HOOK_EXIT_DEADLINE_MS - performance.now()),
-).unref();
+setTimeout(() => process.exit(0), Math.max(0, HOOK_EXIT_DEADLINE_MS - performance.now())).unref();
 
 main()
   .catch(() => {})
