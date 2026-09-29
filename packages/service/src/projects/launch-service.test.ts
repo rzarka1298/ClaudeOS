@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,7 @@ import {
   type LaunchServiceDeps,
 } from "./launch-service.js";
 import { createStoreProjectLookup } from "./project-lookup.js";
+import { ensureScriptDir } from "./script-dir.js";
 
 let base: string;
 let store: OperationalStore;
@@ -402,6 +403,73 @@ describe("Claude Code with an injected terminal launcher (the 04-09 seam)", () =
       service({ terminalLauncher: launcher }).launch({ projectId, action: "claude-code" }),
     ).resolves.toEqual({ ok: false, error: "automation-denied" });
     expect(getProject(store.db, projectId)?.lastOpenedAt).toBeNull();
+  });
+});
+
+describe("Claude Code through the script directory and selectTerminalLauncher (plan 04-09)", () => {
+  let scriptDir: string;
+
+  beforeEach(() => {
+    scriptDir = ensureScriptDir(join(base, "runtime"));
+  });
+
+  it("answers launcher-not-configured with no stored config, spawning nothing", async () => {
+    await expect(
+      service({ scriptDir }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: false, error: "launcher-not-configured" });
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("refuses a stored config carrying the forbidden flag, writing and spawning nothing (D-22)", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: ["--dangerously-skip-permissions"],
+      terminal: { kind: "terminal-app" },
+    });
+    await expect(
+      service({ scriptDir }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: false, error: "launcher-not-configured" });
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("hands Terminal a script from the directory and touches last_opened_at on success", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: ["{projectPath}"],
+      terminal: { kind: "terminal-app" },
+    });
+    await expect(
+      service({ scriptDir }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: true });
+    expect(spawner.calls).toHaveLength(1);
+    const argv = spawner.calls[0]?.argv ?? [];
+    expect(argv.slice(0, 3)).toEqual(["/usr/bin/open", "-b", "com.apple.Terminal"]);
+    expect(dirname(argv[3] ?? "")).toBe(scriptDir);
+    const body = readFileSync(argv[3] ?? "", "utf8");
+    expect(body).toContain(`'/usr/bin/true' '${projectDir}'`);
+    expect(getProject(store.db, projectId)?.lastOpenedAt).not.toBeNull();
+  });
+
+  it("an explicitly injected terminal launcher still wins over the script directory", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    const inputs: TerminalLaunchInput[] = [];
+    const terminalLauncher: TerminalLauncher = {
+      launch(input) {
+        inputs.push(input);
+        return Promise.resolve({ ok: true });
+      },
+    };
+    await expect(
+      service({ scriptDir, terminalLauncher }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: true });
+    expect(inputs).toHaveLength(1);
+    expect(spawner.calls).toHaveLength(0);
   });
 });
 

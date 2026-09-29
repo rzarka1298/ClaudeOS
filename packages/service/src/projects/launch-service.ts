@@ -116,6 +116,8 @@ export interface LaunchServiceDeps {
   readonly capMs?: number;
   /** The Claude Code terminal hand-off (plan 04-09). Absent: Claude Code is not configured. */
   readonly terminalLauncher?: TerminalLauncher;
+  /** RED-phase stub (plan 04-09 Task 1): not wired yet. */
+  readonly scriptDir?: string;
 }
 
 export interface LaunchService {
