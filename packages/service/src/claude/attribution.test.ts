@@ -56,9 +56,9 @@ function testGit(cwd: string, ...args: string[]): void {
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_AUTHOR_NAME: "t",
-      GIT_AUTHOR_EMAIL: "t@example.invalid",
+      GIT_AUTHOR_EMAIL: "t@example.com",
       GIT_COMMITTER_NAME: "t",
-      GIT_COMMITTER_EMAIL: "t@example.invalid",
+      GIT_COMMITTER_EMAIL: "t@example.com",
     },
   });
 }
