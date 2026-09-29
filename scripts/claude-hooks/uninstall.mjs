@@ -74,7 +74,7 @@ await runCommand("uninstall", async () => {
   }
 
   // Settings first: once no entry points at the copies, removing them is safe.
-  const backup = changed ? await writeSettingsAtomic(settingsPath, nextText) : undefined;
+  const backup = changed ? await writeSettingsAtomic(settingsPath, nextText, current) : undefined;
   rmSync(hooksDir(runtimeDir), { recursive: true, force: true });
   const originalPath = originalStatusLinePath(runtimeDir);
   rmSync(originalPath, { force: true });

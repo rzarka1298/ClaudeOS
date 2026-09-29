@@ -22,7 +22,10 @@ import { dirname } from "node:path";
 import {
   assertHookBuilt,
   assertNodeVersion,
+  assertPrivateOrAbsent,
+  assertSettingsUnchanged,
   ensurePrivateDir,
+  hooksDir,
   installedEntryPath,
   installHookFiles,
   installRecordPath,
@@ -61,6 +64,10 @@ await runCommand("install", async () => {
 
   // Every check runs before the first write: a refusal leaves no trace.
   const current = readSettings(settingsPath);
+  // Directories that already exist are used as they are, never chmodded.
+  assertPrivateOrAbsent(runtimeDir);
+  assertPrivateOrAbsent(hooksDir(runtimeDir));
+  if (withStatusline) assertPrivateOrAbsent(dirname(originalStatusLinePath(runtimeDir)));
 
   const claudeBin = options.claudeBin ?? whichOnPath("claude");
   const probe = probeClaudeVersion(claudeBin);
@@ -107,6 +114,10 @@ await runCommand("install", async () => {
     return;
   }
 
+  // The probe above ran `claude`, which may itself have rewritten settings:
+  // re-check before the first write, and again inside the settings write.
+  assertSettingsUnchanged(settingsPath, current);
+
   // Copies first, then the saved original status line, then settings: the
   // settings file never points at a hook or a wrapper input that is not there.
   installHookFiles(runtimeDir);
@@ -115,7 +126,7 @@ await runCommand("install", async () => {
     ensurePrivateDir(dirname(originalPath));
     writePrivateFile(originalPath, `${JSON.stringify(saveOriginal, null, 2)}\n`);
   }
-  const backup = changed ? await writeSettingsAtomic(settingsPath, nextText) : undefined;
+  const backup = changed ? await writeSettingsAtomic(settingsPath, nextText, current) : undefined;
   writePrivateFile(
     installRecordPath(runtimeDir),
     `${JSON.stringify(

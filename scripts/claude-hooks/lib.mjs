@@ -626,17 +626,43 @@ async function loadAtomicWrite() {
 }
 
 /**
+ * Refuses when `settingsPath` no longer holds what was read at the start of
+ * the run (`read` from {@link readSettings}): someone — Claude Code, an
+ * editor, another installer — changed it in between, and writing the merge
+ * computed from the old bytes would silently discard their edit.
+ *
+ * @param {string} settingsPath
+ * @param {{ exists: boolean, text: string }} read
+ */
+export function assertSettingsUnchanged(settingsPath, read) {
+  const exists = existsSync(settingsPath);
+  const text = exists ? readFileSync(settingsPath, "utf8") : "";
+  if (exists !== read.exists || text !== read.text) {
+    throw new Refusal(
+      `${settingsPath} changed while the installer was running; refusing to overwrite that edit. ` +
+        "Re-run to merge against the current file. settings.json was not written.",
+    );
+  }
+}
+
+/**
  * Backs the current file up, then replaces it atomically (temp file in the
  * same directory, fsync, rename) with `text`. A symlinked settings file is
  * followed, so the link survives and its target is what changes. The file's
  * permission bits are kept; a new file is created 0600.
  *
+ * `read` is what the run read at its start: the file is re-read right before
+ * the write and the write refused if it changed (wave 3 review), so the
+ * read-modify-write window no longer spans the whole run.
+ *
  * @param {string} settingsPath
  * @param {string} text
+ * @param {{ exists: boolean, text: string }} read
  * @returns {Promise<string | undefined>} the backup path
  */
-export async function writeSettingsAtomic(settingsPath, text) {
+export async function writeSettingsAtomic(settingsPath, text, read) {
   const write = await loadAtomicWrite();
+  assertSettingsUnchanged(settingsPath, read);
   const exists = existsSync(settingsPath);
   const target = exists ? realpathSync(settingsPath) : settingsPath;
   const keepMode = exists ? statSync(target).mode & 0o777 : 0o600;
@@ -646,12 +672,45 @@ export async function writeSettingsAtomic(settingsPath, text) {
   return backup;
 }
 
+/** Group and other permission bits: any of them set means "not private". */
+const GROUP_OTHER_BITS = 0o077;
+
 /**
- * Creates `dir` (recursively) and forces it to 0700, repairing wider bits on
- * an existing directory.
+ * Refuses an EXISTING `dir` that is not a private directory. An absent one
+ * passes: {@link ensurePrivateDir} will create it 0700. The installer never
+ * chmods a directory it did not create — an owner-passed `--runtime-dir ~`
+ * must not turn their home directory 0700 (wave 3 review).
+ *
+ * @param {string} dir
  */
-export function ensurePrivateDir(/** @type {string} */ dir) {
+export function assertPrivateOrAbsent(dir) {
+  if (!existsSync(dir)) return;
+  const stats = statSync(dir);
+  if (!stats.isDirectory()) {
+    throw new Refusal(`${dir} exists and is not a directory; pick another path.`);
+  }
+  if ((stats.mode & GROUP_OTHER_BITS) !== 0) {
+    throw new Refusal(
+      `${dir} already exists and is open to other users (mode ${(stats.mode & 0o777).toString(8)}). ` +
+        "The installer only tightens directories it creates, so it will not chmod this one. " +
+        `Pick a different --runtime-dir, or run "chmod 700 ${dir}" yourself if it is meant to be private.`,
+    );
+  }
+}
+
+/**
+ * Creates `dir` (recursively) 0700. An existing directory is left exactly as
+ * it is when already private and refused otherwise ({@link assertPrivateOrAbsent}).
+ *
+ * @param {string} dir
+ */
+export function ensurePrivateDir(dir) {
+  if (existsSync(dir)) {
+    assertPrivateOrAbsent(dir);
+    return;
+  }
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // Created here, so it is ours to set: umask can only have narrowed it.
   chmodSync(dir, 0o700);
 }
 

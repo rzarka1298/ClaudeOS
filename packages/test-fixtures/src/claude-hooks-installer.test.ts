@@ -541,3 +541,53 @@ describe("uninstall.mjs, the status-line wrap and status.mjs (Task 2, D-02, D-13
     expect(readFileSync(fx.settingsPath, "utf8")).toBe(fx.originalBytes);
   });
 });
+
+describe("installer write safety (wave 3 review)", () => {
+  it("refuses to overwrite a settings edit made while it was probing Claude Code", () => {
+    const fx = makeFixture();
+    const concurrent = `${JSON.stringify({ model: "sonnet", edited: true }, null, 2)}\n`;
+    // A `claude` whose --version run edits settings.json: the read-modify-write
+    // window the installer spans while it probes the version.
+    const racer = join(fx.root, "claude-racer");
+    writeFileSync(
+      racer,
+      `#!/bin/sh\nprintf '%s' '${concurrent}' > '${fx.settingsPath}'\necho "2.1.283 (Claude Code)"\n`,
+    );
+    chmodSync(racer, 0o755);
+    const result = install(fx, [], racer);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/changed while the installer was running/);
+    expect(readFileSync(fx.settingsPath, "utf8")).toBe(concurrent);
+    expect(backups(fx)).toEqual([]);
+  });
+
+  it("never chmods an existing directory it did not create: a shared --runtime-dir is refused", () => {
+    const fx = makeFixture();
+    const shared = join(fx.root, "shared");
+    mkdirSync(shared);
+    chmodSync(shared, 0o755);
+    assertContained(fx, shared);
+    const result = runScript(INSTALL, fx, [
+      "--claude-config-dir",
+      fx.configDir,
+      "--runtime-dir",
+      shared,
+      "--claude-bin",
+      fx.claudeBin,
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/only tightens directories it creates/);
+    expect(mode(shared)).toBe(0o755);
+    expect(readdirSync(shared)).toEqual([]);
+    expect(readFileSync(fx.settingsPath, "utf8")).toBe(fx.originalBytes);
+  });
+
+  it("still installs into a private runtime dir that already exists", () => {
+    const fx = makeFixture();
+    mkdirSync(fx.runtimeDir, { mode: 0o700 });
+    chmodSync(fx.runtimeDir, 0o700);
+    const result = install(fx);
+    expect(result.status, result.stderr).toBe(0);
+    expect(mode(fx.runtimeDir)).toBe(0o700);
+  });
+});
