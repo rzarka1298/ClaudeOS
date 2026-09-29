@@ -26,6 +26,10 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "
 const SCRIPTS_DIR = join(REPO_ROOT, "scripts", "claude-hooks");
 const INSTALL = join(SCRIPTS_DIR, "install.mjs");
 const INSTALL_SH = join(SCRIPTS_DIR, "install.sh");
+const UNINSTALL = join(SCRIPTS_DIR, "uninstall.mjs");
+const UNINSTALL_SH = join(SCRIPTS_DIR, "uninstall.sh");
+const STATUS = join(SCRIPTS_DIR, "status.mjs");
+const STATUS_SH = join(SCRIPTS_DIR, "status.sh");
 const LIB = join(SCRIPTS_DIR, "lib.mjs");
 const TEST_BASE = join(homedir(), ".ccc-test");
 
@@ -345,5 +349,195 @@ describe("install.mjs merges the hook package (Task 1, SESS-01, D-13)", () => {
   it("subscribes exactly the domain's KNOWN_HOOK_EVENTS (Test 9)", async () => {
     const lib = (await import(pathToFileURL(LIB).href)) as { SUBSCRIBED_EVENTS: readonly string[] };
     expect([...lib.SUBSCRIBED_EVENTS]).toEqual([...KNOWN_HOOK_EVENTS]);
+  });
+});
+
+/** POSIX single-quoting, as the installer must use for the status-line command (T-05-36). */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function wrapperCommand(fx: Fixture): string {
+  const wrapper = join(fx.runtimeDir, "hooks", "statusline", "wrapper.js");
+  return `${shellQuote(process.execPath)} ${shellQuote(wrapper)} --runtime-dir ${shellQuote(fx.runtimeDir)}`;
+}
+
+function uninstall(fx: Fixture): RunResult {
+  return runScript(UNINSTALL, fx, [
+    "--claude-config-dir",
+    fx.configDir,
+    "--runtime-dir",
+    fx.runtimeDir,
+  ]);
+}
+
+function status(fx: Fixture): RunResult {
+  return runScript(STATUS, fx, baseArgs(fx));
+}
+
+/** Every file under `dir`, relative, sorted: proves a read-only command wrote nothing. */
+function tree(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true, encoding: "utf8" }).sort();
+}
+
+describe("uninstall.mjs, the status-line wrap and status.mjs (Task 2, D-02, D-13)", () => {
+  it("uninstall after install restores the exact original bytes and removes the copies (Test 1)", () => {
+    const fx = makeFixture();
+    expect(install(fx).status).toBe(0);
+    expect(install(fx).status).toBe(0);
+    const result = uninstall(fx);
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(fx.settingsPath, "utf8")).toBe(fx.originalBytes);
+    expect(existsSync(join(fx.runtimeDir, "hooks"))).toBe(false);
+  });
+
+  it("--with-statusline saves the exact prior status line (0600) and wraps it; uninstall restores it (Test 2)", () => {
+    const fx = makeFixture();
+    const result = install(fx, ["--with-statusline"]);
+    expect(result.status, result.stderr).toBe(0);
+
+    const originalFile = join(fx.runtimeDir, "statusline", "original.json");
+    expect(mode(originalFile)).toBe(0o600);
+    expect(mode(join(fx.runtimeDir, "statusline"))).toBe(0o700);
+    expect(mode(fx.runtimeDir)).toBe(0o700);
+    expect(JSON.parse(readFileSync(originalFile, "utf8"))).toEqual({
+      statusLine: FOREIGN_STATUS_LINE,
+      command: "echo hi",
+    });
+    const after = readSettings(fx);
+    expect(after.statusLine).toEqual({ ...FOREIGN_STATUS_LINE, command: wrapperCommand(fx) });
+    expect(Object.keys(after.statusLine as object)).toEqual(["type", "command", "padding"]);
+    const record = JSON.parse(
+      readFileSync(join(fx.runtimeDir, "hooks", "install.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(record.withStatusline).toBe(true);
+
+    // The wrapped command still prints the owner's status line.
+    const shown = spawnSync("/bin/sh", ["-c", wrapperCommand(fx)], {
+      input: "{}",
+      env: childEnv(fx),
+      encoding: "utf8",
+    });
+    expect(shown.status).toBe(0);
+    expect(shown.stdout).toBe("hi\n");
+
+    // A re-install never records the wrapper itself as the original (wave 2 hand-off).
+    const wrappedBytes = readFileSync(fx.settingsPath, "utf8");
+    expect(install(fx, ["--with-statusline"]).status).toBe(0);
+    expect(JSON.parse(readFileSync(originalFile, "utf8")).command).toBe("echo hi");
+    expect(readFileSync(fx.settingsPath, "utf8")).toBe(wrappedBytes);
+
+    const removed = uninstall(fx);
+    expect(removed.status, removed.stderr).toBe(0);
+    expect(readSettings(fx).statusLine).toEqual(FOREIGN_STATUS_LINE);
+    expect(readFileSync(fx.settingsPath, "utf8")).toBe(fx.originalBytes);
+    expect(existsSync(originalFile)).toBe(false);
+  });
+
+  it("--with-statusline with no status line configured refuses and writes nothing (Test 3, Pitfall 11)", () => {
+    const { statusLine: _none, ...withoutStatusLine } = fixtureSettings();
+    const fx = makeFixture(withoutStatusLine);
+    const result = install(fx, ["--with-statusline"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/no status line/);
+    expect(result.stderr).toMatch(/footer/);
+    expect(readFileSync(fx.settingsPath, "utf8")).toBe(fx.originalBytes);
+    expect(backups(fx)).toEqual([]);
+    expect(existsSync(join(fx.runtimeDir, "hooks"))).toBe(false);
+    expect(existsSync(join(fx.runtimeDir, "statusline"))).toBe(false);
+  });
+
+  it("a user edit made after install survives uninstall; only our groups go (Test 4)", () => {
+    const fx = makeFixture();
+    expect(install(fx).status).toBe(0);
+    const edited = readSettings(fx);
+    const userStop = { hooks: [{ type: "command", command: "echo user-stop" }] };
+    (edited.hooks as Record<string, Group[]>).Stop?.push(userStop);
+    writeFileSync(fx.settingsPath, `${JSON.stringify(edited, null, 2)}\n`);
+
+    const result = uninstall(fx);
+    expect(result.status, result.stderr).toBe(0);
+    const expected = {
+      model: "opus",
+      hooks: {
+        PreToolUse: [FOREIGN_PRE_TOOL_USE],
+        SessionStart: [FOREIGN_SESSION_START],
+        Stop: [userStop],
+      },
+      statusLine: FOREIGN_STATUS_LINE,
+    };
+    expect(readFileSync(fx.settingsPath, "utf8")).toBe(`${JSON.stringify(expected, null, 2)}\n`);
+  });
+
+  it("status reports the install, the build match, Claude, disableAllHooks, the wrapper and the spool (Test 5)", () => {
+    const fx = makeFixture();
+    expect(install(fx).status).toBe(0);
+    const settingsBefore = readFileSync(fx.settingsPath, "utf8");
+    const runtimeBefore = tree(fx.runtimeDir);
+
+    const report = status(fx);
+    expect(report.status, report.stderr).toBe(0);
+    for (const line of [
+      "hooks: installed (15 events)",
+      "node: present",
+      "installed files: match build",
+      "claude: 2.1.283 (supported)",
+      "disableAllHooks: false",
+      "status-line wrapper: not installed",
+      "spool: 0 bytes pending, 0 dropped",
+    ]) {
+      expect(report.stdout).toContain(line);
+    }
+    // Read-only: nothing changed on disk.
+    expect(readFileSync(fx.settingsPath, "utf8")).toBe(settingsBefore);
+    expect(tree(fx.runtimeDir)).toEqual(runtimeBefore);
+
+    // A copy that no longer matches the build, and dropped spool records, are both reported.
+    writeFileSync(join(fx.runtimeDir, "hooks", "hook", "limits.js"), "// edited\n");
+    mkdirSync(join(fx.runtimeDir, "spool"), { recursive: true });
+    writeFileSync(join(fx.runtimeDir, "spool", "hooks.dropped"), "xxx");
+    const stale = status(fx);
+    expect(stale.stdout).toContain("installed files: stale — re-run install");
+    expect(stale.stdout).toContain("spool: 0 bytes pending, 3 dropped");
+
+    expect(uninstall(fx).status).toBe(0);
+    const after = status(fx);
+    expect(after.status, after.stderr).toBe(0);
+    expect(after.stdout).toContain("hooks: not installed");
+  });
+
+  it("status reports node: missing when the recorded node path is gone (Test 6, Pitfall 13)", () => {
+    const fx = makeFixture();
+    expect(install(fx).status).toBe(0);
+    const gone = join(fx.root, "old-node", "bin", "node");
+    const text = readFileSync(fx.settingsPath, "utf8").replaceAll(
+      JSON.stringify(process.execPath),
+      JSON.stringify(gone),
+    );
+    writeFileSync(fx.settingsPath, text);
+    const report = status(fx);
+    expect(report.status, report.stderr).toBe(0);
+    expect(report.stdout).toContain("node: missing");
+    expect(report.stdout).toContain("hooks: installed (15 events)");
+  });
+
+  it("uninstall.sh and status.sh are thin shims", () => {
+    const fx = makeFixture();
+    expect(install(fx).status).toBe(0);
+    const shStatus = spawnSync("sh", [STATUS_SH, ...baseArgs(fx)], {
+      cwd: REPO_ROOT,
+      env: childEnv(fx),
+      encoding: "utf8",
+    });
+    expect(shStatus.status, shStatus.stderr).toBe(0);
+    expect(shStatus.stdout).toContain("hooks: installed (15 events)");
+    const shUninstall = spawnSync(
+      "sh",
+      [UNINSTALL_SH, "--claude-config-dir", fx.configDir, "--runtime-dir", fx.runtimeDir],
+      { cwd: REPO_ROOT, env: childEnv(fx), encoding: "utf8" },
+    );
+    expect(shUninstall.status, shUninstall.stderr).toBe(0);
+    expect(readFileSync(fx.settingsPath, "utf8")).toBe(fx.originalBytes);
   });
 });
