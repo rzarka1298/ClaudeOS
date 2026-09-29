@@ -26,6 +26,19 @@ export const SPOOL_DIR_NAME = "spool";
 /** The NDJSON spool file the service drains (ADR-0010). */
 export const SPOOL_FILE_NAME = "hooks.ndjson";
 
+/**
+ * The status-line wrapper's own spool file, next to the hook spool: ONE
+ * snapshot, replaced whole on every undelivered status-line run (temp file
+ * then rename, 0600). Status-line snapshots never go into
+ * {@link SPOOL_FILE_NAME}: they refresh every few hundred milliseconds, so
+ * sharing the hook spool's byte cap would let a service outage fill it with
+ * snapshots and drop write-ahead SessionEnd records (wave 2 review). Latest
+ * wins at the service anyway, so keeping only the newest loses nothing. The
+ * 05-08 spool poller reads it (rename-then-read, like the hook spool) and
+ * hands it to the status-line sink.
+ */
+export const STATUSLINE_SPOOL_FILE_NAME = "statusline.latest.json";
+
 /** One byte is appended here per record dropped at the spool cap; the size is the drop count. */
 export const SPOOL_DROP_FILE_NAME = "hooks.dropped";
 

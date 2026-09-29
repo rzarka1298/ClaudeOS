@@ -1,6 +1,15 @@
 // Imports node: builtins and ./ files only (D-10, purity.test.ts). No
 // @ccc/service-api-client: the hook re-implements the two raw requests.
-import { appendFileSync, chmodSync, mkdirSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import {
+  appendFileSync,
+  chmodSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import http from "node:http";
 import { join } from "node:path";
 import {
@@ -10,6 +19,7 @@ import {
   SPOOL_DROP_FILE_NAME,
   SPOOL_FILE_NAME,
   SPOOL_MAX_BYTES,
+  STATUSLINE_SPOOL_FILE_NAME,
 } from "./limits.js";
 
 /** Group/other permission bits; any of them set on the spool dir or file is repaired. */
@@ -124,6 +134,16 @@ function sizeOrZero(path: string): number {
   }
 }
 
+/** Creates `<runtimeDir>/spool` `0700`, repairing wider permissions; throws on failure. */
+function ensureSpoolDir(runtimeDir: string): string {
+  const spoolDir = join(runtimeDir, SPOOL_DIR_NAME);
+  mkdirSync(spoolDir, { recursive: true, mode: 0o700 });
+  if ((statSync(spoolDir).mode & GROUP_OTHER_PERMISSION_MASK) !== 0) {
+    chmodSync(spoolDir, 0o700);
+  }
+  return spoolDir;
+}
+
 /**
  * Appends one line to `<runtimeDir>/spool/hooks.ndjson` (D-08): the spool dir
  * is created `0700` (and repaired to it), the file `0600`, one
@@ -135,11 +155,7 @@ function sizeOrZero(path: string): number {
  */
 export function appendSpool(runtimeDir: string, line: string): boolean {
   try {
-    const spoolDir = join(runtimeDir, SPOOL_DIR_NAME);
-    mkdirSync(spoolDir, { recursive: true, mode: 0o700 });
-    if ((statSync(spoolDir).mode & GROUP_OTHER_PERMISSION_MASK) !== 0) {
-      chmodSync(spoolDir, 0o700);
-    }
+    const spoolDir = ensureSpoolDir(runtimeDir);
     const text = line.endsWith("\n") ? line : `${line}\n`;
     const spoolFile = join(spoolDir, SPOOL_FILE_NAME);
     if (sizeOrZero(spoolFile) + Buffer.byteLength(text) > SPOOL_MAX_BYTES) {
@@ -149,6 +165,28 @@ export function appendSpool(runtimeDir: string, line: string): boolean {
     appendFileSync(spoolFile, text, { flag: "a", mode: 0o600 });
     return true;
   } catch {
+    return false;
+  }
+}
+
+/**
+ * Replaces `<runtimeDir>/spool/statusline.latest.json` with `json` (wave 2
+ * review): written to a uniquely named `0600` temp file in the same `0700`
+ * dir, then renamed over the target, so a reader sees either the previous
+ * snapshot or this one, never a torn file. It never touches the hook spool
+ * or its drop count. Every filesystem error is swallowed and the temp file
+ * removed (fail open). Returns whether the snapshot was written.
+ */
+export function writeLatestStatusLine(runtimeDir: string, json: string): boolean {
+  let temp: string | undefined;
+  try {
+    const spoolDir = ensureSpoolDir(runtimeDir);
+    temp = join(spoolDir, `.${STATUSLINE_SPOOL_FILE_NAME}.${randomBytes(6).toString("hex")}.tmp`);
+    writeFileSync(temp, json, { flag: "wx", mode: 0o600 });
+    renameSync(temp, join(spoolDir, STATUSLINE_SPOOL_FILE_NAME));
+    return true;
+  } catch {
+    if (temp !== undefined) rmSync(temp, { force: true });
     return false;
   }
 }

@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendSpool, deliver } from "../hook/deliver.js";
+import { deliver, writeLatestStatusLine } from "../hook/deliver.js";
 import { STATUSLINE_PATH } from "../hook/limits.js";
 import { minimizeStatusLine } from "./minimize-status.js";
 
@@ -106,9 +106,11 @@ async function main(): Promise<number> {
   if (!forwarded) {
     // Latest wins at the service, so a snapshot that is both delivered late
     // and spooled is harmless; one that is neither is merely a missed update.
+    // It goes to its own latest-only file, never the hook spool, so it can
+    // never evict a hook record (wave 2 review).
     const snapshot = await settledValueWithin(snapshotPromise, 0);
     if (snapshot !== null && snapshot !== undefined) {
-      appendSpool(runtimeDir, JSON.stringify({ ...snapshot, spool_kind: "statusline" }));
+      writeLatestStatusLine(runtimeDir, JSON.stringify(snapshot));
     }
   }
   return code;

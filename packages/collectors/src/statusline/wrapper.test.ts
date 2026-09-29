@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { StatusLineSnapshotSchema } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SPOOL_MAX_BYTES, STATUSLINE_SPOOL_FILE_NAME } from "../hook/limits.js";
 import { COMPILED_STATUSLINE_WRAPPER, runCompiled } from "../test-support/run-compiled.js";
 import {
   makeTestRuntimeDir,
@@ -70,6 +71,13 @@ function spoolLines(): Record<string, unknown>[] {
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+/** The latest-only status-line spool file's snapshot, or `undefined` when absent. */
+function latestStatusLine(): Record<string, unknown> | undefined {
+  const file = join(runtime.dir, "spool", STATUSLINE_SPOOL_FILE_NAME);
+  if (!existsSync(file)) return undefined;
+  return JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
 }
 
 function runWrapper(stdin: string | Buffer = STATUS_STDIN) {
@@ -165,7 +173,7 @@ describe("the wrapper forwards documented usage fields only", () => {
     ["no server", undefined],
     ["a stalling server", "stall"],
   ] as const)(
-    "Test 4: with %s the snapshot is spooled as statusline and the wrapper exits within 150 ms of the child",
+    "Test 4: with %s the snapshot is kept as the latest status line and the wrapper exits within 150 ms of the child",
     async (_label, mode) => {
       if (mode !== undefined) server = await startUdsTestServer(runtime.socketPath, mode);
       const marker = join(runtime.dir, "child-exited");
@@ -176,14 +184,43 @@ describe("the wrapper forwards documented usage fields only", () => {
       expect(result.code).toBe(0);
       expect(result.stdout.toString("utf8")).toBe("ok");
       expect(result.closedAt - statSync(marker).mtimeMs).toBeLessThan(150);
-      const lines = spoolLines();
-      expect(lines).toHaveLength(1);
-      expect(lines[0]?.spool_kind).toBe("statusline");
-      const { spool_kind: _kind, ...snapshot } = lines[0] ?? {};
+      const snapshot = latestStatusLine();
       expect(StatusLineSnapshotSchema.safeParse(snapshot).success).toBe(true);
-      expect(JSON.stringify(lines[0])).not.toContain(REPO_SENTINEL);
+      expect(JSON.stringify(snapshot)).not.toContain(REPO_SENTINEL);
+      // Status-line snapshots never ride in the hook spool (wave 2 review).
+      expect(spoolLines()).toEqual([]);
     },
   );
+});
+
+describe("status-line snapshots have their own latest-only spool file (wave 2 review)", () => {
+  it("a full hook spool is left byte-unchanged and no drop is counted", async () => {
+    const spoolDir = join(runtime.dir, "spool");
+    mkdirSync(spoolDir, { recursive: true, mode: 0o700 });
+    const hookLine = `${JSON.stringify({ hook_event_name: "SessionEnd", filler: "x".repeat(1000) })}\n`;
+    const full = Buffer.from(hookLine.repeat(Math.floor(SPOOL_MAX_BYTES / hookLine.length)));
+    writeFileSync(join(spoolDir, "hooks.ndjson"), full, { mode: 0o600 });
+    writeOriginal("printf ok");
+
+    await runWrapper();
+
+    expect(readFileSync(join(spoolDir, "hooks.ndjson")).equals(full)).toBe(true);
+    expect(existsSync(join(spoolDir, "hooks.dropped"))).toBe(false);
+    expect(StatusLineSnapshotSchema.safeParse(latestStatusLine()).success).toBe(true);
+  });
+
+  it("repeated undelivered snapshots keep only the latest, 0600 in a 0700 dir, with no temp file left", async () => {
+    writeOriginal("printf ok");
+
+    await runWrapper(JSON.stringify({ ...STATUS_JSON, cost: { total_cost_usd: 1 } }));
+    await runWrapper(JSON.stringify({ ...STATUS_JSON, cost: { total_cost_usd: 2 } }));
+
+    expect(latestStatusLine()?.cost_total_usd).toBe(2);
+    const spoolDir = join(runtime.dir, "spool");
+    expect(readdirSync(spoolDir)).toEqual([STATUSLINE_SPOOL_FILE_NAME]);
+    expect(statSync(spoolDir).mode & 0o777).toBe(0o700);
+    expect(statSync(join(spoolDir, STATUSLINE_SPOOL_FILE_NAME)).mode & 0o777).toBe(0o600);
+  });
 });
 
 describe("the wrapper shares its process group with the owner's command", () => {
