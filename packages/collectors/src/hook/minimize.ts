@@ -132,10 +132,17 @@ function outputKey(event: KnownHookEvent, inputKey: string): string {
   return inputKey;
 }
 
+/** A non-empty string, or `undefined`: the domain schema caps most strings at min(1). */
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 /**
  * The value an input key is forwarded as, or `undefined` to drop it. Only
  * scalars cross: an object or array in a kept key is dropped, so no nested
- * payload can ride along under an allowlisted name.
+ * payload can ride along under an allowlisted name. An empty string is
+ * dropped too: forwarded, it would fail a min(1) field and make a known event
+ * shape-invalid, pausing tracking (wave 2 review).
  */
 function outputValue(inputKey: string, value: unknown): unknown {
   if (inputKey === "effort") {
@@ -143,15 +150,19 @@ function outputValue(inputKey: string, value: unknown): unknown {
       typeof value === "object" && value !== null
         ? (value as { level?: unknown }).level
         : undefined;
-    return typeof level === "string" ? level : undefined;
+    return nonEmpty(level);
   }
   if (inputKey === "error") {
-    return isStopFailureError(value) ? value : undefined;
+    // A present error outside the documented list crosses as "unknown", never
+    // as its text, so the record stays known (wave 2 review). An absent error
+    // stays absent: a missing field is never defaulted (D-12).
+    if (value === undefined) return undefined;
+    return isStopFailureError(value) ? value : "unknown";
   }
   if (inputKey === "is_interrupt") {
     return typeof value === "boolean" ? value : undefined;
   }
-  return typeof value === "string" ? value : undefined;
+  return nonEmpty(value);
 }
 
 /**
@@ -228,8 +239,8 @@ function truncate(value: string, cap: number): string {
 function pickEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
   const picked: Record<string, string> = {};
   for (const key of ENV_KEPT) {
-    const value = env[key];
-    if (typeof value === "string") {
+    const value = nonEmpty(env[key]);
+    if (value !== undefined) {
       const cap = ENV_CAPS[key];
       picked[key] = cap === undefined ? value : truncate(value, cap);
     }
@@ -311,7 +322,7 @@ export function minimizeHookInput(
     hook_event_name: truncate(eventName, EVENT_NAME_CAP),
   };
   if (!isKnownEvent(eventName)) {
-    if (typeof payload.session_id === "string") {
+    if (nonEmpty(payload.session_id) !== undefined) {
       record.session_id = payload.session_id;
     }
     return capRecord(record) as MinimizedHookRecord;

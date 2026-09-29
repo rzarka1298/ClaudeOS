@@ -144,12 +144,68 @@ describe("Test 6: per-event allowlists", () => {
     }
   });
 
-  it("StopFailure drops an undocumented error value entirely", () => {
-    const record = minimize(
-      buildHookStdin("StopFailure", { overrides: { error: `${SENTINEL} raw provider error` } }),
-    );
+  it.each([
+    ["an undocumented string", `${SENTINEL} raw provider error`],
+    ["an object", { message: SENTINEL }],
+    ["a number", 529],
+  ])(
+    "StopFailure forwards %s error as stop_error unknown, never its text (wave 2 review)",
+    (_label, error) => {
+      const record = minimize(buildHookStdin("StopFailure", { overrides: { error } }));
+      expect(record.stop_error).toBe("unknown");
+      expect(JSON.stringify(record)).not.toContain(SENTINEL);
+      expect(classifyHookRecord(record).kind).toBe("known");
+    },
+  );
+
+  it("StopFailure with no error at all stays without stop_error: a missing field is never defaulted", () => {
+    const payload: Record<string, unknown> = { ...buildHookPayload("StopFailure") };
+    delete payload.error;
+    const record = minimize(JSON.stringify(payload));
     expect(record).not.toHaveProperty("stop_error");
-    expect(JSON.stringify(record)).not.toContain(SENTINEL);
+  });
+
+  it("an empty string in any kept field is dropped, never forwarded (wave 2 review)", () => {
+    const record = minimizeHookInput(
+      buildHookStdin("PostModelSwitch", {
+        overrides: {
+          cwd: "",
+          transcript_path: "",
+          permission_mode: "",
+          agent_id: "",
+          agent_type: "",
+          from_model: "",
+          to_model: "",
+          source: "",
+        },
+      }),
+      { CLAUDE_PID: "", CCC_LAUNCH_SOURCE: "", TERM_PROGRAM: "Apple_Terminal" },
+      META,
+    );
+    expect(record).not.toBeNull();
+    for (const key of [
+      "cwd",
+      "transcript_path",
+      "permission_mode",
+      "agent_id",
+      "agent_type",
+      "from_model",
+      "to_model",
+      "switch_source",
+    ]) {
+      expect(record).not.toHaveProperty(key);
+    }
+    expect(record?.env).toEqual({ TERM_PROGRAM: "Apple_Terminal" });
+    expect(classifyHookRecord(record).kind).toBe("known");
+  });
+
+  it("an empty tool_name or notification_type is dropped and the record stays known", () => {
+    const tool = minimize(buildHookStdin("PostToolUse", { overrides: { tool_name: "" } }));
+    expect(tool).not.toHaveProperty("tool_name");
+    expect(classifyHookRecord(tool).kind).toBe("known");
+    const note = minimize(buildHookStdin("Notification", { overrides: { notification_type: "" } }));
+    expect(note).not.toHaveProperty("notification_type");
+    expect(classifyHookRecord(note).kind).toBe("known");
   });
 
   it("PostModelSwitch maps its model fields and renames source to switch_source", () => {
