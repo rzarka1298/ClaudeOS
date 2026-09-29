@@ -146,7 +146,7 @@ describe("createProjectsCollector: when it reads (D-11)", () => {
 });
 
 describe("createProjectsCollector: what it publishes (D-12, RESEARCH Pattern 4)", () => {
-  it("publishes a change as one upserted delta and an unchanged re-read as nothing", async () => {
+  it("publishes a change as one upserted delta and an unchanged re-read as a heartbeat only", async () => {
     const collector = makeCollector();
     collector.refresh(id(1));
     await settle();
@@ -158,22 +158,28 @@ describe("createProjectsCollector: what it publishes (D-12, RESEARCH Pattern 4)"
     expect(first.upserted[0]?.git).toEqual(repoState("main"));
     expect(first.upserted[0]?.displayPath).toBe("~/code/example-project-1");
 
+    // An unchanged re-read carries no upsert — only the observed heartbeat.
     collector.refresh(id(1));
     await settle();
-    expect(published).toHaveLength(1);
+    expect(published).toHaveLength(2);
+    expect(ProjectsUpdatedPayloadSchema.parse(published[1]?.payload)).toEqual({
+      upserted: [],
+      removed: [],
+      observed: [{ projectId: id(1), observedAt: "2026-09-01T00:00:00.000Z" }],
+    });
 
     answer = () => Promise.resolve(repoState("feature"));
     collector.refresh(id(1));
     await settle();
-    expect(published).toHaveLength(2);
-    const second = ProjectsUpdatedPayloadSchema.parse(published[1]?.payload);
+    expect(published).toHaveLength(3);
+    const second = ProjectsUpdatedPayloadSchema.parse(published[2]?.payload);
     expect(second).toEqual({
       upserted: [expect.objectContaining({ projectId: id(1), git: repoState("feature") })],
       removed: [],
     });
   });
 
-  it("publishes nothing for an unchanged re-read even though observedAt moved on", async () => {
+  it("publishes only the new observedAt (no upsert) for an unchanged re-read", async () => {
     let clock = Date.parse("2026-09-01T00:00:00.000Z");
     const collector = createProjectsCollector({
       eventBus: {
@@ -195,7 +201,12 @@ describe("createProjectsCollector: what it publishes (D-12, RESEARCH Pattern 4)"
     clock += 60_000;
     collector.refresh(id(1));
     await settle();
-    expect(published).toHaveLength(1);
+    expect(published).toHaveLength(2);
+    expect(ProjectsUpdatedPayloadSchema.parse(published[1]?.payload)).toEqual({
+      upserted: [],
+      removed: [],
+      observed: [{ projectId: id(1), observedAt: new Date(clock).toISOString() }],
+    });
     const view = collector.snapshot().projects.find((v) => v.projectId === id(1));
     expect(view?.observedAt).toBe(new Date(clock).toISOString());
   });
@@ -278,5 +289,79 @@ describe("createProjectsCollector: what it publishes (D-12, RESEARCH Pattern 4)"
     await settle();
     expect(published).toHaveLength(before);
     expect(collector.snapshot().projects.map((v) => v.projectId)).toEqual([id(1)]);
+  });
+});
+
+describe("createProjectsCollector: the freshness heartbeat (wave-3 review, D-12)", () => {
+  function tickingCollector() {
+    return createProjectsCollector({
+      eventBus: {
+        publish: (type, payload) => {
+          published.push({ type, payload });
+          return { id: published.length, type, occurredAt: new Date().toISOString(), payload };
+        },
+        subscriberCount: () => subscribers,
+      },
+      gitRunner,
+      readRecords: () => records,
+      readLauncherConfigs: (): LauncherConfigRecord[] => [],
+      homeDir: HOME,
+      // Fake timers move Date.now() with the interval, so each tick reads "now".
+      now: () => new Date(),
+    });
+  }
+
+  function heartbeats() {
+    return published
+      .map((event) => ProjectsUpdatedPayloadSchema.parse(event.payload))
+      .filter((payload) => payload.observed !== undefined);
+  }
+
+  it("publishes one heartbeat per tick carrying every unchanged project's new observedAt", async () => {
+    vi.setSystemTime(new Date("2026-09-01T00:00:00.000Z"));
+    subscribers = 1;
+    const collector = tickingCollector();
+    collector.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    // The first read changes pending -> repo: upserts, and nothing left for a heartbeat.
+    expect(heartbeats()).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const beats = heartbeats();
+    expect(beats).toHaveLength(2);
+    expect(beats[0]?.upserted).toEqual([]);
+    expect(beats[0]?.removed).toEqual([]);
+    expect(beats[0]?.observed?.map((o) => o.projectId).sort()).toEqual([id(1), id(2)]);
+    expect(new Set(beats[0]?.observed?.map((o) => o.observedAt))).toEqual(
+      new Set(["2026-09-01T00:01:00.000Z"]),
+    );
+    expect(new Set(beats[1]?.observed?.map((o) => o.observedAt))).toEqual(
+      new Set(["2026-09-01T00:01:30.000Z"]),
+    );
+    collector.stop();
+  });
+
+  it("publishes no heartbeat once the collector stops reading, so freshness can age honestly", async () => {
+    subscribers = 1;
+    const collector = tickingCollector();
+    collector.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    const before = published.length;
+    collector.stop();
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(published).toHaveLength(before);
+  });
+
+  it("never reports an observedAt for a read that failed", async () => {
+    subscribers = 1;
+    const collector = tickingCollector();
+    collector.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    answer = () => Promise.reject(new Error("timed out"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(heartbeats()).toEqual([]);
+    collector.stop();
   });
 });

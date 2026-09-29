@@ -290,6 +290,34 @@ describe("ProjectsUpdatedPayloadSchema", () => {
       }).success,
     ).toBe(true);
   });
+
+  it("carries an optional observed heartbeat: per-project observedAt for reads that changed nothing", () => {
+    const parsed = ProjectsUpdatedPayloadSchema.parse({
+      upserted: [],
+      removed: [],
+      observed: [{ projectId: EXAMPLE_PROJECT_ID, observedAt: "2026-09-01T00:00:30.000Z" }],
+    });
+    expect(parsed.observed).toEqual([
+      { projectId: EXAMPLE_PROJECT_ID, observedAt: "2026-09-01T00:00:30.000Z" },
+    ]);
+  });
+
+  it("rejects a malformed observed heartbeat entry", () => {
+    expect(
+      ProjectsUpdatedPayloadSchema.safeParse({
+        upserted: [],
+        removed: [],
+        observed: [{ projectId: "not-an-id", observedAt: "2026-09-01T00:00:30.000Z" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      ProjectsUpdatedPayloadSchema.safeParse({
+        upserted: [],
+        removed: [],
+        observed: [{ projectId: EXAMPLE_PROJECT_ID, observedAt: null }],
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("compareProjectViews (UI-SPEC S1 Order, PROJ-15)", () => {

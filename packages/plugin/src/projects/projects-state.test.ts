@@ -1,7 +1,14 @@
 import type { ProjectsSnapshot, ProjectView } from "@ccc/domain";
 import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
-import { describe, expect, it } from "vitest";
-import { projectRowsFrom, projectShortcutsStateFor } from "./projects-state.js";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  applyProjectsDelta,
+  applyProjectsSnapshot,
+  projectRowsFrom,
+  projectShortcutsStateFor,
+  projectsSnapshot,
+  resetProjectsState,
+} from "./projects-state.js";
 
 /**
  * `projectShortcutsStateFor` (pure) and `projectRowsFrom` (plan 04-07): the
@@ -32,9 +39,9 @@ function snapshotOf(projects: readonly ProjectView[]): ProjectsSnapshot {
 
 describe("projectShortcutsStateFor: undefined snapshot", () => {
   it("reads loading while the connection is still connecting", () => {
-    expect(
-      projectShortcutsStateFor(undefined, { kind: "connecting" }, NOW_ISO),
-    ).toEqual({ kind: "loading" });
+    expect(projectShortcutsStateFor(undefined, { kind: "connecting" }, NOW_ISO)).toEqual({
+      kind: "loading",
+    });
   });
 
   it("reads unavailable once disconnected with nothing ever received", () => {
@@ -54,8 +61,18 @@ describe("projectShortcutsStateFor: a defined snapshot is always ready", () => {
   });
 
   it("orders rows with compareProjectViews (pinned first, then last-opened, then name)", () => {
-    const a = view({ projectId: "a".repeat(9) + "0".repeat(16) as ProjectView["projectId"], displayName: "Zeta", pinned: false, lastOpenedAt: "2026-09-28T10:00:00.000Z" });
-    const b = view({ projectId: "b".repeat(9) + "0".repeat(16) as ProjectView["projectId"], displayName: "Alpha", pinned: true, lastOpenedAt: null });
+    const a = view({
+      projectId: ("a".repeat(9) + "0".repeat(16)) as ProjectView["projectId"],
+      displayName: "Zeta",
+      pinned: false,
+      lastOpenedAt: "2026-09-28T10:00:00.000Z",
+    });
+    const b = view({
+      projectId: ("b".repeat(9) + "0".repeat(16)) as ProjectView["projectId"],
+      displayName: "Alpha",
+      pinned: true,
+      lastOpenedAt: null,
+    });
     const state = projectShortcutsStateFor(snapshotOf([a, b]), { kind: "live" }, NOW_ISO);
     if (state.kind !== "ready") throw new Error("unreachable");
     expect(state.data.projects.map((r) => r.name)).toEqual(["Alpha", "Zeta"]);
@@ -122,7 +139,14 @@ describe("projectRowsFrom", () => {
         id: "abcdefghi0123456789abcdef0123456",
         name: "example-project",
         pinned: true,
-        git: { kind: "repo", branch: "main", detached: false, dirty: false, commits: [], remote: null },
+        git: {
+          kind: "repo",
+          branch: "main",
+          detached: false,
+          dirty: false,
+          commits: [],
+          remote: null,
+        },
         gitReadFailed: false,
         github: { kind: "none" },
         observedAt: NOW_ISO,
@@ -131,5 +155,57 @@ describe("projectRowsFrom", () => {
         nextTask: null,
       },
     ]);
+  });
+});
+
+describe("the observed heartbeat keeps freshness honest (wave-3 review MAJOR)", () => {
+  const T0 = Date.parse("2026-09-28T12:00:00.000Z");
+  const at = (ms: number): string => new Date(T0 + ms).toISOString();
+  const projectId = view().projectId;
+
+  afterEach(resetProjectsState);
+
+  function receiveSnapshot(): void {
+    applyProjectsSnapshot({
+      lastEventId: 1,
+      state: { serviceStartedAt: at(0), projects: snapshotOf([view({ observedAt: at(0) })]) },
+    });
+  }
+
+  function heartbeat(id: number, observedAt: string, target = projectId): void {
+    applyProjectsDelta({
+      id,
+      type: "projects.updated",
+      occurredAt: observedAt,
+      payload: { upserted: [], removed: [], observed: [{ projectId: target, observedAt }] },
+    });
+  }
+
+  function freshnessAt(ms: number): string {
+    const state = projectShortcutsStateFor(projectsSnapshot.value, { kind: "live" }, at(ms));
+    if (state.kind !== "ready") throw new Error(`expected ready, got ${state.kind}`);
+    return state.freshness;
+  }
+
+  it("a steady connection whose git never changes stays live past two minutes", () => {
+    receiveSnapshot();
+    for (let tick = 1; tick <= 8; tick += 1) heartbeat(tick + 1, at(tick * 30_000));
+    expect(projectsSnapshot.value?.projects[0]?.observedAt).toBe(at(240_000));
+    expect(freshnessAt(250_000)).toBe("live");
+  });
+
+  it("goes stale once the heartbeats stop (the collector stopped reading)", () => {
+    receiveSnapshot();
+    heartbeat(2, at(30_000));
+    expect(freshnessAt(60_000)).toBe("live");
+    expect(freshnessAt(120_000)).toBe("stale");
+  });
+
+  it("never moves observedAt backwards, and ignores a heartbeat for an unknown project", () => {
+    receiveSnapshot();
+    heartbeat(2, at(60_000));
+    heartbeat(3, at(30_000));
+    heartbeat(4, at(90_000), "zzzzzzzzz0000000000000000");
+    expect(projectsSnapshot.value?.projects[0]?.observedAt).toBe(at(60_000));
   });
 });
