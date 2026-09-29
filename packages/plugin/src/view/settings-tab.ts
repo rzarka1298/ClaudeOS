@@ -93,6 +93,9 @@ export const CLAUDE_COPY_UNINSTALL_DESC =
   "Removes the hooks and the status-line wrapper and restores your previous settings: " +
   CLAUDE_UNINSTALL_COMMAND;
 export const CLAUDE_UNINSTALL_COPIED_NOTICE = "Uninstall command copied. Run it in Terminal.";
+/** Rows 2 and 3 when the clipboard write is refused; the command is still in the row's description. */
+export const CLAUDE_COPY_FAILED_NOTICE =
+  "Couldn't copy the command. It's shown in the setting's description; copy it from there.";
 
 // Row 4 -- status-line wrapper status (SettingDefinitionEmpty).
 export const CLAUDE_STATUSLINE_NAME = "Status-line wrapper";
@@ -277,7 +280,10 @@ export class CommandCenterSettingTab extends PluginSettingTab {
   private readonly host: SettingsTabHost;
   /** `"checking"` until the service answers; `"unavailable"` after a failed fetch (UI-SPEC S5). */
   private claudeStatus: ClaudeIntegrationStatus | "checking" | "unavailable" = "checking";
-  private claudeStatusRequested = false;
+  /** True while a `getIntegration()` call is in flight; a display during it starts no second one. */
+  private claudeStatusInFlight = false;
+  /** True while this tab's OWN `update()` runs, whose `getSettingDefinitions()` must not refetch. */
+  private selfUpdating = false;
   /** R-15: set once a successful write turns transcript analysis off; row 6 reflects it. */
   private transcriptJustDisabled = false;
 
@@ -330,7 +336,9 @@ export class CommandCenterSettingTab extends PluginSettingTab {
         type: "toggle" as const,
         key: TRANSCRIPT_ANALYSIS_KEY,
         defaultValue: false,
-        disabled: () => this.claudeStatus === "unavailable",
+        // Off-looking while the service's value is unknown would be a guess:
+        // the toggle is only live once a status has actually been read.
+        disabled: () => typeof this.claudeStatus !== "object",
       },
     };
     const deleteUsageItem = {
@@ -399,7 +407,7 @@ export class CommandCenterSettingTab extends PluginSettingTab {
         // render via `deleteUsageDescription()`.
         if (wasEnabled && !enabled) this.transcriptJustDisabled = true;
       }
-      this.update();
+      this.rerender();
       return;
     }
     if (key !== REDUCED_MOTION_KEY) {
@@ -411,30 +419,45 @@ export class CommandCenterSettingTab extends PluginSettingTab {
     // reverted save puts the dropdown back on the persisted value without the
     // tab tracking a second copy of it. `display()` would not refresh a
     // declarative setting on 1.13+.
-    if (outcome === "reverted") this.update();
+    if (outcome === "reverted") this.rerender();
   }
 
   /**
-   * Kicks off exactly one `getIntegration()` fetch, the first time
-   * `getSettingDefinitions()` runs (Obsidian's own declarative-settings
-   * "first-render" hook, since this tab has no `display()` override). A
-   * missing seam (`host.claude` undefined) or a rejected fetch both settle
-   * on a definite state -- `"unavailable"` on failure -- never leaving the
-   * row on `"checking"` forever without a reason.
+   * Re-fetches the integration status each time the tab is displayed
+   * (wave 2 review): Obsidian calls `getSettingDefinitions()` on every
+   * display, so that is the hook. The last known status stays on screen
+   * while the new one loads (only the very first load reads "Checking…"),
+   * a display during an in-flight fetch starts no second one, and the
+   * tab's own {@link rerender} never triggers a fetch -- Obsidian's
+   * `update()` re-reads the definitions, which would otherwise loop. A
+   * missing seam or a rejected fetch settles on a definite state --
+   * `"unavailable"` on failure -- never "checking" forever.
    */
   private ensureClaudeStatusLoaded(): void {
-    if (this.claudeStatusRequested || !this.host.claude) return;
-    this.claudeStatusRequested = true;
+    if (this.selfUpdating || this.claudeStatusInFlight || !this.host.claude) return;
+    this.claudeStatusInFlight = true;
     this.host.claude.getIntegration().then(
       (status) => {
+        this.claudeStatusInFlight = false;
         this.claudeStatus = status;
-        this.update();
+        this.rerender();
       },
       () => {
+        this.claudeStatusInFlight = false;
         this.claudeStatus = "unavailable";
-        this.update();
+        this.rerender();
       },
     );
+  }
+
+  /** `update()` without the refetch its `getSettingDefinitions()` call would otherwise start. */
+  private rerender(): void {
+    this.selfUpdating = true;
+    try {
+      this.update();
+    } finally {
+      this.selfUpdating = false;
+    }
   }
 
   /** Row 6's description: the base copy, plus the R-15 note once analysis has just been turned off. */
@@ -453,11 +476,17 @@ export class CommandCenterSettingTab extends PluginSettingTab {
   /**
    * Rows 2 and 3: copies a fixed, repository-relative command (D-13, R-24 --
    * the dashboard never installs anything itself) and notifies. A missing
-   * seam is a no-op rather than a throw, matching every other row here.
+   * seam is a no-op rather than a throw, matching every other row here; a
+   * refused clipboard write says so instead of claiming a copy.
    */
   private async copyCommand(command: string, copiedNotice: string): Promise<void> {
     if (!this.host.claude) return;
-    await this.host.claude.copyText(command);
+    try {
+      await this.host.claude.copyText(command);
+    } catch {
+      this.notify(CLAUDE_COPY_FAILED_NOTICE);
+      return;
+    }
     this.notify(copiedNotice);
   }
 
@@ -492,6 +521,6 @@ export class CommandCenterSettingTab extends PluginSettingTab {
     } catch {
       this.notify(CLAUDE_USAGE_DELETE_FAILED_NOTICE);
     }
-    this.update();
+    this.rerender();
   }
 }

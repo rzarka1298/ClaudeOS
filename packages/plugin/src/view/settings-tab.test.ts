@@ -7,6 +7,7 @@ import {
   applyReducedMotionChange,
   applyTranscriptAnalysisChange,
   asMotionPreference,
+  CLAUDE_COPY_FAILED_NOTICE,
   CLAUDE_COPY_INSTALL_NAME,
   CLAUDE_COPY_UNINSTALL_NAME,
   CLAUDE_DELETE_USAGE_NAME,
@@ -513,5 +514,133 @@ describe("CommandCenterSettingTab -- Claude rows 2, 3 and 6 (Task 3)", () => {
     const allText = group.items.map((item) => `${item.name} ${item.desc ?? ""}`).join(" ");
     expect(allText).not.toContain("/Users/");
     expect(allText).not.toContain("~/.claude");
+  });
+});
+
+describe("CommandCenterSettingTab -- status freshness and control safety (wave 2 review)", () => {
+  function seam(overrides: Partial<SettingsClaudeSeam> = {}): SettingsClaudeSeam {
+    return {
+      getIntegration: vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS),
+      setTranscriptAnalysis: vi.fn().mockResolvedValue({ enabled: false }),
+      deleteUsageAnalytics: vi.fn().mockResolvedValue(undefined),
+      copyText: vi.fn().mockResolvedValue(undefined),
+      ...overrides,
+    };
+  }
+
+  function hookRow(tab: CommandCenterSettingTab): string | undefined {
+    return tab.getSettingDefinitions()[1].items[0].desc;
+  }
+
+  function toggleDisabled(tab: CommandCenterSettingTab): boolean {
+    return tab.getSettingDefinitions()[1].items[4].control.disabled();
+  }
+
+  it("re-fetches the status each time the tab is displayed, showing the newest answer", async () => {
+    const getIntegration = vi
+      .fn()
+      .mockResolvedValue({ ...BASE_CLAUDE_STATUS, hooks: "installed", lastEventAt: null })
+      .mockResolvedValueOnce(BASE_CLAUDE_STATUS);
+    const tab = new CommandCenterSettingTab(
+      {} as never,
+      {} as never,
+      createHost({ claude: seam({ getIntegration }) }),
+    );
+
+    tab.getSettingDefinitions(); // first display
+    await flush();
+    expect(hookRow(tab)).toBe(CLAUDE_HOOKS_NOT_INSTALLED_TEXT);
+    await flush(); // the owner opens the tab again (hookRow was that display)
+
+    expect(getIntegration).toHaveBeenCalledTimes(2);
+    expect(hookRow(tab)).toContain("Installed");
+  });
+
+  it("its own update() after a fetch does not start another fetch (no refresh loop)", async () => {
+    const getIntegration = vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS);
+    const tab = new CommandCenterSettingTab(
+      {} as never,
+      {} as never,
+      createHost({ claude: seam({ getIntegration }) }),
+    );
+    // Obsidian's update() re-reads getSettingDefinitions(); the stub's does not.
+    tab.update = () => {
+      tab.getSettingDefinitions();
+    };
+
+    tab.getSettingDefinitions();
+    await flush(12);
+
+    expect(getIntegration).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts no second fetch while one is in flight, then re-fetches on the next display", async () => {
+    const resolvers: Array<(status: ClaudeIntegrationStatus) => void> = [];
+    const getIntegration = vi.fn(
+      () =>
+        new Promise<ClaudeIntegrationStatus>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const tab = new CommandCenterSettingTab(
+      {} as never,
+      {} as never,
+      createHost({ claude: seam({ getIntegration }) }),
+    );
+
+    tab.getSettingDefinitions();
+    tab.getSettingDefinitions();
+    expect(getIntegration).toHaveBeenCalledTimes(1);
+
+    resolvers[0]?.({ ...BASE_CLAUDE_STATUS, hooks: "installed", lastEventAt: null });
+    await flush();
+    tab.getSettingDefinitions();
+    expect(getIntegration).toHaveBeenCalledTimes(2);
+    resolvers[1]?.(BASE_CLAUDE_STATUS);
+    await flush();
+
+    expect(hookRow(tab)).toBe(CLAUDE_HOOKS_NOT_INSTALLED_TEXT);
+  });
+
+  it("disables the transcript toggle while checking and while unavailable, enables it once known", async () => {
+    let resolveIntegration!: (status: ClaudeIntegrationStatus) => void;
+    let rejectIntegration!: (error: Error) => void;
+    const getIntegration = vi.fn(
+      () =>
+        new Promise<ClaudeIntegrationStatus>((resolve, reject) => {
+          resolveIntegration = resolve;
+          rejectIntegration = reject;
+        }),
+    );
+    const tab = new CommandCenterSettingTab(
+      {} as never,
+      {} as never,
+      createHost({ claude: seam({ getIntegration }) }),
+    );
+
+    tab.getSettingDefinitions();
+    expect(toggleDisabled(tab)).toBe(true); // checking
+
+    resolveIntegration(BASE_CLAUDE_STATUS);
+    await flush();
+    expect(toggleDisabled(tab)).toBe(false);
+
+    tab.getSettingDefinitions(); // shown again; this fetch fails
+    rejectIntegration(new Error("service down"));
+    await flush();
+    expect(hookRow(tab)).toBe(CLAUDE_STATUS_UNAVAILABLE_TEXT);
+    expect(toggleDisabled(tab)).toBe(true);
+  });
+
+  it("a rejected copy notifies the failure instead of the copied notice", async () => {
+    const copyText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
+    const host = createHost({ claude: seam({ copyText }) });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    tab.getSettingDefinitions()[1].items[1].action?.({} as never, 1);
+    await flush();
+
+    expect(copyText).toHaveBeenCalledWith(CLAUDE_INSTALL_COMMAND);
+    expect(host.notices).toEqual([CLAUDE_COPY_FAILED_NOTICE]);
   });
 });
