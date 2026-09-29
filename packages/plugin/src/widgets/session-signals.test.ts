@@ -66,7 +66,10 @@ describe("applySessionUpserted: revision monotonicity (Test 2, ADR-0007)", () =>
   it("applies the first valid event for a RunId", () => {
     const applied = applySessionUpserted({ session: baseSession() });
     expect(applied).toBe(true);
-    expect(sessionsById.value.get(runId(1))).toMatchObject({ revision: 1, name: "Refactor parser" });
+    expect(sessionsById.value.get(runId(1))).toMatchObject({
+      revision: 1,
+      name: "Refactor parser",
+    });
   });
 
   it("ignores an event whose revision is not greater than the stored one", () => {

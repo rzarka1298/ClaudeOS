@@ -1,6 +1,7 @@
-import type { ServiceEvent } from "@ccc/domain";
+import type { ServiceEvent, SnapshotResponse } from "@ccc/domain";
 import type { EventClient, EventClientState } from "@ccc/service-api-client";
 import { signal } from "@preact/signals";
+import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./widgets/claude-events.js";
 
 /**
  * The command-center view's connection state, driven entirely by the real
@@ -60,10 +61,17 @@ export function attachEventClient(client: EventClient): void {
   client.subscribe(
     (event: ServiceEvent) => {
       lastEvent.value = { type: event.type, occurredAt: event.occurredAt };
+      // One call per concern (PATTERNS fact 4): Phase 5's session and Claude
+      // integration events; Phase 4 adds `state.projects` adoption the same
+      // way, here and in `onSnapshot` below, rather than a second subscribe.
+      applyClaudeServiceEvent(event);
     },
     (state: EventClientState) => {
       connectionState.value = mapClientState(state);
       connectionChangedAt.value = new Date().toISOString();
+    },
+    (snapshot: SnapshotResponse) => {
+      adoptClaudeSnapshot(snapshot);
     },
   );
 }

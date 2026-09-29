@@ -162,61 +162,13 @@ export const todayWidget: WidgetDefinition<TodayData> = {
 };
 
 // ---------------------------------------------------------------------------
-// 2. Active Claude sessions (PRD §7.1.2) — unavailable until Phase 5
+// 2. Active Claude sessions (PRD §7.1.2) — moved to `active-sessions.tsx`
+// (plan 05-06). Re-exported here so `registry.ts` needs no change (PATTERNS
+// "Moving them"). This is the ONE line Phase 4's `projectShortcutsWidget`
+// region below never has to see move.
 // ---------------------------------------------------------------------------
 
-export type SessionStatus =
-  | "running"
-  | "waiting-for-approval"
-  | "recently-completed"
-  | "failed"
-  | "unknown";
-
-export interface SessionRow {
-  readonly id: string;
-  readonly project: string;
-  readonly name: string;
-  readonly model: string | null;
-  readonly elapsed: string;
-  readonly lastActivity: string;
-  readonly status: SessionStatus;
-}
-
-export interface ActiveSessionsData {
-  readonly rows: readonly SessionRow[];
-}
-
-function ActiveSessionsBody({
-  data,
-  size,
-  onNavigate,
-}: WidgetBodyProps<ActiveSessionsData>): VNode | null {
-  return (
-    <ListBody<SessionRow>
-      rows={data.rows}
-      size={size}
-      keyOf={(row) => row.id}
-      renderPrimary={(row) => `${row.project} · ${row.name}`}
-      renderMeta={(row) => `${row.status} · ${row.elapsed} · ${row.lastActivity}`}
-      moreDestination="agent-runs"
-      onMore={onNavigate}
-    />
-  );
-}
-
-export const activeSessionsWidget: WidgetDefinition<ActiveSessionsData> = {
-  id: "active-sessions",
-  title: "Active Claude sessions",
-  description: "Running, waiting, completed and failed sessions. Filled in by phase 5.",
-  dataKeys: [{ key: "sessions.active", transport: "service", sourceLabel: "Claude Code hooks" }],
-  refresh: { kind: "event-driven" },
-  minSize: "medium",
-  preferredSize: "tall",
-  featureFlag: "widget.active-sessions",
-  quickActions: [],
-  renderBody: ActiveSessionsBody,
-  renderEmpty: () => <p className="ccc-state-body">No sessions are running right now.</p>,
-};
+export { type ActiveSessionsData, activeSessionsWidget } from "./active-sessions.js";
 
 // ---------------------------------------------------------------------------
 // 3. Project shortcuts (PRD §7.1.3) — unavailable until Phase 4

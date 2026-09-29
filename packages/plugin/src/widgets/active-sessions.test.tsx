@@ -1,9 +1,9 @@
-import type { ServiceEvent, SessionView } from "@ccc/domain";
+import type { RunId, ServiceEvent, SessionView } from "@ccc/domain";
 import { cleanup, render } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectionState } from "../connection-state.js";
 import { Overview } from "../view/overview.js";
-import { activeSessionsMetric, type ActiveSessionsData } from "./active-sessions.js";
+import { type ActiveSessionsData, activeSessionsMetric } from "./active-sessions.js";
 import { applyClaudeServiceEvent } from "./claude-events.js";
 import {
   activeSessionsState,
@@ -13,8 +13,8 @@ import {
 } from "./session-signals.js";
 
 /** A 25-char `[0-9a-z]` RunId, varied by `n` (RUN_ID_PATTERN). */
-function runId(n: number): string {
-  return `0mfk1a2b3c4d5e6f7a8b9c0d${(n % 36).toString(36)}`;
+function runId(n: number): RunId {
+  return `0mfk1a2b3c4d5e6f7a8b9c0d${(n % 36).toString(36)}` as RunId;
 }
 
 function session(overrides: Partial<SessionView> = {}): SessionView {
@@ -44,7 +44,7 @@ function session(overrides: Partial<SessionView> = {}): SessionView {
     hasTranscript: false,
     terminateRequested: false,
     ...overrides,
-  } as SessionView;
+  };
 }
 
 function resetSignals(): void {

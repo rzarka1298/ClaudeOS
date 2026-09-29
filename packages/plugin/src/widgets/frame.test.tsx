@@ -943,8 +943,14 @@ describe("a panel title used mid-sentence keeps its proper nouns", () => {
         now={TWO_MINUTES_LATER}
       />,
     );
+    // 05-06: a hero-variant widget (`active-sessions`) draws its loading
+    // skeleton in the frame-owned `.ccc-hero-head`, not the generic
+    // `.ccc-card-body` — the same widget can never have both live at once
+    // (frame.tsx), so checking either location covers both shapes.
     expect(
-      loading.container.querySelector(".ccc-card-body .ccc-visually-hidden")?.textContent,
+      loading.container.querySelector(
+        ".ccc-hero-head .ccc-visually-hidden, .ccc-card-body .ccc-visually-hidden",
+      )?.textContent,
     ).toBe(`Loading ${panel}`);
     cleanup();
 

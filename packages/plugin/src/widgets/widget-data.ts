@@ -2,6 +2,7 @@ import { type ReadonlySignal, signal } from "@preact/signals";
 import type { WidgetState } from "./contract.js";
 import type { WidgetId } from "./registry.js";
 import { serviceHealthState } from "./service-health.js";
+import { activeSessionsState } from "./session-signals.js";
 
 /**
  * One signal per widget (research Pattern 8, PERF-02/PERF-03).
@@ -42,9 +43,13 @@ const WIDGET_STATES: Readonly<Record<WidgetId, ReadonlySignal<WidgetState<unknow
   // The only two panels that will sit behind a real OAuth capability gate.
   today: constantState(permissionRequiredState("google", "Google Calendar and Gmail")),
   "github-discoveries": constantState(permissionRequiredState("github", "GitHub")),
-  // The five with no connector to click: `unavailable`, not a plausible lie
+  // The one panel this phase gives a route: a computed over the live
+  // session signals (`session-signals.ts`), following the same "replace the
+  // constant with a client-fed signal, change nothing else" move as
+  // `service-health` above (this file's own docblock).
+  "active-sessions": activeSessionsState,
+  // The four with no connector to click: `unavailable`, not a plausible lie
   // that reads as "one click away" (ADR-0023 rejected alternative).
-  "active-sessions": constantState(UNAVAILABLE_STATE),
   "project-shortcuts": constantState(UNAVAILABLE_STATE),
   "claude-usage": constantState(UNAVAILABLE_STATE),
   "tech-intel": constantState(UNAVAILABLE_STATE),
