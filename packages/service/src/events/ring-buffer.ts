@@ -1,6 +1,11 @@
 import type { ServiceEvent, ServiceEventType } from "@ccc/domain";
 
-const DEFAULT_EVENT_BUFFER_CAPACITY = 200;
+/**
+ * 500, re-tuned from 200 for Claude tool events (PR-05): the pipeline
+ * coalesces activity-only events to at most one per Run per 5 s, so the
+ * buffer is sized for that rate, not the raw tool-call rate.
+ */
+const DEFAULT_EVENT_BUFFER_CAPACITY = 500;
 
 /**
  * The buffer's capacity, single-sourced. ADR-0007 calls buffer depth a
@@ -9,7 +14,7 @@ const DEFAULT_EVENT_BUFFER_CAPACITY = 200;
  * that trade-off stays actually tunable rather than a number repeated at
  * every use site. Overridable via `CCC_EVENT_BUFFER_CAPACITY` so an
  * integration test can exercise the eviction/resync path without publishing
- * two hundred real events first.
+ * five hundred real events first.
  */
 export const EVENT_BUFFER_CAPACITY = Number(
   process.env.CCC_EVENT_BUFFER_CAPACITY ?? DEFAULT_EVENT_BUFFER_CAPACITY,

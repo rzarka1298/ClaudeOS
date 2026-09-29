@@ -1,15 +1,29 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { SessionFacts } from "@ccc/collectors";
+import type { KnownHookEvent } from "@ccc/domain";
 import type { Logger } from "pino";
 import type { SessionFactsProvider } from "./pipeline.js";
+import { assertTranscriptPath, TranscriptPathRefusedError } from "./transcript-path.js";
 
 export type { SessionFactsProvider } from "./pipeline.js";
 
+/**
+ * The process-facts OS adapter (D-19, RESEARCH Q5, PATTERNS fact 6). Every
+ * shell-out is `/bin/ps` by absolute path with a fixed argv array, a
+ * timeout and the C locale, never a shell string. A pid originates in a
+ * hook record, so it is validated as digits before it can reach an argv
+ * (T-05-29). Failures read as unknown (null, empty), never as a throw.
+ */
+
+/** The `execFile` surface this adapter needs; tests pass a fake process table. */
 export type ExecFileRunner = (
   file: string,
   args: readonly string[],
   options: { readonly timeout: number; readonly env: Readonly<Record<string, string>> },
 ) => Promise<{ readonly stdout: string }>;
 
+/** `process.kill(pid, 0)`: signal 0 only checks existence and permission. */
 export type KillFn = (pid: number, signal: 0) => void;
 
 export interface AncestorEntry {
@@ -19,9 +33,13 @@ export interface AncestorEntry {
 }
 
 export interface ProcessFacts {
+  /** `kill(pid, 0)`: ESRCH is gone; EPERM is alive but not ours. */
   isAlive(pid: number): boolean;
+  /** The raw C-locale `lstart` string per pid, from one batched `ps` call. Missing pids are absent. */
   readStartTimes(pids: readonly number[]): Promise<Map<number, string>>;
+  /** The controlling tty (`ttys021`), or null for none (`??`) or on failure. */
   readTty(pid: number): Promise<string | null>;
+  /** The process and its parents up to 12 levels, stopping at pid 1. */
   readAncestry(pid: number): Promise<AncestorEntry[]>;
 }
 
@@ -31,27 +49,162 @@ export interface ProcessFactsDeps {
   readonly logger: Logger;
 }
 
-// RED stub (05-08 Task 2).
-export function createProcessFacts(_deps: ProcessFactsDeps): ProcessFacts {
-  throw new Error("not implemented");
+const PS = "/bin/ps";
+const PS_TIMEOUT_MS = 2000;
+const PS_ENV: Readonly<Record<string, string>> = { LC_ALL: "C" };
+const PID_PATTERN = /^[0-9]{1,10}$/;
+const TTY_PATTERN = /^ttys?[0-9]{1,6}$/;
+const MAX_ANCESTRY_DEPTH = 12;
+
+/** A pid safe to put in an argv or signal: decimal digits only, and above 0 (0 is the process group). */
+function isValidPid(pid: number): boolean {
+  return PID_PATTERN.test(String(pid)) && pid > 0;
+}
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * The real `execFile` runner. `ps -p a,b` exits 1 when any listed pid is
+ * gone yet still prints the live ones, so an exit-code failure still yields
+ * its stdout; a timeout or spawn failure rejects.
+ */
+export const nodeExecFile: ExecFileRunner = async (file, args, options) => {
+  try {
+    const { stdout } = await execFileAsync(file, [...args], {
+      timeout: options.timeout,
+      env: { ...options.env },
+      encoding: "utf8",
+      maxBuffer: 256 * 1024,
+    });
+    return { stdout };
+  } catch (err: unknown) {
+    const failure = err as { code?: unknown; stdout?: unknown; killed?: boolean };
+    if (typeof failure.code === "number" && !failure.killed && typeof failure.stdout === "string") {
+      return { stdout: failure.stdout };
+    }
+    throw err;
+  }
+};
+
+export function createProcessFacts(deps: ProcessFactsDeps): ProcessFacts {
+  const { logger } = deps;
+
+  async function ps(fields: string, pids: readonly number[]): Promise<string | null> {
+    try {
+      const { stdout } = await deps.execFile(PS, ["-o", fields, "-p", pids.join(",")], {
+        timeout: PS_TIMEOUT_MS,
+        env: PS_ENV,
+      });
+      return stdout;
+    } catch (err: unknown) {
+      logger.info(
+        { fields, count: pids.length, code: (err as { code?: unknown }).code },
+        "ps read failed",
+      );
+      return null;
+    }
+  }
+
+  return {
+    isAlive(pid) {
+      if (!isValidPid(pid)) return false;
+      try {
+        deps.kill(pid, 0);
+        return true;
+      } catch (err: unknown) {
+        return (err as NodeJS.ErrnoException).code === "EPERM";
+      }
+    },
+
+    async readStartTimes(pids) {
+      const valid = [...new Set(pids.filter(isValidPid))];
+      if (valid.length !== pids.length) {
+        logger.warn({ refused: pids.length - valid.length }, "ps refused an invalid pid");
+      }
+      const times = new Map<number, string>();
+      if (valid.length === 0) return times;
+      const stdout = await ps("pid=,lstart=", valid);
+      for (const line of (stdout ?? "").split("\n")) {
+        const match = /^\s*(\d+)\s+(\S.*?)\s*$/.exec(line);
+        if (match === null) continue;
+        const pid = Number(match[1]);
+        if (valid.includes(pid)) times.set(pid, match[2] as string);
+      }
+      return times;
+    },
+
+    async readTty(pid) {
+      if (!isValidPid(pid)) return null;
+      const tty = (await ps("tty=", [pid]))?.trim() ?? "";
+      return TTY_PATTERN.test(tty) ? tty : null;
+    },
+
+    async readAncestry(pid) {
+      const chain: AncestorEntry[] = [];
+      let current = pid;
+      while (chain.length < MAX_ANCESTRY_DEPTH && isValidPid(current) && current !== 1) {
+        const stdout = await ps("ppid=,comm=", [current]);
+        const match = /^\s*(\d+)\s+(\S.*?)\s*$/.exec((stdout ?? "").split("\n")[0] ?? "");
+        if (match === null) break;
+        const ppid = Number(match[1]);
+        chain.push({ pid: current, ppid, comm: match[2] as string });
+        current = ppid;
+      }
+      return chain;
+    },
+  };
 }
 
 export interface SessionFactsProviderOptions {
   readonly processFacts: ProcessFacts;
+  /** `<claude-config>/projects`: the one read-only root a transcript path may resolve under (PR-28). */
   readonly claudeProjectsRoot: string;
   readonly logger: Logger;
 }
 
-// RED stub (05-08 Task 2).
+const START_EVENT: KnownHookEvent = "SessionStart";
+
+/**
+ * The facts the reducer needs beside a hook record (D-19, PR-28). At
+ * SessionStart it reads the pid's `lstart` (the PID-reuse identity); on any
+ * record it keeps `transcript_path` only when it resolves under the Claude
+ * projects root. `launchSource` is `dashboard` only when the hook forwarded
+ * `CCC_LAUNCH_SOURCE=dashboard`. Project attribution and the terminal/
+ * external launch-source classifier arrive with 05-11 through this same
+ * provider; until then those facts are null (unknown, never guessed).
+ */
 export function createSessionFactsProvider(
-  _options: SessionFactsProviderOptions,
+  options: SessionFactsProviderOptions,
 ): SessionFactsProvider {
-  const none: SessionFacts = {
-    pidStartedAt: null,
-    launchSource: null,
-    projectId: null,
-    worktreeRoot: null,
-    transcriptPath: null,
+  const { processFacts, claudeProjectsRoot, logger } = options;
+  return {
+    async factsFor(record) {
+      let pidStartedAt: string | null = null;
+      const rawPid = record.env?.CLAUDE_PID;
+      if (record.hook_event_name === START_EVENT && rawPid !== undefined) {
+        const pid = Number.parseInt(rawPid, 10);
+        pidStartedAt = (await processFacts.readStartTimes([pid])).get(pid) ?? null;
+      }
+
+      let transcriptPath: string | null = null;
+      if (record.transcript_path !== undefined) {
+        try {
+          transcriptPath = assertTranscriptPath(record.transcript_path, claudeProjectsRoot);
+        } catch (err: unknown) {
+          if (!(err instanceof TranscriptPathRefusedError)) throw err;
+          // The reason only: the path itself never reaches a log line (D-49).
+          logger.info({ reason: err.reason }, "transcript path refused; stored as null");
+        }
+      }
+
+      const facts: SessionFacts = {
+        pidStartedAt,
+        launchSource: record.env?.CCC_LAUNCH_SOURCE === "dashboard" ? "dashboard" : null,
+        projectId: null,
+        worktreeRoot: null,
+        transcriptPath,
+      };
+      return facts;
+    },
   };
-  return { factsFor: async () => none };
 }

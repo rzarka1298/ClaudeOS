@@ -74,3 +74,20 @@ export function resolveDbPath(): string {
 export function resolveSpoolPath(): string {
   return process.env.CCC_SPOOL_PATH ?? join(resolveRuntimeDir(), "spool", "hooks.ndjson");
 }
+
+/**
+ * Where the installer copies the hook bundle (D-07): `<runtimeDir>/hooks`.
+ * Read-only for the service; it never writes here.
+ */
+export function resolveHooksDir(): string {
+  return join(resolveRuntimeDir(), "hooks");
+}
+
+/**
+ * Claude Code's own config dir: `CLAUDE_CONFIG_DIR`, else `~/.claude`. The
+ * service only ever READS under it (transcripts, `<dir>/projects`) and never
+ * registers it as a write root (PR-07). Every test points it at a temp dir.
+ */
+export function resolveClaudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+}

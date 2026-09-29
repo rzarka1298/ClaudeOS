@@ -2,11 +2,13 @@ import {
   type Evidence,
   type KnownHookRecord,
   type ReduceResult,
+  type RunIndex,
   reduce,
   type SessionFacts,
 } from "@ccc/collectors";
 import {
   classifyHookRecord,
+  isTerminalRunState,
   type KnownHookEvent,
   type RunId,
   type SessionRun,
@@ -91,15 +93,69 @@ const SETTLING_EVENTS: ReadonlySet<KnownHookEvent> = new Set<KnownHookEvent>([
   "SessionEnd",
 ]);
 
+/** How many applied eventIds the replay guard remembers (D-08). */
+const APPLIED_EVENT_ID_CAPACITY = 10_000;
+
+/**
+ * The fields a coalesced write may differ in (PR-05): activity time, the
+ * revision, and the subagent set. A change in anything else (state,
+ * activity, model, a link, an ending) is written and published at once.
+ */
+const COALESCIBLE_FIELDS: ReadonlySet<keyof SessionRun> = new Set<keyof SessionRun>([
+  "lastActivityAt",
+  "revision",
+  "subagentActiveIds",
+  "subagentLastType",
+]);
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, i) => item === b[i]);
+  }
+  return a === b;
+}
+
+/** Whether `next` differs from the persisted Run only in coalescible fields. */
+function onlyActivityChanged(persisted: SessionRun, next: SessionRun): boolean {
+  return (Object.keys(next) as (keyof SessionRun)[]).every(
+    (key) => COALESCIBLE_FIELDS.has(key) || sameValue(persisted[key], next[key]),
+  );
+}
+
+function defaultSchedule(fn: () => void, ms: number): () => void {
+  const timer = setTimeout(fn, ms);
+  timer.unref();
+  return () => clearTimeout(timer);
+}
+
+/** Per-event-name shape history, as an ingest sequence number (D-12). */
+interface ShapeHistory {
+  lastValid: number;
+  lastInvalid: number;
+}
+
 export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
   const { db, bus, logger } = deps;
+  const schedule = deps.schedule ?? defaultSchedule;
+  const store = sessionRunIndex(db);
   const settledListeners = new Set<(run: SessionRun) => void>();
+  const shapes = new Map<KnownHookEvent, ShapeHistory>();
+  /** Insertion-ordered: the oldest id is evicted first once over capacity. */
+  const appliedEventIds = new Set<string>();
+  /** The latest reduced state of a Run whose write is being coalesced, never yet persisted. */
+  const pending = new Map<RunId, SessionRun>();
+  const flushTimers = new Map<RunId, () => void>();
+  /** When each Run was last written and published, by `deps.now()`. */
+  const lastWriteAt = new Map<RunId, number>();
+  let sequence = 0;
   let lastEventAt: string | null = null;
   let unknownEventCount = 0;
   let rejectedEdgeCount = 0;
+  let stopped = false;
 
-  // One promise chain serializes every ingest and apply, so the events of
-  // one session are reduced in arrival order even across awaits.
+  // One promise chain serializes every ingest, apply and coalesced flush,
+  // so the events of one session are reduced in arrival order even across
+  // the awaits in facts resolution.
   let tail: Promise<unknown> = Promise.resolve();
   function enqueue<T>(work: () => Promise<T> | T): Promise<T> {
     const next = tail.then(work);
@@ -110,6 +166,27 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
     return next;
   }
 
+  /**
+   * The Run as the reducer must see it: the stored row with any pending
+   * coalesced fields laid over it, at the STORED revision, so the next
+   * write is exactly one revision past the last published one. Pending
+   * Runs differ only in activity fields, so the store's identity and state
+   * queries still select the right row.
+   */
+  function overlay(run: SessionRun | null): SessionRun | null {
+    if (run === null) return null;
+    const held = pending.get(run.runId);
+    return held === undefined ? run : { ...held, revision: run.revision };
+  }
+
+  const index: RunIndex = {
+    byRunId: (runId) => overlay(store.byRunId(runId)),
+    byIdentity: (claudeSessionId, pid) => overlay(store.byIdentity(claudeSessionId, pid)),
+    latestBySession: (claudeSessionId) => overlay(store.latestBySession(claudeSessionId)),
+    liveByPid: (pid) => overlay(store.liveByPid(pid)),
+    latestByPid: (pid) => overlay(store.latestByPid(pid)),
+  };
+
   function projectNames(): Map<string, string> {
     return new Map(listRegisteredProjects(db).map((project) => [project.projectId, project.name]));
   }
@@ -118,9 +195,55 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
     return toSessionView(run, run.projectId === null ? null : (names.get(run.projectId) ?? null));
   }
 
-  /** Runs the reducer, persists every upsert in one transaction, publishes, and logs rejections. */
+  function cancelFlush(runId: RunId): void {
+    flushTimers.get(runId)?.();
+    flushTimers.delete(runId);
+  }
+
+  /** Persists `runs` in one transaction, then publishes each; clears their pending state. */
+  function writeAndPublish(runs: readonly SessionRun[]): void {
+    if (runs.length === 0) return;
+    db.transaction(() => {
+      for (const run of runs) upsertSessionRun(db, run);
+    })();
+    const writtenAt = deps.now().getTime();
+    const names = projectNames();
+    for (const run of runs) {
+      pending.delete(run.runId);
+      cancelFlush(run.runId);
+      // A terminal Run takes no more activity, so its window is forgotten.
+      if (isTerminalRunState(run.state)) lastWriteAt.delete(run.runId);
+      else lastWriteAt.set(run.runId, writtenAt);
+      bus.publish("session.upserted", { session: viewOf(run, names) });
+    }
+  }
+
+  function flush(runId: RunId): void {
+    flushTimers.delete(runId);
+    const held = pending.get(runId);
+    if (held !== undefined) writeAndPublish([held]);
+  }
+
+  /**
+   * Holds an activity-only change until its Run's window closes (PR-05).
+   * The first held change schedules the flush; later ones only replace
+   * the held Run, so the flush carries the latest activity time.
+   */
+  function hold(run: SessionRun, nowMs: number, lastMs: number): void {
+    pending.set(run.runId, run);
+    if (flushTimers.has(run.runId) || stopped) return;
+    const delay = Math.max(0, lastMs + COALESCE_WINDOW_MS - nowMs);
+    flushTimers.set(
+      run.runId,
+      schedule(() => {
+        void enqueue(() => flush(run.runId));
+      }, delay),
+    );
+  }
+
+  /** Runs the reducer, logs rejections, then writes (or holds) every upsert. */
   function applyNow(evidence: Evidence): ReduceResult {
-    const result = reduce(sessionRunIndex(db), evidence, deps.now().toISOString(), deps.mintRunId);
+    const result = reduce(index, evidence, deps.now().toISOString(), deps.mintRunId);
     for (const edge of result.rejected) {
       rejectedEdgeCount += 1;
       // Ids and labels only: never a value from the record (D-49).
@@ -129,14 +252,20 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
         "session evidence rejected",
       );
     }
-    if (result.upserts.length === 0) return result;
-    db.transaction(() => {
-      for (const run of result.upserts) upsertSessionRun(db, run);
-    })();
-    const names = projectNames();
+    const nowMs = deps.now().getTime();
+    const immediate: SessionRun[] = [];
     for (const run of result.upserts) {
-      bus.publish("session.upserted", { session: viewOf(run, names) });
+      const persisted = store.byRunId(run.runId);
+      const lastMs = lastWriteAt.get(run.runId);
+      const coalesce =
+        persisted !== null &&
+        lastMs !== undefined &&
+        nowMs - lastMs < COALESCE_WINDOW_MS &&
+        onlyActivityChanged(persisted, run);
+      if (coalesce) hold(run, nowMs, lastMs);
+      else immediate.push(run);
     }
+    writeAndPublish(immediate);
     if (evidence.kind === "hook" && SETTLING_EVENTS.has(evidence.record.hook_event_name)) {
       for (const run of result.upserts) notifySettled(run);
     }
@@ -153,7 +282,25 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
     }
   }
 
+  function shapeOf(event: KnownHookEvent): ShapeHistory {
+    let history = shapes.get(event);
+    if (history === undefined) {
+      history = { lastValid: 0, lastInvalid: 0 };
+      shapes.set(event, history);
+    }
+    return history;
+  }
+
+  function rememberApplied(eventId: string): void {
+    appliedEventIds.add(eventId);
+    if (appliedEventIds.size > APPLIED_EVENT_ID_CAPACITY) {
+      const oldest = appliedEventIds.values().next().value;
+      if (oldest !== undefined) appliedEventIds.delete(oldest);
+    }
+  }
+
   async function ingestNow(input: unknown, via: "socket" | "spool"): Promise<IngestOutcome> {
+    sequence += 1;
     const classified = classifyHookRecord(input);
     switch (classified.kind) {
       case "envelope-invalid":
@@ -164,12 +311,21 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
         logger.info({ via, event: classified.eventName }, "unknown hook event; counted");
         return "unknown-event";
       case "shape-invalid":
+        // Never applied and never defaulted: the source reads as changed
+        // until a later valid record of the same event (D-12, SESS-18).
+        shapeOf(classified.event).lastInvalid = sequence;
         logger.warn(
           { via, event: classified.event, issuePaths: classified.issuePaths },
           "hook record shape changed; not applied",
         );
         return "shape-invalid";
       case "known": {
+        shapeOf(classified.event).lastValid = sequence;
+        const { eventId } = classified.record;
+        if (appliedEventIds.has(eventId)) {
+          logger.debug({ via, event: classified.event }, "hook record replayed; ignored");
+          return "duplicate";
+        }
         // Stored timestamps are always `toISOString()` form, whatever offset
         // the record was stamped with, so string comparisons in the store hold.
         const record = {
@@ -178,6 +334,7 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
         } as KnownHookRecord;
         const facts = await deps.facts.factsFor(record);
         applyNow({ kind: "hook", record, facts });
+        rememberApplied(eventId);
         lastEventAt = deps.now().toISOString();
         return "applied";
       }
@@ -195,18 +352,28 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
       const names = projectNames();
       return listSessionRunsForView(db, { endedSince }).map((run) => viewOf(run, names));
     },
-    health: () => ({
-      lastEventAt,
-      unknownEventCount,
-      rejectedEdgeCount,
-      shapeChanged: null,
-    }),
-    stop() {},
+    health() {
+      let shapeChanged: KnownHookEvent | null = null;
+      let newest = 0;
+      for (const [event, history] of shapes) {
+        if (history.lastInvalid > history.lastValid && history.lastInvalid > newest) {
+          shapeChanged = event;
+          newest = history.lastInvalid;
+        }
+      }
+      return { lastEventAt, unknownEventCount, rejectedEdgeCount, shapeChanged };
+    },
     onRunSettled(listener) {
       settledListeners.add(listener);
       return () => {
         settledListeners.delete(listener);
       };
+    },
+    stop() {
+      stopped = true;
+      for (const cancel of flushTimers.values()) cancel();
+      flushTimers.clear();
+      writeAndPublish([...pending.values()]);
     },
   };
 }
