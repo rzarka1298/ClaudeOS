@@ -151,7 +151,6 @@ export function removeProject(
   client: SocketApiClient,
   request: RemoveProjectRequest,
 ): Promise<ProjectMutationResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, PROJECT_REMOVE_PATH, request, ProjectMutationResponseSchema);
 }
 
@@ -160,7 +159,6 @@ export function renameProject(
   client: SocketApiClient,
   request: RenameProjectRequest,
 ): Promise<ProjectMutationResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, PROJECT_RENAME_PATH, request, ProjectMutationResponseSchema);
 }
 
@@ -169,7 +167,6 @@ export function pinProject(
   client: SocketApiClient,
   request: PinProjectRequest,
 ): Promise<ProjectMutationResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, PROJECT_PIN_PATH, request, ProjectMutationResponseSchema);
 }
 
@@ -178,7 +175,6 @@ export function setGithubLink(
   client: SocketApiClient,
   request: SetGithubLinkRequest,
 ): Promise<ProjectMutationResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, PROJECT_GITHUB_LINK_PATH, request, ProjectMutationResponseSchema);
 }
 
@@ -189,7 +185,6 @@ export function setGithubLink(
 
 /** `POST /api/v1/projects/launch` — one launch, answered within the service's 4 s cap. */
 export function requestLaunch(client: SocketApiClient, request: LaunchRequest): Promise<LaunchResult> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, LAUNCH_PATH, request, LaunchResultSchema);
 }
 
@@ -198,13 +193,11 @@ export function requestLaunch(client: SocketApiClient, request: LaunchRequest): 
 
 /** `POST /api/v1/launchers/detect` — find candidate apps, executables and git. */
 export function detectLaunchers(client: SocketApiClient): Promise<DetectionResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, LAUNCHERS_DETECT_PATH, {}, DetectionResponseSchema);
 }
 
 /** `POST /api/v1/launchers/get` — the saved configuration, display-safe. */
 export function getLauncherConfigs(client: SocketApiClient): Promise<LauncherConfigView> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, LAUNCHERS_GET_PATH, {}, LauncherConfigViewSchema);
 }
 
@@ -224,7 +217,6 @@ export async function saveLauncherConfig(
   client: SocketApiClient,
   request: SaveLauncherConfigRequest,
 ): Promise<SaveLauncherConfigResult> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   const res = await client.request<unknown>({ method: "POST", path: LAUNCHERS_SAVE_PATH, body: request });
   if (res.status === 200) {
     const parsed = ProjectMutationResponseSchema.safeParse(res.body);
@@ -251,7 +243,6 @@ export async function saveLauncherConfig(
 
 /** `POST /api/v1/launchers/test` — fire one real launch of the SAVED configuration. */
 export function testLauncher(client: SocketApiClient, launcherId: LauncherId): Promise<LaunchResult> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, LAUNCHERS_TEST_PATH, { launcherId }, LaunchResultSchema);
 }
 
@@ -260,7 +251,6 @@ export function markLauncherTested(
   client: SocketApiClient,
   launcherId: LauncherId,
 ): Promise<ProjectMutationResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(
     client,
     LAUNCHERS_MARK_TESTED_PATH,
@@ -274,7 +264,6 @@ export function openSystemSettings(
   client: SocketApiClient,
   pane: SystemSettingsPane,
 ): Promise<ProjectMutationResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(
     client,
     SYSTEM_SETTINGS_OPEN_PATH,
@@ -291,7 +280,6 @@ export function addScanRoot(
   client: SocketApiClient,
   request: AddScanRootRequest,
 ): Promise<ScanStateResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, SCAN_ROOTS_ADD_PATH, request, ScanStateResponseSchema);
 }
 
@@ -300,7 +288,6 @@ export function removeScanRoot(
   client: SocketApiClient,
   request: RemoveScanRootRequest,
 ): Promise<ScanStateResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, SCAN_ROOTS_REMOVE_PATH, request, ScanStateResponseSchema);
 }
 
@@ -309,13 +296,11 @@ export function rescanScanRoot(
   client: SocketApiClient,
   request: RescanScanRootRequest,
 ): Promise<ScanStateResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, SCAN_ROOTS_RESCAN_PATH, request, ScanStateResponseSchema);
 }
 
 /** `POST /api/v1/scan-roots/list` — scan roots plus current suggestions. */
 export function listScanState(client: SocketApiClient): Promise<ScanStateResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, SCAN_ROOTS_LIST_PATH, {}, ScanStateResponseSchema);
 }
 
@@ -324,7 +309,6 @@ export function registerSuggestion(
   client: SocketApiClient,
   request: SuggestionActionRequest,
 ): Promise<RegisterProjectResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, SUGGESTION_REGISTER_PATH, request, RegisterProjectResponseSchema);
 }
 
@@ -333,6 +317,5 @@ export function dismissSuggestion(
   client: SocketApiClient,
   request: SuggestionActionRequest,
 ): Promise<ProjectMutationResponse> {
-  throw new Error("04-07-task2-red-stub: not implemented yet");
   return postValidated(client, SUGGESTION_DISMISS_PATH, request, ProjectMutationResponseSchema);
 }
