@@ -113,7 +113,14 @@ function childEnv(fx: Fixture): NodeJS.ProcessEnv {
 
 function baseArgs(fx: Fixture, claudeBin = fx.claudeBin): string[] {
   assertContained(fx, fx.configDir, fx.runtimeDir, claudeBin);
-  return ["--claude-config-dir", fx.configDir, "--runtime-dir", fx.runtimeDir, "--claude-bin", claudeBin];
+  return [
+    "--claude-config-dir",
+    fx.configDir,
+    "--runtime-dir",
+    fx.runtimeDir,
+    "--claude-bin",
+    claudeBin,
+  ];
 }
 
 function runScript(script: string, fx: Fixture, args: string[]): RunResult {
@@ -236,6 +243,28 @@ describe("install.mjs merges the hook package (Task 1, SESS-01, D-13)", () => {
     expect(record.claudeVersion).toBe("2.1.283");
     expect(record.withStatusline).toBe(false);
     expect(typeof record.installedAt).toBe("string");
+  });
+
+  it("the installed copy runs from its own location: silent, exit 0, record spooled", () => {
+    const fx = makeFixture();
+    expect(install(fx).status).toBe(0);
+    const payload = JSON.stringify({
+      hook_event_name: "SessionStart",
+      session_id: "11111111-1111-4111-8111-111111111111",
+      source: "startup",
+      cwd: fx.root,
+      model: "claude",
+    });
+    const handler = expectedHandler(fx) as { command: string; args: string[] };
+    const run = spawnSync(handler.command, handler.args, {
+      input: payload,
+      env: childEnv(fx),
+      encoding: "utf8",
+    });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+    const spooled = readFileSync(join(fx.runtimeDir, "spool", "hooks.ndjson"), "utf8");
+    expect(spooled).toContain('"hook_event_name":"SessionStart"');
   });
 
   it("is idempotent: a re-install yields byte-identical settings (Test 3)", () => {
