@@ -3,16 +3,17 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { ProjectsActions } from "../projects/projects-actions.js";
-import { projectRowsFrom, projectsSnapshot } from "../projects/projects-state.js";
+import { projectRowsFrom, projectsReceivedAt, projectsSnapshot } from "../projects/projects-state.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
+import { formatRelativeTime } from "../widgets/relative-time.js";
 import type { DestinationId } from "./destinations.js";
 import { ProjectCard } from "./project-card.js";
 import { RegisterFlow } from "./register-flow.js";
 
 /**
  * The S3 Projects destination (Task 1: the grid of cards; Task 2: the full
- * S4 register flow via `RegisterFlow`; Task 3 completes the card anatomy and
- * adds the manage toolbar).
+ * S4 register flow via `RegisterFlow`; Task 3: loading/empty/error states,
+ * the disconnected banner, and focus restoration after register/remove).
  */
 export interface ProjectsViewProps {
   readonly actions: ProjectsActions;
@@ -23,7 +24,12 @@ export interface ProjectsViewProps {
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
 }
 
-export function ProjectsView({ actions, pickFolder, now }: ProjectsViewProps): VNode {
+/** A ref-map key: one entry per project's per-control DOM node this view needs to refocus (currently only its name heading). */
+function headingKey(projectId: string): string {
+  return `${projectId}:heading`;
+}
+
+export function ProjectsView({ actions, pickFolder, connection, now }: ProjectsViewProps): VNode {
   const snapshot = projectsSnapshot.value;
   const rows = snapshot === undefined ? [] : projectRowsFrom(snapshot);
   const displayPathById = new Map<string, string>(
@@ -32,30 +38,91 @@ export function ProjectsView({ actions, pickFolder, now }: ProjectsViewProps): V
 
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
   const registerOpenerRef = useRef<HTMLButtonElement | null>(null);
-  const headingRefs = useRef(new Map<string, HTMLHeadingElement>());
+  const controlRefs = useRef(new Map<string, HTMLElement>());
 
-  // Focus follows a newly registered (or duplicate) project onto the
-  // dashboard only once its row actually arrives — the register response
-  // carries a `projectId`, not the project's rendered data, which arrives
-  // moments later over the event stream (D-11). Focusing before the row
-  // exists would move focus to nothing.
+  // Focus follows a newly registered project, a duplicate, or the next card
+  // after a removal onto the dashboard only once its row actually settles in
+  // `projectsSnapshot` — a register response carries a `projectId`, not the
+  // project's rendered data, which arrives moments later over the event
+  // stream (D-11). Focusing before the row exists would move focus to
+  // nothing.
   useEffect(() => {
     if (pendingFocusId === null) return;
     if (!rows.some((row) => row.id === pendingFocusId)) return;
-    headingRefs.current.get(pendingFocusId)?.focus();
+    controlRefs.current.get(headingKey(pendingFocusId))?.focus();
     setPendingFocusId(null);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: `headingRefs` is a stable ref container, not reactive state.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: `controlRefs` is a stable ref container, not reactive state.
   }, [rows, pendingFocusId]);
+
+  function handleRemoved(removedId: string): void {
+    const index = rows.findIndex((row) => row.id === removedId);
+    const next = rows[index + 1] ?? (index > 0 ? rows[index - 1] : undefined);
+    if (next === undefined) {
+      registerOpenerRef.current?.focus();
+      return;
+    }
+    setPendingFocusId(next.id);
+  }
+
+  const registerFlow = (
+    <RegisterFlow
+      actions={actions}
+      pickFolder={pickFolder}
+      onRegistered={setPendingFocusId}
+      onDuplicate={setPendingFocusId}
+      openerRef={registerOpenerRef}
+    />
+  );
+
+  if (snapshot === undefined) {
+    if (connection.kind === "connecting") {
+      return (
+        <div className="ccc-projects-section">
+          {registerFlow}
+          <h3 className="ccc-state-heading">Registered projects</h3>
+          <div aria-busy="true" className="ccc-projects-grid">
+            <span className="ccc-visually-hidden">Loading projects</span>
+            <div className="ccc-card">
+              <p className="ccc-skeleton-line" />
+              <p className="ccc-skeleton-line" />
+            </div>
+            <div className="ccc-card">
+              <p className="ccc-skeleton-line" />
+              <p className="ccc-skeleton-line" />
+            </div>
+            <div className="ccc-card">
+              <p className="ccc-skeleton-line" />
+              <p className="ccc-skeleton-line" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="ccc-projects-section">
+        {registerFlow}
+        <p className="ccc-state-body">
+          ▲ Couldn't load projects. Check the service in Settings → Diagnostics, then refresh.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="ccc-projects-section">
-      <RegisterFlow
-        actions={actions}
-        pickFolder={pickFolder}
-        onRegistered={setPendingFocusId}
-        onDuplicate={setPendingFocusId}
-        openerRef={registerOpenerRef}
-      />
+      {connection.kind === "disconnected" && (
+        <div className="ccc-banner">
+          <p className="ccc-state-heading">Service disconnected</p>
+          <p className="ccc-state-body">
+            {`Showing the last projects received ${
+              projectsReceivedAt.value === null
+                ? "a moment ago"
+                : formatRelativeTime(projectsReceivedAt.value, now)
+            }. They may be out of date. Launches and changes resume when the service reconnects.`}
+          </p>
+        </div>
+      )}
+      {registerFlow}
       <h3 className="ccc-state-heading">Registered projects</h3>
       {rows.length === 0 ? (
         <p className="ccc-state-body">
@@ -69,9 +136,13 @@ export function ProjectsView({ actions, pickFolder, now }: ProjectsViewProps): V
               row={row}
               displayPath={displayPathById.get(row.id) ?? ""}
               now={now}
+              connection={connection}
+              actions={actions}
+              onRemoved={handleRemoved}
               headingRef={(el) => {
-                if (el) headingRefs.current.set(row.id, el);
-                else headingRefs.current.delete(row.id);
+                const key = headingKey(row.id);
+                if (el) controlRefs.current.set(key, el);
+                else controlRefs.current.delete(key);
               }}
             />
           ))}
