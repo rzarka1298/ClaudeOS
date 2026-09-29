@@ -1,5 +1,5 @@
 import type { VNode } from "preact";
-import { useId, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 
 /**
  * The per-section Source disclosure (UI-SPEC "Per-number Source", USAGE-04,
@@ -33,6 +33,14 @@ export function SourceDisclosure({ srSuffix, rows, disabled }: SourceDisclosureP
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const panelId = `${useId()}-source-panel`;
+  // A section that loses its observation while the panel is open must not
+  // leave an open, now-unclosable panel behind (the disabled button refuses
+  // every toggle): the panel is hidden at once and stays closed if the
+  // section later regains data (wave 3 review).
+  const expanded = open && disabled !== true;
+  useEffect(() => {
+    if (disabled === true) setOpen(false);
+  }, [disabled]);
 
   function toggle(): void {
     if (disabled === true) return;
@@ -50,7 +58,7 @@ export function SourceDisclosure({ srSuffix, rows, disabled }: SourceDisclosureP
 
   /** Escape closes the panel and hands focus back (A11Y-01 floor 5). */
   function handleContainerKeyDown(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || !open) return;
+    if (event.key !== "Escape" || !expanded) return;
     event.preventDefault();
     setOpen(false);
     buttonRef.current?.focus();
@@ -63,7 +71,7 @@ export function SourceDisclosure({ srSuffix, rows, disabled }: SourceDisclosureP
         type="button"
         className="ccc-source-button"
         ref={buttonRef}
-        aria-expanded={open}
+        aria-expanded={expanded}
         aria-controls={panelId}
         aria-disabled={disabled === true ? "true" : undefined}
         onClick={toggle}
@@ -71,7 +79,7 @@ export function SourceDisclosure({ srSuffix, rows, disabled }: SourceDisclosureP
       >
         {"Source"} <span className="ccc-visually-hidden">{srSuffix}</span>
       </button>
-      <div id={panelId} className="ccc-source-panel" hidden={!open}>
+      <div id={panelId} className="ccc-source-panel" hidden={!expanded}>
         <ul className="ccc-source-list">
           {rows.map((row) => (
             <li key={row.numberLabel} className="ccc-source-row">

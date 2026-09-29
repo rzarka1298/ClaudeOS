@@ -76,3 +76,24 @@ describe("SourceDisclosure", () => {
     expect(button.getAttribute("aria-disabled")).toBe("true");
   });
 });
+
+describe("SourceDisclosure when its section loses its observation (wave 3 review)", () => {
+  it("closes and hides an open panel once disabled, and stays closed when re-enabled", () => {
+    const { getByRole, container, rerender } = render(
+      <SourceDisclosure srSuffix="for token activity" rows={ROWS} />,
+    );
+    const button = getByRole("button", { name: "Source for token activity" });
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    const panel = () => container.querySelector(`#${button.getAttribute("aria-controls")}`);
+    expect(panel()?.hasAttribute("hidden")).toBe(false);
+
+    rerender(<SourceDisclosure srSuffix="for token activity" rows={[]} disabled />);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(panel()?.hasAttribute("hidden")).toBe(true);
+
+    rerender(<SourceDisclosure srSuffix="for token activity" rows={ROWS} />);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(panel()?.hasAttribute("hidden")).toBe(true);
+  });
+});
