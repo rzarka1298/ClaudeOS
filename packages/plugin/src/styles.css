@@ -937,6 +937,12 @@
   gap: var(--ccc-space-sm);
 }
 
+/* An empty state's own action (S1 `Go to Projects`) sits one small step below
+ * the body copy rather than flush against it. */
+.ccc-empty-action {
+  margin-top: var(--ccc-space-sm);
+}
+
 /* S10 setup callout — a glass panel one step quieter than a card, since it is
  * guidance rather than data. */
 .ccc-setup-callout {

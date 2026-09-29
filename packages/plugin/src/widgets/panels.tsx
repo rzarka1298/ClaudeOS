@@ -268,7 +268,12 @@ export function projectMetaSegments(
   const git = row.git;
   switch (git.kind) {
     case "repo":
-      segments.push({ glyph: "⎇", text: git.detached ? "Detached HEAD" : (git.branch ?? "Detached HEAD") });
+      // `⎇` pairs only with a branch name or `Detached HEAD` (UI-SPEC Glyph
+      // Vocabulary). A branch git could not name while HEAD is attached is
+      // not a detached HEAD: it reads unavailable, like every unknown value.
+      if (git.detached) segments.push({ glyph: "⎇", text: "Detached HEAD" });
+      else if (git.branch === null) segments.push({ text: "Branch unavailable" });
+      else segments.push({ glyph: "⎇", text: git.branch });
       segments.push(
         git.dirty ? { glyph: "✱", text: "Uncommitted changes" } : { glyph: "✓", text: "Clean" },
       );
@@ -337,7 +342,7 @@ function ProjectShortcutsEmpty({
       <p className="ccc-state-body">Register a project in Projects to see it here.</p>
       <button
         type="button"
-        className="ccc-connect-button"
+        className="ccc-connect-button ccc-empty-action"
         onClick={() => onNavigate?.("projects")}
       >
         Go to Projects
