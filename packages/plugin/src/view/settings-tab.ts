@@ -1,9 +1,11 @@
-import { type App, Notice, type Plugin, PluginSettingTab } from "obsidian";
+import type { ClaudeIntegrationStatus } from "@ccc/domain";
+import { type App, Notice, type Plugin, PluginSettingTab, type SettingDefinitionItem } from "obsidian";
 import {
   applyMotionPreference,
   type MediaQueryListLike,
   type MotionPreference,
 } from "../motion.js";
+import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 
 /**
  * The plugin's Settings tab — the owner's override for reduced motion
@@ -39,6 +41,69 @@ export const REDUCED_MOTION_OPTIONS: Readonly<Record<MotionPreference, string>> 
   reduced: "Always reduced",
 };
 
+// --- Claude section (UI-SPEC S5, D-48) -- RED scaffold, Task 1 -----------
+// Exports the right shapes so settings-tab.test.ts resolves and fails on
+// real assertions rather than a module-resolution crash. GREEN replaces
+// every body below with the real implementation.
+
+export const CLAUDE_GROUP_HEADING = "Claude";
+export const CLAUDE_HOOKS_NAME = "Claude Code hooks";
+export const CLAUDE_HOOKS_NOT_INSTALLED_TEXT =
+  "Not installed. Session tracking and waiting-for-approval states need them.";
+export const CLAUDE_STATUS_UNAVAILABLE_TEXT =
+  "Status unavailable — the companion service isn't running.";
+export const CLAUDE_COPY_INSTALL_NAME = "Copy install command";
+export const CLAUDE_COPY_INSTALL_DESC = "TODO";
+export const CLAUDE_COPY_UNINSTALL_NAME = "Copy uninstall command";
+export const CLAUDE_COPY_UNINSTALL_DESC = "TODO";
+export const CLAUDE_STATUSLINE_NAME = "Status-line wrapper";
+export const CLAUDE_TRANSCRIPT_ANALYSIS_NAME = "Transcript analysis";
+export const CLAUDE_TRANSCRIPT_ANALYSIS_DESC = "TODO";
+export const CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE =
+  "Couldn't change transcript analysis. The companion service didn't respond.";
+export const CLAUDE_DELETE_USAGE_NAME = "Delete cached usage analytics";
+export const CLAUDE_DELETE_USAGE_DESC = "TODO";
+export const TRANSCRIPT_ANALYSIS_KEY = "claude.transcriptAnalysis";
+
+export interface SettingsClaudeSeam {
+  readonly getIntegration: () => Promise<ClaudeIntegrationStatus>;
+  readonly setTranscriptAnalysis: (enabled: boolean) => Promise<{ enabled: boolean }>;
+  readonly deleteUsageAnalytics: () => Promise<void>;
+  readonly copyText: (text: string) => Promise<void>;
+}
+
+export type ClaudeSettingOutcome = "saved" | "reverted";
+
+type HookStatusInput =
+  | "checking"
+  | "unavailable"
+  | Pick<ClaudeIntegrationStatus, "hooks" | "lastEventAt" | "telemetry">;
+
+type StatusLineStatusInput =
+  | "checking"
+  | "unavailable"
+  | Pick<ClaudeIntegrationStatus, "statusLine" | "statusLineReported">;
+
+/** RED stub -- always wrong, so Test 4 fails on a real assertion. */
+export function hookStatusText(_status: HookStatusInput, _now: number): string {
+  return "";
+}
+
+/** RED stub -- always wrong, so Test 4 fails on a real assertion. */
+export function statusLineStatusText(_status: StatusLineStatusInput, _now: number): string {
+  return "";
+}
+
+/** RED stub -- never calls the seam, so Test 5 fails on a real assertion. */
+export async function applyTranscriptAnalysisChange(
+  _host: SettingsTabHost,
+  _value: boolean,
+): Promise<ClaudeSettingOutcome> {
+  return "saved";
+}
+
+// --- end Claude section RED scaffold --------------------------------------
+
 /**
  * Everything the tab needs from the plugin, behind one typed seam — the same
  * shape `setup-command.ts` uses. Production passes the plugin; tests pass a
@@ -53,6 +118,8 @@ export interface SettingsTabHost {
   readonly mql: Pick<MediaQueryListLike, "matches">;
   /** Shows a transient message. Defaults to Obsidian's `Notice` in production. */
   readonly notify?: (message: string) => void;
+  /** The Claude settings section's service seam (UI-SPEC S5). Absent means not wired yet. */
+  readonly claude?: SettingsClaudeSeam | undefined;
 }
 
 /** What `applyReducedMotionChange` did, so a caller can revert its own control. */

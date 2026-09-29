@@ -1,13 +1,29 @@
+import type { ClaudeIntegrationStatus } from "@ccc/domain";
 import { Notice } from "obsidian";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { motionMode } from "../motion.js";
+import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 import {
   applyReducedMotionChange,
+  applyTranscriptAnalysisChange,
   asMotionPreference,
+  CLAUDE_GROUP_HEADING,
+  CLAUDE_HOOKS_NAME,
+  CLAUDE_HOOKS_NOT_INSTALLED_TEXT,
+  CLAUDE_STATUS_UNAVAILABLE_TEXT,
+  CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE,
+  CLAUDE_COPY_INSTALL_NAME,
+  CLAUDE_COPY_UNINSTALL_NAME,
+  CLAUDE_DELETE_USAGE_NAME,
+  CLAUDE_STATUSLINE_NAME,
+  CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
   CommandCenterSettingTab,
+  hookStatusText,
   REDUCED_MOTION_KEY,
   REDUCED_MOTION_OPTIONS,
   REDUCED_MOTION_SAVE_FAILED,
+  statusLineStatusText,
+  type SettingsClaudeSeam,
   type SettingsTabHost,
 } from "./settings-tab.js";
 
@@ -23,7 +39,9 @@ interface Recorded extends SettingsTabHost {
   saveCalls: number;
 }
 
-function createHost(options: { failSave?: boolean } = {}): Recorded {
+function createHost(
+  options: { failSave?: boolean; claude?: SettingsClaudeSeam } = {},
+): Recorded {
   const notices: string[] = [];
   const host: Recorded = {
     settings: { reducedMotion: "auto" },
@@ -37,9 +55,25 @@ function createHost(options: { failSave?: boolean } = {}): Recorded {
     notify: (message: string) => {
       notices.push(message);
     },
+    claude: options.claude,
   };
   return host;
 }
+
+const BASE_CLAUDE_STATUS: ClaudeIntegrationStatus = {
+  hooks: "not-installed",
+  hookRuntimeMissing: false,
+  disableAllHooks: null,
+  lastEventAt: null,
+  telemetry: { kind: "ok" },
+  detectedClaudeVersion: null,
+  statusLine: "not-installed",
+  statusLineReported: false,
+  transcriptAnalysis: { enabled: false },
+  spoolDropCount: 0,
+  unknownEventCount: 0,
+  cleanupPeriodDays: 30,
+};
 
 beforeEach(() => {
   motionMode.value = "full";
@@ -150,5 +184,183 @@ describe("CommandCenterSettingTab", () => {
     expect(host.saveCalls).toBe(1);
     expect(host.settings.reducedMotion).toBe("reduced");
     expect(motionMode.value).toBe("reduced");
+  });
+
+  it("declares the Claude group with six rows in the fixed UI-SPEC order (Test 3)", () => {
+    const host = createHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    const definitions = tab.getSettingDefinitions();
+    const group = definitions[1];
+
+    expect(group).toMatchObject({ type: "group", heading: CLAUDE_GROUP_HEADING });
+    // A group's `items` field only exists on SettingDefinitionGroup -- narrow first.
+    if (!group || !("items" in group) || !group.items) throw new Error("expected a group");
+    const names = group.items.map((item) => item.name);
+    expect(names).toEqual([
+      CLAUDE_HOOKS_NAME,
+      CLAUDE_COPY_INSTALL_NAME,
+      CLAUDE_COPY_UNINSTALL_NAME,
+      CLAUDE_STATUSLINE_NAME,
+      CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
+      CLAUDE_DELETE_USAGE_NAME,
+    ]);
+  });
+
+  it("reads Checking… before the service answers, then the resolved status after update() (Test 4)", async () => {
+    let resolveIntegration!: (status: ClaudeIntegrationStatus) => void;
+    const host = createHost({
+      claude: {
+        getIntegration: () =>
+          new Promise<ClaudeIntegrationStatus>((resolve) => {
+            resolveIntegration = resolve;
+          }),
+        setTranscriptAnalysis: vi.fn(),
+        deleteUsageAnalytics: vi.fn(),
+        copyText: vi.fn(),
+      },
+    });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    const firstGroup = tab.getSettingDefinitions()[1];
+    if (!firstGroup || !("items" in firstGroup) || !firstGroup.items) {
+      throw new Error("expected a group");
+    }
+    expect(firstGroup.items[0]?.desc).toBe("Checking…");
+
+    resolveIntegration({ ...BASE_CLAUDE_STATUS, hooks: "installed", lastEventAt: null });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const secondGroup = tab.getSettingDefinitions()[1];
+    if (!secondGroup || !("items" in secondGroup) || !secondGroup.items) {
+      throw new Error("expected a group");
+    }
+    // A resolved installed status with no lastEventAt renders through the
+    // same silent-since bucket as a stale one -- never a blank row.
+    expect(secondGroup.items[0]?.desc).toContain("Installed");
+  });
+
+  it("reverts the transcript toggle and notifies on a failed write, without touching plugin settings (Test 5)", async () => {
+    const setTranscriptAnalysis = vi.fn().mockRejectedValue(new Error("service down"));
+    const host = createHost({
+      claude: {
+        getIntegration: vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS),
+        setTranscriptAnalysis,
+        deleteUsageAnalytics: vi.fn(),
+        copyText: vi.fn(),
+      },
+    });
+
+    const outcome = await applyTranscriptAnalysisChange(host, true);
+
+    expect(outcome).toBe("reverted");
+    expect(setTranscriptAnalysis).toHaveBeenCalledWith(true);
+    expect(host.notices).toEqual([CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE]);
+    expect(host.saveCalls).toBe(0);
+    expect(host.settings).not.toHaveProperty("transcriptAnalysis");
+  });
+
+  it("saves the transcript toggle through the service alone (Test 5)", async () => {
+    const setTranscriptAnalysis = vi.fn().mockResolvedValue({ enabled: true });
+    const host = createHost({
+      claude: {
+        getIntegration: vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS),
+        setTranscriptAnalysis,
+        deleteUsageAnalytics: vi.fn(),
+        copyText: vi.fn(),
+      },
+    });
+
+    const outcome = await applyTranscriptAnalysisChange(host, true);
+
+    expect(outcome).toBe("saved");
+    expect(setTranscriptAnalysis).toHaveBeenCalledWith(true);
+    expect(host.notices).toEqual([]);
+    expect(host.saveCalls).toBe(0);
+  });
+});
+
+describe("hookStatusText (Test 4)", () => {
+  const NOW = Date.parse("2026-09-28T12:00:00Z");
+
+  it("reads Checking… before the service answers", () => {
+    expect(hookStatusText("checking", NOW)).toBe("Checking…");
+  });
+
+  it("reads the last-event relative time within the silent threshold", () => {
+    const lastEventAt = new Date(NOW - 2 * 60 * 1000).toISOString();
+    const status = { hooks: "installed" as const, lastEventAt, telemetry: { kind: "ok" as const } };
+
+    expect(hookStatusText(status, NOW)).toBe(
+      `Installed. Last event ${formatRelativeTime(lastEventAt, NOW)}.`,
+    );
+  });
+
+  it("reads the no-events-since string once the silent threshold has passed", () => {
+    const lastEventAt = new Date(NOW - 11 * 60 * 1000).toISOString();
+    const status = { hooks: "installed" as const, lastEventAt, telemetry: { kind: "ok" as const } };
+
+    expect(hookStatusText(status, NOW)).toBe(
+      `Installed, but no events have arrived since ${formatAbsoluteTime(lastEventAt)}. ` +
+        "Claude Code skips hooks in folders you haven't trusted and when hooks are turned off in its settings.",
+    );
+  });
+
+  it("reads the not-installed string", () => {
+    const status = { hooks: "not-installed" as const, lastEventAt: null, telemetry: { kind: "ok" as const } };
+    expect(hookStatusText(status, NOW)).toBe(CLAUDE_HOOKS_NOT_INSTALLED_TEXT);
+  });
+
+  it("reads the unsupported-version string ahead of the install state", () => {
+    const status = {
+      hooks: "installed" as const,
+      lastEventAt: null,
+      telemetry: { kind: "unsupported-version" as const, version: "2.1.100" },
+    };
+    expect(hookStatusText(status, NOW)).toBe(
+      "Claude Code 2.1.100 is older than the minimum supported 2.1.214.",
+    );
+  });
+
+  it("reads the shape-changed string ahead of the install state", () => {
+    const status = {
+      hooks: "installed" as const,
+      lastEventAt: null,
+      telemetry: { kind: "shape-changed" as const, version: "2.1.290" },
+    };
+    expect(hookStatusText(status, NOW)).toBe(
+      "Claude Code 2.1.290 changed its hook event format. Session tracking is paused rather than guessed.",
+    );
+  });
+
+  it("reads the unavailable string for a client failure", () => {
+    expect(hookStatusText("unavailable", NOW)).toBe(CLAUDE_STATUS_UNAVAILABLE_TEXT);
+  });
+});
+
+describe("statusLineStatusText (Test 4)", () => {
+  it("reads installed-and-available", () => {
+    expect(
+      statusLineStatusText({ statusLine: "installed", statusLineReported: true }, 0),
+    ).toBe("Installed. Plan usage is available.");
+  });
+
+  it("reads installed-and-waiting", () => {
+    expect(
+      statusLineStatusText({ statusLine: "installed", statusLineReported: false }, 0),
+    ).toBe("Installed. Waiting for the first response in a Claude Code session.");
+  });
+
+  it("reads not-installed", () => {
+    expect(
+      statusLineStatusText({ statusLine: "not-installed", statusLineReported: false }, 0),
+    ).toBe(
+      'Not installed. Plan usage reads "Account capacity unavailable". The wrapper keeps your current status line exactly as it is.',
+    );
+  });
+
+  it("reads unavailable for a client failure", () => {
+    expect(statusLineStatusText("unavailable", 0)).toBe(CLAUDE_STATUS_UNAVAILABLE_TEXT);
   });
 });
