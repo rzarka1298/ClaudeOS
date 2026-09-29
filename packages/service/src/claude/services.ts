@@ -29,8 +29,12 @@ export interface ClaudeServices {
   readonly poller: SpoolPoller;
   /** What `createRequestListener` carries as `RouteContext.claude`. */
   readonly routeDeps: ClaudeRouteDeps;
-  /** Clears every Claude timer and writes any coalesced activity still pending. */
-  stop(): void;
+  /**
+   * Stops the poller (awaiting its in-flight tick), then the pipeline
+   * (awaiting its queue and writing any coalesced activity still pending).
+   * The store may be closed only after this resolves.
+   */
+  stop(): Promise<void>;
 }
 
 function pollInterval(env: NodeJS.ProcessEnv): number {
@@ -87,9 +91,9 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     pipeline,
     poller,
     routeDeps: { pipeline },
-    stop() {
-      poller.stop();
-      pipeline.stop();
+    async stop() {
+      await poller.stop();
+      await pipeline.stop();
     },
   };
 }

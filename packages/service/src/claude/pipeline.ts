@@ -80,8 +80,13 @@ export interface ClaudePipeline {
   health(): PipelineHealth;
   /** Fires after an upsert caused by Stop or SessionEnd; returns an unsubscribe. */
   onRunSettled(listener: (run: SessionRun) => void): () => void;
-  /** Writes any pending coalesced activity now and cancels every timer. */
-  stop(): void;
+  /**
+   * Cancels every flush timer, waits for every queued ingest and apply to
+   * finish, then writes any pending coalesced activity. Resolves only once
+   * the queue is empty, so the caller may close the store afterwards. After
+   * stop, activity-only changes are written at once instead of held.
+   */
+  stop(): Promise<void>;
 }
 
 /** How far back a terminal Run stays in the views (UI-SPEC R-08). */
@@ -225,20 +230,35 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
   }
 
   /**
+   * Schedules the coalesced write of `runId` after `delay`. A failed write
+   * (a SQLite error) leaves the held Run in `pending` — `writeAndPublish`
+   * clears it only after its transaction commits — so the failure is logged
+   * and the flush re-armed one window later rather than escaping as an
+   * unhandled rejection and stranding the activity (wave 3 review).
+   */
+  function armFlush(runId: RunId, delay: number): void {
+    flushTimers.set(
+      runId,
+      schedule(() => {
+        enqueue(() => flush(runId)).catch((err: unknown) => {
+          logger.error({ runId, err }, "coalesced session write failed; retrying");
+          if (!stopped && pending.has(runId) && !flushTimers.has(runId)) {
+            armFlush(runId, COALESCE_WINDOW_MS);
+          }
+        });
+      }, delay),
+    );
+  }
+
+  /**
    * Holds an activity-only change until its Run's window closes (PR-05).
    * The first held change schedules the flush; later ones only replace
    * the held Run, so the flush carries the latest activity time.
    */
   function hold(run: SessionRun, nowMs: number, lastMs: number): void {
     pending.set(run.runId, run);
-    if (flushTimers.has(run.runId) || stopped) return;
-    const delay = Math.max(0, lastMs + COALESCE_WINDOW_MS - nowMs);
-    flushTimers.set(
-      run.runId,
-      schedule(() => {
-        void enqueue(() => flush(run.runId));
-      }, delay),
-    );
+    if (flushTimers.has(run.runId)) return;
+    armFlush(run.runId, Math.max(0, lastMs + COALESCE_WINDOW_MS - nowMs));
   }
 
   /** Runs the reducer, logs rejections, then writes (or holds) every upsert. */
@@ -257,7 +277,9 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
     for (const run of result.upserts) {
       const persisted = store.byRunId(run.runId);
       const lastMs = lastWriteAt.get(run.runId);
+      // Once stopped nothing is held: no timer would ever flush it.
       const coalesce =
+        !stopped &&
         persisted !== null &&
         lastMs !== undefined &&
         nowMs - lastMs < COALESCE_WINDOW_MS &&
@@ -369,11 +391,13 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
         settledListeners.delete(listener);
       };
     },
-    stop() {
+    async stop() {
       stopped = true;
       for (const cancel of flushTimers.values()) cancel();
       flushTimers.clear();
-      writeAndPublish([...pending.values()]);
+      // Queued behind every in-flight ingest and apply, so their writes land
+      // before this final flush and before the caller closes the store.
+      await enqueue(() => writeAndPublish([...pending.values()]));
     },
   };
 }

@@ -255,7 +255,71 @@ describe("tool-event coalescing (Test 3, PR-05)", () => {
     time.advanceTo(T0 + 500);
     const tool = record("PostToolUse", { tool_name: "Read" });
     await pipeline.ingest(tool, "socket");
-    pipeline.stop();
+    await pipeline.stop();
+    expect(getSessionRun(store.db, runId)?.lastActivityAt).toBe(tool.observedAt);
+  });
+
+  it("keeps held activity and re-arms the flush when the coalesced write fails, with no unhandled rejection", async () => {
+    const pipeline = pipelineWith();
+    const runId = await startRun(pipeline);
+    await pipeline.ingest(record("UserPromptSubmit"), "socket");
+    time.advanceTo(T0 + 500);
+    const tool = record("PostToolUse", { tool_name: "Read" });
+    await pipeline.ingest(tool, "socket");
+    const published = upserted().length;
+
+    store.db.exec(
+      "CREATE TEMP TRIGGER fail_run_write BEFORE UPDATE ON runs BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+    time.advanceTo(T0 + COALESCE_WINDOW_MS);
+    await drain();
+    expect(upserted()).toHaveLength(published);
+    expect(getSessionRun(store.db, runId)?.lastActivityAt).not.toBe(tool.observedAt);
+
+    store.db.exec("DROP TRIGGER fail_run_write");
+    time.advanceTo(T0 + COALESCE_WINDOW_MS * 2);
+    await drain();
+    expect(upserted()).toHaveLength(published + 1);
+    expect(getSessionRun(store.db, runId)?.lastActivityAt).toBe(tool.observedAt);
+  });
+});
+
+describe("shutdown ordering (wave 3 review)", () => {
+  it("stop() resolves only after in-flight ingests have been applied", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pipeline = pipelineWith({
+      facts: {
+        factsFor: async (rec) => {
+          if (rec.hook_event_name === "SessionStart") await gate;
+          return NULL_FACTS.factsFor(rec);
+        },
+      },
+    });
+    const ingest = pipeline.ingest(record("SessionStart", { source: "startup" }), "socket");
+    let stopped = false;
+    const stopping = pipeline.stop().then(() => {
+      stopped = true;
+    });
+    await drain();
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(await ingest).toBe("applied");
+    expect(upserted()).toHaveLength(1);
+    expect(pipeline.listSessionViews()).toHaveLength(1);
+  });
+
+  it("writes an activity-only change at once after stop() instead of holding it", async () => {
+    const pipeline = pipelineWith();
+    const runId = await startRun(pipeline);
+    await pipeline.ingest(record("UserPromptSubmit"), "socket");
+    await pipeline.stop();
+    time.advanceTo(T0 + 500);
+    const tool = record("PostToolUse", { tool_name: "Read" });
+    expect(await pipeline.ingest(tool, "socket")).toBe("applied");
     expect(getSessionRun(store.db, runId)?.lastActivityAt).toBe(tool.observedAt);
   });
 });

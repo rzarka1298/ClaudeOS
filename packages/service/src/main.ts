@@ -102,15 +102,26 @@ async function main(): Promise<void> {
 
   logger.info({ socketPath }, "listening");
 
+  // The store closes only after the Claude services have drained (the
+  // pipeline's queue, its pending coalesced writes, the in-flight spool
+  // tick) AND every open connection has ended, so no write ever runs
+  // against a closed store (wave 3 review).
+  let shuttingDown = false;
   const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     clearInterval(heartbeatTimer);
-    claudeServices.stop();
+    const claudeStopped = claudeServices.stop().catch((err: unknown) => {
+      logger.error({ err }, "shutdown: claude services did not stop cleanly");
+    });
     server.close(() => {
-      store.close();
-      if (existsSync(socketPath)) {
-        unlinkSync(socketPath);
-      }
-      process.exit(0);
+      void claudeStopped.then(() => {
+        store.close();
+        if (existsSync(socketPath)) {
+          unlinkSync(socketPath);
+        }
+        process.exit(0);
+      });
     });
   };
 
