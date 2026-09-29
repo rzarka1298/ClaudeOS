@@ -30,8 +30,18 @@ describe("widgetStateFor is one signal per widget", () => {
     expect(new Set(signals).size).toBe(WIDGET_IDS.length);
   });
 
-  it.each(PRD_PANEL_ORDER)("%s: never holds a ready payload (D-17)", (id) => {
-    expect(["permission-required", "unavailable"]).toContain(widgetStateFor(id).value.kind);
+  it.each(PRD_PANEL_ORDER.filter((id) => id !== "project-shortcuts"))(
+    "%s: never holds a ready payload (D-17)",
+    (id) => {
+      expect(["permission-required", "unavailable"]).toContain(widgetStateFor(id).value.kind);
+    },
+  );
+
+  // project-shortcuts is real now (plan 04-07, D-35): a service-fed signal,
+  // not a D-17 constant. Its own honest-state coverage lives in
+  // projects-state.test.ts and panels.test.tsx.
+  it("project-shortcuts: loading before any snapshot has arrived", () => {
+    expect(widgetStateFor("project-shortcuts").value.kind).toBe("loading");
   });
 });
 

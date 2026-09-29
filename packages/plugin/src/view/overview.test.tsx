@@ -428,12 +428,19 @@ function projects(n: number): unknown {
       id: `p-${i}`,
       name: `Project ${i}`,
       pinned: false,
-      branch: "main",
-      dirty: false,
-      openItems: 0,
-      sessionCount: 0,
+      git: { kind: "repo", branch: "main", detached: false, dirty: false, commits: [], remote: null },
+      gitReadFailed: false,
+      github: { kind: "none" },
+      observedAt: null,
+      openItems: null,
+      sessionCount: null,
       nextTask: null,
     })),
+    launchers: {
+      antigravity: "set-up",
+      "claude-code": { status: "set-up", terminalLabel: "Terminal" },
+      "claude-desktop": "set-up",
+    },
   };
 }
 

@@ -1,4 +1,12 @@
-import { randomUUID } from "node:crypto";
+/**
+ * ID minting uses the Web Crypto `crypto.randomUUID()` global rather than
+ * `node:crypto`'s `randomUUID` import deliberately: this file is reachable
+ * from `@ccc/plugin`'s public entry, which the visual-regression harness
+ * bundles for a plain browser page with zero Node built-ins (see
+ * `posix-path.ts`'s docblock for the fuller rationale). `crypto.randomUUID`
+ * has been a standard global in both Node (18.14+) and every evergreen
+ * browser for years, so this is a like-for-like swap, not a weaker one.
+ */
 
 declare const brand: unique symbol;
 
@@ -48,7 +56,7 @@ export type NoteId = Brand<string, "NoteId">;
  */
 export function newRunId(): RunId {
   const time = Date.now().toString(36).padStart(9, "0");
-  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as RunId;
 }
 
@@ -63,7 +71,7 @@ export function newRunId(): RunId {
  */
 export function newNoteId(): NoteId {
   const time = Date.now().toString(36).padStart(9, "0");
-  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as NoteId;
 }
 
@@ -81,7 +89,7 @@ export function newNoteId(): NoteId {
  */
 export function newWorkspaceId(): WorkspaceId {
   const time = Date.now().toString(36).padStart(9, "0");
-  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as WorkspaceId;
 }
 
@@ -94,7 +102,7 @@ export function newWorkspaceId(): WorkspaceId {
  */
 export function newProjectId(): ProjectId {
   const time = Date.now().toString(36).padStart(9, "0");
-  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as ProjectId;
 }
 
@@ -107,6 +115,6 @@ export type ScanRootId = Brand<string, "ScanRootId">;
 /** Mints a ScanRootId — the one minting home for scan-root IDs, same shape as {@link newProjectId}. */
 export function newScanRootId(): ScanRootId {
   const time = Date.now().toString(36).padStart(9, "0");
-  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as ScanRootId;
 }

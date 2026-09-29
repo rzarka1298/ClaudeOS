@@ -1,5 +1,10 @@
 import type { Freshness, ProjectsSnapshot, ServiceEvent, SnapshotResponse } from "@ccc/domain";
-import { compareProjectViews, ProjectsUpdatedPayloadSchema } from "@ccc/domain";
+// `@ccc/domain/browser`, not `@ccc/domain`: this module is reachable from
+// `@ccc/plugin`'s public entry, which the visual-regression harness bundles
+// for a plain browser page. The full barrel re-exports `path-containment.js`
+// (genuine `node:fs` need), which is fatal for that bundle even though
+// nothing here uses it (`index.browser.ts`'s docblock has the full story).
+import { compareProjectViews, ProjectsUpdatedPayloadSchema } from "@ccc/domain/browser";
 import { computed, signal } from "@preact/signals";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState } from "../connection-state.js";
@@ -116,10 +121,28 @@ export function projectShortcutsStateFor(
   connection: ConnectionState,
   nowIso: string,
 ): WidgetState<ProjectShortcutsData> {
-  // TDD-RED-STUB(04-07-task1): real derivation lands in the GREEN commit.
-  void connection;
-  void nowIso;
-  return snapshot === undefined ? { kind: "loading" } : { kind: "unavailable" };
+  if (snapshot === undefined) {
+    return connection.kind === "connecting" ? { kind: "loading" } : { kind: "unavailable" };
+  }
+
+  const rows = projectRowsFrom(snapshot);
+  const nowMs = Date.parse(nowIso);
+  const everyRowFresh = rows.every(
+    (row) => row.observedAt === null || nowMs - Date.parse(row.observedAt) <= LIVE_WINDOW_MS,
+  );
+  const freshness: Freshness = connection.kind === "live" && everyRowFresh ? "live" : "stale";
+  const anyGitReadFailed = rows.some((row) => row.gitReadFailed);
+
+  return {
+    kind: "ready",
+    data: { projects: rows, launchers: snapshot.launchers },
+    observedAt: newestObservedAt(rows, nowIso),
+    freshness,
+    partiality: anyGitReadFailed
+      ? { partial: true, missingSources: ["Local git status"] }
+      : { partial: false },
+    isEmpty: rows.length === 0,
+  };
 }
 
 /** The Project shortcuts card's live signal — replaces `widget-data.ts`'s constant. */

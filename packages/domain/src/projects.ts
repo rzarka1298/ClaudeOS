@@ -1,7 +1,7 @@
-import path from "node:path";
 import { z } from "zod";
 import { API_BASE } from "./api.js";
 import type { ProjectId, ScanRootId } from "./ids.js";
+import { isAbsolutePosixPath } from "./posix-path.js";
 
 /**
  * Project, scan-root and projects-snapshot contracts (Phase 4, ADR-0003).
@@ -61,7 +61,7 @@ export const AbsolutePathSchema = z
   .refine((value) => !hasControlCharacter(value), {
     message: "path must not contain a control character",
   })
-  .refine((value) => path.isAbsolute(value), { message: "path must be an absolute path" });
+  .refine((value) => isAbsolutePosixPath(value), { message: "path must be an absolute path" });
 
 /**
  * Folders macOS guards with TCC or that are rarely a project's real home;
