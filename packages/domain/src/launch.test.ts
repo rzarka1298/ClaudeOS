@@ -333,18 +333,32 @@ describe("TerminalLauncher port (D-49, PR-07)", () => {
         return Promise.resolve({ ok: true });
       },
     };
+    const signal = new AbortController().signal;
     const withoutEnv: TerminalLaunchInput = {
       cwd: "/Users/USERNAME/code/example-project",
       argv: ["/usr/bin/true"],
+      signal,
     };
     const withEnv: TerminalLaunchInput = {
       cwd: "/Users/USERNAME/code/example-project",
       argv: ["/usr/bin/true"],
       env: { CCC_RUN_ID: "run-1" },
+      signal,
     };
     await expect(launcher.launch(withoutEnv)).resolves.toEqual({ ok: true });
     await expect(launcher.launch(withEnv)).resolves.toEqual({ ok: true });
     expect(seen[1]?.env).toEqual({ CCC_RUN_ID: "run-1" });
+  });
+
+  it("carries the launch's AbortSignal, so an adapter can refuse to open after the cap", () => {
+    const controller = new AbortController();
+    const input: TerminalLaunchInput = {
+      cwd: "/Users/USERNAME/code/example-project",
+      argv: ["/usr/bin/true"],
+      signal: controller.signal,
+    };
+    controller.abort();
+    expect(input.signal.aborted).toBe(true);
   });
 
   it("a ProjectId-typed lookup key compiles against the port shapes", () => {

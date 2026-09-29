@@ -330,12 +330,19 @@ describe("Claude Code with an injected terminal launcher (the 04-09 seam)", () =
     await expect(
       service({ terminalLauncher: launcher }).launch({ projectId, action: "claude-code" }),
     ).resolves.toEqual({ ok: true });
-    expect(inputs).toEqual([{ cwd: projectDir, argv: ["/usr/bin/true", "--add-dir", projectDir] }]);
+    expect(inputs).toEqual([
+      {
+        cwd: projectDir,
+        argv: ["/usr/bin/true", "--add-dir", projectDir],
+        signal: expect.any(AbortSignal),
+      },
+    ]);
+    expect(inputs[0]?.signal.aborted).toBe(false);
     expect(spawner.calls).toHaveLength(0);
     expect(getProject(store.db, projectId)?.lastOpenedAt).not.toBeNull();
   });
 
-  it("refuses a stored template carrying a permission-bypass flag, launching nothing", async () => {
+  it("reads a stored template that fails validation as not configured, launching nothing", async () => {
     saveLauncherConfig(store.db, "claude-code", {
       executablePath: "/usr/bin/true",
       args: ["--permission-mode", "bypassPermissions"],
@@ -344,8 +351,44 @@ describe("Claude Code with an injected terminal launcher (the 04-09 seam)", () =
     const { inputs, launcher } = terminalSpy();
     await expect(
       service({ terminalLauncher: launcher }).launch({ projectId, action: "claude-code" }),
-    ).resolves.toEqual({ ok: false, error: "spawn-failed" });
+    ).resolves.toEqual({ ok: false, error: "launcher-not-configured" });
     expect(inputs).toHaveLength(0);
+  });
+
+  it("a stored executable that is no longer executable is not configured either", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: join(base, "no-such-claude"),
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    const { inputs, launcher } = terminalSpy();
+    await expect(
+      service({ terminalLauncher: launcher }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: false, error: "launcher-not-configured" });
+    expect(inputs).toHaveLength(0);
+  });
+
+  it("aborts the hand-off's signal when the cap fires, so it cannot open after timeout is reported", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    const inputs: TerminalLaunchInput[] = [];
+    const launcher: TerminalLauncher = {
+      launch(input) {
+        inputs.push(input);
+        return new Promise<never>(() => {});
+      },
+    };
+    await expect(
+      service({ terminalLauncher: launcher, capMs: 50 }).launch({
+        projectId,
+        action: "claude-code",
+      }),
+    ).resolves.toEqual({ ok: false, error: "timeout" });
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]?.signal.aborted).toBe(true);
   });
 
   it("passes the terminal launcher's own failure kind through", async () => {
