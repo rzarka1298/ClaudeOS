@@ -15,12 +15,15 @@ import {
   FORMAT_MIN_RATIO,
   FORMAT_MIN_SAMPLE,
   FORMAT_ZERO_SAMPLE,
+  MAX_LINE_BYTES,
   parseTranscriptChunk,
   type RecognizedUsageRecord,
+  type TranscriptCarry,
 } from "./parse.js";
 
 const encoder = new TextEncoder();
 const bytes = (text: string) => encoder.encode(text).length;
+const carryText = (carry: TranscriptCarry) => new TextDecoder().decode(carry.bytes);
 
 describe("parseTranscriptChunk — one chunk (Test 1)", () => {
   const complete = [
@@ -32,22 +35,24 @@ describe("parseTranscriptChunk — one chunk (Test 1)", () => {
   const chunk = `${complete.join("\n")}\n${partial}`;
 
   it("returns the recognized records and carries the trailing partial line", () => {
-    const result = parseTranscriptChunk(chunk, "");
+    const result = parseTranscriptChunk(chunk);
     expect(result.records).toHaveLength(20);
-    expect(result.carry).toBe(partial);
+    expect(carryText(result.carry)).toBe(partial);
+    expect(result.carry.skipping).toBe(false);
   });
 
   it("counts only complete lines in bytesConsumed", () => {
-    const result = parseTranscriptChunk(chunk, "");
+    const result = parseTranscriptChunk(chunk);
     expect(result.bytesConsumed).toBe(bytes(chunk) - bytes(partial));
   });
 
   it("reports the malformed line and per-version counts in stats", () => {
-    const { stats } = parseTranscriptChunk(chunk, "");
+    const { stats } = parseTranscriptChunk(chunk);
     expect(stats).toEqual({
       assistant: 20,
       recognized: 20,
       unparsable: 1,
+      oversized: 0,
       byVersion: { [SYNTHETIC_VERSION]: { assistant: 20, recognized: 20 } },
     });
   });
@@ -58,7 +63,7 @@ describe("parseTranscriptChunk — one chunk (Test 1)", () => {
       usage: { input: 7, output: 11, cacheWrite: 13, cacheRead: 17 },
       timestamp: "2026-09-28T12:34:56.000Z",
     });
-    const [record] = parseTranscriptChunk(`${line}\n`, "").records;
+    const [record] = parseTranscriptChunk(`${line}\n`).records;
     expect(record).toEqual({
       messageId: "msg_mapped",
       sessionId: SYNTHETIC_SESSION_ID,
@@ -72,7 +77,7 @@ describe("parseTranscriptChunk — one chunk (Test 1)", () => {
   it("does not recognize an assistant record whose usage lost a counter", () => {
     const line = JSON.parse(assistantLine({ messageId: "msg_changed" }));
     delete line.message.usage.cache_read_input_tokens;
-    const result = parseTranscriptChunk(`${JSON.stringify(line)}\n`, "");
+    const result = parseTranscriptChunk(`${JSON.stringify(line)}\n`);
     expect(result.records).toEqual([]);
     expect(result.stats.byVersion[SYNTHETIC_VERSION]).toEqual({ assistant: 1, recognized: 0 });
   });
@@ -81,22 +86,21 @@ describe("parseTranscriptChunk — one chunk (Test 1)", () => {
 describe("parseTranscriptChunk — byte-split chunks (Test 2, cursor safety)", () => {
   it("yields the same records from 7 arbitrary byte splits as from one chunk", () => {
     const transcript = generateSyntheticTranscript({ messages: 15 });
-    const whole = parseTranscriptChunk(transcript.text, "");
-    expect(whole.carry).toBe("");
+    const whole = parseTranscriptChunk(transcript.text);
+    expect(whole.carry.bytes.length).toBe(0);
     expect(whole.bytesConsumed).toBe(bytes(transcript.text));
 
     const encoded = encoder.encode(transcript.text);
     // Seven chunks split at fixed, uneven byte offsets, several landing inside
-    // a line and one inside the two-byte `é`, decoded as a streaming reader would.
+    // a line and one inside the two-byte `é`, passed as raw bytes as the
+    // service's file reader does.
     const cuts = [1, 97, 1_000, 1_001, 2_503, 4_444, encoded.length - 3].sort((a, b) => a - b);
-    const decoder = new TextDecoder("utf-8");
-    let carry = "";
+    let carry: TranscriptCarry | undefined;
     let consumed = 0;
     const records: RecognizedUsageRecord[] = [];
     let start = 0;
     for (const end of [...cuts, encoded.length]) {
-      const text = decoder.decode(encoded.subarray(start, end), { stream: end < encoded.length });
-      const result = parseTranscriptChunk(text, carry);
+      const result = parseTranscriptChunk(encoded.subarray(start, end), carry);
       records.push(...result.records);
       carry = result.carry;
       consumed += result.bytesConsumed;
@@ -104,8 +108,59 @@ describe("parseTranscriptChunk — byte-split chunks (Test 2, cursor safety)", (
     }
     expect(cuts).toHaveLength(7);
     expect(records).toEqual(whole.records);
-    expect(carry).toBe("");
+    expect(carry?.bytes.length).toBe(0);
     expect(consumed).toBe(encoded.length);
+  });
+});
+
+describe("parseTranscriptChunk — byte accounting and the line cap (wave 2 review)", () => {
+  it("counts bytesConsumed on the raw bytes, so invalid UTF-8 never drifts the cursor", () => {
+    const valid = assistantLine({ messageId: "msg_after_invalid" });
+    const chunk = new Uint8Array([
+      ...encoder.encode('{"type":"user","note":"'),
+      0xff,
+      0xfe,
+      0xc3, // a lone lead byte
+      ...encoder.encode('"}\n'),
+      ...encoder.encode(`${valid}\n`),
+      0xe2,
+      0x82, // a partial line ending in a split multi-byte sequence
+    ]);
+    const result = parseTranscriptChunk(chunk);
+    expect(result.records.map((record) => record.messageId)).toEqual(["msg_after_invalid"]);
+    expect(result.bytesConsumed).toBe(chunk.length - 2);
+    expect(Array.from(result.carry.bytes)).toEqual([0xe2, 0x82]);
+  });
+
+  it("drops a line longer than MAX_LINE_BYTES, skips to the next newline and keeps the carry bounded", () => {
+    const piece = new Uint8Array(MAX_LINE_BYTES / 2).fill(0x61);
+    let carry: TranscriptCarry | undefined;
+    let consumed = 0;
+    let total = 0;
+    const records: RecognizedUsageRecord[] = [];
+    let oversized = 0;
+    const tail = encoder.encode(`aaa\n${assistantLine({ messageId: "msg_after_long" })}\n`);
+    for (const chunk of [piece, piece, piece, tail]) {
+      const result = parseTranscriptChunk(chunk, carry);
+      carry = result.carry;
+      consumed += result.bytesConsumed;
+      total += chunk.length;
+      records.push(...result.records);
+      oversized += result.stats.oversized;
+      expect(carry.bytes.length).toBeLessThanOrEqual(MAX_LINE_BYTES);
+    }
+    expect(oversized).toBe(1);
+    expect(records.map((record) => record.messageId)).toEqual(["msg_after_long"]);
+    expect(consumed).toBe(total);
+    expect(carry?.skipping).toBe(false);
+  });
+
+  it("a complete line longer than MAX_LINE_BYTES inside one chunk is counted oversized, not parsed", () => {
+    const long = `{"type":"assistant","pad":"${"x".repeat(MAX_LINE_BYTES)}"}`;
+    const text = `${long}\n${assistantLine({ messageId: "msg_short" })}\n`;
+    const result = parseTranscriptChunk(text);
+    expect(result.stats).toMatchObject({ oversized: 1, assistant: 1, recognized: 1 });
+    expect(result.bytesConsumed).toBe(bytes(text));
   });
 });
 
@@ -115,7 +170,7 @@ describe("parseTranscriptChunk — one message over many lines (Test 3)", () => 
       { length: 19 },
       () => `${assistantLine({ messageId: "msg_repeated" })}\n`,
     ).join("");
-    const { records } = parseTranscriptChunk(text, "");
+    const { records } = parseTranscriptChunk(text);
     expect(records).toHaveLength(19);
     expect(new Set(records.map((record) => record.messageId))).toEqual(new Set(["msg_repeated"]));
   });
@@ -123,7 +178,7 @@ describe("parseTranscriptChunk — one message over many lines (Test 3)", () => 
 
 describe("parseTranscriptChunk — <synthetic> records (Test 4, PR-11)", () => {
   it("recognizes a <synthetic> record with zero usage and no requestId", () => {
-    const { records, stats } = parseTranscriptChunk(`${syntheticModelLine("msg_synth")}\n`, "");
+    const { records, stats } = parseTranscriptChunk(`${syntheticModelLine("msg_synth")}\n`);
     expect(records).toEqual([
       expect.objectContaining({
         messageId: "msg_synth",
@@ -180,7 +235,7 @@ describe("evaluateRecognition — format-change detection (Test 5, D-41, PR-11)"
 describe("parseTranscriptChunk — never lets content out (Test 6, D-49, T-05-14)", () => {
   it("serialized records exclude every planted content sentinel, path and branch", () => {
     const transcript = generateSyntheticTranscript({ messages: 20, subagent: true });
-    const { records } = parseTranscriptChunk(transcript.text, "");
+    const { records } = parseTranscriptChunk(transcript.text);
     expect(records.length).toBe(transcript.assistantLines);
     const serialized = JSON.stringify(records);
     expect(transcript.text).toContain(CONTENT_SENTINEL);

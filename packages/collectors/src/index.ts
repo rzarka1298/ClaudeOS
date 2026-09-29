@@ -37,15 +37,18 @@ export {
   type SessionFacts,
 } from "./sessions/reducer.js";
 export {
+  EMPTY_CARRY,
   evaluateRecognition,
   FORMAT_MIN_RATIO,
   FORMAT_MIN_SAMPLE,
   FORMAT_ZERO_SAMPLE,
+  MAX_LINE_BYTES,
   type ParseResult,
   type ParseStats,
   parseTranscriptChunk,
   type RecognitionVerdict,
   type RecognizedUsageRecord,
+  type TranscriptCarry,
   UNVERSIONED,
   type VersionRecognition,
 } from "./transcripts/parse.js";
