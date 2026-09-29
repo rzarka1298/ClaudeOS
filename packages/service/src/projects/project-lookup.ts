@@ -1,4 +1,4 @@
-import { realpathSync, statSync } from "node:fs";
+import { realpath, stat } from "node:fs/promises";
 import type { ProjectId, ProjectLookup, ProjectLookupFailure, ResolvedProject } from "@ccc/domain";
 import { getProject, type OperationalStore } from "@ccc/operational-store";
 
@@ -17,6 +17,10 @@ import { getProject, type OperationalStore } from "@ccc/operational-store";
  *
  * The residual same-user race between this check and the spawn is the one
  * ADR-0001 already accepts (threat T-04-18).
+ *
+ * Every filesystem call is asynchronous (`fs.promises`): a synchronous
+ * `realpath`/`stat` on a stalled network or external volume would block the
+ * event loop, so the launch pipeline's 4 s cap could never fire (D-40).
  */
 
 const ACCESS_DENIED_CODES = new Set(["EPERM", "EACCES"]);
@@ -34,18 +38,19 @@ function classifyFsError(err: unknown): ProjectLookupFailure {
 
 export function createStoreProjectLookup(store: OperationalStore): ProjectLookup {
   return {
-    resolve(projectId: ProjectId): ResolvedProject | ProjectLookupFailure {
+    async resolve(projectId: ProjectId): Promise<ResolvedProject | ProjectLookupFailure> {
       const record = getProject(store.db, projectId);
       if (record === null) return { error: "project-missing" };
       let resolved: string;
       try {
-        resolved = realpathSync.native(record.path);
+        // `fs.promises.realpath` resolves through the native realpath(3).
+        resolved = await realpath(record.path);
       } catch (err: unknown) {
         return classifyFsError(err);
       }
       if (resolved !== record.path) return { error: "project-moved" };
       try {
-        if (!statSync(resolved).isDirectory()) return { error: "project-moved" };
+        if (!(await stat(resolved)).isDirectory()) return { error: "project-moved" };
       } catch (err: unknown) {
         return classifyFsError(err);
       }

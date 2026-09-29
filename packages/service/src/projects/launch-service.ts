@@ -1,4 +1,5 @@
-import { accessSync, constants } from "node:fs";
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
 import {
   type LaunchAction,
   type LaunchErrorKind,
@@ -54,7 +55,10 @@ import type { Spawner } from "./spawner.js";
  *
  * The whole pipeline runs under {@link LAUNCH_CAP_MS}: whatever happens
  * inside, the caller has a result within 4 s, leaving the plugin's 5 s
- * wall-clock deadline room for the transport (Pitfall 6).
+ * wall-clock deadline room for the transport (Pitfall 6). That includes the
+ * preparation step: every filesystem check (the project lookup, the
+ * executable check) is asynchronous, so a stalled volume cannot block the
+ * event loop past the cap.
  *
  * A launch never waits on git (D-42): after a successful spawn it touches
  * `last_opened_at`, tells the collector the registry changed, and queues a
@@ -138,10 +142,10 @@ function refuse(error: LaunchErrorKind): Prepared {
   return { kind: "refuse", error };
 }
 
-/** `accessSync(X_OK)` as a boolean, for the template validator (D-22). */
-function isExecutable(path: string): boolean {
+/** `access(X_OK)` as a boolean, for the template validator (D-22). */
+async function isExecutable(path: string): Promise<boolean> {
   try {
-    accessSync(path, constants.X_OK);
+    await access(path, constants.X_OK);
     return true;
   } catch {
     return false;
@@ -178,35 +182,42 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     return { kind: "spawn", argv: openUrl(githubRepoUrl(target.owner, target.repo)) };
   };
 
-  const prepareClaudeCode = (projectId: ProjectId): Prepared => {
+  const prepareClaudeCode = async (projectId: ProjectId): Promise<Prepared> => {
     const terminalLauncher = deps.terminalLauncher;
     if (terminalLauncher === undefined) return refuse("launcher-not-configured");
     const record = getLauncherConfig(deps.store.db, "claude-code");
     const config = record === null ? null : parseStoredLauncherConfig("claude-code", record.config);
     if (config === null) return refuse("launcher-not-configured");
-    const project = deps.lookup.resolve(projectId);
+    const project = await deps.lookup.resolve(projectId);
     if ("error" in project) return refuse(project.error);
     const template = [config.executablePath, ...config.args];
+    // The validator's executable check is synchronous; the one path it asks
+    // about (`argv[0]`) is checked asynchronously here first.
+    const executable = await isExecutable(config.executablePath);
     // The stored template is validated again at launch: a row written before
     // a validator change must not run a forbidden flag (D-22).
-    if (!validateCommandTemplate(template, { kind: "claude-code", isExecutable }).ok) {
+    const validation = validateCommandTemplate(template, {
+      kind: "claude-code",
+      isExecutable: (path) => executable && path === config.executablePath,
+    });
+    if (!validation.ok) {
       return refuse("spawn-failed");
     }
     const argv = renderCommandTemplate(template, { projectPath: project.path });
     return { kind: "delegate", run: () => terminalLauncher.launch({ cwd: project.path, argv }) };
   };
 
-  const prepare = (request: LaunchRequest): Prepared => {
+  const prepare = async (request: LaunchRequest): Promise<Prepared> => {
     switch (request.action) {
       case "finder": {
-        const project = deps.lookup.resolve(request.projectId);
+        const project = await deps.lookup.resolve(request.projectId);
         if ("error" in project) return refuse(project.error);
         return { kind: "spawn", argv: revealInFinder(project.path) };
       }
       case "antigravity": {
         const bundleId = savedBundleId("antigravity");
         if (bundleId === null) return refuse("launcher-not-configured");
-        const project = deps.lookup.resolve(request.projectId);
+        const project = await deps.lookup.resolve(request.projectId);
         if ("error" in project) return refuse(project.error);
         return { kind: "spawn", argv: openInApp(bundleId, project.path) };
       }
@@ -232,7 +243,8 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
 
   const attempt = async (request: LaunchRequest, state: Attempt): Promise<LaunchResult> => {
     const projectId = projectIdOf(request);
-    const prepared = prepare(request);
+    const prepared = await prepare(request);
+    if (state.cancelled) return failure("timeout");
     if (prepared.kind === "refuse") return failure(prepared.error);
     const decision = await guard.check({ projectId, action: request.action });
     if (!decision.ok) return failure(decision.error);

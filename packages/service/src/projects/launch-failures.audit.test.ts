@@ -1,5 +1,5 @@
-import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import * as fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProjectId } from "@ccc/domain";
@@ -21,15 +21,10 @@ import { createStoreProjectLookup } from "./project-lookup.js";
  * refresh, and only { projectId, action, kind } logged. Also covers EPERM.
  */
 
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  const realpath = Object.assign(
-    (...a: Parameters<typeof actual.realpathSync>) => actual.realpathSync(...a),
-    {
-      native: vi.fn(actual.realpathSync.native),
-    },
-  );
-  return { ...actual, realpathSync: realpath };
+// The lookup resolves through `fs.promises` (never a blocking sync call).
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, realpath: vi.fn(actual.realpath) };
 });
 
 let base: string;
@@ -73,7 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.mocked(fs.realpathSync.native).mockRestore?.();
+  vi.mocked(fsp.realpath).mockClear();
   store.close();
   rmSync(base, { recursive: true, force: true });
 });
@@ -110,9 +105,9 @@ describe("launch lookup failures through the real service (D-26, D-06)", () => {
   });
 
   it("EPERM while resolving the folder answers folder-access-denied with no side effects", async () => {
-    vi.mocked(fs.realpathSync.native).mockImplementationOnce(() => {
-      throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
-    });
+    vi.mocked(fsp.realpath).mockRejectedValueOnce(
+      Object.assign(new Error("operation not permitted"), { code: "EPERM" }),
+    );
     expect(await service().launch({ projectId, action: "finder" })).toEqual({
       ok: false,
       error: "folder-access-denied",

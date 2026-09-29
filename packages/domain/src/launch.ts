@@ -429,9 +429,12 @@ export interface ProjectLookupFailure {
 /**
  * Resolves a ProjectId to its stored path, re-checking existence and
  * `realpath` equality (D-06). Unknown ids resolve to `project-missing`.
+ * Asynchronous so the filesystem re-check can never block the event loop:
+ * the launch pipeline races it against its own cap, and a stalled volume
+ * must surface as `timeout`, not as a hung service (D-40).
  */
 export interface ProjectLookup {
-  resolve(projectId: ProjectId): ResolvedProject | ProjectLookupFailure;
+  resolve(projectId: ProjectId): Promise<ResolvedProject | ProjectLookupFailure>;
 }
 
 export interface LaunchGuardInput {
