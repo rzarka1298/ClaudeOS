@@ -1,14 +1,44 @@
 import {
   ApiErrorBodySchema,
+  type AssociateRequest,
+  AssociateRequestSchema,
+  type BranchRequest,
+  BranchRequestSchema,
+  type BranchResponse,
+  BranchResponseSchema,
   CLAUDE_INTEGRATION_PATH,
+  CLAUDE_SESSION_USAGE_PATH,
   CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
   CLAUDE_USAGE_DELETE_PATH,
   type ClaudeIntegrationStatus,
   ClaudeIntegrationStatusSchema,
+  type FocusResponse,
+  FocusResponseSchema,
+  type OpenTranscriptRequest,
+  OpenTranscriptRequestSchema,
+  type ResumeRequest,
+  ResumeRequestSchema,
+  type ResumeResponse,
+  ResumeResponseSchema,
+  SESSION_ASSOCIATE_PATH,
+  SESSION_BRANCH_PATH,
+  SESSION_FOCUS_PATH,
+  SESSION_OPEN_TRANSCRIPT_PATH,
+  SESSION_RESUME_PATH,
+  SESSION_TERMINATE_REQUEST_PATH,
+  SESSION_WORKTREES_PATH,
   SessionActionErrorBodySchema,
   type SessionActionErrorCode,
+  type SessionActionRequest,
+  SessionActionRequestSchema,
+  type SessionUsage,
+  SessionUsageSchema,
+  type TerminateRequestResponse,
+  TerminateRequestResponseSchema,
   type TranscriptAnalysisRequest,
   TranscriptAnalysisRequestSchema,
+  type WorktreeListResponse,
+  WorktreeListResponseSchema,
 } from "@ccc/domain";
 import type { SocketApiClient } from "./socket-api-client.js";
 import { SocketUnreachableError } from "./socket-api-client.js";
@@ -145,16 +175,97 @@ export function deleteUsageAnalytics(client: SocketApiClient): Promise<void> {
   );
 }
 
-/** RED stub -- Task 2. Throws unconditionally so callers fail on a real assertion. */
-export function requestSessionAction(
-  _client: SocketApiClient,
-  _action: string,
-  _body: unknown,
-): Promise<unknown> {
-  throw new Error("not implemented");
+/** Validates and parses -- the shape zod schemas satisfy, reused for outgoing request bodies. */
+interface RequestValidator<T> {
+  parse(input: unknown): T;
 }
 
-/** RED stub -- Task 2. Throws unconditionally so callers fail on a real assertion. */
-export function getSessionUsage(_client: SocketApiClient, _runId: string): Promise<unknown> {
-  throw new Error("not implemented");
+/**
+ * Every Session action, by name: its route, its strict request schema (used
+ * to VALIDATE the outgoing body -- an extra key, including a smuggled path,
+ * throws before the request ever reaches the wire, T-05-03) and its
+ * response schema. `open-transcript` and `associate` have no domain
+ * response schema yet, so they accept any 200 body via `unknownResponse`.
+ */
+const SESSION_ACTION_SPECS = {
+  focus: {
+    path: SESSION_FOCUS_PATH,
+    request: SessionActionRequestSchema,
+    response: FocusResponseSchema,
+  },
+  resume: {
+    path: SESSION_RESUME_PATH,
+    request: ResumeRequestSchema,
+    response: ResumeResponseSchema,
+  },
+  branch: {
+    path: SESSION_BRANCH_PATH,
+    request: BranchRequestSchema,
+    response: BranchResponseSchema,
+  },
+  worktrees: {
+    path: SESSION_WORKTREES_PATH,
+    request: SessionActionRequestSchema,
+    response: WorktreeListResponseSchema,
+  },
+  "open-transcript": {
+    path: SESSION_OPEN_TRANSCRIPT_PATH,
+    request: OpenTranscriptRequestSchema,
+    response: unknownResponse,
+  },
+  associate: {
+    path: SESSION_ASSOCIATE_PATH,
+    request: AssociateRequestSchema,
+    response: unknownResponse,
+  },
+  "terminate-request": {
+    path: SESSION_TERMINATE_REQUEST_PATH,
+    request: SessionActionRequestSchema,
+    response: TerminateRequestResponseSchema,
+  },
+} as const;
+
+/** The request/response payload shapes for each {@link SessionActionName}. */
+interface SessionActionTable {
+  focus: { request: SessionActionRequest; response: FocusResponse };
+  resume: { request: ResumeRequest; response: ResumeResponse };
+  branch: { request: BranchRequest; response: BranchResponse };
+  worktrees: { request: SessionActionRequest; response: WorktreeListResponse };
+  "open-transcript": { request: OpenTranscriptRequest; response: unknown };
+  associate: { request: AssociateRequest; response: unknown };
+  "terminate-request": { request: SessionActionRequest; response: TerminateRequestResponse };
+}
+
+export type SessionActionName = keyof SessionActionTable;
+
+/**
+ * Every Phase 5 Session action through one typed, validated poster. The
+ * outgoing body is parsed (not cast) against the action's own strict
+ * schema before it is sent -- an extra key rejects synchronously, so a
+ * caller bug can never smuggle an unexpected field, let alone a path, onto
+ * the wire (T-05-03).
+ */
+export async function requestSessionAction<K extends SessionActionName>(
+  client: SocketApiClient,
+  action: K,
+  body: SessionActionTable[K]["request"],
+): Promise<SessionActionTable[K]["response"]> {
+  const spec = SESSION_ACTION_SPECS[action];
+  // Inside an `async` function, a synchronous `.parse()` throw (an
+  // unrecognised key, including a smuggled path) becomes a REJECTED
+  // promise rather than an exception thrown before the caller ever gets a
+  // promise to await -- the same contract every other function here keeps.
+  const validatedBody = (spec.request as RequestValidator<unknown>).parse(body);
+  return requestClaude(client, "POST", spec.path, validatedBody, spec.response);
+}
+
+/** `POST /api/v1/claude/usage/session` -- per-Session usage for the Agent runs detail pane (PR-23). */
+export async function getSessionUsage(
+  client: SocketApiClient,
+  runId: string,
+): Promise<SessionUsage> {
+  // `async` so a malformed `runId` (not the 25-char minted shape) rejects
+  // rather than throwing before the caller has a promise to await.
+  const body = SessionActionRequestSchema.parse({ runId });
+  return requestClaude(client, "POST", CLAUDE_SESSION_USAGE_PATH, body, SessionUsageSchema);
 }

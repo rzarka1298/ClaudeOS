@@ -1,4 +1,4 @@
-import type { ClaudeIntegrationStatus, SessionUsage } from "@ccc/domain";
+import type { ClaudeIntegrationStatus, RunId, SessionUsage } from "@ccc/domain";
 import {
   CLAUDE_INTEGRATION_PATH,
   CLAUDE_SESSION_USAGE_PATH,
@@ -131,7 +131,7 @@ describe("setTranscriptAnalysis (Test 2)", () => {
  * Task 2: the rest of the Claude client -- session actions, per-session
  * usage, deletion. A valid 25-char RunId (`RUN_ID_PATTERN`, `session.ts`).
  */
-const RUN_ID = "0mfk1a2b3c4d5e6f7a8b9c0d1";
+const RUN_ID = "0mfk1a2b3c4d5e6f7a8b9c0d1" as RunId;
 
 describe("requestSessionAction (Test 1)", () => {
   it("POSTs focus to SESSION_FOCUS_PATH and returns the parsed FocusResponse", async () => {
@@ -199,7 +199,9 @@ describe("requestSessionAction (Test 2)", () => {
   });
 
   it("worktrees returns the parsed worktree list", async () => {
-    const worktrees = { worktrees: [{ worktreeId: "wt1", branch: "main", folderBasename: "repo" }] };
+    const worktrees = {
+      worktrees: [{ worktreeId: "wt1", branch: "main", folderBasename: "repo" }],
+    };
     const client = fakeClient((opts) => {
       expect(opts.path).toBe(SESSION_WORKTREES_PATH);
       return { status: 200, body: worktrees };
@@ -257,7 +259,7 @@ describe("requestSessionAction (Test 3)", () => {
     const client = fakeClient(() => {
       throw new Error("must not be called: the strict schema should reject first");
     });
-    const smuggled = { runId: RUN_ID, path: "/etc/passwd" } as unknown as { runId: string };
+    const smuggled = { runId: RUN_ID, path: "/etc/passwd" } as unknown as { runId: RunId };
 
     await expect(requestSessionAction(client, "focus", smuggled)).rejects.toThrow();
   });
@@ -267,8 +269,8 @@ describe("getSessionUsage and deleteUsageAnalytics (Test 4)", () => {
   it("getSessionUsage returns the parsed SessionUsage", async () => {
     const usage: SessionUsage = {
       runId: RUN_ID,
-      activity: { kind: "unavailable" },
-      cost: { kind: "unavailable" },
+      activity: { kind: "unavailable", reason: "analysis-off", version: null },
+      cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
     };
     const client = fakeClient((opts) => {
       expect(opts.method).toBe("POST");
