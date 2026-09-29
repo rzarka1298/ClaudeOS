@@ -9,6 +9,7 @@ import {
   resolveSpoolPath,
   resolveStatusLineSpoolPath,
 } from "../paths.js";
+import { createLivenessSweeper, type LivenessSweeper, livenessConfigFromEnv } from "./liveness.js";
 import { type ClaudePipeline, createClaudePipeline } from "./pipeline.js";
 import { createProcessFacts, createSessionFactsProvider, nodeExecFile } from "./process-facts.js";
 import type { ClaudeRouteDeps } from "./routes.js";
@@ -27,10 +28,12 @@ export interface ClaudeServicesDeps {
 export interface ClaudeServices {
   readonly pipeline: ClaudePipeline;
   readonly poller: SpoolPoller;
+  readonly sweeper: LivenessSweeper;
   /** What `createRequestListener` carries as `RouteContext.claude`. */
   readonly routeDeps: ClaudeRouteDeps;
   /**
-   * Stops the poller (awaiting its in-flight tick), then the pipeline
+   * Stops the liveness sweeper (awaiting its in-flight sweep), the poller
+   * (awaiting its in-flight tick), then the pipeline
    * (awaiting its queue and writing any coalesced activity still pending).
    * The store may be closed only after this resolves.
    */
@@ -84,14 +87,34 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     intervalMs: pollInterval(env),
   });
 
+  const sweeper = createLivenessSweeper({
+    db: store.db,
+    pipeline,
+    processFacts,
+    logger,
+    now: () => new Date(),
+    config: livenessConfigFromEnv(env),
+  });
+
   const drained = await poller.drainNow();
   logger.info({ count: drained, dropped: poller.dropCount() }, "startup: drained hook spool");
+  // D-22: after recovery turned every non-terminal Run stale and the drain
+  // applied any queued endings, one immediate sweep revives the Runs whose
+  // process is still the same live process — all before `main.ts` opens
+  // the socket. Only then does the periodic sweep begin.
+  const revival = await sweeper.sweepNow();
+  logger.info(revival, "startup: liveness sweep");
+  sweeper.start();
 
   return {
     pipeline,
     poller,
+    sweeper,
     routeDeps: { pipeline },
     async stop() {
+      // The sweeper first: its evidence goes through the pipeline, which
+      // must still be accepting work, and nothing may sweep a closed store.
+      await sweeper.stop();
       await poller.stop();
       await pipeline.stop();
     },

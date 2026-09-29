@@ -1,14 +1,41 @@
+import type { RunId, SessionRun } from "@ccc/domain";
+import { listRevivableRuns } from "@ccc/operational-store";
 import type Database from "better-sqlite3";
 import type { Logger } from "pino";
 import type { ClaudePipeline } from "./pipeline.js";
 import type { ProcessFacts } from "./process-facts.js";
 
-// RED scaffold (05-11 Task 1): the real sweeper replaces this body.
+/**
+ * The process-liveness sweeper (D-19, D-22, RESEARCH Pattern 4 and Q5).
+ * Every sweep reads the revivable Runs (`listRevivableRuns`: every active
+ * session Run plus stale ones with a pid seen in the last 24 h), checks
+ * their pids with one `kill(pid, 0)` pass, then reads the start times of the
+ * pids that answered in ONE batched C-locale `ps`, and turns what it saw
+ * into evidence for the pipeline's reducer:
+ *
+ * - A pid that is gone, or alive with an `lstart` different from the one
+ *   stored at SessionStart (the PID was reused: another process), is
+ *   remembered as first-seen-gone. Only after the grace period, when no
+ *   SessionEnd has ended the Run meanwhile, does the sweep apply `pid-gone`.
+ * - A pid alive with exactly the stored `lstart` applies `pid-alive` to a
+ *   stale Run (revival). An unknown stored or read `lstart` proves nothing
+ *   either way, so it neither revives nor ends a Run.
+ *
+ * Nothing here ever infers an ending (SESS-06). `pid-gone` makes a Run
+ * `stale` — unknown — and the reducer writes `cancelled` only when a
+ * terminate was requested. This module never writes `completed` or
+ * `failed`, never writes the store itself, and never signals a process:
+ * signal 0 only asks whether the pid exists.
+ */
 
 export interface LivenessConfig {
+  /** How often the sweep runs (`CCC_LIVENESS_SWEEP_MS`, default 5 s). */
   readonly sweepMs: number;
+  /** How long a pid must stay gone before `pid-gone` (`CCC_LIVENESS_GRACE_MS`, default 10 s). */
   readonly graceMs: number;
+  /** A queued/starting Run with no SessionStart for this long goes stale (`CCC_START_TIMEOUT_MS`, 60 s). */
   readonly startTimeoutMs: number;
+  /** A PID-less Run idle this long goes stale (`CCC_PIDLESS_INACTIVITY_MS`, 30 min). */
   readonly pidlessInactivityMs: number;
 }
 
@@ -16,13 +43,37 @@ export const DEFAULT_LIVENESS_CONFIG: LivenessConfig = {
   sweepMs: 5000,
   graceMs: 10_000,
   startTimeoutMs: 60_000,
-  pidlessInactivityMs: 1_800_000,
+  pidlessInactivityMs: 30 * 60 * 1000,
 };
 
+function positiveMs(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return raw !== undefined && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/** The sweeper's timings, each overridable by its env knob (tests shrink them). */
+export function livenessConfigFromEnv(env: NodeJS.ProcessEnv): LivenessConfig {
+  return {
+    sweepMs: positiveMs(env.CCC_LIVENESS_SWEEP_MS, DEFAULT_LIVENESS_CONFIG.sweepMs),
+    graceMs: positiveMs(env.CCC_LIVENESS_GRACE_MS, DEFAULT_LIVENESS_CONFIG.graceMs),
+    startTimeoutMs: positiveMs(env.CCC_START_TIMEOUT_MS, DEFAULT_LIVENESS_CONFIG.startTimeoutMs),
+    pidlessInactivityMs: positiveMs(
+      env.CCC_PIDLESS_INACTIVITY_MS,
+      DEFAULT_LIVENESS_CONFIG.pidlessInactivityMs,
+    ),
+  };
+}
+
+/** What one sweep saw and did. Counts only: never a path or a pid. */
 export interface SweepReport {
+  /** Runs that carried a pid and were checked. */
   readonly checked: number;
+  /** `pid-gone` evidence applied this sweep. */
   readonly gone: number;
+  /** `pid-alive` evidence applied to stale Runs this sweep (revival). */
   readonly revived: number;
+  /** Runs seen gone whose grace has not ended yet. */
+  readonly pendingGone: number;
 }
 
 export interface LivenessSweeperDeps {
@@ -32,18 +83,165 @@ export interface LivenessSweeperDeps {
   readonly logger: Logger;
   readonly now: () => Date;
   readonly config: LivenessConfig;
+  /** Schedules `fn` after `ms`; returns a cancel. Defaults to an unref'd `setTimeout`. */
+  readonly schedule?: (fn: () => void, ms: number) => () => void;
 }
 
 export interface LivenessSweeper {
+  /** Runs one sweep now (serialized with any timer sweep) and reports it. */
   sweepNow(): Promise<SweepReport>;
+  /** Starts the periodic sweep. Idempotent. */
   start(): void;
+  /** Stops the timer and waits for an in-flight sweep, so the store may close afterwards. */
   stop(): Promise<void>;
 }
 
-export function createLivenessSweeper(_deps: LivenessSweeperDeps): LivenessSweeper {
+/**
+ * What one sweep can say about a Run's process (D-19, T-05-47): `same` only
+ * when the pid answered and its `lstart` equals the stored one exactly;
+ * `gone` when it did not answer, or answered with a different `lstart` (a
+ * reused PID is another process); `unknown` when it answered but either
+ * start time is unknown (a failed `ps`, or none stored) — no evidence.
+ */
+function identityOf(
+  run: SessionRun,
+  answered: boolean,
+  lstart: string | undefined,
+): "same" | "gone" | "unknown" {
+  if (!answered) return "gone";
+  if (lstart === undefined || run.pidStartedAt === null) return "unknown";
+  return lstart === run.pidStartedAt ? "same" : "gone";
+}
+
+function defaultSchedule(fn: () => void, ms: number): () => void {
+  const timer = setTimeout(fn, ms);
+  timer.unref();
+  return () => clearTimeout(timer);
+}
+
+export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweeper {
+  const { db, pipeline, processFacts, logger, config } = deps;
+  const schedule = deps.schedule ?? defaultSchedule;
+  /** When each Run's pid was first seen gone (ms, by `deps.now()`). In memory only. */
+  const firstSeenGone = new Map<RunId, number>();
+  let running = false;
+  let stopped = false;
+  let cancelTimer: (() => void) | null = null;
+  /** Serializes sweeps: a timer sweep and a `sweepNow` never overlap. */
+  let tail: Promise<unknown> = Promise.resolve();
+
+  function serialized<T>(work: () => Promise<T>): Promise<T> {
+    const next = tail.then(work);
+    tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  async function sweep(): Promise<SweepReport> {
+    const nowMs = deps.now().getTime();
+    const observedAt = new Date(nowMs).toISOString();
+    const candidates = listRevivableRuns(db, observedAt);
+    const withPid = candidates.filter(
+      (run): run is SessionRun & { pid: number } => run.pid !== null,
+    );
+
+    // One kill(0) pass, then one batched ps for the pids that answered.
+    const answered = new Set(
+      withPid.filter((run) => processFacts.isAlive(run.pid)).map((run) => run.pid),
+    );
+    const starts =
+      answered.size > 0
+        ? await processFacts.readStartTimes([...answered])
+        : new Map<number, string>();
+
+    const seen = new Set<RunId>();
+    let gone = 0;
+    let revived = 0;
+    for (const run of withPid) {
+      seen.add(run.runId);
+      const identity = identityOf(run, answered.has(run.pid), starts.get(run.pid));
+      if (identity === "same") {
+        firstSeenGone.delete(run.runId);
+        if (run.state === "stale") {
+          await pipeline.apply({ kind: "pid-alive", runId: run.runId, observedAt });
+          revived += 1;
+        }
+        continue;
+      }
+      if (identity === "unknown") {
+        firstSeenGone.delete(run.runId);
+        continue;
+      }
+      // A stale Run is already unknown; only a pending terminate still has
+      // an ending (cancelled) for its vanished process to prove.
+      if (run.state === "stale" && run.terminateRequestedAt === null) {
+        firstSeenGone.delete(run.runId);
+        continue;
+      }
+      const first = firstSeenGone.get(run.runId);
+      if (first === undefined) {
+        firstSeenGone.set(run.runId, nowMs);
+        continue;
+      }
+      if (nowMs - first >= config.graceMs) {
+        firstSeenGone.delete(run.runId);
+        await pipeline.apply({ kind: "pid-gone", runId: run.runId, observedAt });
+        gone += 1;
+      }
+    }
+    // A Run that ended (or left the candidate set) during its grace is forgotten.
+    for (const runId of [...firstSeenGone.keys()]) {
+      if (!seen.has(runId)) firstSeenGone.delete(runId);
+    }
+
+    const report: SweepReport = {
+      checked: withPid.length,
+      gone,
+      revived,
+      pendingGone: firstSeenGone.size,
+    };
+    if (gone > 0 || revived > 0) logger.info(report, "liveness sweep applied evidence");
+    return report;
+  }
+
+  /** The next wake: the sweep interval, or sooner when a grace ends first. */
+  function nextDelay(): number {
+    const nowMs = deps.now().getTime();
+    let delay = config.sweepMs;
+    for (const first of firstSeenGone.values()) {
+      delay = Math.min(delay, Math.max(0, first + config.graceMs - nowMs));
+    }
+    return delay;
+  }
+
+  function arm(): void {
+    if (stopped) return;
+    cancelTimer = schedule(() => {
+      cancelTimer = null;
+      serialized(sweep)
+        .catch((err: unknown) => {
+          logger.error({ err }, "liveness sweep failed");
+        })
+        .finally(() => {
+          arm();
+        });
+    }, nextDelay());
+  }
+
   return {
-    sweepNow: async () => ({ checked: 0, gone: 0, revived: 0 }),
-    start() {},
-    stop: async () => {},
+    sweepNow: () => serialized(sweep),
+    start() {
+      if (running || stopped) return;
+      running = true;
+      arm();
+    },
+    async stop() {
+      stopped = true;
+      cancelTimer?.();
+      cancelTimer = null;
+      await tail;
+    },
   };
 }
