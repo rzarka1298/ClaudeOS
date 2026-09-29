@@ -398,11 +398,17 @@ export type OpenSystemSettingsRequest = z.infer<typeof OpenSystemSettingsRequest
  * directory, a plain argv (never a shell string) and an optional
  * environment. `env` is optional so Phase 5 can pass `CCC_RUN_ID` and
  * friends without amending this interface.
+ *
+ * `signal` is the launch pipeline's own cap (D-40): it aborts the moment the
+ * caller has been told `timeout`. An adapter must check it before opening a
+ * window and kill any child it started when it fires, so a hand-off can
+ * never open a terminal after the owner was told the launch timed out.
  */
 export interface TerminalLaunchInput {
   readonly cwd: string;
   readonly argv: readonly string[];
   readonly env?: Readonly<Record<string, string>>;
+  readonly signal: AbortSignal;
 }
 
 /**

@@ -50,8 +50,10 @@ import type { Spawner } from "./spawner.js";
  *   remote (in memory; git is never run here);
  * - `claude-code`: the injected {@link TerminalLauncher} (plan 04-09);
  *   without one it is `launcher-not-configured`.
- * A launcher with no saved configuration, or one whose stored JSON no
- * longer matches the domain schema, is `launcher-not-configured`.
+ * A launcher with no saved configuration, one whose stored JSON no longer
+ * matches the domain schema, or (Claude Code) one whose stored command
+ * template no longer passes the validator, is `launcher-not-configured` —
+ * the next step is always to fix the setup in Settings.
  *
  * The whole pipeline runs under {@link LAUNCH_CAP_MS}: whatever happens
  * inside, the caller has a result within 4 s, leaving the plugin's 5 s
@@ -120,7 +122,7 @@ export interface LaunchService {
 /** What a resolved action hands to the spawn step. */
 type Prepared =
   | { readonly kind: "spawn"; readonly argv: readonly string[] }
-  | { readonly kind: "delegate"; readonly run: () => Promise<LaunchResult> }
+  | { readonly kind: "delegate"; readonly run: (signal: AbortSignal) => Promise<LaunchResult> }
   | { readonly kind: "refuse"; readonly error: LaunchErrorKind };
 
 /** Tracks one launch so a spawn that finishes after the cap cannot act as a success. */
@@ -200,11 +202,16 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
       kind: "claude-code",
       isExecutable: (path) => executable && path === config.executablePath,
     });
-    if (!validation.ok) {
-      return refuse("spawn-failed");
-    }
+    // A stored template that no longer validates is a setup problem, not a
+    // spawn failure: the owner's next step is Settings (D-26).
+    if (!validation.ok) return refuse("launcher-not-configured");
     const argv = renderCommandTemplate(template, { projectPath: project.path });
-    return { kind: "delegate", run: () => terminalLauncher.launch({ cwd: project.path, argv }) };
+    return {
+      kind: "delegate",
+      // The cap's signal travels with the hand-off, so an adapter can refuse
+      // to open (or kill what it started) once `timeout` has been reported.
+      run: (signal) => terminalLauncher.launch({ cwd: project.path, argv, signal }),
+    };
   };
 
   const prepare = async (request: LaunchRequest): Promise<Prepared> => {
@@ -250,7 +257,7 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     if (!decision.ok) return failure(decision.error);
     if (state.cancelled) return failure("timeout");
     if (prepared.kind === "delegate") {
-      const delegated = await prepared.run();
+      const delegated = await prepared.run(state.signal);
       if (state.cancelled) return failure("timeout");
       if (!delegated.ok) return delegated;
     } else {
