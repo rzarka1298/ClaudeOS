@@ -86,7 +86,7 @@ describe("refreshProjectsOnConnect", () => {
     const onLive = refreshProjectsOnConnect(() => refreshProjects(socket.client));
     expect(() => onLive()).not.toThrow();
     // Let the rejection settle; an unhandled rejection would fail the run.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
     expect(socket.requests).toHaveLength(1);
   });
 });
