@@ -125,6 +125,22 @@ export function updateRunState(db: Database.Database, runId: RunId, state: RunSt
   db.prepare("UPDATE runs SET state = ? WHERE run_id = ?").run(state, runId);
 }
 
+/**
+ * Restart recovery's one write (SVC-11, D-22): moves a Run to `stale`,
+ * leaving `ended_at` untouched, and bumps `revision` for a session Run
+ * (automation Runs carry no revision). Subscribers apply a session Run only
+ * when its revision advances, so a state change without a bump would be
+ * invisible to a client that already holds the pre-restart row (wave 2
+ * review). Callers pass only non-terminal Runs.
+ */
+export function recoverRunToStale(db: Database.Database, runId: RunId): void {
+  db.prepare(
+    `UPDATE runs SET state = 'stale',
+       revision = CASE WHEN kind = 'session' THEN COALESCE(revision, 0) + 1 ELSE revision END
+     WHERE run_id = ?`,
+  ).run(runId);
+}
+
 /** Every Run whose state is one of the four non-terminal members — the query restart recovery consumes on every service start. */
 export function listNonTerminalRuns(db: Database.Database): RunRecord[] {
   const placeholders = NON_TERMINAL_STATES.map(() => "?").join(", ");

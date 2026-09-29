@@ -1,8 +1,14 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RunId, RunState } from "@ccc/domain";
-import { applyMigrations, getRun, insertRun } from "@ccc/operational-store";
+import type { RunId, RunState, SessionRun } from "@ccc/domain";
+import {
+  applyMigrations,
+  getRun,
+  getSessionRun,
+  insertRun,
+  upsertSessionRun,
+} from "@ccc/operational-store";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLogger } from "../logging.js";
@@ -102,4 +108,59 @@ describe("recoverInterruptedRuns", () => {
     expect(infoLine).toBeDefined();
     expect(infoLine?.level).toBe(30); // pino info level
   });
+
+  it("bumps a session Run's revision when it moves it to stale, so subscribers see the change (wave 2 review)", () => {
+    const sessionRunId = "mgz1a2b3c0000000000000001" as RunId;
+    upsertSessionRun(db, sessionRun(sessionRunId, "running", 3));
+    const logger = createLogger(logPath);
+    recoverInterruptedRuns(db, logger);
+    expect(getSessionRun(db, sessionRunId)).toMatchObject({
+      state: "stale",
+      revision: 4,
+      endedAt: null,
+    });
+
+    recoverInterruptedRuns(db, logger);
+    expect(getSessionRun(db, sessionRunId)?.revision).toBe(4);
+  });
+
+  it("leaves an automation Run's revision untouched", () => {
+    seedRun("run-automation", "running");
+    const before = db.prepare("SELECT revision FROM runs WHERE run_id = ?").get("run-automation");
+    recoverInterruptedRuns(db, createLogger(logPath));
+    const after = db.prepare("SELECT revision FROM runs WHERE run_id = ?").get("run-automation");
+    expect(after).toEqual(before);
+  });
 });
+
+function sessionRun(runId: RunId, state: RunState, revision: number): SessionRun {
+  return {
+    runId,
+    revision,
+    claudeSessionId: "recover-session-1",
+    pid: 5001,
+    pidStartedAt: "Mon Sep 28 10:00:00 2026",
+    state,
+    activity: "working",
+    projectId: null,
+    name: null,
+    model: null,
+    effort: null,
+    launchSource: "terminal",
+    cwd: null,
+    worktreeRoot: null,
+    permissionMode: null,
+    lastError: null,
+    claudeVersion: null,
+    transcriptPath: null,
+    linkKind: null,
+    linkedFromRunId: null,
+    subagentActiveIds: [],
+    subagentLastType: null,
+    startedAt: "2026-09-28T09:00:00.000Z",
+    lastActivityAt: "2026-09-28T10:00:00.000Z",
+    endedAt: null,
+    terminateRequestedAt: null,
+    endObservedAt: null,
+  };
+}

@@ -8,6 +8,7 @@ export {
   insertRun,
   listAllRuns,
   listNonTerminalRuns,
+  recoverRunToStale,
   updateRunState,
 } from "./run-store.js";
 export type {
