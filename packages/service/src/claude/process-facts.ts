@@ -160,23 +160,73 @@ export interface SessionFactsProviderOptions {
   /** `<claude-config>/projects`: the one read-only root a transcript path may resolve under (PR-28). */
   readonly claudeProjectsRoot: string;
   readonly logger: Logger;
+  /**
+   * Project attribution for a record's cwd (05-11 `attributeCwd`, bound).
+   * Absent, project facts stay null (unknown, never guessed).
+   */
+  readonly attribute?: (input: {
+    readonly cwd: string | null;
+    readonly claudeSessionId: string | null;
+  }) => Promise<{ readonly projectId: string | null; readonly worktreeRoot: string | null }>;
 }
 
 const START_EVENT: KnownHookEvent = "SessionStart";
+
+/** How many (session, cwd) attributions the provider remembers between SessionStarts. */
+const ATTRIBUTION_CACHE_CAPACITY = 1000;
+
+interface ProjectFacts {
+  readonly projectId: string | null;
+  readonly worktreeRoot: string | null;
+}
+
+const NO_PROJECT: ProjectFacts = { projectId: null, worktreeRoot: null };
 
 /**
  * The facts the reducer needs beside a hook record (D-19, PR-28). At
  * SessionStart it reads the pid's `lstart` (the PID-reuse identity); on any
  * record it keeps `transcript_path` only when it resolves under the Claude
  * projects root. `launchSource` is `dashboard` only when the hook forwarded
- * `CCC_LAUNCH_SOURCE=dashboard`. Project attribution and the terminal/
- * external launch-source classifier arrive with 05-11 through this same
- * provider; until then those facts are null (unknown, never guessed).
+ * `CCC_LAUNCH_SOURCE=dashboard`.
+ *
+ * Project attribution (05-11) runs for every SessionStart, and for any other
+ * record whose (session, cwd) pair this provider has not attributed yet — a
+ * session whose hooks were installed mid-session still gets its project
+ * once, without a realpath and git round-trip on every activity event. An
+ * attribution failure reads as unknown (null), never as a failed ingest.
  */
 export function createSessionFactsProvider(
   options: SessionFactsProviderOptions,
 ): SessionFactsProvider {
   const { processFacts, claudeProjectsRoot, logger } = options;
+  /** Insertion-ordered: the oldest pair is evicted first once over capacity. */
+  const attributed = new Map<string, ProjectFacts>();
+
+  async function projectFacts(
+    record: Parameters<SessionFactsProvider["factsFor"]>[0],
+  ): Promise<ProjectFacts> {
+    const attribute = options.attribute;
+    if (attribute === undefined || record.cwd === undefined) return NO_PROJECT;
+    const key = `${record.session_id}\u0000${record.cwd}`;
+    const known = attributed.get(key);
+    if (known !== undefined && record.hook_event_name !== START_EVENT) return known;
+    let facts: ProjectFacts;
+    try {
+      const result = await attribute({ cwd: record.cwd, claudeSessionId: record.session_id });
+      facts = { projectId: result.projectId, worktreeRoot: result.worktreeRoot };
+    } catch (err: unknown) {
+      logger.warn({ code: (err as { code?: unknown }).code }, "session attribution failed");
+      return NO_PROJECT;
+    }
+    attributed.delete(key);
+    attributed.set(key, facts);
+    if (attributed.size > ATTRIBUTION_CACHE_CAPACITY) {
+      const oldest = attributed.keys().next().value;
+      if (oldest !== undefined) attributed.delete(oldest);
+    }
+    return facts;
+  }
+
   return {
     async factsFor(record) {
       let pidStartedAt: string | null = null;
@@ -197,11 +247,12 @@ export function createSessionFactsProvider(
         }
       }
 
+      const project = await projectFacts(record);
       const facts: SessionFacts = {
         pidStartedAt,
         launchSource: record.env?.CCC_LAUNCH_SOURCE === "dashboard" ? "dashboard" : null,
-        projectId: null,
-        worktreeRoot: null,
+        projectId: project.projectId,
+        worktreeRoot: project.worktreeRoot,
         transcriptPath,
       };
       return facts;

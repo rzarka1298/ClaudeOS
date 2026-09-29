@@ -15,6 +15,8 @@ import pino, { type Logger } from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type AttributionDeps, attributeCwd } from "./attribution.js";
 import { runGit } from "./git-readonly.js";
+import type { SessionFactsProvider } from "./pipeline.js";
+import { createSessionFactsProvider } from "./process-facts.js";
 import { createStoreProjectLookup } from "./project-lookup.js";
 
 let base: string;
@@ -238,4 +240,57 @@ describe("attribution only reads (Test 7, SESS-17, D-57)", () => {
       expect(text).not.toMatch(/\b(setSessionOverride|upsertSessionRun)\b/);
     },
   );
+});
+
+describe("the session facts provider carries the attribution (05-08 hand-off, SESS-07)", () => {
+  const processFacts = {
+    isAlive: () => false,
+    readStartTimes: async () => new Map<number, string>(),
+    readTty: async () => null,
+    readAncestry: async () => [],
+  };
+
+  function recordOf(event: string, cwd: string): Parameters<SessionFactsProvider["factsFor"]>[0] {
+    return {
+      eventId: "e",
+      observedAt: "2026-09-29T00:00:00.000Z",
+      hook_event_name: event,
+      session_id: "sess-facts",
+      cwd,
+      ...(event === "SessionStart" ? { source: "startup" } : {}),
+    } as Parameters<SessionFactsProvider["factsFor"]>[0];
+  }
+
+  it("attributes at SessionStart and reuses it for later records of the same cwd", async () => {
+    let calls = 0;
+    const facts = createSessionFactsProvider({
+      processFacts,
+      claudeProjectsRoot: base,
+      logger,
+      attribute: async () => {
+        calls += 1;
+        return { projectId: "alpha", worktreeRoot: "/w", reason: "project-root" };
+      },
+    });
+    const start = await facts.factsFor(recordOf("SessionStart", "/c"));
+    const later = await facts.factsFor(recordOf("UserPromptSubmit", "/c"));
+    expect(start).toMatchObject({ projectId: "alpha", worktreeRoot: "/w" });
+    expect(later).toMatchObject({ projectId: "alpha", worktreeRoot: "/w" });
+    expect(calls).toBe(1);
+  });
+
+  it("an attribution that throws reads as unknown, never a failed ingest", async () => {
+    const facts = createSessionFactsProvider({
+      processFacts,
+      claudeProjectsRoot: base,
+      logger,
+      attribute: async () => {
+        throw Object.assign(new Error("boom"), { code: "EPERM" });
+      },
+    });
+    await expect(facts.factsFor(recordOf("SessionStart", "/c"))).resolves.toMatchObject({
+      projectId: null,
+      worktreeRoot: null,
+    });
+  });
 });

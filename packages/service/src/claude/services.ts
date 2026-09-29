@@ -1,6 +1,7 @@
+import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { newRunId } from "@ccc/domain";
-import type { OperationalStore } from "@ccc/operational-store";
+import { getSessionOverride, type OperationalStore } from "@ccc/operational-store";
 import type { Logger } from "pino";
 import type { EventBus } from "../events/event-bus.js";
 import {
@@ -9,9 +10,12 @@ import {
   resolveSpoolPath,
   resolveStatusLineSpoolPath,
 } from "../paths.js";
+import { createAttribution } from "./attribution.js";
+import { runGit } from "./git-readonly.js";
 import { createLivenessSweeper, type LivenessSweeper, livenessConfigFromEnv } from "./liveness.js";
 import { type ClaudePipeline, createClaudePipeline } from "./pipeline.js";
 import { createProcessFacts, createSessionFactsProvider, nodeExecFile } from "./process-facts.js";
+import { createStoreProjectLookup } from "./project-lookup.js";
 import type { ClaudeRouteDeps } from "./routes.js";
 import { type SpoolPoller, startSpoolPoller } from "./spool-poller.js";
 
@@ -65,10 +69,20 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     },
     logger,
   });
+  // Attribution reads the registered projects and the owner's overrides
+  // and runs only read-only git (SESS-11); it never writes (D-57).
+  const attribute = createAttribution({
+    lookup: createStoreProjectLookup(store.db),
+    getOverride: (claudeSessionId) => getSessionOverride(store.db, claudeSessionId),
+    realpath,
+    runGit,
+    logger,
+  });
   const facts = createSessionFactsProvider({
     processFacts,
     claudeProjectsRoot: join(resolveClaudeConfigDir(), "projects"),
     logger,
+    attribute,
   });
   const pipeline = createClaudePipeline({
     db: store.db,
