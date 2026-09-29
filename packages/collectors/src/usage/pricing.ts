@@ -12,6 +12,16 @@
  * status line did not report `cost.total_cost_usd` for the session. Cache
  * writes are priced at the 5-minute rate; a 1-hour write costs more, so the
  * estimate is a lower bound when 1-hour caching was used.
+ *
+ * Only models the source lists have a row (wave 2 review removed an uncited
+ * `claude-sonnet-5-5` row in table version 2026-09-29.1). A model not listed
+ * is unpriced, which reads as a partial total, never as a guessed price.
+ *
+ * A bracketed variant such as `[1m]` (the 1M-context deployment id) is priced
+ * at its family's base rate. The source documents no long-context premium
+ * for the current models, but where a premium applies (the older long-context
+ * betas billed input past 200K tokens at a higher rate), the base rate
+ * undercounts: every estimate for a `[1m]` variant is a LOWER BOUND.
  */
 
 /** The four token counters a recognized transcript record carries. */
@@ -39,7 +49,7 @@ export type CostEstimate =
   /** No row for the model: excluded from totals, which then read as partial. Never zero. */
   | { readonly kind: "unpriced" };
 
-export const PRICING_TABLE_VERSION = "2026-09-28.1";
+export const PRICING_TABLE_VERSION = "2026-09-29.1";
 
 /** The date the prices below were read from the source. */
 export const PRICE_TABLE_EFFECTIVE_FROM = "2026-09-28";
@@ -60,7 +70,6 @@ export const PRICE_ROWS = [
   { model: "claude-opus-4-5", input: 5, output: 25, cacheWrite: 6.25, cacheRead: 0.5 },
   { model: "claude-opus-4-1", input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
   { model: "claude-opus-4", input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
-  { model: "claude-sonnet-5-5", input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.2 },
   { model: "claude-sonnet-5", input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.2 },
   { model: "claude-sonnet-4-6", input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
   { model: "claude-sonnet-4-5", input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },

@@ -43,7 +43,15 @@ describe("estimateCostUsd (Test 4, USAGE-03, D-42)", () => {
     expect(result).toEqual({ kind: "priced", usd: expect.closeTo(0.2, 10) });
   });
 
-  it.each(["claude-unlisted-9", "gpt-synthetic", "claude-opus-4-9", "claude-sonnet-4-7", ""])(
+  it.each([
+    "claude-unlisted-9",
+    "gpt-synthetic",
+    "claude-opus-4-9",
+    "claude-sonnet-4-7",
+    // Not on the cited pricing page (wave 2 review): unpriced, never guessed.
+    "claude-sonnet-5-5",
+    "",
+  ])(
     "reports %j as unpriced, never as zero dollars",
     (model) => {
       expect(estimateCostUsd(model, COUNTERS)).toEqual({ kind: "unpriced" });
