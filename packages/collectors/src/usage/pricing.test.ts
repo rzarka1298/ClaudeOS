@@ -51,12 +51,9 @@ describe("estimateCostUsd (Test 4, USAGE-03, D-42)", () => {
     // Not on the cited pricing page (wave 2 review): unpriced, never guessed.
     "claude-sonnet-5-5",
     "",
-  ])(
-    "reports %j as unpriced, never as zero dollars",
-    (model) => {
-      expect(estimateCostUsd(model, COUNTERS)).toEqual({ kind: "unpriced" });
-    },
-  );
+  ])("reports %j as unpriced, never as zero dollars", (model) => {
+    expect(estimateCostUsd(model, COUNTERS)).toEqual({ kind: "unpriced" });
+  });
 
   it("prices the <synthetic> model at zero as a priced result", () => {
     expect(estimateCostUsd("<synthetic>", COUNTERS)).toEqual({ kind: "priced", usd: 0 });
