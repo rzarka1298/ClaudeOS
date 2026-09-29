@@ -3,7 +3,11 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { ProjectsActions } from "../projects/projects-actions.js";
-import { projectRowsFrom, projectsReceivedAt, projectsSnapshot } from "../projects/projects-state.js";
+import {
+  projectRowsFrom,
+  projectsReceivedAt,
+  projectsSnapshot,
+} from "../projects/projects-state.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
 import type { DestinationId } from "./destinations.js";
@@ -51,7 +55,7 @@ export function ProjectsView({ actions, pickFolder, connection, now }: ProjectsV
     if (!rows.some((row) => row.id === pendingFocusId)) return;
     controlRefs.current.get(headingKey(pendingFocusId))?.focus();
     setPendingFocusId(null);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: `controlRefs` is a stable ref container, not reactive state.
+    // `controlRefs` is a stable ref container, not reactive state.
   }, [rows, pendingFocusId]);
 
   function handleRemoved(removedId: string): void {

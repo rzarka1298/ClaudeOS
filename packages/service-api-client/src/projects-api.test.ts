@@ -1,11 +1,12 @@
+import { readFile } from "node:fs/promises";
 import {
   type DetectionResponse,
+  LAUNCH_PATH,
   LAUNCHERS_DETECT_PATH,
   LAUNCHERS_GET_PATH,
   LAUNCHERS_MARK_TESTED_PATH,
   LAUNCHERS_SAVE_PATH,
   LAUNCHERS_TEST_PATH,
-  LAUNCH_PATH,
   type LauncherConfigView,
   type LaunchRequest,
   newProjectId,
@@ -17,16 +18,15 @@ import {
   PROJECT_RENAME_PATH,
   PROJECTS_REFRESH_PATH,
   type RegisterProjectResponse,
-  type ScanStateResponse,
   SCAN_ROOTS_ADD_PATH,
   SCAN_ROOTS_LIST_PATH,
   SCAN_ROOTS_REMOVE_PATH,
   SCAN_ROOTS_RESCAN_PATH,
+  type ScanStateResponse,
   SUGGESTION_DISMISS_PATH,
   SUGGESTION_REGISTER_PATH,
   SYSTEM_SETTINGS_OPEN_PATH,
 } from "@ccc/domain";
-import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   addScanRoot,
@@ -36,8 +36,8 @@ import {
   listScanState,
   markLauncherTested,
   openSystemSettings,
-  pinProject,
   ProjectsRequestError,
+  pinProject,
   refreshProjects,
   registerProject,
   registerSuggestion,
@@ -114,7 +114,11 @@ describe("registerProject", () => {
     const { client, requests } = fakeClient({ status: 200, body: REGISTERED });
     const result = await registerProject(client, "/Users/USERNAME/code/example");
     expect(requests).toEqual([
-      { method: "POST", path: PROJECT_REGISTER_PATH, body: { path: "/Users/USERNAME/code/example" } },
+      {
+        method: "POST",
+        path: PROJECT_REGISTER_PATH,
+        body: { path: "/Users/USERNAME/code/example" },
+      },
     ]);
     expect(result).toEqual(REGISTERED);
   });

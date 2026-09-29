@@ -1,4 +1,9 @@
-import { EMPTY_PROJECTS_SNAPSHOT, newProjectId, type ProjectId, type ProjectView } from "@ccc/domain";
+import {
+  EMPTY_PROJECTS_SNAPSHOT,
+  newProjectId,
+  type ProjectId,
+  type ProjectView,
+} from "@ccc/domain";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectActionOutcome, ProjectsActions } from "../projects/projects-actions.js";
@@ -229,7 +234,9 @@ describe("ProjectsView (Task 3: loading/empty/error states, disconnected banner,
     projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
 
     await vi.waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Register a project" })),
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Register a project" }),
+      ),
     );
   });
 
@@ -255,9 +262,9 @@ describe("ProjectsView (Task 3: loading/empty/error states, disconnected banner,
       />,
     );
 
-    const removedCard = screen.getByRole("heading", { level: 4, name: "removed-project" }).closest(
-      "article",
-    ) as HTMLElement;
+    const removedCard = screen
+      .getByRole("heading", { level: 4, name: "removed-project" })
+      .closest("article") as HTMLElement;
     fireEvent.click(within(removedCard).getByRole("button", { name: "Remove from projects" }));
     fireEvent.click(within(removedCard).getByRole("button", { name: "Remove project" }));
     await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(removedId));

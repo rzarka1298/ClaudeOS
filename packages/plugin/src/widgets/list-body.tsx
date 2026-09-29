@@ -81,7 +81,7 @@ function MetaSegments({ segments }: { readonly segments: readonly MetaSegment[] 
   return (
     <p className="ccc-list-meta ccc-meta-segments">
       {segments.map((segment, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: segments are a fixed-order render output, never reordered or filtered independently.
+        // Index keys are safe: segments are a fixed-order render output, never reordered or filtered independently.
         <Fragment key={index}>
           {index > 0 ? " · " : ""}
           {segment.glyph === undefined ? null : (

@@ -138,6 +138,7 @@ export class PluginSettingTab {
 
 /** The chainable builder, reduced to the calls that keep a chain legal. */
 export class Setting {
+  // biome-ignore lint/complexity/noUselessConstructor: mirrors Obsidian's `new Setting(containerEl)` signature so stubbed callers type-check the same way.
   constructor(_containerEl: unknown) {}
 
   setName(_name: string | DocumentFragment): this {
@@ -253,10 +254,7 @@ export abstract class FuzzySuggestModal<T> extends SuggestModal<{ item: T; match
 
   renderSuggestion(_item: { item: T; match: unknown }, _el: unknown): void {}
 
-  onChooseSuggestion(
-    match: { item: T; match: unknown },
-    evt: MouseEvent | KeyboardEvent,
-  ): void {
+  onChooseSuggestion(match: { item: T; match: unknown }, evt: MouseEvent | KeyboardEvent): void {
     this.onChooseItem(match.item, evt);
   }
 }
@@ -276,6 +274,7 @@ export interface RecordedRegistration {
 export class Scope {
   readonly registrations: RecordedRegistration[] = [];
 
+  // biome-ignore lint/complexity/noUselessConstructor: mirrors Obsidian's `new Scope(parent?)` signature so stubbed callers type-check the same way.
   constructor(_parent?: Scope) {}
 
   register(

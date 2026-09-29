@@ -21,11 +21,7 @@ vi.mock("../widgets/registry.js", async (importOriginal) => {
     ...actual.WIDGETS["quick-actions"],
     actionsInBody: true,
     quickActions: [],
-    renderBody: ({
-      onQuickAction,
-    }: {
-      onQuickAction?: (descriptor: unknown) => void;
-    }) => (
+    renderBody: ({ onQuickAction }: { onQuickAction?: (descriptor: unknown) => void }) => (
       <button
         type="button"
         onClick={() =>
@@ -187,9 +183,7 @@ describe("Shell", () => {
   it("renders the Projects destination with no-op defaults when projectsActions and pickFolder are not provided (D-24)", () => {
     render(<Shell />);
     fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
-    expect(
-      screen.getByRole("heading", { level: 3, name: "Registered projects" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: "Registered projects" })).toBeTruthy();
   });
 
   it("threads requestLaunch through the one dispatcher when a widget body emits a launch descriptor (D-24, PR-08)", () => {
@@ -202,7 +196,8 @@ describe("Shell", () => {
       partiality: { partial: false },
       isEmpty: false,
     });
-    const stateFor = (id: WidgetId) => (id === "quick-actions" ? readyQuickActions : widgetStateFor(id));
+    const stateFor = (id: WidgetId) =>
+      id === "quick-actions" ? readyQuickActions : widgetStateFor(id);
 
     render(<Shell requestLaunch={requestLaunch} stateFor={stateFor} />);
     fireEvent.click(screen.getByRole("button", { name: "Launch Finder" }));

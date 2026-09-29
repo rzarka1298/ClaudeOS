@@ -4,29 +4,29 @@ import {
   ApiErrorBodySchema,
   type DetectionResponse,
   DetectionResponseSchema,
+  LAUNCH_PATH,
   LAUNCHERS_DETECT_PATH,
   LAUNCHERS_GET_PATH,
   LAUNCHERS_MARK_TESTED_PATH,
   LAUNCHERS_SAVE_PATH,
   LAUNCHERS_TEST_PATH,
-  LAUNCH_PATH,
+  LauncherConfigRefusalBodySchema,
   type LauncherConfigView,
   LauncherConfigViewSchema,
-  LauncherConfigRefusalBodySchema,
   type LauncherId,
   type LaunchRequest,
   type LaunchResult,
   LaunchResultSchema,
   type PinProjectRequest,
-  type ProjectId,
-  type ProjectMutationResponse,
-  ProjectMutationResponseSchema,
   PROJECT_GITHUB_LINK_PATH,
   PROJECT_PIN_PATH,
   PROJECT_REGISTER_PATH,
   PROJECT_REMOVE_PATH,
   PROJECT_RENAME_PATH,
   PROJECTS_REFRESH_PATH,
+  type ProjectId,
+  type ProjectMutationResponse,
+  ProjectMutationResponseSchema,
   type RegisterProjectResponse,
   RegisterProjectResponseSchema,
   type RemoveProjectRequest,
@@ -34,18 +34,18 @@ import {
   type RenameProjectRequest,
   type RescanScanRootRequest,
   type SaveLauncherConfigRequest,
-  type ScanStateResponse,
-  ScanStateResponseSchema,
   SCAN_ROOTS_ADD_PATH,
   SCAN_ROOTS_LIST_PATH,
   SCAN_ROOTS_REMOVE_PATH,
   SCAN_ROOTS_RESCAN_PATH,
+  type ScanStateResponse,
+  ScanStateResponseSchema,
   type SetGithubLinkRequest,
-  type SuggestionActionRequest,
   SUGGESTION_DISMISS_PATH,
   SUGGESTION_REGISTER_PATH,
-  type SystemSettingsPane,
+  type SuggestionActionRequest,
   SYSTEM_SETTINGS_OPEN_PATH,
+  type SystemSettingsPane,
   type TemplateRefusalReason,
 } from "@ccc/domain";
 import type { SocketApiClient } from "./socket-api-client.js";
@@ -184,7 +184,10 @@ export function setGithubLink(
 // non-200 branch.
 
 /** `POST /api/v1/projects/launch` — one launch, answered within the service's 4 s cap. */
-export function requestLaunch(client: SocketApiClient, request: LaunchRequest): Promise<LaunchResult> {
+export function requestLaunch(
+  client: SocketApiClient,
+  request: LaunchRequest,
+): Promise<LaunchResult> {
   return postValidated(client, LAUNCH_PATH, request, LaunchResultSchema);
 }
 
@@ -217,7 +220,11 @@ export async function saveLauncherConfig(
   client: SocketApiClient,
   request: SaveLauncherConfigRequest,
 ): Promise<SaveLauncherConfigResult> {
-  const res = await client.request<unknown>({ method: "POST", path: LAUNCHERS_SAVE_PATH, body: request });
+  const res = await client.request<unknown>({
+    method: "POST",
+    path: LAUNCHERS_SAVE_PATH,
+    body: request,
+  });
   if (res.status === 200) {
     const parsed = ProjectMutationResponseSchema.safeParse(res.body);
     if (!parsed.success) {
@@ -242,7 +249,10 @@ export async function saveLauncherConfig(
 // Test launches and permissions (D-28, RR-14, RR-16)
 
 /** `POST /api/v1/launchers/test` — fire one real launch of the SAVED configuration. */
-export function testLauncher(client: SocketApiClient, launcherId: LauncherId): Promise<LaunchResult> {
+export function testLauncher(
+  client: SocketApiClient,
+  launcherId: LauncherId,
+): Promise<LaunchResult> {
   return postValidated(client, LAUNCHERS_TEST_PATH, { launcherId }, LaunchResultSchema);
 }
 
@@ -264,12 +274,7 @@ export function openSystemSettings(
   client: SocketApiClient,
   pane: SystemSettingsPane,
 ): Promise<ProjectMutationResponse> {
-  return postValidated(
-    client,
-    SYSTEM_SETTINGS_OPEN_PATH,
-    { pane },
-    ProjectMutationResponseSchema,
-  );
+  return postValidated(client, SYSTEM_SETTINGS_OPEN_PATH, { pane }, ProjectMutationResponseSchema);
 }
 
 // ---------------------------------------------------------------------------

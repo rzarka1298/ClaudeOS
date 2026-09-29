@@ -1,5 +1,5 @@
-import { GithubLinkSchema, hasControlCharacter } from "@ccc/domain/browser";
 import type { ProjectId } from "@ccc/domain";
+import { GithubLinkSchema, hasControlCharacter } from "@ccc/domain/browser";
 import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ProjectsActions } from "../projects/projects-actions.js";
@@ -33,7 +33,8 @@ type Mode =
 
 const NAME_ERROR = "▲ Enter a name between 1 and 64 characters.";
 const GITHUB_LINK_ERROR = "▲ Enter a GitHub link like https://github.com/owner/repo.";
-const SAVE_FAILED = "▲ Couldn't save that change. Check the service in Settings → Diagnostics, then try again.";
+const SAVE_FAILED =
+  "▲ Couldn't save that change. Check the service in Settings → Diagnostics, then try again.";
 
 function validateName(value: string): string | null {
   const trimmed = value.trim();
@@ -94,7 +95,7 @@ export function ProjectManageToolbar({
       setFocusedIndex(returnFocusIndex);
       setReturnFocusIndex(null);
     }
-    // biome-ignore lint/correctness/useExhaustiveDependencies: `buttonRefs` is rebuilt fresh each render from stable ref containers, not reactive state.
+    // `buttonRefs` is rebuilt fresh each render from stable ref containers, not reactive state.
   }, [mode.kind, returnFocusIndex]);
 
   function handleToolbarKeyDown(event: KeyboardEvent): void {
@@ -242,7 +243,11 @@ export function ProjectManageToolbar({
             <button type="submit" className="ccc-connect-button">
               Save name
             </button>
-            <button type="button" className="ccc-list-more" onClick={() => closeRename("rename-button")}>
+            <button
+              type="button"
+              className="ccc-list-more"
+              onClick={() => closeRename("rename-button")}
+            >
               Keep current name
             </button>
           </div>
@@ -283,7 +288,11 @@ export function ProjectManageToolbar({
               Discard link changes
             </button>
             {row.github.kind === "github" && (
-              <button type="button" className="ccc-list-more" onClick={() => void saveGithubLink(null)}>
+              <button
+                type="button"
+                className="ccc-list-more"
+                onClick={() => void saveGithubLink(null)}
+              >
                 Clear GitHub link
               </button>
             )}

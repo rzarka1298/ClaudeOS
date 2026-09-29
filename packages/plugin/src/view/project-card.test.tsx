@@ -43,8 +43,16 @@ const REPO_STATE: ProjectGitState = {
   dirty: false,
   remote: { host: "github.com", path: "owner/repo" },
   commits: [
-    { hash: "a1b2c3d4e5f6", subject: "Add the settings page", committedAt: new Date(NOW - 2 * 3_600_000).toISOString() },
-    { hash: "b2c3d4e5f6a1", subject: "Fix a bug", committedAt: new Date(NOW - 5 * 3_600_000).toISOString() },
+    {
+      hash: "a1b2c3d4e5f6",
+      subject: "Add the settings page",
+      committedAt: new Date(NOW - 2 * 3_600_000).toISOString(),
+    },
+    {
+      hash: "b2c3d4e5f6a1",
+      subject: "Fix a bug",
+      committedAt: new Date(NOW - 5 * 3_600_000).toISOString(),
+    },
   ],
 };
 
@@ -185,7 +193,14 @@ describe("ProjectCard (Task 3, S3 card anatomy)", () => {
     render(
       <ProjectCard
         row={row({
-          git: { kind: "repo", branch: "main", detached: false, dirty: false, remote: null, commits: [] },
+          git: {
+            kind: "repo",
+            branch: "main",
+            detached: false,
+            dirty: false,
+            remote: null,
+            commits: [],
+          },
         })}
         displayPath="~/code/example-project"
         now={NOW}
@@ -214,7 +229,9 @@ describe("ProjectCard (Task 3, S3 card anatomy)", () => {
 
     expect(screen.getByText(/Git unavailable/)).toBeTruthy();
     expect(
-      screen.getByText("Install Apple's command line developer tools, then choose Refresh git status."),
+      screen.getByText(
+        "Install Apple's command line developer tools, then choose Refresh git status.",
+      ),
     ).toBeTruthy();
   });
 

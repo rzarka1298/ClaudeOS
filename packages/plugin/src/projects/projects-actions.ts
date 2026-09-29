@@ -1,7 +1,7 @@
 import type { ProjectId, ProtectedLocation } from "@ccc/domain";
 import {
-  pinProject,
   ProjectsRequestError,
+  pinProject,
   refreshProjects,
   registerProject,
   removeProject,
@@ -68,7 +68,10 @@ export interface ProjectsActions {
  */
 function classifyFailure(
   error: unknown,
-): Extract<ProjectActionOutcome, { kind: "refused" | "invalid" | "service-disconnected" | "failed" }> {
+): Extract<
+  ProjectActionOutcome,
+  { kind: "refused" | "invalid" | "service-disconnected" | "failed" }
+> {
   if (error instanceof SocketUnreachableError) {
     return error.errno === "ECONNREFUSED" || error.errno === "ENOENT"
       ? { kind: "service-disconnected" }

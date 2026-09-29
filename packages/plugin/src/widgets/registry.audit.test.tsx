@@ -78,7 +78,12 @@ describe("every button on every registered card routes through the dispatcher", 
     "%s: clicking every action only ever navigates to settings",
     (id) => {
       const definition: AnyWidgetDefinition = WIDGETS[id];
-      const ctx = { navigate: vi.fn(), notify: vi.fn(), requestLaunch: vi.fn(), openSwitcher: vi.fn() };
+      const ctx = {
+        navigate: vi.fn(),
+        notify: vi.fn(),
+        requestLaunch: vi.fn(),
+        openSwitcher: vi.fn(),
+      };
       const emitted: QuickActionDescriptor[] = [];
       const { container } = render(
         <WidgetFrame
@@ -105,7 +110,12 @@ describe("every button on every registered card routes through the dispatcher", 
   );
 
   it("Today's Connect button lands on settings and names Google Calendar and Gmail", () => {
-    const ctx = { navigate: vi.fn(), notify: vi.fn(), requestLaunch: vi.fn(), openSwitcher: vi.fn() };
+    const ctx = {
+      navigate: vi.fn(),
+      notify: vi.fn(),
+      requestLaunch: vi.fn(),
+      openSwitcher: vi.fn(),
+    };
     const { getByRole } = render(
       <WidgetFrame
         definition={WIDGETS.today as AnyWidgetDefinition}
@@ -122,7 +132,12 @@ describe("every button on every registered card routes through the dispatcher", 
 
   it("every PRD quick action reports unavailable and never navigates", () => {
     for (const action of WIDGETS["quick-actions"].quickActions) {
-      const ctx = { navigate: vi.fn(), notify: vi.fn(), requestLaunch: vi.fn(), openSwitcher: vi.fn() };
+      const ctx = {
+        navigate: vi.fn(),
+        notify: vi.fn(),
+        requestLaunch: vi.fn(),
+        openSwitcher: vi.fn(),
+      };
       expect(dispatchQuickAction(action, ctx)).toEqual({ kind: "unavailable" });
       expect(ctx.navigate).not.toHaveBeenCalled();
       expect(ctx.notify).toHaveBeenCalledWith(`${action.label} isn't available yet.`);

@@ -32,7 +32,12 @@ afterEach(cleanup);
 describe("ProjectManageToolbar (Task 3, S3 manage toolbar, RR-01)", () => {
   it("is a role=toolbar with one tab stop, and Right/Left/Home/End move it (RR-01)", () => {
     render(
-      <ProjectManageToolbar row={row()} actions={noopActions()} onRemoved={vi.fn()} onStatus={vi.fn()} />,
+      <ProjectManageToolbar
+        row={row()}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+        onStatus={vi.fn()}
+      />,
     );
 
     const toolbar = screen.getByRole("toolbar");
@@ -113,7 +118,12 @@ describe("ProjectManageToolbar (Task 3, S3 manage toolbar, RR-01)", () => {
 
   it("Escape while renaming keeps the current name and returns focus to Rename project", () => {
     render(
-      <ProjectManageToolbar row={row()} actions={noopActions()} onRemoved={vi.fn()} onStatus={vi.fn()} />,
+      <ProjectManageToolbar
+        row={row()}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+        onStatus={vi.fn()}
+      />,
     );
 
     const renameButton = screen.getByRole("button", { name: "Rename project" });
@@ -150,7 +160,9 @@ describe("ProjectManageToolbar (Task 3, S3 manage toolbar, RR-01)", () => {
     const setGithubLink = vi.fn().mockResolvedValue({ kind: "ok" });
     render(
       <ProjectManageToolbar
-        row={row({ github: { kind: "github", label: "github.com/owner/repo", source: "override" } })}
+        row={row({
+          github: { kind: "github", label: "github.com/owner/repo", source: "override" },
+        })}
         actions={{ ...noopActions(), setGithubLink }}
         onRemoved={vi.fn()}
         onStatus={vi.fn()}
@@ -174,7 +186,12 @@ describe("ProjectManageToolbar (Task 3, S3 manage toolbar, RR-01)", () => {
 
   it("Remove from projects shows the confirmation with focus on Keep project; Escape keeps", () => {
     render(
-      <ProjectManageToolbar row={row()} actions={noopActions()} onRemoved={vi.fn()} onStatus={vi.fn()} />,
+      <ProjectManageToolbar
+        row={row()}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+        onStatus={vi.fn()}
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Remove from projects" }));
@@ -234,7 +251,12 @@ describe("ProjectManageToolbar (Task 3, S3 manage toolbar, RR-01)", () => {
   it("never uses confirm() or a modal for removal", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(
-      <ProjectManageToolbar row={row()} actions={noopActions()} onRemoved={vi.fn()} onStatus={vi.fn()} />,
+      <ProjectManageToolbar
+        row={row()}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+        onStatus={vi.fn()}
+      />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Remove from projects" }));

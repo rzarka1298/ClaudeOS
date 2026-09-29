@@ -66,7 +66,11 @@ const FOCUSABLE = [
 ];
 
 /** The Phase 4 interactive classes new to this section (D-39). */
-const PHASE_4_MIN_TARGET_CLASSES = [".ccc-button-danger", ".ccc-text-input", ".ccc-radio-group input"];
+const PHASE_4_MIN_TARGET_CLASSES = [
+  ".ccc-button-danger",
+  ".ccc-text-input",
+  ".ccc-radio-group input",
+];
 
 // ---------------------------------------------------------------------------
 // A small, deliberate CSS reader

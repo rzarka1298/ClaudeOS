@@ -125,7 +125,10 @@ describe("RegisterFlow (Task 2, S4)", () => {
   it("shows Registering… in the same render as the submit click, before any await resolves", async () => {
     let resolveRegister: (outcome: ProjectActionOutcome) => void = () => {};
     const register = vi.fn(
-      () => new Promise<ProjectActionOutcome>((resolve) => { resolveRegister = resolve; }),
+      () =>
+        new Promise<ProjectActionOutcome>((resolve) => {
+          resolveRegister = resolve;
+        }),
     );
 
     render(
@@ -146,9 +149,9 @@ describe("RegisterFlow (Task 2, S4)", () => {
     // No await before this assertion (D-40): the in-flight text is set
     // synchronously before the first await inside the click handler.
     expect(screen.getByRole("status").textContent).toBe("Registering…");
-    expect(screen.getByRole("button", { name: "Register folder" }).getAttribute("aria-disabled")).toBe(
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: "Register folder" }).getAttribute("aria-disabled"),
+    ).toBe("true");
 
     resolveRegister({ kind: "failed" });
     await screen.findByText(/Couldn't register this folder\./);
@@ -270,11 +273,7 @@ describe("RegisterFlow (Task 2, S4)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
 
     await vi.waitFor(() => expect(register).toHaveBeenCalledTimes(2));
-    expect(register).toHaveBeenNthCalledWith(
-      2,
-      "/Users/USERNAME/Documents/example-project",
-      true,
-    );
+    expect(register).toHaveBeenNthCalledWith(2, "/Users/USERNAME/Documents/example-project", true);
   });
 
   it("protected-location: Choose another folder returns to the typed form with the path kept", async () => {

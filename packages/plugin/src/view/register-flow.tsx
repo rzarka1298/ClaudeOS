@@ -1,5 +1,5 @@
-import { hasControlCharacter } from "@ccc/domain/browser";
 import type { ProjectId, ProtectedLocation } from "@ccc/domain";
+import { hasControlCharacter } from "@ccc/domain/browser";
 import type { Ref, VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
@@ -145,7 +145,10 @@ export function RegisterFlow({
     }
   }
 
-  async function attemptRegister(path: string, acknowledgeProtectedLocation?: boolean): Promise<void> {
+  async function attemptRegister(
+    path: string,
+    acknowledgeProtectedLocation?: boolean,
+  ): Promise<void> {
     setTypedPath(path);
     setBusy(true);
     setStatus("Registering…");
@@ -234,12 +237,7 @@ export function RegisterFlow({
         >
           Register a project
         </button>
-        <button
-          type="button"
-          ref={typeLinkRef}
-          className="ccc-list-more"
-          onClick={openTypedForm}
-        >
+        <button type="button" ref={typeLinkRef} className="ccc-list-more" onClick={openTypedForm}>
           Type a path instead
         </button>
       </div>

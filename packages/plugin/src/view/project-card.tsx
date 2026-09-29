@@ -4,7 +4,7 @@ import { useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import type { ProjectsActions } from "../projects/projects-actions.js";
 import { WidgetFooter } from "../widgets/footer.js";
-import { projectMetaSegments, type ProjectRow } from "../widgets/panels.js";
+import { type ProjectRow, projectMetaSegments } from "../widgets/panels.js";
 import type { FooterModel, FooterSource } from "../widgets/presentation.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
 import { ProjectManageToolbar } from "./project-manage-toolbar.js";
@@ -53,7 +53,7 @@ function MetaSegments({ row }: { readonly row: ProjectRow }): VNode {
   return (
     <p className="ccc-list-meta ccc-meta-segments">
       {segments.map((segment, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: segments are a fixed-order render output for one card, never reordered independently.
+        // Index keys are safe: segments are a fixed-order render output for one card, never reordered independently.
         <span key={index}>
           {index > 0 ? " · " : ""}
           {segment.glyph === undefined ? null : (
@@ -139,7 +139,10 @@ export function projectFooterModel(
   nowMs: number,
 ): FooterModel {
   const sources: FooterSource[] = [
-    { label: "Project registry", status: connection.kind === "disconnected" ? "disconnected" : "ok" },
+    {
+      label: "Project registry",
+      status: connection.kind === "disconnected" ? "disconnected" : "ok",
+    },
     {
       label: "Local git status",
       status:
@@ -154,7 +157,12 @@ export function projectFooterModel(
   ];
 
   if (connection.kind === "disconnected") {
-    return { observedAt: row.observedAt, freshness: "unavailable", partiality: { partial: false }, sources };
+    return {
+      observedAt: row.observedAt,
+      freshness: "unavailable",
+      partiality: { partial: false },
+      sources,
+    };
   }
   if (row.observedAt === null) {
     return { observedAt: null, freshness: null, partiality: { partial: false }, sources };
@@ -202,9 +210,16 @@ export function ProjectCard({
       <p role="status" className="ccc-state-body">
         {status}
       </p>
-      <p className="ccc-later-fields">Issues and PRs unavailable · Sessions unavailable · Next task unavailable</p>
+      <p className="ccc-later-fields">
+        Issues and PRs unavailable · Sessions unavailable · Next task unavailable
+      </p>
       {connection.kind !== "disconnected" && (
-        <ProjectManageToolbar row={row} actions={actions} onRemoved={onRemoved} onStatus={setStatus} />
+        <ProjectManageToolbar
+          row={row}
+          actions={actions}
+          onRemoved={onRemoved}
+          onStatus={setStatus}
+        />
       )}
       <WidgetFooter
         model={projectFooterModel(row, connection, now)}

@@ -123,7 +123,11 @@ describe("a launch:* capability requests a launch and touches nothing else (D-24
 
   it("reports unavailable when a project-targeted action has no target", () => {
     const ctx = context();
-    const descriptor: QuickActionDescriptor = { id: "x", label: "Finder", capability: "launch:finder" };
+    const descriptor: QuickActionDescriptor = {
+      id: "x",
+      label: "Finder",
+      capability: "launch:finder",
+    };
 
     const result = dispatchQuickAction(descriptor, ctx);
 
@@ -134,7 +138,11 @@ describe("a launch:* capability requests a launch and touches nothing else (D-24
 
   it("reports unavailable for an unrecognised launch action", () => {
     const ctx = context();
-    const descriptor: QuickActionDescriptor = { id: "x", label: "Bogus", capability: "launch:bogus" };
+    const descriptor: QuickActionDescriptor = {
+      id: "x",
+      label: "Bogus",
+      capability: "launch:bogus",
+    };
 
     const result = dispatchQuickAction(descriptor, ctx);
 

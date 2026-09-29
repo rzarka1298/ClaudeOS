@@ -1,6 +1,6 @@
 import { newProjectId, type RegisterProjectResponse } from "@ccc/domain";
-import { ProjectsRequestError, SocketUnreachableError } from "@ccc/service-api-client";
 import type { SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
+import { ProjectsRequestError, SocketUnreachableError } from "@ccc/service-api-client";
 import { describe, expect, it } from "vitest";
 import { createProjectsActions } from "./projects-actions.js";
 
@@ -107,9 +107,7 @@ describe("createProjectsActions (Task 1)", () => {
 
   it("register: an ENOENT SocketUnreachableError also resolves service-disconnected", async () => {
     const cause = Object.assign(new Error("no such file"), { code: "ENOENT" });
-    const client = throwingClient(
-      new SocketUnreachableError("/tmp/ccc.sock", cause),
-    );
+    const client = throwingClient(new SocketUnreachableError("/tmp/ccc.sock", cause));
     const actions = createProjectsActions(client);
 
     await expect(actions.register("/x")).resolves.toEqual({ kind: "service-disconnected" });
