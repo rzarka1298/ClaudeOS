@@ -87,13 +87,17 @@ describe("stale session Runs across the two recovery queries (audit, 05-05)", ()
     expect(revivable.sort()).toEqual([runId(1), runId(2)].sort());
   });
 
-  // AUDIT-BUG (05-05 truth 3, MINOR): the truth says "fewer than 24 h since
-  // last activity", but listRevivableRuns compares `>= cutoff`, so a stale Run
-  // last active exactly 24 h ago is still returned. Skipped until the
-  // boundary is fixed (use `>` in session-store.ts) or the truth is amended.
-  it.skip("a stale Run exactly 24 h past its last activity is not revivable", () => {
+  // AUDIT-BUG (05-05 truth 3, MINOR), fixed in wave 2: the truth says
+  // "fewer than 24 h since last activity", so exactly 24 h is out.
+  it("a stale Run exactly 24 h past its last activity is not revivable", () => {
     upsertSessionRun(db, run(3, { state: "stale", lastActivityAt: HOURS_AGO(24) }));
     expect(listRevivableRuns(db, NOW)).toEqual([]);
+  });
+
+  it("a stale Run one millisecond inside the 24 h window is revivable", () => {
+    const justInside = new Date(Date.parse(NOW) - 24 * 3_600_000 + 1).toISOString();
+    upsertSessionRun(db, run(4, { state: "stale", lastActivityAt: justInside }));
+    expect(listRevivableRuns(db, NOW).map((r) => r.runId)).toEqual([runId(4)]);
   });
 });
 

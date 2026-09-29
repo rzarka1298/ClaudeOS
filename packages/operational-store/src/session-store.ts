@@ -269,7 +269,8 @@ function oneRow(db: Database.Database, sql: string, ...params: unknown[]): Sessi
 /**
  * The Runs the liveness sweep checks after restart recovery (D-22, PR-12):
  * every active session Run, plus stale ones that still name a pid, have no
- * end time, and were last active (or started) within 24 h of `nowIso`. A new
+ * end time, and were last active (or started) fewer than 24 h before
+ * `nowIso` (strictly: exactly 24 h is out, wave 2 audit). A new
  * query on purpose: `listNonTerminalRuns` must keep excluding `stale`, or
  * SVC-11 recovery would stop being idempotent (Pitfall 8). Timestamps are
  * compared as the `toISOString()` strings the service writes.
@@ -281,7 +282,7 @@ export function listRevivableRuns(db: Database.Database, nowIso: string): Sessio
     `SELECT * FROM runs WHERE kind = 'session' AND (
        state IN (${placeholders(ACTIVE_STATES)})
        OR (state = 'stale' AND pid IS NOT NULL AND ended_at IS NULL
-           AND COALESCE(last_activity_at, started_at) >= ?)
+           AND COALESCE(last_activity_at, started_at) > ?)
      ) ${LATEST_FIRST}`,
     ...ACTIVE_STATES,
     cutoff,
