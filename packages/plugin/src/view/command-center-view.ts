@@ -5,6 +5,8 @@ import {
 } from "@ccc/service-api-client";
 import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
+import { pickFolder } from "../projects/folder-picker.js";
+import { createProjectsActions } from "../projects/projects-actions.js";
 import { attachEventClient, refreshProjectsOnConnect } from "../service-connection.js";
 import type { CommandCenterSettings } from "../settings.js";
 import type { DestinationId } from "./destinations.js";
@@ -73,6 +75,8 @@ export class CommandCenterView extends ItemView {
         notify: (message: string) => {
           new Notice(message);
         },
+        projectsActions: createProjectsActions(this.host.client),
+        pickFolder,
       }),
       this.contentEl,
     );

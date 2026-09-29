@@ -5,6 +5,8 @@ import { useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
+import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
+import type { ProjectsActions } from "../projects/projects-actions.js";
 import { nowTick } from "../widgets/clock.js";
 import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
 import { resolvedLayout } from "../widgets/layout.js";
@@ -13,6 +15,7 @@ import type { WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 import { Overview } from "./overview.js";
+import { ProjectsView } from "./projects-view.js";
 
 export interface ShellProps {
   /** The destination selected before this render — usually the last-saved one (PLUG-05). */
@@ -40,11 +43,40 @@ export interface ShellProps {
   requestLaunch?: (projectId: ProjectId | null, action: LaunchAction) => void;
   /** Opens the Claude Code quick switcher, prefilled. The default is a no-op. */
   openSwitcher?: (prefill: string) => void;
+  /**
+   * The Projects destination's bound service actions (register, remove,
+   * rename, pin, set-GitHub-link, refresh). The view host wires this to
+   * `createProjectsActions(client)`; the default resolves `failed` for
+   * everything so Shell renders — and its Projects destination behaves
+   * honestly — with no host at all (D-24's "components never import the
+   * client" seam).
+   */
+  projectsActions?: ProjectsActions;
+  /**
+   * Opens Electron's native folder dialog (D-03). The default resolves
+   * `unavailable`, which is a real, expected outcome the Projects
+   * destination already falls back from — not a special case for the
+   * no-host default.
+   */
+  pickFolder?: (options: PickFolderOptions) => Promise<FolderPick>;
 }
 
 function noNotify(_message: string): void {}
 function noRequestLaunch(_projectId: ProjectId | null, _action: LaunchAction): void {}
 function noOpenSwitcher(_prefill: string): void {}
+
+const FAILED_OUTCOME = Promise.resolve({ kind: "failed" as const });
+const noProjectsActions: ProjectsActions = {
+  register: () => FAILED_OUTCOME,
+  remove: () => FAILED_OUTCOME,
+  rename: () => FAILED_OUTCOME,
+  pin: () => FAILED_OUTCOME,
+  setGithubLink: () => FAILED_OUTCOME,
+  refresh: () => FAILED_OUTCOME,
+};
+function noPickFolder(_options: PickFolderOptions): Promise<FolderPick> {
+  return Promise.resolve({ kind: "unavailable" });
+}
 
 /**
  * Per-destination content beyond Overview (PR-12). A destination absent from
@@ -59,6 +91,8 @@ export interface DestinationViewProps {
   readonly now: number;
   readonly onQuickAction: (descriptor: QuickActionDescriptor) => void;
   readonly onNavigate: (destination: DestinationId) => void;
+  readonly projectsActions: ProjectsActions;
+  readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
 }
 
 const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewProps) => VNode>> = {
@@ -66,6 +100,16 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
     <Overview
       layout={resolvedLayout.value}
       stateFor={stateFor}
+      connection={connection}
+      now={now}
+      onQuickAction={onQuickAction}
+      onNavigate={onNavigate}
+    />
+  ),
+  projects: ({ connection, now, onQuickAction, onNavigate, projectsActions, pickFolder }) => (
+    <ProjectsView
+      actions={projectsActions}
+      pickFolder={pickFolder}
       connection={connection}
       now={now}
       onQuickAction={onQuickAction}
@@ -106,6 +150,8 @@ export function Shell({
   notify = noNotify,
   requestLaunch = noRequestLaunch,
   openSwitcher = noOpenSwitcher,
+  projectsActions = noProjectsActions,
+  pickFolder = noPickFolder,
 }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
   const tabRefs = useRef<Partial<Record<DestinationId, HTMLButtonElement>>>({});
@@ -229,6 +275,8 @@ export function Shell({
               now={nowTick.value}
               onQuickAction={handleQuickAction}
               onNavigate={focusDestination}
+              projectsActions={projectsActions}
+              pickFolder={pickFolder}
             />
           ) : (
             <p>{active.description}</p>
