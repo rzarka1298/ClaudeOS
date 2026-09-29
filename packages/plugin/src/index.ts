@@ -28,11 +28,13 @@ export type {
   ActiveSessionsData,
   ClaudeUsageData,
   GithubDiscoveriesData,
+  ProjectRow,
   ProjectShortcutsData,
   QuickActionsData,
   TechIntelData,
   TodayData,
 } from "./widgets/panels.js";
+export { projectShortcutsStateFor } from "./projects/projects-state.js";
 export type {
   CardPresentation,
   FooterModel,

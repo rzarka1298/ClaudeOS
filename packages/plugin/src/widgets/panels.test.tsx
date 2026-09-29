@@ -93,30 +93,53 @@ describe("Today: every count names its own unavailability", () => {
   });
 });
 
-describe("Project shortcuts: open items", () => {
-  const project = {
+/** All three launchers set up, so S10's setup callout never appears in these fixtures. */
+const SET_UP_LAUNCHERS = {
+  antigravity: "set-up",
+  "claude-code": { status: "set-up", terminalLabel: "Terminal" },
+  "claude-desktop": "set-up",
+};
+
+/** A ready `ProjectRow` (plan 04-07 shape: `git`/`gitReadFailed`/`github`, never a bare `branch`/`dirty`). */
+function projectRow(overrides: Record<string, unknown> = {}) {
+  return {
     id: "p",
     name: "P",
     pinned: false,
-    branch: "main",
-    dirty: false,
+    git: { kind: "repo", branch: "main", detached: false, dirty: false, commits: [], remote: null },
+    gitReadFailed: false,
+    github: { kind: "none" },
+    observedAt: "2026-09-25T11:58:00Z",
+    openItems: null,
     sessionCount: null,
     nextTask: null,
+    ...overrides,
   };
+}
 
-  it("an unavailable open-item count reads `open items unavailable`", () => {
-    const text = cardText("project-shortcuts", { projects: [{ ...project, openItems: null }] });
+describe("Project shortcuts: later-phase fields never render (D-15, SC-6 — rewritten, not deleted)", () => {
+  it("openItems, sessionCount and nextTask are omitted from S1 — never a number, never the words 'open item'", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ openItems: null, sessionCount: null, nextTask: null })],
+      launchers: SET_UP_LAUNCHERS,
+    });
     expectNoLeak(text);
-    expect(text).toMatch(/main · open items unavailable/);
+    expect(text).not.toMatch(/open item/i);
+    expect(text).not.toMatch(/session/i);
+    expect(text).not.toMatch(/(^|\s)0(\s|$)/);
+    expect(text).toMatch(/main/);
+    expect(text).toMatch(/Clean/);
   });
 
-  it("a known count, zero included, still reads as a number", () => {
-    expect(cardText("project-shortcuts", { projects: [{ ...project, openItems: 0 }] })).toMatch(
-      /main · 0 open items/,
-    );
-    expect(cardText("project-shortcuts", { projects: [{ ...project, openItems: 1 }] })).toMatch(
-      /main · 1 open item\b/,
-    );
+  it("stays true even when the row carries a real numeric count — D-15 is structural, not a null check", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ openItems: 1_200, sessionCount: 3, nextTask: "Ship it" })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).not.toMatch(/open item/i);
+    expect(text).not.toMatch(/1,200/);
+    expect(text).not.toMatch(/(^|\s)3(\s|$)/);
+    expect(text).not.toMatch(/Ship it/);
   });
 });
 
@@ -178,20 +201,13 @@ describe("counted nouns: digit grouping", () => {
     expect(text).toMatch(/4,200 stars · \+12% · Fast/);
   });
 
-  it("a four-digit open-item count is grouped (`1,200 open items`)", () => {
-    const project = {
-      id: "p",
-      name: "example",
-      pinned: true,
-      branch: "main",
-      dirty: false,
-      openItems: 1_200,
-      sessionCount: null,
-      nextTask: null,
-    };
-    expect(cardText("project-shortcuts", { projects: [project] })).toMatch(
-      /main · 1,200 open items/,
-    );
+  it("never renders an open-item count in S1, however large (D-15)", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ name: "example", pinned: true, openItems: 1_200 })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).not.toMatch(/1,200/);
+    expect(text).not.toMatch(/open item/i);
   });
 });
 

@@ -207,18 +207,36 @@ function adaptActiveSessions(data: Fields): ActiveSessionsData {
   };
 }
 
+/** All three launchers set up, so S10's setup callout never appears in the existing cells. */
+const HARNESS_LAUNCHERS_SET_UP = {
+  antigravity: "set-up",
+  "claude-code": { status: "set-up", terminalLabel: "Terminal" },
+  "claude-desktop": "set-up",
+} as const;
+
 function adaptProjectShortcuts(data: Fields): ProjectShortcutsData {
   return {
     projects: list(data.rows).map((row) => ({
       id: text(row.project),
       name: text(row.project),
       pinned: true,
-      branch: text(row.branch),
-      dirty: text(row.dirty) !== "Clean",
-      openItems: quantity(row.openIssues),
-      sessionCount: quantity(row.sessions),
+      git: {
+        kind: "repo" as const,
+        branch: text(row.branch) || null,
+        detached: false,
+        dirty: text(row.dirty) !== "Clean",
+        commits: [],
+        remote: null,
+      },
+      gitReadFailed: false,
+      github: { kind: "none" as const },
+      observedAt: FIXTURES.now,
+      // Never populated in Phase 4 (D-15) — no prototype counterpart is read.
+      openItems: null,
+      sessionCount: null,
       nextTask: null,
     })),
+    launchers: HARNESS_LAUNCHERS_SET_UP,
   };
 }
 

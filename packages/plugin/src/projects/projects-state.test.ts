@@ -1,157 +1,135 @@
-import type { ServiceEvent, SnapshotResponse } from "@ccc/domain";
+import type { ProjectsSnapshot, ProjectView } from "@ccc/domain";
 import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  applyProjectsDelta,
-  applyProjectsSnapshot,
-  projectsSnapshot,
-  resetProjectsState,
-} from "./projects-state.js";
+import { describe, expect, it } from "vitest";
+import { projectRowsFrom, projectShortcutsStateFor } from "./projects-state.js";
 
 /**
- * The plugin's one in-memory Projects picture (D-43, D-11).
- *
- * `projectsSnapshot` is last-good, memory only: a malformed snapshot or
- * delta is dropped, and the previous value is kept — a service that sends
- * garbage never corrupts what the owner already sees.
+ * `projectShortcutsStateFor` (pure) and `projectRowsFrom` (plan 04-07): the
+ * Project shortcuts card's `WidgetState` derivation, and the S1 row shape
+ * (D-12, D-15, D-43, PROJ-04, PROJ-15).
  */
 
-const PROJECT_ID_A = "0000000000123456789abcdef";
-const PROJECT_ID_B = "1111111111123456789abcdef";
+const NOW_ISO = "2026-09-28T12:00:00.000Z";
 
-function exampleView(projectId: string, overrides: Record<string, unknown> = {}) {
+function view(overrides: Partial<ProjectView> = {}): ProjectView {
   return {
-    projectId,
+    projectId: "abcdefghi0123456789abcdef0123456" as ProjectView["projectId"],
     displayName: "example-project",
     displayPath: "~/code/example-project",
     pinned: false,
     lastOpenedAt: null,
-    observedAt: null,
+    observedAt: NOW_ISO,
     gitReadFailed: false,
-    git: { kind: "pending" },
+    git: { kind: "repo", branch: "main", detached: false, dirty: false, commits: [], remote: null },
     github: { kind: "none" },
     ...overrides,
   };
 }
 
-function exampleSnapshot(overrides: Record<string, unknown> = {}) {
-  return {
-    projects: [exampleView(PROJECT_ID_A)],
-    launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
-    ...overrides,
-  };
+function snapshotOf(projects: readonly ProjectView[]): ProjectsSnapshot {
+  return { projects: [...projects], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
 }
 
-function snapshotResponse(): SnapshotResponse {
-  return {
-    lastEventId: 1,
-    state: {
-      serviceStartedAt: "2026-09-15T00:00:00.000Z",
-      projects: exampleSnapshot() as SnapshotResponse["state"]["projects"],
-    },
-  };
-}
+describe("projectShortcutsStateFor: undefined snapshot", () => {
+  it("reads loading while the connection is still connecting", () => {
+    expect(
+      projectShortcutsStateFor(undefined, { kind: "connecting" }, NOW_ISO),
+    ).toEqual({ kind: "loading" });
+  });
 
-function projectsUpdatedEvent(payload: Record<string, unknown>): ServiceEvent {
-  return {
-    id: 2,
-    type: "projects.updated",
-    occurredAt: "2026-09-15T00:01:00.000Z",
-    payload,
-  };
-}
-
-afterEach(resetProjectsState);
-
-describe("applyProjectsSnapshot", () => {
-  it("sets projectsSnapshot.value from a valid snapshot response", () => {
-    applyProjectsSnapshot(snapshotResponse());
-    expect(projectsSnapshot.value).toEqual(exampleSnapshot());
+  it("reads unavailable once disconnected with nothing ever received", () => {
+    expect(
+      projectShortcutsStateFor(undefined, { kind: "disconnected", reason: "x" }, NOW_ISO),
+    ).toEqual({ kind: "unavailable" });
   });
 });
 
-describe("applyProjectsDelta", () => {
-  it("is a no-op when no snapshot has arrived yet", () => {
-    applyProjectsDelta(
-      projectsUpdatedEvent({ upserted: [exampleView(PROJECT_ID_A)], removed: [] }),
+describe("projectShortcutsStateFor: a defined snapshot is always ready", () => {
+  it("is ready with isEmpty true for a snapshot with no projects", () => {
+    const state = projectShortcutsStateFor(snapshotOf([]), { kind: "live" }, NOW_ISO);
+    expect(state.kind).toBe("ready");
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.isEmpty).toBe(true);
+    expect(state.data.projects).toEqual([]);
+  });
+
+  it("orders rows with compareProjectViews (pinned first, then last-opened, then name)", () => {
+    const a = view({ projectId: "a".repeat(9) + "0".repeat(16) as ProjectView["projectId"], displayName: "Zeta", pinned: false, lastOpenedAt: "2026-09-28T10:00:00.000Z" });
+    const b = view({ projectId: "b".repeat(9) + "0".repeat(16) as ProjectView["projectId"], displayName: "Alpha", pinned: true, lastOpenedAt: null });
+    const state = projectShortcutsStateFor(snapshotOf([a, b]), { kind: "live" }, NOW_ISO);
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.data.projects.map((r) => r.name)).toEqual(["Alpha", "Zeta"]);
+  });
+
+  it("is freshness live when every observedAt is within 60s of now and the connection is live", () => {
+    const state = projectShortcutsStateFor(snapshotOf([view()]), { kind: "live" }, NOW_ISO);
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.freshness).toBe("live");
+  });
+
+  it("is stale when an observedAt is older than 60s, even while live", () => {
+    const stale = view({ observedAt: "2026-09-28T11:00:00.000Z" });
+    const state = projectShortcutsStateFor(snapshotOf([stale]), { kind: "live" }, NOW_ISO);
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.freshness).toBe("stale");
+  });
+
+  it("is stale whenever the connection itself is not live, even with a fresh observedAt", () => {
+    const state = projectShortcutsStateFor(
+      snapshotOf([view()]),
+      { kind: "disconnected", reason: "x" },
+      NOW_ISO,
     );
-    expect(projectsSnapshot.value).toBeUndefined();
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.freshness).toBe("stale");
   });
 
-  it("upserts a new project by projectId, keeping the existing one", () => {
-    applyProjectsSnapshot(snapshotResponse());
-    applyProjectsDelta(
-      projectsUpdatedEvent({ upserted: [exampleView(PROJECT_ID_B)], removed: [] }),
-    );
-    const ids = projectsSnapshot.value?.projects.map((p) => p.projectId).sort();
-    expect(ids).toEqual([PROJECT_ID_A, PROJECT_ID_B].sort());
+  it("a null observedAt (pending) never counts against the live window", () => {
+    const pending = view({ observedAt: null, git: { kind: "pending" } });
+    const state = projectShortcutsStateFor(snapshotOf([pending]), { kind: "live" }, NOW_ISO);
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.freshness).toBe("live");
   });
 
-  it("upserts an existing project by projectId, replacing its fields", () => {
-    applyProjectsSnapshot(snapshotResponse());
-    applyProjectsDelta(
-      projectsUpdatedEvent({
-        upserted: [exampleView(PROJECT_ID_A, { displayName: "renamed" })],
-        removed: [],
-      }),
-    );
-    expect(projectsSnapshot.value?.projects).toHaveLength(1);
-    expect(projectsSnapshot.value?.projects[0]?.displayName).toBe("renamed");
+  it("any gitReadFailed row marks the whole card Partial, naming Local git status", () => {
+    const failed = view({ gitReadFailed: true });
+    const state = projectShortcutsStateFor(snapshotOf([failed]), { kind: "live" }, NOW_ISO);
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.partiality).toEqual({ partial: true, missingSources: ["Local git status"] });
   });
 
-  it("removes listed ids", () => {
-    applyProjectsSnapshot(snapshotResponse());
-    applyProjectsDelta(projectsUpdatedEvent({ upserted: [], removed: [PROJECT_ID_A] }));
-    expect(projectsSnapshot.value?.projects).toEqual([]);
+  it("no gitReadFailed row keeps the card not partial", () => {
+    const state = projectShortcutsStateFor(snapshotOf([view()]), { kind: "live" }, NOW_ISO);
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.partiality).toEqual({ partial: false });
   });
 
-  it("replaces launchers when the delta carries them", () => {
-    applyProjectsSnapshot(snapshotResponse());
-    const newLaunchers = {
-      antigravity: "set-up" as const,
-      "claude-code": { status: "tested" as const, terminalLabel: "iTerm2" },
-      "claude-desktop": "not-set-up" as const,
-    };
-    applyProjectsDelta(
-      projectsUpdatedEvent({ upserted: [], removed: [], launchers: newLaunchers }),
-    );
-    expect(projectsSnapshot.value?.launchers).toEqual(newLaunchers);
+  it("never produces the number 0 for openItems or sessionCount — both are always null", () => {
+    const state = projectShortcutsStateFor(snapshotOf([view()]), { kind: "live" }, NOW_ISO);
+    if (state.kind !== "ready") throw new Error("unreachable");
+    for (const row of state.data.projects) {
+      expect(row.openItems).toBeNull();
+      expect(row.sessionCount).toBeNull();
+    }
   });
+});
 
-  it("keeps the previous launchers when the delta carries none", () => {
-    applyProjectsSnapshot(snapshotResponse());
-    applyProjectsDelta(projectsUpdatedEvent({ upserted: [], removed: [] }));
-    expect(projectsSnapshot.value?.launchers).toEqual(EMPTY_PROJECTS_SNAPSHOT.launchers);
-  });
-
-  it("leaves the previous value unchanged when the payload fails validation", () => {
-    applyProjectsSnapshot(snapshotResponse());
-    const before = projectsSnapshot.value;
-    applyProjectsDelta(projectsUpdatedEvent({ upserted: "not-an-array", removed: [] }));
-    expect(projectsSnapshot.value).toEqual(before);
-  });
-
-  it("re-sorts after an upsert into the PROJ-15 order: pinned, then most recently opened, then name", () => {
-    applyProjectsSnapshot(snapshotResponse());
-    const PROJECT_ID_C = "2222222222123456789abcdef";
-    applyProjectsDelta(
-      projectsUpdatedEvent({
-        upserted: [
-          exampleView(PROJECT_ID_B, {
-            displayName: "beta",
-            lastOpenedAt: "2026-09-10T00:00:00.000Z",
-          }),
-          exampleView(PROJECT_ID_C, { displayName: "gamma", pinned: true }),
-        ],
-        removed: [],
-      }),
-    );
-    // A pinned project and a recently opened one land AHEAD of the
-    // never-opened survivor, not appended after it.
-    expect(projectsSnapshot.value?.projects.map((p) => p.projectId)).toEqual([
-      PROJECT_ID_C,
-      PROJECT_ID_B,
-      PROJECT_ID_A,
+describe("projectRowsFrom", () => {
+  it("maps a ProjectView to the S1 row shape, never inventing openItems/sessionCount/nextTask", () => {
+    const rows = projectRowsFrom(snapshotOf([view({ pinned: true })]));
+    expect(rows).toEqual([
+      {
+        id: "abcdefghi0123456789abcdef0123456",
+        name: "example-project",
+        pinned: true,
+        git: { kind: "repo", branch: "main", detached: false, dirty: false, commits: [], remote: null },
+        gitReadFailed: false,
+        github: { kind: "none" },
+        observedAt: NOW_ISO,
+        openItems: null,
+        sessionCount: null,
+        nextTask: null,
+      },
     ]);
   });
 });

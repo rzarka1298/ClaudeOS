@@ -9,6 +9,7 @@ export type {
   CreateAuthenticatedClientOptions,
 } from "./handshake.js";
 export { createAuthenticatedClient } from "./handshake.js";
+export { ProjectsRequestError, registerProject, refreshProjects } from "./projects-api.js";
 export type {
   SocketApiClient,
   SocketApiClientOptions,

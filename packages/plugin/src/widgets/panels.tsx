@@ -1,3 +1,4 @@
+import type { GithubTarget, LaunchersSummary, ProjectGitState } from "@ccc/domain";
 import type { VNode } from "preact";
 import type { WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { ListBody } from "./list-body.js";
@@ -226,17 +227,72 @@ export interface ProjectRow {
   readonly id: string;
   readonly name: string;
   readonly pinned: boolean;
-  readonly branch: string;
-  readonly dirty: boolean;
-  /** Issue/task count from a source that can fail independently of git status. */
+  readonly git: ProjectGitState;
+  /** A last-good `git` value whose latest refresh failed (ADR-0002). */
+  readonly gitReadFailed: boolean;
+  readonly github: GithubTarget;
+  /** When `git` was last read; `null` while still `pending`. */
+  readonly observedAt: string | null;
+  /** Issue/task count from a source that can fail independently of git status. Never populated in Phase 4 (D-15). */
   readonly openItems: MaybeCount;
-  /** From Claude Code hooks; unknown when no lifecycle event has arrived. */
+  /** From Claude Code hooks; unknown when no lifecycle event has arrived. Never populated in Phase 4 (D-15). */
   readonly sessionCount: MaybeCount;
+  /** Never populated in Phase 4 (D-15). */
   readonly nextTask: string | null;
 }
 
 export interface ProjectShortcutsData {
   readonly projects: readonly ProjectRow[];
+  readonly launchers: LaunchersSummary;
+}
+
+/** A plain-text rendering of {@link projectMetaSegments}, joined by " · " (Task 3 renders segments). */
+function projectMetaLine(row: ProjectRow): string {
+  return projectMetaSegments(row)
+    .map((segment) => segment.text)
+    .join(" · ");
+}
+
+/**
+ * The S1 row meta content, per git kind (UI-SPEC "S1 Project shortcuts card
+ * copy", Glyph Vocabulary). A failed read appends `◔ Stale` regardless of
+ * kind (ADR-0002: freshness is stated, never implied).
+ */
+export function projectMetaSegments(
+  row: ProjectRow,
+): readonly { readonly glyph?: string; readonly text: string }[] {
+  const segments: { readonly glyph?: string; readonly text: string }[] = [];
+  const git = row.git;
+  switch (git.kind) {
+    case "repo":
+      segments.push({ glyph: "⎇", text: git.detached ? "Detached HEAD" : (git.branch ?? "Detached HEAD") });
+      segments.push(
+        git.dirty ? { glyph: "✱", text: "Uncommitted changes" } : { glyph: "✓", text: "Clean" },
+      );
+      break;
+    case "not-a-repo":
+      segments.push({ glyph: "◌", text: "Not a Git repository" });
+      break;
+    case "git-unavailable":
+      segments.push({ glyph: "▲", text: "Git unavailable" });
+      break;
+    case "folder-missing":
+      segments.push({ glyph: "▲", text: "Folder not found" });
+      break;
+    case "skipped":
+      segments.push({ text: "Git status skipped" });
+      break;
+    case "folder-access-denied":
+      segments.push({ glyph: "▲", text: "Folder access blocked by macOS" });
+      break;
+    case "pending":
+      segments.push({ text: "Checking Git status…" });
+      break;
+  }
+  if (row.gitReadFailed) {
+    segments.push({ glyph: "◔", text: "Stale" });
+  }
+  return segments;
 }
 
 function ProjectShortcutsBody({
@@ -251,13 +307,7 @@ function ProjectShortcutsBody({
       onMore={onNavigate}
       keyOf={(project) => project.id}
       renderPrimary={(project) => project.name}
-      renderMeta={(project) =>
-        `${project.branch}${project.dirty ? " · uncommitted changes" : ""} · ${count(
-          project.openItems,
-          "open item",
-          "open items",
-        )}`
-      }
+      renderMeta={projectMetaLine}
       moreDestination="projects"
     />
   );
@@ -270,6 +320,7 @@ export const projectShortcutsWidget: WidgetDefinition<ProjectShortcutsData> = {
   dataKeys: [
     { key: "projects.registered", transport: "service", sourceLabel: "Project registry" },
     { key: "projects.git-status", transport: "service", sourceLabel: "Local git status" },
+    { key: "launchers.config", transport: "service", sourceLabel: "Launcher settings" },
   ],
   refresh: { kind: "interval", everyMs: 30_000 },
   minSize: "small",
