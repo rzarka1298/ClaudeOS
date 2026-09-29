@@ -21,7 +21,8 @@ import {
  *
  * - Nothing is ever inferred complete (SESS-06, D-19). `completed` is
  *   written only by an explicit ending: a SessionEnd, or a `/clear`
- *   SessionStart ending the old Run on the same process (D-21). `failed` is
+ *   SessionStart ending the old Run on the same process (D-21), proven by
+ *   equal known process start times. `failed` is
  *   written only by launch-failed. A process that vanished without either
  *   becomes `stale` — the absence of evidence, never an invented ending.
  * - Stale is not final (D-20). Any later hook event or a live identity-checked
@@ -573,10 +574,19 @@ function sessionStart(
       } else if (source === "clear") {
         // `/clear` ends the old session on this process (D-21). Its own
         // SessionEnd(reason "clear") usually arrives first; this is the
-        // explicit fallback when that event was lost.
+        // explicit fallback when that event was lost. The fallback ends the
+        // old Run only when both process start times are known and equal:
+        // with either unknown, a reused PID cannot be ruled out, so the new
+        // Run is linked and the old one left for its own evidence (SESS-06,
+        // wave 2 review). Linking alone invents no terminal state.
         linkKind = "clear";
         linkedFrom = previousOnProcess(index, pid, sessionId, facts, false);
-        if (linkedFrom !== null && !TERMINAL.has(linkedFrom.state)) {
+        if (
+          linkedFrom !== null &&
+          !TERMINAL.has(linkedFrom.state) &&
+          linkedFrom.pidStartedAt !== null &&
+          linkedFrom.pidStartedAt === facts.pidStartedAt
+        ) {
           ended = write(linkedFrom, endingPatch(linkedFrom, at));
         }
       }

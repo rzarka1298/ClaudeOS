@@ -171,7 +171,7 @@ describe("session reducer — identity and linking (D-21)", () => {
     },
     {
       name: "/clear on a PID whose Run holds another session completes the old Run and opens a linked one",
-      initial: [seedRun({ runId: R1, state: "running" })],
+      initial: [seedRun({ runId: R1, state: "running", pidStartedAt: "Mon Sep 28 12:00:00 2026" })],
       evidence: [sessionStart("clear", { sessionId: SESSION_B, observedAt: at(20) })],
       check: (o, initial) => {
         expect(o.run(R1)).toMatchObject({ state: "completed", endedAt: at(20), revision: 2 });
@@ -182,6 +182,30 @@ describe("session reducer — identity and linking (D-21)", () => {
           linkKind: "clear",
           linkedFromRunId: R1,
         });
+      },
+    },
+    {
+      name: "/clear when the old Run's process start is unknown only links it, never completes it (wave 2 review)",
+      initial: [seedRun({ runId: R1, state: "running", pidStartedAt: null })],
+      evidence: [sessionStart("clear", { sessionId: SESSION_B, observedAt: at(20) })],
+      check: (o, initial) => {
+        expect(o.run(R1)).toEqual(initial[0]);
+        expect(created(o, initial)).toMatchObject({ linkKind: "clear", linkedFromRunId: R1 });
+      },
+    },
+    {
+      name: "/clear when the new record's process start is unknown only links the old Run",
+      initial: [seedRun({ runId: R1, state: "running", pidStartedAt: "Mon Sep 28 12:00:00 2026" })],
+      evidence: [
+        sessionStart(
+          "clear",
+          { sessionId: SESSION_B, observedAt: at(20) },
+          startFacts({ pidStartedAt: null }),
+        ),
+      ],
+      check: (o, initial) => {
+        expect(o.run(R1)).toEqual(initial[0]);
+        expect(created(o, initial)).toMatchObject({ linkKind: "clear", linkedFromRunId: R1 });
       },
     },
     {
