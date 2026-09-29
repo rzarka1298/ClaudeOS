@@ -19,6 +19,7 @@ import {
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
+import { openDeleteUsageModal as openDeleteUsageModalDialog } from "./view/delete-usage-modal.js";
 import { CommandCenterSettingTab } from "./view/settings-tab.js";
 import { startClock } from "./widgets/clock.js";
 import { createAdapterLayoutSource, startLayoutPolling } from "./widgets/layout-source.js";
@@ -132,6 +133,10 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
           deleteUsageAnalytics: () => deleteUsageAnalytics(this.client),
           copyText: (text: string) => navigator.clipboard.writeText(text),
         },
+        // Row 6's confirmation modal (UI-SPEC S4-d). Behind the same seam
+        // pattern as every other modal opener in this plugin.
+        openDeleteUsageModal: (horizonDate: string | null) =>
+          openDeleteUsageModalDialog(this.app, horizonDate),
       }),
     );
 

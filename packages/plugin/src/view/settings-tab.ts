@@ -226,6 +226,14 @@ export interface SettingsTabHost {
   readonly notify?: (message: string) => void;
   /** The Claude settings section's service seam (UI-SPEC S5). Absent means not wired yet. */
   readonly claude?: SettingsClaudeSeam | undefined;
+  /**
+   * Opens the delete-usage confirmation modal (UI-SPEC S4-d), resolving
+   * `true` only on an explicit confirm. Behind a seam -- like every other
+   * modal opener in this plugin -- so `settings-tab.ts` stays importable and
+   * testable under Vitest without Obsidian's DOM (`obsidian-stub.ts`'s
+   * `Modal`/`ButtonComponent` are deliberately inert).
+   */
+  readonly openDeleteUsageModal?: ((horizonDate: string | null) => Promise<boolean>) | undefined;
 }
 
 /** What `applyReducedMotionChange` did, so a caller can revert its own control. */
@@ -270,6 +278,8 @@ export class CommandCenterSettingTab extends PluginSettingTab {
   /** `"checking"` until the service answers; `"unavailable"` after a failed fetch (UI-SPEC S5). */
   private claudeStatus: ClaudeIntegrationStatus | "checking" | "unavailable" = "checking";
   private claudeStatusRequested = false;
+  /** R-15: set once a successful write turns transcript analysis off; row 6 reflects it. */
+  private transcriptJustDisabled = false;
 
   constructor(app: App, plugin: Plugin, host: SettingsTabHost) {
     super(app, plugin);
@@ -291,25 +301,67 @@ export class CommandCenterSettingTab extends PluginSettingTab {
         options: { ...REDUCED_MOTION_OPTIONS },
       },
     };
+    const hookStatusItem = {
+      name: CLAUDE_HOOKS_NAME,
+      desc: hookStatusText(this.claudeStatus, Date.now()),
+    };
+    const copyInstallItem = {
+      name: CLAUDE_COPY_INSTALL_NAME,
+      desc: CLAUDE_COPY_INSTALL_DESC,
+      action: (_el: HTMLElement, _index: number) => {
+        void this.copyCommand(CLAUDE_INSTALL_COMMAND, CLAUDE_INSTALL_COPIED_NOTICE);
+      },
+    };
+    const copyUninstallItem = {
+      name: CLAUDE_COPY_UNINSTALL_NAME,
+      desc: CLAUDE_COPY_UNINSTALL_DESC,
+      action: (_el: HTMLElement, _index: number) => {
+        void this.copyCommand(CLAUDE_UNINSTALL_COMMAND, CLAUDE_UNINSTALL_COPIED_NOTICE);
+      },
+    };
+    const statusLineItem = {
+      name: CLAUDE_STATUSLINE_NAME,
+      desc: statusLineStatusText(this.claudeStatus, Date.now()),
+    };
+    const transcriptItem = {
+      name: CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
+      desc: CLAUDE_TRANSCRIPT_ANALYSIS_DESC,
+      control: {
+        type: "toggle" as const,
+        key: TRANSCRIPT_ANALYSIS_KEY,
+        defaultValue: false,
+        disabled: () => this.claudeStatus === "unavailable",
+      },
+    };
+    const deleteUsageItem = {
+      name: CLAUDE_DELETE_USAGE_NAME,
+      desc: this.deleteUsageDescription(),
+      action: (_el: HTMLElement, _index: number) => {
+        void this.handleDeleteUsage();
+      },
+    };
     const claudeGroup = {
       type: "group" as const,
       heading: CLAUDE_GROUP_HEADING,
+      // A tuple cast keeps each item's own literal shape distinct (see the
+      // note on the outer return below) -- row 1 and row 4 have no
+      // `action`/`control` at all (matching Obsidian's `SettingDefinitionEmpty`),
+      // rows 2/3/6 have `action` only, and row 5 has `control` only, exactly
+      // as UI-SPEC S5 declares each row's kind.
       items: [
-        { name: CLAUDE_HOOKS_NAME, desc: hookStatusText(this.claudeStatus, Date.now()) },
-        { name: CLAUDE_COPY_INSTALL_NAME, desc: CLAUDE_COPY_INSTALL_DESC },
-        { name: CLAUDE_COPY_UNINSTALL_NAME, desc: CLAUDE_COPY_UNINSTALL_DESC },
-        { name: CLAUDE_STATUSLINE_NAME, desc: statusLineStatusText(this.claudeStatus, Date.now()) },
-        {
-          name: CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
-          desc: CLAUDE_TRANSCRIPT_ANALYSIS_DESC,
-          control: {
-            type: "toggle" as const,
-            key: TRANSCRIPT_ANALYSIS_KEY,
-            defaultValue: false,
-            disabled: () => this.claudeStatus === "unavailable",
-          },
-        },
-        { name: CLAUDE_DELETE_USAGE_NAME, desc: CLAUDE_DELETE_USAGE_DESC },
+        hookStatusItem,
+        copyInstallItem,
+        copyUninstallItem,
+        statusLineItem,
+        transcriptItem,
+        deleteUsageItem,
+      ] as [
+        typeof hookStatusItem,
+        typeof copyInstallItem,
+        typeof copyUninstallItem,
+        typeof statusLineItem,
+        typeof transcriptItem,
+        typeof deleteUsageItem,
       ],
     };
     // A tuple cast (not `as const`, which would widen the array to
@@ -334,12 +386,18 @@ export class CommandCenterSettingTab extends PluginSettingTab {
   async setControlValue(key: string, value: unknown): Promise<void> {
     if (key === TRANSCRIPT_ANALYSIS_KEY) {
       const enabled = value === true;
+      const wasEnabled =
+        typeof this.claudeStatus === "object" && this.claudeStatus.transcriptAnalysis.enabled;
       const outcome = await applyTranscriptAnalysisChange(this.host, enabled);
       // On success, reflect the confirmed value immediately rather than
       // waiting on a fresh fetch; on revert, leave `claudeStatus` untouched
       // so `getControlValue` reports the value still actually in effect.
       if (outcome === "saved" && typeof this.claudeStatus === "object") {
         this.claudeStatus = { ...this.claudeStatus, transcriptAnalysis: { enabled } };
+        // R-15: deletion is offered in the SAME flow as turning analysis
+        // off, with no extra modal -- row 6 picks this up on its next
+        // render via `deleteUsageDescription()`.
+        if (wasEnabled && !enabled) this.transcriptJustDisabled = true;
       }
       this.update();
       return;
@@ -377,5 +435,63 @@ export class CommandCenterSettingTab extends PluginSettingTab {
         this.update();
       },
     );
+  }
+
+  /** Row 6's description: the base copy, plus the R-15 note once analysis has just been turned off. */
+  private deleteUsageDescription(): string {
+    return this.transcriptJustDisabled
+      ? `${CLAUDE_DELETE_USAGE_DESC} ${CLAUDE_DELETE_USAGE_RETAINED_NOTE}`
+      : CLAUDE_DELETE_USAGE_DESC;
+  }
+
+  /** Shows a transient message through the host's notifier, or Obsidian's own `Notice`. */
+  private notify(message: string): void {
+    if (this.host.notify) this.host.notify(message);
+    else new Notice(message);
+  }
+
+  /**
+   * Rows 2 and 3: copies a fixed, repository-relative command (D-13, R-24 --
+   * the dashboard never installs anything itself) and notifies. A missing
+   * seam is a no-op rather than a throw, matching every other row here.
+   */
+  private async copyCommand(command: string, copiedNotice: string): Promise<void> {
+    if (!this.host.claude) return;
+    await this.host.claude.copyText(command);
+    this.notify(copiedNotice);
+  }
+
+  /**
+   * The oldest calendar date a surviving transcript could still name, from
+   * the already-fetched `cleanupPeriodDays` -- never a separate fetch, and
+   * never guessed when the status itself is unknown (see the `null` branch
+   * at the call site).
+   */
+  private computeHorizonDate(cleanupPeriodDays: number): string {
+    return new Date(Date.now() - cleanupPeriodDays * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  /**
+   * Row 6: opens the confirmation modal (UI-SPEC S4-d) through the injected
+   * `host.openDeleteUsageModal` seam -- never a widget body, per the single
+   * choke-point rule -- and only reaches the service on an explicit
+   * confirm. A cancelled modal calls nothing at all.
+   */
+  private async handleDeleteUsage(): Promise<void> {
+    if (!this.host.openDeleteUsageModal || !this.host.claude) return;
+    const horizon =
+      typeof this.claudeStatus === "object"
+        ? this.computeHorizonDate(this.claudeStatus.cleanupPeriodDays)
+        : null;
+    const confirmed = await this.host.openDeleteUsageModal(horizon);
+    if (!confirmed) return;
+    try {
+      await this.host.claude.deleteUsageAnalytics();
+      this.transcriptJustDisabled = false;
+      this.notify(CLAUDE_USAGE_DELETED_NOTICE);
+    } catch {
+      this.notify(CLAUDE_USAGE_DELETE_FAILED_NOTICE);
+    }
+    this.update();
   }
 }

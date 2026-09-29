@@ -63,6 +63,10 @@ export interface StubElement {
   createDiv(): StubElement;
   addEventListener(type: string, handler: () => void): void;
   empty(): void;
+  /** Mirrors Obsidian's `Element.setText` DOM extension -- inert (plan 05-07). */
+  setText(text: string): void;
+  /** Mirrors the real `titleEl`/`buttonEl`'s native `HTMLElement.focus` -- inert. */
+  focus(): void;
 }
 
 function createStubElement(): StubElement {
@@ -71,6 +75,8 @@ function createStubElement(): StubElement {
     createDiv: () => createStubElement(),
     addEventListener: () => {},
     empty: () => {},
+    setText: () => {},
+    focus: () => {},
   };
 }
 
@@ -85,6 +91,8 @@ export class Notice {
 export class Modal {
   readonly app: unknown;
   contentEl: StubElement = createStubElement();
+  /** Added plan 05-07 (delete-usage modal); every other modal in this file predates it. */
+  titleEl: StubElement = createStubElement();
 
   constructor(app: unknown) {
     this.app = app;
@@ -101,6 +109,36 @@ export class Modal {
   onOpen(): void {}
 
   onClose(): void {}
+}
+
+/**
+ * Inert stand-in for Obsidian's `ButtonComponent` (plan 05-07, delete-usage
+ * modal). Deliberately minimal, same rationale as `Modal`/`PluginSettingTab`
+ * above: `setCta`/`setDestructive`/`setButtonText` are no-ops that return
+ * `this` for chaining, and `onClick` does not wire a real DOM listener --
+ * the modal's OWN `confirm()`/`close()` methods are what a test calls
+ * directly, never a simulated click through this stub.
+ */
+export class ButtonComponent {
+  buttonEl: StubElement = createStubElement();
+
+  constructor(_containerEl: StubElement) {}
+
+  setButtonText(_text: string): this {
+    return this;
+  }
+
+  setCta(): this {
+    return this;
+  }
+
+  setDestructive(): this {
+    return this;
+  }
+
+  onClick(_handler: (evt: MouseEvent) => unknown): this {
+    return this;
+  }
 }
 
 /**
