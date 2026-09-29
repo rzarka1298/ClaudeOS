@@ -22,8 +22,15 @@ const INTERNAL_ERROR_BODY: ApiErrorBody = { error: "internal error" };
  * Checks the permissive envelope but hands back the WHOLE parsed body: the
  * envelope schema strips every key it does not name, and the pipeline must
  * see the event's own fields to tell a known event from one whose shape
- * changed. The 64 KiB default cap still bounds the read.
+ * changed. {@link HOOK_EVENT_BODY_LIMIT_BYTES} bounds the read.
  */
+/**
+ * The hook caps a serialized record at 4 KiB (collectors `MAX_RECORD_BYTES`);
+ * twice that leaves headroom for a future field without letting one request
+ * buffer the 64 KiB general default (wave 3 review).
+ */
+export const HOOK_EVENT_BODY_LIMIT_BYTES = 8 * 1024;
+
 const ENVELOPE_CHECKED_BODY: BodyParser<unknown> = {
   safeParse(input) {
     return HookRecordEnvelopeSchema.safeParse(input).success
@@ -43,7 +50,7 @@ async function handleHookEvents(
     sendClaudeJson(res, 503, UNAVAILABLE_BODY);
     return;
   }
-  const parsed = await readJsonBody(req, ENVELOPE_CHECKED_BODY);
+  const parsed = await readJsonBody(req, ENVELOPE_CHECKED_BODY, HOOK_EVENT_BODY_LIMIT_BYTES);
   if (!parsed.ok) {
     logger.warn({ route: CLAUDE_HOOK_EVENTS_PATH, reason: parsed.reason }, "rejected request body");
     sendClaudeJson(res, 400, INVALID_BODY_BODY);
@@ -52,12 +59,15 @@ async function handleHookEvents(
   try {
     const outcome = await claude.pipeline.ingest(parsed.value, "socket");
     switch (outcome) {
+      // A shape-invalid record was received and classified (health now
+      // reads "changed"); answering 400 would make the hook spool it and the
+      // spool drain count it a second time (wave 3 review).
       case "applied":
       case "duplicate":
       case "unknown-event":
+      case "shape-invalid":
         sendClaudeJson(res, 202, ACCEPTED_BODY);
         return;
-      case "shape-invalid":
       case "envelope-invalid":
         sendClaudeJson(res, 400, INVALID_BODY_BODY);
         return;

@@ -163,7 +163,7 @@ afterAll(() => {
 });
 
 describe("05-08 audit: POST /api/v1/claude/hook-events", () => {
-  it("answers the constant 400 body for a known event whose shape changed, applies nothing, and flags health", async () => {
+  it("accepts (202) a known event whose shape changed, applies nothing, and flags health, so the hook never spools it for a second count", async () => {
     const token = await handshake(socketPath);
     // SessionStart without its required `source`: a known event, wrong shape.
     const res = await request<unknown>(socketPath, {
@@ -172,10 +172,35 @@ describe("05-08 audit: POST /api/v1/claude/hook-events", () => {
       rawBody: JSON.stringify(hookRecord("SessionStart")),
       token,
     });
-    expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: "invalid request body" });
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ accepted: true });
     expect(lastEvent(bus)).toBeUndefined();
     expect(pipelineRef.health().shapeChanged).toBe("SessionStart");
+  });
+
+  it("refuses a body over the 8 KiB hook-record cap with the constant 400 body, and accepts one just under it", async () => {
+    const token = await handshake(socketPath);
+    const padded = (bytes: number): string => {
+      const base = JSON.stringify(hookRecord("SomeFutureEvent", { pad: "" }));
+      return JSON.stringify(
+        hookRecord("SomeFutureEvent", { pad: "x".repeat(bytes - Buffer.byteLength(base)) }),
+      );
+    };
+    const over = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_HOOK_EVENTS_PATH,
+      rawBody: padded(8 * 1024 + 1),
+      token,
+    });
+    expect(over.status).toBe(400);
+    expect(over.body).toEqual({ error: "invalid request body" });
+    const under = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_HOOK_EVENTS_PATH,
+      rawBody: padded(8 * 1024),
+      token,
+    });
+    expect(under.status).toBe(202);
   });
 
   it("treats a second POST of the same eventId as a no-op", async () => {
