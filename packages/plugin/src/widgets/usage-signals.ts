@@ -3,13 +3,26 @@
 // pulls in `path-containment.ts` (`node:fs`/`node:path`), which the visual
 // harness's browser-platform bundle cannot resolve.
 import type { Freshness } from "@ccc/domain/freshness.js";
-import { type UsageSummary, UsageSummarySchema } from "@ccc/domain/usage.js";
+import { type UsageRangeKind, type UsageSummary, UsageSummarySchema } from "@ccc/domain/usage.js";
 import { computed, signal } from "@preact/signals";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState } from "../connection-state.js";
 import type { ClaudeUsageData } from "./claude-usage.js";
 import { nowTick } from "./clock.js";
 import type { WidgetState } from "./contract.js";
+import {
+  ESTIMATED_COST_SOURCE_LABEL,
+  PLAN_CAPACITY_SOURCE_LABEL,
+  TOKEN_ACTIVITY_SOURCE_LABEL,
+  usageRange,
+} from "./usage-view.js";
+
+export {
+  ESTIMATED_COST_SOURCE_LABEL,
+  PLAN_CAPACITY_SOURCE_LABEL,
+  TOKEN_ACTIVITY_SOURCE_LABEL,
+  usageRange,
+};
 
 /**
  * The one place `usage.updated` and the snapshot's usage slice land
@@ -64,12 +77,6 @@ const FRESHNESS_RANK: Readonly<Record<Freshness, number>> = {
   unavailable: 3,
 };
 
-/** The UI-SPEC S2 data-key source labels, single-sourced here and re-used by
- * `claude-usage.tsx`'s `dataKeys` and section Source disclosures. */
-export const PLAN_CAPACITY_SOURCE_LABEL = "Claude Code status line";
-export const TOKEN_ACTIVITY_SOURCE_LABEL = "Local transcript analysis";
-export const ESTIMATED_COST_SOURCE_LABEL = "Claude Code estimates and list prices";
-
 interface ConceptFreshness {
   readonly freshness: Freshness;
   readonly partial: boolean;
@@ -93,7 +100,8 @@ interface ConceptFreshness {
  *   sections each render their own honest state; nothing here ever reads
  *   as zero.
  * - `freshness` is the least fresh of the concepts that are currently
- *   PRODUCING NUMBERS (today's range activity/cost, plus capacity), or
+ *   PRODUCING NUMBERS (the selected range's activity/cost, plus capacity,
+ *   which has its own fixed windows), or
  *   `live` when none are — the summary itself was just received live, so
  *   "nothing is on" is not a staleness fact (R-10 does not force `ready`
  *   into the presentation layer's `error` fallback for the ordinary
@@ -109,11 +117,12 @@ export function claudeUsageStateFor(
   connection: ConnectionState,
   summary: UsageSummary | null,
   nowMs: number,
+  range: UsageRangeKind = "today",
 ): WidgetState<ClaudeUsageData> {
   void connection;
   if (summary === null) return { kind: "unavailable" };
 
-  const today = summary.ranges.today;
+  const selected = summary.ranges[range];
   const concepts: ConceptFreshness[] = [];
   if (summary.capacity.kind === "available") {
     concepts.push({
@@ -122,17 +131,17 @@ export function claudeUsageStateFor(
       label: PLAN_CAPACITY_SOURCE_LABEL,
     });
   }
-  if (today.activity.kind === "available") {
+  if (selected.activity.kind === "available") {
     concepts.push({
-      freshness: today.activity.freshness,
-      partial: today.activity.partiality.partial,
+      freshness: selected.activity.freshness,
+      partial: selected.activity.partiality.partial,
       label: TOKEN_ACTIVITY_SOURCE_LABEL,
     });
   }
-  if (today.cost.kind === "available") {
+  if (selected.cost.kind === "available") {
     concepts.push({
-      freshness: today.cost.freshness,
-      partial: today.cost.partiality.partial,
+      freshness: selected.cost.freshness,
+      partial: selected.cost.partiality.partial,
       label: ESTIMATED_COST_SOURCE_LABEL,
     });
   }
@@ -164,5 +173,5 @@ export function claudeUsageStateFor(
  * `activeSessionsState`). Every read is `.value` on this one computed.
  */
 export const claudeUsageState = computed<WidgetState<ClaudeUsageData>>(() =>
-  claudeUsageStateFor(connectionState.value, usageSummary.value, nowTick.value),
+  claudeUsageStateFor(connectionState.value, usageSummary.value, nowTick.value, usageRange.value),
 );

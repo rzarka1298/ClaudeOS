@@ -15,7 +15,7 @@ import type {
   UsageSummary,
 } from "@ccc/domain/usage.js";
 import type { VNode } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { formatAbsoluteTime } from "./relative-time.js";
 import { SourceDisclosure, type SourceDisclosureRow } from "./source-disclosure.js";
@@ -23,12 +23,19 @@ import {
   formatCalendarDate,
   formatCompactTokens,
   formatExactTokens,
+  formatMonthDay,
   formatPercentUsed,
   formatRangeBounds,
   formatTimeOfDay,
   formatUsd,
   pluralize,
 } from "./usage-format.js";
+import {
+  ESTIMATED_COST_SOURCE_LABEL,
+  PLAN_CAPACITY_SOURCE_LABEL,
+  TOKEN_ACTIVITY_SOURCE_LABEL,
+  usageRange,
+} from "./usage-view.js";
 
 /**
  * The Claude usage card (UI-SPEC S2, D-37, D-38, D-51). Moved out of
@@ -50,10 +57,6 @@ export interface ClaudeUsageData {
   readonly summary: UsageSummary;
   readonly nowMs: number;
 }
-
-const PLAN_CAPACITY_SOURCE_LABEL = "Claude Code status line";
-const TOKEN_ACTIVITY_SOURCE_LABEL = "Local transcript analysis";
-const ESTIMATED_COST_SOURCE_LABEL = "Claude Code estimates and list prices";
 
 /** The three locked section headings (UI-SPEC S2, R-20). */
 const SECTION_HEADING = {
@@ -106,11 +109,33 @@ const WINDOW_LABEL: Readonly<Record<CapacityWindow, string>> = {
 };
 
 /** `4:40 PM` for the 5-hour window, `Oct 1` for the 7-day window — neither
- * ever contains a `/` (PRIV-04). */
+ * ever contains a `/` (PRIV-04). `resetsAt` is an INSTANT, so the 7-day date
+ * is the reader's local calendar date of it, not its UTC date (wave 3
+ * review). */
 function resetsText(window: CapacityWindow, resetsAt: string, nowMs: number): string {
-  return window === "five-hour"
-    ? formatTimeOfDay(resetsAt)
-    : formatCalendarDate(resetsAt.slice(0, 10), nowMs);
+  return window === "five-hour" ? formatTimeOfDay(resetsAt) : formatMonthDay(resetsAt, nowMs);
+}
+
+/**
+ * One window's line. Once its reset time has passed, the reported
+ * percentage describes a window that is already over: it reads as outdated
+ * (and loses its meter) rather than "resets {past time}" beside a number
+ * that is no longer current (wave 3 review).
+ */
+function capacityLine(
+  window: CapacityWindow,
+  usedPercent: number,
+  resetsAt: string,
+  nowMs: number,
+): { readonly text: string; readonly current: boolean } {
+  const when = resetsText(window, resetsAt, nowMs);
+  if (Date.parse(resetsAt) <= nowMs) {
+    return {
+      text: `${formatPercentUsed(usedPercent)} before the ${when} reset · outdated`,
+      current: false,
+    };
+  }
+  return { text: `${formatPercentUsed(usedPercent)} · resets ${when}`, current: true };
 }
 
 const CAPACITY_UNAVAILABLE_BODY: Readonly<
@@ -153,21 +178,24 @@ function PlanCapacitySection({
   }
   return (
     <>
-      {capacity.windows.map((window) => (
-        <div className="ccc-usage-row" key={window.window}>
-          <p className="ccc-list-meta">{WINDOW_LABEL[window.window]}</p>
-          <p className="ccc-state-heading">
-            {`${formatPercentUsed(window.usedPercent)} · resets ${resetsText(window.window, window.resetsAt, nowMs)}`}
-          </p>
-          <meter
-            className="ccc-usage-meter"
-            min={0}
-            max={100}
-            value={window.usedPercent}
-            aria-hidden="true"
-          />
-        </div>
-      ))}
+      {capacity.windows.map((window) => {
+        const line = capacityLine(window.window, window.usedPercent, window.resetsAt, nowMs);
+        return (
+          <div className="ccc-usage-row" key={window.window}>
+            <p className="ccc-list-meta">{WINDOW_LABEL[window.window]}</p>
+            <p className="ccc-state-heading">{line.text}</p>
+            {line.current && (
+              <meter
+                className="ccc-usage-meter"
+                min={0}
+                max={100}
+                value={window.usedPercent}
+                aria-hidden="true"
+              />
+            )}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -326,6 +354,53 @@ function TopProjects({
   );
 }
 
+/** UI-SPEC S2 "Enable failed" row and the action table's failure copy. */
+const ENABLE_FAILED_HEADING = "Couldn't turn on transcript analysis.";
+const ENABLE_FAILED_BODY = "Check the service in Settings → Diagnostics, then try again.";
+
+/**
+ * Emits the enable descriptor and reports whether it failed. The dispatcher
+ * contract returns nothing, so a failure is either a synchronous throw or a
+ * handler that returns a rejected promise; both are caught here and become
+ * the section's inline ▲ line (UI-SPEC E3 error) instead of escaping the
+ * click handler uncaught (wave 3 audit, Error E3).
+ */
+function useEnableAnalysis(
+  onQuickAction: ((descriptor: QuickActionDescriptor) => void) | undefined,
+): { readonly failed: boolean; readonly enable: () => void } {
+  const [failed, setFailed] = useState(false);
+  function enable(): void {
+    setFailed(false);
+    if (onQuickAction === undefined) return;
+    try {
+      const outcome: unknown = onQuickAction(ENABLE_ANALYSIS_DESCRIPTOR);
+      if (outcome instanceof Promise) {
+        outcome.catch(() => {
+          setFailed(true);
+        });
+      }
+    } catch {
+      setFailed(true);
+    }
+  }
+  return { failed, enable };
+}
+
+function EnableFailedLine(): VNode {
+  return (
+    <>
+      <p className="ccc-state-body">
+        {/* Decorative reinforcement only: the text carries the failure (A11Y-04). */}
+        <span className="ccc-error-glyph" aria-hidden="true">
+          ▲
+        </span>
+        <span>{ENABLE_FAILED_HEADING}</span>
+      </p>
+      <p className="ccc-list-meta">{ENABLE_FAILED_BODY}</p>
+    </>
+  );
+}
+
 function TokenActivitySection({
   activity,
   range,
@@ -341,22 +416,26 @@ function TokenActivitySection({
   readonly onQuickAction: ((descriptor: QuickActionDescriptor) => void) | undefined;
   readonly onNavigate: ((destination: "agent-runs") => void) | undefined;
 }): VNode {
+  const enabling = useEnableAnalysis(onQuickAction);
   if (firstScanPending) {
     return <p className="ccc-state-body">Counting tokens from local transcripts…</p>;
   }
   if (activity.kind === "unavailable") {
     const copy = ACTIVITY_UNAVAILABLE[activity.reason];
     const body = copy.body(activity.version);
+    const failed = activity.reason === "analysis-off" && enabling.failed;
     return (
       <>
-        <p className="ccc-state-body">{copy.heading}</p>
-        {body.length > 0 && <p className="ccc-list-meta">{body}</p>}
+        {failed ? (
+          <EnableFailedLine />
+        ) : (
+          <>
+            <p className="ccc-state-body">{copy.heading}</p>
+            {body.length > 0 && <p className="ccc-list-meta">{body}</p>}
+          </>
+        )}
         {activity.reason === "analysis-off" && (
-          <button
-            type="button"
-            className="ccc-quick-action"
-            onClick={() => onQuickAction?.(ENABLE_ANALYSIS_DESCRIPTOR)}
-          >
+          <button type="button" className="ccc-quick-action" onClick={enabling.enable}>
             {ENABLE_ANALYSIS_DESCRIPTOR.label}
           </button>
         )}
@@ -468,6 +547,18 @@ function ClaudeUsageBody({
   const { summary, nowMs } = data;
   const [range, setRange] = useState<UsageRangeKind>("today");
   const rangeData = summary.ranges[range];
+  // Mirror the selection into the card state's view signal so the footer's
+  // freshness and partiality follow the range on screen; back to Today when
+  // the card goes away, matching the selector's default-on-mount (E4).
+  useEffect(() => {
+    usageRange.value = range;
+  }, [range]);
+  useEffect(
+    () => () => {
+      usageRange.value = "today";
+    },
+    [],
+  );
   const activityBusy = summary.analysis.enabled && summary.analysis.firstScanPending;
   const navigateToAgentRuns = onNavigate
     ? (destination: "agent-runs") => onNavigate(destination)
@@ -518,6 +609,36 @@ function ClaudeUsageBody({
   );
 }
 
+/**
+ * The whole-card empty body (UI-SPEC E3 empty row): the same three sections,
+ * each with its own no-data line, reason and next step, so no section ever
+ * renders blank and the card never falls back to a list's "no items" copy.
+ * No numbers, meters or controls: there is no observation to show or act on.
+ */
+function ClaudeUsageEmpty(): VNode {
+  const off = ACTIVITY_UNAVAILABLE["analysis-off"];
+  return (
+    <div className="ccc-usage-sections">
+      <section className="ccc-usage-section" data-usage-section="plan-capacity">
+        <h4>{SECTION_HEADING.capacity}</h4>
+        <p className="ccc-state-body">Account capacity unavailable</p>
+        <p className="ccc-list-meta">{CAPACITY_UNAVAILABLE_BODY["no-report-yet"](null)}</p>
+      </section>
+      <section className="ccc-usage-section" data-usage-section="token-activity">
+        <h4>{SECTION_HEADING.activity}</h4>
+        <p className="ccc-state-body">{off.heading}</p>
+        <p className="ccc-list-meta">{off.body(null)}</p>
+      </section>
+      <section className="ccc-usage-section" data-usage-section="estimated-cost">
+        <h4>{SECTION_HEADING.cost}</h4>
+        <p className="ccc-state-body">Estimated API-equivalent cost unavailable</p>
+        <p className="ccc-list-meta">{COST_UNAVAILABLE_BODY}</p>
+        <p className="ccc-list-meta">{PLAN_LINE}</p>
+      </section>
+    </div>
+  );
+}
+
 export const claudeUsageWidget: WidgetDefinition<ClaudeUsageData> = {
   id: "claude-usage",
   title: "Claude usage",
@@ -533,5 +654,6 @@ export const claudeUsageWidget: WidgetDefinition<ClaudeUsageData> = {
   featureFlag: "widget.claude-usage",
   quickActions: [],
   renderBody: ClaudeUsageBody,
-  renderEmpty: () => null,
+  renderEmpty: ClaudeUsageEmpty,
+  ownsEmptyCopy: true,
 };

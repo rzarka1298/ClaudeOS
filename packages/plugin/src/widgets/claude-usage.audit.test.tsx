@@ -165,23 +165,38 @@ describe("05-10 audit: per-section Source is aria-disabled without an observatio
 });
 
 describe("05-10 audit: Error E3 (failed enable)", () => {
-  // AUDIT-BUG (05-10, MAJOR): the "Error E3" truth is unimplemented.
-  // ClaudeUsageBody has no enable-failure state: when the
-  // usage:enable-transcript-analysis action fails, no inline ▲ line appears in
-  // the Token activity section. claude-usage.tsx contains no "▲" at all.
-  it.skip("a failed enable shows the inline ▲ line in Token activity only", async () => {
+  it("a failed enable shows the inline ▲ line in Token activity only", async () => {
     const { container, getByRole } = renderCard(summary(), () => {
       throw new Error("enable failed");
     });
-    try {
-      fireEvent.click(getByRole("button", { name: "Turn on transcript analysis" }));
-    } catch {
-      // the dispatcher's failure is the card's to report, not the test's
-    }
+    fireEvent.click(getByRole("button", { name: "Turn on transcript analysis" }));
     await waitFor(() => {
       expect(section(container, "token-activity").textContent).toContain("▲");
     });
+    const activityText = section(container, "token-activity").textContent ?? "";
+    expect(activityText).toContain("Couldn't turn on transcript analysis.");
+    expect(activityText).toContain("Check the service in Settings → Diagnostics, then try again.");
     expect(section(container, "plan-capacity").textContent).not.toContain("▲");
     expect(section(container, "estimated-cost").textContent).not.toContain("▲");
+  });
+
+  it("an enable whose handler rejects asynchronously shows the same line, and a retry clears it", async () => {
+    let fail = true;
+    const handler = (() =>
+      fail ? Promise.reject(new Error("no service")) : Promise.resolve()) as (
+      d: QuickActionDescriptor,
+    ) => void;
+    const { container, getByRole } = renderCard(summary(), handler);
+    fireEvent.click(getByRole("button", { name: "Turn on transcript analysis" }));
+    await waitFor(() => {
+      expect(section(container, "token-activity").textContent).toContain(
+        "Couldn't turn on transcript analysis.",
+      );
+    });
+    fail = false;
+    fireEvent.click(getByRole("button", { name: "Turn on transcript analysis" }));
+    await waitFor(() => {
+      expect(section(container, "token-activity").textContent).not.toContain("▲");
+    });
   });
 });

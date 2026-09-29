@@ -5,6 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ClaudeUsageData, claudeUsageWidget } from "./claude-usage.js";
 import type { QuickActionDescriptor, WidgetState } from "./contract.js";
 import { WidgetFrame } from "./frame.js";
+import {
+  ESTIMATED_COST_SOURCE_LABEL,
+  PLAN_CAPACITY_SOURCE_LABEL,
+  TOKEN_ACTIVITY_SOURCE_LABEL,
+  usageRange,
+} from "./usage-signals.js";
 
 /**
  * Task 1 (tracer): the Claude usage card renders three labelled, honestly
@@ -442,5 +448,107 @@ describe("Test 5 (Source): a per-section Source disclosure with a unique accessi
     const panel = container.querySelector(`#${panelId}`);
     expect(panel?.textContent).toContain("Source: Local transcript analysis");
     expect(panel?.textContent).not.toContain("/");
+  });
+});
+
+function capacityWith(windows: unknown[]): ClaudeUsageData {
+  return readyData({
+    capacity: {
+      kind: "available",
+      windows,
+      observedAt: "2026-09-26T14:00:00.000Z",
+      source: "claude-code-status-line",
+      freshness: "live",
+      partiality: { partial: false },
+    },
+  });
+}
+
+describe("capacity reset times (wave 3 review)", () => {
+  it("shows the 7-day reset as the reader's LOCAL calendar date of the instant", () => {
+    // An instant whose local date differs from its UTC date wherever the
+    // test runs off UTC: 23:30 local west of UTC, 00:30 local east of it.
+    const offset = new Date(NOW).getTimezoneOffset();
+    const local = offset >= 0 ? new Date(2026, 9, 1, 23, 30) : new Date(2026, 9, 1, 0, 30);
+    const expected = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(
+      local,
+    );
+    const { container } = renderCard(
+      capacityWith([{ window: "seven-day", usedPercent: 18, resetsAt: local.toISOString() }]),
+    );
+    const text = container.querySelector('[data-usage-section="plan-capacity"]')?.textContent ?? "";
+    expect(text).toContain(`18% used · resets ${expected}`);
+  });
+
+  it("marks a window whose reset time has passed as outdated instead of 'resets'", () => {
+    const { container } = renderCard(
+      capacityWith([
+        { window: "five-hour", usedPercent: 62, resetsAt: "2026-09-26T13:00:00.000Z" },
+        { window: "seven-day", usedPercent: 18, resetsAt: "2026-10-01T09:00:00.000Z" },
+      ]),
+    );
+    const section = container.querySelector('[data-usage-section="plan-capacity"]');
+    const rows = [...(section?.querySelectorAll(".ccc-usage-row") ?? [])];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.textContent).toMatch(/62% used before the .+ reset · outdated/);
+    expect(rows[0]?.textContent).not.toMatch(/resets/);
+    expect(rows[0]?.querySelector("meter")).toBeNull();
+    expect(rows[1]?.textContent).toMatch(/18% used · resets /);
+    expect(rows[1]?.querySelector("meter")).not.toBeNull();
+  });
+});
+
+describe("the card footer follows the selected range (wave 3 review)", () => {
+  it("mirrors the selected range into usageRange and resets it to Today on unmount", () => {
+    usageRange.value = "this-month";
+    const { getByRole, unmount } = renderCard({ summary: multiRangeSummary(), nowMs: NOW });
+    expect(usageRange.value).toBe("today");
+    fireEvent.click(getByRole("button", { name: "Last 7 days" }));
+    expect(usageRange.value).toBe("last-7-days");
+    unmount();
+    expect(usageRange.value).toBe("today");
+  });
+
+  it("declares exactly the shared source-label constants", () => {
+    expect(claudeUsageWidget.dataKeys.map((key) => key.sourceLabel)).toEqual([
+      PLAN_CAPACITY_SOURCE_LABEL,
+      TOKEN_ACTIVITY_SOURCE_LABEL,
+      ESTIMATED_COST_SOURCE_LABEL,
+    ]);
+  });
+});
+
+describe("whole-card empty (UI-SPEC E3 empty row, wave 3 review)", () => {
+  it("renders each section's own no-data line with a reason, never blank", () => {
+    const state: WidgetState<ClaudeUsageData> = {
+      kind: "ready",
+      data: readyData(),
+      observedAt: "2026-09-26T14:00:00.000Z",
+      freshness: "live",
+      partiality: { partial: false },
+      isEmpty: true,
+    };
+    const { container } = render(
+      <WidgetFrame
+        definition={claudeUsageWidget}
+        state={state}
+        connection={{ kind: "live" }}
+        now={NOW}
+      />,
+    );
+    const headings = [...container.querySelectorAll("h4")].map((el) => el.textContent);
+    expect(headings).toEqual([
+      "Plan usage",
+      "Token activity",
+      "Estimated API-equivalent cost — an estimate, not your bill",
+    ]);
+    const text = (key: string) =>
+      container.querySelector(`[data-usage-section="${key}"]`)?.textContent ?? "";
+    expect(text("plan-capacity")).toContain("Account capacity unavailable");
+    expect(text("token-activity")).toContain("Transcript analysis is off");
+    expect(text("estimated-cost")).toContain("Estimated API-equivalent cost unavailable");
+    expect(text("estimated-cost")).toContain("It needs token activity or the status-line wrapper.");
+    expect(container.textContent).not.toContain("has no items right now");
+    expect(container.querySelector("meter")).toBeNull();
   });
 });

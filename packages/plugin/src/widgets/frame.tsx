@@ -269,6 +269,7 @@ export function WidgetFrame<T>({
           </>
         );
       case "empty":
+        if (definition.ownsEmptyCopy === true) return <Empty />;
         return (
           <>
             <p className="ccc-state-heading">Nothing here yet</p>

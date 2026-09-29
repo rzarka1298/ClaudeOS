@@ -8,6 +8,7 @@ import {
   claudeUsageState,
   claudeUsageStateFor,
   lastUsageEventAt,
+  usageRange,
   usageSummary,
 } from "./usage-signals.js";
 
@@ -94,6 +95,7 @@ function readySummary(overrides: Record<string, unknown> = {}): UsageSummary {
 function resetSignals(): void {
   usageSummary.value = null;
   lastUsageEventAt.value = null;
+  usageRange.value = "today";
 }
 
 beforeEach(resetSignals);
@@ -231,5 +233,59 @@ describe("claudeUsageStateFor: a received summary is always ready, never zero-as
     const state = claudeUsageStateFor(LIVE, summary(), NOW);
     if (state.kind !== "ready") throw new Error("expected ready");
     expect(state.observedAt).toBe("2026-09-26T14:00:00.000Z");
+  });
+});
+
+describe("card freshness and partiality follow the selected range (wave 3 review, R-10)", () => {
+  /** Today live and complete; the last 7 days stale and partial. */
+  function splitSummary(): UsageSummary {
+    const base = readySummary();
+    const today = base.ranges.today;
+    if (today.activity.kind !== "available" || today.cost.kind !== "available") {
+      throw new Error("expected available today");
+    }
+    return {
+      ...base,
+      ranges: {
+        ...base.ranges,
+        "last-7-days": {
+          activity: {
+            ...today.activity,
+            range: "last-7-days",
+            freshness: "stale",
+            partiality: { partial: true, missingSources: [] },
+          },
+          cost: { ...today.cost, range: "last-7-days", freshness: "stale" },
+        },
+      },
+    };
+  }
+
+  it("reads today's concepts by default and the selected range's when one is given", () => {
+    const s = splitSummary();
+    const today = claudeUsageStateFor(LIVE, s, NOW);
+    if (today.kind !== "ready") throw new Error("expected ready");
+    expect(today.freshness).toBe("live");
+    expect(today.partiality.partial).toBe(false);
+
+    const week = claudeUsageStateFor(LIVE, s, NOW, "last-7-days");
+    if (week.kind !== "ready") throw new Error("expected ready");
+    expect(week.freshness).toBe("stale");
+    expect(week.partiality).toEqual({
+      partial: true,
+      missingSources: ["Local transcript analysis"],
+    });
+  });
+
+  it("claudeUsageState follows the usageRange view-state signal", () => {
+    usageSummary.value = splitSummary();
+    const before = claudeUsageState.value;
+    if (before.kind !== "ready") throw new Error("expected ready");
+    expect(before.freshness).toBe("live");
+    usageRange.value = "last-7-days";
+    const after = claudeUsageState.value;
+    if (after.kind !== "ready") throw new Error("expected ready");
+    expect(after.freshness).toBe("stale");
+    expect(after.partiality.partial).toBe(true);
   });
 });

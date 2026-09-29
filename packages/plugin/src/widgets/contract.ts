@@ -205,6 +205,14 @@ export interface WidgetDefinition<T> {
   readonly renderBody: (props: WidgetBodyProps<T>) => VNode | null;
   readonly renderEmpty: (props: Record<string, never>) => VNode | null;
   /**
+   * When true, the frame's `empty` body is `renderEmpty` alone: the shared
+   * "Nothing here yet" / "{title} has no items right now" pair is list copy,
+   * and a card whose empty state is defined per section (the Claude usage
+   * card, UI-SPEC E3 empty row) supplies all of its own copy. Absent means
+   * the Phase 3 behaviour, unchanged for every other widget.
+   */
+  readonly ownsEmptyCopy?: boolean | undefined;
+  /**
    * Declares a frame-owned hero head (UI-SPEC S1, D-50): absent means the
    * existing glass card, so no other widget changes. `WidgetFrame` reads this
    * field and renders the head itself — the body still renders only its rows
