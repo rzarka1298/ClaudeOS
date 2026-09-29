@@ -183,28 +183,70 @@ function adaptToday(data: Fields): TodayData {
   };
 }
 
-const SESSION_STATUS: Readonly<Record<string, ActiveSessionsData["rows"][number]["status"]>> = {
-  Running: "running",
-  "Waiting for approval": "waiting-for-approval",
-  "Recently completed": "recently-completed",
-  Failed: "failed",
-};
+/**
+ * The eight domain `RunState` values (05-06). This file cannot import
+ * `@ccc/domain` (the three-module purity list above), so the set is a local,
+ * harness-only copy used only to validate the fixture's own `state` field —
+ * never a second source of truth for the production mapping, which lives in
+ * `RUN_STATE_DISPLAY` and is exercised by the real component this harness
+ * renders.
+ */
+const RUN_STATES = new Set([
+  "queued",
+  "starting",
+  "running",
+  "waiting-for-approval",
+  "stale",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
+/** An unrecognised state maps to `stale` (unknown) — never an invented terminal state. */
+function sessionState(value: unknown): string {
+  const state = text(value);
+  return RUN_STATES.has(state) ? state : "stale";
+}
+
+const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * `ActiveSessionsData` (05-06) carries real `SessionView` rows, which this
+ * file cannot import the type for (the purity list above). The object below
+ * is built to that shape from the fixture's own fields, with an honest
+ * default for every field the prototype fixture never carried (subagents,
+ * link kind, transcript, …) — never a value the fixture does not say.
+ */
 function adaptActiveSessions(data: Fields): ActiveSessionsData {
-  return {
-    rows: list(data.rows).map((row) => ({
-      id: `${text(row.project)}-${text(row.name)}`,
-      project: text(row.project),
-      name: text(row.name),
-      model: typeof row.model === "string" ? row.model : null,
-      elapsed: text(row.elapsed),
-      // No prototype counterpart; stated rather than invented.
-      lastActivity: "last activity not reported",
-      // "Stale or unknown" and anything unrecognised map to `unknown` — never
-      // an invented terminal state (project data-integrity constraint).
-      status: SESSION_STATUS[text(row.status)] ?? "unknown",
-    })),
-  };
+  const sessions = list(data.rows).map((row) => ({
+    runId: `${text(row.project)}-${text(row.name)}`,
+    revision: 1,
+    claudeSessionId: typeof row.claudeSessionId === "string" ? row.claudeSessionId : null,
+    state: sessionState(row.state),
+    activity: null,
+    projectId: text(row.project),
+    projectName: text(row.project),
+    name: text(row.name),
+    model: typeof row.model === "string" ? row.model : null,
+    effort: null,
+    launchSource: "terminal",
+    permissionMode: null,
+    claudeVersion: null,
+    startedAt: text(row.startedAt, FIXTURES.now),
+    endedAt: TERMINAL_STATES.has(sessionState(row.state))
+      ? text(row.lastActivityAt, FIXTURES.now)
+      : null,
+    lastActivityAt: text(row.lastActivityAt, FIXTURES.now),
+    subagents: { active: 0, lastType: null },
+    lastError: null,
+    linkKind: null,
+    linkedFromRunId: null,
+    cwdBasename: null,
+    worktreeBasename: null,
+    hasTranscript: false,
+    terminateRequested: false,
+  }));
+  return { sessions, nowMs: NOW } as unknown as ActiveSessionsData;
 }
 
 function adaptProjectShortcuts(data: Fields): ProjectShortcutsData {

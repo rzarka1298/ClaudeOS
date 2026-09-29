@@ -177,21 +177,55 @@
                 "name": "refactor-ingest",
                 "model": "Opus",
                 "elapsed": "18m",
-                "status": "Running"
+                "status": "Running",
+                "state": "running",
+                "startedAt": "2026-09-22T11:42:00.000Z",
+                "lastActivityAt": "2026-09-22T11:59:50.000Z",
+                "claudeSessionId": "fixture-lantern-session"
               },
               {
                 "project": "Quarry",
                 "name": "quarry-index-rebuild",
                 "model": "Sonnet",
                 "elapsed": "42m",
-                "status": "Waiting for approval"
+                "status": "Waiting for approval",
+                "state": "waiting-for-approval",
+                "startedAt": "2026-09-22T11:18:00.000Z",
+                "lastActivityAt": "2026-09-22T11:59:30.000Z",
+                "claudeSessionId": "fixture-quarry-session"
               },
               {
                 "project": "Tidewater",
                 "name": "tidewater-migration",
                 "model": "Opus",
                 "elapsed": "6m",
-                "status": "Running"
+                "status": "Running",
+                "state": "running",
+                "startedAt": "2026-09-22T11:54:00.000Z",
+                "lastActivityAt": "2026-09-22T11:59:58.000Z",
+                "claudeSessionId": "fixture-tidewater-session"
+              },
+              {
+                "project": "Bramble",
+                "name": "spike-notebook",
+                "model": null,
+                "elapsed": "22m",
+                "status": "Stale or unknown",
+                "state": "stale",
+                "startedAt": "2026-09-22T11:16:00.000Z",
+                "lastActivityAt": "2026-09-22T11:38:00.000Z",
+                "claudeSessionId": "fixture-bramble-session"
+              },
+              {
+                "project": "Anchorage",
+                "name": "release-checklist",
+                "model": "Opus",
+                "elapsed": "10m",
+                "status": "Failed",
+                "state": "failed",
+                "startedAt": "2026-09-22T10:50:00.000Z",
+                "lastActivityAt": "2026-09-22T11:50:00.000Z",
+                "claudeSessionId": "fixture-anchorage-session"
               }
             ]
           }
@@ -210,21 +244,33 @@
                 "name": "refactor-ingest",
                 "model": "Opus",
                 "elapsed": "18m",
-                "status": "Stale or unknown"
+                "status": "Running",
+                "state": "running",
+                "startedAt": "2026-09-22T08:42:00.000Z",
+                "lastActivityAt": "2026-09-22T08:59:50.000Z",
+                "claudeSessionId": "fixture-lantern-session"
               },
               {
                 "project": "Quarry",
                 "name": "quarry-index-rebuild",
                 "model": "Sonnet",
                 "elapsed": "42m",
-                "status": "Stale or unknown"
+                "status": "Waiting for approval",
+                "state": "waiting-for-approval",
+                "startedAt": "2026-09-22T08:18:00.000Z",
+                "lastActivityAt": "2026-09-22T08:59:30.000Z",
+                "claudeSessionId": "fixture-quarry-session"
               },
               {
                 "project": "Tidewater",
                 "name": "tidewater-migration",
                 "model": "Opus",
                 "elapsed": "6m",
-                "status": "Stale or unknown"
+                "status": "Running",
+                "state": "running",
+                "startedAt": "2026-09-22T08:54:00.000Z",
+                "lastActivityAt": "2026-09-22T08:59:58.000Z",
+                "claudeSessionId": "fixture-tidewater-session"
               }
             ]
           }
