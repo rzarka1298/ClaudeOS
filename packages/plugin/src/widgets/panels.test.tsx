@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type ReadonlySignal, signal } from "@preact/signals";
 import { cleanup, render } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { Overview } from "../view/overview.js";
 import type { WidgetState } from "./contract.js";
+import { type ProjectRow, projectMetaSegments } from "./panels.js";
 import type { WidgetId } from "./registry.js";
 
 /**
@@ -47,11 +51,7 @@ function cardText(id: WidgetId, data: unknown, size: "medium" | "wide" = "wide")
 }
 
 /** Renders ONE card and returns its body ELEMENT, for DOM/attribute assertions `cardText` can't make. */
-function cardBody(
-  id: WidgetId,
-  data: unknown,
-  opts: { readonly isEmpty?: boolean } = {},
-): Element {
+function cardBody(id: WidgetId, data: unknown, opts: { readonly isEmpty?: boolean } = {}): Element {
   const state: ReadonlySignal<WidgetState<unknown>> = signal({
     ...ready(data),
     isEmpty: opts.isEmpty ?? false,
@@ -267,7 +267,14 @@ describe("Project shortcuts: every git kind renders its UI-SPEC meta copy with t
     const text = cardText("project-shortcuts", {
       projects: [
         projectRow({
-          git: { kind: "repo", branch: "main", detached: false, dirty: true, commits: [], remote: null },
+          git: {
+            kind: "repo",
+            branch: "main",
+            detached: false,
+            dirty: true,
+            commits: [],
+            remote: null,
+          },
         }),
       ],
       launchers: SET_UP_LAUNCHERS,
@@ -279,12 +286,31 @@ describe("Project shortcuts: every git kind renders its UI-SPEC meta copy with t
     const text = cardText("project-shortcuts", {
       projects: [
         projectRow({
-          git: { kind: "repo", branch: null, detached: true, dirty: false, commits: [], remote: null },
+          git: {
+            kind: "repo",
+            branch: null,
+            detached: true,
+            dirty: false,
+            commits: [],
+            remote: null,
+          },
         }),
       ],
       launchers: SET_UP_LAUNCHERS,
     });
     expect(text).toMatch(/Detached HEAD/);
+  });
+
+  it("repo, no branch but not detached: an unavailable branch, never Detached HEAD (wave-3 review)", () => {
+    const row = projectRow({
+      git: { kind: "repo", branch: null, detached: false, dirty: false, commits: [], remote: null },
+    });
+    const text = cardText("project-shortcuts", { projects: [row], launchers: SET_UP_LAUNCHERS });
+    expect(text).not.toMatch(/Detached HEAD/);
+    expect(text).toMatch(/Branch unavailable/);
+    // The ⎇ glyph pairs only with a branch name or Detached HEAD (UI-SPEC Glyph Vocabulary).
+    const segments = projectMetaSegments(row as ProjectRow);
+    expect(segments[0]).toEqual({ text: "Branch unavailable" });
   });
 
   it("not-a-repo", () => {
@@ -355,9 +381,9 @@ describe("Project shortcuts: every glyph is aria-hidden with a non-empty text si
     for (const glyph of Array.from(glyphs)) {
       expect(glyph.getAttribute("aria-hidden")).toBe("true");
       const parent = glyph.parentElement;
-      expect(parent?.textContent?.replace(glyph.textContent ?? "", "").trim().length).toBeGreaterThan(
-        0,
-      );
+      expect(
+        parent?.textContent?.replace(glyph.textContent ?? "", "").trim().length,
+      ).toBeGreaterThan(0);
     }
   });
 });
@@ -422,6 +448,23 @@ describe("Project shortcuts: empty state (S1, RR-27)", () => {
       (b) => b.textContent === "Go to Projects",
     );
     expect(button).toBeTruthy();
+  });
+
+  it("spaces the Go to Projects button from the body copy with a spacing token (wave-3 visual)", () => {
+    const body = cardBody(
+      "project-shortcuts",
+      { projects: [], launchers: SET_UP_LAUNCHERS },
+      { isEmpty: true },
+    );
+    const button = Array.from(body.querySelectorAll("button")).find(
+      (b) => b.textContent === "Go to Projects",
+    );
+    expect(button?.classList.contains("ccc-empty-action")).toBe(true);
+    const css = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../styles.css"),
+      "utf8",
+    );
+    expect(css).toMatch(/\.ccc-empty-action\s*\{[^}]*margin-top:\s*var\(--ccc-space-sm\)/);
   });
 
   it("shows the setup callout after the empty copy while no launcher is set up — read from the live snapshot signal, since renderEmpty receives no data", () => {
