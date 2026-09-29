@@ -27,6 +27,7 @@ import { createLaunchService } from "./projects/launch-service.js";
 import { createStoreProjectLookup } from "./projects/project-lookup.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 import { resolveHomeDir } from "./projects/project-views.js";
+import { ensureScriptDir, sweepStaleScripts } from "./projects/script-dir.js";
 import { createCommandSpawner } from "./projects/spawner.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
@@ -48,6 +49,16 @@ async function main(): Promise<void> {
   const dbPath = resolveDbPath();
 
   ensureRuntimeDir(runtimeDir, logger);
+
+  // Phase 4 (plan 04-09): the private launch-script directory, before the
+  // socket listens. Nothing can be mid-hand-off at startup, so every
+  // leftover script from an interrupted launch goes (D-20, Pitfall 5). Only
+  // the count is logged.
+  const scriptDir = ensureScriptDir(runtimeDir, logger);
+  const sweptScripts = sweepStaleScripts(scriptDir, { all: true });
+  if (sweptScripts > 0) {
+    logger.info({ count: sweptScripts }, "startup: removed leftover launch scripts");
+  }
 
   const store = openStore(dbPath);
   // ADR-0018: migrations apply before anything else touches the store, so
@@ -162,6 +173,10 @@ async function main(): Promise<void> {
       gitState: (projectId) => projectsCollector.gitState(projectId),
     },
     logger,
+    // Claude Code reaches its terminal through a generated script in this
+    // directory; the executable check (access X_OK) runs inside the launch
+    // service before every launch (D-20, D-22).
+    scriptDir,
   });
 
   const requestListener = createRequestListener({

@@ -10,6 +10,7 @@ import {
   type ProjectId,
   type ProjectLookup,
   parseStoredLauncherConfig,
+  type StoredClaudeCodeConfig,
   type TerminalLauncher,
 } from "@ccc/domain";
 import {
@@ -31,6 +32,7 @@ import {
   touchLastOpened,
 } from "@ccc/operational-store";
 import type { Spawner } from "./spawner.js";
+import { selectTerminalLauncher } from "./terminal-launchers.js";
 
 /**
  * The launch pipeline (D-06, D-19, D-26, D-40, D-42, D-49): one request
@@ -48,8 +50,14 @@ import type { Spawner } from "./spawner.js";
  * - `github`: `open https://github.com/{owner}/{repo}`, rebuilt from the
  *   owner's validated override or else the collector's last-good github.com
  *   remote (in memory; git is never run here);
- * - `claude-code`: the injected {@link TerminalLauncher} (plan 04-09);
- *   without one it is `launcher-not-configured`.
+ * - `claude-code`: `[stored absolute claude, ...stored arguments]` with
+ *   `{projectPath}` replaced whole-token, run at the project folder by the
+ *   terminal the stored configuration chose ({@link selectTerminalLauncher}:
+ *   a generated, self-deleting script handed to Terminal.app by bundle ID,
+ *   or to the owner's custom terminal template). The permission-bypass
+ *   flags are refused again before every launch, whatever the stored row
+ *   says (D-22). The LaunchGuard runs before the hand-off (Phase 5's
+ *   concurrent-session warning plugs in there).
  * A launcher with no saved configuration, one whose stored JSON no longer
  * matches the domain schema, or (Claude Code) one whose stored command
  * template no longer passes the validator, is `launcher-not-configured` —
@@ -114,10 +122,18 @@ export interface LaunchServiceDeps {
   readonly guard?: LaunchGuard;
   /** Defaults to {@link LAUNCH_CAP_MS}; tests may shorten it. */
   readonly capMs?: number;
-  /** The Claude Code terminal hand-off (plan 04-09). Absent: Claude Code is not configured. */
-  readonly terminalLauncher?: TerminalLauncher;
-  /** RED-phase stub (plan 04-09 Task 1): not wired yet. */
+  /**
+   * The 0700 `<runtimeDir>/launch` directory (`ensureScriptDir`). With it,
+   * Claude Code reaches the terminal the stored configuration chose, through
+   * {@link selectTerminalLauncher} (plan 04-09). Without it (and without an
+   * injected {@link terminalLauncher}), Claude Code is not configured.
+   */
   readonly scriptDir?: string;
+  /**
+   * Overrides the configured terminal for every Claude Code launch. Tests
+   * inject a spy here; production leaves it unset and passes `scriptDir`.
+   */
+  readonly terminalLauncher?: TerminalLauncher;
 }
 
 export interface LaunchService {
@@ -189,12 +205,23 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     return { kind: "spawn", argv: openUrl(githubRepoUrl(target.owner, target.repo)) };
   };
 
+  /** The injected override, else the adapter the stored terminal choice selects, else `null`. */
+  const terminalFor = (config: StoredClaudeCodeConfig): TerminalLauncher | null => {
+    if (deps.terminalLauncher !== undefined) return deps.terminalLauncher;
+    if (deps.scriptDir === undefined) return null;
+    return selectTerminalLauncher(config.terminal, {
+      spawner: deps.spawner,
+      scriptDir: deps.scriptDir,
+      capMs,
+    });
+  };
+
   const prepareClaudeCode = async (projectId: ProjectId): Promise<Prepared> => {
-    const terminalLauncher = deps.terminalLauncher;
-    if (terminalLauncher === undefined) return refuse("launcher-not-configured");
     const record = getLauncherConfig(deps.store.db, "claude-code");
     const config = record === null ? null : parseStoredLauncherConfig("claude-code", record.config);
     if (config === null) return refuse("launcher-not-configured");
+    const terminalLauncher = terminalFor(config);
+    if (terminalLauncher === null) return refuse("launcher-not-configured");
     const project = await deps.lookup.resolve(projectId);
     if ("error" in project) return refuse(project.error);
     const template = [config.executablePath, ...config.args];
