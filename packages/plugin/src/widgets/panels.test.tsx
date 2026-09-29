@@ -120,53 +120,57 @@ describe("Project shortcuts: open items", () => {
   });
 });
 
-describe("Claude usage: capacity, tokens and cost", () => {
-  const tokens = { input: 10, output: 20, cache: 0 };
+describe("Claude usage: three honest sections, never a zero (05-10)", () => {
+  const OFF_RANGE = {
+    activity: { kind: "unavailable", reason: "analysis-off", version: null },
+    cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+  };
 
-  it("an unknown used amount reads `Capacity unavailable`, never `null of 100`", () => {
-    const text = cardText("claude-usage", {
-      bars: [{ label: "Session", used: null, limit: 100 }],
-      tokens,
-      estimate: "$1.00",
-    });
+  function summary(overrides: Record<string, unknown> = {}): unknown {
+    return {
+      capacity: { kind: "unavailable", reason: "wrapper-not-installed", version: null },
+      ranges: { today: OFF_RANGE, "last-7-days": OFF_RANGE, "this-month": OFF_RANGE },
+      analysis: { enabled: false, firstScanPending: false },
+      observedAt: OBSERVED,
+      ...overrides,
+    };
+  }
+
+  it("an unavailable plan capacity reads `Account capacity unavailable`, never a percentage", () => {
+    const text = cardText("claude-usage", { summary: summary(), nowMs: Date.parse(OBSERVED) });
     expectNoLeak(text);
-    expect(text).toMatch(/Capacity unavailable/);
+    expect(text).toMatch(/Account capacity unavailable/);
+    expect(text).not.toMatch(/%/);
   });
 
-  it("unavailable token counts read unavailable one by one", () => {
+  it("an available plan capacity reads its percentage with digit grouping intact", () => {
     const text = cardText("claude-usage", {
-      bars: [],
-      tokens: { input: null, output: 20, cache: null },
-      estimate: "$1.00",
+      summary: summary({
+        capacity: {
+          kind: "available",
+          windows: [{ window: "five-hour", usedPercent: 62, resetsAt: "2026-09-25T16:40:00.000Z" }],
+          observedAt: OBSERVED,
+          source: "claude-code-status-line",
+          freshness: "live",
+          partiality: { partial: false },
+        },
+      }),
+      nowMs: Date.parse(OBSERVED),
     });
-    expectNoLeak(text);
-    expect(text).toMatch(/Input unavailable · output 20 · cache unavailable/);
+    expect(text).toMatch(/62% used/);
   });
 
-  it("an unavailable cost estimate is said, not hidden", () => {
-    const text = cardText("claude-usage", { bars: [], tokens, estimate: null });
+  it("token activity off-by-default names the reason, never a bare zero", () => {
+    const text = cardText("claude-usage", { summary: summary(), nowMs: Date.parse(OBSERVED) });
+    expectNoLeak(text);
+    expect(text).toMatch(/Transcript analysis is off/);
+  });
+
+  it("an unavailable cost estimate is said, not hidden, and the plan line always shows", () => {
+    const text = cardText("claude-usage", { summary: summary(), nowMs: Date.parse(OBSERVED) });
     expectNoLeak(text);
     expect(text).toMatch(/Estimated API-equivalent cost unavailable/);
-  });
-
-  it("token counts print with digit grouping, never as a bare run of digits", () => {
-    const text = cardText("claude-usage", {
-      bars: [],
-      tokens: { input: 1_210_000, output: 430_000, cache: 198_000 },
-      estimate: "$18.40",
-    });
-    expect(text).toMatch(/Input 1,210,000 · output 430,000 · cache 198,000/);
-    expect(text).not.toMatch(/\d{4,}/);
-  });
-
-  it("a known capacity reads `used of limit` with digit grouping", () => {
-    const text = cardText("claude-usage", {
-      bars: [{ label: "Session", used: 312_000, limit: 821_053 }],
-      tokens,
-      estimate: "$1.00",
-    });
-    expectNoLeak(text);
-    expect(text).toMatch(/Session312,000 of 821,053/);
+    expect(text).toMatch(/Your subscription spend is your fixed plan price\./);
   });
 });
 

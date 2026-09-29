@@ -87,7 +87,13 @@ describe("Test 2: plan capacity unavailable never reads as zero (USAGE-06, Non-N
     const text = section?.textContent ?? "";
     expect(text).toContain("Account capacity unavailable");
     expect(text).not.toMatch(/%/);
-    expect(text).not.toMatch(/\d/);
+    // "shape-changed" names the Claude Code version that changed (UI-SPEC
+    // Section 1 state table: "The status line format changed in Claude Code
+    // {version}."), so it is the one reason whose body legitimately contains
+    // a digit. The other three reasons name no version at all.
+    if (reason !== "shape-changed") {
+      expect(text).not.toMatch(/\d/);
+    }
   });
 
   it("an available capacity renders its windows with a meter and the percentage in text", () => {
@@ -95,9 +101,7 @@ describe("Test 2: plan capacity unavailable never reads as zero (USAGE-06, Non-N
       readyData({
         capacity: {
           kind: "available",
-          windows: [
-            { window: "five-hour", usedPercent: 62, resetsAt: "2026-09-26T21:00:00.000Z" },
-          ],
+          windows: [{ window: "five-hour", usedPercent: 62, resetsAt: "2026-09-26T21:00:00.000Z" }],
           observedAt: "2026-09-26T14:00:00.000Z",
           source: "claude-code-status-line",
           freshness: "live",

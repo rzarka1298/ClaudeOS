@@ -60,11 +60,6 @@ function count(
   return `${grouped(n)} ${n === 1 ? singular : plural}`;
 }
 
-/** A number shown bare (`output 20`); unavailable reads `unavailable`. */
-function amount(n: MaybeCount): string {
-  return n === null ? "unavailable" : grouped(n);
-}
-
 /** Sentence case for a line assembled from mid-sentence pieces. */
 function upperFirst(line: string): string {
   return line.charAt(0).toUpperCase() + line.slice(1);
@@ -233,75 +228,12 @@ export const projectShortcutsWidget: WidgetDefinition<ProjectShortcutsData> = {
 };
 
 // ---------------------------------------------------------------------------
-// 4. Claude usage (PRD §7.1.4) — unavailable until Phase 5
+// 4. Claude usage (PRD §7.1.4) — moved to `claude-usage.tsx` (plan 05-10).
+// Re-exported here so `registry.ts` needs no change (PATTERNS "Moving
+// them"), the same move plan 05-06 made for section 2 above.
 // ---------------------------------------------------------------------------
 
-export interface UsageBar {
-  readonly label: string;
-  readonly used: MaybeCount;
-  readonly limit: MaybeCount;
-}
-
-export interface UsageTokens {
-  readonly input: MaybeCount;
-  readonly output: MaybeCount;
-  readonly cache: MaybeCount;
-}
-
-export interface ClaudeUsageData {
-  readonly bars: readonly UsageBar[];
-  readonly tokens: UsageTokens;
-  /**
-   * Always rendered as an ESTIMATE — subscription spend is the plan price.
-   * `null` is an estimate that could not be computed, and reads unavailable.
-   */
-  readonly estimate: string | null;
-}
-
-function ClaudeUsageBody({ data }: { readonly data: ClaudeUsageData }): VNode {
-  return (
-    <>
-      <ul className="ccc-list">
-        {data.bars.map((bar) => (
-          <li className="ccc-list-row" key={bar.label}>
-            <p className="ccc-list-primary">{bar.label}</p>
-            <p className="ccc-list-meta">
-              {/* An unknown limit reads `unavailable`, never zero — the
-                  data-integrity rule in the project constraints. */}
-              {bar.used === null || bar.limit === null
-                ? "Capacity unavailable"
-                : `${grouped(bar.used)} of ${grouped(bar.limit)}`}
-            </p>
-          </li>
-        ))}
-      </ul>
-      <p className="ccc-state-body">
-        {`Input ${amount(data.tokens.input)} · output ${amount(data.tokens.output)} · cache ${amount(
-          data.tokens.cache,
-        )}`}
-      </p>
-      <p className="ccc-state-body">
-        {data.estimate === null
-          ? "Estimated API-equivalent cost unavailable"
-          : `Estimated API-equivalent cost: ${data.estimate}`}
-      </p>
-    </>
-  );
-}
-
-export const claudeUsageWidget: WidgetDefinition<ClaudeUsageData> = {
-  id: "claude-usage",
-  title: "Claude usage",
-  description: "Plan capacity, token activity and an estimated cost. Filled in by phase 5.",
-  dataKeys: [{ key: "usage.rollup", transport: "service", sourceLabel: "Claude usage collector" }],
-  refresh: { kind: "interval", everyMs: 300_000 },
-  minSize: "medium",
-  preferredSize: "wide",
-  featureFlag: "widget.claude-usage",
-  quickActions: [],
-  renderBody: ClaudeUsageBody,
-  renderEmpty: () => <p className="ccc-state-body">No usage has been recorded yet.</p>,
-};
+export { type ClaudeUsageData, claudeUsageWidget } from "./claude-usage.js";
 
 // ---------------------------------------------------------------------------
 // 5. Technology and market intelligence (PRD §7.1.5) — unavailable, Phase 7

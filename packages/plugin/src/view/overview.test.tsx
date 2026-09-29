@@ -237,7 +237,28 @@ const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
     nowMs: Date.parse("2026-09-25T11:58:00Z"),
   },
   "project-shortcuts": { projects: [] },
-  "claude-usage": { bars: [], tokens: { input: 0, output: 0, cache: 0 }, estimate: null },
+  "claude-usage": {
+    summary: {
+      capacity: { kind: "unavailable", reason: "wrapper-not-installed", version: null },
+      ranges: {
+        today: {
+          activity: { kind: "unavailable", reason: "analysis-off", version: null },
+          cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+        },
+        "last-7-days": {
+          activity: { kind: "unavailable", reason: "analysis-off", version: null },
+          cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+        },
+        "this-month": {
+          activity: { kind: "unavailable", reason: "analysis-off", version: null },
+          cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+        },
+      },
+      analysis: { enabled: false, firstScanPending: false },
+      observedAt: "2026-09-25T11:58:00Z",
+    },
+    nowMs: Date.parse("2026-09-25T11:58:00Z"),
+  },
   "tech-intel": { stories: [], marketSummary: null },
   "github-discoveries": { repos: [] },
   "quick-actions": {},
