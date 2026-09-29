@@ -21,13 +21,10 @@ import { SocketUnreachableError } from "./socket-api-client.js";
  */
 
 function fakeClient(
-  handler: (opts: SocketRequestOptions) => SocketResponse<unknown> | Promise<never>,
+  handler: (opts: SocketRequestOptions) => SocketResponse<unknown>,
 ): SocketApiClient {
   return {
-    request: async (opts) => {
-      const result = handler(opts);
-      return result as Promise<SocketResponse<unknown>>;
-    },
+    request: <T>(opts: SocketRequestOptions) => Promise.resolve(handler(opts) as SocketResponse<T>),
   };
 }
 

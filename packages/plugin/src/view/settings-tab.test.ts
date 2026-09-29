@@ -7,24 +7,24 @@ import {
   applyReducedMotionChange,
   applyTranscriptAnalysisChange,
   asMotionPreference,
+  CLAUDE_COPY_INSTALL_NAME,
+  CLAUDE_COPY_UNINSTALL_NAME,
+  CLAUDE_DELETE_USAGE_NAME,
   CLAUDE_GROUP_HEADING,
   CLAUDE_HOOKS_NAME,
   CLAUDE_HOOKS_NOT_INSTALLED_TEXT,
   CLAUDE_STATUS_UNAVAILABLE_TEXT,
-  CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE,
-  CLAUDE_COPY_INSTALL_NAME,
-  CLAUDE_COPY_UNINSTALL_NAME,
-  CLAUDE_DELETE_USAGE_NAME,
   CLAUDE_STATUSLINE_NAME,
+  CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE,
   CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
   CommandCenterSettingTab,
   hookStatusText,
   REDUCED_MOTION_KEY,
   REDUCED_MOTION_OPTIONS,
   REDUCED_MOTION_SAVE_FAILED,
-  statusLineStatusText,
   type SettingsClaudeSeam,
   type SettingsTabHost,
+  statusLineStatusText,
 } from "./settings-tab.js";
 
 /**
@@ -39,9 +39,7 @@ interface Recorded extends SettingsTabHost {
   saveCalls: number;
 }
 
-function createHost(
-  options: { failSave?: boolean; claude?: SettingsClaudeSeam } = {},
-): Recorded {
+function createHost(options: { failSave?: boolean; claude?: SettingsClaudeSeam } = {}): Recorded {
   const notices: string[] = [];
   const host: Recorded = {
     settings: { reducedMotion: "auto" },
@@ -308,7 +306,11 @@ describe("hookStatusText (Test 4)", () => {
   });
 
   it("reads the not-installed string", () => {
-    const status = { hooks: "not-installed" as const, lastEventAt: null, telemetry: { kind: "ok" as const } };
+    const status = {
+      hooks: "not-installed" as const,
+      lastEventAt: null,
+      telemetry: { kind: "ok" as const },
+    };
     expect(hookStatusText(status, NOW)).toBe(CLAUDE_HOOKS_NOT_INSTALLED_TEXT);
   });
 
@@ -341,15 +343,15 @@ describe("hookStatusText (Test 4)", () => {
 
 describe("statusLineStatusText (Test 4)", () => {
   it("reads installed-and-available", () => {
-    expect(
-      statusLineStatusText({ statusLine: "installed", statusLineReported: true }, 0),
-    ).toBe("Installed. Plan usage is available.");
+    expect(statusLineStatusText({ statusLine: "installed", statusLineReported: true }, 0)).toBe(
+      "Installed. Plan usage is available.",
+    );
   });
 
   it("reads installed-and-waiting", () => {
-    expect(
-      statusLineStatusText({ statusLine: "installed", statusLineReported: false }, 0),
-    ).toBe("Installed. Waiting for the first response in a Claude Code session.");
+    expect(statusLineStatusText({ statusLine: "installed", statusLineReported: false }, 0)).toBe(
+      "Installed. Waiting for the first response in a Claude Code session.",
+    );
   });
 
   it("reads not-installed", () => {

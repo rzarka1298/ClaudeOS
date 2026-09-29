@@ -4,6 +4,9 @@ import {
   createAuthenticatedClient,
   createEventClient,
   createSocketApiClient,
+  deleteUsageAnalytics,
+  getClaudeIntegration,
+  setTranscriptAnalysis,
 } from "@ccc/service-api-client";
 import { Plugin, type WorkspaceLeaf } from "obsidian";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
@@ -120,6 +123,15 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         settings: this.settings,
         saveSettings: () => this.saveSettings(),
         mql: window.matchMedia(REDUCED_MOTION_QUERY),
+        // The Claude section's service seam (UI-SPEC S5). Built from the
+        // existing authenticated client -- the tab never reaches the
+        // service any other way, and nothing here touches plugin settings.
+        claude: {
+          getIntegration: () => getClaudeIntegration(this.client),
+          setTranscriptAnalysis: (enabled: boolean) => setTranscriptAnalysis(this.client, enabled),
+          deleteUsageAnalytics: () => deleteUsageAnalytics(this.client),
+          copyText: (text: string) => navigator.clipboard.writeText(text),
+        },
       }),
     );
 

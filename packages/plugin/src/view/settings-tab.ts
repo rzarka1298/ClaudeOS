@@ -1,5 +1,5 @@
 import type { ClaudeIntegrationStatus } from "@ccc/domain";
-import { type App, Notice, type Plugin, PluginSettingTab, type SettingDefinitionItem } from "obsidian";
+import { type App, Notice, type Plugin, PluginSettingTab } from "obsidian";
 import {
   applyMotionPreference,
   type MediaQueryListLike,
@@ -41,30 +41,91 @@ export const REDUCED_MOTION_OPTIONS: Readonly<Record<MotionPreference, string>> 
   reduced: "Always reduced",
 };
 
-// --- Claude section (UI-SPEC S5, D-48) -- RED scaffold, Task 1 -----------
-// Exports the right shapes so settings-tab.test.ts resolves and fails on
-// real assertions rather than a module-resolution crash. GREEN replaces
-// every body below with the real implementation.
+// --- Claude section (UI-SPEC S5, D-48) ------------------------------------
+// A "Claude" group appended to the settings tab: hook status, the owner-run
+// install/uninstall commands, the status-line wrapper status, the
+// transcript-analysis toggle (service-owned, never persisted here) and
+// "Delete cached usage analytics". The service is the source of truth for
+// every status row and for the toggle -- this file never writes any of it
+// to `CommandCenterSettings` (PLUG-07's `assertNoCredentialFields` stays the
+// only write guard on that shape).
 
 export const CLAUDE_GROUP_HEADING = "Claude";
+
+// Row 1 -- hook status (SettingDefinitionEmpty).
 export const CLAUDE_HOOKS_NAME = "Claude Code hooks";
-export const CLAUDE_HOOKS_NOT_INSTALLED_TEXT =
-  "Not installed. Session tracking and waiting-for-approval states need them.";
+export const CLAUDE_HOOKS_CHECKING_TEXT = "Checking…";
 export const CLAUDE_STATUS_UNAVAILABLE_TEXT =
   "Status unavailable — the companion service isn't running.";
+export const CLAUDE_HOOKS_NOT_INSTALLED_TEXT =
+  "Not installed. Session tracking and waiting-for-approval states need them.";
+const CLAUDE_HOOKS_SILENT_SUFFIX =
+  " Claude Code skips hooks in folders you haven't trusted and when hooks are turned off in its settings.";
+/** The silence threshold before "Last event …" gives way to "no events have arrived since …". */
+const HOOK_SILENT_THRESHOLD_MS = 10 * 60 * 1000;
+
+/**
+ * A Claude Code version shape safe to render: dotted digits only (mirrors
+ * `widgets/frame.tsx`'s `claudeCodeVersion` -- kept local rather than
+ * imported because that module is plugin-harness-reachable and this one is
+ * not; duplicating four lines is cheaper than coupling their bundling
+ * constraints together).
+ */
+const VERSION_SHAPE = /^\d{1,6}(?:\.\d{1,6}){0,3}$/;
+function claudeCodeVersionLabel(version: string | null): string {
+  return version !== null && VERSION_SHAPE.test(version)
+    ? `Claude Code ${version}`
+    : "Your Claude Code version";
+}
+
+// Row 2 -- copy install command (action).
 export const CLAUDE_COPY_INSTALL_NAME = "Copy install command";
-export const CLAUDE_COPY_INSTALL_DESC = "TODO";
+export const CLAUDE_INSTALL_COMMAND = "./scripts/claude-hooks/install.sh";
+export const CLAUDE_COPY_INSTALL_DESC =
+  `From the Claude command center repository folder, run: ${CLAUDE_INSTALL_COMMAND} — add ` +
+  "--dry-run to preview the change first, or --with-statusline to also install the status-line wrapper.";
+export const CLAUDE_INSTALL_COPIED_NOTICE = "Install command copied. Run it in Terminal.";
+
+// Row 3 -- copy uninstall command (action).
 export const CLAUDE_COPY_UNINSTALL_NAME = "Copy uninstall command";
-export const CLAUDE_COPY_UNINSTALL_DESC = "TODO";
+export const CLAUDE_UNINSTALL_COMMAND = "./scripts/claude-hooks/uninstall.sh";
+export const CLAUDE_COPY_UNINSTALL_DESC =
+  "Removes the hooks and the status-line wrapper and restores your previous settings: " +
+  CLAUDE_UNINSTALL_COMMAND;
+export const CLAUDE_UNINSTALL_COPIED_NOTICE = "Uninstall command copied. Run it in Terminal.";
+
+// Row 4 -- status-line wrapper status (SettingDefinitionEmpty).
 export const CLAUDE_STATUSLINE_NAME = "Status-line wrapper";
+export const CLAUDE_STATUSLINE_INSTALLED_AVAILABLE_TEXT = "Installed. Plan usage is available.";
+export const CLAUDE_STATUSLINE_INSTALLED_WAITING_TEXT =
+  "Installed. Waiting for the first response in a Claude Code session.";
+export const CLAUDE_STATUSLINE_NOT_INSTALLED_TEXT =
+  'Not installed. Plan usage reads "Account capacity unavailable". The wrapper keeps your current status line exactly as it is.';
+
+// Row 5 -- transcript analysis (toggle, default off, service-owned).
+export const TRANSCRIPT_ANALYSIS_KEY = "claude.transcriptAnalysis";
 export const CLAUDE_TRANSCRIPT_ANALYSIS_NAME = "Transcript analysis";
-export const CLAUDE_TRANSCRIPT_ANALYSIS_DESC = "TODO";
+export const CLAUDE_TRANSCRIPT_ANALYSIS_DESC =
+  "Count tokens from Claude Code's local transcripts. Only counts, model names and timestamps " +
+  "are stored — never prompts, replies or file contents. Hook telemetry keeps working when this is off.";
 export const CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE =
   "Couldn't change transcript analysis. The companion service didn't respond.";
-export const CLAUDE_DELETE_USAGE_NAME = "Delete cached usage analytics";
-export const CLAUDE_DELETE_USAGE_DESC = "TODO";
-export const TRANSCRIPT_ANALYSIS_KEY = "claude.transcriptAnalysis";
 
+// Row 6 -- delete cached usage analytics (destructive action, Task 3 wires the click).
+export const CLAUDE_DELETE_USAGE_NAME = "Delete cached usage analytics";
+export const CLAUDE_DELETE_USAGE_DESC =
+  "Removes stored token counts, cost estimates, plan usage history and coverage records. Session history stays.";
+export const CLAUDE_DELETE_USAGE_RETAINED_NOTE = "Existing totals are kept until you delete them.";
+export const CLAUDE_USAGE_DELETED_NOTICE = "Cached usage analytics deleted.";
+export const CLAUDE_USAGE_DELETE_FAILED_NOTICE =
+  "Couldn't delete cached usage analytics. Check the service in Settings → Diagnostics, then try again.";
+
+/**
+ * Everything the settings tab needs from `@ccc/service-api-client`'s Claude
+ * routes, behind one typed seam -- the same shape as {@link SettingsTabHost}
+ * itself. Production builds it in `main.ts` from the authenticated client;
+ * tests pass plain functions.
+ */
 export interface SettingsClaudeSeam {
   readonly getIntegration: () => Promise<ClaudeIntegrationStatus>;
   readonly setTranscriptAnalysis: (enabled: boolean) => Promise<{ enabled: boolean }>;
@@ -72,6 +133,7 @@ export interface SettingsClaudeSeam {
   readonly copyText: (text: string) => Promise<void>;
 }
 
+/** What a Claude-service-backed setting change did (mirrors {@link ReducedMotionOutcome}). */
 export type ClaudeSettingOutcome = "saved" | "reverted";
 
 type HookStatusInput =
@@ -84,25 +146,69 @@ type StatusLineStatusInput =
   | "unavailable"
   | Pick<ClaudeIntegrationStatus, "statusLine" | "statusLineReported">;
 
-/** RED stub -- always wrong, so Test 4 fails on a real assertion. */
-export function hookStatusText(_status: HookStatusInput, _now: number): string {
-  return "";
+/**
+ * UI-SPEC S5 row 1: the ONE fixed string every state resolves to (E10
+ * empty). Telemetry problems (an unsupported Claude Code version, or a
+ * hook-event shape change) take priority over the plain install state,
+ * because they mean session tracking is paused even when hooks ARE
+ * installed. A `lastEventAt` of `null` (installed, but never once heard
+ * from) falls into the same silent-since bucket as a stale one, worded
+ * without a timestamp there is none to give -- never a blank row.
+ */
+export function hookStatusText(status: HookStatusInput, now: number): string {
+  if (status === "checking") return CLAUDE_HOOKS_CHECKING_TEXT;
+  if (status === "unavailable") return CLAUDE_STATUS_UNAVAILABLE_TEXT;
+  if (status.telemetry.kind === "unsupported-version") {
+    return `${claudeCodeVersionLabel(status.telemetry.version)} is older than the minimum supported 2.1.214.`;
+  }
+  if (status.telemetry.kind === "shape-changed") {
+    return `${claudeCodeVersionLabel(status.telemetry.version)} changed its hook event format. Session tracking is paused rather than guessed.`;
+  }
+  if (status.hooks !== "installed") return CLAUDE_HOOKS_NOT_INSTALLED_TEXT;
+  if (status.lastEventAt === null) {
+    return `Installed, but no events have arrived yet.${CLAUDE_HOOKS_SILENT_SUFFIX}`;
+  }
+  const elapsedMs = now - Date.parse(status.lastEventAt);
+  if (elapsedMs <= HOOK_SILENT_THRESHOLD_MS) {
+    return `Installed. Last event ${formatRelativeTime(status.lastEventAt, now)}.`;
+  }
+  return `Installed, but no events have arrived since ${formatAbsoluteTime(status.lastEventAt)}.${CLAUDE_HOOKS_SILENT_SUFFIX}`;
 }
 
-/** RED stub -- always wrong, so Test 4 fails on a real assertion. */
-export function statusLineStatusText(_status: StatusLineStatusInput, _now: number): string {
-  return "";
+/** UI-SPEC S5 row 4: the ONE fixed string every state resolves to (E10 empty). */
+export function statusLineStatusText(status: StatusLineStatusInput, _now: number): string {
+  if (status === "checking") return CLAUDE_HOOKS_CHECKING_TEXT;
+  if (status === "unavailable") return CLAUDE_STATUS_UNAVAILABLE_TEXT;
+  if (status.statusLine !== "installed") return CLAUDE_STATUSLINE_NOT_INSTALLED_TEXT;
+  return status.statusLineReported
+    ? CLAUDE_STATUSLINE_INSTALLED_AVAILABLE_TEXT
+    : CLAUDE_STATUSLINE_INSTALLED_WAITING_TEXT;
 }
 
-/** RED stub -- never calls the seam, so Test 5 fails on a real assertion. */
+/**
+ * The transcript-analysis toggle's whole decision (mirrors
+ * `applyReducedMotionChange`'s shape, UI-SPEC S5 row 5). The SERVICE is the
+ * source of truth here, not `host.saveSettings` -- a failed write reverts
+ * with a fixed Notice and never reaches `host.settings` at all, so the
+ * plugin's own settings object gains no transcript key (USAGE-07: it must
+ * never be persisted in `data.json`).
+ */
 export async function applyTranscriptAnalysisChange(
-  _host: SettingsTabHost,
-  _value: boolean,
+  host: SettingsTabHost,
+  value: boolean,
 ): Promise<ClaudeSettingOutcome> {
-  return "saved";
+  try {
+    if (!host.claude) throw new Error("no Claude service seam configured");
+    await host.claude.setTranscriptAnalysis(value);
+    return "saved";
+  } catch {
+    if (host.notify) host.notify(CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE);
+    else new Notice(CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE);
+    return "reverted";
+  }
 }
 
-// --- end Claude section RED scaffold --------------------------------------
+// --- end Claude section ----------------------------------------------------
 
 /**
  * Everything the tab needs from the plugin, behind one typed seam — the same
@@ -161,6 +267,9 @@ export function asMotionPreference(value: unknown): MotionPreference {
 
 export class CommandCenterSettingTab extends PluginSettingTab {
   private readonly host: SettingsTabHost;
+  /** `"checking"` until the service answers; `"unavailable"` after a failed fetch (UI-SPEC S5). */
+  private claudeStatus: ClaudeIntegrationStatus | "checking" | "unavailable" = "checking";
+  private claudeStatusRequested = false;
 
   constructor(app: App, plugin: Plugin, host: SettingsTabHost) {
     super(app, plugin);
@@ -168,29 +277,73 @@ export class CommandCenterSettingTab extends PluginSettingTab {
   }
 
   getSettingDefinitions() {
-    return [
-      {
-        name: REDUCED_MOTION_NAME,
-        desc: REDUCED_MOTION_DESC,
-        control: {
-          type: "dropdown" as const,
-          key: REDUCED_MOTION_KEY,
-          // A `data.json` written before this key existed already resolved to
-          // `auto` through DEFAULT_SETTINGS, so the partial case needs no
-          // special handling here (UI-SPEC E8 partial row).
-          defaultValue: "auto",
-          options: { ...REDUCED_MOTION_OPTIONS },
-        },
+    this.ensureClaudeStatusLoaded();
+    const reducedMotionItem = {
+      name: REDUCED_MOTION_NAME,
+      desc: REDUCED_MOTION_DESC,
+      control: {
+        type: "dropdown" as const,
+        key: REDUCED_MOTION_KEY,
+        // A `data.json` written before this key existed already resolved to
+        // `auto` through DEFAULT_SETTINGS, so the partial case needs no
+        // special handling here (UI-SPEC E8 partial row).
+        defaultValue: "auto",
+        options: { ...REDUCED_MOTION_OPTIONS },
       },
-    ];
+    };
+    const claudeGroup = {
+      type: "group" as const,
+      heading: CLAUDE_GROUP_HEADING,
+      items: [
+        { name: CLAUDE_HOOKS_NAME, desc: hookStatusText(this.claudeStatus, Date.now()) },
+        { name: CLAUDE_COPY_INSTALL_NAME, desc: CLAUDE_COPY_INSTALL_DESC },
+        { name: CLAUDE_COPY_UNINSTALL_NAME, desc: CLAUDE_COPY_UNINSTALL_DESC },
+        { name: CLAUDE_STATUSLINE_NAME, desc: statusLineStatusText(this.claudeStatus, Date.now()) },
+        {
+          name: CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
+          desc: CLAUDE_TRANSCRIPT_ANALYSIS_DESC,
+          control: {
+            type: "toggle" as const,
+            key: TRANSCRIPT_ANALYSIS_KEY,
+            defaultValue: false,
+            disabled: () => this.claudeStatus === "unavailable",
+          },
+        },
+        { name: CLAUDE_DELETE_USAGE_NAME, desc: CLAUDE_DELETE_USAGE_DESC },
+      ],
+    };
+    // A tuple cast (not `as const`, which would widen the array to
+    // `readonly` and break assignability against the base class's mutable
+    // `SettingDefinitionItem[]`) keeps each element's own literal shape
+    // distinct -- callers can index a specific position
+    // (`definitions[0].control`, `definitions[1].items`) without a type
+    // guard, exactly like the pre-existing reduced-motion test does.
+    return [reducedMotionItem, claudeGroup] as [typeof reducedMotionItem, typeof claudeGroup];
   }
 
   getControlValue(key: string): unknown {
     if (key === REDUCED_MOTION_KEY) return this.host.settings.reducedMotion;
+    if (key === TRANSCRIPT_ANALYSIS_KEY) {
+      return typeof this.claudeStatus === "object"
+        ? this.claudeStatus.transcriptAnalysis.enabled
+        : false;
+    }
     return super.getControlValue(key);
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
+    if (key === TRANSCRIPT_ANALYSIS_KEY) {
+      const enabled = value === true;
+      const outcome = await applyTranscriptAnalysisChange(this.host, enabled);
+      // On success, reflect the confirmed value immediately rather than
+      // waiting on a fresh fetch; on revert, leave `claudeStatus` untouched
+      // so `getControlValue` reports the value still actually in effect.
+      if (outcome === "saved" && typeof this.claudeStatus === "object") {
+        this.claudeStatus = { ...this.claudeStatus, transcriptAnalysis: { enabled } };
+      }
+      this.update();
+      return;
+    }
     if (key !== REDUCED_MOTION_KEY) {
       await super.setControlValue(key, value);
       return;
@@ -201,5 +354,28 @@ export class CommandCenterSettingTab extends PluginSettingTab {
     // tab tracking a second copy of it. `display()` would not refresh a
     // declarative setting on 1.13+.
     if (outcome === "reverted") this.update();
+  }
+
+  /**
+   * Kicks off exactly one `getIntegration()` fetch, the first time
+   * `getSettingDefinitions()` runs (Obsidian's own declarative-settings
+   * "first-render" hook, since this tab has no `display()` override). A
+   * missing seam (`host.claude` undefined) or a rejected fetch both settle
+   * on a definite state -- `"unavailable"` on failure -- never leaving the
+   * row on `"checking"` forever without a reason.
+   */
+  private ensureClaudeStatusLoaded(): void {
+    if (this.claudeStatusRequested || !this.host.claude) return;
+    this.claudeStatusRequested = true;
+    this.host.claude.getIntegration().then(
+      (status) => {
+        this.claudeStatus = status;
+        this.update();
+      },
+      () => {
+        this.claudeStatus = "unavailable";
+        this.update();
+      },
+    );
   }
 }

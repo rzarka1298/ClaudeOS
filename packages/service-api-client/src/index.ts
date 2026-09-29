@@ -1,3 +1,10 @@
+export type { ClaudeClientErrorCode } from "./claude-client.js";
+export {
+  ClaudeRequestError,
+  deleteUsageAnalytics,
+  getClaudeIntegration,
+  setTranscriptAnalysis,
+} from "./claude-client.js";
 export type {
   CreateEventClientOptions,
   EventClient,
