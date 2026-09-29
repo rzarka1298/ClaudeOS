@@ -2,7 +2,7 @@
 // Owner-run installer for the Claude Code hook package (plan 05-09, SESS-01,
 // D-13, ADR-0025). The dashboard never runs this; the owner does.
 //
-//   ./scripts/claude-hooks/install.sh [--dry-run]
+//   ./scripts/claude-hooks/install.sh [--dry-run] [--with-statusline]
 //       [--claude-config-dir <dir>] [--runtime-dir <dir>] [--claude-bin <path>]
 //
 // Merge-only: one matcher group per subscribed event is added to
@@ -11,19 +11,29 @@
 // keep their values. A re-install is byte-identical. Invalid JSON is refused
 // untouched. --dry-run prints the diff and writes nothing. Every write is
 // preceded by a timestamped backup and lands atomically.
+//
+// --with-statusline (opt-in, D-02) also wraps an EXISTING status line: the
+// exact prior statusLine object is saved to <runtime>/statusline/original.json
+// (0600) and only its command changes. With no status line it refuses
+// (Pitfall 11).
 
 import { existsSync } from "node:fs";
+import { dirname } from "node:path";
 import {
   assertHookBuilt,
   assertNodeVersion,
+  ensurePrivateDir,
   installedEntryPath,
   installHookFiles,
   installRecordPath,
+  isOurWrapperCommand,
   isSupportedClaudeVersion,
   lineDiff,
   MIN_CLAUDE_VERSION,
   mergeHooks,
+  originalStatusLinePath,
   parseArgs,
+  planStatusLineWrap,
   probeClaudeVersion,
   Refusal,
   readSettings,
@@ -36,8 +46,10 @@ import {
 } from "./lib.mjs";
 
 await runCommand("install", async () => {
-  const options = parseArgs(process.argv.slice(2), { booleans: ["--dry-run"] });
-  const { claudeConfigDir, runtimeDir, settingsPath, dryRun } = options;
+  const options = parseArgs(process.argv.slice(2), {
+    booleans: ["--dry-run", "--with-statusline"],
+  });
+  const { claudeConfigDir, runtimeDir, settingsPath, dryRun, withStatusline } = options;
 
   assertNodeVersion();
   assertHookBuilt();
@@ -65,9 +77,16 @@ await runCommand("install", async () => {
   }
 
   const nodePath = process.execPath;
-  const next = mergeHooks(current.settings, installedEntryPath(runtimeDir), nodePath, runtimeDir);
+  let next = mergeHooks(current.settings, installedEntryPath(runtimeDir), nodePath, runtimeDir);
+  let saveOriginal;
+  if (withStatusline) {
+    const plan = planStatusLineWrap(current.settings, nodePath, runtimeDir, settingsPath);
+    next = { ...next, statusLine: plan.statusLine };
+    saveOriginal = plan.original;
+  }
   const nextText = serializeSettings(next);
   const changed = nextText !== current.text;
+  const wrapped = isOurWrapperCommand(next.statusLine?.command, runtimeDir);
 
   if (dryRun) {
     process.stdout.write("Dry run: nothing was written.\n");
@@ -80,11 +99,22 @@ await runCommand("install", async () => {
         : `${settingsPath} already holds this install; it would not change.\n`,
     );
     process.stdout.write(`Would copy the compiled hook into ${runtimeDir}/hooks\n`);
+    if (saveOriginal !== undefined) {
+      process.stdout.write(
+        `Would save your current status line to ${originalStatusLinePath(runtimeDir)}\n`,
+      );
+    }
     return;
   }
 
-  // Copies first, so settings never point at a hook that is not there yet.
+  // Copies first, then the saved original status line, then settings: the
+  // settings file never points at a hook or a wrapper input that is not there.
   installHookFiles(runtimeDir);
+  if (saveOriginal !== undefined) {
+    const originalPath = originalStatusLinePath(runtimeDir);
+    ensurePrivateDir(dirname(originalPath));
+    writePrivateFile(originalPath, `${JSON.stringify(saveOriginal, null, 2)}\n`);
+  }
   const backup = changed ? await writeSettingsAtomic(settingsPath, nextText) : undefined;
   writePrivateFile(
     installRecordPath(runtimeDir),
@@ -94,7 +124,7 @@ await runCommand("install", async () => {
         claudeBin: claudeBin ?? null,
         claudeVersion: probe.version,
         installedAt: new Date().toISOString(),
-        withStatusline: false,
+        withStatusline: wrapped,
       },
       null,
       2,
@@ -109,6 +139,7 @@ await runCommand("install", async () => {
       `  hook entry:  ${installedEntryPath(runtimeDir)}`,
       `  node:        ${nodePath}`,
       `  claude:      ${probe.version ?? "unknown"}${claudeBin === undefined ? "" : ` (${claudeBin})`}`,
+      `  status line: ${wrapped ? "wrapped (your original is kept and restored on uninstall)" : "unchanged"}`,
       `  runtime dir: ${runtimeDir}`,
       "Check with ./scripts/claude-hooks/status.sh; undo with ./scripts/claude-hooks/uninstall.sh",
       "",

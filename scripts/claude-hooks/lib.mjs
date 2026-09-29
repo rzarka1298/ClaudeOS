@@ -385,6 +385,120 @@ export function findOurHandler(
 }
 
 // ---------------------------------------------------------------------------
+// Status line (opt-in wrapper, D-02, PR-14, Pitfall 11)
+
+/**
+ * POSIX single-quoting: the status-line `command` runs in a shell, so every
+ * path in it is quoted and an embedded `'` becomes `'\''` (T-05-36).
+ */
+export function shellQuote(/** @type {string} */ value) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/** The status-line command that runs the installed wrapper. */
+export function wrapperCommand(/** @type {string} */ nodePath, /** @type {string} */ runtimeDir) {
+  return [
+    shellQuote(nodePath),
+    shellQuote(installedWrapperPath(runtimeDir)),
+    "--runtime-dir",
+    shellQuote(runtimeDir),
+  ].join(" ");
+}
+
+/** True when `command` runs this runtime dir's wrapper (whatever node path it names). */
+export function isOurWrapperCommand(
+  /** @type {unknown} */ command,
+  /** @type {string} */ runtimeDir,
+) {
+  return (
+    typeof command === "string" && command.includes(shellQuote(installedWrapperPath(runtimeDir)))
+  );
+}
+
+/**
+ * True when `command` runs ANY Claude command center wrapper, including one
+ * installed under another runtime dir. Wrapping such a command would nest
+ * wrappers, and the inner one would stop at the recursion guard and print
+ * nothing, so the installer refuses instead.
+ */
+export function invokesAnyWrapper(/** @type {unknown} */ command) {
+  return typeof command === "string" && /hooks\/statusline\/wrapper\.js/.test(command);
+}
+
+/** True when `value` is a status line the wrapper can run: `{ type: "command", command }`. */
+export function isCommandStatusLine(/** @type {unknown} */ value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const statusLine = /** @type {{ type?: unknown, command?: unknown }} */ (value);
+  return (
+    statusLine.type === "command" &&
+    typeof statusLine.command === "string" &&
+    statusLine.command.trim().length > 0
+  );
+}
+
+/**
+ * The recorded `{ statusLine, command }`, or undefined when absent or malformed.
+ * @param {string} runtimeDir
+ * @returns {{ statusLine: Record<string, unknown>, command: string } | undefined}
+ */
+export function readOriginalStatusLine(runtimeDir) {
+  try {
+    const parsed = JSON.parse(readFileSync(originalStatusLinePath(runtimeDir), "utf8"));
+    if (!isCommandStatusLine(parsed?.statusLine) || typeof parsed.command !== "string") {
+      return undefined;
+    }
+    return { statusLine: parsed.statusLine, command: parsed.command };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Pure: decides the status-line change for `install --with-statusline`.
+ * Refuses when there is no status line to wrap (Pitfall 11: the installer
+ * never creates one), and when the current one already runs a wrapper it
+ * cannot unwrap. A status line that already runs OUR wrapper keeps its
+ * recorded original, so a re-install never saves the wrapper as the owner's
+ * command (wave 2 hand-off).
+ *
+ * @param {Record<string, any>} settings the settings being installed into
+ * @param {string} nodePath
+ * @param {string} runtimeDir
+ * @param {string} settingsPath for messages
+ * @returns {{ statusLine: Record<string, unknown>, original: { statusLine: Record<string, unknown>, command: string } | undefined }}
+ *   `original` is the record to save, or undefined when the saved one stays
+ */
+export function planStatusLineWrap(settings, nodePath, runtimeDir, settingsPath) {
+  const existing = settings.statusLine;
+  if (!isCommandStatusLine(existing)) {
+    throw new Refusal(
+      `--with-statusline: ${settingsPath} has no status line command to wrap, and the installer ` +
+        "never creates one: with a custom status line Claude Code hides most of its footer hints, " +
+        'including "esc to interrupt". Set up your own status line first, or install without ' +
+        "--with-statusline. Nothing was changed.",
+    );
+  }
+  const wrapped = { ...existing, command: wrapperCommand(nodePath, runtimeDir) };
+  if (isOurWrapperCommand(existing.command, runtimeDir)) {
+    if (readOriginalStatusLine(runtimeDir) === undefined) {
+      throw new Refusal(
+        `the status line already runs the wrapper, but ${originalStatusLinePath(runtimeDir)} ` +
+          "is missing or unreadable, so the original command is unknown. Restore your status " +
+          `line in ${settingsPath} by hand, then re-run. Nothing was changed.`,
+      );
+    }
+    return { statusLine: wrapped, original: undefined };
+  }
+  if (invokesAnyWrapper(existing.command)) {
+    throw new Refusal(
+      "the status line already runs a Claude command center wrapper from another runtime " +
+        "directory; uninstall that one first. Nothing was changed.",
+    );
+  }
+  return { statusLine: wrapped, original: { statusLine: existing, command: existing.command } };
+}
+
+// ---------------------------------------------------------------------------
 // Diff
 
 /**
@@ -588,6 +702,28 @@ export function installHookFiles(runtimeDir) {
   const statusline = copyHookFiles(join(COLLECTORS_DIST, "statusline"), join(root, "statusline"));
   writePrivateFile(join(root, "package.json"), `${JSON.stringify({ type: "module" }, null, 2)}\n`);
   return { hook, statusline };
+}
+
+/**
+ * The exact bytes of the newest backup whose content serializes identically
+ * to `settings`, or undefined. Uninstall writes these instead of re-serializing,
+ * so undoing an install returns the owner's file byte for byte, formatting
+ * included. Unreadable or invalid backups are skipped.
+ *
+ * @param {string} settingsPath
+ * @param {Record<string, unknown>} settings
+ */
+export function matchingBackupText(settingsPath, settings) {
+  const wanted = serializeSettings(settings);
+  for (const backup of listBackups(settingsPath)) {
+    try {
+      const text = readFileSync(backup, "utf8");
+      if (serializeSettings(JSON.parse(text)) === wanted) return text;
+    } catch {
+      // not a usable backup
+    }
+  }
+  return undefined;
 }
 
 /** Writes `text` to `path` with mode 0600 (replacing any existing file). */
