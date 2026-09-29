@@ -20,8 +20,13 @@ import { nextToolbarIndex } from "../widgets/toolbar-keys.js";
 export interface ProjectManageToolbarProps {
   readonly row: Pick<ProjectRow, "id" | "name" | "pinned" | "github">;
   readonly actions: ProjectsActions;
-  /** Called after a successful removal, so the caller can move focus (Task 3, projects-view.tsx). */
-  readonly onRemoved: (projectId: string) => void;
+  /**
+   * Called after a successful removal with the project's id and name. The
+   * caller owns both the focus move and the "Removed {project} from
+   * projects." announcement: this toolbar's card unmounts with its row, so a
+   * message sent to the card's own status region would vanish unheard.
+   */
+  readonly onRemoved: (projectId: string, projectName: string) => void;
   readonly onStatus: (message: string) => void;
 }
 
@@ -212,8 +217,7 @@ export function ProjectManageToolbar({
       onStatus(SAVE_FAILED);
       return;
     }
-    onStatus(`Removed ${row.name} from projects.`);
-    onRemoved(projectId);
+    onRemoved(projectId, row.name);
   }
 
   function handleRemoveConfirmKeyDown(event: KeyboardEvent): void {

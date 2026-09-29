@@ -38,6 +38,9 @@ const PICKER_UNAVAILABLE_NOTICE =
 const REFUSED_PROBLEM = "▲ Couldn't register this folder.";
 const REFUSED_NEXT_STEP =
   "Choose an existing folder outside the managed vault and outside system folders, then try again.";
+/** The service/Diagnostics next step (UI-SPEC: `service-disconnected`, management failure). */
+const DIAGNOSTICS_NEXT_STEP = "Check the service in Settings → Diagnostics, then try again.";
+const SERVICE_DISCONNECTED_PROBLEM = "▲ Couldn't reach the command center service.";
 
 /**
  * Sentence case, per-location proper nouns (`obsidianmd/ui/sentence-case`,
@@ -86,7 +89,15 @@ export function RegisterFlow({
   const [typedPath, setTypedPath] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [status, setStatus] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusyState] = useState(false);
+  // The rendered `busy` only reaches handlers on the next render; the ref is
+  // read synchronously, so a second click or submit in the same tick is
+  // refused too (aria-disabled alone does not stop activation).
+  const busyRef = useRef(false);
+  function setBusy(value: boolean): void {
+    busyRef.current = value;
+    setBusyState(value);
+  }
 
   const openerButtonRef = useRef<HTMLButtonElement | null>(null);
   const typeLinkRef = useRef<HTMLButtonElement | null>(null);
@@ -135,10 +146,20 @@ export function RegisterFlow({
         setStep({ kind: "protected", path, location: outcome.location });
         return;
       }
+      case "service-disconnected": {
+        // Nothing is wrong with the folder: the service could not be
+        // reached. Point at the service, never at the chosen folder.
+        setStatus(`${SERVICE_DISCONNECTED_PROBLEM} ${DIAGNOSTICS_NEXT_STEP}`);
+        return;
+      }
+      case "failed": {
+        setStatus(`${REFUSED_PROBLEM} ${DIAGNOSTICS_NEXT_STEP}`);
+        return;
+      }
       default: {
-        // refused | invalid | service-disconnected | failed — one constant
-        // problem+next-step pair, never a message that echoes the path
-        // (D-04). The typed value is kept in the input for editing.
+        // refused | invalid — one constant problem+next-step pair, never a
+        // message that echoes the path (D-04). The typed value is kept in
+        // the input for editing.
         setStatus(`${REFUSED_PROBLEM} ${REFUSED_NEXT_STEP}`);
         return;
       }
@@ -156,19 +177,37 @@ export function RegisterFlow({
     // call shape from omitting it entirely (`toHaveBeenCalledWith` sees
     // both) — omit rather than pass `undefined` so the dialog-pick path
     // (no acknowledgement) posts exactly `{ path }`, matching D-04.
-    const outcome =
-      acknowledgeProtectedLocation === undefined
-        ? await actions.register(path)
-        : await actions.register(path, acknowledgeProtectedLocation);
+    let outcome: Awaited<ReturnType<ProjectsActions["register"]>>;
+    try {
+      outcome =
+        acknowledgeProtectedLocation === undefined
+          ? await actions.register(path)
+          : await actions.register(path, acknowledgeProtectedLocation);
+    } catch {
+      // `ProjectsActions` resolves every outcome; a rejection is still
+      // treated as a failure rather than leaving the flow busy forever.
+      outcome = { kind: "failed" };
+    }
     resolveOutcome(path, outcome);
   }
 
   async function handleTriggerClick(): Promise<void> {
-    const pick = await pickFolder({ title: DIALOG_TITLE, buttonLabel: DIALOG_BUTTON_LABEL });
+    if (busyRef.current) return;
+    // Busy while the dialog is open, so a second activation cannot open a
+    // second picker behind the first.
+    setBusy(true);
+    // A rejected dialog is treated like an absent picker (S4 step 2).
+    let pick: FolderPick;
+    try {
+      pick = await pickFolder({ title: DIALOG_TITLE, buttonLabel: DIALOG_BUTTON_LABEL });
+    } catch {
+      pick = { kind: "unavailable" };
+    }
     if (pick.kind === "picked") {
       await attemptRegister(pick.path);
       return;
     }
+    setBusy(false);
     if (pick.kind === "unavailable") {
       setValidationError(null);
       setStep({ kind: "form", notice: PICKER_UNAVAILABLE_NOTICE });
@@ -194,6 +233,7 @@ export function RegisterFlow({
 
   async function handleFormSubmit(event: Event): Promise<void> {
     event.preventDefault();
+    if (busyRef.current) return;
     const error = validateTypedPath(typedPath);
     if (error !== null) {
       setValidationError(error);
@@ -210,7 +250,7 @@ export function RegisterFlow({
   }
 
   async function handleProtectedRegister(): Promise<void> {
-    if (step.kind !== "protected") return;
+    if (step.kind !== "protected" || busyRef.current) return;
     await attemptRegister(step.path, true);
   }
 
@@ -230,10 +270,7 @@ export function RegisterFlow({
           ref={assignOpenerRef}
           className="ccc-connect-button"
           aria-disabled={busy ? "true" : undefined}
-          onClick={() => {
-            if (busy) return;
-            void handleTriggerClick();
-          }}
+          onClick={() => void handleTriggerClick()}
         >
           Register a project
         </button>

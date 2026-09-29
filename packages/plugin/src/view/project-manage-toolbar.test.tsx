@@ -199,7 +199,7 @@ describe("ProjectManageToolbar (Task 3, S3 manage toolbar, RR-01)", () => {
 
     expect(screen.queryByRole("button", { name: "Edit GitHub link" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Set GitHub link" }));
-    expect((screen.getByLabelText("GitHub link") as HTMLInputElement).value).toBe("");
+    expect(screen.getByLabelText<HTMLInputElement>("GitHub link").value).toBe("");
     expect(screen.queryByRole("button", { name: "Clear GitHub link" })).toBeNull();
     expect(setGithubLink).not.toHaveBeenCalled();
   });

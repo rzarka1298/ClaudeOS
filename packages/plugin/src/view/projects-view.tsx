@@ -41,6 +41,9 @@ export function ProjectsView({ actions, pickFolder, connection, now }: ProjectsV
   );
 
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+  // View-owned, so it outlives the card whose removal it announces (the
+  // card and its own status region unmount with the row).
+  const [announcement, setAnnouncement] = useState("");
   const registerOpenerRef = useRef<HTMLButtonElement | null>(null);
   const controlRefs = useRef(new Map<string, HTMLElement>());
 
@@ -58,7 +61,8 @@ export function ProjectsView({ actions, pickFolder, connection, now }: ProjectsV
     // `controlRefs` is a stable ref container, not reactive state.
   }, [rows, pendingFocusId]);
 
-  function handleRemoved(removedId: string): void {
+  function handleRemoved(removedId: string, removedName: string): void {
+    setAnnouncement(`Removed ${removedName} from projects.`);
     const index = rows.findIndex((row) => row.id === removedId);
     const next = rows[index + 1] ?? (index > 0 ? rows[index - 1] : undefined);
     if (next === undefined) {
@@ -79,7 +83,11 @@ export function ProjectsView({ actions, pickFolder, connection, now }: ProjectsV
   );
 
   if (snapshot === undefined) {
-    if (connection.kind === "connecting") {
+    // Until the first snapshot arrives the view is loading — including the
+    // moment between the event stream going live and its first snapshot
+    // event. Only a dropped connection with nothing ever received is a load
+    // error.
+    if (connection.kind !== "disconnected") {
       return (
         <div className="ccc-projects-section">
           {registerFlow}
@@ -127,6 +135,9 @@ export function ProjectsView({ actions, pickFolder, connection, now }: ProjectsV
         </div>
       )}
       {registerFlow}
+      <p role="status" className="ccc-state-body">
+        {announcement}
+      </p>
       <h3 className="ccc-state-heading">Registered projects</h3>
       {rows.length === 0 ? (
         <div className="ccc-projects-empty">

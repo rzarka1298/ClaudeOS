@@ -24,8 +24,8 @@ export interface ProjectCardProps {
   readonly now: number;
   readonly connection: ConnectionState;
   readonly actions: ProjectsActions;
-  /** Called after this project is removed, so the caller can move focus (Task 3, projects-view.tsx). */
-  readonly onRemoved: (projectId: string) => void;
+  /** Called after this project is removed, so the caller can move focus and announce it (Task 3, projects-view.tsx). */
+  readonly onRemoved: (projectId: string, projectName: string) => void;
   /**
    * Attached to the card's name heading (`tabindex="-1"`) so a caller can
    * move focus there after a register, pin, unpin or removal.
