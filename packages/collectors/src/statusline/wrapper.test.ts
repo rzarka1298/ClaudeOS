@@ -136,6 +136,45 @@ describe("the status-line wrapper relays the owner's command unchanged", () => {
   });
 });
 
+describe("the wrapper cannot recurse into itself (wave 2 review)", () => {
+  it("the owner's command runs with CCC_STATUSLINE=1 in its environment", async () => {
+    writeOriginal('printf "%s" "$CCC_STATUSLINE"');
+
+    const result = await runWrapper();
+
+    expect(result.stdout.toString("utf8")).toBe("1");
+  });
+
+  it("with CCC_STATUSLINE=1 already set it exits 0 without spawning, forwarding or spooling", async () => {
+    server = await startUdsTestServer(runtime.socketPath, "accept");
+    const marker = join(runtime.dir, "child-ran");
+    writeOriginal(`: > '${marker}'; printf ok`);
+
+    const result = await runCompiled(COMPILED_STATUSLINE_WRAPPER, {
+      args: ["--runtime-dir", runtime.dir],
+      stdin: STATUS_STDIN,
+      env: { CCC_STATUSLINE: "1" },
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.length).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    expect(server.started()).toBe(0);
+    expect(existsSync(join(runtime.dir, "spool"))).toBe(false);
+  });
+
+  it("an original command that names the wrapper itself runs the wrapper once, which does nothing", async () => {
+    writeOriginal(
+      `"${process.execPath}" "${COMPILED_STATUSLINE_WRAPPER}" --runtime-dir "${runtime.dir}"; printf "inner=%s" "$?"`,
+    );
+
+    const result = await runWrapper();
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.toString("utf8")).toBe("inner=0");
+  });
+});
+
 describe("the wrapper forwards documented usage fields only", () => {
   it("Test 3: one POST /api/v1/claude/statusline with the snapshot and no repository, PR or worktree", async () => {
     server = await startUdsTestServer(runtime.socketPath, "accept");

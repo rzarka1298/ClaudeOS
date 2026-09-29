@@ -21,6 +21,14 @@ const FORWARD_DEADLINE_MS = 250;
 /** The longest the wrapper waits for the forward once the owner's command has exited. */
 const POST_EXIT_WAIT_MS = 50;
 
+/**
+ * Set in the owner's command's environment. A wrapper that finds it already
+ * set is running inside another wrapper (an `original.json` that names the
+ * wrapper itself, directly or through a script), so it exits 0 at once and
+ * spawns nothing: the recursion stops at depth one (wave 2 review).
+ */
+const RECURSION_MARKER = "CCC_STATUSLINE";
+
 /** Where the installer records the owner's original status-line command. */
 const ORIGINAL_COMMAND_FILE = join("statusline", "original.json");
 
@@ -55,6 +63,7 @@ function settledTrueWithin(forward: Promise<boolean>, ms: number): Promise<boole
 }
 
 async function main(): Promise<number> {
+  if (process.env[RECURSION_MARKER] === "1") return 0;
   const runtimeDir = argValue("--runtime-dir");
   if (runtimeDir === undefined || runtimeDir.length === 0) return 0;
   const command = readOriginalCommand(runtimeDir);
@@ -64,7 +73,10 @@ async function main(): Promise<number> {
   // by killing its process group, which must take the owner's command with it.
   // stdout is inherited, so the owner's bytes reach Claude Code untouched; the
   // wrapper itself never writes to stdout.
-  const child = spawn("/bin/sh", ["-c", command], { stdio: ["pipe", "inherit", "inherit"] });
+  const child = spawn("/bin/sh", ["-c", command], {
+    stdio: ["pipe", "inherit", "inherit"],
+    env: { ...process.env, [RECURSION_MARKER]: "1" },
+  });
   child.stdin.on("error", () => {});
   const exited = new Promise<number>((resolve) => {
     child.once("error", () => resolve(1));
