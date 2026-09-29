@@ -56,7 +56,7 @@ function post(
   socketPath: string,
   path: string,
   body: unknown,
-  token: string,
+  token: string | null,
 ): Promise<SocketReply> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
@@ -68,7 +68,7 @@ function post(
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(payload),
-          authorization: `Bearer ${token}`,
+          ...(token === null ? {} : { authorization: `Bearer ${token}` }),
         },
       },
       (res) => {
@@ -202,6 +202,23 @@ describe("reveal a registered project in Finder over the socket (tracer, PROJ-07
     );
     expect(reply.status).toBe(200);
     expect(reply.body).toEqual({ ok: false, error: "project-missing" });
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("rejects an unauthenticated launch with the existing 401 and spawns nothing", async () => {
+    const projectId = await registerProject();
+    const reply = await post(socketPath, LAUNCH_PATH, { projectId, action: "finder" }, null);
+    expect(reply.status).toBe(401);
+    expect(spawner.calls).toHaveLength(0);
+    expect(getProject(store.db, projectId)?.lastOpenedAt).toBeNull();
+    expect(refreshCalls).toEqual([]);
+  });
+
+  it("rejects a launch carrying a forged bearer token with 401 and spawns nothing", async () => {
+    const projectId = await registerProject();
+    const forged = mintToken(randomBytes(32), { nowMs: Date.now() });
+    const reply = await post(socketPath, LAUNCH_PATH, { projectId, action: "finder" }, forged);
+    expect(reply.status).toBe(401);
     expect(spawner.calls).toHaveLength(0);
   });
 
