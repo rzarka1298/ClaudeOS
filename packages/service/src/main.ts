@@ -27,7 +27,11 @@ import { createLaunchService } from "./projects/launch-service.js";
 import { createStoreProjectLookup } from "./projects/project-lookup.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 import { resolveHomeDir } from "./projects/project-views.js";
-import { ensureScriptDir, sweepStaleScripts } from "./projects/script-dir.js";
+import {
+  ensureScriptDir,
+  STARTUP_SCRIPT_MIN_AGE_MS,
+  sweepStaleScripts,
+} from "./projects/script-dir.js";
 import { createCommandSpawner } from "./projects/spawner.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
@@ -51,11 +55,12 @@ async function main(): Promise<void> {
   ensureRuntimeDir(runtimeDir, logger);
 
   // Phase 4 (plan 04-09): the private launch-script directory, before the
-  // socket listens. Nothing can be mid-hand-off at startup, so every
-  // leftover script from an interrupted launch goes (D-20, Pitfall 5). Only
-  // the count is logged.
+  // socket listens. Leftovers from interrupted launches go, but only those
+  // older than a short threshold: a launchd KeepAlive restart can follow a
+  // hand-off within seconds, before Terminal has read that script (D-20,
+  // Pitfall 5). Only the count is logged.
   const scriptDir = ensureScriptDir(runtimeDir, logger);
-  const sweptScripts = sweepStaleScripts(scriptDir, { all: true });
+  const sweptScripts = sweepStaleScripts(scriptDir, { olderThanMs: STARTUP_SCRIPT_MIN_AGE_MS });
   if (sweptScripts > 0) {
     logger.info({ count: sweptScripts }, "startup: removed leftover launch scripts");
   }

@@ -21,9 +21,11 @@ import { ensureRuntimeDir } from "../paths.js";
  *   service never deletes a script it has handed off: Terminal may not have
  *   read it yet (Pitfall 5).
  * - A hand-off that was interrupted (Terminal never ran the script) leaves
- *   the file here. Service startup deletes every leftover `.command`, and
- *   each launch deletes any older than {@link SCRIPT_MAX_AGE_MS} — long past
- *   any hand-off, so never a just-handed-off file.
+ *   the file here. Service startup deletes leftovers older than
+ *   {@link STARTUP_SCRIPT_MIN_AGE_MS}, and each launch deletes any older
+ *   than {@link SCRIPT_MAX_AGE_MS} — both long past any hand-off, so never a
+ *   just-handed-off file (a launchd KeepAlive restart can follow a hand-off
+ *   within seconds, before Terminal has read the script).
  */
 
 export const SCRIPT_DIR_NAME = "launch";
@@ -31,9 +33,17 @@ export const SCRIPT_DIR_NAME = "launch";
 /** A leftover script older than this is swept by the next launch. */
 export const SCRIPT_MAX_AGE_MS = 10 * 60 * 1000;
 
+/**
+ * A leftover script older than this is swept at service startup. Short,
+ * because a restart means no launch of the previous process is still
+ * pending for long — but never zero, because Terminal may not yet have
+ * read a script handed off just before the restart.
+ */
+export const STARTUP_SCRIPT_MIN_AGE_MS = 60 * 1000;
+
 const SCRIPT_SUFFIX = ".command";
 
-/** `{ all: true }` at startup (nothing can be mid-hand-off); an age threshold per launch. */
+/** An age threshold ({@link STARTUP_SCRIPT_MIN_AGE_MS} at startup, {@link SCRIPT_MAX_AGE_MS} per launch), or `{ all: true }`. */
 export type SweepOptions =
   | { readonly all: true }
   | { readonly olderThanMs: number; readonly now?: number };
