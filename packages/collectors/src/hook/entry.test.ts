@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOOK_RECORD_SCHEMAS } from "@ccc/domain";
@@ -265,5 +266,31 @@ describe("the spool cap, write-ahead and recursion guards", () => {
     const stdinIndex = source.search(/await readStdinCapped\(/);
     expect(markIndex).toBeGreaterThan(-1);
     expect(stdinIndex).toBeGreaterThan(markIndex);
+  });
+});
+
+describe("the hook's overall deadline (wave 2 review)", () => {
+  it("exits 0 within its budget when stdin never reaches EOF, delivering and spooling nothing", async () => {
+    server = await startUdsTestServer(runtime.socketPath, "accept");
+    const child = spawn(process.execPath, [COMPILED_HOOK_ENTRY, "--runtime-dir", runtime.dir], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const startedAt = performance.now();
+    child.stdin.on("error", () => {});
+    // Half a payload, and stdin is never ended: Claude Code must not wait on it.
+    child.stdin.write(SESSION_START_STDIN.slice(0, 40));
+    const stdout: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    const safety = setTimeout(() => child.kill("SIGKILL"), 3000);
+    const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
+    clearTimeout(safety);
+    const wallMs = performance.now() - startedAt;
+
+    expect(code).toBe(0);
+    expect(wallMs).toBeLessThanOrEqual(1000);
+    expect(Buffer.concat(stdout).length).toBe(0);
+    expect(server.started()).toBe(0);
+    expect(existsSync(spoolDirOf())).toBe(false);
   });
 });

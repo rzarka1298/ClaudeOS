@@ -8,6 +8,14 @@
 /** The whole hook's time budget from process start: Claude Code must never wait on it (D-08). */
 export const HOOK_DEADLINE_MS = 300;
 
+/**
+ * The hard exit, from process start: an unref'd timer ends the process here
+ * whatever it is waiting on (stdin that never reaches EOF, a callback that
+ * never fires). It sits past {@link HOOK_DEADLINE_MS} so a delivery that
+ * timed out at the budget still gets to spool its record (wave 2 review).
+ */
+export const HOOK_EXIT_DEADLINE_MS = HOOK_DEADLINE_MS + 40;
+
 /** Stdin bytes kept for parsing; everything past this is drained and discarded (RESEARCH Q9). */
 export const STDIN_RETAIN_BYTES = 262_144;
 

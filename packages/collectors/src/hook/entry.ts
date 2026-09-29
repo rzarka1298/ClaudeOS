@@ -3,7 +3,12 @@
 // files only (purity.test.ts), never writes to stdout, always exits 0.
 import { randomUUID } from "node:crypto";
 import { appendSpool, deliver } from "./deliver.js";
-import { HOOK_DEADLINE_MS, HOOK_EVENTS_PATH, STDIN_RETAIN_BYTES } from "./limits.js";
+import {
+  HOOK_DEADLINE_MS,
+  HOOK_EVENTS_PATH,
+  HOOK_EXIT_DEADLINE_MS,
+  STDIN_RETAIN_BYTES,
+} from "./limits.js";
 import { minimizeHookInput } from "./minimize.js";
 
 interface CappedStdin {
@@ -78,6 +83,13 @@ async function main(): Promise<void> {
 // as a non-zero exit or a stderr trace either.
 process.on("uncaughtException", () => process.exit(0));
 process.on("unhandledRejection", () => process.exit(0));
+
+// The overall deadline: stdin that never reaches EOF must not hold Claude
+// Code. Unref'd, so it never keeps an otherwise finished process alive.
+setTimeout(
+  () => process.exit(0),
+  Math.max(0, HOOK_EXIT_DEADLINE_MS - performance.now()),
+).unref();
 
 main()
   .catch(() => {})
