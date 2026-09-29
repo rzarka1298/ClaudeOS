@@ -10,13 +10,20 @@ import {
   CLAUDE_COPY_INSTALL_NAME,
   CLAUDE_COPY_UNINSTALL_NAME,
   CLAUDE_DELETE_USAGE_NAME,
+  CLAUDE_DELETE_USAGE_RETAINED_NOTE,
   CLAUDE_GROUP_HEADING,
   CLAUDE_HOOKS_NAME,
   CLAUDE_HOOKS_NOT_INSTALLED_TEXT,
+  CLAUDE_INSTALL_COMMAND,
+  CLAUDE_INSTALL_COPIED_NOTICE,
   CLAUDE_STATUS_UNAVAILABLE_TEXT,
   CLAUDE_STATUSLINE_NAME,
   CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE,
   CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
+  CLAUDE_UNINSTALL_COMMAND,
+  CLAUDE_UNINSTALL_COPIED_NOTICE,
+  CLAUDE_USAGE_DELETE_FAILED_NOTICE,
+  CLAUDE_USAGE_DELETED_NOTICE,
   CommandCenterSettingTab,
   hookStatusText,
   REDUCED_MOTION_KEY,
@@ -25,7 +32,13 @@ import {
   type SettingsClaudeSeam,
   type SettingsTabHost,
   statusLineStatusText,
+  TRANSCRIPT_ANALYSIS_KEY,
 } from "./settings-tab.js";
+
+/** Flushes enough microtask ticks for a chain of a few awaited promises to settle. */
+async function flush(times = 6): Promise<void> {
+  for (let i = 0; i < times; i++) await Promise.resolve();
+}
 
 /**
  * The tab's DECISION, not its rendering. Obsidian's own builder draws the
@@ -39,7 +52,13 @@ interface Recorded extends SettingsTabHost {
   saveCalls: number;
 }
 
-function createHost(options: { failSave?: boolean; claude?: SettingsClaudeSeam } = {}): Recorded {
+function createHost(
+  options: {
+    failSave?: boolean;
+    claude?: SettingsClaudeSeam;
+    openDeleteUsageModal?: (horizonDate: string | null) => Promise<boolean>;
+  } = {},
+): Recorded {
   const notices: string[] = [];
   const host: Recorded = {
     settings: { reducedMotion: "auto" },
@@ -54,6 +73,7 @@ function createHost(options: { failSave?: boolean; claude?: SettingsClaudeSeam }
       notices.push(message);
     },
     claude: options.claude,
+    openDeleteUsageModal: options.openDeleteUsageModal,
   };
   return host;
 }
@@ -364,5 +384,134 @@ describe("statusLineStatusText (Test 4)", () => {
 
   it("reads unavailable for a client failure", () => {
     expect(statusLineStatusText("unavailable", 0)).toBe(CLAUDE_STATUS_UNAVAILABLE_TEXT);
+  });
+});
+
+/** Task 3: the delete-usage confirmation modal and the copy-command rows. */
+describe("CommandCenterSettingTab -- Claude rows 2, 3 and 6 (Task 3)", () => {
+  function fullClaudeSeam(overrides: Partial<SettingsClaudeSeam> = {}): SettingsClaudeSeam {
+    return {
+      getIntegration: vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS),
+      setTranscriptAnalysis: vi.fn().mockResolvedValue({ enabled: false }),
+      deleteUsageAnalytics: vi.fn().mockResolvedValue(undefined),
+      copyText: vi.fn().mockResolvedValue(undefined),
+      ...overrides,
+    };
+  }
+
+  it("row 6's action opens the modal and deletes on confirm (Test 3)", async () => {
+    const deleteUsageAnalytics = vi.fn().mockResolvedValue(undefined);
+    const openDeleteUsageModal = vi.fn().mockResolvedValue(true);
+    const host = createHost({
+      claude: fullClaudeSeam({ deleteUsageAnalytics }),
+      openDeleteUsageModal,
+    });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    tab.getSettingDefinitions();
+    await flush();
+
+    const group = tab.getSettingDefinitions()[1];
+    group.items[5].action?.({} as never, 5);
+    await flush();
+
+    expect(openDeleteUsageModal).toHaveBeenCalledTimes(1);
+    expect(deleteUsageAnalytics).toHaveBeenCalledTimes(1);
+    expect(host.notices).toEqual([CLAUDE_USAGE_DELETED_NOTICE]);
+  });
+
+  it("row 6's action calls nothing when the modal is cancelled (Test 3)", async () => {
+    const deleteUsageAnalytics = vi.fn();
+    const openDeleteUsageModal = vi.fn().mockResolvedValue(false);
+    const host = createHost({
+      claude: fullClaudeSeam({ deleteUsageAnalytics }),
+      openDeleteUsageModal,
+    });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    tab.getSettingDefinitions();
+    await flush();
+
+    const group = tab.getSettingDefinitions()[1];
+    group.items[5].action?.({} as never, 5);
+    await flush();
+
+    expect(deleteUsageAnalytics).not.toHaveBeenCalled();
+    expect(host.notices).toEqual([]);
+  });
+
+  it("row 6's action notifies the failure string on a rejected deletion (Test 3)", async () => {
+    const deleteUsageAnalytics = vi.fn().mockRejectedValue(new Error("service down"));
+    const openDeleteUsageModal = vi.fn().mockResolvedValue(true);
+    const host = createHost({
+      claude: fullClaudeSeam({ deleteUsageAnalytics }),
+      openDeleteUsageModal,
+    });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    tab.getSettingDefinitions();
+    await flush();
+
+    const group = tab.getSettingDefinitions()[1];
+    group.items[5].action?.({} as never, 5);
+    await flush();
+
+    expect(host.notices).toEqual([CLAUDE_USAGE_DELETE_FAILED_NOTICE]);
+  });
+
+  it("row 6 gains the retained-totals note once transcript analysis is turned off (Test 4, R-15)", async () => {
+    const setTranscriptAnalysis = vi.fn().mockResolvedValue({ enabled: false });
+    const host = createHost({
+      claude: fullClaudeSeam({
+        getIntegration: vi
+          .fn()
+          .mockResolvedValue({ ...BASE_CLAUDE_STATUS, transcriptAnalysis: { enabled: true } }),
+        setTranscriptAnalysis,
+      }),
+    });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    tab.getSettingDefinitions();
+    await flush();
+
+    await tab.setControlValue(TRANSCRIPT_ANALYSIS_KEY, false);
+
+    const group = tab.getSettingDefinitions()[1];
+    expect(group.items[5].desc).toContain(CLAUDE_DELETE_USAGE_RETAINED_NOTE);
+  });
+
+  it("row 2's action copies the install command and notifies (Test 5)", async () => {
+    const copyText = vi.fn().mockResolvedValue(undefined);
+    const host = createHost({ claude: fullClaudeSeam({ copyText }) });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    const group = tab.getSettingDefinitions()[1];
+    group.items[1].action?.({} as never, 1);
+    await flush();
+
+    expect(copyText).toHaveBeenCalledWith(CLAUDE_INSTALL_COMMAND);
+    expect(host.notices).toEqual([CLAUDE_INSTALL_COPIED_NOTICE]);
+  });
+
+  it("row 3's action copies the uninstall command and notifies (Test 5)", async () => {
+    const copyText = vi.fn().mockResolvedValue(undefined);
+    const host = createHost({ claude: fullClaudeSeam({ copyText }) });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    const group = tab.getSettingDefinitions()[1];
+    group.items[2].action?.({} as never, 2);
+    await flush();
+
+    expect(copyText).toHaveBeenCalledWith(CLAUDE_UNINSTALL_COMMAND);
+    expect(host.notices).toEqual([CLAUDE_UNINSTALL_COPIED_NOTICE]);
+  });
+
+  it("row 2's description mentions --dry-run and --with-statusline, and no row renders a home path (Test 5)", () => {
+    const host = createHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    const group = tab.getSettingDefinitions()[1];
+    expect(group.items[1].desc).toContain("--dry-run");
+    expect(group.items[1].desc).toContain("--with-statusline");
+
+    const allText = group.items.map((item) => `${item.name} ${item.desc ?? ""}`).join(" ");
+    expect(allText).not.toContain("/Users/");
+    expect(allText).not.toContain("~/.claude");
   });
 });
