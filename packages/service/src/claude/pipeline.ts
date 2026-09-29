@@ -44,7 +44,12 @@ export interface ClaudePipelineDeps {
   readonly now: () => Date;
   readonly mintRunId: () => RunId;
   readonly facts: SessionFactsProvider;
+  /** Schedules `fn` after `ms`; returns a cancel. Defaults to an unref'd `setTimeout`. */
+  readonly schedule?: (fn: () => void, ms: number) => () => void;
 }
+
+/** A Run whose only change is activity time is written and published at most once per window (PR-05). */
+export const COALESCE_WINDOW_MS = 5000;
 
 /** What one ingest did. The route maps it to 202 or a constant 400. */
 export type IngestOutcome =
@@ -73,6 +78,8 @@ export interface ClaudePipeline {
   health(): PipelineHealth;
   /** Fires after an upsert caused by Stop or SessionEnd; returns an unsubscribe. */
   onRunSettled(listener: (run: SessionRun) => void): () => void;
+  /** Writes any pending coalesced activity now and cancels every timer. */
+  stop(): void;
 }
 
 /** How far back a terminal Run stays in the views (UI-SPEC R-08). */
@@ -194,6 +201,7 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
       rejectedEdgeCount,
       shapeChanged: null,
     }),
+    stop() {},
     onRunSettled(listener) {
       settledListeners.add(listener);
       return () => {
