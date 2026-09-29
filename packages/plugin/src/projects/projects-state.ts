@@ -11,7 +11,7 @@ import type {
 // (genuine `node:fs` need), which is fatal for that bundle even though
 // nothing here uses it (`index.browser.ts`'s docblock has the full story).
 import { compareProjectViews, ProjectsUpdatedPayloadSchema } from "@ccc/domain/browser";
-import { computed, signal } from "@preact/signals";
+import { batch, computed, signal } from "@preact/signals";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState } from "../connection-state.js";
 import { nowTick } from "../widgets/clock.js";
@@ -31,9 +31,20 @@ import type { ProjectRow, ProjectShortcutsData } from "../widgets/panels.js";
  */
 export const projectsSnapshot = signal<ProjectsSnapshot | undefined>(undefined);
 
+/**
+ * When the plugin last received projects state from the service (a snapshot
+ * or an applied delta) — the honest "last updated" for what the registry
+ * itself says while no git read has been observed yet (an empty registry,
+ * or a first read that failed). Never used as a git observation time.
+ */
+export const projectsReceivedAt = signal<string | null>(null);
+
 /** Applies a full-resync snapshot's `projects` field (D-43). */
 export function applyProjectsSnapshot(snapshot: SnapshotResponse): void {
-  projectsSnapshot.value = snapshot.state.projects;
+  batch(() => {
+    projectsSnapshot.value = snapshot.state.projects;
+    projectsReceivedAt.value = new Date().toISOString();
+  });
 }
 
 /**
@@ -65,13 +76,16 @@ export function applyProjectsDelta(event: ServiceEvent): void {
   const projects = [...survivors, ...upserted];
   const readAt = new Map((observed ?? []).map((beat) => [beat.projectId, beat.observedAt]));
 
-  projectsSnapshot.value = {
-    projects: (readAt.size === 0
-      ? projects
-      : projects.map((view) => withReadAt(view, readAt))
-    ).sort(compareProjectViews),
-    launchers: launchers ?? current.launchers,
-  };
+  batch(() => {
+    projectsSnapshot.value = {
+      projects: (readAt.size === 0
+        ? projects
+        : projects.map((view) => withReadAt(view, readAt))
+      ).sort(compareProjectViews),
+      launchers: launchers ?? current.launchers,
+    };
+    projectsReceivedAt.value = new Date().toISOString();
+  });
 }
 
 /** A view with its `observedAt` moved forward to the heartbeat's, when that is newer. */
@@ -86,6 +100,7 @@ function withReadAt(view: ProjectView, readAt: ReadonlyMap<string, string>): Pro
 /** Resets the signal to its initial (unset) value. Test-only. */
 export function resetProjectsState(): void {
   projectsSnapshot.value = undefined;
+  projectsReceivedAt.value = null;
 }
 
 /**
@@ -114,15 +129,15 @@ export function projectRowsFrom(snapshot: ProjectsSnapshot): readonly ProjectRow
   }));
 }
 
-/** The newest row `observedAt`, or `nowIso` when every row is still `pending`. */
-function newestObservedAt(rows: readonly ProjectRow[], nowIso: string): string {
+/** The newest row `observedAt`, or `null` when no row has been observed yet. */
+function newestObservedAt(rows: readonly ProjectRow[]): string | null {
   let newest: string | null = null;
   for (const row of rows) {
     if (row.observedAt !== null && (newest === null || row.observedAt > newest)) {
       newest = row.observedAt;
     }
   }
-  return newest ?? nowIso;
+  return newest;
 }
 
 /**
@@ -133,35 +148,53 @@ function newestObservedAt(rows: readonly ProjectRow[], nowIso: string): string {
  * `unavailable` otherwise (live-with-no-snapshot-yet reads the same as
  * disconnected — there is nothing to show either way).
  *
- * A defined snapshot is always `ready`: freshness is `live` only while the
- * connection itself is live AND every row's `observedAt` is within
- * {@link LIVE_WINDOW_MS} of `nowIso` (a `pending` row's `null` observedAt
- * never counts against it); otherwise `stale`. Any row whose last git read
- * failed marks the whole card `Partial`, naming `Local git status` (ADR-0002,
- * D-12) — the row itself keeps its last-good values and gains `◔ Stale` in
- * its own meta (panels.tsx).
+ * Nothing is ever dated "now" (the widget contract: `observedAt` is a real
+ * observation). `observedAt` is the newest row read; when no row has been
+ * read yet:
+ * - every row still `pending` with its first read in flight is `loading`;
+ * - an empty registry, or a first read that failed, is dated by
+ *   `receivedAt` — when the registry itself arrived — and is `loading` when
+ *   that is unknown too.
+ *
+ * Freshness is `live` only while the connection itself is live AND every
+ * row's `observedAt` is within {@link LIVE_WINDOW_MS} of `nowIso` (a
+ * `pending` row's `null` observedAt never counts against it) AND something
+ * was actually observed — rows with no read at all are never `live`;
+ * otherwise `stale`. An empty registry has no git to observe: it is `live`
+ * while connected, since the registry list itself is pushed on every change.
+ * Any row whose last git read failed marks the whole card `Partial`, naming
+ * `Local git status` (ADR-0002, D-12) — the row itself keeps its last-good
+ * values and gains `◔ Stale` in its own meta (panels.tsx).
  */
 export function projectShortcutsStateFor(
   snapshot: ProjectsSnapshot | undefined,
   connection: ConnectionState,
   nowIso: string,
+  receivedAt: string | null = null,
 ): WidgetState<ProjectShortcutsData> {
   if (snapshot === undefined) {
     return connection.kind === "connecting" ? { kind: "loading" } : { kind: "unavailable" };
   }
 
   const rows = projectRowsFrom(snapshot);
+  const anyGitReadFailed = rows.some((row) => row.gitReadFailed);
+  const newest = newestObservedAt(rows);
+  if (newest === null && rows.length > 0 && !anyGitReadFailed) return { kind: "loading" };
+  const observedAt = newest ?? receivedAt;
+  if (observedAt === null) return { kind: "loading" };
+
   const nowMs = Date.parse(nowIso);
   const everyRowFresh = rows.every(
     (row) => row.observedAt === null || nowMs - Date.parse(row.observedAt) <= LIVE_WINDOW_MS,
   );
-  const freshness: Freshness = connection.kind === "live" && everyRowFresh ? "live" : "stale";
-  const anyGitReadFailed = rows.some((row) => row.gitReadFailed);
+  const observedSomething = newest !== null || rows.length === 0;
+  const freshness: Freshness =
+    connection.kind === "live" && everyRowFresh && observedSomething ? "live" : "stale";
 
   return {
     kind: "ready",
     data: { projects: rows, launchers: snapshot.launchers },
-    observedAt: newestObservedAt(rows, nowIso),
+    observedAt,
     freshness,
     partiality: anyGitReadFailed
       ? { partial: true, missingSources: ["Local git status"] }
@@ -176,5 +209,6 @@ export const projectShortcutsState = computed<WidgetState<ProjectShortcutsData>>
     projectsSnapshot.value,
     connectionState.value,
     new Date(nowTick.value).toISOString(),
+    projectsReceivedAt.value,
   ),
 );
