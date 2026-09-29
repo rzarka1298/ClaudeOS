@@ -85,6 +85,8 @@ export interface LivenessSweeperDeps {
   readonly config: LivenessConfig;
   /** Schedules `fn` after `ms`; returns a cancel. Defaults to an unref'd `setTimeout`. */
   readonly schedule?: (fn: () => void, ms: number) => () => void;
+  /** RED scaffold (05-11 Task 3). */
+  readonly attribute?: unknown;
 }
 
 export interface LivenessSweeper {

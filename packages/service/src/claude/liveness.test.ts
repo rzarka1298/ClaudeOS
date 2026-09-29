@@ -1,11 +1,20 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Evidence } from "@ccc/collectors";
-import { newRunId, type RunId, type SessionRun } from "@ccc/domain";
+import {
+  newRunId,
+  type RunId,
+  type SessionRun,
+  SessionUpsertedPayloadSchema,
+  type SessionView,
+} from "@ccc/domain";
 import {
   applyMigrations,
+  getSessionOverride,
   getSessionRun,
   type OperationalStore,
   openStore,
@@ -13,7 +22,10 @@ import {
 } from "@ccc/operational-store";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createEventBus } from "../events/event-bus.js";
+import { createEventBus, type EventBus } from "../events/event-bus.js";
+import { recoverInterruptedRuns } from "../lifecycle/recover-runs.js";
+import { createAttribution } from "./attribution.js";
+import { runGit } from "./git-readonly.js";
 import {
   createLivenessSweeper,
   DEFAULT_LIVENESS_CONFIG,
@@ -25,7 +37,9 @@ import {
   createClaudePipeline,
   type SessionFactsProvider,
 } from "./pipeline.js";
-import type { ProcessFacts } from "./process-facts.js";
+import { createProcessFacts, nodeExecFile, type ProcessFacts } from "./process-facts.js";
+import { createStoreProjectLookup } from "./project-lookup.js";
+import { startClaudeServices } from "./services.js";
 
 const T0 = Date.parse("2026-09-29T10:00:00.000Z");
 const LSTART = "Mon Sep 29 09:59:58 2026";
@@ -76,6 +90,7 @@ let store: OperationalStore;
 let nowMs: number;
 let applied: Evidence[];
 let pipeline: ClaudePipeline;
+let bus: EventBus;
 let table: ReturnType<typeof fakeProcessTable>;
 
 beforeEach(() => {
@@ -85,9 +100,10 @@ beforeEach(() => {
   nowMs = T0;
   applied = [];
   table = fakeProcessTable();
+  bus = createEventBus();
   pipeline = createClaudePipeline({
     db: store.db,
-    bus: createEventBus(),
+    bus,
     logger: pino({ level: "silent" }),
     now: () => new Date(nowMs),
     mintRunId: newRunId,
@@ -138,11 +154,12 @@ function seedRun(patch: Partial<SessionRun> = {}): SessionRun {
 }
 
 function sweeperWith(config: Partial<LivenessConfig> = {}): LivenessSweeper {
-  const spied: Pick<ClaudePipeline, "apply"> = {
+  const spied: Pick<ClaudePipeline, "apply" | "reattribute"> = {
     apply: (evidence) => {
       applied.push(evidence);
       return pipeline.apply(evidence);
     },
+    reattribute: (runId, attribution) => pipeline.reattribute(runId, attribution),
   };
   return createLivenessSweeper({
     db: store.db,
@@ -151,6 +168,13 @@ function sweeperWith(config: Partial<LivenessConfig> = {}): LivenessSweeper {
     logger: pino({ level: "silent" }),
     now: () => new Date(nowMs),
     config: { ...DEFAULT_LIVENESS_CONFIG, ...config },
+    attribute: createAttribution({
+      lookup: createStoreProjectLookup(store.db),
+      getOverride: (claudeSessionId) => getSessionOverride(store.db, claudeSessionId),
+      realpath,
+      runGit,
+      logger: pino({ level: "silent" }),
+    }),
   });
 }
 
@@ -283,5 +307,222 @@ describe("process liveness sweep (Task 1, SESS-06, D-19)", () => {
     const count = applied.length;
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(applied.length).toBe(count);
+  });
+});
+
+function publishedFor(runId: RunId): SessionView[] {
+  const replay = bus.buffer.since(0);
+  const events = replay.mode === "replay" ? replay.events : [];
+  return events
+    .filter((event) => event.type === "session.upserted")
+    .map((event) => SessionUpsertedPayloadSchema.parse(event.payload).session)
+    .filter((session) => session.runId === runId);
+}
+
+describe("restart revival (Task 3 Test 2, D-22, PR-12)", () => {
+  const saved = {
+    runtime: process.env.CCC_RUNTIME_DIR,
+    config: process.env.CLAUDE_CONFIG_DIR,
+    spool: process.env.CCC_SPOOL_PATH,
+  };
+  const children: ChildProcess[] = [];
+
+  beforeEach(() => {
+    process.env.CCC_RUNTIME_DIR = dir;
+    process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
+    delete process.env.CCC_SPOOL_PATH;
+  });
+
+  afterEach(() => {
+    for (const child of children.splice(0)) {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
+    for (const [key, value] of [
+      ["CCC_RUNTIME_DIR", saved.runtime],
+      ["CLAUDE_CONFIG_DIR", saved.config],
+      ["CCC_SPOOL_PATH", saved.spool],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  /** A throwaway idle child standing in for a Claude process; only this test signals it. */
+  async function spawnChild(): Promise<ChildProcess> {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    children.push(child);
+    await new Promise<void>((resolveSpawn, reject) => {
+      child.once("spawn", () => resolveSpawn());
+      child.once("error", reject);
+    });
+    return child;
+  }
+
+  it("revives only the identity-verified live pid before startClaudeServices resolves", async () => {
+    const logger = pino({ level: "silent" });
+    const facts = createProcessFacts({
+      execFile: nodeExecFile,
+      kill: (pid, signal) => {
+        process.kill(pid, signal);
+      },
+      logger,
+    });
+    const live = await spawnChild();
+    const doomed = await spawnChild();
+    const livePid = live.pid as number;
+    const doomedPid = doomed.pid as number;
+    const starts = await facts.readStartTimes([livePid, doomedPid]);
+    const exited = new Promise<void>((resolveExit) => doomed.once("exit", () => resolveExit()));
+    doomed.kill("SIGKILL");
+    await exited;
+
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    const alive = seedRun({
+      claudeSessionId: "sess-live",
+      pid: livePid,
+      pidStartedAt: starts.get(livePid) ?? null,
+      startedAt: recent,
+      lastActivityAt: recent,
+    });
+    const dead = seedRun({
+      claudeSessionId: "sess-dead",
+      pid: doomedPid,
+      pidStartedAt: starts.get(doomedPid) ?? null,
+      startedAt: recent,
+      lastActivityAt: recent,
+    });
+    expect(alive.pidStartedAt).not.toBeNull();
+
+    recoverInterruptedRuns(store.db, logger);
+    expect(stateOf(alive.runId)).toBe("stale");
+    expect(stateOf(dead.runId)).toBe("stale");
+
+    const services = await startClaudeServices({
+      store,
+      bus: createEventBus(),
+      logger,
+      env: { CCC_LIVENESS_SWEEP_MS: "60000" },
+    });
+    try {
+      expect(stateOf(alive.runId)).toBe("running");
+      expect(stateOf(dead.runId)).toBe("stale");
+      for (const run of [alive, dead]) {
+        expect(["completed", "failed", "cancelled"]).not.toContain(stateOf(run.runId));
+      }
+    } finally {
+      await services.stop();
+    }
+  });
+});
+
+describe("start and PID-less inactivity timeouts (Task 3 Test 3, D-19)", () => {
+  it("a queued or starting Run past the start timeout with no SessionStart reads stale", async () => {
+    const old = new Date(T0 - DEFAULT_LIVENESS_CONFIG.startTimeoutMs).toISOString();
+    const queued = seedRun({
+      pid: null,
+      pidStartedAt: null,
+      state: "queued",
+      startedAt: old,
+      lastActivityAt: null,
+    });
+    const starting = seedRun({
+      pid: null,
+      pidStartedAt: null,
+      state: "starting",
+      startedAt: old,
+      lastActivityAt: null,
+    });
+    const young = seedRun({
+      pid: null,
+      pidStartedAt: null,
+      state: "queued",
+      startedAt: new Date(T0 - 1_000).toISOString(),
+      lastActivityAt: null,
+    });
+    await sweeperWith().sweepNow();
+    expect(appliedKinds(queued.runId)).toEqual(["start-timeout"]);
+    expect(appliedKinds(starting.runId)).toEqual(["start-timeout"]);
+    expect(stateOf(queued.runId)).toBe("stale");
+    expect(stateOf(starting.runId)).toBe("stale");
+    expect(appliedKinds(young.runId)).toEqual([]);
+    expect(stateOf(young.runId)).toBe("queued");
+  });
+
+  it("a PID-less running Run idle past the inactivity threshold reads stale", async () => {
+    const idle = seedRun({
+      claudeSessionId: "sess-idle",
+      pid: null,
+      pidStartedAt: null,
+      lastActivityAt: new Date(T0 - DEFAULT_LIVENESS_CONFIG.pidlessInactivityMs - 1).toISOString(),
+    });
+    const busy = seedRun({
+      claudeSessionId: "sess-busy",
+      pid: null,
+      pidStartedAt: null,
+      lastActivityAt: new Date(T0 - 60_000).toISOString(),
+    });
+    await sweeperWith().sweepNow();
+    expect(appliedKinds(idle.runId)).toEqual(["inactivity-timeout"]);
+    expect(stateOf(idle.runId)).toBe("stale");
+    expect(appliedKinds(busy.runId)).toEqual([]);
+    expect(stateOf(busy.runId)).toBe("running");
+  });
+});
+
+describe("re-attribution when the registered project set changes (Task 3 Test 4, D-23)", () => {
+  it("re-attributes unclassified live and 7-day-recent Runs once, and leaves older ones alone", async () => {
+    const root = join(realpathSync(dir), "proj");
+    mkdirSync(join(root, "src"), { recursive: true });
+    const cwd = join(root, "src");
+    const live = seedRun({ claudeSessionId: "sess-a", pid: null, pidStartedAt: null, cwd });
+    const recentEnd = seedRun({
+      claudeSessionId: "sess-b",
+      pid: null,
+      pidStartedAt: null,
+      cwd,
+      state: "completed",
+      activity: null,
+      endedAt: new Date(T0 - 24 * 60 * 60 * 1000).toISOString(),
+    });
+    const oldEnd = seedRun({
+      claudeSessionId: "sess-c",
+      pid: null,
+      pidStartedAt: null,
+      cwd,
+      state: "completed",
+      activity: null,
+      startedAt: new Date(T0 - 9 * 24 * 60 * 60 * 1000).toISOString(),
+      endedAt: new Date(T0 - 8 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    const sweeper = sweeperWith();
+    await sweeper.sweepNow();
+    expect(getSessionRun(store.db, live.runId)?.projectId).toBeNull();
+
+    // Test seeding only: product code never writes `projects` (D-57).
+    store.db
+      .prepare(
+        "INSERT INTO projects (project_id, path, workspace_id, display_name, registered_at) VALUES (?, ?, NULL, ?, ?)",
+      )
+      .run("proj", root, "Proj", "2026-09-29T00:00:00.000Z");
+    nowMs += DEFAULT_LIVENESS_CONFIG.sweepMs;
+    await sweeper.sweepNow();
+
+    const after = getSessionRun(store.db, live.runId);
+    expect(after?.projectId).toBe("proj");
+    expect(after?.revision).toBe(live.revision + 1);
+    expect(after?.state).toBe("running");
+    expect(publishedFor(live.runId)).toHaveLength(1);
+    expect(publishedFor(live.runId)[0]?.projectId).toBe("proj");
+    expect(getSessionRun(store.db, recentEnd.runId)?.projectId).toBe("proj");
+    expect(getSessionRun(store.db, recentEnd.runId)?.state).toBe("completed");
+    expect(getSessionRun(store.db, oldEnd.runId)?.projectId).toBeNull();
+    expect(getSessionRun(store.db, oldEnd.runId)?.revision).toBe(oldEnd.revision);
+
+    // An unchanged project set re-attributes nothing more.
+    nowMs += DEFAULT_LIVENESS_CONFIG.sweepMs;
+    await sweeper.sweepNow();
+    expect(publishedFor(live.runId)).toHaveLength(1);
   });
 });

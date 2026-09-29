@@ -1,6 +1,6 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import http from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import {
   SessionUpsertedPayloadSchema,
   type SessionView,
 } from "@ccc/domain";
+import { getSessionRun, openStore } from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requestOverSocket, startServiceForTest } from "./service-harness.js";
 import { withTempSocketDir } from "./socket-fixture.js";
@@ -240,4 +241,75 @@ describe("SESS-06: a Claude process killed without SessionEnd reads unknown (Tas
       }
     });
   }, 30_000);
+});
+
+describe("SESS-07/08: two concurrent sessions under two projects (Task 3, Test 5)", () => {
+  it("shows two Runs, each with its project, pid, model, launch source and start time", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
+      mkdirSync(join(dir, "claude", "projects"), { recursive: true });
+      const dbPath = join(dir, "operational.db");
+      const service = await startServiceForTest({ socketPath, dbPath });
+      const token = await handshake(socketPath);
+      const stream = collectEvents(socketPath, token);
+      try {
+        const roots = ["alpha", "beta"].map((name) => {
+          const root = join(realpathSync(dir), "projects", name);
+          mkdirSync(join(root, "src"), { recursive: true });
+          return { projectId: `proj-${name}`, root };
+        });
+        // Test seeding only: product code never writes `projects` (D-57).
+        const seed = openStore(dbPath);
+        try {
+          for (const { projectId, root } of roots) {
+            seed.db
+              .prepare(
+                "INSERT INTO projects (project_id, path, workspace_id, display_name, registered_at) VALUES (?, ?, NULL, ?, ?)",
+              )
+              .run(projectId, root, projectId, new Date().toISOString());
+          }
+        } finally {
+          seed.close();
+        }
+
+        const sessions: { sessionId: string; pid: number; projectId: string }[] = [];
+        for (const { projectId, root } of roots) {
+          const claude = await spawnFakeClaude();
+          const sessionId = `two-${projectId}-${randomUUID().slice(0, 8)}`;
+          sessions.push({ sessionId, pid: claude.pid as number, projectId });
+          const sentAt = Date.now();
+          await runHook(dir, claude.pid as number, sessionStart(sessionId, join(root, "src")));
+          const seen = await stream.waitFor((event) => {
+            const session = sessionOf(event);
+            return session?.claudeSessionId === sessionId && session.projectId === projectId;
+          }, 10_000);
+          expect(Date.now() - sentAt).toBeLessThan(10_000);
+          const view = sessionOf(seen);
+          expect(view?.state).toBe("running");
+          expect(view?.model).toBe("claude-test-model");
+          expect(view?.launchSource).not.toBeNull();
+          expect(view?.startedAt).toBeTruthy();
+        }
+
+        const views = sessions.map(({ sessionId }) =>
+          stream.events.map(sessionOf).find((session) => session?.claudeSessionId === sessionId),
+        );
+        expect(new Set(views.map((view) => view?.runId)).size).toBe(2);
+
+        const read = openStore(dbPath);
+        try {
+          for (const [i, view] of views.entries()) {
+            const run = getSessionRun(read.db, view?.runId as never);
+            expect(run?.pid).toBe(sessions[i]?.pid);
+            expect(run?.projectId).toBe(sessions[i]?.projectId);
+          }
+        } finally {
+          read.close();
+        }
+      } finally {
+        stream.close();
+        await service.stop();
+      }
+    });
+  }, 40_000);
 });

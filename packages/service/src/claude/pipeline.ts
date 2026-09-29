@@ -50,6 +50,12 @@ export interface ClaudePipelineDeps {
   readonly schedule?: (fn: () => void, ms: number) => () => void;
 }
 
+/** The project facts a re-attribution writes (05-11). */
+export interface RunAttribution {
+  readonly projectId: string | null;
+  readonly worktreeRoot: string | null;
+}
+
 /** A Run whose only change is activity time is written and published at most once per window (PR-05). */
 export const COALESCE_WINDOW_MS = 5000;
 
@@ -75,6 +81,8 @@ export interface ClaudePipeline {
   ingest(input: unknown, via: "socket" | "spool"): Promise<IngestOutcome>;
   /** Applies liveness, launch or terminate evidence (05-11, 05-14), queued with ingest. */
   apply(evidence: Evidence): Promise<void>;
+  /** RED scaffold (05-11 Task 3). */
+  reattribute(runId: RunId, attribution: RunAttribution): Promise<boolean>;
   /** Synchronous: non-terminal Runs plus terminal Runs that ended within 7 days. */
   listSessionViews(): SessionView[];
   health(): PipelineHealth;
@@ -369,6 +377,7 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
       enqueue(() => {
         applyNow(evidence);
       }),
+    reattribute: async () => false,
     listSessionViews() {
       const endedSince = new Date(deps.now().getTime() - VIEW_ENDED_WINDOW_MS).toISOString();
       const names = projectNames();
