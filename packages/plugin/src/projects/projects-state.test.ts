@@ -1,11 +1,12 @@
 import type { ProjectsSnapshot, ProjectView } from "@ccc/domain";
 import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyProjectsDelta,
   applyProjectsSnapshot,
   projectRowsFrom,
   projectShortcutsStateFor,
+  projectsReceivedAt,
   projectsSnapshot,
   resetProjectsState,
 } from "./projects-state.js";
@@ -17,6 +18,8 @@ import {
  */
 
 const NOW_ISO = "2026-09-28T12:00:00.000Z";
+/** When the plugin last received the registry from the service. */
+const RECEIVED_ISO = "2026-09-28T11:59:40.000Z";
 
 function view(overrides: Partial<ProjectView> = {}): ProjectView {
   return {
@@ -53,7 +56,7 @@ describe("projectShortcutsStateFor: undefined snapshot", () => {
 
 describe("projectShortcutsStateFor: a defined snapshot is always ready", () => {
   it("is ready with isEmpty true for a snapshot with no projects", () => {
-    const state = projectShortcutsStateFor(snapshotOf([]), { kind: "live" }, NOW_ISO);
+    const state = projectShortcutsStateFor(snapshotOf([]), { kind: "live" }, NOW_ISO, RECEIVED_ISO);
     expect(state.kind).toBe("ready");
     if (state.kind !== "ready") throw new Error("unreachable");
     expect(state.isEmpty).toBe(true);
@@ -102,8 +105,16 @@ describe("projectShortcutsStateFor: a defined snapshot is always ready", () => {
   });
 
   it("a null observedAt (pending) never counts against the live window", () => {
-    const pending = view({ observedAt: null, git: { kind: "pending" } });
-    const state = projectShortcutsStateFor(snapshotOf([pending]), { kind: "live" }, NOW_ISO);
+    const pending = view({
+      projectId: ("p".repeat(9) + "0".repeat(16)) as ProjectView["projectId"],
+      observedAt: null,
+      git: { kind: "pending" },
+    });
+    const state = projectShortcutsStateFor(
+      snapshotOf([view(), pending]),
+      { kind: "live" },
+      NOW_ISO,
+    );
     if (state.kind !== "ready") throw new Error("unreachable");
     expect(state.freshness).toBe("live");
   });
@@ -211,5 +222,65 @@ describe("the observed heartbeat keeps freshness honest (wave-3 review MAJOR)", 
     heartbeat(3, at(30_000));
     heartbeat(4, at(90_000), "zzzzzzzzz0000000000000000");
     expect(projectsSnapshot.value?.projects[0]?.observedAt).toBe(at(60_000));
+  });
+});
+
+describe("nothing observed yet never claims live at now (wave-3 review, widget contract)", () => {
+  const pending = (): ProjectView => view({ observedAt: null, git: { kind: "pending" } });
+
+  it("every row still pending reads loading, not ready-live with observedAt = now", () => {
+    expect(
+      projectShortcutsStateFor(snapshotOf([pending()]), { kind: "live" }, NOW_ISO, RECEIVED_ISO),
+    ).toEqual({ kind: "loading" });
+  });
+
+  it("an empty registry dates the card by when the registry was received, not by now", () => {
+    const state = projectShortcutsStateFor(snapshotOf([]), { kind: "live" }, NOW_ISO, RECEIVED_ISO);
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.observedAt).toBe(RECEIVED_ISO);
+    expect(state.isEmpty).toBe(true);
+  });
+
+  it("an empty registry with no known receipt time reads loading", () => {
+    expect(projectShortcutsStateFor(snapshotOf([]), { kind: "live" }, NOW_ISO)).toEqual({
+      kind: "loading",
+    });
+  });
+
+  it("a first read that failed is stale and partial, dated by receipt, never live", () => {
+    const failed = view({ observedAt: null, git: { kind: "pending" }, gitReadFailed: true });
+    const state = projectShortcutsStateFor(
+      snapshotOf([failed]),
+      { kind: "live" },
+      NOW_ISO,
+      RECEIVED_ISO,
+    );
+    if (state.kind !== "ready") throw new Error("unreachable");
+    expect(state.observedAt).toBe(RECEIVED_ISO);
+    expect(state.freshness).toBe("stale");
+    expect(state.partiality).toEqual({ partial: true, missingSources: ["Local git status"] });
+  });
+
+  it("the live card state carries the time the snapshot was applied", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(RECEIVED_ISO));
+      applyProjectsSnapshot({
+        lastEventId: 1,
+        state: { serviceStartedAt: RECEIVED_ISO, projects: snapshotOf([]) },
+      });
+      vi.setSystemTime(new Date(NOW_ISO));
+      const state = projectShortcutsStateFor(
+        projectsSnapshot.value,
+        { kind: "live" },
+        NOW_ISO,
+        projectsReceivedAt.value,
+      );
+      if (state.kind !== "ready") throw new Error("unreachable");
+      expect(state.observedAt).toBe(RECEIVED_ISO);
+    } finally {
+      vi.useRealTimers();
+      resetProjectsState();
+    }
   });
 });

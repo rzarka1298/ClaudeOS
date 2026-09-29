@@ -87,7 +87,7 @@ describe("S1 partial (audit)", () => {
 
 describe("S1 zero-one-many (audit)", () => {
   it("zero projects renders the empty state copy", () => {
-    const state = projectShortcutsStateFor(snapshotOf([]), { kind: "live" }, NOW_ISO);
+    const state = projectShortcutsStateFor(snapshotOf([]), { kind: "live" }, NOW_ISO, NOW_ISO);
     const text = renderCard(state).textContent ?? "";
     expect(text).toContain("Register a project in Projects to see it here.");
   });
