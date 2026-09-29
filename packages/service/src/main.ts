@@ -34,7 +34,7 @@ import {
 } from "./projects/script-dir.js";
 import { createCommandSpawner } from "./projects/spawner.js";
 import { createRequestListener } from "./routes.js";
-import { startSocketServer } from "./socket-server.js";
+import { claimSocketPath, SocketInUseError, startSocketServer } from "./socket-server.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
 
 /**
@@ -53,6 +53,13 @@ async function main(): Promise<void> {
   const dbPath = resolveDbPath();
 
   ensureRuntimeDir(runtimeDir, logger);
+
+  // A second instance must refuse BEFORE it changes anything a live
+  // instance depends on — the launch-script sweep, the store (migrations,
+  // run recovery, the spool drain) and above all the socket file itself.
+  // Probing, not unlinking: a live listener throws SocketInUseError (the
+  // file stays); only a stale socket from an unclean shutdown is removed.
+  await claimSocketPath(socketPath);
 
   // Phase 4 (plan 04-09): the private launch-script directory, before the
   // socket listens. Leftovers from interrupted launches go, but only those
@@ -212,6 +219,13 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  logger.error({ err }, "fatal startup error");
+  if (err instanceof SocketInUseError) {
+    logger.error(
+      { socketPath: err.socketPath },
+      "startup refused: another service instance is already listening on the socket",
+    );
+  } else {
+    logger.error({ err }, "fatal startup error");
+  }
   process.exit(1);
 });

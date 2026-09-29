@@ -12,5 +12,7 @@ export default defineConfig({
     // test`, never by vitest: vitest would execute test.skip() at module scope
     // and fail the whole package.
     exclude: ["**/node_modules/**", "**/dist/**", "visual/**"],
+    // Every test file gets a throwaway CCC_RUNTIME_DIR (never the real one).
+    setupFiles: ["./src/isolate-runtime-dir.setup.ts"],
   },
 });
