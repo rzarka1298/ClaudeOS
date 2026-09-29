@@ -3,17 +3,11 @@ import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "@ccc/domain";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
 import { applyMigrations, openStore } from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
+import { startClaudeServices } from "./claude/services.js";
 import { createEventBus } from "./events/event-bus.js";
 import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
-import { drainSpool } from "./lifecycle/spool-drain.js";
 import { logger } from "./logging.js";
-import {
-  ensureRuntimeDir,
-  resolveDbPath,
-  resolveRuntimeDir,
-  resolveSocketPath,
-  resolveSpoolPath,
-} from "./paths.js";
+import { ensureRuntimeDir, resolveDbPath, resolveRuntimeDir, resolveSocketPath } from "./paths.js";
 import { createRequestListener } from "./routes.js";
 import { startSocketServer } from "./socket-server.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
@@ -58,8 +52,24 @@ async function main(): Promise<void> {
   if (reconciledCount > 0) {
     logger.info({ reconciledCount }, "startup: reconciled interrupted runs");
   }
-  const spoolRecords = drainSpool(resolveSpoolPath(), logger);
-  logger.info({ count: spoolRecords.length }, "startup: drained hook spool");
+
+  // ADR-0007: the bus (and the bounded buffer it publishes into) is
+  // in-process memory only, never written to the store or a file — a
+  // service restart loses it by design, and the client implements full
+  // resync for exactly that case. Created here, ahead of the Claude block,
+  // because the startup spool drain already publishes session events.
+  const eventBus = createEventBus();
+
+  // Claude (Phase 5): the session pipeline, then the spool drain it runs
+  // before returning. After recovery and before the socket opens (D-22):
+  // recovery, then the drain, then the socket. A drained ending applies to
+  // a recovered-stale Run; recovery itself never promotes to completed.
+  const claudeServices = await startClaudeServices({
+    store,
+    bus: eventBus,
+    logger,
+    env: process.env,
+  });
 
   // The managed vault root is the only approved path root this phase
   // introduces, and the allowlist is in-memory — so it has to be rebuilt
@@ -75,11 +85,6 @@ async function main(): Promise<void> {
   const secretStore = createSecurityCliSecretStore();
   const installSecret = await getInstallSecret(secretStore);
 
-  // ADR-0007: the bus (and the bounded buffer it publishes into) is
-  // in-process memory only, never written to the store or a file — a
-  // service restart loses it by design, and the client implements full
-  // resync for exactly that case.
-  const eventBus = createEventBus();
   const heartbeatIntervalMs = Number(
     process.env.CCC_HEARTBEAT_INTERVAL_MS ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
   );
@@ -91,6 +96,7 @@ async function main(): Promise<void> {
     store,
     getSecret: () => installSecret,
     eventBus,
+    claude: claudeServices.routeDeps,
   });
   const server = await startSocketServer({ socketPath, requestListener });
 
@@ -98,6 +104,7 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     clearInterval(heartbeatTimer);
+    claudeServices.stop();
     server.close(() => {
       store.close();
       if (existsSync(socketPath)) {
