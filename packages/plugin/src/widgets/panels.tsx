@@ -1,5 +1,8 @@
 import type { GithubTarget, LaunchersSummary, ProjectGitState } from "@ccc/domain";
 import type { VNode } from "preact";
+import { projectsSnapshot } from "../projects/projects-state.js";
+import type { DestinationId } from "../view/destinations.js";
+import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { ListBody } from "./list-body.js";
 
@@ -295,21 +298,56 @@ export function projectMetaSegments(
   return segments;
 }
 
+/** A pinned row's primary line carries a hidden "Pinned: " prefix plus a visible "★" (UI-SPEC S1, Glyph Vocabulary). */
+function projectPrimaryBadge(project: ProjectRow): { hiddenLabel: string; glyph: string } | null {
+  return project.pinned ? { hiddenLabel: "Pinned: ", glyph: "★" } : null;
+}
+
 function ProjectShortcutsBody({
   data,
   size,
   onNavigate,
 }: WidgetBodyProps<ProjectShortcutsData>): VNode | null {
   return (
-    <ListBody<ProjectRow>
-      rows={data.projects}
-      size={size}
-      onMore={onNavigate}
-      keyOf={(project) => project.id}
-      renderPrimary={(project) => project.name}
-      renderMeta={projectMetaLine}
-      moreDestination="projects"
-    />
+    <>
+      {launchersNeedSetup(data.launchers) && <SetupCallout onNavigate={onNavigate} />}
+      <ListBody<ProjectRow>
+        rows={data.projects}
+        size={size}
+        onMore={onNavigate}
+        keyOf={(project) => project.id}
+        renderPrimary={(project) => project.name}
+        renderMeta={projectMetaLine}
+        renderMetaSegments={projectMetaSegments}
+        primaryBadge={projectPrimaryBadge}
+        moreDestination="projects"
+      />
+    </>
+  );
+}
+
+/** S1's empty copy (UI-SPEC "Copywriting Contract", RR-27): the frame's own `Nothing here yet` precedes this. */
+function ProjectShortcutsEmpty({
+  onNavigate,
+}: {
+  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+}): VNode {
+  return (
+    <>
+      <p className="ccc-state-body">Register a project in Projects to see it here.</p>
+      <button
+        type="button"
+        className="ccc-connect-button"
+        onClick={() => onNavigate?.("projects")}
+      >
+        Go to Projects
+      </button>
+      {/* The empty renderer receives no `data`, so the setup state reads the
+          live signal directly (RR-27, S10). */}
+      {launchersNeedSetup(projectsSnapshot.value?.launchers) && (
+        <SetupCallout onNavigate={onNavigate} />
+      )}
+    </>
   );
 }
 
@@ -328,7 +366,7 @@ export const projectShortcutsWidget: WidgetDefinition<ProjectShortcutsData> = {
   featureFlag: "widget.project-shortcuts",
   quickActions: [],
   renderBody: ProjectShortcutsBody,
-  renderEmpty: () => <p className="ccc-state-body">No projects are registered yet.</p>,
+  renderEmpty: ProjectShortcutsEmpty,
 };
 
 // ---------------------------------------------------------------------------
