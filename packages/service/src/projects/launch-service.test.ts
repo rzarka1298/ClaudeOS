@@ -1,6 +1,7 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   LaunchGuard,
   LaunchGuardInput,
@@ -149,12 +150,30 @@ describe("after a successful launch (D-42, D-11)", () => {
 
 describe("project resolution goes through the lookup (D-06)", () => {
   it("a lookup failure is returned as the launch error, with no spawn", async () => {
-    const lookup: ProjectLookup = { resolve: () => ({ error: "project-moved" }) };
+    const lookup: ProjectLookup = { resolve: () => Promise.resolve({ error: "project-moved" }) };
     await expect(service({ lookup }).launch({ projectId, action: "finder" })).resolves.toEqual({
       ok: false,
       error: "project-moved",
     });
     expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("a lookup stalled on the filesystem is cut off by the cap as timeout, spawning nothing", async () => {
+    const lookup: ProjectLookup = { resolve: () => new Promise<never>(() => {}) };
+    const started = performance.now();
+    await expect(
+      service({ lookup, capMs: 50 }).launch({ projectId, action: "finder" }),
+    ).resolves.toEqual({ ok: false, error: "timeout" });
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("uses no synchronous filesystem call on the launch path", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "launch-service.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/\b(access|stat|realpath|readFile|exists)Sync\b/);
   });
 
   it("logs only { projectId, action, kind }", async () => {
