@@ -1,5 +1,5 @@
 import { EMPTY_PROJECTS_SNAPSHOT, newProjectId, type ProjectId, type ProjectView } from "@ccc/domain";
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectActionOutcome, ProjectsActions } from "../projects/projects-actions.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
@@ -126,5 +126,151 @@ describe("ProjectsView (Task 1)", () => {
     await vi.waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
     expect(register).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(button);
+  });
+});
+
+describe("ProjectsView (Task 3: loading/empty/error states, disconnected banner, removal focus)", () => {
+  it("shows three skeleton cards with hidden 'Loading projects' while connecting and no snapshot has arrived yet", () => {
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "connecting" }}
+        now={Date.now()}
+      />,
+    );
+
+    expect(screen.getByText("Loading projects")).toBeTruthy();
+    expect(document.querySelectorAll('[aria-busy="true"] .ccc-card')).toHaveLength(3);
+    // The toolbar (Register a project) is live immediately, even while loading.
+    expect(screen.getByRole("button", { name: "Register a project" })).toBeTruthy();
+  });
+
+  it("shows the load-error copy when no snapshot ever arrives and the connection is not merely connecting", () => {
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "disconnected", reason: "connect ECONNREFUSED" }}
+        now={Date.now()}
+      />,
+    );
+
+    expect(screen.getByText(/Couldn't load projects\./)).toBeTruthy();
+    expect(
+      screen.getByText(/Check the service in Settings → Diagnostics, then refresh\./),
+    ).toBeTruthy();
+  });
+
+  it("shows the empty-state copy once a snapshot arrives with no projects", () => {
+    projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
+
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { level: 3, name: "Registered projects" })).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Register a folder to open it in Antigravity, Claude Code, Finder or GitHub from here.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("shows the disconnected banner while a last-good snapshot exists and the connection drops", () => {
+    const projectId = newProjectId();
+    projectsSnapshot.value = {
+      projects: [view({ projectId })],
+      launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+    };
+
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "disconnected", reason: "connect ECONNREFUSED" }}
+        now={Date.now()}
+      />,
+    );
+
+    expect(screen.getByText("Service disconnected")).toBeTruthy();
+    // The last-good card still renders — disconnected never means empty.
+    expect(screen.getByRole("article")).toBeTruthy();
+  });
+
+  it("after removing the only project, focus moves to Register a project", async () => {
+    const projectId = newProjectId();
+    projectsSnapshot.value = {
+      projects: [view({ projectId })],
+      launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+    };
+    const remove = vi.fn().mockResolvedValue({ kind: "ok" });
+    const actions: ProjectsActions = { ...noopActions(), remove };
+
+    render(
+      <ProjectsView
+        actions={actions}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove from projects" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove project" }));
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(projectId));
+
+    // The removal delta lands, leaving no rows.
+    projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
+
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Register a project" })),
+    );
+  });
+
+  it("after removing a project with another still registered, focus moves to the next card's heading", async () => {
+    const removedId = newProjectId();
+    const survivorId = newProjectId();
+    projectsSnapshot.value = {
+      projects: [
+        view({ projectId: removedId, displayName: "removed-project" }),
+        view({ projectId: survivorId, displayName: "survivor-project" }),
+      ],
+      launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+    };
+    const remove = vi.fn().mockResolvedValue({ kind: "ok" });
+    const actions: ProjectsActions = { ...noopActions(), remove };
+
+    render(
+      <ProjectsView
+        actions={actions}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+
+    const removedCard = screen.getByRole("heading", { level: 4, name: "removed-project" }).closest(
+      "article",
+    ) as HTMLElement;
+    fireEvent.click(within(removedCard).getByRole("button", { name: "Remove from projects" }));
+    fireEvent.click(within(removedCard).getByRole("button", { name: "Remove project" }));
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(removedId));
+
+    projectsSnapshot.value = {
+      projects: [view({ projectId: survivorId, displayName: "survivor-project" })],
+      launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+    };
+
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { level: 4, name: "survivor-project" }),
+      ),
+    );
   });
 });
