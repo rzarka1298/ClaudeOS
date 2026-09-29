@@ -495,9 +495,7 @@ describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
     isEmpty: false,
   };
 
-  function bodyWidget(
-    overrides: Partial<WidgetDefinition<string>> = {},
-  ): WidgetDefinition<string> {
+  function bodyWidget(overrides: Partial<WidgetDefinition<string>> = {}): WidgetDefinition<string> {
     return {
       id: "body-widget",
       title: "Body widget",
