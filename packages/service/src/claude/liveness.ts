@@ -1,7 +1,13 @@
+import { createHash } from "node:crypto";
 import type { RunId, SessionRun } from "@ccc/domain";
-import { listRevivableRuns } from "@ccc/operational-store";
+import {
+  listRegisteredProjects,
+  listRevivableRuns,
+  listSessionRunsForView,
+} from "@ccc/operational-store";
 import type Database from "better-sqlite3";
 import type { Logger } from "pino";
+import type { AttributeFn } from "./attribution.js";
 import type { ClaudePipeline } from "./pipeline.js";
 import type { ProcessFacts } from "./process-facts.js";
 
@@ -20,6 +26,15 @@ import type { ProcessFacts } from "./process-facts.js";
  * - A pid alive with exactly the stored `lstart` applies `pid-alive` to a
  *   stale Run (revival). An unknown stored or read `lstart` proves nothing
  *   either way, so it neither revives nor ends a Run.
+ * - A queued or starting Run with no SessionStart after the start timeout
+ *   applies `start-timeout`; a PID-less running Run idle past the
+ *   inactivity threshold applies `inactivity-timeout` (it has no process to
+ *   check). Both make the Run `stale`.
+ * - When the registered project set changes (a fingerprint of every
+ *   project's id and root, checked each sweep), every unclassified Run that
+ *   is non-terminal or ended within 7 days is attributed again, and a Run
+ *   that now matches is re-published through `pipeline.reattribute`
+ *   (metadata only, revision + 1, D-23).
  *
  * Nothing here ever infers an ending (SESS-06). `pid-gone` makes a Run
  * `stale` — unknown — and the reducer writes `cancelled` only when a
@@ -74,19 +89,25 @@ export interface SweepReport {
   readonly revived: number;
   /** Runs seen gone whose grace has not ended yet. */
   readonly pendingGone: number;
+  /** `start-timeout` evidence applied this sweep. */
+  readonly startTimeouts: number;
+  /** `inactivity-timeout` evidence applied this sweep. */
+  readonly inactivityTimeouts: number;
+  /** Unclassified Runs given a project after a project-set change. */
+  readonly reattributed: number;
 }
 
 export interface LivenessSweeperDeps {
   readonly db: Database.Database;
-  readonly pipeline: Pick<ClaudePipeline, "apply">;
+  readonly pipeline: Pick<ClaudePipeline, "apply" | "reattribute">;
   readonly processFacts: Pick<ProcessFacts, "isAlive" | "readStartTimes">;
   readonly logger: Logger;
   readonly now: () => Date;
   readonly config: LivenessConfig;
   /** Schedules `fn` after `ms`; returns a cancel. Defaults to an unref'd `setTimeout`. */
   readonly schedule?: (fn: () => void, ms: number) => () => void;
-  /** RED scaffold (05-11 Task 3). */
-  readonly attribute?: unknown;
+  /** Attribution for re-evaluating unclassified Runs; absent, project changes are not watched. */
+  readonly attribute?: AttributeFn;
 }
 
 export interface LivenessSweeper {
@@ -115,6 +136,19 @@ function identityOf(
   return lstart === run.pidStartedAt ? "same" : "gone";
 }
 
+/** How far back a terminal Run is still re-attributed (the views' 7-day window, UI-SPEC R-08). */
+const REATTRIBUTE_ENDED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+const START_PENDING_STATES: ReadonlySet<SessionRun["state"]> = new Set<SessionRun["state"]>([
+  "queued",
+  "starting",
+]);
+
+const PIDLESS_ACTIVE_STATES: ReadonlySet<SessionRun["state"]> = new Set<SessionRun["state"]>([
+  "running",
+  "waiting-for-approval",
+]);
+
 function defaultSchedule(fn: () => void, ms: number): () => void {
   const timer = setTimeout(fn, ms);
   timer.unref();
@@ -131,6 +165,8 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
   let cancelTimer: (() => void) | null = null;
   /** Serializes sweeps: a timer sweep and a `sweepNow` never overlap. */
   let tail: Promise<unknown> = Promise.resolve();
+  /** The project set last seen; undefined before the first sweep sets the baseline. */
+  let projectFingerprint: string | undefined;
 
   function serialized<T>(work: () => Promise<T>): Promise<T> {
     const next = tail.then(work);
@@ -141,12 +177,76 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
     return next;
   }
 
+  /** A hash of every registered project's id and root, in a stable order. Never logged. */
+  function fingerprintProjects(): string {
+    const pairs = listRegisteredProjects(db)
+      .map((project) => `${project.projectId}\u0000${project.root}`)
+      .sort();
+    return createHash("sha256").update(pairs.join("\u0001")).digest("hex");
+  }
+
+  /** Re-attributes unclassified live and 7-day-recent Runs; returns how many gained a project. */
+  async function reattributeUnclassified(attribute: AttributeFn, nowMs: number): Promise<number> {
+    const endedSince = new Date(nowMs - REATTRIBUTE_ENDED_WINDOW_MS).toISOString();
+    const unclassified = listSessionRunsForView(db, { endedSince }).filter(
+      (run) => run.projectId === null && run.cwd !== null,
+    );
+    let count = 0;
+    for (const run of unclassified) {
+      try {
+        const attribution = await attribute({
+          cwd: run.cwd,
+          claudeSessionId: run.claudeSessionId,
+        });
+        if (attribution.projectId === null) continue;
+        if (await pipeline.reattribute(run.runId, attribution)) count += 1;
+      } catch (err: unknown) {
+        logger.warn({ runId: run.runId, err }, "re-attribution failed; run left unclassified");
+      }
+    }
+    return count;
+  }
+
+  /** Checks the project set; on a change, re-attributes. The first sweep only sets the baseline. */
+  async function watchProjects(nowMs: number): Promise<number> {
+    const attribute = deps.attribute;
+    if (attribute === undefined) return 0;
+    const fingerprint = fingerprintProjects();
+    const previous = projectFingerprint;
+    projectFingerprint = fingerprint;
+    if (previous === undefined || previous === fingerprint) return 0;
+    return reattributeUnclassified(attribute, nowMs);
+  }
+
   async function sweep(): Promise<SweepReport> {
     const nowMs = deps.now().getTime();
     const observedAt = new Date(nowMs).toISOString();
     const candidates = listRevivableRuns(db, observedAt);
+
+    // Runs with no process to check: a launch that never started, or a
+    // PID-less session gone quiet (D-19).
+    let startTimeouts = 0;
+    let inactivityTimeouts = 0;
+    for (const run of candidates) {
+      if (
+        START_PENDING_STATES.has(run.state) &&
+        nowMs - Date.parse(run.startedAt) >= config.startTimeoutMs
+      ) {
+        await pipeline.apply({ kind: "start-timeout", runId: run.runId, observedAt });
+        startTimeouts += 1;
+      } else if (
+        run.pid === null &&
+        PIDLESS_ACTIVE_STATES.has(run.state) &&
+        nowMs - Date.parse(run.lastActivityAt ?? run.startedAt) >= config.pidlessInactivityMs
+      ) {
+        await pipeline.apply({ kind: "inactivity-timeout", runId: run.runId, observedAt });
+        inactivityTimeouts += 1;
+      }
+    }
+
     const withPid = candidates.filter(
-      (run): run is SessionRun & { pid: number } => run.pid !== null,
+      (run): run is SessionRun & { pid: number } =>
+        run.pid !== null && !START_PENDING_STATES.has(run.state),
     );
 
     // One kill(0) pass, then one batched ps for the pids that answered.
@@ -198,13 +298,20 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
       if (!seen.has(runId)) firstSeenGone.delete(runId);
     }
 
+    const reattributed = await watchProjects(nowMs);
+
     const report: SweepReport = {
       checked: withPid.length,
       gone,
       revived,
       pendingGone: firstSeenGone.size,
+      startTimeouts,
+      inactivityTimeouts,
+      reattributed,
     };
-    if (gone > 0 || revived > 0) logger.info(report, "liveness sweep applied evidence");
+    if (gone + revived + startTimeouts + inactivityTimeouts + reattributed > 0) {
+      logger.info(report, "liveness sweep applied evidence");
+    }
     return report;
   }
 

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { SessionFacts } from "@ccc/collectors";
-import type { KnownHookEvent } from "@ccc/domain";
+import type { KnownHookEvent, LaunchSource } from "@ccc/domain";
 import type { Logger } from "pino";
 import type { SessionFactsProvider } from "./pipeline.js";
 import { assertTranscriptPath, TranscriptPathRefusedError } from "./transcript-path.js";
@@ -168,6 +168,14 @@ export interface SessionFactsProviderOptions {
     readonly cwd: string | null;
     readonly claudeSessionId: string | null;
   }) => Promise<{ readonly projectId: string | null; readonly worktreeRoot: string | null }>;
+  /**
+   * The SessionStart launch-source classifier (05-11 `classifyLaunchSource`,
+   * bound to the process facts). Absent, only `dashboard` is recognised.
+   */
+  readonly classifyLaunchSource?: (input: {
+    readonly env: Readonly<Record<string, string | undefined>> | undefined;
+    readonly pid: number | null;
+  }) => Promise<LaunchSource | null>;
 }
 
 const START_EVENT: KnownHookEvent = "SessionStart";
@@ -187,7 +195,9 @@ const NO_PROJECT: ProjectFacts = { projectId: null, worktreeRoot: null };
  * SessionStart it reads the pid's `lstart` (the PID-reuse identity); on any
  * record it keeps `transcript_path` only when it resolves under the Claude
  * projects root. `launchSource` is `dashboard` only when the hook forwarded
- * `CCC_LAUNCH_SOURCE=dashboard`.
+ * `CCC_LAUNCH_SOURCE=dashboard`; at SessionStart the injected classifier
+ * decides terminal or external from the Claude process's tty and ancestry
+ * (PR-03). Other records report no launch source, which keeps the Run's.
  *
  * Project attribution (05-11) runs for every SessionStart, and for any other
  * record whose (session, cwd) pair this provider has not attributed yet — a
@@ -230,10 +240,20 @@ export function createSessionFactsProvider(
   return {
     async factsFor(record) {
       let pidStartedAt: string | null = null;
+      let launchSource: LaunchSource | null =
+        record.env?.CCC_LAUNCH_SOURCE === "dashboard" ? "dashboard" : null;
       const rawPid = record.env?.CLAUDE_PID;
-      if (record.hook_event_name === START_EVENT && rawPid !== undefined) {
-        const pid = Number.parseInt(rawPid, 10);
+      const parsedPid = rawPid === undefined ? Number.NaN : Number.parseInt(rawPid, 10);
+      const pid = Number.isFinite(parsedPid) ? parsedPid : null;
+      if (record.hook_event_name === START_EVENT && pid !== null) {
         pidStartedAt = (await processFacts.readStartTimes([pid])).get(pid) ?? null;
+      }
+      if (record.hook_event_name === START_EVENT && options.classifyLaunchSource !== undefined) {
+        try {
+          launchSource = await options.classifyLaunchSource({ env: record.env, pid });
+        } catch {
+          // Not reported: never a guess (PR-03).
+        }
       }
 
       let transcriptPath: string | null = null;
@@ -250,7 +270,7 @@ export function createSessionFactsProvider(
       const project = await projectFacts(record);
       const facts: SessionFacts = {
         pidStartedAt,
-        launchSource: record.env?.CCC_LAUNCH_SOURCE === "dashboard" ? "dashboard" : null,
+        launchSource,
         projectId: project.projectId,
         worktreeRoot: project.worktreeRoot,
         transcriptPath,

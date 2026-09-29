@@ -12,6 +12,7 @@ import {
 } from "../paths.js";
 import { createAttribution } from "./attribution.js";
 import { runGit } from "./git-readonly.js";
+import { classifyLaunchSource } from "./launch-source.js";
 import { createLivenessSweeper, type LivenessSweeper, livenessConfigFromEnv } from "./liveness.js";
 import { type ClaudePipeline, createClaudePipeline } from "./pipeline.js";
 import { createProcessFacts, createSessionFactsProvider, nodeExecFile } from "./process-facts.js";
@@ -52,11 +53,13 @@ function pollInterval(env: NodeJS.ProcessEnv): number {
 }
 
 /**
- * The Claude composition (05-08): process facts, the session facts
- * provider, the pipeline and the spool poller, built once in `main.ts`.
- * It drains the spool before returning, so `main.ts` calling it after
- * restart recovery and before `startSocketServer` keeps the D-22 order:
- * recovery, then the drain, then the socket. The Claude config dir is read
+ * The Claude composition (05-08, 05-11): process facts, project
+ * attribution through the read-only git gateway, the launch-source
+ * classifier, the session facts provider, the pipeline, the spool poller
+ * and the liveness sweeper, built once in `main.ts`. It drains the spool
+ * and runs one revival sweep before returning, so `main.ts` calling it
+ * after restart recovery and before `startSocketServer` keeps the D-22
+ * order: recovery, then the drain, then the revival sweep, then the socket. The Claude config dir is read
  * only (its `projects/` is the transcript root, PR-28); it is never a
  * write root.
  */
@@ -83,6 +86,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     claudeProjectsRoot: join(resolveClaudeConfigDir(), "projects"),
     logger,
     attribute,
+    classifyLaunchSource: (input) => classifyLaunchSource(input, processFacts),
   });
   const pipeline = createClaudePipeline({
     db: store.db,
@@ -108,6 +112,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     logger,
     now: () => new Date(),
     config: livenessConfigFromEnv(env),
+    attribute,
   });
 
   const drained = await poller.drainNow();

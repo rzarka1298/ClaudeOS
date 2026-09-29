@@ -81,7 +81,12 @@ export interface ClaudePipeline {
   ingest(input: unknown, via: "socket" | "spool"): Promise<IngestOutcome>;
   /** Applies liveness, launch or terminate evidence (05-11, 05-14), queued with ingest. */
   apply(evidence: Evidence): Promise<void>;
-  /** RED scaffold (05-11 Task 3). */
+  /**
+   * Metadata-only re-attribution (05-11, D-23): writes the Run's project
+   * facts at revision + 1 and publishes it once, never touching its state.
+   * A null fact never clears a known one. Queued with ingest and apply;
+   * resolves false when the Run is unknown or nothing changed.
+   */
   reattribute(runId: RunId, attribution: RunAttribution): Promise<boolean>;
   /** Synchronous: non-terminal Runs plus terminal Runs that ended within 7 days. */
   listSessionViews(): SessionView[];
@@ -377,7 +382,16 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
       enqueue(() => {
         applyNow(evidence);
       }),
-    reattribute: async () => false,
+    reattribute: (runId, attribution) =>
+      enqueue(() => {
+        const run = index.byRunId(runId);
+        if (run === null) return false;
+        const projectId = attribution.projectId ?? run.projectId;
+        const worktreeRoot = attribution.worktreeRoot ?? run.worktreeRoot;
+        if (projectId === run.projectId && worktreeRoot === run.worktreeRoot) return false;
+        writeAndPublish([{ ...run, projectId, worktreeRoot, revision: run.revision + 1 }]);
+        return true;
+      }),
     listSessionViews() {
       const endedSince = new Date(deps.now().getTime() - VIEW_ENDED_WINDOW_MS).toISOString();
       const names = projectNames();
