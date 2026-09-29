@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ServiceEvent, SnapshotResponse } from "@ccc/domain";
+import type { ServiceEvent, SessionView, SnapshotResponse } from "@ccc/domain";
 import { beforeEach, describe, expect, it } from "vitest";
 import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./claude-events.js";
 import {
   applySessionUpserted,
   claudeIntegration,
   lastSessionEventAt,
+  orderSessionRows,
   sessionsById,
 } from "./session-signals.js";
 
@@ -210,5 +211,84 @@ describe("applyClaudeServiceEvent: the one dispatch point (PATTERNS fact 4)", ()
     };
     expect(() => applyClaudeServiceEvent(event)).not.toThrow();
     expect(sessionsById.value.size).toBe(0);
+  });
+});
+
+/**
+ * Task 2: row ordering and the 60-minute terminal window (Test 1, UI-SPEC
+ * "Row list", R-07/R-25).
+ */
+
+/** `baseSession()`'s object as a typed {@link SessionView} (schema-valid shape). */
+function typedSession(overrides: Record<string, unknown> = {}): SessionView {
+  return baseSession(overrides) as SessionView;
+}
+
+describe("orderSessionRows: fixed state order and the 60-minute terminal window (Test 1)", () => {
+  const NOW = Date.parse("2026-09-25T12:00:00.000Z");
+
+  it("orders waiting-for-approval -> running -> starting -> queued -> stale -> failed -> completed -> cancelled", () => {
+    const fiveMinAgo = "2026-09-25T11:55:00.000Z";
+    const sessions: readonly SessionView[] = [
+      typedSession({ runId: runId(8), state: "cancelled", endedAt: fiveMinAgo }),
+      typedSession({ runId: runId(7), state: "completed", endedAt: fiveMinAgo }),
+      typedSession({ runId: runId(6), state: "failed", endedAt: fiveMinAgo }),
+      typedSession({ runId: runId(5), state: "stale" }),
+      typedSession({ runId: runId(4), state: "queued" }),
+      typedSession({ runId: runId(3), state: "starting" }),
+      typedSession({ runId: runId(2), state: "running" }),
+      typedSession({ runId: runId(1), state: "waiting-for-approval" }),
+    ];
+
+    const rows = orderSessionRows(sessions, NOW);
+
+    expect(rows.map((row) => row.state)).toEqual([
+      "waiting-for-approval",
+      "running",
+      "starting",
+      "queued",
+      "stale",
+      "failed",
+      "completed",
+      "cancelled",
+    ]);
+  });
+
+  it("excludes a completed Run that ended 61 minutes ago, and includes a failed Run that ended 10 minutes ago", () => {
+    const sessions: readonly SessionView[] = [
+      typedSession({
+        runId: runId(10),
+        state: "completed",
+        endedAt: new Date(NOW - 61 * 60_000).toISOString(),
+      }),
+      typedSession({
+        runId: runId(11),
+        state: "failed",
+        endedAt: new Date(NOW - 10 * 60_000).toISOString(),
+      }),
+    ];
+
+    const rows = orderSessionRows(sessions, NOW);
+
+    expect(rows.map((row) => row.runId)).toEqual([runId(11)]);
+  });
+
+  it("orders most-recent-activity first within a state", () => {
+    const sessions: readonly SessionView[] = [
+      typedSession({ runId: runId(1), state: "running", lastActivityAt: "2026-09-25T11:00:00.000Z" }),
+      typedSession({ runId: runId(2), state: "running", lastActivityAt: "2026-09-25T11:30:00.000Z" }),
+    ];
+
+    const rows = orderSessionRows(sessions, NOW);
+
+    expect(rows.map((row) => row.runId)).toEqual([runId(2), runId(1)]);
+  });
+
+  it("excludes a terminal Run with no endedAt: no invented end time (R-22)", () => {
+    const sessions: readonly SessionView[] = [
+      typedSession({ runId: runId(1), state: "failed", endedAt: null }),
+    ];
+
+    expect(orderSessionRows(sessions, NOW)).toEqual([]);
   });
 });
