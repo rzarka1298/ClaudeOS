@@ -2,12 +2,12 @@
   "$comment": "Synthetic widget data for the UI-01 prototype round (D-05). Every name here is INVENTED. This file is the single source of every string the prototypes render and, from plan 03-09, of every string a committed screenshot baseline can contain -- which is what makes PRIV-04 true by construction rather than by inspection. Timestamps are fixed, never Date.now(): the same fixture must mean the same pixels on every machine. Regenerate the browser copy with: node scripts/generate-prototype-fixtures.mjs",
   "now": "2026-09-22T12:00:00.000Z",
   "freshnessGlyphs": {
-    "live": "●",
-    "cached": "◆",
-    "stale": "▼",
-    "unavailable": "✕"
+    "live": "\u25cf",
+    "cached": "\u25c6",
+    "stale": "\u25bc",
+    "unavailable": "\u2715"
   },
-  "partialGlyph": "◐",
+  "partialGlyph": "\u25d0",
   "panels": [
     {
       "id": "service-health",
@@ -20,47 +20,93 @@
         "live": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Companion service", "status": "Connected" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Companion service",
+              "status": "Connected"
+            }
+          ],
           "data": {
             "headline": "Connected",
             "kpi": "12s",
             "kpiLabel": "Since last event",
-            "lines": ["Transport: local socket", "Last event: session.updated"]
+            "lines": [
+              "Transport: local socket",
+              "Last event: session.updated"
+            ]
           }
         },
         "stale": {
           "observedAt": "2026-09-22T09:00:00.000Z",
           "freshness": "stale",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Companion service", "status": "Last seen 3 hours ago" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Companion service",
+              "status": "Last seen 3 hours ago"
+            }
+          ],
           "data": {
             "headline": "Connected",
             "kpi": "3h",
             "kpiLabel": "Since last event",
-            "lines": ["Transport: local socket", "Last event: session.updated"]
+            "lines": [
+              "Transport: local socket",
+              "Last event: session.updated"
+            ]
           }
         },
         "empty": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Companion service", "status": "Connected, no events yet" }],
-          "data": { "headline": null, "kpi": null, "kpiLabel": null, "lines": [] }
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Companion service",
+              "status": "Connected, no events yet"
+            }
+          ],
+          "data": {
+            "headline": null,
+            "kpi": null,
+            "kpiLabel": null,
+            "lines": []
+          }
         },
         "permission-required": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Companion service", "status": "Not connected" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Companion service",
+              "status": "Not connected"
+            }
+          ],
           "capability": "service",
           "data": {}
         },
         "failure": {
           "observedAt": "2026-09-22T11:30:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Companion service", "status": "Unreachable" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Companion service",
+              "status": "Unreachable"
+            }
+          ],
           "message": "The companion service did not answer on the local socket.",
           "data": {}
         }
@@ -77,51 +123,111 @@
         "live": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
+          "partiality": {
+            "partial": false
+          },
           "sources": [
-            { "label": "Google Calendar", "status": "Connected" },
-            { "label": "Gmail", "status": "Connected" },
-            { "label": "Managed vault tasks", "status": "Connected" }
+            {
+              "label": "Google Calendar",
+              "status": "Connected"
+            },
+            {
+              "label": "Gmail",
+              "status": "Connected"
+            },
+            {
+              "label": "Managed vault tasks",
+              "status": "Connected"
+            }
           ],
           "data": {
             "kpi": "4",
             "kpiLabel": "Commitments left",
-            "nextEvent": { "time": "14:30", "title": "Tidewater design review" },
+            "nextEvent": {
+              "time": "14:30",
+              "title": "Tidewater design review"
+            },
             "dueTasks": [
-              { "title": "Draft the ingest retry policy", "due": "Today" },
-              { "title": "Reply to the Quarry maintainer thread", "due": "Overdue" }
+              {
+                "title": "Draft the ingest retry policy",
+                "due": "Today"
+              },
+              {
+                "title": "Reply to the Quarry maintainer thread",
+                "due": "Overdue"
+              }
             ],
-            "unread": { "count": "3", "summary": "3 unread worth reading, 1 needs a reply" }
+            "unread": {
+              "count": "3",
+              "summary": "3 unread worth reading, 1 needs a reply"
+            }
           }
         },
         "stale": {
           "observedAt": "2026-09-22T09:00:00.000Z",
           "freshness": "stale",
-          "partiality": { "partial": true, "missingSources": ["Gmail"] },
+          "partiality": {
+            "partial": true,
+            "missingSources": [
+              "Gmail"
+            ]
+          },
           "sources": [
-            { "label": "Google Calendar", "status": "Last synced 3 hours ago" },
-            { "label": "Gmail", "status": "Did not respond" },
-            { "label": "Managed vault tasks", "status": "Connected" }
+            {
+              "label": "Google Calendar",
+              "status": "Last synced 3 hours ago"
+            },
+            {
+              "label": "Gmail",
+              "status": "Did not respond"
+            },
+            {
+              "label": "Managed vault tasks",
+              "status": "Connected"
+            }
           ],
           "data": {
             "kpi": "4",
             "kpiLabel": "Commitments left",
-            "nextEvent": { "time": "14:30", "title": "Tidewater design review" },
+            "nextEvent": {
+              "time": "14:30",
+              "title": "Tidewater design review"
+            },
             "dueTasks": [
-              { "title": "Draft the ingest retry policy", "due": "Today" },
-              { "title": "Reply to the Quarry maintainer thread", "due": "Overdue" }
+              {
+                "title": "Draft the ingest retry policy",
+                "due": "Today"
+              },
+              {
+                "title": "Reply to the Quarry maintainer thread",
+                "due": "Overdue"
+              }
             ],
-            "unread": { "count": "3", "summary": "Unread count is from the last good sync" }
+            "unread": {
+              "count": "3",
+              "summary": "Unread count is from the last good sync"
+            }
           }
         },
         "empty": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
+          "partiality": {
+            "partial": false
+          },
           "sources": [
-            { "label": "Google Calendar", "status": "Connected, nothing scheduled" },
-            { "label": "Gmail", "status": "Connected, nothing unread" },
-            { "label": "Managed vault tasks", "status": "Connected, nothing due" }
+            {
+              "label": "Google Calendar",
+              "status": "Connected, nothing scheduled"
+            },
+            {
+              "label": "Gmail",
+              "status": "Connected, nothing unread"
+            },
+            {
+              "label": "Managed vault tasks",
+              "status": "Connected, nothing due"
+            }
           ],
           "data": {
             "kpi": null,
@@ -134,10 +240,18 @@
         "permission-required": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
+          "partiality": {
+            "partial": false
+          },
           "sources": [
-            { "label": "Google Calendar", "status": "Not connected" },
-            { "label": "Gmail", "status": "Not connected" }
+            {
+              "label": "Google Calendar",
+              "status": "Not connected"
+            },
+            {
+              "label": "Gmail",
+              "status": "Not connected"
+            }
           ],
           "capability": "google",
           "data": {}
@@ -145,10 +259,18 @@
         "failure": {
           "observedAt": "2026-09-22T11:30:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
+          "partiality": {
+            "partial": false
+          },
           "sources": [
-            { "label": "Google Calendar", "status": "Error" },
-            { "label": "Gmail", "status": "Error" }
+            {
+              "label": "Google Calendar",
+              "status": "Error"
+            },
+            {
+              "label": "Gmail",
+              "status": "Error"
+            }
           ],
           "message": "The Google Workspace adapter returned an error for every request.",
           "data": {}
@@ -166,8 +288,15 @@
         "live": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Claude Code session events", "status": "Connected" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Claude Code session events",
+              "status": "Connected"
+            }
+          ],
           "data": {
             "kpi": "3",
             "kpiLabel": "Running now",
@@ -233,8 +362,15 @@
         "stale": {
           "observedAt": "2026-09-22T09:00:00.000Z",
           "freshness": "stale",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Claude Code session events", "status": "No event in 3 hours" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Claude Code session events",
+              "status": "No event in 3 hours"
+            }
+          ],
           "data": {
             "kpi": "3",
             "kpiLabel": "Running at last contact",
@@ -278,23 +414,48 @@
         "empty": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Claude Code session events", "status": "Connected, no sessions" }],
-          "data": { "kpi": null, "kpiLabel": null, "rows": [] }
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Claude Code session events",
+              "status": "Connected, no sessions"
+            }
+          ],
+          "data": {
+            "kpi": null,
+            "kpiLabel": null,
+            "rows": []
+          }
         },
         "permission-required": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Claude Code hooks", "status": "Not connected" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Claude Code hooks",
+              "status": "Not connected"
+            }
+          ],
           "capability": "claude-hooks",
           "data": {}
         },
         "failure": {
           "observedAt": "2026-09-22T11:30:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Claude Code hooks", "status": "Error" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Claude Code hooks",
+              "status": "Error"
+            }
+          ],
           "message": "The session collector stopped reporting and did not restart.",
           "data": {}
         }
@@ -311,10 +472,18 @@
         "live": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
+          "partiality": {
+            "partial": false
+          },
           "sources": [
-            { "label": "Registered projects", "status": "Connected" },
-            { "label": "Local Git", "status": "Connected" }
+            {
+              "label": "Registered projects",
+              "status": "Connected"
+            },
+            {
+              "label": "Local Git",
+              "status": "Connected"
+            }
           ],
           "data": {
             "kpi": "3",
@@ -347,11 +516,25 @@
         "stale": {
           "observedAt": "2026-09-22T09:00:00.000Z",
           "freshness": "stale",
-          "partiality": { "partial": true, "missingSources": ["GitHub"] },
+          "partiality": {
+            "partial": true,
+            "missingSources": [
+              "GitHub"
+            ]
+          },
           "sources": [
-            { "label": "Registered projects", "status": "Connected" },
-            { "label": "Local Git", "status": "Last read 3 hours ago" },
-            { "label": "GitHub", "status": "Did not respond" }
+            {
+              "label": "Registered projects",
+              "status": "Connected"
+            },
+            {
+              "label": "Local Git",
+              "status": "Last read 3 hours ago"
+            },
+            {
+              "label": "GitHub",
+              "status": "Did not respond"
+            }
           ],
           "data": {
             "kpi": "3",
@@ -384,23 +567,48 @@
         "empty": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Registered projects", "status": "Connected, none registered" }],
-          "data": { "kpi": null, "kpiLabel": null, "rows": [] }
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Registered projects",
+              "status": "Connected, none registered"
+            }
+          ],
+          "data": {
+            "kpi": null,
+            "kpiLabel": null,
+            "rows": []
+          }
         },
         "permission-required": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Registered projects", "status": "Not connected" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Registered projects",
+              "status": "Not connected"
+            }
+          ],
           "capability": "projects",
           "data": {}
         },
         "failure": {
           "observedAt": "2026-09-22T11:30:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Local Git", "status": "Error" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Local Git",
+              "status": "Error"
+            }
+          ],
           "message": "Reading the registered project list failed.",
           "data": {}
         }
@@ -417,80 +625,704 @@
         "live": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": true, "missingSources": ["Account capacity"] },
+          "partiality": {
+            "partial": true,
+            "missingSources": [
+              "Local transcript analysis",
+              "Claude Code estimates and list prices"
+            ]
+          },
           "sources": [
-            { "label": "Claude Code telemetry", "status": "Connected" },
-            { "label": "Account capacity", "status": "Unavailable" }
+            {
+              "label": "Claude Code status line",
+              "status": "Connected"
+            },
+            {
+              "label": "Local transcript analysis",
+              "status": "Partial"
+            },
+            {
+              "label": "Claude Code estimates and list prices",
+              "status": "Partial"
+            }
           ],
           "data": {
-            "kpi": "1.84M",
-            "kpiLabel": "Tokens this week",
-            "capacityNote": "Account capacity unavailable",
-            "bars": [
-              { "label": "Session", "pct": 38, "valueText": "312K tokens" },
-              { "label": "Today", "pct": 61, "valueText": "740K tokens" },
-              { "label": "This week", "pct": 47, "valueText": "1.84M tokens" }
-            ],
-            "tokens": { "input": "1.21M in", "output": "430K out", "cache": "198K cached" },
-            "estimate": {
-              "label": "Estimated API-equivalent cost (not billed)",
-              "value": "$18.40"
+            "summary": {
+              "capacity": {
+                "kind": "available",
+                "windows": [
+                  {
+                    "window": "five-hour",
+                    "usedPercent": 62,
+                    "resetsAt": "2026-09-22T16:40:00.000Z"
+                  },
+                  {
+                    "window": "seven-day",
+                    "usedPercent": 18,
+                    "resetsAt": "2026-09-29T00:00:00.000Z"
+                  }
+                ],
+                "observedAt": "2026-09-22T11:58:00.000Z",
+                "source": "claude-code-status-line",
+                "freshness": "live",
+                "partiality": {
+                  "partial": false
+                }
+              },
+              "ranges": {
+                "today": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "today",
+                    "bounds": {
+                      "start": "2026-09-22T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 1210000,
+                      "output": 430000,
+                      "cacheWrite": 120000,
+                      "cacheRead": 198000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 1210000,
+                          "output": 430000,
+                          "cacheWrite": 120000,
+                          "cacheRead": 198000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 1,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "today",
+                    "bounds": {
+                      "start": "2026-09-22T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 18.4,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                },
+                "last-7-days": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "last-7-days",
+                    "bounds": {
+                      "start": "2026-09-16T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 4100000,
+                      "output": 1500000,
+                      "cacheWrite": 400000,
+                      "cacheRead": 700000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 4100000,
+                          "output": 1500000,
+                          "cacheWrite": 400000,
+                          "cacheRead": 700000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 1,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "last-7-days",
+                    "bounds": {
+                      "start": "2026-09-16T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 64.05,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                },
+                "this-month": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "this-month",
+                    "bounds": {
+                      "start": "2026-09-01T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 12000000,
+                      "output": 4200000,
+                      "cacheWrite": 900000,
+                      "cacheRead": 1600000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 12000000,
+                          "output": 4200000,
+                          "cacheWrite": 900000,
+                          "cacheRead": 1600000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 14,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "this-month",
+                    "bounds": {
+                      "start": "2026-09-01T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 140.77,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                }
+              },
+              "analysis": {
+                "enabled": true,
+                "firstScanPending": false
+              },
+              "observedAt": "2026-09-22T11:58:00.000Z"
             }
           }
         },
         "stale": {
           "observedAt": "2026-09-22T09:00:00.000Z",
           "freshness": "stale",
-          "partiality": { "partial": true, "missingSources": ["Account capacity"] },
+          "partiality": {
+            "partial": true,
+            "missingSources": [
+              "Local transcript analysis",
+              "Claude Code estimates and list prices"
+            ]
+          },
           "sources": [
-            { "label": "Claude Code telemetry", "status": "Last read 3 hours ago" },
-            { "label": "Account capacity", "status": "Unavailable" }
+            {
+              "label": "Claude Code status line",
+              "status": "Connected"
+            },
+            {
+              "label": "Local transcript analysis",
+              "status": "Last read 3 hours ago"
+            },
+            {
+              "label": "Claude Code estimates and list prices",
+              "status": "Last read 3 hours ago"
+            }
           ],
           "data": {
-            "kpi": "1.62M",
-            "kpiLabel": "Tokens this week",
-            "capacityNote": "Account capacity unavailable",
-            "bars": [
-              { "label": "Session", "pct": 30, "valueText": "248K tokens" },
-              { "label": "Today", "pct": 52, "valueText": "615K tokens" },
-              { "label": "This week", "pct": 41, "valueText": "1.62M tokens" }
-            ],
-            "tokens": { "input": "1.06M in", "output": "381K out", "cache": "174K cached" },
-            "estimate": {
-              "label": "Estimated API-equivalent cost (not billed)",
-              "value": "$16.05"
+            "summary": {
+              "capacity": {
+                "kind": "available",
+                "windows": [
+                  {
+                    "window": "five-hour",
+                    "usedPercent": 30,
+                    "resetsAt": "2026-09-22T16:40:00.000Z"
+                  },
+                  {
+                    "window": "seven-day",
+                    "usedPercent": 12,
+                    "resetsAt": "2026-09-29T00:00:00.000Z"
+                  }
+                ],
+                "observedAt": "2026-09-22T09:00:00.000Z",
+                "source": "claude-code-status-line",
+                "freshness": "stale",
+                "partiality": {
+                  "partial": false
+                }
+              },
+              "ranges": {
+                "today": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "today",
+                    "bounds": {
+                      "start": "2026-09-22T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 1060000,
+                      "output": 381000,
+                      "cacheWrite": 100000,
+                      "cacheRead": 174000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 1210000,
+                          "output": 430000,
+                          "cacheWrite": 120000,
+                          "cacheRead": 198000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T09:00:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "stale",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 1,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "today",
+                    "bounds": {
+                      "start": "2026-09-22T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 16.05,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T09:00:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "stale",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                },
+                "last-7-days": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "last-7-days",
+                    "bounds": {
+                      "start": "2026-09-16T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 4100000,
+                      "output": 1500000,
+                      "cacheWrite": 400000,
+                      "cacheRead": 700000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 4100000,
+                          "output": 1500000,
+                          "cacheWrite": 400000,
+                          "cacheRead": 700000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 1,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "last-7-days",
+                    "bounds": {
+                      "start": "2026-09-16T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 64.05,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                },
+                "this-month": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "this-month",
+                    "bounds": {
+                      "start": "2026-09-01T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 12000000,
+                      "output": 4200000,
+                      "cacheWrite": 900000,
+                      "cacheRead": 1600000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 12000000,
+                          "output": 4200000,
+                          "cacheWrite": 900000,
+                          "cacheRead": 1600000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 14,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "this-month",
+                    "bounds": {
+                      "start": "2026-09-01T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 140.77,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                }
+              },
+              "analysis": {
+                "enabled": true,
+                "firstScanPending": false
+              },
+              "observedAt": "2026-09-22T09:00:00.000Z"
             }
           }
         },
         "empty": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
+          "partiality": {
+            "partial": false
+          },
           "sources": [
-            { "label": "Claude Code telemetry", "status": "Connected, nothing recorded" }
+            {
+              "label": "Claude Code telemetry",
+              "status": "Connected, nothing recorded"
+            }
           ],
-          "data": {
-            "kpi": null,
-            "kpiLabel": null,
-            "capacityNote": null,
-            "bars": [],
-            "tokens": null,
-            "estimate": null
-          }
+          "data": {}
         },
         "permission-required": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Claude Code telemetry", "status": "Not connected" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Claude Code telemetry",
+              "status": "Not connected"
+            }
+          ],
           "capability": "usage",
           "data": {}
         },
         "failure": {
           "observedAt": "2026-09-22T11:30:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Claude Code telemetry", "status": "Error" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Claude Code telemetry",
+              "status": "Error"
+            }
+          ],
           "message": "The usage adapter could not read any supported telemetry source.",
           "data": {}
         }
@@ -507,10 +1339,18 @@
         "live": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
+          "partiality": {
+            "partial": false
+          },
           "sources": [
-            { "label": "Daily technology and markets report", "status": "Connected" },
-            { "label": "Newsletter digest", "status": "Connected" }
+            {
+              "label": "Daily technology and markets report",
+              "status": "Connected"
+            },
+            {
+              "label": "Newsletter digest",
+              "status": "Connected"
+            }
           ],
           "data": {
             "kpi": "9",
@@ -544,10 +1384,21 @@
         "stale": {
           "observedAt": "2026-09-22T09:00:00.000Z",
           "freshness": "stale",
-          "partiality": { "partial": true, "missingSources": ["Market data"] },
+          "partiality": {
+            "partial": true,
+            "missingSources": [
+              "Market data"
+            ]
+          },
           "sources": [
-            { "label": "Daily technology and markets report", "status": "From the 08:00 run" },
-            { "label": "Market data", "status": "Did not respond" }
+            {
+              "label": "Daily technology and markets report",
+              "status": "From the 08:00 run"
+            },
+            {
+              "label": "Market data",
+              "status": "Did not respond"
+            }
           ],
           "data": {
             "kpi": "9",
@@ -581,28 +1432,49 @@
         "empty": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
+          "partiality": {
+            "partial": false
+          },
           "sources": [
             {
               "label": "Daily technology and markets report",
               "status": "Connected, no report yet"
             }
           ],
-          "data": { "kpi": null, "kpiLabel": null, "marketLine": null, "rows": [] }
+          "data": {
+            "kpi": null,
+            "kpiLabel": null,
+            "marketLine": null,
+            "rows": []
+          }
         },
         "permission-required": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Newsletter digest", "status": "Not connected" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Newsletter digest",
+              "status": "Not connected"
+            }
+          ],
           "capability": "research",
           "data": {}
         },
         "failure": {
           "observedAt": "2026-09-22T11:30:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Daily technology and markets report", "status": "Run failed" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Daily technology and markets report",
+              "status": "Run failed"
+            }
+          ],
           "message": "The 08:00 research run failed and no cached report is available.",
           "data": {}
         }
@@ -619,8 +1491,15 @@
         "live": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "cached",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Weekly discovery report", "status": "Cached from Monday" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Weekly discovery report",
+              "status": "Cached from Monday"
+            }
+          ],
           "data": {
             "kpi": "12",
             "kpiLabel": "New this week",
@@ -649,8 +1528,15 @@
         "stale": {
           "observedAt": "2026-09-22T09:00:00.000Z",
           "freshness": "stale",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Weekly discovery report", "status": "Older than the window" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Weekly discovery report",
+              "status": "Older than the window"
+            }
+          ],
           "data": {
             "kpi": "12",
             "kpiLabel": "New this week",
@@ -679,25 +1565,48 @@
         "empty": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
+          "partiality": {
+            "partial": false
+          },
           "sources": [
-            { "label": "Weekly discovery report", "status": "Connected, nothing new" }
+            {
+              "label": "Weekly discovery report",
+              "status": "Connected, nothing new"
+            }
           ],
-          "data": { "kpi": null, "kpiLabel": null, "rows": [] }
+          "data": {
+            "kpi": null,
+            "kpiLabel": null,
+            "rows": []
+          }
         },
         "permission-required": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "GitHub", "status": "Not connected" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "GitHub",
+              "status": "Not connected"
+            }
+          ],
           "capability": "github",
           "data": {}
         },
         "failure": {
           "observedAt": "2026-09-22T11:30:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "GitHub", "status": "Error" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "GitHub",
+              "status": "Error"
+            }
+          ],
           "message": "The GitHub adapter rejected the last request.",
           "data": {}
         }
@@ -714,8 +1623,15 @@
         "live": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Command center", "status": "Ready" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Command center",
+              "status": "Ready"
+            }
+          ],
           "data": {
             "kpi": null,
             "kpiLabel": null,
@@ -732,8 +1648,15 @@
         "stale": {
           "observedAt": "2026-09-22T09:00:00.000Z",
           "freshness": "stale",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Command center", "status": "Waiting on the service" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Command center",
+              "status": "Waiting on the service"
+            }
+          ],
           "data": {
             "kpi": null,
             "kpiLabel": null,
@@ -750,23 +1673,48 @@
         "empty": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "live",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Command center", "status": "No actions available" }],
-          "data": { "kpi": null, "kpiLabel": null, "actions": [] }
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Command center",
+              "status": "No actions available"
+            }
+          ],
+          "data": {
+            "kpi": null,
+            "kpiLabel": null,
+            "actions": []
+          }
         },
         "permission-required": {
           "observedAt": "2026-09-22T11:58:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Command center", "status": "Not connected" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Command center",
+              "status": "Not connected"
+            }
+          ],
           "capability": "service",
           "data": {}
         },
         "failure": {
           "observedAt": "2026-09-22T11:30:00.000Z",
           "freshness": "unavailable",
-          "partiality": { "partial": false },
-          "sources": [{ "label": "Command center", "status": "Error" }],
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Command center",
+              "status": "Error"
+            }
+          ],
           "message": "The action registry could not be read.",
           "data": {}
         }
@@ -778,36 +1726,122 @@
       "id": "projects",
       "title": "Projects",
       "sourceLabel": "Registered projects",
-      "columns": ["Project", "Branch", "Working tree", "Issues", "Last activity"],
+      "columns": [
+        "Project",
+        "Branch",
+        "Working tree",
+        "Issues",
+        "Last activity"
+      ],
       "rows": [
-        ["Lantern", "main", "Clean", "4 open", "6 minutes ago"],
-        ["Quarry", "index-rebuild", "6 changed files", "11 open", "42 minutes ago"],
-        ["Tidewater", "schema-migration", "2 changed files", "0 open", "Yesterday"],
-        ["Saltmarsh", "main", "Clean", "2 open", "Last week"]
+        [
+          "Lantern",
+          "main",
+          "Clean",
+          "4 open",
+          "6 minutes ago"
+        ],
+        [
+          "Quarry",
+          "index-rebuild",
+          "6 changed files",
+          "11 open",
+          "42 minutes ago"
+        ],
+        [
+          "Tidewater",
+          "schema-migration",
+          "2 changed files",
+          "0 open",
+          "Yesterday"
+        ],
+        [
+          "Saltmarsh",
+          "main",
+          "Clean",
+          "2 open",
+          "Last week"
+        ]
       ]
     },
     "agent-runs": {
       "id": "agent-runs",
       "title": "Agent runs",
       "sourceLabel": "Claude Code session events",
-      "columns": ["Run", "Project", "State", "Started", "Duration"],
+      "columns": [
+        "Run",
+        "Project",
+        "State",
+        "Started",
+        "Duration"
+      ],
       "rows": [
-        ["refactor-ingest", "Lantern", "Running", "11:40", "18m"],
-        ["quarry-index-rebuild", "Quarry", "Waiting for approval", "11:16", "42m"],
-        ["tidewater-migration", "Tidewater", "Running", "11:52", "6m"],
-        ["lantern-docs-pass", "Lantern", "Completed", "09:05", "27m"],
-        ["saltmarsh-audit", "Saltmarsh", "Stale or unknown", "Yesterday", "Unknown"]
+        [
+          "refactor-ingest",
+          "Lantern",
+          "Running",
+          "11:40",
+          "18m"
+        ],
+        [
+          "quarry-index-rebuild",
+          "Quarry",
+          "Waiting for approval",
+          "11:16",
+          "42m"
+        ],
+        [
+          "tidewater-migration",
+          "Tidewater",
+          "Running",
+          "11:52",
+          "6m"
+        ],
+        [
+          "lantern-docs-pass",
+          "Lantern",
+          "Completed",
+          "09:05",
+          "27m"
+        ],
+        [
+          "saltmarsh-audit",
+          "Saltmarsh",
+          "Stale or unknown",
+          "Yesterday",
+          "Unknown"
+        ]
       ]
     },
     "research": {
       "id": "research",
       "title": "Research",
       "sourceLabel": "Research automations",
-      "columns": ["Report", "Published", "Stories", "Confidence"],
+      "columns": [
+        "Report",
+        "Published",
+        "Stories",
+        "Confidence"
+      ],
       "rows": [
-        ["Technology and markets, daily", "Today 08:00", "9 stories", "Verified"],
-        ["Edge inference runtimes, weekly", "Monday 08:00", "6 stories", "Mixed"],
-        ["Open-source maintenance watch, weekly", "Monday 08:00", "5 stories", "Verified"]
+        [
+          "Technology and markets, daily",
+          "Today 08:00",
+          "9 stories",
+          "Verified"
+        ],
+        [
+          "Edge inference runtimes, weekly",
+          "Monday 08:00",
+          "6 stories",
+          "Mixed"
+        ],
+        [
+          "Open-source maintenance watch, weekly",
+          "Monday 08:00",
+          "5 stories",
+          "Verified"
+        ]
       ]
     }
   },
@@ -815,7 +1849,7 @@
     "emptyHeading": "Nothing here yet",
     "emptyBody": "{Panel} has no items right now. New items appear as they arrive.",
     "errorHeading": "Couldn't load {panel}.",
-    "errorBody": "Check the service in Settings → Diagnostics, then refresh.",
+    "errorBody": "Check the service in Settings \u2192 Diagnostics, then refresh.",
     "permissionHeading": "{Source} isn't connected",
     "permissionBody": "Connect {source} to see {panel} here.",
     "permissionAction": "Connect {source}",

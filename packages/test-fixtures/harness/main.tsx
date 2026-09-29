@@ -265,45 +265,44 @@ function adaptProjectShortcuts(data: Fields): ProjectShortcutsData {
 }
 
 /**
- * A bar's capacity, derived from the fixture's OWN percentage: `used` is
- * `pct` percent of the limit, so the limit is `used × 100 ÷ pct`. Nothing is
- * invented — a bar with no usable percentage or no usable amount has an
- * unknown limit (`null`, rendered "Capacity unavailable").
+ * The 05-10 fixture's `data.summary` is already a `UsageSummary`-shaped
+ * plain object — no display-string parsing (`quantity()`) needed, since the
+ * production body now takes typed data straight from the service, not a
+ * prototype's display strings. This file cannot import `@ccc/domain`'s
+ * `UsageSummary` type (the three-module purity list above), so the field is
+ * read as `ClaudeUsageData["summary"]` — the one type this harness already
+ * carries via `@ccc/plugin`.
+ *
+ * A fallback "everything off" summary covers the `empty` /
+ * `permission-required` / `failure` fixture states, whose `data` is `{}`:
+ * `WidgetFrame` never calls `renderBody` for those presentations (frame.tsx
+ * `case "empty"` renders its own generic copy without reading `state.data`),
+ * so this value is never actually drawn — it exists only so `ADAPTERS`
+ * stays a total function over every `FixtureStateKey`.
  */
-function limitFromPercent(used: number | null, pct: unknown): number | null {
-  if (used === null || typeof pct !== "number" || !(pct > 0)) return null;
-  return Math.round((used * 100) / pct);
-}
+const EMPTY_USAGE_SUMMARY: ClaudeUsageData["summary"] = {
+  capacity: { kind: "unavailable", reason: "wrapper-not-installed", version: null },
+  ranges: {
+    today: {
+      activity: { kind: "unavailable", reason: "analysis-off", version: null },
+      cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+    },
+    "last-7-days": {
+      activity: { kind: "unavailable", reason: "analysis-off", version: null },
+      cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+    },
+    "this-month": {
+      activity: { kind: "unavailable", reason: "analysis-off", version: null },
+      cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+    },
+  },
+  analysis: { enabled: false, firstScanPending: false },
+  observedAt: FIXTURES.now,
+};
 
-function adaptClaudeUsage(data: Fields, variant: FixtureStateKey): ClaudeUsageData {
-  const tokens = data.tokens as Fields | null | undefined;
-  const estimate = data.estimate as Fields | null | undefined;
-  return {
-    // Both capacity paths are screenshotted (03-09 review MINOR): the ready
-    // (`live`) cell derives each limit from the bar's own percentage, so the
-    // known-capacity `used of limit` line is drawn; every other variant keeps
-    // the prototype's "Account capacity unavailable" note, so its limits are
-    // `null` and read "Capacity unavailable" — never zero.
-    bars: list(data.bars).map((bar) => {
-      const used = quantity(bar.valueText);
-      return {
-        label: text(bar.label),
-        used,
-        limit: variant === "live" ? limitFromPercent(used, bar.pct) : null,
-      };
-    }),
-    // A fixture with no token block is three UNKNOWN counts, never three
-    // zeroes (null-not-0; 03-09 review MINOR).
-    tokens:
-      tokens === null || tokens === undefined
-        ? { input: null, output: null, cache: null }
-        : {
-            input: quantity(tokens.input),
-            output: quantity(tokens.output),
-            cache: quantity(tokens.cache),
-          },
-    estimate: estimate === null || estimate === undefined ? null : text(estimate.value),
-  };
+function adaptClaudeUsage(data: Fields): ClaudeUsageData {
+  const summary = data.summary as ClaudeUsageData["summary"] | undefined;
+  return { summary: summary ?? EMPTY_USAGE_SUMMARY, nowMs: NOW };
 }
 
 function adaptTechIntel(data: Fields): TechIntelData {

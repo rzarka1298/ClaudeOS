@@ -629,48 +629,327 @@ globalThis.CCC_FIXTURES = {
           "partiality": {
             "partial": true,
             "missingSources": [
-              "Account capacity"
+              "Local transcript analysis",
+              "Claude Code estimates and list prices"
             ]
           },
           "sources": [
             {
-              "label": "Claude Code telemetry",
+              "label": "Claude Code status line",
               "status": "Connected"
             },
             {
-              "label": "Account capacity",
-              "status": "Unavailable"
+              "label": "Local transcript analysis",
+              "status": "Partial"
+            },
+            {
+              "label": "Claude Code estimates and list prices",
+              "status": "Partial"
             }
           ],
           "data": {
-            "kpi": "1.84M",
-            "kpiLabel": "Tokens this week",
-            "capacityNote": "Account capacity unavailable",
-            "bars": [
-              {
-                "label": "Session",
-                "pct": 38,
-                "valueText": "312K tokens"
+            "summary": {
+              "capacity": {
+                "kind": "available",
+                "windows": [
+                  {
+                    "window": "five-hour",
+                    "usedPercent": 62,
+                    "resetsAt": "2026-09-22T16:40:00.000Z"
+                  },
+                  {
+                    "window": "seven-day",
+                    "usedPercent": 18,
+                    "resetsAt": "2026-09-29T00:00:00.000Z"
+                  }
+                ],
+                "observedAt": "2026-09-22T11:58:00.000Z",
+                "source": "claude-code-status-line",
+                "freshness": "live",
+                "partiality": {
+                  "partial": false
+                }
               },
-              {
-                "label": "Today",
-                "pct": 61,
-                "valueText": "740K tokens"
+              "ranges": {
+                "today": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "today",
+                    "bounds": {
+                      "start": "2026-09-22T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 1210000,
+                      "output": 430000,
+                      "cacheWrite": 120000,
+                      "cacheRead": 198000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 1210000,
+                          "output": 430000,
+                          "cacheWrite": 120000,
+                          "cacheRead": 198000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 1,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "today",
+                    "bounds": {
+                      "start": "2026-09-22T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 18.4,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                },
+                "last-7-days": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "last-7-days",
+                    "bounds": {
+                      "start": "2026-09-16T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 4100000,
+                      "output": 1500000,
+                      "cacheWrite": 400000,
+                      "cacheRead": 700000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 4100000,
+                          "output": 1500000,
+                          "cacheWrite": 400000,
+                          "cacheRead": 700000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 1,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "last-7-days",
+                    "bounds": {
+                      "start": "2026-09-16T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 64.05,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                },
+                "this-month": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "this-month",
+                    "bounds": {
+                      "start": "2026-09-01T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 12000000,
+                      "output": 4200000,
+                      "cacheWrite": 900000,
+                      "cacheRead": 1600000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 12000000,
+                          "output": 4200000,
+                          "cacheWrite": 900000,
+                          "cacheRead": 1600000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 14,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "this-month",
+                    "bounds": {
+                      "start": "2026-09-01T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 140.77,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                }
               },
-              {
-                "label": "This week",
-                "pct": 47,
-                "valueText": "1.84M tokens"
-              }
-            ],
-            "tokens": {
-              "input": "1.21M in",
-              "output": "430K out",
-              "cache": "198K cached"
-            },
-            "estimate": {
-              "label": "Estimated API-equivalent cost (not billed)",
-              "value": "$18.40"
+              "analysis": {
+                "enabled": true,
+                "firstScanPending": false
+              },
+              "observedAt": "2026-09-22T11:58:00.000Z"
             }
           }
         },
@@ -680,48 +959,327 @@ globalThis.CCC_FIXTURES = {
           "partiality": {
             "partial": true,
             "missingSources": [
-              "Account capacity"
+              "Local transcript analysis",
+              "Claude Code estimates and list prices"
             ]
           },
           "sources": [
             {
-              "label": "Claude Code telemetry",
+              "label": "Claude Code status line",
+              "status": "Connected"
+            },
+            {
+              "label": "Local transcript analysis",
               "status": "Last read 3 hours ago"
             },
             {
-              "label": "Account capacity",
-              "status": "Unavailable"
+              "label": "Claude Code estimates and list prices",
+              "status": "Last read 3 hours ago"
             }
           ],
           "data": {
-            "kpi": "1.62M",
-            "kpiLabel": "Tokens this week",
-            "capacityNote": "Account capacity unavailable",
-            "bars": [
-              {
-                "label": "Session",
-                "pct": 30,
-                "valueText": "248K tokens"
+            "summary": {
+              "capacity": {
+                "kind": "available",
+                "windows": [
+                  {
+                    "window": "five-hour",
+                    "usedPercent": 30,
+                    "resetsAt": "2026-09-22T16:40:00.000Z"
+                  },
+                  {
+                    "window": "seven-day",
+                    "usedPercent": 12,
+                    "resetsAt": "2026-09-29T00:00:00.000Z"
+                  }
+                ],
+                "observedAt": "2026-09-22T09:00:00.000Z",
+                "source": "claude-code-status-line",
+                "freshness": "stale",
+                "partiality": {
+                  "partial": false
+                }
               },
-              {
-                "label": "Today",
-                "pct": 52,
-                "valueText": "615K tokens"
+              "ranges": {
+                "today": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "today",
+                    "bounds": {
+                      "start": "2026-09-22T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 1060000,
+                      "output": 381000,
+                      "cacheWrite": 100000,
+                      "cacheRead": 174000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 1210000,
+                          "output": 430000,
+                          "cacheWrite": 120000,
+                          "cacheRead": 198000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T09:00:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "stale",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 1,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "today",
+                    "bounds": {
+                      "start": "2026-09-22T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 16.05,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T09:00:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "stale",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                },
+                "last-7-days": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "last-7-days",
+                    "bounds": {
+                      "start": "2026-09-16T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 4100000,
+                      "output": 1500000,
+                      "cacheWrite": 400000,
+                      "cacheRead": 700000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 4100000,
+                          "output": 1500000,
+                          "cacheWrite": 400000,
+                          "cacheRead": 700000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 1,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "last-7-days",
+                    "bounds": {
+                      "start": "2026-09-16T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 64.05,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                },
+                "this-month": {
+                  "activity": {
+                    "kind": "available",
+                    "range": "this-month",
+                    "bounds": {
+                      "start": "2026-09-01T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "totals": {
+                      "input": 12000000,
+                      "output": 4200000,
+                      "cacheWrite": 900000,
+                      "cacheRead": 1600000
+                    },
+                    "byProject": [
+                      {
+                        "projectId": "proj-alpha",
+                        "projectName": "alpha",
+                        "counters": {
+                          "input": 700000,
+                          "output": 250000,
+                          "cacheWrite": 70000,
+                          "cacheRead": 100000
+                        }
+                      },
+                      {
+                        "projectId": "proj-beta",
+                        "projectName": "beta",
+                        "counters": {
+                          "input": 400000,
+                          "output": 150000,
+                          "cacheWrite": 40000,
+                          "cacheRead": 80000
+                        }
+                      },
+                      {
+                        "projectId": null,
+                        "projectName": null,
+                        "counters": {
+                          "input": 110000,
+                          "output": 30000,
+                          "cacheWrite": 10000,
+                          "cacheRead": 18000
+                        }
+                      }
+                    ],
+                    "byModel": [
+                      {
+                        "model": "claude-opus-4",
+                        "counters": {
+                          "input": 12000000,
+                          "output": 4200000,
+                          "cacheWrite": 900000,
+                          "cacheRead": 1600000
+                        }
+                      }
+                    ],
+                    "bySkill": [],
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "local-transcript-analysis",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    },
+                    "coverage": {
+                      "horizonDate": "2026-09-15",
+                      "uncoveredDays": 14,
+                      "analysisOffDays": 0
+                    }
+                  },
+                  "cost": {
+                    "kind": "available",
+                    "range": "this-month",
+                    "bounds": {
+                      "start": "2026-09-01T00:00:00.000Z",
+                      "end": "2026-09-22T11:58:00.000Z"
+                    },
+                    "usd": 140.77,
+                    "basis": "mixed",
+                    "priceTableDate": "2026-09-01",
+                    "excludedModelCount": 1,
+                    "observedAt": "2026-09-22T11:58:00.000Z",
+                    "source": "claude-code-estimates-and-list-prices",
+                    "freshness": "live",
+                    "partiality": {
+                      "partial": true,
+                      "missingSources": []
+                    }
+                  }
+                }
               },
-              {
-                "label": "This week",
-                "pct": 41,
-                "valueText": "1.62M tokens"
-              }
-            ],
-            "tokens": {
-              "input": "1.06M in",
-              "output": "381K out",
-              "cache": "174K cached"
-            },
-            "estimate": {
-              "label": "Estimated API-equivalent cost (not billed)",
-              "value": "$16.05"
+              "analysis": {
+                "enabled": true,
+                "firstScanPending": false
+              },
+              "observedAt": "2026-09-22T09:00:00.000Z"
             }
           }
         },
@@ -737,14 +1295,7 @@ globalThis.CCC_FIXTURES = {
               "status": "Connected, nothing recorded"
             }
           ],
-          "data": {
-            "kpi": null,
-            "kpiLabel": null,
-            "capacityNote": null,
-            "bars": [],
-            "tokens": null,
-            "estimate": null
-          }
+          "data": {}
         },
         "permission-required": {
           "observedAt": "2026-09-22T11:58:00.000Z",
