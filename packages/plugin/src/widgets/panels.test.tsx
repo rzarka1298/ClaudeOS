@@ -1,6 +1,7 @@
 import { type ReadonlySignal, signal } from "@preact/signals";
 import { cleanup, render } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
+import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { Overview } from "../view/overview.js";
 import type { WidgetState } from "./contract.js";
 import type { WidgetId } from "./registry.js";
@@ -45,12 +46,38 @@ function cardText(id: WidgetId, data: unknown, size: "medium" | "wide" = "wide")
   return body.textContent ?? "";
 }
 
+/** Renders ONE card and returns its body ELEMENT, for DOM/attribute assertions `cardText` can't make. */
+function cardBody(
+  id: WidgetId,
+  data: unknown,
+  opts: { readonly isEmpty?: boolean } = {},
+): Element {
+  const state: ReadonlySignal<WidgetState<unknown>> = signal({
+    ...ready(data),
+    isEmpty: opts.isEmpty ?? false,
+  });
+  const { container } = render(
+    <Overview
+      layout={{ entries: [{ widgetId: id, size: "medium" }], skipped: [] }}
+      stateFor={() => state}
+      connection={{ kind: "live" }}
+      now={Date.parse(OBSERVED)}
+    />,
+  );
+  const body = container.querySelector(".ccc-card-body");
+  if (!body) throw new Error(`no card body for ${id}`);
+  return body;
+}
+
 /** No rendered string may leak a missing value as a word or a zero. */
 function expectNoLeak(text: string): void {
   expect(text).not.toMatch(/\bnull\b|\bundefined\b|\bNaN\b/);
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetProjectsState();
+});
 
 const TODAY_BASE = {
   nextEvent: null,
@@ -218,5 +245,224 @@ describe("GitHub discoveries: stars", () => {
     });
     expectNoLeak(text);
     expect(text).toMatch(/stars unavailable · \+12% · Fast/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 04-07 Task 3: S1 structured meta segments, pinned marker, empty
+// state and the setup callout (D-15, D-30, D-35, RR-27, A11Y-04).
+// ---------------------------------------------------------------------------
+
+describe("Project shortcuts: every git kind renders its UI-SPEC meta copy with the right glyph", () => {
+  it("repo, clean: branch glyph plus Clean", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow()],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/main/);
+    expect(text).toMatch(/Clean/);
+  });
+
+  it("repo, dirty: Uncommitted changes", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [
+        projectRow({
+          git: { kind: "repo", branch: "main", detached: false, dirty: true, commits: [], remote: null },
+        }),
+      ],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Uncommitted changes/);
+  });
+
+  it("repo, detached HEAD", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [
+        projectRow({
+          git: { kind: "repo", branch: null, detached: true, dirty: false, commits: [], remote: null },
+        }),
+      ],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Detached HEAD/);
+  });
+
+  it("not-a-repo", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ git: { kind: "not-a-repo" } })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Not a Git repository/);
+  });
+
+  it("git-unavailable", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ git: { kind: "git-unavailable" } })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Git unavailable/);
+  });
+
+  it("folder-missing", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ git: { kind: "folder-missing" } })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Folder not found/);
+  });
+
+  it("skipped", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ git: { kind: "skipped", reason: "local-config-commands" } })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Git status skipped/);
+  });
+
+  it("folder-access-denied", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ git: { kind: "folder-access-denied" } })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Folder access blocked by macOS/);
+  });
+
+  it("pending", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ git: { kind: "pending" } })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Checking Git status…/);
+  });
+
+  it("a failed read appends Stale regardless of git kind", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ gitReadFailed: true })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Stale/);
+  });
+});
+
+describe("Project shortcuts: every glyph is aria-hidden with a non-empty text sibling (A11Y-04)", () => {
+  it("every .ccc-meta-glyph in the meta line is aria-hidden and has sibling text", () => {
+    const body = cardBody("project-shortcuts", {
+      projects: [projectRow({ gitReadFailed: true })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    const glyphs = body.querySelectorAll(".ccc-meta-glyph");
+    expect(glyphs.length).toBeGreaterThan(0);
+    for (const glyph of Array.from(glyphs)) {
+      expect(glyph.getAttribute("aria-hidden")).toBe("true");
+      const parent = glyph.parentElement;
+      expect(parent?.textContent?.replace(glyph.textContent ?? "", "").trim().length).toBeGreaterThan(
+        0,
+      );
+    }
+  });
+});
+
+describe("Project shortcuts: no rendered S1 text ever matches a bare 0 for a row with null counts", () => {
+  it("holds across every git kind and pinned state", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ pinned: true, openItems: null, sessionCount: null, nextTask: null })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).not.toMatch(/(^|\s)0(\s|$)/);
+  });
+});
+
+describe("Project shortcuts: pinned marker (UI-SPEC S1, Glyph Vocabulary)", () => {
+  it("a pinned row's primary text is preceded by a visually hidden 'Pinned: ' and an aria-hidden ★", () => {
+    const body = cardBody("project-shortcuts", {
+      projects: [projectRow({ pinned: true })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    const primary = body.querySelector(".ccc-list-primary");
+    const hidden = primary?.querySelector(".ccc-visually-hidden");
+    const glyph = primary?.querySelector(".ccc-meta-glyph");
+    expect(hidden?.textContent).toBe("Pinned: ");
+    expect(glyph?.getAttribute("aria-hidden")).toBe("true");
+    expect(glyph?.textContent).toBe("★");
+  });
+
+  it("an unpinned row carries no pinned marker", () => {
+    const body = cardBody("project-shortcuts", {
+      projects: [projectRow({ pinned: false })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    const primary = body.querySelector(".ccc-list-primary");
+    expect(primary?.querySelector(".ccc-visually-hidden")).toBeNull();
+  });
+});
+
+describe("Project shortcuts: long-text names clamp with the full text in title and the DOM (D-14)", () => {
+  it("a 200-character name keeps the full text in title and in the DOM with the clamp class", () => {
+    const long = "P".repeat(200);
+    const body = cardBody("project-shortcuts", {
+      projects: [projectRow({ name: long })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    const primary = body.querySelector(".ccc-list-primary");
+    expect(primary?.classList.contains("ccc-clamp-2")).toBe(true);
+    expect(primary?.getAttribute("title")).toBe(long);
+    expect(primary?.textContent?.endsWith(long)).toBe(true);
+  });
+});
+
+describe("Project shortcuts: empty state (S1, RR-27)", () => {
+  it("with zero projects, renderEmpty shows the S1 copy and a Go to Projects button", () => {
+    const body = cardBody(
+      "project-shortcuts",
+      { projects: [], launchers: SET_UP_LAUNCHERS },
+      { isEmpty: true },
+    );
+    expect(body.textContent).toContain("Register a project in Projects to see it here.");
+    const button = Array.from(body.querySelectorAll("button")).find(
+      (b) => b.textContent === "Go to Projects",
+    );
+    expect(button).toBeTruthy();
+  });
+
+  it("shows the setup callout after the empty copy while no launcher is set up — read from the live snapshot signal, since renderEmpty receives no data", () => {
+    projectsSnapshot.value = {
+      projects: [],
+      launchers: {
+        antigravity: "not-set-up",
+        "claude-code": { status: "not-set-up", terminalLabel: "Terminal" },
+        "claude-desktop": "not-set-up",
+      },
+    };
+    const body = cardBody(
+      "project-shortcuts",
+      { projects: [], launchers: SET_UP_LAUNCHERS },
+      { isEmpty: true },
+    );
+    expect(body.textContent).toContain("Register a project in Projects to see it here.");
+    expect(body.textContent).toContain("Launchers aren't set up yet");
+  });
+});
+
+describe("Project shortcuts: the setup callout while no launcher is set up (S10, RR-26)", () => {
+  const NONE_SET_UP = {
+    antigravity: "not-set-up",
+    "claude-code": { status: "not-set-up", terminalLabel: "Terminal" },
+    "claude-desktop": "not-set-up",
+  };
+
+  it("renders at the top of the body while ready with rows", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow()],
+      launchers: NONE_SET_UP,
+    });
+    expect(text).toContain("Launchers aren't set up yet");
+  });
+
+  it("never renders while every launcher is set up", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow()],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).not.toContain("Launchers aren't set up yet");
   });
 });

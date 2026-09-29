@@ -147,3 +147,96 @@ describe("row anatomy (UI-SPEC populated and long-text rows)", () => {
     expect(primary?.getAttribute("title")).toBe(long);
   });
 });
+
+describe("renderMetaSegments (UI-SPEC S1 structured meta, plan 04-07, A11Y-04)", () => {
+  it("renders one span per glyph segment, aria-hidden with a non-empty text sibling", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={[{ id: "r", primary: "Row", meta: "unused" }]}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        renderMetaSegments={() => [
+          { glyph: "⎇", text: "main" },
+          { glyph: "✓", text: "Clean" },
+        ]}
+        moreDestination="tasks"
+      />,
+    );
+    const meta = container.querySelector(".ccc-list-meta");
+    const glyphs = meta?.querySelectorAll(".ccc-meta-glyph") ?? [];
+    expect(glyphs).toHaveLength(2);
+    for (const glyph of Array.from(glyphs)) {
+      expect(glyph.getAttribute("aria-hidden")).toBe("true");
+      expect(glyph.textContent?.length).toBeGreaterThan(0);
+    }
+    expect(meta?.textContent).toContain("main");
+    expect(meta?.textContent).toContain("Clean");
+    expect(meta?.textContent).toContain(" · ");
+  });
+
+  it("renders a segment with no glyph as text only, still inside the meta line", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={[{ id: "r", primary: "Row", meta: "unused" }]}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        renderMetaSegments={() => [{ text: "Checking Git status…" }]}
+        moreDestination="tasks"
+      />,
+    );
+    const meta = container.querySelector(".ccc-list-meta");
+    expect(meta?.querySelectorAll(".ccc-meta-glyph")).toHaveLength(0);
+    expect(meta?.textContent).toBe("Checking Git status…");
+  });
+
+  it("existing callers with no renderMetaSegments prop are unaffected — a plain string meta renders as before", () => {
+    const { container } = renderList(1, "medium");
+    const meta = container.querySelector(".ccc-list-meta");
+    expect(meta?.classList.contains("ccc-meta-segments")).toBe(false);
+    expect(meta?.textContent).toBe("Meta 0");
+  });
+});
+
+describe("primaryBadge (UI-SPEC S1 pinned marker, plan 04-07)", () => {
+  it("prepends a visually hidden label and an aria-hidden glyph before the primary text", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={[{ id: "r", primary: "example-project", meta: "unused" }]}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        primaryBadge={() => ({ hiddenLabel: "Pinned: ", glyph: "★" })}
+        moreDestination="tasks"
+      />,
+    );
+    const primary = container.querySelector(".ccc-list-primary");
+    const hidden = primary?.querySelector(".ccc-visually-hidden");
+    const glyph = primary?.querySelector(".ccc-meta-glyph");
+    expect(hidden?.textContent).toBe("Pinned: ");
+    expect(glyph?.getAttribute("aria-hidden")).toBe("true");
+    expect(glyph?.textContent).toBe("★");
+    expect(primary?.textContent).toBe("Pinned: ★ example-project");
+  });
+
+  it("renders no badge when the callback returns null", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={[{ id: "r", primary: "example-project", meta: "unused" }]}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        primaryBadge={() => null}
+        moreDestination="tasks"
+      />,
+    );
+    const primary = container.querySelector(".ccc-list-primary");
+    expect(primary?.querySelector(".ccc-visually-hidden")).toBeNull();
+    expect(primary?.textContent).toBe("example-project");
+  });
+});
