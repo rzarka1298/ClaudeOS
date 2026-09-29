@@ -1,5 +1,9 @@
-import { randomUUID } from "node:crypto";
-
+// Uses the global Web Crypto `crypto.randomUUID()`, not `node:crypto`'s named
+// export (05-06 deviation, Rule 3): this module is reachable from `@ccc/domain`'s
+// barrel, which `@ccc/plugin` — esbuild-bundled for a browser context — imports
+// for its session types. `globalThis.crypto` is the same UUIDv4 generator in
+// Node 19+, Electron renderers and every evergreen browser, so this is a
+// portability fix, not a behavior change.
 declare const brand: unique symbol;
 
 /** A nominal type helper: `T` branded with the literal string `B`. */
@@ -48,7 +52,7 @@ export type NoteId = Brand<string, "NoteId">;
  */
 export function newRunId(): RunId {
   const time = Date.now().toString(36).padStart(9, "0");
-  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as RunId;
 }
 
@@ -63,7 +67,7 @@ export function newRunId(): RunId {
  */
 export function newNoteId(): NoteId {
   const time = Date.now().toString(36).padStart(9, "0");
-  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as NoteId;
 }
 
@@ -81,6 +85,6 @@ export function newNoteId(): NoteId {
  */
 export function newWorkspaceId(): WorkspaceId {
   const time = Date.now().toString(36).padStart(9, "0");
-  const random = randomUUID().replace(/-/g, "").slice(0, 16);
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as WorkspaceId;
 }

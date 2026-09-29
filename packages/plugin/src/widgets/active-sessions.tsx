@@ -1,9 +1,16 @@
-import {
-  RUN_STATE_DISPLAY,
-  type RunState,
-  type SessionView,
-  sessionDisplayName,
-} from "@ccc/domain";
+// Deep submodule imports, not the `@ccc/domain` barrel (05-06 deviation,
+// Rule 3): the barrel's `index.ts` does `export * from` every domain module,
+// including `path-containment.ts` (`node:fs`/`node:path`, genuinely
+// Node-only). The real plugin bundle is `platform: "node"` and never sees
+// this, but the visual-regression harness bundles for an actual browser
+// (`platform: "browser"`, D-21) and fails to resolve those built-ins the
+// moment anything imports from the barrel. Importing the two specific
+// submodules this file needs sidesteps the barrel's `export *` chain
+// entirely, and domain's `package.json` "exports" map (`./*.js`) grew a
+// wildcard subpath to make this a supported import shape.
+
+import type { RunState } from "@ccc/domain/run.js";
+import { RUN_STATE_DISPLAY, type SessionView, sessionDisplayName } from "@ccc/domain/session.js";
 import type { VNode } from "preact";
 import type {
   HeroMetric,

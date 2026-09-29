@@ -1,11 +1,17 @@
+// Deep submodule imports, not the `@ccc/domain` barrel (05-06 deviation,
+// Rule 3, see the matching comment in `active-sessions.tsx`): the barrel
+// pulls in `path-containment.ts` (`node:fs`/`node:path`), which the visual
+// harness's browser-platform bundle cannot resolve.
 import {
   type ClaudeIntegrationStatus,
   ClaudeIntegrationStatusSchema,
+} from "@ccc/domain/claude-integration.js";
+import type { RunState } from "@ccc/domain/run.js";
+import {
   isTerminalRunState,
-  type RunState,
   SessionUpsertedPayloadSchema,
   type SessionView,
-} from "@ccc/domain";
+} from "@ccc/domain/session.js";
 import { computed, signal } from "@preact/signals";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState } from "../connection-state.js";

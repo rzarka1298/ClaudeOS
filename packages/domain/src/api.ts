@@ -1,4 +1,3 @@
-import path from "node:path";
 import { z } from "zod";
 
 /** The versioned base path every companion-service HTTP route lives under. */
@@ -49,7 +48,12 @@ export const VaultSetupRequestSchema = z.object({
     .refine((value) => !value.includes("\0"), {
       message: "vaultRoot must not contain a NUL byte",
     })
-    .refine((value) => path.isAbsolute(value), {
+    // A POSIX check, not `node:path`'s `isAbsolute` (05-06 deviation, Rule 3):
+    // this schema is shared with `@ccc/plugin`, which esbuild bundles for a
+    // browser context that cannot resolve `node:path` — the plugin is
+    // macOS-only (project constraint), so a leading `/` is the only
+    // absolute-path shape that ever needs to pass here.
+    .refine((value) => value.startsWith("/"), {
       message: "vaultRoot must be an absolute path",
     }),
 });

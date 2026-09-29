@@ -130,7 +130,11 @@ describe("applySessionUpserted: schema safety (Test 3, T-05-23, SESS-05)", () =>
       .split("\n")
       .map((line) => line.replace(/\/\/.*$/, ""))
       .join("\n");
-    expect(code).toMatch(/\bfrom\s*["']@ccc\/domain["']/);
+    // Deep submodule specifiers ("@ccc/domain/session.js"), not just the bare
+    // barrel: 05-06 routes around the barrel's `export *` chain (a
+    // `path-containment.ts` `node:fs` import the browser-platform visual
+    // harness cannot resolve), so the real specifier is a subpath now.
+    expect(code).toMatch(/\bfrom\s*["']@ccc\/domain(\/[^"']+)?["']/);
     expect(code).not.toMatch(/classifyHookRecord|HOOK_RECORD_SCHEMAS/);
   });
 });

@@ -1,4 +1,3 @@
-import path from "node:path";
 import { z } from "zod";
 import { RUN_ID_PATTERN } from "./run.js";
 
@@ -89,7 +88,12 @@ const AbsolutePathSchema = z
   .min(1)
   .max(4096)
   .refine((value) => !value.includes("\0"), { message: "must not contain a NUL byte" })
-  .refine((value) => path.isAbsolute(value), { message: "must be an absolute path" });
+  // A POSIX check, not `node:path`'s `isAbsolute` (05-06 deviation, Rule 3): this
+  // schema is shared with `@ccc/plugin`, which esbuild bundles for a browser
+  // context that cannot resolve `node:path` — the plugin is macOS-only (project
+  // constraint), so a leading `/` is the only absolute-path shape that ever
+  // needs to pass here.
+  .refine((value) => value.startsWith("/"), { message: "must be an absolute path" });
 
 /**
  * The permissive envelope every forwarded record must carry before it can be
