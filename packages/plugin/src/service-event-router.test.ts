@@ -2,9 +2,15 @@ import type { ServiceEvent, SnapshotResponse } from "@ccc/domain";
 import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
 import type { EventClient, EventClientState } from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { attachEventClient, connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
+import { connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
 import { projectsSnapshot, resetProjectsState } from "./projects/projects-state.js";
-import { applySnapshot, EVENT_HANDLERS, routeServiceEvent, SNAPSHOT_APPLIERS } from "./service-event-router.js";
+import { attachEventClient } from "./service-connection.js";
+import {
+  applySnapshot,
+  EVENT_HANDLERS,
+  routeServiceEvent,
+  SNAPSHOT_APPLIERS,
+} from "./service-event-router.js";
 
 /**
  * The appendable fan-out router (PR-09, D-50): `EVENT_HANDLERS` and
@@ -101,7 +107,10 @@ describe("attachEventClient wiring the router and the snapshot applier", () => {
     onEventCb?.(heartbeatEvent());
 
     expect(connectionState.value).toEqual({ kind: "live" });
-    expect(lastEvent.value).toEqual({ type: "service.heartbeat", occurredAt: heartbeatEvent().occurredAt });
+    expect(lastEvent.value).toEqual({
+      type: "service.heartbeat",
+      occurredAt: heartbeatEvent().occurredAt,
+    });
     expect(connectionChangedAt.value).toBeTruthy();
   });
 });

@@ -1,6 +1,5 @@
 import type { GithubTarget, LaunchersSummary, ProjectGitState } from "@ccc/domain";
 import type { VNode } from "preact";
-import { projectsSnapshot } from "../projects/projects-state.js";
 import type { DestinationId } from "../view/destinations.js";
 import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { WidgetBodyProps, WidgetDefinition } from "./contract.js";
@@ -334,8 +333,10 @@ function ProjectShortcutsBody({
 /** S1's empty copy (UI-SPEC "Copywriting Contract", RR-27): the frame's own `Nothing here yet` precedes this. */
 function ProjectShortcutsEmpty({
   onNavigate,
+  data,
 }: {
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+  readonly data?: ProjectShortcutsData | undefined;
 }): VNode {
   return (
     <>
@@ -347,11 +348,8 @@ function ProjectShortcutsEmpty({
       >
         Go to Projects
       </button>
-      {/* The empty renderer receives no `data`, so the setup state reads the
-          live signal directly (RR-27, S10). */}
-      {launchersNeedSetup(projectsSnapshot.value?.launchers) && (
-        <SetupCallout onNavigate={onNavigate} />
-      )}
+      {/* The setup state comes from the card's own widget state (RR-27, S10). */}
+      {launchersNeedSetup(data?.launchers) && <SetupCallout onNavigate={onNavigate} />}
     </>
   );
 }

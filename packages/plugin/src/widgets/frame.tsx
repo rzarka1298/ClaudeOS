@@ -122,7 +122,7 @@ export function WidgetFrame<T>({
             <p className="ccc-state-body">
               {`${definition.title} has no items right now. New items appear as they arrive.`}
             </p>
-            <Empty onNavigate={onNavigate} />
+            <Empty onNavigate={onNavigate} data={state.kind === "ready" ? state.data : undefined} />
           </>
         );
       case "ready":

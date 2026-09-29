@@ -161,7 +161,13 @@ export interface WidgetDefinition<T> {
    */
   readonly actionsInBody?: boolean | undefined;
   readonly renderBody: (props: WidgetBodyProps<T>) => VNode | null;
+  /**
+   * `data` is the `ready` state's own payload when the frame presents it as
+   * `empty` — an empty list can still carry context (S1's launcher setup
+   * state), and reading it here keeps the renderer off global signals.
+   */
   readonly renderEmpty: (props: {
     readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+    readonly data?: T | undefined;
   }) => VNode | null;
 }

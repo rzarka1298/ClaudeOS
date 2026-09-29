@@ -595,7 +595,7 @@ describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
     expect(container.querySelector(".ccc-card-actions")).toBeTruthy();
   });
 
-  it("passes onNavigate to renderEmpty", () => {
+  it("passes onNavigate and the ready state's own data to renderEmpty", () => {
     const emptySpy = vi.fn((_props: { onNavigate?: unknown }) => null);
     const onNavigate = vi.fn();
     render(
@@ -608,7 +608,7 @@ describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
         onNavigate={onNavigate}
       />,
     );
-    expect(emptySpy.mock.calls[0]?.[0]).toEqual({ onNavigate });
+    expect(emptySpy.mock.calls[0]?.[0]).toEqual({ onNavigate, data: READY_STATE.data });
   });
 });
 
