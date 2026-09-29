@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,13 +50,16 @@ beforeEach(() => {
   logLines = [];
 });
 
-afterEach(() => {
-  poller?.stop();
+afterEach(async () => {
+  await poller?.stop();
   poller = undefined;
   rmSync(dir, { recursive: true, force: true });
 });
 
-function start(intervalMs = 60_000): SpoolPoller {
+function start(
+  intervalMs = 60_000,
+  extra: Partial<Parameters<typeof startSpoolPoller>[0]> = {},
+): SpoolPoller {
   const logger = pino(
     { level: "debug" },
     { write: (line: string) => logLines.push(JSON.parse(line) as Record<string, unknown>) },
@@ -65,6 +71,7 @@ function start(intervalMs = 60_000): SpoolPoller {
     pipeline: fakePipeline,
     logger,
     intervalMs,
+    ...extra,
   });
   return poller;
 }
@@ -121,7 +128,7 @@ describe("rename-then-read (Test 1, PR-12)", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     expect(numbers()).toEqual([7]);
-    p.stop();
+    await p.stop();
     appendFileSync(spoolPath, line(8));
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(numbers()).toEqual([7]);
@@ -201,5 +208,101 @@ describe("hook and status-line routing (Test 3)", () => {
     expect(p.dropCount()).toBe(0);
     writeFileSync(dropPath, "xxx");
     expect(p.dropCount()).toBe(3);
+  });
+});
+
+/** A pipeline whose ingest of record `n === blockOn` waits until released. */
+function gatedPipeline(blockOn: number) {
+  let release: () => void = () => undefined;
+  let reached: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const arrived = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const pipeline: Pick<ClaudePipeline, "ingest"> = {
+    ingest: async (record, via): Promise<IngestOutcome> => {
+      if ((record as { n?: unknown }).n === blockOn) {
+        reached();
+        await gate;
+      }
+      ingested.push({ record, via });
+      return "applied";
+    },
+  };
+  return { pipeline, release: () => release(), arrived };
+}
+
+describe("write-ahead durability (wave 3 review)", () => {
+  it("keeps a taken file on disk until every one of its lines has been ingested", async () => {
+    const gated = gatedPipeline(2);
+    const p = start(60_000, { pipeline: gated.pipeline });
+    appendFileSync(spoolPath, line(1) + line(2) + line(3));
+    const draining = p.drainNow();
+    await gated.arrived;
+    expect(spoolFiles()).toHaveLength(1);
+    gated.release();
+    await expect(draining).resolves.toBe(3);
+    expect(numbers()).toEqual([1, 2, 3]);
+    expect(spoolFiles()).toEqual([]);
+  });
+
+  it("keeps the file for the next tick when an ingest fails, and replays it then", async () => {
+    let failOnce = true;
+    const pipeline: Pick<ClaudePipeline, "ingest"> = {
+      ingest: async (record, via): Promise<IngestOutcome> => {
+        if ((record as { n?: unknown }).n === 2 && failOnce) {
+          failOnce = false;
+          throw new Error("store unavailable");
+        }
+        ingested.push({ record, via });
+        return "applied";
+      },
+    };
+    const p = start(60_000, { pipeline });
+    appendFileSync(spoolPath, line(1) + line(2) + line(3));
+    await p.drainNow();
+    expect(numbers()).toEqual([1]);
+    expect(spoolFiles()).toHaveLength(1);
+    await p.tick();
+    // Line 1 arrives twice; the pipeline's eventId guard makes the replay a no-op.
+    expect(numbers()).toEqual([1, 1, 2, 3]);
+    expect(spoolFiles()).toEqual([]);
+  });
+
+  it("stop() resolves only after the in-flight tick has finished its file", async () => {
+    const gated = gatedPipeline(1);
+    const p = start(60_000, { pipeline: gated.pipeline });
+    writeFileSync(`${spoolPath}.draining-1000-0`, line(1) + line(2));
+    const ticking = p.tick();
+    await gated.arrived;
+    let stopped = false;
+    const stopping = p.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+    gated.release();
+    await stopping;
+    await ticking;
+    expect(numbers()).toEqual([1, 2]);
+    expect(spoolFiles()).toEqual([]);
+  });
+
+  it("startup drain lets a writer that opened the spool before the rename finish its append", async () => {
+    appendFileSync(spoolPath, line(1));
+    // A hook that opened hooks.ndjson (O_APPEND) just before the rename and
+    // writes just after it: its line lands in the renamed inode.
+    const fd = openSync(spoolPath, "a");
+    const p = start(60_000, {
+      settle: async () => {
+        writeSync(fd, line(2));
+        closeSync(fd);
+      },
+    });
+    await expect(p.drainNow()).resolves.toBe(2);
+    expect(numbers()).toEqual([1, 2]);
+    expect(spoolFiles()).toEqual([]);
   });
 });
