@@ -97,7 +97,13 @@ export type UnavailableReason =
   /** Claude Code at `version` sends hook events in a shape this build does not recognise. */
   | { readonly code: "session-telemetry-changed"; readonly version: string }
   /** Claude Code at `version` is below the supported floor. */
-  | { readonly code: "claude-version-unsupported"; readonly version: string };
+  | { readonly code: "claude-version-unsupported"; readonly version: string }
+  /** Claude Code's `disableAllHooks` is on: no hook can fire, so no session is reported (D-15). */
+  | { readonly code: "hooks-disabled" }
+  /** The installed hook cannot find its Node.js runtime, so no session is reported. */
+  | { readonly code: "hook-runtime-missing" }
+  /** The service could not read Claude Code's hook settings and no session has been seen. */
+  | { readonly code: "hooks-status-unknown" };
 export type UnavailableReasonCode = UnavailableReason["code"];
 
 /**
@@ -120,8 +126,9 @@ export type WidgetState<T> =
       readonly kind: "unavailable";
       /**
        * Set when the source is unavailable for a reportable reason — a
-       * telemetry-shape change, or a Claude Code version below the floor
-       * (SESS-18, D-12) — rather than simply having no route yet. Absent
+       * telemetry-shape change, a Claude Code version below the floor
+       * (SESS-18, D-12), or hooks that cannot report at all (D-15) — rather
+       * than simply having no route yet. Absent
        * keeps Phase 3's "No source yet" copy unchanged.
        */
       readonly reason?: UnavailableReason | undefined;

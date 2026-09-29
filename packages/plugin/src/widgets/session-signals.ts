@@ -144,6 +144,10 @@ const CLAUDE_HOOKS_SOURCE_LABEL = "Claude Code hooks";
  * - A telemetry shape change or an unsupported Claude Code version PAUSES
  *   tracking rather than guessing at a payload this build cannot parse —
  *   `unavailable` with a typed reason, never the generic "no source" copy.
+ * - A missing hook runtime or `disableAllHooks` means no hook can fire, so
+ *   tracking is paused (`unavailable`, typed reason); hooks in an `unknown`
+ *   install state with no session seen are `unavailable` too. None of these
+ *   ever reads as "0 active sessions" (D-15, wave 2 review).
  * - Hooks reported `not-installed` with no session ever seen is the setup
  *   gate; once a session has been seen, history stays visible even if hooks
  *   are later uninstalled (a card that erases known history because a
@@ -177,12 +181,27 @@ export function activeSessionsStateFor(
         reason: { code: "claude-version-unsupported", version: integration.telemetry.version },
       };
     }
+    // No hook can fire in either state, so nothing the card could show is
+    // current: tracking is paused, whatever history is stored (D-15). A
+    // `null` disableAllHooks means "not read", which is not "on".
+    if (integration.hookRuntimeMissing) {
+      return { kind: "unavailable", reason: { code: "hook-runtime-missing" } };
+    }
+    if (integration.disableAllHooks === true) {
+      return { kind: "unavailable", reason: { code: "hooks-disabled" } };
+    }
     if (integration.hooks === "not-installed" && sessions.size === 0) {
       return {
         kind: "permission-required",
         capability: CLAUDE_HOOKS_CAPABILITY,
         sourceLabel: CLAUDE_HOOKS_SOURCE_LABEL,
       };
+    }
+    // Unknown install state with nothing seen: an empty list would read as
+    // "0 active sessions", a zero the service cannot vouch for (D-15). Once a
+    // session has been seen, the events themselves are the evidence.
+    if (integration.hooks === "unknown" && sessions.size === 0) {
+      return { kind: "unavailable", reason: { code: "hooks-status-unknown" } };
     }
   }
 

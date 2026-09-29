@@ -385,6 +385,91 @@ describe("setup and telemetry-paused states (Test 6, D-53, SESS-18)", () => {
   });
 });
 
+function renderedText(state: ReturnType<typeof activeSessionsStateFor>): string {
+  const { container } = render(
+    <WidgetFrame
+      definition={activeSessionsWidget}
+      state={state}
+      connection={{ kind: "live" }}
+      now={NOW_MS}
+    />,
+  );
+  return container.textContent ?? "";
+}
+
+describe("hook states that mean no events can arrive never read as zero sessions (wave 2 review, D-15)", () => {
+  it.each([
+    [
+      "disableAllHooks",
+      { disableAllHooks: true },
+      "hooks-disabled",
+      "Claude Code has all hooks turned off (disableAllHooks), so no sessions are reported. Turn hooks back on in Claude Code's settings to resume tracking.",
+    ],
+    [
+      "a missing hook runtime",
+      { hookRuntimeMissing: true },
+      "hook-runtime-missing",
+      "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+    ],
+  ] as const)(
+    "%s pauses tracking with a typed reason, with or without stored sessions",
+    (_label, overrides, code, body) => {
+      const stored = session({ runId: runId(1) });
+      for (const sessions of [new Map(), new Map([[stored.runId, stored]])]) {
+        const state = activeSessionsStateFor(
+          { kind: "live" },
+          sessions,
+          integrationWith(overrides),
+          NOW_MS,
+        );
+        expect(state).toEqual({ kind: "unavailable", reason: { code } });
+        const text = renderedText(state);
+        expect(text).toContain("Session tracking paused");
+        expect(text).toContain(body);
+        expect(text).not.toMatch(/\b0 active/);
+        cleanup();
+      }
+    },
+  );
+
+  it("hooks unknown with no sessions is unavailable, never 0 active sessions", () => {
+    const state = activeSessionsStateFor(
+      { kind: "live" },
+      new Map(),
+      integrationWith({ hooks: "unknown" }),
+      NOW_MS,
+    );
+    expect(state).toEqual({ kind: "unavailable", reason: { code: "hooks-status-unknown" } });
+    const text = renderedText(state);
+    expect(text).toContain("Session tracking status unknown");
+    expect(text).toContain(
+      "The service couldn't read Claude Code's hook settings, so it can't tell whether sessions are being reported.",
+    );
+    expect(text).not.toMatch(/\b0 active/);
+  });
+
+  it("hooks unknown with stored sessions stays ready: the events themselves are the evidence", () => {
+    const stored = session({ runId: runId(1) });
+    const state = activeSessionsStateFor(
+      { kind: "live" },
+      new Map([[stored.runId, stored]]),
+      integrationWith({ hooks: "unknown" }),
+      NOW_MS,
+    );
+    expect(state.kind).toBe("ready");
+  });
+
+  it("disableAllHooks null (not read) with hooks installed stays ready", () => {
+    const state = activeSessionsStateFor(
+      { kind: "live" },
+      new Map(),
+      integrationWith({ disableAllHooks: null }),
+      NOW_MS,
+    );
+    expect(state.kind).toBe("ready");
+  });
+});
+
 /**
  * One press of Tab: sequential focus order over what a browser would offer —
  * document order over every focusable, non-disabled, non-hidden element.

@@ -131,6 +131,23 @@ const UNAVAILABLE_COPY: Record<
     heading: "Session tracking paused",
     body: (version) => `${claudeCodeVersion(version)} is older than the minimum supported 2.1.214.`,
   },
+  // Hook states in which no event can arrive (wave 2 review, D-15): each is
+  // said out loud rather than shown as "0 active sessions".
+  "hooks-disabled": {
+    heading: "Session tracking paused",
+    body: () =>
+      "Claude Code has all hooks turned off (disableAllHooks), so no sessions are reported. Turn hooks back on in Claude Code's settings to resume tracking.",
+  },
+  "hook-runtime-missing": {
+    heading: "Session tracking paused",
+    body: () =>
+      "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+  },
+  "hooks-status-unknown": {
+    heading: "Session tracking status unknown",
+    body: () =>
+      "The service couldn't read Claude Code's hook settings, so it can't tell whether sessions are being reported.",
+  },
 };
 
 /**
@@ -145,7 +162,7 @@ function unavailableCopy(
   if (typeof reason !== "object" || reason === null) return null;
   if (!Object.hasOwn(UNAVAILABLE_COPY, reason.code)) return null;
   const copy = UNAVAILABLE_COPY[reason.code];
-  const version = typeof reason.version === "string" ? reason.version : "";
+  const version = "version" in reason && typeof reason.version === "string" ? reason.version : "";
   return { heading: copy.heading, body: copy.body(version) };
 }
 
