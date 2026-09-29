@@ -69,17 +69,35 @@ function MetaSegments({ row }: { readonly row: ProjectRow }): VNode {
   );
 }
 
+/**
+ * The S3 "GitHub link override row" (UI-SPEC S3, RR-12): the `GitHub link`
+ * label plus the owner-set `github.com/owner/repo`. Only an owner-set
+ * override gets this row — a link derived from the git remote is already
+ * shown by the remote row, so repeating it here would state it twice.
+ */
+function GithubLinkRow({ row }: { readonly row: ProjectRow }): VNode | null {
+  if (row.github.kind !== "github" || row.github.source !== "override") return null;
+  return (
+    <p className="ccc-list-meta ccc-github-link-row">
+      <span className="ccc-mono-label">GitHub link</span> {row.github.label}
+    </p>
+  );
+}
+
 /** The S3g git detail block: branch/dirty (or the error/pending states), remote and recent commits. */
 function GitDetail({ row, now }: { readonly row: ProjectRow; readonly now: number }): VNode {
   const git = row.git;
 
   if (git.kind === "pending") {
     return (
-      <div aria-busy="true">
-        <span className="ccc-visually-hidden">Loading git status…</span>
-        <p className="ccc-skeleton-line" />
-        <p className="ccc-skeleton-line" />
-      </div>
+      <>
+        <div aria-busy="true">
+          <span className="ccc-visually-hidden">Loading git status…</span>
+          <p className="ccc-skeleton-line" />
+          <p className="ccc-skeleton-line" />
+        </div>
+        <GithubLinkRow row={row} />
+      </>
     );
   }
 
@@ -100,11 +118,13 @@ function GitDetail({ row, now }: { readonly row: ProjectRow; readonly now: numbe
           Updating Node.js can make macOS ask again.
         </p>
       )}
+      {git.kind !== "repo" && <GithubLinkRow row={row} />}
       {git.kind === "repo" && (
         <>
           <p className="ccc-list-meta">
             {git.remote === null ? "No remote" : `Remote ${git.remote.host}/${git.remote.path}`}
           </p>
+          <GithubLinkRow row={row} />
           {/* LAUNCH_TOOLBAR_SLOT: plan 04-10 mounts the S2 launch toolbar and
               its persistent status line here, between the remote row and
               "Recent commits" (UI-SPEC S3 card anatomy). Deliberately empty

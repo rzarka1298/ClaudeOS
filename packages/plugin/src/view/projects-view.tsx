@@ -129,9 +129,12 @@ export function ProjectsView({ actions, pickFolder, connection, now }: ProjectsV
       {registerFlow}
       <h3 className="ccc-state-heading">Registered projects</h3>
       {rows.length === 0 ? (
-        <p className="ccc-state-body">
-          Register a folder to open it in Antigravity, Claude Code, Finder or GitHub from here.
-        </p>
+        <div className="ccc-projects-empty">
+          <h4 className="ccc-state-heading">Nothing here yet</h4>
+          <p className="ccc-state-body">
+            Register a folder to open it in Antigravity, Claude Code, Finder or GitHub from here.
+          </p>
+        </div>
       ) : (
         <div className="ccc-projects-grid">
           {rows.map((row) => (
