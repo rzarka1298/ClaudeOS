@@ -275,8 +275,16 @@ describe("orderSessionRows: fixed state order and the 60-minute terminal window 
 
   it("orders most-recent-activity first within a state", () => {
     const sessions: readonly SessionView[] = [
-      typedSession({ runId: runId(1), state: "running", lastActivityAt: "2026-09-25T11:00:00.000Z" }),
-      typedSession({ runId: runId(2), state: "running", lastActivityAt: "2026-09-25T11:30:00.000Z" }),
+      typedSession({
+        runId: runId(1),
+        state: "running",
+        lastActivityAt: "2026-09-25T11:00:00.000Z",
+      }),
+      typedSession({
+        runId: runId(2),
+        state: "running",
+        lastActivityAt: "2026-09-25T11:30:00.000Z",
+      }),
     ];
 
     const rows = orderSessionRows(sessions, NOW);

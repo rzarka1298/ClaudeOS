@@ -11,9 +11,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
 import { Overview } from "../view/overview.js";
 import {
+  type ActiveSessionsData,
   activeSessionsMetric,
   activeSessionsWidget,
-  type ActiveSessionsData,
 } from "./active-sessions.js";
 import { applyClaudeServiceEvent } from "./claude-events.js";
 import { formatDuration } from "./duration.js";
@@ -438,8 +438,13 @@ describe("keyboard order: row link -> row pill -> next row -> +n more -> Source 
     const afterLastPill = pressTab();
     expect(afterLastPill?.textContent).toBe("+2 more");
 
-    const afterMore = pressTab();
-    expect(afterMore?.textContent).toBe("Source");
+    // The footer's own focusable timestamp (Phase 3, unchanged by this
+    // phase) sits between the overflow control and Source in DOM order.
+    const afterMoreTime = pressTab();
+    expect(afterMoreTime?.className).toContain("ccc-footer-time");
+
+    const afterTime = pressTab();
+    expect(afterTime?.textContent).toBe("Source");
   });
 });
 

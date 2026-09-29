@@ -1,6 +1,17 @@
-import { RUN_STATE_DISPLAY, type SessionView, sessionDisplayName } from "@ccc/domain";
+import {
+  RUN_STATE_DISPLAY,
+  type RunState,
+  type SessionView,
+  sessionDisplayName,
+} from "@ccc/domain";
 import type { VNode } from "preact";
-import type { HeroMetric, WidgetBodyProps, WidgetDefinition } from "./contract.js";
+import type {
+  HeroMetric,
+  QuickActionDescriptor,
+  WidgetBodyProps,
+  WidgetDefinition,
+} from "./contract.js";
+import { formatDuration } from "./duration.js";
 import { ListBody } from "./list-body.js";
 import { formatRelativeTime } from "./relative-time.js";
 
@@ -49,22 +60,6 @@ export function activeSessionsMetric(data: ActiveSessionsData): HeroMetric {
 }
 
 /**
- * `{s} s` under a minute, `{m} min` under an hour, else `{h} h {m} min`
- * (UI-SPEC "Number and time formatting"). Task 2 extracts this into its own
- * `duration.ts` module (05-13 reuses it); Task 1 keeps it local to the one
- * caller it has so far.
- */
-function formatDurationMs(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  if (totalSeconds < 60) return `${totalSeconds} s`;
-  const totalMinutes = Math.floor(ms / 60_000);
-  if (totalMinutes < 60) return `${totalMinutes} min`;
-  const hours = Math.floor(ms / 3_600_000);
-  const minutes = Math.floor((ms % 3_600_000) / 60_000);
-  return `${hours} h ${minutes} min`;
-}
-
-/**
  * A row's elapsed text. A `stale` Run's duration is bounded by its last known
  * activity, never by `now` — inventing elapsed time past the last evidence
  * would be exactly the guess the data-integrity rule forbids (R-22), so it
@@ -74,10 +69,10 @@ function elapsedText(row: SessionView, nowMs: number): string {
   if (row.state === "stale") {
     const lastKnownMs = Date.parse(row.lastActivityAt ?? row.startedAt);
     const startedMs = Date.parse(row.startedAt);
-    return `At least ${formatDurationMs(Math.max(0, lastKnownMs - startedMs))}`;
+    return `At least ${formatDuration(Math.max(0, lastKnownMs - startedMs))}`;
   }
   const endMs = row.endedAt !== null ? Date.parse(row.endedAt) : nowMs;
-  return formatDurationMs(Math.max(0, endMs - Date.parse(row.startedAt)));
+  return formatDuration(Math.max(0, endMs - Date.parse(row.startedAt)));
 }
 
 /** `{glyph} {label} · {model, when reported} · {elapsed} · active {relative}` (UI-SPEC "Row list"). */
@@ -90,10 +85,61 @@ function rowMeta(row: SessionView, nowMs: number): string {
   return parts.join(" · ");
 }
 
+/**
+ * Row states whose one action is Focus, and the ones whose one action is
+ * Resume (UI-SPEC S1 row action table). `queued` and every state without a
+ * Claude session id have no action at all — {@link rowActionDescriptor}
+ * checks the session id first, so both rules apply uniformly.
+ */
+const FOCUSABLE_STATES: ReadonlySet<RunState> = new Set([
+  "running",
+  "waiting-for-approval",
+  "starting",
+]);
+const RESUMABLE_STATES: ReadonlySet<RunState> = new Set([
+  "stale",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+/**
+ * The row's one descriptor, or `null` for no action (UI-SPEC S1 row action
+ * table). A descriptor is DATA (C-11): the row emits it to `onQuickAction`
+ * and executes nothing itself.
+ */
+function rowActionDescriptor(row: SessionView): QuickActionDescriptor | null {
+  if (row.claudeSessionId === null) return null;
+  if (FOCUSABLE_STATES.has(row.state)) {
+    return {
+      id: `session-focus-${row.runId}`,
+      label: "Focus",
+      capability: "session:focus",
+      target: { runId: row.runId },
+    };
+  }
+  if (RESUMABLE_STATES.has(row.state)) {
+    return {
+      id: `session-resume-${row.runId}`,
+      label: "Resume",
+      capability: "session:resume",
+      target: { runId: row.runId },
+    };
+  }
+  return null;
+}
+
+/** `Focus terminal for {name}` or `Resume {name}` (UI-SPEC S1 row action table). */
+function rowActionLabel(row: SessionView): string {
+  const name = sessionDisplayName(row);
+  return FOCUSABLE_STATES.has(row.state) ? `Focus terminal for ${name}` : `Resume ${name}`;
+}
+
 function ActiveSessionsBody({
   data,
   size,
   onNavigate,
+  onQuickAction,
 }: WidgetBodyProps<ActiveSessionsData>): VNode | null {
   return (
     <ListBody<SessionView>
@@ -104,6 +150,10 @@ function ActiveSessionsBody({
       renderMeta={(row) => rowMeta(row, data.nowMs)}
       moreDestination="agent-runs"
       onMore={onNavigate}
+      renderAction={rowActionDescriptor}
+      renderActionLabel={rowActionLabel}
+      onAction={onQuickAction}
+      onSelectRow={(row) => onNavigate?.("agent-runs", { runId: row.runId })}
     />
   );
 }
