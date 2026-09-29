@@ -467,7 +467,24 @@ describe("Project shortcuts: empty state (S1, RR-27)", () => {
     expect(css).toMatch(/\.ccc-empty-action\s*\{[^}]*margin-top:\s*var\(--ccc-space-sm\)/);
   });
 
-  it("shows the setup callout after the empty copy while no launcher is set up — read from the live snapshot signal, since renderEmpty receives no data", () => {
+  it("shows the setup callout after the empty copy when the card's own state says no launcher is set up", () => {
+    const body = cardBody(
+      "project-shortcuts",
+      {
+        projects: [],
+        launchers: {
+          antigravity: "not-set-up",
+          "claude-code": { status: "not-set-up", terminalLabel: "Terminal" },
+          "claude-desktop": "not-set-up",
+        },
+      },
+      { isEmpty: true },
+    );
+    expect(body.textContent).toContain("Register a project in Projects to see it here.");
+    expect(body.textContent).toContain("Launchers aren't set up yet");
+  });
+
+  it("reads the setup state from the widget state it was handed, not a global signal (wave-3 review)", () => {
     projectsSnapshot.value = {
       projects: [],
       launchers: {
@@ -482,7 +499,7 @@ describe("Project shortcuts: empty state (S1, RR-27)", () => {
       { isEmpty: true },
     );
     expect(body.textContent).toContain("Register a project in Projects to see it here.");
-    expect(body.textContent).toContain("Launchers aren't set up yet");
+    expect(body.textContent).not.toContain("Launchers aren't set up yet");
   });
 });
 
