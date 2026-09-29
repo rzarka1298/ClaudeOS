@@ -17,6 +17,7 @@ import {
   ensureScriptDir,
   SCRIPT_DIR_NAME,
   SCRIPT_MAX_AGE_MS,
+  STARTUP_SCRIPT_MIN_AGE_MS,
   sweepStaleScripts,
   writeLaunchScript,
 } from "./script-dir.js";
@@ -114,6 +115,20 @@ describe("sweepStaleScripts (Pitfall 5)", () => {
     expect(existsSync(fresh)).toBe(true);
     expect(existsSync(almost)).toBe(true);
     expect(existsSync(oldOther)).toBe(true);
+  });
+
+  it("the startup threshold is a short 60 seconds, well under the per-launch 10 minutes", () => {
+    expect(STARTUP_SCRIPT_MIN_AGE_MS).toBe(60_000);
+    expect(STARTUP_SCRIPT_MIN_AGE_MS).toBeLessThan(SCRIPT_MAX_AGE_MS);
+  });
+
+  it("a startup sweep keeps a script handed off seconds before a KeepAlive restart", () => {
+    const dir = ensureScriptDir(runtimeDir);
+    const justHanded = seed(dir, `${"c".repeat(32)}.command`, 5_000);
+    const leftover = seed(dir, `${"d".repeat(32)}.command`, 2 * 60_000);
+    expect(sweepStaleScripts(dir, { olderThanMs: STARTUP_SCRIPT_MIN_AGE_MS })).toBe(1);
+    expect(existsSync(justHanded)).toBe(true);
+    expect(existsSync(leftover)).toBe(false);
   });
 
   it("answers 0 for a directory that does not exist", () => {

@@ -62,11 +62,16 @@ describe("audit: each Terminal.app launch sweeps stale scripts (D-20, Pitfall 5)
   });
 });
 
-describe("audit: service startup removes every leftover script before listening (D-20)", () => {
-  it("main.ts ensures the script dir and sweeps { all: true } before the socket server starts", () => {
+describe("audit: service startup removes leftover scripts before listening (D-20)", () => {
+  it("main.ts ensures the script dir and sweeps with the short startup threshold before the socket server starts", () => {
     const src = readFileSync(fileURLToPath(new URL("../main.ts", import.meta.url)), "utf8");
     const ensure = src.indexOf("ensureScriptDir(runtimeDir");
-    const sweep = src.indexOf("sweepStaleScripts(scriptDir, { all: true })");
+    // Never `{ all: true }` at startup: a KeepAlive restart can follow a
+    // hand-off within seconds, and Terminal may not have read that script.
+    expect(src).not.toContain("sweepStaleScripts(scriptDir, { all: true })");
+    const sweep = src.indexOf(
+      "sweepStaleScripts(scriptDir, { olderThanMs: STARTUP_SCRIPT_MIN_AGE_MS })",
+    );
     const listen = src.indexOf("startSocketServer(");
     expect(ensure).toBeGreaterThan(-1);
     expect(sweep).toBeGreaterThan(ensure);
