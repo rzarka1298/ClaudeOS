@@ -5,6 +5,8 @@ satisfies: ADR-06
 
 # Hooks install at user level and deliver over the socket with a spool fallback
 
+Amended by ADR-0025 (subscription set, write-ahead SessionEnd, rename-then-read drain).
+
 Telemetry reaches the companion service through Claude Code `command` hooks
 registered in `~/.claude/settings.json` with `"async": true`. Each hook writes
 its stdin payload to the service's Unix socket, and falls back to appending to
