@@ -455,3 +455,44 @@ describe("spawn outcomes map to D-26 kinds (PROJ-12)", () => {
     ]);
   });
 });
+
+describe("an identical launch already in flight is joined, not repeated (wave-3 review)", () => {
+  it("a second identical request while one is in flight returns the same promise and spawns once", async () => {
+    spawner.mode = { kind: "succeed", delayMs: 30 };
+    const svc = service();
+    const first = svc.launch({ projectId, action: "finder" });
+    const second = svc.launch({ projectId, action: "finder" });
+    expect(second).toBe(first);
+    await expect(Promise.all([first, second])).resolves.toEqual([{ ok: true }, { ok: true }]);
+    expect(spawner.calls).toHaveLength(1);
+    expect(refreshCalls).toEqual([projectId]);
+  });
+
+  it("a different action or project is not joined", async () => {
+    spawner.mode = { kind: "succeed", delayMs: 30 };
+    setGithubUrlOverride(store.db, projectId, "https://github.com/owner/repo");
+    const svc = service();
+    await Promise.all([
+      svc.launch({ projectId, action: "finder" }),
+      svc.launch({ projectId, action: "github" }),
+    ]);
+    expect(spawner.calls).toHaveLength(2);
+  });
+
+  it("once the first launch settles, the same request launches again", async () => {
+    const svc = service();
+    await svc.launch({ projectId, action: "finder" });
+    await svc.launch({ projectId, action: "finder" });
+    expect(spawner.calls).toHaveLength(2);
+  });
+
+  it("joins identical Claude Desktop requests, which carry no project", async () => {
+    saveLauncherConfig(store.db, "claude-desktop", { bundleId: "com.anthropic.claudefordesktop" });
+    spawner.mode = { kind: "succeed", delayMs: 30 };
+    const svc = service();
+    const first = svc.launch({ action: "claude-desktop" });
+    expect(svc.launch({ action: "claude-desktop" })).toBe(first);
+    await first;
+    expect(spawner.calls).toHaveLength(1);
+  });
+});
