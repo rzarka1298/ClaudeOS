@@ -1,9 +1,10 @@
 import { PROJECTS_REFRESH_PATH } from "@ccc/domain";
-import type {
-  EventClient,
-  EventClientState,
-  SocketApiClient,
-  SocketRequestOptions,
+import {
+  type EventClient,
+  type EventClientState,
+  refreshProjects,
+  type SocketApiClient,
+  type SocketRequestOptions,
 } from "@ccc/service-api-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "./connection-state.js";
@@ -71,7 +72,9 @@ describe("refreshProjectsOnConnect", () => {
   it("posts one full refresh when the stream goes live", async () => {
     const socket = fakeSocketClient(() => Promise.resolve({ status: 200, body: { ok: true } }));
     const events = fakeEventClient();
-    attachEventClient(events.client, { onLive: refreshProjectsOnConnect(socket.client) });
+    attachEventClient(events.client, {
+      onLive: refreshProjectsOnConnect(() => refreshProjects(socket.client)),
+    });
 
     events.setState({ kind: "live" });
     await Promise.resolve();
@@ -80,7 +83,7 @@ describe("refreshProjectsOnConnect", () => {
 
   it("swallows a failed refresh — the next collector tick still reads git", async () => {
     const socket = fakeSocketClient(() => Promise.reject(new Error("socket closed")));
-    const onLive = refreshProjectsOnConnect(socket.client);
+    const onLive = refreshProjectsOnConnect(() => refreshProjects(socket.client));
     expect(() => onLive()).not.toThrow();
     // Let the rejection settle; an unhandled rejection would fail the run.
     await new Promise((resolve) => setTimeout(resolve, 0));

@@ -27,6 +27,33 @@ function mapClientState(state: EventClientState): ConnectionState {
   }
 }
 
+export interface AttachEventClientOptions {
+  /**
+   * Called once each time the stream becomes live (from connecting or
+   * disconnected), never for a repeated `live`. The view passes
+   * {@link refreshProjectsOnConnect} here.
+   */
+  readonly onLive?: () => void;
+}
+
+/**
+ * The connect seam's action: asks the service to re-read every project's git
+ * state now (D-42), so a freshly connected card does not wait up to a whole
+ * 30 s collector tick — a restarted service starts every project `pending`.
+ * Fire and forget: a failure is swallowed, since the next tick reads git
+ * anyway and the card's freshness already says what it knows.
+ *
+ * `refresh` is injected (the view passes `@ccc/service-api-client`'s
+ * `refreshProjects` bound to its client) rather than imported: this module
+ * is reachable from `@ccc/plugin`'s public entry, which the browser harness
+ * bundles, and the client package's value exports pull in `node:http`.
+ */
+export function refreshProjectsOnConnect(refresh: () => Promise<unknown>): () => void {
+  return () => {
+    refresh().catch(() => undefined);
+  };
+}
+
 /**
  * Wires an {@link EventClient}'s transitions onto the {@link connectionState}
  * and {@link lastEvent} signals the shell reads directly (never a client —
@@ -37,15 +64,20 @@ function mapClientState(state: EventClientState): ConnectionState {
  * idempotency guard), so calling this again on a view reopen just re-points
  * the callbacks at the still-live subscription.
  */
-export function attachEventClient(client: EventClient): void {
+export function attachEventClient(
+  client: EventClient,
+  options: AttachEventClientOptions = {},
+): void {
   client.subscribe(
     (event: ServiceEvent) => {
       lastEvent.value = { type: event.type, occurredAt: event.occurredAt };
       routeServiceEvent(event);
     },
     (state: EventClientState) => {
+      const wasLive = connectionState.value.kind === "live";
       connectionState.value = mapClientState(state);
       connectionChangedAt.value = new Date().toISOString();
+      if (state.kind === "live" && !wasLive) options.onLive?.();
     },
     applySnapshot,
   );

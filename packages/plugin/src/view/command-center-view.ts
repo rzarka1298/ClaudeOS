@@ -1,7 +1,11 @@
-import type { AuthenticatedSocketApiClient, EventClient } from "@ccc/service-api-client";
+import {
+  type AuthenticatedSocketApiClient,
+  type EventClient,
+  refreshProjects,
+} from "@ccc/service-api-client";
 import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
-import { attachEventClient } from "../service-connection.js";
+import { attachEventClient, refreshProjectsOnConnect } from "../service-connection.js";
 import type { CommandCenterSettings } from "../settings.js";
 import type { DestinationId } from "./destinations.js";
 import { Shell } from "./shell.js";
@@ -75,8 +79,11 @@ export class CommandCenterView extends ItemView {
 
     // The subscription always starts after the render above returns —
     // painting never waits on the network (PERF-01 as a structural
-    // property, not a performance hope).
-    attachEventClient(this.host.eventClient);
+    // property, not a performance hope). Each time the stream goes live the
+    // service re-reads every project's git state once (D-42).
+    attachEventClient(this.host.eventClient, {
+      onLive: refreshProjectsOnConnect(() => refreshProjects(this.host.client)),
+    });
   }
 
   override async onClose(): Promise<void> {
