@@ -280,4 +280,48 @@ describe("ProjectsView (Task 3: loading/empty/error states, disconnected banner,
       ),
     );
   });
+  it("shows the skeleton, not the load error, while live but before the first snapshot arrives", () => {
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+
+    expect(screen.getByText("Loading projects")).toBeTruthy();
+    expect(screen.queryByText(/Couldn't load projects\./)).toBeNull();
+  });
+
+  it("announces the removal from a view-owned status region that outlives the removed card", async () => {
+    const projectId = newProjectId();
+    projectsSnapshot.value = {
+      projects: [view({ projectId, displayName: "gone-project" })],
+      launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+    };
+    const remove = vi.fn().mockResolvedValue({ kind: "ok" });
+
+    const { container } = render(
+      <ProjectsView
+        actions={{ ...noopActions(), remove }}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove from projects" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove project" }));
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(projectId));
+
+    projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
+
+    await vi.waitFor(() => {
+      const regions = Array.from(container.querySelectorAll('[role="status"]'));
+      const owner = regions.find((r) => r.textContent === "Removed gone-project from projects.");
+      expect(owner).toBeTruthy();
+      expect(owner?.closest("article")).toBeNull();
+    });
+  });
 });

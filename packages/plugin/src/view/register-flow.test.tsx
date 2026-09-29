@@ -1,6 +1,7 @@
 import { EMPTY_PROJECTS_SNAPSHOT, newProjectId } from "@ccc/domain";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { FolderPick } from "../projects/folder-picker.js";
 import type { ProjectActionOutcome, ProjectsActions } from "../projects/projects-actions.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { RegisterFlow } from "./register-flow.js";
@@ -318,5 +319,168 @@ describe("RegisterFlow (Task 2, S4)", () => {
 
     expect(screen.queryByLabelText("Folder path")).toBeNull();
     expect(document.activeElement).toBe(opener);
+  });
+  it("a second submit while a registration is in flight sends no second request", async () => {
+    let resolveRegister: (outcome: ProjectActionOutcome) => void = () => {};
+    const register = vi.fn(
+      () =>
+        new Promise<ProjectActionOutcome>((resolve) => {
+          resolveRegister = resolve;
+        }),
+    );
+    render(
+      <RegisterFlow
+        actions={{ ...noopActions(), register }}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        onRegistered={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
+    const input = screen.getByLabelText("Folder path");
+    fireEvent.input(input, { target: { value: "/Users/USERNAME/code/example-project" } });
+    const form = input.closest("form") as HTMLFormElement;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
+
+    expect(register).toHaveBeenCalledTimes(1);
+    resolveRegister({ kind: "failed" });
+    await screen.findByText(/Couldn't register this folder\./);
+  });
+
+  it("protected-location: a second Register folder click while in flight sends no third request", async () => {
+    const projectId = newProjectId();
+    let resolveSecond: (outcome: ProjectActionOutcome) => void = () => {};
+    const register = vi
+      .fn()
+      .mockResolvedValueOnce({ kind: "protected-location", location: "documents" })
+      .mockImplementationOnce(
+        () =>
+          new Promise<ProjectActionOutcome>((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+    render(
+      <RegisterFlow
+        actions={{ ...noopActions(), register }}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        onRegistered={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
+    fireEvent.input(screen.getByLabelText("Folder path"), {
+      target: { value: "/Users/USERNAME/Documents/example-project" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
+    await screen.findByText("This folder is in Documents");
+
+    const confirm = screen.getByRole("button", { name: "Register folder" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(register).toHaveBeenCalledTimes(2);
+    resolveSecond({ kind: "registered", projectId });
+    await screen.findByText("Registered example-project.");
+  });
+
+  it("while the folder picker is open, Register a project is busy and opens no second picker", async () => {
+    let resolvePick: (pick: FolderPick) => void = () => {};
+    const pickFolder = vi.fn(
+      () =>
+        new Promise<FolderPick>((resolve) => {
+          resolvePick = resolve;
+        }),
+    );
+    render(
+      <RegisterFlow
+        actions={noopActions()}
+        pickFolder={pickFolder}
+        onRegistered={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+
+    const opener = screen.getByRole("button", { name: "Register a project" });
+    fireEvent.click(opener);
+    fireEvent.click(opener);
+    expect(pickFolder).toHaveBeenCalledTimes(1);
+    expect(opener.getAttribute("aria-disabled")).toBe("true");
+
+    resolvePick({ kind: "cancelled" });
+    await vi.waitFor(() => expect(opener.getAttribute("aria-disabled")).toBeNull());
+  });
+
+  it("a rejected pickFolder opens the typed form with the picker-unavailable notice", async () => {
+    render(
+      <RegisterFlow
+        actions={noopActions()}
+        pickFolder={() => Promise.reject(new Error("dialog exploded"))}
+        onRegistered={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Register a project" }));
+
+    await screen.findByLabelText("Folder path");
+    expect(
+      screen.getByText(
+        "The folder picker isn't available here. Paste the folder's full path instead.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Register a project" }).getAttribute("aria-disabled"),
+    ).toBeNull();
+  });
+
+  it("service-disconnected points at the service and Diagnostics, not at the folder", async () => {
+    const register = vi.fn().mockResolvedValue({ kind: "service-disconnected" });
+    render(
+      <RegisterFlow
+        actions={{ ...noopActions(), register }}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        onRegistered={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
+    fireEvent.input(screen.getByLabelText("Folder path"), {
+      target: { value: "/Users/USERNAME/code/example-project" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe(
+        "▲ Couldn't reach the command center service. Check the service in Settings → Diagnostics, then try again.",
+      ),
+    );
+  });
+
+  it("failed points at Diagnostics rather than blaming the chosen folder", async () => {
+    const register = vi.fn().mockResolvedValue({ kind: "failed" });
+    render(
+      <RegisterFlow
+        actions={{ ...noopActions(), register }}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        onRegistered={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
+    fireEvent.input(screen.getByLabelText("Folder path"), {
+      target: { value: "/Users/USERNAME/code/example-project" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe(
+        "▲ Couldn't register this folder. Check the service in Settings → Diagnostics, then try again.",
+      ),
+    );
   });
 });

@@ -226,7 +226,7 @@ describe("ProjectManageToolbar (Task 3, S3 manage toolbar, RR-01)", () => {
     expect(screen.getByRole("button", { name: "Remove from projects" })).toBeTruthy();
   });
 
-  it("Remove project calls actions.remove and announces removal via onStatus", async () => {
+  it("Remove project calls actions.remove and hands the removal (id and name) to onRemoved, not to the card's own status", async () => {
     const remove = vi.fn().mockResolvedValue({ kind: "ok" });
     const onRemoved = vi.fn();
     const onStatus = vi.fn();
@@ -243,8 +243,10 @@ describe("ProjectManageToolbar (Task 3, S3 manage toolbar, RR-01)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove project" }));
 
     await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("abcdefghi0123456789abcdef"));
-    expect(onRemoved).toHaveBeenCalledWith("abcdefghi0123456789abcdef");
-    expect(onStatus).toHaveBeenCalledWith("Removed example-project from projects.");
+    expect(onRemoved).toHaveBeenCalledWith("abcdefghi0123456789abcdef", "example-project");
+    // The card is about to unmount with its row, taking its status region
+    // with it — the view owns the removal announcement instead.
+    expect(onStatus).not.toHaveBeenCalledWith("Removed example-project from projects.");
   });
 
   it("a failed action reports the constant save-failure copy via onStatus", async () => {
