@@ -233,7 +233,9 @@ function multiRangeSummary(): UsageSummary {
   return summary({
     ranges: {
       today: {
-        activity: activityAvailable({ totals: { input: 100, output: 0, cacheWrite: 0, cacheRead: 0 } }),
+        activity: activityAvailable({
+          totals: { input: 100, output: 0, cacheWrite: 0, cacheRead: 0 },
+        }),
         cost: costAvailable({ usd: 1 }),
       },
       "last-7-days": {
@@ -299,7 +301,7 @@ describe("Test 3 (partial): retention and analysis-off-for-part-of-range copy (D
     );
     const section = container.querySelector('[data-usage-section="token-activity"]');
     expect(section?.textContent).toContain("Partial");
-    expect(section?.textContent).toContain("Local transcripts only go back to Sep 20, 2026.");
+    expect(section?.textContent).toContain("Local transcripts only go back to Sep 20.");
   });
 
   it("analysisOffDays > 0 adds the analysis-off-for-part-of-range sentence", () => {
@@ -347,14 +349,8 @@ describe("Test 4 (cost): basis lines and the forbidden-words guard (USAGE-03)", 
   it("basis lines: each of the three exact sentences, plus the always-shown plan line", () => {
     const cases: ReadonlyArray<[string, string]> = [
       ["claude-code-estimates", "From Claude Code's own session estimates."],
-      [
-        "list-prices",
-        "From list prices dated Sep 1, 2026 applied to token activity.",
-      ],
-      [
-        "mixed",
-        "From Claude Code's session estimates and list prices dated Sep 1, 2026.",
-      ],
+      ["list-prices", "From list prices dated Sep 1 applied to token activity."],
+      ["mixed", "From Claude Code's session estimates and list prices dated Sep 1."],
     ];
     for (const [basis, expectedLine] of cases) {
       const { container } = renderCard(
@@ -394,16 +390,17 @@ describe("Test 4 (cost): basis lines and the forbidden-words guard (USAGE-03)", 
       }),
     );
     const section = container.querySelector('[data-usage-section="estimated-cost"]');
-    expect(section?.textContent).toContain(
-      "2 models without a list price were left out.",
-    );
+    expect(section?.textContent).toContain("2 models without a list price were left out.");
   });
 
   it("no forbidden billing word appears anywhere in S2, and 'spend' appears only in the fixed plan line", () => {
     const { container } = renderCard(
       readyData({
         ranges: {
-          today: { activity: activityAvailable(), cost: costAvailable({ basis: "mixed", priceTableDate: "2026-09-01" }) },
+          today: {
+            activity: activityAvailable(),
+            cost: costAvailable({ basis: "mixed", priceTableDate: "2026-09-01" }),
+          },
           "last-7-days": OFF_RANGE,
           "this-month": OFF_RANGE,
         },

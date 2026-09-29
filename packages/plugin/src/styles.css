@@ -927,6 +927,130 @@
   border-style: dashed;
 }
 
+/*
+ * The Claude usage card (UI-SPEC S2, plan 05-10). A glass `wide` card, never
+ * cream: cream is reserved for the S1 hero (UI-SPEC Color, "Layout
+ * accent"). Three fixed-order sections that stack in a narrow pane at the
+ * CARD's own width (`.ccc-card`'s existing `container-type: inline-size`,
+ * no new container declared here) — never a breakpoint layout.
+ */
+.ccc-usage-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--ccc-space-lg);
+}
+
+.ccc-usage-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  min-width: 0;
+}
+
+.ccc-usage-section > h4 {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-usage-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+}
+
+/* The usage bar's height is `--ccc-space-sm` (0.5rem) per the ADR-0023
+ * spacing table's own row for it — a deliberately different thickness from
+ * the S1 hero's 0.25rem progress line. `--ccc-ink` fill on `--ccc-border`
+ * track, aria-hidden, and NO transition on value change (UI-SPEC Motion:
+ * "no transition on value change"). */
+.ccc-usage-meter {
+  appearance: none;
+  width: 100%;
+  height: var(--ccc-space-sm);
+  border-radius: var(--ccc-radius-pill);
+}
+
+.ccc-usage-meter::-webkit-meter-bar {
+  background: var(--ccc-border);
+  border-radius: var(--ccc-radius-pill);
+}
+
+.ccc-usage-meter::-webkit-meter-optimum-value,
+.ccc-usage-meter::-webkit-meter-suboptimum-value,
+.ccc-usage-meter::-webkit-meter-even-less-good-value {
+  background: var(--ccc-ink);
+  border-radius: var(--ccc-radius-pill);
+}
+
+/* At CARD widths under three 12rem columns plus their gaps, the sections
+ * have already stacked (the grid's own `auto-fit` does that with no query);
+ * this only adds the hairline separator UI-SPEC's "Layout" paragraph
+ * describes for the stacked case. */
+@container (max-width: 39rem) {
+  .ccc-usage-section {
+    padding-top: var(--ccc-space-lg);
+    border-top: var(--ccc-border-hairline) solid var(--ccc-border);
+  }
+
+  .ccc-usage-section:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+}
+
+/* The Section 2 range selector (UI-SPEC "Range selector", R-19). Unpressed
+ * pills use the existing outline-pill look (`--ccc-ink-muted`, hairline
+ * border); the pressed pill is the ADR-0023 selected-pill treatment — cream
+ * fill, `--ccc-ink-inverse` text, weight 600 — the one place outside the S1
+ * hero that `--ccc-cream` is used (UI-SPEC Color, "Layout accent"). */
+.ccc-range-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-range-pill {
+  min-width: var(--ccc-space-lg);
+  min-height: var(--ccc-space-lg);
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  overflow-wrap: anywhere;
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-pill);
+  background: transparent;
+  color: var(--ccc-ink-muted);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  cursor: pointer;
+  transition:
+    color var(--ccc-motion-fast) ease-out,
+    background-color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-range-pill:hover {
+  color: var(--ccc-ink);
+}
+
+.ccc-range-pill[aria-pressed="true"] {
+  background-color: var(--ccc-cream);
+  color: var(--ccc-ink-inverse);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-range-pill:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* The bright accent is unaudited on the cream pressed-pill fill (ADR-0023);
+ * the deep accent is the cream-safe focus ring everywhere else it appears. */
+.ccc-range-pill[aria-pressed="true"]:focus-visible {
+  outline-color: var(--ccc-accent-deep);
+}
+
 /* Long values clamp to two lines with the full text still in the DOM, so the
  * accessible name is never the truncated one (UI-SPEC E1/E5 long-text rows). */
 .ccc-clamp-2 {

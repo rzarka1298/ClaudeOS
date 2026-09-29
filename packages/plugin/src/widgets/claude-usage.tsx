@@ -2,6 +2,7 @@
 // Rule 3): the barrel's `export *` chain pulls in `path-containment.ts`
 // (`node:fs`/`node:path`), which the visual harness's browser-platform
 // bundle cannot resolve.
+import type { Freshness } from "@ccc/domain/freshness.js";
 import type {
   CapacityWindow,
   CostBasis,
@@ -10,22 +11,36 @@ import type {
   PlanCapacityUnavailableReason,
   TokenActivity,
   TokenActivityUnavailableReason,
+  UsageRangeKind,
   UsageSummary,
 } from "@ccc/domain/usage.js";
 import type { VNode } from "preact";
+import { useState } from "preact/hooks";
 import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
+import { formatAbsoluteTime } from "./relative-time.js";
+import { SourceDisclosure, type SourceDisclosureRow } from "./source-disclosure.js";
+import {
+  formatCalendarDate,
+  formatCompactTokens,
+  formatExactTokens,
+  formatPercentUsed,
+  formatRangeBounds,
+  formatTimeOfDay,
+  formatUsd,
+  pluralize,
+} from "./usage-format.js";
 
 /**
  * The Claude usage card (UI-SPEC S2, D-37, D-38, D-51). Moved out of
  * `panels.tsx`'s Phase 3 placeholder section 4; `panels.tsx` now only
  * re-exports {@link claudeUsageWidget} and {@link ClaudeUsageData}.
  *
- * Task 1 (tracer) implements every state row of the three section tables —
- * plan capacity, token activity and estimated cost — each honest when its
- * own source is unavailable, never a zero. The range is fixed to `today`
- * for now; Task 2 adds the range selector, exact `Intl` formatting (this
- * task uses simple inline formatting), per-section Source disclosures and
- * the forbidden-words guard.
+ * Task 1 (tracer) implemented every state row of the three section tables,
+ * fixed to the `today` range. Task 2 adds the range selector (`today` /
+ * `last-7-days` / `this-month`), exact `Intl` formatting via
+ * `usage-format.ts`, the top-three-projects line, partial retention copy,
+ * per-section `SourceDisclosure`s, and keeps every cost string clear of the
+ * forbidden billing words (USAGE-03).
  */
 
 /** The whole precomputed summary, plus the frame's own clock tick — the
@@ -47,6 +62,14 @@ const SECTION_HEADING = {
   cost: "Estimated API-equivalent cost — an estimate, not your bill",
 } as const;
 
+/** `{Freshness}` -> the Source panel's exact display word. */
+const FRESHNESS_LABEL: Readonly<Record<Freshness, string>> = {
+  live: "Live",
+  cached: "Cached",
+  stale: "Stale",
+  unavailable: "Unavailable",
+};
+
 /** A Claude Code version as copy may show it: dotted digits only, mirroring
  * `frame.tsx`'s `claudeCodeVersion` — a version string is schema-bounded
  * but not shape-restricted, so this keeps a free string from a payload out
@@ -58,6 +81,21 @@ function claudeCodeVersion(version: string | null): string {
     : "Your Claude Code version";
 }
 
+/** The `.ccc-badge[data-badge="partial"]` chip (ADR-0002, reused from
+ * `footer.tsx`'s inline Partial badge markup — the same shape, a second
+ * independent instance per section rather than a shared component, since
+ * each section's partial reason text differs). */
+function PartialBadge(): VNode {
+  return (
+    <span className="ccc-badge" data-badge="partial">
+      <span className="ccc-badge-glyph" aria-hidden="true">
+        ◈
+      </span>
+      <span className="ccc-badge-label">Partial</span>
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Section 1: Plan usage (D-02, D-38, USAGE-06)
 // ---------------------------------------------------------------------------
@@ -67,15 +105,12 @@ const WINDOW_LABEL: Readonly<Record<CapacityWindow, string>> = {
   "seven-day": "7-day window",
 };
 
-const TIME_OF_DAY = new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" });
-const MONTH_DAY = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" });
-
 /** `4:40 PM` for the 5-hour window, `Oct 1` for the 7-day window — neither
- * ever contains a `/` (PRIV-04). Exact `Intl` options land in Task 2's
- * `usage-format.ts`; this is the simple version Task 1 needs. */
-function resetsText(window: CapacityWindow, resetsAt: string): string {
-  const date = new Date(resetsAt);
-  return window === "five-hour" ? TIME_OF_DAY.format(date) : MONTH_DAY.format(date);
+ * ever contains a `/` (PRIV-04). */
+function resetsText(window: CapacityWindow, resetsAt: string, nowMs: number): string {
+  return window === "five-hour"
+    ? formatTimeOfDay(resetsAt)
+    : formatCalendarDate(resetsAt.slice(0, 10), nowMs);
 }
 
 const CAPACITY_UNAVAILABLE_BODY: Readonly<
@@ -88,7 +123,24 @@ const CAPACITY_UNAVAILABLE_BODY: Readonly<
   "shape-changed": (version) => `The status line format changed in ${claudeCodeVersion(version)}.`,
 };
 
-function PlanCapacitySection({ capacity }: { readonly capacity: PlanCapacity }): VNode {
+function capacitySourceRows(capacity: PlanCapacity): readonly SourceDisclosureRow[] {
+  if (capacity.kind === "unavailable") return [];
+  return capacity.windows.map((window) => ({
+    numberLabel: `${WINDOW_LABEL[window.window]}: ${formatPercentUsed(window.usedPercent)}`,
+    source: PLAN_CAPACITY_SOURCE_LABEL,
+    range: WINDOW_LABEL[window.window],
+    observed: formatAbsoluteTime(capacity.observedAt),
+    freshness: FRESHNESS_LABEL[capacity.freshness],
+  }));
+}
+
+function PlanCapacitySection({
+  capacity,
+  nowMs,
+}: {
+  readonly capacity: PlanCapacity;
+  readonly nowMs: number;
+}): VNode {
   if (capacity.kind === "unavailable") {
     return (
       <>
@@ -105,7 +157,7 @@ function PlanCapacitySection({ capacity }: { readonly capacity: PlanCapacity }):
         <div className="ccc-usage-row" key={window.window}>
           <p className="ccc-list-meta">{WINDOW_LABEL[window.window]}</p>
           <p className="ccc-state-heading">
-            {`${Math.round(window.usedPercent)}% used · resets ${resetsText(window.window, window.resetsAt)}`}
+            {`${formatPercentUsed(window.usedPercent)} · resets ${resetsText(window.window, window.resetsAt, nowMs)}`}
           </p>
           <meter
             className="ccc-usage-meter"
@@ -123,6 +175,21 @@ function PlanCapacitySection({ capacity }: { readonly capacity: PlanCapacity }):
 // ---------------------------------------------------------------------------
 // Section 2: Token activity (D-03, D-40..D-45, USAGE-01/07/09)
 // ---------------------------------------------------------------------------
+
+const RANGE_PILL_LABEL: Readonly<Record<UsageRangeKind, string>> = {
+  today: "Today",
+  "last-7-days": "Last 7 days",
+  "this-month": "This month",
+};
+
+/** The cost value line's lowercase range word (`$12.40 · today`). */
+const RANGE_WORD: Readonly<Record<UsageRangeKind, string>> = {
+  today: "today",
+  "last-7-days": "last 7 days",
+  "this-month": "this month",
+};
+
+const USAGE_RANGE_ORDER: readonly UsageRangeKind[] = ["today", "last-7-days", "this-month"];
 
 /** The descriptor `dispatchQuickAction` resolves to its "isn't available
  * yet" outcome until 05-17 wires `usage:*` (plan note, this file is not
@@ -154,14 +221,125 @@ const ACTIVITY_UNAVAILABLE: Readonly<
   },
 };
 
+function RangeSelector({
+  value,
+  onChange,
+}: {
+  readonly value: UsageRangeKind;
+  readonly onChange: (range: UsageRangeKind) => void;
+}): VNode {
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: UI-SPEC S2 "Range selector" is exactly `<div role="group" aria-label="...">` — a `<fieldset>` is a form-associated element with its own native styling and a `<legend>` requirement, neither of which fits three plain toggle pills outside a form.
+    <div className="ccc-range-group" role="group" aria-label="Token activity range">
+      {USAGE_RANGE_ORDER.map((range) => (
+        <button
+          key={range}
+          type="button"
+          className="ccc-range-pill"
+          aria-pressed={range === value}
+          onClick={() => onChange(range)}
+        >
+          {RANGE_PILL_LABEL[range]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function activitySourceRows(
+  activity: TokenActivity,
+  range: UsageRangeKind,
+  nowMs: number,
+): readonly SourceDisclosureRow[] {
+  if (activity.kind === "unavailable") return [];
+  const rangeText = formatRangeBounds(activity.bounds, range, nowMs);
+  const observed = formatAbsoluteTime(activity.observedAt);
+  const freshness = FRESHNESS_LABEL[activity.freshness];
+  const partial = activity.partiality.partial ? retentionPartialText(activity, nowMs) : undefined;
+  const counters: ReadonlyArray<readonly [string, number]> = [
+    ["Input", activity.totals.input],
+    ["Output", activity.totals.output],
+    ["Cache write", activity.totals.cacheWrite],
+    ["Cache read", activity.totals.cacheRead],
+  ];
+  return counters.map(([label, value]) => ({
+    numberLabel: `${label}: ${formatExactTokens(value)} tokens`,
+    source: TOKEN_ACTIVITY_SOURCE_LABEL,
+    range: rangeText,
+    observed,
+    freshness,
+    partial,
+  }));
+}
+
+/** The retention/analysis-off-for-part-of-range sentences (UI-SPEC
+ * "Partial" bullet, D-44). Both are independent and either or both may
+ * apply. */
+function retentionPartialText(
+  activity: Extract<TokenActivity, { kind: "available" }>,
+  nowMs: number,
+): string {
+  const parts: string[] = [];
+  if (activity.coverage.horizonDate !== null) {
+    parts.push(
+      `Local transcripts only go back to ${formatCalendarDate(activity.coverage.horizonDate, nowMs)}.`,
+    );
+  }
+  if (activity.coverage.analysisOffDays > 0) {
+    parts.push("Transcript analysis was off for part of this range.");
+  }
+  return parts.join(" ");
+}
+
+function TopProjects({
+  activity,
+  onNavigate,
+}: {
+  readonly activity: Extract<TokenActivity, { kind: "available" }>;
+  readonly onNavigate: ((destination: "agent-runs") => void) | undefined;
+}): VNode | null {
+  if (activity.byProject.length === 0) return null;
+  const totalOf = (counters: {
+    input: number;
+    output: number;
+    cacheWrite: number;
+    cacheRead: number;
+  }): number => counters.input + counters.output + counters.cacheWrite + counters.cacheRead;
+  const sorted = [...activity.byProject].sort((a, b) => totalOf(b.counters) - totalOf(a.counters));
+  const top = sorted.slice(0, 3);
+  const hidden = sorted.length - top.length;
+  const line = top
+    .map(
+      (project) =>
+        `${project.projectName ?? "Unclassified"} ${formatCompactTokens(totalOf(project.counters))}`,
+    )
+    .join(" · ");
+  return (
+    <p className="ccc-list-meta">
+      {`By project: ${line}`}
+      {hidden > 0 && (
+        <button type="button" className="ccc-list-more" onClick={() => onNavigate?.("agent-runs")}>
+          {` +${hidden} more`}
+        </button>
+      )}
+    </p>
+  );
+}
+
 function TokenActivitySection({
   activity,
+  range,
+  nowMs,
   firstScanPending,
   onQuickAction,
+  onNavigate,
 }: {
   readonly activity: TokenActivity;
+  readonly range: UsageRangeKind;
+  readonly nowMs: number;
   readonly firstScanPending: boolean;
   readonly onQuickAction: ((descriptor: QuickActionDescriptor) => void) | undefined;
+  readonly onNavigate: ((destination: "agent-runs") => void) | undefined;
 }): VNode {
   if (firstScanPending) {
     return <p className="ccc-state-body">Counting tokens from local transcripts…</p>;
@@ -187,12 +365,24 @@ function TokenActivitySection({
   }
   const totals = activity.totals;
   const total = totals.input + totals.output + totals.cacheWrite + totals.cacheRead;
+  const partialText = activity.partiality.partial ? retentionPartialText(activity, nowMs) : "";
   return (
     <>
-      <p className="ccc-state-heading">{`${total} tokens`}</p>
+      <p className="ccc-state-heading">{`${formatCompactTokens(total)} tokens`}</p>
+      <p className="ccc-list-meta">{formatRangeBounds(activity.bounds, range, nowMs)}</p>
       <p className="ccc-list-meta">
-        {`Input ${totals.input} · output ${totals.output} · cache write ${totals.cacheWrite} · cache read ${totals.cacheRead}`}
+        {`Input ${formatCompactTokens(totals.input)} · output ${formatCompactTokens(
+          totals.output,
+        )} · cache write ${formatCompactTokens(totals.cacheWrite)} · cache read ${formatCompactTokens(
+          totals.cacheRead,
+        )}`}
       </p>
+      <TopProjects activity={activity} onNavigate={onNavigate} />
+      {activity.partiality.partial && partialText.length > 0 && (
+        <p className="ccc-list-meta">
+          <PartialBadge /> {partialText}
+        </p>
+      )}
     </>
   );
 }
@@ -205,18 +395,44 @@ const PLAN_LINE = "Your subscription spend is your fixed plan price.";
 
 const COST_UNAVAILABLE_BODY = "It needs token activity or the status-line wrapper.";
 
-function costBasisLine(basis: CostBasis, priceTableDate: string | null): string {
+function costBasisLine(basis: CostBasis, priceTableDate: string | null, nowMs: number): string {
   switch (basis) {
     case "claude-code-estimates":
       return "From Claude Code's own session estimates.";
     case "list-prices":
-      return `From list prices dated ${MONTH_DAY.format(new Date(priceTableDate ?? 0))} applied to token activity.`;
+      return `From list prices dated ${formatCalendarDate(priceTableDate ?? "1970-01-01", nowMs)} applied to token activity.`;
     case "mixed":
-      return `From Claude Code's session estimates and list prices dated ${MONTH_DAY.format(new Date(priceTableDate ?? 0))}.`;
+      return `From Claude Code's session estimates and list prices dated ${formatCalendarDate(priceTableDate ?? "1970-01-01", nowMs)}.`;
   }
 }
 
-function EstimatedCostSection({ cost }: { readonly cost: EstimatedApiCost }): VNode {
+function costSourceRows(
+  cost: EstimatedApiCost,
+  range: UsageRangeKind,
+  nowMs: number,
+): readonly SourceDisclosureRow[] {
+  if (cost.kind === "unavailable") return [];
+  return [
+    {
+      numberLabel: `Estimated cost: ${formatUsd(cost.usd)}`,
+      source: ESTIMATED_COST_SOURCE_LABEL,
+      range: formatRangeBounds(cost.bounds, range, nowMs),
+      observed: formatAbsoluteTime(cost.observedAt),
+      freshness: FRESHNESS_LABEL[cost.freshness],
+      partial: cost.partiality.partial ? pluralize(cost.excludedModelCount) : undefined,
+    },
+  ];
+}
+
+function EstimatedCostSection({
+  cost,
+  range,
+  nowMs,
+}: {
+  readonly cost: EstimatedApiCost;
+  readonly range: UsageRangeKind;
+  readonly nowMs: number;
+}): VNode {
   if (cost.kind === "unavailable") {
     return (
       <>
@@ -228,11 +444,14 @@ function EstimatedCostSection({ cost }: { readonly cost: EstimatedApiCost }): VN
   }
   return (
     <>
-      <p className="ccc-state-heading">
-        {cost.usd > 0 && cost.usd < 0.01 ? "Less than $0.01" : `$${cost.usd.toFixed(2)}`}
-      </p>
-      <p className="ccc-list-meta">{costBasisLine(cost.basis, cost.priceTableDate)}</p>
+      <p className="ccc-state-heading">{`${formatUsd(cost.usd)} · ${RANGE_WORD[range]}`}</p>
+      <p className="ccc-list-meta">{costBasisLine(cost.basis, cost.priceTableDate, nowMs)}</p>
       <p className="ccc-list-meta">{PLAN_LINE}</p>
+      {cost.partiality.partial && cost.excludedModelCount > 0 && (
+        <p className="ccc-list-meta">
+          <PartialBadge /> {pluralize(cost.excludedModelCount)}
+        </p>
+      )}
     </>
   );
 }
@@ -241,16 +460,29 @@ function EstimatedCostSection({ cost }: { readonly cost: EstimatedApiCost }): VN
 // The card body
 // ---------------------------------------------------------------------------
 
-function ClaudeUsageBody({ data, onQuickAction }: WidgetBodyProps<ClaudeUsageData>): VNode {
-  const { summary } = data;
-  const today = summary.ranges.today;
+function ClaudeUsageBody({
+  data,
+  onQuickAction,
+  onNavigate,
+}: WidgetBodyProps<ClaudeUsageData>): VNode {
+  const { summary, nowMs } = data;
+  const [range, setRange] = useState<UsageRangeKind>("today");
+  const rangeData = summary.ranges[range];
   const activityBusy = summary.analysis.enabled && summary.analysis.firstScanPending;
+  const navigateToAgentRuns = onNavigate
+    ? (destination: "agent-runs") => onNavigate(destination)
+    : undefined;
 
   return (
     <div className="ccc-usage-sections">
       <section className="ccc-usage-section" data-usage-section="plan-capacity">
         <h4>{SECTION_HEADING.capacity}</h4>
-        <PlanCapacitySection capacity={summary.capacity} />
+        <PlanCapacitySection capacity={summary.capacity} nowMs={nowMs} />
+        <SourceDisclosure
+          srSuffix="for plan usage"
+          rows={capacitySourceRows(summary.capacity)}
+          disabled={summary.capacity.kind === "unavailable"}
+        />
       </section>
       <section
         className="ccc-usage-section"
@@ -258,15 +490,29 @@ function ClaudeUsageBody({ data, onQuickAction }: WidgetBodyProps<ClaudeUsageDat
         aria-busy={activityBusy ? "true" : undefined}
       >
         <h4>{SECTION_HEADING.activity}</h4>
+        <RangeSelector value={range} onChange={setRange} />
         <TokenActivitySection
-          activity={today.activity}
+          activity={rangeData.activity}
+          range={range}
+          nowMs={nowMs}
           firstScanPending={activityBusy}
           onQuickAction={onQuickAction}
+          onNavigate={navigateToAgentRuns}
+        />
+        <SourceDisclosure
+          srSuffix="for token activity"
+          rows={activitySourceRows(rangeData.activity, range, nowMs)}
+          disabled={rangeData.activity.kind === "unavailable" || activityBusy}
         />
       </section>
       <section className="ccc-usage-section" data-usage-section="estimated-cost">
         <h4>{SECTION_HEADING.cost}</h4>
-        <EstimatedCostSection cost={today.cost} />
+        <EstimatedCostSection cost={rangeData.cost} range={range} nowMs={nowMs} />
+        <SourceDisclosure
+          srSuffix="for estimated cost"
+          rows={costSourceRows(rangeData.cost, range, nowMs)}
+          disabled={rangeData.cost.kind === "unavailable"}
+        />
       </section>
     </div>
   );
