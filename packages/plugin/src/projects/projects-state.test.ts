@@ -161,18 +161,22 @@ describe("projectRowsFrom", () => {
 describe("the observed heartbeat keeps freshness honest (wave-3 review MAJOR)", () => {
   const T0 = Date.parse("2026-09-28T12:00:00.000Z");
   const at = (ms: number): string => new Date(T0 + ms).toISOString();
-  const projectId = view().projectId;
+  // A schema-valid id: the heartbeat is zod-validated before it is applied.
+  const projectId = "abcdefghi0123456789abcdef" as ProjectView["projectId"];
 
   afterEach(resetProjectsState);
 
   function receiveSnapshot(): void {
     applyProjectsSnapshot({
       lastEventId: 1,
-      state: { serviceStartedAt: at(0), projects: snapshotOf([view({ observedAt: at(0) })]) },
+      state: {
+        serviceStartedAt: at(0),
+        projects: snapshotOf([view({ projectId, observedAt: at(0) })]),
+      },
     });
   }
 
-  function heartbeat(id: number, observedAt: string, target = projectId): void {
+  function heartbeat(id: number, observedAt: string, target: string = projectId): void {
     applyProjectsDelta({
       id,
       type: "projects.updated",

@@ -1,4 +1,10 @@
-import type { Freshness, ProjectsSnapshot, ServiceEvent, SnapshotResponse } from "@ccc/domain";
+import type {
+  Freshness,
+  ProjectsSnapshot,
+  ProjectView,
+  ServiceEvent,
+  SnapshotResponse,
+} from "@ccc/domain";
 // `@ccc/domain/browser`, not `@ccc/domain`: this module is reachable from
 // `@ccc/plugin`'s public entry, which the visual-regression harness bundles
 // for a plain browser page. The full barrel re-exports `path-containment.js`
@@ -9,8 +15,8 @@ import { computed, signal } from "@preact/signals";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState } from "../connection-state.js";
 import { nowTick } from "../widgets/clock.js";
-import type { ProjectRow, ProjectShortcutsData } from "../widgets/panels.js";
 import type { WidgetState } from "../widgets/contract.js";
+import type { ProjectRow, ProjectShortcutsData } from "../widgets/panels.js";
 
 /**
  * The plugin's one in-memory picture of Projects (D-43, D-11).
@@ -37,6 +43,11 @@ export function applyProjectsSnapshot(snapshot: SnapshotResponse): void {
  * when the delta carries it — keeping the previous value otherwise. A delta arriving before any
  * snapshot, or one that fails validation, is a no-op (D-11, the
  * zod-before-read rule): the last-good value is kept either way.
+ *
+ * `observed` (the collector's freshness heartbeat) moves a known row's
+ * `observedAt` forward — never backwards, and never onto a row the plugin
+ * does not hold — so an unchanged repository the service keeps reading
+ * stays `live`, while one it stopped reading ages into `stale`.
  */
 export function applyProjectsDelta(event: ServiceEvent): void {
   const current = projectsSnapshot.value;
@@ -45,17 +56,31 @@ export function applyProjectsDelta(event: ServiceEvent): void {
   const parsed = ProjectsUpdatedPayloadSchema.safeParse(event.payload);
   if (!parsed.success) return;
 
-  const { upserted, removed, launchers } = parsed.data;
+  const { upserted, removed, launchers, observed } = parsed.data;
   const removedIds = new Set<string>(removed);
   const upsertedIds = new Set(upserted.map((project) => project.projectId));
   const survivors = current.projects.filter(
     (project) => !removedIds.has(project.projectId) && !upsertedIds.has(project.projectId),
   );
+  const projects = [...survivors, ...upserted];
+  const readAt = new Map((observed ?? []).map((beat) => [beat.projectId, beat.observedAt]));
 
   projectsSnapshot.value = {
-    projects: [...survivors, ...upserted].sort(compareProjectViews),
+    projects: (readAt.size === 0
+      ? projects
+      : projects.map((view) => withReadAt(view, readAt))
+    ).sort(compareProjectViews),
     launchers: launchers ?? current.launchers,
   };
+}
+
+/** A view with its `observedAt` moved forward to the heartbeat's, when that is newer. */
+function withReadAt(view: ProjectView, readAt: ReadonlyMap<string, string>): ProjectView {
+  const observedAt = readAt.get(view.projectId);
+  if (observedAt === undefined) return view;
+  if (view.observedAt !== null && Date.parse(observedAt) <= Date.parse(view.observedAt))
+    return view;
+  return { ...view, observedAt };
 }
 
 /** Resets the signal to its initial (unset) value. Test-only. */

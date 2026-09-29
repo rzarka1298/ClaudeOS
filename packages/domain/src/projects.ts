@@ -237,16 +237,32 @@ export const EMPTY_PROJECTS_SNAPSHOT: ProjectsSnapshot = Object.freeze({
   }),
 });
 
+/** One project's read time in a `projects.updated` freshness heartbeat. */
+export const ProjectObservedSchema = z.object({
+  projectId: ProjectIdSchema,
+  observedAt: z.string(),
+});
+export type ProjectObserved = z.infer<typeof ProjectObservedSchema>;
+
 /**
  * The `projects.updated` event payload: a delta only. The event ring buffer
  * holds a bounded number of events, so a payload must stay small whatever
  * the project count (RESEARCH Pattern 4); a client that misses events
  * resyncs from the snapshot instead.
+ *
+ * `observed` is the freshness heartbeat: the collector leaves `observedAt`
+ * out of its change detection (it moves on every read), so a read that
+ * changed nothing publishes no upsert — only a `{ projectId, observedAt }`
+ * pair, batched into one event per collector tick. Without it the plugin
+ * would see a row's `observedAt` frozen at its last change and call it stale
+ * although the service kept reading. A failed read never appears here, and
+ * nothing is sent once reads stop, so freshness still ages honestly.
  */
 export const ProjectsUpdatedPayloadSchema = z.object({
   upserted: z.array(ProjectViewSchema),
   removed: z.array(ProjectIdSchema),
   launchers: LaunchersSummarySchema.optional(),
+  observed: z.array(ProjectObservedSchema).optional(),
 });
 export type ProjectsUpdatedPayload = z.infer<typeof ProjectsUpdatedPayloadSchema>;
 

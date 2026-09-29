@@ -30,6 +30,14 @@ import { buildProjectView, launchersSummary } from "./project-views.js";
  * events a reconnecting client needs; the whole list lives in `snapshot()`
  * instead, which `GET /snapshot` reads synchronously.
  *
+ * The freshness heartbeat: a successful read that changed nothing still
+ * moved `observedAt`, and the plugin must see that or every unchanged row
+ * reads stale after a minute. Those reads are batched and published as one
+ * `{ upserted: [], removed: [], observed: [{ projectId, observedAt }] }`
+ * event when the queue drains — one small event per 30 s tick, the same
+ * cadence as `service.heartbeat`. A failed read is never in it, and a
+ * stopped collector sends none, so stale still appears when reads stop.
+ *
  * Failure: a read that rejects (a git call timed out or failed) keeps the
  * last good git value and sets `gitReadFailed` (ADR-0002: freshness is
  * stated, never implied). Git state is never persisted (D-11); a restart
@@ -96,6 +104,8 @@ export function createProjectsCollector(options: ProjectsCollectorOptions): Proj
   const queue: ProjectId[] = [];
   const queued = new Set<ProjectId>();
   const inFlight = new Set<ProjectId>();
+  /** Unchanged successful reads since the last drain: the next heartbeat. */
+  const observed = new Map<ProjectId, string>();
   let timer: IntervalHandle | null = null;
 
   const viewOf = (entry: Entry): ProjectView =>
@@ -110,6 +120,16 @@ export function createProjectsCollector(options: ProjectsCollectorOptions): Proj
   const publish = (payload: ProjectsUpdatedPayload): void => {
     if (payload.upserted.length === 0 && payload.removed.length === 0) return;
     options.eventBus.publish("projects.updated", payload);
+  };
+
+  /** Publishes the batched heartbeat, dropping projects removed since their read. */
+  const flushObserved = (): void => {
+    const beats = [...observed]
+      .filter(([projectId]) => entries.has(projectId))
+      .map(([projectId, observedAt]) => ({ projectId, observedAt }));
+    observed.clear();
+    if (beats.length === 0) return;
+    options.eventBus.publish("projects.updated", { upserted: [], removed: [], observed: beats });
   };
 
   /**
@@ -157,6 +177,7 @@ export function createProjectsCollector(options: ProjectsCollectorOptions): Proj
       if (!seen.has(projectId)) {
         entries.delete(projectId);
         queued.delete(projectId);
+        observed.delete(projectId);
         removed.push(projectId);
       }
     }
@@ -184,7 +205,13 @@ export function createProjectsCollector(options: ProjectsCollectorOptions): Proj
       current.gitReadFailed = false;
     }
     const view = takeIfChanged(current);
-    if (view !== null) publish({ upserted: [view], removed: [] });
+    if (view !== null) {
+      // The upsert carries this read's observedAt itself.
+      observed.delete(projectId);
+      publish({ upserted: [view], removed: [] });
+    } else if (next !== null && current.observedAt !== null) {
+      observed.set(projectId, current.observedAt);
+    }
   };
 
   const pump = (): void => {
@@ -197,6 +224,7 @@ export function createProjectsCollector(options: ProjectsCollectorOptions): Proj
       void readOne(projectId).finally(() => {
         inFlight.delete(projectId);
         pump();
+        if (inFlight.size === 0 && queue.length === 0) flushObserved();
       });
     }
   };
