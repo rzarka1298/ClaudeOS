@@ -69,8 +69,14 @@ export function ProjectManageToolbar({
   const [returnFocusIndex, setReturnFocusIndex] = useState<number | null>(null);
   const [nameDraft, setNameDraft] = useState(row.name);
   const [nameError, setNameError] = useState<string | null>(null);
+  // Only an owner-set override is editable or clearable here: a link derived
+  // from the git remote is not stored as an override, so "Edit" would
+  // pre-fill a value the owner never set and "Clear" would send a no-op
+  // `null` while announcing that something was cleared (RR-12).
+  const overrideLabel =
+    row.github.kind === "github" && row.github.source === "override" ? row.github.label : null;
   const [linkDraft, setLinkDraft] = useState(
-    row.github.kind === "github" ? `https://${row.github.label}` : "",
+    overrideLabel === null ? "" : `https://${overrideLabel}`,
   );
   const [linkError, setLinkError] = useState<string | null>(null);
 
@@ -154,7 +160,7 @@ export function ProjectManageToolbar({
   }
 
   function openGithubLink(): void {
-    setLinkDraft(row.github.kind === "github" ? `https://${row.github.label}` : "");
+    setLinkDraft(overrideLabel === null ? "" : `https://${overrideLabel}`);
     setLinkError(null);
     setMode({ kind: "github-link" });
   }
@@ -287,7 +293,7 @@ export function ProjectManageToolbar({
             <button type="button" className="ccc-list-more" onClick={closeGithubLink}>
               Discard link changes
             </button>
-            {row.github.kind === "github" && (
+            {overrideLabel !== null && (
               <button
                 type="button"
                 className="ccc-list-more"
@@ -360,7 +366,7 @@ export function ProjectManageToolbar({
         onFocus={() => setFocusedIndex(2)}
         onClick={openGithubLink}
       >
-        {row.github.kind === "github" ? "Edit GitHub link" : "Set GitHub link"}
+        {overrideLabel !== null ? "Edit GitHub link" : "Set GitHub link"}
       </button>
       <button
         type="button"
