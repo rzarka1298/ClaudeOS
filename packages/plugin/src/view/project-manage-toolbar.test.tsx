@@ -184,6 +184,26 @@ describe("ProjectManageToolbar (Task 3, S3 manage toolbar, RR-01)", () => {
     );
   });
 
+  it("a remote-derived link offers Set GitHub link with an empty draft and no Clear GitHub link", () => {
+    const setGithubLink = vi.fn().mockResolvedValue({ kind: "ok" });
+    render(
+      <ProjectManageToolbar
+        row={row({
+          github: { kind: "github", label: "github.com/owner/repo", source: "remote" },
+        })}
+        actions={{ ...noopActions(), setGithubLink }}
+        onRemoved={vi.fn()}
+        onStatus={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Edit GitHub link" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Set GitHub link" }));
+    expect((screen.getByLabelText("GitHub link") as HTMLInputElement).value).toBe("");
+    expect(screen.queryByRole("button", { name: "Clear GitHub link" })).toBeNull();
+    expect(setGithubLink).not.toHaveBeenCalled();
+  });
+
   it("Remove from projects shows the confirmation with focus on Keep project; Escape keeps", () => {
     render(
       <ProjectManageToolbar
