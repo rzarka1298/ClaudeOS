@@ -22,6 +22,10 @@
 # operational store, and its launchd registration is removed on exit (trap).
 # The result file holds enums and booleans only.
 #
+# SPIKE_DIR must be new, empty, or already carry the spike marker file
+# (MARKER_NAME) from an earlier run -- never HOME or a folder containing it
+# -- before this script changes its mode or suggests deleting it.
+#
 # Usage, from the repository root:  sh scripts/spikes/p4-launch-spike.sh
 set -eu
 
@@ -30,6 +34,8 @@ SERVICE_DEFAULT_DIR="${HOME}/.claude-command-center"
 SPIKE_DIR="${CCC_P4_SPIKE_DIR:-${HOME}/.ccc-p4-spike}"
 SPIKE_PROJECT="${HOME}/Documents/ccc-spike-project"
 RESULT_NAME="p4-spike-result.json"
+MARKER_NAME=".ccc-p4-spike"
+PROJECT_MARKER_NAME="ccc-p4-spike-project"
 # The same fixed PATH the installed service's LaunchAgent uses.
 JOB_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 DOMAIN="gui/$(id -u)"
@@ -72,22 +78,63 @@ if [ -n "${CCC_RUNTIME_DIR+set}" ] && same_dir "${SPIKE_DIR}" "${CCC_RUNTIME_DIR
   fail "the spike directory equals the exported service runtime directory. Set CCC_P4_SPIKE_DIR to another folder."
 fi
 
-if ! /usr/bin/xcode-select -p >/dev/null 2>&1 && ! command -v git >/dev/null 2>&1; then
-  fail "git is not available, so the synthetic repository cannot be created."
+# Never HOME, and never a folder that contains HOME: this script changes the
+# spike directory's mode and suggests deleting it. Compared physically, so a
+# symlinked or dot-dot spelling cannot slip past. A path that does not exist
+# yet cannot be HOME or one of its parents.
+[ -L "${SPIKE_DIR}" ] && fail "CCC_P4_SPIKE_DIR must not be a symbolic link."
+HOME_REAL=$(cd "${HOME}" && pwd -P)
+if [ -d "${SPIKE_DIR}" ]; then
+  SPIKE_DIR_REAL=$(cd "${SPIKE_DIR}" && pwd -P)
+  case "${HOME_REAL}/" in
+    "${SPIKE_DIR_REAL%/}/"*)
+      fail "CCC_P4_SPIKE_DIR must not be your home folder or a folder that contains it." ;;
+  esac
+elif [ -e "${SPIKE_DIR}" ]; then
+  fail "CCC_P4_SPIKE_DIR exists but is not a folder."
 fi
 
+# An existing spike directory must be empty or carry the marker an earlier
+# run of this script left, so the chmod below and the removal advice at the
+# end can only ever reach a folder this script owns.
+if [ -d "${SPIKE_DIR}" ] && [ ! -f "${SPIKE_DIR}/${MARKER_NAME}" ] &&
+  [ -n "$(ls -A "${SPIKE_DIR}")" ]; then
+  fail "${SPIKE_DIR} is not empty and has no spike marker (${MARKER_NAME}). Set CCC_P4_SPIKE_DIR to a new or empty folder."
+fi
+
+# /usr/bin/git is a shim that opens the Command Line Tools installer when no
+# developer directory is selected, so git counts as available only when
+# xcode-select -p succeeds (the same rule the service uses, D-10).
+if ! /usr/bin/xcode-select -p >/dev/null 2>&1; then
+  fail "Apple's command line developer tools are not installed (xcode-select -p failed), so git cannot create the synthetic repository. Install them with: xcode-select --install"
+fi
+command -v git >/dev/null 2>&1 || fail "git is not on PATH, so the synthetic repository cannot be created."
+
 mkdir -p "${SPIKE_DIR}"
+: >"${SPIKE_DIR}/${MARKER_NAME}"
 chmod 700 "${SPIKE_DIR}"
 RESULT_FILE="${SPIKE_DIR}/${RESULT_NAME}"
 rm -f "${RESULT_FILE}"
 
-# The synthetic protected-folder project, created only when absent. The
-# commit passes its own identity, so it works with no git identity set.
+# The synthetic protected-folder project, created only when absent. It is
+# built in a staging folder inside SPIKE_DIR and moved into Documents only
+# after git init and the first commit succeed, so a failure leaves nothing
+# behind in Documents. The commit passes its own identity, so it works with
+# no git identity set. A marker inside .git (never a tracked or untracked
+# file, so git status stays clean) records that this script created it.
 if [ ! -e "${SPIKE_PROJECT}" ]; then
-  mkdir -p "${SPIKE_PROJECT}"
-  git -C "${SPIKE_PROJECT}" init -q
-  git -C "${SPIKE_PROJECT}" -c user.name=spike -c user.email=spike@example.com commit --allow-empty -q -m "spike"
-  echo "Created the synthetic project folder ${SPIKE_PROJECT}"
+  STAGING="${SPIKE_DIR}/project-staging"
+  rm -rf "${STAGING}"
+  if mkdir "${STAGING}" &&
+    git -C "${STAGING}" init -q &&
+    git -C "${STAGING}" -c user.name=spike -c user.email=spike@example.com commit --allow-empty -q -m "spike" &&
+    : >"${STAGING}/.git/${PROJECT_MARKER_NAME}" &&
+    mv "${STAGING}" "${SPIKE_PROJECT}"; then
+    echo "Created the synthetic project folder ${SPIKE_PROJECT}"
+  else
+    rm -rf "${STAGING}"
+    fail "could not create the synthetic git repository at ${SPIKE_PROJECT}; nothing was left in Documents."
+  fi
 fi
 SPIKE_PROJECT_REAL=$(cd "${SPIKE_PROJECT}" && pwd -P)
 
@@ -135,5 +182,11 @@ echo
 echo "Spike result:"
 cat "${RESULT_FILE}"
 echo
+# Removal is only ever suggested for folders carrying this script's markers.
 echo "When the end-of-phase UAT is done, remove the spike folders with:"
-echo "  rm -rf \"${SPIKE_PROJECT}\" \"${SPIKE_DIR}\""
+if [ -f "${SPIKE_PROJECT}/.git/${PROJECT_MARKER_NAME}" ]; then
+  echo "  rm -rf \"${SPIKE_PROJECT}\" \"${SPIKE_DIR}\""
+else
+  echo "  rm -rf \"${SPIKE_DIR}\""
+  echo "(${SPIKE_PROJECT} was not created by this script, so it is left to you.)"
+fi
