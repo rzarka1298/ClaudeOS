@@ -145,5 +145,16 @@ export function deleteUsageAnalytics(client: SocketApiClient): Promise<void> {
   );
 }
 
-// Task 2 adds requestSessionAction and getSessionUsage on this same
-// `requestClaude` poster.
+/** RED stub -- Task 2. Throws unconditionally so callers fail on a real assertion. */
+export function requestSessionAction(
+  _client: SocketApiClient,
+  _action: string,
+  _body: unknown,
+): Promise<unknown> {
+  throw new Error("not implemented");
+}
+
+/** RED stub -- Task 2. Throws unconditionally so callers fail on a real assertion. */
+export function getSessionUsage(_client: SocketApiClient, _runId: string): Promise<unknown> {
+  throw new Error("not implemented");
+}
