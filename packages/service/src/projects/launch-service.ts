@@ -62,6 +62,9 @@ import type { Spawner } from "./spawner.js";
  * executable check) is asynchronous, so a stalled volume cannot block the
  * event loop past the cap.
  *
+ * An identical request (`{ projectId, action }`) arriving while one is still
+ * in flight joins it: same promise, one spawn.
+ *
  * A launch never waits on git (D-42): after a successful spawn it touches
  * `last_opened_at`, tells the collector the registry changed, and queues a
  * refresh without awaiting it.
@@ -276,38 +279,56 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     return { ok: true };
   };
 
+  /**
+   * Launches in flight, keyed by `{ projectId, action }`: a double-click or a
+   * retried request while the first is still running joins it and gets the
+   * very same promise — one spawn, one window, one result (wave-3 review).
+   */
+  const inFlight = new Map<string, Promise<LaunchResult>>();
+
+  const run = async (request: LaunchRequest): Promise<LaunchResult> => {
+    // The cap both answers the caller and aborts the spawn, so a hung
+    // LaunchServices hand-off is killed rather than left running (D-40).
+    const controller = new AbortController();
+    const state: Attempt = { cancelled: false, signal: controller.signal };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cap = new Promise<LaunchResult>((resolve) => {
+      timer = setTimeout(() => {
+        state.cancelled = true;
+        controller.abort();
+        resolve(failure("timeout"));
+      }, capMs);
+    });
+    let result: LaunchResult;
+    try {
+      result = await Promise.race([attempt(request, state), cap]);
+    } catch {
+      // A builder refusal (LaunchArgumentError) or any other throw: the
+      // message could name a value, so only the kind survives.
+      result = failure("spawn-failed");
+    } finally {
+      clearTimeout(timer);
+    }
+    const fields: LaunchLogFields = {
+      projectId: projectIdOf(request),
+      action: request.action,
+      kind: result.ok ? "ok" : result.error,
+    };
+    if (result.ok) deps.logger.info(fields, "launch");
+    else deps.logger.warn(fields, "launch failed");
+    return result;
+  };
+
   return {
-    async launch(request) {
-      // The cap both answers the caller and aborts the spawn, so a hung
-      // LaunchServices hand-off is killed rather than left running (D-40).
-      const controller = new AbortController();
-      const state: Attempt = { cancelled: false, signal: controller.signal };
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const cap = new Promise<LaunchResult>((resolve) => {
-        timer = setTimeout(() => {
-          state.cancelled = true;
-          controller.abort();
-          resolve(failure("timeout"));
-        }, capMs);
+    launch(request) {
+      const key = `${request.action}\u0000${projectIdOf(request) ?? ""}`;
+      const joined = inFlight.get(key);
+      if (joined !== undefined) return joined;
+      const pending = run(request).finally(() => {
+        inFlight.delete(key);
       });
-      let result: LaunchResult;
-      try {
-        result = await Promise.race([attempt(request, state), cap]);
-      } catch {
-        // A builder refusal (LaunchArgumentError) or any other throw: the
-        // message could name a value, so only the kind survives.
-        result = failure("spawn-failed");
-      } finally {
-        clearTimeout(timer);
-      }
-      const fields: LaunchLogFields = {
-        projectId: projectIdOf(request),
-        action: request.action,
-        kind: result.ok ? "ok" : result.error,
-      };
-      if (result.ok) deps.logger.info(fields, "launch");
-      else deps.logger.warn(fields, "launch failed");
-      return result;
+      inFlight.set(key, pending);
+      return pending;
     },
   };
 }

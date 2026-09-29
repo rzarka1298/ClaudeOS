@@ -119,9 +119,9 @@ interface TimedLaunch {
 }
 
 /** POSTs a finder launch and measures request write to parsed response. */
-function timedLaunch(): Promise<TimedLaunch> {
+function timedLaunch(target: ProjectId = projectId): Promise<TimedLaunch> {
   return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({ projectId, action: "finder" });
+    const payload = JSON.stringify({ projectId: target, action: "finder" });
     const started = performance.now();
     const req = http.request(
       {
@@ -175,8 +175,19 @@ describe("PERF-05 launch contract over the real socket (D-40, D-41)", () => {
   });
 
   it("five concurrent fast launches each finish in under 500 ms", async () => {
+    // Five different projects: an identical request in flight is joined
+    // rather than spawned again, so identical launches would measure one.
+    const targets = [
+      projectId,
+      ...Array.from({ length: 4 }, (_, i) => {
+        const other = join(dir, `example-project-${i}`);
+        mkdirSync(other);
+        return insertProject(store.db, { path: other, displayName: `Example ${i}` }).record
+          .projectId;
+      }),
+    ];
     const replies = await settlesWithin(
-      Promise.all(Array.from({ length: 5 }, () => timedLaunch())),
+      Promise.all(targets.map((target) => timedLaunch(target))),
       FAILURE_BUDGET_MS,
     );
     expect(replies).toHaveLength(5);
