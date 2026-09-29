@@ -20,6 +20,7 @@ import { listAllRuns, type OperationalStore } from "@ccc/operational-store";
 import { initializeVault, planVaultSetup, VaultRootMissingError } from "@ccc/vault-repo";
 import { requireToken } from "./auth/require-token.js";
 import { mintToken } from "./auth/token.js";
+import { type ClaudeRouteDeps, claudeRouteTable } from "./claude/routes.js";
 import type { EventBus } from "./events/event-bus.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
@@ -33,6 +34,8 @@ export interface RouteContext {
   /** Returns the per-install secret used to mint and verify bearer tokens. */
   getSecret: () => Buffer;
   eventBus: EventBus;
+  /** The Claude session pipeline (Phase 5). Absent in an older composition: its routes answer 503. */
+  readonly claude?: ClaudeRouteDeps | undefined;
 }
 
 type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;
@@ -128,7 +131,11 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
   const startedAt = ctx.store.readServiceMeta("started_at") ?? new Date(0).toISOString();
   const body: SnapshotResponse = {
     lastEventId: ctx.eventBus.buffer.latestId(),
-    state: { serviceStartedAt: startedAt },
+    state: {
+      serviceStartedAt: startedAt,
+      // Read synchronously in the same tick as `lastEventId` (race-free resync).
+      ...(ctx.claude ? { sessions: ctx.claude.pipeline.listSessionViews() } : {}),
+    },
   };
   sendJson(res, 200, body);
 };
@@ -270,6 +277,7 @@ const routeTable: Record<string, Record<string, Handler>> = {
   [RUNS_PATH]: { GET: withAuth(listRunsHandler) },
   [EVENTS_PATH]: { GET: withAuth(eventsHandler) },
   [SNAPSHOT_PATH]: { GET: withAuth(snapshotHandler) },
+  ...claudeRouteTable,
 };
 
 /**

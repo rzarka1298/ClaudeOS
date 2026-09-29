@@ -19,6 +19,7 @@
     "dev": "node dist/main.js"
   },
   "dependencies": {
+    "@ccc/collectors": "workspace:*",
     "@ccc/domain": "workspace:*",
     "@ccc/keychain": "workspace:*",
     "@ccc/operational-store": "workspace:*",
