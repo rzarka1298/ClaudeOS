@@ -34,6 +34,29 @@ describe("classifyStderr", () => {
     ).toBe("automation-denied");
   });
 
+  it("recognises the error-number forms osascript prints for -1743", () => {
+    for (const text of [
+      "0:12: execution error: Not authorized to send Apple events to iTerm2. (-1743)",
+      "execution error: error -1743",
+      "execution error: Not authorized (errAEEventNotPermitted:-1743)",
+    ]) {
+      expect(classifyStderr(text), text).toBe("automation-denied");
+    }
+  });
+
+  it("does not read -1743 inside a path or a name as an Apple Events refusal", () => {
+    for (const text of [
+      "The file /Users/USERNAME/code/proj-1743 does not exist.",
+      "sh: /Users/USERNAME/code/build-1743: No such file or directory",
+      "cannot open proj-1743/x",
+    ]) {
+      expect(classifyStderr(text), text).not.toBe("automation-denied");
+    }
+    expect(classifyStderr("The file /Users/USERNAME/code/proj-1743 does not exist.")).toBe(
+      "path-missing",
+    );
+  });
+
   it("recognises a TCC refusal", () => {
     expect(classifyStderr("fatal: cannot read: Operation not permitted")).toBe("permission-denied");
   });
