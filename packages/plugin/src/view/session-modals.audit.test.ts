@@ -309,10 +309,10 @@ describe("audit 05-15: button styling and order", () => {
 });
 
 describe("audit 05-15: worktree-name validation mirrors the service", () => {
-  // AUDIT-BUG (MINOR): the service refuses a leading '-' (session-action-routes.ts
-  // planChoice) but the plugin accepts it, so the owner gets a late
-  // invalid-state failure instead of the inline message.
-  it.skip("rejects a name with a leading dash", () => {
+  // Was AUDIT-BUG (MINOR, fixed wave 5): the service refuses a leading '-'
+  // (session-action-routes.ts planChoice), so the plugin must too, or the
+  // owner gets a late invalid-state failure instead of the inline message.
+  it("rejects a name with a leading dash", () => {
     expect(validateWorktreeName("-rf")).toBe(WORKTREE_NAME_INVALID_MESSAGE);
     expect(validateWorktreeName("--dangerously-skip-permissions")).toBe(
       WORKTREE_NAME_INVALID_MESSAGE,

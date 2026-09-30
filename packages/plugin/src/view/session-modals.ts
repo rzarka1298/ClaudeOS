@@ -191,12 +191,12 @@ export const WORKTREE_NAME_INVALID_MESSAGE =
 export const WORKTREE_NAME_DUPLICATE_MESSAGE =
   "A worktree with that name already exists. Pick another.";
 
-/** `null` means valid. Mirrors the domain's own `WORKTREE_NAME_PATTERN` plus the `.`/`..` refusal (`session-actions.ts`), so a name the client would reject never even reaches the request. */
+/** `null` means valid. Mirrors the domain's own `WORKTREE_NAME_PATTERN` plus the `.`/`..` refusal (`session-actions.ts`) and the service's leading-`-` refusal (`session-action-routes.ts`, a name must never read as a flag), so a name the service would reject never even reaches the request. */
 export function validateWorktreeName(
   name: string,
   existingNames: readonly string[] = [],
 ): string | null {
-  if (!WORKTREE_NAME_PATTERN.test(name) || name === "." || name === "..") {
+  if (!WORKTREE_NAME_PATTERN.test(name) || name === "." || name === ".." || name.startsWith("-")) {
     return WORKTREE_NAME_INVALID_MESSAGE;
   }
   if (existingNames.includes(name)) return WORKTREE_NAME_DUPLICATE_MESSAGE;
