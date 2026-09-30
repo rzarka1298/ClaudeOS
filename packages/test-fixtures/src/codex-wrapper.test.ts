@@ -233,7 +233,9 @@ if (process.env.FAKE_AG_MODE === "claim") {
       // The IDE's environment, not the wrapper's: it may have another CODEX_HOME.
       const env = { ...process.env };
       if (process.env.FAKE_AG_CODEX_HOME) env.CODEX_HOME = process.env.FAKE_AG_CODEX_HOME;
-      const child = spawn(t.shellPath, t.shellArgs, { cwd: t.cwd, detached: true, stdio: "ignore", env });
+      // An extension from before TUI mode always ran "follow".
+      const argv = process.env.FAKE_AG_LEGACY ? ["follow", req.runId] : t.shellArgs;
+      const child = spawn(t.shellPath, argv, { cwd: t.cwd, detached: true, stdio: "ignore", env });
       child.unref();
     }
     if (!got.length && Date.now() - started < 5000) setTimeout(tick, 50);
@@ -1470,5 +1472,20 @@ describe("project resolution edge cases", () => {
       true,
     );
     expect(h.repo.git("status", "--porcelain").trim()).toBe("");
+  });
+});
+
+describe("tui with an older extension", () => {
+  it("a window whose extension still runs `follow` gets the interactive Codex too", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      FAKE_AG_MODE: "claim",
+      FAKE_AG_LEGACY: "1",
+      CODEX_BRIDGE_CLAIM_TIMEOUT_MS: "8000",
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(h.calls().filter((c) => c.argv.includes("--ask-for-approval"))).toHaveLength(1);
+    expect(h.execCalls()).toHaveLength(0);
   });
 });

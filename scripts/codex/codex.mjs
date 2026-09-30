@@ -1738,6 +1738,9 @@ async function cmdFollow({ positional }) {
   const v = bridge.readClaimed(BRIDGE_STATE, positional[0]);
   if (!v.ok) fail(EXIT.USAGE, `cannot follow run ${positional[0]}: ${v.reason}`);
   const req = v.request;
+  // An extension from before TUI mode runs `follow` for every request; a tui
+  // request still gets the interactive Codex, never a log tail.
+  if (req.mode === "tui") return cmdTui({ positional });
   process.stdout.write(`Codex ${req.kind} run ${req.runId}\nlive log: ${req.liveLog}\n\n`);
   let pos = 0;
   let tail = "";
