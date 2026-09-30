@@ -6,7 +6,7 @@
 // wrapper, records every argv it receives, and never touches the network or
 // the owner's Codex account. No test spends plan allowance.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -80,7 +80,8 @@ if (argv[0] === "app-server") {
     emit({ type: "thread.started", thread_id: "${SESSION_ID}" });
     emit({ type: "turn.started" });
     if (mode === "hang") {
-      const child = spawn("sleep", ["60"], { stdio: "ignore" });
+      // A descendant that ignores SIGTERM: only a process-group SIGKILL stops it.
+      const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"], { stdio: "ignore" });
       fs.writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(child.pid));
       setInterval(() => {}, 1000);
       return;
@@ -173,6 +174,22 @@ interface Harness {
   ): { status: number | null; out: string; stdout: string };
   calls(): Array<{ argv: string[]; cwd: string; stdin?: string | null }>;
   execCalls(): Array<{ argv: string[]; cwd: string; stdin?: string | null }>;
+}
+
+/** Polls until `pid` no longer exists (up to ~3 s). */
+async function gone(pid: number): Promise<boolean> {
+  for (let i = 0; i < 30; i++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  try {
+    process.kill(pid, "SIGKILL"); // don't leak it past the test
+  } catch {}
+  return false;
 }
 
 const cleanups: Array<() => void> = [];
@@ -435,6 +452,40 @@ describe("review", () => {
     expect(md).toContain("BLOCKER candidate");
   });
 
+  it("parses Codex's native review text when the output schema is not honoured", () => {
+    const h = harness();
+    const native = [
+      "The interruption path can leave descendants running.",
+      "",
+      "Review comment:",
+      "",
+      `- [P2] Complete cleanup before resolving — ${h.root}/src/a.ts:3-4`,
+      "  When SIGINT arrives the group is not killed.",
+      "  Track interruption state.",
+      "- [P1] Second issue — src/a.ts:1",
+      "  Body two.",
+    ].join("\n");
+    const r = h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: native });
+    expect(r.status).toBe(0);
+    const out = JSON.parse(r.stdout.trim().split("\n").pop() ?? "{}");
+    const report = JSON.parse(readFileSync(join(h.root, out.report), "utf8"));
+    expect(report.status).toBe("ok");
+    expect(report.format).toBe("native-text");
+    expect(report.verdict).toBe("needs-attention");
+    expect(report.review.findings).toEqual([
+      expect.objectContaining({
+        severity: "medium",
+        title: "Complete cleanup before resolving",
+        file: "src/a.ts",
+        line_start: 3,
+        line_end: 4,
+        body: "When SIGINT arrives the group is not killed.\nTrack interruption state.",
+      }),
+      expect.objectContaining({ severity: "high", file: "src/a.ts", line_start: 1, line_end: 1 }),
+    ]);
+    expect(report.text).toBe(native);
+  });
+
   it("keeps unstructured review text instead of dropping it", () => {
     const h = harness();
     const r = h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: "Looks fine to me." });
@@ -557,7 +608,7 @@ describe("task", () => {
     expect(h.execCalls()).toHaveLength(0);
   });
 
-  it("the watchdog kills the whole process group and exits 21", () => {
+  it("the watchdog kills the whole process group and exits 21", async () => {
     const h = harness();
     const wt = linkedWorktree(h);
     const pidfile = join(h.bin, "child.pid");
@@ -568,16 +619,37 @@ describe("task", () => {
     expect(r.status).toBe(21);
     expect(r.out).toMatch(/timeout/i);
     const child = Number(readFileSync(pidfile, "utf8"));
-    let alive = true;
-    for (let i = 0; i < 20 && alive; i++) {
-      try {
-        process.kill(child, 0);
-        spawnSync("sleep", ["0.1"]);
-      } catch {
-        alive = false;
-      }
-    }
-    expect(alive).toBe(false);
+    expect(await gone(child)).toBe(true);
+  });
+});
+
+describe("interruption", () => {
+  it("SIGTERM to the wrapper kills the whole Codex process group before exiting 130", async () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const pidfile = join(h.bin, "child.pid");
+    const wrapper = spawn(process.execPath, [join(h.root, WRAPPER), "task", wt, briefFile(h)], {
+      cwd: h.root,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        PATH: `${h.bin}:${process.env.PATH ?? ""}`,
+        FAKE_CODEX_LOG: h.log,
+        FAKE_CODEX_USAGE: usageResult(),
+        FAKE_CODEX_EXEC: "hang",
+        FAKE_CODEX_PIDFILE: pidfile,
+        CCC_CODEX_KILL_GRACE_MS: "5000",
+      },
+    });
+    const exited = new Promise<number | null>((res) => wrapper.on("exit", (code) => res(code)));
+    for (let i = 0; i < 100 && !existsSync(pidfile); i++)
+      await new Promise((r) => setTimeout(r, 100));
+    wrapper.kill("SIGTERM");
+    expect(await exited).toBe(130);
+    const child = Number(readFileSync(pidfile, "utf8"));
+    expect(await gone(child)).toBe(true);
+    const log = readFileSync(join(h.root, ".planning", "codex", "live", "current.log"), "utf8");
+    expect(log).toMatch(/\[end\] interrupted by SIGTERM/);
   });
 });
 

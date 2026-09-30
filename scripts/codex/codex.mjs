@@ -549,13 +549,18 @@ function runCodex({ args, cwd, stdinText, timeoutSec, live, onSession }) {
         process.kill(-child.pid, sig);
       } catch {}
     };
+    // Interrupted: ask the group to stop, and SIGKILL it for certain before
+    // this process exits — whichever comes first, Codex closing or the grace.
+    let interrupted = null;
     const onSignal = (sig) => {
+      if (interrupted) return;
+      interrupted = sig;
       live.write([`[end] interrupted by ${sig}`]);
       killGroup("SIGTERM");
       setTimeout(() => {
         killGroup("SIGKILL");
         process.exit(130);
-      }, 500);
+      }, KILL_GRACE_MS);
     };
     process.once("SIGINT", onSignal);
     process.once("SIGTERM", onSignal);
@@ -622,7 +627,9 @@ function runCodex({ args, cwd, stdinText, timeoutSec, live, onSession }) {
     child.on("close", (code, signal) => {
       clearTimeout(watchdog);
       if (hardKill) clearTimeout(hardKill);
-      if (state.timedOut) killGroup("SIGKILL"); // stragglers that ignored SIGTERM
+      // Descendants that ignored SIGTERM (or outlived the leader) die here.
+      if (state.timedOut || interrupted) killGroup("SIGKILL");
+      if (interrupted) process.exit(130);
       process.removeListener("SIGINT", onSignal);
       process.removeListener("SIGTERM", onSignal);
       resolve({ ...state, code, signal });
@@ -682,6 +689,45 @@ function isReview(v) {
   );
 }
 
+const NATIVE_SEVERITY = ["critical", "high", "medium", "low"];
+
+// `codex exec review` does not honour --output-schema (observed on 0.159.2):
+// its final message is prose followed by "- [P<n>] <title> — <file>:<a>-<b>"
+// items with indented bodies. Parse that into the review shape.
+export function parseNativeReview(text, worktree) {
+  const head = /^\s*-\s*\[P([0-3])\]\s+(.+?)\s+(?:—|--|-)\s+(\S.*?):(\d+)(?:-(\d+))?\s*$/;
+  const findings = [];
+  let current = null;
+  for (const line of text.split("\n")) {
+    const m = line.match(head);
+    if (m) {
+      let file = m[3];
+      if (worktree && isAbsolute(file)) {
+        const r = relative(worktree, file);
+        if (!r.startsWith("..")) file = r;
+      }
+      current = {
+        severity: NATIVE_SEVERITY[Number(m[1])],
+        title: m[2],
+        body: "",
+        file,
+        line_start: Number(m[4]),
+        line_end: Number(m[5] ?? m[4]),
+        confidence: null,
+        recommendation: "",
+      };
+      findings.push(current);
+    } else if (current && /^\s{2,}\S/.test(line)) {
+      current.body += (current.body ? "\n" : "") + line.trim();
+    } else if (line.trim()) {
+      current = null;
+    }
+  }
+  if (!findings.length) return null;
+  const summary = text.split(/\n\s*Review comments?:/)[0].trim();
+  return { verdict: "needs-attention", summary, findings, next_steps: [] };
+}
+
 function reviewMarkdown(report) {
   const out = [
     `# Codex review (advisory) — ${report.runId}`,
@@ -702,12 +748,11 @@ function reviewMarkdown(report) {
       out.push(
         `### ${n + 1}. [${f.severity} → ${SEVERITY_LABEL[f.severity] ?? "?"}] ${f.title}`,
         "",
-        `${where}${where ? " · " : ""}confidence ${f.confidence}`,
+        `${where}${where && f.confidence !== null ? " · " : ""}${f.confidence !== null ? `confidence ${f.confidence}` : ""}`,
         "",
         f.body ?? "",
         "",
-        `**Recommendation:** ${f.recommendation ?? ""}`,
-        "",
+        ...(f.recommendation ? [`**Recommendation:** ${f.recommendation}`, ""] : []),
       );
     });
     if (report.review.next_steps?.length) {
@@ -769,17 +814,23 @@ async function cmdReview({ positional, opts, extras }) {
 
   let status;
   let exit;
+  let format = "schema";
   if (res.timedOut) [status, exit] = ["timeout", EXIT.TIMEOUT];
   else if (res.limitHit) [status, exit] = ["limit", EXIT.LIMIT_HIT];
   else if (res.code !== 0 || !text) [status, exit] = ["unavailable", EXIT.CODEX_FAILED];
   else if (isReview(parsed)) [status, exit] = ["ok", EXIT.OK];
-  else [status, exit] = ["unstructured", EXIT.OK];
+  else {
+    const native = parseNativeReview(text, worktree);
+    if (native) [parsed, status, exit, format] = [native, "ok", EXIT.OK, "native-text"];
+    else [status, exit] = ["unstructured", EXIT.OK];
+  }
 
   const report = {
     runId: id,
     kind: "review",
     advisory: true,
     status,
+    format: status === "ok" ? format : null,
     verdict: status === "ok" ? parsed.verdict : null,
     worktree: rel(worktree),
     base,
@@ -787,7 +838,7 @@ async function cmdReview({ positional, opts, extras }) {
     model: role.model,
     effort: role.effort,
     review: status === "ok" ? parsed : null,
-    text: status === "unstructured" ? text : null,
+    text: status === "unstructured" || format === "native-text" ? text : null,
     finishedAt: new Date().toISOString(),
   };
   let resetsAt = null;
