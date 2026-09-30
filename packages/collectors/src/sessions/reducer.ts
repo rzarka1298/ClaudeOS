@@ -510,6 +510,19 @@ function previousOnProcess(
   return previous;
 }
 
+/** Whether two process start times are both known and differ (a reused pid). */
+function startsConflict(held: string | null, observed: string | null): boolean {
+  return held !== null && observed !== null && held !== observed;
+}
+
+/** The latest time a Run has recorded: its ending, else its last activity, else its start. */
+function latestTimeOf(run: SessionRun): string {
+  return [run.endedAt, run.lastActivityAt].reduce<string>(
+    (latest, time) => (time === null ? latest : later(latest, time)),
+    run.startedAt,
+  );
+}
+
 function sessionStart(
   index: RunIndex,
   record: Extract<KnownHookRecord, { hook_event_name: "SessionStart" }>,
@@ -554,12 +567,29 @@ function sessionStart(
         );
       }
 
-      // A re-delivered SessionStart for a live Run updates it in place.
       const existing = index.byIdentity(sessionId, pid);
-      if (existing !== null && !TERMINAL.has(existing.state)) {
-        return upserted(
-          write(existing, { ...metadata(existing, record, facts), ...live(existing) }),
-        );
+      if (existing !== null) {
+        // A re-delivered SessionStart for a live Run updates it in place,
+        // but only while the process start does not contradict it: a
+        // reused pid resuming the same session is another execution
+        // (Codex 5), which opens its own Run below.
+        const sameExecution = !startsConflict(existing.pidStartedAt, facts.pidStartedAt);
+        if (!TERMINAL.has(existing.state) && sameExecution) {
+          return upserted(
+            write(existing, { ...metadata(existing, record, facts), ...live(existing) }),
+          );
+        }
+        // A start no later than what the held Run already recorded is a
+        // replay (a retained spool after a restart forgot its eventId),
+        // never a new execution (Codex 2).
+        if (Date.parse(at) <= Date.parse(latestTimeOf(existing))) {
+          return rejected(
+            existing.runId,
+            existing.state,
+            label,
+            TERMINAL.has(existing.state) ? "terminal" : "not-applicable",
+          );
+        }
       }
 
       let linkKind: RunLinkKind | null = null;
