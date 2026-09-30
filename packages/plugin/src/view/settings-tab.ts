@@ -236,7 +236,9 @@ export interface SettingsTabHost {
    * testable under Vitest without Obsidian's DOM (`obsidian-stub.ts`'s
    * `Modal`/`ButtonComponent` are deliberately inert).
    */
-  readonly openDeleteUsageModal?: ((horizonDate: string | null) => Promise<boolean>) | undefined;
+  readonly openDeleteUsageModal?:
+    | ((horizonDate: string | null, analysisOn: boolean) => Promise<boolean>)
+    | undefined;
 }
 
 /** What `applyReducedMotionChange` did, so a caller can revert its own control. */
@@ -512,7 +514,12 @@ export class CommandCenterSettingTab extends PluginSettingTab {
       typeof this.claudeStatus === "object"
         ? this.computeHorizonDate(this.claudeStatus.cleanupPeriodDays)
         : null;
-    const confirmed = await this.host.openDeleteUsageModal(horizon);
+    // While analysis is on the service recounts from the retained
+    // transcripts right away (f44c3ae); the modal says so. An unknown status
+    // keeps the plain copy rather than guessing.
+    const analysisOn =
+      typeof this.claudeStatus === "object" && this.claudeStatus.transcriptAnalysis.enabled;
+    const confirmed = await this.host.openDeleteUsageModal(horizon, analysisOn);
     if (!confirmed) return;
     try {
       await this.host.claude.deleteUsageAnalytics();

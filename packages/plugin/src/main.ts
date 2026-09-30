@@ -135,8 +135,8 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         },
         // Row 6's confirmation modal (UI-SPEC S4-d). Behind the same seam
         // pattern as every other modal opener in this plugin.
-        openDeleteUsageModal: (horizonDate: string | null) =>
-          openDeleteUsageModalDialog(this.app, horizonDate),
+        openDeleteUsageModal: (horizonDate: string | null, analysisOn: boolean) =>
+          openDeleteUsageModalDialog(this.app, horizonDate, analysisOn),
       }),
     );
 

@@ -40,6 +40,23 @@ describe("deleteUsageViewModel (Test 1)", () => {
   });
 });
 
+describe("deleteUsageViewModel with transcript analysis on (wave 4)", () => {
+  const RECOUNT =
+    "Transcript analysis is on, so token counts will be recounted right away from the transcripts Claude Code still keeps.";
+
+  it("says the counts are recounted right away while analysis is on", () => {
+    const vm = deleteUsageViewModel("2026-08-01T00:00:00.000Z", true);
+    expect(vm.bodies.join(" ")).toContain(RECOUNT);
+    expect(vm.bodies[0]).toBe(DELETE_USAGE_MODAL_BODY_1);
+  });
+
+  it("keeps the current copy, unchanged, while analysis is off", () => {
+    const off = deleteUsageViewModel("2026-08-01T00:00:00.000Z", false);
+    expect(off.bodies.join(" ")).not.toContain(RECOUNT);
+    expect(off).toEqual(deleteUsageViewModel("2026-08-01T00:00:00.000Z"));
+  });
+});
+
 describe("DeleteUsageModal (Test 2)", () => {
   it("settles exactly once, and onClose without a choice resolves false", () => {
     const decide = vi.fn();

@@ -57,7 +57,7 @@ function createHost(
   options: {
     failSave?: boolean;
     claude?: SettingsClaudeSeam;
-    openDeleteUsageModal?: (horizonDate: string | null) => Promise<boolean>;
+    openDeleteUsageModal?: (horizonDate: string | null, analysisOn: boolean) => Promise<boolean>;
   } = {},
 ): Recorded {
   const notices: string[] = [];
@@ -418,6 +418,29 @@ describe("CommandCenterSettingTab -- Claude rows 2, 3 and 6 (Task 3)", () => {
     expect(openDeleteUsageModal).toHaveBeenCalledTimes(1);
     expect(deleteUsageAnalytics).toHaveBeenCalledTimes(1);
     expect(host.notices).toEqual([CLAUDE_USAGE_DELETED_NOTICE]);
+  });
+
+  it("row 6 tells the modal whether transcript analysis is on (wave 4, f44c3ae rebuild)", async () => {
+    for (const enabled of [true, false]) {
+      const openDeleteUsageModal = vi.fn().mockResolvedValue(false);
+      const host = createHost({
+        claude: fullClaudeSeam({
+          getIntegration: vi
+            .fn()
+            .mockResolvedValue({ ...BASE_CLAUDE_STATUS, transcriptAnalysis: { enabled } }),
+        }),
+        openDeleteUsageModal,
+      });
+      const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+      tab.getSettingDefinitions();
+      await flush();
+
+      const group = tab.getSettingDefinitions()[1];
+      group.items[5].action?.({} as never, 5);
+      await flush();
+
+      expect(openDeleteUsageModal).toHaveBeenCalledWith(expect.any(String), enabled);
+    }
   });
 
   it("row 6's action calls nothing when the modal is cancelled (Test 3)", async () => {

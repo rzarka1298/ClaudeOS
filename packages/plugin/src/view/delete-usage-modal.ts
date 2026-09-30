@@ -15,6 +15,11 @@ import { type App, ButtonComponent, Modal } from "obsidian";
 export const DELETE_USAGE_MODAL_TITLE = "Delete cached usage analytics?";
 export const DELETE_USAGE_MODAL_BODY_1 =
   "This deletes the token counts, cost estimates, plan usage history and transcript coverage records the companion service has stored.";
+/** Only while transcript analysis is on: the service rebuilds the deleted
+ * token counts from the retained transcripts straight away (f44c3ae), so the
+ * modal must not imply they stay gone (05 wave 4). */
+export const DELETE_USAGE_MODAL_RECOUNT =
+  "Transcript analysis is on, so token counts will be recounted right away from the transcripts Claude Code still keeps.";
 export const DELETE_USAGE_CONFIRM_LABEL = "Delete usage analytics";
 export const DELETE_USAGE_CANCEL_LABEL = "Cancel";
 
@@ -52,25 +57,30 @@ export interface DeleteUsageViewModelButton {
 
 export interface DeleteUsageViewModel {
   readonly title: string;
-  readonly bodies: readonly [string, string];
+  /** Two paragraphs, plus {@link DELETE_USAGE_MODAL_RECOUNT} as a third
+   * while transcript analysis is on. */
+  readonly bodies: readonly [string, string] | readonly [string, string, string];
   readonly buttons: readonly [DeleteUsageViewModelButton, DeleteUsageViewModelButton];
   readonly initialFocus: "cancel";
 }
 
 /**
  * The whole decision: title, both body paragraphs (the second one carrying
- * the retention horizon when known) and button order/styling. `horizonDate`
- * is an ISO instant, typically `now - cleanupPeriodDays days` -- computed by
+ * the retention horizon when known), the recount paragraph while
+ * `analysisOn`, and button order/styling. `horizonDate` is an ISO instant, typically `now - cleanupPeriodDays days` -- computed by
  * the settings tab from the already-fetched `ClaudeIntegrationStatus`, never
  * by this module.
  */
-export function deleteUsageViewModel(horizonDate: string | null): DeleteUsageViewModel {
+export function deleteUsageViewModel(
+  horizonDate: string | null,
+  analysisOn = false,
+): DeleteUsageViewModel {
+  const body2 = `Your session history and Claude Code's own transcripts aren't touched.${horizonClause(horizonDate)}`;
   return {
     title: DELETE_USAGE_MODAL_TITLE,
-    bodies: [
-      DELETE_USAGE_MODAL_BODY_1,
-      `Your session history and Claude Code's own transcripts aren't touched.${horizonClause(horizonDate)}`,
-    ],
+    bodies: analysisOn
+      ? [DELETE_USAGE_MODAL_BODY_1, body2, DELETE_USAGE_MODAL_RECOUNT]
+      : [DELETE_USAGE_MODAL_BODY_1, body2],
     buttons: [
       { label: DELETE_USAGE_CONFIRM_LABEL, destructive: true },
       { label: DELETE_USAGE_CANCEL_LABEL, destructive: false },
@@ -97,9 +107,14 @@ export class DeleteUsageModal extends Modal {
   private readonly decide: (confirmed: boolean) => void;
   private settled = false;
 
-  constructor(app: App, horizonDate: string | null, decide: (confirmed: boolean) => void) {
+  constructor(
+    app: App,
+    horizonDate: string | null,
+    decide: (confirmed: boolean) => void,
+    analysisOn = false,
+  ) {
     super(app);
-    this.viewModel = deleteUsageViewModel(horizonDate);
+    this.viewModel = deleteUsageViewModel(horizonDate, analysisOn);
     this.decide = decide;
   }
 
@@ -149,8 +164,12 @@ export class DeleteUsageModal extends Modal {
 }
 
 /** The production factory: opens the modal, resolving once the user decides. */
-export function openDeleteUsageModal(app: App, horizonDate: string | null): Promise<boolean> {
+export function openDeleteUsageModal(
+  app: App,
+  horizonDate: string | null,
+  analysisOn: boolean,
+): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    new DeleteUsageModal(app, horizonDate, resolve).open();
+    new DeleteUsageModal(app, horizonDate, resolve, analysisOn).open();
   });
 }
