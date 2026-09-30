@@ -510,9 +510,20 @@ function previousOnProcess(
   return previous;
 }
 
-/** Whether two process start times are both known and differ (a reused pid). */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T/;
+
+/**
+ * Whether two process start times are both known and name different
+ * starts (a reused pid). Two ISO instants compare as instants; two legacy
+ * `lstart` texts compare as text; a mix of the two forms (a Run stored
+ * before the service switched to ISO) cannot be compared here and reads as
+ * no contradiction.
+ */
 function startsConflict(held: string | null, observed: string | null): boolean {
-  return held !== null && observed !== null && held !== observed;
+  if (held === null || observed === null || held === observed) return false;
+  const heldIso = ISO_INSTANT.test(held);
+  if (heldIso !== ISO_INSTANT.test(observed)) return false;
+  return heldIso ? Date.parse(held) !== Date.parse(observed) : true;
 }
 
 /** The latest time a Run has recorded: its ending, else its last activity, else its start. */

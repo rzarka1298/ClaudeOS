@@ -114,3 +114,36 @@ describe("Codex 5: a start whose process start contradicts the held Run is anoth
     }
   });
 });
+
+describe("Codex 5: process start forms", () => {
+  it("equal ISO instants in different text and a legacy/ISO mix never read as another execution", () => {
+    for (const [held, observed] of [
+      ["2026-09-28T12:00:00.000Z", "2026-09-28T12:00:00Z"],
+      [START_1, "2026-09-28T12:00:00.000Z"],
+    ] as const) {
+      const stale = seedRun({ runId: R1, pidStartedAt: held, state: "stale" });
+      const { index } = play(
+        [stale],
+        [sessionStart("resume", { observedAt: at(50) }, startFacts({ pidStartedAt: observed }))],
+      );
+      expect(index.all()).toHaveLength(1);
+      expect(index.byRunId(R1)?.state).toBe("running");
+    }
+  });
+
+  it("two different ISO instants are two executions", () => {
+    const stale = seedRun({ runId: R1, pidStartedAt: "2026-09-28T12:00:00.000Z", state: "stale" });
+    const { index } = play(
+      [stale],
+      [
+        sessionStart(
+          "resume",
+          { observedAt: at(50) },
+          startFacts({ pidStartedAt: "2026-09-28T13:00:00.000Z" }),
+        ),
+      ],
+    );
+    expect(index.all()).toHaveLength(2);
+    expect(index.byRunId(R1)?.state).toBe("stale");
+  });
+});
