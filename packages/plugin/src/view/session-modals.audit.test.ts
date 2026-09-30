@@ -202,22 +202,22 @@ function openConcurrent(settled: unknown[]) {
 }
 
 describe("audit 05-15: initial focus is on Cancel (UI-SPEC S4 shared rules, A11Y floor 7)", () => {
-  // AUDIT-BUG (MAJOR, A11Y): no renderer calls focus(); the view models only
-  // declare `initialFocus: "cancel"`. Obsidian focuses the first focusable
-  // control instead, which is a launch/destructive button.
-  it.skip("the concurrent-session modal focuses Cancel on open", () => {
+  // Was AUDIT-BUG (MAJOR, A11Y, fixed wave 5): no renderer called focus();
+  // the view models only declared `initialFocus: "cancel"`, so Obsidian
+  // focused the first focusable control -- a launch/destructive button.
+  it("the concurrent-session modal focuses Cancel on open", () => {
     reset();
     openConcurrent([]);
     expect(fake.focused.at(-1)).toBe(button("Cancel").buttonEl);
   });
 
-  it.skip("the transcript warning focuses Cancel on open", () => {
+  it("the transcript warning focuses Cancel on open", () => {
     reset();
     new TranscriptWarningModal({} as never, transcriptWarningViewModel(30), () => {}).open();
     expect(fake.focused.at(-1)).toBe(button("Cancel").buttonEl);
   });
 
-  it.skip("the force-terminate request focuses Cancel on open", () => {
+  it("the force-terminate request focuses Cancel on open", () => {
     reset();
     new TerminateRequestModal(
       {} as never,
@@ -225,6 +225,27 @@ describe("audit 05-15: initial focus is on Cancel (UI-SPEC S4 shared rules, A11Y
       () => {},
     ).open();
     expect(fake.focused.at(-1)).toBe(button("Cancel").buttonEl);
+  });
+});
+
+describe("wave 5 review: every choice's consequence line describes its button (UI-SPEC S4-a)", () => {
+  it("each choice button is aria-describedby the id of the <p> beneath it", () => {
+    reset();
+    const modal = openConcurrent([]);
+    const els = walk(modal.contentEl);
+    for (const label of [
+      "Continue in this working tree",
+      "Use an isolated worktree",
+      "Read-only investigation (plan mode)",
+      "Cancel",
+    ]) {
+      const describedBy = (button(label).buttonEl as FakeEl).attrs["aria-describedby"];
+      expect(describedBy, label).toBeTruthy();
+      const described = els.filter((el) => el.attrs.id === describedBy);
+      expect(described, label).toHaveLength(1);
+      expect(described[0]?.tag).toBe("p");
+      expect(described[0]?.text.length).toBeGreaterThan(0);
+    }
   });
 });
 

@@ -67,6 +67,8 @@ export interface StubElement {
   setText(text: string): void;
   /** Mirrors the real `titleEl`/`buttonEl`'s native `HTMLElement.focus` -- inert. */
   focus(): void;
+  /** Added wave 5 review (ids, `aria-describedby`, `<label for>` on the session modals) -- inert. */
+  setAttribute(name: string, value: string): void;
 }
 
 function createStubElement(): StubElement {
@@ -77,6 +79,7 @@ function createStubElement(): StubElement {
     empty: () => {},
     setText: () => {},
     focus: () => {},
+    setAttribute: () => {},
   };
 }
 

@@ -238,7 +238,18 @@ export type ConcurrentChoiceResolution =
  * swaps back to the four choices. The one promise settles once, whichever
  * step it settles from.
  */
+/**
+ * Per-instance prefix for the element ids `aria-describedby` and `<label
+ * for>` point at, so two modals opened in one session can never share an id.
+ */
+let modalIdCounter = 0;
+function nextModalIdPrefix(): string {
+  modalIdCounter += 1;
+  return `session-modal-${modalIdCounter}`;
+}
+
 export class ConcurrentChoiceModal extends Modal {
+  private readonly idPrefix = nextModalIdPrefix();
   private readonly vm: ConcurrentChoiceViewModel;
   private readonly loadWorktrees: () => Promise<WorktreeListResult>;
   private readonly decide: (resolution: ConcurrentChoiceResolution) => void;
@@ -265,10 +276,15 @@ export class ConcurrentChoiceModal extends Modal {
   }
 
   onOpen(): void {
-    this.renderChoices();
+    this.renderChoices(this.vm.initialFocus);
   }
 
-  private renderChoices(): void {
+  /**
+   * The four choices, each button `aria-describedby` its consequence line
+   * (UI-SPEC S4-a). `focusOn` is `Cancel` on open (the safest option, A11Y
+   * floor 7) and `Use an isolated worktree` after the worktree step's `Back`.
+   */
+  private renderChoices(focusOn: ConcurrentChoiceButtonId): void {
     const { titleEl, contentEl } = this;
     contentEl.empty();
     titleEl.setText(this.vm.title);
@@ -277,13 +293,19 @@ export class ConcurrentChoiceModal extends Modal {
     for (const item of this.vm.items) {
       list.createEl("li", { text: item.text });
     }
+    let focusTarget: ButtonComponent | null = null;
     for (const choice of this.vm.choices) {
       const row = contentEl.createDiv();
       const button = new ButtonComponent(row).setButtonText(choice.label);
       if (choice.cta) button.setCta();
       button.onClick(() => this.handleChoice(choice.id));
-      row.createEl("p", { text: choice.consequence });
+      const consequenceId = `${this.idPrefix}-${choice.id}-consequence`;
+      const consequence = row.createEl("p", { text: choice.consequence });
+      consequence.setAttribute("id", consequenceId);
+      button.buttonEl.setAttribute("aria-describedby", consequenceId);
+      if (choice.id === focusOn) focusTarget = button;
     }
+    focusTarget?.buttonEl.focus();
   }
 
   private handleChoice(id: ConcurrentChoiceButtonId): void {
@@ -345,7 +367,7 @@ export class ConcurrentChoiceModal extends Modal {
       .onClick(() => this.launchWorktree());
     new ButtonComponent(buttonRow)
       .setButtonText(stepVm.backLabel)
-      .onClick(() => this.renderChoices());
+      .onClick(() => this.renderChoices("worktree"));
   }
 
   private launchWorktree(): void {
@@ -575,10 +597,12 @@ export class TranscriptWarningModal extends Modal {
       this.settle("open");
       this.close();
     });
-    new ButtonComponent(buttonRow).setButtonText(cancel.label).onClick(() => {
+    const cancelButton = new ButtonComponent(buttonRow).setButtonText(cancel.label).onClick(() => {
       this.settle("cancel");
       this.close();
     });
+    // Initial focus on Cancel, the safest option (UI-SPEC S4 shared rules).
+    cancelButton.buttonEl.focus();
   }
 
   onClose(): void {
@@ -664,10 +688,12 @@ export class TerminateRequestModal extends Modal {
         this.settle("send");
         this.close();
       });
-    new ButtonComponent(buttonRow).setButtonText(cancel.label).onClick(() => {
+    const cancelButton = new ButtonComponent(buttonRow).setButtonText(cancel.label).onClick(() => {
       this.settle("cancel");
       this.close();
     });
+    // Initial focus on Cancel, the safest option (UI-SPEC S4 shared rules).
+    cancelButton.buttonEl.focus();
   }
 
   onClose(): void {
