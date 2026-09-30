@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { parseTranscriptChunk } from "@ccc/collectors";
 import {
   type IntegrationInstallState,
   type StatusLineSnapshot,
@@ -12,17 +14,29 @@ import {
 import type Database from "better-sqlite3";
 import type { Logger } from "pino";
 import type { EventBus } from "../events/event-bus.js";
+import { resolveClaudeConfigDir } from "../paths.js";
 import type { ClaudePipeline } from "./pipeline.js";
 import type { SpoolPoller } from "./spool-poller.js";
-import type { TranscriptIo } from "./transcript-job.js";
+import { createTranscriptJob, nodeTranscriptIo, type TranscriptIo } from "./transcript-job.js";
 import {
   buildUsageSummary,
+  DEFAULT_CLEANUP_PERIOD_DAYS,
   EMPTY_STATUS_LINE_OBSERVATION,
+  localDayOf,
   type StatusLineObservation,
 } from "./usage-summary.js";
 
 /** The collector setting that holds the transcript-analysis toggle (D-03, D-47). Default off. */
 export const TRANSCRIPT_ANALYSIS_SETTING = "transcript_analysis_enabled";
+
+/** The periodic transcript sweep (D-40); `CCC_TRANSCRIPT_SWEEP_MS` overrides it. */
+export const DEFAULT_TRANSCRIPT_SWEEP_MS = 300_000;
+
+/** A positive integer of milliseconds from the environment, else the default. */
+export function envMs(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
 
 /** The settings facts the usage model needs (PR-24); Task 3 reads them from Claude's settings. */
 export interface UsageSettingsFacts {
@@ -40,7 +54,7 @@ export interface UsageServicesDeps {
   readonly now: () => Date;
   /** The local time zone ranges are computed in (D-45); defaults to the process zone. */
   readonly timeZone?: string;
-  /** `<claude-config>/projects` (RED scaffold: unused until GREEN). */
+  /** `<claude-config>/projects`, the only transcript root (defaults from `CLAUDE_CONFIG_DIR`). */
   readonly claudeProjectsRoot?: string;
   /** Overrides the transcript file IO (tests). */
   readonly transcriptIo?: Partial<TranscriptIo>;
@@ -58,7 +72,11 @@ export interface UsageServices {
    * the spool poller's latest-only file (D-02). Never throws for bad input.
    */
   handleStatusLine(input: unknown): StatusLineOutcome;
-  /** Starts the background work; `main.ts` calls it once the socket is open. */
+  /**
+   * Starts the background work: a non-blocking startup sweep and the
+   * periodic sweep, both gated on transcript analysis. `main.ts` calls it
+   * once the socket is open, so a sweep never delays startup (D-55).
+   */
   start(): void;
   /** Stops timers and listeners and waits for in-flight work. */
   stop(): Promise<void>;
@@ -96,13 +114,32 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
   const timeZone = deps.timeZone ?? processTimeZone();
   const settingsFacts =
     deps.settingsFacts ??
-    ((): UsageSettingsFacts => ({ statusLine: "unknown", cleanupPeriodDays: 30 }));
+    ((): UsageSettingsFacts => ({
+      statusLine: "unknown",
+      cleanupPeriodDays: DEFAULT_CLEANUP_PERIOD_DAYS,
+    }));
   let observation: StatusLineObservation = EMPTY_STATUS_LINE_OBSERVATION;
-  const firstScanPending = false;
+  let firstScanPending = false;
 
+  /** Off unless the owner turned it on: an absent setting is off (D-03, USAGE-07). */
   function analysisEnabled(): boolean {
     return getCollectorSetting(db, TRANSCRIPT_ANALYSIS_SETTING) === "true";
   }
+
+  const io = nodeTranscriptIo();
+  const job = createTranscriptJob({
+    db,
+    logger,
+    claudeProjectsRoot: deps.claudeProjectsRoot ?? join(resolveClaudeConfigDir(), "projects"),
+    readChunk: deps.transcriptIo?.readChunk ?? io.readChunk,
+    stat: deps.transcriptIo?.stat ?? io.stat,
+    listFiles: deps.transcriptIo?.listFiles ?? io.listFiles,
+    parse: deps.transcriptIo?.parse ?? parseTranscriptChunk,
+    now,
+    isEnabled: analysisEnabled,
+    dayOf: (iso) => localDayOf(iso, timeZone),
+    cleanupPeriodDays: () => settingsFacts().cleanupPeriodDays,
+  });
 
   function summary(): UsageSummary {
     return buildUsageSummary({
@@ -113,7 +150,7 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
       timeZone,
       analysis: { enabled: analysisEnabled(), firstScanPending },
       cleanupPeriodDays: settingsFacts().cleanupPeriodDays,
-      transcripts: { verdict: { kind: "ok" }, oldestTranscriptAt: null, lastScanAt: null },
+      transcripts: job.facts(),
     });
   }
 
@@ -198,10 +235,75 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
     }
   });
 
+  // --- the transcript scanner: never on the ingest path (D-55) -------------
+
+  const inFlight = new Set<Promise<void>>();
+  let stopped = false;
+  let sweeping = false;
+  let sweepTimer: ReturnType<typeof setInterval> | undefined;
+
+  function track(work: Promise<void>): void {
+    inFlight.add(work);
+    void work.finally(() => inFlight.delete(work));
+  }
+
+  /** One sweep at a time; usage.updated once the batch completes, never per chunk. */
+  async function runSweep(): Promise<void> {
+    if (stopped || sweeping || !analysisEnabled()) return;
+    sweeping = true;
+    try {
+      const outcome = await job.sweep();
+      if (!outcome.completed) return;
+      firstScanPending = false;
+      publishUsage();
+    } catch (err: unknown) {
+      logger.warn({ err }, "transcript sweep failed");
+    } finally {
+      sweeping = false;
+    }
+  }
+
+  /** The scan a Stop or SessionEnd schedules for that Run's own contained transcript (D-40). */
+  async function scanSettled(transcriptPath: string): Promise<void> {
+    try {
+      const outcome = await job.scanFile(transcriptPath);
+      if (outcome.kind === "scanned") publishUsage();
+    } catch (err: unknown) {
+      logger.warn({ err }, "transcript scan failed");
+    }
+  }
+
+  const unsubscribeSettled = deps.pipeline.onRunSettled((run) => {
+    // The gate is checked here, inside the listener, before anything is
+    // scheduled: with analysis off, a settle touches no file (USAGE-07).
+    if (stopped || run.transcriptPath === null || !analysisEnabled()) return;
+    const transcriptPath = run.transcriptPath;
+    // The listener runs inside the pipeline's apply; the scan waits for the
+    // next turn of the event loop so the ingest path never reads a file.
+    setImmediate(() => {
+      if (!stopped) track(scanSettled(transcriptPath));
+    });
+  });
+
   return {
     summary,
     handleStatusLine,
-    start() {},
-    async stop() {},
+    start() {
+      if (stopped || sweepTimer !== undefined) return;
+      const sweepMs = envMs(deps.env.CCC_TRANSCRIPT_SWEEP_MS, DEFAULT_TRANSCRIPT_SWEEP_MS);
+      setImmediate(() => {
+        if (!stopped) track(runSweep());
+      });
+      sweepTimer = setInterval(() => track(runSweep()), sweepMs);
+      sweepTimer.unref();
+    },
+    async stop() {
+      stopped = true;
+      if (sweepTimer !== undefined) clearInterval(sweepTimer);
+      unsubscribeSettled();
+      job.cancel();
+      await Promise.allSettled([...inFlight]);
+      await job.idle();
+    },
   };
 }

@@ -1,21 +1,36 @@
-import type { RecognitionVerdict } from "@ccc/collectors";
+import {
+  estimateCostUsd,
+  PRICE_TABLE_EFFECTIVE_FROM,
+  type RecognitionVerdict,
+} from "@ccc/collectors";
 import {
   CAPACITY_WINDOWS,
   type CapacityWindow,
+  type CostBasis,
   type EstimatedApiCost,
   type Freshness,
   type IntegrationInstallState,
   type PlanCapacity,
+  type SessionRun,
+  type SessionUsage,
   type TokenActivity,
+  type TokenCounters,
   USAGE_RANGES,
   type UsageRangeKind,
+  type UsageScope,
   type UsageSummary,
 } from "@ccc/domain";
 import {
+  type AnalysisToggle,
   type CostSnapshot,
   latestCapacity,
   latestRunBySession,
   listCostSnapshots,
+  listRegisteredProjects,
+  listToggleLog,
+  queryCoverage,
+  queryTokenActivity,
+  type TokenActivityRows,
 } from "@ccc/operational-store";
 import type Database from "better-sqlite3";
 
@@ -324,76 +339,332 @@ export function snapshotsCovering(
 }
 
 const TRANSCRIPT_SOURCE = "local-transcript-analysis";
+/** `missingSources` names for a partial cost. */
+const UNPRICED_MODELS = "unpriced-models";
+const TRANSCRIPT_COVERAGE = "transcript-coverage";
+
+const ZERO: TokenCounters = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+
+function counterTotal(c: TokenCounters): number {
+  return c.input + c.output + c.cacheWrite + c.cacheRead;
+}
+
+function subtract(a: TokenCounters, b: TokenCounters): TokenCounters {
+  return {
+    input: Math.max(0, a.input - b.input),
+    output: Math.max(0, a.output - b.output),
+    cacheWrite: Math.max(0, a.cacheWrite - b.cacheWrite),
+    cacheRead: Math.max(0, a.cacheRead - b.cacheRead),
+  };
+}
+
+/** List prices over per-model counters: an unlisted model is excluded and named, never priced at zero. */
+function priceByModel(byModel: Iterable<readonly [string, TokenCounters]>): {
+  usd: number;
+  excludedModels: ReadonlySet<string>;
+  hasTokens: boolean;
+} {
+  let usd = 0;
+  let hasTokens = false;
+  const excludedModels = new Set<string>();
+  for (const [model, counters] of byModel) {
+    if (counterTotal(counters) === 0) continue;
+    hasTokens = true;
+    const estimate = estimateCostUsd(model, counters);
+    if (estimate.kind === "priced") usd += estimate.usd;
+    else excludedModels.add(model);
+  }
+  return { usd, excludedModels, hasTokens };
+}
+
+function latestObservedAt(snapshots: readonly CostSnapshot[]): string | null {
+  return snapshots.reduce<string | null>(
+    (latest, s) => (newer(s.observedAt, latest) ? s.observedAt : latest),
+    null,
+  );
+}
 
 /**
- * The cost for one range. With token activity unavailable, only the status
- * line's own estimates can speak, and the result is partial (sessions
- * without a snapshot are unknown). Task 2 adds list prices over activity.
+ * The cost for one range (D-42, USAGE-03). A session's own status-line
+ * estimate stands for it only when the session lies wholly inside the
+ * range; list prices cover the rest of the range's token activity. The
+ * basis is always stated: `claude-code-estimates`, `list-prices` or
+ * `mixed`. An unlisted model is excluded and counted, and marks the cost
+ * partial. With token activity unavailable, only the status line's
+ * estimates can speak, and the result is partial (a session without a
+ * snapshot is unknown); with neither, the cost is unavailable.
  */
 export function buildRangeCost(
   db: Database.Database,
-  kind: UsageRangeKind,
-  bounds: RangeBounds,
+  kind: UsageScope,
+  bounds: Pick<RangeBounds, "start" | "end" | "queryEnd">,
   activity: TokenActivity,
   now: Date,
 ): EstimatedApiCost {
   const covered = snapshotsCovering(db, bounds);
-  if (covered.length === 0 || activity.kind === "available") {
-    return { kind: "unavailable", reason: "needs-activity-or-wrapper" };
-  }
-  const observedAt = covered.reduce(
-    (latest, s) => (newer(s.observedAt, latest) ? s.observedAt : latest),
-    covered[0]?.observedAt ?? now.toISOString(),
-  );
-  return {
-    kind: "available",
+  const snapshotUsd = covered.reduce((sum, s) => sum + s.totalCostUsd, 0);
+  const snapshotAt = latestObservedAt(covered);
+  const common = {
+    kind: "available" as const,
     range: kind,
     bounds: { start: bounds.start, end: bounds.end },
-    usd: covered.reduce((sum, s) => sum + s.totalCostUsd, 0),
-    basis: "claude-code-estimates",
-    priceTableDate: null,
-    excludedModelCount: 0,
-    observedAt,
-    source: "claude-code-estimates-and-list-prices",
-    freshness: freshnessAt(observedAt, now),
-    partiality: { partial: true, missingSources: [TRANSCRIPT_SOURCE] },
+    source: "claude-code-estimates-and-list-prices" as const,
+  };
+  if (activity.kind !== "available") {
+    if (snapshotAt === null) return { kind: "unavailable", reason: "needs-activity-or-wrapper" };
+    return {
+      ...common,
+      usd: snapshotUsd,
+      basis: "claude-code-estimates",
+      priceTableDate: null,
+      excludedModelCount: 0,
+      observedAt: snapshotAt,
+      freshness: freshnessAt(snapshotAt, now),
+      partiality: { partial: true, missingSources: [TRANSCRIPT_SOURCE] },
+    };
+  }
+
+  // The range's activity minus the covered sessions' own activity in it.
+  const remaining = new Map(activity.byModel.map((row) => [row.model, row.counters] as const));
+  for (const snapshot of covered) {
+    const own = queryTokenActivity(db, {
+      start: bounds.start,
+      end: bounds.queryEnd,
+      claudeSessionId: snapshot.claudeSessionId,
+    });
+    for (const row of own.byModel) {
+      remaining.set(row.model, subtract(remaining.get(row.model) ?? ZERO, row.counters));
+    }
+  }
+  const listed = priceByModel(remaining);
+  const basis: CostBasis =
+    snapshotAt === null ? "list-prices" : listed.hasTokens ? "mixed" : "claude-code-estimates";
+  const missingSources = [
+    ...(listed.excludedModels.size > 0 ? [UNPRICED_MODELS] : []),
+    ...(activity.partiality.partial ? [TRANSCRIPT_COVERAGE] : []),
+  ];
+  return {
+    ...common,
+    usd: snapshotUsd + listed.usd,
+    basis,
+    priceTableDate: basis === "claude-code-estimates" ? null : PRICE_TABLE_EFFECTIVE_FROM,
+    excludedModelCount: listed.excludedModels.size,
+    observedAt: activity.observedAt,
+    freshness:
+      snapshotAt === null
+        ? activity.freshness
+        : worseFreshness(activity.freshness, freshnessAt(snapshotAt, now)),
+    partiality: missingSources.length > 0 ? { partial: true, missingSources } : { partial: false },
   };
 }
 
 // ---------------------------------------------------------------------------
-// The summary
+// Token activity and coverage (D-40, D-41, D-44, D-45)
 
 export interface AnalysisState {
   readonly enabled: boolean;
   readonly firstScanPending: boolean;
 }
 
-/** What the transcript job knows (RED scaffold: unused until GREEN). */
+/** What the transcript job knows: the format verdict, the oldest transcript, the last scan. */
 export interface TranscriptFacts {
   readonly verdict: RecognitionVerdict;
+  /** The earliest record (or file creation) among surviving transcripts, or null for none. */
   readonly oldestTranscriptAt: string | null;
   readonly lastScanAt: string | null;
 }
 
+export const NO_TRANSCRIPT_FACTS: TranscriptFacts = Object.freeze({
+  verdict: { kind: "ok" } as const,
+  oldestTranscriptAt: null,
+  lastScanAt: null,
+});
+
+/** Claude Code's `cleanupPeriodDays` default when its settings name none (D-44). */
+export const DEFAULT_CLEANUP_PERIOD_DAYS = 30;
+
 export interface UsageSummaryInputs extends PlanCapacityInputs {
   readonly analysis: AnalysisState;
   readonly timeZone: string;
+  /** Claude Code's transcript retention (default 30, minimum 1). */
   readonly cleanupPeriodDays: number;
   readonly transcripts: TranscriptFacts;
 }
 
-function rangeActivity(analysis: AnalysisState): TokenActivity {
-  return analysis.enabled
-    ? { kind: "unavailable", reason: "no-coverage", version: null }
-    : { kind: "unavailable", reason: "analysis-off", version: null };
+const DAY_MS = 86_400_000;
+
+/**
+ * The retention horizon (D-44): the later of now − cleanupPeriodDays and
+ * the oldest surviving transcript, as a local calendar date. Null when no
+ * transcript survives.
+ */
+export function retentionHorizon(
+  now: Date,
+  timeZone: string,
+  cleanupPeriodDays: number,
+  oldestTranscriptAt: string | null,
+): string | null {
+  if (oldestTranscriptAt === null) return null;
+  const days = Number.isFinite(cleanupPeriodDays)
+    ? Math.max(1, Math.floor(cleanupPeriodDays))
+    : DEFAULT_CLEANUP_PERIOD_DAYS;
+  const byRetention = localDayOf(now.getTime() - days * DAY_MS, timeZone);
+  const byOldest = localDayOf(oldestTranscriptAt, timeZone);
+  return byOldest > byRetention ? byOldest : byRetention;
 }
+
+/** A toggle log that reads "on" for every day: what a scan covered, whatever the toggle said. */
+const ALWAYS_ON: readonly AnalysisToggle[] = [{ at: "1970-01-01T00:00:00.000Z", enabled: true }];
+
+interface RangeCoverage {
+  readonly horizonDate: string | null;
+  readonly uncoveredDays: number;
+  readonly analysisOffDays: number;
+  /** Days a scan covered (the toggle aside); zero means no-coverage. */
+  readonly scannedDays: number;
+  readonly partial: boolean;
+}
+
+/**
+ * Coverage for the local days [firstDay, lastDay]. Days before the
+ * horizon, days analysis was off (from the toggle log) and days no scan
+ * covered make the range partial. The scanner reads whole transcripts, so
+ * a day analysis was off can still hold counted tokens once analysis is
+ * back on; it is still reported as an analysis-off day (D-47), and only a
+ * range with no scanned day at all is no-coverage.
+ */
+function rangeCoverage(
+  db: Database.Database,
+  firstDay: string,
+  lastDay: string,
+  horizon: string | null,
+  toggles: readonly AnalysisToggle[],
+  timeZone: string,
+): RangeCoverage {
+  const dayOf = (iso: string) => localDayOf(iso, timeZone);
+  const days = queryCoverage(db, firstDay, lastDay, horizon, toggles, dayOf);
+  const scanned = queryCoverage(db, firstDay, lastDay, horizon, ALWAYS_ON, dayOf);
+  const count = (status: string) => days.filter((d) => d.status === status).length;
+  return {
+    horizonDate: horizon !== null && firstDay < horizon ? horizon : null,
+    uncoveredDays: count("before-horizon") + count("not-scanned"),
+    analysisOffDays: count("analysis-off"),
+    scannedDays: scanned.filter((d) => d.status === "covered").length,
+    partial: days.some((d) => d.status !== "covered"),
+  };
+}
+
+/** Why activity is unavailable before any coverage is looked at: off, or the format changed. */
+function blockedActivity(inputs: UsageSummaryInputs): TokenActivity | null {
+  if (!inputs.analysis.enabled) {
+    return { kind: "unavailable", reason: "analysis-off", version: null };
+  }
+  if (inputs.transcripts.verdict.kind === "unavailable") {
+    return {
+      kind: "unavailable",
+      reason: "format-changed",
+      version: inputs.transcripts.verdict.version,
+    };
+  }
+  return null;
+}
+
+interface ActivityContext {
+  readonly horizon: string | null;
+  readonly toggles: readonly AnalysisToggle[];
+  readonly projectNames: ReadonlyMap<string, string>;
+}
+
+function activityContext(inputs: UsageSummaryInputs): ActivityContext {
+  return {
+    horizon: retentionHorizon(
+      inputs.now,
+      inputs.timeZone,
+      inputs.cleanupPeriodDays,
+      inputs.transcripts.oldestTranscriptAt,
+    ),
+    toggles: listToggleLog(inputs.db),
+    projectNames: new Map(listRegisteredProjects(inputs.db).map((p) => [p.projectId, p.name])),
+  };
+}
+
+const MAX_KEY = 128;
+
+function availableActivity(
+  inputs: UsageSummaryInputs,
+  context: ActivityContext,
+  range: UsageScope,
+  bounds: { start: string; end: string },
+  rows: TokenActivityRows,
+  coverage: RangeCoverage,
+): TokenActivity {
+  const { lastScanAt } = inputs.transcripts;
+  return {
+    kind: "available",
+    range,
+    bounds,
+    totals: rows.totals,
+    byProject: rows.byProject.map((row) => ({
+      projectId: row.projectId,
+      projectName:
+        row.projectId === null ? null : (context.projectNames.get(row.projectId) ?? null),
+      counters: row.counters,
+    })),
+    byModel: rows.byModel.filter((row) => row.model.length > 0 && row.model.length <= MAX_KEY),
+    bySkill: rows.bySkill.filter((row) => row.name.length > 0 && row.name.length <= MAX_KEY),
+    observedAt: lastScanAt ?? inputs.now.toISOString(),
+    source: TRANSCRIPT_SOURCE,
+    // Before this process's first scan the aggregates are what an earlier one left.
+    freshness: lastScanAt === null ? "cached" : freshnessAt(lastScanAt, inputs.now),
+    partiality: { partial: coverage.partial },
+    coverage: {
+      horizonDate: coverage.horizonDate,
+      uncoveredDays: coverage.uncoveredDays,
+      analysisOffDays: coverage.analysisOffDays,
+    },
+  };
+}
+
+function buildRangeActivity(
+  inputs: UsageSummaryInputs,
+  context: ActivityContext,
+  kind: UsageRangeKind,
+  bounds: RangeBounds,
+): TokenActivity {
+  const blocked = blockedActivity(inputs);
+  if (blocked !== null) return blocked;
+  const coverage = rangeCoverage(
+    inputs.db,
+    bounds.firstDay,
+    bounds.lastDay,
+    context.horizon,
+    context.toggles,
+    inputs.timeZone,
+  );
+  if (coverage.scannedDays === 0) {
+    return { kind: "unavailable", reason: "no-coverage", version: null };
+  }
+  const rows = queryTokenActivity(inputs.db, { start: bounds.start, end: bounds.queryEnd });
+  return availableActivity(
+    inputs,
+    context,
+    kind,
+    { start: bounds.start, end: bounds.end },
+    rows,
+    coverage,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The summary and per-Session usage
 
 /** The whole summary published by `usage.updated` and `snapshot.state.usage`. */
 export function buildUsageSummary(inputs: UsageSummaryInputs): UsageSummary {
   const { db, now, timeZone, analysis } = inputs;
+  const context = activityContext(inputs);
   const range = (kind: UsageRangeKind) => {
     const bounds = rangeBounds(kind, now, timeZone);
-    const activity = rangeActivity(analysis);
+    const activity = buildRangeActivity(inputs, context, kind, bounds);
     return { activity, cost: buildRangeCost(db, kind, bounds, activity, now) };
   };
   const [today, last7, month] = USAGE_RANGES.map(range);
@@ -406,4 +677,87 @@ export function buildUsageSummary(inputs: UsageSummaryInputs): UsageSummary {
     analysis: { enabled: analysis.enabled, firstScanPending: analysis.firstScanPending },
     observedAt: now.toISOString(),
   };
+}
+
+/** Every hour bucket: a Session's activity is filtered by its Claude session ID, not by time. */
+const ALL_TIME = { start: "1970-01-01T00:00:00.000Z", end: "9999-12-31T00:00:00.000Z" } as const;
+
+/**
+ * Per-Session usage for the Agent runs detail pane (PR-23): the Session's
+ * token activity (all of its Claude session's aggregates) and its cost,
+ * its own status-line estimate where one exists, else list prices.
+ */
+export function buildSessionUsage(inputs: UsageSummaryInputs & { run: SessionRun }): SessionUsage {
+  const { db, run, now, timeZone } = inputs;
+  const endIso = run.endedAt ?? now.toISOString();
+  const bounds =
+    Date.parse(endIso) >= Date.parse(run.startedAt)
+      ? { start: run.startedAt, end: endIso }
+      : { start: run.startedAt, end: run.startedAt };
+  const session = run.claudeSessionId;
+  const context = activityContext(inputs);
+
+  const blocked = blockedActivity(inputs);
+  let activity: TokenActivity = blocked ?? {
+    kind: "unavailable",
+    reason: "no-coverage",
+    version: null,
+  };
+  let rows: TokenActivityRows | null = null;
+  if (blocked === null && session !== null) {
+    const coverage = rangeCoverage(
+      db,
+      localDayOf(bounds.start, timeZone),
+      localDayOf(bounds.end, timeZone),
+      context.horizon,
+      context.toggles,
+      timeZone,
+    );
+    rows = queryTokenActivity(db, { ...ALL_TIME, claudeSessionId: session });
+    if (coverage.scannedDays > 0 || counterTotal(rows.totals) > 0) {
+      activity = availableActivity(inputs, context, "session", bounds, rows, coverage);
+    }
+  }
+
+  const snapshot =
+    session === null ? undefined : listCostSnapshots(db).find((s) => s.claudeSessionId === session);
+  let cost: EstimatedApiCost;
+  if (snapshot !== undefined) {
+    cost = {
+      kind: "available",
+      range: "session",
+      bounds,
+      usd: snapshot.totalCostUsd,
+      basis: "claude-code-estimates",
+      priceTableDate: null,
+      excludedModelCount: 0,
+      observedAt: snapshot.observedAt,
+      source: "claude-code-estimates-and-list-prices",
+      freshness: freshnessAt(snapshot.observedAt, now),
+      partiality: { partial: false },
+    };
+  } else if (activity.kind === "available" && rows !== null) {
+    const listed = priceByModel(rows.byModel.map((row) => [row.model, row.counters] as const));
+    const missingSources = [
+      ...(listed.excludedModels.size > 0 ? [UNPRICED_MODELS] : []),
+      ...(activity.partiality.partial ? [TRANSCRIPT_COVERAGE] : []),
+    ];
+    cost = {
+      kind: "available",
+      range: "session",
+      bounds,
+      usd: listed.usd,
+      basis: "list-prices",
+      priceTableDate: PRICE_TABLE_EFFECTIVE_FROM,
+      excludedModelCount: listed.excludedModels.size,
+      observedAt: activity.observedAt,
+      source: "claude-code-estimates-and-list-prices",
+      freshness: activity.freshness,
+      partiality:
+        missingSources.length > 0 ? { partial: true, missingSources } : { partial: false },
+    };
+  } else {
+    cost = { kind: "unavailable", reason: "needs-activity-or-wrapper" };
+  }
+  return { runId: run.runId, activity, cost };
 }
