@@ -62,11 +62,15 @@ function isNoSuchProcess(err: unknown): boolean {
  * `POST /sessions/terminate-request` only proposes.
  *
  * The sequence, identity-checked before every signal:
+ * 0. The token must cover this call: operation, subject (the RunId) and an
+ *    unexpired `expiresAt` (`capability-refused` otherwise).
  * 1. The Run must be non-terminal with a pid and a stored process start
  *    equal to the pid's current one (a reused pid is another process).
  * 2. Record `terminate-requested`, so a SessionEnd the signal triggers is
  *    only an observation, not an ending (PR-02).
- * 3. Send the terminate signal; poll until the pid is gone.
+ * 3. Re-check the identity, then send the terminate signal with nothing
+ *    awaited in between (a failed re-check records `terminate-withdrawn`);
+ *    poll until the pid is gone.
  * 4. After the grace period, if the pid is still the same process, send
  *    the kill signal.
  * 5. Only when the pid is observed gone, record `pid-gone`: the Run
@@ -83,6 +87,21 @@ export function createTerminateExecutor(deps: TerminateExecutorDeps): SessionTer
     if (!processFacts.isAlive(pid)) return false;
     const read = (await processFacts.readStartTimes([pid])).get(pid);
     return read !== undefined && sameProcessStart(read, stored);
+  }
+
+  /**
+   * Whether the token covers exactly this call (wave 5 review): the
+   * operation, the subject RunId, and an expiry still in the future. The
+   * type already required a token; this proves it was issued for this Run.
+   */
+  function covers(token: CapabilityToken<"session.force-terminate">, runId: RunId): boolean {
+    const expiresMs = Date.parse(token.expiresAt);
+    return (
+      token.operation === "session.force-terminate" &&
+      token.subject === runId &&
+      Number.isFinite(expiresMs) &&
+      expiresMs > deps.now().getTime()
+    );
   }
 
   /** Sends `signal`; false when the pid is already gone. */
@@ -111,6 +130,10 @@ export function createTerminateExecutor(deps: TerminateExecutorDeps): SessionTer
       token: CapabilityToken<"session.force-terminate">,
       runId: RunId,
     ): Promise<TerminateResult> {
+      if (!covers(token, runId)) {
+        logger.warn({ runId, proposalId: token.proposalId }, "force-terminate: capability refused");
+        return { ok: false, reason: "capability-refused" };
+      }
       const run = getSessionRun(deps.db, runId);
       if (run === null || isTerminalRunState(run.state))
         return { ok: false, reason: "run-not-found" };
@@ -121,13 +144,25 @@ export function createTerminateExecutor(deps: TerminateExecutorDeps): SessionTer
       if (!(await sameProcess(pid, pidStartedAt)))
         return { ok: false, reason: "identity-mismatch" };
 
-      logger.info({ runId, proposalId: token.proposalId }, "force-terminate: approved, signalling");
       await deps.pipeline.apply({
         kind: "terminate-requested",
         runId,
         at: deps.now().toISOString(),
       });
-
+      // Re-verified after the awaited write and immediately before the
+      // signal (wave 5 review, TOCTOU): nothing is awaited between this
+      // check and SIGTERM. A refusal here withdraws the recorded request,
+      // so the Run is never later finalized as cancelled without a signal.
+      const stillAlive = processFacts.isAlive(pid);
+      if (!stillAlive || !(await sameProcess(pid, pidStartedAt))) {
+        await deps.pipeline.apply({
+          kind: "terminate-withdrawn",
+          runId,
+          at: deps.now().toISOString(),
+        });
+        return { ok: false, reason: stillAlive ? "identity-mismatch" : "process-ended" };
+      }
+      logger.info({ runId, proposalId: token.proposalId }, "force-terminate: approved, signalling");
       let gone = !signal(pid, "SIGTERM") || (await waitGone(pid, graceMs));
       if (!gone) {
         // Re-verified: after the grace period the pid may already belong to

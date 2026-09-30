@@ -31,7 +31,8 @@ import {
  *   returned as a rejected edge naming the from-state and the evidence; it
  *   is never applied and never thrown.
  * - A pending terminate turns SessionEnd into an observation, not an ending
- *   (PR-02). SIGTERM/SIGHUP run SessionEnd(reason "other"); while a Run
+ *   (PR-02); a withdrawn terminate (refused before any signal) lets that
+ *   observation complete the Run. SIGTERM/SIGHUP run SessionEnd(reason "other"); while a Run
  *   carries `terminateRequestedAt`, that SessionEnd only records
  *   `endObservedAt`, and the later pid-gone makes the Run `cancelled`.
  * - A missing optional field leaves the previous value unchanged. No
@@ -79,7 +80,11 @@ export type Evidence =
       readonly runId: RunId;
       readonly at: string;
     }
-  | { readonly kind: "terminate-requested"; readonly runId: RunId; readonly at: string };
+  | {
+      readonly kind: "terminate-requested" | "terminate-withdrawn";
+      readonly runId: RunId;
+      readonly at: string;
+    };
 
 /** Read-only access to the Runs the service holds. The service implements it over the store. */
 export interface RunIndex {
@@ -266,6 +271,26 @@ export function reduce(
           ? upserted(write(run, { terminateRequestedAt: bounded(evidence.at, now) }))
           : NOTHING,
       );
+
+    // The executor recorded a request, then refused before any signal (its
+    // identity re-check failed): the pending terminate is withdrawn, so a
+    // later pid-gone cannot read as cancelled. A SessionEnd observed while
+    // it was pending was the process's own ending, and now completes it.
+    case "terminate-withdrawn":
+      return onRun(index, evidence.runId, evidence.kind, (run) => {
+        if (run.terminateRequestedAt === null) return NOTHING;
+        if (run.endObservedAt !== null) {
+          return upserted(
+            write(run, {
+              terminateRequestedAt: null,
+              state: "completed",
+              endedAt: run.endObservedAt,
+              activity: null,
+            }),
+          );
+        }
+        return upserted(write(run, { terminateRequestedAt: null }));
+      });
 
     case "pid-gone":
       return onRun(index, evidence.runId, evidence.kind, (run) => {

@@ -109,7 +109,12 @@ export type TerminateResult =
   | { readonly ok: true }
   | {
       readonly ok: false;
-      readonly reason: "process-ended" | "identity-mismatch" | "run-not-found";
+      /** `capability-refused`: the token's operation, subject or expiry does not cover this call. */
+      readonly reason:
+        | "process-ended"
+        | "identity-mismatch"
+        | "run-not-found"
+        | "capability-refused";
     };
 
 /**

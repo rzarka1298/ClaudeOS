@@ -147,3 +147,45 @@ describe("Codex 5: process start forms", () => {
     expect(index.byRunId(R1)?.state).toBe("stale");
   });
 });
+
+describe("terminate-withdrawn (wave 5 review: the executor refused after recording)", () => {
+  it("clears a pending terminate, and a SessionEnd observed meanwhile completes the Run", () => {
+    const running = seedRun({ runId: R1, state: "running" });
+    const withdrawn = play(
+      [running],
+      [
+        { kind: "terminate-requested", runId: R1, at: at(10) },
+        { kind: "terminate-withdrawn", runId: R1, at: at(11) },
+      ],
+    );
+    expect(withdrawn.index.byRunId(R1)).toMatchObject({
+      state: "running",
+      terminateRequestedAt: null,
+    });
+
+    const ended = play(
+      [running],
+      [
+        { kind: "terminate-requested", runId: R1, at: at(10) },
+        hook("SessionEnd", { observedAt: at(11), fields: { reason: "other" } }),
+        { kind: "terminate-withdrawn", runId: R1, at: at(12) },
+      ],
+    );
+    expect(ended.index.byRunId(R1)).toMatchObject({
+      state: "completed",
+      endedAt: at(11),
+      terminateRequestedAt: null,
+    });
+  });
+
+  it("is a no-op without a pending terminate and rejected on a terminal Run", () => {
+    const running = seedRun({ runId: R1, state: "running" });
+    expect(
+      play([running], [{ kind: "terminate-withdrawn", runId: R1, at: at(5) }]).results[0],
+    ).toEqual({ upserts: [], rejected: [] });
+    const done = seedRun({ runId: R1, state: "completed", endedAt: at(3) });
+    expect(
+      play([done], [{ kind: "terminate-withdrawn", runId: R1, at: at(5) }]).results[0]?.rejected,
+    ).toHaveLength(1);
+  });
+});

@@ -12,10 +12,18 @@ declare const capabilityOperation: unique symbol;
  * verification function, and no always-allow or blanket-scope value exists
  * here — per CONTEXT.md, an Approval is "never persistent, never blanket."
  * The approval engine that issues real tokens is Phase 6.
+ *
+ * `subject` names the one thing the approval covers (for
+ * `session.force-terminate`, the RunId). A capability-typed executor still
+ * compares `operation`, `subject` and `expiresAt` itself at run time and
+ * refuses a mismatch or an expired token: the type proves a token was
+ * required, not that this token was issued for this call.
  */
 export interface CapabilityToken<TOperation extends string> {
   readonly proposalId: string;
   readonly operation: TOperation;
+  /** The id of the single target the approval covers (a RunId for force-terminate). */
+  readonly subject: string;
   readonly expiresAt: string;
   readonly [capabilityOperation]: TOperation;
 }

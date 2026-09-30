@@ -55,11 +55,18 @@ const NULL_FACTS: SessionFactsProvider = {
  * token. A local cast here is the sanctioned test pattern (PATTERNS
  * correction 4); backstop rule 9 forbids it in non-test source.
  */
-const TOKEN = {
-  proposalId: "proposal-test-1",
-  operation: "session.force-terminate",
-  expiresAt: "2099-01-01T00:00:00.000Z",
-} as unknown as CapabilityToken<"session.force-terminate">;
+function tokenFor(
+  subject: string,
+  patch: { operation?: string; expiresAt?: string } = {},
+): CapabilityToken<"session.force-terminate"> {
+  return {
+    proposalId: "proposal-test-1",
+    operation: "session.force-terminate",
+    subject,
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    ...patch,
+  } as unknown as CapabilityToken<"session.force-terminate">;
+}
 
 let base: string;
 let store: OperationalStore;
@@ -218,7 +225,7 @@ describe("the capability-typed terminate executor on a real child (Task 3 Test 3
       logger,
     });
 
-    const result = await executor.terminate(TOKEN, run.runId);
+    const result = await executor.terminate(tokenFor(run.runId), run.runId);
     await sessionEndApplied;
 
     expect(result).toEqual({ ok: true });
@@ -256,7 +263,7 @@ describe("the executor refuses before any signal (Task 3 Test 4, T-05-59)", () =
     const result = await executorWith(
       fakeFacts({ lstart: "2026-09-30T02:00:00.000Z" }),
       signals,
-    ).terminate(TOKEN, run.runId);
+    ).terminate(tokenFor(run.runId), run.runId);
     expect(result).toEqual({ ok: false, reason: "identity-mismatch" });
     expect(signals).toEqual([]);
     expect(getSessionRun(store.db, run.runId)?.terminateRequestedAt).toBeNull();
@@ -267,7 +274,7 @@ describe("the executor refuses before any signal (Task 3 Test 4, T-05-59)", () =
     const signals: TerminateSignal[] = [];
     expect(
       await executorWith(fakeFacts({ lstart: "2026-09-30T01:00:00.000Z" }), signals).terminate(
-        TOKEN,
+        tokenFor(run.runId),
         run.runId,
       ),
     ).toEqual({ ok: false, reason: "identity-mismatch" });
@@ -283,19 +290,84 @@ describe("the executor refuses before any signal (Task 3 Test 4, T-05-59)", () =
       endedAt: new Date().toISOString(),
     });
     const facts = fakeFacts({ lstart: "2026-09-30T01:00:00.000Z" });
-    expect(await executorWith(facts, signals).terminate(TOKEN, ended.runId)).toEqual({
+    expect(
+      await executorWith(facts, signals).terminate(tokenFor(ended.runId), ended.runId),
+    ).toEqual({
       ok: false,
       reason: "run-not-found",
     });
-    expect(await executorWith(facts, signals).terminate(TOKEN, newRunId() as RunId)).toEqual({
+    const unknown = newRunId() as RunId;
+    expect(await executorWith(facts, signals).terminate(tokenFor(unknown), unknown)).toEqual({
       ok: false,
       reason: "run-not-found",
     });
     const gone = seedRun({ pid: 4242, pidStartedAt: "2026-09-30T01:00:00.000Z" });
     expect(
-      await executorWith(fakeFacts({ alive: false }), signals).terminate(TOKEN, gone.runId),
+      await executorWith(fakeFacts({ alive: false }), signals).terminate(
+        tokenFor(gone.runId),
+        gone.runId,
+      ),
     ).toEqual({ ok: false, reason: "process-ended" });
     expect(signals).toEqual([]);
+  });
+});
+
+describe("the executor checks the capability itself (wave 5 review, ADR-0012)", () => {
+  function executorWith(processFacts: ProcessFacts, signals: TerminateSignal[]) {
+    return createTerminateExecutor({
+      db: store.db,
+      pipeline,
+      processFacts,
+      kill: (_pid, signal) => {
+        signals.push(signal);
+      },
+      graceMs: 20,
+      pollMs: 5,
+      now: () => new Date("2026-09-30T12:00:00.000Z"),
+      logger,
+    });
+  }
+  const LSTART = "2026-09-30T01:00:00.000Z";
+
+  it("refuses a token for another Run, an expired token and a token for another operation", async () => {
+    const run = seedRun({ pid: 4242, pidStartedAt: LSTART });
+    const other = seedRun({ pid: 4243, pidStartedAt: LSTART });
+    const signals: TerminateSignal[] = [];
+    const executor = executorWith(fakeFacts({ lstart: LSTART }), signals);
+    for (const token of [
+      tokenFor(other.runId),
+      tokenFor(run.runId, { expiresAt: "2026-09-30T11:59:59.999Z" }),
+      tokenFor(run.runId, { expiresAt: "not a time" }),
+      tokenFor(run.runId, { operation: "vault.write" }),
+    ]) {
+      expect(await executor.terminate(token, run.runId)).toEqual({
+        ok: false,
+        reason: "capability-refused",
+      });
+    }
+    expect(signals).toEqual([]);
+    expect(getSessionRun(store.db, run.runId)?.terminateRequestedAt).toBeNull();
+  });
+
+  it("re-checks identity after recording the request, immediately before the terminate signal", async () => {
+    const run = seedRun({ pid: 4242, pidStartedAt: LSTART });
+    let reads = 0;
+    const facts: ProcessFacts = {
+      ...fakeFacts({}),
+      // The Run's process at the first check; another process reusing the pid by the second.
+      readStartTimes: async (pids) => {
+        reads += 1;
+        return new Map(pids.map((pid) => [pid, reads === 1 ? LSTART : "2026-09-30T02:00:00.000Z"]));
+      },
+    };
+    const signals: TerminateSignal[] = [];
+    const result = await executorWith(facts, signals).terminate(tokenFor(run.runId), run.runId);
+    expect(result).toEqual({ ok: false, reason: "identity-mismatch" });
+    expect(signals).toEqual([]);
+    // The request is withdrawn: no signal was sent, so nothing may later read as cancelled.
+    const after = getSessionRun(store.db, run.runId);
+    expect(after?.terminateRequestedAt).toBeNull();
+    expect(after?.state).toBe("running");
   });
 });
 
