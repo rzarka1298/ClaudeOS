@@ -1,4 +1,5 @@
-import { accessSync, constants, lstatSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants } from "node:fs";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ProjectGitState } from "@ccc/domain";
@@ -176,9 +177,15 @@ function isAccessError(err: unknown): boolean {
   return code === "EPERM" || code === "EACCES";
 }
 
-function probe(path: string): FsProbe {
+/**
+ * Both probes are asynchronous: readProject runs on every refresh and
+ * polling tick, and a synchronous stat against a stalled network or
+ * external volume would block the whole event loop — no git timeout, no
+ * launch cap, no API request and no heartbeat could fire behind it.
+ */
+async function probe(path: string): Promise<FsProbe> {
   try {
-    lstatSync(path);
+    await lstat(path);
     return "present";
   } catch (err: unknown) {
     return isAccessError(err) ? "denied" : "missing";
@@ -192,10 +199,12 @@ function probe(path: string): FsProbe {
  * moved and linked back) or is no longer a directory is `missing` — the
  * project moved, and git must not run in whatever sits there now.
  */
-function probeRoot(root: string): FsProbe {
+async function probeRoot(root: string): Promise<FsProbe> {
   try {
-    if (realpathSync.native(root) !== root) return "missing";
-    return statSync(root).isDirectory() ? "present" : "missing";
+    // fs/promises realpath has the same semantics as realpathSync.native,
+    // which registration used to store the root (D-06).
+    if ((await realpath(root)) !== root) return "missing";
+    return (await stat(root)).isDirectory() ? "present" : "missing";
   } catch (err: unknown) {
     return isAccessError(err) ? "denied" : "missing";
   }
@@ -207,12 +216,12 @@ export function createGitRunner(options: GitRunnerOptions): GitRunner {
 
   return {
     async readProject(root) {
-      const folder = probeRoot(root);
+      const folder = await probeRoot(root);
       if (folder === "missing") return { kind: "folder-missing" };
       if (folder === "denied") return { kind: "folder-access-denied" };
       if (options.git.kind === "unavailable") return { kind: "git-unavailable" };
 
-      const dotGit = probe(join(root, ".git"));
+      const dotGit = await probe(join(root, ".git"));
       if (dotGit === "missing") return { kind: "not-a-repo" };
       if (dotGit === "denied") return { kind: "folder-access-denied" };
 
