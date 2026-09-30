@@ -28,9 +28,9 @@
  *
  * Presets route through `/usr/bin/open` or `/usr/bin/osascript`, which
  * return once the terminal has been handed the script, so exit status 0
- * means "handed off" (RESEARCH Pattern 1). A preset that ran the terminal
- * binary directly would stay running and hit the launch deadline even though
- * its window opened. Every preset ships `verified: false` until the owner
+ * means "handed off" (RESEARCH Pattern 1). An owner template that runs the
+ * terminal binary directly is started detached by the service instead, so
+ * the launch deadline never kills its window (ADR-0024, Terminal presets). Every preset ships `verified: false` until the owner
  * tests it (D-23).
  */
 import type { TemplateRefusalReason, TerminalPresetId } from "@ccc/domain";

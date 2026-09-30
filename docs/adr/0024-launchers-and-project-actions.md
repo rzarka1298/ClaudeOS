@@ -61,7 +61,7 @@ must be `https:` with no userinfo. The error names the field, never the value.
 | GitHub (`PROJ-08`) | `["/usr/bin/open", "https://github.com/<owner>/<repo>"]` | Rebuilt from validated parts: the owner's override, else the collector's last-good github.com remote (`D-13`). Never a general URL opener. |
 | Claude Desktop (`PROJ-09`) | `["/usr/bin/open", "-b", <saved bundle ID>]` | Activates a running app; never a second instance. No project. |
 | Claude Code, Terminal.app (`PROJ-06`) | `["/usr/bin/open", "-b", "com.apple.Terminal", <script path>]` | The script runs `[absolute claude, ...stored arguments]` at the project root. |
-| Claude Code, custom terminal (`PROJ-10`) | the saved template with `{script}` and `{projectPath}` replaced element for element | Validated before every spawn (see Terminal presets). |
+| Claude Code, custom terminal (`PROJ-10`) | the saved template with `{script}` and `{projectPath}` replaced element for element | Validated before every spawn (see Terminal presets). `argv[0]` `/usr/bin/open` or `/usr/bin/osascript` is awaited under the cap; any other `argv[0]` is started detached (see Terminal presets). |
 
 **Bundle ID versus name.** A bundle ID survives the owner renaming or moving the `.app`; a name
 does not, and a name is ambiguous: two Antigravity bundles with different bundle IDs are installed
@@ -118,7 +118,8 @@ Two proof tests execute real scripts rather than inspecting strings:
 - **Self-delete:** the script's first line is `rm -f -- "$0"`. The service never deletes a script
   it has handed off, because Terminal may not have read it yet (Pitfall 5). It deletes a script
   only when the hand-off provably never reached a terminal: nothing was spawned, the spawn never
-  started, the bundle was not found, or macOS refused the Apple Event (-1743).
+  started, the bundle was not found, macOS refused the Apple Event (-1743), or a directly-run
+  terminal binary exited non-zero within its grace period.
 - **Sweeps:** service startup deletes leftover `.command` files older than 60 seconds (never zero,
   because a launchd KeepAlive restart can follow a hand-off within seconds). Each launch deletes
   any older than 10 minutes. Neither sweep ever touches a just-handed-off file. Non-`.command` files
@@ -135,8 +136,12 @@ composition root:
   store-resolved project path, `argv` a plain array (never a shell string), `env` optional so Phase 5
   can pass `CCC_RUN_ID` / `CCC_LAUNCH_SOURCE` with no amendment (`PR-07`), and `signal` the launch
   pipeline's 4-second cap. An adapter checks the signal before writing, after any asynchronous
-  check and before spawning, and hands it to the spawner, which kills a still-running child when it
-  fires. A hand-off can never open a terminal after the owner was told `timeout`. Implementations:
+  check and before spawning. A hand-off that has not started when the cap fires opens nothing. For
+  an `open` or `osascript` hand-off the spawner also kills the still-running child when the cap
+  fires. That stops a hung hand-off, but it cannot recall one LaunchServices or AppleScript has
+  already dispatched, so a terminal can still open after the owner was told `timeout`. A
+  directly-run custom terminal binary is never killed (see Terminal presets), so it too can open
+  after `timeout`. Implementations:
   `createTerminalAppLauncher` and `createCustomTemplateLauncher`, selected by
   `selectTerminalLauncher(storedConfig.terminal, deps)` in
   `packages/service/src/projects/terminal-launchers.ts`.
@@ -145,9 +150,11 @@ composition root:
   sends a path (`D-06`).
 - `LaunchGuard.check({ projectId, action })` — runs before the hand-off. Phase 4 allows everything;
   Phase 5's concurrent-session warning plugs in here (`D-49`).
-- `Spawner.run(argv, { timeoutMs, signal })` — the only process port. Stderr is reduced to a class
-  inside it and dropped. Tests inject a recording fake, so no test ever runs the real `open`
-  (`D-41`).
+- `Spawner.run(argv, { timeoutMs, signal })` and `Spawner.detach(argv, { graceMs })` — the only
+  process port. `run` awaits a child under a deadline. Stderr is reduced to a class inside it and
+  dropped. `detach` starts a child in its own process group with no stdio, `unref`s it, and has no
+  deadline and no abort signal. Both use the same fixed environment allowlist. Tests inject a
+  recording fake, so no test ever runs the real `open` (`D-41`).
 - `LaunchResult` — `{ ok: true }` or `{ ok: false, error: LaunchErrorKind }`.
 
 The environment is exported inside the script, never passed to the `open` child: a
@@ -163,7 +170,7 @@ environment is the spawner's fixed allowlist (Pitfall 11).
 | GitHub `open https://…` | No | No | None |
 | Claude Desktop `open -b id` | No | No | None |
 | Terminal `open -b com.apple.Terminal x.command` | No | No (confirmed on the owner's Mac, A1) | The script lives in the runtime directory (unprotected). Terminal's own TCC standing governs the script's `cd`. |
-| Custom osascript preset (iTerm2) | Yes (osascript to iTerm2) | Yes, walked through in that launcher's Test step (`D-28`, `PR-02`). -1743 maps to `automation-denied`. | Same as Terminal |
+| Custom osascript preset (iTerm2) | Yes (osascript to iTerm2) | Yes, once (`D-28`, `PR-02`). The Test step that is meant to surface it is built in plan 04-11. Until then the first real launch meets the prompt and can end in `timeout` (Residual risks). -1743 maps to `automation-denied`. | Same as Terminal |
 | Custom `open`-routed preset (Ghostty, WezTerm) | No | No | Same as Terminal |
 | Git collector | No | No | Reads the project folder. A project in a protected location needs a Files & Folders grant for the service's node (see Protected folders). |
 | Project lookup and registration | No | No | `realpath`/`lstat` of the project folder, same TCC standing as the git collector |
@@ -181,10 +188,10 @@ as an Obsidian Notice; none contains a path.
 | The stored path no longer exists, or `open` reports "does not exist" | `project-missing` |
 | The stored path no longer realpaths to itself | `project-moved` |
 | No override and no github.com remote | `no-github-remote` |
-| osascript stderr carries `-1743` (custom osascript presets only) | `automation-denied` |
+| osascript stderr carries `(-1743)`, `error -1743` or `:-1743)` (custom osascript presets only). A bare `-1743` inside a path such as `proj-1743` does not count. | `automation-denied` |
 | `EPERM`/`EACCES` on `realpath`/`lstat`, or "Operation not permitted" | `folder-access-denied` |
 | The service's 4-second cap, or the plugin's 5-second wall-clock deadline | `timeout` |
-| Spawn `ENOENT`/`EACCES`, a refused script value (NUL/CR/LF, non-`CCC_` env key), any other non-zero exit | `spawn-failed` |
+| Spawn `ENOENT`/`EACCES`, a refused script value (NUL/CR/LF, non-`CCC_` env key), a directly-run terminal binary that exits non-zero within its grace period, any other non-zero exit | `spawn-failed` |
 
 `packages/launchers/src/error-map.ts` holds the pure half (`classifyStderr`, `mapLaunchFailure`). Its
 switch is exhaustive with no default, so a new stderr class cannot compile until its kind is chosen.
@@ -236,9 +243,23 @@ It remains a possible future adapter behind the same `TerminalLauncher` port.
 
 All presets are labelled **Unverified** until the owner's Test step confirms one (`D-23`). The
 Terminal.app adapter is the only first-class, verified path. Presets route through `/usr/bin/open` or
-`/usr/bin/osascript`, which return once the terminal has the script, so "exit 0 = handed off" holds.
-A template that runs a terminal binary directly stays running and meets the cap even though its
-window opened.
+`/usr/bin/osascript`, which return once the terminal has the script. They are awaited under the cap,
+and exit 0 means handed off.
+
+A custom template whose `argv[0]` is anything else (for example
+`/Applications/WezTerm.app/Contents/MacOS/wezterm start -- {script}`) is taken to be the terminal
+process itself. It runs for as long as the window stays open. Awaiting it would kill the window at
+the 4-second cap and report `timeout`. So `createCustomTemplateLauncher` starts it with
+`Spawner.detach`: its own process group, stdio ignored, `unref`'d, with no deadline and no abort
+signal. It is then judged on a short grace period (300 ms by default, never longer than the cap):
+
+- still running at the end of the grace, or exited 0 → handed off, and the script is left for itself
+  and the sweeps;
+- the spawn failed (`ENOENT` or `EACCES`, including an `argv[0]` removed after the `X_OK` check), or it
+  exited non-zero within the grace → `spawn-failed`, and the script is removed.
+
+The cap never kills such a process. If the cap fired during the grace, the answer is still
+`timeout`, but the window may open anyway.
 
 | Preset | argv template | Caveat |
 |---|---|---|
@@ -251,10 +272,17 @@ window opened.
 `packages/launchers/src/command-template.ts`, run by `createCustomTemplateLauncher` on each launch,
 whatever was checked at save time):
 
-- `argv[0]` must be absolute and must pass `X_OK` at that moment, checked asynchronously.
+- `argv[0]` must be absolute, a regular file (a directory such as an `.app` bundle passes `X_OK`,
+  but cannot be executed) and must pass `X_OK` at that moment, checked asynchronously.
 - `{script}` is required.
 - Placeholders must be whole elements. An embedded placeholder (`--cwd={projectPath}`) or an
   unknown `{name}` is refused.
+- A placeholder directly after an interpreter's "run this code" flag is refused, reported as
+  `embedded-placeholder`. The flags are a short-option bundle ending in `c` (`-c`, `-lc`, `-ic`),
+  one ending in `e` or `E` (`-e`, `-ne`, `-E`), and `--eval`, `-Command` or `--command` in any letter
+  case. One exception: `{script}` after a bare `-e` is allowed unless `argv[0]` is
+  `/usr/bin/osascript`. For a terminal emulator, `-e` means "run this program", and the Ghostty
+  preset relies on that. `{projectPath}` after any of these flags is always refused.
 - NUL/CR/LF and empty elements are refused, and a template may have at most 32 elements.
 - Every Claude Code permission-bypass form is refused: `--dangerously-skip-permissions` in any
   spelling, and `bypassPermissions` as a permission mode, a flag value or inside `--settings` JSON.
@@ -327,14 +355,38 @@ only enums and booleans.
   - The project card's `folder-access-denied` body ("Allow access in System Settings › Privacy &
     Security › Files & Folders, then try again. Updating Node.js can make macOS ask again.") leads
     with the grant rather than `PR-11`'s "move the project" guidance.
-  - Registration resolves candidates with a synchronous `realpathSync.native`. While a TCC prompt is
-    on screen, that call can block the service's event loop until the owner answers.
+  - (Resolved in the wave-4b review.) Registration used a synchronous `realpathSync.native` that
+    could block the service's event loop while a TCC prompt was on screen. It now resolves, stats
+    and follows links through `fs.promises`.
 - **iTerm2 splits `command` on spaces.** The iTerm2 preset passes the script path as the `command`
   of a new window, and iTerm2 splits it on spaces. The runtime directory, and so the launch directory
   under it, must contain no space. The default `/Users/USERNAME/.claude-command-center` has none.
   A `CCC_RUNTIME_DIR` with a space would break only that preset, and the preset stays Unverified.
 - **Ghostty double run** is harmless only because the script deletes itself first. That line must
   stay first.
+- **The first Automation prompt can end in `timeout`.** An osascript preset (iTerm2) waits while
+  macOS shows its first "wants to control" prompt. If the owner takes longer than the 4-second cap,
+  osascript is killed and the launch reports a bare `timeout`, though nothing is wrong. Requirement
+  for plan 04-11's Test step: give an osascript-based launch a longer cap there, or run a separate
+  pre-flight that meets the prompt with no cap. Map "killed while the first Automation prompt was
+  pending" to an outcome that explains the prompt and says to try again, not a bare `timeout`.
+  Until 04-11 lands, the prompt is met on the first real launch.
+- **Code-flag placeholders are judged by the flag, not the program.** The refusal matches common
+  interpreter flags (`-c`, `-e`, `-E`, bundles ending in them, `--eval`, `-Command`, `--command`). It
+  cannot know every program's options. `{script}` after a bare `-e` stays allowed for terminal
+  emulators, so `perl -e {script}` or `node -e {script}` would pass validation and evaluate the
+  service-generated script path as code. That path holds no owner-controlled text, so this is a
+  broken template rather than an injection. A program whose code flag has another name is not
+  caught. Templates remain owner-authorised code (above).
+- **Check-then-spawn race on `argv[0]`.** The regular-file and `X_OK` check and the spawn are
+  separate steps. If the file is removed between them, the spawn fails with `ENOENT`, which maps to
+  `spawn-failed` and removes the script. If it is replaced by another executable in between, the
+  replacement runs. Swapping the file needs the owner's own privileges, which is the same-user
+  threat ADR-0001 accepts.
+- **The detached grace is a heuristic.** A directly-run terminal binary that fails later than the
+  grace period (300 ms) is reported as handed off. One that forks its window process and exits 0 is
+  handed off correctly. The service never learns whether the window stayed open, and it never kills
+  the process.
 
 ## Consequences
 
@@ -345,7 +397,8 @@ only enums and booleans.
   new quoting context. A terminal needing an AppleScript string built from the path would violate
   this ADR.
 - The default configuration needs no Automation permission at all. Only an osascript-based custom
-  preset brings a prompt, inside its own Test step (`D-28`, `PR-02`).
+  preset brings a prompt (`D-28`, `PR-02`). It is meant to appear in that preset's Test step once
+  plan 04-11 builds it (Residual risks).
 - Phase 5 resumes sessions through the same `TerminalLauncher` port, passing its run identity in
   `env`, with no change to this design (`PR-07`).
 - Protected-folder behaviour is measured, not assumed. The copy is true for a prompt and for a silent
