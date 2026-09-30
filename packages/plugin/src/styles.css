@@ -786,10 +786,12 @@
  * is given `onSelectRow` (UI-SPEC S1 "Primary line"). It carries the same
  * ink, size and clamp classes; the reset below removes button chrome so it
  * reads identically to the plain `<p>` it replaces. */
-/* Scoped under .ccc-card (0,2,0) so it outranks Obsidian's global
+/* Scoped under .ccc-card, or under .ccc-agent-runs for the S3 table's own
+ * row-link buttons (05-13) — both (0,2,0) — so it outranks Obsidian's global
  * `button:not(.clickable-icon)` rules (0,1,1): fixed height, nowrap,
  * background and box-shadow would otherwise break the two-line clamp. */
-.ccc-card .ccc-session-row-link {
+.ccc-card .ccc-session-row-link,
+.ccc-agent-runs .ccc-session-row-link {
   display: block;
   width: 100%;
   height: auto;
