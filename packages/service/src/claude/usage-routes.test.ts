@@ -4,21 +4,35 @@ import http, { type Server } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  CLAUDE_HOOK_EVENTS_PATH,
+  CLAUDE_INTEGRATION_PATH,
+  CLAUDE_SESSION_USAGE_PATH,
   CLAUDE_STATUSLINE_PATH,
+  CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
+  CLAUDE_USAGE_DELETE_PATH,
+  ClaudeIntegrationStatusSchema,
   HANDSHAKE_PATH,
   type HandshakeResponse,
   newRunId,
   PlanCapacitySchema,
+  SessionUsageSchema,
   SNAPSHOT_PATH,
   SnapshotResponseSchema,
   UsageSummarySchema,
 } from "@ccc/domain";
 import {
   applyMigrations,
+  getCollectorSetting,
   latestCapacity,
+  latestRunBySession,
   listCostSnapshots,
+  listToggleLog,
+  markDayCovered,
   type OperationalStore,
   openStore,
+  queryTokenActivity,
+  recordUsage,
+  setCollectorSetting,
 } from "@ccc/operational-store";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -37,7 +51,11 @@ import { createLogger } from "../logging.js";
 import { createRequestListener } from "../routes.js";
 import { startSocketServer } from "../socket-server.js";
 import { createClaudePipeline, type SessionFactsProvider } from "./pipeline.js";
-import { startUsageServices, type UsageServices } from "./usage-services.js";
+import {
+  startUsageServices,
+  TRANSCRIPT_ANALYSIS_SETTING,
+  type UsageServices,
+} from "./usage-services.js";
 import { buildPlanCapacity, EMPTY_STATUS_LINE_OBSERVATION } from "./usage-summary.js";
 
 const TEST_BASE = join(homedir(), ".ccc-test");
@@ -357,5 +375,257 @@ describe("buildPlanCapacity: unavailable is never a number (Test 3, D-38, USAGE-
     });
     expect(hasNumber(summary.capacity)).toBe(false);
     expect(latestCapacity(store.db)).toEqual([]);
+  });
+});
+
+const WIDE = { start: "2020-01-01T00:00:00.000Z", end: "2100-01-01T00:00:00.000Z" };
+
+function hookRecord(event: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    eventId: randomUUID(),
+    observedAt: new Date().toISOString(),
+    hook_event_name: event,
+    session_id: "sess-usage-1",
+    cwd: join(dir, "code", "demo"),
+    env: { CLAUDE_PID: "4242" },
+    ...extra,
+  };
+}
+
+function eventsOf(type: string) {
+  const replay = bus.buffer.since(0);
+  if (replay.mode !== "replay") throw new Error("expected a replay");
+  return replay.events.filter((event) => event.type === type);
+}
+
+function seedUsage(): void {
+  recordUsage(
+    store.db,
+    [
+      {
+        messageId: "msg_seed_1",
+        claudeSessionId: "sess-usage-1",
+        timestamp: new Date().toISOString(),
+        model: "claude-opus-4-8",
+        skillKey: null,
+        projectKey: null,
+        counters: { input: 11, output: 22, cacheWrite: 0, cacheRead: 0 },
+      },
+    ],
+    new Date().toISOString(),
+  );
+}
+
+describe("POST transcript-analysis (Test 4, D-03, D-47, USAGE-07)", () => {
+  it("turns analysis on: persisted, logged, first scan pending, a sweep, and both streams republished", async () => {
+    const token = await handshake(socketPath);
+    const res = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
+      rawBody: JSON.stringify({ enabled: true }),
+      token,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: true });
+    expect(getCollectorSetting(store.db, TRANSCRIPT_ANALYSIS_SETTING)).toBe("true");
+    expect(listToggleLog(store.db)).toMatchObject([{ enabled: true }]);
+
+    const pending = eventsOf("usage.updated").map((e) => UsageSummarySchema.parse(e.payload));
+    expect(pending.some((s) => s.analysis.enabled && s.analysis.firstScanPending)).toBe(true);
+    // The triggered sweep completes (the synthetic projects root is empty).
+    await vi.waitFor(() => {
+      expect(usage.summary().analysis).toEqual({ enabled: true, firstScanPending: false });
+    });
+    const integration = eventsOf("claude-integration.updated").map((e) =>
+      ClaudeIntegrationStatusSchema.parse(e.payload),
+    );
+    expect(integration.at(-1)?.transcriptAnalysis).toEqual({ enabled: true });
+  });
+
+  it("turns analysis off: persisted, keeps aggregates, and a parallel SessionStart still applies", async () => {
+    const token = await handshake(socketPath);
+    setCollectorSetting(store.db, TRANSCRIPT_ANALYSIS_SETTING, "true", new Date().toISOString());
+    seedUsage();
+    const [toggle, hook] = await Promise.all([
+      request<unknown>(socketPath, {
+        method: "POST",
+        path: CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
+        rawBody: JSON.stringify({ enabled: false }),
+        token,
+      }),
+      request<unknown>(socketPath, {
+        method: "POST",
+        path: CLAUDE_HOOK_EVENTS_PATH,
+        rawBody: JSON.stringify(hookRecord("SessionStart", { source: "startup" })),
+        token,
+      }),
+    ]);
+    expect(toggle.status).toBe(200);
+    expect(toggle.body).toEqual({ enabled: false });
+    expect(hook.status).toBe(202);
+    expect(latestRunBySession(store.db, "sess-usage-1")?.state).toBe("running");
+    expect(getCollectorSetting(store.db, TRANSCRIPT_ANALYSIS_SETTING)).toBe("false");
+    expect(listToggleLog(store.db)).toMatchObject([{ enabled: false }]);
+    expect(queryTokenActivity(store.db, WIDE).totals.input).toBe(11);
+    expect(usage.integration().transcriptAnalysis).toEqual({ enabled: false });
+    expect(usage.summary().ranges.today.activity).toMatchObject({ reason: "analysis-off" });
+  });
+
+  it("refuses a malformed toggle with the constant 400", async () => {
+    const token = await handshake(socketPath);
+    const res = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
+      rawBody: JSON.stringify({ enabled: "yes", path: "/etc" }),
+      token,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid request body" });
+    expect(getCollectorSetting(store.db, TRANSCRIPT_ANALYSIS_SETTING)).toBeNull();
+  });
+});
+
+describe("POST usage/delete (Test 5, D-46, USAGE-08)", () => {
+  it("empties the usage tables atomically, keeps Runs, and republishes usage.updated", async () => {
+    const token = await handshake(socketPath);
+    setCollectorSetting(store.db, TRANSCRIPT_ANALYSIS_SETTING, "true", new Date().toISOString());
+    const hook = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_HOOK_EVENTS_PATH,
+      rawBody: JSON.stringify(hookRecord("SessionStart", { source: "startup" })),
+      token,
+    });
+    expect(hook.status).toBe(202);
+    seedUsage();
+    markDayCovered(store.db, "2026-09-20", new Date().toISOString());
+    await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_STATUSLINE_PATH,
+      rawBody: JSON.stringify(statusLine({ rate_limits: RATE_LIMITS, cost_total_usd: 2 })),
+      token,
+    });
+    const runBefore = latestRunBySession(store.db, "sess-usage-1");
+
+    const res = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_USAGE_DELETE_PATH,
+      token,
+    });
+    expect(res.status).toBe(200);
+    expect(queryTokenActivity(store.db, WIDE).totals.input).toBe(0);
+    expect(latestCapacity(store.db)).toEqual([]);
+    expect(listCostSnapshots(store.db)).toEqual([]);
+    expect(latestRunBySession(store.db, "sess-usage-1")).toEqual(runBefore);
+    expect(getCollectorSetting(store.db, TRANSCRIPT_ANALYSIS_SETTING)).toBe("true");
+
+    const summary = UsageSummarySchema.parse(eventsOf("usage.updated").at(-1)?.payload);
+    expect(summary.ranges.today.activity).toEqual({
+      kind: "unavailable",
+      reason: "no-coverage",
+      version: null,
+    });
+    expect(summary.capacity.kind).toBe("unavailable");
+  });
+
+  it("refuses a body that is not empty or {}", async () => {
+    const token = await handshake(socketPath);
+    seedUsage();
+    const res = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_USAGE_DELETE_PATH,
+      rawBody: JSON.stringify({ table: "runs" }),
+      token,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "invalid request body" });
+    expect(queryTokenActivity(store.db, WIDE).totals.input).toBe(11);
+  });
+});
+
+describe("POST usage/session and GET integration (Tests 6-7, PR-23, PR-24)", () => {
+  it("returns a SessionUsage for the Run's session, and 404 run-not-found for an unknown Run", async () => {
+    const token = await handshake(socketPath);
+    await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_HOOK_EVENTS_PATH,
+      rawBody: JSON.stringify(hookRecord("SessionStart", { source: "startup" })),
+      token,
+    });
+    await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_STATUSLINE_PATH,
+      rawBody: JSON.stringify(statusLine({ cost_total_usd: 1.5 })),
+      token,
+    });
+    const run = latestRunBySession(store.db, "sess-usage-1");
+    if (run === null) throw new Error("expected a Run");
+
+    const res = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_SESSION_USAGE_PATH,
+      rawBody: JSON.stringify({ runId: run.runId }),
+      token,
+    });
+    expect(res.status).toBe(200);
+    const sessionUsage = SessionUsageSchema.parse(res.body);
+    expect(sessionUsage.runId).toBe(run.runId);
+    expect(sessionUsage.activity).toEqual({
+      kind: "unavailable",
+      reason: "analysis-off",
+      version: null,
+    });
+    expect(sessionUsage.cost).toMatchObject({
+      kind: "available",
+      range: "session",
+      usd: 1.5,
+      basis: "claude-code-estimates",
+    });
+
+    const unknown = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_SESSION_USAGE_PATH,
+      rawBody: JSON.stringify({ runId: newRunId() }),
+      token,
+    });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body).toEqual({ error: "run-not-found" });
+
+    const smuggled = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_SESSION_USAGE_PATH,
+      rawBody: JSON.stringify({ runId: run.runId, transcriptPath: "/etc/passwd" }),
+      token,
+    });
+    expect(smuggled.status).toBe(400);
+    expect(smuggled.body).toEqual({ error: "invalid request body" });
+  });
+
+  it("serves GET integration behind the token, and the snapshot carries claudeIntegration", async () => {
+    const unauth = await request<unknown>(socketPath, {
+      method: "GET",
+      path: CLAUDE_INTEGRATION_PATH,
+    });
+    expect(unauth.status).toBe(401);
+
+    const token = await handshake(socketPath);
+    const res = await request<unknown>(socketPath, {
+      method: "GET",
+      path: CLAUDE_INTEGRATION_PATH,
+      token,
+    });
+    expect(res.status).toBe(200);
+    const status = ClaudeIntegrationStatusSchema.parse(res.body);
+    // The synthetic Claude config dir holds no settings.json.
+    expect(status.hooks).toBe("unknown");
+    expect(status.transcriptAnalysis).toEqual({ enabled: false });
+    expect(JSON.stringify(res.body)).not.toContain(dir);
+
+    const snapshot = await request<unknown>(socketPath, {
+      method: "GET",
+      path: SNAPSHOT_PATH,
+      token,
+    });
+    const parsed = SnapshotResponseSchema.parse(snapshot.body);
+    expect(ClaudeIntegrationStatusSchema.parse(parsed.state.claudeIntegration)).toEqual(status);
   });
 });

@@ -1,7 +1,10 @@
 import { join } from "node:path";
 import { parseTranscriptChunk } from "@ccc/collectors";
 import {
+  type ClaudeIntegrationStatus,
   type IntegrationInstallState,
+  type RunId,
+  type SessionUsage,
   type StatusLineSnapshot,
   StatusLineSnapshotSchema,
   type UsageSummary,
@@ -15,6 +18,7 @@ import type Database from "better-sqlite3";
 import type { Logger } from "pino";
 import type { EventBus } from "../events/event-bus.js";
 import { resolveClaudeConfigDir } from "../paths.js";
+import { buildIntegrationStatus } from "./integration-status.js";
 import type { ClaudePipeline } from "./pipeline.js";
 import type { SpoolPoller } from "./spool-poller.js";
 import { createTranscriptJob, nodeTranscriptIo, type TranscriptIo } from "./transcript-job.js";
@@ -58,6 +62,10 @@ export interface UsageServicesDeps {
   readonly claudeProjectsRoot?: string;
   /** Overrides the transcript file IO (tests). */
   readonly transcriptIo?: Partial<TranscriptIo>;
+  /** The service runtime dir holding `hooks/install.json` (RED scaffold: unused). */
+  readonly runtimeDir?: string;
+  /** Claude Code's config dir holding `settings.json` (RED scaffold: unused). */
+  readonly claudeConfigDir?: string;
   /** Overrides the settings facts (tests). */
   readonly settingsFacts?: () => UsageSettingsFacts;
 }
@@ -78,6 +86,12 @@ export interface UsageServices {
    * once the socket is open, so a sweep never delays startup (D-55).
    */
   start(): void;
+  /** The integration status (RED scaffold). */
+  integration(): ClaudeIntegrationStatus;
+  refreshIntegration(): Promise<ClaudeIntegrationStatus>;
+  setTranscriptAnalysis(enabled: boolean): Promise<{ enabled: boolean }>;
+  deleteUsage(): void;
+  sessionUsage(runId: RunId): SessionUsage | null;
   /** Stops timers and listeners and waits for in-flight work. */
   stop(): Promise<void>;
 }
@@ -285,9 +299,32 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
     });
   });
 
+  const redIntegration = (): ClaudeIntegrationStatus =>
+    buildIntegrationStatus({
+      settings: {
+        hooks: "unknown",
+        statusLine: "unknown",
+        disableAllHooks: null,
+        cleanupPeriodDays: 30,
+        hookNodePath: null,
+      },
+      install: null,
+      pathExists: () => false,
+      health: deps.pipeline.health(),
+      dropCount: 0,
+      analysisEnabled: false,
+      statusLineReported: false,
+      detectedClaudeVersion: null,
+    });
+
   return {
     summary,
     handleStatusLine,
+    integration: redIntegration,
+    refreshIntegration: async () => redIntegration(),
+    setTranscriptAnalysis: async () => ({ enabled: false }),
+    deleteUsage() {},
+    sessionUsage: () => null,
     start() {
       if (stopped || sweepTimer !== undefined) return;
       const sweepMs = envMs(deps.env.CCC_TRANSCRIPT_SWEEP_MS, DEFAULT_TRANSCRIPT_SWEEP_MS);

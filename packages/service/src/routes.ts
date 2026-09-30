@@ -137,6 +137,8 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
       ...(ctx.claude ? { sessions: ctx.claude.pipeline.listSessionViews() } : {}),
       // The usage summary (05-12, PR-23), also read synchronously in this tick.
       ...(ctx.claude?.usage ? { usage: ctx.claude.usage.summary() } : {}),
+      // The Claude integration status (05-12, PR-24).
+      ...(ctx.claude?.usage ? { claudeIntegration: ctx.claude.usage.integration() } : {}),
     },
   };
   sendJson(res, 200, body);

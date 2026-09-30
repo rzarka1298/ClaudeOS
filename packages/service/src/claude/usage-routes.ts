@@ -1,5 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { type ApiErrorBody, CLAUDE_STATUSLINE_PATH } from "@ccc/domain";
+import {
+  type ApiErrorBody,
+  CLAUDE_INTEGRATION_PATH,
+  CLAUDE_SESSION_USAGE_PATH,
+  CLAUDE_STATUSLINE_PATH,
+  CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
+  CLAUDE_USAGE_DELETE_PATH,
+} from "@ccc/domain";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
 import type { RouteContext } from "../routes.js";
@@ -68,6 +75,16 @@ function detached(
   };
 }
 
+/** RED scaffold (05-12 Task 3): the real handlers land in the GREEN commit. */
+const notYet: ClaudeHandler = (req, res) => {
+  req.resume();
+  sendClaudeJson(res, 503, UNAVAILABLE_BODY);
+};
+
 export const usageRoutes: Record<string, Record<string, ClaudeHandler>> = {
   [CLAUDE_STATUSLINE_PATH]: { POST: withClaudeAuth(detached(handleStatusLine)) },
+  [CLAUDE_INTEGRATION_PATH]: { GET: withClaudeAuth(notYet) },
+  [CLAUDE_TRANSCRIPT_ANALYSIS_PATH]: { POST: withClaudeAuth(notYet) },
+  [CLAUDE_USAGE_DELETE_PATH]: { POST: withClaudeAuth(notYet) },
+  [CLAUDE_SESSION_USAGE_PATH]: { POST: withClaudeAuth(notYet) },
 };
