@@ -1,6 +1,11 @@
 import pino from "pino";
 import { describe, expect, it } from "vitest";
-import { createProcessFacts, type ExecFileRunner, type KillFn } from "./process-facts.js";
+import {
+  createProcessFacts,
+  type ExecFileRunner,
+  type KillFn,
+  startInstantMs,
+} from "./process-facts.js";
 
 interface FakeProcess {
   readonly lstart?: string;
@@ -66,10 +71,30 @@ describe("createProcessFacts (Test 4)", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.file).toBe("/bin/ps");
     expect(calls[0]?.args).toEqual(["-o", "pid=,lstart=", "-p", "12,34"]);
-    expect(calls[0]?.env).toEqual({ LC_ALL: "C" });
+    // TZ=UTC (wave 4): lstart is rendered in UTC whatever the system zone,
+    // and normalised to an ISO instant, so a zone change never reads as reuse.
+    expect(calls[0]?.env).toEqual({ LC_ALL: "C", TZ: "UTC" });
     expect(calls[0]?.timeout).toBe(2000);
-    expect(times.get(12)).toBe("Mon Jul 20 03:25:26 2026");
-    expect(times.get(34)).toBe("Tue Jul 21 11:02:09 2026");
+    expect(times.get(12)).toBe("2026-07-20T03:25:26.000Z");
+    expect(times.get(34)).toBe("2026-07-21T11:02:09.000Z");
+  });
+
+  it("parses a space-padded day and omits an lstart it cannot parse (unknown, never a guess)", async () => {
+    const { processFacts } = facts({
+      12: { lstart: "Mon Jul  6 03:25:26 2026" },
+      34: { lstart: "sometime yesterday" },
+    });
+    const times = await processFacts.readStartTimes([12, 34]);
+    expect(times.get(12)).toBe("2026-07-06T03:25:26.000Z");
+    expect(times.has(34)).toBe(false);
+  });
+
+  it("compares a stored start as an instant: ISO, or a legacy local-time lstart", () => {
+    expect(startInstantMs("2026-07-20T03:25:26.000Z")).toBe(Date.UTC(2026, 6, 20, 3, 25, 26));
+    expect(startInstantMs("Mon Jul 20 03:25:26 2026")).toBe(
+      new Date(2026, 6, 20, 3, 25, 26).getTime(),
+    );
+    expect(startInstantMs("nonsense")).toBeNull();
   });
 
   it("refuses a non-digit or non-positive pid before any spawn", async () => {

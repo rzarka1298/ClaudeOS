@@ -9,7 +9,7 @@ import type Database from "better-sqlite3";
 import type { Logger } from "pino";
 import type { AttributeFn } from "./attribution.js";
 import type { ClaudePipeline } from "./pipeline.js";
-import type { ProcessFacts } from "./process-facts.js";
+import { type ProcessFacts, startInstantMs } from "./process-facts.js";
 
 /**
  * The process-liveness sweeper (D-19, D-22, RESEARCH Pattern 4 and Q5).
@@ -133,7 +133,19 @@ function identityOf(
 ): "same" | "gone" | "unknown" {
   if (!answered) return "gone";
   if (lstart === undefined || run.pidStartedAt === null) return "unknown";
-  return lstart === run.pidStartedAt ? "same" : "gone";
+  return sameStart(lstart, run.pidStartedAt) ? "same" : "gone";
+}
+
+/**
+ * Two start times name the same process start when they are the same
+ * instant (wave 4): `ps` now reports UTC ISO instants, while a Run stored
+ * before that holds a local-time `lstart`. Unparsable values fall back to
+ * exact text equality.
+ */
+function sameStart(read: string, stored: string): boolean {
+  const a = startInstantMs(read);
+  const b = startInstantMs(stored);
+  return a !== null && b !== null ? a === b : read === stored;
 }
 
 /** How far back a terminal Run is still re-attributed (the views' 7-day window, UI-SPEC R-08). */

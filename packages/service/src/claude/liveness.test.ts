@@ -294,6 +294,17 @@ describe("process liveness sweep (Task 1, SESS-06, D-19)", () => {
     expect(stateOf(run.runId)).toBe("stale");
   });
 
+  it("compares start times as instants: a legacy local-time lstart matches the same instant read in UTC (wave 4)", async () => {
+    const legacy = "Mon Sep 29 09:59:58 2026"; // rendered in the system zone before TZ=UTC
+    const sameInstant = new Date(2026, 8, 29, 9, 59, 58).toISOString();
+    table.spawn(PID, sameInstant);
+    const run = seedRun({ pidStartedAt: legacy, state: "stale" });
+    const sweeper = sweeperWith();
+    await sweeper.sweepNow();
+    expect(appliedKinds(run.runId)).toEqual(["pid-alive"]);
+    expect(stateOf(run.runId)).toBe("running");
+  });
+
   it("start() sweeps on its timer and stop() ends it (key link: services stop chain)", async () => {
     const run = seedRun();
     const sweeper = sweeperWith({ sweepMs: 20, graceMs: 30 });

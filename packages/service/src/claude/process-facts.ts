@@ -35,7 +35,12 @@ export interface AncestorEntry {
 export interface ProcessFacts {
   /** `kill(pid, 0)`: ESRCH is gone; EPERM is alive but not ours. */
   isAlive(pid: number): boolean;
-  /** The raw C-locale `lstart` string per pid, from one batched `ps` call. Missing pids are absent. */
+  /**
+   * Each pid's start time as an ISO instant, from one batched `ps` call
+   * whose `lstart` is rendered in UTC (`TZ=UTC`), so a system time-zone
+   * change never makes a live process read as reused. Missing pids, and
+   * an `lstart` that does not parse, are absent (unknown).
+   */
   readStartTimes(pids: readonly number[]): Promise<Map<number, string>>;
   /** The controlling tty (`ttys021`), or null for none (`??`) or on failure. */
   readTty(pid: number): Promise<string | null>;
@@ -51,7 +56,8 @@ export interface ProcessFactsDeps {
 
 const PS = "/bin/ps";
 const PS_TIMEOUT_MS = 2000;
-const PS_ENV: Readonly<Record<string, string>> = { LC_ALL: "C" };
+/** C locale for fixed English month names; UTC so `lstart` never depends on the system zone. */
+const PS_ENV: Readonly<Record<string, string>> = { LC_ALL: "C", TZ: "UTC" };
 const PID_PATTERN = /^[0-9]{1,10}$/;
 const TTY_PATTERN = /^ttys?[0-9]{1,6}$/;
 const MAX_ANCESTRY_DEPTH = 12;
@@ -59,6 +65,48 @@ const MAX_ANCESTRY_DEPTH = 12;
 /** A pid safe to put in an argv or signal: decimal digits only, and above 0 (0 is the process group). */
 function isValidPid(pid: number): boolean {
   return PID_PATTERN.test(String(pid)) && pid > 0;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** C-locale `lstart`: `Mon Jul  6 03:25:26 2026` (the day may be space-padded). */
+const LSTART_PATTERN =
+  /^[A-Z][a-z]{2} ([A-Z][a-z]{2})\s+(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/;
+
+type LstartParts = [year: number, month: number, day: number, h: number, m: number, s: number];
+
+function lstartParts(value: string): LstartParts | null {
+  const match = LSTART_PATTERN.exec(value.trim());
+  if (match === null) return null;
+  const month = MONTHS.indexOf(match[1] as string);
+  if (month < 0) return null;
+  const [, , day, h, m, sec, year] = match.map(Number) as number[];
+  return [year as number, month, day as number, h as number, m as number, sec as number];
+}
+
+/** A `TZ=UTC` `lstart` as an ISO instant, or null when it does not parse. */
+function lstartToIso(value: string): string | null {
+  const parts = lstartParts(value);
+  if (parts === null) return null;
+  const ms = Date.UTC(...parts);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
+/**
+ * A stored process start time as epoch ms, for identity comparison (D-19):
+ * an ISO instant (what {@link ProcessFacts.readStartTimes} returns since
+ * wave 4), or a legacy raw `lstart` stored before `TZ=UTC`, which `ps`
+ * rendered in the system zone and so is read as local time. Null when
+ * neither parses.
+ */
+export function startInstantMs(value: string): number | null {
+  const parts = lstartParts(value);
+  if (parts !== null) {
+    const ms = new Date(...parts).getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
 }
 
 const execFileAsync = promisify(execFile);
@@ -128,7 +176,8 @@ export function createProcessFacts(deps: ProcessFactsDeps): ProcessFacts {
         const match = /^\s*(\d+)\s+(\S.*?)\s*$/.exec(line);
         if (match === null) continue;
         const pid = Number(match[1]);
-        if (valid.includes(pid)) times.set(pid, match[2] as string);
+        const iso = lstartToIso(match[2] as string);
+        if (valid.includes(pid) && iso !== null) times.set(pid, iso);
       }
       return times;
     },
