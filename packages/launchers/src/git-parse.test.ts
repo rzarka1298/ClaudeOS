@@ -97,6 +97,38 @@ describe("parseStatusPorcelainV2 (porcelain v2 -z --branch)", () => {
   });
 });
 
+describe("parseStatusPorcelainV2 long branch names (codex finding 2)", () => {
+  // Git limits each ref component, not the whole name: this 309-character
+  // multi-component branch is valid, but the wire schema caps branch at 255.
+  const LONG = `feature/${"a".repeat(150)}/${"b".repeat(150)}`;
+
+  it("caps a branch longer than the wire limit, with a visible truncation marker", () => {
+    expect(LONG.length).toBe(309);
+    const { branch } = parseStatusPorcelainV2(
+      records("# branch.oid (initial)", `# branch.head ${LONG}`),
+    );
+    expect(branch).not.toBeNull();
+    expect(branch?.length).toBeLessThanOrEqual(255);
+    expect(branch?.endsWith("…")).toBe(true);
+    expect(LONG.startsWith(branch?.slice(0, -1) ?? "")).toBe(true);
+  });
+
+  it("leaves a branch of exactly the wire limit unchanged", () => {
+    const exact = `feature/${"c".repeat(247)}`;
+    expect(exact.length).toBe(255);
+    expect(parseStatusPorcelainV2(records(`# branch.head ${exact}`)).branch).toBe(exact);
+  });
+
+  it("never leaves half of a surrogate pair before the marker", () => {
+    const astral = String.fromCodePoint(0x1f600);
+    const name = `${"d".repeat(253)}${astral}${"e".repeat(20)}`;
+    const branch = parseStatusPorcelainV2(records(`# branch.head ${name}`)).branch ?? "";
+    expect(branch.length).toBeLessThanOrEqual(255);
+    const beforeMarker = branch.charCodeAt(branch.length - 2);
+    expect(beforeMarker >= 0xd800 && beforeMarker <= 0xdbff).toBe(false);
+  });
+});
+
 describe("parseLogRecords (log -z --format=%h%x1f%ct%x1f%s)", () => {
   const log = (hash: string, ct: string, subject: string) => `${hash}${US}${ct}${US}${subject}`;
 

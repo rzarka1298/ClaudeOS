@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ProjectGitState } from "@ccc/domain";
+import { type ProjectGitState, ProjectGitStateSchema } from "@ccc/domain";
 import { LOCAL_EXEC_PREFLIGHT_ARGS, NEUTRALISING_OVERRIDES } from "@ccc/launchers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createFakeCommandRunner } from "../test-support/fake-command-runner.js";
@@ -208,6 +208,19 @@ describe("recent commits survive a short core.abbrev (codex finding 5)", () => {
     fx.git(root, ["config", "core.abbrev", "4"]);
     const state = await realRunner().git.readProject(root);
     expect(state.kind).toBe("repo");
+  });
+});
+
+describe("a valid branch longer than the wire limit (codex finding 2)", () => {
+  it("publishes a state the domain schema accepts, with the branch visibly truncated", async () => {
+    const root = fx.repo("example-project", 1);
+    const long = `feature/${"a".repeat(150)}/${"b".repeat(150)}`;
+    fx.git(root, ["checkout", "-q", "-b", long]);
+    const state = await realRunner().git.readProject(root);
+    if (state.kind !== "repo") throw new Error(`expected repo, got ${state.kind}`);
+    expect(ProjectGitStateSchema.safeParse(state).success).toBe(true);
+    expect(state.branch?.endsWith("…")).toBe(true);
+    expect(state.commits).toHaveLength(1);
   });
 });
 
