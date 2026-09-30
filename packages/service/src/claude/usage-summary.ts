@@ -1,3 +1,4 @@
+import type { RecognitionVerdict } from "@ccc/collectors";
 import {
   CAPACITY_WINDOWS,
   type CapacityWindow,
@@ -367,9 +368,18 @@ export interface AnalysisState {
   readonly firstScanPending: boolean;
 }
 
+/** What the transcript job knows (RED scaffold: unused until GREEN). */
+export interface TranscriptFacts {
+  readonly verdict: RecognitionVerdict;
+  readonly oldestTranscriptAt: string | null;
+  readonly lastScanAt: string | null;
+}
+
 export interface UsageSummaryInputs extends PlanCapacityInputs {
   readonly analysis: AnalysisState;
   readonly timeZone: string;
+  readonly cleanupPeriodDays: number;
+  readonly transcripts: TranscriptFacts;
 }
 
 function rangeActivity(analysis: AnalysisState): TokenActivity {

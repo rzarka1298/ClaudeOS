@@ -14,6 +14,7 @@ import type { Logger } from "pino";
 import type { EventBus } from "../events/event-bus.js";
 import type { ClaudePipeline } from "./pipeline.js";
 import type { SpoolPoller } from "./spool-poller.js";
+import type { TranscriptIo } from "./transcript-job.js";
 import {
   buildUsageSummary,
   EMPTY_STATUS_LINE_OBSERVATION,
@@ -39,6 +40,10 @@ export interface UsageServicesDeps {
   readonly now: () => Date;
   /** The local time zone ranges are computed in (D-45); defaults to the process zone. */
   readonly timeZone?: string;
+  /** `<claude-config>/projects` (RED scaffold: unused until GREEN). */
+  readonly claudeProjectsRoot?: string;
+  /** Overrides the transcript file IO (tests). */
+  readonly transcriptIo?: Partial<TranscriptIo>;
   /** Overrides the settings facts (tests). */
   readonly settingsFacts?: () => UsageSettingsFacts;
 }
@@ -107,6 +112,8 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
       now: now(),
       timeZone,
       analysis: { enabled: analysisEnabled(), firstScanPending },
+      cleanupPeriodDays: settingsFacts().cleanupPeriodDays,
+      transcripts: { verdict: { kind: "ok" }, oldestTranscriptAt: null, lastScanAt: null },
     });
   }
 
