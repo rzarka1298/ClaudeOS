@@ -12,6 +12,7 @@
  *
  * The functions are total: malformed records are skipped, never thrown on.
  */
+import { MAX_BRANCH_LENGTH } from "@ccc/domain";
 import { type NormalisedRemote, normaliseRemote } from "./github-url.js";
 
 /** Summary of `git status --porcelain=v2 --branch -z`. */
@@ -90,20 +91,38 @@ export function parseStatusPorcelainV2(stdout: string): StatusSummary {
       detached = true;
       branch = null;
     } else if (record.startsWith("# branch.head ")) {
-      branch = record.slice("# branch.head ".length);
+      branch = capBranch(record.slice("# branch.head ".length));
       detached = false;
     }
   }
   return { branch, detached, unborn, dirty };
 }
 
-function capSubject(subject: string): string {
-  if (subject.length <= MAX_SUBJECT_LENGTH) return subject;
-  let cut = subject.slice(0, MAX_SUBJECT_LENGTH);
-  // Never leave half of a surrogate pair at the end.
+/** The first `max` UTF-16 units of `text`, never ending on half of a surrogate pair. */
+function cutAt(text: string, max: number): string {
+  let cut = text.slice(0, max);
   const last = cut.charCodeAt(cut.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
   return cut;
+}
+
+function capSubject(subject: string): string {
+  if (subject.length <= MAX_SUBJECT_LENGTH) return subject;
+  return cutAt(subject, MAX_SUBJECT_LENGTH);
+}
+
+const TRUNCATION_MARKER = "…";
+
+/**
+ * Git limits each ref component, not a whole branch name, so a valid
+ * branch can exceed the wire limit. It is cut to fit with a trailing `…`
+ * so one repository cannot invalidate a snapshot or delta, and the
+ * display still shows the name was shortened. Display only: no caller
+ * resolves a ref from this value.
+ */
+function capBranch(branch: string): string {
+  if (branch.length <= MAX_BRANCH_LENGTH) return branch;
+  return `${cutAt(branch, MAX_BRANCH_LENGTH - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`;
 }
 
 /**

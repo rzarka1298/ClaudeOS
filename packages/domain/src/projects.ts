@@ -139,6 +139,14 @@ export const GitRemoteSchema = z.object({
 export type GitRemote = z.infer<typeof GitRemoteSchema>;
 
 /**
+ * The longest branch name the wire carries. Git limits each ref component,
+ * not the whole name, so a valid branch can be longer; the service caps it
+ * (with a trailing `…`) before publication so one repository can never
+ * invalidate a snapshot or a delta.
+ */
+export const MAX_BRANCH_LENGTH = 255;
+
+/**
  * Every state a project's git read can be in (UI-SPEC Glyph Vocabulary).
  * `pending` is "not read yet" — distinct from every failure, so the UI never
  * invents a clean tree before git has answered. `skipped` records that the
@@ -148,7 +156,7 @@ export type GitRemote = z.infer<typeof GitRemoteSchema>;
 export const ProjectGitStateSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("repo"),
-    branch: z.string().max(255).nullable(),
+    branch: z.string().max(MAX_BRANCH_LENGTH).nullable(),
     detached: z.boolean(),
     dirty: z.boolean(),
     commits: z.array(GitCommitSchema).max(5),
