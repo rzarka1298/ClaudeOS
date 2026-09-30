@@ -179,6 +179,37 @@ describe("readProject against real repositories (PROJ-04)", () => {
   });
 });
 
+describe("recent commits survive a short core.abbrev (codex finding 5)", () => {
+  it("reads all commits when the repository's local config sets core.abbrev=4", async () => {
+    const root = fx.repo("example-project", 5);
+    fx.git(root, ["config", "core.abbrev", "4"]);
+    // Precondition: plain git really does emit 4-character %h here.
+    const plain = fx.git(root, ["log", "-n", "1", "--format=%h"]).trim();
+    expect(plain).toMatch(/^[0-9a-f]{4}$/);
+
+    const state = await realRunner().git.readProject(root);
+    if (state.kind !== "repo") throw new Error(`expected repo, got ${state.kind}`);
+    expect(state.commits).toHaveLength(5);
+    for (const commit of state.commits) expect(commit.hash).toMatch(/^[0-9a-f]{7,40}$/);
+    expect(state.commits[0]?.subject).toBe("commit 5");
+  });
+
+  it("reads all commits when the owner's global config sets core.abbrev=4", async () => {
+    const root = fx.repo("example-project", 3);
+    writeFileSync(join(fx.home, ".gitconfig"), "[core]\n\tabbrev = 4\n");
+    const state = await realRunner().git.readProject(root);
+    if (state.kind !== "repo") throw new Error(`expected repo, got ${state.kind}`);
+    expect(state.commits).toHaveLength(3);
+  });
+
+  it("a local core.abbrev is not an executable key: the repository is read, not skipped", async () => {
+    const root = fx.repo("example-project", 1);
+    fx.git(root, ["config", "core.abbrev", "4"]);
+    const state = await realRunner().git.readProject(root);
+    expect(state.kind).toBe("repo");
+  });
+});
+
 describe("the stored root must still be the folder it named (D-06)", () => {
   it("reads a root replaced by a symlink to another repository as folder-missing without spawning git", async () => {
     const root = fx.repo("example-project", 1);
