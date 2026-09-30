@@ -795,7 +795,9 @@ describe("POST /api/v1/sessions/associate (Task 2 Test 4, SESS-17, D-24)", () =>
     const replay = bus.buffer.since(0);
     if (replay.mode !== "replay") throw new Error("expected a replay");
     const upserted = replay.events.filter((event) => event.type === "session.upserted");
-    expect(upserted.at(-1)?.payload).toMatchObject({ runId: run.runId, projectId: "alpha" });
+    expect(upserted.at(-1)?.payload).toMatchObject({
+      session: { runId: run.runId, projectId: "alpha" },
+    });
 
     // A later SessionStart of the same session (a new process) attributes to the chosen project.
     const outcome = await pipeline.ingest(

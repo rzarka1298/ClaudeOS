@@ -1,13 +1,18 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, isAbsolute } from "node:path";
 import { promisify } from "node:util";
 import {
   type ApiErrorBody,
+  AssociateRequestSchema,
+  BranchRequestSchema,
+  type BranchResponse,
   LAUNCH_PORT_FAILURE_ERROR_CODES,
   type LaunchChoice,
   type LaunchPortResult,
+  OpenTranscriptRequestSchema,
   type ProposeForceTerminate,
   ResumeRequestSchema,
   type ResumeResponse,
@@ -30,7 +35,11 @@ import {
   WORKTREE_NAME_PATTERN,
   type WorktreeListResponse,
 } from "@ccc/domain";
-import { getSessionRun } from "@ccc/operational-store";
+import {
+  getSessionRun,
+  ProjectNotRegisteredError,
+  setSessionOverride,
+} from "@ccc/operational-store";
 import type Database from "better-sqlite3";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
@@ -38,6 +47,7 @@ import type { RouteContext } from "../routes.js";
 import { type ClaudeHandler, sendClaudeJson, withClaudeAuth } from "./http.js";
 import type { WorktreeEntry } from "./launch-guard.js";
 import type { ClaudePipeline } from "./pipeline.js";
+import { assertTranscriptPath, TranscriptPathRefusedError } from "./transcript-path.js";
 
 /**
  * The session-action routes (05-14, SESS-10..17, D-36, PR-25): fixed paths,
@@ -123,6 +133,18 @@ const RESUME_REFUSED_STATES: ReadonlySet<SessionRun["state"]> = new Set([
   "running",
   "waiting-for-approval",
 ]);
+
+/** A fork's new Claude session id: a lowercase v4 UUID, checked before it reaches an argv. */
+const FORK_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** Whether `path` is an existing regular file, following symlinks; false on any error. */
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
 
 /** Whether `path` is an existing directory, following symlinks; false on any error. */
 function isDirectory(path: string): boolean {
@@ -392,7 +414,120 @@ const handleWorktrees = actionRoute(
   },
 );
 
-/** A route this plan has not built yet answers 503 behind the token (replaced by Tasks 2 and 3). */
+/**
+ * `POST /api/v1/sessions/branch` `{ runId, choice? }` (SESS-14, D-33, PR-10):
+ * `claude --resume <id> --fork-session --session-id <new uuid>`, with the
+ * child Run pre-registered under the new id and linked as a fork. Any
+ * state may be branched; the guard applies exactly as for resume.
+ */
+const handleBranch = actionRoute(
+  SESSION_BRANCH_PATH,
+  BranchRequestSchema,
+  async (body, res, { actions, pipeline }) => {
+    const run = getSessionRun(actions.db, body.runId as RunId);
+    if (run === null) return sendError(res, "run-not-found");
+    const forkId = randomUUID();
+    // Allowlist discipline (PATTERNS): a value is checked against its exact
+    // shape before it is placed in an argv, even one minted here.
+    if (!FORK_SESSION_ID.test(forkId)) return sendError(res, "invalid-state");
+    const outcome = await launchLinked(
+      run,
+      body.choice,
+      (sessionId) => ({
+        linkKind: "fork",
+        argv: ["--resume", sessionId, "--fork-session", "--session-id", forkId],
+        claudeSessionId: forkId,
+      }),
+      actions,
+      pipeline,
+    );
+    if (outcome.kind === "refused") return sendError(res, outcome.code);
+    if (outcome.kind === "conflict") return sendClaudeJson(res, 200, outcome.body);
+    sendClaudeJson(res, 200, {
+      outcome: "launched",
+      childRunId: outcome.runId,
+    } satisfies BranchResponse);
+  },
+);
+
+const OPENED_BODY = { outcome: "opened" } as const;
+const ASSOCIATED_BODY = { outcome: "associated" } as const;
+
+/** Whether a failed `open` ran out of time rather than failing outright. */
+function timedOut(err: unknown): boolean {
+  const failure = err as { killed?: unknown; code?: unknown } | null;
+  return failure?.killed === true || failure?.code === "ETIMEDOUT";
+}
+
+/**
+ * `POST /api/v1/sessions/open-transcript` `{ runId, mode }` (SESS-15, D-34,
+ * PR-07). The path comes ONLY from the Run record, and the containment
+ * check under `<claude-config>/projects/` runs again now, at request time,
+ * so a row changed after ingest still cannot open anything else. `reveal`
+ * is `open -R` (Finder, selected); `open` hands the file to its default
+ * app. The service never reads, copies or renders the transcript.
+ */
+const handleOpenTranscript = actionRoute(
+  SESSION_OPEN_TRANSCRIPT_PATH,
+  OpenTranscriptRequestSchema,
+  async (body, res, { actions }) => {
+    const run = getSessionRun(actions.db, body.runId as RunId);
+    if (run === null) return sendError(res, "run-not-found");
+    if (run.transcriptPath === null) return sendError(res, "transcript-missing");
+    let resolved: string;
+    try {
+      resolved = assertTranscriptPath(run.transcriptPath, actions.claudeProjectsRoot);
+    } catch (err: unknown) {
+      if (!(err instanceof TranscriptPathRefusedError)) throw err;
+      logger.warn(
+        { route: SESSION_OPEN_TRANSCRIPT_PATH, reason: err.reason },
+        "transcript refused",
+      );
+      return sendError(res, "transcript-outside-root");
+    }
+    if (!isFile(resolved)) return sendError(res, "transcript-missing");
+    try {
+      await actions.openFile(body.mode === "reveal" ? ["-R", resolved] : [resolved]);
+    } catch (err: unknown) {
+      if (timedOut(err)) return sendError(res, "timeout");
+      throw err;
+    }
+    sendClaudeJson(res, 200, OPENED_BODY);
+  },
+);
+
+/**
+ * `POST /api/v1/sessions/associate` `{ runId, projectId }` (SESS-17, D-24):
+ * writes the owner's override for the Run's Claude session (registered
+ * projects only; the check and the write share one transaction), then
+ * re-publishes the current Run under that project (05-11's
+ * `pipeline.reattribute`). Later Runs of the same session read the override
+ * at attribution. Only the operational store is written.
+ */
+const handleAssociate = actionRoute(
+  SESSION_ASSOCIATE_PATH,
+  AssociateRequestSchema,
+  async (body, res, { actions, pipeline }) => {
+    const run = getSessionRun(actions.db, body.runId as RunId);
+    if (run === null) return sendError(res, "run-not-found");
+    if (run.claudeSessionId === null) return sendError(res, "invalid-state");
+    try {
+      setSessionOverride(
+        actions.db,
+        run.claudeSessionId,
+        body.projectId,
+        actions.now().toISOString(),
+      );
+    } catch (err: unknown) {
+      if (err instanceof ProjectNotRegisteredError) return sendError(res, "project-not-registered");
+      throw err;
+    }
+    await pipeline.reattribute(run.runId, { projectId: body.projectId, worktreeRoot: null });
+    sendClaudeJson(res, 200, ASSOCIATED_BODY);
+  },
+);
+
+/** A route this plan has not built yet answers 503 behind the token (replaced by Task 3). */
 const notYetBuilt = actionRoute(
   SESSION_FOCUS_PATH,
   SessionActionRequestSchema,
@@ -404,9 +539,9 @@ const notYetBuilt = actionRoute(
 export const sessionActionRoutes: Record<string, Record<string, ClaudeHandler>> = {
   [SESSION_RESUME_PATH]: { POST: handleResume },
   [SESSION_WORKTREES_PATH]: { POST: handleWorktrees },
-  [SESSION_BRANCH_PATH]: { POST: notYetBuilt },
-  [SESSION_OPEN_TRANSCRIPT_PATH]: { POST: notYetBuilt },
-  [SESSION_ASSOCIATE_PATH]: { POST: notYetBuilt },
+  [SESSION_BRANCH_PATH]: { POST: handleBranch },
+  [SESSION_OPEN_TRANSCRIPT_PATH]: { POST: handleOpenTranscript },
+  [SESSION_ASSOCIATE_PATH]: { POST: handleAssociate },
   [SESSION_FOCUS_PATH]: { POST: notYetBuilt },
   [SESSION_TERMINATE_REQUEST_PATH]: { POST: notYetBuilt },
 };
