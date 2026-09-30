@@ -233,6 +233,23 @@ describe("probeClaudeVersion (Test 2, PR-09, T-05-54)", () => {
   });
 });
 
+describe("probeClaudeVersion failures are not cached (wave 4 review)", () => {
+  it("re-probes after a failed or unparsable probe, so a transient failure never sticks as unknown", async () => {
+    let attempt = 0;
+    const deps = probeDeps(() => {
+      attempt += 1;
+      if (attempt === 1) return Promise.reject(new Error("synthetic timeout"));
+      if (attempt === 2) return Promise.resolve("not a version\n");
+      return Promise.resolve("2.1.283 (Claude Code)\n");
+    });
+    expect(await probeClaudeVersion("/opt/synthetic/claude", deps)).toBeNull();
+    expect(await probeClaudeVersion("/opt/synthetic/claude", deps)).toBeNull();
+    expect(await probeClaudeVersion("/opt/synthetic/claude", deps)).toBe("2.1.283");
+    expect(await probeClaudeVersion("/opt/synthetic/claude", deps)).toBe("2.1.283");
+    expect(deps.execFile).toHaveBeenCalledTimes(3);
+  });
+});
+
 const HEALTHY: IntegrationInputs = {
   settings: {
     hooks: "installed",

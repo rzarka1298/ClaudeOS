@@ -186,7 +186,8 @@ export function nodeVersionProbeDeps(): VersionProbeDeps {
 
 /**
  * The installed Claude Code version (PR-09): `<bin> --version` on the
- * installer-recorded absolute binary, cached per (realpath, mtime). It
+ * installer-recorded absolute binary, cached per (realpath, mtime) once it
+ * parses (a failed probe is retried on the next refresh). It
  * decides the install minimum and the health display only, never a live
  * session. Null when there is no absolute binary or the probe fails.
  */
@@ -202,7 +203,8 @@ export async function probeClaudeVersion(
   } catch {
     return null;
   }
-  if (deps.cache.has(key)) return deps.cache.get(key) ?? null;
+  const cached = deps.cache.get(key);
+  if (cached !== undefined && cached !== null) return cached;
   let version: string | null = null;
   try {
     const { stdout } = await deps.execFile(bin, ["--version"], {
@@ -212,7 +214,10 @@ export async function probeClaudeVersion(
   } catch {
     version = null;
   }
-  deps.cache.set(key, version);
+  // Only a parsed version is cached (wave 4 review): a timeout or an
+  // unparsable answer is retried on the next refresh instead of reading as
+  // "unknown" (and telemetry "ok") until the binary changes.
+  if (version !== null) deps.cache.set(key, version);
   return version;
 }
 
