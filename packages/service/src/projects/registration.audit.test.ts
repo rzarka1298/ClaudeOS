@@ -12,33 +12,49 @@ const fault = vi.hoisted(() => ({
   code: null as string | null,
   on: null as "realpath" | "stat" | null,
   calls: 0,
+  /** Paths any SYNCHRONOUS fs call was made on (wave-4b: registration must not block). */
+  syncPaths: [] as string[],
 }));
 
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
+// Registration resolves and stats through node:fs/promises; the faults are
+// injected there. The synchronous functions are wrapped only to record use.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
   const raise = () => {
     const err = new Error("simulated") as NodeJS.ErrnoException;
     err.code = fault.code ?? "EIO";
     throw err;
   };
-  const realpathNative = (p: string) => {
+  const realpath = async (p: string) => {
     fault.calls += 1;
     if (fault.on === "realpath") raise();
-    return actual.realpathSync.native(p);
+    return actual.realpath(p);
   };
-  const realpathSync = Object.assign(
-    (p: string) => {
-      fault.calls += 1;
-      return actual.realpathSync(p);
-    },
-    { native: realpathNative },
-  );
-  const statSync = (p: string) => {
+  const stat = async (p: string) => {
     fault.calls += 1;
     if (fault.on === "stat") raise();
-    return actual.statSync(p);
+    return actual.stat(p);
   };
-  return { ...actual, default: { ...actual, realpathSync, statSync }, realpathSync, statSync };
+  return { ...actual, default: { ...actual, realpath, stat }, realpath, stat };
+});
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const record =
+    <A extends unknown[], R>(fn: (p: string, ...rest: A) => R) =>
+    (p: string, ...rest: A): R => {
+      fault.calls += 1;
+      fault.syncPaths.push(String(p));
+      return fn(p, ...rest);
+    };
+  const realpathSync = Object.assign(record(actual.realpathSync), {
+    native: record(actual.realpathSync.native),
+  });
+  const statSync = record(actual.statSync);
+  const lstatSync = record(actual.lstatSync);
+  const readlinkSync = record(actual.readlinkSync);
+  const wrapped = { realpathSync, statSync, lstatSync, readlinkSync };
+  return { ...actual, default: { ...actual, ...wrapped }, ...wrapped };
 });
 
 const { ProjectRefusedError, detectProtectedLocation, validateProjectCandidate } = await import(
@@ -52,9 +68,9 @@ function policy() {
   return { homeDir: homedir(), runtimeDir: join(base, "runtime"), vaultRoot: join(base, "vault") };
 }
 
-function reasonFor(candidate: string): string | null {
+async function reasonFor(candidate: string): Promise<string | null> {
   try {
-    validateProjectCandidate(candidate, policy());
+    await validateProjectCandidate(candidate, policy());
     return null;
   } catch (err) {
     expect(err).toBeInstanceOf(ProjectRefusedError);
@@ -66,6 +82,7 @@ function reasonFor(candidate: string): string | null {
 beforeEach(() => {
   fault.code = null;
   fault.on = null;
+  fault.syncPaths = [];
   base = realpathSync.native(mkdtempSync(join(tmpdir(), "ccc-reg-audit-")));
   project = join(base, "code", "example-project");
   mkdirSync(project, { recursive: true });
@@ -77,29 +94,29 @@ afterEach(() => {
 });
 
 describe("forbidden roots the plan names explicitly (D-04, PR-06)", () => {
-  it.each(["/bin", "/sbin", "/private/var", "/private/tmp"])("refuses %s", (candidate) => {
-    expect(reasonFor(candidate)).toBe("forbidden-location");
+  it.each(["/bin", "/sbin", "/private/var", "/private/tmp"])("refuses %s", async (candidate) => {
+    expect(await reasonFor(candidate)).toBe("forbidden-location");
   });
 });
 
 describe("EPERM is refused as access-denied, never propagated (D-29, PR-10)", () => {
-  it.each(["realpath", "stat"] as const)("EPERM from %s", (on) => {
+  it.each(["realpath", "stat"] as const)("EPERM from %s", async (on) => {
     fault.code = "EPERM";
     fault.on = on;
-    expect(reasonFor(project)).toBe("access-denied");
+    expect(await reasonFor(project)).toBe("access-denied");
   });
 
-  it("control: an unrelated errno is not access-denied", () => {
+  it("control: an unrelated errno is not access-denied", async () => {
     fault.code = "EIO";
     fault.on = "realpath";
-    expect(reasonFor(project)).toBe("missing");
+    expect(await reasonFor(project)).toBe("missing");
   });
 });
 
 describe("EPERM through a symlink names the protected location it leads into (PR-10)", () => {
-  function refusalFor(candidate: string, homeDir: string) {
+  async function refusalFor(candidate: string, homeDir: string) {
     try {
-      validateProjectCandidate(candidate, { ...policy(), homeDir });
+      await validateProjectCandidate(candidate, { ...policy(), homeDir });
     } catch (err) {
       expect(err).toBeInstanceOf(ProjectRefusedError);
       return err as { reason: string; protectedLocation: string | null };
@@ -107,7 +124,7 @@ describe("EPERM through a symlink names the protected location it leads into (PR
     throw new Error("expected a refusal");
   }
 
-  it("a symlink to a folder under Documents", () => {
+  it("a symlink to a folder under Documents", async () => {
     const home = join(base, "home");
     const inDocuments = join(home, "Documents", "example-project");
     mkdirSync(inDocuments, { recursive: true });
@@ -115,27 +132,27 @@ describe("EPERM through a symlink names the protected location it leads into (PR
     symlinkSync(inDocuments, link);
     fault.code = "EPERM";
     fault.on = "realpath";
-    const refusal = refusalFor(link, home);
+    const refusal = await refusalFor(link, home);
     expect(refusal.reason).toBe("access-denied");
     expect(refusal.protectedLocation).toBe("documents");
   });
 
-  it("a folder reached through a symlinked ancestor that points into Desktop", () => {
+  it("a folder reached through a symlinked ancestor that points into Desktop", async () => {
     const home = join(base, "home");
     mkdirSync(join(home, "Desktop", "example-project"), { recursive: true });
     const linkedParent = join(base, "linked-desktop");
     symlinkSync(join(home, "Desktop"), linkedParent);
     fault.code = "EPERM";
     fault.on = "realpath";
-    expect(refusalFor(join(linkedParent, "example-project"), home).protectedLocation).toBe(
+    expect((await refusalFor(join(linkedParent, "example-project"), home)).protectedLocation).toBe(
       "desktop",
     );
   });
 
-  it("control: EPERM on a plain folder names no location", () => {
+  it("control: EPERM on a plain folder names no location", async () => {
     fault.code = "EPERM";
     fault.on = "realpath";
-    expect(refusalFor(project, join(base, "home")).protectedLocation).toBeNull();
+    expect((await refusalFor(project, join(base, "home"))).protectedLocation).toBeNull();
   });
 });
 
@@ -146,5 +163,24 @@ describe("protected-location detection reads nothing from disk (PR-04)", () => {
       detectProtectedLocation(join(homedir(), "Documents", "example-project"), homedir()),
     ).toBe("documents");
     expect(fault.calls).toBe(0);
+  });
+});
+
+describe("registration never blocks the event loop on the candidate (wave-4b)", () => {
+  it("resolves, stats and follows links asynchronously: no synchronous fs call touches the candidate", async () => {
+    const link = join(base, "link-to-project");
+    symlinkSync(project, link);
+    fault.syncPaths = [];
+    await expect(validateProjectCandidate(link, policy())).resolves.toBe(project);
+    fault.code = "EPERM";
+    fault.on = "realpath";
+    expect(await reasonFor(link)).toBe("access-denied");
+    expect(fault.syncPaths.filter((p) => p.startsWith(base))).toEqual([]);
+  });
+
+  it("returns a promise, so a pending Files & Folders prompt cannot freeze the service", () => {
+    const pending = validateProjectCandidate(project, policy());
+    expect(pending).toBeInstanceOf(Promise);
+    return pending;
   });
 });

@@ -42,10 +42,10 @@ function policy() {
 }
 
 /** Asserts `candidate` is refused with `reason` and the constant message. */
-function expectRefused(candidate: string, reason: ProjectRefusalReason): void {
+async function expectRefused(candidate: string, reason: ProjectRefusalReason): Promise<void> {
   let caught: unknown;
   try {
-    validateProjectCandidate(candidate, policy());
+    await validateProjectCandidate(candidate, policy());
   } catch (err) {
     caught = err;
   }
@@ -85,22 +85,22 @@ describe("validateProjectCandidate: forbidden locations in realpath form (E-3, P
     ["/opt", "system tree"],
     ["/", "the filesystem root"],
     ["/Users", "every user's home parent"],
-  ])("refuses %s (%s)", (candidate) => {
-    expectRefused(candidate, "forbidden-location");
+  ])("refuses %s (%s)", async (candidate) => {
+    await expectRefused(candidate, "forbidden-location");
   });
 
-  it("refuses the home directory", () => {
-    expectRefused(homedir(), "forbidden-location");
+  it("refuses the home directory", async () => {
+    await expectRefused(homedir(), "forbidden-location");
   });
 
-  it("refuses the home directory spelled in a different letter case", () => {
-    expectRefused(homedir().toUpperCase(), "forbidden-location");
+  it("refuses the home directory spelled in a different letter case", async () => {
+    await expectRefused(homedir().toUpperCase(), "forbidden-location");
   });
 
-  it("refuses a symlink that points at /etc", () => {
+  it("refuses a symlink that points at /etc", async () => {
     const link = join(base, "innocent-looking");
     symlinkSync("/etc", link);
-    expectRefused(link, "forbidden-location");
+    await expectRefused(link, "forbidden-location");
   });
 
   it("isForbiddenRoot compares realpath forms, so /private/etc matches the /etc entry", () => {
@@ -116,63 +116,65 @@ describe("validateProjectCandidate: forbidden locations in realpath form (E-3, P
 });
 
 describe("validateProjectCandidate: the service's own directories (D-04, A-06)", () => {
-  it("refuses the runtime directory, a folder inside it and an ancestor of it", () => {
-    expectRefused(runtimeDir, "runtime-dir");
-    expectRefused(join(runtimeDir, "launch"), "runtime-dir");
-    expectRefused(runtimeParent, "runtime-dir");
+  it("refuses the runtime directory, a folder inside it and an ancestor of it", async () => {
+    await expectRefused(runtimeDir, "runtime-dir");
+    await expectRefused(join(runtimeDir, "launch"), "runtime-dir");
+    await expectRefused(runtimeParent, "runtime-dir");
   });
 
-  it("refuses the vault root and a folder inside it as inside-vault", () => {
-    expectRefused(vaultRoot, "inside-vault");
-    expectRefused(join(vaultRoot, "notes"), "inside-vault");
+  it("refuses the vault root and a folder inside it as inside-vault", async () => {
+    await expectRefused(vaultRoot, "inside-vault");
+    await expectRefused(join(vaultRoot, "notes"), "inside-vault");
   });
 
-  it("refuses the vault root's parent as above-vault", () => {
-    expectRefused(vaultParent, "above-vault");
+  it("refuses the vault root's parent as above-vault", async () => {
+    await expectRefused(vaultParent, "above-vault");
   });
 });
 
 describe("validateProjectCandidate: what the path must be", () => {
-  it("refuses a regular file", () => {
+  it("refuses a regular file", async () => {
     const file = join(base, "notes.txt");
     writeFileSync(file, "x");
-    expectRefused(file, "not-a-directory");
+    await expectRefused(file, "not-a-directory");
   });
 
-  it("refuses a missing path", () => {
-    expectRefused(join(base, "does-not-exist"), "missing");
+  it("refuses a missing path", async () => {
+    await expectRefused(join(base, "does-not-exist"), "missing");
   });
 
-  it("classifies EACCES as access-denied instead of propagating it", () => {
+  it("classifies EACCES as access-denied instead of propagating it", async () => {
     const parent = join(base, "locked");
     mkdirSync(join(parent, "inner"), { recursive: true });
     chmodSync(parent, 0o000);
     locked = parent;
-    expectRefused(join(parent, "inner"), "access-denied");
+    await expectRefused(join(parent, "inner"), "access-denied");
   });
 
-  it("accepts a plain folder, returning its realpath (control: the refusal is not blanket)", () => {
-    expect(validateProjectCandidate(control, policy())).toBe(control);
+  it("accepts a plain folder, returning its realpath (control: the refusal is not blanket)", async () => {
+    await expect(validateProjectCandidate(control, policy())).resolves.toBe(control);
   });
 
-  it("accepts a folder through a symlink or a case alias, returning the one realpath", () => {
+  it("accepts a folder through a symlink or a case alias, returning the one realpath", async () => {
     const link = join(base, "link-to-project");
     symlinkSync(control, link);
-    expect(validateProjectCandidate(link, policy())).toBe(control);
+    await expect(validateProjectCandidate(link, policy())).resolves.toBe(control);
     const upper = join(base, "code", "EXAMPLE-PROJECT");
-    expect(validateProjectCandidate(upper, policy())).toBe(control);
+    await expect(validateProjectCandidate(upper, policy())).resolves.toBe(control);
   });
 
-  it("refuses a symlink whose target name carries a control character, judging the realpath too (D-04)", () => {
+  it("refuses a symlink whose target name carries a control character, judging the realpath too (D-04)", async () => {
     const hostile = join(base, `bad${String.fromCharCode(7)}name`);
     mkdirSync(hostile);
     const link = join(base, "clean-looking-link");
     symlinkSync(hostile, link);
-    expectRefused(link, "control-characters");
+    await expectRefused(link, "control-characters");
   });
 
-  it("accepts a project when no vault root is set up yet", () => {
-    expect(validateProjectCandidate(control, { ...policy(), vaultRoot: null })).toBe(control);
+  it("accepts a project when no vault root is set up yet", async () => {
+    await expect(validateProjectCandidate(control, { ...policy(), vaultRoot: null })).resolves.toBe(
+      control,
+    );
   });
 });
 
