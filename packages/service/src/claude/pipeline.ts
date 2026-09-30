@@ -376,10 +376,15 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
   function applyFollowUp(record: KnownHookRecord, facts: DeferredSessionFacts): void {
     const run = runOfRecord(record);
     if (run === null) return;
+    // Attribution belongs to the record's working directory: once a later
+    // record moved the Run to another cwd, this answer is superseded and
+    // must not overwrite the newer project (Codex 3). The launch source is
+    // a fact of the process, not the cwd, so it still applies.
+    const current = record.cwd === undefined || record.cwd === run.cwd;
     const next = {
       launchSource: facts.launchSource ?? run.launchSource,
-      projectId: facts.projectId ?? run.projectId,
-      worktreeRoot: facts.worktreeRoot ?? run.worktreeRoot,
+      projectId: current ? (facts.projectId ?? run.projectId) : run.projectId,
+      worktreeRoot: current ? (facts.worktreeRoot ?? run.worktreeRoot) : run.worktreeRoot,
     };
     if (
       next.launchSource === run.launchSource &&

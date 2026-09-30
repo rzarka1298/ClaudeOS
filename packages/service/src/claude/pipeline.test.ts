@@ -530,3 +530,57 @@ describe("ordering and settling", () => {
     unsubscribe();
   });
 });
+
+describe("Codex 3: deferred attribution from a superseded record is discarded", () => {
+  it("a follow-up for cwd A that resolves after cwd B's leaves B's project and worktree", async () => {
+    const gates = new Map<string, () => void>();
+    const waitFor = (cwd: string) =>
+      new Promise<void>((resolve) => {
+        gates.set(cwd, resolve);
+      });
+    const cwdA = join(dir, "alpha");
+    const cwdB = join(dir, "beta");
+    for (const [projectId, root] of [
+      ["proj-a", cwdA],
+      ["proj-b", cwdB],
+    ] as const) {
+      store.db
+        .prepare(
+          "INSERT INTO projects (project_id, path, workspace_id, display_name, registered_at) VALUES (?, ?, NULL, ?, ?)",
+        )
+        .run(projectId, root, projectId, new Date(T0).toISOString());
+    }
+    const pipeline = pipelineWith({
+      facts: {
+        factsFor: NULL_FACTS.factsFor,
+        deferredFactsFor: (hook) => {
+          const cwd = hook.cwd;
+          if (cwd === undefined) return null;
+          const opened = waitFor(cwd);
+          return opened.then(() => ({
+            launchSource: null,
+            projectId: cwd === cwdA ? "proj-a" : "proj-b",
+            worktreeRoot: cwd,
+          }));
+        },
+      },
+    });
+    await pipeline.ingest(record("SessionStart", { source: "startup", cwd: cwdA }), "socket");
+    await pipeline.ingest(record("UserPromptSubmit", { cwd: cwdB }), "socket");
+    const runId = upserted().at(-1)?.runId as RunId;
+    expect(getSessionRun(store.db, runId)?.cwd).toBe(cwdB);
+
+    gates.get(cwdB)?.();
+    await vi.waitFor(() => {
+      expect(getSessionRun(store.db, runId)?.projectId).toBe("proj-b");
+    });
+    gates.get(cwdA)?.();
+    await pipeline.stop();
+
+    expect(getSessionRun(store.db, runId)).toMatchObject({
+      cwd: cwdB,
+      projectId: "proj-b",
+      worktreeRoot: cwdB,
+    });
+  });
+});
