@@ -377,7 +377,7 @@ async function launchLinked(
     const launch = spec(sessionId);
     const registered = await beforeDeadline(
       serializedOn(locks, plan.cwd, () =>
-        guardThenRegister(run, root, plan, launch, deps, pipeline),
+        guardThenRegister(run, root, plan, launch, deadline, deps, pipeline),
       ),
       deadline,
     );
@@ -416,13 +416,15 @@ async function launchLinked(
 /**
  * The critical section, serialized per launch tree: the guard (where the
  * plan still needs it), then the pre-registered linked Run, written before
- * the next launch into the same tree may run its own guard.
+ * the next launch into the same tree may run its own guard — and only
+ * while the flow's deadline has not passed.
  */
 async function guardThenRegister(
   run: SessionRun,
   root: LaunchRoot,
   plan: Extract<LaunchPlan, { ok: true }>,
   launch: LaunchSpec,
+  deadline: number,
   deps: SessionActionDeps,
   pipeline: ClaudePipeline,
 ): Promise<LaunchOutcome | { readonly kind: "registered"; readonly runId: RunId }> {
@@ -440,6 +442,9 @@ async function guardThenRegister(
     }
   }
   const worktreeRoot = plan.treeKnown ? await deps.guard.worktreeRootOf(plan.cwd) : null;
+  // The route may already have answered `timeout` while the guard ran: a
+  // Run registered now would never be launched, so nothing is written.
+  if (Date.now() >= deadline) return { kind: "refused", code: "timeout" };
   const runId = deps.mintRunId();
   await pipeline.apply({
     kind: "launch-registered",

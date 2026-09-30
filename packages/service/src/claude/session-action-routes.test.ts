@@ -1129,6 +1129,10 @@ describe("wave 5 review: resume/branch guard, pre-registration, timeouts and bud
     gated.release();
 
     // A guard slower than the whole budget: nothing is registered or launched.
+    // (The stale child is ended first, so the late guard would answer clear.)
+    store.db
+      .prepare("UPDATE runs SET state = 'completed', ended_at = ? WHERE linked_from_run_id = ?")
+      .run(new Date().toISOString(), source.runId);
     guardDelayMs = 600;
     const late = seedRun({ projectId: "alpha", cwd: join(repo, "src") });
     const other = new GatedLauncher();
@@ -1137,6 +1141,8 @@ describe("wave 5 review: resume/branch guard, pre-registration, timeouts and bud
       status: 409,
       body: { error: "timeout" },
     });
+    // Nor later, once the slow guard finally answers after the deadline.
+    await new Promise((resolve) => setTimeout(resolve, 400));
     expect(childrenOf(late.runId)).toHaveLength(0);
     expect(other.requests).toHaveLength(0);
   });
