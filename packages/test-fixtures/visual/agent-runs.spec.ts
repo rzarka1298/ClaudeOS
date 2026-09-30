@@ -55,9 +55,33 @@ const CASES = [
   { agentRunsCase: "disconnected", snapshot: "agent-runs-disconnected.png" },
 ] as const;
 
+/**
+ * Grows the viewport to the destination's full height before the capture.
+ *
+ * The destination lives in the production `.ccc-content` scroller, which is
+ * exactly as tall as the command-center root — here, the viewport. At the
+ * fixed 1024x768 viewport everything below 768px (the detail pane's field
+ * list, the usage section) was scrolled out of view and screenshotted as
+ * blank background (05 wave 4 review, "detail list clipped at the 768px
+ * capture"). In Obsidian the same content simply scrolls; growing the page
+ * instead makes the baseline show the whole destination. Width is unchanged,
+ * so no container query or column layout moves.
+ */
+async function fitViewportToContent(page: Page): Promise<void> {
+  const current = page.viewportSize();
+  if (current === null) throw new Error("agent-runs visual cells need a fixed viewport");
+  const needed = await page
+    .locator(".ccc-content")
+    .evaluate((content) => Math.ceil(content.getBoundingClientRect().top + content.scrollHeight));
+  if (needed > current.height) {
+    await page.setViewportSize({ width: current.width, height: needed });
+  }
+}
+
 for (const { agentRunsCase, snapshot } of CASES) {
   cell(`agent-runs — ${agentRunsCase}`, snapshot, async (page, snapshotName) => {
     await page.goto(harnessUrl({ view: "agent-runs", case: agentRunsCase, motion: "full" }));
+    await fitViewportToContent(page);
     await expect(page.locator(".ccc-agent-runs")).toHaveScreenshot(snapshotName);
   });
 }
