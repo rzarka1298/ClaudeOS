@@ -336,6 +336,8 @@ const DIMMED_SURFACES = ["--ccc-bg", "--ccc-surface", GLASS_COMPOSITE];
 describe("the disconnected dimming keeps text legible (A11Y-02; UI-SPEC disconnected row)", () => {
   it("dims the body and the footer through one audited opacity token", () => {
     expect(DIMMED_RULES.map((rule) => rule.selector).sort()).toEqual([
+      // The Agent runs destination's disconnected tables (UI-SPEC S3, 05 wave 4).
+      '.ccc-agent-runs [data-dimmed="true"]',
       '.ccc-card-body[data-dimmed="true"]',
       '.ccc-card-footer[data-dimmed="true"]',
     ]);
