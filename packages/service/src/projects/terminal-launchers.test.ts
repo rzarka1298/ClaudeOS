@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { TerminalLaunchInput } from "@ccc/domain";
@@ -9,6 +17,7 @@ import { ensureScriptDir } from "./script-dir.js";
 import {
   createCustomTemplateLauncher,
   createTerminalAppLauncher,
+  isExecutableFile,
   selectTerminalLauncher,
 } from "./terminal-launchers.js";
 
@@ -379,5 +388,26 @@ describe("selectTerminalLauncher picks the custom adapter (PROJ-10, D-23)", () =
       error: "launcher-not-configured",
     });
     expect(spawner.calls).toHaveLength(0);
+  });
+});
+
+describe("isExecutableFile (D-22): a regular file with X_OK, nothing else", () => {
+  it("accepts an executable regular file", async () => {
+    const file = join(runtimeDir, "terminal");
+    writeFileSync(file, "#!/bin/sh\n", { mode: 0o755 });
+    await expect(isExecutableFile(file)).resolves.toBe(true);
+  });
+
+  it("refuses a directory, even though a directory passes X_OK (search permission)", async () => {
+    const dir = join(runtimeDir, "Example.app");
+    mkdirSync(dir, { mode: 0o755 });
+    await expect(isExecutableFile(dir)).resolves.toBe(false);
+  });
+
+  it("refuses a regular file without the execute bit, and a missing path", async () => {
+    const file = join(runtimeDir, "not-executable");
+    writeFileSync(file, "x", { mode: 0o644 });
+    await expect(isExecutableFile(file)).resolves.toBe(false);
+    await expect(isExecutableFile(join(runtimeDir, "absent"))).resolves.toBe(false);
   });
 });
