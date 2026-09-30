@@ -135,6 +135,8 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
       serviceStartedAt: startedAt,
       // Read synchronously in the same tick as `lastEventId` (race-free resync).
       ...(ctx.claude ? { sessions: ctx.claude.pipeline.listSessionViews() } : {}),
+      // The usage summary (05-12, PR-23), also read synchronously in this tick.
+      ...(ctx.claude?.usage ? { usage: ctx.claude.usage.summary() } : {}),
     },
   };
   sendJson(res, 200, body);
