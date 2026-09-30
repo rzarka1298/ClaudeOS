@@ -328,3 +328,20 @@ describe("tui mode requests", () => {
     expect(v.ok).toBe(false);
   });
 });
+
+describe("codexHome", () => {
+  it("carries an existing absolute Codex home and rejects anything else", () => {
+    const w = world();
+    const home = tmp("ccc-codex-home-");
+    const ok = core.validateRequest(w.request({ codexHome: home }), {
+      stateDir: w.state,
+      now: NOW,
+    });
+    expect(ok.ok && ok.request.codexHome).toBe(home);
+    for (const bad of ["relative", "/nonexistent/codex-home", 7]) {
+      expect(
+        core.validateRequest(w.request({ codexHome: bad }), { stateDir: w.state, now: NOW }).ok,
+      ).toBe(false);
+    }
+  });
+});

@@ -18,6 +18,7 @@ export interface BridgeRequest {
   mode: "follow" | "tui";
   role: "review" | "plan" | "task" | "chore" | null;
   promptFile: string | null;
+  codexHome: string | null;
 }
 
 export type Validation =

@@ -119,8 +119,14 @@ if (argv[0] === "app-server") {
   // The interactive TUI, as the Antigravity tab runs it: writes a rollout the
   // way Codex does (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl).
   const mode = process.env.FAKE_CODEX_TUI || "ok";
-  record({ tui: true });
+  record({ tui: true, codexHome: process.env.CODEX_HOME });
   if (mode === "crash") process.exit(2);
+  if (mode === "prompt") {
+    // Stuck on an interactive prompt (e.g. "trust this folder?"): no session yet.
+    if (process.env.FAKE_CODEX_PIDFILE) fs.writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(process.pid));
+    setInterval(() => {}, 1000);
+    return;
+  }
   const prompt = argv[argv.length - 1];
   const d = new Date();
   const p2 = (n) => String(n).padStart(2, "0");
@@ -133,7 +139,15 @@ if (argv[0] === "app-server") {
   w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] } });
   w({ type: "event_msg", payload: { type: "task_started", turn_id: "t1" } });
   if (process.env.FAKE_CODEX_PIDFILE) fs.writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(process.pid));
-  if (mode === "hang") { setInterval(() => {}, 1000); return; }
+  if (mode === "hang") {
+    if (process.env.FAKE_CODEX_CHILD_PIDFILE) {
+      // A tool process Codex started that ignores SIGTERM.
+      const c = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"], { stdio: "ignore" });
+      fs.writeFileSync(process.env.FAKE_CODEX_CHILD_PIDFILE, String(c.pid));
+    }
+    setInterval(() => {}, 1000);
+    return;
+  }
   setTimeout(() => {
     w({ type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: "{}" } });
     if (mode === "limit") {
@@ -216,7 +230,10 @@ if (process.env.FAKE_AG_MODE === "claim") {
     const got = core.scanRequests({ stateDir, folders: [args[0]], containDelayMs: 0 });
     for (const req of got) {
       const t = core.terminalOptions(req, core.bridgeCommand(home));
-      const child = spawn(t.shellPath, t.shellArgs, { cwd: t.cwd, detached: true, stdio: "ignore" });
+      // The IDE's environment, not the wrapper's: it may have another CODEX_HOME.
+      const env = { ...process.env };
+      if (process.env.FAKE_AG_CODEX_HOME) env.CODEX_HOME = process.env.FAKE_AG_CODEX_HOME;
+      const child = spawn(t.shellPath, t.shellArgs, { cwd: t.cwd, detached: true, stdio: "ignore", env });
       child.unref();
     }
     if (!got.length && Date.now() - started < 5000) setTimeout(tick, 50);
@@ -1315,5 +1332,143 @@ describe("tui in the antigravity tab", () => {
     expect(r.status).toBe(21);
     const pid = Number(readFileSync(pidfile, "utf8"));
     expect(await gone(pid)).toBe(true);
+  });
+});
+
+describe("tui: trust, withdrawal and cleanup", () => {
+  const CLAIM = { FAKE_AG_MODE: "claim", CODEX_BRIDGE_CLAIM_TIMEOUT_MS: "8000" };
+  const tuiCalls = (h: Harness) => h.calls().filter((c) => c.argv.includes("--ask-for-approval"));
+
+  it("trusts exactly the run's worktree and project for this run, with sandbox and approvals still pinned", () => {
+    const h = harness();
+    expect(
+      h.run(["review", h.root, "HEAD~1"], { ...CLAIM, FAKE_CODEX_FINAL: REVIEW_JSON }).status,
+    ).toBe(0);
+    const argv = tuiCalls(h)[0]?.argv ?? [];
+    const i = argv.findIndex((a) => a.startsWith("projects="));
+    expect(argv[i - 1]).toBe("-c");
+    expect(argv[i]).toBe(`projects={${JSON.stringify(h.root)}={trust_level="trusted"}}`);
+    expect(argv).toEqual(
+      expect.arrayContaining(["-s", "read-only", "--ask-for-approval", "never"]),
+    );
+  });
+
+  it("stops a TUI that shows no session in time (e.g. a trust prompt) and falls back headless", async () => {
+    const h = harness();
+    const pidfile = join(h.bin, "prompt.pid");
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_SESSION_WAIT_MS: "1500",
+      FAKE_CODEX_TUI: "prompt",
+      FAKE_CODEX_PIDFILE: pidfile,
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(h.execCalls()).toHaveLength(1);
+    // The waiting TUI is gone, so a late answer cannot start a duplicate run.
+    expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+  });
+
+  it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
+    const h = harness();
+    const wrapper = spawn(process.execPath, [join(h.root, WRAPPER), "review", h.root, "HEAD~1"], {
+      cwd: h.root,
+      stdio: "ignore",
+      env: testEnv({
+        PATH: `${fakeBin()}:${process.env.PATH ?? ""}`,
+        HOME: h.home,
+        FAKE_CODEX_LOG: h.log,
+        FAKE_AG_LOG: h.agLog,
+        FAKE_CODEX_USAGE: usageResult(),
+        CODEX_BRIDGE_CLAIM_TIMEOUT_MS: "20000",
+      }),
+    });
+    const exited = new Promise<number | null>((res) => wrapper.on("exit", (code) => res(code)));
+    for (let i = 0; i < 100 && requestFiles(h).length === 0; i++)
+      await new Promise((r) => setTimeout(r, 100));
+    expect(requestFiles(h)).toHaveLength(1);
+    wrapper.kill("SIGTERM");
+    expect(await exited).toBe(130);
+    expect(requestFiles(h)).toEqual([]);
+    expect(readdirSync(join(h.bridgeState, "prompts"))).toEqual([]);
+    expect(h.calls().filter((c) => c.argv[0] !== "app-server")).toHaveLength(0);
+  });
+
+  it("the watchdog kills the whole TUI worker tree before reporting (finding 2)", async () => {
+    const h = harness();
+    const pidfile = join(h.bin, "tui.pid");
+    const childPidfile = join(h.bin, "tool.pid");
+    const r = h.run(["review", h.root, "HEAD~1", "--timeout-sec", "2"], {
+      ...CLAIM,
+      FAKE_CODEX_TUI: "hang",
+      FAKE_CODEX_PIDFILE: pidfile,
+      FAKE_CODEX_CHILD_PIDFILE: childPidfile,
+    });
+    expect(r.status).toBe(21);
+    expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+    expect(await gone(Number(readFileSync(childPidfile, "utf8")))).toBe(true);
+  });
+
+  it("runs the TUI with the wrapper's CODEX_HOME even if the IDE has another (finding 3)", () => {
+    const h = harness();
+    const ideHome = join(h.home, "ide-codex-home");
+    mkdirSync(ideHome);
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      FAKE_AG_CODEX_HOME: ideHome,
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+      CODEX_BRIDGE_SESSION_WAIT_MS: "4000",
+    });
+    expect(r.status).toBe(0);
+    const [call] = tuiCalls(h) as Array<{ codexHome?: string }>;
+    expect(call?.codexHome).toBe(join(h.home, ".codex"));
+    expect(h.execCalls()).toHaveLength(0);
+  });
+});
+
+describe("project resolution edge cases", () => {
+  it("finds the main checkout of a repo with a separate git dir (finding 4)", () => {
+    const h = harness();
+    const wt = realpathSync(mkdtempSync(join(tmpdir(), "ccc-sepwt-")));
+    const gd = realpathSync(mkdtempSync(join(tmpdir(), "ccc-sepgd-")));
+    cleanups.push(() => {
+      rmSync(wt, { recursive: true, force: true });
+      rmSync(gd, { recursive: true, force: true });
+    });
+    const g = (...a: string[]) => {
+      const r = spawnSync("git", ["-C", wt, ...a], { encoding: "utf8" });
+      if (r.status !== 0) throw new Error(r.stderr);
+    };
+    spawnSync("git", ["init", "-q", "--separate-git-dir", join(gd, "meta"), wt]);
+    g("config", "user.email", "t@example.com");
+    g("config", "user.name", "t");
+    g("config", "core.fsmonitor", "false");
+    writeFileSync(join(wt, "a.txt"), "1\n");
+    g("add", "a.txt");
+    g("commit", "-q", "-m", "one");
+    writeFileSync(join(wt, "a.txt"), "2\n");
+    g("commit", "-q", "-am", "two");
+    const r = h.run(["review", wt, "HEAD~1"], {
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+      CODEX_BRIDGE_TAB: "0",
+    });
+    expect(r.status).toBe(0);
+    const report = String(lastJson(r.stdout).report);
+    expect(report).toMatch(/\/projects\/ccc-sepwt-[^/]+-[0-9a-f]{10}\/reports\//);
+  });
+
+  it("uses the external state dir unless every runtime artifact is ignored (finding 5)", () => {
+    const h = harness();
+    h.repo.write(".gitignore", ".planning/codex/reports/\n.claude/worktrees/\n");
+    h.repo.git("commit", "-q", "-am", "ignore only reports");
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+      CODEX_BRIDGE_TAB: "0",
+    });
+    expect(r.status).toBe(0);
+    expect(String(lastJson(r.stdout).report).startsWith(join(h.bridgeState, "projects"))).toBe(
+      true,
+    );
+    expect(h.repo.git("status", "--porcelain").trim()).toBe("");
   });
 });

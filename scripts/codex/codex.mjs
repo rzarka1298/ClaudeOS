@@ -68,7 +68,15 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, relative } from "node:path";
+import {
+  basename,
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve as resolvePath,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -254,19 +262,67 @@ function git(cwd, ...args) {
 }
 
 // The main checkout (not a linked worktree) of the repository holding `dir`.
+// The main checkout of the repository holding `dir`. Never derived from the
+// git dir's location alone: that is wrong for --separate-git-dir checkouts and
+// absorbed submodules. From inside the main worktree it is simply the
+// toplevel; from a linked worktree, each candidate is accepted only if Git
+// confirms it is the working tree that owns the common git dir.
 function mainCheckoutOf(dir) {
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return null;
+    }
+  };
+  const gitDir = git(dir, "rev-parse", "--path-format=absolute", "--git-dir");
   const common = git(dir, "rev-parse", "--path-format=absolute", "--git-common-dir");
-  return common ? realpathSync(dirname(common)) : null;
+  const top = git(dir, "rev-parse", "--show-toplevel");
+  if (!gitDir || !common || !top) return null;
+  const commonReal = real(common);
+  if (real(gitDir) === commonReal) return real(top);
+  const candidates = [];
+  const list = git(dir, "worktree", "list", "--porcelain");
+  const first = list?.split("\n")[0];
+  if (first?.startsWith("worktree ")) candidates.push(first.slice("worktree ".length));
+  const coreWt = spawnSync("git", ["--git-dir", common, "config", "--get", "core.worktree"], {
+    encoding: "utf8",
+  });
+  if (coreWt.status === 0 && coreWt.stdout.trim())
+    candidates.push(resolvePath(common, coreWt.stdout.trim()));
+  candidates.push(dirname(common));
+  for (const c of candidates) {
+    if (!existsSync(c)) continue;
+    const cGit = git(c, "rev-parse", "--path-format=absolute", "--git-dir");
+    const cTop = git(c, "rev-parse", "--show-toplevel");
+    if (cGit && cTop && real(cGit) === commonReal) return real(cTop);
+  }
+  return null;
 }
 
 const BRIDGE_STATE = bridge.bridgeStateDir(process.env, homedir());
 
 // In-repo state only where git ignores it, so a run never dirties a checkout.
+// Every kind of file a run writes under <main>/.planning/codex/.
+const STATE_PROBES = [
+  "reports/x-review.json",
+  "reports/x-review.md",
+  "reports/x-task.json",
+  "sessions/x.json",
+  "live/x-task.log",
+  "live/x-task.jsonl",
+  "live/current.log",
+  "live/.current.1.tmp",
+  "pending-resume.json",
+  "x.json.1.tmp",
+].map((p) => `.planning/codex/${p}`);
+
 export function stateDirFor(main) {
-  const ignored =
-    spawnSync("git", ["-C", main, "check-ignore", "-q", ".planning/codex/reports/x.json"])
-      .status === 0;
-  if (ignored) return join(main, ".planning", "codex");
+  const r = spawnSync("git", ["-C", main, "check-ignore", "--", ...STATE_PROBES], {
+    encoding: "utf8",
+  });
+  const ignored = new Set((r.stdout ?? "").split("\n").filter(Boolean));
+  if (STATE_PROBES.every((p) => ignored.has(p))) return join(main, ".planning", "codex");
   const name =
     basename(main)
       .replace(/[^A-Za-z0-9._-]/g, "_")
@@ -646,6 +702,7 @@ function openBridgeTab({ id, kind, cwd, sessionId, liveLog }) {
       liveLog,
       pid: process.pid,
       createdAt: new Date().toISOString(),
+      codexHome: existsSync(codexHome()) ? realpathSync(codexHome()) : null,
     });
     if (!written) return;
     ensureWindow(cli);
@@ -669,6 +726,10 @@ function openBridgeTab({ id, kind, cwd, sessionId, liveLog }) {
 
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only tuning knob
 const CLAIM_TIMEOUT_MS = Number(process.env.CODEX_BRIDGE_CLAIM_TIMEOUT_MS) || 20_000;
+// How long a started TUI may sit without a session (e.g. an owner prompt)
+// before it is stopped and the run goes headless.
+// biome-ignore lint/suspicious/noUndeclaredEnvVars: tuning knob
+const SESSION_WAIT_MS = Number(process.env.CODEX_BRIDGE_SESSION_WAIT_MS) || 180_000;
 const HELPER_START_MS = 15_000;
 const ROLLOUT_SCAN_BYTES = 1024 * 1024;
 
@@ -678,11 +739,23 @@ export function marker(id) {
   return `codex-bridge run ${id}`;
 }
 
-export function tuiArgs(role, cwd, prompt) {
+// --ignore-user-config hides the owner's trusted projects, and every run uses
+// a fresh worktree, so the TUI would stop at "trust this folder?". Trust exactly
+// this run's directories, for this run only, as one inline table: a dotted
+// `projects."<path>".trust_level` key would break on paths containing dots.
+// Sandbox and approvals stay pinned explicitly, so trust loosens neither.
+export function trustOverride(paths) {
+  const entries = [...new Set(paths)].map((p) => `${JSON.stringify(p)}={trust_level="trusted"}`);
+  return `projects={${entries.join(",")}}`;
+}
+
+export function tuiArgs(role, cwd, prompt, trusted = [cwd]) {
   return [
     ...roleArgs(role, { withSandboxFlag: true }),
     "--ask-for-approval",
     "never",
+    "-c",
+    trustOverride(trusted),
     "-C",
     cwd,
     prompt,
@@ -800,6 +873,29 @@ function firstLine(text) {
     .slice(0, 200);
 }
 
+// Writes the stop marker the tab helper polls: it then kills the TUI's whole
+// process tree, and it refuses to start Codex at all if the marker came first.
+function stopTui(id) {
+  try {
+    writeFileSync(
+      join(bridge.dirs(BRIDGE_STATE).tui, `${id}.stop`),
+      `${new Date().toISOString()}\n`,
+    );
+  } catch {}
+}
+
+function helperState(id) {
+  const st = readJson(join(bridge.dirs(BRIDGE_STATE).tui, `${id}.json`));
+  if (!st) return "none";
+  return st.status === "exited" || (st.pid && !alive(st.pid)) ? "exited" : "running";
+}
+
+// After stopTui: wait until the helper reports its Codex tree is gone.
+async function waitHelperExit(id) {
+  const until = Date.now() + KILL_GRACE_MS + 5000;
+  while (helperState(id) === "running" && Date.now() < until) await sleep(100);
+}
+
 async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession }) {
   // biome-ignore lint/suspicious/noUndeclaredEnvVars: owner opt-out
   if (process.env.CODEX_BRIDGE_TAB === "0" || process.env.CODEX_BRIDGE_TUI === "0") return null;
@@ -807,12 +903,36 @@ async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession
   if (!cli) return null;
   const d = bridge.dirs(BRIDGE_STATE);
   const promptFile = join(d.prompts, `${id}.md`);
+  const reqFile = join(d.requests, `${id}.json`);
   const dropPrompt = () => rmSync(promptFile, { force: true });
-  let reqFile = null;
+  // Withdraw (never leave claimable) whatever happens before the watch starts.
+  const withdraw = () => {
+    stopTui(id);
+    let withdrawn = false;
+    try {
+      unlinkSync(reqFile);
+      withdrawn = true;
+    } catch {}
+    dropPrompt();
+    return withdrawn;
+  };
+  const onSignal = (sig) => {
+    withdraw();
+    live.write([`[end] interrupted by ${sig}`]);
+    process.exit(130);
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  const unhook = () => {
+    process.removeListener("SIGINT", onSignal);
+    process.removeListener("SIGTERM", onSignal);
+  };
   try {
     bridge.ensureDirs(BRIDGE_STATE);
+    const home = codexHome();
+    mkdirSync(home, { recursive: true });
     writeFileSync(promptFile, prompt, { mode: 0o600 });
-    reqFile = bridge.writeRequest(BRIDGE_STATE, {
+    const written = bridge.writeRequest(BRIDGE_STATE, {
       runId: id,
       kind,
       projectRoot: MAIN,
@@ -824,57 +944,52 @@ async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession
       mode: "tui",
       role,
       promptFile,
+      codexHome: realpathSync(home),
     });
-    if (!reqFile) throw new Error("a request for this run already exists");
+    if (!written) throw new Error("a request for this run already exists");
     ensureWindow(cli);
   } catch (err) {
     dropPrompt();
+    unhook();
     say(`tui tab skipped: ${err?.message ?? err}`);
     return null;
   }
   const launchedAt = Date.now();
   const claimed = join(d.claimed, `${id}.json`);
   while (!existsSync(claimed) && Date.now() - launchedAt < CLAIM_TIMEOUT_MS) await sleep(100);
-  if (!existsSync(claimed)) {
-    let withdrawn = false;
-    try {
-      unlinkSync(reqFile);
-      withdrawn = true;
-    } catch {}
-    if (withdrawn || !existsSync(claimed)) {
-      dropPrompt();
-      say(
-        `no Antigravity window claimed the tab within ${CLAIM_TIMEOUT_MS / 1000}s; running headless`,
-      );
-      live.write(["[tui] no Antigravity window claimed the tab; running headless"]);
-      return null;
-    }
+  if (!existsSync(claimed) && (withdraw() || !existsSync(claimed))) {
+    unhook();
+    say(
+      `no Antigravity window claimed the tab within ${CLAIM_TIMEOUT_MS / 1000}s; running headless`,
+    );
+    live.write(["[tui] no Antigravity window claimed the tab; running headless"]);
+    return null;
   }
+  unhook();
   const tab = `Codex · ${kind} · ${id.slice(9, 15)}`;
   say(`codex is running interactively in the Antigravity tab "${tab}"`);
   live.write([`[tui] Codex opened in the Antigravity tab "${tab}"`]);
-  const res = await watchTui({ id, launchedAt, timeoutSec, live, onSession });
+  const res = await watchTui({
+    id,
+    claimedAt: Date.now(),
+    launchedAt,
+    timeoutSec,
+    live,
+    onSession,
+  });
   if (res === null) {
-    live.write(["[tui] the Codex TUI did not start; running headless"]);
-    say("the Codex TUI did not start; running headless");
+    live.write(["[tui] no Codex session started in the tab; it was stopped; running headless"]);
+    say("no Codex session started in the tab (stopped it); running headless");
   }
   return res;
 }
 
-async function watchTui({ id, launchedAt, timeoutSec, live, onSession }) {
-  const d = bridge.dirs(BRIDGE_STATE);
-  const stopFile = join(d.tui, `${id}.stop`);
-  const statusFile = join(d.tui, `${id}.json`);
-  const stop = () => {
-    try {
-      writeFileSync(stopFile, `${new Date().toISOString()}\n`);
-    } catch {}
-  };
+async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession }) {
   const state = { sessionId: null, limitHit: false, timedOut: false, lastMessage: null, code: 1 };
   const onSignal = (sig) => {
     live.write([`[end] interrupted by ${sig}`]);
-    stop();
-    process.exit(130);
+    stopTui(id);
+    waitHelperExit(id).finally(() => process.exit(130));
   };
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
@@ -947,18 +1062,23 @@ async function watchTui({ id, launchedAt, timeoutSec, live, onSession }) {
     if (Date.now() > deadline) {
       state.timedOut = true;
       live.write([`[watchdog] timeout after ${timeoutSec}s — stopping the Codex TUI`]);
-      stop();
+      stopTui(id);
+      await waitHelperExit(id);
       break;
     }
-    const st = readJson(statusFile);
-    const helperGone = st ? st.status === "exited" || (st.pid && !alive(st.pid)) : false;
-    if (helperGone) {
+    const helper = helperState(id);
+    if (helper === "exited") {
       if (!rollout) fellBack = true;
       else live.write(["[tui] the Codex TUI exited before finishing"]);
       break;
     }
-    if (!st && !rollout && Date.now() - launchedAt > CLAIM_TIMEOUT_MS + HELPER_START_MS) {
-      stop(); // the tab never started; make sure it cannot start late
+    // No session yet: the tab never started, or Codex sits at a prompt. Stop
+    // it for certain before going headless, so a late answer cannot start a
+    // duplicate run.
+    const waited = Date.now() - claimedAt;
+    if (!rollout && (helper === "none" ? waited > HELPER_START_MS : waited > SESSION_WAIT_MS)) {
+      stopTui(id);
+      await waitHelperExit(id);
       fellBack = true;
       break;
     }
@@ -1653,6 +1773,7 @@ async function cmdFollow({ positional }) {
     ...process.env,
     PATH: `${process.env.PATH ?? ""}${delimiter}${join(homedir(), ".local", "bin")}`,
   };
+  if (req.codexHome) env.CODEX_HOME = req.codexHome;
   if (sessionId && bridge.UUID_RE.test(sessionId)) {
     process.stdout.write(
       `\n[codex-bridge] opening the Codex session: codex resume ${sessionId}\n\n`,
@@ -1685,6 +1806,7 @@ async function cmdTui({ positional }) {
     writeJson(statusFile, { pid: process.pid, ...extra, at: new Date().toISOString() });
   if (existsSync(stopFile)) {
     status({ status: "exited", code: null });
+    rmSync(req.promptFile, { force: true });
     fail(EXIT.USAGE, `run ${req.runId} was withdrawn`);
   }
   const prompt = readFileSync(req.promptFile, "utf8");
@@ -1693,9 +1815,9 @@ async function cmdTui({ positional }) {
     status({ status: "exited", code: null });
     fail(EXIT.REFUSED, "refused: the prompt does not carry this run's marker");
   }
-  // argv is rebuilt here from the validated role and directory; nothing from
+  // argv is rebuilt here from the validated role and directories; nothing from
   // the request reaches a shell, and the pinned flags cannot be loosened.
-  const args = tuiArgs(req.role, req.cwd, prompt);
+  const args = tuiArgs(req.role, req.cwd, prompt, [req.cwd, req.projectRoot]);
   const flags = args.slice(0, -1).join(" ").toLowerCase();
   if (BANNED.some((b) => flags.includes(b))) fail(EXIT.REFUSED, "refused: bypass flag");
   const r = ROLES[req.role];
@@ -1707,30 +1829,65 @@ async function cmdTui({ positional }) {
     ...process.env,
     PATH: `${process.env.PATH ?? ""}${delimiter}${join(homedir(), ".local", "bin")}`,
   };
+  // The Codex home the wrapper checked usage against and watches for the session.
+  if (req.codexHome) env.CODEX_HOME = req.codexHome;
   const child = spawn(CODEX, args, { stdio: "inherit", cwd: req.cwd, env });
+  let tree = new Set();
   const poll = setInterval(() => {
     if (!existsSync(stopFile)) return;
     clearInterval(poll);
-    try {
-      child.kill("SIGTERM");
-    } catch {}
-    setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {}
-    }, KILL_GRACE_MS).unref();
-  }, 500);
+    // The TUI keeps the terminal's process group, so its tree is walked
+    // explicitly: everything Codex started is signalled, not just Codex.
+    tree = new Set([child.pid, ...descendants(child.pid)]);
+    signalAll(tree, "SIGTERM");
+    setTimeout(() => signalAll(tree, "SIGKILL"), KILL_GRACE_MS).unref();
+  }, 250);
   const code = await new Promise((resolve) => {
     child.on("error", () => resolve(127));
     child.on("exit", (c) => resolve(c ?? 1));
   });
   clearInterval(poll);
+  if (tree.size) {
+    // Stopped: make sure every process of the tree is gone before reporting.
+    const until = Date.now() + KILL_GRACE_MS;
+    while ([...tree].some(alive) && Date.now() < until) await sleep(100);
+    signalAll(tree, "SIGKILL");
+  }
   status({ status: "exited", code });
   // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
   if (process.env.CODEX_BRIDGE_FOLLOW_SHELL !== "0" && process.stdin.isTTY) {
     spawnSync(process.env.SHELL || "/bin/zsh", ["-l"], { stdio: "inherit", cwd: req.cwd, env });
   }
   process.exit(EXIT.OK);
+}
+
+// All descendants of `pid`, from one `ps` snapshot.
+function descendants(pid) {
+  const r = spawnSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" });
+  const kids = new Map();
+  for (const line of (r.stdout ?? "").split("\n")) {
+    const [c, p] = line.trim().split(/\s+/).map(Number);
+    if (!c || !p) continue;
+    if (!kids.has(p)) kids.set(p, []);
+    kids.get(p).push(c);
+  }
+  const out = [];
+  const todo = [pid];
+  while (todo.length) {
+    for (const c of kids.get(todo.pop()) ?? []) {
+      out.push(c);
+      todo.push(c);
+    }
+  }
+  return out;
+}
+
+function signalAll(pids, sig) {
+  for (const p of pids) {
+    try {
+      process.kill(p, sig);
+    } catch {}
+  }
 }
 
 // ---------------------------------------------------------------------------

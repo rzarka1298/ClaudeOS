@@ -133,6 +133,11 @@ function validateRequest(raw, { stateDir, now = Date.now(), ttlMs = TTL_MS, chec
     if (path.basename(promptFile) !== `${raw.runId}.md`) return no("tui promptFile name");
     role = raw.role;
   }
+  let codexHome = null;
+  if (raw.codexHome !== undefined && raw.codexHome !== null) {
+    codexHome = realDir(raw.codexHome);
+    if (!codexHome) return no("codexHome is not an absolute existing directory");
+  }
   const created = typeof raw.createdAt === "string" ? Date.parse(raw.createdAt) : Number.NaN;
   if (!Number.isFinite(created)) return no("bad createdAt");
   if (checkAge) {
@@ -153,6 +158,7 @@ function validateRequest(raw, { stateDir, now = Date.now(), ttlMs = TTL_MS, chec
       mode,
       role,
       promptFile,
+      codexHome,
     },
   };
 }
