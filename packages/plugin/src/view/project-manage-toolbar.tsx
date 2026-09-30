@@ -1,7 +1,7 @@
 import type { ProjectId } from "@ccc/domain";
 import { GithubLinkSchema, hasControlCharacter } from "@ccc/domain/browser";
 import type { VNode } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { ProjectsActions } from "../projects/projects-actions.js";
 import type { ProjectRow } from "../widgets/panels.js";
 import { nextToolbarIndex } from "../widgets/toolbar-keys.js";
@@ -93,6 +93,29 @@ export function ProjectManageToolbar({
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const linkInputRef = useRef<HTMLInputElement | null>(null);
   const buttonRefs = [pinButtonRef, renameButtonRef, githubButtonRef, removeButtonRef];
+  // Set when Pin/Unpin is pressed while it holds focus. The registry delta
+  // that follows re-sorts the grid (pinned first), and moving the focused
+  // card's DOM subtree drops focus to the body even though keyed
+  // reconciliation keeps the same nodes (UI-SPEC S2: "This also applies to
+  // pin and unpin in S3"). The layout effect below puts it back.
+  const restorePinFocusRef = useRef(false);
+
+  // Runs after the commit that carries the new `pinned` value — the same
+  // commit that reorders the cards — so focus is back on the same control
+  // before the browser paints. Focus that the owner has already moved
+  // somewhere else is never taken back.
+  useLayoutEffect(() => {
+    if (!restorePinFocusRef.current) return;
+    restorePinFocusRef.current = false;
+    const button = pinButtonRef.current;
+    if (button === null) return;
+    const active = button.ownerDocument.activeElement;
+    if (active === button) return;
+    if (active === null || active === button.ownerDocument.body) {
+      button.focus();
+      setFocusedIndex(0);
+    }
+  }, [row.pinned]);
 
   // Each inline form takes focus the moment it opens — none of these
   // transitions is reachable except by activating the button that opens it,
@@ -118,16 +141,18 @@ export function ProjectManageToolbar({
   }
 
   async function handleTogglePin(): Promise<void> {
-    const outcome = await actions.pin(projectId, !row.pinned);
+    const wasPinned = row.pinned;
+    const button = pinButtonRef.current;
+    // Armed BEFORE the request: the registry delta can land before the pin
+    // response does.
+    restorePinFocusRef.current = button !== null && button.ownerDocument.activeElement === button;
+    const outcome = await actions.pin(projectId, !wasPinned);
     if (outcome.kind !== "ok") {
+      restorePinFocusRef.current = false;
       onStatus(SAVE_FAILED);
       return;
     }
-    // The reorder that follows a pin/unpin keeps this same keyed card and
-    // button in place in the DOM (React/Preact key-based reconciliation
-    // moves nodes rather than recreating them) — focus is never explicitly
-    // re-applied here because there is nothing to restore it FROM.
-    onStatus(row.pinned ? "Unpinned." : "Pinned.");
+    onStatus(wasPinned ? "Unpinned." : "Pinned.");
   }
 
   function openRename(): void {
