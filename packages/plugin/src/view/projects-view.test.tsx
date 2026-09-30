@@ -325,3 +325,89 @@ describe("ProjectsView (Task 3: loading/empty/error states, disconnected banner,
     });
   });
 });
+
+describe("ProjectsView pin reorder keeps keyboard focus (UI-SPEC S2/S3, codex finding 3)", () => {
+  function threeUnpinned(): {
+    alpha: ProjectId;
+    beta: ProjectId;
+    gamma: ProjectId;
+    views: (gammaPinned: boolean) => ProjectView[];
+  } {
+    const alpha = newProjectId();
+    const beta = newProjectId();
+    const gamma = newProjectId();
+    return {
+      alpha,
+      beta,
+      gamma,
+      views: (gammaPinned) => [
+        view({ projectId: alpha, displayName: "alpha-project" }),
+        view({ projectId: beta, displayName: "beta-project" }),
+        view({ projectId: gamma, displayName: "gamma-project", pinned: gammaPinned }),
+      ],
+    };
+  }
+
+  function cardNames(): string[] {
+    return screen
+      .getAllByRole("article")
+      .map((card) => within(card).getByRole("heading", { level: 4 }).textContent ?? "");
+  }
+
+  function gammaCard(): HTMLElement {
+    return screen
+      .getByRole("heading", { level: 4, name: "gamma-project" })
+      .closest("article") as HTMLElement;
+  }
+
+  it.each([
+    ["the registry delta lands after the pin response", "delta-after"],
+    ["the registry delta lands before the pin response", "delta-before"],
+  ] as const)(
+    "pinning the third card moves it first and focus stays on its pin control when %s",
+    async (_label, order) => {
+      const fx = threeUnpinned();
+      projectsSnapshot.value = {
+        projects: fx.views(false),
+        launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+      };
+      const pinDelta = (): void => {
+        projectsSnapshot.value = {
+          projects: fx.views(true),
+          launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+        };
+      };
+      const pin = vi.fn(async (): Promise<ProjectActionOutcome> => {
+        if (order === "delta-before") pinDelta();
+        return { kind: "ok" };
+      });
+      const actions: ProjectsActions = { ...noopActions(), pin };
+
+      render(
+        <ProjectsView
+          actions={actions}
+          pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+          connection={{ kind: "live" }}
+          now={Date.now()}
+        />,
+      );
+      expect(cardNames()).toEqual(["alpha-project", "beta-project", "gamma-project"]);
+
+      const pinButton = within(gammaCard()).getByRole("button", { name: "Pin project" });
+      pinButton.focus();
+      expect(document.activeElement).toBe(pinButton);
+      fireEvent.click(pinButton);
+      await vi.waitFor(() => expect(pin).toHaveBeenCalledWith(fx.gamma, true));
+      if (order === "delta-after") pinDelta();
+
+      await vi.waitFor(() =>
+        expect(cardNames()).toEqual(["gamma-project", "alpha-project", "beta-project"]),
+      );
+      await vi.waitFor(() =>
+        expect(document.activeElement).toBe(
+          within(gammaCard()).getByRole("button", { name: "Unpin project" }),
+        ),
+      );
+    },
+  );
+});
