@@ -59,12 +59,17 @@ function recordingTerminal(result: LaunchResult | Error = { ok: true }): Termina
   };
 }
 
+/** The spike only drives the Terminal.app adapter, which never detaches. */
+const NEVER_DETACHES: Spawner["detach"] = () =>
+  Promise.reject(new Error("the spike never detaches"));
+
 function recordingSpawner(outcome: SpawnOutcome = OK_OUTCOME): Spawner {
   return {
     run(argv) {
       events.push(`spawn:${argv.slice(0, 2).join(" ")}`);
       return Promise.resolve(outcome);
     },
+    detach: NEVER_DETACHES,
   };
 }
 
@@ -224,6 +229,7 @@ describe("runLaunchSpike (PR-10 owner spike harness)", () => {
       deps: {
         spawner: {
           run: () => Promise.reject(new Error("spawn exploded at /Users/USERNAME")),
+          detach: NEVER_DETACHES,
         },
         createTerminalLauncher: () => recordingTerminal(new Error("terminal exploded")),
         gitRunner: recordingGit(new Error("git exploded")),
@@ -264,6 +270,7 @@ describe("runLaunchSpike (PR-10 owner spike harness)", () => {
         }
         return Promise.resolve(OK_OUTCOME);
       },
+      detach: NEVER_DETACHES,
     };
     const report = await runLaunchSpike({
       resultDir,

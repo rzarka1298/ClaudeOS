@@ -233,6 +233,9 @@ function recordHandoffs(inner: Spawner, scripts: string[]): Spawner {
       }
       return inner.run(argv, opts);
     },
+    detach(argv, opts) {
+      return inner.detach(argv, opts);
+    },
   };
 }
 

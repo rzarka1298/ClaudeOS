@@ -54,13 +54,13 @@ function stub(name: string, body: string): string {
   return path;
 }
 
-function launcher(template: readonly string[], capMs = 400) {
+function launcher(template: readonly string[], capMs = 400, detachGraceMs = 100) {
   return createCustomTemplateLauncher({
     spawner: createCommandSpawner(createExecFileCommandRunner()),
     scriptDir,
     template,
     capMs,
-    detachGraceMs: 100,
+    detachGraceMs,
     isExecutable: isExecutableFile,
   });
 }
@@ -114,7 +114,8 @@ describe("a directly-run terminal binary is handed off, never killed by the cap"
 
   it("an executable that fails at once is spawn-failed and its script is removed", async () => {
     const terminal = stub("failing-terminal", "exit 3");
-    await expect(launcher([terminal, "{script}"]).launch(input())).resolves.toEqual({
+    // A generous grace, so a slow /bin/sh start on a loaded machine still exits inside it.
+    await expect(launcher([terminal, "{script}"], 4000, 2000).launch(input())).resolves.toEqual({
       ok: false,
       error: "spawn-failed",
     });

@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import { classifyStderr, type StderrClass } from "@ccc/launchers";
-import type { CommandRunner } from "./command-runner.js";
+import {
+  type CommandRunner,
+  createDetachedStarter,
+  type DetachedStarter,
+  type DetachedStartOutcome,
+} from "./command-runner.js";
 
 /**
  * The launch process port (D-18, D-46, Shared Pattern 3): every application
@@ -41,9 +46,25 @@ export interface SpawnOutcome {
   readonly timedOut: boolean;
 }
 
+export interface DetachOptions {
+  /** How long to watch for a spawn error or an early exit before reporting `running`. */
+  readonly graceMs: number;
+}
+
+/** A detached start's result; see {@link DetachedStartOutcome}. */
+export type DetachOutcome = DetachedStartOutcome;
+
 export interface Spawner {
-  /** Runs `argv[0]` with `argv.slice(1)`. Never rejects. */
+  /** Runs `argv[0]` with `argv.slice(1)` to completion, under a deadline. Never rejects. */
   run(argv: readonly string[], opts: SpawnOptions): Promise<SpawnOutcome>;
+  /**
+   * Starts `argv[0]` detached (own process group, no stdio, unref'd) and
+   * reports how the grace period ended. There is deliberately no deadline
+   * and no abort signal: a terminal binary run directly is never killed by
+   * the launch cap (wave-4b review). Same fixed environment as `run`.
+   * Never rejects.
+   */
+  detach(argv: readonly string[], opts: DetachOptions): Promise<DetachOutcome>;
 }
 
 /** stderr beyond this is never needed to classify an `open(1)` failure. */
@@ -58,8 +79,16 @@ function spawnEnv(): Readonly<Record<string, string>> {
   return { PATH: "/usr/bin:/bin", HOME: homedir(), LC_ALL: "C" };
 }
 
-export function createCommandSpawner(runner: CommandRunner): Spawner {
+export function createCommandSpawner(
+  runner: CommandRunner,
+  starter: DetachedStarter = createDetachedStarter(),
+): Spawner {
   return {
+    detach(argv, opts) {
+      const [file, ...args] = argv;
+      if (file === undefined) return Promise.resolve({ kind: "not-started", errno: "EINVAL" });
+      return starter.start(file, args, { env: spawnEnv(), graceMs: opts.graceMs });
+    },
     async run(argv, opts) {
       const [file, ...args] = argv;
       if (file === undefined) {

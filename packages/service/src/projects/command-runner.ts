@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 
 /**
  * The service's process port (D-18, Shared Pattern 3): every child process
@@ -105,6 +105,82 @@ export function createExecFileCommandRunner(): CommandRunner {
             });
           },
         );
+      });
+    },
+  };
+}
+
+/**
+ * How a detached start ended the grace period:
+ * - `running`: still running when the grace passed; the child has been
+ *   `unref`'d and is never killed by this service;
+ * - `exited`: it exited within the grace (`exitCode` is `null` when a signal
+ *   ended it);
+ * - `not-started`: the spawn itself failed (`ENOENT`, `EACCES`, ...).
+ */
+export type DetachedStartOutcome =
+  | { readonly kind: "running" }
+  | { readonly kind: "exited"; readonly exitCode: number | null }
+  | { readonly kind: "not-started"; readonly errno: string };
+
+export interface DetachedStartOptions {
+  /** The child's whole environment. Callers build it from scratch. */
+  readonly env: Readonly<Record<string, string>>;
+  /** How long to watch for a spawn error or an early exit before handing off. */
+  readonly graceMs: number;
+}
+
+/**
+ * Starts a process the service hands off and then lets go of: a terminal
+ * binary run directly by a custom template (wave-4b review). It gets its own
+ * process group (`detached`), no stdio and no deadline, so neither the
+ * launch cap nor the service's own exit can kill it. Still no shell: `spawn`
+ * with an argv array.
+ */
+export interface DetachedStarter {
+  start(
+    file: string,
+    args: readonly string[],
+    options: DetachedStartOptions,
+  ): Promise<DetachedStartOutcome>;
+}
+
+function errnoOf(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : "UNKNOWN";
+}
+
+export function createDetachedStarter(): DetachedStarter {
+  return {
+    start(file, args, options) {
+      return new Promise((resolve) => {
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const settle = (outcome: DetachedStartOutcome): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(outcome);
+        };
+        let child: ChildProcess;
+        try {
+          child = spawn(file, [...args], {
+            detached: true,
+            stdio: "ignore",
+            env: { ...options.env },
+            windowsHide: true,
+          });
+        } catch (error: unknown) {
+          settle({ kind: "not-started", errno: errnoOf(error) });
+          return;
+        }
+        // Kept for the child's lifetime: a late 'error' must never be unhandled.
+        child.on("error", (error) => settle({ kind: "not-started", errno: errnoOf(error) }));
+        child.once("exit", (code) => settle({ kind: "exited", exitCode: code }));
+        timer = setTimeout(() => {
+          child.unref();
+          settle({ kind: "running" });
+        }, options.graceMs);
       });
     },
   };

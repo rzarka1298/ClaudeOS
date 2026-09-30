@@ -76,6 +76,9 @@ const executingSpawner: Spawner = {
     });
     return Promise.resolve({ exitCode: 0, errno: null, stderrClass: "none", timedOut: false });
   },
+  detach() {
+    throw new Error("the Terminal.app hand-off never detaches");
+  },
 };
 
 beforeEach(() => {
