@@ -50,7 +50,7 @@ import {
 /** The collector setting that holds the transcript-analysis toggle (D-03, D-47). Default off. */
 export const TRANSCRIPT_ANALYSIS_SETTING = "transcript_analysis_enabled";
 
-/** The periodic transcript sweep (D-40); `CCC_TRANSCRIPT_SWEEP_MS` overrides it. */
+/** The periodic transcript sweep (D-40) and usage refresh (Codex 4); `CCC_TRANSCRIPT_SWEEP_MS` overrides it. */
 export const DEFAULT_TRANSCRIPT_SWEEP_MS = 300_000;
 
 /** The integration-status refresh (PR-24); `CCC_INTEGRATION_REFRESH_MS` overrides it. */
@@ -322,12 +322,13 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
    * after a cancel, say) runs once more when it ends. usage.updated goes
    * out once a batch completes, never per chunk.
    */
-  async function runSweep(): Promise<void> {
+  async function runSweep(): Promise<boolean> {
     if (sweeping) {
       sweepAgain = true;
-      return;
+      return false;
     }
     sweeping = true;
+    let published = false;
     try {
       do {
         sweepAgain = false;
@@ -337,12 +338,25 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
         if (!outcome.completed && !outcome.held) continue;
         firstScanPending = false;
         publishUsage();
+        published = true;
       } while (sweepAgain);
     } catch (err: unknown) {
       logger.warn({ err }, "transcript sweep failed");
     } finally {
       sweeping = false;
     }
+    return published;
+  }
+
+  /**
+   * The periodic tick (Codex 4): a sweep when analysis is on, and a fresh
+   * usage.updated either way, so freshness and the Today range recompute
+   * (across midnight too) even when no transcript is ever read.
+   */
+  async function periodicRefresh(): Promise<void> {
+    if (stopped) return;
+    const published = await runSweep();
+    if (!published && !stopped) publishUsage();
   }
 
   /** The scan a Stop or SessionEnd schedules for that Run's own contained transcript (D-40). */
@@ -446,7 +460,7 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
       }
       publishUsage();
       publishIntegrationIfChanged();
-      if (enabled && !stopped) track(runSweep());
+      if (enabled && !stopped) track(runSweep().then(() => undefined));
       return { enabled };
     },
     deleteUsage() {
@@ -458,7 +472,7 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
       firstScanPending = rebuild;
       publishUsage();
       publishIntegrationIfChanged();
-      if (rebuild) track(runSweep());
+      if (rebuild) track(runSweep().then(() => undefined));
     },
     sessionUsage(runId) {
       const run = getSessionRun(db, runId);
@@ -469,9 +483,9 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
       if (stopped || sweepTimer !== undefined) return;
       const sweepMs = envMs(deps.env.CCC_TRANSCRIPT_SWEEP_MS, DEFAULT_TRANSCRIPT_SWEEP_MS);
       setImmediate(() => {
-        if (!stopped) track(runSweep());
+        if (!stopped) track(runSweep().then(() => undefined));
       });
-      sweepTimer = setInterval(() => track(runSweep()), sweepMs);
+      sweepTimer = setInterval(() => track(periodicRefresh()), sweepMs);
       sweepTimer.unref();
       const refreshMs = envMs(deps.env.CCC_INTEGRATION_REFRESH_MS, DEFAULT_INTEGRATION_REFRESH_MS);
       track(refreshInBackground());

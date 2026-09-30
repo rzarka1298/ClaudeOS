@@ -813,3 +813,61 @@ describe("Codex 1: a directory that cannot be enumerated holds coverage back", (
     expect(empty).toMatchObject({ completed: true, files: 0, failedDirs: 0 });
   });
 });
+
+describe("Codex 4: usage summaries refresh periodically with transcript analysis off", () => {
+  it("publishes usage.updated on the periodic tick and rolls Today over midnight without any scan", async () => {
+    let clock = NOW;
+    const bus = createEventBus();
+    const pipeline = createClaudePipeline({
+      db: store.db,
+      bus,
+      logger: silent,
+      now: () => clock,
+      mintRunId: newRunId,
+      facts: {
+        factsFor: async () => ({
+          pidStartedAt: null,
+          launchSource: null,
+          projectId: null,
+          worktreeRoot: null,
+          transcriptPath: null,
+        }),
+      },
+    });
+    const io = spies();
+    const usage = startUsageServices({
+      db: store.db,
+      bus,
+      pipeline,
+      poller: { setStatusLineSink() {}, dropCount: () => 0 },
+      logger: silent,
+      env: { CCC_TRANSCRIPT_SWEEP_MS: "10", CCC_INTEGRATION_REFRESH_MS: "600000" },
+      now: () => clock,
+      timeZone: TZ,
+      claudeProjectsRoot: root,
+      claudeConfigDir: join(dir, "claude"),
+      runtimeDir: dir,
+      transcriptIo: io,
+      settingsFacts: () => ({ statusLine: "not-installed", cleanupPeriodDays: 30 }),
+    });
+    const published = () => {
+      const replay = bus.buffer.since(0);
+      return (replay.mode === "replay" ? replay.events : []).filter(
+        (event) => event.type === "usage.updated",
+      );
+    };
+    usage.start();
+    // Past local midnight in the summary's zone.
+    clock = new Date("2026-09-21T05:00:00.000Z");
+    await vi.waitFor(() => {
+      const last = published().at(-1);
+      expect(last).toBeDefined();
+      expect(last?.payload).toEqual(usage.summary());
+    });
+    await usage.stop();
+    await pipeline.stop();
+    // Analysis off: not one transcript was listed, statted or read (USAGE-07).
+    expect(io.listFiles).not.toHaveBeenCalled();
+    expect(io.stat).not.toHaveBeenCalled();
+  });
+});
