@@ -491,6 +491,8 @@ describe("review", () => {
       expect.arrayContaining(["-c", 'model_reasoning_effort="high"', "--json"]),
     );
     expect(call?.argv).toContain("--base");
+    // Saved to Codex's own history so the owner can open it with `codex resume`.
+    expect(call?.argv).not.toContain("--ephemeral");
     expect(call?.cwd).toBe(h.root);
 
     const out = JSON.parse(r.stdout.trim().split("\n").pop() ?? "{}");
@@ -499,6 +501,7 @@ describe("review", () => {
     const report = JSON.parse(readFileSync(join(h.root, out.report), "utf8"));
     expect(report.verdict).toBe("needs-attention");
     expect(report.advisory).toBe(true);
+    expect(report).toHaveProperty("sessionId");
     expect(report.review.findings).toHaveLength(1);
     const md = readFileSync(join(h.root, out.report.replace(/\.json$/, ".md")), "utf8");
     expect(md).toContain("Off-by-one");

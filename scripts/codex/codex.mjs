@@ -763,6 +763,11 @@ function reviewMarkdown(report) {
     `- Worktree: \`${report.worktree}\``,
     `- Range: \`${report.base.slice(0, 12)}..${(report.head ?? "").slice(0, 12)}\``,
     `- Model: ${report.model} (${report.effort})`,
+    ...(report.sessionId
+      ? [
+          `- Codex session: \`${report.sessionId}\` (open with \`codex resume ${report.sessionId}\`)`,
+        ]
+      : []),
     `- Status: ${report.status}${report.verdict ? ` · Verdict: **${report.verdict}**` : ""}`,
     "",
   ];
@@ -822,7 +827,6 @@ async function cmdReview({ positional, opts, extras }) {
     "--base",
     base,
     "--json",
-    "--ephemeral",
     "--output-schema",
     join(SCHEMAS, "review-output.schema.json"),
     "-o",
@@ -867,6 +871,8 @@ async function cmdReview({ positional, opts, extras }) {
     head,
     model: role.model,
     effort: role.effort,
+    // Codex keeps the review in its own history; open it with `codex resume <sessionId>`.
+    sessionId: res.sessionId ?? null,
     review: status === "ok" ? parsed : null,
     text: status === "unstructured" || format === "native-text" ? text : null,
     finishedAt: new Date().toISOString(),
