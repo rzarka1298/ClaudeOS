@@ -4,6 +4,7 @@ import { createSecurityCliSecretStore } from "@ccc/keychain";
 import { applyMigrations, openStore } from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
 import { startClaudeServices } from "./claude/services.js";
+import { startUsageServices } from "./claude/usage-services.js";
 import { createEventBus } from "./events/event-bus.js";
 import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
 import { logger } from "./logging.js";
@@ -70,6 +71,20 @@ async function main(): Promise<void> {
     logger,
     env: process.env,
   });
+  // Usage (05-12): status-line capacity and cost, the opt-in transcript
+  // scanner and integration status. It hooks the pipeline and the poller
+  // only through their listener APIs, and its background work (the startup
+  // transcript sweep) begins only once the socket is open, never blocking
+  // startup (D-55).
+  const usageServices = startUsageServices({
+    db: store.db,
+    bus: eventBus,
+    pipeline: claudeServices.pipeline,
+    poller: claudeServices.poller,
+    logger,
+    env: process.env,
+    now: () => new Date(),
+  });
 
   // The managed vault root is the only approved path root this phase
   // introduces, and the allowlist is in-memory — so it has to be rebuilt
@@ -96,11 +111,12 @@ async function main(): Promise<void> {
     store,
     getSecret: () => installSecret,
     eventBus,
-    claude: claudeServices.routeDeps,
+    claude: { ...claudeServices.routeDeps, usage: usageServices },
   });
   const server = await startSocketServer({ socketPath, requestListener });
 
   logger.info({ socketPath }, "listening");
+  usageServices.start();
 
   // The store closes only after the Claude services have drained (the
   // pipeline's queue, its pending coalesced writes, the in-flight spool
@@ -111,9 +127,14 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(heartbeatTimer);
-    const claudeStopped = claudeServices.stop().catch((err: unknown) => {
-      logger.error({ err }, "shutdown: claude services did not stop cleanly");
-    });
+    // Usage first: its scans read the store and its listeners hang off the
+    // pipeline and the poller, which stop next.
+    const claudeStopped = usageServices
+      .stop()
+      .then(() => claudeServices.stop())
+      .catch((err: unknown) => {
+        logger.error({ err }, "shutdown: claude services did not stop cleanly");
+      });
     server.close(() => {
       void claudeStopped.then(() => {
         store.close();
