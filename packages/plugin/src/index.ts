@@ -53,10 +53,10 @@ export {
   serviceHealthStateFor,
   serviceHealthWidget,
 } from "./widgets/service-health.js";
+export { claudeIntegration, sessionsById } from "./widgets/session-signals.js";
+export { usageSummary } from "./widgets/usage-signals.js";
 export {
   permissionRequiredState,
   UNAVAILABLE_STATE,
   widgetStateFor,
 } from "./widgets/widget-data.js";
-export { claudeIntegration, sessionsById } from "./widgets/session-signals.js";
-export { usageSummary } from "./widgets/usage-signals.js";
