@@ -10,6 +10,7 @@ import {
   classifyHookRecord,
   isTerminalRunState,
   type KnownHookEvent,
+  type LaunchSource,
   type RunId,
   type SessionRun,
   type SessionView,
@@ -34,9 +35,28 @@ import type { EventBus } from "../events/event-bus.js";
  * the `session.upserted` publish, the log line).
  */
 
+/**
+ * The slow, metadata-only facts behind a hook record (wave 4): the
+ * SessionStart launch source and project attribution. Null means unknown
+ * and never clears a known value.
+ */
+export interface DeferredSessionFacts {
+  readonly launchSource: LaunchSource | null;
+  readonly projectId: string | null;
+  readonly worktreeRoot: string | null;
+}
+
 /** Resolves the process and project facts behind one known hook record (05-08 Task 2). */
 export interface SessionFactsProvider {
+  /** The facts the reducer needs now; awaited on the serial ingest queue, so kept cheap. */
   factsFor(record: KnownHookRecord): Promise<SessionFacts>;
+  /**
+   * Facts that need several process spawns (launch-source ancestry, git
+   * attribution). The pipeline starts this after the record is applied and
+   * never awaits it on the ingest queue; the result is written as a
+   * metadata-only follow-up (revision + 1). Null when nothing is pending.
+   */
+  deferredFactsFor?(record: KnownHookRecord): Promise<DeferredSessionFacts> | null;
 }
 
 export interface ClaudePipelineDeps {
@@ -173,6 +193,8 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
   const flushTimers = new Map<RunId, () => void>();
   /** When each Run was last written and published, by `deps.now()`. */
   const lastWriteAt = new Map<RunId, number>();
+  /** Deferred-facts follow-ups still resolving; stop() waits for them. */
+  const followUps = new Set<Promise<void>>();
   let sequence = 0;
   let lastEventAt: string | null = null;
   let unknownEventCount = 0;
@@ -342,6 +364,57 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
     }
   }
 
+  /** The Run a record was applied to, as the reducer found it (identity, else the session's latest). */
+  function runOfRecord(record: KnownHookRecord): SessionRun | null {
+    const raw = record.env?.CLAUDE_PID;
+    const pid = raw === undefined ? null : Number.parseInt(raw, 10);
+    if (pid !== null && Number.isFinite(pid)) return index.byIdentity(record.session_id, pid);
+    return index.byIdentity(record.session_id, null) ?? index.latestBySession(record.session_id);
+  }
+
+  /** Writes deferred metadata onto the record's Run (null never clears a known value). */
+  function applyFollowUp(record: KnownHookRecord, facts: DeferredSessionFacts): void {
+    const run = runOfRecord(record);
+    if (run === null) return;
+    const next = {
+      launchSource: facts.launchSource ?? run.launchSource,
+      projectId: facts.projectId ?? run.projectId,
+      worktreeRoot: facts.worktreeRoot ?? run.worktreeRoot,
+    };
+    if (
+      next.launchSource === run.launchSource &&
+      next.projectId === run.projectId &&
+      next.worktreeRoot === run.worktreeRoot
+    ) {
+      return;
+    }
+    writeAndPublish([{ ...run, ...next, revision: run.revision + 1 }]);
+  }
+
+  /**
+   * Starts the record's deferred facts OFF the queue (wave 4 review): the
+   * state change is already written and published, so the 10 s state target
+   * never waits on process spawns; the metadata follows when it resolves.
+   */
+  function startFollowUp(record: KnownHookRecord): void {
+    if (stopped) return;
+    let pending: Promise<DeferredSessionFacts> | null;
+    try {
+      pending = deps.facts.deferredFactsFor?.(record) ?? null;
+    } catch (err: unknown) {
+      logger.warn({ err }, "deferred session facts failed");
+      return;
+    }
+    if (pending === null) return;
+    const work = pending
+      .then((facts) => enqueue(() => applyFollowUp(record, facts)))
+      .catch((err: unknown) => {
+        logger.warn({ err }, "deferred session facts failed");
+      });
+    followUps.add(work);
+    void work.finally(() => followUps.delete(work));
+  }
+
   async function ingestNow(input: unknown, via: "socket" | "spool"): Promise<IngestOutcome> {
     sequence += 1;
     const classified = classifyHookRecord(input);
@@ -379,6 +452,7 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
         applyNow({ kind: "hook", record, facts });
         rememberApplied(eventId);
         lastEventAt = deps.now().toISOString();
+        startFollowUp(record);
         return "applied";
       }
     }
@@ -435,6 +509,10 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
       stopped = true;
       for (const cancel of flushTimers.values()) cancel();
       flushTimers.clear();
+      // Follow-ups started before stop still write through the queue; wait
+      // for them (none start after stop), so none runs against a closed store.
+      await enqueue(() => undefined);
+      while (followUps.size > 0) await Promise.allSettled([...followUps]);
       // Queued behind every in-flight ingest and apply, so their writes land
       // before this final flush and before the caller closes the store.
       await enqueue(() => writeAndPublish([...pending.values()]));

@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import type { SessionFacts } from "@ccc/collectors";
 import type { KnownHookEvent, LaunchSource } from "@ccc/domain";
 import type { Logger } from "pino";
-import type { SessionFactsProvider } from "./pipeline.js";
+import type { DeferredSessionFacts, SessionFactsProvider } from "./pipeline.js";
 import { assertTranscriptPath, TranscriptPathRefusedError } from "./transcript-path.js";
 
 export type { SessionFactsProvider } from "./pipeline.js";
@@ -253,19 +253,25 @@ interface CachedAttribution {
 }
 
 /**
- * The facts the reducer needs beside a hook record (D-19, PR-28). At
- * SessionStart it reads the pid's `lstart` (the PID-reuse identity); on any
- * record it keeps `transcript_path` only when it resolves under the Claude
- * projects root. `launchSource` is `dashboard` only when the hook forwarded
- * `CCC_LAUNCH_SOURCE=dashboard`; at SessionStart the injected classifier
- * decides terminal or external from the Claude process's tty and ancestry
- * (PR-03). Other records report no launch source, which keeps the Run's.
+ * The facts the reducer needs beside a hook record (D-19, PR-28), split so
+ * the serial ingest queue only ever waits on ONE spawn (wave 4 review):
  *
- * Project attribution (05-11) runs for every SessionStart, and for any other
- * record whose (session, cwd) pair this provider has not attributed yet — a
- * session whose hooks were installed mid-session still gets its project
- * once, without a realpath and git round-trip on every activity event. An
- * attribution failure reads as unknown (null), never as a failed ingest.
+ * `factsFor` (awaited on the queue): at SessionStart the pid's `lstart`
+ * (the PID-reuse identity the reducer compares); on any record the
+ * `transcript_path` when it resolves under the Claude projects root;
+ * `dashboard` when the hook forwarded `CCC_LAUNCH_SOURCE=dashboard`; and a
+ * project already attributed for this (session, cwd) under the current
+ * owner override. Everything else reads null (unknown, which keeps the
+ * Run's value) — never a guess.
+ *
+ * `deferredFactsFor` (resolved OFF the queue; the pipeline writes the result
+ * as a metadata-only follow-up at revision + 1): the SessionStart launch
+ * source from the Claude process's tty and ancestry (PR-03, up to 13 `ps`
+ * spawns), and project attribution (05-11: realpath and read-only git) for
+ * every SessionStart and for any other record whose (session, cwd) pair is
+ * not attributed under the current override — a session whose hooks were
+ * installed mid-session still gets its project once. A failure reads as
+ * unknown (null), never as a failed ingest.
  */
 export function createSessionFactsProvider(
   options: SessionFactsProviderOptions,
@@ -273,58 +279,74 @@ export function createSessionFactsProvider(
   const { processFacts, claudeProjectsRoot, logger } = options;
   /** Insertion-ordered: the oldest pair is evicted first once over capacity. */
   const attributed = new Map<string, CachedAttribution>();
+  /** Attributions in flight, so a burst of records for one pair spawns once. */
+  const inFlight = new Map<string, Promise<ProjectFacts>>();
 
-  async function projectFacts(
-    record: Parameters<SessionFactsProvider["factsFor"]>[0],
-  ): Promise<ProjectFacts> {
-    const attribute = options.attribute;
-    if (attribute === undefined || record.cwd === undefined) return NO_PROJECT;
-    const key = `${record.session_id}\u0000${record.cwd}`;
+  type HookRecord = Parameters<SessionFactsProvider["factsFor"]>[0];
+
+  function cacheKey(record: HookRecord): string | null {
+    if (options.attribute === undefined || record.cwd === undefined) return null;
+    return `${record.session_id}\u0000${record.cwd}`;
+  }
+
+  /** The cached project for the record's pair, when computed under the current override. */
+  function cachedProject(record: HookRecord): ProjectFacts | null {
+    const key = cacheKey(record);
+    if (key === null) return null;
     const override = options.getOverride?.(record.session_id) ?? null;
     const known = attributed.get(key);
     // The override is consulted before the cache: an entry computed under a
     // different override is stale (the owner re-associated the session).
-    if (
-      known !== undefined &&
-      known.override === override &&
-      record.hook_event_name !== START_EVENT
-    ) {
-      return known.facts;
-    }
-    let facts: ProjectFacts;
-    try {
-      const result = await attribute({ cwd: record.cwd, claudeSessionId: record.session_id });
-      facts = { projectId: result.projectId, worktreeRoot: result.worktreeRoot };
-    } catch (err: unknown) {
-      logger.warn({ code: (err as { code?: unknown }).code }, "session attribution failed");
-      return NO_PROJECT;
-    }
-    attributed.delete(key);
-    attributed.set(key, { facts, override });
-    if (attributed.size > ATTRIBUTION_CACHE_CAPACITY) {
-      const oldest = attributed.keys().next().value;
-      if (oldest !== undefined) attributed.delete(oldest);
-    }
-    return facts;
+    return known !== undefined && known.override === override ? known.facts : null;
+  }
+
+  function attributeOffQueue(record: HookRecord, key: string): Promise<ProjectFacts> {
+    const running = inFlight.get(key);
+    if (running !== undefined) return running;
+    const attribute = options.attribute;
+    if (attribute === undefined) return Promise.resolve(NO_PROJECT);
+    const override = options.getOverride?.(record.session_id) ?? null;
+    const work = (async (): Promise<ProjectFacts> => {
+      try {
+        const result = await attribute({
+          cwd: record.cwd ?? null,
+          claudeSessionId: record.session_id,
+        });
+        const facts = { projectId: result.projectId, worktreeRoot: result.worktreeRoot };
+        attributed.delete(key);
+        attributed.set(key, { facts, override });
+        if (attributed.size > ATTRIBUTION_CACHE_CAPACITY) {
+          const oldest = attributed.keys().next().value;
+          if (oldest !== undefined) attributed.delete(oldest);
+        }
+        return facts;
+      } catch (err: unknown) {
+        logger.warn({ code: (err as { code?: unknown }).code }, "session attribution failed");
+        return NO_PROJECT;
+      } finally {
+        inFlight.delete(key);
+      }
+    })();
+    inFlight.set(key, work);
+    return work;
+  }
+
+  function pidOf(record: HookRecord): number | null {
+    const rawPid = record.env?.CLAUDE_PID;
+    const parsedPid = rawPid === undefined ? Number.NaN : Number.parseInt(rawPid, 10);
+    return Number.isFinite(parsedPid) ? parsedPid : null;
+  }
+
+  function isDashboard(record: HookRecord): boolean {
+    return record.env?.CCC_LAUNCH_SOURCE === "dashboard";
   }
 
   return {
     async factsFor(record) {
       let pidStartedAt: string | null = null;
-      let launchSource: LaunchSource | null =
-        record.env?.CCC_LAUNCH_SOURCE === "dashboard" ? "dashboard" : null;
-      const rawPid = record.env?.CLAUDE_PID;
-      const parsedPid = rawPid === undefined ? Number.NaN : Number.parseInt(rawPid, 10);
-      const pid = Number.isFinite(parsedPid) ? parsedPid : null;
+      const pid = pidOf(record);
       if (record.hook_event_name === START_EVENT && pid !== null) {
         pidStartedAt = (await processFacts.readStartTimes([pid])).get(pid) ?? null;
-      }
-      if (record.hook_event_name === START_EVENT && options.classifyLaunchSource !== undefined) {
-        try {
-          launchSource = await options.classifyLaunchSource({ env: record.env, pid });
-        } catch {
-          // Not reported: never a guess (PR-03).
-        }
       }
 
       let transcriptPath: string | null = null;
@@ -338,15 +360,35 @@ export function createSessionFactsProvider(
         }
       }
 
-      const project = await projectFacts(record);
+      const project = cachedProject(record) ?? NO_PROJECT;
       const facts: SessionFacts = {
         pidStartedAt,
-        launchSource,
+        launchSource: isDashboard(record) ? "dashboard" : null,
         projectId: project.projectId,
         worktreeRoot: project.worktreeRoot,
         transcriptPath,
       };
       return facts;
+    },
+
+    deferredFactsFor(record) {
+      const isStart = record.hook_event_name === START_EVENT;
+      const classify = options.classifyLaunchSource;
+      const needsLaunch = isStart && classify !== undefined && !isDashboard(record);
+      const key = cacheKey(record);
+      const needsProject = key !== null && (isStart || cachedProject(record) === null);
+      if (!needsLaunch && !needsProject) return null;
+      return (async (): Promise<DeferredSessionFacts> => {
+        const [launchSource, project] = await Promise.all([
+          needsLaunch
+            ? classify({ env: record.env, pid: pidOf(record) }).catch(() => null) // Not reported: never a guess (PR-03).
+            : Promise.resolve(null),
+          needsProject && key !== null
+            ? attributeOffQueue(record, key)
+            : Promise.resolve(NO_PROJECT),
+        ]);
+        return { launchSource, projectId: project.projectId, worktreeRoot: project.worktreeRoot };
+      })();
     },
   };
 }

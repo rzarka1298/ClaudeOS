@@ -16,8 +16,9 @@ import {
   openStore,
 } from "@ccc/operational-store";
 import pino from "pino";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEventBus, type EventBus } from "../events/event-bus.js";
+import { classifyLaunchSource } from "./launch-source.js";
 import {
   type ClaudePipeline,
   type ClaudePipelineDeps,
@@ -411,6 +412,89 @@ describe("facts at SessionStart (Test 5, D-19, PR-28)", () => {
       "socket",
     );
     expect(upserted().at(-1)?.launchSource).toBeNull();
+  });
+});
+
+describe("slow SessionStart facts run off the ingest queue (wave 4)", () => {
+  it("applies the Run's state first, never waits on launch-source or attribution spawns, then writes them at revision + 1", async () => {
+    store.db
+      .prepare(
+        "INSERT INTO projects (project_id, path, workspace_id, display_name, registered_at) VALUES (?, ?, NULL, ?, ?)",
+      )
+      .run("proj-slow", join(dir, "code"), "Slow", new Date(T0).toISOString());
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const processFacts: ProcessFacts = {
+      isAlive: () => true,
+      readStartTimes: async (pids) => new Map(pids.map((pid) => [pid, LSTART])),
+      readTty: async () => "ttys001",
+      readAncestry: async (pid) => {
+        await gate;
+        return [{ pid, ppid: 1, comm: "/bin/zsh" }];
+      },
+    };
+    const facts = createSessionFactsProvider({
+      processFacts,
+      claudeProjectsRoot: join(dir, "claude", "projects"),
+      logger: pino({ level: "silent" }),
+      attribute: async () => {
+        await gate;
+        return { projectId: "proj-slow", worktreeRoot: join(dir, "code") };
+      },
+      classifyLaunchSource: (input) => classifyLaunchSource(input, processFacts),
+    });
+    const pipeline = pipelineWith({ facts });
+
+    const start = record("SessionStart", { source: "startup", cwd: join(dir, "code") });
+    expect(await pipeline.ingest(start, "socket")).toBe("applied");
+    // The next record is not held behind the gated spawns either.
+    expect(await pipeline.ingest(record("UserPromptSubmit"), "socket")).toBe("applied");
+    const before = upserted().at(-1);
+    expect(before?.state).toBe("running");
+    expect(before?.launchSource).toBeNull(); // Not reported yet: never a guess
+    expect(before?.projectId).toBeNull();
+    const runId = before?.runId as RunId;
+    const revisionBefore = getSessionRun(store.db, runId)?.revision ?? 0;
+
+    release();
+    await vi.waitFor(() => {
+      const run = getSessionRun(store.db, runId);
+      expect(run?.launchSource).toBe("terminal");
+      expect(run?.projectId).toBe("proj-slow");
+    });
+    const after = getSessionRun(store.db, runId);
+    expect(after?.state).toBe("running");
+    expect(after?.revision).toBe(revisionBefore + 1);
+    expect(upserted().at(-1)).toMatchObject({ launchSource: "terminal", projectId: "proj-slow" });
+    await pipeline.stop();
+  });
+
+  it("stop() waits for a follow-up still resolving, so nothing writes after the store may close", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pipeline = pipelineWith({
+      facts: {
+        factsFor: NULL_FACTS.factsFor,
+        deferredFactsFor: async () => {
+          await gate;
+          return { launchSource: "external", projectId: null, worktreeRoot: null };
+        },
+      },
+    });
+    await pipeline.ingest(record("SessionStart", { source: "startup" }), "socket");
+    let stopped = false;
+    const stopping = pipeline.stop().then(() => {
+      stopped = true;
+    });
+    await drain();
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(upserted().at(-1)?.launchSource).toBe("external");
   });
 });
 

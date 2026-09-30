@@ -272,10 +272,16 @@ describe("the session facts provider carries the attribution (05-08 hand-off, SE
         return { projectId: "alpha", worktreeRoot: "/w", reason: "project-root" };
       },
     });
-    const start = await facts.factsFor(recordOf("SessionStart", "/c"));
-    const later = await facts.factsFor(recordOf("UserPromptSubmit", "/c"));
-    expect(start).toMatchObject({ projectId: "alpha", worktreeRoot: "/w" });
+    // Attribution runs off the ingest queue (wave 4): factsFor stays cheap and
+    // the deferred facts carry the project for the pipeline's follow-up.
+    const startRecord = recordOf("SessionStart", "/c");
+    expect(await facts.factsFor(startRecord)).toMatchObject({ projectId: null });
+    const deferred = await facts.deferredFactsFor?.(startRecord);
+    expect(deferred).toMatchObject({ projectId: "alpha", worktreeRoot: "/w" });
+    const laterRecord = recordOf("UserPromptSubmit", "/c");
+    const later = await facts.factsFor(laterRecord);
     expect(later).toMatchObject({ projectId: "alpha", worktreeRoot: "/w" });
+    expect(facts.deferredFactsFor?.(laterRecord)).toBeNull();
     expect(calls).toBe(1);
   });
 
@@ -295,12 +301,16 @@ describe("the session facts provider carries the attribution (05-08 hand-off, SE
           : { projectId: chosen, worktreeRoot: "/w", reason: "override" };
       },
     });
-    await facts.factsFor(recordOf("SessionStart", "/c"));
+    await facts.deferredFactsFor?.(recordOf("SessionStart", "/c"));
     override = "beta"; // the owner associates the session with another project
-    const later = await facts.factsFor(recordOf("UserPromptSubmit", "/c"));
-    expect(later).toMatchObject({ projectId: "beta" });
-    // Cached again under the new override: no attribution on the next record.
-    await facts.factsFor(recordOf("Stop", "/c"));
+    const laterRecord = recordOf("UserPromptSubmit", "/c");
+    // The cached "alpha" was computed under no override, so it is not served.
+    expect(await facts.factsFor(laterRecord)).toMatchObject({ projectId: null });
+    expect(await facts.deferredFactsFor?.(laterRecord)).toMatchObject({ projectId: "beta" });
+    // Cached again under the new override: served at once, no attribution.
+    const stopRecord = recordOf("Stop", "/c");
+    expect(await facts.factsFor(stopRecord)).toMatchObject({ projectId: "beta" });
+    expect(facts.deferredFactsFor?.(stopRecord)).toBeNull();
     expect(calls).toBe(2);
   });
 
@@ -314,6 +324,10 @@ describe("the session facts provider carries the attribution (05-08 hand-off, SE
       },
     });
     await expect(facts.factsFor(recordOf("SessionStart", "/c"))).resolves.toMatchObject({
+      projectId: null,
+      worktreeRoot: null,
+    });
+    await expect(facts.deferredFactsFor?.(recordOf("SessionStart", "/c"))).resolves.toMatchObject({
       projectId: null,
       worktreeRoot: null,
     });
