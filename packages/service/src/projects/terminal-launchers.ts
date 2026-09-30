@@ -1,5 +1,5 @@
 import { constants, unlinkSync } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import type {
   LaunchResult,
   TerminalChoice,
@@ -77,9 +77,21 @@ function neverHandedOff(outcome: SpawnOutcome): boolean {
   );
 }
 
-/** `access(X_OK)` as a boolean, asynchronously, so a stalled volume never blocks the event loop. */
+/**
+ * A regular file (after following symlinks) that passes `access(X_OK)`, as a
+ * boolean, asynchronously so a stalled volume never blocks the event loop.
+ * `X_OK` alone is not enough: every searchable directory passes it, and an
+ * `.app` bundle directory is not something `execve` can run.
+ *
+ * Check-then-spawn race (accepted, ADR-0024 Residual risks): the file can be
+ * replaced or removed between this check and the spawn. A removal surfaces
+ * as a spawn errno (`spawn-failed`, script removed); a same-user swap is the
+ * same-user threat ADR-0001 accepts.
+ */
 export async function isExecutableFile(path: string): Promise<boolean> {
   try {
+    const info = await stat(path);
+    if (!info.isFile()) return false;
     await access(path, constants.X_OK);
     return true;
   } catch {
