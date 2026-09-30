@@ -1,4 +1,5 @@
 import type { AuthenticatedSocketApiClient, EventClient } from "@ccc/service-api-client";
+import { getSessionUsage } from "@ccc/service-api-client";
 import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
 import { attachEventClient } from "../connection-state.js";
@@ -69,6 +70,10 @@ export class CommandCenterView extends ItemView {
         notify: (message: string) => {
           new Notice(message);
         },
+        // Built here, from the view's own authenticated client — never
+        // constructed inside `agent-runs-detail.tsx` (05-13 acceptance
+        // criteria: no `@ccc/service-api-client` import there).
+        loadSessionUsage: (runId: string) => getSessionUsage(this.host.client, runId),
       }),
       this.contentEl,
     );

@@ -1,3 +1,4 @@
+import type { SessionUsage } from "@ccc/domain/usage.js";
 import type { ReadonlySignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useRef, useState } from "preact/hooks";
@@ -28,6 +29,7 @@ interface DestinationViewProps {
   readonly now: number;
   readonly onQuickAction: (descriptor: QuickActionDescriptor) => void;
   readonly onNavigate: (id: DestinationId, selection?: { readonly runId: string }) => void;
+  readonly loadSessionUsage: ((runId: string) => Promise<SessionUsage>) | undefined;
 }
 
 /**
@@ -51,7 +53,9 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
       onNavigate={onNavigate}
     />
   ),
-  "agent-runs": ({ now, onQuickAction }) => <AgentRuns now={now} onQuickAction={onQuickAction} />,
+  "agent-runs": ({ now, onQuickAction, loadSessionUsage }) => (
+    <AgentRuns now={now} onQuickAction={onQuickAction} loadSessionUsage={loadSessionUsage} />
+  ),
 };
 
 export interface ShellProps {
@@ -71,6 +75,13 @@ export interface ShellProps {
    * `obsidian` and stays renderable anywhere (C-11).
    */
   notify?: (message: string) => void;
+  /**
+   * Loads one Run's own token activity and cost for the Agent runs detail
+   * pane (05-07's `getSessionUsage`, built from the view's authenticated
+   * client). Absent means the pane's per-session usage section stays empty
+   * — never a constructed client living inside `agent-runs-detail.tsx`.
+   */
+  loadSessionUsage?: (runId: string) => Promise<SessionUsage>;
 }
 
 function noNotify(_message: string): void {}
@@ -105,6 +116,7 @@ export function Shell({
   onDestinationChange,
   stateFor = widgetStateFor,
   notify = noNotify,
+  loadSessionUsage,
 }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
   const tabRefs = useRef<Partial<Record<DestinationId, HTMLButtonElement>>>({});
@@ -230,6 +242,7 @@ export function Shell({
           now: nowTick.value,
           onQuickAction: handleQuickAction,
           onNavigate: focusDestination,
+          loadSessionUsage,
         }) ?? <p>{active.description}</p>}
       </div>
     </div>

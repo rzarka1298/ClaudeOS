@@ -6,9 +6,9 @@ import {
   NOT_REPORTED,
   RUN_STATE_DISPLAY,
   type SessionView,
-  STALE_RUN_EXPLANATION,
   sessionDisplayName,
 } from "@ccc/domain/session.js";
+import type { SessionUsage } from "@ccc/domain/usage.js";
 import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
@@ -22,7 +22,10 @@ import { resolveCardPresentation } from "../widgets/presentation.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 import { activeSessionsState, sessionsById } from "../widgets/session-signals.js";
 import { formatMonthDay, formatTimeOfDay } from "../widgets/usage-format.js";
+import { usageSummary } from "../widgets/usage-signals.js";
+import { DetailPane } from "./agent-runs-detail.js";
 import { groupSessions, RECENT_PAGE_SIZE, selectedRunId } from "./agent-runs-state.js";
+import { AgentRunsUsage } from "./agent-runs-usage.js";
 
 /**
  * The Agent runs destination (UI-SPEC S3, D-52). Replaces the placeholder
@@ -217,41 +220,14 @@ function SessionsTable({
 }
 
 /**
- * Task 1's detail-pane slot (UI-SPEC S3 "Detail pane" heading/state/stale
- * explanation only). Task 2 replaces this with the full `DetailPane`
- * (controls, fields, per-session usage) from `agent-runs-detail.tsx`; the
- * focus/selection mechanics built here (the heading ref, `tabIndex={-1}`)
- * carry over unchanged.
+ * The empty detail-pane prompt (UI-SPEC S3 "Detail pane"). A selected
+ * session renders the real {@link DetailPane} from `agent-runs-detail.tsx`
+ * instead (controls, fields, per-session usage).
  */
-function DetailPaneSlot({
-  session,
-  headingRef,
-}: {
-  readonly session: SessionView | null;
-  readonly headingRef: { current: HTMLHeadingElement | null };
-}): VNode {
-  if (session === null) {
-    return (
-      <div className="ccc-detail-pane">
-        <p className="ccc-state-body">Select a session to see its details and controls.</p>
-      </div>
-    );
-  }
-  const display = RUN_STATE_DISPLAY[session.state];
+function NoSelectionPrompt(): VNode {
   return (
     <div className="ccc-detail-pane">
-      <h3
-        ref={(el) => {
-          headingRef.current = el;
-        }}
-        tabIndex={-1}
-      >
-        {sessionDisplayName(session)}
-      </h3>
-      <p className="ccc-state-body">
-        {display.glyph} {display.label}
-      </p>
-      {session.state === "stale" && <p className="ccc-list-meta">{STALE_RUN_EXPLANATION}</p>}
+      <p className="ccc-state-body">Select a session to see its details and controls.</p>
     </div>
   );
 }
@@ -332,9 +308,13 @@ function Banner({
 export interface AgentRunsProps {
   readonly now: number;
   readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
+  /** Built from the authenticated client and 05-07's `getSessionUsage`
+   * (`command-center-view.ts`). Absent in tests that don't exercise
+   * per-session usage. */
+  readonly loadSessionUsage?: ((runId: string) => Promise<SessionUsage>) | undefined;
 }
 
-export function AgentRuns({ now, onQuickAction }: AgentRunsProps): VNode {
+export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsProps): VNode {
   const state = activeSessionsState.value;
   const connection: ConnectionState = connectionState.value;
   const presentation: CardPresentation = resolveCardPresentation(
@@ -497,8 +477,26 @@ export function AgentRuns({ now, onQuickAction }: AgentRunsProps): VNode {
               />
             </section>
           </div>
-          <DetailPaneSlot session={selectedSession} headingRef={headingRef} />
+          {selectedSession === null ? (
+            <NoSelectionPrompt />
+          ) : (
+            <DetailPane
+              session={selectedSession}
+              nowMs={now}
+              connected={connection.kind === "live"}
+              // The associate picker's project options come from Phase 4's
+              // projects state at wiring (05-17); `null` (unknown) never
+              // disables the control (plan note).
+              projectCount={null}
+              onQuickAction={onQuickAction}
+              loadSessionUsage={loadSessionUsage}
+              headingRef={headingRef}
+            />
+          )}
         </div>
+      )}
+      {usageSummary.value !== null && (
+        <AgentRunsUsage summary={usageSummary.value} nowMs={now} onQuickAction={onQuickAction} />
       )}
     </div>
   );

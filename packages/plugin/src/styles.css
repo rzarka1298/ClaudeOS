@@ -1243,3 +1243,70 @@
   outline: var(--ccc-focus-ring) solid var(--ccc-accent);
   outline-offset: calc(-1 * var(--ccc-focus-ring));
 }
+
+/* Session/Run IDs (UI-SPEC "Detail pane" #4): mono, selectable, never a
+ * path — the class carries no colour, only the type family. */
+.ccc-mono {
+  font-family: var(--ccc-font-mono);
+  overflow-wrap: anywhere;
+}
+
+/* The controls row (UI-SPEC "Detail pane" #2). Wrapped pills with a
+ * destructive control (Force-terminate) separated by --ccc-space-md from
+ * the rest, per "the order is fixed: primary first, destructive last …
+ * destructive is separated by --ccc-space-md". */
+.ccc-session-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-session-control:last-child .ccc-quick-action[data-capability="session:terminate"] {
+  margin-left: var(--ccc-space-md);
+  color: var(--ccc-danger);
+}
+
+.ccc-session-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  max-width: 16rem;
+}
+
+.ccc-quick-action[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* The fields dl (UI-SPEC "Detail pane" #4): `max-content 1fr` columns, row
+ * gap --ccc-space-xs, column gap --ccc-space-md. */
+.ccc-detail-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  row-gap: var(--ccc-space-xs);
+  column-gap: var(--ccc-space-md);
+  margin: var(--ccc-space-md) 0 0;
+}
+
+.ccc-detail-fields dt {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-detail-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+}
+
+/* Below 24rem the dl collapses to one column (UI-SPEC S3 "Overflow"). */
+@container (max-width: 24rem) {
+  .ccc-detail-fields {
+    grid-template-columns: 1fr;
+  }
+}
