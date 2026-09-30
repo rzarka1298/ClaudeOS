@@ -279,3 +279,52 @@ describe("heartbeats and claimed requests", () => {
     expect(readdirSync(join(w.state, "claimed"))).toHaveLength(0);
   });
 });
+
+describe("tui mode requests", () => {
+  function tuiWorld(): World & { promptFile: string } {
+    const w = world();
+    mkdirSync(join(w.state, "prompts"), { recursive: true });
+    const promptFile = join(w.state, "prompts", `${RUN}.md`);
+    writeFileSync(promptFile, `Review it.\n\ncodex-bridge run ${RUN}\n`);
+    return { ...w, promptFile };
+  }
+
+  it("accepts a tui request with a role and a prompt file in the bridge state dir", () => {
+    const w = tuiWorld();
+    const v = core.validateRequest(
+      w.request({ mode: "tui", role: "review", promptFile: w.promptFile }),
+      { stateDir: w.state, now: NOW },
+    );
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.request).toMatchObject({ mode: "tui", role: "review", promptFile: w.promptFile });
+    expect(core.terminalOptions(v.request, "/h/.local/bin/codex-bridge").shellArgs).toEqual([
+      "tui",
+      RUN,
+    ]);
+  });
+
+  it("defaults to follow mode", () => {
+    const w = world();
+    const v = core.validateRequest(w.request(), { stateDir: w.state, now: NOW });
+    expect(v.ok && v.request.mode).toBe("follow");
+  });
+
+  it.each([
+    ["an unknown mode", { mode: "shell" }],
+    ["tui without a role", { mode: "tui", role: undefined }],
+    ["tui with an unknown role", { mode: "tui", role: "danger" }],
+    ["tui without a prompt file", { mode: "tui", role: "task", promptFile: null }],
+    [
+      "tui with a prompt file outside prompts/",
+      { mode: "tui", role: "task", promptFile: "/etc/hosts" },
+    ],
+  ])("rejects %s", (_label, over) => {
+    const w = tuiWorld();
+    const v = core.validateRequest(w.request({ promptFile: w.promptFile, ...over }), {
+      stateDir: w.state,
+      now: NOW,
+    });
+    expect(v.ok).toBe(false);
+  });
+});

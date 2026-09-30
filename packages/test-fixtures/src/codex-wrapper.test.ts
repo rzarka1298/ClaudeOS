@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { loadBridgeCore } from "./codex-bridge-core.js";
-import { type GateRepo, gateRepo } from "./gate-repo.js";
+import { type GateRepo, gateRepo, REPO_ROOT } from "./gate-repo.js";
 
 const bridgeCore = loadBridgeCore();
 
@@ -115,6 +115,37 @@ if (argv[0] === "app-server") {
     process.stdin.on("data", (d) => (s += d));
     process.stdin.on("end", () => run(s));
   } else run(null);
+} else if (argv.includes("--ask-for-approval")) {
+  // The interactive TUI, as the Antigravity tab runs it: writes a rollout the
+  // way Codex does (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl).
+  const mode = process.env.FAKE_CODEX_TUI || "ok";
+  record({ tui: true });
+  if (mode === "crash") process.exit(2);
+  const prompt = argv[argv.length - 1];
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, "0");
+  const dir = require("node:path").join(process.env.CODEX_HOME, "sessions", String(d.getFullYear()), p2(d.getMonth() + 1), p2(d.getDate()));
+  fs.mkdirSync(dir, { recursive: true });
+  const file = dir + "/rollout-" + d.toISOString().slice(0, 19).replace(/:/g, "-") + "-${SESSION_ID}.jsonl";
+  const w = (o) => fs.appendFileSync(file, JSON.stringify(o) + "\n");
+  w({ type: "session_meta", payload: { id: "${SESSION_ID}", cwd: process.cwd(), originator: "codex-tui", source: "cli" } });
+  w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>x</environment_context>" }] } });
+  w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] } });
+  w({ type: "event_msg", payload: { type: "task_started", turn_id: "t1" } });
+  if (process.env.FAKE_CODEX_PIDFILE) fs.writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(process.pid));
+  if (mode === "hang") { setInterval(() => {}, 1000); return; }
+  setTimeout(() => {
+    w({ type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: "{}" } });
+    if (mode === "limit") {
+      w({ type: "event_msg", payload: { type: "error", message: "You've hit your usage limit. Try again later." } });
+    } else {
+      const finalMsg = process.env.FAKE_CODEX_FINAL || "done";
+      w({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: finalMsg }] } });
+      w({ type: "event_msg", payload: { type: "task_complete", turn_id: "t1", last_agent_message: finalMsg } });
+    }
+    // The TUI stays open for the owner's chat; the fake lingers briefly.
+    setTimeout(() => process.exit(0), Number(process.env.FAKE_CODEX_TUI_LINGER_MS || 300));
+  }, 200);
 } else {
   record({});
   process.stdout.write("fake codex\n");
@@ -168,9 +199,30 @@ const REVIEW_JSON = JSON.stringify({
   next_steps: ["Fix the loop."],
 });
 
-// A fake `antigravity-ide` CLI: records its argv, opens nothing.
+// A fake `antigravity-ide` CLI: records its argv. With FAKE_AG_MODE=claim it
+// also plays the Codex Bridge extension of the window it "opens": it claims the
+// request with the real bridge-core and runs the tab's command without a shell.
 const FAKE_ANTIGRAVITY = String.raw`
-require("node:fs").appendFileSync(process.env.FAKE_AG_LOG, JSON.stringify(process.argv.slice(2)) + "\n");
+const fs = require("node:fs");
+const { spawn } = require("node:child_process");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.FAKE_AG_LOG, JSON.stringify(args) + "\n");
+if (process.env.FAKE_AG_MODE === "claim") {
+  const core = require(process.env.FAKE_AG_CORE);
+  const home = process.env.HOME;
+  const stateDir = core.bridgeStateDir(process.env, home);
+  const started = Date.now();
+  const tick = () => {
+    const got = core.scanRequests({ stateDir, folders: [args[0]], containDelayMs: 0 });
+    for (const req of got) {
+      const t = core.terminalOptions(req, core.bridgeCommand(home));
+      const child = spawn(t.shellPath, t.shellArgs, { cwd: t.cwd, detached: true, stdio: "ignore" });
+      child.unref();
+    }
+    if (!got.length && Date.now() - started < 5000) setTimeout(tick, 50);
+  };
+  tick();
+}
 `;
 
 interface Harness {
@@ -249,6 +301,13 @@ function harness(): Harness {
   const bin = mkdtempSync(join(tmpdir(), "ccc-fake-codex-"));
   const log = join(bin, "calls.jsonl");
   const home = realpathSync(mkdtempSync(join(tmpdir(), "ccc-fake-home-")));
+  // What the installer puts on PATH; the Antigravity tab runs it.
+  mkdirSync(join(home, ".local", "bin"), { recursive: true });
+  writeFileSync(
+    join(home, ".local", "bin", "codex-bridge"),
+    `#!/bin/sh\nexec '${process.execPath}' '${join(realpathSync(repo.root), WRAPPER)}' "$@"\n`,
+    { mode: 0o755 },
+  );
   cleanups.push(() => {
     repo.dispose();
     rmSync(bin, { recursive: true, force: true });
@@ -300,7 +359,11 @@ function testEnv(over: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("CODEX_BRIDGE_")) delete env[k];
   delete env.XDG_STATE_HOME;
+  delete env.CODEX_HOME;
   env.CODEX_BRIDGE_ANTIGRAVITY_APP = "/nonexistent/Antigravity IDE.app";
+  env.CODEX_BRIDGE_CLAIM_TIMEOUT_MS = "300";
+  env.FAKE_AG_CORE = join(REPO_ROOT, "scripts", "codex", "antigravity-extension", "bridge-core.js");
+  if (over.HOME) env.CODEX_HOME = join(over.HOME, ".codex");
   return { ...env, ...over };
 }
 
@@ -1089,5 +1152,168 @@ describe("follow", () => {
     expect(r.status).toBe(2);
     expect(r.out).toMatch(/liveLog/);
     expect(h.calls()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TUI mode: the interactive Codex in the Antigravity tab is the worker
+
+describe("tui in the antigravity tab", () => {
+  const CLAIM = { FAKE_AG_MODE: "claim", CODEX_BRIDGE_CLAIM_TIMEOUT_MS: "8000" };
+  const tuiCalls = (h: Harness) => h.calls().filter((c) => c.argv.includes("--ask-for-approval"));
+
+  it("runs the review in the TUI with pinned flags, finds the session by marker, and reports", () => {
+    const h = harness();
+    const fenced = `Summary first.\n\n\`\`\`json\n${REVIEW_JSON}\n\`\`\`\n`;
+    const r = h.run(["review", h.root, "HEAD~1"], { ...CLAIM, FAKE_CODEX_FINAL: fenced });
+    expect(r.status).toBe(0);
+    expect(h.execCalls()).toHaveLength(0);
+    const [call] = tuiCalls(h);
+    expect(call?.argv).toEqual(
+      expect.arrayContaining(["--ask-for-approval", "never", "-s", "read-only", "-C", h.root]),
+    );
+    expect(call?.argv).toEqual(expect.arrayContaining(["-m", "gpt-6.1-sol"]));
+    expect(call?.argv).toEqual(expect.arrayContaining(["-c", 'approval_policy="never"']));
+    const joined = call?.argv.join(" ") ?? "";
+    for (const bad of FORBIDDEN_TOKENS) expect(joined).not.toContain(bad);
+    const out = lastJson(r.stdout);
+    const prompt = call?.argv.at(-1) ?? "";
+    expect(prompt).toContain(`codex-bridge run ${out.runId}`);
+    expect(prompt).toMatch(/git diff [0-9a-f]{40}\.\.\.HEAD/);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report).toMatchObject({
+      status: "ok",
+      verdict: "needs-attention",
+      sessionId: SESSION_ID,
+    });
+    expect(report.mode).toBe("tui");
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(`[session] ${SESSION_ID}`);
+    expect(log).toMatch(/\[end\] status=ok/);
+  });
+
+  it("runs a task in the TUI with the brief and workspace-write, recording the session", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const r = h.run(["task", wt, briefFile(h)], CLAIM);
+    expect(r.status).toBe(0);
+    const [call] = tuiCalls(h);
+    expect(call?.argv).toEqual(expect.arrayContaining(["-s", "workspace-write", "-C", wt]));
+    expect(call?.argv.at(-1)).toContain("Do the thing.");
+    expect(call?.cwd).toBe(wt);
+    const out = lastJson(r.stdout);
+    expect(out.sessionId).toBe(SESSION_ID);
+    const rec = JSON.parse(
+      readFileSync(join(h.root, ".planning", "codex", "sessions", `${out.runId}.json`), "utf8"),
+    );
+    expect(rec).toMatchObject({ sessionId: SESSION_ID, status: "ok" });
+  });
+
+  it("ignores a rollout whose prompt lacks this run's marker", () => {
+    const h = harness();
+    // A foreign session started at the same time must not be picked up.
+    const d = new Date();
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    const dir = join(
+      h.home,
+      ".codex",
+      "sessions",
+      `${d.getFullYear()}`,
+      p2(d.getMonth() + 1),
+      p2(d.getDate()),
+    );
+    mkdirSync(dir, { recursive: true });
+    const other = "99999999-8888-7777-6666-555555555555";
+    writeFileSync(
+      join(dir, `rollout-other-${other}.jsonl`),
+      [
+        { type: "session_meta", payload: { id: other } },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "codex-bridge run 20000101T000000000Z" }],
+          },
+        },
+        { type: "event_msg", payload: { type: "task_complete", last_agent_message: "wrong" } },
+      ]
+        .map((o) => JSON.stringify(o))
+        .join("\n"),
+    );
+    const r = h.run(["review", h.root, "HEAD~1"], { ...CLAIM, FAKE_CODEX_FINAL: REVIEW_JSON });
+    expect(r.status).toBe(0);
+    expect(lastJson(r.stdout).verdict).toBe("needs-attention");
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report.sessionId).toBe(SESSION_ID);
+  });
+
+  it("falls back to headless exec when no window claims the tab in time", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON });
+    expect(r.status).toBe(0);
+    expect(tuiCalls(h)).toHaveLength(0);
+    expect(h.execCalls()).toHaveLength(1);
+    expect(r.out).toMatch(/no Antigravity window claimed the tab/);
+  });
+
+  it("falls back to headless exec when the TUI fails to start", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      FAKE_CODEX_TUI: "crash",
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(tuiCalls(h)).toHaveLength(1);
+    expect(h.execCalls()).toHaveLength(1);
+  });
+
+  it.each([
+    ["CODEX_BRIDGE_TAB=0", { CODEX_BRIDGE_TAB: "0" }],
+    ["CODEX_BRIDGE_TUI=0", { CODEX_BRIDGE_TUI: "0" }],
+  ])("%s keeps the headless path", (_l, env) => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      ...env,
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(tuiCalls(h)).toHaveLength(0);
+    expect(h.execCalls()).toHaveLength(1);
+  });
+
+  it("refuses bypass extras before any tab or codex call", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1", "--", "--yolo"], CLAIM);
+    expect(r.status).toBe(3);
+    expect(h.calls()).toHaveLength(0);
+    expect(requestFiles(h)).toEqual([]);
+  });
+
+  it("a usage-limit hit in the TUI records a pending resume and exits 20", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const r = h.run(["task", wt, briefFile(h)], { ...CLAIM, FAKE_CODEX_TUI: "limit" });
+    expect(r.status).toBe(20);
+    const pending = JSON.parse(
+      readFileSync(join(h.root, ".planning", "codex", "pending-resume.json"), "utf8"),
+    );
+    expect(pending.sessionId).toBe(SESSION_ID);
+  });
+
+  it("the watchdog stops a TUI run that never completes and exits 21", async () => {
+    const h = harness();
+    const pidfile = join(h.bin, "tui.pid");
+    const r = h.run(["review", h.root, "HEAD~1", "--timeout-sec", "2"], {
+      ...CLAIM,
+      FAKE_CODEX_TUI: "hang",
+      FAKE_CODEX_PIDFILE: pidfile,
+    });
+    expect(r.status).toBe(21);
+    const pid = Number(readFileSync(pidfile, "utf8"));
+    expect(await gone(pid)).toBe(true);
   });
 });

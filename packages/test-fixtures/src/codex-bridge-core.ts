@@ -15,6 +15,9 @@ export interface BridgeRequest {
   liveLog: string;
   pid: number | null;
   createdAt: string;
+  mode: "follow" | "tui";
+  role: "review" | "plan" | "task" | "chore" | null;
+  promptFile: string | null;
 }
 
 export type Validation =

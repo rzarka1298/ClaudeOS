@@ -21,6 +21,9 @@ const RUN_ID_RE = /^[0-9]{8}T[0-9]{9}Z$/;
 const REQUEST_FILE_RE = /^[0-9]{8}T[0-9]{9}Z\.json$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const KINDS = ["review", "task", "resume"];
+// follow = tail a headless run's live log; tui = run the interactive Codex TUI as the worker.
+const MODES = ["follow", "tui"];
+const ROLES = ["review", "plan", "task", "chore"];
 const TTL_MS = 10 * 60 * 1000;
 const FUTURE_SKEW_MS = 60 * 1000;
 const HEARTBEAT_FRESH_MS = 90 * 1000;
@@ -44,6 +47,8 @@ function dirs(stateDir) {
     requests: path.join(stateDir, "requests"),
     claimed: path.join(stateDir, "claimed"),
     windows: path.join(stateDir, "windows"),
+    prompts: path.join(stateDir, "prompts"),
+    tui: path.join(stateDir, "tui"),
   };
 }
 
@@ -115,6 +120,19 @@ function validateRequest(raw, { stateDir, now = Date.now(), ttlMs = TTL_MS, chec
     return no("liveLog is outside the bridge state dir and the project's codex live dir");
   if (raw.pid !== undefined && raw.pid !== null && !(Number.isInteger(raw.pid) && raw.pid > 0))
     return no("bad pid");
+  const mode = raw.mode === undefined || raw.mode === null ? "follow" : raw.mode;
+  if (!MODES.includes(mode)) return no("bad mode");
+  let role = null;
+  let promptFile = null;
+  if (mode === "tui") {
+    if (!ROLES.includes(raw.role)) return no("tui needs a known role");
+    promptFile = realFile(raw.promptFile);
+    const prompts = realDir(dirs(stateDir).prompts);
+    if (!promptFile || !prompts || path.dirname(promptFile) !== prompts)
+      return no("tui promptFile must be a file directly in the bridge prompts dir");
+    if (path.basename(promptFile) !== `${raw.runId}.md`) return no("tui promptFile name");
+    role = raw.role;
+  }
   const created = typeof raw.createdAt === "string" ? Date.parse(raw.createdAt) : Number.NaN;
   if (!Number.isFinite(created)) return no("bad createdAt");
   if (checkAge) {
@@ -132,6 +150,9 @@ function validateRequest(raw, { stateDir, now = Date.now(), ttlMs = TTL_MS, chec
       liveLog,
       pid: raw.pid ?? null,
       createdAt: raw.createdAt,
+      mode,
+      role,
+      promptFile,
     },
   };
 }
@@ -224,7 +245,7 @@ function terminalOptions(request, command) {
   return {
     name: `Codex · ${request.kind} · ${request.runId.slice(9, 15)}`,
     shellPath: command,
-    shellArgs: ["follow", request.runId],
+    shellArgs: [request.mode === "tui" ? "tui" : "follow", request.runId],
     cwd: request.cwd,
     isTransient: true,
   };
@@ -268,19 +289,22 @@ function windowCovers(stateDir, projectRoot, now = Date.now()) {
   return false;
 }
 
+/** Removes claimed requests, TUI status files and stray prompts older than `keepMs`. */
 function pruneClaimed(stateDir, now = Date.now(), keepMs = CLAIMED_KEEP_MS) {
-  const d = dirs(stateDir).claimed;
-  let names;
-  try {
-    names = fs.readdirSync(d);
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    const f = path.join(d, name);
+  const all = dirs(stateDir);
+  for (const d of [all.claimed, all.tui, all.prompts]) {
+    let names;
     try {
-      if (now - fs.statSync(f).mtimeMs > keepMs) fs.unlinkSync(f);
-    } catch {}
+      names = fs.readdirSync(d);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const f = path.join(d, name);
+      try {
+        if (now - fs.statSync(f).mtimeMs > keepMs) fs.unlinkSync(f);
+      } catch {}
+    }
   }
 }
 

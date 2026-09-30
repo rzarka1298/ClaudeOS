@@ -147,7 +147,8 @@ const USAGE_TEXT = `usage:
                                          [--timeout-sec N] [-- <extra>]
   codex.mjs resume <session-id> [--timeout-sec N] [-- <extra>]
   codex.mjs watch [--once] [--idle-exit-sec N]
-  codex.mjs follow <run-id>`;
+  codex.mjs follow <run-id>
+  codex.mjs tui <run-id>`;
 
 // ---------------------------------------------------------------------------
 // argument parsing
@@ -615,7 +616,20 @@ function openLiveLog(id, kind) {
 // ---------------------------------------------------------------------------
 // Antigravity tab (codex-bridge)
 
-// Queues a tab request for the IDE extension. Best effort: never throws.
+let ideLaunched = false;
+
+// Opens (or focuses) an Antigravity window on the project, at most once per run,
+// unless a live window already has it; that window's extension claims requests.
+function ensureWindow(cli) {
+  if (ideLaunched) return;
+  ideLaunched = true;
+  if (bridge.windowCovers(BRIDGE_STATE, MAIN)) return;
+  const child = spawn(cli, [MAIN], { detached: true, stdio: "ignore" });
+  child.on("error", () => {});
+  child.unref();
+}
+
+// Queues a follow-tab request (headless runs) for the IDE extension. Best effort: never throws.
 function openBridgeTab({ id, kind, cwd, sessionId, liveLog }) {
   try {
     // biome-ignore lint/suspicious/noUndeclaredEnvVars: owner opt-out
@@ -634,16 +648,325 @@ function openBridgeTab({ id, kind, cwd, sessionId, liveLog }) {
       createdAt: new Date().toISOString(),
     });
     if (!written) return;
-    if (!bridge.windowCovers(BRIDGE_STATE, MAIN)) {
-      // Opens (or focuses) an Antigravity window on the project; its extension claims the request.
-      const child = spawn(cli, [MAIN], { detached: true, stdio: "ignore" });
-      child.on("error", () => {});
-      child.unref();
-    }
+    ensureWindow(cli);
     say(`antigravity tab requested: Codex · ${kind} · ${id.slice(9, 15)}`);
   } catch (err) {
     say(`antigravity tab skipped: ${err?.message ?? err}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// TUI mode: the interactive Codex TUI in the Antigravity tab is the worker.
+//
+// The wrapper queues a `tui` request (role + prompt file, never a command);
+// the window's extension runs `codex-bridge tui <run>`, which rebuilds the
+// pinned argv itself (tuiArgs) and runs Codex interactively. The wrapper finds
+// the session by the run marker in the prompt, follows its rollout
+// (~/.codex/sessions/**/rollout-*.jsonl) to task_complete, and writes the same
+// reports and exit codes as a headless run. The TUI stays open for the owner.
+// If no window claims the request in time, or the TUI fails to start, the run
+// falls back to headless `codex exec`.
+
+// biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only tuning knob
+const CLAIM_TIMEOUT_MS = Number(process.env.CODEX_BRIDGE_CLAIM_TIMEOUT_MS) || 20_000;
+const HELPER_START_MS = 15_000;
+const ROLLOUT_SCAN_BYTES = 1024 * 1024;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export function marker(id) {
+  return `codex-bridge run ${id}`;
+}
+
+export function tuiArgs(role, cwd, prompt) {
+  return [
+    ...roleArgs(role, { withSandboxFlag: true }),
+    "--ask-for-approval",
+    "never",
+    "-C",
+    cwd,
+    prompt,
+  ];
+}
+
+function schemaInstruction(file) {
+  return [
+    "End your final message with exactly one fenced ```json block holding a single JSON object",
+    "that matches this JSON Schema:",
+    "",
+    readFileSync(join(SCHEMAS, file), "utf8").trim(),
+  ].join("\n");
+}
+
+function reviewPrompt(base, head, id) {
+  return [
+    `Review the changes on this branch: run \`git diff ${base}...HEAD\` (HEAD is ${head}) and review only that diff, reading surrounding code where needed.`,
+    "Do not modify any files. Report real bugs, security problems and regressions with file and line numbers; skip style nits.",
+    schemaInstruction("review-output.schema.json"),
+    `(${marker(id)})`,
+  ].join("\n\n");
+}
+
+function taskPrompt(brief, id) {
+  return [
+    brief.trimEnd(),
+    "---",
+    schemaInstruction("worker-report.schema.json"),
+    `(${marker(id)})`,
+  ].join("\n\n");
+}
+
+// A final message may be bare JSON or prose ending in a fenced ```json block.
+export function extractJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {}
+  const blocks = [...text.matchAll(/```json[ \t]*\n([\s\S]*?)```/g)];
+  for (const m of blocks.reverse()) {
+    try {
+      return JSON.parse(m[1]);
+    } catch {}
+  }
+  return null;
+}
+
+function codexHome() {
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: Codex's own home override
+  return process.env.CODEX_HOME || join(homedir(), ".codex");
+}
+
+function dateDirs(times) {
+  const out = new Set();
+  const p2 = (n) => String(n).padStart(2, "0");
+  for (const t of times) {
+    const d = new Date(t);
+    out.add(join(`${d.getFullYear()}`, p2(d.getMonth() + 1), p2(d.getDate())));
+    out.add(join(`${d.getUTCFullYear()}`, p2(d.getUTCMonth() + 1), p2(d.getUTCDate())));
+  }
+  return [...out];
+}
+
+function userTexts(o) {
+  const p = o?.payload;
+  if (!p || typeof p !== "object") return [];
+  if (o.type === "event_msg" && p.type === "user_message" && typeof p.message === "string")
+    return [p.message];
+  if (o.type === "response_item" && p.type === "message" && p.role === "user")
+    return (p.content ?? []).map((c) => c?.text).filter((t) => typeof t === "string");
+  return [];
+}
+
+// The rollout of the session whose prompt carries this run's marker. Reads at
+// most the head of each recent rollout; never logs its content.
+function findRollout(id, since) {
+  const sessions = join(codexHome(), "sessions");
+  const want = marker(id);
+  for (const rel_ of dateDirs([since, Date.now()])) {
+    const dir = join(sessions, rel_);
+    let names;
+    try {
+      names = readdirSync(dir).filter((f) => f.startsWith("rollout-") && f.endsWith(".jsonl"));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const file = join(dir, name);
+      try {
+        if (statSync(file).mtimeMs < since - 2000) continue;
+        const fd = openSync(file, "r");
+        const buf = Buffer.alloc(Math.min(fstatSync(fd).size, ROLLOUT_SCAN_BYTES));
+        readSync(fd, buf, 0, buf.length, 0);
+        closeSync(fd);
+        for (const line of buf.toString("utf8").split("\n")) {
+          let o;
+          try {
+            o = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (userTexts(o).some((t) => t.includes(want))) return file;
+          if (o.type === "event_msg" && o.payload?.type === "task_complete") break;
+        }
+      } catch {}
+    }
+  }
+  return null;
+}
+
+function firstLine(text) {
+  return String(text ?? "")
+    .split("\n")[0]
+    .slice(0, 200);
+}
+
+async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession }) {
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: owner opt-out
+  if (process.env.CODEX_BRIDGE_TAB === "0" || process.env.CODEX_BRIDGE_TUI === "0") return null;
+  const cli = bridge.antigravityCli(process.env);
+  if (!cli) return null;
+  const d = bridge.dirs(BRIDGE_STATE);
+  const promptFile = join(d.prompts, `${id}.md`);
+  const dropPrompt = () => rmSync(promptFile, { force: true });
+  let reqFile = null;
+  try {
+    bridge.ensureDirs(BRIDGE_STATE);
+    writeFileSync(promptFile, prompt, { mode: 0o600 });
+    reqFile = bridge.writeRequest(BRIDGE_STATE, {
+      runId: id,
+      kind,
+      projectRoot: MAIN,
+      cwd,
+      sessionId: null,
+      liveLog: live.log,
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+      mode: "tui",
+      role,
+      promptFile,
+    });
+    if (!reqFile) throw new Error("a request for this run already exists");
+    ensureWindow(cli);
+  } catch (err) {
+    dropPrompt();
+    say(`tui tab skipped: ${err?.message ?? err}`);
+    return null;
+  }
+  const launchedAt = Date.now();
+  const claimed = join(d.claimed, `${id}.json`);
+  while (!existsSync(claimed) && Date.now() - launchedAt < CLAIM_TIMEOUT_MS) await sleep(100);
+  if (!existsSync(claimed)) {
+    let withdrawn = false;
+    try {
+      unlinkSync(reqFile);
+      withdrawn = true;
+    } catch {}
+    if (withdrawn || !existsSync(claimed)) {
+      dropPrompt();
+      say(
+        `no Antigravity window claimed the tab within ${CLAIM_TIMEOUT_MS / 1000}s; running headless`,
+      );
+      live.write(["[tui] no Antigravity window claimed the tab; running headless"]);
+      return null;
+    }
+  }
+  const tab = `Codex · ${kind} · ${id.slice(9, 15)}`;
+  say(`codex is running interactively in the Antigravity tab "${tab}"`);
+  live.write([`[tui] Codex opened in the Antigravity tab "${tab}"`]);
+  const res = await watchTui({ id, launchedAt, timeoutSec, live, onSession });
+  if (res === null) {
+    live.write(["[tui] the Codex TUI did not start; running headless"]);
+    say("the Codex TUI did not start; running headless");
+  }
+  return res;
+}
+
+async function watchTui({ id, launchedAt, timeoutSec, live, onSession }) {
+  const d = bridge.dirs(BRIDGE_STATE);
+  const stopFile = join(d.tui, `${id}.stop`);
+  const statusFile = join(d.tui, `${id}.json`);
+  const stop = () => {
+    try {
+      writeFileSync(stopFile, `${new Date().toISOString()}\n`);
+    } catch {}
+  };
+  const state = { sessionId: null, limitHit: false, timedOut: false, lastMessage: null, code: 1 };
+  const onSignal = (sig) => {
+    live.write([`[end] interrupted by ${sig}`]);
+    stop();
+    process.exit(130);
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  const deadline = Date.now() + timeoutSec * 1000;
+  let rollout = null;
+  let pos = 0;
+  let partial = "";
+  let done = false;
+  let fellBack = false;
+
+  const handle = (o) => {
+    const p = o?.payload ?? {};
+    if (o.type === "session_meta" && bridge.UUID_RE.test(p.id ?? "")) {
+      state.sessionId = p.id;
+      live.write([`[session] ${p.id}`]);
+      onSession?.(p.id);
+    } else if (o.type === "response_item") {
+      if (p.type === "function_call" || p.type === "custom_tool_call")
+        live.write([`[tool] ${p.name}`]);
+      else if (p.type === "message" && p.role === "assistant") {
+        const text = (p.content ?? []).map((c) => c?.text ?? "").join("");
+        if (text) live.write([`[message] ${firstLine(text)}`]);
+      }
+    } else if (o.type === "event_msg") {
+      if (p.type === "task_complete") {
+        state.lastMessage = p.last_agent_message ?? null;
+        state.code = 0;
+        live.write(["[turn] completed"]);
+        done = true;
+      } else if (p.type === "error" || p.type === "stream_error") {
+        const msg = String(p.message ?? "");
+        live.write([`[error] ${firstLine(msg)}`]);
+        if (LIMIT_RE.test(msg) || /usage_limit_reached/i.test(JSON.stringify(p))) {
+          state.limitHit = true;
+          done = true;
+        }
+      } else if (p.type === "turn_aborted") {
+        live.write(["[turn] aborted"]);
+        done = true;
+      }
+    }
+  };
+
+  for (;;) {
+    if (!rollout) {
+      rollout = findRollout(id, launchedAt);
+      if (rollout) live.write(["[tui] following the Codex session"]);
+    }
+    if (rollout) {
+      try {
+        const fd = openSync(rollout, "r");
+        const size = fstatSync(fd).size;
+        if (size > pos) {
+          const buf = Buffer.alloc(size - pos);
+          readSync(fd, buf, 0, buf.length, pos);
+          pos = size;
+          const lines = (partial + buf.toString("utf8")).split("\n");
+          partial = lines.pop() ?? "";
+          for (const line of lines) {
+            if (done) break;
+            try {
+              handle(JSON.parse(line));
+            } catch {}
+          }
+        }
+        closeSync(fd);
+      } catch {}
+    }
+    if (done) break;
+    if (Date.now() > deadline) {
+      state.timedOut = true;
+      live.write([`[watchdog] timeout after ${timeoutSec}s — stopping the Codex TUI`]);
+      stop();
+      break;
+    }
+    const st = readJson(statusFile);
+    const helperGone = st ? st.status === "exited" || (st.pid && !alive(st.pid)) : false;
+    if (helperGone) {
+      if (!rollout) fellBack = true;
+      else live.write(["[tui] the Codex TUI exited before finishing"]);
+      break;
+    }
+    if (!st && !rollout && Date.now() - launchedAt > CLAIM_TIMEOUT_MS + HELPER_START_MS) {
+      stop(); // the tab never started; make sure it cannot start late
+      fellBack = true;
+      break;
+    }
+    await sleep(250);
+  }
+  process.removeListener("SIGINT", onSignal);
+  process.removeListener("SIGTERM", onSignal);
+  return fellBack ? null : state;
 }
 
 // ---------------------------------------------------------------------------
@@ -925,15 +1248,24 @@ async function cmdReview({ positional, opts, extras }) {
   ];
   const onSession = (sid) =>
     openBridgeTab({ id, kind: "review", cwd: worktree, sessionId: sid, liveLog: live.log });
-  const res = await runCodex({ args, cwd: worktree, stdinText: null, timeoutSec, live, onSession });
+  let res = extras.length
+    ? null
+    : await runTui({
+        kind: "review",
+        id,
+        role: "review",
+        cwd: worktree,
+        prompt: reviewPrompt(base, head, id),
+        timeoutSec,
+        live,
+      });
+  const mode = res ? "tui" : "headless";
+  res ??= await runCodex({ args, cwd: worktree, stdinText: null, timeoutSec, live, onSession });
 
   let text = existsSync(lastMessage) ? readFileSync(lastMessage, "utf8").trim() : "";
   if (!text && res.lastMessage) text = res.lastMessage.trim();
   rmSync(tmp, { recursive: true, force: true });
-  let parsed = null;
-  try {
-    parsed = JSON.parse(text);
-  } catch {}
+  let parsed = extractJson(text);
 
   let status;
   let exit;
@@ -952,6 +1284,7 @@ async function cmdReview({ positional, opts, extras }) {
     runId: id,
     kind: "review",
     advisory: true,
+    mode,
     status,
     format: status === "ok" ? format : null,
     verdict: status === "ok" ? parsed.verdict : null,
@@ -994,14 +1327,20 @@ async function cmdReview({ positional, opts, extras }) {
 // task + resume
 
 function finalReport(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text ? { unstructured: text } : null;
-  }
+  return extractJson(text) ?? (text ? { unstructured: text } : null);
 }
 
-async function runWorker({ kind, id, role, worktree, args, stdinText, timeoutSec, sessionHint }) {
+async function runWorker({
+  kind,
+  id,
+  role,
+  worktree,
+  args,
+  stdinText,
+  timeoutSec,
+  sessionHint,
+  tuiPrompt,
+}) {
   const live = openLiveLog(id, kind);
   const r = ROLES[role];
   live.write([
@@ -1025,7 +1364,21 @@ async function runWorker({ kind, id, role, worktree, args, stdinText, timeoutSec
     writeJson(sessionPath, { ...session, sessionId: sid });
     openBridgeTab({ id, kind, cwd: worktree, sessionId: sid, liveLog: live.log });
   };
-  const res = await runCodex({ args, cwd: worktree, stdinText, timeoutSec, live, onSession });
+  const tuiSession = (sid) => writeJson(sessionPath, { ...session, sessionId: sid, mode: "tui" });
+  let res = tuiPrompt
+    ? await runTui({
+        kind,
+        id,
+        role,
+        cwd: worktree,
+        prompt: tuiPrompt,
+        timeoutSec,
+        live,
+        onSession: tuiSession,
+      })
+    : null;
+  session.mode = res ? "tui" : "headless";
+  res ??= await runCodex({ args, cwd: worktree, stdinText, timeoutSec, live, onSession });
   session.sessionId = res.sessionId ?? session.sessionId;
 
   let status;
@@ -1092,7 +1445,17 @@ async function cmdTask({ positional, opts, extras }) {
     "-",
   ];
   const stdinText = readFileSync(brief, "utf8");
-  const out = await runWorker({ kind: "task", id, role, worktree, args, stdinText, timeoutSec });
+  const tuiPrompt = extras.length ? null : taskPrompt(stdinText, id);
+  const out = await runWorker({
+    kind: "task",
+    id,
+    role,
+    worktree,
+    args,
+    stdinText,
+    timeoutSec,
+    tuiPrompt,
+  });
   finishWorker(out, lastMessage, tmp, role);
 }
 
@@ -1106,6 +1469,7 @@ function finishWorker({ live, res, status, exit, session, resetsAt }, lastMessag
     runId: session.runId,
     kind: session.kind,
     role,
+    mode: session.mode ?? "headless",
     status,
     sessionId: session.sessionId,
     worktree: session.worktree,
@@ -1306,6 +1670,70 @@ async function cmdFollow({ positional }) {
 }
 
 // ---------------------------------------------------------------------------
+// tui (run inside the Antigravity tab): the interactive Codex as the worker
+
+async function cmdTui({ positional }) {
+  if (positional.length !== 1) fail(EXIT.USAGE, USAGE_TEXT);
+  const v = bridge.readClaimed(BRIDGE_STATE, positional[0]);
+  if (!v.ok) fail(EXIT.USAGE, `cannot open run ${positional[0]}: ${v.reason}`);
+  const req = v.request;
+  if (req.mode !== "tui") fail(EXIT.USAGE, `run ${req.runId} is not a tui run`);
+  const d = bridge.dirs(BRIDGE_STATE);
+  const statusFile = join(d.tui, `${req.runId}.json`);
+  const stopFile = join(d.tui, `${req.runId}.stop`);
+  const status = (extra) =>
+    writeJson(statusFile, { pid: process.pid, ...extra, at: new Date().toISOString() });
+  if (existsSync(stopFile)) {
+    status({ status: "exited", code: null });
+    fail(EXIT.USAGE, `run ${req.runId} was withdrawn`);
+  }
+  const prompt = readFileSync(req.promptFile, "utf8");
+  rmSync(req.promptFile, { force: true });
+  if (!prompt.includes(marker(req.runId))) {
+    status({ status: "exited", code: null });
+    fail(EXIT.REFUSED, "refused: the prompt does not carry this run's marker");
+  }
+  // argv is rebuilt here from the validated role and directory; nothing from
+  // the request reaches a shell, and the pinned flags cannot be loosened.
+  const args = tuiArgs(req.role, req.cwd, prompt);
+  const flags = args.slice(0, -1).join(" ").toLowerCase();
+  if (BANNED.some((b) => flags.includes(b))) fail(EXIT.REFUSED, "refused: bypass flag");
+  const r = ROLES[req.role];
+  process.stdout.write(
+    `codex-bridge: Codex ${req.kind} run ${req.runId} — ${r.model} (${r.effort}), sandbox ${r.sandbox}, approvals never\n`,
+  );
+  status({ status: "running" });
+  const env = {
+    ...process.env,
+    PATH: `${process.env.PATH ?? ""}${delimiter}${join(homedir(), ".local", "bin")}`,
+  };
+  const child = spawn(CODEX, args, { stdio: "inherit", cwd: req.cwd, env });
+  const poll = setInterval(() => {
+    if (!existsSync(stopFile)) return;
+    clearInterval(poll);
+    try {
+      child.kill("SIGTERM");
+    } catch {}
+    setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    }, KILL_GRACE_MS).unref();
+  }, 500);
+  const code = await new Promise((resolve) => {
+    child.on("error", () => resolve(127));
+    child.on("exit", (c) => resolve(c ?? 1));
+  });
+  clearInterval(poll);
+  status({ status: "exited", code });
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
+  if (process.env.CODEX_BRIDGE_FOLLOW_SHELL !== "0" && process.stdin.isTTY) {
+    spawnSync(process.env.SHELL || "/bin/zsh", ["-l"], { stdio: "inherit", cwd: req.cwd, env });
+  }
+  process.exit(EXIT.OK);
+}
+
+// ---------------------------------------------------------------------------
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -1333,6 +1761,8 @@ async function main() {
       return cmdWatch(parsed);
     case "follow":
       return cmdFollow(parsed);
+    case "tui":
+      return cmdTui(parsed);
     default:
       fail(EXIT.USAGE, USAGE_TEXT);
   }
