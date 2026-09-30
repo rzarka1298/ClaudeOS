@@ -411,3 +411,102 @@ describe("isExecutableFile (D-22): a regular file with X_OK, nothing else", () =
     await expect(isExecutableFile(join(runtimeDir, "absent"))).resolves.toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A template whose argv[0] is the terminal binary itself (wave-4b review):
+// spawned detached and never killed by the cap.
+// ---------------------------------------------------------------------------
+
+const DIRECT = ["/Applications/Example.app/Contents/MacOS/example", "start", "--", "{script}"];
+
+/** An abort signal that reads as aborted as soon as a script exists in `dir`. */
+function abortedOnceWritten(dir: string): AbortSignal {
+  const controller = new AbortController();
+  return new Proxy(controller.signal, {
+    get(target, property) {
+      if (property === "aborted") return readdirSync(dir).length > 0;
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+describe("the Custom terminal adapter with a directly-run terminal binary", () => {
+  it("spawns it detached (not through the awaited run) and reports handed-off while it runs", async () => {
+    const spawner = createFakeSpawner();
+    await expect(customLauncher(spawner, DIRECT).launch(input())).resolves.toEqual({ ok: true });
+    expect(spawner.calls).toHaveLength(0);
+    expect(spawner.detached).toHaveLength(1);
+    const argv = spawner.detached[0]?.argv ?? [];
+    expectNoPlaceholders(argv);
+    expect(argv.slice(0, 3)).toEqual(DIRECT.slice(0, 3));
+    // The detach call carries no signal and no deadline: nothing can kill it.
+    expect(Object.keys(spawner.detached[0]?.opts ?? {})).toEqual(["graceMs"]);
+    expect(spawner.detached[0]?.opts.graceMs).toBeLessThan(4000);
+    expect(readdirSync(scriptDir)).toHaveLength(1);
+  });
+
+  it("an exit 0 within the grace is handed-off and the script is left for itself", async () => {
+    const spawner = createFakeSpawner();
+    spawner.detachOutcome = { kind: "exited", exitCode: 0 };
+    await expect(customLauncher(spawner, DIRECT).launch(input())).resolves.toEqual({ ok: true });
+    expect(readdirSync(scriptDir)).toHaveLength(1);
+  });
+
+  it("a non-zero exit within the grace is spawn-failed and removes the script", async () => {
+    const spawner = createFakeSpawner();
+    spawner.detachOutcome = { kind: "exited", exitCode: 3 };
+    await expect(customLauncher(spawner, DIRECT).launch(input())).resolves.toEqual({
+      ok: false,
+      error: "spawn-failed",
+    });
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("a spawn errno (argv[0] removed after the X_OK check) is spawn-failed and removes the script", async () => {
+    const spawner = createFakeSpawner();
+    spawner.detachOutcome = { kind: "not-started", errno: "ENOENT" };
+    await expect(customLauncher(spawner, DIRECT).launch(input())).resolves.toEqual({
+      ok: false,
+      error: "spawn-failed",
+    });
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("the open/osascript presets stay on the awaited run path", async () => {
+    const spawner = createFakeSpawner();
+    await customLauncher(spawner, WEZTERM).launch(input());
+    await customLauncher(spawner, ITERM2).launch(input());
+    expect(spawner.detached).toHaveLength(0);
+    expect(spawner.calls.map((call) => call.argv[0])).toEqual([
+      "/usr/bin/open",
+      "/usr/bin/osascript",
+    ]);
+  });
+});
+
+describe("an abort between the script write and the spawn removes the script", () => {
+  it("Terminal.app adapter", async () => {
+    const spawner = createFakeSpawner();
+    await expect(
+      createTerminalAppLauncher({ spawner, scriptDir }).launch(
+        input({ signal: abortedOnceWritten(scriptDir) }),
+      ),
+    ).resolves.toEqual({ ok: false, error: "timeout" });
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it.each([
+    ["an open-routed preset", WEZTERM],
+    ["a directly-run terminal binary", DIRECT],
+  ])("Custom adapter, %s", async (_label, template) => {
+    const spawner = createFakeSpawner();
+    await expect(
+      customLauncher(spawner, template).launch(input({ signal: abortedOnceWritten(scriptDir) })),
+    ).resolves.toEqual({ ok: false, error: "timeout" });
+    expect(spawner.calls).toHaveLength(0);
+    expect(spawner.detached).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+});

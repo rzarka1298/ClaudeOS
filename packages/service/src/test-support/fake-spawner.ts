@@ -1,4 +1,10 @@
-import type { Spawner, SpawnOptions, SpawnOutcome } from "../projects/spawner.js";
+import type {
+  DetachOptions,
+  DetachOutcome,
+  Spawner,
+  SpawnOptions,
+  SpawnOutcome,
+} from "../projects/spawner.js";
 
 /** One recorded `run` call: the argv and the options object exactly as passed. */
 export interface RecordedSpawn {
@@ -18,8 +24,18 @@ export type FakeSpawnMode =
   | { readonly kind: "hang" }
   | { readonly kind: "fail"; readonly outcome: Partial<SpawnOutcome> };
 
+/** One recorded `detach` call: the argv and the options object exactly as passed. */
+export interface RecordedDetach {
+  readonly argv: readonly string[];
+  readonly opts: DetachOptions;
+}
+
 export interface FakeSpawner extends Spawner {
   readonly calls: RecordedSpawn[];
+  /** Every `detach` call (a custom template that runs a terminal binary directly). */
+  readonly detached: RecordedDetach[];
+  /** What `detach` answers; defaults to "still running after the grace". */
+  detachOutcome: DetachOutcome;
   /** Changes how later calls are answered. */
   mode: FakeSpawnMode;
   /** How many calls saw their abort signal fire. */
@@ -46,9 +62,12 @@ const FAILED_OUTCOME: SpawnOutcome = {
  */
 export function createFakeSpawner(initial: FakeSpawnMode = { kind: "succeed" }): FakeSpawner {
   const calls: RecordedSpawn[] = [];
+  const detached: RecordedDetach[] = [];
   let abortsObserved = 0;
   const fake: FakeSpawner = {
     calls,
+    detached,
+    detachOutcome: { kind: "running" },
     mode: initial,
     get abortsObserved() {
       return abortsObserved;
@@ -82,6 +101,10 @@ export function createFakeSpawner(initial: FakeSpawnMode = { kind: "succeed" }):
         case "fail":
           return Promise.resolve({ ...FAILED_OUTCOME, ...mode.outcome });
       }
+    },
+    detach(argv, opts) {
+      detached.push({ argv: [...argv], opts });
+      return Promise.resolve(fake.detachOutcome);
     },
   };
   return fake;
