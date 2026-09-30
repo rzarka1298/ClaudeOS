@@ -17,7 +17,7 @@ import type { LaunchErrorKind } from "@ccc/domain";
  * |----------------------------------------------|---------------------|------------------------|
  * | `LSCopyApplicationURLsForBundleIdentifier`   | `bundle-not-found`  | `app-not-found`        |
  * | `does not exist`                             | `path-missing`      | `project-missing`      |
- * | `-1743` (Apple Events refused)               | `automation-denied` | `automation-denied`    |
+ * | `(-1743)`, `error -1743`, `:-1743)`          | `automation-denied` | `automation-denied`    |
  * | `Operation not permitted`                    | `permission-denied` | `folder-access-denied` |
  * | nothing                                      | `none`              | `spawn-failed`         |
  * | anything else                                | `other`             | `spawn-failed`         |
@@ -45,8 +45,13 @@ export interface LaunchFailureSignals {
 }
 
 const BUNDLE_NOT_FOUND = "LSCopyApplicationURLsForBundleIdentifier";
-/** The Apple Events error number, as a whole token (`(-1743)`, `-1743.`). */
-const AUTOMATION_DENIED = /(^|[^0-9])-1743(?![0-9])/;
+/**
+ * The Apple Events error number in the forms osascript prints it: the
+ * trailing `(-1743)`, `error -1743`, or `…:-1743)`. Anchored to those forms
+ * so a path or a name that merely contains `-1743` (`proj-1743`) is not read
+ * as a refusal.
+ */
+const AUTOMATION_DENIED = /(?:\(|\berror |:)-1743(?![0-9])/;
 const PERMISSION_DENIED = "Operation not permitted";
 const PATH_MISSING = "does not exist";
 
