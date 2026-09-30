@@ -516,6 +516,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
                 session={selectedSession}
                 nowMs={now}
                 connected={connection.kind === "live"}
+                connecting={connection.kind === "connecting"}
                 // The associate picker's project options come from Phase 4's
                 // projects state at wiring (05-17); `null` (unknown) never
                 // disables the control (plan note).

@@ -237,6 +237,18 @@ describe("Task 1 (tracer): the Agent runs table with a Run selected", () => {
     expect(container.querySelector(".ccc-agent-runs-banner")?.closest("[data-dimmed]")).toBeNull();
   });
 
+  it("connecting never shows the disconnected reason on the detail controls (wave 4 finding)", () => {
+    const target = session({ runId: runId(1), name: "Refactor parser", state: "running" });
+    seed([target]);
+    connectionState.value = { kind: "connecting" };
+    selectedRunId.value = target.runId;
+
+    render(<AgentRuns now={NOW_MS} />);
+
+    expect(screen.queryByText("The companion service isn't running.")).toBeNull();
+    expect(screen.getAllByText("Connecting to the companion service…").length).toBeGreaterThan(0);
+  });
+
   it("live never dims", () => {
     seed([session({ runId: runId(1), name: "Refactor parser", state: "running" })]);
     usageSummary.value = usageFixture();

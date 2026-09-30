@@ -126,6 +126,20 @@ describe("controlsFor (Test 1: the availability matrix)", () => {
     }
   });
 
+  it("while still connecting, every control says so instead of claiming the service isn't running", () => {
+    const view = session({ state: "running" });
+    const controls = controlsFor(view, {
+      connected: false,
+      connecting: true,
+      approvalInboxReady: false,
+      projectCount: 5,
+    });
+    expect(controls.length).toBeGreaterThan(0);
+    for (const c of controls) {
+      expect(c.disabledReason).toBe("Connecting to the companion service…");
+    }
+  });
+
   it("Resume needs a registered project or its recorded folder when neither resolves", () => {
     const view = session({ state: "completed", projectId: null, cwdBasename: null });
     const controls = controlsFor(view, CONNECTED);

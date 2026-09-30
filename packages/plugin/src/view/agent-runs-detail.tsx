@@ -46,6 +46,10 @@ import { clearActionStatus, sessionActionStatus } from "./session-action-status.
 export const APPROVAL_INBOX_READY = false;
 
 const DISCONNECTED_REASON = "The companion service isn't running.";
+/** The event stream has not reached `live` yet (first connect, or a
+ * reconnect in progress): the service may well be running, so this never
+ * claims it isn't (05 wave 4 review). */
+const CONNECTING_REASON = "Connecting to the companion service…";
 const APPROVAL_REASON = "Needs approval — available once the approval inbox is ready";
 
 export interface SessionControl {
@@ -59,6 +63,10 @@ export interface SessionControl {
 
 export interface ControlsContext {
   readonly connected: boolean;
+  /** Only read while `connected` is false: `true` means the transport is
+   * still connecting rather than disconnected, which picks
+   * {@link CONNECTING_REASON} over {@link DISCONNECTED_REASON}. */
+  readonly connecting?: boolean | undefined;
   readonly approvalInboxReady: boolean;
   /** `null` means unknown, which never disables (plan note). */
   readonly projectCount: number | null;
@@ -80,21 +88,24 @@ const INTERRUPTIBLE_STATES: ReadonlySet<SessionView["state"]> = new Set([
   "waiting-for-approval",
 ]);
 
-/** Disconnected is a universal blocker for every control — it takes priority
- * over any control-specific reason, including force-terminate's own (Test 1:
- * "When disconnected, every control has disabledReason '{@link DISCONNECTED_REASON}'"). */
+/** Not being connected is a universal blocker for every control — it takes
+ * priority over any control-specific reason, including force-terminate's own
+ * (Test 1: "When disconnected, every control has disabledReason
+ * '{@link DISCONNECTED_REASON}'"); while still connecting the reason is
+ * {@link CONNECTING_REASON} instead. */
 function control(
   capability: string,
   label: string,
-  connected: boolean,
+  ctx: ControlsContext,
   specificReason: string | null,
 ): SessionControl {
-  return { capability, label, disabledReason: connected ? specificReason : DISCONNECTED_REASON };
+  const blocked = ctx.connecting === true ? CONNECTING_REASON : DISCONNECTED_REASON;
+  return { capability, label, disabledReason: ctx.connected ? specificReason : blocked };
 }
 
 function focusTerminalControl(view: SessionView, ctx: ControlsContext): SessionControl | null {
   if (!LIVE_STATES.has(view.state)) return null;
-  return control("session:focus", "Focus terminal", ctx.connected, null);
+  return control("session:focus", "Focus terminal", ctx, null);
 }
 
 function resumeControl(view: SessionView, ctx: ControlsContext): SessionControl | null {
@@ -103,25 +114,25 @@ function resumeControl(view: SessionView, ctx: ControlsContext): SessionControl 
   return control(
     "session:resume",
     "Resume",
-    ctx.connected,
+    ctx,
     noTarget ? "Needs a registered project or its recorded folder" : null,
   );
 }
 
 function branchControl(view: SessionView, ctx: ControlsContext): SessionControl | null {
   if (view.claudeSessionId === null) return null;
-  return control("session:branch", "Branch", ctx.connected, null);
+  return control("session:branch", "Branch", ctx, null);
 }
 
 function openTranscriptControl(view: SessionView, ctx: ControlsContext): SessionControl | null {
   if (!view.hasTranscript) return null;
-  return control("session:open-transcript", "Open transcript", ctx.connected, null);
+  return control("session:open-transcript", "Open transcript", ctx, null);
 }
 
 /** Labelled "Focus to interrupt", never "Interrupt" alone (Test 2, PR-27). */
 function interruptControl(view: SessionView, ctx: ControlsContext): SessionControl | null {
   if (!INTERRUPTIBLE_STATES.has(view.state)) return null;
-  return control("session:interrupt", "Focus to interrupt", ctx.connected, null);
+  return control("session:interrupt", "Focus to interrupt", ctx, null);
 }
 
 function associateControl(view: SessionView, ctx: ControlsContext): SessionControl | null {
@@ -129,7 +140,7 @@ function associateControl(view: SessionView, ctx: ControlsContext): SessionContr
   return control(
     "session:associate",
     "Associate with project",
-    ctx.connected,
+    ctx,
     ctx.projectCount === 0 ? "Register a project first" : null,
   );
 }
@@ -140,7 +151,7 @@ function forceTerminateControl(view: SessionView, ctx: ControlsContext): Session
   return control(
     "session:terminate",
     "Force-terminate",
-    ctx.connected,
+    ctx,
     ctx.approvalInboxReady ? null : APPROVAL_REASON,
   );
 }
@@ -312,16 +323,19 @@ function DetailFields({
 function ControlsRow({
   session,
   connected,
+  connecting,
   projectCount,
   onQuickAction,
 }: {
   readonly session: SessionView;
   readonly connected: boolean;
+  readonly connecting: boolean | undefined;
   readonly projectCount: number | null;
   readonly onQuickAction: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }): VNode {
   const controls = controlsFor(session, {
     connected,
+    connecting,
     approvalInboxReady: APPROVAL_INBOX_READY,
     projectCount,
   });
@@ -472,6 +486,9 @@ export interface DetailPaneProps {
   readonly session: SessionView;
   readonly nowMs: number;
   readonly connected: boolean;
+  /** The transport is still connecting (not disconnected) — see
+   * {@link ControlsContext.connecting}. */
+  readonly connecting?: boolean | undefined;
   readonly projectCount: number | null;
   readonly onQuickAction: ((descriptor: QuickActionDescriptor) => void) | undefined;
   readonly loadSessionUsage: ((runId: string) => Promise<SessionUsage>) | undefined;
@@ -482,6 +499,7 @@ export function DetailPane({
   session,
   nowMs,
   connected,
+  connecting,
   projectCount,
   onQuickAction,
   loadSessionUsage,
@@ -511,6 +529,7 @@ export function DetailPane({
       <ControlsRow
         session={session}
         connected={connected}
+        connecting={connecting}
         projectCount={projectCount}
         onQuickAction={onQuickAction}
       />
