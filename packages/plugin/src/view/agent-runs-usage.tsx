@@ -8,6 +8,7 @@ import type {
   EstimatedApiCost,
   PlanCapacity,
   TokenActivity,
+  TokenActivityUnavailableReason,
   TokenCounters,
   UsageRangeKind,
   UsageSummary,
@@ -24,6 +25,7 @@ import {
   formatRangeBounds,
   formatTimeOfDay,
   formatUsd,
+  pluralize,
 } from "../widgets/usage-format.js";
 import {
   ESTIMATED_COST_SOURCE_LABEL,
@@ -250,6 +252,16 @@ function activitySourceRows(
   }));
 }
 
+/** The same headings as the Overview usage card's section 2 (UI-SPEC S3
+ * "Partial, off and changed states: identical strings to S2"); a range with
+ * no covered day is never a number (E8 empty). A `Record`, so a new reason
+ * fails the type check instead of silently falling through. */
+const ACTIVITY_UNAVAILABLE_HEADING: Readonly<Record<TokenActivityUnavailableReason, string>> = {
+  "analysis-off": "Transcript analysis is off",
+  "format-changed": "Token activity unavailable",
+  "no-coverage": "No transcript coverage for this range",
+};
+
 function TokenActivitySection({
   activity,
   range,
@@ -260,10 +272,7 @@ function TokenActivitySection({
   readonly nowMs: number;
 }): VNode {
   if (activity.kind === "unavailable") {
-    const heading =
-      activity.reason === "analysis-off"
-        ? "Transcript analysis is off"
-        : "Token activity unavailable";
+    const heading = ACTIVITY_UNAVAILABLE_HEADING[activity.reason];
     return (
       <div className="ccc-usage-section" data-usage-section="token-activity">
         <h4>Token activity</h4>
@@ -331,8 +340,24 @@ function costSourceRows(
       range: formatRangeBounds(cost.bounds, range, nowMs),
       observed: formatAbsoluteTime(cost.observedAt),
       freshness: FRESHNESS_LABEL[cost.freshness],
+      partial: cost.partiality.partial ? pluralize(cost.excludedModelCount) : undefined,
     },
   ];
+}
+
+/** The `.ccc-badge[data-badge="partial"]` chip — the same markup as the
+ * Overview usage card's private `PartialBadge` (`claude-usage.tsx`),
+ * duplicated rather than imported across the widget/view boundary, the same
+ * way this file already mirrors that card's label tables. */
+function PartialBadge(): VNode {
+  return (
+    <span className="ccc-badge" data-badge="partial">
+      <span className="ccc-badge-glyph" aria-hidden="true">
+        ◈
+      </span>
+      <span className="ccc-badge-label">Partial</span>
+    </span>
+  );
 }
 
 function EstimatedCostSection({
@@ -358,6 +383,11 @@ function EstimatedCostSection({
       <h4>Estimated API-equivalent cost — an estimate, not your bill</h4>
       <p className="ccc-state-heading">{`${formatUsd(cost.usd)} · ${RANGE_WORD[range]}`}</p>
       <p className="ccc-list-meta">Your subscription spend is your fixed plan price.</p>
+      {cost.partiality.partial && cost.excludedModelCount > 0 && (
+        <p className="ccc-list-meta">
+          <PartialBadge /> {pluralize(cost.excludedModelCount)}
+        </p>
+      )}
       <SourceDisclosure srSuffix="for estimated cost" rows={costSourceRows(cost, range, nowMs)} />
     </div>
   );

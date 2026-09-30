@@ -121,11 +121,11 @@ function usage(
 const BOUNDS = { start: "2026-09-25T00:00:00.000Z", end: NOW_ISO };
 
 describe("Agent runs usage section E8 (audit)", () => {
-  // AUDIT-BUG (05-13, MINOR): the Agent runs usage section renders every
-  // unavailable reason other than analysis-off as "Token activity
-  // unavailable"; UI-SPEC E8 requires "No transcript coverage for this
-  // range" for no-coverage (the Overview card has it, this view does not).
-  it.skip("an uncovered range reads 'No transcript coverage for this range'", () => {
+  // Was AUDIT-BUG (05-13, MINOR), fixed in wave 4: the Agent runs usage
+  // section rendered every unavailable reason other than analysis-off as
+  // "Token activity unavailable"; UI-SPEC E8 requires "No transcript
+  // coverage for this range" for no-coverage.
+  it("an uncovered range reads 'No transcript coverage for this range'", () => {
     render(
       <AgentRunsUsage
         summary={usage({ kind: "unavailable", reason: "no-coverage", version: null }, {
@@ -138,12 +138,12 @@ describe("Agent runs usage section E8 (audit)", () => {
     expect(screen.getByText("No transcript coverage for this range")).toBeTruthy();
   });
 
-  // AUDIT-BUG (05-13, MINOR): the cost section never states the excluded
-  // model count, so "1 model without a list price was left out." (Intl
-  // PluralRules, Zero-one-many E8 / Partial E8) is not shown anywhere in
-  // the Agent runs destination.
-  it.skip("a partial cost states the excluded model count, pluralised", () => {
-    render(
+  // Was AUDIT-BUG (05-13, MINOR), fixed in wave 4: the cost section never
+  // stated the excluded model count, so "1 model without a list price was
+  // left out." (Intl PluralRules, Zero-one-many E8 / Partial E8) was not
+  // shown anywhere in the Agent runs destination.
+  it("a partial cost states the excluded model count, pluralised", () => {
+    const { container } = render(
       <AgentRunsUsage
         summary={usage(
           { kind: "unavailable", reason: "analysis-off", version: null },
@@ -164,6 +164,38 @@ describe("Agent runs usage section E8 (audit)", () => {
         nowMs={NOW_MS}
       />,
     );
-    expect(screen.getByText(/1 model without a list price was left out\./)).toBeTruthy();
+    // Visible beside the chip, and again in the section's Source panel row.
+    expect(
+      screen.getAllByText(/1 model without a list price was left out\./).length,
+    ).toBeGreaterThan(0);
+    const costSection = container.querySelector('[data-usage-section="estimated-cost"]');
+    expect(costSection?.querySelector('.ccc-badge[data-badge="partial"]')?.textContent).toContain(
+      "Partial",
+    );
+  });
+
+  it("two excluded models read in the plural", () => {
+    const cost = {
+      kind: "available",
+      range: "today",
+      bounds: BOUNDS,
+      usd: 1.5,
+      basis: "list-prices",
+      priceTableDate: "2026-09-01",
+      excludedModelCount: 2,
+      observedAt: NOW_ISO,
+      source: "claude-code-estimates-and-list-prices",
+      freshness: "live",
+      partiality: { partial: true },
+    } as const;
+    render(
+      <AgentRunsUsage
+        summary={usage({ kind: "unavailable", reason: "analysis-off", version: null }, cost)}
+        nowMs={NOW_MS}
+      />,
+    );
+    expect(
+      screen.getAllByText(/2 models without a list price were left out\./).length,
+    ).toBeGreaterThan(0);
   });
 });
