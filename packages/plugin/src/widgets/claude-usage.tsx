@@ -20,13 +20,12 @@ import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from ".
 import { formatAbsoluteTime } from "./relative-time.js";
 import { SourceDisclosure, type SourceDisclosureRow } from "./source-disclosure.js";
 import {
+  capacityLine,
   formatCalendarDate,
   formatCompactTokens,
   formatExactTokens,
-  formatMonthDay,
   formatPercentUsed,
   formatRangeBounds,
-  formatTimeOfDay,
   formatUsd,
   pluralize,
 } from "./usage-format.js";
@@ -107,36 +106,6 @@ const WINDOW_LABEL: Readonly<Record<CapacityWindow, string>> = {
   "five-hour": "5-hour window",
   "seven-day": "7-day window",
 };
-
-/** `4:40 PM` for the 5-hour window, `Oct 1` for the 7-day window — neither
- * ever contains a `/` (PRIV-04). `resetsAt` is an INSTANT, so the 7-day date
- * is the reader's local calendar date of it, not its UTC date (wave 3
- * review). */
-function resetsText(window: CapacityWindow, resetsAt: string, nowMs: number): string {
-  return window === "five-hour" ? formatTimeOfDay(resetsAt) : formatMonthDay(resetsAt, nowMs);
-}
-
-/**
- * One window's line. Once its reset time has passed, the reported
- * percentage describes a window that is already over: it reads as outdated
- * (and loses its meter) rather than "resets {past time}" beside a number
- * that is no longer current (wave 3 review).
- */
-function capacityLine(
-  window: CapacityWindow,
-  usedPercent: number,
-  resetsAt: string,
-  nowMs: number,
-): { readonly text: string; readonly current: boolean } {
-  const when = resetsText(window, resetsAt, nowMs);
-  if (Date.parse(resetsAt) <= nowMs) {
-    return {
-      text: `${formatPercentUsed(usedPercent)} before the ${when} reset · outdated`,
-      current: false,
-    };
-  }
-  return { text: `${formatPercentUsed(usedPercent)} · resets ${when}`, current: true };
-}
 
 const CAPACITY_UNAVAILABLE_BODY: Readonly<
   Record<PlanCapacityUnavailableReason, (version: string | null) => string>

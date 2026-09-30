@@ -19,11 +19,10 @@ import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatAbsoluteTime } from "../widgets/relative-time.js";
 import { SourceDisclosure, type SourceDisclosureRow } from "../widgets/source-disclosure.js";
 import {
+  capacityLine,
   formatExactTokens,
-  formatMonthDay,
   formatPercentUsed,
   formatRangeBounds,
-  formatTimeOfDay,
   formatUsd,
   pluralize,
 } from "../widgets/usage-format.js";
@@ -98,10 +97,6 @@ const WINDOW_LABEL: Readonly<Record<CapacityWindow, string>> = {
   "seven-day": "7-day window",
 };
 
-function resetsText(window: CapacityWindow, resetsAt: string, nowMs: number): string {
-  return window === "five-hour" ? formatTimeOfDay(resetsAt) : formatMonthDay(resetsAt, nowMs);
-}
-
 const CAPACITY_UNAVAILABLE_BODY: Readonly<Record<string, string>> = {
   "wrapper-not-installed":
     "Install the optional status-line wrapper to see plan usage. Obsidian settings → Claude command center → Claude has the command.",
@@ -141,21 +136,26 @@ function PlanUsageSection({
   return (
     <div className="ccc-usage-section" data-usage-section="plan-capacity">
       <h4>Plan usage</h4>
-      {capacity.windows.map((window) => (
-        <div className="ccc-usage-row" key={window.window}>
-          <p className="ccc-list-meta">{WINDOW_LABEL[window.window]}</p>
-          <p className="ccc-state-heading">
-            {`${formatPercentUsed(window.usedPercent)} · resets ${resetsText(window.window, window.resetsAt, nowMs)}`}
-          </p>
-          <meter
-            className="ccc-usage-meter"
-            min={0}
-            max={100}
-            value={window.usedPercent}
-            aria-hidden="true"
-          />
-        </div>
-      ))}
+      {capacity.windows.map((window) => {
+        // Same decision as the Overview card (Codex advisory 7): an expired
+        // window reads outdated and loses its meter.
+        const line = capacityLine(window.window, window.usedPercent, window.resetsAt, nowMs);
+        return (
+          <div className="ccc-usage-row" key={window.window}>
+            <p className="ccc-list-meta">{WINDOW_LABEL[window.window]}</p>
+            <p className="ccc-state-heading">{line.text}</p>
+            {line.current && (
+              <meter
+                className="ccc-usage-meter"
+                min={0}
+                max={100}
+                value={window.usedPercent}
+                aria-hidden="true"
+              />
+            )}
+          </div>
+        );
+      })}
       <SourceDisclosure srSuffix="for plan usage" rows={capacitySourceRows(capacity)} />
     </div>
   );

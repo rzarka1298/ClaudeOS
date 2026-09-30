@@ -146,3 +146,39 @@ describe("Test 7: the usage section", () => {
     expect(screen.queryByText("Transcripts in this range don't name a skill or agent.")).toBeNull();
   });
 });
+
+/**
+ * Codex advisory 6-7 (wave 5), finding 7: the Overview usage card marks a
+ * capacity window whose reset has passed as outdated and drops its meter
+ * (wave 3 fix); Agent runs rendered the same expired observation as current
+ * capacity with a reset time in the past.
+ */
+describe("Codex 7: an expired capacity window reads outdated in Agent runs too", () => {
+  it("marks a window whose reset time has passed as outdated, without a meter", () => {
+    const base = summary();
+    const withCapacity: UsageSummary = {
+      ...base,
+      capacity: {
+        kind: "available",
+        windows: [
+          { window: "five-hour", usedPercent: 62, resetsAt: "2026-09-26T13:00:00.000Z" },
+          { window: "seven-day", usedPercent: 18, resetsAt: "2026-10-01T09:00:00.000Z" },
+        ],
+        observedAt: "2026-09-26T12:00:00.000Z",
+        source: "claude-code-status-line",
+        freshness: "live",
+        partiality: { partial: false },
+      },
+    };
+    const { container } = render(<AgentRunsUsage summary={withCapacity} nowMs={NOW_MS} />);
+
+    const section = container.querySelector('[data-usage-section="plan-capacity"]');
+    const rows = [...(section?.querySelectorAll(".ccc-usage-row") ?? [])];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.textContent).toMatch(/62% used before the .+ reset · outdated/);
+    expect(rows[0]?.textContent).not.toMatch(/resets/);
+    expect(rows[0]?.querySelector("meter")).toBeNull();
+    expect(rows[1]?.textContent).toMatch(/18% used · resets /);
+    expect(rows[1]?.querySelector("meter")).not.toBeNull();
+  });
+});

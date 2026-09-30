@@ -1,4 +1,4 @@
-import type { UsageBounds, UsageRangeKind } from "@ccc/domain/usage.js";
+import type { CapacityWindow, UsageBounds, UsageRangeKind } from "@ccc/domain/usage.js";
 
 /**
  * Exact number and time formatting for the usage card (UI-SPEC "Number and
@@ -120,4 +120,40 @@ export function pluralize(n: number): string {
   const noun = isOne ? "model" : "models";
   const verb = isOne ? "was" : "were";
   return `${n} ${noun} without a list price ${verb} left out.`;
+}
+
+/** `4:40 PM` for the 5-hour window, `Oct 1` for the 7-day window — neither
+ * ever contains a `/` (PRIV-04). `resetsAt` is an INSTANT, so the 7-day date
+ * is the reader's local calendar date of it, not its UTC date (wave 3
+ * review). */
+export function formatCapacityReset(
+  window: CapacityWindow,
+  resetsAt: string,
+  nowMs: number,
+): string {
+  return window === "five-hour" ? formatTimeOfDay(resetsAt) : formatMonthDay(resetsAt, nowMs);
+}
+
+/**
+ * One capacity window's line, shared by the Overview usage card and Agent
+ * runs so the same observation never reads two ways (Codex advisory 7, wave
+ * 5). Once its reset time has passed, the reported percentage describes a
+ * window that is already over: it reads as outdated (and the caller drops
+ * its meter) rather than "resets {past time}" beside a number that is no
+ * longer current (wave 3 review).
+ */
+export function capacityLine(
+  window: CapacityWindow,
+  usedPercent: number,
+  resetsAt: string,
+  nowMs: number,
+): { readonly text: string; readonly current: boolean } {
+  const when = formatCapacityReset(window, resetsAt, nowMs);
+  if (Date.parse(resetsAt) <= nowMs) {
+    return {
+      text: `${formatPercentUsed(usedPercent)} before the ${when} reset · outdated`,
+      current: false,
+    };
+  }
+  return { text: `${formatPercentUsed(usedPercent)} · resets ${when}`, current: true };
 }
