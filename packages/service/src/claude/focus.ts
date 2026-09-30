@@ -14,7 +14,8 @@ import { type ProcessFacts, sameProcessStart } from "./process-facts.js";
  * 1. Load the Run and check the pid is still the same process (its `lstart`
  *    equals the stored one; T-05-59).
  * 2. Walk the pid's ancestry to the first executable inside an `.app`
- *    bundle: that is the host.
+ *    bundle, taking its OUTERMOST bundle and skipping helpers nested in a
+ *    bundle's `Contents/Frameworks/`: that is the host.
  * 3. Choose a tier. Terminal.app and iTerm2 select the tab whose tty is the
  *    Claude pid's tty, with a CONSTANT AppleScript that receives the tty
  *    only as `argv` (never interpolated; T-05-60). iTerm2 ships unverified
@@ -139,6 +140,8 @@ export interface FocusServiceDeps {
 /** `ps -o tty=` form of a pseudo-terminal: `ttys` plus at least three digits. */
 const TTY_PATTERN = /^ttys[0-9]{3,}$/;
 const APP_MARKER = ".app/Contents/MacOS/";
+const APP_CONTENTS = ".app/Contents/";
+const FRAMEWORKS_MARKER = ".app/Contents/Frameworks/";
 /** An absolute `.app` bundle path with no `..` segment, NUL or newline. */
 const APP_PATH_PATTERN = /^\/[^\0\n]{1,1024}\.app$/;
 /** The most of an app's name a response carries (the schema's cap). */
@@ -153,27 +156,57 @@ type Host =
   | { readonly tier: "background" }
   | { readonly tier: "none" };
 
-/** The first `.app` bundle in the ancestry, by tier; `none` without a valid one. */
+/**
+ * The outermost `.app` bundle an executable lives in: `/X.app/Contents/…`
+ * cut after the FIRST `.app/Contents/`, so a helper nested in the bundle's
+ * `Contents/Frameworks/` (`Code Helper.app`, wave 5 review) resolves to
+ * the app that owns it. Null when the path is inside no bundle.
+ */
+function outermostApp(comm: string): string | null {
+  const at = comm.indexOf(APP_CONTENTS);
+  if (at < 0 || !comm.includes(APP_MARKER)) return null;
+  return comm.slice(0, at + ".app".length);
+}
+
+/** Whether an executable is a helper nested in another bundle's `Contents/Frameworks/`. */
+function isFrameworksHelper(comm: string): boolean {
+  return comm.includes(FRAMEWORKS_MARKER);
+}
+
+/**
+ * The host app in the ancestry, by tier; `none` without a valid one. The
+ * first main-app executable wins; a Frameworks helper is skipped in favour
+ * of its owning app further up, and is used (as its outermost bundle) only
+ * when no main executable follows.
+ */
 function hostOf(comms: readonly string[]): Host {
+  let helperApp: string | null = null;
   for (const comm of comms) {
-    const at = comm.indexOf(APP_MARKER);
-    if (at < 0) continue;
-    const appPath = comm.slice(0, at + ".app".length);
-    if (
-      !isAbsolute(appPath) ||
-      !APP_PATH_PATTERN.test(appPath) ||
-      appPath.split("/").includes("..")
-    ) {
-      return { tier: "none" };
+    const appPath = outermostApp(comm);
+    if (appPath === null) continue;
+    if (isFrameworksHelper(comm)) {
+      helperApp ??= appPath;
+      continue;
     }
-    const appName = basename(appPath, ".app");
-    if (appName.length === 0) return { tier: "none" };
-    if (appName === "ClaudeCode") return { tier: "background" };
-    if (appName === "Terminal") return { tier: "terminal", appPath, appName };
-    if (appName.startsWith("iTerm")) return { tier: "iterm", appPath, appName };
-    return { tier: "activate", appPath, appName };
+    return hostFor(appPath);
   }
-  return { tier: "none" };
+  return helperApp === null ? { tier: "none" } : hostFor(helperApp);
+}
+
+function hostFor(appPath: string): Host {
+  if (
+    !isAbsolute(appPath) ||
+    !APP_PATH_PATTERN.test(appPath) ||
+    appPath.split("/").includes("..")
+  ) {
+    return { tier: "none" };
+  }
+  const appName = basename(appPath, ".app");
+  if (appName.length === 0) return { tier: "none" };
+  if (appName === "ClaudeCode") return { tier: "background" };
+  if (appName === "Terminal") return { tier: "terminal", appPath, appName };
+  if (appName.startsWith("iTerm")) return { tier: "iterm", appPath, appName };
+  return { tier: "activate", appPath, appName };
 }
 
 /** Error text an `execFile` rejection carries, for mapping only (never logged or returned). */
@@ -189,13 +222,35 @@ function timedOut(err: unknown): boolean {
 
 const FOCUSED: FocusOutcome = { ok: true, response: { outcome: "focused" } };
 
+/**
+ * The one flow budget (D-31, D-36, wave 5 review): every osascript or open
+ * call gets only what remains of it, capped at {@link EXEC_TIMEOUT_MS}, and
+ * once it is spent no call is spawned at all, so a flow that has already
+ * answered `timeout` can never focus a window later.
+ */
+interface Budget {
+  /** The timeout for the next call, or null when the budget is spent. */
+  callTimeout(): number | null;
+}
+
+function budgetUntil(deadlineMs: number): Budget {
+  return {
+    callTimeout() {
+      const remaining = deadlineMs - Date.now();
+      return remaining > 0 ? Math.min(EXEC_TIMEOUT_MS, remaining) : null;
+    },
+  };
+}
+
 export function createFocusService(deps: FocusServiceDeps): FocusService {
   const { processFacts, logger } = deps;
 
   /** Brings the host app forward (`open -a <bundle path>`): the activation tier and every fallback. */
-  async function activate(appPath: string, appName: string): Promise<FocusOutcome> {
+  async function activate(appPath: string, appName: string, budget: Budget): Promise<FocusOutcome> {
+    const timeout = budget.callTimeout();
+    if (timeout === null) return { ok: false, reason: "timeout" };
     try {
-      await deps.execFile(OPEN, ["-a", appPath], { timeout: EXEC_TIMEOUT_MS });
+      await deps.execFile(OPEN, ["-a", appPath], { timeout });
     } catch (err: unknown) {
       if (timedOut(err)) return { ok: false, reason: "timeout" };
       logger.info({ tier: "activate" }, "focus activation failed");
@@ -207,19 +262,22 @@ export function createFocusService(deps: FocusServiceDeps): FocusService {
     };
   }
 
-  async function run(runId: RunId): Promise<FocusOutcome> {
+  async function run(runId: RunId, budget: Budget): Promise<FocusOutcome> {
     const session = getSessionRun(deps.db, runId);
     if (session === null) return { ok: false, reason: "run-not-found" };
     if (isTerminalRunState(session.state)) return { ok: false, reason: "process-ended" };
     const pid = session.pid;
-    // A PID-less Run (hooks without CLAUDE_PID) has no process to look up.
-    if (pid === null) return { ok: false, reason: "terminal-unsupported" };
+    // A PID-less Run (hooks without CLAUDE_PID) has no process to look up,
+    // and a Run whose process start was never recorded has no identity to
+    // verify (wave 5 review): a reused pid could be anyone's terminal.
+    if (pid === null || session.pidStartedAt === null) {
+      return { ok: false, reason: "terminal-unsupported" };
+    }
     if (!processFacts.isAlive(pid)) return { ok: false, reason: "process-ended" };
     const started = (await processFacts.readStartTimes([pid])).get(pid);
-    // Identity (T-05-59): a stored start must match; a pid that no longer
+    // Identity (T-05-59): the stored start must match; a pid that no longer
     // reports one is not proven to be the Run's process.
-    if (started === undefined) return { ok: false, reason: "process-ended" };
-    if (session.pidStartedAt !== null && !sameProcessStart(started, session.pidStartedAt)) {
+    if (started === undefined || !sameProcessStart(started, session.pidStartedAt)) {
       return { ok: false, reason: "process-ended" };
     }
 
@@ -227,7 +285,7 @@ export function createFocusService(deps: FocusServiceDeps): FocusService {
     const host = hostOf(ancestry.map((entry) => entry.comm));
     if (host.tier === "none") return { ok: false, reason: "terminal-unsupported" };
     if (host.tier === "background") return { ok: false, reason: "background-session" };
-    if (host.tier === "activate") return activate(host.appPath, host.appName);
+    if (host.tier === "activate") return activate(host.appPath, host.appName, budget);
 
     const tty = await processFacts.readTty(pid);
     // Validated before anything spawns; it reaches osascript only as argv.
@@ -237,29 +295,30 @@ export function createFocusService(deps: FocusServiceDeps): FocusService {
     if (host.tier === "iterm") {
       logger.info({ tier: "iterm", verified: false }, "focus via iTerm2 AppleScript (unverified)");
     }
+    const timeout = budget.callTimeout();
+    if (timeout === null) return { ok: false, reason: "timeout" };
     let stdout: string;
     try {
-      ({ stdout } = await deps.execFile(OSASCRIPT, ["-e", script, `/dev/${tty}`], {
-        timeout: EXEC_TIMEOUT_MS,
-      }));
+      ({ stdout } = await deps.execFile(OSASCRIPT, ["-e", script, `/dev/${tty}`], { timeout }));
     } catch (err: unknown) {
       if (stderrOf(err).includes("-1743")) return { ok: false, reason: "automation-denied" };
       if (timedOut(err)) return { ok: false, reason: "timeout" };
       logger.info({ tier: host.tier }, "focus script failed; activating instead");
-      return activate(host.appPath, host.appName);
+      return activate(host.appPath, host.appName, budget);
     }
     if (stdout.trim() === "focused") return FOCUSED;
-    return activate(host.appPath, host.appName);
+    return activate(host.appPath, host.appName, budget);
   }
 
   return {
     async focus(runId) {
+      const budget = budgetUntil(Date.now() + FOCUS_TIMEOUT_MS);
       let timer: NodeJS.Timeout | undefined;
       const timeout = new Promise<FocusOutcome>((resolve) => {
         timer = setTimeout(() => resolve({ ok: false, reason: "timeout" }), FOCUS_TIMEOUT_MS);
       });
       try {
-        return await Promise.race([run(runId), timeout]);
+        return await Promise.race([run(runId, budget), timeout]);
       } finally {
         clearTimeout(timer);
       }

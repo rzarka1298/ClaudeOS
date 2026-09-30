@@ -297,3 +297,84 @@ describe("the other tiers and every specific failure (Task 3 Test 2, PR-06, Pitf
     expect(settled).toEqual({ ok: false, reason: "timeout" });
   });
 });
+
+describe("wave 5 review: host app, unverifiable identity and one budget", () => {
+  const VSCODE = "/Applications/Visual Studio Code.app";
+  const HELPER = `${VSCODE}/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)`;
+
+  it("resolves a Frameworks helper to its outermost .app, never the helper bundle", async () => {
+    const run = seedRun();
+    const spy = fakeExec({ open: { stdout: "" } });
+    const outcome = await service(facts({ hostComm: HELPER }), spy.execFile).focus(run.runId);
+    expect(outcome).toEqual({
+      ok: true,
+      response: { outcome: "activated", terminalApp: "Visual Studio Code" },
+    });
+    expect(spy.calls.map((call) => call.args)).toEqual([["-a", VSCODE]]);
+  });
+
+  it("skips the helper for the main app executable further up the ancestry", async () => {
+    const run = seedRun();
+    const base = facts({ hostComm: HELPER });
+    const ancestry = await base.readAncestry(PID);
+    const spy = fakeExec({ open: { stdout: "" } });
+    const outcome = await service(
+      {
+        ...base,
+        readAncestry: async () => [
+          ...ancestry,
+          { pid: 400, ppid: 1, comm: `${VSCODE}/Contents/MacOS/Electron` },
+        ],
+      },
+      spy.execFile,
+    ).focus(run.runId);
+    expect(outcome).toMatchObject({ ok: true, response: { terminalApp: "Visual Studio Code" } });
+    expect(spy.calls[0]?.args).toEqual(["-a", VSCODE]);
+  });
+
+  it("refuses a Run whose process start was never recorded, spawning nothing", async () => {
+    const run = seedRun({ pidStartedAt: null });
+    const spy = fakeExec({ osascript: { stdout: "focused\n" } });
+    const processFacts = facts({});
+    expect(await service(processFacts, spy.execFile).focus(run.runId)).toEqual({
+      ok: false,
+      reason: "terminal-unsupported",
+    });
+    expect(spy.calls).toEqual([]);
+    expect(processFacts.ttyReads).toEqual([]);
+  });
+
+  it("gives each call only the remaining budget, and spawns nothing once it is spent", async () => {
+    vi.useFakeTimers();
+    const slow = (ms: number) => {
+      const base = facts({});
+      return {
+        ...base,
+        readAncestry: async (pid: number) => {
+          await new Promise((resolve) => setTimeout(resolve, ms));
+          return base.readAncestry(pid);
+        },
+      };
+    };
+    const run = seedRun();
+    const late = fakeExec({ osascript: { stdout: "focused\n" } });
+    const pending = service(slow(4500), late.execFile).focus(run.runId);
+    await vi.advanceTimersByTimeAsync(4500);
+    expect(await pending).toEqual({ ok: true, response: { outcome: "focused" } });
+    expect(late.calls[0]?.timeout).toBeLessThanOrEqual(500);
+
+    const spent = fakeExec({ osascript: { stdout: "focused\n" } });
+    let settled: unknown;
+    const timedOut = service(slow(5200), spent.execFile)
+      .focus(run.runId)
+      .then((outcome) => {
+        settled = outcome;
+      });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(settled).toEqual({ ok: false, reason: "timeout" });
+    await vi.advanceTimersByTimeAsync(1000);
+    await timedOut;
+    // The late ancestry answer never reaches an osascript or open call.
+    expect(spent.calls).toEqual([]);
+  });
+});
