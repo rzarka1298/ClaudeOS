@@ -142,7 +142,7 @@ export const REASON_COPY: Record<SessionActionErrorCode | "unrecognised-response
   "launcher-not-configured": "no launcher is set up yet",
   "run-not-found": "this session is no longer tracked",
   "invalid-state": "this session's state changed before the request finished",
-  "approval-unavailable": "Needs approval — available once the approval inbox is ready",
+  "approval-unavailable": "needs approval — available once the approval inbox is ready",
   "project-not-registered": "that project isn't registered",
   "folder-access-denied": "the folder couldn't be accessed",
   "spawn-failed": "the terminal couldn't be started",
@@ -150,6 +150,32 @@ export const REASON_COPY: Record<SessionActionErrorCode | "unrecognised-response
   "app-not-found": "the terminal app isn't installed",
   "unrecognised-response": "the service sent a response this app doesn't recognise",
 };
+
+/**
+ * The reason a failure Notice gives when a modal opener itself throws or
+ * rejects (wave 5 review): the runner runs from a click handler with nowhere
+ * for a rejection to go, so an opener failure is caught and reported like any
+ * other failure -- never as a service reason, since no request was made.
+ */
+const MODAL_FAILED_REASON = "the dialog couldn't be opened";
+
+/** Distinguishes an opener that failed from every value an opener can resolve to. */
+const MODAL_FAILED: unique symbol = Symbol("modal-failed");
+
+/** Awaits a modal opener inside `try`, so a sync throw or a rejection becomes {@link MODAL_FAILED}. */
+async function openSafely<T>(open: () => Promise<T>): Promise<T | typeof MODAL_FAILED> {
+  try {
+    return await open();
+  } catch {
+    return MODAL_FAILED;
+  }
+}
+
+/** Writes a failure status and its Notice -- the one ending every failure branch shares. */
+function reportFailure(deps: SessionActionDeps, runId: string, text: string): void {
+  setActionStatus(runId, { kind: "failure", text });
+  deps.ui.notify(text);
+}
 
 function unavailableMessage(label: string): string {
   return `${label} isn't available yet.`;
@@ -304,10 +330,16 @@ async function runLaunch(
       deps.ui.notify(text);
       return;
     }
-    const resolution = await deps.ui.openConcurrentChoice(
-      concurrentChoiceViewModel(first.conflicts, first.projectName, Date.now()),
-      () => loadWorktrees(deps, runId),
+    const resolution = await openSafely(() =>
+      deps.ui.openConcurrentChoice(
+        concurrentChoiceViewModel(first.conflicts, first.projectName, Date.now()),
+        () => loadWorktrees(deps, runId),
+      ),
     );
+    if (resolution === MODAL_FAILED) {
+      reportFailure(deps, runId, copy.failure(name, MODAL_FAILED_REASON));
+      return;
+    }
     if (resolution.kind === "cancel") {
       clearActionStatus(runId);
       return;
@@ -355,7 +387,11 @@ async function runAssociate(
     deps.ui.notify("Register a project first");
     return;
   }
-  const chosen = await deps.ui.openAssociatePicker(name, projects);
+  const chosen = await openSafely(() => deps.ui.openAssociatePicker(name, projects));
+  if (chosen === MODAL_FAILED) {
+    reportFailure(deps, runId, `Couldn't associate ${name}: ${MODAL_FAILED_REASON}.`);
+    return;
+  }
   if (chosen === null) return;
   setActionStatus(runId, { kind: "pending", text: "Associating…" });
   try {
@@ -387,7 +423,13 @@ async function runOpenTranscript(
     return;
   }
   const days = deps.cleanupPeriodDays() ?? DEFAULT_CLEANUP_PERIOD_DAYS;
-  const choice = await deps.ui.openTranscriptWarning(transcriptWarningViewModel(days));
+  const choice = await openSafely(() =>
+    deps.ui.openTranscriptWarning(transcriptWarningViewModel(days)),
+  );
+  if (choice === MODAL_FAILED) {
+    reportFailure(deps, runId, `Couldn't open the transcript: ${MODAL_FAILED_REASON}.`);
+    return;
+  }
   if (choice === "cancel") return;
   setActionStatus(runId, { kind: "pending", text: "Opening the transcript…" });
   try {
@@ -431,9 +473,15 @@ async function runTerminateRequest(
   const name = sessionNameFor(deps, runId);
   const view = deps.getSession(runId);
   const projectName = view?.projectName ?? "Unclassified";
-  const choice = await deps.ui.openTerminateRequest(
-    terminateRequestViewModel(name, projectName, DEFAULT_TERMINATE_GRACE_SECONDS),
+  const choice = await openSafely(() =>
+    deps.ui.openTerminateRequest(
+      terminateRequestViewModel(name, projectName, DEFAULT_TERMINATE_GRACE_SECONDS),
+    ),
   );
+  if (choice === MODAL_FAILED) {
+    reportFailure(deps, runId, `Couldn't send the request: ${MODAL_FAILED_REASON}.`);
+    return;
+  }
   if (choice === "cancel") return;
   setActionStatus(runId, { kind: "pending", text: "Sending the request…" });
   try {

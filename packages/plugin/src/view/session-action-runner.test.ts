@@ -620,7 +620,73 @@ describe("Task 3 (Test 3): force-terminate request", () => {
 
     expect(sessionActionStatus.value.get("r1")).toEqual({
       kind: "failure",
-      text: "Couldn't send the request: Needs approval — available once the approval inbox is ready.",
+      text: "Couldn't send the request: needs approval — available once the approval inbox is ready.",
+    });
+  });
+});
+
+describe("wave 5 review: a modal opener that throws never escapes the runner", () => {
+  const MODAL_FAILURE = "the dialog couldn't be opened";
+
+  it.each([
+    [
+      "associate",
+      "session:associate",
+      { openAssociatePicker: vi.fn().mockRejectedValue(new Error("boom")) },
+      `Couldn't associate Fix parser: ${MODAL_FAILURE}.`,
+    ],
+    [
+      "open transcript",
+      "session:open-transcript",
+      {
+        openTranscriptWarning: vi.fn(() => {
+          throw new Error("boom");
+        }),
+      },
+      `Couldn't open the transcript: ${MODAL_FAILURE}.`,
+    ],
+    [
+      "terminate",
+      "session:terminate",
+      { openTerminateRequest: vi.fn().mockRejectedValue(new Error("boom")) },
+      `Couldn't send the request: ${MODAL_FAILURE}.`,
+    ],
+  ] as const)("%s: resolves, calls nothing, and reports the failure", async (_l, cap, ui, text) => {
+    const requestSessionAction = vi.fn();
+    const notify = vi.fn();
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ ...ui, notify }),
+      listProjects: () => [],
+      getSession: () => view({ name: "Fix parser" }),
+    });
+
+    await expect(runSessionAction(descriptor(cap, "r1"), deps)).resolves.toBeUndefined();
+
+    expect(requestSessionAction).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenLastCalledWith(text);
+    expect(sessionActionStatus.value.get("r1")).toEqual({ kind: "failure", text });
+  });
+
+  it("resume: a throwing concurrent-choice opener reports the dialog failure, not a service reason", async () => {
+    const requestSessionAction = vi
+      .fn()
+      .mockResolvedValue({ outcome: "conflict", conflicts: [], projectName: "alpha" });
+    const openConcurrentChoice = vi.fn().mockRejectedValue(new Error("boom"));
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openConcurrentChoice }),
+      getSession: () => view({ name: "Fix parser" }),
+    });
+
+    await expect(
+      runSessionAction(descriptor("session:resume", "r1"), deps),
+    ).resolves.toBeUndefined();
+
+    expect(requestSessionAction).toHaveBeenCalledTimes(1);
+    expect(sessionActionStatus.value.get("r1")).toEqual({
+      kind: "failure",
+      text: `Couldn't resume Fix parser: ${MODAL_FAILURE}.`,
     });
   });
 });
