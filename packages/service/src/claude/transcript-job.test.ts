@@ -528,3 +528,37 @@ describe("cancellation (Test 8, D-47, T-05-52)", () => {
     expect(readCursor(store.db, path)).toBeNull();
   });
 });
+
+describe("per-file errors (wave 4 review)", () => {
+  it("logs a non-ENOENT stat or read failure and keeps sweeping; a vanished file is silent", async () => {
+    writeFixture();
+    const denied = file("-synthetic-alpha", "sess-b.jsonl");
+    const vanished = file("-synthetic-beta", "sess-c.jsonl");
+    const io = spies();
+    const stat = vi.fn(async (path: string) => {
+      if (path === denied) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      return io.stat(path);
+    });
+    const readChunk = vi.fn(async (path: string, position: number, length: number) => {
+      if (path === vanished) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return io.readChunk(path, position, length);
+    });
+    const logged: Array<{ level: number; msg: string; code?: unknown }> = [];
+    const logger = pino(
+      { level: "info" },
+      { write: (line: string) => logged.push(JSON.parse(line)) },
+    );
+    const job = makeJob({ ...io, stat, readChunk }, { logger });
+    const outcome = await job.sweep();
+    // Every other file was still scanned.
+    expect(queryTokenActivity(store.db, WIDE).totals.input).toBe(
+      EXPECTED_TOTALS.input - B1.input - C1.input,
+    );
+    expect(outcome).toMatchObject({ completed: true, failedFiles: 1 });
+    const failures = logged.filter((entry) => entry.msg === "transcript scan failed; skipped");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.code).toBe("EACCES");
+    // The path never reaches a log line (D-49).
+    expect(JSON.stringify(logged)).not.toContain(root);
+  });
+});

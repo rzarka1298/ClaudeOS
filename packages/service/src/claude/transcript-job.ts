@@ -106,9 +106,11 @@ export type ScanOutcome =
   | { readonly kind: "cancelled" };
 
 export interface SweepOutcome {
-  /** True only when every listed file was scanned without cancellation. */
+  /** True only when every listed file was visited without cancellation. */
   readonly completed: boolean;
   readonly files: number;
+  /** Files whose stat or read failed with anything but ENOENT; logged and skipped. */
+  readonly failedFiles: number;
 }
 
 export interface TranscriptJob {
@@ -302,7 +304,14 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
       if (!alive()) return { kind: "cancelled" };
       const readAt = position + carry.bytes.length;
       const length = Math.min(chunkBytes, info.size - readAt);
-      const chunk = await deps.readChunk(resolved, readAt, length);
+      let chunk: Uint8Array;
+      try {
+        chunk = await deps.readChunk(resolved, readAt, length);
+      } catch (err: unknown) {
+        // Deleted between stat and read: Claude Code's own cleanup, not a failure.
+        if (errorCode(err) === "ENOENT") return { kind: "missing" };
+        throw err;
+      }
       // Re-checked after the await: a switch-off during the read writes nothing.
       if (!alive()) return { kind: "cancelled" };
       if (chunk.length === 0) break;
@@ -367,27 +376,38 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
 
   async function sweepAll(gen: number): Promise<SweepOutcome> {
     const alive = () => gen === generation && deps.isEnabled();
-    if (!alive()) return { completed: false, files: 0 };
+    if (!alive()) return { completed: false, files: 0, failedFiles: 0 };
     const files = await deps.listFiles(deps.claudeProjectsRoot);
     const present = new Set<string>();
     let scanned = 0;
+    let failedFiles = 0;
     for (const file of files) {
-      if (!alive()) return { completed: false, files: scanned };
-      const outcome = await scanOne(file, gen, present);
+      if (!alive()) return { completed: false, files: scanned, failedFiles };
+      let outcome: ScanOutcome;
+      try {
+        outcome = await scanOne(file, gen, present);
+      } catch (err: unknown) {
+        // One unreadable file (EACCES, EIO…) never aborts the sweep (wave 4
+        // review). The errno code only: the path never reaches a log (D-49).
+        logger.warn({ code: errorCode(err) }, "transcript scan failed; skipped");
+        failedFiles += 1;
+        await yieldNow();
+        continue;
+      }
       if (outcome.kind === "cancelled" || outcome.kind === "skipped") {
-        return { completed: false, files: scanned };
+        return { completed: false, files: scanned, failedFiles };
       }
       scanned += 1;
       await yieldNow();
     }
-    if (!alive()) return { completed: false, files: scanned };
+    if (!alive()) return { completed: false, files: scanned, failedFiles };
     // Files Claude Code deleted no longer hold back the retention horizon.
     for (const path of firstSeen.keys()) {
       if (!present.has(path)) firstSeen.delete(path);
     }
     markRetainedDaysCovered();
     lastScanAt = now().toISOString();
-    return { completed: true, files: scanned };
+    return { completed: true, files: scanned, failedFiles };
   }
 
   return {
