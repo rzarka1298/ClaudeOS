@@ -6,18 +6,23 @@ import type { Logger } from "pino";
 import type { EventBus } from "../events/event-bus.js";
 import {
   resolveClaudeConfigDir,
+  resolveRuntimeDir,
   resolveSpoolDropPath,
   resolveSpoolPath,
   resolveStatusLineSpoolPath,
 } from "../paths.js";
 import { createAttribution } from "./attribution.js";
+import { approvalUnavailableProposer, unconfiguredTerminalLauncher } from "./default-ports.js";
 import { runGit } from "./git-readonly.js";
+import { readInstallRecord } from "./integration-status.js";
+import { createLaunchGuard, listWorktrees } from "./launch-guard.js";
 import { classifyLaunchSource } from "./launch-source.js";
 import { createLivenessSweeper, type LivenessSweeper, livenessConfigFromEnv } from "./liveness.js";
 import { type ClaudePipeline, createClaudePipeline } from "./pipeline.js";
 import { createProcessFacts, createSessionFactsProvider, nodeExecFile } from "./process-facts.js";
 import { createStoreProjectLookup } from "./project-lookup.js";
 import type { ClaudeRouteDeps } from "./routes.js";
+import { nodeOpenFile, type SessionActionDeps } from "./session-action-routes.js";
 import { type SpoolPoller, startSpoolPoller } from "./spool-poller.js";
 
 /** The spool poll interval (D-08: at most 2 s); `CCC_SPOOL_POLL_MS` shrinks it for tests. */
@@ -116,6 +121,25 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     attribute,
   });
 
+  // Session actions (05-14). Before Phase 4 the launcher answers
+  // launcher-not-configured and before Phase 6 the terminate request answers
+  // approval-unavailable (PR-17, PR-26): both honest, neither reaches the OS.
+  // Plan 05-17 swaps in Phase 4's launcher. Git stays read-only (D-30).
+  const actions: SessionActionDeps = {
+    db: store.db,
+    launcher: unconfiguredTerminalLauncher,
+    guard: createLaunchGuard({ db: store.db, runGit, realpath }),
+    lookup: createStoreProjectLookup(store.db),
+    listWorktrees: (projectRoot) => listWorktrees(projectRoot, { runGit, realpath }),
+    proposer: approvalUnavailableProposer,
+    // Read per request, so an install after the service started is picked up.
+    claudeBin: () => readInstallRecord(resolveRuntimeDir())?.claudeBin ?? null,
+    claudeProjectsRoot: join(resolveClaudeConfigDir(), "projects"),
+    openFile: nodeOpenFile,
+    now: () => new Date(),
+    mintRunId: newRunId,
+  };
+
   const drained = await poller.drainNow();
   logger.info({ count: drained, dropped: poller.dropCount() }, "startup: drained hook spool");
   // D-22: after recovery turned every non-terminal Run stale and the drain
@@ -130,7 +154,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     pipeline,
     poller,
     sweeper,
-    routeDeps: { pipeline },
+    routeDeps: { pipeline, actions },
     async stop() {
       // The sweeper first: its evidence goes through the pipeline, which
       // must still be accepting work, and nothing may sweep a closed store.
