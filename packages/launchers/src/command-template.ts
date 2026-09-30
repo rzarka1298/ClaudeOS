@@ -16,6 +16,11 @@
  *   - A placeholder embedded in a larger element (`--cwd={projectPath}`) is
  *     refused: substituting inside an element is how a value starts being
  *     parsed by whatever reads that element.
+ *   - A placeholder that directly follows an interpreter's "run this code"
+ *     flag (`sh -c`, `zsh -lc`, `perl -e`, `node --eval`, `pwsh -Command`,
+ *     `osascript -e`) is refused for the same reason: a whole element is
+ *     still parsed when the program reads it as source
+ *     ({@link placeholderRunsAsCode}).
  *   - The Claude Code permission bypass is refused in any form -- the
  *     `--dangerously-skip-permissions` flag and the `bypassPermissions`
  *     permission mode, however spelled -- in either kind of template
@@ -33,6 +38,8 @@ import { MAX_TEMPLATE_ARGUMENTS } from "@ccc/domain";
 import { OPEN } from "./app-actions.js";
 
 export const PLACEHOLDERS = ["{projectPath}", "{script}"] as const;
+
+export const OSASCRIPT = "/usr/bin/osascript";
 export type Placeholder = (typeof PLACEHOLDERS)[number];
 
 /** The Claude Code permission-bypass flag, as documented. Refused in every template. */
@@ -123,6 +130,35 @@ function containsForbiddenFlag(element: string, previous: string | undefined): b
   );
 }
 
+/** Long-form flags whose next argument is source code (node, PowerShell). */
+const LONG_CODE_FLAGS: ReadonlySet<string> = new Set(["--eval", "-command", "--command"]);
+
+/**
+ * True when `placeholder`, as the element right after `flag`, would be read
+ * as source code rather than as a value. Matched: a short-option bundle
+ * ending in `c` (`-c`, `-lc`, `-ic`: sh, bash, zsh, python) or in `e`/`E`
+ * (`-e`, `-ne`, `-E`: perl, ruby, node, osascript), and `--eval`,
+ * `-Command`, `--command` in any letter case.
+ *
+ * One exception keeps the Ghostty preset (and terminals like it) usable: a
+ * bare `-e` followed by `{script}` is a terminal emulator's "run this
+ * program", so it stays allowed unless the executable is osascript, whose
+ * `-e` is AppleScript source. `{script}` is the service-generated script
+ * path; `{projectPath}` after any of these flags is always refused.
+ */
+function placeholderRunsAsCode(
+  placeholder: string,
+  flag: string | undefined,
+  executable: string | undefined,
+): boolean {
+  if (flag === undefined) return false;
+  const bundle = /^-[A-Za-z]+$/.test(flag) && !flag.startsWith("--");
+  const codeFlag = (bundle && /[ceE]$/.test(flag)) || LONG_CODE_FLAGS.has(flag.toLowerCase());
+  if (!codeFlag) return false;
+  if (placeholder === "{script}" && flag === "-e" && executable !== OSASCRIPT) return false;
+  return true;
+}
+
 function refuse(reason: TemplateRefusal, index: number | null): TemplateValidation {
   return { ok: false, reason, index };
 }
@@ -153,6 +189,9 @@ export function validateCommandTemplate(
     if (WHOLE_TOKEN_PLACEHOLDER.test(element)) {
       if (!(allowed as readonly string[]).includes(element)) {
         return refuse("unknown-placeholder", index);
+      }
+      if (placeholderRunsAsCode(element, argv[index - 1], argv[0])) {
+        return refuse("embedded-placeholder", index);
       }
       continue;
     }
@@ -191,8 +230,6 @@ export function renderCommandTemplate(
     return element;
   });
 }
-
-export const OSASCRIPT = "/usr/bin/osascript";
 
 /** Custom-terminal presets (RESEARCH "Terminal Presets"). All unverified until the owner's Test step succeeds. */
 export const TERMINAL_PRESETS: readonly TerminalPreset[] = [
