@@ -1,4 +1,4 @@
-import type { RunId, SessionView } from "@ccc/domain";
+import type { ClaudeIntegrationStatus, RunId, SessionView } from "@ccc/domain";
 import type { UsageSummary } from "@ccc/domain/usage.js";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -466,4 +466,85 @@ describe("Task 3: keyboard order and the narrow-pane 'Back to sessions' control"
     expect(selectedRunId.value).toBeNull();
     expect(document.activeElement).toBe(rowButton);
   });
+});
+
+/** A full, schema-shaped {@link ClaudeIntegrationStatus}, varied by override (mirrors `active-sessions.test.tsx`). */
+function integrationWith(
+  overrides: Partial<ClaudeIntegrationStatus> = {},
+): ClaudeIntegrationStatus {
+  return {
+    hooks: "installed",
+    hookRuntimeMissing: false,
+    disableAllHooks: false,
+    lastEventAt: null,
+    telemetry: { kind: "ok" },
+    detectedClaudeVersion: null,
+    statusLine: "installed",
+    statusLineReported: false,
+    transcriptAnalysis: { enabled: false },
+    spoolDropCount: 0,
+    unknownEventCount: 0,
+    cleanupPeriodDays: 30,
+    ...overrides,
+  };
+}
+
+/**
+ * Codex advisory 6 (wave 5): hook states in which no event can arrive
+ * resolve `unavailable` with a typed reason (session-signals.ts, D-15), but
+ * the destination banner only knew the two telemetry codes -- it rendered
+ * nothing, then zero counts and the "appear within 10 seconds" promise.
+ */
+describe("Codex 6: unavailable hook reasons are said out loud in Agent runs (D-15)", () => {
+  const CASES = [
+    [
+      "hooks-disabled",
+      { disableAllHooks: true },
+      "Session tracking paused",
+      "Claude Code has all hooks turned off (disableAllHooks), so no sessions are reported. Turn hooks back on in Claude Code's settings to resume tracking.",
+    ],
+    [
+      "hook-runtime-missing",
+      { hookRuntimeMissing: true },
+      "Session tracking paused",
+      "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+    ],
+    [
+      "hooks-status-unknown",
+      { hooks: "unknown" },
+      "Session tracking status unknown",
+      "The service couldn't read Claude Code's hook settings, so it can't tell whether sessions are being reported.",
+    ],
+  ] as const;
+
+  it.each(CASES)(
+    "%s with no history: the banner stands alone -- no zero counts, no 10-second promise",
+    (_code, overrides, heading, body) => {
+      connectionState.value = { kind: "live" };
+      claudeIntegration.value = integrationWith(overrides);
+
+      const { container } = render(<AgentRuns now={NOW_MS} />);
+      const text = container.textContent ?? "";
+
+      expect(screen.getByText(heading)).toBeTruthy();
+      expect(screen.getByText(body)).toBeTruthy();
+      expect(text).not.toMatch(/\b0 active/);
+      expect(text).not.toContain("within 10");
+      expect(text).not.toContain("Nothing here yet");
+    },
+  );
+
+  it.each(CASES.filter(([code]) => code !== "hooks-status-unknown"))(
+    "%s with stored history: the banner explains the pause above the stored rows",
+    (_code, overrides, heading, body) => {
+      seed([session({ runId: runId(1), name: "Refactor parser" })]);
+      claudeIntegration.value = integrationWith(overrides);
+
+      render(<AgentRuns now={NOW_MS} />);
+
+      expect(screen.getByText(heading)).toBeTruthy();
+      expect(screen.getByText(body)).toBeTruthy();
+      expect(screen.getAllByText("Refactor parser").length).toBeGreaterThan(0);
+    },
+  );
 });

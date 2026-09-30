@@ -254,6 +254,57 @@ function claudeCodeVersion(version: string): string {
   return VERSION_SHAPE.test(version) ? `Claude Code ${version}` : "Your Claude Code version";
 }
 
+/**
+ * Banner copy for each unavailable reason code this destination explains.
+ * The hook codes (wave 2 review, D-15) are states in which no event can
+ * arrive -- each is said out loud rather than shown as zero sessions (Codex
+ * advisory 6, wave 5). Same literals as the Overview card's `frame.tsx`
+ * table, kept independent for the reason given above. A code with no row (a
+ * free string, a future code) renders no banner.
+ */
+const UNAVAILABLE_BANNER: Readonly<
+  Record<string, { readonly heading: string; readonly body: (version: string) => string }>
+> = {
+  "session-telemetry-changed": {
+    heading: TELEMETRY_PAUSED_HEADING,
+    body: (version) =>
+      `${claudeCodeVersion(version)} reports sessions in a format this build doesn't recognise. States below come from process checks only and may be incomplete.`,
+  },
+  "claude-version-unsupported": {
+    heading: TELEMETRY_PAUSED_HEADING,
+    body: (version) => `${claudeCodeVersion(version)} is older than the minimum supported 2.1.214.`,
+  },
+  "hooks-disabled": {
+    heading: TELEMETRY_PAUSED_HEADING,
+    body: () =>
+      "Claude Code has all hooks turned off (disableAllHooks), so no sessions are reported. Turn hooks back on in Claude Code's settings to resume tracking.",
+  },
+  "hook-runtime-missing": {
+    heading: TELEMETRY_PAUSED_HEADING,
+    body: () =>
+      "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+  },
+  "hooks-status-unknown": {
+    heading: "Session tracking status unknown",
+    body: () =>
+      "The service couldn't read Claude Code's hook settings, so it can't tell whether sessions are being reported.",
+  },
+};
+
+/** The banner copy for an `unavailable` presentation, or `null` when its reason has none. */
+function unavailableBannerCopy(
+  presentation: CardPresentation,
+): { readonly heading: string; readonly body: string } | null {
+  if (presentation.kind !== "unavailable") return null;
+  const reason = presentation.reason;
+  if (typeof reason !== "object" || reason === null) return null;
+  if (!Object.hasOwn(UNAVAILABLE_BANNER, reason.code)) return null;
+  const copy = UNAVAILABLE_BANNER[reason.code];
+  if (copy === undefined) return null;
+  const version = "version" in reason && typeof reason.version === "string" ? reason.version : "";
+  return { heading: copy.heading, body: copy.body(version) };
+}
+
 function Banner({
   presentation,
   onSetUpHooks,
@@ -275,22 +326,12 @@ function Banner({
         </div>
       );
     case "unavailable": {
-      const reason = presentation.reason;
-      const version =
-        reason !== undefined && "version" in reason && typeof reason.version === "string"
-          ? reason.version
-          : "";
-      const body =
-        reason?.code === "session-telemetry-changed"
-          ? `${claudeCodeVersion(version)} reports sessions in a format this build doesn't recognise. States below come from process checks only and may be incomplete.`
-          : reason?.code === "claude-version-unsupported"
-            ? `${claudeCodeVersion(version)} is older than the minimum supported 2.1.214.`
-            : null;
-      if (body === null) return null;
+      const copy = unavailableBannerCopy(presentation);
+      if (copy === null) return null;
       return (
         <div className="ccc-agent-runs-banner">
-          <p className="ccc-state-heading">{TELEMETRY_PAUSED_HEADING}</p>
-          <p className="ccc-state-body">{body}</p>
+          <p className="ccc-state-heading">{copy.heading}</p>
+          <p className="ccc-state-body">{copy.body}</p>
         </div>
       );
     }
@@ -443,6 +484,24 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
         </p>
         <WidgetFooter model={footerModel} panelTitle="agent runs" now={now} />
         <Banner presentation={presentation} onSetUpHooks={handleSetUpHooks} now={now} />
+      </div>
+    );
+  }
+
+  // An explained `unavailable` with no stored history: the banner stands
+  // alone (Codex advisory 6). Zero counts, "Nothing here yet" and the
+  // "appear within 10 seconds" promise would each be a zero or a promise the
+  // service cannot vouch for while no event can arrive (D-15).
+  if (totalSessions === 0 && unavailableBannerCopy(presentation) !== null) {
+    return (
+      <div className="ccc-agent-runs">
+        <WidgetFooter model={footerModel} panelTitle="agent runs" now={now} />
+        <Banner presentation={presentation} onSetUpHooks={handleSetUpHooks} now={now} />
+        {/* Plan usage and token activity have their own sources (status line,
+            transcripts), so a hook pause never hides them. */}
+        {usageSummary.value !== null && (
+          <AgentRunsUsage summary={usageSummary.value} nowMs={now} onQuickAction={onQuickAction} />
+        )}
       </div>
     );
   }
