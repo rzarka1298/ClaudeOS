@@ -16,16 +16,20 @@
 #
 # The rule. Every tracked image, document or video (IMAGE_EXTENSIONS below,
 # any case — a screenshot can arrive as a phone's .heic, a scanner's .tiff or
-# a printed .pdf just as easily as a .png) must be a direct child of
-# ALLOWED_PREFIX AND be on the EXPECTED list: the exact baseline file names
-# `scripts/list-visual-baselines.mjs` derives from the tests themselves
+# a printed .pdf just as easily as a .png) must sit exactly ONE directory
+# level below ALLOWED_PREFIX (a `{specFile}-snapshots/` directory — one per
+# `packages/test-fixtures/visual/*.spec.ts` file, since Playwright's own
+# `{testFileName}` snapshotPathTemplate token gives each spec file its own
+# directory, 05-13 Task 3) AND be on the EXPECTED list: the exact baseline
+# paths `scripts/list-visual-baselines.mjs` derives from the tests themselves
 # (`playwright test --list`, one `baseline` annotation per screenshot cell).
 # The directory is never the source of truth (judge-r1 finding 1): a vault
 # screenshot renamed `something-chromium-linux.png` is an ORPHAN, not a
 # baseline. Conversely every expected baseline must be tracked — a MISSING one
 # fails too, so the set git tracks and the set the tests compare are equal.
-# `.gitignore` admits only `*-chromium-linux.png` at staging time; this gate
-# is the half that also catches a force-add and a well-named impostor.
+# `.gitignore` admits only `*-chromium-linux.png` at staging time, per spec
+# file's own snapshot directory; this gate is the half that also catches a
+# force-add and a well-named impostor.
 #
 # Refusals (judge-r1 finding 4): a failing `git ls-files`, a failing or empty
 # lister, and a scan of zero images while baselines are expected all fail the
@@ -41,7 +45,7 @@
 
 set -eu
 
-ALLOWED_PREFIX="packages/test-fixtures/visual/widgets.spec.ts-snapshots/"
+ALLOWED_PREFIX="packages/test-fixtures/visual/"
 LISTER="scripts/list-visual-baselines.mjs"
 # Every raster, vector and document format a screenshot or a scan of personal
 # content can take, plus the video formats a screen recording can (judge-r1
@@ -92,17 +96,27 @@ while IFS= read -r f; do
   SCANNED=$((SCANNED + 1))
   case "$f" in
     "$ALLOWED_PREFIX"*)
+      # `$name` is now `{specFile}-snapshots/{baseline}.png` — exactly one
+      # directory level below ALLOWED_PREFIX (one snapshot dir per spec
+      # file, 05-13 Task 3). Zero slashes means it sits loose in `visual/`
+      # itself; two or more means it is nested further than any spec file's
+      # own snapshot dir — both are violations, only exactly one is valid.
       name=${f#"$ALLOWED_PREFIX"}
-      case "$name" in
-        */*)
-          echo "IMAGE OUTSIDE ALLOWLIST: $f (nested below the snapshot directory)"
+      slashes=$(printf '%s' "$name" | tr -cd '/' | wc -c | tr -d ' ')
+      case "$slashes" in
+        0)
+          echo "IMAGE OUTSIDE ALLOWLIST: $f (not inside a *-snapshots directory)"
           VIOLATIONS=$((VIOLATIONS + 1))
           ;;
-        *)
+        1)
           if ! is_expected "$name"; then
             echo "ORPHAN BASELINE: $f (no visual test declares it; only the names $LISTER prints may be tracked)"
             VIOLATIONS=$((VIOLATIONS + 1))
           fi
+          ;;
+        *)
+          echo "IMAGE OUTSIDE ALLOWLIST: $f (nested below the snapshot directory)"
+          VIOLATIONS=$((VIOLATIONS + 1))
           ;;
       esac
       ;;

@@ -1,6 +1,9 @@
-// Audit (03-09): behavioural checks on the visual matrix contract that the
-// plan's own tests left to inspection — the 68-cell count, the off-Linux skip
-// guard, the determinism pins, and that no fixture leaks into the plugin.
+// Audit (03-09; recount 05-13): behavioural checks on the visual matrix
+// contract that the plan's own tests left to inspection — the cell count,
+// the off-Linux skip guard, the determinism pins, and that no fixture leaks
+// into the plugin. 05-13 Task 3 added a second spec file (`agent-runs.spec.ts`,
+// 4 fixed cells for the Agent runs destination), so the total is now 72
+// tests across 2 files rather than the original 68 in 1.
 
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -28,14 +31,18 @@ function filesUnder(dir: string): string[] {
 }
 
 describe("visual matrix (audit)", () => {
-  it("lists exactly 68 cells: 8 widgets x 8 presentations + 4 motion cells", () => {
+  it("lists exactly 72 cells: 8 widgets x 8 presentations + 4 motion cells + 4 Agent runs cells", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 68 tests in 1 file/);
+    expect(out).toMatch(/Total: 72 tests in 2 files/);
     for (const cell of [
       "background — full",
       "background — reduced",
       "service-health — ready — motion full",
       "service-health — ready — motion reduced",
+      "agent-runs — selected-waiting",
+      "agent-runs — selected-stale",
+      "agent-runs — narrow-detail",
+      "agent-runs — disconnected",
     ]) {
       expect(out).toContain(cell);
     }
@@ -54,15 +61,18 @@ describe("visual matrix (audit)", () => {
     expect(config).toContain('updateSnapshots: "none"');
   });
 
-  it("skips the whole spec on a non-Linux host unless the local override is set", () => {
-    const spec = readFileSync(
-      join(REPO_ROOT, "packages", "test-fixtures", "visual", "widgets.spec.ts"),
-      "utf8",
-    );
-    expect(spec).toMatch(
-      /test\.skip\(\s*process\.platform !== "linux" && !process\.env\.CCC_VISUAL_ALLOW_LOCAL/,
-    );
-  });
+  it.each(["widgets.spec.ts", "agent-runs.spec.ts"])(
+    "%s skips the whole file on a non-Linux host unless the local override is set",
+    (fileName) => {
+      const spec = readFileSync(
+        join(REPO_ROOT, "packages", "test-fixtures", "visual", fileName),
+        "utf8",
+      );
+      expect(spec).toMatch(
+        /test\.skip\(\s*process\.platform !== "linux" && !process\.env\.CCC_VISUAL_ALLOW_LOCAL/,
+      );
+    },
+  );
 
   it("never lets the plugin source reach the synthetic fixtures", () => {
     const pluginSrc = join(REPO_ROOT, "packages", "plugin", "src");

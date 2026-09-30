@@ -6,11 +6,14 @@
 // on this list that is not tracked.
 //
 // Source of truth: `playwright test --list --reporter=json`. Every screenshot
-// cell in `packages/test-fixtures/visual/widgets.spec.ts` is registered through
-// `cell()`, which attaches a `baseline` annotation naming the one snapshot the
-// cell may write. The file name is then `{stem}-{projectName}-linux.png`, the
-// same shape `snapshotPathTemplate` in playwright.config.ts produces on the
-// Linux container (D-22).
+// cell in a `packages/test-fixtures/visual/*.spec.ts` file (`widgets.spec.ts`,
+// and 05-13's `agent-runs.spec.ts`) is registered through `cell()`, which
+// attaches a `baseline` annotation naming the one snapshot the cell may
+// write. The path is then `{specFile}-snapshots/{stem}-{projectName}-linux.png`,
+// the same shape `snapshotPathTemplate` in playwright.config.ts produces on
+// the Linux container (D-22) — one subdirectory per spec file, since
+// Playwright's own `{testFileName}` token in that template means a second
+// spec file gets a second, independent snapshot directory.
 //
 // Refuses (exit 2, nothing on stdout) rather than printing a partial list:
 // Playwright failing, a load error in any spec, zero tests, a test with no
@@ -63,7 +66,11 @@ if (Array.isArray(report.errors) && report.errors.length > 0) {
 const names = new Set();
 let tests = 0;
 
-function visit(suite) {
+// `suite.file` is set on the top-level (per-spec-file) suite only; nested
+// suites (a `describe()`) carry no `file` of their own, so the file name is
+// threaded down from the nearest ancestor that had one.
+function visit(suite, fileName) {
+  const currentFile = suite.file ?? fileName;
   for (const spec of suite.specs ?? []) {
     for (const test of spec.tests ?? []) {
       tests++;
@@ -73,14 +80,15 @@ function visit(suite) {
       }
       const stem = declared[0].description ?? "";
       if (!STEM.test(stem)) refuse(`"${spec.title}" declares a malformed baseline name "${stem}"`);
-      const name = `${stem.slice(0, -".png".length)}-${test.projectName}-${PLATFORM}.png`;
+      if (!currentFile) refuse(`"${spec.title}" has no owning spec file in the playwright report`);
+      const name = `${currentFile}-snapshots/${stem.slice(0, -".png".length)}-${test.projectName}-${PLATFORM}.png`;
       if (names.has(name)) refuse(`two cells declare the same baseline ${name}`);
       names.add(name);
     }
   }
-  for (const child of suite.suites ?? []) visit(child);
+  for (const child of suite.suites ?? []) visit(child, currentFile);
 }
-for (const suite of report.suites ?? []) visit(suite);
+for (const suite of report.suites ?? []) visit(suite, undefined);
 
 if (tests === 0 || names.size === 0) refuse("playwright listed no visual cells");
 

@@ -1155,6 +1155,39 @@
   }
 }
 
+/* "Back to sessions" only exists as a control below 48rem, where the detail
+ * pane stacks under the table instead of sitting beside it (UI-SPEC S3
+ * "Layout", "Overflow"). Always present in the DOM — the surrounding
+ * container query is the only thing that shows or hides it — so a keyboard
+ * user tabbing through source order finds it exactly where the narrow
+ * layout puts it, and no environment that cannot evaluate a container query
+ * (a test runner) loses the control entirely. */
+.ccc-back-to-sessions {
+  display: none;
+}
+
+@container (max-width: 48rem) {
+  .ccc-back-to-sessions {
+    display: inline-flex;
+    min-width: var(--ccc-space-lg);
+    min-height: var(--ccc-space-lg);
+    margin-bottom: var(--ccc-space-sm);
+    padding: var(--ccc-space-xs) var(--ccc-space-sm);
+    border: var(--ccc-border-hairline) solid var(--ccc-border);
+    border-radius: var(--ccc-radius-pill);
+    background: transparent;
+    color: var(--ccc-ink);
+    font-family: inherit;
+    font-size: var(--ccc-text-label);
+    cursor: pointer;
+  }
+
+  .ccc-back-to-sessions:focus-visible {
+    outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+    outline-offset: calc(-1 * var(--ccc-focus-ring));
+  }
+}
+
 .ccc-agent-runs-sessions {
   display: flex;
   flex-direction: column;

@@ -119,7 +119,7 @@ interface SessionsTableProps {
   readonly onShowMore: () => void;
   readonly nowMs: number;
   readonly selected: string | null;
-  readonly onSelect: (runId: string) => void;
+  readonly onSelect: (runId: string, rowButton: HTMLButtonElement | null) => void;
 }
 
 function SkeletonRows(): VNode {
@@ -189,7 +189,7 @@ function SessionsTable({
                     className="ccc-session-row-link ccc-clamp-2"
                     title={name}
                     aria-current={isSelected ? "true" : undefined}
-                    onClick={() => onSelect(session.runId)}
+                    onClick={(event) => onSelect(session.runId, event.currentTarget)}
                   >
                     {name}
                   </button>
@@ -343,6 +343,20 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
     // is a ref and stable by contract.
   }, [selected]);
 
+  // The row button that triggered the current selection — below 48rem
+  // "Back to sessions" returns focus to it (UI-SPEC S3 "Layout"). Always in
+  // the DOM (CSS hides it at 48rem and wider): jsdom cannot evaluate the
+  // container query, so the keyboard test drives this element directly.
+  const originatingRowRef = useRef<HTMLButtonElement | null>(null);
+  function handleSelectRow(runId: string, rowButton: HTMLButtonElement | null): void {
+    originatingRowRef.current = rowButton;
+    selectedRunId.value = runId;
+  }
+  function handleBackToSessions(): void {
+    selectedRunId.value = null;
+    originatingRowRef.current?.focus();
+  }
+
   function handleSetUpHooks(): void {
     onQuickAction?.({
       id: "connect-claude-hooks",
@@ -443,9 +457,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
                 onShowMore={() => {}}
                 nowMs={now}
                 selected={selected}
-                onSelect={(runId) => {
-                  selectedRunId.value = runId;
-                }}
+                onSelect={handleSelectRow}
               />
             </section>
             <section>
@@ -457,9 +469,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
                 onShowMore={() => setRecentShown((n) => n + RECENT_PAGE_SIZE)}
                 nowMs={now}
                 selected={selected}
-                onSelect={(runId) => {
-                  selectedRunId.value = runId;
-                }}
+                onSelect={handleSelectRow}
               />
             </section>
             <section>
@@ -471,27 +481,30 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
                 onShowMore={() => setUnclassifiedShown((n) => n + RECENT_PAGE_SIZE)}
                 nowMs={now}
                 selected={selected}
-                onSelect={(runId) => {
-                  selectedRunId.value = runId;
-                }}
+                onSelect={handleSelectRow}
               />
             </section>
           </div>
           {selectedSession === null ? (
             <NoSelectionPrompt />
           ) : (
-            <DetailPane
-              session={selectedSession}
-              nowMs={now}
-              connected={connection.kind === "live"}
-              // The associate picker's project options come from Phase 4's
-              // projects state at wiring (05-17); `null` (unknown) never
-              // disables the control (plan note).
-              projectCount={null}
-              onQuickAction={onQuickAction}
-              loadSessionUsage={loadSessionUsage}
-              headingRef={headingRef}
-            />
+            <>
+              <button type="button" className="ccc-back-to-sessions" onClick={handleBackToSessions}>
+                Back to sessions
+              </button>
+              <DetailPane
+                session={selectedSession}
+                nowMs={now}
+                connected={connection.kind === "live"}
+                // The associate picker's project options come from Phase 4's
+                // projects state at wiring (05-17); `null` (unknown) never
+                // disables the control (plan note).
+                projectCount={null}
+                onQuickAction={onQuickAction}
+                loadSessionUsage={loadSessionUsage}
+                headingRef={headingRef}
+              />
+            </>
           )}
         </div>
       )}
