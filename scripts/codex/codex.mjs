@@ -739,8 +739,8 @@ export function marker(id) {
   return `codex-bridge run ${id}`;
 }
 
-// --ignore-user-config hides the owner's trusted projects, and every run uses
-// a fresh worktree, so the TUI would stop at "trust this folder?". Trust exactly
+// Every run uses a fresh worktree, which the owner never trusted, so the TUI
+// would stop at "trust this folder?". Trust exactly
 // this run's directories, for this run only, as one inline table: a dotted
 // `projects."<path>".trust_level` key would break on paths containing dots.
 // Sandbox and approvals stay pinned explicitly, so trust loosens neither.
@@ -749,9 +749,15 @@ export function trustOverride(paths) {
   return `projects={${entries.join(",")}}`;
 }
 
+// The interactive CLI rejects --ignore-user-config (exec-only; verified on
+// 0.159.2), so the TUI loads the owner's config. Everything that matters is
+// still pinned on the command line, which outranks it: model, effort,
+// sandbox, approvals, network, env inheritance, and no MCP servers.
 export function tuiArgs(role, cwd, prompt, trusted = [cwd]) {
   return [
-    ...roleArgs(role, { withSandboxFlag: true }),
+    ...roleArgs(role, { withSandboxFlag: true }).filter((a) => a !== "--ignore-user-config"),
+    "-c",
+    "mcp_servers={}",
     "--ask-for-approval",
     "never",
     "-c",
@@ -1068,6 +1074,12 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
     }
     const helper = helperState(id);
     if (helper === "exited") {
+      const st = readJson(join(bridge.dirs(BRIDGE_STATE).tui, `${id}.json`));
+      if (st?.code) {
+        live.write([
+          `[tui] codex exited with code ${st.code}${st.error ? `: ${firstLine(st.error.split("\n").at(-1))}` : ""}`,
+        ]);
+      }
       if (!rollout) fellBack = true;
       else live.write(["[tui] the Codex TUI exited before finishing"]);
       break;
@@ -1834,7 +1846,14 @@ async function cmdTui({ positional }) {
   };
   // The Codex home the wrapper checked usage against and watches for the session.
   if (req.codexHome) env.CODEX_HOME = req.codexHome;
-  const child = spawn(CODEX, args, { stdio: "inherit", cwd: req.cwd, env });
+  // stderr is passed through and its tail kept: a TUI that refuses to start
+  // (bad flag, config error) says why there, and the wrapper logs it.
+  const child = spawn(CODEX, args, { stdio: ["inherit", "inherit", "pipe"], cwd: req.cwd, env });
+  let errTail = "";
+  child.stderr.on("data", (b) => {
+    process.stderr.write(b);
+    errTail = (errTail + b.toString("utf8")).slice(-2000);
+  });
   let tree = new Set();
   const poll = setInterval(() => {
     if (!existsSync(stopFile)) return;
@@ -1856,7 +1875,7 @@ async function cmdTui({ positional }) {
     while ([...tree].some(alive) && Date.now() < until) await sleep(100);
     signalAll(tree, "SIGKILL");
   }
-  status({ status: "exited", code });
+  status({ status: "exited", code, error: code ? errTail.trim().slice(-500) : null });
   // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
   if (process.env.CODEX_BRIDGE_FOLLOW_SHELL !== "0" && process.stdin.isTTY) {
     spawnSync(process.env.SHELL || "/bin/zsh", ["-l"], { stdio: "inherit", cwd: req.cwd, env });

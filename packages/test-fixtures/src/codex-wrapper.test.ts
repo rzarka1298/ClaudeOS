@@ -120,7 +120,15 @@ if (argv[0] === "app-server") {
   // way Codex does (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl).
   const mode = process.env.FAKE_CODEX_TUI || "ok";
   record({ tui: true, codexHome: process.env.CODEX_HOME });
-  if (mode === "crash") process.exit(2);
+  // Verified on 0.159.2: the interactive CLI rejects --ignore-user-config (exec-only).
+  if (argv.includes("--ignore-user-config")) {
+    process.stderr.write("error: unexpected argument '--ignore-user-config' found\n");
+    process.exit(2);
+  }
+  if (mode === "crash") {
+    process.stderr.write("error: unexpected argument '--frobnicate' found\n");
+    process.exit(2);
+  }
   if (mode === "prompt") {
     // Stuck on an interactive prompt (e.g. "trust this folder?"): no session yet.
     if (process.env.FAKE_CODEX_PIDFILE) fs.writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(process.pid));
@@ -1287,6 +1295,8 @@ describe("tui in the antigravity tab", () => {
     expect(r.status).toBe(0);
     expect(tuiCalls(h)).toHaveLength(1);
     expect(h.execCalls()).toHaveLength(1);
+    const log = readFileSync(join(h.root, String(lastJson(r.stdout).liveLog)), "utf8");
+    expect(log).toContain("[tui] codex exited with code 2: error: unexpected argument");
   });
 
   it.each([
@@ -1353,6 +1363,8 @@ describe("tui: trust, withdrawal and cleanup", () => {
     expect(argv).toEqual(
       expect.arrayContaining(["-s", "read-only", "--ask-for-approval", "never"]),
     );
+    // The owner's MCP servers stay out of the worker, as --ignore-user-config does headless.
+    expect(argv).toEqual(expect.arrayContaining(["-c", "mcp_servers={}"]));
   });
 
   it("stops a TUI that shows no session in time (e.g. a trust prompt) and falls back headless", async () => {
