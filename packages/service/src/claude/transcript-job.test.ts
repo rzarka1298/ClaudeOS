@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -778,5 +779,37 @@ describe("delete cached usage analytics while analysis is on (wave 4 review, D-4
     expect(usage.summary().analysis.firstScanPending).toBe(false);
     await usage.stop();
     await pipeline.stop();
+  });
+});
+
+describe("Codex 1: a directory that cannot be enumerated holds coverage back", () => {
+  it("an unreadable project directory is counted and marks nothing covered", async () => {
+    writeFixture();
+    const denied = file("-synthetic-alpha");
+    chmodSync(denied, 0o000);
+    try {
+      const outcome = await makeJob(spies()).sweep();
+      expect(outcome).toMatchObject({ failedFiles: 0, failedDirs: 1 });
+      expect(coveredDays()).toEqual([]);
+      // The readable project was still scanned.
+      expect(queryTokenActivity(store.db, WIDE).totals).toEqual(C1);
+    } finally {
+      chmodSync(denied, 0o755);
+    }
+  });
+
+  it("an unreadable projects root marks nothing covered; a missing one is simply empty", async () => {
+    writeFixture();
+    chmodSync(root, 0o000);
+    try {
+      const outcome = await makeJob(spies()).sweep();
+      expect(outcome).toMatchObject({ files: 0, failedDirs: 1 });
+      expect(coveredDays()).toEqual([]);
+    } finally {
+      chmodSync(root, 0o755);
+    }
+    rmSync(root, { recursive: true, force: true });
+    const empty = await makeJob(spies()).sweep();
+    expect(empty).toMatchObject({ completed: true, files: 0, failedDirs: 0 });
   });
 });

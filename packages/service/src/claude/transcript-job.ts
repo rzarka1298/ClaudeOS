@@ -97,8 +97,15 @@ export interface TranscriptFileStat {
 export interface TranscriptIo {
   readChunk(path: string, position: number, length: number): Promise<Uint8Array>;
   stat(path: string): Promise<TranscriptFileStat>;
-  listFiles(root: string): Promise<string[]>;
+  listFiles(root: string): Promise<TranscriptListing>;
   parse: typeof parseTranscriptChunk;
+}
+
+/** What a sweep listed, plus how many directories could not be enumerated (Codex 1). */
+export interface TranscriptListing {
+  readonly files: readonly string[];
+  /** Directories whose listing failed with anything but a missing entry; they hold coverage back. */
+  readonly failedDirs: number;
 }
 
 export interface TranscriptJobDeps extends TranscriptIo {
@@ -138,6 +145,8 @@ export interface SweepOutcome {
   readonly files: number;
   /** Files whose stat or read failed with anything but ENOENT; logged and skipped. */
   readonly failedFiles: number;
+  /** Directories that could not be listed (EACCES, EIO…); logged, and no day is marked covered. */
+  readonly failedDirs: number;
   /** The sweep stopped because the format-recognition verdict is unavailable. */
   readonly held: boolean;
 }
@@ -199,10 +208,16 @@ export function nodeTranscriptIo(): Omit<TranscriptIo, "parse"> {
     },
     async listFiles(root) {
       const files: string[] = [];
+      let failedDirs = 0;
+      // A missing directory is simply empty (no transcripts yet, no
+      // subagents); any other failure is counted, so a sweep that could
+      // not see everything never reads as complete (Codex 1).
       const entries = async (dir: string) => {
         try {
           return await readdir(dir, { withFileTypes: true });
-        } catch {
+        } catch (err: unknown) {
+          const code = errorCode(err);
+          if (code !== "ENOENT" && code !== "ENOTDIR") failedDirs += 1;
           return [];
         }
       };
@@ -210,7 +225,7 @@ export function nodeTranscriptIo(): Omit<TranscriptIo, "parse"> {
         if (!project.isDirectory()) continue;
         const projectDir = join(root, project.name);
         for (const entry of await entries(projectDir)) {
-          if (files.length >= MAX_SWEEP_FILES) return files;
+          if (files.length >= MAX_SWEEP_FILES) return { files, failedDirs };
           if (entry.isFile() && entry.name.endsWith(".jsonl")) {
             files.push(join(projectDir, entry.name));
           } else if (entry.isDirectory()) {
@@ -222,7 +237,7 @@ export function nodeTranscriptIo(): Omit<TranscriptIo, "parse"> {
           }
         }
       }
-      return files;
+      return { files, failedDirs };
     },
   };
 }
@@ -458,17 +473,21 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
 
   async function sweepAll(gen: number): Promise<SweepOutcome> {
     const alive = () => gen === generation && deps.isEnabled();
-    if (!alive()) return { completed: false, files: 0, failedFiles: 0, held: false };
+    if (!alive()) return { completed: false, files: 0, failedFiles: 0, failedDirs: 0, held: false };
     ensureParserVersion();
     if (verdict().kind === "unavailable") {
-      return { completed: false, files: 0, failedFiles: 0, held: true };
+      return { completed: false, files: 0, failedFiles: 0, failedDirs: 0, held: true };
     }
-    const files = await deps.listFiles(deps.claudeProjectsRoot);
+    const { files, failedDirs } = await deps.listFiles(deps.claudeProjectsRoot);
+    if (failedDirs > 0) {
+      logger.warn({ failedDirs }, "transcript directories could not be listed; coverage held");
+    }
     const present = new Set<string>();
     let scanned = 0;
     let failedFiles = 0;
     for (const file of files) {
-      if (!alive()) return { completed: false, files: scanned, failedFiles, held: false };
+      if (!alive())
+        return { completed: false, files: scanned, failedFiles, failedDirs, held: false };
       let outcome: ScanOutcome;
       try {
         outcome = await scanOne(file, gen, present);
@@ -481,26 +500,29 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
         continue;
       }
       if (outcome.kind === "cancelled" || outcome.kind === "skipped") {
-        return { completed: false, files: scanned, failedFiles, held: false };
+        return { completed: false, files: scanned, failedFiles, failedDirs, held: false };
       }
       if (outcome.kind === "held") {
-        return { completed: false, files: scanned, failedFiles, held: true };
+        return { completed: false, files: scanned, failedFiles, failedDirs, held: true };
       }
       scanned += 1;
       await yieldNow();
     }
-    if (!alive()) return { completed: false, files: scanned, failedFiles, held: false };
-    // Files Claude Code deleted no longer hold back the retention horizon.
-    for (const path of firstSeen.keys()) {
-      if (!present.has(path)) firstSeen.delete(path);
+    if (!alive()) return { completed: false, files: scanned, failedFiles, failedDirs, held: false };
+    // Files Claude Code deleted no longer hold back the retention horizon;
+    // a directory that could not be listed proves nothing was deleted.
+    if (failedDirs === 0) {
+      for (const path of firstSeen.keys()) {
+        if (!present.has(path)) firstSeen.delete(path);
+      }
     }
     // Coverage comes only from a full sweep that read every file (wave 4
     // review): a single-file scan (a Stop or SessionEnd) must never make one
     // session's tokens read as a complete day, and an unreadable file leaves
     // the days honestly not-scanned.
-    if (failedFiles === 0) markRetainedDaysCovered();
+    if (failedFiles === 0 && failedDirs === 0) markRetainedDaysCovered();
     lastScanAt = now().toISOString();
-    return { completed: true, files: scanned, failedFiles, held: false };
+    return { completed: true, files: scanned, failedFiles, failedDirs, held: false };
   }
 
   return {
