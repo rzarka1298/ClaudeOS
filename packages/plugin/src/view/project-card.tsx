@@ -88,6 +88,20 @@ function GithubLinkRow({ row }: { readonly row: ProjectRow }): VNode | null {
 function GitDetail({ row, now }: { readonly row: ProjectRow; readonly now: number }): VNode {
   const git = row.git;
 
+  // The very first read timed out or failed: the collector keeps `pending`
+  // (there is no last-good value to show) and sets `gitReadFailed`. That is
+  // a failure, not a load in progress, so it must never render the loading
+  // skeleton (ADR-0002: never imply a state git has not reported).
+  if (git.kind === "pending" && row.gitReadFailed) {
+    return (
+      <>
+        <MetaSegments row={row} />
+        <p className="ccc-state-body">Choose Refresh git status to try again.</p>
+        <GithubLinkRow row={row} />
+      </>
+    );
+  }
+
   if (git.kind === "pending") {
     return (
       <>
@@ -185,7 +199,12 @@ export function projectFooterModel(
     };
   }
   if (row.observedAt === null) {
-    return { observedAt: null, freshness: null, partiality: { partial: false }, sources };
+    // Never read successfully. A failed first read is still Partial: the
+    // Local git status source is missing, and there is no time to show.
+    const partiality: Partiality = row.gitReadFailed
+      ? { partial: true, missingSources: ["Local git status"] }
+      : { partial: false };
+    return { observedAt: null, freshness: null, partiality, sources };
   }
 
   const freshness: Freshness =

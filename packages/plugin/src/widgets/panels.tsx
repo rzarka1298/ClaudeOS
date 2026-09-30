@@ -293,6 +293,13 @@ export function projectMetaSegments(
       segments.push({ glyph: "▲", text: "Folder access blocked by macOS" });
       break;
     case "pending":
+      // A pending state whose read already failed was never read at all:
+      // it is a failure with nothing stale to qualify, not a check in
+      // progress (codex finding 4).
+      if (row.gitReadFailed) {
+        segments.push({ glyph: "▲", text: "Couldn't read Git status" });
+        return segments;
+      }
       segments.push({ text: "Checking Git status…" });
       break;
   }
