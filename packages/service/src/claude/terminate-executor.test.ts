@@ -417,6 +417,64 @@ describe("no Phase 5 package ever sends the interrupt signal (Task 3 Test 6, PR-
   });
 });
 
+describe("backstop rules 8 and 9, widened (wave 5 review)", () => {
+  /** Runs the backstop over a scratch repo holding exactly `files`; returns its stdout and status. */
+  function backstopOver(files: Record<string, string>) {
+    const scratch = realpathSync(mkdtempSync(join(base, "backstop-w5-")));
+    mkdirSync(join(scratch, "scripts"));
+    copyFileSync(
+      join(REPO_ROOT, "scripts", "check-boundaries.sh"),
+      join(scratch, "scripts", "check-boundaries.sh"),
+    );
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(join(scratch, path, ".."), { recursive: true });
+      writeFileSync(join(scratch, path), text);
+    }
+    execFileSync("git", ["init", "-q"], { cwd: scratch, stdio: "ignore" });
+    execFileSync("git", ["add", "."], { cwd: scratch, stdio: "ignore" });
+    return spawnSync("sh", ["scripts/check-boundaries.sh"], { cwd: scratch, encoding: "utf8" });
+  }
+  const quoted = `"${INTERRUPT}"`;
+  const bare = INTERRUPT.slice(3);
+  const token = `${"Capability"}Token<"session.force-terminate">`;
+
+  it("rule 8 catches the signal held in a variable, by constant, and kill -INT / -2 via execFile", () => {
+    const samples = [
+      `const sig = ${quoted};\nprocess.kill(pid, sig);\n`,
+      `process.kill(pid, os.constants.signals.${INTERRUPT});\n`,
+      `execFile("/bin/kill", ["-${bare}", String(pid)]);\n`,
+      `execFile("/bin/kill", ["-${"2"}", String(pid)]);\n`,
+      `execFile("/bin/kill", ["-s", "${bare}", String(pid)]);\n`,
+    ];
+    for (const sample of samples) {
+      const result = backstopOver({ "packages/collectors/src/stop.ts": sample });
+      expect(result.status, sample).toBe(1);
+      expect(result.stdout).toContain("BOUNDARY VIOLATION: a file sends the interrupt signal");
+    }
+    // Receiving it in a shutdown handler stays allowed.
+    const handler = backstopOver({
+      "packages/service/src/main.ts": `process.on(${quoted}, shutdown);\nprocess.once(${quoted}, shutdown);\n`,
+    });
+    expect(handler.stdout).toContain("0 rule(s) violated");
+  }, 60_000);
+
+  it("rule 9 catches a token built from JSON.parse or any, in non-test files only", () => {
+    const samples = [
+      `const t: ${token} = JSON.parse(raw);\n`,
+      `void executor.terminate(JSON.parse(raw), runId);\n`,
+      `import type { ${"Capability"}Token } from "@ccc/domain";\nconst t: any = {};\nvoid executor.terminate(t, runId);\n`,
+      `import type { ${"Capability"}Token } from "@ccc/domain";\nvoid executor.terminate({} as any, runId);\n`,
+    ];
+    for (const sample of samples) {
+      const result = backstopOver({ "packages/service/src/approve.ts": sample });
+      expect(result.status, sample).toBe(1);
+      expect(result.stdout).toContain("BOUNDARY VIOLATION: a non-test file");
+      const spared = backstopOver({ "packages/service/src/approve.test.ts": sample });
+      expect(spared.stdout, sample).toContain("0 rule(s) violated");
+    }
+  }, 60_000);
+});
+
 describe("backstop rules 8 and 9 (Task 3 Test 7)", () => {
   it("pass on the tree, reporting all rules clean", () => {
     const out = execFileSync("sh", ["scripts/check-boundaries.sh"], {
@@ -456,7 +514,7 @@ describe("backstop rules 8 and 9 (Task 3 Test 7)", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("BOUNDARY VIOLATION: a file sends the interrupt signal");
     expect(result.stdout).toContain("packages/service/src/scratch.ts:2:");
-    expect(result.stdout).toContain("BOUNDARY VIOLATION: a non-test file casts to CapabilityToken");
+    expect(result.stdout).toContain("BOUNDARY VIOLATION: a non-test file forges a CapabilityToken");
     expect(result.stdout).toContain("packages/plugin/src/cast.ts:1:");
     expect(result.stdout).not.toContain("cast.test.ts");
     expect(result.stdout).toContain("2 rule(s) violated");

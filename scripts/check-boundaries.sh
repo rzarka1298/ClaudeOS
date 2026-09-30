@@ -29,9 +29,12 @@
 #   7. no file inside packages/plugin assigns an inline style -- state
 #      reaches CSS through data-* attributes and --ccc-* tokens (UI-03)
 #   8. no file inside packages/service, packages/collectors or
-#      packages/plugin sends the interrupt signal to a process (PR-01)
-#   9. no non-test file casts to the CapabilityToken type -- only the
-#      approval engine issues one (ADR-0012, PR-26)
+#      packages/plugin sends the interrupt signal to a process (PR-01) --
+#      by name in a kill call, held in a variable or constant, or as a
+#      kill(1) flag via execFile; receiving it in a handler stays allowed
+#   9. no non-test file forges a CapabilityToken -- a cast, a typed
+#      initializer, JSON.parse or `any` fed to a capability-typed call --
+#      only the approval engine issues one (ADR-0012, PR-26)
 #
 # Rules 6 and 7 mirror DOM_SAFETY_RULES, and rule 2 mirrors
 # NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs. The
@@ -97,11 +100,17 @@ check_rule() {
   shift 2
   # Remaining args: files to scan (already pre-filtered by caller to the
   # relevant subset -- e.g. "every source file outside packages/plugin").
-  RULES=$((RULES + 1))
   hits=$(grep_noncomment "$pattern" "$@" || true)
-  if [ -n "$hits" ]; then
-    echo "BOUNDARY VIOLATION: $description"
-    echo "$hits"
+  report_rule "$description" "$hits"
+}
+
+# Counts one rule and reports its hits (already collected by the caller,
+# possibly from several scans), failing the run when there are any.
+report_rule() {
+  RULES=$((RULES + 1))
+  if [ -n "$2" ]; then
+    echo "BOUNDARY VIOLATION: $1"
+    echo "$2"
     FAILURES=$((FAILURES + 1))
   fi
 }
@@ -182,28 +191,56 @@ check_rule \
 # packages/plugin sends the interrupt signal to a process (PR-01, SESS-16).
 # Signalled, it ends an interactive Claude Code session instead of
 # interrupting the turn, so "interrupt" is focus plus Esc (PR-27) and no code
-# may ever send it -- by name, or as the bare number 2. Receiving it (the
-# service's own shutdown handler) is not a kill call and stays allowed. The
-# plugin has no process-launching path today; the scan is cheap and closes
-# the gap if Electron process access is ever used there. ---
+# may ever send it: by name or as the bare number 2 in a kill call; held in a
+# variable or constant (any quoted signal name, `os.constants.signals.`);
+# or as a kill(1) flag through execFile (`-INT`, `-SIGINT`, `-2`,
+# `-s INT`) (wave 5 review). Receiving it (the service's own shutdown
+# handler, `process.on`/`once`) is not a send and stays allowed. The plugin
+# has no process-launching path today; the scan is cheap and closes the gap
+# if Electron process access is ever used there. ---
 SIGNAL_OWNERS=$(printf '%s\n' "$SRC_FILES" | grep -E '^packages/(service|collectors|plugin)/' || true)
 # shellcheck disable=SC2086
-check_rule \
+kill_hits=$(grep_noncomment \
+  "kill[[:space:]]*[(][^)]*SIGINT|kill[[:space:]]*[(][^)]*,[[:space:]]*2[[:space:]]*[)]|signals[.]SIGINT|[\"'\`]-(INT|SIGINT|2)[\"'\`]|[\"'\`]-s[\"'\`][[:space:]]*,[[:space:]]*[\"'\`](INT|SIGINT|2)[\"'\`]" \
+  $SIGNAL_OWNERS || true)
+# shellcheck disable=SC2086
+held_hits=$(grep_noncomment "[\"'\`]SIGINT[\"'\`]" $SIGNAL_OWNERS |
+  grep -Ev "process[.](on|once|addListener|prependListener|prependOnceListener|off|removeListener)[[:space:]]*[(][[:space:]]*[\"'\`]SIGINT" || true)
+report_rule \
   "a file sends the interrupt signal to a process (PR-01: it ends a Claude Code session; interrupt is focus plus Esc)" \
-  "kill[[:space:]]*[(][^)]*SIGINT|kill[[:space:]]*[(][^)]*,[[:space:]]*2[[:space:]]*[)]" \
-  $SIGNAL_OWNERS
+  "$(printf '%s\n%s\n' "$kill_hits" "$held_hits" | grep -v '^$' | sort -u || true)"
 
-# --- Rule 9: no non-test file casts to the CapabilityToken type (PR-26,
-# ADR-0012, PATTERNS correction 4). A write method typed on a capability is
-# only a choke point while nothing but the approval engine can produce one;
-# a cast is the one way around the type. Tests may cast locally to exercise
-# a capability-typed method, so files named *.test.* are exempt. ---
+# --- Rule 9: no non-test file forges a CapabilityToken (PR-26, ADR-0012,
+# PATTERNS correction 4). A write method typed on a capability is only a
+# choke point while nothing but the approval engine can produce one. The
+# ways around the type are all refused outside tests: a cast (`as
+# CapabilityToken`, `<CapabilityToken>`); a typed initializer (`const t:
+# CapabilityToken<...> = ...`); JSON.parse fed straight to terminate(); and,
+# in any file that names CapabilityToken or SessionTerminator, `any` in any
+# form (wave 5 review). Tests may cast locally to exercise a
+# capability-typed method, so files named *.test.* are exempt. ---
 NON_TEST_FILES=$(printf '%s\n' "$SRC_FILES" | grep -v '[.]test[.]' || true)
 # shellcheck disable=SC2086
-check_rule \
-  "a non-test file casts to CapabilityToken (only the approval engine issues one; tests may cast locally)" \
-  "(^|[^A-Za-z0-9_])as[[:space:]]+CapabilityToken|[=(,][[:space:]]*<CapabilityToken" \
-  $NON_TEST_FILES
+forge_hits=$(grep_noncomment \
+  "(^|[^A-Za-z0-9_])as[[:space:]]+CapabilityToken|[=(,][[:space:]]*<CapabilityToken|:[[:space:]]*CapabilityToken[[:space:]]*<[^>]*>[[:space:]]*=[^=>]|terminate[[:space:]]*[(][[:space:]]*JSON[.]parse" \
+  $NON_TEST_FILES || true)
+CAPABILITY_FILES=""
+for f in $NON_TEST_FILES; do
+  [ -f "$f" ] || continue
+  if grep -Eq 'CapabilityToken|SessionTerminator' "$f"; then
+    CAPABILITY_FILES="$CAPABILITY_FILES $f"
+  fi
+done
+any_hits=""
+if [ -n "$CAPABILITY_FILES" ]; then
+  # shellcheck disable=SC2086
+  any_hits=$(grep_noncomment \
+    "(^|[^A-Za-z0-9_])as[[:space:]]+any([^A-Za-z0-9_]|$)|<any>|:[[:space:]]*any([^A-Za-z0-9_]|$)" \
+    $CAPABILITY_FILES || true)
+fi
+report_rule \
+  "a non-test file forges a CapabilityToken (a cast, typed initializer, JSON.parse or any; only the approval engine issues one; tests may cast locally)" \
+  "$(printf '%s\n%s\n' "$forge_hits" "$any_hits" | grep -v '^$' | sort -u || true)"
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: checked ${RULES} rules."
