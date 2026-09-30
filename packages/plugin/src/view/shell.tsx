@@ -1,16 +1,58 @@
 import type { ReadonlySignal } from "@preact/signals";
+import type { VNode } from "preact";
 import { useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import { nowTick } from "../widgets/clock.js";
 import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
+import type { LayoutResolution } from "../widgets/layout.js";
 import { resolvedLayout } from "../widgets/layout.js";
 import { dispatchQuickAction } from "../widgets/quick-actions.js";
 import type { WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
+import { AgentRuns } from "./agent-runs.js";
+import { selectedRunId } from "./agent-runs-state.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 import { Overview } from "./overview.js";
+
+/**
+ * Everything any registered destination view could need. A destination that
+ * needs less simply ignores the rest — `AgentRuns` today only reads `now`
+ * and `onQuickAction`, `Overview` reads all six.
+ */
+interface DestinationViewProps {
+  readonly layout: LayoutResolution;
+  readonly stateFor: (id: WidgetId) => ReadonlySignal<WidgetState<unknown>>;
+  readonly connection: ConnectionState;
+  readonly now: number;
+  readonly onQuickAction: (descriptor: QuickActionDescriptor) => void;
+  readonly onNavigate: (id: DestinationId, selection?: { readonly runId: string }) => void;
+}
+
+/**
+ * The destination-id-to-component lookup (04-PATTERNS line 825, PATTERNS
+ * "shell recommendation"): the executor's base check for whether this
+ * lookup already existed in Phase 4's shell.tsx found only the original
+ * Overview-else-description ternary, so this plan converts it. A
+ * destination absent from this record falls back to its
+ * `DESTINATIONS`-declared `description` paragraph unchanged (every
+ * destination besides Overview and Agent runs, still "Filled in a later
+ * phase.").
+ */
+const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewProps) => VNode>> = {
+  overview: ({ layout, stateFor, connection, now, onQuickAction, onNavigate }) => (
+    <Overview
+      layout={layout}
+      stateFor={stateFor}
+      connection={connection}
+      now={now}
+      onQuickAction={onQuickAction}
+      onNavigate={onNavigate}
+    />
+  ),
+  "agent-runs": ({ now, onQuickAction }) => <AgentRuns now={now} onQuickAction={onQuickAction} />,
+};
 
 export interface ShellProps {
   /** The destination selected before this render — usually the last-saved one (PLUG-05). */
@@ -78,8 +120,17 @@ export function Shell({
    * or a connect action — because the control the owner just activated is
    * unmounted with the grid; without this, focus would fall back to the
    * document body and a keyboard user would lose their place (A11Y-01).
+   *
+   * The optional `selection` is the S1 hero row's `{ runId }` channel
+   * (UI-SPEC S1 "Primary line", R-06): it sets `agent-runs-state.ts`'s
+   * `selectedRunId` signal before switching tabs, so Agent runs mounts with
+   * that Run already selected. The tab itself still receives focus here;
+   * `AgentRuns`'s own mount effect then moves it on to the detail heading
+   * (UI-SPEC "Activating a hero row … focus on the detail heading"),
+   * because this function has no reference into that destination's DOM.
    */
-  function focusDestination(id: DestinationId): void {
+  function focusDestination(id: DestinationId, selection?: { readonly runId: string }): void {
+    if (selection?.runId !== undefined) selectedRunId.value = selection.runId;
     select(id);
     tabRefs.current[id]?.focus();
   }
@@ -172,18 +223,14 @@ export function Shell({
         tabIndex={0}
       >
         <h2>{active.label}</h2>
-        {active.id === "overview" ? (
-          <Overview
-            layout={resolvedLayout.value}
-            stateFor={stateFor}
-            connection={status}
-            now={nowTick.value}
-            onQuickAction={handleQuickAction}
-            onNavigate={focusDestination}
-          />
-        ) : (
-          <p>{active.description}</p>
-        )}
+        {DESTINATION_VIEWS[active.id]?.({
+          layout: resolvedLayout.value,
+          stateFor,
+          connection: status,
+          now: nowTick.value,
+          onQuickAction: handleQuickAction,
+          onNavigate: focusDestination,
+        }) ?? <p>{active.description}</p>}
       </div>
     </div>
   );

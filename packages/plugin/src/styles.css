@@ -1115,3 +1115,131 @@
 .ccc-layout-empty {
   grid-column: span 1;
 }
+
+/*
+ * The Agent runs destination (UI-SPEC S3, D-52, plan 05-13). No cream
+ * surface anywhere — cream is reserved for the S1 hero (UI-SPEC Color,
+ * "Layout accent"). Every panel is glass, at the same radius/shadow/padding
+ * as every other card. `48rem` and `24rem` are the only new literals this
+ * phase adds (UI-SPEC "Phase 5 adds zero new design tokens"), following the
+ * Phase 3 precedent of hand-picked container-query thresholds.
+ */
+.ccc-agent-runs {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-lg);
+}
+
+.ccc-agent-runs-banner,
+.ccc-detail-pane {
+  padding: var(--ccc-space-lg);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+  box-shadow: var(--ccc-shadow-card);
+}
+
+/* Master/detail at 48rem and wider; below that the detail stacks beneath the
+ * sessions panel (UI-SPEC S3 "Layout"). Never horizontal scroll — columns
+ * hide by priority instead (below). */
+.ccc-agent-runs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ccc-space-lg);
+}
+
+@container (min-width: 48rem) {
+  .ccc-agent-runs-layout {
+    grid-template-columns: minmax(0, 3fr) minmax(20rem, 2fr);
+  }
+}
+
+.ccc-agent-runs-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+}
+
+.ccc-agent-runs-sessions > section > h3 {
+  margin: 0 0 var(--ccc-space-sm);
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-agent-runs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.ccc-agent-runs-table th,
+.ccc-agent-runs-table td {
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  overflow-wrap: anywhere;
+  text-align: left;
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-agent-runs-table th[scope="col"] {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-agent-runs-table th[scope="row"] {
+  font-weight: var(--ccc-weight-regular);
+}
+
+.ccc-agent-runs-table td {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-agent-runs-table tr {
+  min-height: var(--ccc-space-lg);
+}
+
+/* The selected row: three non-colour cues (an inset bar, the opaque
+ * surface, weight 600 on the name) plus `aria-current`, never colour alone
+ * (UI-SPEC "Sessions table", "Selected row"). */
+.ccc-agent-runs-table tr[data-selected="true"] {
+  background-color: var(--ccc-surface);
+  box-shadow: inset var(--ccc-focus-ring) 0 0 0 var(--ccc-ink);
+}
+
+.ccc-agent-runs-table tr[data-selected="true"] .ccc-session-row-link {
+  font-weight: var(--ccc-weight-strong);
+  color: var(--ccc-ink);
+}
+
+/* Columns 3-4 hide below 24rem; columns 5-8 hide below 48rem (UI-SPEC
+ * "Sessions table" priority column) — every hidden field stays reachable in
+ * the detail pane, so table semantics only ever drop rendering, never data. */
+@container (max-width: 24rem) {
+  .ccc-agent-runs-table [data-priority="secondary"] {
+    display: none;
+  }
+}
+
+@container (max-width: 48rem) {
+  .ccc-agent-runs-table [data-priority="tertiary"] {
+    display: none;
+  }
+}
+
+.ccc-detail-pane h3 {
+  margin: 0 0 var(--ccc-space-xs);
+  font-size: var(--ccc-text-heading);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-detail-pane h3:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
