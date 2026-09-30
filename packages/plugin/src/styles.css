@@ -1348,6 +1348,12 @@
   opacity: 0.7;
 }
 
+/* A linked-Run button whose Run isn't loaded (UI-SPEC S3 "Detail pane" #4):
+ * the visible reason beneath it carries the state, not the styling. */
+.ccc-list-more[aria-disabled="true"] {
+  cursor: default;
+}
+
 /* The fields dl (UI-SPEC "Detail pane" #4): `max-content 1fr` columns, row
  * gap --ccc-space-xs, column gap --ccc-space-md. */
 .ccc-detail-fields {

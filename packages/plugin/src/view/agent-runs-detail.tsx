@@ -20,6 +20,7 @@ import { useEffect, useId, useState } from "preact/hooks";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatDuration } from "../widgets/duration.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
+import { sessionsById } from "../widgets/session-signals.js";
 import {
   formatExactTokens,
   formatMonthDay,
@@ -198,6 +199,54 @@ const LINK_LABEL: Readonly<Record<RunLinkKind, string>> = {
   clear: "Cleared from",
 };
 
+/** Shown instead of a name when the linked Run is outside the loaded
+ * session history (pruned, or from before this history was kept). */
+const UNLOADED_LINK_LABEL = "Earlier session";
+const UNLOADED_LINK_REASON = "That session isn't in the loaded history.";
+
+/**
+ * The `Resumed from` / `Branched from` / `Cleared from` value (UI-SPEC S3
+ * "Detail pane" #4: "a button that selects the linked Run"). Labelled by the
+ * linked session's display name, never its raw RunId. A linked Run that is
+ * not in the loaded session map would select nothing and empty the pane, so
+ * it renders `aria-disabled` with its visible reason linked by
+ * `aria-describedby` — never the native `disabled` attribute, which would
+ * drop it from the tab order and hide the reason (UI-SPEC "Availability
+ * matrix") (05 wave 4 review).
+ */
+function LinkedRunButton({ linkedRunId }: { readonly linkedRunId: string }): VNode {
+  const reasonId = useId();
+  const linked = sessionsById.value.get(linkedRunId);
+  if (linked === undefined) {
+    return (
+      <>
+        <button
+          type="button"
+          className="ccc-list-more"
+          aria-disabled="true"
+          aria-describedby={reasonId}
+        >
+          {UNLOADED_LINK_LABEL}
+        </button>
+        <p id={reasonId} className="ccc-list-meta">
+          {UNLOADED_LINK_REASON}
+        </p>
+      </>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="ccc-list-more"
+      onClick={() => {
+        selectedRunId.value = linked.runId;
+      }}
+    >
+      {sessionDisplayName(linked)}
+    </button>
+  );
+}
+
 /** `Mon D, h:mm AM` — mirrors `agent-runs.tsx`'s private `formatStarted`
  * (not exported there), duplicated here for the same reason
  * `active-sessions.tsx`'s `elapsedText` is duplicated rather than reaching
@@ -287,18 +336,7 @@ function DetailFields({
       {session.linkKind !== null && session.linkedFromRunId !== null && (
         <Field
           term={LINK_LABEL[session.linkKind]}
-          value={
-            <button
-              type="button"
-              className="ccc-list-more"
-              onClick={() => {
-                // biome-ignore lint/style/noNonNullAssertion: guarded by the surrounding `!== null` check above.
-                selectedRunId.value = session.linkedFromRunId!;
-              }}
-            >
-              {session.linkedFromRunId}
-            </button>
-          }
+          value={<LinkedRunButton linkedRunId={session.linkedFromRunId} />}
         />
       )}
       <Field term="Worktree" value={session.worktreeBasename ?? NOT_REPORTED} />

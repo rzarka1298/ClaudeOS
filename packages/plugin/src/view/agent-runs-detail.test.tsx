@@ -5,6 +5,7 @@ import type { RunId, RunState, SessionView } from "@ccc/domain";
 import type { SessionUsage } from "@ccc/domain/usage.js";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sessionsById } from "../widgets/session-signals.js";
 import { APPROVAL_INBOX_READY, controlsFor, DetailPane } from "./agent-runs-detail.js";
 import { selectedRunId } from "./agent-runs-state.js";
 import { clearActionStatus, setActionStatus } from "./session-action-status.js";
@@ -411,5 +412,45 @@ describe("Test 6: per-session usage", () => {
     expect(
       screen.getByText("Estimated API-equivalent cost — an estimate, not your bill: $1.23"),
     ).toBeTruthy();
+  });
+});
+
+describe("the linked-Run field (05 wave 4 review)", () => {
+  afterEach(() => {
+    sessionsById.value = new Map();
+  });
+
+  it("labels the button by the linked session's name, never its raw RunId, and selects it", () => {
+    const parent = session({ runId: runId(2), name: "Plan the migration", state: "completed" });
+    sessionsById.value = new Map([[parent.runId, parent]]);
+    renderPane({ linkKind: "resume", linkedFromRunId: parent.runId });
+
+    expect(screen.getByText("Resumed from")).toBeTruthy();
+    const button = screen.getByRole("button", { name: "Plan the migration" });
+    expect(button.getAttribute("aria-disabled")).toBeNull();
+    expect(screen.queryByRole("button", { name: parent.runId })).toBeNull();
+
+    fireEvent.click(button);
+    expect(selectedRunId.value).toBe(parent.runId);
+  });
+
+  it("is aria-disabled with a visible reason when the linked Run isn't loaded, and selects nothing", () => {
+    sessionsById.value = new Map();
+    selectedRunId.value = runId(1);
+    renderPane({ linkKind: "fork", linkedFromRunId: runId(3) });
+
+    expect(screen.getByText("Branched from")).toBeTruthy();
+    expect(screen.queryByText(runId(3))).toBeNull();
+    const button = screen.getByRole("button", { name: "Earlier session" });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.hasAttribute("disabled")).toBe(false);
+    const reasonId = button.getAttribute("aria-describedby");
+    expect(reasonId).not.toBeNull();
+    expect(document.getElementById(reasonId ?? "")?.textContent).toBe(
+      "That session isn't in the loaded history.",
+    );
+
+    fireEvent.click(button);
+    expect(selectedRunId.value).toBe(runId(1));
   });
 });
