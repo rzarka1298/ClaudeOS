@@ -13,6 +13,7 @@ import {
 } from "../paths.js";
 import { createAttribution } from "./attribution.js";
 import { approvalUnavailableProposer, unconfiguredTerminalLauncher } from "./default-ports.js";
+import { createFocusService, nodeFocusExecFile } from "./focus.js";
 import { runGit } from "./git-readonly.js";
 import { readInstallRecord } from "./integration-status.js";
 import { createLaunchGuard, listWorktrees } from "./launch-guard.js";
@@ -131,6 +132,12 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     guard: createLaunchGuard({ db: store.db, runGit, realpath }),
     lookup: createStoreProjectLookup(store.db),
     listWorktrees: (projectRoot) => listWorktrees(projectRoot, { runGit, realpath }),
+    focus: createFocusService({
+      processFacts,
+      execFile: nodeFocusExecFile,
+      db: store.db,
+      logger,
+    }),
     proposer: approvalUnavailableProposer,
     // Read per request, so an install after the service started is picked up.
     claudeBin: () => readInstallRecord(resolveRuntimeDir())?.claudeBin ?? null,

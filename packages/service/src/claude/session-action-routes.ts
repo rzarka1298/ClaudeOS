@@ -44,6 +44,7 @@ import type Database from "better-sqlite3";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
 import type { RouteContext } from "../routes.js";
+import type { FocusService } from "./focus.js";
 import { type ClaudeHandler, sendClaudeJson, withClaudeAuth } from "./http.js";
 import type { WorktreeEntry } from "./launch-guard.js";
 import type { ClaudePipeline } from "./pipeline.js";
@@ -75,6 +76,8 @@ export interface SessionActionDeps {
   readonly lookup: SessionProjectLookup;
   /** The read-only worktree list for a launch root; `path` never leaves the service. */
   readonly listWorktrees: (projectRoot: string) => Promise<readonly WorktreeEntry[]>;
+  /** Focus by tty (D-31); read-only process facts plus constant AppleScripts. */
+  readonly focus: FocusService;
   /** Hands a force-terminate request to the approval inbox (Phase 6); `approval-unavailable` until then. */
   readonly proposer: ProposeForceTerminate;
   /** The absolute Claude binary the installer recorded (05-09), read per request; null when absent. */

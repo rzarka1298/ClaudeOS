@@ -63,6 +63,7 @@ import {
 } from "../test-support/fake-ports.js";
 import { createAttribution } from "./attribution.js";
 import { approvalUnavailableProposer, unconfiguredTerminalLauncher } from "./default-ports.js";
+import type { FocusOutcome } from "./focus.js";
 import { READ_ONLY_GIT_ARGV, type RunGit, runGit } from "./git-readonly.js";
 import { createLaunchGuard, listWorktrees } from "./launch-guard.js";
 import {
@@ -234,6 +235,8 @@ let gitCalls: string[][];
 let repo: string;
 let claudeBin: string | null;
 let openCalls: string[][];
+let focusAnswer: FocusOutcome;
+let focusCalls: RunId[];
 let facts: SessionFactsProvider;
 let logger: Logger;
 
@@ -264,6 +267,8 @@ beforeEach(async () => {
     },
   });
   openCalls = [];
+  focusCalls = [];
+  focusAnswer = { ok: true, response: { outcome: "focused" } };
   fake = new FakeSessionTerminalLauncher();
   launcher = fake;
   proposer = new FakeProposeForceTerminate();
@@ -281,6 +286,12 @@ beforeEach(async () => {
     guard: createLaunchGuard({ db: store.db, runGit: spyGit, realpath }),
     lookup: createStoreProjectLookup(store.db),
     listWorktrees: (root) => listWorktrees(root, { runGit: spyGit, realpath }),
+    focus: {
+      focus: async (runId) => {
+        focusCalls.push(runId);
+        return focusAnswer;
+      },
+    },
     proposer: { propose: (req) => proposer.propose(req) },
     claudeBin: () => claudeBin,
     claudeProjectsRoot: join(dir, "claude", "projects"),
@@ -845,5 +856,86 @@ describe("POST /api/v1/sessions/associate (Task 2 Test 4, SESS-17, D-24)", () =>
   });
 });
 
-// Kept referenced so later tasks' deps stay typed against this harness.
-void approvalUnavailableProposer;
+describe("POST /api/v1/sessions/focus (Task 3, SESS-12, D-31, PR-27)", () => {
+  it("answers the focus outcome, or its specific code", async () => {
+    const token = await handshake();
+    const run = seedRun({ state: "running", pid: 4242 });
+
+    expect(await post(SESSION_FOCUS_PATH, { runId: run.runId }, token)).toMatchObject({
+      status: 200,
+      body: { outcome: "focused" },
+    });
+    expect(focusCalls).toEqual([run.runId]);
+
+    focusAnswer = { ok: true, response: { outcome: "activated", terminalApp: "Ghostty" } };
+    expect((await post(SESSION_FOCUS_PATH, { runId: run.runId }, token)).body).toEqual({
+      outcome: "activated",
+      terminalApp: "Ghostty",
+    });
+
+    for (const reason of [
+      "background-session",
+      "terminal-unsupported",
+      "automation-denied",
+      "process-ended",
+      "timeout",
+    ] as const) {
+      focusAnswer = { ok: false, reason };
+      expect(await post(SESSION_FOCUS_PATH, { runId: run.runId }, token)).toMatchObject({
+        status: 409,
+        body: { error: reason },
+      });
+    }
+    focusAnswer = { ok: false, reason: "run-not-found" };
+    expect(await post(SESSION_FOCUS_PATH, { runId: run.runId }, token)).toMatchObject({
+      status: 404,
+      body: { error: "run-not-found" },
+    });
+  });
+});
+
+describe("POST /api/v1/sessions/terminate-request (Task 3 Test 5, SESS-16, PR-13, PR-26)", () => {
+  it("answers approval-unavailable before Phase 6, and only proposes once an inbox exists", async () => {
+    const token = await handshake();
+    const run = seedRun({ state: "running", pid: 4242, pidStartedAt: "2026-09-30T01:00:00.000Z" });
+
+    proposer.result = await approvalUnavailableProposer.propose({ runId: run.runId });
+    expect(await post(SESSION_TERMINATE_REQUEST_PATH, { runId: run.runId }, token)).toMatchObject({
+      status: 409,
+      body: { error: "approval-unavailable" },
+    });
+
+    proposer.result = { ok: true, proposalId: "proposal-1" };
+    expect(await post(SESSION_TERMINATE_REQUEST_PATH, { runId: run.runId }, token)).toMatchObject({
+      status: 200,
+      body: { outcome: "proposed", proposalId: "proposal-1" },
+    });
+    expect(proposer.requests).toEqual([{ runId: run.runId }, { runId: run.runId }]);
+    // A proposal changes nothing about the Run: no terminate is recorded or sent.
+    expect(getSessionRun(store.db, run.runId)?.terminateRequestedAt).toBeNull();
+  });
+
+  it("re-validates the Run: unknown is run-not-found, ended is invalid-state, nothing is proposed", async () => {
+    const token = await handshake();
+    const ended = seedRun({ state: "completed" });
+    expect(await post(SESSION_TERMINATE_REQUEST_PATH, { runId: ended.runId }, token)).toMatchObject(
+      {
+        status: 409,
+        body: { error: "invalid-state" },
+      },
+    );
+    expect(await post(SESSION_TERMINATE_REQUEST_PATH, { runId: newRunId() }, token)).toMatchObject({
+      status: 404,
+      body: { error: "run-not-found" },
+    });
+    expect(proposer.requests).toEqual([]);
+  });
+
+  it("no route can reach the signal executor (source scan)", () => {
+    const text = readFileSync(join(import.meta.dirname, "session-action-routes.ts"), "utf8");
+    expect(text).toContain("proposer.propose");
+    expect(text).not.toMatch(/terminate-executor/);
+    expect(text).not.toMatch(/SessionTerminator|createTerminateExecutor/);
+    expect(text).not.toMatch(/\.kill\s*\(/);
+  });
+});
