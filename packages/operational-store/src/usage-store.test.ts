@@ -32,7 +32,7 @@ const NOW = "2026-09-28T12:00:00.000Z";
 
 /** The six tables "Delete cached usage analytics" empties (D-46). */
 const USAGE_TABLES = [
-  "usage_hourly",
+  "usage_quarter_hourly",
   "usage_seen_messages",
   "coverage_days",
   "transcript_cursors",
@@ -71,10 +71,10 @@ function count(table: string): number {
   return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 }
 
-function hourlyRows(): unknown[] {
+function bucketRows(): unknown[] {
   return db
     .prepare(
-      "SELECT * FROM usage_hourly ORDER BY hour_bucket, claude_session_id, project_key, model, skill_key",
+      "SELECT * FROM usage_quarter_hourly ORDER BY bucket_start, claude_session_id, project_key, model, skill_key",
     )
     .all();
 }
@@ -113,10 +113,29 @@ describe("recordUsage (Test 1, USAGE-05, D-43, PR-11)", () => {
     expect(queryTokenActivity(db, WHOLE_DAY).totals.input).toBe(10);
   });
 
-  it("buckets a record by its UTC hour", () => {
-    recordUsage(db, [record()], NOW);
-    const row = db.prepare("SELECT hour_bucket FROM usage_hourly").get() as { hour_bucket: string };
-    expect(row.hour_bucket).toBe("2026-09-28T10:00:00.000Z");
+  it("buckets a record by its UTC quarter hour, so :30 and :45 local midnights are exact (wave 4)", () => {
+    recordUsage(
+      db,
+      [
+        record(),
+        record({ messageId: "msg_44", timestamp: "2026-09-28T10:44:59.999Z" }),
+        record({ messageId: "msg_45", timestamp: "2026-09-28T10:45:00.000Z" }),
+      ],
+      NOW,
+    );
+    const rows = db
+      .prepare("SELECT bucket_start FROM usage_quarter_hourly ORDER BY bucket_start")
+      .all() as Array<{ bucket_start: string }>;
+    expect(rows.map((row) => row.bucket_start)).toEqual([
+      "2026-09-28T10:15:00.000Z",
+      "2026-09-28T10:30:00.000Z",
+      "2026-09-28T10:45:00.000Z",
+    ]);
+    // A range starting at a quarter-hour local midnight takes exactly its quarters.
+    expect(
+      queryTokenActivity(db, { start: "2026-09-28T10:30:00.000Z", end: "2026-09-28T11:00:00.000Z" })
+        .totals.input,
+    ).toBe(20);
   });
 
   it("refuses a record with a negative counter or an unparsable timestamp, writing nothing", () => {
@@ -137,7 +156,7 @@ describe("recordUsage (Test 1, USAGE-05, D-43, PR-11)", () => {
       InvalidUsageRecordError,
     );
     expect(count("usage_seen_messages")).toBe(0);
-    expect(count("usage_hourly")).toBe(0);
+    expect(count("usage_quarter_hourly")).toBe(0);
   });
 });
 
@@ -302,13 +321,13 @@ describe("rebuild after deletion (Test 4, USAGE-05, D-43)", () => {
       record({ messageId: "c", timestamp: "2026-09-28T11:59:00.000Z", projectKey: null }),
     ];
     recordUsage(db, records, NOW);
-    const firstPass = hourlyRows();
+    const firstPass = bucketRows();
 
     deleteUsageAnalytics(db);
     expect(readCursor(db, "/Users/USERNAME/.claude/projects/x/a.jsonl")).toBeNull();
     recordUsage(db, records, "2026-09-28T13:00:00.000Z");
 
-    expect(hourlyRows()).toEqual(firstPass);
+    expect(bucketRows()).toEqual(firstPass);
   });
 });
 

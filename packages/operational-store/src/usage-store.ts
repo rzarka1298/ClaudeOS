@@ -2,8 +2,8 @@ import type { TokenCounters } from "@ccc/domain";
 import type Database from "better-sqlite3";
 
 /**
- * Usage persistence (Phase 5, D-40..D-47): message-level dedup, hourly
- * token counters, transcript cursors, the coverage ledger, latest-wins
+ * Usage persistence (Phase 5, D-40..D-47): message-level dedup,
+ * quarter-hour token counters, transcript cursors, the coverage ledger, latest-wins
  * capacity and cost snapshots, collector settings and the analysis toggle
  * log. Counters and identifiers only — nothing here accepts or stores a
  * prompt, a reply, a tool input or file content (D-49). The service is the
@@ -19,7 +19,7 @@ import type Database from "better-sqlite3";
 export interface UsageRecordInput {
   readonly messageId: string;
   readonly claudeSessionId: string;
-  /** An ISO 8601 instant; the record is bucketed by its UTC hour. */
+  /** An ISO 8601 instant; the record is bucketed by its UTC quarter hour. */
   readonly timestamp: string;
   readonly model: string;
   readonly skillKey: string | null;
@@ -35,7 +35,10 @@ export class InvalidUsageRecordError extends Error {
   }
 }
 
-/** UTC bounds, start inclusive and end exclusive, over hour buckets. */
+/**
+ * UTC bounds, start inclusive and end exclusive, over quarter-hour bucket
+ * starts. Any bound on a quarter hour (every local midnight is one) is exact.
+ */
 export interface TokenActivityQuery {
   readonly start: string;
   readonly end: string;
@@ -99,12 +102,13 @@ export interface CostSnapshot {
 
 const COUNTER_KEYS = ["input", "output", "cacheWrite", "cacheRead"] as const;
 
-function hourBucketOf(timestamp: string): string | null {
+/** The bucket width (wave 4): every real zone offset is a multiple of 15 minutes. */
+export const USAGE_BUCKET_MS = 15 * 60 * 1000;
+
+function bucketOf(timestamp: string): string | null {
   const ms = Date.parse(timestamp);
   if (Number.isNaN(ms)) return null;
-  const hour = new Date(ms);
-  hour.setUTCMinutes(0, 0, 0);
-  return hour.toISOString();
+  return new Date(Math.floor(ms / USAGE_BUCKET_MS) * USAGE_BUCKET_MS).toISOString();
 }
 
 function assertValidRecord(record: UsageRecordInput): string {
@@ -117,7 +121,7 @@ function assertValidRecord(record: UsageRecordInput): string {
       throw new InvalidUsageRecordError(record.messageId, `${key} is not a non-negative integer`);
     }
   }
-  const bucket = hourBucketOf(record.timestamp);
+  const bucket = bucketOf(record.timestamp);
   if (bucket === null) {
     throw new InvalidUsageRecordError(record.messageId, "unparsable timestamp");
   }
@@ -129,7 +133,7 @@ function assertValidRecord(record: UsageRecordInput): string {
  * validated first, so a malformed batch writes nothing. Then, in ONE
  * transaction, each `messageId` is inserted into `usage_seen_messages`
  * with INSERT OR IGNORE, and only when that insert changed a row are the
- * record's counters added into its hourly bucket. A message repeated over
+ * record's counters added into its quarter-hour bucket. A message repeated over
  * many lines, or rescanned later, therefore adds its tokens exactly once.
  * Returns the number of records newly counted.
  */
@@ -143,10 +147,10 @@ export function recordUsage(
     "INSERT OR IGNORE INTO usage_seen_messages (message_id, seen_at) VALUES (?, ?)",
   );
   const addCounters = db.prepare(
-    `INSERT INTO usage_hourly
-       (hour_bucket, claude_session_id, project_key, model, skill_key, input, output, cache_write, cache_read)
-     VALUES (@hourBucket, @claudeSessionId, @projectKey, @model, @skillKey, @input, @output, @cacheWrite, @cacheRead)
-     ON CONFLICT (hour_bucket, claude_session_id, project_key, model, skill_key) DO UPDATE SET
+    `INSERT INTO usage_quarter_hourly
+       (bucket_start, claude_session_id, project_key, model, skill_key, input, output, cache_write, cache_read)
+     VALUES (@bucketStart, @claudeSessionId, @projectKey, @model, @skillKey, @input, @output, @cacheWrite, @cacheRead)
+     ON CONFLICT (bucket_start, claude_session_id, project_key, model, skill_key) DO UPDATE SET
        input = input + excluded.input,
        output = output + excluded.output,
        cache_write = cache_write + excluded.cache_write,
@@ -157,7 +161,7 @@ export function recordUsage(
     records.forEach((record, index) => {
       if (markSeen.run(record.messageId, seenAt).changes !== 1) return;
       addCounters.run({
-        hourBucket: buckets[index],
+        bucketStart: buckets[index],
         claudeSessionId: record.claudeSessionId,
         projectKey: record.projectKey ?? "",
         model: record.model,
@@ -190,8 +194,8 @@ const SUMS =
   "SUM(input) AS input, SUM(output) AS output, SUM(cache_write) AS cache_write, SUM(cache_read) AS cache_read";
 
 /**
- * Totals and the by-project, by-model and by-skill breakdowns over hour
- * buckets in [start, end), optionally for one Claude session. The service
+ * Totals and the by-project, by-model and by-skill breakdowns over
+ * quarter-hour buckets in [start, end), optionally for one Claude session. The service
  * converts a local-time range to these UTC bounds (D-45); breakdown rows are
  * ordered by input tokens, largest first.
  */
@@ -201,7 +205,7 @@ export function queryTokenActivity(
 ): TokenActivityRows {
   const sessionClause =
     query.claudeSessionId === undefined ? "" : " AND claude_session_id = @session";
-  const where = `WHERE hour_bucket >= @start AND hour_bucket < @end${sessionClause}`;
+  const where = `WHERE bucket_start >= @start AND bucket_start < @end${sessionClause}`;
   const params = {
     start: query.start,
     end: query.end,
@@ -210,12 +214,14 @@ export function queryTokenActivity(
   const grouped = <K extends string>(column: string, alias: K, extraWhere = "") =>
     db
       .prepare(
-        `SELECT ${column} AS ${alias}, ${SUMS} FROM usage_hourly ${where}${extraWhere}
+        `SELECT ${column} AS ${alias}, ${SUMS} FROM usage_quarter_hourly ${where}${extraWhere}
          GROUP BY ${column} ORDER BY SUM(input) DESC, ${column}`,
       )
       .all(params) as Array<CounterSums & Record<K, string>>;
 
-  const totals = db.prepare(`SELECT ${SUMS} FROM usage_hourly ${where}`).get(params) as CounterSums;
+  const totals = db
+    .prepare(`SELECT ${SUMS} FROM usage_quarter_hourly ${where}`)
+    .get(params) as CounterSums;
   return {
     totals: toCounters(totals),
     byProject: grouped("project_key", "key").map((row) => ({
@@ -464,7 +470,7 @@ export function listToggleLog(db: Database.Database): AnalysisToggle[] {
  * owner's associations, the analysis setting or its history (USAGE-08).
  */
 const USAGE_ANALYTICS_TABLES = [
-  "usage_hourly",
+  "usage_quarter_hourly",
   "usage_seen_messages",
   "coverage_days",
   "transcript_cursors",

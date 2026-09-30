@@ -59,15 +59,34 @@ describe("half-hour UTC offset day bucketing (audit)", () => {
     expect(localDayOf(NOW.getTime(), ZONE)).toBe("2026-09-30");
   });
 
-  // AUDIT-BUG (05-12, MINOR): usage is stored in whole UTC hour buckets and
-  // "today" queries hour_bucket >= local midnight (18:30Z), so the 18:00Z
-  // bucket is excluded and the first 30 minutes of every local day vanish
-  // from every range in a half-hour-offset zone (India, Newfoundland, parts
-  // of Australia). Unskip once buckets align to the zone or bounds round down.
-  it.skip("a message ten minutes after local midnight counts toward today", () => {
+  // Was AUDIT-BUG (05-12, MINOR→MAJOR): usage was stored in whole UTC hour
+  // buckets and "today" queried hour_bucket >= local midnight (18:30Z), so
+  // the first 30 minutes of every local day vanished in a half-hour-offset
+  // zone. Fixed in wave 4: buckets are UTC quarter hours, and every real
+  // zone offset is a multiple of 15 minutes.
+  it("a message ten minutes after local midnight counts toward today", () => {
     record("m-after-midnight", JUST_AFTER_MIDNIGHT, 100);
     const bounds = rangeBounds("today", NOW, ZONE);
     const rows = queryTokenActivity(store.db, { start: bounds.start, end: bounds.queryEnd });
     expect(rows.totals.input).toBe(100);
+  });
+
+  it("a message ten minutes before local midnight stays yesterday's", () => {
+    record("m-before-midnight", "2026-09-29T18:20:00.000Z", 7); // 23:50 local
+    record("m-after-midnight", JUST_AFTER_MIDNIGHT, 100);
+    const bounds = rangeBounds("today", NOW, ZONE);
+    const rows = queryTokenActivity(store.db, { start: bounds.start, end: bounds.queryEnd });
+    expect(rows.totals.input).toBe(100);
+  });
+
+  it("a :45 zone (Asia/Kathmandu, UTC+05:45) splits its day exactly too", () => {
+    const zone = "Asia/Kathmandu";
+    // Local midnight of 2026-09-30 is 2026-09-29T18:15Z.
+    record("m-np-before", "2026-09-29T18:10:00.000Z", 3);
+    record("m-np-after", "2026-09-29T18:20:00.000Z", 40);
+    const bounds = rangeBounds("today", NOW, zone);
+    expect(bounds.start).toBe("2026-09-29T18:15:00.000Z");
+    const rows = queryTokenActivity(store.db, { start: bounds.start, end: bounds.queryEnd });
+    expect(rows.totals.input).toBe(40);
   });
 });

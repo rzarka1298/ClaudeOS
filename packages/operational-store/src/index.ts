@@ -59,6 +59,7 @@ export {
   readCursor,
   recordUsage,
   setCollectorSetting,
+  USAGE_BUCKET_MS,
   upsertCapacitySnapshot,
   upsertCostSnapshot,
   writeCursor,

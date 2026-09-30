@@ -191,19 +191,21 @@ export const usageSeenMessages = sqliteTable("usage_seen_messages", {
 });
 
 /**
- * Hourly token counters (D-40, D-45, D-46), keyed by UTC hour, Claude
- * session, project (`project_key`: a project ID, or the empty string for
- * unclassified), model and skill (`skill_key`: empty when none is named).
- * The four counters are `integer` because SQL adds into them
- * (`input = input + excluded.input`). Counters and identifiers only: no
- * body, content, excerpt or text column exists, and none may be added
- * (D-49). Every row is recomputable by rescanning transcripts from a zero
- * cursor, so deleting the table loses no source data.
+ * Token counters by UTC quarter hour (wave 4 review, D-40, D-45, D-46),
+ * keyed by bucket start, Claude session, project (`project_key`: a project
+ * ID, or the empty string for unclassified), model and skill (`skill_key`:
+ * empty when none is named). Quarter hours, not hours, because every real
+ * zone offset is a multiple of 15 minutes, so a local-day range over
+ * `bucket_start` is exact in :30 and :45 zones too. Replaces `usage_hourly`
+ * (migration 0003 carries its rows over). The four counters are `integer`
+ * because SQL adds into them. Counters and identifiers only: no body,
+ * content, excerpt or text column exists, and none may be added (D-49).
+ * Every row is recomputable by rescanning transcripts from a zero cursor.
  */
-export const usageHourly = sqliteTable(
-  "usage_hourly",
+export const usageQuarterHourly = sqliteTable(
+  "usage_quarter_hourly",
   {
-    hourBucket: text("hour_bucket").notNull(),
+    bucketStart: text("bucket_start").notNull(),
     claudeSessionId: text("claude_session_id").notNull(),
     projectKey: text("project_key").notNull(),
     model: text("model").notNull(),
@@ -216,7 +218,7 @@ export const usageHourly = sqliteTable(
   (table) => [
     primaryKey({
       columns: [
-        table.hourBucket,
+        table.bucketStart,
         table.claudeSessionId,
         table.projectKey,
         table.model,

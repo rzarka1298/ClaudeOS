@@ -19,11 +19,14 @@ const MIGRATION_FILES = readdirSync(REAL_MIGRATIONS_DIR)
   .sort();
 const EXPECTED_SCHEMA_VERSION = MIGRATION_FILES.length;
 
-/** The nine tables the Phase 5 migration adds (D-21, D-24, D-46). */
+/**
+ * The tables the Phase 5 migrations leave (D-21, D-24, D-46); wave 4
+ * replaced `usage_hourly` with `usage_quarter_hourly`.
+ */
 const PHASE_5_TABLES = [
   "session_overrides",
   "usage_seen_messages",
-  "usage_hourly",
+  "usage_quarter_hourly",
   "coverage_days",
   "transcript_cursors",
   "capacity_snapshots",
@@ -178,6 +181,46 @@ describe("applyMigrations", () => {
       for (const column of PHASE_5_RUN_COLUMNS) {
         expect(row).toHaveProperty(column, null);
       }
+    } finally {
+      db.close();
+      rmSync(previousDir, { recursive: true, force: true });
+    }
+  });
+
+  it("carries hourly usage rows into the quarter-hour table and drops usage_hourly (wave 4)", () => {
+    const previousDir = mkdtempSync(join(tmpdir(), "ccc-previous-migrations-"));
+    const base = MIGRATION_FILES.findIndex((name) => name.includes("claude_sessions_usage"));
+    expect(base).toBeGreaterThanOrEqual(0);
+    for (const file of MIGRATION_FILES.slice(0, base + 1)) {
+      copyFileSync(join(REAL_MIGRATIONS_DIR, file), join(previousDir, file));
+    }
+    const db = new Database(dbPath);
+    try {
+      applyMigrations(db, previousDir);
+      db.prepare(
+        `INSERT INTO usage_hourly
+           (hour_bucket, claude_session_id, project_key, model, skill_key, input, output, cache_write, cache_read)
+         VALUES ('2026-09-28T10:00:00.000Z', 'sess-before', '', 'claude-opus-4-8', '', 1, 2, 3, 4)`,
+      ).run();
+
+      applyMigrations(db, REAL_MIGRATIONS_DIR);
+
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name = 'usage_hourly'").all(),
+      ).toHaveLength(0);
+      expect(db.prepare("SELECT * FROM usage_quarter_hourly").all()).toEqual([
+        {
+          bucket_start: "2026-09-28T10:00:00.000Z",
+          claude_session_id: "sess-before",
+          project_key: "",
+          model: "claude-opus-4-8",
+          skill_key: "",
+          input: 1,
+          output: 2,
+          cache_write: 3,
+          cache_read: 4,
+        },
+      ]);
     } finally {
       db.close();
       rmSync(previousDir, { recursive: true, force: true });

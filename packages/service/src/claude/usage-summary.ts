@@ -31,6 +31,7 @@ import {
   queryCoverage,
   queryTokenActivity,
   type TokenActivityRows,
+  USAGE_BUCKET_MS,
 } from "@ccc/operational-store";
 import type Database from "better-sqlite3";
 
@@ -181,11 +182,9 @@ export interface RangeBounds {
   readonly end: string;
   readonly firstDay: string;
   readonly lastDay: string;
-  /** The exclusive UTC hour-bucket bound covering `end` (the store queries [start, queryEnd)). */
+  /** The exclusive UTC quarter-hour bucket bound covering `end` (the store queries [start, queryEnd)). */
   readonly queryEnd: string;
 }
-
-const HOUR_MS = 3_600_000;
 
 /**
  * Today since local midnight, the last seven local days including today,
@@ -206,7 +205,8 @@ export function rangeBounds(kind: UsageRangeKind, now: Date, timeZone: string): 
       break;
   }
   const startMs = Math.min(localMidnight(firstDay, timeZone), now.getTime());
-  const queryEndMs = Math.floor(now.getTime() / HOUR_MS) * HOUR_MS + HOUR_MS;
+  const queryEndMs =
+    Math.floor(now.getTime() / USAGE_BUCKET_MS) * USAGE_BUCKET_MS + USAGE_BUCKET_MS;
   return {
     start: new Date(startMs).toISOString(),
     end: now.toISOString(),
@@ -679,7 +679,7 @@ export function buildUsageSummary(inputs: UsageSummaryInputs): UsageSummary {
   };
 }
 
-/** Every hour bucket: a Session's activity is filtered by its Claude session ID, not by time. */
+/** Every bucket: a Session's activity is filtered by its Claude session ID, not by time. */
 const ALL_TIME = { start: "1970-01-01T00:00:00.000Z", end: "9999-12-31T00:00:00.000Z" } as const;
 
 /**
