@@ -86,6 +86,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     claudeProjectsRoot: join(resolveClaudeConfigDir(), "projects"),
     logger,
     attribute,
+    getOverride: (claudeSessionId) => getSessionOverride(store.db, claudeSessionId),
     classifyLaunchSource: (input) => classifyLaunchSource(input, processFacts),
   });
   const pipeline = createClaudePipeline({

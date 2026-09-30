@@ -169,6 +169,13 @@ export interface SessionFactsProviderOptions {
     readonly claudeSessionId: string | null;
   }) => Promise<{ readonly projectId: string | null; readonly worktreeRoot: string | null }>;
   /**
+   * The owner's manual association for a Claude session (SESS-07), read
+   * before the attribution cache so an override made after a session was
+   * first attributed wins on its next record (wave 4 review). Absent, the
+   * cache is trusted until the next SessionStart.
+   */
+  readonly getOverride?: (claudeSessionId: string) => string | null;
+  /**
    * The SessionStart launch-source classifier (05-11 `classifyLaunchSource`,
    * bound to the process facts). Absent, only `dashboard` is recognised.
    */
@@ -190,6 +197,12 @@ interface ProjectFacts {
 
 const NO_PROJECT: ProjectFacts = { projectId: null, worktreeRoot: null };
 
+/** A cached attribution and the owner override it was computed under. */
+interface CachedAttribution {
+  readonly facts: ProjectFacts;
+  readonly override: string | null;
+}
+
 /**
  * The facts the reducer needs beside a hook record (D-19, PR-28). At
  * SessionStart it reads the pid's `lstart` (the PID-reuse identity); on any
@@ -210,7 +223,7 @@ export function createSessionFactsProvider(
 ): SessionFactsProvider {
   const { processFacts, claudeProjectsRoot, logger } = options;
   /** Insertion-ordered: the oldest pair is evicted first once over capacity. */
-  const attributed = new Map<string, ProjectFacts>();
+  const attributed = new Map<string, CachedAttribution>();
 
   async function projectFacts(
     record: Parameters<SessionFactsProvider["factsFor"]>[0],
@@ -218,8 +231,17 @@ export function createSessionFactsProvider(
     const attribute = options.attribute;
     if (attribute === undefined || record.cwd === undefined) return NO_PROJECT;
     const key = `${record.session_id}\u0000${record.cwd}`;
+    const override = options.getOverride?.(record.session_id) ?? null;
     const known = attributed.get(key);
-    if (known !== undefined && record.hook_event_name !== START_EVENT) return known;
+    // The override is consulted before the cache: an entry computed under a
+    // different override is stale (the owner re-associated the session).
+    if (
+      known !== undefined &&
+      known.override === override &&
+      record.hook_event_name !== START_EVENT
+    ) {
+      return known.facts;
+    }
     let facts: ProjectFacts;
     try {
       const result = await attribute({ cwd: record.cwd, claudeSessionId: record.session_id });
@@ -229,7 +251,7 @@ export function createSessionFactsProvider(
       return NO_PROJECT;
     }
     attributed.delete(key);
-    attributed.set(key, facts);
+    attributed.set(key, { facts, override });
     if (attributed.size > ATTRIBUTION_CACHE_CAPACITY) {
       const oldest = attributed.keys().next().value;
       if (oldest !== undefined) attributed.delete(oldest);

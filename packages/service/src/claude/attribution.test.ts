@@ -279,6 +279,31 @@ describe("the session facts provider carries the attribution (05-08 hand-off, SE
     expect(calls).toBe(1);
   });
 
+  it("an owner override made after the cached attribution wins for later records (wave 4)", async () => {
+    let override: string | null = null;
+    let calls = 0;
+    const facts = createSessionFactsProvider({
+      processFacts,
+      claudeProjectsRoot: base,
+      logger,
+      getOverride: () => override,
+      attribute: async ({ claudeSessionId }) => {
+        calls += 1;
+        const chosen = claudeSessionId === null ? null : override;
+        return chosen === null
+          ? { projectId: "alpha", worktreeRoot: "/w", reason: "project-root" }
+          : { projectId: chosen, worktreeRoot: "/w", reason: "override" };
+      },
+    });
+    await facts.factsFor(recordOf("SessionStart", "/c"));
+    override = "beta"; // the owner associates the session with another project
+    const later = await facts.factsFor(recordOf("UserPromptSubmit", "/c"));
+    expect(later).toMatchObject({ projectId: "beta" });
+    // Cached again under the new override: no attribution on the next record.
+    await facts.factsFor(recordOf("Stop", "/c"));
+    expect(calls).toBe(2);
+  });
+
   it("an attribution that throws reads as unknown, never a failed ingest", async () => {
     const facts = createSessionFactsProvider({
       processFacts,
