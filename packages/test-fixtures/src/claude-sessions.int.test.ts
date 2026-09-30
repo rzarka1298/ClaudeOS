@@ -218,11 +218,15 @@ describe("SESS-06: a Claude process killed without SessionEnd reads unknown (Tas
         );
         const runId = sessionOf(started)?.runId;
 
-        // Alive with a matching identity: several sweeps change nothing.
+        // Alive with a matching identity: several sweeps change nothing. The
+        // only other upsert allowed is SessionStart's own metadata follow-up
+        // (launch source and project, resolved off the ingest queue: wave 4).
         await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
-        expect(
-          stream.events.filter((event) => sessionOf(event)?.runId === runId).map(sessionOf),
-        ).toHaveLength(1);
+        const early = stream.events
+          .filter((event) => sessionOf(event)?.runId === runId)
+          .map(sessionOf);
+        expect(early.length).toBeLessThanOrEqual(2);
+        expect(early.every((session) => session?.state === "running")).toBe(true);
 
         await killAndReap(claude);
         await stream.waitFor(
