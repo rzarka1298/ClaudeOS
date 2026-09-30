@@ -1,16 +1,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { FocusResponse } from "@ccc/domain/session-actions.js";
+import type { RunId } from "@ccc/domain/ids.js";
 import type { SessionView } from "@ccc/domain/session.js";
+import type { FocusResponse } from "@ccc/domain/session-actions.js";
 import { ClaudeRequestError } from "@ccc/service-api-client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
-import {
-  REASON_COPY,
-  type SessionActionDeps,
-  runSessionAction,
-} from "./session-action-runner.js";
+import { REASON_COPY, runSessionAction, type SessionActionDeps } from "./session-action-runner.js";
 import { sessionActionStatus } from "./session-action-status.js";
 
 /**
@@ -21,7 +18,14 @@ import { sessionActionStatus } from "./session-action-status.js";
  * rest of the runner's branches.
  */
 
-function descriptor(capability: string, runId?: string, label = "Focus terminal"): QuickActionDescriptor {
+/** `RunId` is a branded string (`ids.ts`); a plain literal is not assignable, so every fixture mints one this way (matches the `agent-runs*.test.tsx` convention). */
+const RUN_ID_1 = "0mfk1a2b3c4d5e6f7a8b9c0d1" as RunId;
+
+function descriptor(
+  capability: string,
+  runId?: string,
+  label = "Focus terminal",
+): QuickActionDescriptor {
   return {
     id: `${capability}-${runId ?? "none"}`,
     label,
@@ -32,7 +36,7 @@ function descriptor(capability: string, runId?: string, label = "Focus terminal"
 
 function view(overrides: Partial<SessionView> = {}): SessionView {
   return {
-    runId: "r1",
+    runId: RUN_ID_1,
     revision: 1,
     claudeSessionId: null,
     state: "running",
@@ -67,7 +71,7 @@ function makeDeps(overrides: Partial<SessionActionDeps> = {}): SessionActionDeps
     getSession: () => view(),
     cleanupPeriodDays: () => 30,
     ...overrides,
-  } as SessionActionDeps;
+  };
 }
 
 beforeEach(() => {
@@ -76,7 +80,7 @@ beforeEach(() => {
 
 describe("Task 1 (tracer): Focus terminal", () => {
   it("Test 1: sets pending status synchronously, before the first await", () => {
-    let releaseRequest: (() => void) | null = null;
+    let releaseRequest: () => void = () => {};
     const requestSessionAction = vi.fn(
       () =>
         new Promise<FocusResponse>((resolve) => {
@@ -91,13 +95,15 @@ describe("Task 1 (tracer): Focus terminal", () => {
       kind: "pending",
       text: "Focusing the terminal…",
     });
-    releaseRequest?.();
+    releaseRequest();
   });
 
   it("Test 1: a 'focused' outcome sets and notifies the focused-terminal success text", async () => {
     const notify = vi.fn();
     const deps = makeDeps({
-      requestSessionAction: vi.fn().mockResolvedValue({ outcome: "focused" } satisfies FocusResponse),
+      requestSessionAction: vi
+        .fn()
+        .mockResolvedValue({ outcome: "focused" } satisfies FocusResponse),
       ui: { notify },
       getSession: () => view({ name: "Fix parser" }),
     });
@@ -113,9 +119,10 @@ describe("Task 1 (tracer): Focus terminal", () => {
 
   it("Test 1: an 'activated' outcome names the terminal app", async () => {
     const deps = makeDeps({
-      requestSessionAction: vi
-        .fn()
-        .mockResolvedValue({ outcome: "activated", terminalApp: "Ghostty" } satisfies FocusResponse),
+      requestSessionAction: vi.fn().mockResolvedValue({
+        outcome: "activated",
+        terminalApp: "Ghostty",
+      } satisfies FocusResponse),
       getSession: () => view({ name: "Fix parser" }),
     });
 
@@ -141,7 +148,9 @@ describe("Task 1: 'Focus to interrupt' (PR-01/PR-27) — session:interrupt dispa
 
   it("Test 2: on success sets the guided-focus instruction, never an interrupt-sent message", async () => {
     const deps = makeDeps({
-      requestSessionAction: vi.fn().mockResolvedValue({ outcome: "focused" } satisfies FocusResponse),
+      requestSessionAction: vi
+        .fn()
+        .mockResolvedValue({ outcome: "focused" } satisfies FocusResponse),
     });
 
     await runSessionAction(descriptor("session:interrupt", "r1"), deps);
@@ -205,7 +214,10 @@ describe("Task 1: an unresolvable descriptor (Test 4)", () => {
     const notify = vi.fn();
     const deps = makeDeps({ requestSessionAction, ui: { notify } });
 
-    await runSessionAction({ id: "x", label: "Mystery action", capability: "session:mystery" }, deps);
+    await runSessionAction(
+      { id: "x", label: "Mystery action", capability: "session:mystery" },
+      deps,
+    );
 
     expect(notify).toHaveBeenCalledExactlyOnceWith("Mystery action isn't available yet.");
     expect(requestSessionAction).not.toHaveBeenCalled();
@@ -230,7 +242,9 @@ describe("Task 1 (source scan, Test 5): no interrupt-signal action name; only do
   });
 
   it("passes only action names from the domain's session-action table", () => {
-    const calls = [...SOURCE.matchAll(/requestSessionAction\(\s*["']([a-z-]+)["']/g)].map((m) => m[1]);
+    const calls = [...SOURCE.matchAll(/requestSessionAction\(\s*["']([a-z-]+)["']/g)].map(
+      (m) => m[1],
+    );
     expect(calls.length).toBeGreaterThan(0);
     for (const name of calls) {
       expect(KNOWN_ACTION_NAMES).toContain(name);
