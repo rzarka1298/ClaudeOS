@@ -64,11 +64,21 @@ function view(overrides: Partial<SessionView> = {}): SessionView {
   };
 }
 
+function fakeUi(overrides: Partial<SessionActionDeps["ui"]> = {}): SessionActionDeps["ui"] {
+  return {
+    notify: vi.fn(),
+    openConcurrentChoice: vi.fn(),
+    openAssociatePicker: vi.fn(),
+    ...overrides,
+  };
+}
+
 function makeDeps(overrides: Partial<SessionActionDeps> = {}): SessionActionDeps {
   return {
     requestSessionAction: vi.fn(),
-    ui: { notify: vi.fn() },
+    ui: fakeUi(),
     getSession: () => view(),
+    listProjects: () => null,
     cleanupPeriodDays: () => 30,
     ...overrides,
   };
@@ -104,7 +114,7 @@ describe("Task 1 (tracer): Focus terminal", () => {
       requestSessionAction: vi
         .fn()
         .mockResolvedValue({ outcome: "focused" } satisfies FocusResponse),
-      ui: { notify },
+      ui: fakeUi({ notify }),
       getSession: () => view({ name: "Fix parser" }),
     });
 
@@ -201,7 +211,7 @@ describe("Task 1: an unresolvable descriptor (Test 4)", () => {
   it("notifies the generic unavailable message and calls nothing, for a missing target.runId", async () => {
     const requestSessionAction = vi.fn();
     const notify = vi.fn();
-    const deps = makeDeps({ requestSessionAction, ui: { notify } });
+    const deps = makeDeps({ requestSessionAction, ui: fakeUi({ notify }) });
 
     await runSessionAction(descriptor("session:focus"), deps);
 
@@ -212,7 +222,7 @@ describe("Task 1: an unresolvable descriptor (Test 4)", () => {
   it("notifies the generic unavailable message for an unknown capability", async () => {
     const requestSessionAction = vi.fn();
     const notify = vi.fn();
-    const deps = makeDeps({ requestSessionAction, ui: { notify } });
+    const deps = makeDeps({ requestSessionAction, ui: fakeUi({ notify }) });
 
     await runSessionAction(
       { id: "x", label: "Mystery action", capability: "session:mystery" },
@@ -249,5 +259,229 @@ describe("Task 1 (source scan, Test 5): no interrupt-signal action name; only do
     for (const name of calls) {
       expect(KNOWN_ACTION_NAMES).toContain(name);
     }
+  });
+});
+
+/**
+ * Task 2: resume and branch through the concurrent-session guard (with its
+ * worktree step), and the associate picker (UI-SPEC S4-a, S4-e; SESS-10,
+ * SESS-13, SESS-14, SESS-17). The pure view models and thin Modal renderers
+ * these tests dispatch to live in `session-modals.ts` / `.test.ts`; this file
+ * only proves the RUNNER's own orchestration against a fake `ui` seam.
+ */
+
+function conflict(
+  overrides: Partial<{
+    runId: string;
+    sessionName: string;
+    state: string;
+    lastActivityAt: string | null;
+  }> = {},
+) {
+  return {
+    runId: RUN_ID_1,
+    sessionName: "beta",
+    state: "running" as const,
+    lastActivityAt: "2026-09-26T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("Task 2 (Test 3): resume through the concurrent-write guard", () => {
+  it("a clear first call launches directly, with no ui.openConcurrentChoice", async () => {
+    const requestSessionAction = vi.fn().mockResolvedValue({ outcome: "launched" });
+    const deps = makeDeps({ requestSessionAction, getSession: () => view({ name: "Fix parser" }) });
+
+    await runSessionAction(descriptor("session:resume", "r1"), deps);
+
+    expect(deps.ui.openConcurrentChoice).not.toHaveBeenCalled();
+    expect(sessionActionStatus.value.get("r1")).toEqual({
+      kind: "success",
+      text: "Resuming Fix parser in a new terminal.",
+    });
+  });
+
+  it("a conflict awaits ui.openConcurrentChoice; 'plan' relaunches with choice { kind: 'plan' }", async () => {
+    const requestSessionAction = vi
+      .fn()
+      .mockResolvedValueOnce({ outcome: "conflict", projectName: "alpha", conflicts: [conflict()] })
+      .mockResolvedValueOnce({ outcome: "launched" });
+    const openConcurrentChoice = vi.fn().mockResolvedValue({ kind: "plan" });
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openConcurrentChoice }),
+      getSession: () => view({ name: "Fix parser" }),
+    });
+
+    await runSessionAction(descriptor("session:resume", "r1"), deps);
+
+    expect(openConcurrentChoice).toHaveBeenCalledOnce();
+    expect(requestSessionAction).toHaveBeenNthCalledWith(2, "resume", {
+      runId: "r1",
+      choice: { kind: "plan" },
+    });
+    expect(sessionActionStatus.value.get("r1")).toEqual({
+      kind: "success",
+      text: "Resuming Fix parser in a new terminal.",
+    });
+  });
+
+  it("'cancel' makes no second call and clears the status", async () => {
+    const requestSessionAction = vi.fn().mockResolvedValueOnce({
+      outcome: "conflict",
+      projectName: "alpha",
+      conflicts: [conflict()],
+    });
+    const openConcurrentChoice = vi.fn().mockResolvedValue({ kind: "cancel" });
+    const deps = makeDeps({ requestSessionAction, ui: fakeUi({ openConcurrentChoice }) });
+
+    await runSessionAction(descriptor("session:resume", "r1"), deps);
+
+    expect(requestSessionAction).toHaveBeenCalledOnce();
+    expect(sessionActionStatus.value.has("r1")).toBe(false);
+  });
+
+  it("'worktree' fetches 'worktrees' and passes the loader into openConcurrentChoice; existing-worktree relaunches with that choice", async () => {
+    const requestSessionAction = vi
+      .fn()
+      .mockResolvedValueOnce({ outcome: "conflict", projectName: "alpha", conflicts: [conflict()] })
+      .mockResolvedValueOnce({
+        worktrees: [{ worktreeId: "wt1", branch: "b", folderBasename: "f" }],
+      })
+      .mockResolvedValueOnce({ outcome: "launched" });
+    const openConcurrentChoice = vi.fn(
+      async (_vm: unknown, loadWorktrees: () => Promise<unknown>) => {
+        const list = await loadWorktrees();
+        expect(list).toEqual([{ worktreeId: "wt1", branch: "b", folderBasename: "f" }]);
+        return { kind: "existing-worktree" as const, worktreeId: "wt1" };
+      },
+    );
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openConcurrentChoice }),
+      getSession: () => view({ name: "Fix parser" }),
+    });
+
+    await runSessionAction(descriptor("session:resume", "r1"), deps);
+
+    expect(requestSessionAction).toHaveBeenNthCalledWith(2, "worktrees", { runId: "r1" });
+    expect(requestSessionAction).toHaveBeenNthCalledWith(3, "resume", {
+      runId: "r1",
+      choice: { kind: "existing-worktree", worktreeId: "wt1" },
+    });
+  });
+
+  it("'worktree' with a new-worktree choice relaunches with that name", async () => {
+    const requestSessionAction = vi
+      .fn()
+      .mockResolvedValueOnce({ outcome: "conflict", projectName: "alpha", conflicts: [conflict()] })
+      .mockResolvedValueOnce({ worktrees: [] })
+      .mockResolvedValueOnce({ outcome: "launched" });
+    const openConcurrentChoice = vi
+      .fn()
+      .mockResolvedValue({ kind: "new-worktree", name: "fix-parser" });
+    const deps = makeDeps({ requestSessionAction, ui: fakeUi({ openConcurrentChoice }) });
+
+    await runSessionAction(descriptor("session:resume", "r1"), deps);
+
+    expect(requestSessionAction).toHaveBeenNthCalledWith(3, "resume", {
+      runId: "r1",
+      choice: { kind: "new-worktree", name: "fix-parser" },
+    });
+  });
+});
+
+describe("Task 2 (Test 4): branch through the same guard flow", () => {
+  it("launches directly on a clear first call, giving the branch success text", async () => {
+    const requestSessionAction = vi
+      .fn()
+      .mockResolvedValue({ outcome: "launched", childRunId: "c1" });
+    const deps = makeDeps({ requestSessionAction, getSession: () => view({ name: "Fix parser" }) });
+
+    await runSessionAction(descriptor("session:branch", "r1"), deps);
+
+    expect(sessionActionStatus.value.get("r1")).toEqual({
+      kind: "success",
+      text: "Branching Fix parser into a new session.",
+    });
+  });
+
+  it("a conflict resolves through openConcurrentChoice exactly like resume", async () => {
+    const requestSessionAction = vi
+      .fn()
+      .mockResolvedValueOnce({ outcome: "conflict", projectName: "alpha", conflicts: [conflict()] })
+      .mockResolvedValueOnce({ outcome: "launched", childRunId: "c1" });
+    const openConcurrentChoice = vi.fn().mockResolvedValue({ kind: "continue" });
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openConcurrentChoice }),
+      getSession: () => view({ name: "Fix parser" }),
+    });
+
+    await runSessionAction(descriptor("session:branch", "r1"), deps);
+
+    expect(requestSessionAction).toHaveBeenNthCalledWith(2, "branch", {
+      runId: "r1",
+      choice: { kind: "continue" },
+    });
+    expect(sessionActionStatus.value.get("r1")?.kind).toBe("success");
+  });
+});
+
+describe("Task 2 (Test 5): associate with a registered project", () => {
+  it("an empty project list still opens the picker, and a null choice calls nothing", async () => {
+    const requestSessionAction = vi.fn();
+    const openAssociatePicker = vi.fn().mockResolvedValue(null);
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openAssociatePicker }),
+      listProjects: () => [],
+      getSession: () => view({ name: "Fix parser" }),
+    });
+
+    await runSessionAction(descriptor("session:associate", "r1"), deps);
+
+    expect(openAssociatePicker).toHaveBeenCalledExactlyOnceWith("Fix parser", []);
+    expect(requestSessionAction).not.toHaveBeenCalled();
+  });
+
+  it("choosing a project calls requestSessionAction('associate', …) and gives the association success text", async () => {
+    const requestSessionAction = vi.fn().mockResolvedValue(undefined);
+    const project = { id: "p1", name: "alpha" };
+    const openAssociatePicker = vi.fn().mockResolvedValue(project);
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openAssociatePicker }),
+      listProjects: () => [project],
+      getSession: () => view({ name: "Fix parser" }),
+    });
+
+    await runSessionAction(descriptor("session:associate", "r1"), deps);
+
+    expect(requestSessionAction).toHaveBeenCalledExactlyOnceWith("associate", {
+      runId: "r1",
+      projectId: "p1",
+    });
+    expect(sessionActionStatus.value.get("r1")).toEqual({
+      kind: "success",
+      text: "Associated Fix parser with alpha. Later resumes of this session go there too.",
+    });
+  });
+
+  it("listProjects() returning null (unknown, pre-Phase-4) notifies 'Register a project first' and calls nothing", async () => {
+    const requestSessionAction = vi.fn();
+    const openAssociatePicker = vi.fn();
+    const notify = vi.fn();
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openAssociatePicker, notify }),
+      listProjects: () => null,
+    });
+
+    await runSessionAction(descriptor("session:associate", "r1"), deps);
+
+    expect(notify).toHaveBeenCalledExactlyOnceWith("Register a project first");
+    expect(openAssociatePicker).not.toHaveBeenCalled();
+    expect(requestSessionAction).not.toHaveBeenCalled();
   });
 });

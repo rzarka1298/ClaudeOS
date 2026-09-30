@@ -1,8 +1,21 @@
 import { type SessionView, sessionDisplayName } from "@ccc/domain/session.js";
-import type { FocusResponse, SessionActionErrorCode } from "@ccc/domain/session-actions.js";
+import type {
+  BranchResponse,
+  FocusResponse,
+  LaunchChoice,
+  ResumeResponse,
+  SessionActionErrorCode,
+  WorktreeListResponse,
+} from "@ccc/domain/session-actions.js";
 import { ClaudeRequestError } from "@ccc/service-api-client";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { setActionStatus } from "./session-action-status.js";
+import type {
+  ConcurrentChoiceResolution,
+  ConcurrentChoiceViewModel,
+  ProjectOption,
+  WorktreeListResult,
+} from "./session-modals.js";
 
 /**
  * The single action runner for every `session:*` and `usage:*` quick-action
@@ -26,16 +39,51 @@ const DEFAULT_CLEANUP_PERIOD_DAYS = 30;
  * The modal seam, in the {@link VaultSetupUi} shape (setup-command.ts):
  * production code touches Obsidian only through `createObsidianSessionActionUi`
  * (session-modals.ts); this module and its tests never import `obsidian`.
- * Tasks 2-3 add the modal openers this plan's other controls need.
+ * Task 3 adds the two remaining openers (transcript warning, terminate
+ * request) this plan's other controls need.
  */
 export interface SessionActionUi {
-  /** Shows a transient message to the user (an Obsidian `Notice` in production). */
-  notify(message: string): void;
+  /**
+   * Shows a transient message to the user (an Obsidian `Notice` in
+   * production). Declared as an arrow-typed property, not a method, so a
+   * test's `expect(deps.ui.notify)` never trips
+   * `@typescript-eslint/unbound-method` (same reason every opener below is).
+   */
+  readonly notify: (message: string) => void;
+  /**
+   * Opens the concurrent-session choice (S4-a), including its worktree step:
+   * the ONE modal instance resolves once, whichever step it settles from.
+   * `loadWorktrees` is called by the modal itself, lazily, only if the owner
+   * picks "Use an isolated worktree" -- the modal never calls the client
+   * directly.
+   */
+  readonly openConcurrentChoice: (
+    vm: ConcurrentChoiceViewModel,
+    loadWorktrees: () => Promise<WorktreeListResult>,
+  ) => Promise<ConcurrentChoiceResolution>;
+  /** Opens the associate-with-project picker (S4-e). `null` is a refusal (Escape, closed with no choice). */
+  readonly openAssociatePicker: (
+    sessionName: string,
+    projects: readonly ProjectOption[],
+  ) => Promise<ProjectOption | null>;
 }
 
-/** The request/response shape for every action name the runner dispatches so far. */
+/**
+ * The request/response shape for every action name the runner dispatches.
+ * Requests are LOCAL, loosely-typed shapes (`runId: string`, not the
+ * domain's branded `RunId`): this module never mints a `RunId`, only passes
+ * through the plain string a descriptor's `target` already carries, and the
+ * real validation happens where 05-17 wires this deps object to the actual
+ * `requestSessionAction(client, action, body)` (service-api-client), which
+ * parses every body against its own strict schema before it reaches the
+ * wire. Responses keep the domain's own (read-only) shapes.
+ */
 export interface SessionActionRequestMap {
   focus: { request: { runId: string }; response: FocusResponse };
+  resume: { request: { runId: string; choice?: LaunchChoice }; response: ResumeResponse };
+  branch: { request: { runId: string; choice?: LaunchChoice }; response: BranchResponse };
+  worktrees: { request: { runId: string }; response: WorktreeListResponse };
+  associate: { request: { runId: string; projectId: string }; response: unknown };
 }
 
 /**
@@ -51,6 +99,8 @@ export interface SessionActionDeps {
   readonly ui: SessionActionUi;
   /** `null` when the Run is not (yet) loaded into the signal store. */
   getSession(runId: string): SessionView | null;
+  /** `null` means "unknown" (before Phase 4's project registry is wired, PR-17) -- never treated as "zero projects". */
+  listProjects(): readonly ProjectOption[] | null;
   /** `null` when the service hasn't reported it yet. */
   cleanupPeriodDays(): number | null;
 }

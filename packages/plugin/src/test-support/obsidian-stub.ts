@@ -136,9 +136,55 @@ export class ButtonComponent {
     return this;
   }
 
+  /** Added plan 05-15 (session-modals.ts's worktree-step Launch button) -- inert, same rationale as every other setter here. */
+  setDisabled(_disabled: boolean): this {
+    return this;
+  }
+
   onClick(_handler: (evt: MouseEvent) => unknown): this {
     return this;
   }
+}
+
+/** Mirrors obsidian's `Instruction` (`{ command, purpose }`) closely enough for a shape test. */
+export interface StubInstruction {
+  command: string;
+  purpose: string;
+}
+
+/**
+ * Inert stand-in for Obsidian's `FuzzySuggestModal<T>` (plan 05-15, the
+ * associate-with-project picker). Same rationale as `Modal`/`ButtonComponent`
+ * above: `setPlaceholder`/`setInstructions` just record what they were given
+ * so a test can read it back, and `getItems`/`getItemText`/`onChooseItem` are
+ * the subclass's own overrides -- this stub supplies no fuzzy-search
+ * behaviour of its own, because a hand-written one would prove nothing about
+ * Obsidian's real matcher. Base check before adding: absent from this file
+ * until this plan; shared with the Phase 4 project palette (05-UI-SPEC R-01),
+ * which needed the same class and did not land here first.
+ */
+export class FuzzySuggestModal<T> extends Modal {
+  placeholder = "";
+  instructions: StubInstruction[] = [];
+  emptyStateText = "";
+
+  setPlaceholder(placeholder: string): void {
+    this.placeholder = placeholder;
+  }
+
+  setInstructions(instructions: StubInstruction[]): void {
+    this.instructions = instructions;
+  }
+
+  getItems(): T[] {
+    return [];
+  }
+
+  getItemText(_item: T): string {
+    return "";
+  }
+
+  onChooseItem(_item: T, _evt: MouseEvent | KeyboardEvent): void {}
 }
 
 /**
