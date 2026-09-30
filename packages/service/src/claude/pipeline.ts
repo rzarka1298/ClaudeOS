@@ -88,6 +88,14 @@ export interface ClaudePipeline {
    * resolves false when the Run is unknown or nothing changed.
    */
   reattribute(runId: RunId, attribution: RunAttribution): Promise<boolean>;
+  /**
+   * Metadata-only identity backfill (wave 4): records the process start of
+   * a Run that has a pid but no `pidStartedAt` (its hooks were installed
+   * mid-session, or the SessionStart `ps` failed), at revision + 1, never
+   * touching its state. Never replaces a known start. Queued with ingest;
+   * resolves false when the Run is unknown, terminal or already has one.
+   */
+  backfillPidStart(runId: RunId, pidStartedAt: string): Promise<boolean>;
   /** Synchronous: non-terminal Runs plus terminal Runs that ended within 7 days. */
   listSessionViews(): SessionView[];
   health(): PipelineHealth;
@@ -390,6 +398,15 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
         const worktreeRoot = attribution.worktreeRoot ?? run.worktreeRoot;
         if (projectId === run.projectId && worktreeRoot === run.worktreeRoot) return false;
         writeAndPublish([{ ...run, projectId, worktreeRoot, revision: run.revision + 1 }]);
+        return true;
+      }),
+    backfillPidStart: (runId, pidStartedAt) =>
+      enqueue(() => {
+        const run = index.byRunId(runId);
+        if (run === null || run.pidStartedAt !== null || isTerminalRunState(run.state)) {
+          return false;
+        }
+        writeAndPublish([{ ...run, pidStartedAt, revision: run.revision + 1 }]);
         return true;
       }),
     listSessionViews() {

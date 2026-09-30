@@ -154,12 +154,13 @@ function seedRun(patch: Partial<SessionRun> = {}): SessionRun {
 }
 
 function sweeperWith(config: Partial<LivenessConfig> = {}): LivenessSweeper {
-  const spied: Pick<ClaudePipeline, "apply" | "reattribute"> = {
+  const spied: Pick<ClaudePipeline, "apply" | "reattribute" | "backfillPidStart"> = {
     apply: (evidence) => {
       applied.push(evidence);
       return pipeline.apply(evidence);
     },
     reattribute: (runId, attribution) => pipeline.reattribute(runId, attribution),
+    backfillPidStart: (runId, pidStartedAt) => pipeline.backfillPidStart(runId, pidStartedAt),
   };
   return createLivenessSweeper({
     db: store.db,
@@ -303,6 +304,41 @@ describe("process liveness sweep (Task 1, SESS-06, D-19)", () => {
     await sweeper.sweepNow();
     expect(appliedKinds(run.runId)).toEqual(["pid-alive"]);
     expect(stateOf(run.runId)).toBe("running");
+  });
+
+  it("backfills pidStartedAt for a mid-session Run, then catches a later PID reuse (wave 4)", async () => {
+    const startedBeforeActivity = new Date(T0 - 120_000).toISOString();
+    table.spawn(PID, startedBeforeActivity);
+    const run = seedRun({ pidStartedAt: null });
+    const sweeper = sweeperWith();
+    await sweeper.sweepNow();
+    // The process answered with a start before the Run's last hook activity:
+    // it is the Run's own process, so its start becomes the identity.
+    expect(getSessionRun(store.db, run.runId)?.pidStartedAt).toBe(startedBeforeActivity);
+    expect(appliedKinds(run.runId)).toEqual([]);
+    expect(stateOf(run.runId)).toBe("running");
+
+    // The process exits and the pid is reused by a newer process.
+    table.kill(PID);
+    table.spawn(PID, new Date(T0 + 1_000).toISOString());
+    nowMs = T0 + 2_000;
+    await sweeper.sweepNow();
+    nowMs += DEFAULT_LIVENESS_CONFIG.graceMs;
+    await sweeper.sweepNow();
+    expect(appliedKinds(run.runId)).toEqual(["pid-gone"]);
+    expect(stateOf(run.runId)).toBe("stale");
+  });
+
+  it("a Run with no stored start whose pid started after its last activity reads gone, never running (wave 4)", async () => {
+    table.spawn(PID, new Date(T0 - 500).toISOString()); // after lastActivityAt (T0 - 1 s)
+    const run = seedRun({ pidStartedAt: null });
+    const sweeper = sweeperWith();
+    await sweeper.sweepNow();
+    expect(getSessionRun(store.db, run.runId)?.pidStartedAt).toBeNull();
+    nowMs = T0 + DEFAULT_LIVENESS_CONFIG.graceMs;
+    await sweeper.sweepNow();
+    expect(appliedKinds(run.runId)).toEqual(["pid-gone"]);
+    expect(stateOf(run.runId)).toBe("stale");
   });
 
   it("start() sweeps on its timer and stop() ends it (key link: services stop chain)", async () => {

@@ -24,8 +24,14 @@ import { type ProcessFacts, startInstantMs } from "./process-facts.js";
  *   remembered as first-seen-gone. Only after the grace period, when no
  *   SessionEnd has ended the Run meanwhile, does the sweep apply `pid-gone`.
  * - A pid alive with exactly the stored `lstart` applies `pid-alive` to a
- *   stale Run (revival). An unknown stored or read `lstart` proves nothing
- *   either way, so it neither revives nor ends a Run.
+ *   stale Run (revival). An unknown read `lstart` proves nothing either
+ *   way, so it neither revives nor ends a Run.
+ * - A Run with a pid but no stored start (hooks installed mid-session, or
+ *   a failed SessionStart `ps`) is judged by the read start against its
+ *   last hook activity (wave 4): a process that started no later than that
+ *   activity held the pid then, so it is the Run's own process and its start
+ *   is backfilled through `pipeline.backfillPidStart`; one that started
+ *   after it is a reused pid and is treated as gone.
  * - A queued or starting Run with no SessionStart after the start timeout
  *   applies `start-timeout`; a PID-less running Run idle past the
  *   inactivity threshold applies `inactivity-timeout` (it has no process to
@@ -95,11 +101,13 @@ export interface SweepReport {
   readonly inactivityTimeouts: number;
   /** Unclassified Runs given a project after a project-set change. */
   readonly reattributed: number;
+  /** Runs whose missing process start was backfilled this sweep (wave 4). */
+  readonly backfilled: number;
 }
 
 export interface LivenessSweeperDeps {
   readonly db: Database.Database;
-  readonly pipeline: Pick<ClaudePipeline, "apply" | "reattribute">;
+  readonly pipeline: Pick<ClaudePipeline, "apply" | "reattribute" | "backfillPidStart">;
   readonly processFacts: Pick<ProcessFacts, "isAlive" | "readStartTimes">;
   readonly logger: Logger;
   readonly now: () => Date;
@@ -130,10 +138,24 @@ function identityOf(
   run: SessionRun,
   answered: boolean,
   lstart: string | undefined,
-): "same" | "gone" | "unknown" {
+): "same" | "backfill" | "gone" | "unknown" {
   if (!answered) return "gone";
-  if (lstart === undefined || run.pidStartedAt === null) return "unknown";
+  if (lstart === undefined) return "unknown";
+  if (run.pidStartedAt === null) return ownProcessWithoutStart(run, lstart);
   return sameStart(lstart, run.pidStartedAt) ? "same" : "gone";
+}
+
+/**
+ * A Run with no stored start (wave 4): the pid's process is the Run's own
+ * when it started no later than the Run's last hook activity (a pid names
+ * one process at a time, and a reuse can only start after the original
+ * died, which is after that activity). A later start is a reused pid.
+ */
+function ownProcessWithoutStart(run: SessionRun, lstart: string): "backfill" | "gone" | "unknown" {
+  const startMs = startInstantMs(lstart);
+  const lastMs = Date.parse(run.lastActivityAt ?? run.startedAt);
+  if (startMs === null || Number.isNaN(lastMs)) return "unknown";
+  return startMs <= lastMs ? "backfill" : "gone";
 }
 
 /**
@@ -273,9 +295,16 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
     const seen = new Set<RunId>();
     let gone = 0;
     let revived = 0;
+    let backfilled = 0;
     for (const run of withPid) {
       seen.add(run.runId);
-      const identity = identityOf(run, answered.has(run.pid), starts.get(run.pid));
+      const lstart = starts.get(run.pid);
+      let identity = identityOf(run, answered.has(run.pid), lstart);
+      if (identity === "backfill" && lstart !== undefined) {
+        await pipeline.backfillPidStart(run.runId, lstart);
+        backfilled += 1;
+        identity = "same";
+      }
       if (identity === "same") {
         firstSeenGone.delete(run.runId);
         if (run.state === "stale") {
@@ -320,8 +349,9 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
       startTimeouts,
       inactivityTimeouts,
       reattributed,
+      backfilled,
     };
-    if (gone + revived + startTimeouts + inactivityTimeouts + reattributed > 0) {
+    if (gone + revived + startTimeouts + inactivityTimeouts + reattributed + backfilled > 0) {
       logger.info(report, "liveness sweep applied evidence");
     }
     return report;
