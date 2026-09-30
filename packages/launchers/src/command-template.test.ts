@@ -204,6 +204,47 @@ describe("validateCommandTemplate (D-22, PROJ-10)", () => {
     });
   });
 
+  it.each([
+    [["/bin/sh", "-c", "{projectPath}", "{script}"], 2],
+    [["/bin/zsh", "-lc", "{projectPath}", "{script}"], 2],
+    [["/usr/bin/python3", "-c", "{script}"], 2],
+    [["/bin/bash", "-ic", "{script}"], 2],
+    [["/usr/bin/perl", "-e", "{projectPath}", "{script}"], 2],
+    [["/usr/bin/perl", "-ne", "{script}"], 2],
+    [["/usr/bin/perl", "-E", "{projectPath}", "{script}"], 2],
+    [["/usr/local/bin/node", "--eval", "{script}"], 2],
+    [["/usr/local/bin/pwsh", "-Command", "{projectPath}", "{script}"], 2],
+    [["/usr/local/bin/pwsh", "--command", "{script}"], 2],
+    [["/usr/bin/osascript", "-e", "{script}"], 2],
+    [["/usr/bin/open", "-na", "Ghostty", "--args", "-e", "{projectPath}", "{script}"], 5],
+  ] as const)("refuses a placeholder that an interpreter would run as code: %j", (argv, index) => {
+    expect(refusal(argv)).toEqual({ reason: "embedded-placeholder", index });
+  });
+
+  it("refuses {projectPath} after -c in a Claude Code template too", () => {
+    expect(refusal([CLAUDE, "-c", "{projectPath}"], "claude-code")).toEqual({
+      reason: "embedded-placeholder",
+      index: 2,
+    });
+  });
+
+  it("still accepts a terminal's own -e {script} (a program to run, not code) and ordinary flags", () => {
+    for (const argv of [
+      [OPEN, "-na", "Ghostty", "--args", "-e", "{script}"],
+      ["/Applications/Example.app/Contents/MacOS/example", "-e", "{script}"],
+      [WEZTERM, "start", "--cwd", "{projectPath}", "--", "{script}"],
+      ["/bin/sh", "-c", 'exec "$0"', "{script}"],
+    ]) {
+      expect(
+        validateCommandTemplate(argv, { kind: "terminal", isExecutable: always }),
+        argv.join(" "),
+      ).toEqual({
+        ok: true,
+        argv,
+      });
+    }
+  });
+
   it("passes only argv[0] to isExecutable", () => {
     const seen: string[] = [];
     validateCommandTemplate([WEZTERM, "{script}"], {
