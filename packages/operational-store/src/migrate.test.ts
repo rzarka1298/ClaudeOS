@@ -33,6 +33,7 @@ const PHASE_5_TABLES = [
   "cost_snapshots",
   "collector_settings",
   "analysis_toggle_log",
+  "transcript_recognition",
 ] as const;
 
 /** The nullable columns the Phase 5 migration adds to `runs` (D-21). */

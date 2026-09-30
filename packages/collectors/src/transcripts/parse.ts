@@ -24,6 +24,14 @@ import type { TokenCounters } from "../usage/pricing.js";
  * is still counted; the service knows a subagent file by its path.
  */
 
+/**
+ * The parser's own version (wave 4): bump it whenever what this parser
+ * recognizes changes. The service keys its persisted recognition tallies by
+ * it, and a new value resets every transcript cursor and the coverage ledger
+ * so the next sweep rereads everything with the new parser.
+ */
+export const TRANSCRIPT_PARSER_VERSION = 1;
+
 /** PR-11: once a version has this many assistant records, its recognition ratio is judged. */
 export const FORMAT_MIN_SAMPLE = 20;
 /** PR-11: below this share of recognized assistant records, the format changed. */

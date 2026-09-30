@@ -296,3 +296,24 @@ export const analysisToggleLog = sqliteTable("analysis_toggle_log", {
   at: text("at").primaryKey(),
   enabled: text("enabled").notNull(),
 });
+
+/**
+ * Transcript format recognition tallies (D-41, PR-11, wave 4 review): how
+ * many assistant records each Claude Code version wrote and how many the
+ * parser recognized, per parser version. Persisted so a format-change
+ * verdict survives a restart; the service reads only the current parser
+ * version's rows, and a parser version change drops the others with the
+ * cursors and coverage. Counters and version strings only: no content
+ * column exists, and none may be added (D-49).
+ */
+export const transcriptRecognition = sqliteTable(
+  "transcript_recognition",
+  {
+    parserVersion: integer("parser_version").notNull(),
+    claudeVersion: text("claude_version").notNull(),
+    assistant: integer("assistant").notNull(),
+    recognized: integer("recognized").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.parserVersion, table.claudeVersion] })],
+);

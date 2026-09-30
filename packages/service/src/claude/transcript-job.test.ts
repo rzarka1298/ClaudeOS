@@ -12,10 +12,11 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { parseTranscriptChunk } from "@ccc/collectors";
+import { parseTranscriptChunk, TRANSCRIPT_PARSER_VERSION } from "@ccc/collectors";
 import { newRunId, UsageSummarySchema } from "@ccc/domain";
 import {
   applyMigrations,
+  getCollectorSetting,
   latestRunBySession,
   type OperationalStore,
   openStore,
@@ -31,6 +32,7 @@ import {
   createTranscriptJob,
   nodeTranscriptIo,
   TRANSCRIPT_CHUNK_BYTES,
+  TRANSCRIPT_PARSER_VERSION_SETTING,
   type TranscriptJobDeps,
 } from "./transcript-job.js";
 import { startUsageServices, TRANSCRIPT_ANALYSIS_SETTING } from "./usage-services.js";
@@ -595,5 +597,70 @@ describe("coverage only from a completed full sweep (wave 4 review)", () => {
     const outcome = await makeJob({ ...io, stat }).sweep();
     expect(outcome).toMatchObject({ completed: true, failedFiles: 1 });
     expect(coveredDays()).toEqual([]);
+  });
+});
+
+describe("persisted recognition verdict (wave 4 review, D-41, PR-11)", () => {
+  function writeChangedFormat(): string {
+    const records: string[] = [];
+    for (let i = 0; i < 25; i += 1) {
+      records.push(
+        assistantLine({
+          messageId: `msg_f_${i}`,
+          sessionId: "sess-f",
+          version: "2.1.290",
+          withUsage: i < 20,
+        }),
+      );
+    }
+    const path = file("-synthetic-format", "sess-f.jsonl");
+    write(path, lines(...records));
+    return path;
+  }
+
+  it("survives a restart, and holds cursors, usage and coverage while unavailable", async () => {
+    const changed = writeChangedFormat();
+    const good = file("-synthetic-good", "sess-g.jsonl");
+    write(good, lines(assistantLine({ messageId: "msg_g1", sessionId: "sess-g", usage: C1 })));
+    const first = makeJob(spies());
+    const outcome = await first.sweep();
+    expect(outcome.completed).toBe(false);
+    expect(outcome.held).toBe(true);
+    // The chunk that tripped the verdict advanced nothing and counted nothing.
+    expect(readCursor(store.db, changed)).toBeNull();
+    expect(coveredDays()).toEqual([]);
+
+    // A new job over the same store (a service restart) still knows.
+    const io = spies();
+    const restarted = makeJob(io);
+    expect(restarted.recognition()).toEqual({ kind: "unavailable", version: "2.1.290" });
+    expect(restarted.facts().verdict).toEqual({ kind: "unavailable", version: "2.1.290" });
+    // Nothing is read while the verdict stands: the period cannot read complete.
+    expect((await restarted.scanFile(good)).kind).toBe("held");
+    expect((await restarted.sweep()).completed).toBe(false);
+    expect(io.readChunk).not.toHaveBeenCalled();
+    expect(coveredDays()).toEqual([]);
+  });
+
+  it("a parser version change resets cursors and coverage, and rescans from zero", async () => {
+    writeFixture();
+    const path = file("-synthetic-alpha", "sess-b.jsonl");
+    await makeJob(spies()).sweep();
+    expect(readCursor(store.db, path)?.offset).toBe(readFileSync(path).length);
+    expect(coveredDays().length).toBeGreaterThan(0);
+
+    // Simulate a store last scanned by an older parser.
+    setCollectorSetting(store.db, TRANSCRIPT_PARSER_VERSION_SETTING, "0", NOW.toISOString());
+    const io = spies();
+    const job = makeJob(io);
+    expect(job.facts().verdict).toEqual({ kind: "ok" });
+    await job.sweep();
+    expect(io.readChunk.mock.calls.filter(([p]) => p === path)[0]?.[1]).toBe(0);
+    // Dedup keeps the rescan from counting twice.
+    expect(queryTokenActivity(store.db, WIDE).totals).toEqual(EXPECTED_TOTALS);
+    expect(coveredDays().length).toBeGreaterThan(0);
+    expect(getCollectorSetting(store.db, TRANSCRIPT_PARSER_VERSION_SETTING)).toBe(
+      String(TRANSCRIPT_PARSER_VERSION),
+    );
   });
 });

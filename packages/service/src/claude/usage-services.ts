@@ -325,7 +325,8 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
         sweepAgain = false;
         if (stopped || !analysisEnabled()) break;
         const outcome = await job.sweep();
-        if (!outcome.completed) continue;
+        // A held sweep has its answer too: the format-changed verdict (D-41).
+        if (!outcome.completed && !outcome.held) continue;
         firstScanPending = false;
         publishUsage();
       } while (sweepAgain);
@@ -340,7 +341,7 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
   async function scanSettled(transcriptPath: string): Promise<void> {
     try {
       const outcome = await job.scanFile(transcriptPath);
-      if (outcome.kind === "scanned") publishUsage();
+      if (outcome.kind === "scanned" || outcome.kind === "held") publishUsage();
     } catch (err: unknown) {
       logger.warn({ err }, "transcript scan failed");
     }

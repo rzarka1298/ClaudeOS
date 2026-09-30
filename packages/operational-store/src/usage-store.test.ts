@@ -8,6 +8,7 @@ import { applyMigrations } from "./migrate.js";
 import { insertRun } from "./run-store.js";
 import { setSessionOverride } from "./session-store.js";
 import {
+  addRecognitionStats,
   appendToggleLog,
   deleteUsageAnalytics,
   getCollectorSetting,
@@ -19,7 +20,9 @@ import {
   queryCoverage,
   queryTokenActivity,
   readCursor,
+  readRecognitionStats,
   recordUsage,
+  resetTranscriptScanState,
   setCollectorSetting,
   type UsageRecordInput,
   upsertCapacitySnapshot,
@@ -30,7 +33,7 @@ import {
 const REAL_MIGRATIONS_DIR = join(import.meta.dirname, "../migrations");
 const NOW = "2026-09-28T12:00:00.000Z";
 
-/** The six tables "Delete cached usage analytics" empties (D-46). */
+/** The tables "Delete cached usage analytics" empties (D-46; recognition stats since wave 4). */
 const USAGE_TABLES = [
   "usage_quarter_hourly",
   "usage_seen_messages",
@@ -38,6 +41,7 @@ const USAGE_TABLES = [
   "transcript_cursors",
   "capacity_snapshots",
   "cost_snapshots",
+  "transcript_recognition",
 ] as const;
 
 let dir: string;
@@ -276,9 +280,10 @@ describe("deleteUsageAnalytics (Test 3, USAGE-08, D-46)", () => {
       claudeSessionId: "session-1",
     });
     upsertCostSnapshot(db, { claudeSessionId: "session-1", totalCostUsd: 1.25, observedAt: NOW });
+    addRecognitionStats(db, 1, { "2.1.283": { assistant: 3, recognized: 3 } }, NOW);
   }
 
-  it("empties the six usage tables and leaves runs, overrides, settings and the toggle log untouched", () => {
+  it("empties the usage tables and leaves runs, overrides, settings and the toggle log untouched", () => {
     seedEverything();
     const runsBefore = count("runs");
     const kept = ["runs", "session_overrides", "collector_settings", "analysis_toggle_log"].map(
@@ -301,7 +306,7 @@ describe("deleteUsageAnalytics (Test 3, USAGE-08, D-46)", () => {
   it("leaves every table as it was when a delete fails part-way through the transaction", () => {
     seedEverything();
     const before = USAGE_TABLES.map((table) => count(table));
-    // Test double for a mid-transaction failure: the fifth of the six deletes aborts.
+    // Test double for a mid-transaction failure: the fifth delete aborts.
     db.exec(
       "CREATE TRIGGER forced_failure BEFORE DELETE ON capacity_snapshots BEGIN SELECT RAISE(ABORT, 'forced failure'); END",
     );
@@ -507,5 +512,43 @@ describe("usage-store writes no projects rows (SESS-17, D-57)", () => {
     for (const pattern of writes) {
       expect(source).not.toMatch(pattern);
     }
+  });
+});
+
+describe("transcript recognition stats (wave 4 review, D-41, PR-11)", () => {
+  it("adds per-parser-version, per-Claude-version tallies and reads only the asked parser version", () => {
+    addRecognitionStats(db, 2, { "2.1.283": { assistant: 3, recognized: 2 } }, NOW);
+    addRecognitionStats(
+      db,
+      2,
+      { "2.1.283": { assistant: 4, recognized: 4 }, "2.1.290": { assistant: 1, recognized: 0 } },
+      NOW,
+    );
+    addRecognitionStats(db, 1, { "2.1.283": { assistant: 99, recognized: 0 } }, NOW);
+    expect(readRecognitionStats(db, 2)).toEqual({
+      "2.1.283": { assistant: 7, recognized: 6 },
+      "2.1.290": { assistant: 1, recognized: 0 },
+    });
+    expect(readRecognitionStats(db, 3)).toEqual({});
+  });
+
+  it("resetTranscriptScanState clears cursors, coverage and every tally, keeping counted tokens", () => {
+    recordUsage(db, [record()], NOW);
+    markDayCovered(db, "2026-09-28", NOW);
+    writeCursor(
+      db,
+      "/Users/USERNAME/.claude/projects/x/a.jsonl",
+      { inode: "1", size: 5, offset: 5 },
+      NOW,
+    );
+    addRecognitionStats(db, 1, { "2.1.283": { assistant: 5, recognized: 0 } }, NOW);
+    addRecognitionStats(db, 2, { "2.1.283": { assistant: 5, recognized: 5 } }, NOW);
+    resetTranscriptScanState(db);
+    expect(count("transcript_cursors")).toBe(0);
+    expect(count("coverage_days")).toBe(0);
+    expect(count("transcript_recognition")).toBe(0);
+    // Counted tokens stay: message-id dedup keeps a rescan from counting twice.
+    expect(count("usage_quarter_hourly")).toBe(1);
+    expect(count("usage_seen_messages")).toBe(1);
   });
 });

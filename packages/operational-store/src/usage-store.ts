@@ -464,7 +464,8 @@ export function listToggleLog(db: Database.Database): AnalysisToggle[] {
 }
 
 /**
- * The six tables "Delete cached usage analytics" empties (D-46). `runs`,
+ * The tables "Delete cached usage analytics" empties (D-46; the recognition
+ * tallies since wave 4, because a rescan from zero cursors rebuilds them). `runs`,
  * `session_overrides`, `collector_settings` and `analysis_toggle_log` are
  * deliberately absent: deleting usage never touches session history, the
  * owner's associations, the analysis setting or its history (USAGE-08).
@@ -476,10 +477,11 @@ const USAGE_ANALYTICS_TABLES = [
   "transcript_cursors",
   "capacity_snapshots",
   "cost_snapshots",
+  "transcript_recognition",
 ] as const;
 
 /**
- * Empties the six usage tables in one transaction (USAGE-08, D-46). If any
+ * Empties the usage tables in one transaction (USAGE-08, D-46). If any
  * delete fails, the transaction rolls back and every table is as it was.
  * Clearing the cursors and seen messages is what lets a later rescan from
  * zero rebuild identical aggregates.
@@ -489,5 +491,71 @@ export function deleteUsageAnalytics(db: Database.Database): void {
     for (const table of USAGE_ANALYTICS_TABLES) {
       db.prepare(`DELETE FROM ${table}`).run();
     }
+  })();
+}
+
+/** One Claude Code version's recognition tally (D-41, PR-11). */
+export interface RecognitionTally {
+  readonly assistant: number;
+  readonly recognized: number;
+}
+
+/**
+ * Adds per-Claude-version recognition tallies for one parser version
+ * (wave 4): the scanner calls it in the same transaction that advances the
+ * cursor over the chunk those tallies came from, so a chunk is tallied once.
+ */
+export function addRecognitionStats(
+  db: Database.Database,
+  parserVersion: number,
+  byVersion: Readonly<Record<string, RecognitionTally>>,
+  at: string,
+): void {
+  const add = db.prepare(
+    `INSERT INTO transcript_recognition (parser_version, claude_version, assistant, recognized, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (parser_version, claude_version) DO UPDATE SET
+       assistant = assistant + excluded.assistant,
+       recognized = recognized + excluded.recognized,
+       updated_at = excluded.updated_at`,
+  );
+  db.transaction(() => {
+    for (const [claudeVersion, tally] of Object.entries(byVersion)) {
+      if (tally.assistant === 0 && tally.recognized === 0) continue;
+      add.run(parserVersion, claudeVersion, tally.assistant, tally.recognized, at);
+    }
+  })();
+}
+
+/** Every Claude version's tally for one parser version. */
+export function readRecognitionStats(
+  db: Database.Database,
+  parserVersion: number,
+): Record<string, RecognitionTally> {
+  const rows = db
+    .prepare(
+      "SELECT claude_version, assistant, recognized FROM transcript_recognition WHERE parser_version = ? ORDER BY claude_version",
+    )
+    .all(parserVersion) as Array<{ claude_version: string; assistant: number; recognized: number }>;
+  return Object.fromEntries(
+    rows.map((row) => [
+      row.claude_version,
+      { assistant: row.assistant, recognized: row.recognized },
+    ]),
+  );
+}
+
+/**
+ * Starts transcript scanning over for a new parser version (wave 4): drops
+ * every cursor, the coverage ledger and every recognition tally in one
+ * transaction, so the next sweep rereads every transcript from zero with the
+ * new parser and rebuilds its tallies. Counted tokens stay: message-id dedup keeps the rescan from
+ * counting anything twice, and it adds what the old parser missed.
+ */
+export function resetTranscriptScanState(db: Database.Database): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM transcript_cursors").run();
+    db.prepare("DELETE FROM coverage_days").run();
+    db.prepare("DELETE FROM transcript_recognition").run();
   })();
 }

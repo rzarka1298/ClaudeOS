@@ -48,6 +48,7 @@ export {
   parseTranscriptChunk,
   type RecognitionVerdict,
   type RecognizedUsageRecord,
+  TRANSCRIPT_PARSER_VERSION,
   type TranscriptCarry,
   UNVERSIONED,
   type VersionRecognition,
