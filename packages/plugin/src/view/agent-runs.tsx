@@ -419,6 +419,12 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
     );
   }
 
+  // UI-SPEC S3 "Disconnected": the tables (and the usage section beside
+  // them) dim to the audited --ccc-dim-opacity while the last-good values
+  // stay readable. Never colour alone: the banner above states the reason in
+  // text, and it is never itself dimmed.
+  const dimmed = presentation.kind === "disconnected" ? "true" : undefined;
+
   const totalSessions = sessionsById.value.size;
   const runningCount = allSessions.filter((s) => s.state === "running").length;
   const waitingCount = allSessions.filter((s) => s.state === "waiting-for-approval").length;
@@ -460,7 +466,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
           </p>
         </>
       ) : (
-        <div className="ccc-agent-runs-layout">
+        <div className="ccc-agent-runs-layout" data-dimmed={dimmed}>
           <div className="ccc-agent-runs-sessions">
             <section>
               <h3>{`${GROUP_HEADING.active} (${groups.active.length})`}</h3>
@@ -523,7 +529,12 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
         </div>
       )}
       {usageSummary.value !== null && (
-        <AgentRunsUsage summary={usageSummary.value} nowMs={now} onQuickAction={onQuickAction} />
+        <AgentRunsUsage
+          summary={usageSummary.value}
+          nowMs={now}
+          onQuickAction={onQuickAction}
+          dimmed={dimmed !== undefined}
+        />
       )}
     </div>
   );

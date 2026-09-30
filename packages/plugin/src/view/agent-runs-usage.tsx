@@ -371,14 +371,16 @@ export interface AgentRunsUsageProps {
   readonly summary: UsageSummary;
   readonly nowMs: number;
   readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
+  /** Disconnected: dims the section like the sessions tables (UI-SPEC S3). */
+  readonly dimmed?: boolean | undefined;
 }
 
-export function AgentRunsUsage({ summary, nowMs }: AgentRunsUsageProps): VNode {
+export function AgentRunsUsage({ summary, nowMs, dimmed }: AgentRunsUsageProps): VNode {
   const [range, setRange] = useState<UsageRangeKind>("today");
   const rangeData = summary.ranges[range];
 
   return (
-    <section className="ccc-agent-runs-usage">
+    <section className="ccc-agent-runs-usage" data-dimmed={dimmed === true ? "true" : undefined}>
       <h3>Usage</h3>
       <RangeSelector value={range} onChange={setRange} />
       <PlanUsageSection capacity={summary.capacity} nowMs={nowMs} />

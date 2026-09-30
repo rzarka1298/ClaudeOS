@@ -220,6 +220,32 @@ describe("Task 1 (tracer): the Agent runs table with a Run selected", () => {
     );
   });
 
+  it("disconnected dims the sessions/detail layout and the usage section, never the banner (UI-SPEC S3 Disconnected)", () => {
+    seed([session({ runId: runId(1), name: "Refactor parser", state: "running" })]);
+    usageSummary.value = usageFixture();
+    connectionState.value = { kind: "disconnected", reason: "connect ECONNREFUSED" };
+
+    const { container } = render(<AgentRuns now={NOW_MS} />);
+
+    expect(screen.getByText("Service disconnected")).toBeTruthy();
+    expect(container.querySelector(".ccc-agent-runs-layout")?.getAttribute("data-dimmed")).toBe(
+      "true",
+    );
+    expect(container.querySelector(".ccc-agent-runs-usage")?.getAttribute("data-dimmed")).toBe(
+      "true",
+    );
+    expect(container.querySelector(".ccc-agent-runs-banner")?.closest("[data-dimmed]")).toBeNull();
+  });
+
+  it("live never dims", () => {
+    seed([session({ runId: runId(1), name: "Refactor parser", state: "running" })]);
+    usageSummary.value = usageFixture();
+
+    const { container } = render(<AgentRuns now={NOW_MS} />);
+
+    expect(container.querySelector("[data-dimmed]")).toBeNull();
+  });
+
   it("Test 4: no rendered text starts with a filesystem path", () => {
     const unclassified = session({
       runId: runId(1),

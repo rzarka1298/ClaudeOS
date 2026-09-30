@@ -91,3 +91,10 @@ describe("Agent runs table wrapping (wave 4 mid-word finding)", () => {
     expect(bodies.some((body) => /container-type\s*:\s*inline-size/.test(body))).toBe(true);
   });
 });
+
+describe("Agent runs disconnected dimming (wave 4 finding)", () => {
+  it("a dimmed Agent runs region uses the audited --ccc-dim-opacity token, never a literal", () => {
+    const bodies = declarationsFor('.ccc-agent-runs [data-dimmed="true"]');
+    expect(bodies.some((body) => /opacity\s*:\s*var\(--ccc-dim-opacity\)/.test(body))).toBe(true);
+  });
+});

@@ -1215,6 +1215,13 @@
   gap: var(--ccc-space-md);
 }
 
+/* Disconnected (UI-SPEC S3 "Destination states"): the sessions/detail
+ * layout and the usage section dim like a Phase 3 card body, through the
+ * same audited token (A11Y-02); the banner stating why is never dimmed. */
+.ccc-agent-runs [data-dimmed="true"] {
+  opacity: var(--ccc-dim-opacity);
+}
+
 .ccc-agent-runs-sessions > section > h3 {
   margin: 0 0 var(--ccc-space-sm);
   color: var(--ccc-ink-muted);
