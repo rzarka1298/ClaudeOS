@@ -9,6 +9,7 @@ import { insertRun } from "./run-store.js";
 import { setSessionOverride } from "./session-store.js";
 import {
   addRecognitionStats,
+  analysisOffIntervals,
   appendToggleLog,
   deleteUsageAnalytics,
   getCollectorSetting,
@@ -441,27 +442,50 @@ describe("coverage ledger (Test 6, USAGE-09, D-44)", () => {
     ]);
   });
 
-  it("treats days before the first enable as analysis-off, since the default is off", () => {
+  it("does not treat days before the first enable as analysis-off: that enable backfills them (D-44, D-47, wave 4)", () => {
+    markDayCovered(db, "2026-09-26", NOW);
     markDayCovered(db, "2026-09-27", NOW);
     const toggleLog = [{ at: "2026-09-27T09:00:00.000Z", enabled: true }];
-    expect(queryCoverage(db, "2026-09-26", "2026-09-28", null, toggleLog)).toEqual([
-      { day: "2026-09-26", status: "analysis-off" },
-      { day: "2026-09-27", status: "analysis-off" },
+    expect(queryCoverage(db, "2026-09-25", "2026-09-28", null, toggleLog)).toEqual([
+      { day: "2026-09-25", status: "not-scanned" },
+      { day: "2026-09-26", status: "covered" },
+      { day: "2026-09-27", status: "covered" },
       { day: "2026-09-28", status: "not-scanned" },
     ]);
   });
 
   it("uses the caller's day function for local-time toggles", () => {
     markDayCovered(db, "2026-09-27", NOW);
-    const toggleLog = [{ at: "2026-09-26T23:30:00.000Z", enabled: true }];
-    // In UTC+01:00 the enable lands on 2026-09-27 local, so that day was partly off.
+    const toggleLog = [
+      { at: "2026-09-01T00:00:00.000Z", enabled: true },
+      { at: "2026-09-26T23:30:00.000Z", enabled: false },
+    ];
+    // In UTC+01:00 the switch-off lands on 2026-09-27 local, so that day was partly off.
     const localDay = (iso: string): string =>
       new Date(Date.parse(iso) + 3_600_000).toISOString().slice(0, 10);
+    expect(queryCoverage(db, "2026-09-26", "2026-09-26", null, toggleLog, localDay)).toEqual([
+      { day: "2026-09-26", status: "not-scanned" },
+    ]);
     expect(queryCoverage(db, "2026-09-27", "2026-09-27", null, toggleLog, localDay)).toEqual([
       { day: "2026-09-27", status: "analysis-off" },
     ]);
-    expect(queryCoverage(db, "2026-09-27", "2026-09-27", null, toggleLog)).toEqual([
-      { day: "2026-09-27", status: "covered" },
+    expect(queryCoverage(db, "2026-09-26", "2026-09-26", null, toggleLog)).toEqual([
+      { day: "2026-09-26", status: "analysis-off" },
+    ]);
+  });
+
+  it("derives off intervals from switch-offs only: [off, next on), open while still off (D-47, wave 4)", () => {
+    expect(analysisOffIntervals([])).toEqual([]);
+    expect(
+      analysisOffIntervals([
+        { at: "2026-09-20T12:00:00.000Z", enabled: false },
+        { at: "2026-09-10T00:00:00.000Z", enabled: true },
+        { at: "2026-09-21T09:00:00.000Z", enabled: true },
+        { at: "2026-09-25T00:00:00.000Z", enabled: false },
+      ]),
+    ).toEqual([
+      { start: "2026-09-20T12:00:00.000Z", end: "2026-09-21T09:00:00.000Z" },
+      { start: "2026-09-25T00:00:00.000Z", end: null },
     ]);
   });
 });

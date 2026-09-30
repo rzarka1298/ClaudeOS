@@ -267,7 +267,10 @@ function utcDayOf(iso: string): string {
  * in this order of precedence:
  * 1. before `horizonDate` (when known) → `before-horizon`;
  * 2. analysis off at the day's start, or switched off during it →
- *    `analysis-off` (no toggle before a day means the default, off);
+ *    `analysis-off`. Only a switch-off makes days off (D-47, G-02): before
+ *    the first recorded toggle nothing was switched off, and the first
+ *    enable backfills retained history (D-44), so those days are judged by
+ *    the ledger like any other (wave 4; 05-05 had read "no toggle" as off);
  * 3. recorded by {@link markDayCovered} → `covered`;
  * 4. otherwise `not-scanned`.
  * `dayOf` maps a toggle instant to its calendar day; the service passes a
@@ -297,7 +300,7 @@ export function queryCoverage(
   const days: CoverageDay[] = [];
   for (let ms = fromMs; ms <= toMs; ms += DAY_MS) {
     const day = new Date(ms).toISOString().slice(0, 10);
-    const enabledAtStart = toggles.filter((toggle) => toggle.day < day).at(-1)?.enabled ?? false;
+    const enabledAtStart = toggles.filter((toggle) => toggle.day < day).at(-1)?.enabled ?? true;
     const disabledDuring = toggles.some((toggle) => toggle.day === day && !toggle.enabled);
     let status: CoverageStatus;
     if (horizonDate !== null && day < horizonDate) status = "before-horizon";
@@ -307,6 +310,34 @@ export function queryCoverage(
     days.push({ day, status });
   }
   return days;
+}
+
+/** A period transcript analysis was switched off: [start, end), `end` null while still off. */
+export interface AnalysisOffInterval {
+  readonly start: string;
+  readonly end: string | null;
+}
+
+/**
+ * The periods analysis was switched off (D-47, wave 4): each runs from a
+ * switch-off to the next switch-on. The time before the first recorded
+ * toggle is not one (the first enable backfills retained history, D-44), so
+ * this and {@link queryCoverage} agree on which days are `analysis-off`, and
+ * the scanner counts no token timestamped inside one.
+ */
+export function analysisOffIntervals(toggleLog: readonly AnalysisToggle[]): AnalysisOffInterval[] {
+  const sorted = [...toggleLog].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const intervals: AnalysisOffInterval[] = [];
+  let offSince: string | null = null;
+  for (const toggle of sorted) {
+    if (!toggle.enabled && offSince === null) offSince = toggle.at;
+    else if (toggle.enabled && offSince !== null) {
+      intervals.push({ start: offSince, end: toggle.at });
+      offSince = null;
+    }
+  }
+  if (offSince !== null) intervals.push({ start: offSince, end: null });
+  return intervals;
 }
 
 /** The scanner cursor for a transcript path, or null when the file was never scanned. */

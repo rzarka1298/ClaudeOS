@@ -13,9 +13,11 @@ import {
 } from "@ccc/collectors";
 import {
   addRecognitionStats,
+  analysisOffIntervals,
   getCollectorSetting,
   getSessionOverride,
   latestRunBySession,
+  listToggleLog,
   markDayCovered,
   type RecognitionTally,
   readCursor,
@@ -59,6 +61,10 @@ import { addDays, type TranscriptFacts } from "./usage-summary.js";
  *   put, so a format-changed period can never read as complete, across
  *   restarts too. A new parser version drops every cursor, the coverage
  *   ledger and the old tallies, and the next sweep rereads from zero.
+ * - Analysis-off periods (D-47, wave 4 review): a record timestamped inside
+ *   a period analysis was switched off (switch-off to next switch-on, from
+ *   the toggle log) is never counted, even when a later scan reads it; its
+ *   bytes still advance the cursor. The days stay `analysis-off`.
  * - Privacy: only counters, ids, model, version and timestamps leave the
  *   parser (D-49); the path lives only in `transcript_cursors`.
  * - Scans are serialized on one promise chain and yield to the event loop
@@ -303,6 +309,15 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
     if (known === undefined || ms < known) firstSeen.set(path, ms);
   }
 
+  /** Whether an instant fell inside a period analysis was switched off (D-47). */
+  function offPeriodTest(): (ms: number) => boolean {
+    const intervals = analysisOffIntervals(listToggleLog(db)).map((interval) => ({
+      start: Date.parse(interval.start),
+      end: interval.end === null ? Number.POSITIVE_INFINITY : Date.parse(interval.end),
+    }));
+    return (ms) => intervals.some((interval) => ms >= interval.start && ms < interval.end);
+  }
+
   /** The Run's project for a Claude session: the owner's override, else the attributed one. */
   function projectKeyResolver(): (claudeSessionId: string) => string | null {
     const cache = new Map<string, string | null>();
@@ -357,6 +372,7 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
 
     const fileSessionId = sessionIdFromPath(resolved);
     const projectKeyOf = projectKeyResolver();
+    const wasOff = offPeriodTest();
     let carry: TranscriptCarry = EMPTY_CARRY;
     let counted = 0;
     let bytes = 0;
@@ -380,6 +396,8 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
       for (const record of result.records) {
         if (!isCountable(record) || record.timestamp === null) continue;
         const timestamp = new Date(record.timestamp).toISOString();
+        noteFirstSeen(resolved, Date.parse(timestamp));
+        if (wasOff(Date.parse(timestamp))) continue;
         const claudeSessionId = record.sessionId ?? fileSessionId ?? UNKNOWN_SESSION;
         records.push({
           messageId: record.messageId,
@@ -390,7 +408,6 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
           projectKey: projectKeyOf(claudeSessionId),
           counters: record.counters,
         });
-        noteFirstSeen(resolved, Date.parse(timestamp));
       }
       const nextPosition = position + result.bytesConsumed;
       const at = now().toISOString();

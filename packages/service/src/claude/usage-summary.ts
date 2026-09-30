@@ -528,10 +528,10 @@ interface RangeCoverage {
 /**
  * Coverage for the local days [firstDay, lastDay]. Days before the
  * horizon, days analysis was off (from the toggle log) and days no scan
- * covered make the range partial. The scanner reads whole transcripts, so
- * a day analysis was off can still hold counted tokens once analysis is
- * back on; it is still reported as an analysis-off day (D-47), and only a
- * range with no scanned day at all is no-coverage.
+ * covered make the range partial. Tokens timestamped while analysis was
+ * switched off are never counted, even when a later scan reads them (D-47,
+ * wave 4), so an analysis-off day holds only the tokens from its "on"
+ * hours; only a range with no scanned day at all is no-coverage.
  */
 function rangeCoverage(
   db: Database.Database,

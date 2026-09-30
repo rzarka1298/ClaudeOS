@@ -35,6 +35,7 @@ export {
   upsertSessionRun,
 } from "./session-store.js";
 export type {
+  AnalysisOffInterval,
   AnalysisToggle,
   CapacitySnapshot,
   CostSnapshot,
@@ -48,6 +49,7 @@ export type {
 } from "./usage-store.js";
 export {
   addRecognitionStats,
+  analysisOffIntervals,
   appendToggleLog,
   deleteUsageAnalytics,
   getCollectorSetting,

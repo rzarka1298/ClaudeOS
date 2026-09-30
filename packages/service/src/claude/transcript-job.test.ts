@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import { parseTranscriptChunk, TRANSCRIPT_PARSER_VERSION } from "@ccc/collectors";
 import { newRunId, UsageSummarySchema } from "@ccc/domain";
 import {
+  appendToggleLog,
   applyMigrations,
   getCollectorSetting,
   latestRunBySession,
@@ -662,5 +663,34 @@ describe("persisted recognition verdict (wave 4 review, D-41, PR-11)", () => {
     expect(getCollectorSetting(store.db, TRANSCRIPT_PARSER_VERSION_SETTING)).toBe(
       String(TRANSCRIPT_PARSER_VERSION),
     );
+  });
+});
+
+describe("tokens from days analysis was off are not counted (D-47, wave 4 review)", () => {
+  it("skips records timestamped inside a switch-off interval, and counts the backfill before the first enable", async () => {
+    appendToggleLog(store.db, "2026-09-18T00:00:00.000Z", true);
+    appendToggleLog(store.db, "2026-09-19T10:00:00.000Z", false);
+    appendToggleLog(store.db, "2026-09-19T14:00:00.000Z", true);
+    const at = (messageId: string, timestamp: string, input: number) =>
+      assistantLine({
+        messageId,
+        sessionId: "sess-off",
+        timestamp,
+        usage: { input, output: 0, cacheWrite: 0, cacheRead: 0 },
+      });
+    const path = file("-synthetic-off", "sess-off.jsonl");
+    write(
+      path,
+      lines(
+        at("m-backfill", "2026-09-17T12:00:00.000Z", 1),
+        at("m-before-off", "2026-09-19T09:59:59.000Z", 10),
+        at("m-while-off", "2026-09-19T12:00:00.000Z", 100),
+        at("m-at-reenable", "2026-09-19T14:00:00.000Z", 1000),
+      ),
+    );
+    await makeJob(spies()).scanFile(path);
+    expect(queryTokenActivity(store.db, WIDE).totals.input).toBe(1011);
+    // The cursor still passes the skipped record: it is excluded, not pending.
+    expect(readCursor(store.db, path)?.offset).toBe(readFileSync(path).length);
   });
 });
