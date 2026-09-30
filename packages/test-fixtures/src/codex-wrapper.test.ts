@@ -12,6 +12,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -20,15 +21,20 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { loadBridgeCore } from "./codex-bridge-core.js";
 import { type GateRepo, gateRepo } from "./gate-repo.js";
+
+const bridgeCore = loadBridgeCore();
 
 const WRAPPER = "scripts/codex/codex.mjs";
 const SCRIPTS = [
   WRAPPER,
   "scripts/codex/schemas/review-output.schema.json",
   "scripts/codex/schemas/worker-report.schema.json",
+  "scripts/codex/antigravity-extension/bridge-core.js",
+  "scripts/codex/antigravity-extension/package.json",
 ];
 
 const SESSION_ID = "11111111-2222-3333-4444-555555555555";
@@ -162,12 +168,23 @@ const REVIEW_JSON = JSON.stringify({
   next_steps: ["Fix the loop."],
 });
 
+// A fake `antigravity-ide` CLI: records its argv, opens nothing.
+const FAKE_ANTIGRAVITY = String.raw`
+require("node:fs").appendFileSync(process.env.FAKE_AG_LOG, JSON.stringify(process.argv.slice(2)) + "\n");
+`;
+
 interface Harness {
   repo: GateRepo;
   /** The repository root with symlinks resolved (macOS tmp is /private/var). */
   root: string;
   bin: string;
   log: string;
+  /** A throwaway HOME: the bridge state dir lives under it. */
+  home: string;
+  /** <home>/.local/state/codex-bridge */
+  bridgeState: string;
+  /** Where the fake antigravity-ide records its calls. */
+  agLog: string;
   run(
     args: string[],
     env?: Record<string, string>,
@@ -197,6 +214,28 @@ afterEach(() => {
   for (const c of cleanups.splice(0)) c();
 });
 
+// The fake executables are written ONCE per file and shared by every case:
+// macOS may scan a freshly written executable on its first exec, and doing that
+// for a new file in every case stalled whole runs. Per-case output goes to
+// FAKE_CODEX_LOG / FAKE_AG_LOG in each harness's own directory.
+let sharedBin: string | null = null;
+function fakeBin(): string {
+  if (sharedBin) return sharedBin;
+  const dir = mkdtempSync(join(tmpdir(), "ccc-fake-bin-"));
+  for (const [name, src] of [
+    ["codex", FAKE_CODEX],
+    ["antigravity-ide", FAKE_ANTIGRAVITY],
+  ] as const) {
+    writeFileSync(join(dir, name), `#!${process.execPath}\n${src}`);
+    chmodSync(join(dir, name), 0o755);
+  }
+  sharedBin = dir;
+  return dir;
+}
+afterAll(() => {
+  if (sharedBin) rmSync(sharedBin, { recursive: true, force: true });
+});
+
 function harness(): Harness {
   // Runtime state and orchestrator worktrees are gitignored, as in the real repo,
   // so a run's own output never makes the checkout look dirty.
@@ -208,13 +247,12 @@ function harness(): Harness {
   repo.write("src/a.ts", "export const a = 2;\n");
   repo.git("commit", "-q", "-am", "change");
   const bin = mkdtempSync(join(tmpdir(), "ccc-fake-codex-"));
-  const fake = join(bin, "codex");
-  writeFileSync(fake, `#!${process.execPath}\n${FAKE_CODEX}`);
-  chmodSync(fake, 0o755);
   const log = join(bin, "calls.jsonl");
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "ccc-fake-home-")));
   cleanups.push(() => {
     repo.dispose();
     rmSync(bin, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   });
   const readCalls = () =>
     existsSync(log)
@@ -223,30 +261,47 @@ function harness(): Harness {
           .split("\n")
           .map((l) => JSON.parse(l))
       : [];
+  const agLog = join(bin, "antigravity.jsonl");
   return {
     repo,
     root: realpathSync(repo.root),
     bin,
     log,
+    home,
+    bridgeState: join(home, ".local", "state", "codex-bridge"),
+    agLog,
     run(args, env = {}) {
       const r = spawnSync(process.execPath, [join(repo.root, WRAPPER), ...args], {
         cwd: repo.root,
         encoding: "utf8",
         timeout: 30_000,
-        env: {
-          ...process.env,
-          PATH: `${bin}:${process.env.PATH ?? ""}`,
+        env: testEnv({
+          PATH: `${fakeBin()}:${process.env.PATH ?? ""}`,
+          HOME: home,
           FAKE_CODEX_LOG: log,
+          FAKE_AG_LOG: agLog,
           FAKE_CODEX_USAGE: usageResult(),
           CCC_CODEX_KILL_GRACE_MS: "300",
           ...env,
-        },
+        }),
       });
       return { status: r.status, out: `${r.stdout}${r.stderr}`, stdout: r.stdout };
     },
     calls: readCalls,
     execCalls: () => readCalls().filter((c) => c.argv[0] === "exec"),
   };
+}
+
+/**
+ * The wrapper's environment: the real one minus anything that could point it
+ * at the owner's own bridge state or Antigravity install.
+ */
+function testEnv(over: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of Object.keys(env)) if (k.startsWith("CODEX_BRIDGE_")) delete env[k];
+  delete env.XDG_STATE_HOME;
+  env.CODEX_BRIDGE_ANTIGRAVITY_APP = "/nonexistent/Antigravity IDE.app";
+  return { ...env, ...over };
 }
 
 function linkedWorktree(h: Harness): string {
@@ -559,7 +614,7 @@ describe("review", () => {
     expect(h.execCalls()).toHaveLength(0);
   });
 
-  it("rejects a directory that is not a worktree of this repository", () => {
+  it("rejects a directory that is not a git worktree", () => {
     const h = harness();
     const other = mkdtempSync(join(tmpdir(), "ccc-not-a-repo-"));
     cleanups.push(() => rmSync(other, { recursive: true, force: true }));
@@ -687,15 +742,16 @@ describe("interruption", () => {
     const wrapper = spawn(process.execPath, [join(h.root, WRAPPER), "task", wt, briefFile(h)], {
       cwd: h.root,
       stdio: "ignore",
-      env: {
-        ...process.env,
-        PATH: `${h.bin}:${process.env.PATH ?? ""}`,
+      env: testEnv({
+        PATH: `${fakeBin()}:${process.env.PATH ?? ""}`,
+        HOME: h.home,
         FAKE_CODEX_LOG: h.log,
+        FAKE_AG_LOG: h.agLog,
         FAKE_CODEX_USAGE: usageResult(),
         FAKE_CODEX_EXEC: "hang",
         FAKE_CODEX_PIDFILE: pidfile,
         CCC_CODEX_KILL_GRACE_MS: "5000",
-      },
+      }),
     });
     const exited = new Promise<number | null>((res) => wrapper.on("exit", (code) => res(code)));
     for (let i = 0; i < 100 && !existsSync(pidfile); i++)
@@ -770,5 +826,268 @@ describe("argument handling", () => {
     const r = h.run(["frobnicate"]);
     expect(r.status).toBe(2);
     expect(r.out).toMatch(/usage/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// codex-bridge: project-agnostic state + the Antigravity tab
+
+function lastJson(stdout: string): Record<string, unknown> {
+  return JSON.parse(stdout.trim().split("\n").pop() ?? "{}");
+}
+
+function requestFiles(h: Harness): string[] {
+  const dir = join(h.bridgeState, "requests");
+  return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : [];
+}
+
+function readRequest(h: Harness): Record<string, unknown> {
+  const [f] = requestFiles(h);
+  if (!f) throw new Error("no bridge request written");
+  return JSON.parse(readFileSync(join(h.bridgeState, "requests", f), "utf8"));
+}
+
+/** Waits for the detached fake antigravity-ide to record its argv (up to ~3 s). */
+async function antigravityCalls(h: Harness, expectSome = true): Promise<string[][]> {
+  for (let i = 0; i < 30; i++) {
+    if (existsSync(h.agLog)) break;
+    if (!expectSome && i >= 5) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return existsSync(h.agLog)
+    ? readFileSync(h.agLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l))
+    : [];
+}
+
+describe("project and state location", () => {
+  it("keeps state in .planning/codex/ where git ignores it (this repository)", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON });
+    expect(r.status).toBe(0);
+    expect(lastJson(r.stdout).report).toMatch(/^\.planning\/codex\/reports\//);
+  });
+
+  it("uses the user-level bridge state for a project that does not ignore .planning/codex", () => {
+    const h = harness();
+    h.repo.write(".gitignore", ".claude/worktrees/\n");
+    h.repo.git("commit", "-q", "-am", "no codex ignore");
+    const r = h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON });
+    expect(r.status).toBe(0);
+    const report = String(lastJson(r.stdout).report);
+    const projects = join(h.bridgeState, "projects");
+    expect(report.startsWith(`${projects}/`)).toBe(true);
+    expect(report).toMatch(/\/projects\/ccc-gate-[^/]+-[0-9a-f]{10}\/reports\/.+-review\.json$/);
+    expect(existsSync(report)).toBe(true);
+    // The project checkout stays clean, so the next run is not refused as dirty.
+    expect(h.repo.git("status", "--porcelain").trim()).toBe("");
+    expect(existsSync(join(h.root, ".planning", "codex"))).toBe(false);
+  });
+
+  it("honours XDG_STATE_HOME for the bridge state", () => {
+    const h = harness();
+    h.repo.write(".gitignore", "");
+    h.repo.git("commit", "-q", "-am", "no ignores");
+    const xdg = join(h.home, "xdg");
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+      XDG_STATE_HOME: xdg,
+    });
+    expect(r.status).toBe(0);
+    expect(
+      String(lastJson(r.stdout).report).startsWith(join(xdg, "codex-bridge", "projects")),
+    ).toBe(true);
+  });
+
+  it("runs from an installed copy outside any git checkout, against any repository", () => {
+    const h = harness();
+    const install = mkdtempSync(join(tmpdir(), "ccc-codex-install-"));
+    cleanups.push(() => rmSync(install, { recursive: true, force: true }));
+    for (const f of SCRIPTS) {
+      const to = join(install, f.replace(/^scripts\/codex\//, ""));
+      mkdirSync(dirname(to), { recursive: true });
+      writeFileSync(to, readFileSync(join(h.root, f)));
+    }
+    const r = spawnSync(
+      process.execPath,
+      [join(install, "codex.mjs"), "review", h.root, "HEAD~1"],
+      {
+        cwd: tmpdir(),
+        encoding: "utf8",
+        env: testEnv({
+          PATH: `${fakeBin()}:${process.env.PATH ?? ""}`,
+          HOME: h.home,
+          FAKE_CODEX_LOG: h.log,
+          FAKE_AG_LOG: h.agLog,
+          FAKE_CODEX_USAGE: usageResult(),
+          FAKE_CODEX_FINAL: REVIEW_JSON,
+          CODEX_BRIDGE_TAB: "0",
+        }),
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(lastJson(r.stdout).report).toMatch(/^\.planning\/codex\/reports\//);
+  });
+
+  it("resume and watch resolve the project from the current directory", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    h.run(["task", wt, briefFile(h)]);
+    const elsewhere = mkdtempSync(join(tmpdir(), "ccc-not-a-repo-"));
+    cleanups.push(() => rmSync(elsewhere, { recursive: true, force: true }));
+    const r = spawnSync(process.execPath, [join(h.root, WRAPPER), "resume", SESSION_ID], {
+      cwd: elsewhere,
+      encoding: "utf8",
+      env: testEnv({ PATH: `${fakeBin()}:${process.env.PATH ?? ""}`, HOME: h.home }),
+    });
+    expect(r.status).toBe(2);
+    expect(`${r.stdout}${r.stderr}`).toMatch(/inside the project/);
+  });
+});
+
+describe("antigravity tab", () => {
+  it("queues a validated tab request when the review session starts and opens the project", async () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON });
+    expect(r.status).toBe(0);
+    expect(r.out).toMatch(/antigravity tab requested: Codex · review · \d{6}/);
+    const req = readRequest(h);
+    const out = lastJson(r.stdout);
+    expect(req).toMatchObject({
+      runId: out.runId,
+      kind: "review",
+      projectRoot: h.root,
+      cwd: h.root,
+      sessionId: SESSION_ID,
+      liveLog: join(h.root, String(out.liveLog)),
+    });
+    expect(bridgeCore.validateRequest(req, { stateDir: h.bridgeState }).ok).toBe(true);
+    // No Antigravity window heartbeat covers the project, so the CLI opens it.
+    expect(await antigravityCalls(h)).toEqual([[h.root]]);
+  });
+
+  it("does not launch Antigravity when a live window already has the project open", async () => {
+    const h = harness();
+    bridgeCore.ensureDirs(h.bridgeState);
+    bridgeCore.writeHeartbeat(h.bridgeState, "4242", [h.root]);
+    expect(h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON }).status).toBe(0);
+    expect(requestFiles(h)).toHaveLength(1);
+    expect(await antigravityCalls(h, false)).toEqual([]);
+  });
+
+  it("queues task runs with the worktree as the tab's directory", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    expect(h.run(["task", wt, briefFile(h)]).status).toBe(0);
+    const req = readRequest(h);
+    expect(req).toMatchObject({ kind: "task", projectRoot: h.root, cwd: wt });
+  });
+
+  it("CODEX_BRIDGE_TAB=0 opts out entirely", async () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+      CODEX_BRIDGE_TAB: "0",
+    });
+    expect(r.status).toBe(0);
+    expect(requestFiles(h)).toEqual([]);
+    expect(await antigravityCalls(h, false)).toEqual([]);
+  });
+
+  it("is a no-op when Antigravity is not installed", () => {
+    const h = harness();
+    const bare = mkdtempSync(join(tmpdir(), "ccc-bin-"));
+    cleanups.push(() => rmSync(bare, { recursive: true, force: true }));
+    symlinkSync(join(fakeBin(), "codex"), join(bare, "codex"));
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+      PATH: `${bare}:${process.env.PATH ?? ""}`,
+    });
+    expect(r.status).toBe(0);
+    expect(r.out).not.toMatch(/antigravity tab/);
+    expect(requestFiles(h)).toEqual([]);
+  });
+
+  it("never fails the Codex run when the tab request cannot be written", () => {
+    const h = harness();
+    mkdirSync(h.bridgeState, { recursive: true });
+    writeFileSync(join(h.bridgeState, "requests"), "not a directory\n");
+    const r = h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON });
+    expect(r.status).toBe(0);
+    expect(r.out).toMatch(/antigravity tab skipped/);
+    expect(lastJson(r.stdout).status).toBe("ok");
+  });
+});
+
+describe("follow", () => {
+  function claimedRun(h: Harness, over: Record<string, unknown> = {}): string {
+    const live = join(h.root, ".planning", "codex", "live");
+    mkdirSync(live, { recursive: true });
+    const runId = "20260930T120000000Z";
+    writeFileSync(
+      join(live, `${runId}-review.log`),
+      `12:00:00 [session] ${SESSION_ID}\n12:00:01 [message] looks fine\n12:00:02 [end] status=ok exit=0\n`,
+    );
+    bridgeCore.ensureDirs(h.bridgeState);
+    writeFileSync(
+      join(h.bridgeState, "claimed", `${runId}.json`),
+      JSON.stringify({
+        runId,
+        kind: "review",
+        projectRoot: h.root,
+        cwd: h.root,
+        sessionId: SESSION_ID,
+        liveLog: join(live, `${runId}-review.log`),
+        pid: null,
+        createdAt: new Date().toISOString(),
+        ...over,
+      }),
+    );
+    return runId;
+  }
+
+  it("prints the live log to its end marker, then runs codex resume <session> in the project", () => {
+    const h = harness();
+    const runId = claimedRun(h);
+    const r = h.run(["follow", runId], { CODEX_BRIDGE_FOLLOW_SHELL: "0" });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("[message] looks fine");
+    expect(r.stdout).toContain(`codex resume ${SESSION_ID}`);
+    const calls = h.calls().filter((c) => c.argv[0] === "resume");
+    expect(calls).toEqual([expect.objectContaining({ argv: ["resume", SESSION_ID], cwd: h.root })]);
+  });
+
+  it("takes the session id from the log when the request had none", () => {
+    const h = harness();
+    const runId = claimedRun(h, { sessionId: null });
+    expect(h.run(["follow", runId], { CODEX_BRIDGE_FOLLOW_SHELL: "0" }).status).toBe(0);
+    expect(h.calls().filter((c) => c.argv[0] === "resume")[0]?.argv).toEqual([
+      "resume",
+      SESSION_ID,
+    ]);
+  });
+
+  it.each([
+    ["a malformed run id", "../../etc/passwd"],
+    ["an unclaimed run id", "20260930T235959999Z"],
+  ])("refuses %s and runs nothing", (_label, runId) => {
+    const h = harness();
+    claimedRun(h);
+    const r = h.run(["follow", runId], { CODEX_BRIDGE_FOLLOW_SHELL: "0" });
+    expect(r.status).toBe(2);
+    expect(h.calls()).toHaveLength(0);
+  });
+
+  it("refuses a claimed request whose live log is outside the allowed dirs", () => {
+    const h = harness();
+    const stray = join(h.home, "stray.log");
+    writeFileSync(stray, "[end] x\n");
+    const runId = claimedRun(h, { liveLog: stray });
+    const r = h.run(["follow", runId], { CODEX_BRIDGE_FOLLOW_SHELL: "0" });
+    expect(r.status).toBe(2);
+    expect(r.out).toMatch(/liveLog/);
+    expect(h.calls()).toHaveLength(0);
   });
 });

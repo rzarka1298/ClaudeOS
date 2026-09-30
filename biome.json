@@ -12,6 +12,7 @@
       "*.json",
       "*.mjs",
       "scripts/**/*.mjs",
+      "scripts/**/*.js",
       "scripts/**/*.json"
     ],
     "ignoreUnknown": true

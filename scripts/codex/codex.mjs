@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-// The only sanctioned way agents reach OpenAI Codex CLI in this repository.
+// The only sanctioned way agents reach OpenAI Codex CLI, in this repository and
+// (installed as `codex-bridge` by scripts/codex/install-user-kit.mjs) in any other.
 //
-//   node scripts/codex/codex.mjs usage
-//   node scripts/codex/codex.mjs guard
-//   node scripts/codex/codex.mjs review <worktree> <base-ref> [--timeout-sec N] [-- <extra>]
-//   node scripts/codex/codex.mjs task <worktree> <brief-file> [--role task|chore|plan]
+//   codex.mjs usage
+//   codex.mjs guard
+//   codex.mjs review <worktree> <base-ref> [--timeout-sec N] [-- <extra>]
+//   codex.mjs task <worktree> <brief-file> [--role task|chore|plan]
 //                                    [--timeout-sec N] [-- <extra>]
-//   node scripts/codex/codex.mjs resume <session-id> [--timeout-sec N] [-- <extra>]
-//   node scripts/codex/codex.mjs watch [--once] [--idle-exit-sec N]
+//   codex.mjs resume <session-id> [--timeout-sec N] [-- <extra>]   (from inside the project)
+//   codex.mjs watch [--once] [--idle-exit-sec N]                   (from inside the project)
+//   codex.mjs follow <run-id>        (run by the Antigravity tab; see below)
 //
 // Why a wrapper: a blanket `Bash(codex:*)` allow let an agent launder the
 // git-push deny through `--dangerously-bypass-approvals-and-sandbox` or
@@ -21,15 +23,29 @@
 // window (the owner's 20 % reserve), when ordinary usage is not allowed, and
 // when usage is unavailable — unavailable is never treated as 0 %.
 //
-// Runtime state lives under .planning/codex/ in the MAIN checkout (gitignored):
+// The project is the MAIN checkout of the target worktree (review/task) or of
+// the current directory (resume/watch). Its runtime state lives in
+// <main>/.planning/codex/ when git ignores that path there (this repository),
+// and otherwise in <bridge state>/projects/<name>-<hash>/ (bridge state =
+// $XDG_STATE_HOME/codex-bridge or ~/.local/state/codex-bridge), so no project
+// is ever dirtied by a run:
 //   reports/<run>-review.json|md   review results (advisory until Phase 6)
 //   reports/<run>-<role>.json      worker final reports
 //   sessions/<run>.json            session id per task run (for resume)
 //   pending-resume.json            set on a mid-run usage-limit hit
 //   live/<run>-<kind>.log|jsonl    readable + raw event stream; live/current.log
 //                                  is a symlink to the newest run
+//
+// Antigravity tab (codex-bridge): when Codex announces the session, the
+// wrapper queues <bridge state>/requests/<run>.json; the Codex Bridge extension
+// in the Antigravity IDE window that has the project open claims it and opens
+// a terminal running `codex-bridge follow <run>` (live log, then `codex resume
+// <session>`). If no window has the project open, `antigravity-ide <project>`
+// opens one. CODEX_BRIDGE_TAB=0 turns this off; without Antigravity it is a
+// no-op, and it never fails a run.
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
@@ -50,12 +66,17 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { createRequire } from "node:module";
+import { homedir, tmpdir } from "node:os";
+import { basename, delimiter, dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCHEMAS = join(HERE, "schemas");
+const bridge = createRequire(import.meta.url)("./antigravity-extension/bridge-core.js");
+// How the owner invokes this script: `codex-bridge` once installed user-level.
+// biome-ignore lint/suspicious/noUndeclaredEnvVars: set by the installed launcher
+const SELF = process.env.CODEX_BRIDGE_CMD || "node scripts/codex/codex.mjs";
 // Resolved from PATH (the standalone installer's ~/.local/bin/codex); tests put a fake first.
 const CODEX = "codex";
 
@@ -125,7 +146,8 @@ const USAGE_TEXT = `usage:
   codex.mjs task <worktree> <brief-file> [--role task|chore|plan] [--allow-dirty]
                                          [--timeout-sec N] [-- <extra>]
   codex.mjs resume <session-id> [--timeout-sec N] [-- <extra>]
-  codex.mjs watch [--once] [--idle-exit-sec N]`;
+  codex.mjs watch [--once] [--idle-exit-sec N]
+  codex.mjs follow <run-id>`;
 
 // ---------------------------------------------------------------------------
 // argument parsing
@@ -230,36 +252,67 @@ function git(cwd, ...args) {
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
-function mainCheckout() {
-  const common = git(HERE, "rev-parse", "--path-format=absolute", "--git-common-dir");
-  if (!common) fail(EXIT.USAGE, "the wrapper must live inside a git checkout");
-  return realpathSync(dirname(common));
+// The main checkout (not a linked worktree) of the repository holding `dir`.
+function mainCheckoutOf(dir) {
+  const common = git(dir, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  return common ? realpathSync(dirname(common)) : null;
 }
 
-const MAIN = mainCheckout();
-const STATE = join(MAIN, ".planning", "codex");
-const REPORTS = join(STATE, "reports");
-const SESSIONS = join(STATE, "sessions");
-const LIVE = join(STATE, "live");
-const PENDING = join(STATE, "pending-resume.json");
+const BRIDGE_STATE = bridge.bridgeStateDir(process.env, homedir());
+
+// In-repo state only where git ignores it, so a run never dirties a checkout.
+export function stateDirFor(main) {
+  const ignored =
+    spawnSync("git", ["-C", main, "check-ignore", "-q", ".planning/codex/reports/x.json"])
+      .status === 0;
+  if (ignored) return join(main, ".planning", "codex");
+  const name =
+    basename(main)
+      .replace(/[^A-Za-z0-9._-]/g, "_")
+      .slice(0, 40) || "project";
+  const hash = createHash("sha256").update(main).digest("hex").slice(0, 10);
+  return join(BRIDGE_STATE, "projects", `${name}-${hash}`);
+}
+
+let MAIN = null;
+let STATE = null;
+let REPORTS = null;
+let SESSIONS = null;
+let LIVE = null;
+let PENDING = null;
+
+function useProject(main) {
+  MAIN = main;
+  STATE = stateDirFor(main);
+  REPORTS = join(STATE, "reports");
+  SESSIONS = join(STATE, "sessions");
+  LIVE = join(STATE, "live");
+  PENDING = join(STATE, "pending-resume.json");
+}
+
+function useCwdProject() {
+  const main = mainCheckoutOf(process.cwd());
+  if (!main) fail(EXIT.USAGE, "run this from inside the project's git checkout");
+  useProject(main);
+}
 
 function rel(p) {
   const r = relative(MAIN, p);
   return r === "" ? "." : r.startsWith("..") || isAbsolute(r) ? p : r;
 }
 
+// Accepts the root of any git worktree; its main checkout becomes the project.
 function validateWorktree(dir) {
   if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) {
     fail(EXIT.USAGE, `worktree ${dir} is not a directory`);
   }
   const top = git(dir, "rev-parse", "--show-toplevel");
-  const common = git(dir, "rev-parse", "--path-format=absolute", "--git-common-dir");
-  if (!top || !common) fail(EXIT.USAGE, `${dir} is not a git worktree`);
+  const main = mainCheckoutOf(dir);
+  if (!top || !main) fail(EXIT.USAGE, `${dir} is not a git worktree`);
   const topReal = realpathSync(top);
   if (realpathSync(dir) !== topReal) fail(EXIT.USAGE, `${dir} is not the root of its worktree`);
-  if (realpathSync(dirname(common)) !== MAIN) {
-    fail(EXIT.USAGE, `${dir} is not a worktree of this repository`);
-  }
+  if (MAIN && main !== MAIN) fail(EXIT.USAGE, `${dir} is not a worktree of ${MAIN}`);
+  if (!MAIN) useProject(main);
   return topReal;
 }
 
@@ -547,7 +600,7 @@ function openLiveLog(id, kind) {
   } catch {}
   symlinkSync(`${name}.log`, tmp);
   renameSync(tmp, join(LIVE, "current.log"));
-  say(`live log: tail -F ${join(LIVE, "current.log")}   (or: node scripts/codex/codex.mjs watch)`);
+  say(`live log: tail -F ${join(LIVE, "current.log")}   (or: ${SELF} watch)`);
   return {
     log,
     write(lines) {
@@ -557,6 +610,40 @@ function openLiveLog(id, kind) {
       appendFileSync(jsonl, `${line}\n`);
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Antigravity tab (codex-bridge)
+
+// Queues a tab request for the IDE extension. Best effort: never throws.
+function openBridgeTab({ id, kind, cwd, sessionId, liveLog }) {
+  try {
+    // biome-ignore lint/suspicious/noUndeclaredEnvVars: owner opt-out
+    if (process.env.CODEX_BRIDGE_TAB === "0") return;
+    const cli = bridge.antigravityCli(process.env);
+    if (!cli) return;
+    bridge.ensureDirs(BRIDGE_STATE);
+    const written = bridge.writeRequest(BRIDGE_STATE, {
+      runId: id,
+      kind,
+      projectRoot: MAIN,
+      cwd,
+      sessionId: bridge.UUID_RE.test(sessionId ?? "") ? sessionId : null,
+      liveLog,
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+    });
+    if (!written) return;
+    if (!bridge.windowCovers(BRIDGE_STATE, MAIN)) {
+      // Opens (or focuses) an Antigravity window on the project; its extension claims the request.
+      const child = spawn(cli, [MAIN], { detached: true, stdio: "ignore" });
+      child.on("error", () => {});
+      child.unref();
+    }
+    say(`antigravity tab requested: Codex · ${kind} · ${id.slice(9, 15)}`);
+  } catch (err) {
+    say(`antigravity tab skipped: ${err?.message ?? err}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -693,7 +780,7 @@ async function recordLimit({ sessionId, id, kind, role, worktree }) {
   }
   say(
     `Codex hit its usage limit mid-run. Stop handing Codex work; resets ${usage.resetsAt ?? "unknown"}.` +
-      (sessionId ? ` After reset: node scripts/codex/codex.mjs resume ${sessionId}` : ""),
+      (sessionId ? ` After reset: ${SELF} resume ${sessionId}` : ""),
   );
   return usage.resetsAt;
 }
@@ -836,7 +923,9 @@ async function cmdReview({ positional, opts, extras }) {
     ...roleArgs("review", { withSandboxFlag: false }),
     ...extras,
   ];
-  const res = await runCodex({ args, cwd: worktree, stdinText: null, timeoutSec, live });
+  const onSession = (sid) =>
+    openBridgeTab({ id, kind: "review", cwd: worktree, sessionId: sid, liveLog: live.log });
+  const res = await runCodex({ args, cwd: worktree, stdinText: null, timeoutSec, live, onSession });
 
   let text = existsSync(lastMessage) ? readFileSync(lastMessage, "utf8").trim() : "";
   if (!text && res.lastMessage) text = res.lastMessage.trim();
@@ -932,7 +1021,10 @@ async function runWorker({ kind, id, role, worktree, args, stdinText, timeoutSec
   };
   // Persist the session id the moment Codex announces it, so even a killed
   // wrapper leaves something to resume.
-  const onSession = (sid) => writeJson(sessionPath, { ...session, sessionId: sid });
+  const onSession = (sid) => {
+    writeJson(sessionPath, { ...session, sessionId: sid });
+    openBridgeTab({ id, kind, cwd: worktree, sessionId: sid, liveLog: live.log });
+  };
   const res = await runCodex({ args, cwd: worktree, stdinText, timeoutSec, live, onSession });
   session.sessionId = res.sessionId ?? session.sessionId;
 
@@ -1049,9 +1141,9 @@ async function cmdResume({ positional, opts, extras }) {
   if (positional.length !== 1) fail(EXIT.USAGE, USAGE_TEXT);
   const sessionId = positional[0];
   if (!/^[A-Za-z0-9-]{8,64}$/.test(sessionId)) fail(EXIT.USAGE, "malformed session id");
+  useCwdProject();
   const record = findSession(sessionId);
-  if (!record)
-    fail(EXIT.USAGE, `no recorded task session ${sessionId} under .planning/codex/sessions`);
+  if (!record) fail(EXIT.USAGE, `no recorded task session ${sessionId} under ${rel(SESSIONS)}`);
   const worktree = validateWorktree(
     isAbsolute(record.worktree) ? record.worktree : join(MAIN, record.worktree),
   );
@@ -1097,6 +1189,7 @@ async function cmdResume({ positional, opts, extras }) {
 // watch
 
 async function cmdWatch({ opts }) {
+  useCwdProject();
   const current = join(LIVE, "current.log");
   const idleExitSec = positiveSeconds(opts.idleExitSec, 60, "--idle-exit-sec");
   const started = Date.now();
@@ -1145,6 +1238,74 @@ async function cmdWatch({ opts }) {
 }
 
 // ---------------------------------------------------------------------------
+// follow (run inside the Antigravity tab)
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === "EPERM";
+  }
+}
+
+async function cmdFollow({ positional }) {
+  if (positional.length !== 1) fail(EXIT.USAGE, USAGE_TEXT);
+  const v = bridge.readClaimed(BRIDGE_STATE, positional[0]);
+  if (!v.ok) fail(EXIT.USAGE, `cannot follow run ${positional[0]}: ${v.reason}`);
+  const req = v.request;
+  process.stdout.write(`Codex ${req.kind} run ${req.runId}\nlive log: ${req.liveLog}\n\n`);
+  let pos = 0;
+  let tail = "";
+  let sessionId = req.sessionId;
+  let deadSince = null;
+  for (;;) {
+    try {
+      const fd = openSync(req.liveLog, "r");
+      const size = fstatSync(fd).size;
+      if (size > pos) {
+        const buf = Buffer.alloc(size - pos);
+        readSync(fd, buf, 0, buf.length, pos);
+        pos = size;
+        const chunk = buf.toString("utf8");
+        process.stdout.write(chunk);
+        tail = (tail + chunk).slice(-8192);
+        sessionId ??= chunk.match(/\[session\] ([0-9a-f-]{36})/i)?.[1] ?? null;
+      }
+      closeSync(fd);
+    } catch {}
+    if (/\[end\] /.test(tail)) break;
+    // The wrapper died without an end marker: stop once it has been gone a while.
+    if (req.pid && !alive(req.pid)) {
+      deadSince ??= Date.now();
+      if (Date.now() - deadSince > 3000) {
+        process.stdout.write("\n[codex-bridge] the wrapper exited without an end marker\n");
+        break;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  const env = {
+    ...process.env,
+    PATH: `${process.env.PATH ?? ""}${delimiter}${join(homedir(), ".local", "bin")}`,
+  };
+  if (sessionId && bridge.UUID_RE.test(sessionId)) {
+    process.stdout.write(
+      `\n[codex-bridge] opening the Codex session: codex resume ${sessionId}\n\n`,
+    );
+    spawnSync(CODEX, ["resume", sessionId], { stdio: "inherit", cwd: req.cwd, env });
+  } else {
+    process.stdout.write("\n[codex-bridge] no Codex session id was recorded for this run\n");
+  }
+  // Keep the tab usable: hand it to a login shell in the run's directory.
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
+  if (process.env.CODEX_BRIDGE_FOLLOW_SHELL !== "0" && process.stdin.isTTY) {
+    spawnSync(process.env.SHELL || "/bin/zsh", ["-l"], { stdio: "inherit", cwd: req.cwd, env });
+  }
+  process.exit(EXIT.OK);
+}
+
+// ---------------------------------------------------------------------------
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -1170,6 +1331,8 @@ async function main() {
       return cmdResume(parsed);
     case "watch":
       return cmdWatch(parsed);
+    case "follow":
+      return cmdFollow(parsed);
     default:
       fail(EXIT.USAGE, USAGE_TEXT);
   }

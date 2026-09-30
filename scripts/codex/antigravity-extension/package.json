@@ -1,0 +1,26 @@
+{
+  "name": "codex-bridge",
+  "displayName": "Codex Bridge",
+  "description": "Opens a terminal tab per Codex run started through the codex-bridge wrapper: live log, then codex resume.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "Runs only the fixed codex-bridge launcher; nothing from the workspace is executed."
+    },
+    "virtualWorkspaces": false
+  }
+}
