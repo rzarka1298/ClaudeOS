@@ -805,6 +805,18 @@
   cursor: pointer;
 }
 
+/* Inside a card the row link also carries `.ccc-list-primary`, which gives
+ * it the ink and the Body size. The S3 table's name button carries neither,
+ * so without this it kept the browser's own `button` colour — near-black on
+ * the glass panel and all but invisible (05 wave 4 review). The Agent runs
+ * destination has no cream surface (UI-SPEC S3), so this is the light ink,
+ * audited on glass and on the selected row's opaque --ccc-surface
+ * (ADR-0023); the cream-card override above stays scoped to cream cards. */
+.ccc-agent-runs .ccc-session-row-link {
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+}
+
 .ccc-list-meta {
   margin: 0;
   overflow-wrap: anywhere;
