@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { realpath } from "node:fs/promises";
@@ -239,6 +240,9 @@ let focusAnswer: FocusOutcome;
 let focusCalls: RunId[];
 let facts: SessionFactsProvider;
 let logger: Logger;
+/** Wave 5: extra latency before each guard check, and the flow budget override. */
+let guardDelayMs: number;
+let launchBudgetMs: number | undefined;
 
 const spyGit: RunGit = (cwd, argv, options) => {
   gitCalls.push([...argv]);
@@ -280,10 +284,20 @@ beforeEach(async () => {
   testGit(repo, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init");
   registerProject("alpha", repo, "Alpha");
 
+  guardDelayMs = 0;
+  launchBudgetMs = undefined;
+  const realGuard = createLaunchGuard({ db: store.db, runGit: spyGit, realpath });
   const actions: SessionActionDeps = {
     db: store.db,
     launcher: { launch: (req) => launcher.launch(req) },
-    guard: createLaunchGuard({ db: store.db, runGit: spyGit, realpath }),
+    guard: {
+      check: async (target) => {
+        if (guardDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, guardDelayMs));
+        return realGuard.check(target);
+      },
+      worktreeRootOf: (cwd) => realGuard.worktreeRootOf(cwd),
+    },
+    launchBudgetMs: () => launchBudgetMs,
     lookup: createStoreProjectLookup(store.db),
     listWorktrees: (root) => listWorktrees(root, { runGit: spyGit, realpath }),
     focus: {
@@ -696,7 +710,7 @@ describe("POST /api/v1/sessions/open-transcript (Task 2 Tests 2-3, SESS-15, D-34
     return file;
   }
 
-  it("reveals with open -R, or opens with the default app, only the Run's own transcript", async () => {
+  it("reveals with open -R, or opens in a text editor, only the Run's own transcript", async () => {
     const token = await handshake();
     const sessionId = randomUUID();
     const file = transcriptFile(sessionId);
@@ -717,7 +731,8 @@ describe("POST /api/v1/sessions/open-transcript (Task 2 Tests 2-3, SESS-15, D-34
       token,
     );
     expect(open.status).toBe(200);
-    expect(openCalls.at(-1)).toEqual([file]);
+    // A text editor, never the default-app handler (wave 5 review).
+    expect(openCalls.at(-1)).toEqual(["-t", file]);
     expect(JSON.stringify(reveal.body) + JSON.stringify(open.body)).not.toContain(dir);
   });
 
@@ -937,5 +952,212 @@ describe("POST /api/v1/sessions/terminate-request (Task 3 Test 5, SESS-16, PR-13
     expect(text).not.toMatch(/terminate-executor/);
     expect(text).not.toMatch(/SessionTerminator|createTerminateExecutor/);
     expect(text).not.toMatch(/\.kill\s*\(/);
+  });
+});
+
+/** A launcher that holds every launch until released, answering `result` then. */
+class GatedLauncher implements SessionTerminalLauncher {
+  readonly requests: Parameters<SessionTerminalLauncher["launch"]>[0][] = [];
+  private readonly waiting: Array<() => void> = [];
+  constructor(
+    private readonly result: Awaited<ReturnType<SessionTerminalLauncher["launch"]>> = { ok: true },
+  ) {}
+  launch(request: Parameters<SessionTerminalLauncher["launch"]>[0]) {
+    this.requests.push(request);
+    return new Promise<Awaited<ReturnType<SessionTerminalLauncher["launch"]>>>((resolve) => {
+      this.waiting.push(() => resolve(this.result));
+    });
+  }
+  release(): void {
+    for (const go of this.waiting.splice(0)) go();
+  }
+}
+
+/** Resolves once `predicate` holds, polling the event loop. */
+async function until(predicate: () => boolean): Promise<void> {
+  await vi.waitFor(() => {
+    expect(predicate()).toBe(true);
+  });
+}
+
+describe("wave 5 review: resume/branch guard, pre-registration, timeouts and budget", () => {
+  it("runs the guard on an existing worktree choice (conflict), and launches when that tree is clear", async () => {
+    const token = await handshake();
+    const source = seedRun({ projectId: "alpha", cwd: repo });
+    const tree = join(dir, "trees", "busy");
+    mkdirSync(join(dir, "trees"));
+    testGit(repo, "worktree", "add", "-q", "-b", "busy", tree);
+    const listed = WorktreeListResponseSchema.parse(
+      (await post(SESSION_WORKTREES_PATH, { runId: source.runId }, token)).body,
+    ).worktrees;
+    const busy = listed.find((w) => w.branch === "busy");
+    const writer = seedRun({
+      state: "running",
+      permissionMode: "default",
+      worktreeRoot: realpathSync(tree),
+      name: "Tree writer",
+    });
+
+    const res = await post<{ outcome: string; conflicts: Array<{ runId: string }> }>(
+      SESSION_RESUME_PATH,
+      { runId: source.runId, choice: { kind: "existing-worktree", worktreeId: busy?.worktreeId } },
+      token,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.outcome).toBe("conflict");
+    expect(res.body.conflicts.map((c) => c.runId)).toEqual([writer.runId]);
+    expect(fake.requests).toHaveLength(0);
+    expect(childrenOf(source.runId)).toHaveLength(0);
+
+    // A writer in the MAIN tree does not block the isolated one.
+    store.db.prepare("UPDATE runs SET worktree_root = ? WHERE run_id = ?").run(repo, writer.runId);
+    const clear = await post(
+      SESSION_RESUME_PATH,
+      { runId: source.runId, choice: { kind: "existing-worktree", worktreeId: busy?.worktreeId } },
+      token,
+    );
+    expect(clear.body).toEqual({ outcome: "launched" });
+  });
+
+  it("pre-registers the linked Run with its worktree root, so it is a conflict candidate while queued and starting", async () => {
+    const token = await handshake();
+    const first = seedRun({ projectId: "alpha", cwd: repo });
+    const second = seedRun({ projectId: "alpha", cwd: repo });
+    const gated = new GatedLauncher();
+    launcher = gated;
+
+    const pending = post(SESSION_RESUME_PATH, { runId: first.runId }, token);
+    await until(() => gated.requests.length === 1);
+    const [queued] = childrenOf(first.runId);
+    expect(queued).toMatchObject({ state: "queued", worktreeRoot: repo, permissionMode: null });
+
+    const blocked = await post<{ outcome: string; conflicts: Array<{ runId: string }> }>(
+      SESSION_RESUME_PATH,
+      { runId: second.runId },
+      token,
+    );
+    expect(blocked.body.outcome).toBe("conflict");
+    expect(blocked.body.conflicts.map((c) => c.runId)).toEqual([queued?.runId]);
+
+    gated.release();
+    expect((await pending).body).toEqual({ outcome: "launched" });
+    expect(getSessionRun(store.db, queued?.runId as RunId)?.state).toBe("starting");
+    const again = await post<{ outcome: string; conflicts: Array<{ runId: string }> }>(
+      SESSION_RESUME_PATH,
+      { runId: second.runId },
+      token,
+    );
+    expect(again.body.conflicts.map((c) => c.runId)).toEqual([queued?.runId]);
+  });
+
+  it("a plan-mode pre-registration is not write-capable and a new worktree has no root yet", async () => {
+    const token = await handshake();
+    const source = seedRun({ projectId: "alpha", cwd: repo });
+    await post(SESSION_RESUME_PATH, { runId: source.runId, choice: { kind: "plan" } }, token);
+    await post(
+      SESSION_RESUME_PATH,
+      { runId: source.runId, choice: { kind: "new-worktree", name: "iso" } },
+      token,
+    );
+    const children = childrenOf(source.runId);
+    expect(children.map((c) => [c.permissionMode, c.worktreeRoot]).sort()).toEqual(
+      [
+        ["plan", repo],
+        [null, null],
+      ].sort(),
+    );
+    const other = seedRun({ projectId: "alpha", cwd: repo });
+    expect((await post(SESSION_RESUME_PATH, { runId: other.runId }, token)).body).toEqual({
+      outcome: "launched",
+    });
+  });
+
+  it("refuses a second launch of the same Run while the first is in flight (server-side lock)", async () => {
+    const token = await handshake();
+    const source = seedRun({ projectId: "alpha", cwd: repo });
+    const gated = new GatedLauncher();
+    launcher = gated;
+    const body = { runId: source.runId, choice: { kind: "continue" } };
+    const pending = post(SESSION_RESUME_PATH, body, token);
+    await until(() => gated.requests.length === 1);
+    expect(await post(SESSION_BRANCH_PATH, body, token)).toMatchObject({
+      status: 409,
+      body: { error: "invalid-state" },
+    });
+    gated.release();
+    expect((await pending).body).toEqual({ outcome: "launched" });
+    expect(gated.requests).toHaveLength(1);
+    // Released: the next one goes through.
+    launcher = fake;
+    expect((await post(SESSION_RESUME_PATH, body, token)).body).toEqual({ outcome: "launched" });
+  });
+
+  it("a launcher timeout leaves the Run stale, never failed; only a definite failure records failed", async () => {
+    const token = await handshake();
+    fake.result = { ok: false, reason: "timeout" };
+    const timedOut = seedRun({ projectId: "alpha", cwd: repo });
+    expect(await post(SESSION_RESUME_PATH, { runId: timedOut.runId }, token)).toMatchObject({
+      status: 409,
+      body: { error: "timeout" },
+    });
+    const [uncertain] = childrenOf(timedOut.runId);
+    expect(uncertain?.state).toBe("stale");
+    expect(uncertain?.endedAt).toBeNull();
+
+    // The stale child still guards its tree; `continue` accepts that and launches.
+    fake.result = { ok: false, reason: "spawn-failed" };
+    const failed = seedRun({ projectId: "alpha", cwd: repo });
+    expect(
+      await post(SESSION_RESUME_PATH, { runId: failed.runId, choice: { kind: "continue" } }, token),
+    ).toMatchObject({ status: 409, body: { error: "spawn-failed" } });
+    expect(childrenOf(failed.runId)[0]?.state).toBe("failed");
+  });
+
+  it("one deadline covers the whole flow: a slow guard plus a slow launch answers timeout, the Run stale", async () => {
+    const token = await handshake();
+    launchBudgetMs = 400;
+    guardDelayMs = 200;
+    const gated = new GatedLauncher();
+    launcher = gated;
+    const source = seedRun({ projectId: "alpha", cwd: repo });
+    const started = Date.now();
+    const res = await post(SESSION_RESUME_PATH, { runId: source.runId }, token);
+    expect(res).toMatchObject({ status: 409, body: { error: "timeout" } });
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(gated.requests).toHaveLength(1);
+    expect(childrenOf(source.runId)[0]?.state).toBe("stale");
+    gated.release();
+
+    // A guard slower than the whole budget: nothing is registered or launched.
+    guardDelayMs = 600;
+    const late = seedRun({ projectId: "alpha", cwd: join(repo, "src") });
+    const other = new GatedLauncher();
+    launcher = other;
+    expect(await post(SESSION_RESUME_PATH, { runId: late.runId }, token)).toMatchObject({
+      status: 409,
+      body: { error: "timeout" },
+    });
+    expect(childrenOf(late.runId)).toHaveLength(0);
+    expect(other.requests).toHaveLength(0);
+  });
+
+  it("open-transcript refuses anything but a .jsonl, including a .jsonl symlink to another file type", async () => {
+    const token = await handshake();
+    const folder = join(dir, "claude", "projects", "-code-alpha");
+    mkdirSync(folder, { recursive: true });
+    const script = join(folder, "run-me.command");
+    writeFileSync(script, "#!/bin/sh\n");
+    const direct = seedRun({ transcriptPath: script });
+    const link = join(folder, `${randomUUID()}.jsonl`);
+    symlinkSync(script, link);
+    const linked = seedRun({ transcriptPath: link });
+    for (const run of [direct, linked]) {
+      for (const mode of ["open", "reveal"] as const) {
+        expect(
+          await post(SESSION_OPEN_TRANSCRIPT_PATH, { runId: run.runId, mode }, token),
+        ).toMatchObject({ status: 409, body: { error: "transcript-outside-root" } });
+      }
+    }
+    expect(openCalls).toEqual([]);
   });
 });

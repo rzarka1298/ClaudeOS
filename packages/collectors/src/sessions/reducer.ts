@@ -73,6 +73,15 @@ export type Evidence =
       readonly linkKind: RunLinkKind | null;
       readonly linkedFromRunId: RunId | null;
       readonly cwd: string;
+      /**
+       * The working tree the launch will write to, known before any hook
+       * arrives, so the queued/starting Run is already a concurrent-write
+       * conflict candidate (wave 5 review). Null when not yet known (a new
+       * worktree Claude Code creates itself).
+       */
+      readonly worktreeRoot: string | null;
+      /** `plan` for a plan-mode launch (not write-capable); null when unknown. */
+      readonly permissionMode: string | null;
       readonly at: string;
     }
   | {
@@ -247,6 +256,8 @@ export function reduce(
           linkKind: evidence.linkKind,
           linkedFromRunId: evidence.linkedFromRunId,
           cwd: evidence.cwd,
+          worktreeRoot: evidence.worktreeRoot,
+          permissionMode: evidence.permissionMode,
         }),
       );
     }

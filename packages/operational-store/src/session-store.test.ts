@@ -222,7 +222,7 @@ describe("listSessionRunsForView (Test 2, R-07, R-08)", () => {
 });
 
 describe("listConflictCandidates (Test 3, D-27)", () => {
-  it("returns write-capable active or stale Runs that have a working tree", () => {
+  it("returns write-capable queued, active or stale Runs that have a working tree", () => {
     seed(1, { state: "running", permissionMode: "default" });
     seed(2, { state: "running", permissionMode: "plan" });
     seed(3, { state: "running", permissionMode: null });
@@ -234,7 +234,7 @@ describe("listConflictCandidates (Test 3, D-27)", () => {
     seed(9, { state: "running", permissionMode: "default", worktreeRoot: null });
 
     expect(ids(listConflictCandidates(db))).toEqual(
-      [runId(1), runId(3), runId(4), runId(5), runId(6)].sort(),
+      [runId(1), runId(3), runId(4), runId(5), runId(6), runId(7)].sort(),
     );
   });
 });

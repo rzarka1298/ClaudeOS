@@ -69,14 +69,25 @@ async function resolvedRoot(
 
 /**
  * `createLaunchGuard` implements the domain `SessionLaunchGuard` (D-29). A
- * conflict is any `starting`, `running`, `waiting-for-approval` or `stale`
+ * conflict is any `queued`, `starting`, `running`, `waiting-for-approval` or `stale`
  * Run whose permission mode is not `plan` (a null mode counts as
  * write-capable) and whose realpath'd working tree equals the target's
  * (D-27). `listConflictCandidates` applies the state and mode rules in SQL;
  * this compares the working trees.
  */
-export function createLaunchGuard(deps: LaunchGuardDeps): SessionLaunchGuard {
+/**
+ * The service's guard: the domain port plus the realpath'd working tree a
+ * launch directory belongs to, which a pre-registered Run records so it is
+ * a conflict candidate before its first hook arrives (wave 5 review).
+ */
+export interface ServiceLaunchGuard extends SessionLaunchGuard {
+  /** The realpath'd git toplevel containing `cwd`, or null outside a working tree. */
+  worktreeRootOf(cwd: string): Promise<string | null>;
+}
+
+export function createLaunchGuard(deps: LaunchGuardDeps): ServiceLaunchGuard {
   return {
+    worktreeRootOf: (cwd) => toplevelOf(cwd, deps),
     async check(target): Promise<LaunchGuardResult> {
       const top = await toplevelOf(target.cwd, deps);
       if (top === null) return { kind: "clear" };

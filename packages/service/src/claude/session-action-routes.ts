@@ -30,7 +30,6 @@ import {
   type SessionActionErrorBody,
   type SessionActionErrorCode,
   SessionActionRequestSchema,
-  type SessionLaunchGuard,
   type SessionProjectLookup,
   type SessionRun,
   type SessionTerminalLauncher,
@@ -49,7 +48,7 @@ import { type BodyParser, readJsonBody } from "../request-body.js";
 import type { RouteContext } from "../routes.js";
 import type { FocusService } from "./focus.js";
 import { type ClaudeHandler, sendClaudeJson, withClaudeAuth } from "./http.js";
-import type { WorktreeEntry } from "./launch-guard.js";
+import type { ServiceLaunchGuard, WorktreeEntry } from "./launch-guard.js";
 import type { ClaudePipeline } from "./pipeline.js";
 import { assertTranscriptPath, TranscriptPathRefusedError } from "./transcript-path.js";
 
@@ -74,8 +73,12 @@ export interface SessionActionDeps {
   readonly db: Database.Database;
   /** Opens a terminal (Phase 4's adapter after 05-17; `unconfiguredTerminalLauncher` until then). */
   readonly launcher: SessionTerminalLauncher;
-  /** The concurrent-write guard every resume and branch runs first (D-27). */
-  readonly guard: SessionLaunchGuard;
+  /**
+   * The concurrent-write guard every resume and branch runs first (D-27),
+   * plus the working tree a launch directory belongs to, which the
+   * pre-registered Run records (wave 5 review).
+   */
+  readonly guard: ServiceLaunchGuard;
   readonly lookup: SessionProjectLookup;
   /** The read-only worktree list for a launch root; `path` never leaves the service. */
   readonly listWorktrees: (projectRoot: string) => Promise<readonly WorktreeEntry[]>;
@@ -91,6 +94,8 @@ export interface SessionActionDeps {
   readonly openFile: (args: readonly string[]) => Promise<void>;
   readonly now: () => Date;
   readonly mintRunId: () => RunId;
+  /** Overrides the resume/branch flow budget (tests); defaults to {@link LAUNCH_TIMEOUT_MS}. */
+  readonly launchBudgetMs?: () => number | undefined;
 }
 
 const OPEN = "/usr/bin/open";
@@ -108,7 +113,12 @@ export async function nodeOpenFile(args: readonly string[]): Promise<void> {
 
 /** Every body here is a few hundred bytes at most (T-02-20). */
 const ACTION_BODY_LIMIT_BYTES = 2048;
-/** "Report failure in 5 s" (PERF, D-36): a launcher that has not answered by then is a timeout. */
+/**
+ * "Report failure in 5 s" (PERF, D-36): ONE deadline for the whole
+ * resume/branch flow (wave 5 review) — the guard's git reads, the worktree
+ * list and the launch all share it. What is still unanswered then is a
+ * timeout.
+ */
 export const LAUNCH_TIMEOUT_MS = 5000;
 
 const INVALID_BODY_BODY: ApiErrorBody = { error: "invalid request body" };
@@ -186,63 +196,130 @@ function launchRootOf(run: SessionRun, deps: SessionActionDeps): LaunchRoot | nu
   return null;
 }
 
-type LaunchPlan =
-  | { readonly ok: true; readonly cwd: string; readonly extraArgv: readonly string[] }
-  | { readonly ok: false; readonly code: SessionActionErrorCode };
-
 /**
  * The owner's guard choice (D-28, PR-25) as a launch cwd plus extra argv.
  * `existing-worktree` resolves the opaque id against the service's own
  * worktree list; an id it did not issue is `invalid-state`.
+ *
+ * `guardTarget` is the tree the guard must still check: the launch root
+ * when no choice was made, and an existing worktree the owner picked (a
+ * different tree the first guard never looked at, wave 5 review). A
+ * `continue` was made knowing the conflict, `plan` is not write-capable,
+ * and a new worktree does not exist yet: those three skip it.
  */
+type LaunchPlan =
+  | {
+      readonly ok: true;
+      readonly cwd: string;
+      readonly extraArgv: readonly string[];
+      readonly guardTarget: string | null;
+      /** Whether the launched session will write (false only in plan mode). */
+      readonly planMode: boolean;
+      /** Whether the launch tree already exists (false for a new worktree). */
+      readonly treeKnown: boolean;
+    }
+  | { readonly ok: false; readonly code: SessionActionErrorCode };
+
 async function planChoice(
   choice: LaunchChoice | undefined,
   root: string,
   deps: SessionActionDeps,
 ): Promise<LaunchPlan> {
+  const at = (cwd: string, extraArgv: readonly string[] = []) => ({
+    ok: true as const,
+    cwd,
+    extraArgv,
+    guardTarget: null,
+    planMode: false,
+    treeKnown: true,
+  });
   switch (choice?.kind) {
     case undefined:
+      return { ...at(root), guardTarget: root };
     case "continue":
-      return { ok: true, cwd: root, extraArgv: [] };
+      return at(root);
     case "plan":
-      return { ok: true, cwd: root, extraArgv: ["--permission-mode", "plan"] };
+      return { ...at(root, ["--permission-mode", "plan"]), planMode: true };
     case "new-worktree":
       // The schema already holds the name to WORKTREE_NAME_PATTERN; a
       // leading `-` is also refused so the name can never read as a flag.
       if (!WORKTREE_NAME_PATTERN.test(choice.name) || choice.name.startsWith("-")) {
         return { ok: false, code: "invalid-state" };
       }
-      return { ok: true, cwd: root, extraArgv: ["--worktree", choice.name] };
+      return { ...at(root, ["--worktree", choice.name]), treeKnown: false };
     case "existing-worktree": {
       const entries = await deps.listWorktrees(root);
       const entry = entries.find((e) => e.worktreeId === choice.worktreeId);
       if (entry === undefined || !isDirectory(entry.path))
         return { ok: false, code: "invalid-state" };
-      return { ok: true, cwd: entry.path, extraArgv: [] };
+      return { ...at(entry.path), guardTarget: entry.path };
     }
   }
 }
 
-/** The launcher's answer, bounded to {@link LAUNCH_TIMEOUT_MS}; a throw is a spawn failure. */
-async function boundedLaunch(
-  launcher: SessionTerminalLauncher,
-  request: Parameters<SessionTerminalLauncher["launch"]>[0],
-): Promise<LaunchPortResult> {
+const TIMED_OUT: unique symbol = Symbol("timed-out");
+
+/**
+ * `work`'s answer, or {@link TIMED_OUT} once `deadlineMs` passes. The work
+ * is not cancelled; its late answer is ignored (its rejection is handled).
+ */
+async function beforeDeadline<T>(
+  work: Promise<T>,
+  deadlineMs: number,
+): Promise<T | typeof TIMED_OUT> {
+  const remaining = deadlineMs - Date.now();
+  if (remaining <= 0) {
+    work.catch(() => undefined);
+    return TIMED_OUT;
+  }
   let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<LaunchPortResult>((resolve) => {
-    timer = setTimeout(() => resolve({ ok: false, reason: "timeout" }), LAUNCH_TIMEOUT_MS);
+  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), remaining);
     timer.unref();
   });
   try {
-    return await Promise.race([
-      launcher
-        .launch(request)
-        .catch((): LaunchPortResult => ({ ok: false, reason: "spawn-failed" })),
-      timeout,
-    ]);
+    return await Promise.race([work, timeout]);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * In-flight launches, per composition (wave 5 review): the source Runs
+ * with a resume or branch in progress (a second one for the same Run is
+ * refused), and a per-tree chain that serializes "guard, then
+ * pre-register", so two launches into one tree can never both pass the
+ * guard before either Run exists.
+ */
+interface LaunchLocks {
+  readonly sources: Set<RunId>;
+  readonly trees: Map<string, Promise<unknown>>;
+}
+
+const LOCKS = new WeakMap<SessionActionDeps, LaunchLocks>();
+
+function locksOf(deps: SessionActionDeps): LaunchLocks {
+  let locks = LOCKS.get(deps);
+  if (locks === undefined) {
+    locks = { sources: new Set(), trees: new Map() };
+    LOCKS.set(deps, locks);
+  }
+  return locks;
+}
+
+/** Runs `work` after every earlier holder of `tree` has finished. */
+async function serializedOn<T>(locks: LaunchLocks, tree: string, work: () => Promise<T>) {
+  const previous = locks.trees.get(tree) ?? Promise.resolve();
+  const current = previous.then(work, work);
+  const settled = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  locks.trees.set(tree, settled);
+  void settled.then(() => {
+    if (locks.trees.get(tree) === settled) locks.trees.delete(tree);
+  });
+  return current;
 }
 
 type LaunchOutcome =
@@ -260,10 +337,15 @@ interface LaunchSpec {
 }
 
 /**
- * The shared resume/branch flow (PR-25): resolve the launch root, run the
- * guard when no choice was made, pre-register the linked Run, launch
- * through the port, then record `launch-started` or `launch-failed` so the
- * Run is never left queued (PR-17).
+ * The shared resume/branch flow (PR-25), under ONE deadline (D-36, wave 5
+ * review): resolve the launch root and the choice, run the guard where the
+ * choice still needs it, pre-register the linked Run with its working tree
+ * (so it is a conflict candidate while queued), launch through the port,
+ * then record the outcome so the Run is never left queued (PR-17):
+ * `launch-started`; `launch-failed` only for a DEFINITE failure; and for a
+ * timeout, `start-timeout`, which leaves the Run `stale` — the terminal may
+ * still open late, and its SessionStart adopts the Run (never an invented
+ * terminal state).
  */
 async function launchLinked(
   run: SessionRun,
@@ -272,6 +354,7 @@ async function launchLinked(
   deps: SessionActionDeps,
   pipeline: ClaudePipeline,
 ): Promise<LaunchOutcome> {
+  const deadline = Date.now() + (deps.launchBudgetMs?.() ?? LAUNCH_TIMEOUT_MS);
   const sessionId = run.claudeSessionId;
   if (sessionId === null || !ARGV_SESSION_ID.test(sessionId)) {
     return { kind: "refused", code: "invalid-state" };
@@ -283,8 +366,68 @@ async function launchLinked(
   const root = launchRootOf(run, deps);
   if (root === null) return { kind: "refused", code: "project-missing" };
 
-  if (choice === undefined) {
-    const guard = await deps.guard.check({ cwd: root.root });
+  const locks = locksOf(deps);
+  if (locks.sources.has(run.runId)) return { kind: "refused", code: "invalid-state" };
+  locks.sources.add(run.runId);
+  try {
+    const plan = await beforeDeadline(planChoice(choice, root.root, deps), deadline);
+    if (plan === TIMED_OUT) return { kind: "refused", code: "timeout" };
+    if (!plan.ok) return { kind: "refused", code: plan.code };
+
+    const launch = spec(sessionId);
+    const registered = await beforeDeadline(
+      serializedOn(locks, plan.cwd, () =>
+        guardThenRegister(run, root, plan, launch, deps, pipeline),
+      ),
+      deadline,
+    );
+    if (registered === TIMED_OUT) return { kind: "refused", code: "timeout" };
+    if (registered.kind !== "registered") return registered;
+    const { runId } = registered;
+
+    const result = await beforeDeadline(
+      deps.launcher
+        .launch({
+          cwd: plan.cwd,
+          argv: [claudeBin, ...launch.argv, ...plan.extraArgv],
+          env: { CCC_RUN_ID: runId, CCC_LAUNCH_SOURCE: "dashboard" },
+        })
+        .catch((): LaunchPortResult => ({ ok: false, reason: "spawn-failed" })),
+      deadline,
+    );
+    const at = deps.now().toISOString();
+    if (result === TIMED_OUT || (!result.ok && result.reason === "timeout")) {
+      await pipeline.apply({ kind: "start-timeout", runId, observedAt: at });
+      logger.info({ linkKind: launch.linkKind }, "session launch timed out; run left stale");
+      return { kind: "refused", code: "timeout" };
+    }
+    if (!result.ok) {
+      await pipeline.apply({ kind: "launch-failed", runId, at });
+      logger.info({ reason: result.reason, linkKind: launch.linkKind }, "session launch failed");
+      return { kind: "refused", code: LAUNCH_PORT_FAILURE_ERROR_CODES[result.reason] };
+    }
+    await pipeline.apply({ kind: "launch-started", runId, at });
+    return { kind: "launched", runId };
+  } finally {
+    locks.sources.delete(run.runId);
+  }
+}
+
+/**
+ * The critical section, serialized per launch tree: the guard (where the
+ * plan still needs it), then the pre-registered linked Run, written before
+ * the next launch into the same tree may run its own guard.
+ */
+async function guardThenRegister(
+  run: SessionRun,
+  root: LaunchRoot,
+  plan: Extract<LaunchPlan, { ok: true }>,
+  launch: LaunchSpec,
+  deps: SessionActionDeps,
+  pipeline: ClaudePipeline,
+): Promise<LaunchOutcome | { readonly kind: "registered"; readonly runId: RunId }> {
+  if (plan.guardTarget !== null) {
+    const guard = await deps.guard.check({ cwd: plan.guardTarget });
     if (guard.kind === "conflict") {
       return {
         kind: "conflict",
@@ -296,10 +439,7 @@ async function launchLinked(
       };
     }
   }
-  const plan = await planChoice(choice, root.root, deps);
-  if (!plan.ok) return { kind: "refused", code: plan.code };
-
-  const launch = spec(sessionId);
+  const worktreeRoot = plan.treeKnown ? await deps.guard.worktreeRootOf(plan.cwd) : null;
   const runId = deps.mintRunId();
   await pipeline.apply({
     kind: "launch-registered",
@@ -308,20 +448,11 @@ async function launchLinked(
     linkKind: launch.linkKind,
     linkedFromRunId: run.runId,
     cwd: plan.cwd,
+    worktreeRoot,
+    permissionMode: plan.planMode ? "plan" : null,
     at: deps.now().toISOString(),
   });
-  const result = await boundedLaunch(deps.launcher, {
-    cwd: plan.cwd,
-    argv: [claudeBin, ...launch.argv, ...plan.extraArgv],
-    env: { CCC_RUN_ID: runId, CCC_LAUNCH_SOURCE: "dashboard" },
-  });
-  if (!result.ok) {
-    await pipeline.apply({ kind: "launch-failed", runId, at: deps.now().toISOString() });
-    logger.info({ reason: result.reason, linkKind: launch.linkKind }, "session launch failed");
-    return { kind: "refused", code: LAUNCH_PORT_FAILURE_ERROR_CODES[result.reason] };
-  }
-  await pipeline.apply({ kind: "launch-started", runId, at: deps.now().toISOString() });
-  return { kind: "launched", runId };
+  return { kind: "registered", runId };
 }
 
 /** The deps every action needs, or null (503) in a composition without them. */
@@ -457,6 +588,8 @@ const handleBranch = actionRoute(
 );
 
 const OPENED_BODY = { outcome: "opened" } as const;
+/** The only file type the transcript action ever hands to `open`. */
+const TRANSCRIPT_EXTENSION = ".jsonl";
 const ASSOCIATED_BODY = { outcome: "associated" } as const;
 
 /** Whether a failed `open` ran out of time rather than failing outright. */
@@ -469,9 +602,12 @@ function timedOut(err: unknown): boolean {
  * `POST /api/v1/sessions/open-transcript` `{ runId, mode }` (SESS-15, D-34,
  * PR-07). The path comes ONLY from the Run record, and the containment
  * check under `<claude-config>/projects/` runs again now, at request time,
- * so a row changed after ingest still cannot open anything else. `reveal`
- * is `open -R` (Finder, selected); `open` hands the file to its default
- * app. The service never reads, copies or renders the transcript.
+ * so a row changed after ingest still cannot open anything else. Only a
+ * `.jsonl` file is ever handed over, judged on the RESOLVED path, so a
+ * `.jsonl` symlink to a `.command` is refused too (wave 5 review). `reveal`
+ * is `open -R` (Finder, selected); `open` is `open -t`, the default TEXT
+ * editor — never the file type's default app, which for an executable type
+ * would run it. The service never reads, copies or renders the transcript.
  */
 const handleOpenTranscript = actionRoute(
   SESSION_OPEN_TRANSCRIPT_PATH,
@@ -491,9 +627,19 @@ const handleOpenTranscript = actionRoute(
       );
       return sendError(res, "transcript-outside-root");
     }
+    if (
+      !run.transcriptPath.endsWith(TRANSCRIPT_EXTENSION) ||
+      !resolved.endsWith(TRANSCRIPT_EXTENSION)
+    ) {
+      logger.warn(
+        { route: SESSION_OPEN_TRANSCRIPT_PATH, reason: "not-jsonl" },
+        "transcript refused",
+      );
+      return sendError(res, "transcript-outside-root");
+    }
     if (!isFile(resolved)) return sendError(res, "transcript-missing");
     try {
-      await actions.openFile(body.mode === "reveal" ? ["-R", resolved] : [resolved]);
+      await actions.openFile(body.mode === "reveal" ? ["-R", resolved] : ["-t", resolved]);
     } catch (err: unknown) {
       if (timedOut(err)) return sendError(res, "timeout");
       throw err;

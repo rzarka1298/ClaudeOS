@@ -246,8 +246,14 @@ const ACTIVE_STATES: readonly RunState[] = [
   "waiting-for-approval",
 ];
 
-/** D-27: a Run in one of these states may be writing to its working tree. */
+/**
+ * D-27: a Run in one of these states may be writing to its working tree. A
+ * `queued` dashboard launch counts too (wave 5 review): it is pre-registered
+ * with its working tree before the terminal opens, so a second launch into
+ * the same tree sees it.
+ */
 const CONFLICT_STATES: readonly RunState[] = [
+  "queued",
   "starting",
   "running",
   "waiting-for-approval",
@@ -311,7 +317,7 @@ export function listSessionRunsForView(
 
 /**
  * The Runs a launch into the same working tree could collide with (D-27):
- * starting, running, waiting or stale, not in plan mode (an unknown mode
+ * queued, starting, running, waiting or stale, not in plan mode (an unknown mode
  * counts as write-capable), and with a known working tree. The caller
  * compares `worktreeRoot` with the launch target's.
  */

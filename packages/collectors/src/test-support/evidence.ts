@@ -197,6 +197,8 @@ export function launchRegistered(
     readonly linkKind?: RunLinkKind | null;
     readonly linkedFromRunId?: RunId | null;
     readonly cwd?: string;
+    readonly worktreeRoot?: string | null;
+    readonly permissionMode?: string | null;
   } = {},
 ): Evidence {
   return {
@@ -206,6 +208,8 @@ export function launchRegistered(
     linkKind: options.linkKind ?? null,
     linkedFromRunId: options.linkedFromRunId ?? null,
     cwd: options.cwd ?? "/Users/USERNAME/code/synthetic-project",
+    worktreeRoot: options.worktreeRoot ?? null,
+    permissionMode: options.permissionMode ?? null,
     at: whenAt,
   };
 }
