@@ -147,7 +147,7 @@ async function handleRegister(
     return;
   }
   try {
-    const resolved = validateProjectCandidate(parsed.value.path, policy);
+    const resolved = await validateProjectCandidate(parsed.value.path, policy);
     // A symlink outside the protected folders can still resolve into one;
     // the realpath is judged too before anything is stored.
     const resolvedLocation = acknowledged

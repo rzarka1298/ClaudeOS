@@ -1,6 +1,6 @@
-import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { lstat, readlink, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { checkPathContainment, hasControlCharacter, type ProtectedLocation } from "@ccc/domain";
+import { hasControlCharacter, type ProtectedLocation } from "@ccc/domain";
 import { isForbiddenRoot } from "../vault-root-policy.js";
 
 /**
@@ -12,10 +12,13 @@ import { isForbiddenRoot } from "../vault-root-policy.js";
  * may read and launch into this directory". The route, not the plugin's
  * folder picker, is the trust boundary.
  *
- * Every candidate is resolved with `realpathSync.native` first, so a symlink
- * or a letter-case alias (APFS canonicalises case in the native realpath,
- * not in the JS one) is judged — and stored — as the one real folder it
- * names. It must then be a directory, and it must not be:
+ * Every candidate is resolved with `fs.promises.realpath` first (the native
+ * realpath(3), same semantics as `realpathSync.native`), so a symlink or a
+ * letter-case alias (APFS canonicalises case in the native realpath, not in
+ * the JS one) is judged — and stored — as the one real folder it names.
+ * Every filesystem call here is asynchronous: while macOS shows a Files &
+ * Folders prompt the call can wait on the owner, and a synchronous one would
+ * freeze the whole service until they answer (wave-4b review). It must then be a directory, and it must not be:
  * - a forbidden system location, compared in realpath form (`isForbiddenRoot`,
  *   the E-3 fix: `/etc` is `/private/etc` once resolved);
  * - the home directory or anything above it;
@@ -94,19 +97,36 @@ function isAccessError(err: unknown): boolean {
 }
 
 /** Resolves a policy location, falling back to its lexical form when it does not exist. */
-function resolveLocation(location: string): string {
+async function resolveLocation(location: string): Promise<string> {
   try {
-    return realpathSync.native(location);
+    return await realpath(location);
   } catch {
     return path.resolve(location);
   }
 }
 
-/** True when `a` and `b` are the same folder or one contains the other. */
+/**
+ * Strict descendancy between two ALREADY-RESOLVED paths, compared
+ * lexically. Both sides come from an asynchronous realpath (or, for a policy
+ * location that does not exist, its lexical form), so no second, synchronous
+ * resolve is needed — `checkPathContainment` would re-resolve both with
+ * `realpathSync.native` on the event loop.
+ */
+function lexicallyInside(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+/** True when `a` and `b` are the same folder or one contains the other. Both must be resolved. */
 function sameOrNested(a: string, b: string): "same" | "a-inside-b" | "b-inside-a" | null {
   if (a === b) return "same";
-  if (checkPathContainment(a, b).contained) return "a-inside-b";
-  if (checkPathContainment(b, a).contained) return "b-inside-a";
+  if (lexicallyInside(a, b)) return "a-inside-b";
+  if (lexicallyInside(b, a)) return "b-inside-a";
   return null;
 }
 
@@ -115,10 +135,10 @@ function sameOrNested(a: string, b: string): "same" | "a-inside-b" | "b-inside-a
  * the form the store keeps and duplicate detection compares. Throws
  * {@link ProjectRefusedError} with the reason for every refusal.
  */
-export function validateProjectCandidate(
+export async function validateProjectCandidate(
   candidate: string,
   context: RegistrationPolicyContext,
-): string {
+): Promise<string> {
   // Before any fs call: a control character is how one value becomes two
   // lines in a log or a generated script (D-04). The request schema already
   // refuses these; this keeps the policy total on its own.
@@ -128,7 +148,7 @@ export function validateProjectCandidate(
 
   let resolved: string;
   try {
-    resolved = realpathSync.native(candidate);
+    resolved = await realpath(candidate);
   } catch (err: unknown) {
     if (!isAccessError(err)) throw new ProjectRefusedError(candidate, "missing");
     // TCC refused the resolve. The lexical check already passed, so if the
@@ -137,7 +157,7 @@ export function validateProjectCandidate(
     throw new ProjectRefusedError(
       candidate,
       "access-denied",
-      detectProtectedLocation(followLinksLexically(candidate), context.homeDir),
+      detectProtectedLocation(await followLinksLexically(candidate), context.homeDir),
     );
   }
 
@@ -150,7 +170,7 @@ export function validateProjectCandidate(
 
   let isDirectory: boolean;
   try {
-    isDirectory = statSync(resolved).isDirectory();
+    isDirectory = (await stat(resolved)).isDirectory();
   } catch (err: unknown) {
     throw new ProjectRefusedError(candidate, isAccessError(err) ? "access-denied" : "missing");
   }
@@ -162,18 +182,18 @@ export function validateProjectCandidate(
     throw new ProjectRefusedError(candidate, "forbidden-location");
   }
 
-  const home = resolveLocation(context.homeDir);
+  const home = await resolveLocation(context.homeDir);
   const homeRelation = sameOrNested(resolved, home);
   if (homeRelation === "same" || homeRelation === "b-inside-a") {
     throw new ProjectRefusedError(candidate, "forbidden-location");
   }
 
-  if (sameOrNested(resolved, resolveLocation(context.runtimeDir)) !== null) {
+  if (sameOrNested(resolved, await resolveLocation(context.runtimeDir)) !== null) {
     throw new ProjectRefusedError(candidate, "runtime-dir");
   }
 
   if (context.vaultRoot !== null && context.vaultRoot.length > 0) {
-    const vaultRelation = sameOrNested(resolved, resolveLocation(context.vaultRoot));
+    const vaultRelation = sameOrNested(resolved, await resolveLocation(context.vaultRoot));
     if (vaultRelation === "same" || vaultRelation === "a-inside-b") {
       throw new ProjectRefusedError(candidate, "inside-vault");
     }
@@ -196,7 +216,7 @@ const MAX_LINK_HOPS = 32;
  * Never reads a directory's contents or follows anything past a refusal, so
  * it names where a link LEADS without reading what is there.
  */
-function followLinksLexically(candidate: string): string {
+async function followLinksLexically(candidate: string): Promise<string> {
   const pending = path
     .resolve(candidate)
     .split("/")
@@ -208,7 +228,7 @@ function followLinksLexically(candidate: string): string {
     const next = path.join(current, part);
     let target: string | null = null;
     try {
-      if (lstatSync(next).isSymbolicLink()) target = readlinkSync(next);
+      if ((await lstat(next)).isSymbolicLink()) target = await readlink(next);
     } catch {
       return path.join(next, ...pending);
     }
