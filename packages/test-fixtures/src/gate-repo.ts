@@ -58,6 +58,10 @@ export function gateRepo(
   git("init", "-q");
   git("config", "user.email", "gate-test@example.com");
   git("config", "user.name", "Gate Test");
+  // A throwaway repo must not start a git fsmonitor daemon (a global
+  // core.fsmonitor=true would): each daemon outlives the deleted repo, and a
+  // pile of them stalled later test processes for minutes.
+  git("config", "core.fsmonitor", "false");
   for (const script of scripts) {
     mkdirSync(dirname(join(root, script)), { recursive: true });
     copyFileSync(join(REPO_ROOT, script), join(root, script));
