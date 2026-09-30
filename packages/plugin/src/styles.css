@@ -813,6 +813,7 @@
  * audited on glass and on the selected row's opaque --ccc-surface
  * (ADR-0023); the cream-card override above stays scoped to cream cards. */
 .ccc-agent-runs .ccc-session-row-link {
+  overflow-wrap: anywhere;
   color: var(--ccc-ink);
   font-size: var(--ccc-text-body);
 }
@@ -1202,7 +1203,13 @@
   }
 }
 
+/* The sessions panel is the table's own query container: the priority
+ * collapse below measures the box the columns are actually laid out in. In
+ * the master/detail layout that is 3/5 of the destination, and measured
+ * against the whole destination eight whole-word columns were forced into
+ * roughly 36rem (05 wave 4 review, mid-word breaks). */
 .ccc-agent-runs-sessions {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: var(--ccc-space-md);
@@ -1223,10 +1230,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Whole words only (05 wave 4 review: `anywhere` let the table squeeze a
+ * column below its longest word, so headers read `PROJ/ECT` and cells
+ * `claud/e-opus`). `break-word` keeps each word's width in the column's
+ * minimum, so a cell wraps at spaces and hyphens and a word only ever breaks
+ * if it alone is wider than the whole table. Columns that no longer fit
+ * whole collapse by priority instead (below). */
 .ccc-agent-runs-table th,
 .ccc-agent-runs-table td {
   padding: var(--ccc-space-xs) var(--ccc-space-sm);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   text-align: left;
   border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
 }
@@ -1267,7 +1280,9 @@
 
 /* Columns 3-4 hide below 24rem; columns 5-8 hide below 48rem (UI-SPEC
  * "Sessions table" priority column) — every hidden field stays reachable in
- * the detail pane, so table semantics only ever drop rendering, never data. */
+ * the detail pane, so table semantics only ever drop rendering, never data.
+ * For the sessions tables the container is `.ccc-agent-runs-sessions`; the
+ * usage section's tables still measure the full-width destination. */
 @container (max-width: 24rem) {
   .ccc-agent-runs-table [data-priority="secondary"] {
     display: none;

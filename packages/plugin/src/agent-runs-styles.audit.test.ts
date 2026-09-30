@@ -71,3 +71,23 @@ describe("Agent runs row names (wave 4 contrast finding)", () => {
     expect(contrastRatio(ink, GLASS_COMPOSITE)).toBeGreaterThanOrEqual(4.5);
   });
 });
+
+describe("Agent runs table wrapping (wave 4 mid-word finding)", () => {
+  it("no table header or cell may break inside a word ('PROJ/ECT', 'claud/e-opus')", () => {
+    const tableRules = RULES.filter((rule) =>
+      rule.selectors.some((s) => s.startsWith(".ccc-agent-runs-table")),
+    );
+    expect(tableRules.length).toBeGreaterThan(0);
+    for (const rule of tableRules) {
+      expect(rule.body).not.toMatch(/overflow-wrap\s*:\s*anywhere/);
+      expect(rule.body).not.toMatch(/word-break\s*:\s*break-all/);
+    }
+    const cellBodies = declarationsFor(".ccc-agent-runs-table th");
+    expect(cellBodies.some((body) => /overflow-wrap\s*:\s*break-word/.test(body))).toBe(true);
+  });
+
+  it("the sessions panel is its own inline-size container, so columns collapse by ITS width", () => {
+    const bodies = declarationsFor(".ccc-agent-runs-sessions");
+    expect(bodies.some((body) => /container-type\s*:\s*inline-size/.test(body))).toBe(true);
+  });
+});
