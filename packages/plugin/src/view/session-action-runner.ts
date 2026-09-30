@@ -20,6 +20,8 @@ import {
   type TerminateRequestViewModel,
   type TranscriptChoice,
   type TranscriptWarningViewModel,
+  terminateRequestViewModel,
+  transcriptWarningViewModel,
   type WorktreeListResult,
 } from "./session-modals.js";
 
@@ -370,6 +372,103 @@ async function runAssociate(
 }
 
 /**
+ * The transcript plaintext warning opens on EVERY press (SESS-15, D-34) --
+ * there is no cache and no "seen it already" branch anywhere in this
+ * function, by requirement. Only after the owner picks reveal/open does this
+ * write a pending status and call the service; cancel calls nothing.
+ */
+async function runOpenTranscript(
+  descriptor: QuickActionDescriptor,
+  deps: SessionActionDeps,
+): Promise<void> {
+  const runId = getRunId(descriptor);
+  if (runId === null) {
+    deps.ui.notify(unavailableMessage(descriptor.label));
+    return;
+  }
+  const days = deps.cleanupPeriodDays() ?? DEFAULT_CLEANUP_PERIOD_DAYS;
+  const choice = await deps.ui.openTranscriptWarning(transcriptWarningViewModel(days));
+  if (choice === "cancel") return;
+  setActionStatus(runId, { kind: "pending", text: "Opening the transcript…" });
+  try {
+    await deps.requestSessionAction("open-transcript", { runId, mode: choice });
+    const text =
+      choice === "reveal" ? "Showed the transcript in Finder." : "Opened the transcript.";
+    setActionStatus(runId, { kind: "success", text });
+    deps.ui.notify(text);
+  } catch (error) {
+    const reason = reasonFor(errorCodeOf(error), deps.cleanupPeriodDays());
+    const text = `Couldn't open the transcript: ${reason}.`;
+    setActionStatus(runId, { kind: "failure", text });
+    deps.ui.notify(text);
+  }
+}
+
+/**
+ * Matches the service's tuned `DEFAULT_TERMINATE_GRACE_MS` (10s,
+ * `terminate-executor.ts`, 05-14) -- shown only as fixed UI copy naming the
+ * grace period before escalation, never read from the service at request
+ * time.
+ */
+const DEFAULT_TERMINATE_GRACE_SECONDS = 10;
+
+/**
+ * The force-terminate request (SESS-16, D-01, PR-26): the modal is the whole
+ * confirmation -- there is no typed-confirmation shortcut -- and
+ * `requestSessionAction("terminate-request")` is called only after "send".
+ * Before Phase 6, every request answers `approval-unavailable`; the fixed
+ * reason vocabulary already carries that exact copy.
+ */
+async function runTerminateRequest(
+  descriptor: QuickActionDescriptor,
+  deps: SessionActionDeps,
+): Promise<void> {
+  const runId = getRunId(descriptor);
+  if (runId === null) {
+    deps.ui.notify(unavailableMessage(descriptor.label));
+    return;
+  }
+  const name = sessionNameFor(deps, runId);
+  const view = deps.getSession(runId);
+  const projectName = view?.projectName ?? "Unclassified";
+  const choice = await deps.ui.openTerminateRequest(
+    terminateRequestViewModel(name, projectName, DEFAULT_TERMINATE_GRACE_SECONDS),
+  );
+  if (choice === "cancel") return;
+  setActionStatus(runId, { kind: "pending", text: "Sending the request…" });
+  try {
+    await deps.requestSessionAction("terminate-request", { runId });
+    const text = `Force-terminate request for ${name} is waiting in the approval inbox.`;
+    setActionStatus(runId, { kind: "success", text });
+    deps.ui.notify(text);
+  } catch (error) {
+    const reason = reasonFor(errorCodeOf(error), deps.cleanupPeriodDays());
+    const text = `Couldn't send the request: ${reason}.`;
+    setActionStatus(runId, { kind: "failure", text });
+    deps.ui.notify(text);
+  }
+}
+
+const ENABLE_ANALYSIS_PENDING_TEXT = "Turning on transcript analysis…";
+const ENABLE_ANALYSIS_FAILURE_MESSAGE =
+  "Couldn't turn on transcript analysis. Check the service in Settings → Diagnostics, then try again.";
+
+/**
+ * One-click transcript analysis (D-03): a direct gesture with no
+ * confirmation, and no per-Run status line (there is no Run to attach one
+ * to -- this is a card-level control). On success the card's own SSE-driven
+ * state shows the first-scan copy; this function only reports failure.
+ */
+async function runEnableTranscriptAnalysis(deps: SessionActionDeps): Promise<void> {
+  deps.ui.notify(ENABLE_ANALYSIS_PENDING_TEXT);
+  try {
+    await deps.setTranscriptAnalysis(true);
+  } catch {
+    deps.ui.notify(ENABLE_ANALYSIS_FAILURE_MESSAGE);
+  }
+}
+
+/**
  * Dispatches one {@link QuickActionDescriptor} to its control's full flow:
  * modal (Tasks 2-3), client call, status write, Notice. Unhandled capabilities
  * and descriptors this runner cannot resolve (no `target.runId` where one is
@@ -396,6 +495,15 @@ export async function runSessionAction(
       return;
     case "session:associate":
       await runAssociate(descriptor, deps);
+      return;
+    case "session:open-transcript":
+      await runOpenTranscript(descriptor, deps);
+      return;
+    case "session:terminate":
+      await runTerminateRequest(descriptor, deps);
+      return;
+    case "usage:enable-transcript-analysis":
+      await runEnableTranscriptAnalysis(deps);
       return;
     default:
       deps.ui.notify(unavailableMessage(descriptor.label));
