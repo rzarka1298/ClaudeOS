@@ -694,3 +694,89 @@ describe("tokens from days analysis was off are not counted (D-47, wave 4 review
     expect(readCursor(store.db, path)?.offset).toBe(readFileSync(path).length);
   });
 });
+
+describe("delete cached usage analytics while analysis is on (wave 4 review, D-46, D-47)", () => {
+  function usageServices() {
+    const bus = createEventBus();
+    const pipeline = createClaudePipeline({
+      db: store.db,
+      bus,
+      logger: silent,
+      now: () => NOW,
+      mintRunId: newRunId,
+      facts: {
+        factsFor: async () => ({
+          pidStartedAt: null,
+          launchSource: null,
+          projectId: null,
+          worktreeRoot: null,
+          transcriptPath: null,
+        }),
+      },
+    });
+    const usage = startUsageServices({
+      db: store.db,
+      bus,
+      pipeline,
+      poller: { setStatusLineSink() {}, dropCount: () => 0 },
+      logger: silent,
+      env: {},
+      now: () => NOW,
+      timeZone: TZ,
+      claudeProjectsRoot: root,
+      claudeConfigDir: join(dir, "claude"),
+      runtimeDir: dir,
+      transcriptIo: spies(),
+      settingsFacts: () => ({ statusLine: "not-installed", cleanupPeriodDays: 30 }),
+    });
+    return { usage, pipeline };
+  }
+
+  it("is an honest rebuild: coverage restarts, first scan pending, then totals from retained transcripts", async () => {
+    writeFixture();
+    const { usage, pipeline } = usageServices();
+    await usage.setTranscriptAnalysis(true);
+    await vi.waitFor(() => {
+      expect(usage.summary().ranges.today.activity).toMatchObject({
+        kind: "available",
+        totals: EXPECTED_TOTALS,
+      });
+    });
+
+    usage.deleteUsage();
+    // Nothing stale is shown while the rebuild runs, and no day reads covered.
+    const during = usage.summary();
+    expect(during.analysis.firstScanPending).toBe(true);
+    expect(during.ranges.today.activity).toMatchObject({
+      kind: "unavailable",
+      reason: "no-coverage",
+    });
+
+    await vi.waitFor(() => {
+      const after = usage.summary();
+      expect(after.analysis.firstScanPending).toBe(false);
+      expect(after.ranges.today.activity).toMatchObject({
+        kind: "available",
+        totals: EXPECTED_TOTALS,
+      });
+    });
+    await usage.stop();
+    await pipeline.stop();
+  });
+
+  it("with analysis off, deleted totals stay deleted: nothing is read", async () => {
+    writeFixture();
+    const { usage, pipeline } = usageServices();
+    await usage.setTranscriptAnalysis(true);
+    await vi.waitFor(() => {
+      expect(queryTokenActivity(store.db, WIDE).totals).toEqual(EXPECTED_TOTALS);
+    });
+    await usage.setTranscriptAnalysis(false);
+    usage.deleteUsage();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(queryTokenActivity(store.db, WIDE).totals.input).toBe(0);
+    expect(usage.summary().analysis.firstScanPending).toBe(false);
+    await usage.stop();
+    await pipeline.stop();
+  });
+});

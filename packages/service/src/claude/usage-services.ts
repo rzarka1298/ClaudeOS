@@ -120,7 +120,15 @@ export interface UsageServices {
    * the in-flight scan stops at its next chunk boundary; aggregates stay.
    */
   setTranscriptAnalysis(enabled: boolean): Promise<{ enabled: boolean }>;
-  /** Empties the usage tables in one transaction and republishes (D-46, USAGE-08); Runs stay. */
+  /**
+   * Empties the usage tables in one transaction and republishes (D-46,
+   * USAGE-08); Runs stay. With analysis on, this is an honest rebuild (wave
+   * 4 review): coverage starts over, the summary reads first-scan-pending
+   * (never the deleted totals, never a day as covered), and a full sweep
+   * immediately recounts from the transcripts Claude Code still keeps —
+   * minus any switched-off period (D-47). With analysis off, nothing is
+   * read and the totals stay deleted.
+   */
   deleteUsage(): void;
   /** Usage for one Run's Claude session, or null for an unknown Run. */
   sessionUsage(runId: RunId): SessionUsage | null;
@@ -446,8 +454,11 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
       job.reset();
       deleteUsageAnalytics(db);
       observation = EMPTY_STATUS_LINE_OBSERVATION;
+      const rebuild = analysisEnabled() && !stopped;
+      firstScanPending = rebuild;
       publishUsage();
       publishIntegrationIfChanged();
+      if (rebuild) track(runSweep());
     },
     sessionUsage(runId) {
       const run = getSessionRun(db, runId);
