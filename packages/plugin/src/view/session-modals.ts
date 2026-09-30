@@ -232,13 +232,6 @@ export type ConcurrentChoiceResolution =
   | { readonly kind: "cancel" };
 
 /**
- * Renders the four full-width choices, and -- without resolving -- swaps its
- * OWN content to the worktree step when "Use an isolated worktree" is
- * clicked, per UI-SPEC's "same modal, content replaced" instruction. `Back`
- * swaps back to the four choices. The one promise settles once, whichever
- * step it settles from.
- */
-/**
  * Per-instance prefix for the element ids `aria-describedby` and `<label
  * for>` point at, so two modals opened in one session can never share an id.
  */
@@ -248,14 +241,45 @@ function nextModalIdPrefix(): string {
   return `session-modal-${modalIdCounter}`;
 }
 
+const WORKTREE_NAME_LABEL = "Name";
+
+/**
+ * Renders the four full-width choices, and -- without resolving -- swaps its
+ * OWN content to the worktree step when "Use an isolated worktree" is
+ * clicked, per UI-SPEC's "same modal, content replaced" instruction. `Back`
+ * swaps back to the four choices. The one promise settles once, whichever
+ * step it settles from.
+ *
+ * The worktree step is a real radio group (`<input type="radio">` in a
+ * `<fieldset>`, each with a `<label for>`); every selection or name change
+ * re-evaluates the `Launch in worktree` button and the inline validation
+ * line (wave 5 review: the disabled state used to be set once, at render,
+ * so neither worktree choice was reachable).
+ */
 export class ConcurrentChoiceModal extends Modal {
   private readonly idPrefix = nextModalIdPrefix();
   private readonly vm: ConcurrentChoiceViewModel;
   private readonly loadWorktrees: () => Promise<WorktreeListResult>;
   private readonly decide: (resolution: ConcurrentChoiceResolution) => void;
   private settled = false;
+  /** Set by `onClose`: a late worktree list never renders into a closed modal. */
+  private closed = false;
+  /** Bumped whenever the content is replaced, so a stale `loadWorktrees()` result is dropped. */
+  private renderGeneration = 0;
   private worktreeSelection: WorktreeSelection = null;
   private worktreeName = "";
+  /** Folder basenames of the listed worktrees -- Claude Code's `--worktree <name>` folder -- for the duplicate check. */
+  private existingNames: readonly string[] = [];
+  /** The live worktree-step controls, `null` while the four choices show. */
+  private worktreeControls: {
+    readonly launch: ButtonComponent;
+    readonly validation: HTMLElement;
+    readonly radios: ReadonlyArray<{
+      readonly el: HTMLInputElement;
+      readonly optionId: string | null;
+    }>;
+  } | null = null;
+  private nameInputFocused = false;
 
   constructor(
     app: App,
@@ -285,6 +309,9 @@ export class ConcurrentChoiceModal extends Modal {
    * floor 7) and `Use an isolated worktree` after the worktree step's `Back`.
    */
   private renderChoices(focusOn: ConcurrentChoiceButtonId): void {
+    this.renderGeneration += 1;
+    this.worktreeControls = null;
+    this.nameInputFocused = false;
     const { titleEl, contentEl } = this;
     contentEl.empty();
     titleEl.setText(this.vm.title);
@@ -324,55 +351,132 @@ export class ConcurrentChoiceModal extends Modal {
 
   private async showWorktreeStep(): Promise<void> {
     this.renderWorktreeStep(worktreeStepViewModel("loading"));
-    const list = await this.loadWorktrees();
+    const generation = this.renderGeneration;
+    let list: WorktreeListResult;
+    try {
+      list = await this.loadWorktrees();
+    } catch {
+      list = "failed";
+    }
+    // The owner went Back (or closed the modal) while the list loaded: the
+    // late result must not redraw a step they have already left.
+    if (this.closed || generation !== this.renderGeneration) return;
+    this.existingNames = list === "failed" ? [] : list.map((entry) => entry.folderBasename);
     this.renderWorktreeStep(worktreeStepViewModel(list));
   }
 
   private renderWorktreeStep(stepVm: WorktreeStepViewModel): void {
+    this.renderGeneration += 1;
+    const restoreNameFocus = this.nameInputFocused;
+    this.nameInputFocused = false;
     const { titleEl, contentEl } = this;
     contentEl.empty();
     titleEl.setText(stepVm.title);
-    if (stepVm.loadingMessage !== null) contentEl.createEl("p", { text: stepVm.loadingMessage });
-    if (stepVm.listFailureMessage !== null)
-      contentEl.createEl("p", { text: stepVm.listFailureMessage });
+
+    // Never a hidden selection: an existing worktree that is not among the
+    // rendered radios (still loading, list failed, or gone) is dropped.
+    const current = this.worktreeSelection;
+    if (current?.kind === "existing" && !stepVm.options.some((o) => o.id === current.worktreeId)) {
+      this.worktreeSelection = null;
+    }
 
     const fieldset = contentEl.createEl("fieldset");
     fieldset.createEl("legend", { text: stepVm.legend });
-    for (const option of stepVm.options) {
+    if (stepVm.loadingMessage !== null) fieldset.createEl("p", { text: stepVm.loadingMessage });
+    if (stepVm.listFailureMessage !== null)
+      fieldset.createEl("p", { text: stepVm.listFailureMessage });
+
+    const groupName = `${this.idPrefix}-worktree`;
+    const radios: Array<{ readonly el: HTMLInputElement; readonly optionId: string | null }> = [];
+    const addRadio = (optionId: string | null, label: string): HTMLDivElement => {
       const row = fieldset.createDiv();
-      row.addEventListener("click", () => {
-        this.worktreeSelection = { kind: "existing", worktreeId: option.id };
+      const radioId = `${this.idPrefix}-worktree-${radios.length}`;
+      const radio = row.createEl("input", { type: "radio" });
+      radio.setAttribute("id", radioId);
+      radio.setAttribute("name", groupName);
+      radio.addEventListener("change", () => {
+        this.worktreeSelection =
+          optionId === null
+            ? { kind: "new", name: this.worktreeName }
+            : { kind: "existing", worktreeId: optionId };
+        this.updateWorktreeControls();
       });
-      row.createEl("p", { text: option.label });
-    }
-    const newRow = fieldset.createDiv();
-    newRow.addEventListener("click", () => {
-      this.worktreeSelection = { kind: "new", name: this.worktreeName };
+      const labelEl = row.createEl("label", { text: label });
+      labelEl.setAttribute("for", radioId);
+      radios.push({ el: radio, optionId });
+      return row;
+    };
+    for (const option of stepVm.options) addRadio(option.id, option.label);
+    const newRow = addRadio(null, stepVm.newWorktreeOptionLabel);
+
+    const nameId = `${this.idPrefix}-worktree-name`;
+    const validationId = `${this.idPrefix}-worktree-name-validation`;
+    const nameLabel = newRow.createEl("label", { text: WORKTREE_NAME_LABEL });
+    nameLabel.setAttribute("for", nameId);
+    const input = newRow.createEl("input", { type: "text", placeholder: stepVm.namePlaceholder });
+    input.setAttribute("id", nameId);
+    input.setAttribute("aria-describedby", validationId);
+    input.value = this.worktreeName;
+    // Typing a name IS choosing the new worktree (wave 5 review): the name no
+    // longer counts only if its radio was clicked first.
+    input.addEventListener("input", () => {
+      this.worktreeName = input.value;
+      this.worktreeSelection = { kind: "new", name: input.value };
+      this.updateWorktreeControls();
     });
-    newRow.createEl("p", { text: stepVm.newWorktreeOptionLabel });
-    fieldset.createEl("input", { type: "text", placeholder: stepVm.namePlaceholder }, (input) => {
-      input.addEventListener("input", () => {
-        this.worktreeName = input.value;
-        if (this.worktreeSelection?.kind === "new") {
-          this.worktreeSelection = { kind: "new", name: input.value };
-        }
-      });
+    input.addEventListener("focus", () => {
+      this.nameInputFocused = true;
     });
+    input.addEventListener("blur", () => {
+      this.nameInputFocused = false;
+    });
+    // Inline, below the input (UI-SPEC S4-a "Validation"); announced politely.
+    const validation = newRow.createEl("p");
+    validation.setAttribute("id", validationId);
+    validation.setAttribute("aria-live", "polite");
 
     const buttonRow = contentEl.createDiv();
-    new ButtonComponent(buttonRow)
+    const launch = new ButtonComponent(buttonRow)
       .setButtonText(stepVm.launchLabel)
       .setCta()
-      .setDisabled(worktreeLaunchDisabled(this.worktreeSelection))
       .onClick(() => this.launchWorktree());
     new ButtonComponent(buttonRow)
       .setButtonText(stepVm.backLabel)
       .onClick(() => this.renderChoices("worktree"));
+
+    this.worktreeControls = { launch, validation, radios };
+    this.updateWorktreeControls();
+    // Focus on the first radio (UI-SPEC S4-a) -- unless the owner was typing
+    // a name while the list loaded, in which case the name input keeps it.
+    if (restoreNameFocus) input.focus();
+    else radios[0]?.el.focus();
+  }
+
+  /** Re-derives every selection-dependent control from the current selection: checked radios, Launch's disabled state, and the inline validation line. */
+  private updateWorktreeControls(): void {
+    const controls = this.worktreeControls;
+    if (controls === null) return;
+    const selection = this.worktreeSelection;
+    for (const radio of controls.radios) {
+      radio.el.checked =
+        selection !== null &&
+        (radio.optionId === null
+          ? selection.kind === "new"
+          : selection.kind === "existing" && selection.worktreeId === radio.optionId);
+    }
+    const disabled = worktreeLaunchDisabled(selection, this.existingNames);
+    controls.launch.setDisabled(disabled);
+    controls.launch.buttonEl.setAttribute("aria-disabled", String(disabled));
+    const message =
+      selection?.kind === "new" && selection.name !== ""
+        ? validateWorktreeName(selection.name, this.existingNames)
+        : null;
+    controls.validation.setText(message ?? "");
   }
 
   private launchWorktree(): void {
     const selection = this.worktreeSelection;
-    if (selection === null || worktreeLaunchDisabled(selection)) return;
+    if (selection === null || worktreeLaunchDisabled(selection, this.existingNames)) return;
     const resolution: ConcurrentChoiceResolution =
       selection.kind === "existing"
         ? { kind: "existing-worktree", worktreeId: selection.worktreeId }
@@ -382,6 +486,9 @@ export class ConcurrentChoiceModal extends Modal {
   }
 
   onClose(): void {
+    this.closed = true;
+    this.renderGeneration += 1;
+    this.worktreeControls = null;
     this.settle({ kind: "cancel" });
     this.contentEl.empty();
   }

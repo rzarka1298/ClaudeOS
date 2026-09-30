@@ -124,6 +124,13 @@ export class Modal {
  */
 export class ButtonComponent {
   buttonEl: StubElement = createStubElement();
+  /**
+   * Added wave 5 review: mirrors the real `BaseComponent.disabled` field, and
+   * `setDisabled` below RECORDS into it, so a test reading a button's state
+   * sees what the code under test last set -- never an inert default that
+   * could make a never-updated disabled state look correct.
+   */
+  disabled = false;
 
   constructor(_containerEl: StubElement) {}
 
@@ -139,8 +146,9 @@ export class ButtonComponent {
     return this;
   }
 
-  /** Added plan 05-15 (session-modals.ts's worktree-step Launch button) -- inert, same rationale as every other setter here. */
-  setDisabled(_disabled: boolean): this {
+  /** Added plan 05-15 (session-modals.ts's worktree-step Launch button); records into `disabled` since the wave 5 review. */
+  setDisabled(disabled: boolean): this {
+    this.disabled = disabled;
     return this;
   }
 
