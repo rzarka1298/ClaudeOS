@@ -35,3 +35,7 @@ PRIVACY-GATE-REPORT.md
 
 # Owner UAT layout override (dev vault symlinks this folder) — never commit
 packages/plugin/layout.json
+
+# Codex wrapper runtime state (reports, sessions, live logs, pending resume):
+# local-only, may hold command output and absolute worktree paths.
+.planning/codex/
