@@ -23,6 +23,17 @@ import { orderSessionRows } from "../widgets/session-signals.js";
  * the session map. */
 export const selectedRunId = signal<string | null>(null);
 
+/**
+ * Set by the S1 hero row's `focusDestination("agent-runs", { runId })`
+ * hand-off, and consumed once by `AgentRuns`' mount effect: the only mount
+ * that moves focus to the detail heading (UI-SPEC S1 "Activating a hero row
+ * … focus on the detail heading"). A plain mount — arrowing the tablist onto
+ * Agent runs with a selection left over from last time — leaves focus on the
+ * tab, so the tablist's own arrow-key navigation is never hijacked (05
+ * wave 4 review, focus trap).
+ */
+export const detailFocusRequested = signal(false);
+
 /** `Recent` and `Unclassified` page by 25, then `Show 25 more` (UI-SPEC
  * "Sessions table" volume column). */
 export const RECENT_PAGE_SIZE = 25;

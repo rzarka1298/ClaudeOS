@@ -13,7 +13,7 @@ import { dispatchQuickAction } from "../widgets/quick-actions.js";
 import type { WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
 import { AgentRuns } from "./agent-runs.js";
-import { selectedRunId } from "./agent-runs-state.js";
+import { detailFocusRequested, selectedRunId } from "./agent-runs-state.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 import { Overview } from "./overview.js";
 
@@ -136,13 +136,18 @@ export function Shell({
    * The optional `selection` is the S1 hero row's `{ runId }` channel
    * (UI-SPEC S1 "Primary line", R-06): it sets `agent-runs-state.ts`'s
    * `selectedRunId` signal before switching tabs, so Agent runs mounts with
-   * that Run already selected. The tab itself still receives focus here;
-   * `AgentRuns`'s own mount effect then moves it on to the detail heading
-   * (UI-SPEC "Activating a hero row … focus on the detail heading"),
-   * because this function has no reference into that destination's DOM.
+   * that Run already selected, and raises `detailFocusRequested`. The tab
+   * itself still receives focus here; `AgentRuns`'s own mount effect then
+   * moves it on to the detail heading (UI-SPEC "Activating a hero row …
+   * focus on the detail heading") only because that flag is set — a plain
+   * tab switch never does — since this function has no reference into that
+   * destination's DOM.
    */
   function focusDestination(id: DestinationId, selection?: { readonly runId: string }): void {
-    if (selection?.runId !== undefined) selectedRunId.value = selection.runId;
+    if (selection?.runId !== undefined) {
+      selectedRunId.value = selection.runId;
+      detailFocusRequested.value = true;
+    }
     select(id);
     tabRefs.current[id]?.focus();
   }

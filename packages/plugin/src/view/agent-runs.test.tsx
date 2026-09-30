@@ -187,6 +187,39 @@ describe("Task 1 (tracer): the Agent runs table with a Run selected", () => {
     expect(heading.getAttribute("tabindex")).toBe("-1");
   });
 
+  it("arrowing the tablist onto Agent runs keeps focus on its tab even with a Run already selected (wave 4 focus trap)", () => {
+    const target = session({ runId: runId(1), name: "Refactor parser", state: "running" });
+    seed([target]);
+    selectedRunId.value = target.runId;
+
+    render(<Shell initialDestination="tasks" />);
+    const tasksTab = screen.getByRole("tab", { name: "Tasks" });
+    tasksTab.focus();
+    fireEvent.keyDown(tasksTab, { key: "ArrowRight" });
+
+    const agentRunsTab = screen.getByRole("tab", { name: "Agent runs" });
+    expect(agentRunsTab.getAttribute("aria-selected")).toBe("true");
+    // The detail pane is rendered, but a plain mount never pulls focus out of
+    // the tablist — the next arrow press must still reach the next tab.
+    expect(screen.getByRole("heading", { name: "Refactor parser", level: 3 })).toBeTruthy();
+    expect(document.activeElement).toBe(agentRunsTab);
+  });
+
+  it("a plain mount with a stale selection does not move focus; a row click does", () => {
+    const first = session({ runId: runId(1), name: "Refactor parser", state: "running" });
+    const second = session({ runId: runId(2), name: "Draft notes", state: "running" });
+    seed([first, second]);
+    selectedRunId.value = first.runId;
+
+    render(<AgentRuns now={NOW_MS} />);
+    expect(document.activeElement).toBe(document.body);
+
+    fireEvent.click(screen.getByRole("button", { name: "Draft notes" }));
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { name: "Draft notes", level: 3 }),
+    );
+  });
+
   it("Test 4: no rendered text starts with a filesystem path", () => {
     const unclassified = session({
       runId: runId(1),

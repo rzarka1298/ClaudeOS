@@ -24,7 +24,12 @@ import { activeSessionsState, sessionsById } from "../widgets/session-signals.js
 import { formatMonthDay, formatTimeOfDay } from "../widgets/usage-format.js";
 import { usageSummary } from "../widgets/usage-signals.js";
 import { DetailPane } from "./agent-runs-detail.js";
-import { groupSessions, RECENT_PAGE_SIZE, selectedRunId } from "./agent-runs-state.js";
+import {
+  detailFocusRequested,
+  groupSessions,
+  RECENT_PAGE_SIZE,
+  selectedRunId,
+} from "./agent-runs-state.js";
 import { AgentRunsUsage } from "./agent-runs-usage.js";
 
 /**
@@ -332,15 +337,24 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
   const [unclassifiedShown, setUnclassifiedShown] = useState(RECENT_PAGE_SIZE);
 
   const headingRef = useRef<HTMLHeadingElement | null>(null);
+  // `undefined` until the first effect run, so the mount can be told apart
+  // from a genuine selection change.
+  const previousSelection = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (selected !== null) headingRef.current?.focus();
-    // Re-runs on every genuine selection change (a table row click, or the
-    // hero row's `focusDestination(id, { runId })`) and on this component's
-    // own mount — landing back on Agent runs with a stale selection already
-    // set re-focuses the detail heading, which is the same "go straight to
-    // what's selected" behaviour the mount case and the change case share.
-    // `selected` is the one dependency this effect reacts to; `headingRef`
-    // is a ref and stable by contract.
+    const mounting = previousSelection.current === undefined;
+    const changed = !mounting && previousSelection.current !== selected;
+    previousSelection.current = selected;
+    // The hero hand-off flag is consumed on every run so it can never leak
+    // into a later, plain mount.
+    const handOff = detailFocusRequested.peek();
+    if (handOff) detailFocusRequested.value = false;
+    // Focus moves to the detail heading only on a genuine selection change
+    // (a table row click, a linked-Run button) or on the hero row's
+    // `focusDestination(id, { runId })` hand-off — never on a plain mount,
+    // which would pull focus out of the tablist while the owner is arrowing
+    // through destinations (05 wave 4 review, focus trap). `headingRef` is a
+    // ref and stable by contract.
+    if (selected !== null && (changed || handOff)) headingRef.current?.focus();
   }, [selected]);
 
   // The row button that triggered the current selection — below 48rem
