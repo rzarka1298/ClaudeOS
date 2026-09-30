@@ -283,9 +283,15 @@ describe("SESS-07/08: two concurrent sessions under two projects (Task 3, Test 5
           sessions.push({ sessionId, pid: claude.pid as number, projectId });
           const sentAt = Date.now();
           await runHook(dir, claude.pid as number, sessionStart(sessionId, join(root, "src")));
+          // Launch source and project arrive in off-queue metadata follow-ups
+          // (wave 4), so wait for the Run carrying both, still inside 10 s.
           const seen = await stream.waitFor((event) => {
             const session = sessionOf(event);
-            return session?.claudeSessionId === sessionId && session.projectId === projectId;
+            return (
+              session?.claudeSessionId === sessionId &&
+              session.projectId === projectId &&
+              session.launchSource !== null
+            );
           }, 10_000);
           expect(Date.now() - sentAt).toBeLessThan(10_000);
           const view = sessionOf(seen);
