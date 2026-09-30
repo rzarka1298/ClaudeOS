@@ -10,24 +10,41 @@ import {
   type UsageSummary,
 } from "@ccc/domain";
 import {
+  appendToggleLog,
+  deleteUsageAnalytics,
   getCollectorSetting,
+  getSessionRun,
+  latestCapacity,
+  listCostSnapshots,
+  setCollectorSetting,
   upsertCapacitySnapshot,
   upsertCostSnapshot,
 } from "@ccc/operational-store";
 import type Database from "better-sqlite3";
 import type { Logger } from "pino";
 import type { EventBus } from "../events/event-bus.js";
-import { resolveClaudeConfigDir } from "../paths.js";
-import { buildIntegrationStatus } from "./integration-status.js";
+import { resolveClaudeConfigDir, resolveRuntimeDir } from "../paths.js";
+import {
+  buildIntegrationStatus,
+  type ClaudeSettingsFacts,
+  type InstallRecord,
+  nodePathExists,
+  nodeVersionProbeDeps,
+  probeClaudeVersion,
+  readClaudeSettingsFacts,
+  readInstallRecord,
+  type VersionProbeDeps,
+} from "./integration-status.js";
 import type { ClaudePipeline } from "./pipeline.js";
 import type { SpoolPoller } from "./spool-poller.js";
 import { createTranscriptJob, nodeTranscriptIo, type TranscriptIo } from "./transcript-job.js";
 import {
+  buildSessionUsage,
   buildUsageSummary,
-  DEFAULT_CLEANUP_PERIOD_DAYS,
   EMPTY_STATUS_LINE_OBSERVATION,
   localDayOf,
   type StatusLineObservation,
+  type UsageSummaryInputs,
 } from "./usage-summary.js";
 
 /** The collector setting that holds the transcript-analysis toggle (D-03, D-47). Default off. */
@@ -35,6 +52,9 @@ export const TRANSCRIPT_ANALYSIS_SETTING = "transcript_analysis_enabled";
 
 /** The periodic transcript sweep (D-40); `CCC_TRANSCRIPT_SWEEP_MS` overrides it. */
 export const DEFAULT_TRANSCRIPT_SWEEP_MS = 300_000;
+
+/** The integration-status refresh (PR-24); `CCC_INTEGRATION_REFRESH_MS` overrides it. */
+export const DEFAULT_INTEGRATION_REFRESH_MS = 60_000;
 
 /** A positive integer of milliseconds from the environment, else the default. */
 export function envMs(value: string | undefined, fallback: number): number {
@@ -62,10 +82,14 @@ export interface UsageServicesDeps {
   readonly claudeProjectsRoot?: string;
   /** Overrides the transcript file IO (tests). */
   readonly transcriptIo?: Partial<TranscriptIo>;
-  /** The service runtime dir holding `hooks/install.json` (RED scaffold: unused). */
+  /** The service runtime dir holding `hooks/install.json`; defaults to `CCC_RUNTIME_DIR`. */
   readonly runtimeDir?: string;
-  /** Claude Code's config dir holding `settings.json` (RED scaffold: unused). */
+  /** Claude Code's config dir holding `settings.json` (read only); defaults to `CLAUDE_CONFIG_DIR`. */
   readonly claudeConfigDir?: string;
+  /** Overrides the version probe's exec, realpath and mtime (tests). */
+  readonly versionProbe?: VersionProbeDeps;
+  /** Overrides the hook-runtime existence check (tests). */
+  readonly pathExists?: (path: string) => boolean;
   /** Overrides the settings facts (tests). */
   readonly settingsFacts?: () => UsageSettingsFacts;
 }
@@ -86,11 +110,19 @@ export interface UsageServices {
    * once the socket is open, so a sweep never delays startup (D-55).
    */
   start(): void;
-  /** The integration status (RED scaffold). */
+  /** The integration status, synchronously (GET integration and the snapshot read it). */
   integration(): ClaudeIntegrationStatus;
+  /** Re-reads the settings and install record, probes the version, publishes on change. */
   refreshIntegration(): Promise<ClaudeIntegrationStatus>;
+  /**
+   * Persists the transcript-analysis toggle service-side and appends it to
+   * the toggle log (D-47, D-48). On: first scan pending and a sweep. Off:
+   * the in-flight scan stops at its next chunk boundary; aggregates stay.
+   */
   setTranscriptAnalysis(enabled: boolean): Promise<{ enabled: boolean }>;
+  /** Empties the usage tables in one transaction and republishes (D-46, USAGE-08); Runs stay. */
   deleteUsage(): void;
+  /** Usage for one Run's Claude session, or null for an unknown Run. */
   sessionUsage(runId: RunId): SessionUsage | null;
   /** Stops timers and listeners and waits for in-flight work. */
   stop(): Promise<void>;
@@ -126,11 +158,20 @@ function processTimeZone(): string {
 export function startUsageServices(deps: UsageServicesDeps): UsageServices {
   const { db, bus, logger, now } = deps;
   const timeZone = deps.timeZone ?? processTimeZone();
+  const runtimeDir = deps.runtimeDir ?? resolveRuntimeDir();
+  const claudeConfigDir = deps.claudeConfigDir ?? resolveClaudeConfigDir();
+  const settingsPath = join(claudeConfigDir, "settings.json");
+  const probeDeps = deps.versionProbe ?? nodeVersionProbeDeps();
+  const pathExists = deps.pathExists ?? nodePathExists;
+  // Read-only (PR-24): re-read at startup, on the refresh timer and never written.
+  let claudeSettings: ClaudeSettingsFacts = readClaudeSettingsFacts(settingsPath, runtimeDir);
+  let installRecord: InstallRecord | null = readInstallRecord(runtimeDir);
+  let detectedClaudeVersion: string | null = null;
   const settingsFacts =
     deps.settingsFacts ??
     ((): UsageSettingsFacts => ({
-      statusLine: "unknown",
-      cleanupPeriodDays: DEFAULT_CLEANUP_PERIOD_DAYS,
+      statusLine: claudeSettings.statusLine,
+      cleanupPeriodDays: claudeSettings.cleanupPeriodDays,
     }));
   let observation: StatusLineObservation = EMPTY_STATUS_LINE_OBSERVATION;
   let firstScanPending = false;
@@ -144,7 +185,7 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
   const job = createTranscriptJob({
     db,
     logger,
-    claudeProjectsRoot: deps.claudeProjectsRoot ?? join(resolveClaudeConfigDir(), "projects"),
+    claudeProjectsRoot: deps.claudeProjectsRoot ?? join(claudeConfigDir, "projects"),
     readChunk: deps.transcriptIo?.readChunk ?? io.readChunk,
     stat: deps.transcriptIo?.stat ?? io.stat,
     listFiles: deps.transcriptIo?.listFiles ?? io.listFiles,
@@ -155,17 +196,22 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
     cleanupPeriodDays: () => settingsFacts().cleanupPeriodDays,
   });
 
-  function summary(): UsageSummary {
-    return buildUsageSummary({
+  function summaryInputs(): UsageSummaryInputs {
+    const facts = settingsFacts();
+    return {
       db,
-      statusLineInstall: settingsFacts().statusLine,
+      statusLineInstall: facts.statusLine,
       observation,
       now: now(),
       timeZone,
       analysis: { enabled: analysisEnabled(), firstScanPending },
-      cleanupPeriodDays: settingsFacts().cleanupPeriodDays,
+      cleanupPeriodDays: facts.cleanupPeriodDays,
       transcripts: job.facts(),
-    });
+    };
+  }
+
+  function summary(): UsageSummary {
+    return buildUsageSummary(summaryInputs());
   }
 
   function publishUsage(): void {
@@ -254,22 +300,35 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
   const inFlight = new Set<Promise<void>>();
   let stopped = false;
   let sweeping = false;
+  let sweepAgain = false;
   let sweepTimer: ReturnType<typeof setInterval> | undefined;
+  let integrationTimer: ReturnType<typeof setInterval> | undefined;
 
   function track(work: Promise<void>): void {
     inFlight.add(work);
     void work.finally(() => inFlight.delete(work));
   }
 
-  /** One sweep at a time; usage.updated once the batch completes, never per chunk. */
+  /**
+   * One sweep at a time; a request arriving mid-sweep (a re-enable right
+   * after a cancel, say) runs once more when it ends. usage.updated goes
+   * out once a batch completes, never per chunk.
+   */
   async function runSweep(): Promise<void> {
-    if (stopped || sweeping || !analysisEnabled()) return;
+    if (sweeping) {
+      sweepAgain = true;
+      return;
+    }
     sweeping = true;
     try {
-      const outcome = await job.sweep();
-      if (!outcome.completed) return;
-      firstScanPending = false;
-      publishUsage();
+      do {
+        sweepAgain = false;
+        if (stopped || !analysisEnabled()) break;
+        const outcome = await job.sweep();
+        if (!outcome.completed) continue;
+        firstScanPending = false;
+        publishUsage();
+      } while (sweepAgain);
     } catch (err: unknown) {
       logger.warn({ err }, "transcript sweep failed");
     } finally {
@@ -299,32 +358,101 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
     });
   });
 
-  const redIntegration = (): ClaudeIntegrationStatus =>
-    buildIntegrationStatus({
-      settings: {
-        hooks: "unknown",
-        statusLine: "unknown",
-        disableAllHooks: null,
-        cleanupPeriodDays: 30,
-        hookNodePath: null,
-      },
-      install: null,
-      pathExists: () => false,
+  // --- integration status (PR-24) ------------------------------------------
+
+  /** Whether any status-line report is known: this process saw one, or the store holds one. */
+  function statusLineReported(): boolean {
+    return (
+      observation.lastValidAt !== null ||
+      latestCapacity(db).length > 0 ||
+      listCostSnapshots(db).length > 0
+    );
+  }
+
+  /** Cached settings and version facts plus the live pipeline and spool counters. */
+  function integration(): ClaudeIntegrationStatus {
+    return buildIntegrationStatus({
+      settings: claudeSettings,
+      install: installRecord,
+      pathExists,
       health: deps.pipeline.health(),
-      dropCount: 0,
-      analysisEnabled: false,
-      statusLineReported: false,
-      detectedClaudeVersion: null,
+      dropCount: deps.poller.dropCount(),
+      analysisEnabled: analysisEnabled(),
+      statusLineReported: statusLineReported(),
+      detectedClaudeVersion,
     });
+  }
+
+  let lastIntegration = JSON.stringify(integration());
+
+  /** Publishes claude-integration.updated only when the status differs from the last one. */
+  function publishIntegrationIfChanged(): void {
+    try {
+      const status = integration();
+      const key = JSON.stringify(status);
+      if (key === lastIntegration) return;
+      lastIntegration = key;
+      bus.publish("claude-integration.updated", status);
+    } catch (err: unknown) {
+      logger.warn({ err }, "integration status publish failed");
+    }
+  }
+
+  /** Re-reads Claude's settings and the install record, re-probes the version (cached), publishes on change. */
+  async function refreshIntegration(): Promise<ClaudeIntegrationStatus> {
+    claudeSettings = readClaudeSettingsFacts(settingsPath, runtimeDir);
+    installRecord = readInstallRecord(runtimeDir);
+    detectedClaudeVersion = await probeClaudeVersion(installRecord?.claudeBin ?? null, probeDeps);
+    publishIntegrationIfChanged();
+    return integration();
+  }
+
+  async function refreshInBackground(): Promise<void> {
+    try {
+      await refreshIntegration();
+    } catch (err: unknown) {
+      logger.warn({ err }, "integration status refresh failed");
+    }
+  }
 
   return {
     summary,
     handleStatusLine,
-    integration: redIntegration,
-    refreshIntegration: async () => redIntegration(),
-    setTranscriptAnalysis: async () => ({ enabled: false }),
-    deleteUsage() {},
-    sessionUsage: () => null,
+    integration,
+    refreshIntegration,
+    async setTranscriptAnalysis(enabled) {
+      const was = analysisEnabled();
+      const at = now().toISOString();
+      // Service-owned (D-48): the setting and its history change together.
+      db.transaction(() => {
+        setCollectorSetting(db, TRANSCRIPT_ANALYSIS_SETTING, enabled ? "true" : "false", at);
+        if (was !== enabled) appendToggleLog(db, at, enabled);
+      })();
+      if (enabled) {
+        if (!was) firstScanPending = true;
+      } else {
+        // Stops an in-flight scan at its next chunk boundary; aggregates stay (D-47).
+        job.cancel();
+        firstScanPending = false;
+      }
+      publishUsage();
+      publishIntegrationIfChanged();
+      if (enabled && !stopped) track(runSweep());
+      return { enabled };
+    },
+    deleteUsage() {
+      // Cancel first, so a scan mid-file writes nothing after the delete.
+      job.reset();
+      deleteUsageAnalytics(db);
+      observation = EMPTY_STATUS_LINE_OBSERVATION;
+      publishUsage();
+      publishIntegrationIfChanged();
+    },
+    sessionUsage(runId) {
+      const run = getSessionRun(db, runId);
+      if (run === null) return null;
+      return buildSessionUsage({ ...summaryInputs(), run });
+    },
     start() {
       if (stopped || sweepTimer !== undefined) return;
       const sweepMs = envMs(deps.env.CCC_TRANSCRIPT_SWEEP_MS, DEFAULT_TRANSCRIPT_SWEEP_MS);
@@ -333,10 +461,15 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
       });
       sweepTimer = setInterval(() => track(runSweep()), sweepMs);
       sweepTimer.unref();
+      const refreshMs = envMs(deps.env.CCC_INTEGRATION_REFRESH_MS, DEFAULT_INTEGRATION_REFRESH_MS);
+      track(refreshInBackground());
+      integrationTimer = setInterval(() => track(refreshInBackground()), refreshMs);
+      integrationTimer.unref();
     },
     async stop() {
       stopped = true;
       if (sweepTimer !== undefined) clearInterval(sweepTimer);
+      if (integrationTimer !== undefined) clearInterval(integrationTimer);
       unsubscribeSettled();
       job.cancel();
       await Promise.allSettled([...inFlight]);
