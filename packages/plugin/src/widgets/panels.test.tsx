@@ -361,6 +361,15 @@ describe("Project shortcuts: every git kind renders its UI-SPEC meta copy with t
     expect(text).toMatch(/Checking Git status…/);
   });
 
+  it("a failed FIRST read (still pending) reads as a failure, not as checking or stale (codex finding 4)", () => {
+    const text = cardText("project-shortcuts", {
+      projects: [projectRow({ git: { kind: "pending" }, gitReadFailed: true })],
+      launchers: SET_UP_LAUNCHERS,
+    });
+    expect(text).toMatch(/Couldn't read Git status/);
+    expect(text).not.toMatch(/Checking Git status…/);
+  });
+
   it("a failed read appends Stale regardless of git kind", () => {
     const text = cardText("project-shortcuts", {
       projects: [projectRow({ gitReadFailed: true })],

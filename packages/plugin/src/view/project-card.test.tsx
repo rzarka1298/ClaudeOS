@@ -3,7 +3,7 @@ import { cleanup, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectActionOutcome, ProjectsActions } from "../projects/projects-actions.js";
 import type { ProjectRow } from "../widgets/panels.js";
-import { ProjectCard } from "./project-card.js";
+import { ProjectCard, projectFooterModel } from "./project-card.js";
 
 const NOW = Date.parse("2026-09-29T12:00:00.000Z");
 
@@ -282,5 +282,49 @@ describe("ProjectCard (Task 3, S3 card anatomy)", () => {
 
     expect(screen.getByText("Unavailable")).toBeTruthy();
     expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+});
+
+describe("ProjectCard when the first git read failed (codex finding 4)", () => {
+  // The collector keeps `pending` (there is no last-good value) and sets
+  // gitReadFailed when the very first read times out or rejects.
+  const FAILED_FIRST_READ = {
+    git: { kind: "pending" },
+    observedAt: null,
+    gitReadFailed: true,
+  } as const;
+
+  it("shows the read failure with a next step instead of loading forever", () => {
+    const { container } = render(
+      <ProjectCard
+        row={row(FAILED_FIRST_READ)}
+        displayPath="~/code/example-project"
+        now={NOW}
+        connection={{ kind: "live" }}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Loading git status…")).toBeNull();
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(screen.getByText(/Couldn't read Git status/)).toBeTruthy();
+    expect(screen.getByText("Choose Refresh git status to try again.")).toBeTruthy();
+    expect(screen.getByText("Partial")).toBeTruthy();
+  });
+
+  it("projectFooterModel marks the card Partial, naming Local git status", () => {
+    const model = projectFooterModel(row(FAILED_FIRST_READ), { kind: "live" }, NOW);
+    expect(model.partiality).toEqual({ partial: true, missingSources: ["Local git status"] });
+    expect(model.observedAt).toBeNull();
+  });
+
+  it("a first read that has not happened yet is still loading, not partial", () => {
+    const model = projectFooterModel(
+      row({ git: { kind: "pending" }, observedAt: null, gitReadFailed: false }),
+      { kind: "live" },
+      NOW,
+    );
+    expect(model.partiality).toEqual({ partial: false });
   });
 });
