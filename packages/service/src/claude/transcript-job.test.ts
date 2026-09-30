@@ -562,3 +562,38 @@ describe("per-file errors (wave 4 review)", () => {
     expect(JSON.stringify(logged)).not.toContain(root);
   });
 });
+
+function coveredDays(): string[] {
+  return (
+    store.db.prepare("SELECT day FROM coverage_days ORDER BY day").all() as Array<{ day: string }>
+  ).map((row) => row.day);
+}
+
+describe("coverage only from a completed full sweep (wave 4 review)", () => {
+  it("a single-file scan marks no day covered; the next full sweep does", async () => {
+    writeFixture();
+    const job = makeJob(spies());
+    await job.scanFile(file("-synthetic-beta", "sess-c.jsonl"));
+    expect(queryTokenActivity(store.db, WIDE).totals).toEqual(C1);
+    // One session's tokens must not read as the whole day's.
+    expect(coveredDays()).toEqual([]);
+
+    const outcome = await job.sweep();
+    expect(outcome.completed).toBe(true);
+    expect(coveredDays()).toContain(localDayOf(NOW.toISOString(), TZ));
+    expect(coveredDays()).toContain("2026-09-20");
+  });
+
+  it("a sweep that could not read every file marks nothing covered", async () => {
+    writeFixture();
+    const io = spies();
+    const denied = file("-synthetic-alpha", "sess-b.jsonl");
+    const stat = vi.fn(async (path: string) => {
+      if (path === denied) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      return io.stat(path);
+    });
+    const outcome = await makeJob({ ...io, stat }).sweep();
+    expect(outcome).toMatchObject({ completed: true, failedFiles: 1 });
+    expect(coveredDays()).toEqual([]);
+  });
+});

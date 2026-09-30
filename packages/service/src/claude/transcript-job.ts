@@ -40,6 +40,10 @@ import { addDays, type TranscriptFacts } from "./usage-summary.js";
  *   cursor only by `bytesConsumed`, so a partial last line is never
  *   consumed. A changed inode or a shrunk file restarts at 0; the store's
  *   message-id dedup keeps a rescan from counting anything twice.
+ * - Coverage: a day is marked covered only by a full sweep that visited and
+ *   read every listed file without cancellation (D-44, wave 4 review);
+ *   single-file scans on Stop/SessionEnd count tokens but never coverage,
+ *   and a reset or delete starts coverage over.
  * - Privacy: only counters, ids, model, version and timestamps leave the
  *   parser (D-49); the path lives only in `transcript_cursors`.
  * - Scans are serialized on one promise chain and yield to the event loop
@@ -317,7 +321,6 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
       if (chunk.length === 0) break;
       const result = deps.parse(chunk, carry);
       const records: UsageRecordInput[] = [];
-      const days = new Set<string>();
       for (const record of result.records) {
         if (!isCountable(record) || record.timestamp === null) continue;
         const timestamp = new Date(record.timestamp).toISOString();
@@ -331,7 +334,6 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
           projectKey: projectKeyOf(claudeSessionId),
           counters: record.counters,
         });
-        days.add(deps.dayOf(timestamp));
         noteFirstSeen(resolved, Date.parse(timestamp));
       }
       const nextPosition = position + result.bytesConsumed;
@@ -339,7 +341,6 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
       db.transaction(() => {
         counted += recordUsage(db, records, at);
         writeCursor(db, resolved, { inode: info.ino, size: info.size, offset: nextPosition }, at);
-        for (const day of days) markDayCovered(db, day, at);
       })();
       mergeStats(result.stats.byVersion);
       if (result.stats.oversized > 0 || result.stats.unparsable > 0) {
@@ -405,7 +406,11 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
     for (const path of firstSeen.keys()) {
       if (!present.has(path)) firstSeen.delete(path);
     }
-    markRetainedDaysCovered();
+    // Coverage comes only from a full sweep that read every file (wave 4
+    // review): a single-file scan (a Stop or SessionEnd) must never make one
+    // session's tokens read as a complete day, and an unreadable file leaves
+    // the days honestly not-scanned.
+    if (failedFiles === 0) markRetainedDaysCovered();
     lastScanAt = now().toISOString();
     return { completed: true, files: scanned, failedFiles };
   }
