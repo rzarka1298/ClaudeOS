@@ -15,8 +15,8 @@ import {
 } from "@ccc/domain";
 import {
   createEventClient,
-  type EventClientState,
   createSocketApiClient,
+  type EventClientState,
 } from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startServiceForTest } from "./service-harness.js";
@@ -168,9 +168,7 @@ function waitForState(
         return;
       }
       if (Date.now() - start > timeoutMs) {
-        reject(
-          new Error(`timed out waiting for state "${kind}"; saw: ${JSON.stringify(states)}`),
-        );
+        reject(new Error(`timed out waiting for state "${kind}"; saw: ${JSON.stringify(states)}`));
         return;
       }
       setTimeout(check, 25);
