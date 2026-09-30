@@ -106,6 +106,17 @@ describe("Test 7: the usage section", () => {
     expect(screen.queryByText("$0.00")).toBeNull();
   });
 
+  it("the always-unpriced Estimated cost column collapses first in a narrow pane (wave 4 whole-word wrapping)", () => {
+    const { container } = render(<AgentRunsUsage summary={summary()} nowMs={NOW_MS} />);
+    const header = [...container.querySelectorAll("th")].find(
+      (th) => th.textContent === "Estimated cost",
+    );
+    expect(header?.getAttribute("data-priority")).toBe("secondary");
+    for (const cell of screen.getAllByText("No list price")) {
+      expect(cell.getAttribute("data-priority")).toBe("secondary");
+    }
+  });
+
   it("the skill table is replaced by its sentence when it has no rows", () => {
     render(<AgentRunsUsage summary={summary()} nowMs={NOW_MS} />);
     expect(screen.getByText("Transcripts in this range don't name a skill or agent.")).toBeTruthy();

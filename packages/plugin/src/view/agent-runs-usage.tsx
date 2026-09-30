@@ -208,7 +208,13 @@ function UsageTable({
             Cache read
           </th>
           <th scope="col">Total</th>
-          <th scope="col">Estimated cost</th>
+          {/* Collapses below 24rem (05 wave 4): with whole-word wrapping
+              five columns no longer fit a narrow pane, and this one always
+              reads `No list price` — the range's cost is in its own section
+              below. */}
+          <th scope="col" data-priority="secondary">
+            Estimated cost
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -220,7 +226,7 @@ function UsageTable({
             <td data-priority="tertiary">{formatExactTokens(row.counters.cacheWrite)}</td>
             <td data-priority="tertiary">{formatExactTokens(row.counters.cacheRead)}</td>
             <td>{formatExactTokens(totalOf(row.counters))}</td>
-            <td>No list price</td>
+            <td data-priority="secondary">No list price</td>
           </tr>
         ))}
       </tbody>
