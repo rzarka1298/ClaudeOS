@@ -1,11 +1,18 @@
-import { unlinkSync } from "node:fs";
+import { constants, unlinkSync } from "node:fs";
+import { access } from "node:fs/promises";
 import type {
   LaunchResult,
   TerminalChoice,
   TerminalLauncher,
   TerminalLaunchInput,
 } from "@ccc/domain";
-import { mapLaunchFailure, openTerminalScript, renderLaunchScript } from "@ccc/launchers";
+import {
+  mapLaunchFailure,
+  openTerminalScript,
+  renderCommandTemplate,
+  renderLaunchScript,
+  validateCommandTemplate,
+} from "@ccc/launchers";
 import { SCRIPT_MAX_AGE_MS, sweepStaleScripts, writeLaunchScript } from "./script-dir.js";
 import type { Spawner, SpawnOutcome } from "./spawner.js";
 
@@ -57,9 +64,50 @@ function removeUnsent(path: string): void {
   }
 }
 
-/** The spawn provably never reached a terminal, so its script can go now. */
+/**
+ * The spawn provably never reached a terminal, so its script can go now: the
+ * process never started, LaunchServices found no such bundle, or macOS
+ * refused the Apple Event (-1743) before the terminal saw the script.
+ */
 function neverHandedOff(outcome: SpawnOutcome): boolean {
-  return outcome.errno !== null || outcome.stderrClass === "bundle-not-found";
+  return (
+    outcome.errno !== null ||
+    outcome.stderrClass === "bundle-not-found" ||
+    outcome.stderrClass === "automation-denied"
+  );
+}
+
+/** `access(X_OK)` as a boolean, asynchronously, so a stalled volume never blocks the event loop. */
+export async function isExecutableFile(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Spawns the hand-off argv for a written script and maps the outcome. Shared
+ * by every adapter so "exit 0 = handed off", the abort signal and the script
+ * clean-up rules are one implementation.
+ */
+async function handOff(
+  spawner: Spawner,
+  argv: readonly string[],
+  scriptPath: string,
+  capMs: number,
+  signal: AbortSignal,
+): Promise<LaunchResult> {
+  if (signal.aborted) {
+    removeUnsent(scriptPath);
+    return { ok: false, error: "timeout" };
+  }
+  const outcome = await spawner.run(argv, { timeoutMs: capMs, signal });
+  if (signal.aborted) return { ok: false, error: "timeout" };
+  if (outcome.exitCode === 0) return { ok: true };
+  if (neverHandedOff(outcome)) removeUnsent(scriptPath);
+  return { ok: false, error: mapLaunchFailure(outcome) };
 }
 
 /**
@@ -98,10 +146,6 @@ export function createTerminalAppLauncher(deps: TerminalAdapterDeps): TerminalLa
     async launch(input) {
       const written = writeScript(deps.scriptDir, input);
       if ("result" in written) return written.result;
-      if (input.signal.aborted) {
-        removeUnsent(written.path);
-        return { ok: false, error: "timeout" };
-      }
       let argv: readonly string[];
       try {
         argv = openTerminalScript(written.path);
@@ -109,34 +153,84 @@ export function createTerminalAppLauncher(deps: TerminalAdapterDeps): TerminalLa
         removeUnsent(written.path);
         return { ok: false, error: "spawn-failed" };
       }
-      const outcome = await deps.spawner.run(argv, { timeoutMs: capMs, signal: input.signal });
-      if (input.signal.aborted) return { ok: false, error: "timeout" };
-      if (outcome.exitCode === 0) return { ok: true };
-      if (neverHandedOff(outcome)) removeUnsent(written.path);
-      return { ok: false, error: mapLaunchFailure(outcome) };
+      return handOff(deps.spawner, argv, written.path, capMs, input.signal);
     },
   };
 }
 
 export interface CustomTemplateDeps extends TerminalAdapterDeps {
+  /** The owner's stored terminal argv template (`TerminalChoice.argv`), with a `{script}` element. */
   readonly template: readonly string[];
+  /** The `X_OK` check for `template[0]`; asynchronous so no launch blocks the event loop. */
   readonly isExecutable: (path: string) => Promise<boolean>;
 }
 
-/** RED stub (04-09 Task 3): not implemented yet. */
-export function createCustomTemplateLauncher(_deps: CustomTemplateDeps): TerminalLauncher {
+/**
+ * The generic "Custom terminal" adapter (D-22, D-23, PR-07): the owner's
+ * argv template with `{script}` (and optionally `{projectPath}`) as whole
+ * elements. iTerm2, Ghostty and WezTerm ship as presets of this template and
+ * stay "Unverified" until the owner's Test step confirms one (D-23) — this
+ * adapter claims only that it rendered and spawned the argv.
+ *
+ * Before EVERY spawn the stored template is validated again, whatever was
+ * checked when it was saved: `argv[0]` absolute and passing `X_OK` right
+ * now, placeholders whole elements only, and no Claude Code permission
+ * bypass in any spelling (`--dangerously-skip-permissions`,
+ * `bypassPermissions` as a mode, a flag value or inside `--settings` JSON).
+ * A template that fails is a setup problem, answered
+ * `launcher-not-configured` before any script exists, so nothing is left
+ * behind and nothing is spawned (the same kind the launch service gives a
+ * stored Claude Code template that no longer validates).
+ *
+ * Rendering replaces `{script}` with the written script's path and
+ * `{projectPath}` with the launch's working directory, element for element;
+ * nothing is split, joined or parsed. Only presets routed through
+ * `/usr/bin/open` or `/usr/bin/osascript` keep "exit 0 = handed off" true:
+ * both return once the terminal has the script. A template that runs a
+ * terminal binary directly stays running and meets the cap even though its
+ * window opened.
+ *
+ * `input.env` is how Phase 5 passes `CCC_RUN_ID` / `CCC_LAUNCH_SOURCE`
+ * without amending the port (PR-07): it is exported inside the script by
+ * the renderer, keys limited to `^CCC_[A-Z0-9_]+$`, and never reaches the
+ * spawned child's environment (Pitfall 11). An osascript preset refused by
+ * macOS (-1743) is `automation-denied` (D-28).
+ */
+export function createCustomTemplateLauncher(deps: CustomTemplateDeps): TerminalLauncher {
+  const capMs = deps.capMs ?? DEFAULT_CAP_MS;
   return {
-    launch() {
-      return Promise.reject(new Error("createCustomTemplateLauncher is not implemented"));
+    async launch(input) {
+      if (input.signal.aborted) return { ok: false, error: "timeout" };
+      const executable = deps.template[0];
+      const executableOk = executable === undefined ? false : await deps.isExecutable(executable);
+      if (input.signal.aborted) return { ok: false, error: "timeout" };
+      const validation = validateCommandTemplate(deps.template, {
+        kind: "terminal",
+        isExecutable: (path) => executableOk && path === executable,
+      });
+      if (!validation.ok) return { ok: false, error: "launcher-not-configured" };
+      const written = writeScript(deps.scriptDir, input);
+      if ("result" in written) return written.result;
+      let argv: readonly string[];
+      try {
+        argv = renderCommandTemplate(validation.argv, {
+          script: written.path,
+          projectPath: input.cwd,
+        });
+      } catch {
+        removeUnsent(written.path);
+        return { ok: false, error: "spawn-failed" };
+      }
+      return handOff(deps.spawner, argv, written.path, capMs, input.signal);
     },
   };
 }
 
 /**
- * The terminal the stored Claude Code configuration chose (PROJ-10, D-21).
- * `null` means no adapter exists for it yet — the caller answers
- * `launcher-not-configured`. The custom-template adapter lands with plan
- * 04-09 Task 3.
+ * The terminal the stored Claude Code configuration chose (PROJ-10, D-21,
+ * D-23): the first-class Terminal.app adapter, or the Custom terminal
+ * adapter over the stored argv template. `null` is reserved for a choice no
+ * adapter handles; the caller answers `launcher-not-configured`.
  */
 export function selectTerminalLauncher(
   choice: TerminalChoice,
@@ -146,6 +240,10 @@ export function selectTerminalLauncher(
     case "terminal-app":
       return createTerminalAppLauncher(deps);
     case "custom":
-      return null;
+      return createCustomTemplateLauncher({
+        ...deps,
+        template: choice.argv,
+        isExecutable: deps.isExecutable ?? isExecutableFile,
+      });
   }
 }

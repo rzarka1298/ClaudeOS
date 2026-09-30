@@ -1,5 +1,3 @@
-import { constants } from "node:fs";
-import { access } from "node:fs/promises";
 import {
   type LaunchAction,
   type LaunchErrorKind,
@@ -32,7 +30,7 @@ import {
   touchLastOpened,
 } from "@ccc/operational-store";
 import type { Spawner } from "./spawner.js";
-import { selectTerminalLauncher } from "./terminal-launchers.js";
+import { isExecutableFile, selectTerminalLauncher } from "./terminal-launchers.js";
 
 /**
  * The launch pipeline (D-06, D-19, D-26, D-40, D-42, D-49): one request
@@ -165,16 +163,6 @@ function refuse(error: LaunchErrorKind): Prepared {
   return { kind: "refuse", error };
 }
 
-/** `access(X_OK)` as a boolean, for the template validator (D-22). */
-async function isExecutable(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** The GitHub repository a git state's remote points at, when it is github.com. */
 function githubFromGit(git: ProjectGitState | null): { owner: string; repo: string } | null {
   if (git === null || git.kind !== "repo" || git.remote === null) return null;
@@ -213,6 +201,7 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
       spawner: deps.spawner,
       scriptDir: deps.scriptDir,
       capMs,
+      isExecutable: isExecutableFile,
     });
   };
 
@@ -227,7 +216,7 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     const template = [config.executablePath, ...config.args];
     // The validator's executable check is synchronous; the one path it asks
     // about (`argv[0]`) is checked asynchronously here first.
-    const executable = await isExecutable(config.executablePath);
+    const executable = await isExecutableFile(config.executablePath);
     // The stored template is validated again at launch: a row written before
     // a validator change must not run a forbidden flag (D-22).
     const validation = validateCommandTemplate(template, {
