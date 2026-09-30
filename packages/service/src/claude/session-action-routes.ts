@@ -9,6 +9,8 @@ import {
   AssociateRequestSchema,
   BranchRequestSchema,
   type BranchResponse,
+  type FocusResponse,
+  isTerminalRunState,
   LAUNCH_PORT_FAILURE_ERROR_CODES,
   type LaunchChoice,
   type LaunchPortResult,
@@ -32,6 +34,7 @@ import {
   type SessionProjectLookup,
   type SessionRun,
   type SessionTerminalLauncher,
+  type TerminateRequestResponse,
   WORKTREE_NAME_PATTERN,
   type WorktreeListResponse,
 } from "@ccc/domain";
@@ -530,12 +533,43 @@ const handleAssociate = actionRoute(
   },
 );
 
-/** A route this plan has not built yet answers 503 behind the token (replaced by Task 3). */
-const notYetBuilt = actionRoute(
+/**
+ * `POST /api/v1/sessions/focus` `{ runId }` (SESS-12, D-31, PR-06): focus
+ * by tty, or bring the terminal forward. Also the whole of "Focus to
+ * interrupt" (PR-27): the plugin tells the owner to press Esc; no signal is
+ * ever sent for an interrupt (PR-01).
+ */
+const handleFocus = actionRoute(
   SESSION_FOCUS_PATH,
   SessionActionRequestSchema,
-  async (_body, res) => {
-    sendClaudeJson(res, 503, UNAVAILABLE_BODY);
+  async (body, res, { actions }) => {
+    const outcome = await actions.focus.focus(body.runId as RunId);
+    if (!outcome.ok) return sendError(res, outcome.reason);
+    sendClaudeJson(res, 200, outcome.response satisfies FocusResponse);
+  },
+);
+
+/**
+ * `POST /api/v1/sessions/terminate-request` `{ runId }` (SESS-16, PR-13,
+ * PR-26): re-validates that the Run is live, then hands it to the approval
+ * inbox through `ProposeForceTerminate`, and that is all. This route never
+ * signals, never records a terminate and has no path to the executor: the
+ * approval engine (Phase 6) runs the capability-typed executor after the
+ * owner approves. Before Phase 6 the answer is `approval-unavailable`.
+ */
+const handleTerminateRequest = actionRoute(
+  SESSION_TERMINATE_REQUEST_PATH,
+  SessionActionRequestSchema,
+  async (body, res, { actions }) => {
+    const run = getSessionRun(actions.db, body.runId as RunId);
+    if (run === null) return sendError(res, "run-not-found");
+    if (isTerminalRunState(run.state) || run.pid === null) return sendError(res, "invalid-state");
+    const proposal = await actions.proposer.propose({ runId: run.runId });
+    if (!proposal.ok) return sendError(res, proposal.reason);
+    sendClaudeJson(res, 200, {
+      outcome: "proposed",
+      proposalId: proposal.proposalId,
+    } satisfies TerminateRequestResponse);
   },
 );
 
@@ -545,6 +579,6 @@ export const sessionActionRoutes: Record<string, Record<string, ClaudeHandler>> 
   [SESSION_BRANCH_PATH]: { POST: handleBranch },
   [SESSION_OPEN_TRANSCRIPT_PATH]: { POST: handleOpenTranscript },
   [SESSION_ASSOCIATE_PATH]: { POST: handleAssociate },
-  [SESSION_FOCUS_PATH]: { POST: notYetBuilt },
-  [SESSION_TERMINATE_REQUEST_PATH]: { POST: notYetBuilt },
+  [SESSION_FOCUS_PATH]: { POST: handleFocus },
+  [SESSION_TERMINATE_REQUEST_PATH]: { POST: handleTerminateRequest },
 };

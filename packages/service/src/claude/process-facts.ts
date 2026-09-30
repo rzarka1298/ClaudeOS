@@ -109,6 +109,18 @@ export function startInstantMs(value: string): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
+/**
+ * Whether a start time just read names the same process start as a stored
+ * one (D-19, T-05-59): the same instant when both parse, exact text
+ * equality otherwise. The identity check focus and force-terminate run
+ * before they touch a pid (05-14); the liveness sweep keeps its own copy.
+ */
+export function sameProcessStart(read: string, stored: string): boolean {
+  const a = startInstantMs(read);
+  const b = startInstantMs(stored);
+  return a !== null && b !== null ? a === b : read === stored;
+}
+
 const execFileAsync = promisify(execFile);
 
 /**

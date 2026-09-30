@@ -28,6 +28,10 @@
 #      (innerHTML/outerHTML/insertAdjacentHTML/dangerouslySetInnerHTML)
 #   7. no file inside packages/plugin assigns an inline style -- state
 #      reaches CSS through data-* attributes and --ccc-* tokens (UI-03)
+#   8. no file inside packages/service, packages/collectors or
+#      packages/plugin sends the interrupt signal to a process (PR-01)
+#   9. no non-test file casts to the CapabilityToken type -- only the
+#      approval engine issues one (ADR-0012, PR-26)
 #
 # Rules 6 and 7 mirror DOM_SAFETY_RULES, and rule 2 mirrors
 # NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs. The
@@ -44,6 +48,7 @@
 set -eu
 
 FAILURES=0
+RULES=0
 
 # Every tracked TypeScript source file under packages/, excluding build
 # output and both fixture trees. `boundary-violations/` (plan 01-03 task 1)
@@ -92,6 +97,7 @@ check_rule() {
   shift 2
   # Remaining args: files to scan (already pre-filtered by caller to the
   # relevant subset -- e.g. "every source file outside packages/plugin").
+  RULES=$((RULES + 1))
   hits=$(grep_noncomment "$pattern" "$@" || true)
   if [ -n "$hits" ]; then
     echo "BOUNDARY VIOLATION: $description"
@@ -172,7 +178,35 @@ check_rule \
   "[.]style[.][A-Za-z]+[[:space:]]*=|[.]style[[:space:]]*=[^=]|setAttribute[(][[:space:]]*[\"']style[\"']|[[:space:]]style=[{]" \
   $PLUGIN_FILES
 
+# --- Rule 8: no file inside packages/service, packages/collectors or
+# packages/plugin sends the interrupt signal to a process (PR-01, SESS-16).
+# Signalled, it ends an interactive Claude Code session instead of
+# interrupting the turn, so "interrupt" is focus plus Esc (PR-27) and no code
+# may ever send it -- by name, or as the bare number 2. Receiving it (the
+# service's own shutdown handler) is not a kill call and stays allowed. The
+# plugin has no process-launching path today; the scan is cheap and closes
+# the gap if Electron process access is ever used there. ---
+SIGNAL_OWNERS=$(printf '%s\n' "$SRC_FILES" | grep -E '^packages/(service|collectors|plugin)/' || true)
+# shellcheck disable=SC2086
+check_rule \
+  "a file sends the interrupt signal to a process (PR-01: it ends a Claude Code session; interrupt is focus plus Esc)" \
+  "kill[[:space:]]*[(][^)]*SIGINT|kill[[:space:]]*[(][^)]*,[[:space:]]*2[[:space:]]*[)]" \
+  $SIGNAL_OWNERS
+
+# --- Rule 9: no non-test file casts to the CapabilityToken type (PR-26,
+# ADR-0012, PATTERNS correction 4). A write method typed on a capability is
+# only a choke point while nothing but the approval engine can produce one;
+# a cast is the one way around the type. Tests may cast locally to exercise
+# a capability-typed method, so files named *.test.* are exempt. ---
+NON_TEST_FILES=$(printf '%s\n' "$SRC_FILES" | grep -v '[.]test[.]' || true)
+# shellcheck disable=SC2086
+check_rule \
+  "a non-test file casts to CapabilityToken (only the approval engine issues one; tests may cast locally)" \
+  "(^|[^A-Za-z0-9_])as[[:space:]]+CapabilityToken|[=(,][[:space:]]*<CapabilityToken" \
+  $NON_TEST_FILES
+
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
+echo "scripts/check-boundaries.sh: checked ${RULES} rules."
 echo "scripts/check-boundaries.sh: scanned ${FILE_COUNT} tracked source files, ${FAILURES} rule(s) violated."
 
 if [ "$FAILURES" -gt 0 ]; then

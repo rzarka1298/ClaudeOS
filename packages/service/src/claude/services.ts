@@ -1,6 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { newRunId } from "@ccc/domain";
+import { newRunId, type SessionTerminator } from "@ccc/domain";
 import { getSessionOverride, type OperationalStore } from "@ccc/operational-store";
 import type { Logger } from "pino";
 import type { EventBus } from "../events/event-bus.js";
@@ -25,6 +25,7 @@ import { createStoreProjectLookup } from "./project-lookup.js";
 import type { ClaudeRouteDeps } from "./routes.js";
 import { nodeOpenFile, type SessionActionDeps } from "./session-action-routes.js";
 import { type SpoolPoller, startSpoolPoller } from "./spool-poller.js";
+import { createTerminateExecutor } from "./terminate-executor.js";
 
 /** The spool poll interval (D-08: at most 2 s); `CCC_SPOOL_POLL_MS` shrinks it for tests. */
 const DEFAULT_SPOOL_POLL_MS = 2000;
@@ -42,6 +43,13 @@ export interface ClaudeServices {
   readonly sweeper: LivenessSweeper;
   /** What `createRequestListener` carries as `RouteContext.claude`. */
   readonly routeDeps: ClaudeRouteDeps;
+  /**
+   * The force-terminate executor (05-14), typed on
+   * `CapabilityToken<"session.force-terminate">`. Deliberately NOT in
+   * `routeDeps`: no route can reach it. It is here for the Phase 6 approval
+   * engine, the only issuer of that token, to run after the owner approves.
+   */
+  readonly terminator: SessionTerminator;
   /**
    * Stops the liveness sweeper (awaiting its in-flight sweep), the poller
    * (awaiting its in-flight tick), then the pipeline
@@ -147,6 +155,17 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     mintRunId: newRunId,
   };
 
+  const terminator = createTerminateExecutor({
+    db: store.db,
+    pipeline,
+    processFacts,
+    kill: (pid, signal) => {
+      process.kill(pid, signal);
+    },
+    now: () => new Date(),
+    logger,
+  });
+
   const drained = await poller.drainNow();
   logger.info({ count: drained, dropped: poller.dropCount() }, "startup: drained hook spool");
   // D-22: after recovery turned every non-terminal Run stale and the drain
@@ -162,6 +181,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     poller,
     sweeper,
     routeDeps: { pipeline, actions },
+    terminator,
     async stop() {
       // The sweeper first: its evidence goes through the pipeline, which
       // must still be accepting work, and nothing may sweep a closed store.

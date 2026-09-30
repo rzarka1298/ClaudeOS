@@ -220,6 +220,33 @@ A missing lifecycle event never produces an invented terminal state
 `Stale` freshness badge. The thresholds are the starting values in the list
 above. 05-11 tunes them, and 05-14 records the tuned values here.
 
+### Tuned values
+
+Recorded by 05-14 from the 05-08, 05-11 and 05-12 summaries. Each timing has
+an environment knob so tests can shrink it; the defaults below are what the
+owner's service runs with.
+
+| Setting | Default | Knob | Set by |
+|---------|---------|------|--------|
+| Liveness sweep interval | 5 s | `CCC_LIVENESS_SWEEP_MS` | 05-11 |
+| Grace before `pid-gone` | 10 s | `CCC_LIVENESS_GRACE_MS` | 05-11 |
+| Start timeout (queued or starting, no `SessionStart`) | 60 s | `CCC_START_TIMEOUT_MS` | 05-11 |
+| PID-less inactivity threshold | 30 min | `CCC_PIDLESS_INACTIVITY_MS` | 05-11 |
+| Stale revival window after restart | 24 h | none | 05-11 |
+| Re-attribution window for ended Runs | 7 days | none | 05-11 |
+| Spool poll interval (at most) | 2 s | `CCC_SPOOL_POLL_MS` | 05-08 |
+| Activity-only write coalescing | 5 s per Run | none | 05-08 |
+| Transcript sweep interval | 5 min | `CCC_TRANSCRIPT_SWEEP_MS` | 05-12 |
+| Integration-status refresh | 60 s | `CCC_INTEGRATION_REFRESH_MS` | 05-12 |
+| Transcript read chunk (cap) | 256 KiB | none | 05-12 |
+| Version probe timeout | 3 s | none | 05-12 |
+
+The sweep lands `pid-gone` within one sweep interval plus the grace, so a
+silently dead session reads as unknown within about 15 s. The PID-less
+threshold is a Claude's Discretion value: 30 minutes with no event while not
+idle. The measured PERF-04 path below (p50 34 to 35 ms, p95 37 to 40 ms over
+three runs) sits far inside its 2 s p95 budget.
+
 ### Measured PERF-04 path
 
 Plan 05-08 measured the real compiled hook against the real built service.
@@ -300,6 +327,28 @@ for milestone 2.
   −1743 maps to `automation-denied` with the specific error within 5 s.
   iTerm2's `tty`/`select` script ships labelled unverified, because iTerm2 was
   not installed on the dev Mac. It falls back to activating the app.
+- **Timings and guards (05-14).**
+  - Focus answers within 5 s overall; each `osascript` or `open` call has a
+    4 s timeout of its own, so its failure is still mapped inside the budget.
+    The Terminal.app and iTerm2 scripts are module constants that receive the
+    tty only as `argv`, after `^ttys[0-9]{3,}$` validation. Activation passes
+    the validated `.app` bundle path found in the Claude PID's ancestry to
+    `open -a`: the ancestry names the bundle path, not its identifier. A
+    Claude Code background session (under `ClaudeCode.app`) answers
+    `background-session`.
+  - Force-terminate waits a 10 s grace (`DEFAULT_TERMINATE_GRACE_MS`) after
+    `SIGTERM`, polling every 200 ms. It re-verifies the PID's start time
+    before `SIGKILL`, then watches for up to 5 s more. If the PID outlives
+    that, the liveness sweep records the same `pid-gone` later, so the Run
+    is never finalized early.
+  - Resume and branch give the terminal launcher 5 s before answering
+    `timeout`. Reveal and open of a transcript use a 3 s `open` timeout.
+- **Backstop rules 8 and 9.** `scripts/check-boundaries.sh` rule 8 fails the
+  build on any kill call in `packages/service`, `packages/collectors` or
+  `packages/plugin` that names `SIGINT` (or the bare number 2). Rule 9 fails
+  it on any cast to `CapabilityToken` in a non-test file. Together with the
+  executor's `TerminateSignal` type, which admits only `SIGTERM` and
+  `SIGKILL`, these keep the two forbidden paths unreachable in source.
 
 ## Status-line wrapper
 
