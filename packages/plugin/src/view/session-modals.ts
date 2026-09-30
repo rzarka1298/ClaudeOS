@@ -463,6 +463,203 @@ export class AssociateProjectModal extends FuzzySuggestModal<ProjectOption> {
 }
 
 // ---------------------------------------------------------------------------
+// S4-b: transcript plaintext warning (SESS-15, D-34) -- shown on EVERY open
+// ---------------------------------------------------------------------------
+
+export interface ModalButtonView {
+  readonly label: string;
+  readonly cta: boolean;
+  readonly destructive: boolean;
+}
+
+export interface TranscriptWarningViewModel {
+  readonly title: string;
+  readonly bodies: readonly [string, string];
+  readonly buttons: readonly [ModalButtonView, ModalButtonView, ModalButtonView];
+  readonly initialFocus: "cancel";
+}
+
+const TRANSCRIPT_WARNING_TITLE = "Open this transcript?";
+const TRANSCRIPT_WARNING_BODY_1 =
+  "Claude Code stores this transcript on your Mac as plain text. Anything readable by your user account can read it.";
+const SHOW_IN_FINDER_LABEL = "Show in Finder";
+const OPEN_WITH_DEFAULT_APP_LABEL = "Open with default app";
+const CANCEL_LABEL = "Cancel";
+
+/**
+ * The whole DECISION for S4-b: title, both body paragraphs (the second
+ * naming the actual retention period), and the three fixed buttons. There is
+ * NO "don't show again" or remember field anywhere in this shape -- by
+ * requirement (SESS-15), the warning is never cached or skipped, so the
+ * decision this function returns has nothing for a caller to persist.
+ */
+export function transcriptWarningViewModel(cleanupPeriodDays: number): TranscriptWarningViewModel {
+  return {
+    title: TRANSCRIPT_WARNING_TITLE,
+    bodies: [
+      TRANSCRIPT_WARNING_BODY_1,
+      `Claude Code deletes it after ${cleanupPeriodDays} days (its cleanupPeriodDays setting). This app doesn't manage, copy or protect it.`,
+    ],
+    buttons: [
+      { label: SHOW_IN_FINDER_LABEL, cta: true, destructive: false },
+      { label: OPEN_WITH_DEFAULT_APP_LABEL, cta: false, destructive: false },
+      { label: CANCEL_LABEL, cta: false, destructive: false },
+    ],
+    initialFocus: "cancel",
+  };
+}
+
+/** What `openTranscriptWarning` resolves to. */
+export type TranscriptChoice = "reveal" | "open" | "cancel";
+
+/**
+ * A thin renderer over {@link transcriptWarningViewModel}. Single-settle,
+ * like every other modal here: `onClose` (Escape, a click outside) resolves
+ * `"cancel"`. Renders no checkbox -- there is nothing in the view model to
+ * back one with (SESS-15, D-34).
+ */
+export class TranscriptWarningModal extends Modal {
+  private readonly vm: TranscriptWarningViewModel;
+  private readonly decide: (choice: TranscriptChoice) => void;
+  private settled = false;
+
+  constructor(
+    app: App,
+    vm: TranscriptWarningViewModel,
+    decide: (choice: TranscriptChoice) => void,
+  ) {
+    super(app);
+    this.vm = vm;
+    this.decide = decide;
+  }
+
+  private settle(choice: TranscriptChoice): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.decide(choice);
+  }
+
+  onOpen(): void {
+    const { titleEl, contentEl } = this;
+    titleEl.setText(this.vm.title);
+    for (const body of this.vm.bodies) {
+      contentEl.createEl("p", { text: body });
+    }
+    const buttonRow = contentEl.createDiv();
+    const [reveal, open, cancel] = this.vm.buttons;
+    new ButtonComponent(buttonRow)
+      .setButtonText(reveal.label)
+      .setCta()
+      .onClick(() => {
+        this.settle("reveal");
+        this.close();
+      });
+    new ButtonComponent(buttonRow).setButtonText(open.label).onClick(() => {
+      this.settle("open");
+      this.close();
+    });
+    new ButtonComponent(buttonRow).setButtonText(cancel.label).onClick(() => {
+      this.settle("cancel");
+      this.close();
+    });
+  }
+
+  onClose(): void {
+    this.settle("cancel");
+    this.contentEl.empty();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// S4-c: force-terminate request (SESS-16, D-01) -- live after Phase 6 (PR-26)
+// ---------------------------------------------------------------------------
+
+export interface TerminateRequestViewModel {
+  readonly title: string;
+  readonly bodies: readonly [string, string, string];
+  readonly buttons: readonly [ModalButtonView, ModalButtonView];
+  readonly initialFocus: "cancel";
+}
+
+const TERMINATE_REQUEST_TITLE = "Request force-terminate?";
+const SEND_TO_APPROVAL_INBOX_LABEL = "Send to approval inbox";
+
+/**
+ * The whole DECISION for S4-c: title, the three body paragraphs, and the two
+ * buttons. There is NO typed-confirmation field anywhere in this shape (D-01)
+ * -- the destructive primary button IS the whole confirmation, same as
+ * `delete-usage-modal.ts`'s.
+ */
+export function terminateRequestViewModel(
+  sessionName: string,
+  projectName: string,
+  graceSeconds: number,
+): TerminateRequestViewModel {
+  return {
+    title: TERMINATE_REQUEST_TITLE,
+    bodies: [
+      `This sends a request to the approval inbox to stop ${sessionName} in ${projectName}.`,
+      `Once you approve it there, the process gets a terminate signal, then a kill signal if it's still running after ${graceSeconds} seconds. Work in progress in that session is lost.`,
+      "Nothing happens until you approve it.",
+    ],
+    buttons: [
+      { label: SEND_TO_APPROVAL_INBOX_LABEL, cta: true, destructive: true },
+      { label: CANCEL_LABEL, cta: false, destructive: false },
+    ],
+    initialFocus: "cancel",
+  };
+}
+
+/** What `openTerminateRequest` resolves to. */
+export type TerminateChoice = "send" | "cancel";
+
+/** A thin renderer over {@link terminateRequestViewModel}. Single-settle; `onClose` resolves `"cancel"`. */
+export class TerminateRequestModal extends Modal {
+  private readonly vm: TerminateRequestViewModel;
+  private readonly decide: (choice: TerminateChoice) => void;
+  private settled = false;
+
+  constructor(app: App, vm: TerminateRequestViewModel, decide: (choice: TerminateChoice) => void) {
+    super(app);
+    this.vm = vm;
+    this.decide = decide;
+  }
+
+  private settle(choice: TerminateChoice): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.decide(choice);
+  }
+
+  onOpen(): void {
+    const { titleEl, contentEl } = this;
+    titleEl.setText(this.vm.title);
+    for (const body of this.vm.bodies) {
+      contentEl.createEl("p", { text: body });
+    }
+    const buttonRow = contentEl.createDiv();
+    const [send, cancel] = this.vm.buttons;
+    new ButtonComponent(buttonRow)
+      .setButtonText(send.label)
+      .setDestructive()
+      .setCta()
+      .onClick(() => {
+        this.settle("send");
+        this.close();
+      });
+    new ButtonComponent(buttonRow).setButtonText(cancel.label).onClick(() => {
+      this.settle("cancel");
+      this.close();
+    });
+  }
+
+  onClose(): void {
+    this.settle("cancel");
+    this.contentEl.empty();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Production UI seam (Tasks 2-3 build it up; Task 3 adds the remaining openers)
 // ---------------------------------------------------------------------------
 
@@ -491,6 +688,16 @@ export function createObsidianSessionActionUi(app: App): SessionActionUi {
     ): Promise<ProjectOption | null> {
       return new Promise<ProjectOption | null>((resolve) => {
         new AssociateProjectModal(app, sessionName, projects, resolve).open();
+      });
+    },
+    openTranscriptWarning(vm: TranscriptWarningViewModel): Promise<TranscriptChoice> {
+      return new Promise<TranscriptChoice>((resolve) => {
+        new TranscriptWarningModal(app, vm, resolve).open();
+      });
+    },
+    openTerminateRequest(vm: TerminateRequestViewModel): Promise<TerminateChoice> {
+      return new Promise<TerminateChoice>((resolve) => {
+        new TerminateRequestModal(app, vm, resolve).open();
       });
     },
   };

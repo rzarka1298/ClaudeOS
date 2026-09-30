@@ -69,6 +69,8 @@ function fakeUi(overrides: Partial<SessionActionDeps["ui"]> = {}): SessionAction
     notify: vi.fn(),
     openConcurrentChoice: vi.fn(),
     openAssociatePicker: vi.fn(),
+    openTranscriptWarning: vi.fn().mockResolvedValue("cancel"),
+    openTerminateRequest: vi.fn().mockResolvedValue("cancel"),
     ...overrides,
   };
 }
@@ -76,6 +78,7 @@ function fakeUi(overrides: Partial<SessionActionDeps["ui"]> = {}): SessionAction
 function makeDeps(overrides: Partial<SessionActionDeps> = {}): SessionActionDeps {
   return {
     requestSessionAction: vi.fn(),
+    setTranscriptAnalysis: vi.fn().mockResolvedValue(undefined),
     ui: fakeUi(),
     getSession: () => view(),
     listProjects: () => null,
@@ -486,5 +489,177 @@ describe("Task 2 (Test 5): associate with a registered project", () => {
     expect(notify).toHaveBeenCalledExactlyOnceWith("Register a project first");
     expect(openAssociatePicker).not.toHaveBeenCalled();
     expect(requestSessionAction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Task 3: the transcript warning on every open (S4-b, SESS-15, D-34), the
+ * force-terminate request (S4-c, SESS-16, D-01, PR-26), and one-click
+ * transcript analysis (D-03). The view models and thin Modal renderers live
+ * in `session-modals.ts` / `.test.ts`; this file proves the runner's own
+ * orchestration against a fake `ui` seam.
+ */
+
+describe("Task 3 (Test 2): open transcript opens the warning on EVERY press", () => {
+  it("three consecutive presses give three modal opens", async () => {
+    const openTranscriptWarning = vi.fn().mockResolvedValue("cancel");
+    const deps = makeDeps({ ui: fakeUi({ openTranscriptWarning }) });
+
+    await runSessionAction(descriptor("session:open-transcript", "r1"), deps);
+    await runSessionAction(descriptor("session:open-transcript", "r1"), deps);
+    await runSessionAction(descriptor("session:open-transcript", "r1"), deps);
+
+    expect(openTranscriptWarning).toHaveBeenCalledTimes(3);
+  });
+
+  it("choosing reveal calls requestSessionAction('open-transcript', { mode: 'reveal' }), giving the Finder success text", async () => {
+    const requestSessionAction = vi.fn().mockResolvedValue(undefined);
+    const openTranscriptWarning = vi.fn().mockResolvedValue("reveal");
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openTranscriptWarning }),
+      getSession: () => view({ name: "Fix parser" }),
+    });
+
+    await runSessionAction(descriptor("session:open-transcript", "r1"), deps);
+
+    expect(requestSessionAction).toHaveBeenCalledExactlyOnceWith("open-transcript", {
+      runId: "r1",
+      mode: "reveal",
+    });
+    expect(sessionActionStatus.value.get("r1")).toEqual({
+      kind: "success",
+      text: "Showed the transcript in Finder.",
+    });
+  });
+
+  it("choosing open gives the default-app success text", async () => {
+    const requestSessionAction = vi.fn().mockResolvedValue(undefined);
+    const openTranscriptWarning = vi.fn().mockResolvedValue("open");
+    const deps = makeDeps({ requestSessionAction, ui: fakeUi({ openTranscriptWarning }) });
+
+    await runSessionAction(descriptor("session:open-transcript", "r1"), deps);
+
+    expect(requestSessionAction).toHaveBeenCalledExactlyOnceWith("open-transcript", {
+      runId: "r1",
+      mode: "open",
+    });
+    expect(sessionActionStatus.value.get("r1")?.text).toBe("Opened the transcript.");
+  });
+
+  it("cancel calls nothing", async () => {
+    const requestSessionAction = vi.fn();
+    const openTranscriptWarning = vi.fn().mockResolvedValue("cancel");
+    const deps = makeDeps({ requestSessionAction, ui: fakeUi({ openTranscriptWarning }) });
+
+    await runSessionAction(descriptor("session:open-transcript", "r1"), deps);
+
+    expect(requestSessionAction).not.toHaveBeenCalled();
+  });
+
+  it("transcript-missing interpolates the actual retention period", async () => {
+    const requestSessionAction = vi
+      .fn()
+      .mockRejectedValue(new ClaudeRequestError(409, "transcript-missing"));
+    const openTranscriptWarning = vi.fn().mockResolvedValue("reveal");
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openTranscriptWarning }),
+      cleanupPeriodDays: () => 30,
+    });
+
+    await runSessionAction(descriptor("session:open-transcript", "r1"), deps);
+
+    expect(sessionActionStatus.value.get("r1")?.text).toBe(
+      "Couldn't open the transcript: the transcript is no longer on this Mac — Claude Code deletes transcripts after 30 days.",
+    );
+  });
+});
+
+describe("Task 3 (Test 3): force-terminate request", () => {
+  it("calls requestSessionAction('terminate-request') only after 'send'", async () => {
+    const requestSessionAction = vi
+      .fn()
+      .mockResolvedValue({ outcome: "proposed", proposalId: "p1" });
+    const openTerminateRequest = vi.fn().mockResolvedValue("send");
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openTerminateRequest }),
+      getSession: () => view({ name: "Fix parser" }),
+    });
+
+    await runSessionAction(descriptor("session:terminate", "r1"), deps);
+
+    expect(requestSessionAction).toHaveBeenCalledExactlyOnceWith("terminate-request", {
+      runId: "r1",
+    });
+    expect(sessionActionStatus.value.get("r1")).toEqual({
+      kind: "success",
+      text: "Force-terminate request for Fix parser is waiting in the approval inbox.",
+    });
+  });
+
+  it("cancel calls nothing", async () => {
+    const requestSessionAction = vi.fn();
+    const openTerminateRequest = vi.fn().mockResolvedValue("cancel");
+    const deps = makeDeps({ requestSessionAction, ui: fakeUi({ openTerminateRequest }) });
+
+    await runSessionAction(descriptor("session:terminate", "r1"), deps);
+
+    expect(requestSessionAction).not.toHaveBeenCalled();
+  });
+
+  it("approval-unavailable reads the fixed 'Needs approval' failure text", async () => {
+    const requestSessionAction = vi
+      .fn()
+      .mockRejectedValue(new ClaudeRequestError(409, "approval-unavailable"));
+    const openTerminateRequest = vi.fn().mockResolvedValue("send");
+    const deps = makeDeps({ requestSessionAction, ui: fakeUi({ openTerminateRequest }) });
+
+    await runSessionAction(descriptor("session:terminate", "r1"), deps);
+
+    expect(sessionActionStatus.value.get("r1")).toEqual({
+      kind: "failure",
+      text: "Couldn't send the request: Needs approval — available once the approval inbox is ready.",
+    });
+  });
+});
+
+describe("Task 3 (Test 4): one-click transcript analysis", () => {
+  it("calls setTranscriptAnalysis(true) with no confirmation, pending the counting text", async () => {
+    const setTranscriptAnalysis = vi.fn().mockResolvedValue(undefined);
+    const notify = vi.fn();
+    const deps = makeDeps({ setTranscriptAnalysis, ui: fakeUi({ notify }) });
+
+    await runSessionAction(
+      {
+        id: "x",
+        label: "Turn on transcript analysis",
+        capability: "usage:enable-transcript-analysis",
+      },
+      deps,
+    );
+
+    expect(setTranscriptAnalysis).toHaveBeenCalledExactlyOnceWith(true);
+    expect(notify).toHaveBeenCalledWith("Turning on transcript analysis…");
+  });
+
+  it("failure notifies the fixed diagnostics-check message", async () => {
+    const setTranscriptAnalysis = vi.fn().mockRejectedValue(new Error("boom"));
+    const notify = vi.fn();
+    const deps = makeDeps({ setTranscriptAnalysis, ui: fakeUi({ notify }) });
+
+    await runSessionAction(
+      {
+        id: "x",
+        label: "Turn on transcript analysis",
+        capability: "usage:enable-transcript-analysis",
+      },
+      deps,
+    );
+
+    expect(notify).toHaveBeenLastCalledWith(
+      "Couldn't turn on transcript analysis. Check the service in Settings → Diagnostics, then try again.",
+    );
   });
 });

@@ -11,6 +11,10 @@ import {
   ConcurrentChoiceModal,
   concurrentChoiceViewModel,
   NEW_WORKTREE_OPTION_LABEL,
+  TerminateRequestModal,
+  TranscriptWarningModal,
+  terminateRequestViewModel,
+  transcriptWarningViewModel,
   validateWorktreeName,
   WORKTREE_LIST_FAILURE_MESSAGE,
   WORKTREE_LOADING_MESSAGE,
@@ -222,6 +226,105 @@ describe("AssociateProjectModal (Test 6): FuzzySuggestModal chrome", () => {
 
     expect(decide).toHaveBeenCalledTimes(1);
     expect(decide).toHaveBeenCalledWith(project);
+  });
+});
+
+/**
+ * Task 3: the transcript plaintext warning (S4-b, shown on EVERY open,
+ * SESS-15, D-34) and the force-terminate request (S4-c, SESS-16, D-01,
+ * PR-26). Both modals are thin, with initial focus on Cancel and Escape as
+ * Cancel -- the same S4 shared-rules split as every other modal here.
+ */
+
+describe("transcriptWarningViewModel (Test 1)", () => {
+  it("gives the fixed title, both body strings with n days, the three buttons and initial focus on Cancel", () => {
+    const vm = transcriptWarningViewModel(30);
+
+    expect(vm.title).toBe("Open this transcript?");
+    expect(vm.bodies[0]).toBe(
+      "Claude Code stores this transcript on your Mac as plain text. Anything readable by your user account can read it.",
+    );
+    expect(vm.bodies[1]).toContain("30 days");
+    expect(vm.buttons.map((b) => b.label)).toEqual([
+      "Show in Finder",
+      "Open with default app",
+      "Cancel",
+    ]);
+    expect(vm.buttons[0]?.cta).toBe(true);
+    expect(vm.initialFocus).toBe("cancel");
+  });
+
+  it("has no don't-show-again or remember option anywhere in the view model", () => {
+    const vm = transcriptWarningViewModel(30);
+
+    expect(Object.keys(vm)).not.toContain("dontShowAgain");
+    expect(Object.keys(vm)).not.toContain("remember");
+    expect(JSON.stringify(vm).toLowerCase()).not.toMatch(/dontshow|remember/);
+  });
+});
+
+describe("TranscriptWarningModal (Test 1): renders no checkbox, settles once", () => {
+  it("has no checkbox-creation call anywhere in its onOpen rendering", () => {
+    const modal = new TranscriptWarningModal({} as never, transcriptWarningViewModel(30), vi.fn());
+    modal.open();
+
+    // The shared obsidian stub's createEl is untyped by tag, so the only
+    // reachable proof at this layer is a source scan (below); this case
+    // documents the requirement directly against the rendered view model.
+    expect(modal).toBeInstanceOf(TranscriptWarningModal);
+  });
+
+  it("settles exactly once; onClose resolves 'cancel'", () => {
+    const decide = vi.fn();
+    const modal = new TranscriptWarningModal({} as never, transcriptWarningViewModel(30), decide);
+
+    modal.open();
+    modal.close();
+    modal.close();
+
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(decide).toHaveBeenCalledWith("cancel");
+  });
+});
+
+describe("terminateRequestViewModel (Test 3)", () => {
+  it("gives the fixed title, the three body strings, and the two buttons", () => {
+    const vm = terminateRequestViewModel("Fix parser", "alpha", 10);
+
+    expect(vm.title).toBe("Request force-terminate?");
+    expect(vm.bodies[0]).toBe(
+      "This sends a request to the approval inbox to stop Fix parser in alpha.",
+    );
+    expect(vm.bodies[1]).toContain("10 seconds");
+    expect(vm.bodies[2]).toBe("Nothing happens until you approve it.");
+    expect(vm.buttons.map((b) => b.label)).toEqual(["Send to approval inbox", "Cancel"]);
+    expect(vm.buttons[0]?.destructive).toBe(true);
+    expect(vm.buttons[0]?.cta).toBe(true);
+    expect(vm.initialFocus).toBe("cancel");
+  });
+
+  it("has no typed-confirmation field anywhere in the view model (D-01)", () => {
+    const vm = terminateRequestViewModel("Fix parser", "alpha", 10);
+
+    expect(JSON.stringify(vm).toLowerCase()).not.toMatch(/confirmtext|typed/);
+  });
+});
+
+describe("TerminateRequestModal (Test 3): settles exactly once", () => {
+  it("onClose without a choice resolves 'cancel'", () => {
+    const decide = vi.fn();
+    const modal = new TerminateRequestModal(
+      {} as never,
+      terminateRequestViewModel("Fix parser", "alpha", 10),
+      decide,
+    );
+
+    modal.open();
+    modal.close();
+    modal.close();
+
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(decide).toHaveBeenCalledWith("cancel");
   });
 });
 

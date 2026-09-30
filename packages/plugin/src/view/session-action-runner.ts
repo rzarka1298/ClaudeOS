@@ -5,6 +5,7 @@ import type {
   LaunchChoice,
   ResumeResponse,
   SessionActionErrorCode,
+  TerminateRequestResponse,
   WorktreeListResponse,
 } from "@ccc/domain/session-actions.js";
 import { ClaudeRequestError } from "@ccc/service-api-client";
@@ -15,6 +16,10 @@ import {
   type ConcurrentChoiceViewModel,
   concurrentChoiceViewModel,
   type ProjectOption,
+  type TerminateChoice,
+  type TerminateRequestViewModel,
+  type TranscriptChoice,
+  type TranscriptWarningViewModel,
   type WorktreeListResult,
 } from "./session-modals.js";
 
@@ -67,6 +72,10 @@ export interface SessionActionUi {
     sessionName: string,
     projects: readonly ProjectOption[],
   ) => Promise<ProjectOption | null>;
+  /** Opens the transcript plaintext warning (S4-b) -- on EVERY press, never cached (SESS-15, D-34). */
+  readonly openTranscriptWarning: (vm: TranscriptWarningViewModel) => Promise<TranscriptChoice>;
+  /** Opens the force-terminate request (S4-c). There is no typed-confirmation shortcut (D-01). */
+  readonly openTerminateRequest: (vm: TerminateRequestViewModel) => Promise<TerminateChoice>;
 }
 
 /**
@@ -85,6 +94,8 @@ export interface SessionActionRequestMap {
   branch: { request: { runId: string; choice?: LaunchChoice }; response: BranchResponse };
   worktrees: { request: { runId: string }; response: WorktreeListResponse };
   associate: { request: { runId: string; projectId: string }; response: unknown };
+  "open-transcript": { request: { runId: string; mode: "reveal" | "open" }; response: unknown };
+  "terminate-request": { request: { runId: string }; response: TerminateRequestResponse };
 }
 
 /**
@@ -97,6 +108,8 @@ export interface SessionActionDeps {
     action: K,
     body: SessionActionRequestMap[K]["request"],
   ): Promise<SessionActionRequestMap[K]["response"]>;
+  /** Turns transcript analysis on or off (D-03). Task 3's only caller passes `true` -- a direct gesture, no confirmation. */
+  setTranscriptAnalysis(enabled: boolean): Promise<unknown>;
   readonly ui: SessionActionUi;
   /** `null` when the Run is not (yet) loaded into the signal store. */
   getSession(runId: string): SessionView | null;
