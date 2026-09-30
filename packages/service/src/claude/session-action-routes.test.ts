@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { realpath } from "node:fs/promises";
 import http, { type Server } from "node:http";
 import { homedir } from "node:os";
@@ -24,7 +32,9 @@ import {
 } from "@ccc/domain";
 import {
   applyMigrations,
+  getSessionOverride,
   getSessionRun,
+  latestRunBySession,
   listSessionRunsForView,
   type OperationalStore,
   openStore,
@@ -42,6 +52,7 @@ const env = vi.hoisted(() => {
   return { base };
 });
 
+import type { Logger } from "pino";
 import { createEventBus, type EventBus } from "../events/event-bus.js";
 import { createLogger } from "../logging.js";
 import { createRequestListener } from "../routes.js";
@@ -50,6 +61,7 @@ import {
   FakeProposeForceTerminate,
   FakeSessionTerminalLauncher,
 } from "../test-support/fake-ports.js";
+import { createAttribution } from "./attribution.js";
 import { approvalUnavailableProposer, unconfiguredTerminalLauncher } from "./default-ports.js";
 import { READ_ONLY_GIT_ARGV, type RunGit, runGit } from "./git-readonly.js";
 import { createLaunchGuard, listWorktrees } from "./launch-guard.js";
@@ -58,6 +70,7 @@ import {
   createClaudePipeline,
   type SessionFactsProvider,
 } from "./pipeline.js";
+import { createSessionFactsProvider, type ProcessFacts } from "./process-facts.js";
 import { createStoreProjectLookup } from "./project-lookup.js";
 import type { SessionActionDeps } from "./session-action-routes.js";
 
@@ -220,6 +233,9 @@ let proposer: FakeProposeForceTerminate;
 let gitCalls: string[][];
 let repo: string;
 let claudeBin: string | null;
+let openCalls: string[][];
+let facts: SessionFactsProvider;
+let logger: Logger;
 
 const spyGit: RunGit = (cwd, argv, options) => {
   gitCalls.push([...argv]);
@@ -233,15 +249,21 @@ beforeEach(async () => {
   store = openStore(join(dir, "operational.db"));
   applyMigrations(store.db);
   bus = createEventBus();
-  const logger = createLogger(join(dir, "logs", "service.log"));
+  logger = createLogger(join(dir, "logs", "service.log"));
+  facts = NULL_FACTS;
   pipeline = createClaudePipeline({
     db: store.db,
     bus,
     logger,
     now: () => new Date(),
     mintRunId: newRunId,
-    facts: NULL_FACTS,
+    // Swappable per test: the associate test needs real attribution.
+    facts: {
+      factsFor: (record) => facts.factsFor(record),
+      deferredFactsFor: (record) => facts.deferredFactsFor?.(record) ?? null,
+    },
   });
+  openCalls = [];
   fake = new FakeSessionTerminalLauncher();
   launcher = fake;
   proposer = new FakeProposeForceTerminate();
@@ -262,7 +284,9 @@ beforeEach(async () => {
     proposer: { propose: (req) => proposer.propose(req) },
     claudeBin: () => claudeBin,
     claudeProjectsRoot: join(dir, "claude", "projects"),
-    openFile: async () => {},
+    openFile: async (args) => {
+      openCalls.push([...args]);
+    },
     now: () => new Date(),
     mintRunId: newRunId,
   };
@@ -574,6 +598,250 @@ describe("every session action is authenticated and answers a fixed code (Test 6
   });
 });
 
+describe("POST /api/v1/sessions/branch (Task 2 Test 1, SESS-14, D-33, PR-10)", () => {
+  it("launches --resume S --fork-session --session-id U and pre-registers the linked fork", async () => {
+    const token = await handshake();
+    const source = seedRun({ projectId: "alpha", state: "running" });
+
+    const res = await post<{ outcome: string; childRunId: RunId }>(
+      SESSION_BRANCH_PATH,
+      { runId: source.runId },
+      token,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.outcome).toBe("launched");
+    expect(fake.requests).toHaveLength(1);
+    const [launch] = fake.requests;
+    const argv = launch?.argv ?? [];
+    expect(argv.slice(0, 5)).toEqual([
+      CLAUDE_BIN,
+      "--resume",
+      source.claudeSessionId,
+      "--fork-session",
+      "--session-id",
+    ]);
+    expect(argv).toHaveLength(6);
+    const forkId = argv[5] as string;
+    expect(forkId).toMatch(UUID);
+    expect(forkId).not.toBe(source.claudeSessionId);
+    expect(launch?.cwd).toBe(repo);
+    expect(launch?.env).toEqual({
+      CCC_RUN_ID: res.body.childRunId,
+      CCC_LAUNCH_SOURCE: "dashboard",
+    });
+
+    expect(getSessionRun(store.db, res.body.childRunId)).toMatchObject({
+      state: "starting",
+      claudeSessionId: forkId,
+      linkKind: "fork",
+      linkedFromRunId: source.runId,
+    });
+  });
+
+  it("runs the guard exactly as resume does", async () => {
+    const token = await handshake();
+    const source = seedRun({ projectId: "alpha" });
+    seedRun({ state: "running", permissionMode: "auto", worktreeRoot: repo, name: "Writer" });
+
+    const first = await post(SESSION_BRANCH_PATH, { runId: source.runId }, token);
+    expect(first.body).toMatchObject({ outcome: "conflict", projectName: "Alpha" });
+    expect(fake.requests).toHaveLength(0);
+
+    const planned = await post<{ outcome: string }>(
+      SESSION_BRANCH_PATH,
+      { runId: source.runId, choice: { kind: "plan" } },
+      token,
+    );
+    expect(planned.body.outcome).toBe("launched");
+    expect(fake.requests.at(-1)?.argv.slice(-2)).toEqual(["--permission-mode", "plan"]);
+    expect(fake.requests.at(-1)?.argv.slice(1, 4)).toEqual([
+      "--resume",
+      source.claudeSessionId,
+      "--fork-session",
+    ]);
+  });
+
+  it("refuses a Run without a session id and an unknown Run", async () => {
+    const token = await handshake();
+    const noSession = seedRun({ claudeSessionId: null, projectId: "alpha" });
+    expect(await post(SESSION_BRANCH_PATH, { runId: noSession.runId }, token)).toMatchObject({
+      status: 409,
+      body: { error: "invalid-state" },
+    });
+    expect(await post(SESSION_BRANCH_PATH, { runId: newRunId() }, token)).toMatchObject({
+      status: 404,
+      body: { error: "run-not-found" },
+    });
+    expect(fake.requests).toHaveLength(0);
+  });
+});
+
+describe("POST /api/v1/sessions/open-transcript (Task 2 Tests 2-3, SESS-15, D-34, PR-07)", () => {
+  function transcriptFile(sessionId: string): string {
+    const folder = join(dir, "claude", "projects", "-code-alpha");
+    mkdirSync(folder, { recursive: true });
+    const file = join(folder, `${sessionId}.jsonl`);
+    writeFileSync(file, "{}\n");
+    return file;
+  }
+
+  it("reveals with open -R, or opens with the default app, only the Run's own transcript", async () => {
+    const token = await handshake();
+    const sessionId = randomUUID();
+    const file = transcriptFile(sessionId);
+    const run = seedRun({ claudeSessionId: sessionId, transcriptPath: file });
+
+    const reveal = await post(
+      SESSION_OPEN_TRANSCRIPT_PATH,
+      { runId: run.runId, mode: "reveal" },
+      token,
+    );
+    expect(reveal.status).toBe(200);
+    expect(reveal.body).toEqual({ outcome: "opened" });
+    expect(openCalls).toEqual([["-R", file]]);
+
+    const open = await post(
+      SESSION_OPEN_TRANSCRIPT_PATH,
+      { runId: run.runId, mode: "open" },
+      token,
+    );
+    expect(open.status).toBe(200);
+    expect(openCalls.at(-1)).toEqual([file]);
+    expect(JSON.stringify(reveal.body) + JSON.stringify(open.body)).not.toContain(dir);
+  });
+
+  it("answers transcript-missing for a deleted file and for a Run with no transcript", async () => {
+    const token = await handshake();
+    const sessionId = randomUUID();
+    const file = transcriptFile(sessionId);
+    rmSync(file);
+    const deleted = seedRun({ claudeSessionId: sessionId, transcriptPath: file });
+    expect(
+      await post(SESSION_OPEN_TRANSCRIPT_PATH, { runId: deleted.runId, mode: "reveal" }, token),
+    ).toMatchObject({ status: 409, body: { error: "transcript-missing" } });
+
+    const none = seedRun({ transcriptPath: null });
+    expect(
+      await post(SESSION_OPEN_TRANSCRIPT_PATH, { runId: none.runId, mode: "open" }, token),
+    ).toMatchObject({ status: 409, body: { error: "transcript-missing" } });
+
+    expect(
+      await post(SESSION_OPEN_TRANSCRIPT_PATH, { runId: newRunId(), mode: "open" }, token),
+    ).toMatchObject({ status: 404, body: { error: "run-not-found" } });
+    expect(openCalls).toEqual([]);
+  });
+
+  it("refuses a body carrying a path (strict schema)", async () => {
+    const token = await handshake();
+    const file = transcriptFile(randomUUID());
+    const run = seedRun({ transcriptPath: file });
+    const res = await post(
+      SESSION_OPEN_TRANSCRIPT_PATH,
+      { runId: run.runId, mode: "reveal", path: "/etc/hosts" },
+      token,
+    );
+    expect(res.status).toBe(400);
+    expect(openCalls).toEqual([]);
+  });
+
+  it("re-checks containment at request time: a tampered row gives transcript-outside-root (Test 3)", async () => {
+    const token = await handshake();
+    const run = seedRun({ transcriptPath: null });
+    // Inserted directly, as a tampered store row would be.
+    store.db
+      .prepare("UPDATE runs SET transcript_path = ? WHERE run_id = ?")
+      .run("/etc/hosts", run.runId);
+
+    const res = await post(SESSION_OPEN_TRANSCRIPT_PATH, { runId: run.runId, mode: "open" }, token);
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: "transcript-outside-root" });
+    expect(openCalls).toEqual([]);
+  });
+});
+
+describe("POST /api/v1/sessions/associate (Task 2 Test 4, SESS-17, D-24)", () => {
+  const stubProcessFacts: ProcessFacts = {
+    isAlive: () => false,
+    readStartTimes: async () => new Map(),
+    readTty: async () => null,
+    readAncestry: async () => [],
+  };
+
+  it("writes the override for a registered project, re-attributes the Run, and later SessionStarts follow it", async () => {
+    const token = await handshake();
+    facts = createSessionFactsProvider({
+      processFacts: stubProcessFacts,
+      claudeProjectsRoot: join(dir, "claude", "projects"),
+      logger,
+      attribute: createAttribution({
+        lookup: createStoreProjectLookup(store.db),
+        getOverride: (id) => getSessionOverride(store.db, id),
+        realpath,
+        runGit,
+        logger,
+      }),
+      getOverride: (id) => getSessionOverride(store.db, id),
+    });
+    const elsewhere = join(dir, "scratch", "notes");
+    mkdirSync(elsewhere, { recursive: true });
+    const sessionId = randomUUID();
+    const run = seedRun({ claudeSessionId: sessionId, projectId: null, cwd: elsewhere });
+
+    const res = await post(SESSION_ASSOCIATE_PATH, { runId: run.runId, projectId: "alpha" }, token);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ outcome: "associated" });
+    expect(getSessionOverride(store.db, sessionId)).toBe("alpha");
+    expect(getSessionRun(store.db, run.runId)?.projectId).toBe("alpha");
+    const replay = bus.buffer.since(0);
+    if (replay.mode !== "replay") throw new Error("expected a replay");
+    const upserted = replay.events.filter((event) => event.type === "session.upserted");
+    expect(upserted.at(-1)?.payload).toMatchObject({ runId: run.runId, projectId: "alpha" });
+
+    // A later SessionStart of the same session (a new process) attributes to the chosen project.
+    const outcome = await pipeline.ingest(
+      {
+        eventId: randomUUID(),
+        observedAt: new Date().toISOString(),
+        hook_event_name: "SessionStart",
+        session_id: sessionId,
+        cwd: elsewhere,
+        source: "resume",
+        env: { CLAUDE_PID: "4343" },
+      },
+      "socket",
+    );
+    expect(outcome).toBe("applied");
+    await pipeline.stop();
+    const later = latestRunBySession(store.db, sessionId);
+    expect(later?.runId).not.toBe(run.runId);
+    expect(later?.projectId).toBe("alpha");
+  });
+
+  it("refuses an unregistered project and a Run without a session id, writing nothing", async () => {
+    const token = await handshake();
+    const sessionId = randomUUID();
+    const run = seedRun({ claudeSessionId: sessionId });
+    expect(
+      await post(SESSION_ASSOCIATE_PATH, { runId: run.runId, projectId: "not-registered" }, token),
+    ).toMatchObject({ status: 409, body: { error: "project-not-registered" } });
+    expect(getSessionOverride(store.db, sessionId)).toBeNull();
+
+    const noSession = seedRun({ claudeSessionId: null });
+    expect(
+      await post(SESSION_ASSOCIATE_PATH, { runId: noSession.runId, projectId: "alpha" }, token),
+    ).toMatchObject({ status: 409, body: { error: "invalid-state" } });
+    expect(
+      await post(SESSION_ASSOCIATE_PATH, { runId: newRunId(), projectId: "alpha" }, token),
+    ).toMatchObject({ status: 404, body: { error: "run-not-found" } });
+  });
+
+  it("the session-action routes import nothing from the vault (source scan)", () => {
+    const text = readFileSync(join(import.meta.dirname, "session-action-routes.ts"), "utf8");
+    expect(text).toContain("setSessionOverride");
+    expect(text).not.toMatch(/@ccc\/vault-repo/);
+    expect(text).not.toMatch(/vault/i);
+  });
+});
+
 // Kept referenced so later tasks' deps stay typed against this harness.
 void approvalUnavailableProposer;
-void UUID;
