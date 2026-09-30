@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 /**
  * The service's ONE git choke point (SESS-11, D-30, T-05-45, T-05-46). Every
  * git invocation anywhere in `@ccc/service` goes through {@link runGit}, and
- * `runGit` refuses any argv that is not deep-equal to one of the three
+ * `runGit` refuses any argv that is not deep-equal to one of the two
  * read-only forms in {@link READ_ONLY_GIT_ARGV} — before anything is
  * spawned. A source-scan test keeps every other file free of git spawns.
  *
@@ -15,14 +15,18 @@ import { promisify } from "node:util";
  * inherited `GIT_DIR`/`GIT_WORK_TREE`, with `GIT_OPTIONAL_LOCKS=0` (no index
  * refresh writes) and `GIT_TERMINAL_PROMPT=0`; and `-c core.fsmonitor=false`,
  * so a repository's own config cannot make a read run a helper command.
- * `rev-parse` and `worktree list` run no filters and no hooks.
+ * `rev-parse` runs no filters and no hooks.
+ *
+ * Least privilege (wave 4 review): only argv forms with a caller are listed.
+ * 05-11's linked-worktree attribution asks `--git-common-dir`, so
+ * `worktree list --porcelain` was dropped; 05-14's `listWorktrees` re-adds it
+ * together with its consumer and test.
  */
 
 /** The only argv forms the service may run. Anything else is refused. */
 export const READ_ONLY_GIT_ARGV = [
   ["rev-parse", "--show-toplevel"],
   ["rev-parse", "--git-common-dir"],
-  ["worktree", "list", "--porcelain"],
 ] as const;
 
 export type ReadOnlyGitArgv = (typeof READ_ONLY_GIT_ARGV)[number];
@@ -60,7 +64,7 @@ export type RunGit = (
 
 const GIT = "/usr/bin/git";
 const GIT_TIMEOUT_MS = 2000;
-/** Read-only answers are one path or a short worktree list. */
+/** Read-only answers are one path. */
 const GIT_MAX_BUFFER = 256 * 1024;
 
 const execFileAsync = promisify(execFile);

@@ -38,11 +38,10 @@ afterEach(() => {
 });
 
 describe("the read-only git gateway (Test 1, SESS-11, D-30, T-05-45, T-05-46)", () => {
-  it("allows exactly three argv forms", () => {
+  it("allows exactly the two argv forms attribution uses", () => {
     expect(READ_ONLY_GIT_ARGV).toEqual([
       ["rev-parse", "--show-toplevel"],
       ["rev-parse", "--git-common-dir"],
-      ["worktree", "list", "--porcelain"],
     ]);
   });
 
@@ -68,6 +67,8 @@ describe("the read-only git gateway (Test 1, SESS-11, D-30, T-05-45, T-05-46)", 
     [["-c", "core.fsmonitor=true", "rev-parse", "--show-toplevel"]],
     [["rev-parse"]],
     [["worktree", "list"]],
+    // Unused by 05-11's linked-worktree logic (it asks --git-common-dir), so not allowed (wave 4 review).
+    [["worktree", "list", "--porcelain"]],
     [[]],
   ])("refuses %j before any spawn", async (argv) => {
     const spy = spyExec();
