@@ -198,7 +198,12 @@ afterEach(() => {
 });
 
 function harness(): Harness {
-  const repo = gateRepo(SCRIPTS, { "src/a.ts": "export const a = 1;\n" });
+  // Runtime state and orchestrator worktrees are gitignored, as in the real repo,
+  // so a run's own output never makes the checkout look dirty.
+  const repo = gateRepo(SCRIPTS, {
+    "src/a.ts": "export const a = 1;\n",
+    ".gitignore": ".planning/codex/\n.claude/worktrees/\n",
+  });
   repo.git("commit", "-q", "-m", "init");
   repo.write("src/a.ts", "export const a = 2;\n");
   repo.git("commit", "-q", "-am", "change");
@@ -422,6 +427,54 @@ describe("hard refusals", () => {
       expect(joined).not.toMatch(/network_access=true/);
       expect(call.argv).toEqual(expect.arrayContaining(["-c", 'approval_policy="never"']));
     }
+  });
+});
+
+describe("dirty checkout refusal", () => {
+  it("review refuses a modified tracked file, names it, and calls nothing", () => {
+    const h = harness();
+    h.repo.write("src/a.ts", "export const a = 3;\n");
+    const r = h.run(["review", h.root, "HEAD~1"]);
+    expect(r.status).toBe(4);
+    expect(r.out).toContain("src/a.ts");
+    expect(h.calls()).toHaveLength(0);
+  });
+
+  it("review refuses an untracked file", () => {
+    const h = harness();
+    h.repo.write("notes/private.json", "{}\n");
+    const r = h.run(["review", h.root, "HEAD~1"]);
+    expect(r.status).toBe(4);
+    expect(r.out).toContain("notes/private.json");
+    expect(h.calls()).toHaveLength(0);
+  });
+
+  it("review ignores gitignored files", () => {
+    const h = harness();
+    h.repo.write(".planning/codex/live/old.log", "x\n");
+    const r = h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON });
+    expect(r.status).toBe(0);
+  });
+
+  it("review has no --allow-dirty escape", () => {
+    const h = harness();
+    h.repo.write("src/a.ts", "export const a = 3;\n");
+    const r = h.run(["review", h.root, "HEAD~1", "--allow-dirty"]);
+    expect(r.status).toBe(2);
+    expect(h.calls()).toHaveLength(0);
+  });
+
+  it("task refuses a dirty worktree unless --allow-dirty is given", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    writeFileSync(join(wt, "scratch.txt"), "wip\n");
+    const refused = h.run(["task", wt, briefFile(h)]);
+    expect(refused.status).toBe(4);
+    expect(refused.out).toContain("scratch.txt");
+    expect(h.calls()).toHaveLength(0);
+    const allowed = h.run(["task", wt, briefFile(h), "--allow-dirty"]);
+    expect(allowed.status).toBe(0);
+    expect(h.execCalls()).toHaveLength(1);
   });
 });
 

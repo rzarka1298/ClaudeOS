@@ -63,6 +63,7 @@ export const EXIT = {
   OK: 0,
   USAGE: 2,
   REFUSED: 3,
+  DIRTY: 4,
   RESERVE: 10,
   NOT_ALLOWED: 11,
   UNAVAILABLE: 12,
@@ -121,7 +122,8 @@ const USAGE_TEXT = `usage:
   codex.mjs usage
   codex.mjs guard
   codex.mjs review <worktree> <base-ref> [--timeout-sec N] [-- <extra codex args>]
-  codex.mjs task <worktree> <brief-file> [--role task|chore|plan] [--timeout-sec N] [-- <extra>]
+  codex.mjs task <worktree> <brief-file> [--role task|chore|plan] [--allow-dirty]
+                                         [--timeout-sec N] [-- <extra>]
   codex.mjs resume <session-id> [--timeout-sec N] [-- <extra>]
   codex.mjs watch [--once] [--idle-exit-sec N]`;
 
@@ -142,6 +144,7 @@ function parseArgs(argv) {
   for (let i = 0; i < head.length; i++) {
     const a = head[i];
     if (a === "--once") opts.once = true;
+    else if (a === "--allow-dirty") opts.allowDirty = true;
     else if (a in valued) {
       if (i + 1 >= head.length) fail(EXIT.USAGE, `${a} needs a value\n${USAGE_TEXT}`);
       opts[valued[a]] = head[++i];
@@ -258,6 +261,31 @@ function validateWorktree(dir) {
     fail(EXIT.USAGE, `${dir} is not a worktree of this repository`);
   }
   return topReal;
+}
+
+// Codex sends what it reads to OpenAI, and `exec review --base` diffs against
+// the working tree. A checkout with uncommitted or untracked (non-ignored)
+// files is refused, so local-only files never leave the machine by accident.
+function refuseIfDirty(worktree) {
+  const r = spawnSync(
+    "git",
+    ["-C", worktree, "status", "--porcelain=v1", "--untracked-files=all"],
+    {
+      encoding: "utf8",
+    },
+  );
+  if (r.status !== 0) fail(EXIT.DIRTY, `refused: could not read git status of ${worktree}`);
+  const paths = r.stdout
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => l.slice(3));
+  if (!paths.length) return;
+  const shown = paths.slice(0, 20).map((p) => `  ${p}`);
+  if (paths.length > 20) shown.push(`  … and ${paths.length - 20} more`);
+  fail(
+    EXIT.DIRTY,
+    `refused: ${rel(worktree)} has uncommitted or untracked changes; commit, stash or gitignore them first:\n${shown.join("\n")}`,
+  );
 }
 
 function runId() {
@@ -775,7 +803,9 @@ async function cmdReview({ positional, opts, extras }) {
   if (!base) fail(EXIT.USAGE, `base ref ${baseRef} does not resolve to a commit in ${worktree}`);
   const head = git(worktree, "rev-parse", "HEAD");
   const timeoutSec = positiveSeconds(opts.timeoutSec, DEFAULT_TIMEOUT_SEC.review, "--timeout-sec");
+  if (opts.allowDirty) fail(EXIT.USAGE, "--allow-dirty is not accepted for review");
   enforceExtras(extras, "review");
+  refuseIfDirty(worktree);
   await guardOrExit();
 
   const id = runId();
@@ -937,6 +967,7 @@ async function cmdTask({ positional, opts, extras }) {
   if (!["task", "chore", "plan"].includes(role)) fail(EXIT.USAGE, `unknown role ${role}`);
   const timeoutSec = positiveSeconds(opts.timeoutSec, DEFAULT_TIMEOUT_SEC.task, "--timeout-sec");
   enforceExtras(extras, "task");
+  if (!opts.allowDirty) refuseIfDirty(worktree);
   if (existsSync(PENDING)) {
     const p = readJson(PENDING);
     fail(
