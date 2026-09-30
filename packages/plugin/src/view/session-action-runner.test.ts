@@ -372,10 +372,13 @@ describe("Task 2 (Test 3): resume through the concurrent-write guard", () => {
   });
 
   it("'worktree' with a new-worktree choice relaunches with that name", async () => {
+    // openConcurrentChoice resolves directly here (unlike the previous test),
+    // so it never calls the injected loadWorktrees -- this test is about the
+    // SECOND launch call carrying whatever ui.openConcurrentChoice resolved,
+    // not about the worktree-fetch wiring (covered above).
     const requestSessionAction = vi
       .fn()
       .mockResolvedValueOnce({ outcome: "conflict", projectName: "alpha", conflicts: [conflict()] })
-      .mockResolvedValueOnce({ worktrees: [] })
       .mockResolvedValueOnce({ outcome: "launched" });
     const openConcurrentChoice = vi
       .fn()
@@ -384,7 +387,7 @@ describe("Task 2 (Test 3): resume through the concurrent-write guard", () => {
 
     await runSessionAction(descriptor("session:resume", "r1"), deps);
 
-    expect(requestSessionAction).toHaveBeenNthCalledWith(3, "resume", {
+    expect(requestSessionAction).toHaveBeenNthCalledWith(2, "resume", {
       runId: "r1",
       choice: { kind: "new-worktree", name: "fix-parser" },
     });

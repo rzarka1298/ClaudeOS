@@ -9,12 +9,13 @@ import type {
 } from "@ccc/domain/session-actions.js";
 import { ClaudeRequestError } from "@ccc/service-api-client";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
-import { setActionStatus } from "./session-action-status.js";
-import type {
-  ConcurrentChoiceResolution,
-  ConcurrentChoiceViewModel,
-  ProjectOption,
-  WorktreeListResult,
+import { clearActionStatus, setActionStatus } from "./session-action-status.js";
+import {
+  type ConcurrentChoiceResolution,
+  type ConcurrentChoiceViewModel,
+  concurrentChoiceViewModel,
+  type ProjectOption,
+  type WorktreeListResult,
 } from "./session-modals.js";
 
 /**
@@ -230,6 +231,131 @@ async function runFocus(
   }
 }
 
+/** Fetches the existing-worktree list for the guard's worktree step, resolving to `"failed"` rather than throwing (UI-SPEC "Couldn't list existing worktrees. You can still name a new one."). */
+async function loadWorktrees(deps: SessionActionDeps, runId: string): Promise<WorktreeListResult> {
+  try {
+    const response = await deps.requestSessionAction("worktrees", { runId });
+    return response.worktrees;
+  } catch {
+    return "failed";
+  }
+}
+
+interface LaunchCopy {
+  readonly pending: string;
+  readonly success: (name: string) => string;
+  readonly failure: (name: string, reason: string) => string;
+}
+
+const RESUME_COPY: LaunchCopy = {
+  pending: "Opening a terminal…",
+  success: (name) => `Resuming ${name} in a new terminal.`,
+  failure: (name, reason) => `Couldn't resume ${name}: ${reason}.`,
+};
+
+const BRANCH_COPY: LaunchCopy = {
+  pending: "Opening a terminal…",
+  success: (name) => `Branching ${name} into a new session.`,
+  failure: (name, reason) => `Couldn't branch ${name}: ${reason}.`,
+};
+
+/**
+ * Resume and branch (SESS-13, SESS-14, PR-25's two-step protocol): the first
+ * `requestSessionAction` call either launches directly or answers a
+ * `conflict`, which opens the guard (S4-a) through `ui.openConcurrentChoice`.
+ * A `cancel` clears the pending status and makes no second call. Every other
+ * resolution becomes the second call's `choice` (D-27, D-28) -- the runner
+ * never inspects or validates the choice beyond passing it through, since
+ * the service re-validates the guard on every launch.
+ */
+async function runLaunch(
+  descriptor: QuickActionDescriptor,
+  deps: SessionActionDeps,
+  action: "resume" | "branch",
+  copy: LaunchCopy,
+): Promise<void> {
+  const runId = getRunId(descriptor);
+  if (runId === null) {
+    deps.ui.notify(unavailableMessage(descriptor.label));
+    return;
+  }
+  const name = sessionNameFor(deps, runId);
+  setActionStatus(runId, { kind: "pending", text: copy.pending });
+  try {
+    const first = await deps.requestSessionAction(action, { runId });
+    if (first.outcome === "launched") {
+      const text = copy.success(name);
+      setActionStatus(runId, { kind: "success", text });
+      deps.ui.notify(text);
+      return;
+    }
+    const resolution = await deps.ui.openConcurrentChoice(
+      concurrentChoiceViewModel(first.conflicts, first.projectName, Date.now()),
+      () => loadWorktrees(deps, runId),
+    );
+    if (resolution.kind === "cancel") {
+      clearActionStatus(runId);
+      return;
+    }
+    const second = await deps.requestSessionAction(action, { runId, choice: resolution });
+    if (second.outcome === "launched") {
+      const text = copy.success(name);
+      setActionStatus(runId, { kind: "success", text });
+      deps.ui.notify(text);
+      return;
+    }
+    // A second conflict (a race with another launch) is reported through the
+    // same fixed reason vocabulary as any other failure, never a silent no-op.
+    const text = copy.failure(name, reasonFor("invalid-state", deps.cleanupPeriodDays()));
+    setActionStatus(runId, { kind: "failure", text });
+    deps.ui.notify(text);
+  } catch (error) {
+    const reason = reasonFor(errorCodeOf(error), deps.cleanupPeriodDays());
+    const text = copy.failure(name, reason);
+    setActionStatus(runId, { kind: "failure", text });
+    deps.ui.notify(text);
+  }
+}
+
+/**
+ * Associate an unclassified Run with a registered project (SESS-17, D-24).
+ * `listProjects() === null` means "unknown" (before Phase 4's registry is
+ * wired, PR-17) -- distinct from an empty, but real, project list, which
+ * still opens the picker so its own fixed empty-list copy can show (UI-SPEC
+ * S4-e). Choosing an item is the whole gesture: there is no confirmation
+ * step.
+ */
+async function runAssociate(
+  descriptor: QuickActionDescriptor,
+  deps: SessionActionDeps,
+): Promise<void> {
+  const runId = getRunId(descriptor);
+  if (runId === null) {
+    deps.ui.notify(unavailableMessage(descriptor.label));
+    return;
+  }
+  const name = sessionNameFor(deps, runId);
+  const projects = deps.listProjects();
+  if (projects === null) {
+    deps.ui.notify("Register a project first");
+    return;
+  }
+  const chosen = await deps.ui.openAssociatePicker(name, projects);
+  if (chosen === null) return;
+  setActionStatus(runId, { kind: "pending", text: "Associating…" });
+  try {
+    await deps.requestSessionAction("associate", { runId, projectId: chosen.id });
+    const text = `Associated ${name} with ${chosen.name}. Later resumes of this session go there too.`;
+    setActionStatus(runId, { kind: "success", text });
+    deps.ui.notify(text);
+  } catch (error) {
+    const reason = reasonFor(errorCodeOf(error), deps.cleanupPeriodDays());
+    const text = `Couldn't associate ${name}: ${reason}.`;
+    setActionStatus(runId, { kind: "failure", text });
+    deps.ui.notify(text);
+  }
+}
+
 /**
  * Dispatches one {@link QuickActionDescriptor} to its control's full flow:
  * modal (Tasks 2-3), client call, status write, Notice. Unhandled capabilities
@@ -248,6 +374,15 @@ export async function runSessionAction(
       return;
     case "session:interrupt":
       await runFocus(descriptor, deps, INTERRUPT_COPY);
+      return;
+    case "session:resume":
+      await runLaunch(descriptor, deps, "resume", RESUME_COPY);
+      return;
+    case "session:branch":
+      await runLaunch(descriptor, deps, "branch", BRANCH_COPY);
+      return;
+    case "session:associate":
+      await runAssociate(descriptor, deps);
       return;
     default:
       deps.ui.notify(unavailableMessage(descriptor.label));
