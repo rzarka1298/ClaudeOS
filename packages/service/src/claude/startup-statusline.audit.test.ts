@@ -99,12 +99,11 @@ describe("startup status-line spool (audit)", () => {
     }
   });
 
-  // AUDIT-BUG (05-12, MAJOR): startClaudeServices drains the status-line
-  // spool before startUsageServices registers its sink, so the poller counts
-  // the snapshot as dropped and deletes the file. A snapshot spooled while
-  // the service was down never reaches capacity until the wrapper writes
-  // again. Unskip once the sink is registered before the startup drain.
-  it.skip("a snapshot spooled while the service was down reaches plan capacity after startup", async () => {
+  // Was AUDIT-BUG (05-12, MAJOR): startClaudeServices drained the status-line
+  // spool before startUsageServices registered its sink, so the poller
+  // counted the snapshot as dropped and deleted the file. Fixed in wave 4:
+  // the poller holds the latest undelivered snapshot until a sink exists.
+  it("a snapshot spooled while the service was down reaches plan capacity after startup", async () => {
     writeSnapshot();
     const { claude, usage } = await startBoth();
     try {

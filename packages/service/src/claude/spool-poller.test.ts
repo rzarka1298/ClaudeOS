@@ -182,12 +182,22 @@ describe("hook and status-line routing (Test 3)", () => {
     expect(spoolFiles()).toEqual([]);
   });
 
-  it("counts and drops a snapshot when no sink is registered", async () => {
+  it("holds the latest snapshot until a sink is registered, counting only superseded ones", async () => {
     const p = start();
-    writeFileSync(statusLinePath, JSON.stringify({ session_id: "s1" }));
+    writeFileSync(statusLinePath, JSON.stringify({ session_id: "s1", tick: 1 }));
     await p.drainNow();
+    writeFileSync(statusLinePath, JSON.stringify({ session_id: "s1", tick: 2 }));
+    await p.tick();
     expect(p.stats().statusLineDropped).toBe(1);
     expect(spoolFiles()).toEqual([]);
+
+    const snapshots: unknown[] = [];
+    p.setStatusLineSink((snapshot) => snapshots.push(snapshot));
+    await p.tick();
+    expect(snapshots).toEqual([{ session_id: "s1", tick: 2 }]);
+    // Delivered once: the next tick hands nothing over again.
+    await p.tick();
+    expect(snapshots).toHaveLength(1);
   });
 
   it("logs, skips and deletes an unparsable status-line file", async () => {

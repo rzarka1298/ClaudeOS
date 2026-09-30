@@ -67,7 +67,11 @@ export interface SpoolPollerStats {
   /** Final trailing fragments (no newline) found in renamed files and discarded. */
   readonly fragmentsDiscarded: number;
   readonly unparsableLines: number;
-  /** Status-line snapshots that arrived while no sink was registered. */
+  /**
+   * Status-line snapshots superseded by a newer one while no sink was
+   * registered. The latest is held (in memory) and handed to the sink once
+   * one is set, so a snapshot drained at startup is never lost (wave 4).
+   */
   readonly statusLineDropped: number;
 }
 
@@ -79,6 +83,7 @@ export interface SpoolPoller {
   /** Records the hook dropped at the spool cap: the byte size of `hooks.dropped`. */
   dropCount(): number;
   stats(): SpoolPollerStats;
+  /** Registers the status-line sink; a snapshot held since startup is delivered on the next tick. */
   setStatusLineSink(sink: (snapshot: unknown) => void): void;
   /** Clears the interval and resolves once any in-flight drain or tick has finished. */
   stop(): Promise<void>;
@@ -113,6 +118,8 @@ export function startSpoolPoller(options: SpoolPollerOptions): SpoolPoller {
   let fragmentsDiscarded = 0;
   let unparsableLines = 0;
   let statusLineDropped = 0;
+  /** The newest parsed snapshot not yet delivered because no sink was set. */
+  let heldStatusLine: { snapshot: unknown } | null = null;
   let renameCounter = 0;
   let busy = false;
 
@@ -257,7 +264,25 @@ export function startSpoolPoller(options: SpoolPollerOptions): SpoolPoller {
    * no writer ever holds the file open: renaming and reading in the same
    * tick is safe.
    */
+  function deliverStatusLine(snapshot: unknown): void {
+    if (statusLineSink === undefined) {
+      if (heldStatusLine !== null) statusLineDropped += 1;
+      heldStatusLine = { snapshot };
+      return;
+    }
+    try {
+      statusLineSink(snapshot);
+    } catch (err: unknown) {
+      logger.warn({ err }, "status-line sink failed");
+    }
+  }
+
   function drainStatusLine(): void {
+    if (heldStatusLine !== null && statusLineSink !== undefined) {
+      const { snapshot } = heldStatusLine;
+      heldStatusLine = null;
+      deliverStatusLine(snapshot);
+    }
     renameAside(statusLinePath);
     for (const file of drainingFiles(statusLinePath)) {
       const text = readFile(file, MAX_STATUSLINE_READ_BYTES);
@@ -270,15 +295,7 @@ export function startSpoolPoller(options: SpoolPollerOptions): SpoolPoller {
         logger.warn({}, "status-line spool failed to parse; skipped");
         continue;
       }
-      if (statusLineSink === undefined) {
-        statusLineDropped += 1;
-        continue;
-      }
-      try {
-        statusLineSink(snapshot);
-      } catch (err: unknown) {
-        logger.warn({ err }, "status-line sink failed");
-      }
+      deliverStatusLine(snapshot);
     }
   }
 
