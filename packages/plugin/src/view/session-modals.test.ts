@@ -203,16 +203,45 @@ describe("AssociateProjectModal (Test 6): FuzzySuggestModal chrome", () => {
     expect(populated.emptyStateText).toBe("");
   });
 
-  it("onClose without a choice settles null, and only once", () => {
+  it("onClose without a choice settles null (a microtask later), and only once", async () => {
     const decide = vi.fn();
     const modal = new AssociateProjectModal({} as never, "Fix parser", [], decide);
 
     modal.open();
     modal.close();
     modal.close();
+    await Promise.resolve();
 
     expect(decide).toHaveBeenCalledTimes(1);
     expect(decide).toHaveBeenCalledWith(null);
+  });
+
+  // Wave 5 review (BLOCKER): Obsidian's `selectSuggestion` calls `close()`
+  // BEFORE `onChooseSuggestion`, so an `onClose` that settles null first
+  // discarded every pick. The shared stub mirrors that order.
+  it("a picked suggestion settles the project even though Obsidian closes before choosing", async () => {
+    const decide = vi.fn();
+    const project = { id: "p1", name: "alpha" };
+    const modal = new AssociateProjectModal({} as never, "Fix parser", [project], decide);
+
+    modal.open();
+    modal.selectSuggestion({ item: project, match: { score: 0, matches: [] } }, {} as MouseEvent);
+    await Promise.resolve();
+
+    expect(decide).toHaveBeenCalledExactlyOnceWith(project);
+  });
+
+  it("a close immediately followed by a choice (any close-then-choose path) still settles the choice", async () => {
+    const decide = vi.fn();
+    const project = { id: "p1", name: "alpha" };
+    const modal = new AssociateProjectModal({} as never, "Fix parser", [project], decide);
+
+    modal.open();
+    modal.close();
+    modal.onChooseSuggestion({ item: project, match: { score: 0, matches: [] } }, {} as MouseEvent);
+    await Promise.resolve();
+
+    expect(decide).toHaveBeenCalledExactlyOnceWith(project);
   });
 
   it("onChooseItem settles the chosen project, and only once", () => {

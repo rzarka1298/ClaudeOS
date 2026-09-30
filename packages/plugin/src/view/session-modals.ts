@@ -4,6 +4,7 @@ import { WORKTREE_NAME_PATTERN, type WorktreeListResponse } from "@ccc/domain/se
 import {
   type App,
   ButtonComponent,
+  type FuzzyMatch,
   FuzzySuggestModal,
   type Instruction,
   Modal,
@@ -408,7 +409,7 @@ export function associatePickerViewModel(sessionName: string): AssociatePickerVi
  * Registered projects only, over `FuzzySuggestModal<ProjectOption>`. There is
  * no confirmation step: choosing an item IS the gesture (UI-SPEC S4-e).
  * `onClose` (Escape, a click outside) resolves `null` -- a refusal, never a
- * pending promise.
+ * pending promise -- one microtask later, so a pick always wins.
  */
 export class AssociateProjectModal extends FuzzySuggestModal<ProjectOption> {
   /**
@@ -456,9 +457,25 @@ export class AssociateProjectModal extends FuzzySuggestModal<ProjectOption> {
     this.settle(item);
   }
 
+  /**
+   * Obsidian's `SuggestModal.selectSuggestion` calls `close()` BEFORE
+   * `onChooseSuggestion` (wave 5 review), so `onClose` runs first on every
+   * pick. Settling the pick here, before handing on to the base class, makes
+   * the choice win whatever `onClose` then does.
+   */
+  selectSuggestion(value: FuzzyMatch<ProjectOption>, evt: MouseEvent | KeyboardEvent): void {
+    this.settle(value.item);
+    super.selectSuggestion(value, evt);
+  }
+
+  /**
+   * Dismissal (Escape, a click outside) is a refusal -- but the `null` is
+   * settled a microtask later, so any path that closes and then chooses in
+   * the same tick still lets the choice win (settle-once keeps the first).
+   */
   onClose(): void {
-    this.settle(null);
     this.contentEl.empty();
+    queueMicrotask(() => this.settle(null));
   }
 }
 

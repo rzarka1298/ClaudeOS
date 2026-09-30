@@ -185,6 +185,32 @@ export class FuzzySuggestModal<T> extends Modal {
   }
 
   onChooseItem(_item: T, _evt: MouseEvent | KeyboardEvent): void {}
+
+  /**
+   * Added wave 5 review: mirrors Obsidian's real `FuzzySuggestModal`, which
+   * unwraps the `FuzzyMatch` and hands its item to `onChooseItem`.
+   */
+  onChooseSuggestion(match: StubFuzzyMatch<T>, evt: MouseEvent | KeyboardEvent): void {
+    this.onChooseItem(match.item, evt);
+  }
+
+  /**
+   * Added wave 5 review: mirrors the ORDER of Obsidian's real
+   * `SuggestModal.selectSuggestion` -- it closes the modal FIRST (so
+   * `onClose` runs) and only then calls `onChooseSuggestion`. A subclass
+   * that settles "no choice" in `onClose` would discard every pick; this
+   * ordering is what lets a test catch that.
+   */
+  selectSuggestion(match: StubFuzzyMatch<T>, evt: MouseEvent | KeyboardEvent): void {
+    this.close();
+    this.onChooseSuggestion(match, evt);
+  }
+}
+
+/** Mirrors obsidian's `FuzzyMatch<T>` (`{ item, match }`) closely enough for a choose-order test. */
+export interface StubFuzzyMatch<T> {
+  item: T;
+  match: { score: number; matches: [number, number][] };
 }
 
 /**
