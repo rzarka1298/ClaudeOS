@@ -59,6 +59,7 @@ describe("gitArgs and gitEnv (D-09, PR-05)", () => {
         "core.hooksPath=/dev/null",
         "safe.bareRepository=explicit",
         "log.showSignature=false",
+        "core.abbrev=7",
       ]),
     );
     expect(args.slice(-4)).toEqual([

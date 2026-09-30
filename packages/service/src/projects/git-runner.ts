@@ -25,7 +25,8 @@ import type { CommandOutcome, CommandRunner } from "./command-runner.js";
  * of `-c` overrides can neutralise them all. The defence is layered:
  * 1. `-c` overrides in the command scope, which outranks the repository's
  *    local scope: no fsmonitor, no hooks, no implicitly discovered bare
- *    repository, no signature verification, no pager, no colour.
+ *    repository, no signature verification, no pager, no colour, and a
+ *    fixed seven-character minimum commit abbreviation.
  * 2. An environment built from scratch — never a copy of the service's own
  *    environment — so no inherited GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE or
  *    GIT_CONFIG_* can redirect git; GIT_OPTIONAL_LOCKS=0 so status never
@@ -66,6 +67,12 @@ export const GIT_OVERRIDES: readonly string[] = Object.freeze([
   "safe.bareRepository=explicit",
   "log.showSignature=false",
   "color.ui=false",
+  // `%h` honours core.abbrev, which a repository (or the owner's global
+  // config) may set as low as 4; parseLogRecords accepts 7..40 hex, so a
+  // shorter abbreviation would silently drop every commit. Pinned here, in
+  // command scope, so no config can shorten it. Not an executable key, so
+  // it never needed a preflight exemption.
+  "core.abbrev=7",
 ]);
 
 /** The full argv (after the git executable) for `sub` run against `root`. */
