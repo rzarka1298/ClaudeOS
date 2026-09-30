@@ -43,6 +43,8 @@ export interface TerminalAdapterDeps {
   readonly scriptDir: string;
   /** The hand-off's own deadline; defaults to the launch pipeline's 4 s cap. */
   readonly capMs?: number;
+  /** The custom template's `X_OK` check; defaults to an asynchronous `access(X_OK)`. */
+  readonly isExecutable?: (path: string) => Promise<boolean>;
 }
 
 const DEFAULT_CAP_MS = 4000;
@@ -112,6 +114,20 @@ export function createTerminalAppLauncher(deps: TerminalAdapterDeps): TerminalLa
       if (outcome.exitCode === 0) return { ok: true };
       if (neverHandedOff(outcome)) removeUnsent(written.path);
       return { ok: false, error: mapLaunchFailure(outcome) };
+    },
+  };
+}
+
+export interface CustomTemplateDeps extends TerminalAdapterDeps {
+  readonly template: readonly string[];
+  readonly isExecutable: (path: string) => Promise<boolean>;
+}
+
+/** RED stub (04-09 Task 3): not implemented yet. */
+export function createCustomTemplateLauncher(_deps: CustomTemplateDeps): TerminalLauncher {
+  return {
+    launch() {
+      return Promise.reject(new Error("createCustomTemplateLauncher is not implemented"));
     },
   };
 }

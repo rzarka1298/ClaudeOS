@@ -452,6 +452,71 @@ describe("Claude Code through the script directory and selectTerminalLauncher (p
     expect(getProject(store.db, projectId)?.lastOpenedAt).not.toBeNull();
   });
 
+  it("routes a stored custom terminal through the custom template adapter (D-23)", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: ["{projectPath}"],
+      terminal: {
+        kind: "custom",
+        preset: "wezterm",
+        argv: [
+          "/usr/bin/open",
+          "-na",
+          "WezTerm",
+          "--args",
+          "start",
+          "--cwd",
+          "{projectPath}",
+          "--",
+          "{script}",
+        ],
+      },
+    });
+    await expect(
+      service({ scriptDir }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: true });
+    expect(spawner.calls).toHaveLength(1);
+    const argv = spawner.calls[0]?.argv ?? [];
+    expect(argv.slice(0, 7)).toEqual([
+      "/usr/bin/open",
+      "-na",
+      "WezTerm",
+      "--args",
+      "start",
+      "--cwd",
+      projectDir,
+    ]);
+    expect(argv[7]).toBe("--");
+    expect(dirname(argv[8] ?? "")).toBe(scriptDir);
+    expect(readFileSync(argv[8] ?? "", "utf8")).toContain(`'/usr/bin/true' '${projectDir}'`);
+    expect(getProject(store.db, projectId)?.lastOpenedAt).not.toBeNull();
+  });
+
+  it("a stored custom terminal carrying a bypass form launches nothing (D-22)", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: [],
+      terminal: {
+        kind: "custom",
+        preset: "blank",
+        argv: [
+          "/usr/bin/open",
+          "-na",
+          "WezTerm",
+          "--args",
+          "--permission-mode=bypassPermissions",
+          "{script}",
+        ],
+      },
+    });
+    await expect(
+      service({ scriptDir }).launch({ projectId, action: "claude-code" }),
+    ).resolves.toEqual({ ok: false, error: "launcher-not-configured" });
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+    expect(getProject(store.db, projectId)?.lastOpenedAt).toBeNull();
+  });
+
   it("an explicitly injected terminal launcher still wins over the script directory", async () => {
     saveLauncherConfig(store.db, "claude-code", {
       executablePath: "/usr/bin/true",

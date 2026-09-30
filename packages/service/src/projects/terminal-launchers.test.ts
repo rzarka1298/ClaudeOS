@@ -2,10 +2,15 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { TerminalLaunchInput } from "@ccc/domain";
+import { TERMINAL_PRESETS } from "@ccc/launchers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createFakeSpawner } from "../test-support/fake-spawner.js";
 import { ensureScriptDir } from "./script-dir.js";
-import { createTerminalAppLauncher, selectTerminalLauncher } from "./terminal-launchers.js";
+import {
+  createCustomTemplateLauncher,
+  createTerminalAppLauncher,
+  selectTerminalLauncher,
+} from "./terminal-launchers.js";
 
 let runtimeDir: string;
 let scriptDir: string;
@@ -134,5 +139,245 @@ describe("selectTerminalLauncher (PROJ-10, D-21)", () => {
       "-b",
       "com.apple.Terminal",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: the Custom terminal adapter (D-22, D-23, PR-07)
+// ---------------------------------------------------------------------------
+
+const WEZTERM = TERMINAL_PRESETS.find((preset) => preset.id === "wezterm")?.argv ?? [];
+const ITERM2 = TERMINAL_PRESETS.find((preset) => preset.id === "iterm2")?.argv ?? [];
+
+function customLauncher(
+  spawner: ReturnType<typeof createFakeSpawner>,
+  template: readonly string[],
+  isExecutable: (path: string) => Promise<boolean> = () => Promise.resolve(true),
+) {
+  return createCustomTemplateLauncher({ spawner, scriptDir, template, isExecutable });
+}
+
+function expectNoPlaceholders(argv: readonly unknown[]): void {
+  for (const element of argv) {
+    expect(typeof element).toBe("string");
+    expect(element as string).not.toContain("{script}");
+    expect(element as string).not.toContain("{projectPath}");
+  }
+}
+
+describe("the Custom terminal adapter (D-22, D-23)", () => {
+  it("renders the WezTerm preset into one argv, each placeholder a whole element", async () => {
+    const spawner = createFakeSpawner();
+    await expect(customLauncher(spawner, WEZTERM).launch(input())).resolves.toEqual({ ok: true });
+    expect(spawner.calls).toHaveLength(1);
+    const argv = spawner.calls[0]?.argv ?? [];
+    expectNoPlaceholders(argv);
+    const [script] = readdirSync(scriptDir);
+    const scriptPath = join(scriptDir, script ?? "");
+    expect(argv).toEqual([
+      "/usr/bin/open",
+      "-na",
+      "WezTerm",
+      "--args",
+      "start",
+      "--cwd",
+      "/Users/USERNAME/code/example project",
+      "--",
+      scriptPath,
+    ]);
+    const body = readFileSync(scriptPath, "utf8");
+    expect(body.startsWith("#!/bin/sh\n")).toBe(true);
+    expect(body).toContain("'/usr/local/bin/claude' '--flag'");
+  });
+
+  it("passes the pipeline's abort signal and the cap to the spawn", async () => {
+    const spawner = createFakeSpawner();
+    const controller = new AbortController();
+    await createCustomTemplateLauncher({
+      spawner,
+      scriptDir,
+      template: WEZTERM,
+      isExecutable: () => Promise.resolve(true),
+      capMs: 1234,
+    }).launch(input({ signal: controller.signal }));
+    expect(spawner.calls[0]?.opts.signal).toBe(controller.signal);
+    expect(spawner.calls[0]?.opts.timeoutMs).toBe(1234);
+  });
+
+  it("re-checks the executable before every spawn, asking only about argv[0]", async () => {
+    const spawner = createFakeSpawner();
+    const asked: string[] = [];
+    const launcher = customLauncher(spawner, WEZTERM, (path) => {
+      asked.push(path);
+      return Promise.resolve(true);
+    });
+    await launcher.launch(input());
+    await launcher.launch(input());
+    expect(asked).toEqual(["/usr/bin/open", "/usr/bin/open"]);
+    expect(spawner.calls).toHaveLength(2);
+  });
+
+  it("an executable that no longer passes X_OK is not configured: no spawn, no script", async () => {
+    const spawner = createFakeSpawner();
+    await expect(
+      customLauncher(spawner, WEZTERM, () => Promise.resolve(false)).launch(input()),
+    ).resolves.toEqual({ ok: false, error: "launcher-not-configured" });
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("refuses an embedded placeholder: no spawn, no script", async () => {
+    const spawner = createFakeSpawner();
+    const template = [
+      "/usr/bin/open",
+      "-na",
+      "Ghostty",
+      "--args",
+      "--cwd={projectPath}",
+      "{script}",
+    ];
+    await expect(customLauncher(spawner, template).launch(input())).resolves.toEqual({
+      ok: false,
+      error: "launcher-not-configured",
+    });
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("refuses a template without {script}, and a relative executable", async () => {
+    const spawner = createFakeSpawner();
+    for (const template of [
+      ["/usr/bin/open", "-na", "WezTerm"],
+      ["open", "-na", "WezTerm", "--args", "-e", "{script}"],
+    ]) {
+      await expect(customLauncher(spawner, template).launch(input())).resolves.toEqual({
+        ok: false,
+        error: "launcher-not-configured",
+      });
+    }
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("refuses every permission-bypass form in the terminal template (D-22)", async () => {
+    const spawner = createFakeSpawner();
+    const forms = [
+      ["--dangerously-skip-permissions"],
+      ["--dangerously_skip_permissions"],
+      ["--permission-mode", "bypassPermissions"],
+      ["--permission-mode=bypassPermissions"],
+      ["--settings", '{"permissions":{"defaultMode":"bypassPermissions"}}'],
+    ];
+    for (const form of forms) {
+      const template = ["/usr/bin/open", "-na", "WezTerm", "--args", ...form, "-e", "{script}"];
+      await expect(customLauncher(spawner, template).launch(input())).resolves.toEqual({
+        ok: false,
+        error: "launcher-not-configured",
+      });
+    }
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("maps an osascript preset's -1743 refusal to automation-denied and removes the unsent script", async () => {
+    const spawner = createFakeSpawner({
+      kind: "fail",
+      outcome: { exitCode: 1, stderrClass: "automation-denied" },
+    });
+    await expect(customLauncher(spawner, ITERM2).launch(input())).resolves.toEqual({
+      ok: false,
+      error: "automation-denied",
+    });
+    const argv = spawner.calls[0]?.argv ?? [];
+    expect(argv[0]).toBe("/usr/bin/osascript");
+    expectNoPlaceholders(argv);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("exports the env inside the script and never through the spawn (PR-07, Pitfall 11)", async () => {
+    const spawner = createFakeSpawner();
+    await customLauncher(spawner, WEZTERM).launch(input({ env: { CCC_RUN_ID: "r1" } }));
+    const call = spawner.calls[0];
+    const script = call?.argv[call.argv.length - 1] ?? "";
+    expect(readFileSync(script, "utf8")).toContain("export CCC_RUN_ID='r1'");
+    expect(JSON.stringify(call?.opts ?? {})).not.toContain("CCC_RUN_ID");
+    expect(JSON.stringify(call?.opts ?? {})).not.toContain("r1");
+  });
+
+  it("an env key outside ^CCC_[A-Z0-9_]+$ is spawn-failed, with no spawn and no script", async () => {
+    const spawner = createFakeSpawner();
+    const launcher = customLauncher(spawner, WEZTERM);
+    for (const key of ["PATH", "ccc_run_id", "CCC_", "CCC_RUN-ID", "DYLD_INSERT_LIBRARIES"]) {
+      await expect(launcher.launch(input({ env: { [key]: "x" } }))).resolves.toEqual({
+        ok: false,
+        error: "spawn-failed",
+      });
+    }
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("an already-aborted signal opens nothing and leaves no script", async () => {
+    const spawner = createFakeSpawner();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      customLauncher(spawner, WEZTERM).launch(input({ signal: controller.signal })),
+    ).resolves.toEqual({ ok: false, error: "timeout" });
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("a cap that fires during the executable check opens nothing and leaves no script", async () => {
+    const spawner = createFakeSpawner();
+    const controller = new AbortController();
+    const launcher = customLauncher(spawner, WEZTERM, () => {
+      controller.abort();
+      return Promise.resolve(true);
+    });
+    await expect(launcher.launch(input({ signal: controller.signal }))).resolves.toEqual({
+      ok: false,
+      error: "timeout",
+    });
+    expect(spawner.calls).toHaveLength(0);
+    expect(readdirSync(scriptDir)).toEqual([]);
+  });
+
+  it("leaves a possibly handed-off script for the sweep when the hand-off timed out", async () => {
+    const spawner = createFakeSpawner({
+      kind: "fail",
+      outcome: { exitCode: null, timedOut: true },
+    });
+    await expect(customLauncher(spawner, WEZTERM).launch(input())).resolves.toEqual({
+      ok: false,
+      error: "timeout",
+    });
+    expect(readdirSync(scriptDir)).toHaveLength(1);
+  });
+});
+
+describe("selectTerminalLauncher picks the custom adapter (PROJ-10, D-23)", () => {
+  it("returns the custom adapter for { kind: custom, preset, argv }", async () => {
+    const spawner = createFakeSpawner();
+    const launcher = selectTerminalLauncher(
+      { kind: "custom", preset: "wezterm", argv: [...WEZTERM] },
+      { spawner, scriptDir, isExecutable: () => Promise.resolve(true) },
+    );
+    expect(launcher).not.toBeNull();
+    await expect(launcher?.launch(input())).resolves.toEqual({ ok: true });
+    expect(spawner.calls[0]?.argv.slice(0, 3)).toEqual(["/usr/bin/open", "-na", "WezTerm"]);
+  });
+
+  it("defaults the executable check to the real X_OK test", async () => {
+    const spawner = createFakeSpawner();
+    const missing = selectTerminalLauncher(
+      { kind: "custom", preset: "blank", argv: ["/nonexistent/terminal", "{script}"] },
+      { spawner, scriptDir },
+    );
+    await expect(missing?.launch(input())).resolves.toEqual({
+      ok: false,
+      error: "launcher-not-configured",
+    });
+    expect(spawner.calls).toHaveLength(0);
   });
 });
