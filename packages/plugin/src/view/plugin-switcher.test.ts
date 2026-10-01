@@ -1,8 +1,8 @@
 import type { ProjectId } from "@ccc/domain";
 import type { SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
-import { createHostRegistry } from "../host-registry.js";
+import { createHostRegistry, type HostRegistry } from "../host-registry.js";
 import {
   type LaunchTimerControls,
   launchStatus,
@@ -27,24 +27,20 @@ import type { SwitcherHost } from "./quick-switcher.js";
 
 const PROJECT = "abcdefghi0123456789abcd01" as ProjectId;
 
+type CountingClient = SocketApiClient & { readonly request: Mock };
+
 /** A client whose answers never arrive, counting what was sent. */
-function pendingClient(): SocketApiClient & { request: ReturnType<typeof vi.fn> } {
-  return {
-    request: vi.fn(
-      <T>(_opts: SocketRequestOptions): Promise<{ status: number; body: T }> =>
-        new Promise(() => {}),
-    ),
-  };
+function pendingClient(): CountingClient {
+  const request = vi.fn((_opts: SocketRequestOptions) => new Promise<never>(() => {}));
+  return { request } as unknown as CountingClient;
 }
 
 /** A client that answers every launch `ok`. */
-function okClient(): SocketApiClient & { request: ReturnType<typeof vi.fn> } {
-  return {
-    request: vi.fn(
-      <T>(_opts: SocketRequestOptions): Promise<{ status: number; body: T }> =>
-        Promise.resolve({ status: 200, body: { ok: true } as T }),
-    ),
-  };
+function okClient(): CountingClient {
+  const request = vi.fn((_opts: SocketRequestOptions) =>
+    Promise.resolve({ status: 200, body: { ok: true } }),
+  );
+  return { request } as unknown as CountingClient;
 }
 
 /** Timers that never fire on their own, tracking which are still pending. */
@@ -68,8 +64,12 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve();
 }
 
+/** Every registry built, disposed after each test so no launch hold leaks between tests. */
+const built: HostRegistry[] = [];
+
 function build(client: SocketApiClient = pendingClient()) {
   const registry = createHostRegistry(new FakeObsidianHost());
+  built.push(registry);
   const timers = trackedTimers();
   const notify = vi.fn<(message: string) => void>();
   const reveal = vi.fn<() => void>();
@@ -94,6 +94,7 @@ function build(client: SocketApiClient = pendingClient()) {
 }
 
 afterEach(() => {
+  for (const registry of built.splice(0)) registry.disposeAll();
   resetLaunchStatus();
   navigationRequest.value = null;
   connectionState.value = { kind: "connecting" };
@@ -134,6 +135,18 @@ describe("the plugin-level switcher on unload (wave-7 finding 2)", () => {
 
     registry.disposeAll();
     expect(timers.pending.size).toBe(0);
+  });
+
+  it("releases the store hold of a launch whose answer never came", async () => {
+    connectionState.value = { kind: "live" };
+    const { registry, switcher } = build();
+    switcher.host.requestLaunch(PROJECT, "finder");
+    await flush();
+
+    registry.disposeAll();
+    // With no hold left, the last view's close resets the store.
+    retainLaunchStatus()();
+    expect(launchStatus.value.size).toBe(0);
   });
 
   it("a choice after unload posts nothing, reveals nothing and notifies nothing", async () => {

@@ -7,12 +7,9 @@ import {
   refreshProjects,
 } from "@ccc/service-api-client";
 import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
-import { connectionState } from "./connection-state.js";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference } from "./motion.js";
 import { registerSetUpLaunchersCommand } from "./projects/commands.js";
-import { createLaunchRequester, windowLaunchTimers } from "./projects/launch-client.js";
-import { projectsSnapshot } from "./projects/projects-state.js";
 import { refreshProjectsOnConnect } from "./service-connection.js";
 import {
   assertNoCredentialFields,
@@ -23,12 +20,11 @@ import {
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
-import { requestDestination } from "./view/navigation-request.js";
+import { createPluginSwitcher } from "./view/plugin-switcher.js";
 import {
   createSwitcherOpener,
   ProjectSwitcherModal,
   registerSwitcherCommand,
-  type SwitcherHost,
 } from "./view/quick-switcher.js";
 import { CommandCenterSettingTab } from "./view/settings-tab.js";
 import { startClock } from "./widgets/clock.js";
@@ -152,11 +148,28 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     // The quick-switcher (PROJ-16, D-31 – D-34), from the palette with no
     // default hotkey (D-33). Opening it attaches the event client lazily, so
     // it lists the last-good projects even before the view was opened.
-    const switcherHost = this.createSwitcherHost();
+    // Its launch timers and any modal still open are released on unload
+    // through the seam, after which a late choice does nothing (PLUG-03).
+    const switcher = createPluginSwitcher({
+      registry: this.hostRegistry,
+      client: this.client,
+      notify: (message) => {
+        new Notice(message);
+      },
+      reveal: () => {
+        void this.revealView();
+      },
+      openSwitcher: (prefill) => this.openSwitcher(prefill),
+      openModal: (host, prefill, onClosed) => {
+        const modal = new ProjectSwitcherModal(this.app, host, onClosed);
+        modal.openWith(prefill);
+        return modal;
+      },
+    });
     this.openSwitcher = createSwitcherOpener({
       eventClient: this.eventClient,
       onLive: refreshProjectsOnConnect(() => refreshProjects(this.client)),
-      show: (prefill) => new ProjectSwitcherModal(this.app, switcherHost).openWith(prefill),
+      show: switcher.show,
     });
     registerSwitcherCommand(this.hostRegistry, this.openSwitcher);
 
@@ -164,63 +177,6 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     registerSetUpLaunchersCommand(this.hostRegistry, () => {
       void this.revealView();
     });
-  }
-
-  /**
-   * The quick-switcher's reach (S9). Its launches go through their own
-   * requester — the switcher works with no command-center view open — whose
-   * pending 5 s deadlines and 6 s success clears are released on unload
-   * through the seam, after which a late answer is dropped (PLUG-03).
-   */
-  private createSwitcherHost(): SwitcherHost {
-    const notify = (message: string): void => {
-      new Notice(message);
-    };
-    const timers = windowLaunchTimers();
-    const pending = new Set<number>();
-    let unloaded = false;
-    this.hostRegistry.registerRaw("launchTimers", () => {
-      unloaded = true;
-      for (const id of pending) timers.clearTimer(id);
-      pending.clear();
-    });
-    const terminalLabel = (): string =>
-      projectsSnapshot.value?.launchers["claude-code"].terminalLabel ?? "Terminal";
-    const requestLaunch = createLaunchRequester({
-      client: this.client,
-      notify,
-      connection: () => connectionState.value,
-      projectName: (projectId) =>
-        projectsSnapshot.value?.projects.find((view) => view.projectId === projectId)
-          ?.displayName ?? null,
-      terminalLabel,
-      isDisposed: () => unloaded,
-      setTimer: (callback, ms) => {
-        const id = timers.setTimer(() => {
-          pending.delete(id);
-          callback();
-        }, ms);
-        pending.add(id);
-        return id;
-      },
-      clearTimer: (id) => {
-        pending.delete(id);
-        timers.clearTimer(id);
-      },
-    });
-    return {
-      snapshot: () => projectsSnapshot.value,
-      connection: () => connectionState.value,
-      notify,
-      // A one-shot request the shell consumes, then the view revealed — or
-      // created, in which case the shell honours the request when it mounts.
-      goTo: (destination, focusProjectId) => {
-        requestDestination(destination, { focusProjectId });
-        void this.revealView();
-      },
-      requestLaunch,
-      openSwitcher: (prefill) => this.openSwitcher(prefill),
-    };
   }
 
   /**

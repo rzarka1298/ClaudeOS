@@ -212,10 +212,13 @@ export function chooseSwitcherItem(item: SwitcherItem, host: SwitcherHost): void
  */
 export class ProjectSwitcherModal extends FuzzySuggestModal<SwitcherItem> {
   private readonly host: SwitcherHost;
+  private readonly onClosed: (() => void) | undefined;
 
-  constructor(app: App, host: SwitcherHost) {
+  /** `onClosed` lets the plugin stop tracking the modal once it closes (wave-7 finding 2). */
+  constructor(app: App, host: SwitcherHost, onClosed?: () => void) {
     super(app);
     this.host = host;
+    this.onClosed = onClosed;
     this.setPlaceholder(SWITCHER_PLACEHOLDER);
     this.setInstructions(SWITCHER_INSTRUCTIONS);
     this.emptyStateText = EMPTY_WITHOUT_PROJECTS;
@@ -240,6 +243,11 @@ export class ProjectSwitcherModal extends FuzzySuggestModal<SwitcherItem> {
 
   onChooseItem(item: SwitcherItem, _evt: MouseEvent | KeyboardEvent): void {
     chooseSwitcherItem(item, this.host);
+  }
+
+  override onClose(): void {
+    super.onClose();
+    this.onClosed?.();
   }
 
   /**

@@ -78,6 +78,15 @@ export interface CreateLaunchRequesterOptions {
    * posting a Notice for a view that no longer exists.
    */
   readonly isDisposed?: (() => boolean) | undefined;
+  /**
+   * Holds the shared launch-status store while one launch is in flight and
+   * returns the release, called once the launch settles (any outcome,
+   * including a dropped late answer). The plugin-level switcher passes
+   * `retainLaunchStatus`, so closing the last command-center view cannot
+   * wipe its `opening` entry and let the same launch be posted twice
+   * (wave-7 finding 3). A view needs none: it holds the store while open.
+   */
+  readonly holdStatus?: (() => () => void) | undefined;
   readonly setTimer: LaunchTimerControls["setTimer"];
   readonly clearTimer: LaunchTimerControls["clearTimer"];
 }
@@ -107,6 +116,7 @@ export function createLaunchRequester({
   projectName,
   terminalLabel = () => "Terminal",
   isDisposed = () => false,
+  holdStatus,
   setTimer,
   clearTimer,
 }: CreateLaunchRequesterOptions): (projectId: ProjectId | null, action: LaunchAction) => void {
@@ -115,6 +125,13 @@ export function createLaunchRequester({
   return (projectId, action) => {
     const key = launchStatusKey(projectId, action);
     if (launchStatus.value.get(key)?.kind === "opening") return;
+    const release = holdStatus?.();
+    let held = release !== undefined;
+    const settle = (): void => {
+      if (!held) return;
+      held = false;
+      release?.();
+    };
     setLaunchOpening(key);
 
     const fail = (error: LaunchErrorKind): void => {
@@ -129,13 +146,21 @@ export function createLaunchRequester({
     };
 
     if (connection().kind === "disconnected") {
-      fail("service-disconnected");
+      try {
+        fail("service-disconnected");
+      } finally {
+        settle();
+      }
       return;
     }
 
     const request = buildRequest(projectId, action);
     if (request === null) {
-      fail("spawn-failed");
+      try {
+        fail("spawn-failed");
+      } finally {
+        settle();
+      }
       return;
     }
 
@@ -150,17 +175,25 @@ export function createLaunchRequester({
     Promise.race([answer, deadline])
       .then(
         (outcome) => {
-          if (deadlineId !== undefined) timers.clearTimer(deadlineId);
-          if (isDisposed()) return;
-          if (outcome.settled === "timeout") fail("timeout");
-          else if (outcome.result.ok)
-            setLaunchResult(key, { kind: "success", at: new Date().toISOString() }, timers);
-          else fail(outcome.result.error);
+          try {
+            if (deadlineId !== undefined) timers.clearTimer(deadlineId);
+            if (isDisposed()) return;
+            if (outcome.settled === "timeout") fail("timeout");
+            else if (outcome.result.ok)
+              setLaunchResult(key, { kind: "success", at: new Date().toISOString() }, timers);
+            else fail(outcome.result.error);
+          } finally {
+            settle();
+          }
         },
         (error: unknown) => {
-          if (deadlineId !== undefined) timers.clearTimer(deadlineId);
-          if (isDisposed()) return;
-          fail(classifyLaunchFailure(error));
+          try {
+            if (deadlineId !== undefined) timers.clearTimer(deadlineId);
+            if (isDisposed()) return;
+            fail(classifyLaunchFailure(error));
+          } finally {
+            settle();
+          }
         },
       )
       // A throwing `notify` must not become an unhandled rejection.
