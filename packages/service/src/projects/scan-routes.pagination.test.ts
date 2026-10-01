@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import http, { type Server } from "node:http";
 import { join } from "node:path";
 import {
+  MAX_SCAN_ROOT_PATH_LENGTH,
+  MAX_SCAN_ROOTS,
   type ProjectsSnapshot,
   SCAN_ROOTS_ADD_PATH,
   SCAN_ROOTS_LIST_PATH,
@@ -348,5 +350,42 @@ describe("each scan of a folder has its own generation (codex review 3b, finding
     expect(rescanned.scanRoots[0]?.scanGeneration).not.toBe(first?.scanGeneration);
     const before = new Set(added.suggestions.map((s) => s.suggestionId));
     expect(rescanned.suggestions.some((s) => before.has(s.suggestionId))).toBe(false);
+  });
+});
+
+describe("the scan folder limit (codex review 3b, finding 3)", () => {
+  /** Empty folders under the fake home, one per scan folder. */
+  function folders(count: number): string[] {
+    return Array.from({ length: count }, (_, i) => {
+      const dir = join(fakeHome, "many", `folder-${String(i).padStart(3, "0")}`);
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    });
+  }
+
+  it(`refuses a scan folder past ${MAX_SCAN_ROOTS} with one constant answer; the list still fits`, async () => {
+    const dirs = folders(MAX_SCAN_ROOTS + 1);
+    for (const dir of dirs.slice(0, MAX_SCAN_ROOTS)) {
+      expect((await post(SCAN_ROOTS_ADD_PATH, { path: dir })).status).toBe(200);
+    }
+    const refused = await post(SCAN_ROOTS_ADD_PATH, { path: dirs[MAX_SCAN_ROOTS] });
+    expect(refused.status).toBe(409);
+    expect(refused.raw).toBe(JSON.stringify({ error: "scan folder limit reached" }));
+
+    // A folder already scanned may still be added again (a new depth).
+    const again = await post(SCAN_ROOTS_ADD_PATH, { path: dirs[0], depth: 2 });
+    expect(again.status).toBe(200);
+    expect(Buffer.byteLength(again.raw)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
+    const listed = await post(SCAN_ROOTS_LIST_PATH, {});
+    expect(ScanStateResponseSchema.parse(listed.body).scanRoots).toHaveLength(MAX_SCAN_ROOTS);
+  });
+
+  it("refuses a folder whose path is longer than a scan folder may be, with the constant refusal", async () => {
+    const deep = join(fakeHome, "a".repeat(200), "b".repeat(200));
+    mkdirSync(deep, { recursive: true });
+    expect(deep.length).toBeGreaterThan(MAX_SCAN_ROOT_PATH_LENGTH);
+    const res = await post(SCAN_ROOTS_ADD_PATH, { path: deep });
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "folder cannot be scanned" });
   });
 });

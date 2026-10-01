@@ -271,6 +271,13 @@ describe("createScanActions (plan 04-13 Task 1)", () => {
     const broken = createScanActions(throwingClient(new Error("boom")));
     expect(await broken.removeScanRoot(SCAN_ROOT_ID)).toEqual({ kind: "failed" });
   });
+  it("an add past the scan folder limit resolves limit, never refused (codex review 3b, finding 3)", async () => {
+    const full = createScanActions(
+      fakeClient({ status: 409, body: { error: "scan folder limit reached" } }).client,
+    );
+    expect(await full.addScanRoot("/Users/USERNAME/code")).toEqual({ kind: "limit" });
+  });
+
   it("a 404 on register or dismiss resolves not-found, not an outage (wave-6 review)", async () => {
     const gone = createScanActions(
       fakeClient({ status: 404, body: { error: "no such suggestion" } }).client,

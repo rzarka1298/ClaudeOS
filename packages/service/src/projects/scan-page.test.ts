@@ -1,8 +1,11 @@
 import {
   MAX_PATH_LENGTH,
+  MAX_SCAN_ROOT_PATH_LENGTH,
+  MAX_SCAN_ROOTS,
   SCAN_RESPONSE_BUDGET_BYTES,
   type ScanRootId,
   type ScanRootView,
+  ScanRootViewSchema,
   ScanStateResponseSchema,
   SUGGESTIONS_PAGE_SIZE,
   SuggestionsPageResponseSchema,
@@ -115,5 +118,88 @@ describe("scan pages fit the client's response cap (codex review 3, finding 2)",
     const state = fitScanState(roots, byRoot, false);
     expect(jsonBytes(state)).toBeLessThanOrEqual(SCAN_RESPONSE_BUDGET_BYTES);
     expect(state.scanRoots).toHaveLength(40);
+  });
+});
+
+describe("the full list of scan folders fits too (codex review 3b, finding 3)", () => {
+  /**
+   * The costliest character a scan folder's display path may hold: the
+   * schema refuses control characters (six bytes escaped) and lone
+   * surrogates (six), so a BMP character outside ASCII — three UTF-8 bytes,
+   * unescaped — is the most one UTF-16 unit can cost.
+   */
+  const WORST_PATH_CHAR = "\u0800";
+
+  function worstRoot(r: number): ScanRootView {
+    return ScanRootViewSchema.parse({
+      scanRootId: `abcdefghi${String(r).padStart(16, "0")}`,
+      displayPath: WORST_PATH_CHAR.repeat(MAX_SCAN_ROOT_PATH_LENGTH),
+      depth: 3,
+      addedAt: "2026-10-01T00:00:00.123456789Z",
+      lastScannedAt: "2026-10-01T00:00:00.123456789Z",
+      scanStatus: "access-denied",
+      suggestionCount: Number.MAX_SAFE_INTEGER,
+      scanGeneration: "z".repeat(64),
+    });
+  }
+
+  it("the schema bounds a scan folder's fields, so the worst case is the one built here", () => {
+    const base = worstRoot(0);
+    const accepts = (overrides: Partial<Record<keyof ScanRootView, unknown>>) =>
+      ScanRootViewSchema.safeParse({ ...base, ...overrides }).success;
+    expect(accepts({ displayPath: "a".repeat(MAX_SCAN_ROOT_PATH_LENGTH + 1) })).toBe(false);
+    expect(accepts({ displayPath: `~/code${WORST_CHAR}` })).toBe(false);
+    expect(accepts({ displayPath: "~/code\ud800" })).toBe(false);
+    expect(accepts({ displayPath: "~/code\udc00x" })).toBe(false);
+    expect(accepts({ displayPath: "~/emoji-\ud83d\ude00" })).toBe(true);
+    expect(accepts({ addedAt: `${"\\".repeat(4000)}` })).toBe(false);
+    expect(accepts({ lastScannedAt: "2026-10-01T00:00:00.0000000000Z" })).toBe(false);
+    expect(accepts({ lastScannedAt: null })).toBe(true);
+    expect(accepts({ scanGeneration: "z".repeat(65) })).toBe(false);
+  });
+
+  it(`${MAX_SCAN_ROOTS} worst-case folders, each with worst-case suggestions, answer within 64 KiB`, () => {
+    const roots: ScanRootView[] = [];
+    const byRoot: SuggestionView[][] = [];
+    for (let r = 0; r < MAX_SCAN_ROOTS; r++) {
+      const root = worstRoot(r);
+      roots.push(root);
+      byRoot.push(
+        Array.from({ length: 30 }, (_, i) => ({
+          ...worstSuggestion(i),
+          scanRootId: root.scanRootId,
+        })),
+      );
+    }
+    // The folders alone leave room inside the budget: suggestions are fitted
+    // into what remains, never forced past it.
+    expect(jsonBytes({ scanRoots: roots, suggestions: [], partial: true })).toBeLessThan(
+      SCAN_RESPONSE_BUDGET_BYTES,
+    );
+    const state = fitScanState(roots, byRoot, true);
+    const withProtected = { ...state, protectedLocation: "cloud-storage" as const };
+    expect(state.scanRoots).toHaveLength(MAX_SCAN_ROOTS);
+    expect(jsonBytes(state)).toBeLessThanOrEqual(SCAN_RESPONSE_BUDGET_BYTES);
+    expect(jsonBytes(withProtected)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
+    ScanStateResponseSchema.parse(withProtected);
+  });
+
+  it(`${MAX_SCAN_ROOTS} worst-case folders with typical suggestions still carry first pages`, () => {
+    const roots: ScanRootView[] = [];
+    const byRoot: SuggestionView[][] = [];
+    for (let r = 0; r < MAX_SCAN_ROOTS; r++) {
+      const root = worstRoot(r);
+      roots.push(root);
+      byRoot.push(
+        Array.from({ length: 30 }, (_, i) => ({
+          ...typicalSuggestion(i),
+          scanRootId: root.scanRootId,
+        })),
+      );
+    }
+    const state = fitScanState(roots, byRoot, false);
+    const withProtected = { ...state, protectedLocation: "cloud-storage" as const };
+    expect(jsonBytes(withProtected)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
+    expect(state.suggestions.length).toBeGreaterThan(0);
   });
 });
