@@ -45,8 +45,8 @@ import {
   detectProtectedLocation,
   ProjectRefusedError,
   type RegistrationPolicyContext,
-  validateProjectCandidate,
 } from "./registration.js";
+import { validateAgainstSettledPolicy } from "./settled-policy.js";
 
 /**
  * The project routes (PROJ-01, D-04, D-08): register a folder by path, and —
@@ -93,7 +93,7 @@ const MUTATION_OK: ProjectMutationResponse = { ok: true };
  * The locations a candidate is judged against. Without project services
  * (a partial composition) the real home and runtime directory apply.
  */
-function policyContext(ctx: RouteContext): RegistrationPolicyContext {
+export function policyContext(ctx: RouteContext): RegistrationPolicyContext {
   const vaultRoot = ctx.store.readServiceMeta(VAULT_ROOT_META_KEY);
   return {
     homeDir: ctx.projects?.homeDir ?? resolveHomeDir(),
@@ -109,7 +109,7 @@ const MAX_DISPLAY_NAME_LENGTH = 64;
  * The display name a newly registered project starts with: the folder's own
  * name, trimmed to the store's limit. The owner can rename it afterwards.
  */
-function defaultDisplayName(resolvedPath: string): string {
+export function defaultDisplayName(resolvedPath: string): string {
   const name = basename(resolvedPath).trim().slice(0, MAX_DISPLAY_NAME_LENGTH).trim();
   return name.length > 0 ? name : "project";
 }
@@ -121,41 +121,6 @@ function sendInternalError(res: ServerResponse, route: string, err: unknown): vo
     "project route failed",
   );
   sendJson(res, 500, INTERNAL_ERROR_BODY);
-}
-
-/** How many times registration re-validates after the vault root changed under it. */
-const MAX_POLICY_REVALIDATIONS = 3;
-
-/**
- * Validates `candidate` and returns its realpath, judged against the vault
- * root the store holds NOW, not only the one read before validation began
- * (codex review 2, finding 1).
- *
- * Validation is asynchronous — a Files & Folders prompt can hold it for as
- * long as the owner takes — so vault setup can persist a new root while it
- * runs. Vault setup itself is synchronous from its overlap check to its
- * persist, so it can never interleave with the synchronous tail of
- * registration. That makes a version check sufficient, with no lock: after
- * each validation the vault root is re-read, and if it changed the candidate
- * is validated again against the new one. The caller must not await between
- * this returning and the insert. A vault root that keeps changing is refused
- * rather than chased forever.
- */
-async function validateAgainstSettledPolicy(
-  candidate: string,
-  initial: RegistrationPolicyContext,
-  ctx: RouteContext,
-): Promise<string> {
-  let policy = initial;
-  for (let attempt = 0; ; attempt += 1) {
-    const resolved = await validateProjectCandidate(candidate, policy);
-    const current = policyContext(ctx);
-    if (current.vaultRoot === policy.vaultRoot) return resolved;
-    if (attempt >= MAX_POLICY_REVALIDATIONS) {
-      throw new ProjectRefusedError(candidate, "policy-changed");
-    }
-    policy = current;
-  }
 }
 
 async function handleRegister(
@@ -182,7 +147,9 @@ async function handleRegister(
     return;
   }
   try {
-    const resolved = await validateAgainstSettledPolicy(parsed.value.path, policy, ctx);
+    const resolved = await validateAgainstSettledPolicy(parsed.value.path, policy, () =>
+      policyContext(ctx),
+    );
     // Nothing below awaits until the row is inserted: the policy just
     // confirmed current is still current at insert time (codex review 2).
     // A symlink outside the protected folders can still resolve into one;

@@ -1,11 +1,17 @@
 import type { ProjectId, ProtectedLocation, ScanRootId, ScanStateResponse } from "@ccc/domain";
 import {
+  addScanRoot,
+  dismissSuggestion,
+  listScanState,
   ProjectsRequestError,
   pinProject,
   refreshProjects,
   registerProject,
+  registerSuggestion,
   removeProject,
+  removeScanRoot,
   renameProject,
+  rescanScanRoot,
   type SocketApiClient,
   SocketUnreachableError,
   setGithubLink,
@@ -142,7 +148,11 @@ export function createProjectsActions(client: SocketApiClient): ProjectsActions 
   };
 }
 
-/** RED stub (plan 04-13 Task 1). */
+/**
+ * Every scan action resolves to the complete scan state the service now holds
+ * (each scan route answers the whole `ScanStateResponse`), or one of the
+ * generic failure kinds. Never rejects.
+ */
 export type ScanActionOutcome =
   | { readonly kind: "state"; readonly state: ScanStateResponse }
   | Extract<
@@ -150,23 +160,74 @@ export type ScanActionOutcome =
       { kind: "refused" | "invalid" | "service-disconnected" | "failed" }
     >;
 
+/**
+ * The scan folder and suggestion actions behind S5 (plan 04-13, PROJ-02,
+ * PROJ-03, D-07), bound to one authenticated client. A separate interface
+ * from {@link ProjectsActions} so the project card and toolbar fakes do not
+ * grow six members they never call. Only {@link ScanActions.addScanRoot}
+ * carries a path; everything after it addresses a scan folder by its
+ * ScanRootId and a suggestion by its suggestionId (D-07).
+ */
 export interface ScanActions {
+  /** Nominates a folder and scans it once (D-07). */
   addScanRoot(path: string, acknowledgeProtectedLocation?: boolean): Promise<ScanActionOutcome>;
+  /** Stops scanning a folder; projects registered from it stay (D-08). */
   removeScanRoot(scanRootId: ScanRootId): Promise<ScanActionOutcome>;
+  /** Scans one folder again, optionally at a new depth (1..3). */
   rescan(scanRootId: ScanRootId, depth?: number): Promise<ScanActionOutcome>;
+  /** The scan folders and the suggestions the service holds in memory. */
   listScanState(): Promise<ScanActionOutcome>;
+  /** Registers a suggestion; the service re-checks containment (PROJ-03). */
   registerSuggestion(suggestionId: string): Promise<ProjectActionOutcome>;
+  /** Hides a suggestion until the next rescan or service restart. */
   dismissSuggestion(suggestionId: string): Promise<ProjectActionOutcome>;
 }
 
-export function createScanActions(_client: SocketApiClient): ScanActions {
-  const failed = () => Promise.resolve({ kind: "failed" as const });
+/** The production {@link ScanActions}, bound to one authenticated client. */
+export function createScanActions(client: SocketApiClient): ScanActions {
+  async function asState(request: Promise<ScanStateResponse>): Promise<ScanActionOutcome> {
+    try {
+      return { kind: "state", state: await request };
+    } catch (error: unknown) {
+      return classifyFailure(error);
+    }
+  }
   return {
-    addScanRoot: failed,
-    removeScanRoot: failed,
-    rescan: failed,
-    listScanState: failed,
-    registerSuggestion: failed,
-    dismissSuggestion: failed,
+    addScanRoot(path, acknowledgeProtectedLocation) {
+      return asState(
+        addScanRoot(
+          client,
+          acknowledgeProtectedLocation === undefined
+            ? { path }
+            : { path, acknowledgeProtectedLocation },
+        ),
+      );
+    },
+    removeScanRoot(scanRootId) {
+      return asState(removeScanRoot(client, { scanRootId }));
+    },
+    rescan(scanRootId, depth) {
+      return asState(
+        rescanScanRoot(client, depth === undefined ? { scanRootId } : { scanRootId, depth }),
+      );
+    },
+    listScanState() {
+      return asState(listScanState(client));
+    },
+    async registerSuggestion(suggestionId) {
+      try {
+        return await registerSuggestion(client, { suggestionId });
+      } catch (error: unknown) {
+        return classifyFailure(error);
+      }
+    },
+    async dismissSuggestion(suggestionId) {
+      try {
+        await dismissSuggestion(client, { suggestionId });
+        return { kind: "ok" };
+      } catch (error: unknown) {
+        return classifyFailure(error);
+      }
+    },
   };
 }

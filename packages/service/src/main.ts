@@ -19,7 +19,7 @@ import {
   resolveSocketPath,
   resolveSpoolPath,
 } from "./paths.js";
-import { recomputeApprovedRoots } from "./projects/approved-roots.js";
+import { recomputeApprovedRoots, VAULT_ROOT_META_KEY } from "./projects/approved-roots.js";
 import { createProjectsCollector } from "./projects/collector.js";
 import { createExecFileCommandRunner } from "./projects/command-runner.js";
 import { createDetector } from "./projects/detection.js";
@@ -29,6 +29,7 @@ import type { LauncherServices } from "./projects/launcher-routes.js";
 import { createStoreProjectLookup } from "./projects/project-lookup.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 import { resolveHomeDir } from "./projects/project-views.js";
+import { createScanService } from "./projects/scan.js";
 import {
   ensureScriptDir,
   STARTUP_SCRIPT_MIN_AGE_MS,
@@ -207,6 +208,24 @@ async function main(): Promise<void> {
     scriptDir,
   };
 
+  // --- Phase 4 (projects and launchers): scan folders (plan 04-13) -------
+  // Scans run only when a folder is nominated and when the owner chooses
+  // Rescan folder: nothing here schedules, watches or repeats (D-07). The
+  // policy is read fresh on every call, so a vault set up later applies.
+  const scan = createScanService({
+    store,
+    homeDir,
+    readPolicy: () => {
+      const persistedVault = store.readServiceMeta(VAULT_ROOT_META_KEY);
+      return {
+        homeDir,
+        runtimeDir,
+        vaultRoot: persistedVault !== null && persistedVault.length > 0 ? persistedVault : null,
+      };
+    },
+    projects,
+  });
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
@@ -214,6 +233,7 @@ async function main(): Promise<void> {
     projects,
     launch,
     launchers,
+    scan,
   });
   const server = await startSocketServer({ socketPath, requestListener });
 

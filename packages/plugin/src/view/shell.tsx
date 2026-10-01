@@ -7,7 +7,7 @@ import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
-import type { ProjectsActions } from "../projects/projects-actions.js";
+import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import { nowTick } from "../widgets/clock.js";
 import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
 import { resolvedLayout } from "../widgets/layout.js";
@@ -67,6 +67,12 @@ export interface ShellProps {
    */
   projectsActions?: ProjectsActions;
   /**
+   * The scan folder and suggestion actions behind S5 (plan 04-13). The view
+   * host wires this to `createScanActions(client)`; absent, the Projects
+   * destination's own default resolves `failed` for everything.
+   */
+  scanActions?: ScanActions;
+  /**
    * Opens Electron's native folder dialog (D-03). The default resolves
    * `unavailable`, which is a real, expected outcome the Projects
    * destination already falls back from — not a special case for the
@@ -122,6 +128,7 @@ export interface DestinationViewProps {
   readonly onQuickAction: (descriptor: QuickActionDescriptor) => void;
   readonly onNavigate: (destination: DestinationId) => void;
   readonly projectsActions: ProjectsActions;
+  readonly scanActions?: ScanActions | undefined;
   readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
   readonly openSystemSettings?: ((pane: "automation" | "privacy-security") => void) | undefined;
   readonly launchersActions: LaunchersActions;
@@ -146,11 +153,13 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
     onQuickAction,
     onNavigate,
     projectsActions,
+    scanActions,
     pickFolder,
     openSystemSettings,
   }) => (
     <ProjectsView
       actions={projectsActions}
+      scanActions={scanActions}
       pickFolder={pickFolder}
       connection={connection}
       now={now}
@@ -202,6 +211,7 @@ export function Shell({
   requestLaunch = noRequestLaunch,
   openSwitcher,
   projectsActions = noProjectsActions,
+  scanActions,
   pickFolder = noPickFolder,
   openSystemSettings,
   launchersActions = noLaunchersActions,
@@ -340,6 +350,7 @@ export function Shell({
                 onQuickAction={handleQuickAction}
                 onNavigate={focusDestination}
                 projectsActions={projectsActions}
+                scanActions={scanActions}
                 pickFolder={pickFolder}
                 openSystemSettings={openSystemSettings}
                 launchersActions={launchersActions}

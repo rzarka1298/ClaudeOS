@@ -98,6 +98,26 @@ export function checkPathContainment(candidate: string, root: string): PathConta
     return { contained: false, reason: "candidate-unresolvable" };
   }
 
+  return checkPathContainmentResolved(resolvedCandidate, resolvedRoot);
+}
+
+/**
+ * The comparison half of {@link checkPathContainment}, for a caller that has
+ * ALREADY resolved both paths — typically with the asynchronous
+ * `fs.promises.realpath` (the same native realpath(3)), because a
+ * synchronous resolve on the service's event loop can stall every request
+ * while macOS waits on a Files & Folders prompt (wave-4b review). Pure: no
+ * filesystem call. Same strict-descendant rule and the same result union, so
+ * the walker and its callers share one containment primitive rather than a
+ * second, hand-rolled prefix check.
+ */
+export function checkPathContainmentResolved(
+  resolvedCandidate: string,
+  resolvedRoot: string,
+): PathContainmentResult {
+  if (resolvedCandidate.includes("\0") || resolvedRoot.includes("\0")) {
+    return { contained: false, reason: "nul-byte" };
+  }
   const relative = path.relative(resolvedRoot, resolvedCandidate);
   if (relative === "") {
     return { contained: false, reason: "is-root" };

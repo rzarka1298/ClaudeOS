@@ -225,6 +225,23 @@ export async function validateProjectCandidate(
   return resolved;
 }
 
+/**
+ * The candidate policy for a scan folder (plan 04-13, PR-06, T-04-03): the
+ * SAME forbidden-location, home, runtime-directory, vault, control-character
+ * and must-be-a-directory rules as a project registration, with the same
+ * asynchronous realpath and the same `access-denied` → protected-location
+ * classification. Nominating a folder for scanning lets the service list its
+ * subfolders, so it must never be weaker than registering it would be.
+ * Duplicates are not a policy question here either: `insertScanRoot` answers
+ * an existing scan folder idempotently, exactly as `insertProject` does.
+ */
+export function validateScanRootCandidate(
+  candidate: string,
+  context: RegistrationPolicyContext,
+): Promise<string> {
+  return validateProjectCandidate(candidate, context);
+}
+
 /** How many symlinks {@link followLinksLexically} follows before giving up (the kernel's own order of magnitude). */
 const MAX_LINK_HOPS = 32;
 

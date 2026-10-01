@@ -18,6 +18,7 @@ export {
   LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS,
   LAUNCHER_TEST_CLIENT_TIMEOUT_MS,
   LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS,
+  listScanState,
   markLauncherTested,
   openSystemSettings,
   ProjectsRequestError,

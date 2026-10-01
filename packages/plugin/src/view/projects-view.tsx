@@ -8,11 +8,13 @@ import {
   projectsReceivedAt,
   projectsSnapshot,
 } from "../projects/projects-state.js";
+import { applyScanState, scanState } from "../projects/scan-state.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
 import type { DestinationId } from "./destinations.js";
 import { ProjectCard } from "./project-card.js";
 import { RegisterFlow } from "./register-flow.js";
+import { AddScanFolderFlow, ScanFolders } from "./scan-folders.js";
 
 /**
  * The S3 Projects destination (Task 1: the grid of cards; Task 2: the full
@@ -37,8 +39,20 @@ function headingKey(projectId: string): string {
   return `${projectId}:heading`;
 }
 
+/** Resolves `failed` for every scan action, so the view renders honestly without a host. */
+const FAILED_SCAN = (): Promise<{ kind: "failed" }> => Promise.resolve({ kind: "failed" });
+const NO_SCAN_ACTIONS: ScanActions = {
+  addScanRoot: FAILED_SCAN,
+  removeScanRoot: FAILED_SCAN,
+  rescan: FAILED_SCAN,
+  listScanState: FAILED_SCAN,
+  registerSuggestion: FAILED_SCAN,
+  dismissSuggestion: FAILED_SCAN,
+};
+
 export function ProjectsView({
   actions,
+  scanActions = NO_SCAN_ACTIONS,
   pickFolder,
   connection,
   now,
@@ -58,6 +72,22 @@ export function ProjectsView({
   const [announcement, setAnnouncement] = useState("");
   const registerOpenerRef = useRef<HTMLButtonElement | null>(null);
   const controlRefs = useRef(new Map<string, HTMLElement>());
+
+  // The scan state is read once when the destination opens and again each
+  // time the service comes back (a restart forgets every suggestion, D-07).
+  // Never on a timer: scans themselves run only on the owner's request.
+  // `scanActions` is a stable host-built object, not a dependency to track.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload on connection changes only.
+  useEffect(() => {
+    if (connection.kind !== "live") return;
+    let cancelled = false;
+    void scanActions.listScanState().then((outcome) => {
+      if (!cancelled && outcome.kind === "state") applyScanState(outcome.state);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.kind]);
 
   // Focus follows a newly registered project, a duplicate, or the next card
   // after a removal onto the dashboard only once its row actually settles in
@@ -85,13 +115,16 @@ export function ProjectsView({
   }
 
   const registerFlow = (
-    <RegisterFlow
-      actions={actions}
-      pickFolder={pickFolder}
-      onRegistered={setPendingFocusId}
-      onDuplicate={setPendingFocusId}
-      openerRef={registerOpenerRef}
-    />
+    <>
+      <RegisterFlow
+        actions={actions}
+        pickFolder={pickFolder}
+        onRegistered={setPendingFocusId}
+        onDuplicate={setPendingFocusId}
+        openerRef={registerOpenerRef}
+      />
+      <AddScanFolderFlow actions={scanActions} pickFolder={pickFolder} />
+    </>
   );
 
   if (snapshot === undefined) {
@@ -182,6 +215,7 @@ export function ProjectsView({
           ))}
         </div>
       )}
+      <ScanFolders state={scanState.value} actions={scanActions} now={now} />
     </div>
   );
 }

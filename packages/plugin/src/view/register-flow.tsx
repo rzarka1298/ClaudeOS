@@ -52,7 +52,7 @@ const SERVICE_DISCONNECTED_PROBLEM = "▲ Couldn't reach the command center serv
  * drives) has no UI-SPEC precedent; "Cloud storage" matches the sentence-case
  * and generic-noun style of the other four.
  */
-const PROTECTED_LOCATION_LABELS: Record<ProtectedLocation, string> = {
+export const PROTECTED_LOCATION_LABELS: Record<ProtectedLocation, string> = {
   documents: "Documents",
   desktop: "Desktop",
   downloads: "Downloads",
@@ -68,7 +68,7 @@ function basenameOf(path: string): string {
 }
 
 /** Client-side pre-check mirroring `AbsolutePathSchema` (D-03); the service re-validates authoritatively. */
-function validateTypedPath(value: string): string | null {
+export function validateTypedPath(value: string): string | null {
   if (!value.startsWith("/")) {
     return "▲ Enter the full path, starting with /.";
   }
