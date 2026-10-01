@@ -110,3 +110,29 @@ describe("loaded pages never outlive a rescan (codex review 3b, finding 1)", () 
     expect(idsOf(scanState.value)).toEqual([]);
   });
 });
+
+describe("a held row beyond the first page never outlives its suggestion (codex review 4)", () => {
+  it("registration through an overlapping scan root drops held rows past the fresh first page", () => {
+    const id = newScanRootId();
+    const held = suggestions(id, "s", 30);
+    // 25 on the first page, 5 more paged in: all 30 held, same generation.
+    scanState.value = {
+      scanRoots: [root(id, { scanGeneration: "gen1", suggestionCount: 30 })],
+      suggestions: held,
+      partial: false,
+    };
+    // s26 was registered through another, overlapping scan root: this
+    // folder's generation and first page are unchanged, its count is 29.
+    applyScanState({
+      scanRoots: [root(id, { scanGeneration: "gen1", suggestionCount: 29 })],
+      suggestions: held.slice(0, 25),
+      partial: false,
+    });
+    const ids = idsOf(scanState.value);
+    // The registered row is never kept, and nothing beyond the fresh page is
+    // trusted: the rest reloads through the cursor route.
+    expect(ids).not.toContain("s26");
+    expect(ids).toEqual(held.slice(0, 25).map((s) => s.suggestionId));
+    expect(scanState.value?.scanRoots[0]?.suggestionCount).toBe(29);
+  });
+});
