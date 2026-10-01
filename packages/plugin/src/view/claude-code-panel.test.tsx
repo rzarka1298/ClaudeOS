@@ -392,7 +392,7 @@ describe("an uncertain save reconciles with the service (codex review 3, finding
     expect(actions.getConfigs).toHaveBeenCalledTimes(1);
     expect(session.claudeDraft.value).not.toBeNull();
     expect(
-      (screen.getByRole("radio", { name: "~/.local/bin/claude" }) as HTMLInputElement).checked,
+      screen.getByRole<HTMLInputElement>("radio", { name: "~/.local/bin/claude" }).checked,
     ).toBe(true);
   });
 });

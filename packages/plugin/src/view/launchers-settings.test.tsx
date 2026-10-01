@@ -697,9 +697,9 @@ describe("an uncertain save reconciles with the service (codex review 3, finding
 
     // The service may have stored it after all: read back what it holds.
     expect(actions.getConfigs).toHaveBeenCalledTimes(2);
-    const preview = within(panel("Antigravity")).getByRole("radio", {
+    const preview = within(panel("Antigravity")).getByRole<HTMLInputElement>("radio", {
       name: /Antigravity Preview/,
-    }) as HTMLInputElement;
+    });
     expect(preview.checked).toBe(true);
   });
 });
