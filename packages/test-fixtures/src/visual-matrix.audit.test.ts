@@ -1,5 +1,5 @@
 // Audit (03-09): behavioural checks on the visual matrix contract that the
-// plan's own tests left to inspection — the 68-cell count, the off-Linux skip
+// plan's own tests left to inspection — the cell count, the off-Linux skip
 // guard, the determinism pins, and that no fixture leaks into the plugin.
 
 import { execFileSync } from "node:child_process";
@@ -28,14 +28,17 @@ function filesUnder(dir: string): string[] {
 }
 
 describe("visual matrix (audit)", () => {
-  it("lists exactly 68 cells: 8 widgets x 8 presentations + 4 motion cells", () => {
+  // Plan 04-15 added the fifth motion cell (Project shortcuts, reduced). A phase
+  // that merges after it with cells of its own sums both additions here.
+  it("lists exactly 69 cells: 8 widgets x 8 presentations + 5 motion cells", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 68 tests in 1 file/);
+    expect(out).toMatch(/Total: 69 tests in 1 file/);
     for (const cell of [
       "background — full",
       "background — reduced",
       "service-health — ready — motion full",
       "service-health — ready — motion reduced",
+      "project-shortcuts — ready — reduced",
     ]) {
       expect(out).toContain(cell);
     }

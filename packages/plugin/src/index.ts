@@ -52,3 +52,5 @@ export {
   UNAVAILABLE_STATE,
   widgetStateFor,
 } from "./widgets/widget-data.js";
+export type { WidgetHost } from "./widgets/widget-host.js";
+export { WidgetHostContext } from "./widgets/widget-host.js";

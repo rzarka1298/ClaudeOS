@@ -46,6 +46,7 @@ import {
   serviceHealthStateFor,
   WIDGETS,
   WidgetFrame,
+  WidgetHostContext,
 } from "@ccc/plugin";
 import type { ComponentChildren } from "preact";
 import { render } from "preact";
@@ -207,36 +208,96 @@ function adaptActiveSessions(data: Fields): ActiveSessionsData {
   };
 }
 
-/** All three launchers set up, so S10's setup callout never appears in the existing cells. */
+/** All three launchers set up: S10's setup callout stays out of the ready and stale cells. */
 const HARNESS_LAUNCHERS_SET_UP = {
   antigravity: "set-up",
   "claude-code": { status: "set-up", terminalLabel: "Terminal" },
   "claude-desktop": "set-up",
 } as const;
 
-function adaptProjectShortcuts(data: Fields): ProjectShortcutsData {
+/**
+ * No launcher set up (RR-26). The `empty` fixture is a fresh install — the
+ * registry answered "none registered" — so its cell also shows the S10 setup
+ * callout after the empty copy (UI-SPEC S1 "Setup state"; 04-15 carried item).
+ */
+const HARNESS_LAUNCHERS_NOT_SET_UP = {
+  antigravity: "not-set-up",
+  "claude-code": { status: "not-set-up", terminalLabel: "Terminal" },
+  "claude-desktop": "not-set-up",
+} as const;
+
+/**
+ * One S1 row's git picture. The prototype rows carry only a branch and a
+ * clean/dirty string, so the production states they cannot express — pinned
+ * or not, a detached HEAD, a branch git could not name, a failed read — are
+ * assigned by the row's POSITION, per fixture variant, so every S1 row
+ * anatomy the UI-SPEC defines reaches a baseline (plan 04-15; wave-3 and
+ * wave-6 carried items). Branch names and dirtiness still come from the row.
+ */
+type RowShape =
+  | "pinned"
+  | "unpinned"
+  | "detached"
+  | "stale"
+  | "branch-unavailable"
+  | "first-read-failed";
+
+/**
+ * `live` (the ready and disconnected cells): one pinned row, one unpinned row
+ * with uncommitted changes, one detached HEAD. `stale`: a last-good row whose
+ * refresh failed (`◔ Stale`), a branch git could not name, and a project
+ * whose very first read failed (`▲ Couldn't read Git status`).
+ */
+const ROW_SHAPES: Readonly<Partial<Record<FixtureStateKey, readonly RowShape[]>>> = {
+  live: ["pinned", "unpinned", "detached"],
+  stale: ["stale", "branch-unavailable", "first-read-failed"],
+};
+
+function projectRow(row: Fields, shape: RowShape): ProjectShortcutsData["projects"][number] {
+  const dirty = text(row.dirty) !== "Clean";
+  const branch = text(row.branch) || null;
+  const git: ProjectShortcutsData["projects"][number]["git"] =
+    shape === "first-read-failed"
+      ? { kind: "pending" }
+      : {
+          kind: "repo",
+          branch: shape === "detached" || shape === "branch-unavailable" ? null : branch,
+          detached: shape === "detached",
+          dirty,
+          commits: [],
+          remote: null,
+        };
   return {
-    projects: list(data.rows).map((row) => ({
-      id: text(row.project),
-      name: text(row.project),
-      pinned: true,
-      git: {
-        kind: "repo" as const,
-        branch: text(row.branch) || null,
-        detached: false,
-        dirty: text(row.dirty) !== "Clean",
-        commits: [],
-        remote: null,
-      },
-      gitReadFailed: false,
-      github: { kind: "none" as const },
-      observedAt: FIXTURES.now,
-      // Never populated in Phase 4 (D-15) — no prototype counterpart is read.
-      openItems: null,
-      sessionCount: null,
-      nextTask: null,
-    })),
-    launchers: HARNESS_LAUNCHERS_SET_UP,
+    id: text(row.project),
+    name: text(row.project),
+    pinned: shape === "pinned" || shape === "stale",
+    git,
+    gitReadFailed: shape === "stale" || shape === "first-read-failed",
+    // A row the fixture gives an issue COUNT ("4 open") is a GitHub repository;
+    // a row whose count is unavailable has no target the harness can claim, so
+    // its GitHub button takes the aria-disabled `No GitHub remote` look. The
+    // label is display-only and never rendered by S1.
+    github:
+      quantity(row.openIssues) === null
+        ? { kind: "none" }
+        : {
+            kind: "github",
+            label: `github.com/example/${text(row.project).toLowerCase()}`,
+            source: "remote",
+          },
+    observedAt: shape === "first-read-failed" ? null : FIXTURES.now,
+    // Never populated in Phase 4 (D-15) — no prototype counterpart is read.
+    openItems: null,
+    sessionCount: null,
+    nextTask: null,
+  };
+}
+
+function adaptProjectShortcuts(data: Fields, variant: FixtureStateKey): ProjectShortcutsData {
+  const shapes = ROW_SHAPES[variant] ?? [];
+  return {
+    projects: list(data.rows).map((row, index) => projectRow(row, shapes[index] ?? "unpinned")),
+    launchers: variant === "empty" ? HARNESS_LAUNCHERS_NOT_SET_UP : HARNESS_LAUNCHERS_SET_UP,
   };
 }
 
@@ -312,6 +373,14 @@ function adaptQuickActions(): QuickActionsData {
   // pair renders (visual cells re-baselined in plan 04-15).
   return { launchers: HARNESS_LAUNCHERS_SET_UP };
 }
+
+/**
+ * The widget host the real shell provides (plan 04-14): a quick switcher is
+ * wired, so S8's `Start a Claude Code session` renders live, as it does in
+ * Obsidian. No System Settings route — a harness has no service to ask, and
+ * no cell shows a launch error line.
+ */
+const HARNESS_WIDGET_HOST = { switcherAvailable: true } as const;
 
 /** Every adapter sees which fixture variant it is reshaping; most ignore it. */
 type Adapter = (data: Fields, variant: FixtureStateKey) => unknown;
@@ -485,14 +554,19 @@ function HarnessCell() {
   return (
     <Root motion={motionMode.value}>
       <div className="ccc-overview-grid ccc-harness-cell">
-        <WidgetFrame
-          definition={definition}
-          state={cell.state}
-          connection={connectionState.value}
-          size={definition.preferredSize}
-          now={NOW}
-          onQuickAction={() => {}}
-        />
+        <WidgetHostContext.Provider value={HARNESS_WIDGET_HOST}>
+          {/* A no-op dispatcher: the frame hands it to the body only for ready
+              and stale, so those cells draw the S1 launch toolbars and S8's
+              live buttons exactly as the real card does (RR-05). */}
+          <WidgetFrame
+            definition={definition}
+            state={cell.state}
+            connection={connectionState.value}
+            size={definition.preferredSize}
+            now={NOW}
+            onQuickAction={() => {}}
+          />
+        </WidgetHostContext.Provider>
       </div>
     </Root>
   );
