@@ -26,8 +26,8 @@ import { applyProjectsDelta, applyProjectsSnapshot, resetProjectsState } from ".
  *   reset only when the LAST view releases it.
  */
 
-const A = "abcdefghi0123456789abcdef0123401" as ProjectId;
-const B = "abcdefghi0123456789abcdef0123402" as ProjectId;
+const A = "abcdefghi0123456789abcd01" as ProjectId;
+const B = "abcdefghi0123456789abcd02" as ProjectId;
 
 function view(projectId: ProjectId, overrides: Partial<ProjectView> = {}): ProjectView {
   return {

@@ -17,6 +17,7 @@ import { connectionState } from "../connection-state.js";
 import { nowTick } from "../widgets/clock.js";
 import type { WidgetState } from "../widgets/contract.js";
 import type { ProjectRow, ProjectShortcutsData, QuickActionsData } from "../widgets/panels.js";
+import { clearLauncherErrors, clearNoGithubRemote } from "./launch-status.js";
 
 /**
  * The plugin's one in-memory picture of Projects (D-43, D-11).
@@ -44,7 +45,13 @@ export function applyProjectsSnapshot(snapshot: SnapshotResponse): void {
   batch(() => {
     projectsSnapshot.value = snapshot.state.projects;
     projectsReceivedAt.value = new Date().toISOString();
+    clearNoGithubRemote(linkedProjectIds(snapshot.state.projects.projects));
   });
+}
+
+/** The projects that now have a GitHub link: their `no-github-remote` error is stale (RR-04). */
+function linkedProjectIds(views: readonly ProjectView[]): ProjectView["projectId"][] {
+  return views.filter((view) => view.github.kind === "github").map((view) => view.projectId);
 }
 
 /**
@@ -85,6 +92,11 @@ export function applyProjectsDelta(event: ServiceEvent): void {
       launchers: launchers ?? current.launchers,
     };
     projectsReceivedAt.value = new Date().toISOString();
+    // RR-04 (wave-5 finding 5): a launcher save reaches the plugin as this
+    // delta's `launchers`, and clears the launcher actions' errors; a project
+    // that gained a GitHub link loses its `no-github-remote` error.
+    if (launchers !== undefined) clearLauncherErrors();
+    clearNoGithubRemote(linkedProjectIds(upserted));
   });
 }
 

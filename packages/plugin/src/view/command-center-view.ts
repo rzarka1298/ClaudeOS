@@ -9,7 +9,7 @@ import { h, render } from "preact";
 import { connectionState } from "../connection-state.js";
 import { pickFolder } from "../projects/folder-picker.js";
 import { createLaunchRequester, windowLaunchTimers } from "../projects/launch-client.js";
-import { resetLaunchStatus } from "../projects/launch-status.js";
+import { retainLaunchStatus } from "../projects/launch-status.js";
 import { createProjectsActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
 import { createSystemSettingsOpener } from "../projects/system-settings-opener.js";
@@ -49,6 +49,8 @@ export class CommandCenterView extends ItemView {
   /** Every launch timer (5 s deadline, 6 s success clear) still pending — cleared on close (PLUG-03, T-04-17). */
   private readonly launchTimers = new Set<number>();
   private disposed = false;
+  /** This view's hold on the shared launch-status store; released on close (finding 7). */
+  private releaseLaunchStatus: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, host: CommandCenterViewHost) {
     super(leaf);
@@ -72,6 +74,8 @@ export class CommandCenterView extends ItemView {
 
     this.contentEl.empty();
     this.disposed = false;
+    this.releaseLaunchStatus?.();
+    this.releaseLaunchStatus = retainLaunchStatus();
     const timers = windowLaunchTimers();
     const requestLaunch = createLaunchRequester({
       client: this.host.client,
@@ -146,6 +150,9 @@ export class CommandCenterView extends ItemView {
     this.disposed = true;
     for (const id of this.launchTimers) window.clearTimeout(id);
     this.launchTimers.clear();
-    resetLaunchStatus();
+    // The store is shared by every open command-center view: only the last
+    // one to close resets it (wave-5 finding 7).
+    this.releaseLaunchStatus?.();
+    this.releaseLaunchStatus = null;
   }
 }

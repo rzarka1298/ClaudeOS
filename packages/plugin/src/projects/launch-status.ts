@@ -130,11 +130,79 @@ export function setLaunchError(key: string, error: LaunchErrorKind): void {
   writeStatus(key, { kind: "error", error });
 }
 
+/** The three launch actions a launcher-settings save configures (RR-04). */
+const LAUNCHER_ACTIONS: ReadonlySet<string> = new Set<LaunchAction>([
+  "antigravity",
+  "claude-code",
+  "claude-desktop",
+]);
+
+/** The action a key ends in: `{projectId}:{action}` (a ProjectId never holds `:`). */
+function actionOf(key: string): string {
+  return key.slice(key.lastIndexOf(":") + 1);
+}
+
+/** Removes every key whose status matches, in one signal write. */
+function clearWhere(matches: (key: string, status: LaunchStatus) => boolean): void {
+  let next: Map<string, LaunchStatus> | null = null;
+  for (const [key, status] of launchStatus.value) {
+    if (!matches(key, status)) continue;
+    next ??= new Map(launchStatus.value);
+    next.delete(key);
+  }
+  if (next !== null) launchStatus.value = next;
+}
+
+/**
+ * A launcher-settings save clears the launcher actions' errors (RR-04,
+ * wave-5 finding 5): the owner just changed what those buttons run, so the
+ * old failure no longer describes them. In-flight and success statuses, and
+ * Finder/GitHub errors, are untouched.
+ */
+export function clearLauncherErrors(): void {
+  clearWhere((key, status) => status.kind === "error" && LAUNCHER_ACTIONS.has(actionOf(key)));
+}
+
+/**
+ * A project that now has a GitHub link loses its `no-github-remote` error
+ * (wave-5 finding 5): the button that failed for lack of a remote works now.
+ */
+export function clearNoGithubRemote(projectIds: Iterable<ProjectId>): void {
+  const keys = new Set<string>();
+  for (const projectId of projectIds) keys.add(launchStatusKey(projectId, "github"));
+  if (keys.size === 0) return;
+  clearWhere(
+    (key, status) =>
+      keys.has(key) && status.kind === "error" && status.error === "no-github-remote",
+  );
+}
+
+/** How many open views currently hold the store (finding 7). */
+let holders = 0;
+
+/**
+ * Registers one command-center view as a reader of this store and returns
+ * its release. The store is shared by every open view, so closing one must
+ * not wipe statuses another still shows (wave-5 finding 7): only the LAST
+ * release resets it. Each release counts once, however often it is called.
+ */
+export function retainLaunchStatus(): () => void {
+  holders += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    holders = Math.max(0, holders - 1);
+    if (holders === 0) resetLaunchStatus();
+  };
+}
+
 /**
  * Resets the store to empty, clearing every pending success-clear timer.
- * Tests use it between cases; the view host calls it when the view closes,
- * so no timer outlives the view and no `opening` entry is left behind to
- * swallow the next press (RR-04: errors persist "until view reload").
+ * Tests use it between cases; {@link retainLaunchStatus}'s last release calls
+ * it when the last view closes, so no timer outlives the views and no
+ * `opening` entry is left behind to swallow the next press (RR-04: errors
+ * persist "until view reload").
  */
 export function resetLaunchStatus(): void {
   for (const pending of pendingClearTimers.values()) pending.timers.clearTimer(pending.id);
