@@ -15,6 +15,7 @@ import {
 } from "@ccc/domain";
 import {
   applyMigrations,
+  insertProject,
   listLauncherConfigs,
   listProjects,
   type OperationalStore,
@@ -198,7 +199,7 @@ describe("scan responses fit the client's response cap (codex review 3, finding 
     expect(Buffer.byteLength(listed.raw)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
   });
 
-  it("each folder's count is exact, and paging from the plugin's count walks every suggestion once", async () => {
+  it("each folder's count is exact, and paging after the last held suggestion walks every one once", async () => {
     const added = ScanStateResponseSchema.parse(
       (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
     );
@@ -210,11 +211,13 @@ describe("scan responses fit the client's response cap (codex review 3, finding 
     while (seen.length < REPO_COUNT) {
       const res = await post(SUGGESTIONS_PAGE_PATH, {
         scanRootId: root?.scanRootId,
-        offset: seen.length,
+        scanGeneration: root?.scanGeneration,
+        afterSuggestionId: seen.at(-1)?.suggestionId,
       });
       expect(res.status).toBe(200);
       expect(Buffer.byteLength(res.raw)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
       const page = SuggestionsPageResponseSchema.parse(res.body);
+      if (page.kind !== "page") throw new Error("expected a page");
       expect(page.total).toBe(REPO_COUNT);
       expect(page.suggestions.length).toBeGreaterThan(0);
       seen.push(...page.suggestions);
@@ -225,18 +228,102 @@ describe("scan responses fit the client's response cap (codex review 3, finding 
     );
 
     const past = SuggestionsPageResponseSchema.parse(
-      (await post(SUGGESTIONS_PAGE_PATH, { scanRootId: root?.scanRootId, offset: REPO_COUNT }))
-        .body,
+      (
+        await post(SUGGESTIONS_PAGE_PATH, {
+          scanRootId: root?.scanRootId,
+          scanGeneration: root?.scanGeneration,
+          afterSuggestionId: seen.at(-1)?.suggestionId,
+        })
+      ).body,
     );
-    expect(past).toEqual({ suggestions: [], total: REPO_COUNT });
+    expect(past).toEqual({ kind: "page", suggestions: [], total: REPO_COUNT });
   });
 
-  it("the page route needs the token, a strict body, and a known scan folder", async () => {
+  it("no cursor serves the folder's first page (a response had no room for it)", async () => {
+    const added = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
+    );
+    const root = added.scanRoots[0];
+    const page = SuggestionsPageResponseSchema.parse(
+      (
+        await post(SUGGESTIONS_PAGE_PATH, {
+          scanRootId: root?.scanRootId,
+          scanGeneration: root?.scanGeneration,
+        })
+      ).body,
+    );
+    if (page.kind !== "page") throw new Error("expected a page");
+    expect(page.suggestions[0]?.folderName).toBe(repoName(0));
+  });
+
+  it("a suggestion registered out of band before the cursor skips nothing (codex review 3b, finding 2)", async () => {
+    const added = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
+    );
+    const root = added.scanRoots[0];
+    const held = added.suggestions;
+    // Registered elsewhere (not through the suggestion): the folder's list
+    // shrinks by one ahead of what the plugin holds.
+    insertProject(store.db, { path: join(scanRoot, repoName(3)), displayName: "elsewhere" });
+
+    const page = SuggestionsPageResponseSchema.parse(
+      (
+        await post(SUGGESTIONS_PAGE_PATH, {
+          scanRootId: root?.scanRootId,
+          scanGeneration: root?.scanGeneration,
+          afterSuggestionId: held.at(-1)?.suggestionId,
+        })
+      ).body,
+    );
+    if (page.kind !== "page") throw new Error("expected a page");
+    expect(page.total).toBe(REPO_COUNT - 1);
+    expect(page.suggestions[0]?.folderName).toBe(repoName(SUGGESTIONS_PAGE_SIZE));
+  });
+
+  it("a cursor from another scan, or one the service never minted, answers the constant reload", async () => {
+    const added = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
+    );
+    const root = added.scanRoots[0];
+    const lastHeld = added.suggestions.at(-1)?.suggestionId;
+    await post(SCAN_ROOTS_RESCAN_PATH, { scanRootId: root?.scanRootId });
+
+    const staleGeneration = await post(SUGGESTIONS_PAGE_PATH, {
+      scanRootId: root?.scanRootId,
+      scanGeneration: root?.scanGeneration,
+      afterSuggestionId: lastHeld,
+    });
+    expect(staleGeneration.status).toBe(200);
+    expect(staleGeneration.body).toEqual({ kind: "reload" });
+
+    const relisted = ScanStateResponseSchema.parse((await post(SCAN_ROOTS_LIST_PATH, {})).body);
+    const unknownCursor = await post(SUGGESTIONS_PAGE_PATH, {
+      scanRootId: root?.scanRootId,
+      scanGeneration: relisted.scanRoots[0]?.scanGeneration,
+      afterSuggestionId: lastHeld,
+    });
+    expect(unknownCursor.status).toBe(200);
+    expect(unknownCursor.raw).toBe(JSON.stringify({ kind: "reload" }));
+  });
+
+  it("the page route needs the token, a strict bounded body, and a known scan folder", async () => {
     await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot });
-    const unknown = { scanRootId: "000000000aaaaaaaaaaaaaaaa", offset: 0 };
+    const unknown = { scanRootId: "000000000aaaaaaaaaaaaaaaa", scanGeneration: "abc" };
     expect((await post(SUGGESTIONS_PAGE_PATH, unknown, false)).status).toBe(401);
     expect((await post(SUGGESTIONS_PAGE_PATH, { ...unknown, path: scanRoot })).status).toBe(400);
-    expect((await post(SUGGESTIONS_PAGE_PATH, { ...unknown, offset: -1 })).status).toBe(400);
+    expect((await post(SUGGESTIONS_PAGE_PATH, { ...unknown, offset: 0 })).status).toBe(400);
+    expect(
+      (await post(SUGGESTIONS_PAGE_PATH, { ...unknown, afterSuggestionId: "a".repeat(65) })).status,
+    ).toBe(400);
+    expect(
+      (await post(SUGGESTIONS_PAGE_PATH, { ...unknown, afterSuggestionId: "../x" })).status,
+    ).toBe(400);
+    expect(
+      (await post(SUGGESTIONS_PAGE_PATH, { ...unknown, scanGeneration: "A".repeat(10) })).status,
+    ).toBe(400);
+    expect((await post(SUGGESTIONS_PAGE_PATH, { scanRootId: unknown.scanRootId })).status).toBe(
+      400,
+    );
     const res = await post(SUGGESTIONS_PAGE_PATH, unknown);
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "no such scan folder" });

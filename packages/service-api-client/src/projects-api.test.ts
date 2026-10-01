@@ -25,6 +25,7 @@ import {
   type ScanStateResponse,
   SUGGESTION_DISMISS_PATH,
   SUGGESTION_REGISTER_PATH,
+  SUGGESTIONS_PAGE_PATH,
   SYSTEM_SETTINGS_OPEN_PATH,
 } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
@@ -34,6 +35,7 @@ import {
   dismissSuggestion,
   getLauncherConfigs,
   listScanState,
+  listSuggestionsPage,
   markLauncherTested,
   openSystemSettings,
   ProjectsRequestError,
@@ -349,6 +351,27 @@ describe("listScanState", () => {
     const result = await listScanState(client);
     expect(requests).toEqual([{ method: "POST", path: SCAN_ROOTS_LIST_PATH, body: {} }]);
     expect(result).toEqual(SCAN_STATE);
+  });
+});
+
+describe("listSuggestionsPage (codex review 3b, finding 2)", () => {
+  const cursor = { scanRootId: SCAN_ROOT_ID, scanGeneration: "gen1", afterSuggestionId: "abc123" };
+
+  it("posts the scan generation and the last held suggestion, never an offset", async () => {
+    const page = { kind: "page", suggestions: [], total: 0 } as const;
+    const { client, requests } = fakeClient({ status: 200, body: page });
+    expect(await listSuggestionsPage(client, cursor)).toEqual(page);
+    expect(requests).toEqual([{ method: "POST", path: SUGGESTIONS_PAGE_PATH, body: cursor }]);
+  });
+
+  it("returns the service's reload answer for a stale cursor", async () => {
+    const { client } = fakeClient({ status: 200, body: { kind: "reload" } });
+    expect(await listSuggestionsPage(client, cursor)).toEqual({ kind: "reload" });
+  });
+
+  it("refuses an offset-shaped page body", async () => {
+    const { client } = fakeClient({ status: 200, body: { suggestions: [], total: 0 } });
+    await expect(listSuggestionsPage(client, cursor)).rejects.toBeInstanceOf(ProjectsRequestError);
   });
 });
 

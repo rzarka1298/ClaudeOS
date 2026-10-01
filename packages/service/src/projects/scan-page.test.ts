@@ -71,10 +71,10 @@ describe("scan pages fit the client's response cap (codex review 3, finding 2)",
   it("a page of worst-case suggestions fits, and holds at least one", () => {
     const visible = Array.from({ length: MANY }, (_, i) => worstSuggestion(i));
     for (const offset of [0, 1, MANY - 1]) {
-      const page = fitSuggestionsPage(visible, offset);
+      const page = fitSuggestionsPage(visible.slice(offset), MANY);
       expect(jsonBytes(page)).toBeLessThanOrEqual(SCAN_RESPONSE_BUDGET_BYTES);
       expect(page.suggestions.length).toBeGreaterThanOrEqual(1);
-      expect(page.total).toBe(MANY);
+      expect(page).toMatchObject({ kind: "page", total: MANY });
       SuggestionsPageResponseSchema.parse(page);
     }
   });
@@ -96,7 +96,8 @@ describe("scan pages fit the client's response cap (codex review 3, finding 2)",
 
     const seen: SuggestionView[] = [...state.suggestions];
     while (seen.length < MANY) {
-      const page = fitSuggestionsPage(visible, seen.length);
+      const page = fitSuggestionsPage(visible.slice(seen.length), MANY);
+      if (page.kind !== "page" || page.suggestions.length === 0) throw new Error("no progress");
       expect(jsonBytes(page)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
       seen.push(...page.suggestions);
     }

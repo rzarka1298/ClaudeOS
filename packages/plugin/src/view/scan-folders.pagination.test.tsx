@@ -83,14 +83,23 @@ function rowNames(): string[] {
     .map((item) => item.querySelector("p")?.textContent ?? "");
 }
 
-/** A page action serving `all` from the requested offset, 25 at a time. */
+/** A page action serving `all` after the requested cursor, 25 at a time. */
 function pagesOf(all: SuggestionView[]) {
   return vi.fn(
-    (_scanRootId: ScanRootId, offset: number): Promise<SuggestionsPageOutcome> =>
-      Promise.resolve({
+    (
+      _scanRootId: ScanRootId,
+      _scanGeneration: string,
+      afterSuggestionId?: string,
+    ): Promise<SuggestionsPageOutcome> => {
+      const start =
+        afterSuggestionId === undefined
+          ? 0
+          : all.findIndex((s) => s.suggestionId === afterSuggestionId) + 1;
+      return Promise.resolve({
         kind: "page",
-        page: { suggestions: all.slice(offset, offset + 25), total: all.length },
-      }),
+        page: { kind: "page", suggestions: all.slice(start, start + 25), total: all.length },
+      });
+    },
   );
 }
 
@@ -100,7 +109,7 @@ afterEach(() => {
 });
 
 describe("Show {n} more pages suggestions in from the service (codex review 3, finding 2)", () => {
-  it("counts every suggestion, and fetches the next page from the number held", async () => {
+  it("counts every suggestion, and fetches the next page after the last one held", async () => {
     const a = root({ suggestionCount: 60 });
     const all = suggestionsFor(a.scanRootId, 60);
     const suggestionsPage = pagesOf(all);
@@ -111,11 +120,11 @@ describe("Show {n} more pages suggestions in from the service (codex review 3, f
 
     fireEvent.click(screen.getByRole("button", { name: "Show 25 more" }));
     await waitFor(() => expect(rowNames()).toHaveLength(50));
-    expect(suggestionsPage).toHaveBeenLastCalledWith(a.scanRootId, 25);
+    expect(suggestionsPage).toHaveBeenLastCalledWith(a.scanRootId, "gen1", "project24");
 
     fireEvent.click(screen.getByRole("button", { name: "Show 10 more" }));
     await waitFor(() => expect(rowNames()).toHaveLength(60));
-    expect(suggestionsPage).toHaveBeenLastCalledWith(a.scanRootId, 50);
+    expect(suggestionsPage).toHaveBeenLastCalledWith(a.scanRootId, "gen1", "project49");
     expect(rowNames()).toEqual(all.map((s) => s.folderName));
     expect(screen.queryByRole("button", { name: /^Show \d+ more$/ })).toBeNull();
   });
@@ -130,7 +139,7 @@ describe("Show {n} more pages suggestions in from the service (codex review 3, f
     expect(screen.getByText("3 folders")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Show 3 more" }));
     await waitFor(() => expect(rowNames()).toHaveLength(3));
-    expect(suggestionsPage).toHaveBeenCalledWith(a.scanRootId, 0);
+    expect(suggestionsPage).toHaveBeenCalledWith(a.scanRootId, "gen1", undefined);
   });
 
   it("rows already held are revealed with no request", () => {
@@ -198,5 +207,33 @@ describe("Show {n} more pages suggestions in from the service (codex review 3, f
     await waitFor(() => expect(screen.getByText("59 folders")).toBeTruthy());
     expect(rowNames()).toHaveLength(49);
     expect(rowNames()).toEqual(remaining.slice(0, 49).map((s) => s.folderName));
+  });
+
+  it("a stale cursor reloads the folder from its first page (codex review 3b, finding 2)", async () => {
+    const a = root({ suggestionCount: 60 });
+    const old = suggestionsFor(a.scanRootId, 60);
+    const fresh = old.map((s, i) => ({ ...s, suggestionId: `fresh${i}` }));
+    const suggestionsPage = vi.fn(
+      (): Promise<SuggestionsPageOutcome> => Promise.resolve({ kind: "reload" }),
+    );
+    const listScanState = vi.fn(
+      (): Promise<ScanActionOutcome> =>
+        Promise.resolve({
+          kind: "state",
+          // Same generation reported (the cursor itself was unknown): the
+          // folder still starts over from the fresh first page.
+          state: stateOf([{ ...a, suggestionCount: 60 }], fresh.slice(0, 25)),
+        }),
+    );
+    renderLive(stateOf([a], old.slice(0, 50)), actionsWith({ suggestionsPage, listScanState }));
+    fireEvent.click(screen.getByRole("button", { name: "Show 25 more" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show 10 more" }));
+
+    await waitFor(() => expect(listScanState).toHaveBeenCalled());
+    await waitFor(() => expect(rowNames()).toHaveLength(25));
+    const ids = Array.from(document.querySelectorAll<HTMLElement>("li.ccc-suggestion-row")).map(
+      (row) => row.dataset.suggestionId,
+    );
+    expect(ids).toEqual(fresh.slice(0, 25).map((s) => s.suggestionId));
   });
 });
