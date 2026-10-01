@@ -38,3 +38,12 @@ PRIVACY-GATE-REPORT.md
 
 # Owner UAT layout override (dev vault symlinks this folder) — never commit
 packages/plugin/layout.json
+
+# Internal planning artifacts — never tracked in the public repo
+.planning/
+.claude/
+.obsidian/
+.gsd/
+CONTEXT.md
+claude-command-center-prd.md
+PRIVACY-GATE-REPORT.md
