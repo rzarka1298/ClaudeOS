@@ -12,6 +12,7 @@ import { createLaunchRequester, windowLaunchTimers } from "../projects/launch-cl
 import { resetLaunchStatus } from "../projects/launch-status.js";
 import { createProjectsActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
+import { createSystemSettingsOpener } from "../projects/system-settings-opener.js";
 import { attachEventClient, refreshProjectsOnConnect } from "../service-connection.js";
 import type { CommandCenterSettings } from "../settings.js";
 import type { DestinationId } from "./destinations.js";
@@ -115,10 +116,13 @@ export class CommandCenterView extends ItemView {
         // reaches the client (D-24).
         requestLaunch,
         // A fixed pane enum only — the service owns the URL (RR-16, T-04-22).
-        // Failure is silent: the error's next-step line already names the path.
-        openSystemSettings: (pane: "automation" | "privacy-security") => {
-          openSystemSettings(this.host.client, pane).catch(() => undefined);
-        },
+        // A failed open posts a constant Notice naming the pane (finding 6).
+        openSystemSettings: createSystemSettingsOpener(
+          (pane) => openSystemSettings(this.host.client, pane),
+          (message: string) => {
+            new Notice(message);
+          },
+        ),
         projectsActions: createProjectsActions(this.host.client),
         pickFolder,
       }),

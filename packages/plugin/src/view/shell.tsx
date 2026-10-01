@@ -1,7 +1,7 @@
 import type { LaunchAction, ProjectId } from "@ccc/domain";
 import type { ReadonlySignal } from "@preact/signals";
 import type { VNode } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { useMemo, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
@@ -13,6 +13,7 @@ import { resolvedLayout } from "../widgets/layout.js";
 import { dispatchQuickAction } from "../widgets/quick-actions.js";
 import type { WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
+import { type WidgetHost, WidgetHostContext } from "../widgets/widget-host.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 import { Overview } from "./overview.js";
 import { ProjectsView } from "./projects-view.js";
@@ -41,8 +42,12 @@ export interface ShellProps {
    * `@ccc/service-api-client` itself (D-24).
    */
   requestLaunch?: (projectId: ProjectId | null, action: LaunchAction) => void;
-  /** Opens the Claude Code quick switcher, prefilled. The default is a no-op. */
-  openSwitcher?: (prefill: string) => void;
+  /**
+   * Opens the Claude Code quick switcher, prefilled. Absent (until plan
+   * 04-14 wires one), S8's `Start a Claude Code session` renders unavailable
+   * and its activation posts the unavailable Notice.
+   */
+  openSwitcher?: ((prefill: string) => void) | undefined;
   /**
    * Opens one of the two fixed System Settings panes (RR-16) through the
    * service. Absent, the launch error buttons that need it are omitted —
@@ -69,7 +74,6 @@ export interface ShellProps {
 
 function noNotify(_message: string): void {}
 function noRequestLaunch(_projectId: ProjectId | null, _action: LaunchAction): void {}
-function noOpenSwitcher(_prefill: string): void {}
 
 const FAILED_OUTCOME = Promise.resolve({ kind: "failed" as const });
 const noProjectsActions: ProjectsActions = {
@@ -165,7 +169,7 @@ export function Shell({
   stateFor = widgetStateFor,
   notify = noNotify,
   requestLaunch = noRequestLaunch,
-  openSwitcher = noOpenSwitcher,
+  openSwitcher,
   projectsActions = noProjectsActions,
   pickFolder = noPickFolder,
   openSystemSettings,
@@ -214,93 +218,103 @@ export function Shell({
     focusDestination(nextDestination(activeId, direction));
   }
 
+  // What a widget body may reach of this host (findings 4 and 6): whether a
+  // switcher is wired, and the RR-16 System Settings route.
+  const switcherAvailable = openSwitcher !== undefined;
+  const widgetHost = useMemo<WidgetHost>(
+    () => ({ switcherAvailable, openSystemSettings }),
+    [switcherAvailable, openSystemSettings],
+  );
+
   const active = DESTINATIONS.find((d) => d.id === activeId) ?? DESTINATIONS[0];
   const status = connectionState.value;
   const event = lastEvent.value;
 
   return (
-    <div className="ccc-command-center" data-motion={motionMode.value}>
-      {/* Decorative atmosphere (D-20): CSS-only gradients plus a fixed set of
+    <WidgetHostContext.Provider value={widgetHost}>
+      <div className="ccc-command-center" data-motion={motionMode.value}>
+        {/* Decorative atmosphere (D-20): CSS-only gradients plus a fixed set of
           twinkle points whose positions and delays live entirely in
           `styles.css`. Announced to nobody, and static under reduced motion. */}
-      <div className="ccc-twinkle" aria-hidden="true">
-        <span className="ccc-twinkle-point" key={0} />
-        <span className="ccc-twinkle-point" key={1} />
-        <span className="ccc-twinkle-point" key={2} />
-        <span className="ccc-twinkle-point" key={3} />
-        <span className="ccc-twinkle-point" key={4} />
-        <span className="ccc-twinkle-point" key={5} />
-        <span className="ccc-twinkle-point" key={6} />
-        <span className="ccc-twinkle-point" key={7} />
-        <span className="ccc-twinkle-point" key={8} />
-        <span className="ccc-twinkle-point" key={9} />
-        <span className="ccc-twinkle-point" key={10} />
-        <span className="ccc-twinkle-point" key={11} />
+        <div className="ccc-twinkle" aria-hidden="true">
+          <span className="ccc-twinkle-point" key={0} />
+          <span className="ccc-twinkle-point" key={1} />
+          <span className="ccc-twinkle-point" key={2} />
+          <span className="ccc-twinkle-point" key={3} />
+          <span className="ccc-twinkle-point" key={4} />
+          <span className="ccc-twinkle-point" key={5} />
+          <span className="ccc-twinkle-point" key={6} />
+          <span className="ccc-twinkle-point" key={7} />
+          <span className="ccc-twinkle-point" key={8} />
+          <span className="ccc-twinkle-point" key={9} />
+          <span className="ccc-twinkle-point" key={10} />
+          <span className="ccc-twinkle-point" key={11} />
+        </div>
+        <div className="ccc-connection-status" data-state={status.kind}>
+          <span className="ccc-status-dot" aria-hidden="true" />
+          <span className="ccc-status-text">{connectionStatusText(status)}</span>
+          {event && (
+            <span className="ccc-last-event-text">
+              {`Last event: ${event.type} at ${event.occurredAt}`}
+            </span>
+          )}
+        </div>
+        <div
+          role="tablist"
+          aria-label="Command center destinations"
+          className="ccc-nav"
+          onKeyDown={handleNavKeyDown}
+        >
+          {DESTINATIONS.map((destination) => {
+            const selected = destination.id === activeId;
+            return (
+              <button
+                key={destination.id}
+                type="button"
+                role="tab"
+                id={`ccc-tab-${destination.id}`}
+                aria-selected={selected}
+                aria-controls={`ccc-panel-${destination.id}`}
+                tabIndex={selected ? 0 : -1}
+                className="ccc-nav-item"
+                ref={(el) => {
+                  if (el) tabRefs.current[destination.id] = el;
+                }}
+                onClick={() => select(destination.id)}
+              >
+                {destination.label}
+              </button>
+            );
+          })}
+        </div>
+        <div
+          role="tabpanel"
+          id={`ccc-panel-${active.id}`}
+          aria-labelledby={`ccc-tab-${active.id}`}
+          className="ccc-content"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: the WAI-ARIA tabs pattern requires the tabpanel to be focusable (A11Y-01) — Biome doesn't know role="tabpanel" makes this interactive.
+          tabIndex={0}
+        >
+          <h2>{active.label}</h2>
+          {(() => {
+            const DestinationView = DESTINATION_VIEWS[active.id];
+            return DestinationView ? (
+              <DestinationView
+                stateFor={stateFor}
+                connection={status}
+                now={nowTick.value}
+                onQuickAction={handleQuickAction}
+                onNavigate={focusDestination}
+                projectsActions={projectsActions}
+                pickFolder={pickFolder}
+                openSystemSettings={openSystemSettings}
+              />
+            ) : (
+              <p>{active.description}</p>
+            );
+          })()}
+        </div>
       </div>
-      <div className="ccc-connection-status" data-state={status.kind}>
-        <span className="ccc-status-dot" aria-hidden="true" />
-        <span className="ccc-status-text">{connectionStatusText(status)}</span>
-        {event && (
-          <span className="ccc-last-event-text">
-            {`Last event: ${event.type} at ${event.occurredAt}`}
-          </span>
-        )}
-      </div>
-      <div
-        role="tablist"
-        aria-label="Command center destinations"
-        className="ccc-nav"
-        onKeyDown={handleNavKeyDown}
-      >
-        {DESTINATIONS.map((destination) => {
-          const selected = destination.id === activeId;
-          return (
-            <button
-              key={destination.id}
-              type="button"
-              role="tab"
-              id={`ccc-tab-${destination.id}`}
-              aria-selected={selected}
-              aria-controls={`ccc-panel-${destination.id}`}
-              tabIndex={selected ? 0 : -1}
-              className="ccc-nav-item"
-              ref={(el) => {
-                if (el) tabRefs.current[destination.id] = el;
-              }}
-              onClick={() => select(destination.id)}
-            >
-              {destination.label}
-            </button>
-          );
-        })}
-      </div>
-      <div
-        role="tabpanel"
-        id={`ccc-panel-${active.id}`}
-        aria-labelledby={`ccc-tab-${active.id}`}
-        className="ccc-content"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: the WAI-ARIA tabs pattern requires the tabpanel to be focusable (A11Y-01) — Biome doesn't know role="tabpanel" makes this interactive.
-        tabIndex={0}
-      >
-        <h2>{active.label}</h2>
-        {(() => {
-          const DestinationView = DESTINATION_VIEWS[active.id];
-          return DestinationView ? (
-            <DestinationView
-              stateFor={stateFor}
-              connection={status}
-              now={nowTick.value}
-              onQuickAction={handleQuickAction}
-              onNavigate={focusDestination}
-              projectsActions={projectsActions}
-              pickFolder={pickFolder}
-              openSystemSettings={openSystemSettings}
-            />
-          ) : (
-            <p>{active.description}</p>
-          );
-        })()}
-      </div>
-    </div>
+    </WidgetHostContext.Provider>
   );
 }

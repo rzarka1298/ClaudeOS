@@ -1,11 +1,13 @@
 import type { GithubTarget, LaunchersSummary, ProjectGitState, ProjectId } from "@ccc/domain";
 import type { VNode } from "preact";
+import { useContext } from "preact/hooks";
 import { launchStatus, launchStatusKey } from "../projects/launch-status.js";
 import type { DestinationId } from "../view/destinations.js";
 import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
 import { ListBody } from "./list-body.js";
+import { WidgetHostContext } from "./widget-host.js";
 
 /**
  * The seven PRD §7.1 panels, in the PRD's own desktop ordering.
@@ -323,6 +325,7 @@ function ProjectShortcutsBody({
   onQuickAction,
 }: WidgetBodyProps<ProjectShortcutsData>): VNode | null {
   const terminalLabel = data.launchers["claude-code"].terminalLabel;
+  const { openSystemSettings } = useContext(WidgetHostContext);
   // The frame hands `onQuickAction` in only for `ready`/`stale` (RR-05): a
   // disconnected card renders its dimmed rows with no toolbar and no status
   // line, so no launch control — and no danger-coloured line — ever sits
@@ -363,6 +366,7 @@ function ProjectShortcutsBody({
                   terminalLabel={terminalLabel}
                   actions={PROJECT_LAUNCH_ACTIONS}
                   onNavigate={onNavigate}
+                  openSystemSettings={openSystemSettings}
                 />
               )
             : undefined
@@ -642,16 +646,26 @@ function QuickActionsBody({
   onNavigate,
   onQuickAction,
 }: WidgetBodyProps<QuickActionsData>): VNode | null {
+  const { switcherAvailable, openSystemSettings } = useContext(WidgetHostContext);
   // The frame hands `onQuickAction` in only for `ready`/`stale` (RR-05). In
   // `disconnected` the card hides its buttons (UI-SPEC S8, the Phase 3 rule)
   // and the Claude Desktop status line with them — like S1's rows, nothing
   // focusable and inert, and no stale error line, sits in the dimmed body.
   if (onQuickAction === undefined) return null;
   const desktopOpening = launchStatus.value.get(CLAUDE_DESKTOP_KEY)?.kind === "opening";
+  // `Start a Claude Code session` is live only once the host wires a quick
+  // switcher (plan 04-14); until then it takes the unavailable treatment
+  // rather than sitting live and doing nothing (wave-5 finding 4).
+  const live = LIVE_QUICK_ACTIONS.filter(
+    (action) => switcherAvailable || !action.capability.startsWith("switcher:"),
+  );
+  const unavailable = switcherAvailable
+    ? UNAVAILABLE_QUICK_ACTIONS
+    : QUICK_ACTIONS.filter((action) => !live.includes(action));
   return (
     <>
       <div className="ccc-card-actions">
-        {LIVE_QUICK_ACTIONS.map((action) => {
+        {live.map((action) => {
           const opening = action.capability === "launch:claude-desktop" && desktopOpening;
           return (
             <button
@@ -676,10 +690,11 @@ function QuickActionsBody({
         terminalLabel={data.launchers["claude-code"].terminalLabel}
         actions={CLAUDE_DESKTOP_ACTIONS}
         onNavigate={onNavigate}
+        openSystemSettings={openSystemSettings}
       />
       <p className="ccc-list-meta">Not available yet</p>
       <div className="ccc-card-actions">
-        {UNAVAILABLE_QUICK_ACTIONS.map((action) => (
+        {unavailable.map((action) => (
           <button
             key={action.id}
             type="button"

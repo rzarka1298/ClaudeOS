@@ -35,7 +35,11 @@ export interface QuickActionContext {
   notify(message: string): void;
   /** `projectId` is `null` for the one action with no project target (`claude-desktop`). */
   requestLaunch(projectId: ProjectId | null, action: LaunchAction): void;
-  openSwitcher(prefill: string): void;
+  /**
+   * Absent until the host wires a quick switcher (plan 04-14): the
+   * `switcher:*` capability then answers like any unavailable action.
+   */
+  readonly openSwitcher?: ((prefill: string) => void) | undefined;
 }
 
 export type QuickActionResult =
@@ -90,7 +94,7 @@ export function dispatchQuickAction(
     return { kind: "unavailable" };
   }
 
-  if (descriptor.capability === "switcher:claude-code") {
+  if (descriptor.capability === "switcher:claude-code" && ctx.openSwitcher !== undefined) {
     ctx.openSwitcher(SWITCHER_CLAUDE_CODE_PREFILL);
     return { kind: "switcher-opened" };
   }
