@@ -49,13 +49,28 @@ function sameGeneration(previous: ScanStateResponse, root: ScanRootView): boolea
 }
 
 /**
+ * `true` when `root` reports the very count `previous` held for it (codex
+ * review 4). A same-generation list only ever shrinks, and a suggestion
+ * beyond the first page can go without the first page changing — registered
+ * through an overlapping scan folder — so a count that moved means some held
+ * row may be gone, and nothing past the fresh first page can be trusted.
+ */
+function sameCount(previous: ScanStateResponse, root: ScanRootView, held: number): boolean {
+  const before = previous.scanRoots.find((r) => r.scanRootId === root.scanRootId);
+  return (
+    root.suggestionCount !== undefined && (before?.suggestionCount ?? held) === root.suggestionCount
+  );
+}
+
+/**
  * `next`, keeping the pages already loaded for a folder whose list did not
  * change: a refresh after another folder's rescan, or a register, must not
  * fold an expanded list back to its first page. Held rows are kept only
  * within one scan generation (codex review 3b, finding 1): a rescan mints
  * new IDs, and an empty first page (the byte budget ran out) opens every
- * list, so the IDs alone cannot tell. A folder whose generation changed, or
- * whose first page no longer opens what was held, starts over.
+ * list, so the IDs alone cannot tell. A folder whose generation or count
+ * changed, or whose first page no longer opens what was held, starts over
+ * from that first page; `Show {n} more` reloads the rest through the cursor.
  */
 function keepLoadedPages(
   previous: ScanStateResponse | undefined,
@@ -67,10 +82,12 @@ function keepLoadedPages(
   for (const root of next.scanRoots) {
     const fresh = groupOf(next, root.scanRootId);
     const held = groupOf(previous, root.scanRootId);
-    const total = root.suggestionCount ?? fresh.length;
     const keep =
-      root.scanRootId !== restart && sameGeneration(previous, root) && isPrefix(fresh, held);
-    suggestions.push(...(keep ? held.slice(0, total) : fresh));
+      root.scanRootId !== restart &&
+      sameGeneration(previous, root) &&
+      sameCount(previous, root, held.length) &&
+      isPrefix(fresh, held);
+    suggestions.push(...(keep ? held.slice(0, root.suggestionCount) : fresh));
   }
   return { ...next, suggestions };
 }
