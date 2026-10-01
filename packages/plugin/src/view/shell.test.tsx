@@ -396,4 +396,99 @@ describe("Shell — navigation requests from the switcher and commands (S9, D-30
       screen.getByRole("heading", { level: 3, name: "Launchers" }),
     );
   });
+
+  /** Launchers actions that never answer: the section mounts and stays put. */
+  const PENDING_LAUNCHERS: LaunchersActions = {
+    detect: () => new Promise<never>(() => {}),
+    getConfigs: () => new Promise<never>(() => {}),
+    save: vi.fn(),
+    test: vi.fn(),
+    markTested: vi.fn(),
+    openSystemSettings: vi.fn(),
+  };
+
+  it("Set up launchers lands on the Launchers heading when the shell opens on Settings (wave-7 finding 1)", async () => {
+    connectionState.value = { kind: "live" };
+    requestLaunchersFocus();
+    requestDestination("settings");
+    render(<Shell initialDestination="settings" launchersActions={PENDING_LAUNCHERS} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 3, name: "Launchers" }),
+    );
+    expect(navigationRequest.value).toBeNull();
+  });
+
+  it("Set up launchers lands on the Launchers heading when Settings is already open (wave-7 finding 1)", async () => {
+    connectionState.value = { kind: "live" };
+    render(<Shell initialDestination="settings" launchersActions={PENDING_LAUNCHERS} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      requestLaunchersFocus();
+      requestDestination("settings");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 3, name: "Launchers" }),
+    );
+  });
+
+  it("with two command-center views open, exactly one consumes a request (wave-7 finding 4)", async () => {
+    connectionState.value = { kind: "live" };
+    const first = render(<Shell initialDestination="overview" />);
+    const second = render(<Shell initialDestination="overview" />);
+    await act(async () => {
+      requestDestination("tasks");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const selected = [first, second].filter(
+      (rendered) =>
+        within(rendered.container)
+          .getByRole("tab", { name: "Tasks" })
+          .getAttribute("aria-selected") === "true",
+    );
+    expect(selected).toHaveLength(1);
+    expect(navigationRequest.value).toBeNull();
+  });
+
+  it("Go to a project that no longer exists focuses the Projects tab and forgets the request (wave-7 finding 6)", async () => {
+    connectionState.value = { kind: "live" };
+    const GONE = "abcdefghi0123456789abcdef0123499" as ProjectId;
+    projectsSnapshot.value = {
+      projects: [view({ projectId: PROJECT_ID })],
+      launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+    };
+    render(<Shell />);
+    await act(async () => {
+      requestDestination("projects", { focusProjectId: GONE });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const tab = screen.getByRole("tab", { name: "Projects" });
+    expect(tab.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tab);
+
+    // The forgotten request does not steal focus when that id later appears.
+    const elsewhere = screen.getByRole("tab", { name: "Overview" });
+    elsewhere.focus();
+    await act(async () => {
+      projectsSnapshot.value = {
+        projects: [
+          view({ projectId: PROJECT_ID }),
+          view({ projectId: GONE, displayName: "back-again", displayPath: "~/code/back-again" }),
+        ],
+        launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+      };
+    });
+    expect(document.activeElement).toBe(elsewhere);
+  });
 });
