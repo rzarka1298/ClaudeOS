@@ -46,6 +46,7 @@ function host(openSwitcher: Mock<(prefill: string) => void>): CommandCenterViewH
     eventClient,
     saveSettings: () => Promise.resolve(),
     openSwitcher,
+    requestLaunch: vi.fn(),
   };
 }
 

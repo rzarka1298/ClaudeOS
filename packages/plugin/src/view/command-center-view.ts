@@ -1,3 +1,4 @@
+import type { LaunchAction, ProjectId } from "@ccc/domain";
 import {
   type AuthenticatedSocketApiClient,
   type EventClient,
@@ -6,13 +7,11 @@ import {
 } from "@ccc/service-api-client";
 import { ItemView, Notice, Scope, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
-import { connectionState } from "../connection-state.js";
 import { pickFolder } from "../projects/folder-picker.js";
-import { createLaunchRequester, windowLaunchTimers } from "../projects/launch-client.js";
 import { retainLaunchStatus } from "../projects/launch-status.js";
 import { createLaunchersActions } from "../projects/launchers-actions.js";
+import type { RequestLaunch } from "../projects/plugin-launcher.js";
 import { createProjectsActions, createScanActions } from "../projects/projects-actions.js";
-import { projectsSnapshot } from "../projects/projects-state.js";
 import { createSystemSettingsOpener } from "../projects/system-settings-opener.js";
 import { attachEventClient, refreshProjectsOnConnect } from "../service-connection.js";
 import type { CommandCenterSettings } from "../settings.js";
@@ -27,7 +26,8 @@ export const VIEW_TYPE = "claude-command-center-view";
  * destination (PLUG-05), the shared authenticated client (so `onunload`
  * can invalidate its token), and the shared event-stream client the view
  * subscribes to on open (its teardown lives at the plugin level, through
- * the host registry, not here — see `main.ts`).
+ * the host registry, not here — see `main.ts`), and the plugin's one launch
+ * requester.
  */
 export interface CommandCenterViewHost {
   readonly settings: CommandCenterSettings;
@@ -36,6 +36,14 @@ export interface CommandCenterViewHost {
   saveSettings(): Promise<void>;
   /** Opens the S9 quick-switcher with a query (plan 04-14). */
   openSwitcher(prefill: string): void;
+  /**
+   * The plugin-level launch requester (`createPluginLauncher`), shared
+   * by every view and the switcher. A launch's deadline and answer belong to
+   * the plugin, so closing the view that started it never strands its
+   * `opening` status in a store another view still shows (codex review 3,
+   * finding 1); the plugin clears its timers on unload (PLUG-03).
+   */
+  requestLaunch(projectId: ProjectId | null, action: LaunchAction): void;
 }
 
 /**
@@ -50,9 +58,6 @@ export interface CommandCenterViewHost {
  */
 export class CommandCenterView extends ItemView {
   private readonly host: CommandCenterViewHost;
-  /** Every launch timer (5 s deadline, 6 s success clear) still pending — cleared on close (PLUG-03, T-04-17). */
-  private readonly launchTimers = new Set<number>();
-  private disposed = false;
   /** This view's hold on the shared launch-status store; released on close (finding 7). */
   private releaseLaunchStatus: (() => void) | null = null;
 
@@ -83,35 +88,10 @@ export class CommandCenterView extends ItemView {
     const initial = this.host.settings.lastOpenedDestination as DestinationId;
 
     this.contentEl.empty();
-    this.disposed = false;
     this.releaseLaunchStatus?.();
     this.releaseLaunchStatus = retainLaunchStatus();
-    const timers = windowLaunchTimers();
-    const requestLaunch = createLaunchRequester({
-      client: this.host.client,
-      notify: (message: string) => {
-        new Notice(message);
-      },
-      connection: () => connectionState.value,
-      projectName: (projectId) =>
-        projectsSnapshot.value?.projects.find((view) => view.projectId === projectId)
-          ?.displayName ?? null,
-      terminalLabel: () =>
-        projectsSnapshot.value?.launchers["claude-code"].terminalLabel ?? "Terminal",
-      isDisposed: () => this.disposed,
-      setTimer: (callback, ms) => {
-        const id = timers.setTimer(() => {
-          this.launchTimers.delete(id);
-          callback();
-        }, ms);
-        this.launchTimers.add(id);
-        return id;
-      },
-      clearTimer: (id) => {
-        this.launchTimers.delete(id);
-        timers.clearTimer(id);
-      },
-    });
+    const requestLaunch: RequestLaunch = (projectId, action) =>
+      this.host.requestLaunch(projectId, action);
     render(
       h(Shell, {
         initialDestination: initial,
@@ -161,14 +141,14 @@ export class CommandCenterView extends ItemView {
 
   override async onClose(): Promise<void> {
     render(null, this.contentEl);
-    // No launch timer outlives the view, and a late answer is dropped rather
-    // than written into a store nothing renders (RR-04: launch errors last
-    // "until view reload").
-    this.disposed = true;
-    for (const id of this.launchTimers) window.clearTimeout(id);
-    this.launchTimers.clear();
-    // The store is shared by every open command-center view: only the last
-    // one to close resets it (wave-5 finding 7).
+    // A launch in flight is the plugin's, not this view's: its deadline
+    // still fires and its answer still settles the shared status, so
+    // another open view (or the switcher) is never left facing a stranded
+    // `opening` (codex review 3, finding 1). Its timers are cleared on
+    // plugin unload (PLUG-03). The store is shared by every open
+    // command-center view: only the last one to close resets it (wave-5
+    // finding 7) — and a launch in flight holds it until it settles, so the
+    // reset never lets the same launch be posted twice (wave-7 finding 3).
     this.releaseLaunchStatus?.();
     this.releaseLaunchStatus = null;
   }

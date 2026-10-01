@@ -10,6 +10,7 @@ import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference } from "./motion.js";
 import { registerSetUpLaunchersCommand } from "./projects/commands.js";
+import { createPluginLauncher, type RequestLaunch } from "./projects/plugin-launcher.js";
 import { refreshProjectsOnConnect } from "./service-connection.js";
 import {
   assertNoCredentialFields,
@@ -56,6 +57,13 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
    * — calls this one function, which attaches the event client first.
    */
   openSwitcher: (prefill: string) => void = () => {};
+  /**
+   * The plugin's one launch requester, shared by every command-center view
+   * and the quick-switcher, so a launch outlives the view that started it
+   * (codex review 3, finding 1). Built in `onload` before the view type is
+   * registered; its timers are released on unload through the seam.
+   */
+  requestLaunch: RequestLaunch = () => {};
   private hostRegistry!: HostRegistry;
 
   async onload(): Promise<void> {
@@ -115,6 +123,16 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       window.matchMedia(REDUCED_MOTION_QUERY),
     );
 
+    // One launch requester for the whole plugin: views and the switcher
+    // share its deadlines and store holds (codex review 3, finding 1).
+    this.requestLaunch = createPluginLauncher({
+      registry: this.hostRegistry,
+      client: this.client,
+      notify: (message) => {
+        new Notice(message);
+      },
+    });
+
     this.hostRegistry.view(VIEW_TYPE, (leaf: WorkspaceLeaf) => new CommandCenterView(leaf, this));
 
     this.hostRegistry.ribbon("layout-dashboard", "Open command center", () => {
@@ -148,8 +166,9 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     // The quick-switcher (PROJ-16, D-31 – D-34), from the palette with no
     // default hotkey (D-33). Opening it attaches the event client lazily, so
     // it lists the last-good projects even before the view was opened.
-    // Its launch timers and any modal still open are released on unload
-    // through the seam, after which a late choice does nothing (PLUG-03).
+    // Its launches share the plugin launcher above (whose timers are
+    // released on unload); a modal still open is closed through the seam,
+    // after which a late choice does nothing (PLUG-03).
     const switcher = createPluginSwitcher({
       registry: this.hostRegistry,
       client: this.client,
@@ -160,6 +179,7 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         void this.revealView();
       },
       openSwitcher: (prefill) => this.openSwitcher(prefill),
+      requestLaunch: this.requestLaunch,
       openModal: (host, prefill, onClosed) => {
         const modal = new ProjectSwitcherModal(this.app, host, onClosed);
         modal.openWith(prefill);

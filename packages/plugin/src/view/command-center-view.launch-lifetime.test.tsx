@@ -8,9 +8,12 @@ import { act, cleanup, fireEvent, render, within } from "@testing-library/preact
 import type { WorkspaceLeaf } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
+import { createHostRegistry, type HostRegistry } from "../host-registry.js";
 import { launchStatus, launchStatusKey, resetLaunchStatus } from "../projects/launch-status.js";
+import { createPluginLauncher } from "../projects/plugin-launcher.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { DEFAULT_SETTINGS } from "../settings.js";
+import { FakeObsidianHost } from "../test-support/fake-obsidian-host.js";
 import { type StubLeaf, Scope as StubScope } from "../test-support/obsidian-stub.js";
 import { CommandCenterView, type CommandCenterViewHost } from "./command-center-view.js";
 
@@ -77,9 +80,17 @@ function stubLeaf(): StubLeaf {
   };
 }
 
+/** Every registry built, disposed after each test (the plugin's unload). */
+const registries: HostRegistry[] = [];
+
+/** The view host as `main.ts` builds it: one plugin-level launcher shared by every view. */
 function sharedHost(client: AuthenticatedSocketApiClient): CommandCenterViewHost {
   const eventClient: EventClient = { subscribe: vi.fn(), dispose: vi.fn() };
+  const registry = createHostRegistry(new FakeObsidianHost());
+  registries.push(registry);
+  const requestLaunch = createPluginLauncher({ registry, client, notify: vi.fn() });
   return {
+    requestLaunch,
     settings: { ...DEFAULT_SETTINGS, lastOpenedDestination: "overview" },
     client,
     eventClient,
@@ -105,6 +116,7 @@ function finderButton(leaf: StubLeaf): HTMLElement {
 }
 
 afterEach(() => {
+  for (const registry of registries.splice(0)) registry.disposeAll();
   vi.useRealTimers();
   cleanup();
   resetProjectsState();
@@ -113,6 +125,26 @@ afterEach(() => {
 });
 
 describe("a launch outlives the view that started it (codex review 3, finding 1)", () => {
+  it("plugin unload clears a launch deadline still pending after its view closed (PLUG-03)", async () => {
+    vi.useFakeTimers();
+    connectionState.value = { kind: "live" };
+    projectsSnapshot.value = SNAPSHOT;
+    const { client } = controlledClient();
+    const host = sharedHost(client);
+    const a = await openView(host);
+
+    fireEvent.click(finderButton(a.leaf));
+    await act(async () => {
+      await a.view.onClose();
+    });
+    expect(vi.getTimerCount()).toBe(1);
+
+    for (const registry of registries.splice(0)) registry.disposeAll();
+    expect(vi.getTimerCount()).toBe(0);
+    // The hold the launch kept on the store is released with it.
+    expect(launchStatus.value.size).toBe(0);
+  });
+
   it("closing view A mid-launch: the late answer still settles the shared status, and view B can launch again", async () => {
     connectionState.value = { kind: "live" };
     projectsSnapshot.value = SNAPSHOT;
