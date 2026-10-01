@@ -94,7 +94,14 @@ export interface Detector {
   detect(): Promise<DetectionResponse>;
   /** Whether an app with exactly this bundle ID is installed (the save-time check). */
   findBundle(bundleId: string): Promise<boolean>;
-  /** The absolute path the LAST detection found for a claude candidate, or `null`. */
+  /**
+   * The absolute path of a claude candidate: the one the last detection
+   * found or, when this service run has not detected it (a restart since the
+   * plugin's detection — codex review 3, finding 3), the candidate's fixed
+   * known location ({@link CLAUDE_CANDIDATE_PATHS}). `null` for any other ID.
+   * Either way the path comes from the service, never from the request
+   * (T-04-23), and the save still checks it is an executable file now.
+   */
   candidatePath(candidateId: string): string | null;
 }
 
@@ -307,7 +314,12 @@ export function createDetector(deps: DetectorDeps): Detector {
       return (await lookup(bundleId, scanOnce())).length > 0;
     },
     candidatePath(candidateId) {
-      return candidates.get(candidateId) ?? null;
+      return (
+        candidates.get(candidateId) ??
+        CLAUDE_CANDIDATE_PATHS(deps.homeDir).find((known) => known.candidateId === candidateId)
+          ?.path ??
+        null
+      );
     },
   };
 }

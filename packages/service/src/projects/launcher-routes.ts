@@ -63,9 +63,10 @@ import { isExecutableFile } from "./terminal-launchers.js";
  *   - Antigravity / Claude Desktop: the bundle ID matches the domain pattern
  *     (schema) and an installed app has exactly that ID ({@link Detector.findBundle}),
  *     else `bundle-not-found`.
- *   - Claude Code: the executable is a candidate THIS service detected,
- *     resolved through the detector's in-memory map — never a path the plugin
- *     echoes back (T-04-23) — else `executable-not-found`; or a typed
+ *   - Claude Code: the executable is a candidate ID, resolved by the
+ *     detector — the last detection's path, or after a service restart the
+ *     candidate's fixed known location (codex review 3, finding 3) — never a
+ *     path the plugin echoes back (T-04-23), else `executable-not-found`; or a typed
  *     absolute path. Either way it must be an executable regular file now.
  *     `[executable, ...args]` then passes `validateCommandTemplate` as a
  *     claude-code template (whole-token placeholders, no permission bypass

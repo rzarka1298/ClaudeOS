@@ -270,10 +270,15 @@ describe("claude executable detection (D-21)", () => {
     expect(JSON.stringify(response)).not.toContain(HOME);
   });
 
-  it("knows no candidate before the first detection", () => {
+  it("before any detection, resolves only the known candidate IDs, to their fixed locations (codex review 3, finding 3)", () => {
+    // A service restarted since the plugin's detection has an empty map; the
+    // plugin's retained ID still names one of these fixed locations.
     const { detector } = detectorWith([NOTHING_ELSE]);
-    const [first] = CLAUDE_CANDIDATE_PATHS(HOME);
-    expect(detector.candidatePath(first?.candidateId ?? "")).toBeNull();
+    for (const known of CLAUDE_CANDIDATE_PATHS(HOME)) {
+      expect(detector.candidatePath(known.candidateId)).toBe(known.path);
+    }
+    expect(detector.candidatePath("never-detected")).toBeNull();
+    expect(detector.candidatePath("/opt/homebrew/bin/claude")).toBeNull();
   });
 });
 

@@ -551,7 +551,7 @@ describe("a candidate chosen before a service restart still saves (codex review 
     });
   });
 
-  it("a known candidate whose file is gone is still refused executable-not-found", async () => {
+  it("a known candidate whose file is gone is still refused, as a detected one that vanished is", async () => {
     rmSync(claudeSymlink);
     const reply = await harness.post(LAUNCHERS_SAVE_PATH, {
       launcherId: "claude-code",
@@ -561,7 +561,7 @@ describe("a candidate chosen before a service restart still saves (codex review 
     });
     expect(reply.status).toBe(422);
     expect(LauncherConfigRefusalBodySchema.parse(reply.body)).toMatchObject({
-      reason: "executable-not-found",
+      reason: "executable-not-executable",
       index: 0,
     });
     expect(getLauncherConfig(harness.store.db, "claude-code")).toBeNull();
