@@ -406,6 +406,14 @@ describe("the panels and the progress line (S6, RR-26)", () => {
     expect(within(panel("Claude Desktop")).getByText("Not set up")).toBeTruthy();
   });
 
+  it("the Claude Code slot hosts the Claude Code panel (Task 2)", async () => {
+    mount(fakeActions());
+    await settle();
+    const claudeCode = panel("Claude Code");
+    expect(within(claudeCode).getByRole("group", { name: "Claude Code executable" })).toBeTruthy();
+    expect(within(claudeCode).getByRole("group", { name: "Claude Code arguments" })).toBeTruthy();
+  });
+
   it("Finder and GitHub have nothing to set up and no Save launcher", async () => {
     mount(fakeActions());
     await settle();
