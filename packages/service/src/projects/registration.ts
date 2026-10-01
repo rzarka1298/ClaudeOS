@@ -52,7 +52,9 @@ export type ProjectRefusalReason =
   | "above-vault"
   | "runtime-dir"
   | "access-denied"
-  | "control-characters";
+  | "control-characters"
+  /** The vault root kept changing while the candidate was being validated (codex review 2). */
+  | "policy-changed";
 
 /**
  * Thrown when a candidate folder cannot be registered as a project. The

@@ -123,6 +123,41 @@ function sendInternalError(res: ServerResponse, route: string, err: unknown): vo
   sendJson(res, 500, INTERNAL_ERROR_BODY);
 }
 
+/** How many times registration re-validates after the vault root changed under it. */
+const MAX_POLICY_REVALIDATIONS = 3;
+
+/**
+ * Validates `candidate` and returns its realpath, judged against the vault
+ * root the store holds NOW, not only the one read before validation began
+ * (codex review 2, finding 1).
+ *
+ * Validation is asynchronous — a Files & Folders prompt can hold it for as
+ * long as the owner takes — so vault setup can persist a new root while it
+ * runs. Vault setup itself is synchronous from its overlap check to its
+ * persist, so it can never interleave with the synchronous tail of
+ * registration. That makes a version check sufficient, with no lock: after
+ * each validation the vault root is re-read, and if it changed the candidate
+ * is validated again against the new one. The caller must not await between
+ * this returning and the insert. A vault root that keeps changing is refused
+ * rather than chased forever.
+ */
+async function validateAgainstSettledPolicy(
+  candidate: string,
+  initial: RegistrationPolicyContext,
+  ctx: RouteContext,
+): Promise<string> {
+  let policy = initial;
+  for (let attempt = 0; ; attempt += 1) {
+    const resolved = await validateProjectCandidate(candidate, policy);
+    const current = policyContext(ctx);
+    if (current.vaultRoot === policy.vaultRoot) return resolved;
+    if (attempt >= MAX_POLICY_REVALIDATIONS) {
+      throw new ProjectRefusedError(candidate, "policy-changed");
+    }
+    policy = current;
+  }
+}
+
 async function handleRegister(
   req: IncomingMessage,
   res: ServerResponse,
@@ -147,7 +182,9 @@ async function handleRegister(
     return;
   }
   try {
-    const resolved = await validateProjectCandidate(parsed.value.path, policy);
+    const resolved = await validateAgainstSettledPolicy(parsed.value.path, policy, ctx);
+    // Nothing below awaits until the row is inserted: the policy just
+    // confirmed current is still current at insert time (codex review 2).
     // A symlink outside the protected folders can still resolve into one;
     // the realpath is judged too before anything is stored.
     const resolvedLocation = acknowledged

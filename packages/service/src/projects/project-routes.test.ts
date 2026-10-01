@@ -35,11 +35,13 @@ import { VAULT_ROOT_META_KEY } from "./approved-roots.js";
  * review 2, finding 1). When `validationGate.hold` is set, the NEXT call to
  * `validateProjectCandidate` runs the real policy and then waits on it before
  * returning — exactly the window a macOS Files & Folders prompt opens while
- * the route holds the policy it captured. Every other call passes through.
+ * the route holds the policy it captured. `afterEach`, when set, runs after
+ * EVERY validation. Every other call passes through.
  */
 const validationGate = vi.hoisted(() => ({
   hold: null as Promise<void> | null,
   reached: null as (() => void) | null,
+  afterEach: null as (() => void) | null,
 }));
 
 vi.mock("./registration.js", async (importOriginal) => {
@@ -50,6 +52,7 @@ vi.mock("./registration.js", async (importOriginal) => {
       ...args: Parameters<typeof actual.validateProjectCandidate>
     ): Promise<string> => {
       const resolved = await actual.validateProjectCandidate(...args);
+      validationGate.afterEach?.();
       const hold = validationGate.hold;
       if (hold !== null) {
         validationGate.hold = null;
@@ -617,4 +620,22 @@ describe("vault root never overlaps a registered project, in either order (D-04)
       }
     },
   );
+
+  it("a vault root that keeps changing during validation refuses the registration instead of retrying forever", async () => {
+    let validations = 0;
+    validationGate.afterEach = () => {
+      validations += 1;
+      store.writeServiceMeta(VAULT_ROOT_META_KEY, join(dir, `moving-vault-${validations}`));
+    };
+    try {
+      const res = await register(projectDir);
+      expect(res.status).toBe(422);
+      expect(res.raw).toBe(JSON.stringify({ error: "folder cannot be registered" }));
+      expect(listProjects(store.db)).toHaveLength(0);
+      // The first validation plus a bounded number of re-validations.
+      expect(validations).toBe(4);
+    } finally {
+      validationGate.afterEach = null;
+    }
+  });
 });
