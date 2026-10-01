@@ -1,10 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  type ApiErrorBody,
   LAUNCHERS_DETECT_PATH,
   LAUNCHERS_GET_PATH,
+  LAUNCHERS_MARK_TESTED_PATH,
   LAUNCHERS_SAVE_PATH,
+  LAUNCHERS_TEST_PATH,
   type LauncherConfigRefusalBody,
   type LauncherConfigView,
+  type LauncherId,
+  MarkLauncherTestedRequestSchema,
+  OpenSystemSettingsRequestSchema,
   type ProjectMutationResponse,
   parseStoredLauncherConfig,
   type RefusedTemplate,
@@ -12,10 +18,18 @@ import {
   SaveLauncherConfigRequestSchema,
   StoredClaudeCodeConfigSchema,
   type StoredLauncherConfig,
+  SYSTEM_SETTINGS_OPEN_PATH,
   type TemplateRefusalReason,
+  TestLauncherRequestSchema,
 } from "@ccc/domain";
 import { validateCommandTemplate } from "@ccc/launchers";
-import { listLauncherConfigs, saveLauncherConfig } from "@ccc/operational-store";
+import {
+  getLauncherConfig,
+  type LauncherConfigRecord,
+  listLauncherConfigs,
+  markLauncherTested,
+  saveLauncherConfig,
+} from "@ccc/operational-store";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
 import {
@@ -27,6 +41,8 @@ import {
   withAuth,
 } from "../route-kit.js";
 import type { Detector } from "./detection.js";
+import { LAUNCH_CAP_MS } from "./launch-service.js";
+import { openSystemSettingsArgv, testLaunch } from "./launcher-test-launch.js";
 import { toDisplayPath } from "./project-views.js";
 import type { Spawner } from "./spawner.js";
 import { isExecutableFile } from "./terminal-launchers.js";
@@ -60,6 +76,15 @@ import { isExecutableFile } from "./terminal-launchers.js";
  *   path (PR-13, T-04-09).
  * - A successful save publishes the launchers summary as a `projects.updated`
  *   delta (RR-26) and resets "Tested" (the store does that, RR-14).
+ * - **Test** fires one real launch of the saved configuration
+ *   (`launcher-test-launch.ts`, RR-15) and answers its `LaunchResult`. It
+ *   never marks anything: **mark-tested** does, when the owner answers
+ *   "It opened", and only if the launcher's CURRENT saved configuration
+ *   passed a Test in this service run (RR-14) — otherwise 409. A save in
+ *   between invalidates the passing Test.
+ * - **Open System Settings** takes a pane enum and opens one of two constant
+ *   `x-apple.systempreferences:` URLs; no URL ever comes from a request
+ *   (RR-16, T-04-22).
  *
  * Logs carry `{ route, launcherId, reason }` only.
  */
@@ -71,7 +96,7 @@ export interface LauncherServices {
   readonly homeDir: string;
   /** Publishes the launchers summary after a save or a mark-tested. */
   onLaunchersChanged(): void;
-  /** The launch process port; Test launches go through it (plan 04-11 Task 2). */
+  /** The launch process port; Test launches and System Settings go through it. */
   readonly spawner: Spawner;
   /** The 0700 launch-script directory the Claude Code Test hands to a terminal. */
   readonly scriptDir: string;
@@ -177,7 +202,7 @@ async function validateSave(
 
 /** The saved configuration as the plugin may see it (display-safe, PR-13). */
 export function launcherConfigView(
-  records: ReturnType<typeof listLauncherConfigs>,
+  records: readonly LauncherConfigRecord[],
   homeDir: string,
 ): LauncherConfigView {
   const byId = new Map(records.map((record) => [record.launcherId, record]));
@@ -304,6 +329,150 @@ async function handleSave(
   }
 }
 
+/** The 409 for a mark-tested with no passing Test of the current configuration (RR-14). */
+const NO_PASSING_TEST_BODY: ApiErrorBody = { error: "launcher has no passing test" };
+
+/** `open` of a System Settings pane failed; constant, like every refusal. */
+const SYSTEM_SETTINGS_FAILED_BODY: ApiErrorBody = { error: "system settings did not open" };
+
+/**
+ * The configurations that passed a Test in this service run, per running
+ * service (keyed by its {@link LauncherServices}): launcher id → the
+ * fingerprint of the saved row that passed. Memory only; a restart forgets
+ * them, and the owner tests again.
+ */
+const passedTests = new WeakMap<LauncherServices, Map<LauncherId, string>>();
+
+function passedTestsOf(launchers: LauncherServices): Map<LauncherId, string> {
+  let passed = passedTests.get(launchers);
+  if (passed === undefined) {
+    passed = new Map();
+    passedTests.set(launchers, passed);
+  }
+  return passed;
+}
+
+/** Identifies one saved row: a later save changes it, so an older Test stops counting. */
+function fingerprint(record: LauncherConfigRecord): string {
+  return `${record.updatedAt}\u0000${JSON.stringify(record.config)}`;
+}
+
+function isLauncherId(action: string): action is LauncherId {
+  return action === "antigravity" || action === "claude-code" || action === "claude-desktop";
+}
+
+async function handleTest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: RouteContext,
+): Promise<void> {
+  const body = await readBody(req, res, LAUNCHERS_TEST_PATH, TestLauncherRequestSchema);
+  if (body === null) return;
+  const launchers = launchersOf(ctx, res, LAUNCHERS_TEST_PATH);
+  if (launchers === null) return;
+  const launcherId = body.value.launcherId;
+  try {
+    // The row the Test reads, captured first: a save racing the Test must
+    // not let the new configuration inherit this Test's pass.
+    const before = isLauncherId(launcherId) ? getLauncherConfig(ctx.store.db, launcherId) : null;
+    const result = await testLaunch(launcherId, {
+      store: ctx.store,
+      spawner: launchers.spawner,
+      scriptDir: launchers.scriptDir,
+      homeDir: launchers.homeDir,
+      ...(launchers.isExecutable === undefined ? {} : { isExecutable: launchers.isExecutable }),
+      ...(launchers.testCapMs === undefined ? {} : { capMs: launchers.testCapMs }),
+      ...(launchers.automationTestCapMs === undefined
+        ? {}
+        : { automationCapMs: launchers.automationTestCapMs }),
+    });
+    if (isLauncherId(launcherId)) {
+      const passed = passedTestsOf(launchers);
+      const after = getLauncherConfig(ctx.store.db, launcherId);
+      if (
+        result.ok &&
+        before !== null &&
+        after !== null &&
+        fingerprint(before) === fingerprint(after)
+      ) {
+        passed.set(launcherId, fingerprint(after));
+      } else {
+        passed.delete(launcherId);
+      }
+    }
+    logger.info(
+      { route: LAUNCHERS_TEST_PATH, launcherId, kind: result.ok ? "ok" : result.error },
+      "launcher test",
+    );
+    sendJson(res, 200, result);
+  } catch (err: unknown) {
+    sendInternalError(res, LAUNCHERS_TEST_PATH, err);
+  }
+}
+
+async function handleMarkTested(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: RouteContext,
+): Promise<void> {
+  const body = await readBody(
+    req,
+    res,
+    LAUNCHERS_MARK_TESTED_PATH,
+    MarkLauncherTestedRequestSchema,
+  );
+  if (body === null) return;
+  const launchers = launchersOf(ctx, res, LAUNCHERS_MARK_TESTED_PATH);
+  if (launchers === null) return;
+  const launcherId = body.value.launcherId;
+  try {
+    const record = getLauncherConfig(ctx.store.db, launcherId);
+    const passed = passedTestsOf(launchers).get(launcherId);
+    if (record === null || passed === undefined || passed !== fingerprint(record)) {
+      logger.warn(
+        { route: LAUNCHERS_MARK_TESTED_PATH, launcherId, reason: "no-passing-test" },
+        "mark tested refused",
+      );
+      sendJson(res, 409, NO_PASSING_TEST_BODY);
+      return;
+    }
+    if (!markLauncherTested(ctx.store.db, launcherId)) {
+      sendJson(res, 409, NO_PASSING_TEST_BODY);
+      return;
+    }
+    launchers.onLaunchersChanged();
+    logger.info({ route: LAUNCHERS_MARK_TESTED_PATH, launcherId }, "launcher marked tested");
+    sendJson(res, 200, MUTATION_OK);
+  } catch (err: unknown) {
+    sendInternalError(res, LAUNCHERS_MARK_TESTED_PATH, err);
+  }
+}
+
+async function handleOpenSystemSettings(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: RouteContext,
+): Promise<void> {
+  const body = await readBody(req, res, SYSTEM_SETTINGS_OPEN_PATH, OpenSystemSettingsRequestSchema);
+  if (body === null) return;
+  const launchers = launchersOf(ctx, res, SYSTEM_SETTINGS_OPEN_PATH);
+  if (launchers === null) return;
+  const pane = body.value.pane;
+  try {
+    const outcome = await launchers.spawner.run(openSystemSettingsArgv(pane), {
+      timeoutMs: LAUNCH_CAP_MS,
+    });
+    if (outcome.exitCode !== 0) {
+      logger.warn({ route: SYSTEM_SETTINGS_OPEN_PATH, pane }, "system settings did not open");
+      sendJson(res, 502, SYSTEM_SETTINGS_FAILED_BODY);
+      return;
+    }
+    sendJson(res, 200, MUTATION_OK);
+  } catch (err: unknown) {
+    sendInternalError(res, SYSTEM_SETTINGS_OPEN_PATH, err);
+  }
+}
+
 /** `Handler` is synchronous by contract; every path inside resolves to a written response. */
 function asHandler(
   handle: (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => Promise<void>,
@@ -317,4 +486,7 @@ export const launcherRoutes: Record<string, Record<string, Handler>> = {
   [LAUNCHERS_DETECT_PATH]: { POST: asHandler(handleDetect) },
   [LAUNCHERS_GET_PATH]: { POST: asHandler(handleGet) },
   [LAUNCHERS_SAVE_PATH]: { POST: asHandler(handleSave) },
+  [LAUNCHERS_TEST_PATH]: { POST: asHandler(handleTest) },
+  [LAUNCHERS_MARK_TESTED_PATH]: { POST: asHandler(handleMarkTested) },
+  [SYSTEM_SETTINGS_OPEN_PATH]: { POST: asHandler(handleOpenSystemSettings) },
 };

@@ -399,7 +399,12 @@ export function terminalMayPromptForAutomation(terminal: TerminalChoice): boolea
   return terminal.kind === "custom" && terminal.argv[0] === OSASCRIPT_PATH;
 }
 
-export const TestLauncherRequestSchema = z.object({ launcherId: launcherIdSchema }).strict();
+/**
+ * A Test names one of the five launch actions (D-28, RR-15): the three
+ * launchers that need setup, plus Finder and GitHub, which need none but
+ * still have a Test step. It never carries a path, bundle ID or URL.
+ */
+export const TestLauncherRequestSchema = z.object({ launcherId: launchActionSchema }).strict();
 export type TestLauncherRequest = z.infer<typeof TestLauncherRequestSchema>;
 
 /** `POST /api/v1/launchers/mark-tested` — the owner answered "It opened" (RR-14). */

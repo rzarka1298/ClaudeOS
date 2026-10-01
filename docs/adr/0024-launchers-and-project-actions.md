@@ -170,10 +170,44 @@ environment is the spawner's fixed allowlist (Pitfall 11).
 | GitHub `open https://…` | No | No | None |
 | Claude Desktop `open -b id` | No | No | None |
 | Terminal `open -b com.apple.Terminal x.command` | No | No (confirmed on the owner's Mac, A1) | The script lives in the runtime directory (unprotected). Terminal's own TCC standing governs the script's `cd`. |
-| Custom osascript preset (iTerm2) | Yes (osascript to iTerm2) | Yes, once (`D-28`, `PR-02`). The Test step that is meant to surface it is built in plan 04-11. Until then the first real launch meets the prompt and can end in `timeout` (Residual risks). -1743 maps to `automation-denied`. | Same as Terminal |
+| Custom osascript preset (iTerm2) | Yes (osascript to iTerm2) | Yes, once (`D-28`, `PR-02`). The preset's Test step surfaces it, under a 60-second cap rather than the 4-second launch cap (see Test step). -1743 maps to `automation-denied`. | Same as Terminal |
 | Custom `open`-routed preset (Ghostty, WezTerm) | No | No | Same as Terminal |
 | Git collector | No | No | Reads the project folder. A project in a protected location needs a Files & Folders grant for the service's node (see Protected folders). |
 | Project lookup and registration | No | No | `realpath`/`lstat` of the project folder, same TCC standing as the git collector |
+
+## Test step
+
+`POST /api/v1/launchers/test` (`packages/service/src/projects/launcher-test-launch.ts`, plan 04-11)
+fires one real launch of the **saved** configuration through the same argv builders and terminal
+adapters a project launch uses (`D-28`, `RR-15`):
+
+| Test | What it opens |
+|---|---|
+| Antigravity | `open -b <saved bundle ID>`, with no project |
+| Claude Desktop | `open -b <saved bundle ID>` |
+| Claude Code | the chosen terminal at the managed vault folder (the owner's home when no vault is set up) running `<saved claude> --version`, then the login shell. The saved template is validated again first. |
+| Finder | `open -R <vault folder>` |
+| GitHub | `open https://github.com` |
+
+A Test never marks a launcher "Tested". The owner's "It opened" answer does that through
+`POST /api/v1/launchers/mark-tested`, and the service accepts it only when the launcher's current
+saved configuration passed a Test in this service run (`RR-14`). Otherwise it answers 409. A later
+save resets "Tested" and invalidates the earlier Test.
+
+**The first Automation prompt (implemented, wave-4b requirement).** osascript waits while macOS
+shows its first "wants to control" prompt. A Test whose saved terminal is an osascript template
+(`terminalMayPromptForAutomation` in `@ccc/domain`, today the iTerm2 preset) therefore runs under
+`LAUNCHER_TEST_AUTOMATION_CAP_MS` (60 s) instead of the 4-second launch cap, so the owner has time
+to read and answer the prompt. If osascript is still waiting when that cap passes, it is killed and
+the Test answers `automation-denied`, not a bare `timeout`. That kind's copy names System Settings ›
+Privacy & Security › Automation, offers the button that opens it, and says to try again. A -1743
+refusal is `automation-denied` at once. Every other Test keeps the 4-second cap and plain
+`timeout`. The plugin's Test client must wait longer than `LAUNCHER_TEST_AUTOMATION_CAP_MS` for such
+a Test (plan 04-12). Tests: `launcher-test-launch.test.ts` ("the first Automation prompt"), with an
+osascript stub that sleeps past the normal cap and one that never returns.
+
+`POST /api/v1/system-settings/open` takes `automation` or `privacy-security` and opens one of two
+constant `x-apple.systempreferences:` URLs. No URL comes from a request (`RR-16`).
 
 ## Error taxonomy
 
@@ -364,13 +398,13 @@ only enums and booleans.
   A `CCC_RUNTIME_DIR` with a space would break only that preset, and the preset stays Unverified.
 - **Ghostty double run** is harmless only because the script deletes itself first. That line must
   stay first.
-- **The first Automation prompt can end in `timeout`.** An osascript preset (iTerm2) waits while
-  macOS shows its first "wants to control" prompt. If the owner takes longer than the 4-second cap,
-  osascript is killed and the launch reports a bare `timeout`, though nothing is wrong. Requirement
-  for plan 04-11's Test step: give an osascript-based launch a longer cap there, or run a separate
-  pre-flight that meets the prompt with no cap. Map "killed while the first Automation prompt was
-  pending" to an outcome that explains the prompt and says to try again, not a bare `timeout`.
-  Until 04-11 lands, the prompt is met on the first real launch.
+- **The first Automation prompt outside the Test step.** An osascript preset (iTerm2) waits while
+  macOS shows its first "wants to control" prompt. The Test step now handles this (implemented in
+  plan 04-11, see Test step): a 60-second cap, and `automation-denied` with its Automation-pane copy
+  instead of a bare `timeout`. A project launch keeps the 4-second cap. An owner who saves the preset
+  and never runs its Test meets the prompt on the first real launch, and that launch can still end
+  in `timeout`. The Test is the documented way to meet the prompt. The preset stays Unverified until
+  a Test passes.
 - **Code-flag placeholders are judged by the flag, not the program.** The refusal matches common
   interpreter flags (`-c`, `-e`, `-E`, bundles ending in them, `--eval`, `-Command`, `--command`). It
   cannot know every program's options. `{script}` after a bare `-e` stays allowed for terminal
@@ -397,8 +431,8 @@ only enums and booleans.
   new quoting context. A terminal needing an AppleScript string built from the path would violate
   this ADR.
 - The default configuration needs no Automation permission at all. Only an osascript-based custom
-  preset brings a prompt (`D-28`, `PR-02`). It is meant to appear in that preset's Test step once
-  plan 04-11 builds it (Residual risks).
+  preset brings a prompt (`D-28`, `PR-02`). It appears in that preset's Test step, which waits up
+  to 60 seconds for the owner's answer (Test step).
 - Phase 5 resumes sessions through the same `TerminalLauncher` port, passing its run identity in
   `env`, with no change to this design (`PR-07`).
 - Protected-folder behaviour is measured, not assumed. The copy is true for a prompt and for a silent

@@ -10,6 +10,7 @@ import {
   LAUNCHERS_MARK_TESTED_PATH,
   LAUNCHERS_SAVE_PATH,
   LAUNCHERS_TEST_PATH,
+  type LaunchAction,
   LauncherConfigRefusalBodySchema,
   type LauncherConfigView,
   LauncherConfigViewSchema,
@@ -258,10 +259,16 @@ export async function saveLauncherConfig(
 // ---------------------------------------------------------------------------
 // Test launches and permissions (D-28, RR-14, RR-16)
 
-/** `POST /api/v1/launchers/test` — fire one real launch of the SAVED configuration. */
+/**
+ * `POST /api/v1/launchers/test` — fire one real launch of the SAVED
+ * configuration (any of the five actions; Finder and GitHub need no setup).
+ * A Test of an osascript custom terminal can wait up to
+ * `LAUNCHER_TEST_AUTOMATION_CAP_MS` on macOS's first Automation prompt, so a
+ * caller's deadline for it must be longer than that (plan 04-12).
+ */
 export function testLauncher(
   client: SocketApiClient,
-  launcherId: LauncherId,
+  launcherId: LaunchAction,
 ): Promise<LaunchResult> {
   return postValidated(client, LAUNCHERS_TEST_PATH, { launcherId }, LaunchResultSchema);
 }
