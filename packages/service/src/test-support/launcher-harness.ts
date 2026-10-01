@@ -31,7 +31,7 @@ import {
 import { createFakeSpawner, type FakeSpawner } from "./fake-spawner.js";
 
 /**
- * The launcher routes over a real socket (plans 04-11): the real route
+ * The launcher routes over a real socket (plan 04-11): the real route
  * table, store, event bus and projects collector, with every process port
  * replaced — detection answers from a scripted {@link FakeCommandRunner} and
  * every launch or test lands in a {@link FakeSpawner}. Nothing opens on the
