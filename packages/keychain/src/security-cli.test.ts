@@ -60,11 +60,7 @@ describe("security-cli", () => {
     execaMock.mockResolvedValueOnce({ stdout: "" });
     await setSecret("my-account", "my-value");
     expect(execaMock).toHaveBeenCalledTimes(1);
-    const [bin, args, options] = execaMock.mock.calls[0] as [
-      string,
-      string[],
-      { input?: string },
-    ];
+    const [bin, args, options] = execaMock.mock.calls[0] as [string, string[], { input?: string }];
     expect(bin).toBe("security");
     // argv contains only "-i" — no account, no service name, no secret.
     expect(args).toEqual(["-i"]);
