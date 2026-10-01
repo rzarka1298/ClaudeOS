@@ -2,13 +2,22 @@ import { mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DetectionResponse, LAUNCHER_TEST_AUTOMATION_CAP_MS } from "@ccc/domain";
+import {
+  type DetectionResponse,
+  LAUNCHER_TEST_AUTOMATION_CAP_MS,
+  newScanRootId,
+  type ScanStateResponse,
+} from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import {
+  addScanRoot,
   detectLaunchers,
   LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS,
   LAUNCHER_TEST_CLIENT_TIMEOUT_MS,
   LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS,
+  listScanState,
+  rescanScanRoot,
+  SCAN_ROOTS_CLIENT_TIMEOUT_MS,
   testLauncher,
 } from "./projects-api.js";
 import {
@@ -136,5 +145,26 @@ describe("detectLaunchers' client budget", () => {
     await detectLaunchers(client);
     expect(seen[0]?.timeoutMs).toBe(LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS);
     expect(LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS).toBeGreaterThan(5000);
+  });
+});
+
+describe("the scan routes' client budget (wave-6 review)", () => {
+  const SCAN_STATE: ScanStateResponse = { scanRoots: [], suggestions: [], partial: false };
+
+  it("add and rescan wait as long as detection, well past the 5 s default", async () => {
+    const { client, seen } = recordingClient(SCAN_STATE);
+    await addScanRoot(client, { path: "/Users/USERNAME/code" });
+    await rescanScanRoot(client, { scanRootId: newScanRootId() });
+    expect(SCAN_ROOTS_CLIENT_TIMEOUT_MS).toBe(LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS);
+    expect(seen.map((opts) => opts.timeoutMs)).toEqual([
+      SCAN_ROOTS_CLIENT_TIMEOUT_MS,
+      SCAN_ROOTS_CLIENT_TIMEOUT_MS,
+    ]);
+  });
+
+  it("listing the scan state keeps the default", async () => {
+    const { client, seen } = recordingClient(SCAN_STATE);
+    await listScanState(client);
+    expect(seen[0]?.timeoutMs).toBeUndefined();
   });
 });
