@@ -98,19 +98,37 @@ function isAccessError(err: unknown): boolean {
   return code === "EPERM" || code === "EACCES";
 }
 
-/** Resolves a policy location, falling back to its lexical form when it does not exist. */
+/**
+ * Resolves a policy location to the canonical form the candidate's realpath
+ * is compared against. A location that does not exist (a vault whose folder
+ * was deleted) resolves through its nearest existing ancestor: that
+ * ancestor's realpath with the missing components re-joined. A purely
+ * lexical fallback would keep a symlinked ancestor in the stored path
+ * (`/var/…` is `/private/var/…` on macOS), so containment against the
+ * candidate's realpath would silently miss (codex review 2, finding 2).
+ */
 async function resolveLocation(location: string): Promise<string> {
-  try {
-    return await realpath(location);
-  } catch {
-    return path.resolve(location);
+  const absolute = path.resolve(location);
+  const missing: string[] = [];
+  let current = absolute;
+  for (;;) {
+    try {
+      const real = await realpath(current);
+      return missing.length === 0 ? real : path.join(real, ...missing.reverse());
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return absolute;
+      missing.push(path.basename(current));
+      current = parent;
+    }
   }
 }
 
 /**
  * Strict descendancy between two ALREADY-RESOLVED paths, compared
- * lexically. Both sides come from an asynchronous realpath (or, for a policy
- * location that does not exist, its lexical form), so no second, synchronous
+ * lexically. Both sides come from an asynchronous realpath (for a policy
+ * location that does not exist, its nearest existing ancestor's realpath
+ * with the rest re-joined — {@link resolveLocation}), so no second, synchronous
  * resolve is needed — `checkPathContainment` would re-resolve both with
  * `realpathSync.native` on the event loop.
  */
