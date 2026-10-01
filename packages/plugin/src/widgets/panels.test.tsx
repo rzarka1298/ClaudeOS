@@ -1,13 +1,18 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SocketApiClient } from "@ccc/service-api-client";
 import { type ReadonlySignal, signal } from "@preact/signals";
-import { cleanup, render } from "@testing-library/preact";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { connectionState } from "../connection-state.js";
+import { createLaunchRequester } from "../projects/launch-client.js";
+import { resetLaunchStatus } from "../projects/launch-status.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { Overview } from "../view/overview.js";
+import { Shell } from "../view/shell.js";
 import type { WidgetState } from "./contract.js";
-import { type ProjectRow, projectMetaSegments } from "./panels.js";
+import { type ProjectRow, projectMetaSegments, quickActionsWidget } from "./panels.js";
 import type { WidgetId } from "./registry.js";
 
 /**
@@ -533,5 +538,145 @@ describe("Project shortcuts: the setup callout while no launcher is set up (S10,
       launchers: SET_UP_LAUNCHERS,
     });
     expect(text).not.toContain("Launchers aren't set up yet");
+  });
+});
+
+describe("Quick actions is live (S8, D-38, PR-08, PR-12, RR-18)", () => {
+  const QA_READY: WidgetState<unknown> = {
+    kind: "ready",
+    data: { launchers: SET_UP_LAUNCHERS },
+    observedAt: OBSERVED,
+    freshness: "live",
+    partiality: { partial: false },
+    isEmpty: false,
+  };
+
+  function neverSettling(): SocketApiClient {
+    return { request: () => new Promise(() => {}) };
+  }
+
+  function renderShell(
+    overrides: { openSwitcher?: (prefill: string) => void; notify?: (m: string) => void } = {},
+  ) {
+    const requestLaunch = createLaunchRequester({
+      client: neverSettling(),
+      notify: vi.fn(),
+      connection: () => ({ kind: "live" }),
+      projectName: () => null,
+      setTimer: (callback, ms) => window.setTimeout(callback, ms),
+      clearTimer: (id) => window.clearTimeout(id),
+    });
+    const quickState = signal<WidgetState<unknown>>(QA_READY);
+    const other = signal<WidgetState<unknown>>({ kind: "unavailable" });
+    return render(
+      <Shell
+        stateFor={(id) => (id === "quick-actions" ? quickState : other)}
+        requestLaunch={requestLaunch}
+        openSwitcher={overrides.openSwitcher ?? vi.fn()}
+        notify={overrides.notify ?? vi.fn()}
+      />,
+    );
+  }
+
+  function quickCard(): HTMLElement {
+    const heading = screen.getByRole("heading", { name: "Quick actions" });
+    const card = heading.closest("section");
+    if (card === null) throw new Error("no Quick actions card");
+    return card;
+  }
+
+  afterEach(() => {
+    resetLaunchStatus();
+    connectionState.value = { kind: "connecting" };
+  });
+
+  it("renders the live pair, the Claude Desktop status line, then Not available yet and four aria-disabled buttons", () => {
+    connectionState.value = { kind: "live" };
+    renderShell();
+    const card = quickCard();
+    const body = card.querySelector(".ccc-card-body");
+    if (body === null) throw new Error("no body");
+    const order = Array.from(body.querySelectorAll("button, [role=status], p")).map((el) =>
+      el.getAttribute("role") === "status" ? "[status]" : (el.textContent ?? ""),
+    );
+    expect(order).toEqual([
+      "Start a Claude Code session",
+      "Open Claude Desktop",
+      "[status]",
+      "Not available yet",
+      "Run a skill",
+      "Create a task",
+      "Capture an inbox note",
+      "Refresh selected data",
+    ]);
+    for (const label of [
+      "Run a skill",
+      "Create a task",
+      "Capture an inbox note",
+      "Refresh selected data",
+    ]) {
+      expect(within(card).getByRole("button", { name: label }).getAttribute("aria-disabled")).toBe(
+        "true",
+      );
+    }
+    for (const label of ["Start a Claude Code session", "Open Claude Desktop"]) {
+      expect(
+        within(card).getByRole("button", { name: label }).getAttribute("aria-disabled"),
+      ).toBeNull();
+    }
+    // actionsInBody: the frame's generic actions row is not rendered too.
+    expect(
+      card.querySelectorAll(".ccc-card-body > .ccc-card-actions:last-child button"),
+    ).toHaveLength(4);
+    expect(within(card).getAllByRole("button", { name: "Open Claude Desktop" })).toHaveLength(1);
+  });
+
+  it("Start a Claude Code session opens the switcher prefilled", () => {
+    connectionState.value = { kind: "live" };
+    const openSwitcher = vi.fn();
+    renderShell({ openSwitcher });
+    fireEvent.click(
+      within(quickCard()).getByRole("button", { name: "Start a Claude Code session" }),
+    );
+    expect(openSwitcher).toHaveBeenCalledTimes(1);
+    expect(openSwitcher).toHaveBeenCalledWith("Start Claude Code in ");
+  });
+
+  it("Open Claude Desktop acknowledges in the same render", () => {
+    connectionState.value = { kind: "live" };
+    renderShell();
+    const card = quickCard();
+    const button = within(card).getByRole("button", { name: "Open Claude Desktop" });
+    fireEvent.click(button);
+    expect(within(card).getByRole("status").textContent).toContain("Opening Claude Desktop…");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.getAttribute("data-launch-state")).toBe("opening");
+  });
+
+  it("an unavailable action posts {label} isn't available yet.", () => {
+    connectionState.value = { kind: "live" };
+    const notify = vi.fn();
+    renderShell({ notify });
+    fireEvent.click(within(quickCard()).getByRole("button", { name: "Create a task" }));
+    expect(notify).toHaveBeenCalledWith("Create a task isn't available yet.");
+  });
+
+  it("the Source panel lists Launcher settings, never Skill registry", () => {
+    connectionState.value = { kind: "live" };
+    renderShell();
+    const card = quickCard();
+    fireEvent.click(within(card).getByRole("button", { name: /Source/ }));
+    expect(card.textContent).toContain("Launcher settings");
+    expect(card.textContent).not.toContain("Skill registry");
+  });
+
+  it("declares the PR-08 capabilities and actionsInBody", () => {
+    const capabilities = quickActionsWidget.quickActions.map((action) => action.capability);
+    expect(capabilities).toContain("switcher:claude-code");
+    expect(capabilities).toContain("launch:claude-desktop");
+    expect(capabilities).not.toContain("session:start");
+    expect(capabilities).not.toContain("app:open");
+    expect(quickActionsWidget.actionsInBody).toBe(true);
+    expect(quickActionsWidget.dataKeys.map((key) => key.key)).toEqual(["launchers.config"]);
   });
 });

@@ -8,6 +8,8 @@ import {
   projectShortcutsStateFor,
   projectsReceivedAt,
   projectsSnapshot,
+  quickActionsState,
+  quickActionsStateFor,
   resetProjectsState,
 } from "./projects-state.js";
 
@@ -282,5 +284,37 @@ describe("nothing observed yet never claims live at now (wave-3 review, widget c
       vi.useRealTimers();
       resetProjectsState();
     }
+  });
+});
+
+describe("quickActionsStateFor (S8, D-38)", () => {
+  it("is loading until a projects snapshot exists", () => {
+    expect(quickActionsStateFor(undefined, null, NOW_ISO)).toEqual({ kind: "loading" });
+  });
+
+  it("is ready with the launcher summary once a snapshot exists, live and not partial", () => {
+    const snapshot = snapshotOf([]);
+    const state = quickActionsStateFor(snapshot, RECEIVED_ISO, NOW_ISO);
+    expect(state).toEqual({
+      kind: "ready",
+      data: { launchers: snapshot.launchers },
+      observedAt: RECEIVED_ISO,
+      freshness: "live",
+      partiality: { partial: false },
+      isEmpty: false,
+    });
+  });
+
+  it("dates a snapshot with no receipt time at now", () => {
+    const state = quickActionsStateFor(snapshotOf([]), null, NOW_ISO);
+    expect(state.kind === "ready" ? state.observedAt : null).toBe(NOW_ISO);
+  });
+
+  it("the live signal follows projectsSnapshot", () => {
+    resetProjectsState();
+    expect(quickActionsState.value.kind).toBe("loading");
+    projectsSnapshot.value = snapshotOf([]);
+    expect(quickActionsState.value.kind).toBe("ready");
+    resetProjectsState();
   });
 });

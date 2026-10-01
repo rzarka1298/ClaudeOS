@@ -380,16 +380,18 @@ describe("quick-action buttons in the frame (UI-04, A11Y-01)", () => {
     label: "Run a skill",
     capability: "skill:run",
   };
+  // SC-6: the Phase 4 capability name (PR-08), replacing the Phase 3 placeholder.
   const OPEN_DESKTOP: QuickActionDescriptor = {
     id: "open-claude-desktop",
     label: "Open Claude Desktop",
-    capability: "app:open",
+    capability: "launch:claude-desktop",
   };
 
   const ACTION_PANEL: WidgetDefinition<string> = {
     id: "action-panel",
     title: "Quick actions",
-    dataKeys: [{ key: "skills.registry", transport: "service", sourceLabel: "Skill registry" }],
+    // SC-6: the S8 data key after RR-18 (the skill registry returns with the skill-run phase).
+    dataKeys: [{ key: "launchers.config", transport: "service", sourceLabel: "Launcher settings" }],
     refresh: { kind: "manual" },
     minSize: "small",
     preferredSize: "small",
