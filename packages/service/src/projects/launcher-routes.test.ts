@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   DetectionResponseSchema,
@@ -530,5 +530,40 @@ describe("Test launcher and mark tested (D-28, RR-14)", () => {
     expect(mark.status).toBe(401);
     expect(harness.spawner.calls).toHaveLength(0);
     expect(getLauncherConfig(harness.store.db, "antigravity")?.tested).toBe(false);
+  });
+});
+
+describe("a candidate chosen before a service restart still saves (codex review 3, finding 3)", () => {
+  it("a fresh service (no detection run yet) resolves a known candidate ID to its fixed location", async () => {
+    // The plugin kept `local-bin` from a detection the previous service run
+    // answered; this service has detected nothing since it started.
+    const reply = await harness.post(LAUNCHERS_SAVE_PATH, {
+      launcherId: "claude-code",
+      executable: { kind: "candidate", candidateId: "local-bin" },
+      args: ["{projectPath}"],
+      terminal: { kind: "terminal-app" },
+    });
+    expect(reply.status).toBe(200);
+    expect(getLauncherConfig(harness.store.db, "claude-code")?.config).toEqual({
+      executablePath: claudeSymlink,
+      args: ["{projectPath}"],
+      terminal: { kind: "terminal-app" },
+    });
+  });
+
+  it("a known candidate whose file is gone is still refused executable-not-found", async () => {
+    rmSync(claudeSymlink);
+    const reply = await harness.post(LAUNCHERS_SAVE_PATH, {
+      launcherId: "claude-code",
+      executable: { kind: "candidate", candidateId: "local-bin" },
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    expect(reply.status).toBe(422);
+    expect(LauncherConfigRefusalBodySchema.parse(reply.body)).toMatchObject({
+      reason: "executable-not-found",
+      index: 0,
+    });
+    expect(getLauncherConfig(harness.store.db, "claude-code")).toBeNull();
   });
 });
