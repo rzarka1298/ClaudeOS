@@ -429,6 +429,16 @@ export const SuggestionActionRequestSchema = z
   .strict();
 export type SuggestionActionRequest = z.infer<typeof SuggestionActionRequestSchema>;
 
+/**
+ * How a folder's latest scan in this service session ended (plan 04-13):
+ * `partial` when an entry or time cap stopped it or a subfolder could not be
+ * read, `failed` when the folder is gone or was replaced, `access-denied`
+ * when macOS refused to list it (PR-10). Absent until the folder is scanned
+ * after a service start — suggestions live in memory only (D-07).
+ */
+export const ScanStatusSchema = z.enum(["complete", "partial", "failed", "access-denied"]);
+export type ScanStatus = z.infer<typeof ScanStatusSchema>;
+
 /** A scan root as the plugin sees it: home-abbreviated display path only. */
 export const ScanRootViewSchema = z.object({
   scanRootId: ScanRootIdSchema,
@@ -436,6 +446,7 @@ export const ScanRootViewSchema = z.object({
   depth: ScanDepthSchema,
   addedAt: z.string(),
   lastScannedAt: z.string().nullable(),
+  scanStatus: ScanStatusSchema.optional(),
 });
 export type ScanRootView = z.infer<typeof ScanRootViewSchema>;
 

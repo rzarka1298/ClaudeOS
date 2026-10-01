@@ -478,4 +478,30 @@ describe("project management contracts", () => {
     const deep = { ...state, scanRoots: [{ ...state.scanRoots[0], depth: 4 }] };
     expect(ScanStateResponseSchema.safeParse(deep).success).toBe(false);
   });
+
+  it("a scan root's optional scanStatus is one of the four outcomes (plan 04-13)", () => {
+    const root = {
+      scanRootId: "0000000000abcdefabcdefabc",
+      displayPath: "~/code",
+      depth: 1,
+      addedAt: "2026-09-01T00:00:00.000Z",
+      lastScannedAt: null,
+    };
+    for (const scanStatus of ["complete", "partial", "failed", "access-denied"]) {
+      expect(
+        ScanStateResponseSchema.safeParse({
+          scanRoots: [{ ...root, scanStatus }],
+          suggestions: [],
+          partial: false,
+        }).success,
+      ).toBe(true);
+    }
+    expect(
+      ScanStateResponseSchema.safeParse({
+        scanRoots: [{ ...root, scanStatus: "scanning" }],
+        suggestions: [],
+        partial: false,
+      }).success,
+    ).toBe(false);
+  });
 });
