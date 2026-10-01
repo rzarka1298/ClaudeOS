@@ -374,6 +374,31 @@ export type DetectionResponse = z.infer<typeof DetectionResponseSchema>;
 /** `POST /api/v1/launchers/test` — fire one real launch of the SAVED configuration; answers a LaunchResult. */
 export const LAUNCHERS_TEST_PATH = `${API_BASE}/launchers/test`;
 
+/**
+ * The Test step's cap for a launch that may meet macOS's first Automation
+ * prompt (ADR-0024, wave-4b review): an osascript-driven custom terminal
+ * (the iTerm2 preset) waits while macOS asks the owner whether the command
+ * center may control the terminal, and the normal 4-second launch cap would
+ * kill it mid-prompt. The service waits this long instead, and the plugin's
+ * Test client must wait slightly longer before giving up (plan 04-12). A
+ * Test still unanswered at this cap is reported as `automation-denied`,
+ * whose copy names the Automation pane and says to try again.
+ */
+export const LAUNCHER_TEST_AUTOMATION_CAP_MS = 60_000;
+
+/** The one executable whose launch sends an Apple Event (D-28). */
+const OSASCRIPT_PATH = "/usr/bin/osascript";
+
+/**
+ * Whether testing this terminal choice can raise macOS's Automation prompt:
+ * a custom template run by `osascript` (D-28, PR-02). The default
+ * mechanisms (`open -b`, `open -R`, `open <url>`, Terminal's `.command`
+ * hand-off) send no Apple Event and never do.
+ */
+export function terminalMayPromptForAutomation(terminal: TerminalChoice): boolean {
+  return terminal.kind === "custom" && terminal.argv[0] === OSASCRIPT_PATH;
+}
+
 export const TestLauncherRequestSchema = z.object({ launcherId: launcherIdSchema }).strict();
 export type TestLauncherRequest = z.infer<typeof TestLauncherRequestSchema>;
 

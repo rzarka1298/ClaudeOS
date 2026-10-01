@@ -4,9 +4,12 @@ import {
   DetectionResponseSchema,
   LAUNCHERS_DETECT_PATH,
   LAUNCHERS_GET_PATH,
+  LAUNCHERS_MARK_TESTED_PATH,
   LAUNCHERS_SAVE_PATH,
+  LAUNCHERS_TEST_PATH,
   LauncherConfigRefusalBodySchema,
   LauncherConfigViewSchema,
+  LaunchResultSchema,
   SNAPSHOT_PATH,
   SnapshotResponseSchema,
   TEMPLATE_REFUSAL_REASONS,
@@ -410,5 +413,122 @@ describe("refusal vocabulary (D-22)", () => {
     // Compile-time: a TemplateRefusal is assignable to the domain enum.
     const widened: TemplateRefusalReason = [...seen][0] ?? "line-break";
     expect(widened).toBeDefined();
+  });
+});
+
+describe("Test launcher and mark tested (D-28, RR-14)", () => {
+  async function saveAntigravity(bundleId = "com.google.antigravity"): Promise<void> {
+    const reply = await harness.post(LAUNCHERS_SAVE_PATH, { launcherId: "antigravity", bundleId });
+    expect(reply.status).toBe(200);
+  }
+
+  it("fires one real launch of the saved configuration and never marks it tested by itself", async () => {
+    await saveAntigravity();
+    const reply = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "antigravity" });
+    expect(reply.status).toBe(200);
+    expect(LaunchResultSchema.parse(reply.body)).toEqual({ ok: true });
+    expect(harness.spawner.calls.map((call) => call.argv)).toEqual([
+      ["/usr/bin/open", "-b", "com.google.antigravity"],
+    ]);
+    expect(getLauncherConfig(harness.store.db, "antigravity")?.tested).toBe(false);
+    expect((await snapshotLaunchers()).antigravity).toBe("set-up");
+  });
+
+  it("marks it tested only when the owner answers It opened after a passing Test", async () => {
+    await saveAntigravity();
+    await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "antigravity" });
+
+    const reply = await harness.post(LAUNCHERS_MARK_TESTED_PATH, { launcherId: "antigravity" });
+
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual({ ok: true });
+    expect(getLauncherConfig(harness.store.db, "antigravity")?.tested).toBe(true);
+    expect((await snapshotLaunchers()).antigravity).toBe("tested");
+    const updates = harness.projectsUpdates().filter((update) => update.launchers !== undefined);
+    expect(updates.at(-1)?.launchers?.antigravity).toBe("tested");
+  });
+
+  it("refuses to mark a launcher with no passing Test since its last save", async () => {
+    await saveAntigravity();
+    const untested = await harness.post(LAUNCHERS_MARK_TESTED_PATH, { launcherId: "antigravity" });
+    expect(untested.status).toBe(409);
+    expect(untested.body).toEqual({ error: "launcher has no passing test" });
+
+    harness.spawner.mode = {
+      kind: "fail",
+      outcome: { exitCode: 1, stderrClass: "bundle-not-found" },
+    };
+    const failed = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "antigravity" });
+    expect(failed.body).toEqual({ ok: false, error: "app-not-found" });
+    const afterFailure = await harness.post(LAUNCHERS_MARK_TESTED_PATH, {
+      launcherId: "antigravity",
+    });
+    expect(afterFailure.status).toBe(409);
+    expect(getLauncherConfig(harness.store.db, "antigravity")?.tested).toBe(false);
+  });
+
+  it("refuses to mark a launcher that is not saved", async () => {
+    const reply = await harness.post(LAUNCHERS_MARK_TESTED_PATH, { launcherId: "claude-desktop" });
+    expect(reply.status).toBe(409);
+    expect(getLauncherConfig(harness.store.db, "claude-desktop")).toBeNull();
+  });
+
+  it("a later save resets Tested, the snapshot shows set-up again, and the old Test no longer counts", async () => {
+    await saveAntigravity();
+    await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "antigravity" });
+    await harness.post(LAUNCHERS_MARK_TESTED_PATH, { launcherId: "antigravity" });
+    expect((await snapshotLaunchers()).antigravity).toBe("tested");
+
+    await saveAntigravity("com.google.antigravity-ide");
+
+    expect(getLauncherConfig(harness.store.db, "antigravity")?.tested).toBe(false);
+    expect((await snapshotLaunchers()).antigravity).toBe("set-up");
+    const again = await harness.post(LAUNCHERS_MARK_TESTED_PATH, { launcherId: "antigravity" });
+    expect(again.status).toBe(409);
+  });
+
+  it("tests Finder and GitHub, which need no setup (RR-15)", async () => {
+    const finder = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "finder" });
+    const github = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "github" });
+    expect(finder.body).toEqual({ ok: true });
+    expect(github.body).toEqual({ ok: true });
+    expect(harness.spawner.calls.map((call) => call.argv)).toEqual([
+      ["/usr/bin/open", "-R", harness.homeDir],
+      ["/usr/bin/open", "https://github.com"],
+    ]);
+  });
+
+  it("answers launcher-not-configured for an unsaved launcher and spawns nothing", async () => {
+    const reply = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "claude-code" });
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual({ ok: false, error: "launcher-not-configured" });
+    expect(harness.spawner.calls).toHaveLength(0);
+  });
+
+  it("refuses a Test body carrying anything but the launcher id, and spawns nothing", async () => {
+    const reply = await harness.post(LAUNCHERS_TEST_PATH, {
+      launcherId: "finder",
+      path: "/Applications",
+    });
+    expect(reply.status).toBe(400);
+    expect(harness.spawner.calls).toHaveLength(0);
+  });
+
+  it("rejects unauthenticated Test and mark-tested requests with 401", async () => {
+    await saveAntigravity();
+    const test = await harness.post(
+      LAUNCHERS_TEST_PATH,
+      { launcherId: "antigravity" },
+      { token: null },
+    );
+    const mark = await harness.post(
+      LAUNCHERS_MARK_TESTED_PATH,
+      { launcherId: "antigravity" },
+      { token: null },
+    );
+    expect(test.status).toBe(401);
+    expect(mark.status).toBe(401);
+    expect(harness.spawner.calls).toHaveLength(0);
+    expect(getLauncherConfig(harness.store.db, "antigravity")?.tested).toBe(false);
   });
 });

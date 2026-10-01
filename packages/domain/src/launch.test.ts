@@ -6,6 +6,7 @@ import {
   LAUNCH_ERROR_KINDS,
   LAUNCH_PATH,
   LAUNCHER_IDS,
+  LAUNCHER_TEST_AUTOMATION_CAP_MS,
   LauncherConfigRefusalBodySchema,
   LaunchRequestSchema,
   type LaunchResult,
@@ -17,6 +18,7 @@ import {
   type TerminalLauncher,
   type TerminalLaunchInput,
   TestLauncherRequestSchema,
+  terminalMayPromptForAutomation,
 } from "./launch.js";
 
 const PROJECT_ID = "0000000000123456789abcdef";
@@ -331,9 +333,33 @@ describe("launcher-config refusal body (PR-13)", () => {
     ).toBe(false);
   });
 
-  it("a test request names a launcher id only", () => {
-    expect(TestLauncherRequestSchema.safeParse({ launcherId: "claude-code" }).success).toBe(true);
-    expect(TestLauncherRequestSchema.safeParse({ launcherId: "finder" }).success).toBe(false);
+  it("a test request names one of the five launch actions and nothing else (D-28, RR-15)", () => {
+    for (const launcherId of LAUNCH_ACTIONS) {
+      expect(TestLauncherRequestSchema.safeParse({ launcherId }).success).toBe(true);
+    }
+    expect(TestLauncherRequestSchema.safeParse({ launcherId: "terminal" }).success).toBe(false);
+    expect(
+      TestLauncherRequestSchema.safeParse({ launcherId: "finder", path: "/Applications" }).success,
+    ).toBe(false);
+  });
+
+  it("only an osascript custom terminal can raise the Automation prompt in a Test", () => {
+    expect(terminalMayPromptForAutomation({ kind: "terminal-app" })).toBe(false);
+    expect(
+      terminalMayPromptForAutomation({
+        kind: "custom",
+        preset: "iterm2",
+        argv: ["/usr/bin/osascript", "-e", "on run argv", "{script}"],
+      }),
+    ).toBe(true);
+    expect(
+      terminalMayPromptForAutomation({
+        kind: "custom",
+        preset: "ghostty",
+        argv: ["/usr/bin/open", "-na", "Ghostty", "--args", "-e", "{script}"],
+      }),
+    ).toBe(false);
+    expect(LAUNCHER_TEST_AUTOMATION_CAP_MS).toBeGreaterThan(4000);
   });
 });
 
