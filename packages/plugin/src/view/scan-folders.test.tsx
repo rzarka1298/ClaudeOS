@@ -120,7 +120,7 @@ describe("scan folder rows", () => {
     const code = rowFor("~/code");
     expect(within(code).getByText("~/code").className).toContain("ccc-mono-label");
     expect(within(code).getByText("Scanned 2 minutes ago")).toBeTruthy();
-    const select = within(code).getByLabelText("Look this many levels deep") as HTMLSelectElement;
+    const select = within(code).getByLabelText<HTMLSelectElement>("Look this many levels deep");
     expect(select.value).toBe("2");
     expect(Array.from(select.options).map((o) => o.text)).toEqual([
       "1 level (default)",
@@ -186,7 +186,7 @@ describe("scan folder rows", () => {
     });
     expect(rescan).toHaveBeenCalledWith(a.scanRootId, 3);
     await waitFor(() =>
-      expect((screen.getByLabelText("Look this many levels deep") as HTMLSelectElement).value).toBe(
+      expect(screen.getByLabelText<HTMLSelectElement>("Look this many levels deep").value).toBe(
         "3",
       ),
     );

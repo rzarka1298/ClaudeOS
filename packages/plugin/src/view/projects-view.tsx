@@ -15,6 +15,7 @@ import type { DestinationId } from "./destinations.js";
 import { ProjectCard } from "./project-card.js";
 import { RegisterFlow } from "./register-flow.js";
 import { AddScanFolderFlow, ScanFolders } from "./scan-folders.js";
+import { launchersNeedSetup, SetupCallout } from "./setup-callout.js";
 
 /**
  * The S3 Projects destination (Task 1: the grid of cards; Task 2: the full
@@ -77,7 +78,6 @@ export function ProjectsView({
   // time the service comes back (a restart forgets every suggestion, D-07).
   // Never on a timer: scans themselves run only on the owner's request.
   // `scanActions` is a stable host-built object, not a dependency to track.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reload on connection changes only.
   useEffect(() => {
     if (connection.kind !== "live") return;
     let cancelled = false;
@@ -167,6 +167,8 @@ export function ProjectsView({
 
   return (
     <div className="ccc-projects-section">
+      {/* UI-SPEC S3 reading order 1: the S10 callout while no launcher is set up (D-30). */}
+      {launchersNeedSetup(snapshot.launchers) && <SetupCallout onNavigate={onNavigate} />}
       {connection.kind === "disconnected" && (
         <div className="ccc-banner">
           <p className="ccc-state-heading">Service disconnected</p>
