@@ -242,3 +242,24 @@ describe("scan responses fit the client's response cap (codex review 3, finding 
     expect(res.body).toEqual({ error: "no such scan folder" });
   });
 });
+
+describe("each scan of a folder has its own generation (codex review 3b, finding 1)", () => {
+  it("list repeats the generation; a rescan mints a new one with new suggestion IDs", async () => {
+    const added = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
+    );
+    const first = added.scanRoots[0];
+    expect(first?.scanGeneration).toMatch(/^[0-9a-z]{1,64}$/);
+
+    const listed = ScanStateResponseSchema.parse((await post(SCAN_ROOTS_LIST_PATH, {})).body);
+    expect(listed.scanRoots[0]?.scanGeneration).toBe(first?.scanGeneration);
+
+    const rescanned = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_RESCAN_PATH, { scanRootId: first?.scanRootId })).body,
+    );
+    expect(rescanned.scanRoots[0]?.scanGeneration).toMatch(/^[0-9a-z]{1,64}$/);
+    expect(rescanned.scanRoots[0]?.scanGeneration).not.toBe(first?.scanGeneration);
+    const before = new Set(added.suggestions.map((s) => s.suggestionId));
+    expect(rescanned.suggestions.some((s) => before.has(s.suggestionId))).toBe(false);
+  });
+});
