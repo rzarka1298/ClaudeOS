@@ -1,5 +1,6 @@
 import {
   type ProtectedLocation,
+  type ScanRootId,
   type ScanRootView,
   type ScanStateResponse,
   SUGGESTIONS_PAGE_SIZE,
@@ -12,6 +13,7 @@ import type { ScanActionOutcome, ScanActions } from "../projects/projects-action
 import {
   appendSuggestionsPage,
   applyScanState,
+  nextPageCursor,
   removeSuggestion,
   scanState,
   suggestionTotal,
@@ -120,14 +122,14 @@ export function scanResultLine(found: number, partial = false): string {
 }
 
 /** Re-reads the scan state after an add or rescan that did not answer one (wave-6 review). */
-async function resync(actions: ScanActions): Promise<void> {
+async function resync(actions: ScanActions, restart?: ScanRootId): Promise<void> {
   let listed: ScanActionOutcome;
   try {
     listed = await actions.listScanState();
   } catch {
     return;
   }
-  if (listed.kind === "state") applyScanState(listed.state);
+  if (listed.kind === "state") applyScanState(listed.state, restart);
 }
 
 /** The failure copy for any non-state add outcome: the service, never the folder, when it was unreachable. */
@@ -543,7 +545,9 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
 
   /**
    * `Show {n} more`: reveals rows already held, or first fetches the
-   * folder's next page from the service (codex review 3, finding 2).
+   * folder's next page from the service (codex review 3, finding 2), after
+   * the last row held (codex review 3b, finding 2). A stale cursor starts
+   * the folder over from its first page.
    */
   async function showMore(root: ScanRootView, held: number, shown: number): Promise<void> {
     const reveal = (): void =>
@@ -558,18 +562,37 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
     if (loadingRef.current.has(root.scanRootId)) return;
     loadingRef.current.add(root.scanRootId);
     try {
-      const outcome = await actions.suggestionsPage(root.scanRootId, held);
+      const base = currentState(state);
+      const cursor = base === undefined ? null : nextPageCursor(base, root.scanRootId);
+      if (cursor === null) {
+        await resync(actions);
+        return;
+      }
+      const outcome = await actions.suggestionsPage(
+        root.scanRootId,
+        cursor.scanGeneration,
+        cursor.afterSuggestionId,
+      );
       if (outcome.kind === "page") {
         const latest = currentState(state);
         if (
           latest !== undefined &&
-          appendSuggestionsPage(latest, root.scanRootId, held, outcome.page)
+          appendSuggestionsPage(latest, root.scanRootId, cursor, outcome.page)
         ) {
           reveal();
           return;
         }
         // The list changed underneath: show what the service holds now.
         await resync(actions);
+        return;
+      }
+      if (outcome.kind === "reload") {
+        // The cursor is stale: this folder starts over from its first page.
+        setShownByRoot((current) => {
+          const { [root.scanRootId]: _dropped, ...rest } = current;
+          return rest;
+        });
+        await resync(actions, root.scanRootId);
         return;
       }
       if (outcome.kind === "not-found") {

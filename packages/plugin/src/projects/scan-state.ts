@@ -2,7 +2,7 @@ import type {
   ScanRootId,
   ScanRootView,
   ScanStateResponse,
-  SuggestionsPageResponse,
+  SuggestionsPage,
   SuggestionView,
 } from "@ccc/domain";
 import { signal } from "@preact/signals";
@@ -19,8 +19,9 @@ import { signal } from "@preact/signals";
  *
  * A scan response carries each folder's first page of suggestions and its
  * `suggestionCount`; `Show {n} more` pages the rest in (codex review 3,
- * finding 2). Per folder, the suggestions held here are always a PREFIX of
- * the service's list, so their count is the offset of the next page.
+ * finding 2), after the last suggestion held for the folder and from the
+ * scan generation held (codex review 3b, finding 2) — a cursor, so a list
+ * that shifted ahead of it skips nothing.
  */
 export const scanState = signal<ScanStateResponse | undefined>(undefined);
 
@@ -59,6 +60,7 @@ function sameGeneration(previous: ScanStateResponse, root: ScanRootView): boolea
 function keepLoadedPages(
   previous: ScanStateResponse | undefined,
   next: ScanStateResponse,
+  restart: ScanRootId | undefined,
 ): ScanStateResponse {
   if (previous === undefined) return next;
   const suggestions: SuggestionView[] = [];
@@ -66,30 +68,62 @@ function keepLoadedPages(
     const fresh = groupOf(next, root.scanRootId);
     const held = groupOf(previous, root.scanRootId);
     const total = root.suggestionCount ?? fresh.length;
-    const keep = sameGeneration(previous, root) && isPrefix(fresh, held);
+    const keep =
+      root.scanRootId !== restart && sameGeneration(previous, root) && isPrefix(fresh, held);
     suggestions.push(...(keep ? held.slice(0, total) : fresh));
   }
   return { ...next, suggestions };
 }
 
-/** Applies a scan route response, keeping pages already loaded where still valid. */
-export function applyScanState(state: ScanStateResponse): void {
-  scanState.value = keepLoadedPages(scanState.value, state);
+/**
+ * Applies a scan route response, keeping pages already loaded where still
+ * valid. `restart` names a folder whose held pages are dropped whatever the
+ * response says: the page route answered `reload` for it (codex review 3b,
+ * finding 2), so it starts over from the first page the response carries.
+ */
+export function applyScanState(state: ScanStateResponse, restart?: ScanRootId): void {
+  scanState.value = keepLoadedPages(scanState.value, state, restart);
+}
+
+/** The cursor of a folder's next page: its scan generation and the last suggestion held. */
+export interface SuggestionsCursor {
+  readonly scanGeneration: string;
+  readonly afterSuggestionId: string | undefined;
+}
+
+/** Where `Show {n} more` continues a folder from; `null` before the folder has been scanned. */
+export function nextPageCursor(
+  base: ScanStateResponse,
+  scanRootId: ScanRootId,
+): SuggestionsCursor | null {
+  const root = base.scanRoots.find((r) => r.scanRootId === scanRootId);
+  if (root?.scanGeneration === undefined) return null;
+  return {
+    scanGeneration: root.scanGeneration,
+    afterSuggestionId: groupOf(base, scanRootId).at(-1)?.suggestionId,
+  };
 }
 
 /**
- * Appends one folder's page, fetched from offset = the number held. A page
- * that no longer continues what is held (the list changed underneath) is
- * dropped; `false` tells the caller to resync.
+ * Appends one folder's page, fetched after `cursor`. A page that no longer
+ * continues what is held (a refresh landed in between) is dropped; `false`
+ * tells the caller to resync.
  */
 export function appendSuggestionsPage(
   base: ScanStateResponse,
   scanRootId: ScanRootId,
-  offset: number,
-  page: SuggestionsPageResponse,
+  cursor: SuggestionsCursor,
+  page: SuggestionsPage,
 ): boolean {
+  const now = nextPageCursor(base, scanRootId);
+  if (
+    now === null ||
+    now.scanGeneration !== cursor.scanGeneration ||
+    now.afterSuggestionId !== cursor.afterSuggestionId
+  ) {
+    return false;
+  }
   const held = groupOf(base, scanRootId);
-  if (held.length !== offset) return false;
   const known = new Set(held.map((s) => s.suggestionId));
   if (page.suggestions.some((s) => known.has(s.suggestionId) || s.scanRootId !== scanRootId)) {
     return false;

@@ -3,7 +3,7 @@ import {
   type ScanRootView,
   type ScanStateResponse,
   SUGGESTIONS_PAGE_SIZE,
-  type SuggestionsPageResponse,
+  type SuggestionsPage,
   type SuggestionView,
 } from "@ccc/domain";
 
@@ -22,8 +22,8 @@ export function jsonBytes(value: unknown): number {
 /**
  * The longest prefix of `items`, at most `maxCount` long, whose members fit
  * in `budgetBytes` once serialized into a JSON array (each member plus its
- * separating comma). Always a PREFIX, so the plugin's count of what it holds
- * is the offset of the next page.
+ * separating comma). Always a PREFIX, so the last suggestion the plugin
+ * holds is the cursor of the next page.
  *
  * With `alwaysFirst`, the first item is taken even when it alone is over
  * budget, so a page request always progresses — the schema bounds
@@ -53,7 +53,7 @@ export function takeWithinBudget<T>(
  * suggestions, folder by folder, while the whole body stays inside
  * {@link SCAN_RESPONSE_BUDGET_BYTES}. A folder whose page does not fit
  * carries a shorter prefix (or none), and so does every folder after it;
- * the plugin pages the rest in by `suggestionCount`.
+ * the plugin pages the rest in after the last one it holds.
  */
 export function fitScanState(
   scanRoots: readonly ScanRootView[],
@@ -74,17 +74,19 @@ export function fitScanState(
 }
 
 /**
- * One folder's suggestions from `offset`: at most one page, fitted to the
- * budget, always at least one while any remain (so `Show {n} more` always
- * progresses).
+ * One folder's next page: the visible suggestions after the plugin's cursor
+ * (`after`, in scan order), at most one page, fitted to the budget, always
+ * at least one while any remain (so `Show {n} more` always progresses).
+ * `total` is how many the folder has visible in all.
  */
 export function fitSuggestionsPage(
-  visible: readonly SuggestionView[],
-  offset: number,
-): SuggestionsPageResponse {
-  const budget = SCAN_RESPONSE_BUDGET_BYTES - jsonBytes({ suggestions: [], total: visible.length });
+  after: readonly SuggestionView[],
+  total: number,
+): SuggestionsPage {
+  const budget = SCAN_RESPONSE_BUDGET_BYTES - jsonBytes({ kind: "page", suggestions: [], total });
   return {
-    suggestions: takeWithinBudget(visible.slice(offset), SUGGESTIONS_PAGE_SIZE, budget, true),
-    total: visible.length,
+    kind: "page",
+    suggestions: takeWithinBudget(after, SUGGESTIONS_PAGE_SIZE, budget, true),
+    total,
   };
 }

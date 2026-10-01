@@ -3,7 +3,7 @@ import type {
   ProtectedLocation,
   ScanRootId,
   ScanStateResponse,
-  SuggestionsPageResponse,
+  SuggestionsPage,
 } from "@ccc/domain";
 import {
   addScanRoot,
@@ -191,16 +191,26 @@ export interface ScanActions {
   /** Hides a suggestion until the next rescan or service restart. */
   dismissSuggestion(suggestionId: string): Promise<ProjectActionOutcome>;
   /**
-   * One scan folder's next suggestions from `offset` — the number the
-   * plugin already holds for it (codex review 3, finding 2: a scan state
-   * carries only each folder's first page).
+   * One scan folder's next suggestions after `afterSuggestionId` — the last
+   * one the plugin holds for it, from `scanGeneration` (codex review 3b,
+   * finding 2); its first page when it holds none (codex review 3,
+   * finding 2: a scan state carries at most each folder's first page).
    */
-  suggestionsPage(scanRootId: ScanRootId, offset: number): Promise<SuggestionsPageOutcome>;
+  suggestionsPage(
+    scanRootId: ScanRootId,
+    scanGeneration: string,
+    afterSuggestionId?: string,
+  ): Promise<SuggestionsPageOutcome>;
 }
 
-/** A page of one scan folder's suggestions, or why none arrived. Never rejects. */
+/**
+ * A page of one scan folder's suggestions, `reload` (the cursor is stale:
+ * start the folder over from its first page), or why none arrived. Never
+ * rejects.
+ */
 export type SuggestionsPageOutcome =
-  | { readonly kind: "page"; readonly page: SuggestionsPageResponse }
+  | { readonly kind: "page"; readonly page: SuggestionsPage }
+  | { readonly kind: "reload" }
   | Extract<ProjectActionOutcome, { kind: "not-found" | "service-disconnected" | "failed" }>;
 
 /**
@@ -259,9 +269,15 @@ export function createScanActions(client: SocketApiClient): ScanActions {
         return classifySuggestionFailure(error);
       }
     },
-    async suggestionsPage(scanRootId, offset) {
+    async suggestionsPage(scanRootId, scanGeneration, afterSuggestionId) {
       try {
-        return { kind: "page", page: await listSuggestionsPage(client, { scanRootId, offset }) };
+        const page = await listSuggestionsPage(
+          client,
+          afterSuggestionId === undefined
+            ? { scanRootId, scanGeneration }
+            : { scanRootId, scanGeneration, afterSuggestionId },
+        );
+        return page.kind === "reload" ? { kind: "reload" } : { kind: "page", page };
       } catch (error: unknown) {
         const outcome = classifySuggestionFailure(error);
         return outcome.kind === "not-found" || outcome.kind === "service-disconnected"

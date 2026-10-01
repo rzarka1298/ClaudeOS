@@ -12,6 +12,7 @@ import {
   type ScanRootView,
   type ScanStateResponse,
   type ScanStatus,
+  SUGGESTIONS_RELOAD,
   type SuggestionsPageResponse,
   type SuggestionView,
 } from "@ccc/domain";
@@ -162,10 +163,17 @@ export interface ScanService {
    */
   state(): ScanStateResponse;
   /**
-   * One scan folder's suggestions from `offset` on: at most one page, fitted
-   * to the byte budget. `null` for a ScanRootId the store does not hold.
+   * One scan folder's suggestions after `afterSuggestionId` (from its first
+   * when absent): at most one page, fitted to the byte budget. The constant
+   * `reload` when `scanGeneration` is not the folder's current scan or the
+   * cursor is not a suggestion that scan minted (codex review 3b, finding 2).
+   * `null` for a ScanRootId the store does not hold.
    */
-  suggestionsPage(scanRootId: ScanRootId, offset: number): SuggestionsPageResponse | null;
+  suggestionsPage(
+    scanRootId: ScanRootId,
+    scanGeneration: string,
+    afterSuggestionId: string | undefined,
+  ): SuggestionsPageResponse | null;
   /** Registers one suggestion through the registration policy. */
   registerSuggestion(suggestionId: string): Promise<SuggestionRegisterOutcome>;
   /** Hides one suggestion until the next scan of its folder. `false` when unknown. */
@@ -181,7 +189,10 @@ interface Suggestion {
 }
 
 interface RootMemory {
+  /** Every suggestion the scan minted, in scan order — the cursor's frame. */
   readonly suggestions: Suggestion[];
+  /** Registered or dismissed since: never listed or found again, still a valid cursor. */
+  readonly gone: ReadonlySet<string>;
   readonly status: ScanStatus;
   /** Minted each time the suggestions are replaced (codex review 3b, finding 1). */
   readonly generation: string;
@@ -396,7 +407,12 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
         realPath,
         folderName: path.basename(realPath),
       }));
-    memory.set(scanRootId, { suggestions, status: result.status, generation: mintToken() });
+    memory.set(scanRootId, {
+      suggestions,
+      gone: new Set(),
+      status: result.status,
+      generation: mintToken(),
+    });
     if (result.status === "failed" || result.status === "access-denied") {
       log.warn({ scanRootId, status: result.status }, "scan could not read the folder");
       return;
@@ -427,14 +443,16 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
     return vaultRoot === null || vaultRoot.length === 0 ? null : path.resolve(vaultRoot);
   }
 
-  /** A folder's suggestions as the plugin may see them, in scan order. */
-  function visibleSuggestions(
-    scanRootId: ScanRootId,
+  /** Suggestions as the plugin may see them, in scan order. */
+  function visibleViews(
+    remembered: RootMemory | undefined,
+    candidates: readonly Suggestion[],
     registered: ReadonlySet<string>,
     vault: string | null,
   ): SuggestionView[] {
     const views: SuggestionView[] = [];
-    for (const suggestion of memory.get(scanRootId)?.suggestions ?? []) {
+    for (const suggestion of candidates) {
+      if (remembered?.gone.has(suggestion.suggestionId) === true) continue;
       if (registered.has(suggestion.realPath)) continue;
       if (touchesVault(suggestion.realPath, vault)) continue;
       views.push({
@@ -445,6 +463,16 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
       });
     }
     return views;
+  }
+
+  /** A folder's suggestions as the plugin may see them, in scan order. */
+  function visibleSuggestions(
+    scanRootId: ScanRootId,
+    registered: ReadonlySet<string>,
+    vault: string | null,
+  ): SuggestionView[] {
+    const remembered = memory.get(scanRootId);
+    return visibleViews(remembered, remembered?.suggestions ?? [], registered, vault);
   }
 
   function state(): ScanStateResponse {
@@ -473,26 +501,48 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
     return fitScanState(scanRoots, byRoot, partial);
   }
 
-  function suggestionsPage(scanRootId: ScanRootId, offset: number): SuggestionsPageResponse | null {
+  function suggestionsPage(
+    scanRootId: ScanRootId,
+    scanGeneration: string,
+    afterSuggestionId: string | undefined,
+  ): SuggestionsPageResponse | null {
     if (getScanRoot(store.db, scanRootId) === null) return null;
+    const remembered = memory.get(scanRootId);
+    if (remembered === undefined || remembered.generation !== scanGeneration) {
+      return SUGGESTIONS_RELOAD;
+    }
+    // The cursor is placed among every suggestion the scan minted, gone or
+    // hidden ones included, so what changed ahead of it never moves it.
+    const start =
+      afterSuggestionId === undefined
+        ? 0
+        : remembered.suggestions.findIndex((s) => s.suggestionId === afterSuggestionId) + 1;
+    if (start === 0 && afterSuggestionId !== undefined) return SUGGESTIONS_RELOAD;
     const registered = new Set(listProjects(store.db).map((p) => p.path));
-    return fitSuggestionsPage(visibleSuggestions(scanRootId, registered, currentVault()), offset);
+    const vault = currentVault();
+    const all = remembered.suggestions;
+    return fitSuggestionsPage(
+      visibleViews(remembered, all.slice(start), registered, vault),
+      visibleViews(remembered, all, registered, vault).length,
+    );
   }
 
   function findSuggestion(suggestionId: string): Suggestion | null {
     for (const remembered of memory.values()) {
+      if (remembered.gone.has(suggestionId)) continue;
       const match = remembered.suggestions.find((s) => s.suggestionId === suggestionId);
       if (match !== undefined) return match;
     }
     return null;
   }
 
+  /** Marks one suggestion gone; it stays in scan order as a cursor (codex review 3b, finding 2). */
   function forget(suggestion: Suggestion): void {
     const remembered = memory.get(suggestion.scanRootId);
     if (remembered === undefined) return;
     memory.set(suggestion.scanRootId, {
       ...remembered,
-      suggestions: remembered.suggestions.filter((s) => s.suggestionId !== suggestion.suggestionId),
+      gone: new Set([...remembered.gone, suggestion.suggestionId]),
     });
   }
 
@@ -558,7 +608,12 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
       if (!(await stillAllowed(root))) {
         // Constant: the same refusal every time, nothing listed, nothing kept.
         if (getScanRoot(store.db, scanRootId) !== null) {
-          memory.set(scanRootId, { suggestions: [], status: "refused", generation: mintToken() });
+          memory.set(scanRootId, {
+            suggestions: [],
+            gone: new Set(),
+            status: "refused",
+            generation: mintToken(),
+          });
         }
         return { kind: "refused" };
       }

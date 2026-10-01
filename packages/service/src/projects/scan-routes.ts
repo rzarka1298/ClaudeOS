@@ -43,8 +43,10 @@ import type { ScanService, ScanStateOutcome } from "./scan.js";
  * No response grows with the number of suggestions (codex review 3,
  * finding 2): a scan state carries each folder's first page, fitted to
  * `SCAN_RESPONSE_BUDGET_BYTES`, and the page route serves the rest one
- * fitted page at a time — every body stays under the plugin client's
- * 65,536-byte cap.
+ * fitted page at a time, after a cursor (the last suggestion the plugin
+ * holds, from the scan generation it holds; a stale one answers the
+ * constant `{ kind: "reload" }`, codex review 3b, finding 2) — every body
+ * stays under the plugin client's 65,536-byte cap.
  */
 
 /** The one refusal body for a folder that cannot be nominated, whatever the reason. */
@@ -152,7 +154,11 @@ export const scanRoutes: Record<string, Record<string, Handler>> = {
   },
   [SUGGESTIONS_PAGE_PATH]: {
     POST: scanHandler(SUGGESTIONS_PAGE_PATH, SuggestionsPageRequestSchema, (scan, body, res) => {
-      const page = scan.suggestionsPage(body.scanRootId, body.offset);
+      const page = scan.suggestionsPage(
+        body.scanRootId,
+        body.scanGeneration,
+        body.afterSuggestionId,
+      );
       if (page === null) sendJson(res, 404, NO_SUCH_SCAN_ROOT_BODY);
       else sendJson(res, 200, page);
     }),

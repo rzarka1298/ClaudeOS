@@ -426,7 +426,8 @@ export function listScanState(client: SocketApiClient): Promise<ScanStateRespons
 
 /**
  * `POST /api/v1/scan-roots/suggestions/page` — one scan folder's next
- * suggestions from `offset` (codex review 3, finding 2).
+ * suggestions after the last one held (codex review 3, finding 2), or
+ * `{ kind: "reload" }` for a stale cursor (codex review 3b, finding 2).
  */
 export function listSuggestionsPage(
   client: SocketApiClient,

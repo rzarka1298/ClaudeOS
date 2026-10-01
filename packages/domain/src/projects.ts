@@ -472,12 +472,19 @@ export const SuggestionActionRequestSchema = z
 export type SuggestionActionRequest = z.infer<typeof SuggestionActionRequestSchema>;
 
 /**
- * One scan folder's suggestions from `offset` on: the number the plugin
- * already holds for that folder (its list is always a prefix of the
- * service's), so a page continues exactly where the last one stopped.
+ * One scan folder's suggestions after a cursor (codex review 3b, finding 2):
+ * the last suggestion the plugin holds for the folder, from the scan
+ * generation it holds. No cursor asks for the folder's first page (a scan
+ * response may have had no room for it). A cursor, not an offset: a
+ * suggestion registered elsewhere, or a vault set up, shifts the list ahead
+ * of what the plugin holds, and an offset would then skip one.
  */
 export const SuggestionsPageRequestSchema = z
-  .object({ scanRootId: ScanRootIdSchema, offset: z.number().int().min(0).max(1_000_000) })
+  .object({
+    scanRootId: ScanRootIdSchema,
+    scanGeneration: ScanGenerationSchema,
+    afterSuggestionId: SuggestionIdSchema.optional(),
+  })
   .strict();
 export type SuggestionsPageRequest = z.infer<typeof SuggestionsPageRequestSchema>;
 
@@ -544,8 +551,24 @@ export const ScanStateResponseSchema = z.object({
 export type ScanStateResponse = z.infer<typeof ScanStateResponseSchema>;
 
 /** One page of a scan folder's suggestions, and how many it has in all. */
-export const SuggestionsPageResponseSchema = z.object({
+export const SuggestionsPageSchema = z.object({
+  kind: z.literal("page"),
   suggestions: z.array(SuggestionViewSchema),
   total: z.number().int().min(0),
 });
+export type SuggestionsPage = z.infer<typeof SuggestionsPageSchema>;
+
+/**
+ * The page route's answer: a page, or `reload` — the constant answer when
+ * the cursor's generation is not the folder's current scan, or its
+ * suggestion is not one that scan minted. The plugin then drops the pages it
+ * holds for the folder and starts over from its first page.
+ */
+export const SuggestionsPageResponseSchema = z.discriminatedUnion("kind", [
+  SuggestionsPageSchema,
+  z.object({ kind: z.literal("reload") }).strict(),
+]);
 export type SuggestionsPageResponse = z.infer<typeof SuggestionsPageResponseSchema>;
+
+/** The one `reload` body (codex review 3b, finding 2). */
+export const SUGGESTIONS_RELOAD: SuggestionsPageResponse = { kind: "reload" };
