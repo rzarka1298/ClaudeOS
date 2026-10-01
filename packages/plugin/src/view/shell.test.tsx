@@ -451,7 +451,7 @@ describe("Shell — navigation requests from the switcher and commands (S9, D-30
     });
     const selected = [first, second].filter(
       (rendered) =>
-        within(rendered.container)
+        within(rendered.container as HTMLElement)
           .getByRole("tab", { name: "Tasks" })
           .getAttribute("aria-selected") === "true",
     );
