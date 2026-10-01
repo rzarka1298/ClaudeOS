@@ -32,6 +32,7 @@ function root(overrides: Partial<ScanRootView> = {}): ScanRootView {
     depth: 1,
     addedAt: "2026-09-30T11:00:00.000Z",
     lastScannedAt: "2026-09-30T11:58:00.000Z",
+    scanGeneration: "gen1",
     ...overrides,
   };
 }

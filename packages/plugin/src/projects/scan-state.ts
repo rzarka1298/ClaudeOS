@@ -41,11 +41,20 @@ function isPrefix(prefix: readonly SuggestionView[], list: readonly SuggestionVi
   );
 }
 
+/** `true` when `previous` held `root` from the very scan `root` reports now. */
+function sameGeneration(previous: ScanStateResponse, root: ScanRootView): boolean {
+  const before = previous.scanRoots.find((r) => r.scanRootId === root.scanRootId);
+  return root.scanGeneration !== undefined && before?.scanGeneration === root.scanGeneration;
+}
+
 /**
  * `next`, keeping the pages already loaded for a folder whose list did not
  * change: a refresh after another folder's rescan, or a register, must not
- * fold an expanded list back to its first page. A folder whose first page
- * no longer opens what was held (a rescan mints new IDs) starts over.
+ * fold an expanded list back to its first page. Held rows are kept only
+ * within one scan generation (codex review 3b, finding 1): a rescan mints
+ * new IDs, and an empty first page (the byte budget ran out) opens every
+ * list, so the IDs alone cannot tell. A folder whose generation changed, or
+ * whose first page no longer opens what was held, starts over.
  */
 function keepLoadedPages(
   previous: ScanStateResponse | undefined,
@@ -57,7 +66,8 @@ function keepLoadedPages(
     const fresh = groupOf(next, root.scanRootId);
     const held = groupOf(previous, root.scanRootId);
     const total = root.suggestionCount ?? fresh.length;
-    suggestions.push(...(isPrefix(fresh, held) ? held.slice(0, total) : fresh));
+    const keep = sameGeneration(previous, root) && isPrefix(fresh, held);
+    suggestions.push(...(keep ? held.slice(0, total) : fresh));
   }
   return { ...next, suggestions };
 }

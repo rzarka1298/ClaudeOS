@@ -183,6 +183,13 @@ interface Suggestion {
 interface RootMemory {
   readonly suggestions: Suggestion[];
   readonly status: ScanStatus;
+  /** Minted each time the suggestions are replaced (codex review 3b, finding 1). */
+  readonly generation: string;
+}
+
+/** A fresh opaque token: suggestion IDs and scan generations alike. */
+function mintToken(): string {
+  return randomUUID().replace(/-/g, "");
 }
 
 interface WalkResult {
@@ -384,12 +391,12 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
     const suggestions = result.found
       .filter((realPath) => !registered.has(realPath))
       .map((realPath) => ({
-        suggestionId: randomUUID().replace(/-/g, ""),
+        suggestionId: mintToken(),
         scanRootId,
         realPath,
         folderName: path.basename(realPath),
       }));
-    memory.set(scanRootId, { suggestions, status: result.status });
+    memory.set(scanRootId, { suggestions, status: result.status, generation: mintToken() });
     if (result.status === "failed" || result.status === "access-denied") {
       log.warn({ scanRootId, status: result.status }, "scan could not read the folder");
       return;
@@ -457,7 +464,9 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
         depth: root.depth,
         addedAt: root.addedAt,
         lastScannedAt: root.lastScannedAt,
-        ...(remembered === undefined ? {} : { scanStatus: remembered.status }),
+        ...(remembered === undefined
+          ? {}
+          : { scanStatus: remembered.status, scanGeneration: remembered.generation }),
         suggestionCount: visible.length,
       });
     }
@@ -482,7 +491,7 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
     const remembered = memory.get(suggestion.scanRootId);
     if (remembered === undefined) return;
     memory.set(suggestion.scanRootId, {
-      status: remembered.status,
+      ...remembered,
       suggestions: remembered.suggestions.filter((s) => s.suggestionId !== suggestion.suggestionId),
     });
   }
@@ -549,7 +558,7 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
       if (!(await stillAllowed(root))) {
         // Constant: the same refusal every time, nothing listed, nothing kept.
         if (getScanRoot(store.db, scanRootId) !== null) {
-          memory.set(scanRootId, { suggestions: [], status: "refused" });
+          memory.set(scanRootId, { suggestions: [], status: "refused", generation: mintToken() });
         }
         return { kind: "refused" };
       }

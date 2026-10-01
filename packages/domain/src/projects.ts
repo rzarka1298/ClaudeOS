@@ -439,6 +439,14 @@ export const ScanRootIdSchema = z
 /** An in-memory suggestion's opaque identity, minted by the service per scan. */
 export const SuggestionIdSchema = z.string().regex(/^[0-9a-z]{1,64}$/);
 
+/**
+ * One scan of one folder, minted by the service each time it replaces the
+ * folder's suggestions (codex review 3b, finding 1). Suggestion IDs are only
+ * meaningful within their generation: rows the plugin holds from one
+ * generation are never kept once the folder reports another.
+ */
+export const ScanGenerationSchema = z.string().regex(/^[0-9a-z]{1,64}$/);
+
 export const AddScanRootRequestSchema = z
   .object({
     path: AbsolutePathSchema,
@@ -505,6 +513,11 @@ export const ScanRootViewSchema = z.object({
    * response's own suggestions for the folder are all there are.
    */
   suggestionCount: z.number().int().min(0).optional(),
+  /**
+   * The scan these suggestions came from. Absent until the folder is scanned
+   * in this service session (suggestions live in memory only, D-07).
+   */
+  scanGeneration: ScanGenerationSchema.optional(),
 });
 export type ScanRootView = z.infer<typeof ScanRootViewSchema>;
 
