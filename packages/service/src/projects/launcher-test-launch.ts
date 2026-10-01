@@ -160,52 +160,85 @@ async function prepare(launcherId: LaunchAction, deps: TestLaunchDeps): Promise<
   }
 }
 
-/** Runs one Test under its cap. Never rejects. */
+/**
+ * Whether this Test may meet the Automation prompt, decided from the saved
+ * row alone — synchronously, before any check runs — so the cap that covers
+ * the whole Test is known when it starts.
+ */
+function mayPromptForAutomation(launcherId: LaunchAction, store: OperationalStore): boolean {
+  if (launcherId !== "claude-code") return false;
+  const record = getLauncherConfig(store.db, "claude-code");
+  const config = record === null ? null : parseStoredLauncherConfig("claude-code", record.config);
+  return config !== null && terminalMayPromptForAutomation(config.terminal);
+}
+
+/** What the race between the preparation and the deadline produced. */
+const DEADLINE: unique symbol = Symbol("test deadline");
+
+/**
+ * Runs one Test under ONE cap that starts before anything else (codex
+ * review 3, finding 5): preparing — reading the saved row and checking the
+ * executable on disk, which can stall on an unmounted volume or a privacy
+ * prompt — and launching share the same deadline. A preparation that
+ * finishes after the deadline never spawns anything. Never rejects.
+ */
 export async function testLaunch(
   launcherId: LaunchAction,
   deps: TestLaunchDeps,
 ): Promise<LaunchResult> {
-  let prepared: PreparedTest;
-  try {
-    prepared = await prepare(launcherId, deps);
-  } catch {
-    // A builder refusal (LaunchArgumentError): its message could name a value.
-    return failure("spawn-failed");
-  }
-  if (prepared.kind === "refuse") return failure(prepared.error);
-
-  const automation = prepared.kind === "terminal" && prepared.mayPromptForAutomation;
+  const automation = mayPromptForAutomation(launcherId, deps.store);
   const capMs = automation
     ? (deps.automationCapMs ?? LAUNCHER_TEST_AUTOMATION_CAP_MS)
     : (deps.capMs ?? LAUNCH_CAP_MS);
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const cap = new Promise<LaunchResult>((resolve) => {
+  const deadline = new Promise<typeof DEADLINE>((resolve) => {
     timer = setTimeout(() => {
       controller.abort();
-      resolve(failure("timeout"));
+      resolve(DEADLINE);
     }, capMs);
   });
-  const attempt = async (): Promise<LaunchResult> => {
-    if (prepared.kind === "terminal") return prepared.run(controller.signal, capMs);
-    const outcome = await deps.spawner.run(prepared.argv, {
-      timeoutMs: capMs,
-      signal: controller.signal,
-    });
-    if (controller.signal.aborted) return failure("timeout");
-    return outcome.exitCode === 0 ? { ok: true } : failure(mapLaunchFailure(outcome));
-  };
 
-  let result: LaunchResult;
   try {
-    result = await Promise.race([attempt(), cap]);
-  } catch {
-    result = failure("spawn-failed");
+    let prepared: PreparedTest | typeof DEADLINE;
+    try {
+      const preparing = prepare(launcherId, deps);
+      // A late rejection of an abandoned preparation is absorbed.
+      preparing.catch(() => undefined);
+      prepared = await Promise.race([preparing, deadline]);
+    } catch {
+      // A builder refusal (LaunchArgumentError): its message could name a value.
+      return failure("spawn-failed");
+    }
+    // Nothing ran yet, so this is a stall, never an unanswered prompt.
+    if (prepared === DEADLINE || controller.signal.aborted) return failure("timeout");
+    if (prepared.kind === "refuse") return failure(prepared.error);
+
+    const ready = prepared;
+    const attempt = async (): Promise<LaunchResult> => {
+      if (ready.kind === "terminal") return ready.run(controller.signal, capMs);
+      const outcome = await deps.spawner.run(ready.argv, {
+        timeoutMs: capMs,
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return failure("timeout");
+      return outcome.exitCode === 0 ? { ok: true } : failure(mapLaunchFailure(outcome));
+    };
+
+    let result: LaunchResult;
+    try {
+      const launched = await Promise.race([attempt(), deadline]);
+      result = launched === DEADLINE ? failure("timeout") : launched;
+    } catch {
+      result = failure("spawn-failed");
+    }
+    // osascript killed while macOS may still be asking the owner: explain the
+    // prompt (Automation pane, try again), not a bare timeout (ADR-0024).
+    if (automation && !result.ok && result.error === "timeout") {
+      return failure("automation-denied");
+    }
+    return result;
   } finally {
     clearTimeout(timer);
   }
-  // osascript killed while macOS may still be asking the owner: explain the
-  // prompt (Automation pane, try again), not a bare timeout (ADR-0024).
-  if (automation && !result.ok && result.error === "timeout") return failure("automation-denied");
-  return result;
 }
