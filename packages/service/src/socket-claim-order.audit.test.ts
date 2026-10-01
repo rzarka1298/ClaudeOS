@@ -18,9 +18,9 @@ describe("main.ts claims the socket path before any startup side effect", () => 
     expect(claim).toBeLessThan(src.indexOf("startSocketServer("));
   });
 
-  it("logs a clear refusal line for SocketInUseError", () => {
+  it("logs socket refusals through the path-free logSocketClaimRefusal, never the raw error", () => {
     const src = readFileSync(fileURLToPath(new URL("./main.ts", import.meta.url)), "utf8");
-    expect(src).toContain("err instanceof SocketInUseError");
-    expect(src).toContain("startup refused: another service instance is already listening");
+    expect(src).toContain("logSocketClaimRefusal(logger, err)");
+    expect(src).not.toContain("err.socketPath");
   });
 });
