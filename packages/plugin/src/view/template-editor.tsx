@@ -120,6 +120,23 @@ export function TemplateEditor({
   const [pendingFocus, setPendingFocus] = useState<number | null>(null);
   const inputRefs = useRef(new Map<number, HTMLInputElement>());
   const addRef = useRef<HTMLButtonElement | null>(null);
+  /** The template this editor last emitted (or was mounted with). */
+  const emittedRef = useRef<readonly string[]>(value);
+
+  // Blur errors are keyed by row: a template replaced from outside (a preset
+  // switch, Discard changes, a reload) is not the one they were about, so
+  // they go with it (wave-6 review). The editor's own edits keep them.
+  const valueKey = JSON.stringify(value);
+  useEffect(() => {
+    if (valueKey === JSON.stringify(emittedRef.current)) return;
+    emittedRef.current = value;
+    setBlurErrors((previous) => (previous.size === 0 ? previous : new Map()));
+  }, [valueKey]);
+
+  function emit(next: readonly string[]): void {
+    emittedRef.current = next;
+    onChange(next);
+  }
 
   const maxRows = kind === "terminal" ? MAX_TEMPLATE_ARGUMENTS : MAX_TEMPLATE_ARGUMENTS - 1;
   const full = value.length >= maxRows;
@@ -142,7 +159,7 @@ export function TemplateEditor({
       remaining.delete(index);
       setBlurErrors(remaining);
     }
-    onChange(updated);
+    emit(updated);
   }
 
   function blurRow(row: number): void {
@@ -157,14 +174,14 @@ export function TemplateEditor({
   function append(element: string): void {
     if (disabled || full) return;
     setPendingFocus(value.length);
-    onChange([...value, element]);
+    emit([...value, element]);
   }
 
   function remove(row: number): void {
     if (disabled) return;
     setBlurErrors(new Map());
     setPendingFocus(row);
-    onChange(value.filter((_, index) => index !== row));
+    emit(value.filter((_, index) => index !== row));
   }
 
   const legend = kind === "terminal" ? "Terminal arguments" : "Claude Code arguments";

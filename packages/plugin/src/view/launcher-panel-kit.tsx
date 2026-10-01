@@ -119,6 +119,10 @@ export interface LaunchersSession {
   readonly saveErrors: Signal<Partial<Record<LaunchAction, SaveError>>>;
   /** Set once detection has been started automatically, so a failure is not retried on every open. */
   autoDetected: boolean;
+  /** How many `getConfigs` requests this session has issued (see {@link loadConfigs}). */
+  configsIssued: number;
+  /** The newest issued request whose answer was applied; older answers are dropped. */
+  configsApplied: number;
 }
 
 export function createLaunchersSession(): LaunchersSession {
@@ -131,7 +135,30 @@ export function createLaunchersSession(): LaunchersSession {
     status: signal({}),
     saveErrors: signal({}),
     autoDetected: false,
+    configsIssued: 0,
+    configsApplied: 0,
   };
+}
+
+/**
+ * Re-reads the saved configuration into the session. Several reads can be
+ * in flight at once (an open, a save, a confirmed Test); an answer to a read
+ * issued before one already applied is dropped, so a slow old answer never
+ * overwrites a newer one (wave-6 review). Resolves `true` when this answer
+ * was applied.
+ */
+export function loadConfigs(
+  session: LaunchersSession,
+  actions: LaunchersActions,
+): Promise<boolean> {
+  session.configsIssued += 1;
+  const ticket = session.configsIssued;
+  return actions.getConfigs().then((outcome) => {
+    if (outcome.kind !== "loaded" || ticket <= session.configsApplied) return false;
+    session.configsApplied = ticket;
+    session.configs.value = outcome.configs;
+    return true;
+  });
 }
 
 export function setPanelStatus(
@@ -293,9 +320,7 @@ export function answerLauncherTest(
         if (configs !== null && saved !== null && saved !== undefined) {
           session.configs.value = { ...configs, [id]: { ...saved, tested: true } };
         }
-        void actions.getConfigs().then((loaded) => {
-          if (loaded.kind === "loaded") session.configs.value = loaded.configs;
-        });
+        void loadConfigs(session, actions);
         return;
       }
       case "needs-test":
@@ -540,7 +565,11 @@ export function PanelFollowUps({
           className="ccc-connect-button"
           aria-disabled={disabled ? "true" : undefined}
           onClick={() => {
-            if (!disabled) answerLauncherTest(session, actions, id, true);
+            if (disabled) return;
+            answerLauncherTest(session, actions, id, true);
+            // The answer buttons leave with the question: focus goes back to
+            // where the owner started the Test (wave-6 review).
+            testButtonRef.current?.focus();
           }}
         >
           It opened
@@ -550,7 +579,9 @@ export function PanelFollowUps({
           className="ccc-list-more"
           aria-disabled={disabled ? "true" : undefined}
           onClick={() => {
-            if (!disabled) answerLauncherTest(session, actions, id, false);
+            if (disabled) return;
+            answerLauncherTest(session, actions, id, false);
+            testButtonRef.current?.focus();
           }}
         >
           It didn't open

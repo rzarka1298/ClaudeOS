@@ -18,6 +18,7 @@ import {
   type LauncherBadge,
   LauncherStatusBadge,
   type LaunchersSession,
+  loadConfigs,
   PANEL_DESCRIPTIONS,
   PanelFollowUps,
   type PanelStatus,
@@ -332,14 +333,16 @@ export function ClaudeCodePanel({
     };
     setSaveError(session, "claude-code", null);
     setPanelStatus(session, "claude-code", { kind: "saving" });
+    // An edit made while the save runs is kept (wave-6 review).
+    const draftAtSave = session.claudeDraft.value;
     void actions.save(request).then((outcome) => {
       switch (outcome.kind) {
         case "saved":
           setPanelStatus(session, "claude-code", { kind: "saved" });
-          void actions.getConfigs().then((loaded) => {
-            if (loaded.kind !== "loaded") return;
-            session.configs.value = loaded.configs;
-            session.claudeDraft.value = null;
+          void loadConfigs(session, actions).then((applied) => {
+            if (applied && session.claudeDraft.value === draftAtSave) {
+              session.claudeDraft.value = null;
+            }
           });
           return;
         case "refused":

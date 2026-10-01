@@ -1,4 +1,4 @@
-import type { DetectedApp, DetectionResponse, LaunchAction, LauncherConfigView } from "@ccc/domain";
+import type { DetectedApp, LaunchAction, LauncherConfigView } from "@ccc/domain";
 import { BundleIdSchema } from "@ccc/domain";
 import type { VNode } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
@@ -16,6 +16,7 @@ import {
   type LauncherBadge,
   LauncherStatusBadge,
   type LaunchersSession,
+  loadConfigs,
   PANEL_DESCRIPTIONS,
   PanelFollowUps,
   type PanelStatus,
@@ -87,16 +88,20 @@ function testBusy(status: PanelStatus): boolean {
   return status.kind === "testing" || status.kind === "confirming";
 }
 
+/**
+ * An app launcher's badge. `App not found` only when the service said so —
+ * a Test answered `app-not-found`. Detection looks up a fixed list of
+ * candidate bundle IDs, so a saved bundle it does not list (a typed
+ * override) is not evidence the app is missing (wave-6 review).
+ */
 function appBadge(
   id: AppLauncherId,
   configs: LauncherConfigView | null,
-  detection: DetectionResponse | null,
+  status: PanelStatus,
 ): LauncherBadge {
   const saved = configs?.[id] ?? null;
   if (saved === null) return "not-set-up";
-  if (detection !== null && !detection.apps[id].some((app) => app.bundleId === saved.bundleId)) {
-    return "app-not-found";
-  }
+  if (status.kind === "test-error" && status.error === "app-not-found") return "app-not-found";
   return saved.tested ? "tested" : "set-up";
 }
 
@@ -182,9 +187,7 @@ export function LaunchersSettings({
   const live = connection.kind === "live";
   useEffect(() => {
     if (!live) return;
-    void actions.getConfigs().then((outcome) => {
-      if (outcome.kind === "loaded") session.configs.value = outcome.configs;
-    });
+    void loadConfigs(session, actions);
     if (session.detection.value === null && !session.autoDetected) {
       session.autoDetected = true;
       runDetect();
@@ -402,13 +405,15 @@ function AppLauncherPanel({
     }
     setSaveError(session, id, null);
     setPanelStatus(session, id, { kind: "saving" });
+    // The draft this save sends; an edit made while it runs is the owner's
+    // next change and must survive the save (wave-6 review).
+    const draftAtSave = session.appDrafts.value[id];
     void actions.save({ launcherId: id, bundleId: value }).then((outcome) => {
       switch (outcome.kind) {
         case "saved":
           setPanelStatus(session, id, { kind: "saved" });
-          void actions.getConfigs().then((loaded) => {
-            if (loaded.kind !== "loaded") return;
-            session.configs.value = loaded.configs;
+          void loadConfigs(session, actions).then((applied) => {
+            if (!applied || session.appDrafts.value[id] !== draftAtSave) return;
             const drafts = { ...session.appDrafts.value };
             delete drafts[id];
             session.appDrafts.value = drafts;
@@ -441,7 +446,7 @@ function AppLauncherPanel({
       <h4 id={headingId} className="ccc-field-label">
         {appName}
       </h4>
-      <LauncherStatusBadge badge={appBadge(id, configs, detection)} />
+      <LauncherStatusBadge badge={appBadge(id, configs, status)} />
       <p className="ccc-state-body">{PANEL_DESCRIPTIONS[id]}</p>
       {lines.map((line) => (
         <p key={line} className="ccc-list-meta">
