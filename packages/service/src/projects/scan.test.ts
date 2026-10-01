@@ -304,12 +304,13 @@ describe("dismiss and stop scanning (D-07, D-08)", () => {
 });
 
 describe("no background scanning (D-07, T-04-35)", () => {
-  it("creates no watcher and no timer across add, rescan and register", async () => {
+  it("creates no watcher, no interval, and no timer that outlives a request across add, rescan and register", async () => {
     git(join(root, "a"));
     const watch = vi.spyOn(fs, "watch");
     const watchFile = vi.spyOn(fs, "watchFile");
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
     const service = makeService();
     const state = await addRoot(service);
     const id = state.scanRoots[0]?.scanRootId;
@@ -320,7 +321,120 @@ describe("no background scanning (D-07, T-04-35)", () => {
     expect(watch).not.toHaveBeenCalled();
     expect(watchFile).not.toHaveBeenCalled();
     expect(setIntervalSpy).not.toHaveBeenCalled();
-    expect(setTimeoutSpy).not.toHaveBeenCalled();
+    // The per-operation deadline (wave-6 review) is the only timer, and every
+    // one is cleared before its request answers: nothing fires later.
+    const created = setTimeoutSpy.mock.results.map((r) => r.value);
+    const cleared = new Set(clearTimeoutSpy.mock.calls.map((c) => c[0]));
+    expect(created.every((handle) => cleared.has(handle))).toBe(true);
+  });
+});
+
+describe("rescan re-validates the root and the walk skips the vault (wave-6 review)", () => {
+  function policyWithVault(vault: { current: string | null }) {
+    return () => ({ homeDir: fakeHome, runtimeDir, vaultRoot: vault.current });
+  }
+
+  it("a vault set up inside a scan folder later makes its rescan refused, clears its suggestions and lists nothing", async () => {
+    git(join(root, "a"));
+    const vault = { current: null as string | null };
+    const service = makeService({ readPolicy: policyWithVault(vault) });
+    const state = await addRoot(service);
+    const id = state.scanRoots[0]?.scanRootId;
+    if (id === undefined) throw new Error("no scan root");
+    mkdirSync(join(root, "notes"));
+    vault.current = join(root, "notes");
+    listed = [];
+
+    expect(await service.rescan(id)).toEqual({ kind: "refused" });
+    expect(listed).toEqual([]);
+    expect(service.state().suggestions).toEqual([]);
+    expect(service.state().scanRoots[0]?.scanStatus).toBe("failed");
+    // Constant: asking again answers the same refusal, still without a listing.
+    expect(await service.rescan(id)).toEqual({ kind: "refused" });
+    expect(listed).toEqual([]);
+  });
+
+  it("a scan folder that is now inside the vault is refused on rescan", async () => {
+    git(join(root, "a"));
+    const vault = { current: null as string | null };
+    const service = makeService({ readPolicy: policyWithVault(vault) });
+    const state = await addRoot(service);
+    const id = state.scanRoots[0]?.scanRootId;
+    if (id === undefined) throw new Error("no scan root");
+    vault.current = join(fakeHome, "code");
+    expect(await service.rescan(id)).toEqual({ kind: "refused" });
+    expect(service.state().suggestions).toEqual([]);
+  });
+
+  it("a vault set up while a walk runs is never listed or suggested", async () => {
+    git(join(root, "a"));
+    git(join(root, "notes"));
+    mkdirSync(join(root, "notes", "inner"), { recursive: true });
+    const vault = { current: null as string | null };
+    const service = makeService({
+      readPolicy: policyWithVault(vault),
+      fs: recordingFs((path) => {
+        // Vault setup lands between the add's validation and the walk.
+        if (path === root) vault.current = join(root, "notes");
+        return null;
+      }),
+    });
+    const state = await addRoot(service, 2);
+    expect(names(state)).toEqual(["a"]);
+    expect(
+      listed.some((p) => p === join(root, "notes") || p.startsWith(`${join(root, "notes")}/`)),
+    ).toBe(false);
+  });
+
+  it("a suggestion found before the vault was set up inside it is no longer listed", async () => {
+    git(join(root, "a"));
+    git(join(root, "notes"));
+    const vault = { current: null as string | null };
+    const service = makeService({ readPolicy: policyWithVault(vault) });
+    const state = await addRoot(service);
+    expect(names(state)).toEqual(["a", "notes"]);
+    vault.current = join(root, "notes");
+    expect(names(service.state())).toEqual(["a"]);
+  });
+});
+
+describe("the time cap bounds a hung filesystem call (wave-6 review)", () => {
+  function hanging(): Promise<never> {
+    return new Promise<never>(() => {});
+  }
+
+  it("a listing that never answers stops the walk at the cap, partial, and the next rescan is not stuck behind it", async () => {
+    git(join(root, "a"));
+    mkdirSync(join(root, "stuck"));
+    const service = makeService({
+      timeCapMs: 100,
+      fs: recordingFs((path) => (path === join(root, "stuck") ? hanging() : null)),
+    });
+    const started = Date.now();
+    const state = await addRoot(service);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(state.partial).toBe(true);
+    expect(state.scanRoots[0]?.scanStatus).toBe("partial");
+    const id = state.scanRoots[0]?.scanRootId;
+    if (id === undefined) throw new Error("no scan root");
+    const again = await service.rescan(id);
+    expect(again.kind === "state" && again.state.scanRoots[0]?.scanStatus).toBe("partial");
+  });
+
+  it("a root realpath that never answers marks the root failed within the cap", async () => {
+    git(join(root, "a"));
+    const service = makeService({
+      timeCapMs: 100,
+      fs: {
+        readdir: (path) => fsPromises.readdir(path, { withFileTypes: true }),
+        realpath: (path) => (path === root ? hanging() : fsPromises.realpath(path)),
+      },
+    });
+    const started = Date.now();
+    const state = await addRoot(service);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(state.scanRoots[0]?.scanStatus).toBe("failed");
+    expect(state.suggestions).toEqual([]);
   });
 });
 
