@@ -34,6 +34,18 @@ export const ROW_BUDGET: Readonly<Record<SizeHint, number>> = {
   tall: 10,
 };
 
+/**
+ * Rows that fit a card when each row also carries a launch toolbar and its
+ * status line (UI-SPEC S1, RR-06): taller rows, so fewer of them. Used in
+ * place of {@link ROW_BUDGET} whenever `renderActions` is given.
+ */
+export const ACTION_ROW_BUDGET: Readonly<Record<SizeHint, number>> = {
+  small: 2,
+  medium: 3,
+  wide: 3,
+  tall: 5,
+};
+
 /** One meta-line segment: a decorative glyph (optional) plus its meaning as text. */
 export interface MetaSegment {
   readonly glyph?: string;
@@ -70,6 +82,14 @@ export interface ListBodyProps<Row> {
    * sibling" applied to the primary line, not just the meta line).
    */
   readonly primaryBadge?: (row: Row) => PrimaryBadge | null;
+  /**
+   * An optional per-row actions slot rendered after the meta line (the S2
+   * launch toolbar, plan 04-10). Its presence switches the row budget to
+   * {@link ACTION_ROW_BUDGET}.
+   */
+  readonly renderActions?: ((row: Row) => VNode | null) | undefined;
+  /** An optional per-row status slot rendered after the actions (the S2 status line). */
+  readonly renderStatus?: ((row: Row) => VNode | null) | undefined;
   /** Where the full list lives — the `+{n} more` control focuses it. */
   readonly moreDestination: DestinationId;
   /** The shell's destination focus, threaded from the frame via `WidgetBodyProps.onNavigate`. */
@@ -105,12 +125,14 @@ export function ListBody<Row>({
   renderMeta,
   renderMetaSegments,
   primaryBadge,
+  renderActions,
+  renderStatus,
   moreDestination,
   onMore,
 }: ListBodyProps<Row>): VNode | null {
   if (rows.length === 0) return null;
 
-  const budget = ROW_BUDGET[size];
+  const budget = (renderActions === undefined ? ROW_BUDGET : ACTION_ROW_BUDGET)[size];
   const visible = rows.slice(0, budget);
   const hidden = rows.length - visible.length;
 
@@ -142,6 +164,8 @@ export function ListBody<Row>({
             ) : (
               <MetaSegments segments={segments} />
             )}
+            {renderActions?.(row)}
+            {renderStatus?.(row)}
           </li>
         );
       })}

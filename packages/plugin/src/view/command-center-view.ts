@@ -5,8 +5,12 @@ import {
 } from "@ccc/service-api-client";
 import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
+import { connectionState } from "../connection-state.js";
 import { pickFolder } from "../projects/folder-picker.js";
+import { createLaunchRequester, windowLaunchTimers } from "../projects/launch-client.js";
+import { resetLaunchStatus } from "../projects/launch-status.js";
 import { createProjectsActions } from "../projects/projects-actions.js";
+import { projectsSnapshot } from "../projects/projects-state.js";
 import { attachEventClient, refreshProjectsOnConnect } from "../service-connection.js";
 import type { CommandCenterSettings } from "../settings.js";
 import type { DestinationId } from "./destinations.js";
@@ -40,6 +44,9 @@ export interface CommandCenterViewHost {
  */
 export class CommandCenterView extends ItemView {
   private readonly host: CommandCenterViewHost;
+  /** Every launch timer (5 s deadline, 6 s success clear) still pending — cleared on close (PLUG-03, T-04-17). */
+  private readonly launchTimers = new Set<number>();
+  private disposed = false;
 
   constructor(leaf: WorkspaceLeaf, host: CommandCenterViewHost) {
     super(leaf);
@@ -62,6 +69,33 @@ export class CommandCenterView extends ItemView {
     const initial = this.host.settings.lastOpenedDestination as DestinationId;
 
     this.contentEl.empty();
+    this.disposed = false;
+    const timers = windowLaunchTimers();
+    const requestLaunch = createLaunchRequester({
+      client: this.host.client,
+      notify: (message: string) => {
+        new Notice(message);
+      },
+      connection: () => connectionState.value,
+      projectName: (projectId) =>
+        projectsSnapshot.value?.projects.find((view) => view.projectId === projectId)
+          ?.displayName ?? null,
+      terminalLabel: () =>
+        projectsSnapshot.value?.launchers["claude-code"].terminalLabel ?? "Terminal",
+      isDisposed: () => this.disposed,
+      setTimer: (callback, ms) => {
+        const id = timers.setTimer(() => {
+          this.launchTimers.delete(id);
+          callback();
+        }, ms);
+        this.launchTimers.add(id);
+        return id;
+      },
+      clearTimer: (id) => {
+        this.launchTimers.delete(id);
+        timers.clearTimer(id);
+      },
+    });
     render(
       h(Shell, {
         initialDestination: initial,
@@ -75,6 +109,10 @@ export class CommandCenterView extends ItemView {
         notify: (message: string) => {
           new Notice(message);
         },
+        // Every launch leaves a widget as a `launch:*` descriptor through
+        // `dispatchQuickAction`, which calls this — the only place a launch
+        // reaches the client (D-24).
+        requestLaunch,
         projectsActions: createProjectsActions(this.host.client),
         pickFolder,
       }),
@@ -92,5 +130,12 @@ export class CommandCenterView extends ItemView {
 
   override async onClose(): Promise<void> {
     render(null, this.contentEl);
+    // No launch timer outlives the view, and a late answer is dropped rather
+    // than written into a store nothing renders (RR-04: launch errors last
+    // "until view reload").
+    this.disposed = true;
+    for (const id of this.launchTimers) window.clearTimeout(id);
+    this.launchTimers.clear();
+    resetLaunchStatus();
   }
 }

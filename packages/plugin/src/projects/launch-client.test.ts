@@ -20,8 +20,7 @@ const PROJECT_ID = newProjectId();
 
 function timers() {
   return {
-    setTimer: (callback: () => void, ms: number): number =>
-      window.setTimeout(callback, ms) as unknown as number,
+    setTimer: (callback: () => void, ms: number): number => window.setTimeout(callback, ms),
     clearTimer: (id: number): void => window.clearTimeout(id),
   };
 }
@@ -82,7 +81,7 @@ describe("createLaunchRequester", () => {
 
   it("a client resolving { ok: true } sets a success status", async () => {
     const client: SocketApiClient = {
-      request: () => Promise.resolve({ status: 200, body: { ok: true } }),
+      request: <T>() => Promise.resolve({ status: 200, body: { ok: true } as T }),
     };
     const requestLaunch = createLaunchRequester(deps(client));
 
@@ -112,7 +111,7 @@ describe("createLaunchRequester", () => {
     let messageRead = false;
     const error = new SocketUnreachableError(
       "/tmp/x.sock",
-      Object.assign(new Error("boom"), { code: "ECONNREFUSED" }) as NodeJS.ErrnoException,
+      Object.assign(new Error("boom"), { code: "ECONNREFUSED" }),
     );
     Object.defineProperty(error, "message", {
       get() {
@@ -135,7 +134,8 @@ describe("createLaunchRequester", () => {
 
   it("{ ok: false, error: app-not-found } sets that exact error kind", async () => {
     const client: SocketApiClient = {
-      request: () => Promise.resolve({ status: 200, body: { ok: false, error: "app-not-found" } }),
+      request: <T>() =>
+        Promise.resolve({ status: 200, body: { ok: false, error: "app-not-found" } as T }),
     };
     const requestLaunch = createLaunchRequester(deps(client));
 
@@ -180,7 +180,7 @@ describe("classifyLaunchFailure (SC-3)", () => {
   it("maps ETIMEDOUT to timeout", () => {
     const error = new SocketUnreachableError(
       "/tmp/x.sock",
-      Object.assign(new Error("x"), { code: "ETIMEDOUT" }) as NodeJS.ErrnoException,
+      Object.assign(new Error("x"), { code: "ETIMEDOUT" }),
     );
     expect(classifyLaunchFailure(error)).toBe("timeout");
   });
@@ -188,7 +188,7 @@ describe("classifyLaunchFailure (SC-3)", () => {
   it.each(["ENOENT", "ECONNREFUSED"])("maps %s to service-disconnected", (code) => {
     const error = new SocketUnreachableError(
       "/tmp/x.sock",
-      Object.assign(new Error("x"), { code }) as NodeJS.ErrnoException,
+      Object.assign(new Error("x"), { code }),
     );
     expect(classifyLaunchFailure(error)).toBe("service-disconnected");
   });

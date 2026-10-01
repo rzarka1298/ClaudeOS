@@ -1,8 +1,9 @@
-import type { GithubTarget, LaunchersSummary, ProjectGitState } from "@ccc/domain";
+import type { GithubTarget, LaunchersSummary, ProjectGitState, ProjectId } from "@ccc/domain";
 import type { VNode } from "preact";
 import type { DestinationId } from "../view/destinations.js";
 import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { WidgetBodyProps, WidgetDefinition } from "./contract.js";
+import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
 import { ListBody } from "./list-body.js";
 
 /**
@@ -318,7 +319,14 @@ function ProjectShortcutsBody({
   data,
   size,
   onNavigate,
+  onQuickAction,
 }: WidgetBodyProps<ProjectShortcutsData>): VNode | null {
+  const terminalLabel = data.launchers["claude-code"].terminalLabel;
+  // The frame hands `onQuickAction` in only for `ready`/`stale` (RR-05): a
+  // disconnected card renders its dimmed rows with no toolbar and no status
+  // line, so no launch control — and no danger-coloured line — ever sits
+  // inside the 0.55-opacity body.
+  const live = onQuickAction !== undefined;
   return (
     <>
       {launchersNeedSetup(data.launchers) && <SetupCallout onNavigate={onNavigate} />}
@@ -331,6 +339,33 @@ function ProjectShortcutsBody({
         renderMeta={projectMetaLine}
         renderMetaSegments={projectMetaSegments}
         primaryBadge={projectPrimaryBadge}
+        renderActions={
+          live
+            ? (project) => (
+                <LaunchToolbar
+                  // `ProjectRow.id` is a plain string for `ListBody`'s generic
+                  // key; it is always a service-issued ProjectId.
+                  projectId={project.id as ProjectId}
+                  projectName={project.name}
+                  github={project.github}
+                  onQuickAction={onQuickAction}
+                />
+              )
+            : undefined
+        }
+        renderStatus={
+          live
+            ? (project) => (
+                <LaunchStatusLine
+                  projectId={project.id as ProjectId}
+                  projectName={project.name}
+                  terminalLabel={terminalLabel}
+                  actions={PROJECT_LAUNCH_ACTIONS}
+                  onNavigate={onNavigate}
+                />
+              )
+            : undefined
+        }
         moreDestination="projects"
       />
     </>

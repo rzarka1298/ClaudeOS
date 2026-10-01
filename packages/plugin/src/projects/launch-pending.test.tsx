@@ -4,10 +4,10 @@ import { signal } from "@preact/signals";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
+import { Shell } from "../view/shell.js";
 import type { WidgetState } from "../widgets/contract.js";
 import type { ProjectShortcutsData } from "../widgets/panels.js";
 import type { WidgetId } from "../widgets/registry.js";
-import { Shell } from "../view/shell.js";
 import { createLaunchRequester } from "./launch-client.js";
 import { resetLaunchStatus } from "./launch-status.js";
 
@@ -68,8 +68,7 @@ function stateForOverride(id: WidgetId) {
 
 function hostTimers() {
   return {
-    setTimer: (callback: () => void, ms: number): number =>
-      window.setTimeout(callback, ms) as unknown as number,
+    setTimer: (callback: () => void, ms: number): number => window.setTimeout(callback, ms),
     clearTimer: (id: number): void => window.clearTimeout(id),
   };
 }

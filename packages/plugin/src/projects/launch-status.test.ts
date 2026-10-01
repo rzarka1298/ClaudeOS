@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 
 describe("launchStatusKey (UI-SPEC S2)", () => {
-  it("keys a project action as `${projectId}:${action}`", () => {
+  it("keys a project action as {projectId}:{action}", () => {
     expect(launchStatusKey(PROJECT_ID, "finder")).toBe(`${PROJECT_ID}:finder`);
   });
 
