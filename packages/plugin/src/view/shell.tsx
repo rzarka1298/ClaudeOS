@@ -1,7 +1,7 @@
 import type { LaunchAction, ProjectId } from "@ccc/domain";
 import type { ReadonlySignal } from "@preact/signals";
 import type { VNode } from "preact";
-import { useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
@@ -17,6 +17,7 @@ import { widgetStateFor } from "../widgets/widget-data.js";
 import { type WidgetHost, WidgetHostContext } from "../widgets/widget-host.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 import { createLaunchersSession, type LaunchersSession } from "./launchers-settings.js";
+import { navigationRequest } from "./navigation-request.js";
 import { Overview } from "./overview.js";
 import { ProjectsView } from "./projects-view.js";
 import { SettingsDestination } from "./settings-destination.js";
@@ -134,6 +135,10 @@ export interface DestinationViewProps {
   readonly launchersActions: LaunchersActions;
   /** The view's in-memory Launchers state: detection, drafts, in-flight results (RR-25). */
   readonly launchersSession: LaunchersSession;
+  /** S9's `Go to {project}`: the card whose heading takes focus once it renders (plan 04-14). */
+  readonly focusProjectId?: ProjectId | null | undefined;
+  /** Called once the Projects destination has taken the focus request. */
+  readonly onProjectFocusTaken?: (() => void) | undefined;
 }
 
 const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewProps) => VNode>> = {
@@ -156,6 +161,8 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
     scanActions,
     pickFolder,
     openSystemSettings,
+    focusProjectId,
+    onProjectFocusTaken,
   }) => (
     <ProjectsView
       actions={projectsActions}
@@ -166,6 +173,8 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
       onQuickAction={onQuickAction}
       onNavigate={onNavigate}
       openSystemSettings={openSystemSettings}
+      focusProjectId={focusProjectId}
+      onProjectFocusTaken={onProjectFocusTaken}
     />
   ),
   settings: ({ connection, now, launchersActions, launchersSession }) => (
@@ -220,6 +229,8 @@ export function Shell({
   // One per view: leaving Settings keeps detection and drafts in memory (RR-25).
   const [launchersSession] = useState(createLaunchersSession);
   const tabRefs = useRef<Partial<Record<DestinationId, HTMLButtonElement>>>({});
+  // S9's `Go to {project}`, held until the Projects destination takes it.
+  const [projectFocus, setProjectFocus] = useState<ProjectId | null>(null);
 
   function select(id: DestinationId): void {
     setActiveId(id);
@@ -252,6 +263,23 @@ export function Shell({
       openSwitcher,
     });
   }
+
+  // A navigation request from outside this tree — the S9 switcher or the
+  // `Set up launchers` command (plan 04-14) — is consumed once and cleared:
+  // a request made before this shell mounted is honoured on mount.
+  const request = navigationRequest.value;
+  // `select`/`focusDestination` are per-render closures over stable setters;
+  // the request value alone decides when this runs.
+  useEffect(() => {
+    if (request === null) return;
+    navigationRequest.value = null;
+    if (request.focusProjectId === undefined) {
+      focusDestination(request.destination);
+      return;
+    }
+    select(request.destination);
+    setProjectFocus(request.focusProjectId);
+  }, [request]);
 
   function handleNavKeyDown(event: KeyboardEvent): void {
     let direction: "next" | "previous" | null = null;
@@ -355,6 +383,8 @@ export function Shell({
                 openSystemSettings={openSystemSettings}
                 launchersActions={launchersActions}
                 launchersSession={launchersSession}
+                focusProjectId={projectFocus}
+                onProjectFocusTaken={() => setProjectFocus(null)}
               />
             ) : (
               <p>{active.description}</p>

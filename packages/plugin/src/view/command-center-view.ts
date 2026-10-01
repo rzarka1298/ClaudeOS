@@ -4,7 +4,7 @@ import {
   openSystemSettings,
   refreshProjects,
 } from "@ccc/service-api-client";
-import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, Scope, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
 import { connectionState } from "../connection-state.js";
 import { pickFolder } from "../projects/folder-picker.js";
@@ -17,6 +17,7 @@ import { createSystemSettingsOpener } from "../projects/system-settings-opener.j
 import { attachEventClient, refreshProjectsOnConnect } from "../service-connection.js";
 import type { CommandCenterSettings } from "../settings.js";
 import type { DestinationId } from "./destinations.js";
+import { registerSwitcherScope } from "./quick-switcher.js";
 import { Shell } from "./shell.js";
 
 export const VIEW_TYPE = "claude-command-center-view";
@@ -58,6 +59,12 @@ export class CommandCenterView extends ItemView {
   constructor(leaf: WorkspaceLeaf, host: CommandCenterViewHost) {
     super(leaf);
     this.host = host;
+    // The view's own keymap scope, chained to the app's (obsidian.d.ts
+    // `View.scope`): Obsidian makes it active only while this view has
+    // focus, and it goes away with the view, so Mod+K never reaches a note
+    // and needs no unregistering (D-33). Not a command hotkey.
+    this.scope = new Scope(this.app.scope);
+    registerSwitcherScope(this.scope, () => this.host.openSwitcher(""));
   }
 
   override getViewType(): string {
@@ -118,6 +125,9 @@ export class CommandCenterView extends ItemView {
         notify: (message: string) => {
           new Notice(message);
         },
+        // S8's `Start a Claude Code session` opens the S9 switcher prefilled
+        // (plan 04-14) — the same opener as the palette command and Mod+K.
+        openSwitcher: (prefill: string) => this.host.openSwitcher(prefill),
         // Every launch leaves a widget as a `launch:*` descriptor through
         // `dispatchQuickAction`, which calls this — the only place a launch
         // reaches the client (D-24).

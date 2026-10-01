@@ -298,9 +298,21 @@ export function registerSwitcherCommand(
   });
 }
 
-/** The part of Obsidian's `Scope` this needs. RED skeleton (plan 04-14 Task 2). */
+/** The part of Obsidian's `Scope` this needs (`Scope.register`, obsidian.d.ts). */
 export interface SwitcherScope {
   register(modifiers: Modifier[], key: string, func: () => false): unknown;
 }
 
-export function registerSwitcherScope(_scope: SwitcherScope, _open: () => void): void {}
+/**
+ * Binds `Mod+K` (⌘K on macOS) on the command-center view's OWN scope, so it
+ * is live only while the view has focus and is released with the view
+ * (D-33). It is not a command hotkey — no default global hotkey exists for
+ * any Phase 4 command (`obsidianmd/commands/no-default-hotkeys`). Returning
+ * `false` tells Obsidian to prevent the key's default.
+ */
+export function registerSwitcherScope(scope: SwitcherScope, open: () => void): void {
+  scope.register(["Mod"], "k", () => {
+    open();
+    return false;
+  });
+}

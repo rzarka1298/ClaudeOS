@@ -33,7 +33,18 @@ export interface ProjectsViewProps {
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
   /** Opens one of the two fixed System Settings panes (RR-16) from a launch error's button. */
   readonly openSystemSettings?: ((pane: "automation" | "privacy-security") => void) | undefined;
+  /** S9's `Go to {project}` (plan 04-14): focus this card's heading once its row renders. */
+  readonly focusProjectId?: string | null | undefined;
+  /** Called as soon as the request is taken, so it is honoured once. */
+  readonly onProjectFocusTaken?: (() => void) | undefined;
 }
+
+/**
+ * The S3 search hint. `⌘K` is the D-33 view-scoped binding (`Mod+K`)
+ * rendered for macOS, the only v1 platform (`isDesktopOnly`, ADR-0001).
+ */
+const SEARCH_HINT =
+  "Search projects and actions: ⌘K while the command center has focus, or from the command palette.";
 
 /** A ref-map key: one entry per project's per-control DOM node this view needs to refocus (currently only its name heading). */
 function headingKey(projectId: string): string {
@@ -60,6 +71,8 @@ export function ProjectsView({
   onQuickAction,
   onNavigate,
   openSystemSettings,
+  focusProjectId,
+  onProjectFocusTaken,
 }: ProjectsViewProps): VNode {
   const snapshot = projectsSnapshot.value;
   const rows = snapshot === undefined ? [] : projectRowsFrom(snapshot);
@@ -103,6 +116,15 @@ export function ProjectsView({
     // `controlRefs` is a stable ref container, not reactive state.
   }, [rows, pendingFocusId]);
 
+  // S9's `Go to {project}`: hand the request to the same pending-focus path
+  // a registration uses, which waits until the row exists (plan 04-14).
+  // The host's callback is a per-render closure; the id alone decides when this runs.
+  useEffect(() => {
+    if (focusProjectId === null || focusProjectId === undefined) return;
+    setPendingFocusId(focusProjectId);
+    onProjectFocusTaken?.();
+  }, [focusProjectId]);
+
   function handleRemoved(removedId: string, removedName: string): void {
     setAnnouncement(`Removed ${removedName} from projects.`);
     const index = rows.findIndex((row) => row.id === removedId);
@@ -124,6 +146,7 @@ export function ProjectsView({
         openerRef={registerOpenerRef}
       />
       <AddScanFolderFlow actions={scanActions} pickFolder={pickFolder} />
+      <p className="ccc-list-meta">{SEARCH_HINT}</p>
     </>
   );
 

@@ -10,6 +10,7 @@ import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
 import { connectionState } from "./connection-state.js";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference } from "./motion.js";
+import { registerSetUpLaunchersCommand } from "./projects/commands.js";
 import { createLaunchRequester, windowLaunchTimers } from "./projects/launch-client.js";
 import { projectsSnapshot } from "./projects/projects-state.js";
 import { refreshProjectsOnConnect } from "./service-connection.js";
@@ -22,6 +23,7 @@ import {
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
+import { requestDestination } from "./view/navigation-request.js";
 import {
   createSwitcherOpener,
   ProjectSwitcherModal,
@@ -157,6 +159,11 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       show: (prefill) => new ProjectSwitcherModal(this.app, switcherHost).openWith(prefill),
     });
     registerSwitcherCommand(this.hostRegistry, this.openSwitcher);
+
+    // Reruns launcher onboarding anytime: Settings › Launchers, focused (D-30).
+    registerSetUpLaunchersCommand(this.hostRegistry, () => {
+      void this.revealView();
+    });
   }
 
   /**
@@ -205,7 +212,10 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       snapshot: () => projectsSnapshot.value,
       connection: () => connectionState.value,
       notify,
-      goTo: () => {
+      // A one-shot request the shell consumes, then the view revealed — or
+      // created, in which case the shell honours the request when it mounts.
+      goTo: (destination, focusProjectId) => {
+        requestDestination(destination, { focusProjectId });
         void this.revealView();
       },
       requestLaunch,
