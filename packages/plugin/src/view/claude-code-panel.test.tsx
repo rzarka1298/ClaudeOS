@@ -2,7 +2,6 @@ import {
   type DetectionResponse,
   type LauncherConfigView,
   TEMPLATE_REFUSAL_REASONS,
-  type TemplateRefusalReason,
 } from "@ccc/domain";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -248,7 +247,7 @@ describe("service refusals land on the row they name (PR-13)", () => {
     });
     save();
     await settle();
-    const copy = TEMPLATE_REFUSAL_COPY[reason as TemplateRefusalReason];
+    const copy = TEMPLATE_REFUSAL_COPY[reason];
     expect(copy.length).toBeGreaterThan(0);
     expect(copy).not.toMatch(/(^|\s)(\/|~\/)[A-Za-z]/);
     const errors = Array.from(document.querySelectorAll(".ccc-field-error")).map(

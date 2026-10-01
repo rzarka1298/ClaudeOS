@@ -1,21 +1,44 @@
-import type {
-  DetectedApp,
-  DetectionResponse,
-  LaunchAction,
-  LauncherConfigView,
-  RefusedTemplate,
-  TemplateRefusalReason,
-} from "@ccc/domain";
+import type { DetectedApp, DetectionResponse, LaunchAction, LauncherConfigView } from "@ccc/domain";
 import { BundleIdSchema } from "@ccc/domain";
-import { type Signal, signal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
+import { projectRowsFrom, projectsSnapshot } from "../projects/projects-state.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
+import { ClaudeCodePanel } from "./claude-code-panel.js";
+import {
+  type AppDraft,
+  type AppLauncherId,
+  createLaunchersSession,
+  LAUNCHER_PANEL_NAMES,
+  type LauncherBadge,
+  LauncherStatusBadge,
+  type LaunchersSession,
+  PANEL_DESCRIPTIONS,
+  PanelStatusLine,
+  setSaveError,
+  setPanelStatus as setStatus,
+} from "./launcher-panel-kit.js";
 import { launchersFocusRequested } from "./launchers-focus.js";
 
+export { createLaunchersSession, type LaunchersSession } from "./launcher-panel-kit.js";
 export { requestLaunchersFocus } from "./launchers-focus.js";
+
+/** The preview's sample project when none is registered (RR-24). */
+export const FALLBACK_SAMPLE_PATH = "~/example-project";
+
+/** The first project in S1 order's display path, for the template preview (RR-24). */
+function sampleDisplayPath(): string {
+  const snapshot = projectsSnapshot.value;
+  if (snapshot === undefined) return FALLBACK_SAMPLE_PATH;
+  const first = projectRowsFrom(snapshot)[0];
+  if (first === undefined) return FALLBACK_SAMPLE_PATH;
+  return (
+    snapshot.projects.find((view) => view.projectId === first.id)?.displayPath ??
+    FALLBACK_SAMPLE_PATH
+  );
+}
 
 /**
  * The S6 Launchers section of the command center's own Settings destination
@@ -26,123 +49,11 @@ export { requestLaunchersFocus } from "./launchers-focus.js";
  * (D-43).
  */
 
-/** The two launchers configured by choosing an installed app (D-19). */
-export type AppLauncherId = "antigravity" | "claude-desktop";
-
-/** The owner's in-progress choice for an app launcher. */
-export type AppDraft =
-  | { readonly kind: "detected"; readonly bundleId: string }
-  | { readonly kind: "override"; readonly text: string };
-
-/** What a panel's persistent status line says (UI-SPEC S6). */
-export type PanelStatus =
-  | { readonly kind: "idle" }
-  | { readonly kind: "saving" }
-  | { readonly kind: "saved" }
-  | { readonly kind: "save-failed" };
-
-/** A save problem shown under the field it is about, not in the status line. */
-export type SaveError =
-  | { readonly kind: "invalid-bundle" }
-  | {
-      readonly kind: "refused";
-      readonly reason: TemplateRefusalReason;
-      readonly index: number | null;
-      readonly template?: RefusedTemplate | undefined;
-    };
-
-/**
- * Everything the Launchers section knows, held by the view (the Shell
- * creates one per command-center view): leaving Settings and coming back
- * keeps the detection, the drafts and any in-flight result. Memory only.
- */
-export interface LaunchersSession {
-  readonly detection: Signal<DetectionResponse | null>;
-  readonly detectPhase: Signal<"idle" | "detecting" | "failed">;
-  readonly configs: Signal<LauncherConfigView | null>;
-  readonly appDrafts: Signal<Partial<Record<AppLauncherId, AppDraft>>>;
-  readonly status: Signal<Partial<Record<LaunchAction, PanelStatus>>>;
-  readonly saveErrors: Signal<Partial<Record<LaunchAction, SaveError>>>;
-  /** Set once detection has been started automatically, so a failure is not retried on every open. */
-  autoDetected: boolean;
-}
-
-export function createLaunchersSession(): LaunchersSession {
-  return {
-    detection: signal(null),
-    detectPhase: signal("idle"),
-    configs: signal(null),
-    appDrafts: signal({}),
-    status: signal({}),
-    saveErrors: signal({}),
-    autoDetected: false,
-  };
-}
-
-function setStatus(session: LaunchersSession, id: LaunchAction, status: PanelStatus): void {
-  session.status.value = { ...session.status.value, [id]: status };
-}
-
-function setSaveError(session: LaunchersSession, id: LaunchAction, error: SaveError | null): void {
-  const next = { ...session.saveErrors.value };
-  if (error === null) delete next[id];
-  else next[id] = error;
-  session.saveErrors.value = next;
-}
-
-/** The fixed panel names (UI-SPEC S6 h4 copy). */
-export const LAUNCHER_PANEL_NAMES: Readonly<Record<LaunchAction, string>> = {
-  antigravity: "Antigravity",
-  "claude-code": "Claude Code",
-  "claude-desktop": "Claude Desktop",
-  finder: "Finder",
-  github: "GitHub",
-};
-
-const PANEL_DESCRIPTIONS: Readonly<Record<LaunchAction, string>> = {
-  antigravity: "Opens a project folder in Antigravity.",
-  "claude-code": "Starts a new Claude Code session in a terminal window at the project folder.",
-  "claude-desktop": "Brings Claude Desktop to the front.",
-  finder: "Reveals a project folder in Finder. Nothing to set up.",
-  github: "Opens a project's GitHub page in your default browser. Nothing to set up.",
-};
-
 const LOCATION_COPY: Readonly<Record<DetectedApp["location"], string>> = {
   applications: "In Applications",
   "user-applications": "In your Applications folder",
   other: "Elsewhere on this Mac",
 };
-
-/** A launcher's S6 status badge. */
-export type LauncherBadge = "not-set-up" | "set-up" | "tested" | "app-not-found";
-
-const BADGE_GLYPH: Readonly<Record<LauncherBadge, string>> = {
-  "not-set-up": "◌",
-  "set-up": "◆",
-  tested: "✓",
-  "app-not-found": "▲",
-};
-
-const BADGE_TEXT: Readonly<Record<LauncherBadge, string>> = {
-  "not-set-up": "Not set up",
-  "set-up": "Set up",
-  tested: "Tested",
-  "app-not-found": "App not found",
-};
-
-export function LauncherStatusBadge({ badge }: { readonly badge: LauncherBadge }): VNode {
-  return (
-    <span className="ccc-badge" data-launcher-badge={badge}>
-      <span
-        className={badge === "app-not-found" ? "ccc-error-glyph" : "ccc-meta-glyph"}
-        aria-hidden="true"
-      >
-        {BADGE_GLYPH[badge]}
-      </span>{" "}
-      {BADGE_TEXT[badge]}
-    </span>
-  );
-}
 
 function appBadge(
   id: AppLauncherId,
@@ -290,9 +201,12 @@ export function LaunchersSettings({
         )}
       </p>
       <AppLauncherPanel id="antigravity" actions={actions} session={session} />
-      <PlaceholderPanel
-        id="claude-code"
-        badge={configs?.["claude-code"] ? "set-up" : "not-set-up"}
+      <ClaudeCodePanel
+        actions={actions}
+        session={session}
+        connection={connection}
+        now={now}
+        sampleDisplayPath={sampleDisplayPath()}
       />
       <AppLauncherPanel id="claude-desktop" actions={actions} session={session} />
       <PlaceholderPanel id="finder" badge={null} />
@@ -519,33 +433,5 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
       </div>
       <PanelStatusLine status={status} />
     </section>
-  );
-}
-
-function PanelStatusLine({ status }: { readonly status: PanelStatus }): VNode {
-  const tone =
-    status.kind === "save-failed" ? "error" : status.kind === "saved" ? "success" : undefined;
-  return (
-    <p role="status" className="ccc-launch-status" data-tone={tone}>
-      {status.kind === "saving" && "Saving…"}
-      {status.kind === "saved" && (
-        <>
-          <span className="ccc-meta-glyph" aria-hidden="true">
-            ✓
-          </span>{" "}
-          Saved
-        </>
-      )}
-      {status.kind === "save-failed" && (
-        <>
-          <span className="ccc-error-glyph" aria-hidden="true">
-            ▲
-          </span>
-          Couldn't save launcher settings.
-          <br />
-          Check the service in Settings → Diagnostics, then try again.
-        </>
-      )}
-    </p>
   );
 }
