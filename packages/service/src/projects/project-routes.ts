@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
 import {
   type ApiErrorBody,
+  nextFreeDisplayName,
   PinProjectRequestSchema,
   PROJECT_GITHUB_LINK_PATH,
   PROJECT_PIN_PATH,
@@ -22,6 +23,8 @@ import {
 import {
   getProject,
   insertProject,
+  listProjects,
+  type OperationalStore,
   removeProject,
   renameProject,
   setGithubUrlOverride,
@@ -107,11 +110,26 @@ const MAX_DISPLAY_NAME_LENGTH = 64;
 
 /**
  * The display name a newly registered project starts with: the folder's own
- * name, trimmed to the store's limit. The owner can rename it afterwards.
+ * name, trimmed to the store's limit — or, when another project already
+ * carries that name, `name (2)`, `name (3)`, … (judge ruling: duplicate
+ * names). Registration order decides the ordinal because each registration
+ * reads the names taken at that moment. The owner can rename it afterwards.
  */
-export function defaultDisplayName(resolvedPath: string): string {
+export function defaultDisplayName(
+  resolvedPath: string,
+  takenNames: ReadonlySet<string> = new Set(),
+): string {
   const name = basename(resolvedPath).trim().slice(0, MAX_DISPLAY_NAME_LENGTH).trim();
-  return name.length > 0 ? name : "project";
+  return nextFreeDisplayName(name.length > 0 ? name : "project", takenNames);
+}
+
+/**
+ * Every registered project's display name. Read synchronously right before
+ * the insert, with no await between, so two registrations cannot both take
+ * the same default name.
+ */
+export function takenDisplayNames(db: OperationalStore["db"]): Set<string> {
+  return new Set(listProjects(db).map((record) => record.displayName));
 }
 
 /** Logs an unexpected failure by error class only: an fs or sqlite message can carry a path. */
@@ -167,7 +185,7 @@ async function handleRegister(
     }
     const { created, record } = insertProject(ctx.store.db, {
       path: resolved,
-      displayName: defaultDisplayName(resolved),
+      displayName: defaultDisplayName(resolved, takenDisplayNames(ctx.store.db)),
     });
     if (created) {
       recomputeApprovedRoots(ctx.store);

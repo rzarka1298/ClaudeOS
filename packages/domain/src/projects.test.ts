@@ -6,6 +6,7 @@ import {
   DisplayNameSchema,
   EMPTY_PROJECTS_SNAPSHOT,
   GithubLinkSchema,
+  nextFreeDisplayName,
   PinProjectRequestSchema,
   PROJECT_GITHUB_LINK_PATH,
   PROJECT_PIN_PATH,
@@ -59,6 +60,23 @@ function exampleView(overrides: Record<string, unknown> = {}): Record<string, un
     ...overrides,
   };
 }
+
+describe("nextFreeDisplayName", () => {
+  it("keeps a free name and numbers a taken one from (2), skipping taken ordinals", () => {
+    expect(nextFreeDisplayName("demo-api", new Set(["sample-notes"]))).toBe("demo-api");
+    expect(nextFreeDisplayName("demo-api", new Set(["demo-api"]))).toBe("demo-api (2)");
+    expect(nextFreeDisplayName("demo-api", new Set(["demo-api", "demo-api (2)"]))).toBe(
+      "demo-api (3)",
+    );
+  });
+
+  it("stays within 64 characters", () => {
+    const long = "x".repeat(64);
+    const name = nextFreeDisplayName(long, new Set([long]));
+    expect(name).toHaveLength(64);
+    expect(name.endsWith(" (2)")).toBe(true);
+  });
+});
 
 describe("RegisterProjectRequestSchema", () => {
   it("places the register route under the versioned API base", () => {

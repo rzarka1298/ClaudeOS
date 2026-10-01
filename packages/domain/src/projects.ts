@@ -321,6 +321,21 @@ export const PROJECT_GITHUB_LINK_PATH = `${API_BASE}/projects/github-link`;
 /** `POST /api/v1/projects/refresh` — re-read git state now, for one project or all (D-42). */
 export const PROJECTS_REFRESH_PATH = `${API_BASE}/projects/refresh`;
 
+/**
+ * `name` itself when no name in `taken` equals it, otherwise the first of
+ * `name (2)`, `name (3)`, … that is free — the base trimmed so the result
+ * stays within the 64-character display-name limit. Telling projects that
+ * share a name apart never adds a path segment (UI-SPEC privacy rule 1).
+ */
+export function nextFreeDisplayName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name;
+  for (let ordinal = 2; ; ordinal += 1) {
+    const suffix = ` (${ordinal})`;
+    const candidate = `${name.slice(0, 64 - suffix.length).trimEnd()}${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
 /** A project display name (RR-11): trimmed, 1..64 characters, no control characters. */
 export const DisplayNameSchema = z
   .string()

@@ -28,7 +28,7 @@ import {
 } from "@ccc/operational-store";
 import { logger as serviceLogger } from "../logging.js";
 import { recomputeApprovedRoots } from "./approved-roots.js";
-import { defaultDisplayName } from "./project-routes.js";
+import { defaultDisplayName, takenDisplayNames } from "./project-routes.js";
 import { toDisplayPath } from "./project-views.js";
 import {
   detectProtectedLocation,
@@ -564,7 +564,7 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
       }
       const { created, record } = insertProject(store.db, {
         path: resolved,
-        displayName: defaultDisplayName(resolved),
+        displayName: defaultDisplayName(resolved, takenDisplayNames(store.db)),
       });
       if (created) {
         recomputeApprovedRoots(store);

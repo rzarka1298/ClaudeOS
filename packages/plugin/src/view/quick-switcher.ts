@@ -1,5 +1,5 @@
 import type { LaunchAction, ProjectId, ProjectsSnapshot, ProjectView } from "@ccc/domain";
-import { compareProjectViews } from "@ccc/domain/browser";
+import { compareProjectViews, nextFreeDisplayName } from "@ccc/domain/browser";
 import type { EventClient } from "@ccc/service-api-client";
 import { type App, FuzzySuggestModal, type Instruction, type Modifier } from "obsidian";
 import type { ConnectionState } from "../connection-state.js";
@@ -83,8 +83,36 @@ export interface SwitcherHost {
   openSwitcher(prefill: string): void;
 }
 
-function projectItems(view: ProjectView): SwitcherItem[] {
-  const name = view.displayName;
+/**
+ * The name each project goes by in the switcher. Display names are not
+ * unique — a rename can repeat one — and two identical `Go to` items cannot
+ * be told apart. The first project (by ProjectId, whose leading part is its
+ * registration time, so pins and opens never reshuffle it) keeps the name;
+ * each later one gets the next free ordinal, `name (2)`, `name (3)`, …,
+ * skipping any another project already carries. Never a path segment
+ * (UI-SPEC privacy rule 1).
+ */
+export function switcherNames(views: readonly ProjectView[]): Map<ProjectId, string> {
+  const taken = new Set(views.map((view) => view.displayName));
+  const seen = new Set<string>();
+  const names = new Map<ProjectId, string>();
+  const byId = [...views].sort((a, b) =>
+    a.projectId < b.projectId ? -1 : a.projectId > b.projectId ? 1 : 0,
+  );
+  for (const view of byId) {
+    if (!seen.has(view.displayName)) {
+      seen.add(view.displayName);
+      names.set(view.projectId, view.displayName);
+      continue;
+    }
+    const name = nextFreeDisplayName(view.displayName, taken);
+    taken.add(name);
+    names.set(view.projectId, name);
+  }
+  return names;
+}
+
+function projectItems(view: ProjectView, name: string): SwitcherItem[] {
   const items: SwitcherItem[] = [
     { kind: "project", text: `Go to ${name}`, projectId: view.projectId },
   ];
@@ -145,11 +173,14 @@ const DESTINATION_ITEMS: readonly SwitcherItem[] = DESTINATIONS.map((destination
 export function buildSwitcherItems(snapshot: ProjectsSnapshot | undefined): SwitcherItem[] {
   // The one PROJ-15 comparator S1 and S3 use, so "S1 order" holds here too.
   const views = snapshot === undefined ? [] : [...snapshot.projects].sort(compareProjectViews);
+  const names = switcherNames(views);
+  const itemsOf = (view: ProjectView): SwitcherItem[] =>
+    projectItems(view, names.get(view.projectId) ?? view.displayName);
   return [
-    ...views.filter((view) => view.pinned).flatMap(projectItems),
+    ...views.filter((view) => view.pinned).flatMap(itemsOf),
     CLAUDE_DESKTOP_ITEM,
     ...DESTINATION_ITEMS,
-    ...views.filter((view) => !view.pinned).flatMap(projectItems),
+    ...views.filter((view) => !view.pinned).flatMap(itemsOf),
   ];
 }
 
