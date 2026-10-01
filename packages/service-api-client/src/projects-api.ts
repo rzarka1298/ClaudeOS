@@ -96,6 +96,15 @@ export const LAUNCHER_TEST_CLIENT_TIMEOUT_MS = 15_000;
  */
 export const LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS = 60_000;
 
+/**
+ * Adding and rescanning a scan folder's client budget (wave-6 review). An
+ * add validates the folder first — a Files & Folders prompt can hold that —
+ * and either request waits behind any scan of the same folder already
+ * running, so the 5 s default could abandon a request the service then
+ * completes. Matches detection's budget; the plugin resyncs on any failure.
+ */
+export const SCAN_ROOTS_CLIENT_TIMEOUT_MS = LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS;
+
 export class ProjectsRequestError extends Error {
   readonly status: number;
 
@@ -364,7 +373,13 @@ export function addScanRoot(
   client: SocketApiClient,
   request: AddScanRootRequest,
 ): Promise<ScanStateResponse> {
-  return postValidated(client, SCAN_ROOTS_ADD_PATH, request, ScanStateResponseSchema);
+  return postValidated(
+    client,
+    SCAN_ROOTS_ADD_PATH,
+    request,
+    ScanStateResponseSchema,
+    SCAN_ROOTS_CLIENT_TIMEOUT_MS,
+  );
 }
 
 /** `POST /api/v1/scan-roots/remove` — stop scanning; registered projects stay. */
@@ -380,7 +395,13 @@ export function rescanScanRoot(
   client: SocketApiClient,
   request: RescanScanRootRequest,
 ): Promise<ScanStateResponse> {
-  return postValidated(client, SCAN_ROOTS_RESCAN_PATH, request, ScanStateResponseSchema);
+  return postValidated(
+    client,
+    SCAN_ROOTS_RESCAN_PATH,
+    request,
+    ScanStateResponseSchema,
+    SCAN_ROOTS_CLIENT_TIMEOUT_MS,
+  );
 }
 
 /** `POST /api/v1/scan-roots/list` — scan roots plus current suggestions. */

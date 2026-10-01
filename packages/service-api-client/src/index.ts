@@ -31,6 +31,7 @@ export {
   renameProject,
   requestLaunch,
   rescanScanRoot,
+  SCAN_ROOTS_CLIENT_TIMEOUT_MS,
   saveLauncherConfig,
   setGithubLink,
   testLauncher,
