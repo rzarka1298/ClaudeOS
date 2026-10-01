@@ -1,6 +1,7 @@
-import type { ProjectGitState } from "@ccc/domain";
-import { cleanup, render, screen, within } from "@testing-library/preact";
+import type { ProjectGitState, ProjectId } from "@ccc/domain";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { launchStatusKey, resetLaunchStatus, setLaunchError } from "../projects/launch-status.js";
 import type { ProjectActionOutcome, ProjectsActions } from "../projects/projects-actions.js";
 import type { ProjectRow } from "../widgets/panels.js";
 import { ProjectCard, projectFooterModel } from "./project-card.js";
@@ -326,5 +327,122 @@ describe("ProjectCard when the first git read failed (codex finding 4)", () => {
       NOW,
     );
     expect(model.partiality).toEqual({ partial: false });
+  });
+});
+
+describe("ProjectCard launch toolbar (plan 04-10 Task 2, UI-SPEC S3 anatomy)", () => {
+  afterEach(() => {
+    resetLaunchStatus();
+  });
+
+  it("mounts the S2 toolbar and its status line between the remote row and Recent commits", () => {
+    const onQuickAction = vi.fn();
+    const { container } = render(
+      <ProjectCard
+        row={row({ git: REPO_STATE })}
+        displayPath="~/code/example-project"
+        now={NOW}
+        connection={{ kind: "live" }}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+        onQuickAction={onQuickAction}
+        terminalLabel="Terminal"
+      />,
+    );
+    const toolbar = screen.getByRole("toolbar", { name: "example-project actions" });
+    const remote = screen.getByText("Remote github.com/owner/repo");
+    const commits = screen.getByText("Recent commits");
+    expect(remote.compareDocumentPosition(toolbar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      toolbar.compareDocumentPosition(commits) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(container.querySelector(".ccc-launch-status[role=status]")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open example-project in Antigravity" }));
+    expect(onQuickAction.mock.calls[0]?.[0]).toMatchObject({ capability: "launch:antigravity" });
+  });
+
+  it("a folder that is not a Git repository can still be launched", () => {
+    render(
+      <ProjectCard
+        row={row({ git: { kind: "not-a-repo" } })}
+        displayPath="~/code/example-project"
+        now={NOW}
+        connection={{ kind: "live" }}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+        onQuickAction={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("toolbar", { name: "example-project actions" })).toBeTruthy();
+  });
+
+  it("hides the launch toolbar and status line while disconnected (the banner explains, RR-05)", () => {
+    const { container } = render(
+      <ProjectCard
+        row={row({ git: REPO_STATE })}
+        displayPath="~/code/example-project"
+        now={NOW}
+        connection={{ kind: "disconnected", reason: "service stopped" }}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+        onQuickAction={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(container.querySelector(".ccc-launch-status")).toBeNull();
+  });
+
+  it("an error in Projects hides Go to Projects (inProjects)", () => {
+    const projectId = "abcdefghi0123456789abcdef" as ProjectId;
+    setLaunchError(launchStatusKey(projectId, "finder"), "project-moved");
+    render(
+      <ProjectCard
+        row={row({ git: REPO_STATE })}
+        displayPath="~/code/example-project"
+        now={NOW}
+        connection={{ kind: "live" }}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+        onQuickAction={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/moved or was replaced/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Go to Projects" })).toBeNull();
+  });
+
+  it("after a launch reorders the cards, the same project's same button keeps focus", () => {
+    const first = row({
+      id: "abcdefghi0123456789abcdef",
+      name: "example-project",
+      git: REPO_STATE,
+    });
+    const second = row({ id: "bcdefghij0123456789abcdef", name: "other-project", git: REPO_STATE });
+    function Grid({ rows }: { readonly rows: readonly ProjectRow[] }) {
+      return (
+        <div>
+          {rows.map((r) => (
+            <ProjectCard
+              key={r.id}
+              row={r}
+              displayPath="~/code/example-project"
+              now={NOW}
+              connection={{ kind: "live" }}
+              actions={noopActions()}
+              onRemoved={vi.fn()}
+              onQuickAction={vi.fn()}
+            />
+          ))}
+        </div>
+      );
+    }
+    const { rerender } = render(<Grid rows={[second, first]} />);
+    const claude = screen.getByRole("button", { name: "Start Claude Code in example-project" });
+    claude.focus();
+    fireEvent.click(claude);
+    rerender(<Grid rows={[first, second]} />);
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Start Claude Code in example-project" }),
+    );
   });
 });
