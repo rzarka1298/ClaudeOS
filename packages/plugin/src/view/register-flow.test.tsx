@@ -58,7 +58,7 @@ describe("RegisterFlow typed form spacing (UI-SPEC spacing scale)", () => {
       const layout = getComputedStyle(form as HTMLFormElement);
       expect(layout.display).toBe("flex");
       expect(layout.flexDirection).toBe("column");
-      expect(layout.rowGap || layout.gap).toBe("var(--ccc-space-sm)");
+      expect(layout.getPropertyValue("gap")).toBe("var(--ccc-space-sm)");
     } finally {
       style.remove();
     }

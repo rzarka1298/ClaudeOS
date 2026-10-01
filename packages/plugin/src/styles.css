@@ -963,7 +963,11 @@
   color: var(--ccc-ink-muted);
 }
 
-.ccc-inline-form {
+/* The register, rename and GitHub-link forms nest their label, input, help
+ * and buttons in a <form> inside this container, so the form carries the
+ * same column and gap: `--ccc-space-sm` is the UI-SPEC's label-to-input gap. */
+.ccc-inline-form,
+.ccc-inline-form > form {
   display: flex;
   flex-direction: column;
   gap: var(--ccc-space-sm);
