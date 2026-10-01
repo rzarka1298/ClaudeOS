@@ -224,7 +224,7 @@ describe("Shell — Settings › Launchers (D-37, D-30)", () => {
       test: vi.fn(),
       markTested: vi.fn(),
       openSystemSettings: vi.fn(),
-    } as unknown as LaunchersActions;
+    };
   }
 
   /** Project shortcuts in its empty state with no launcher set up, so S10's callout renders. */

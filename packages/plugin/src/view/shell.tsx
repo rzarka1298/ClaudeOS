@@ -6,6 +6,7 @@ import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
+import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions } from "../projects/projects-actions.js";
 import { nowTick } from "../widgets/clock.js";
 import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
@@ -15,8 +16,10 @@ import type { WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
 import { type WidgetHost, WidgetHostContext } from "../widgets/widget-host.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
+import { createLaunchersSession, type LaunchersSession } from "./launchers-settings.js";
 import { Overview } from "./overview.js";
 import { ProjectsView } from "./projects-view.js";
+import { SettingsDestination } from "./settings-destination.js";
 
 export interface ShellProps {
   /** The destination selected before this render — usually the last-saved one (PLUG-05). */
@@ -70,6 +73,15 @@ export interface ShellProps {
    * no-host default.
    */
   pickFolder?: (options: PickFolderOptions) => Promise<FolderPick>;
+  /**
+   * The Launchers section's bound service actions (detect, read, save,
+   * Test, mark tested, System Settings). The view host wires this to
+   * `createLaunchersActions(client)`; the default resolves `failed` for
+   * everything (and a Test as `spawn-failed`), so the Settings destination
+   * renders honestly with no host at all. Nothing calls it until the owner
+   * opens Settings (D-30).
+   */
+  launchersActions?: LaunchersActions;
 }
 
 function noNotify(_message: string): void {}
@@ -83,6 +95,14 @@ const noProjectsActions: ProjectsActions = {
   pin: () => FAILED_OUTCOME,
   setGithubLink: () => FAILED_OUTCOME,
   refresh: () => FAILED_OUTCOME,
+};
+const noLaunchersActions: LaunchersActions = {
+  detect: () => FAILED_OUTCOME,
+  getConfigs: () => FAILED_OUTCOME,
+  save: () => FAILED_OUTCOME,
+  test: () => Promise.resolve({ kind: "error", error: "spawn-failed" }),
+  markTested: () => FAILED_OUTCOME,
+  openSystemSettings: () => FAILED_OUTCOME,
 };
 function noPickFolder(_options: PickFolderOptions): Promise<FolderPick> {
   return Promise.resolve({ kind: "unavailable" });
@@ -104,6 +124,9 @@ export interface DestinationViewProps {
   readonly projectsActions: ProjectsActions;
   readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
   readonly openSystemSettings?: ((pane: "automation" | "privacy-security") => void) | undefined;
+  readonly launchersActions: LaunchersActions;
+  /** The view's in-memory Launchers state: detection, drafts, in-flight results (RR-25). */
+  readonly launchersSession: LaunchersSession;
 }
 
 const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewProps) => VNode>> = {
@@ -134,6 +157,14 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
       onQuickAction={onQuickAction}
       onNavigate={onNavigate}
       openSystemSettings={openSystemSettings}
+    />
+  ),
+  settings: ({ connection, now, launchersActions, launchersSession }) => (
+    <SettingsDestination
+      launchersActions={launchersActions}
+      launchersSession={launchersSession}
+      connection={connection}
+      now={now}
     />
   ),
 };
@@ -173,8 +204,11 @@ export function Shell({
   projectsActions = noProjectsActions,
   pickFolder = noPickFolder,
   openSystemSettings,
+  launchersActions = noLaunchersActions,
 }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
+  // One per view: leaving Settings keeps detection and drafts in memory (RR-25).
+  const [launchersSession] = useState(createLaunchersSession);
   const tabRefs = useRef<Partial<Record<DestinationId, HTMLButtonElement>>>({});
 
   function select(id: DestinationId): void {
@@ -308,6 +342,8 @@ export function Shell({
                 projectsActions={projectsActions}
                 pickFolder={pickFolder}
                 openSystemSettings={openSystemSettings}
+                launchersActions={launchersActions}
+                launchersSession={launchersSession}
               />
             ) : (
               <p>{active.description}</p>

@@ -10,6 +10,7 @@ import { connectionState } from "../connection-state.js";
 import { pickFolder } from "../projects/folder-picker.js";
 import { createLaunchRequester, windowLaunchTimers } from "../projects/launch-client.js";
 import { retainLaunchStatus } from "../projects/launch-status.js";
+import { createLaunchersActions } from "../projects/launchers-actions.js";
 import { createProjectsActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
 import { createSystemSettingsOpener } from "../projects/system-settings-opener.js";
@@ -128,6 +129,8 @@ export class CommandCenterView extends ItemView {
           },
         ),
         projectsActions: createProjectsActions(this.host.client),
+        // Nothing here runs until the owner opens Settings (D-30).
+        launchersActions: createLaunchersActions(this.host.client),
         pickFolder,
       }),
       this.contentEl,

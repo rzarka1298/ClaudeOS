@@ -10,14 +10,29 @@ export interface SettingsDestinationProps {
   readonly now: number;
 }
 
-/** RED stub. */
-export function SettingsDestination(props: SettingsDestinationProps): VNode {
+/**
+ * The command center's own Settings destination (D-37). Phase 4 fills its
+ * Launchers section (S6); diagnostics and the remaining settings arrive in
+ * Phase 8, which the footer note says in so many words.
+ */
+export function SettingsDestination({
+  launchersActions,
+  launchersSession,
+  connection,
+  now,
+}: SettingsDestinationProps): VNode {
   return (
-    <LaunchersSettings
-      actions={props.launchersActions}
-      connection={props.connection}
-      now={props.now}
-      session={props.launchersSession}
-    />
+    <div className="ccc-settings-section">
+      <LaunchersSettings
+        actions={launchersActions}
+        connection={connection}
+        now={now}
+        session={launchersSession}
+      />
+      <p className="ccc-list-meta">
+        Reduced motion is in Obsidian's settings under Claude command center. Diagnostics and the
+        remaining settings arrive in a later phase.
+      </p>
+    </div>
   );
 }

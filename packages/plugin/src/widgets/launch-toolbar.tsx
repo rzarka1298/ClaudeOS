@@ -18,6 +18,7 @@ import {
   setLaunchError,
 } from "../projects/launch-status.js";
 import type { DestinationId } from "../view/destinations.js";
+import { requestLaunchersFocus } from "../view/launchers-focus.js";
 import type { QuickActionDescriptor } from "./contract.js";
 import { nextToolbarIndex } from "./toolbar-keys.js";
 
@@ -235,6 +236,7 @@ export function LaunchStatusLine({
   function runErrorAction(action: LaunchErrorAction): void {
     switch (action) {
       case "set-up-launchers":
+        requestLaunchersFocus();
         onNavigate?.("settings");
         return;
       case "go-to-projects":

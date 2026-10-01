@@ -129,7 +129,7 @@ describe("detection on first open (D-27)", () => {
     const actions = fakeActions();
     mount(actions);
     await settle();
-    expect(screen.getByText("Detected 5 min ago")).toBeTruthy();
+    expect(screen.getByText("Detected 5 minutes ago")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Detect apps" }));
     expect(screen.getByText("Detecting apps…")).toBeTruthy();
     expect(actions.detect).toHaveBeenCalledTimes(2);
@@ -158,7 +158,7 @@ describe("choosing an app (D-19, PROJ-11)", () => {
       ),
     ).toBeTruthy();
     const group = within(antigravity).getByRole("group", { name: "Which Antigravity?" });
-    const radios = within(group).getAllByRole("radio") as HTMLInputElement[];
+    const radios = within(group).getAllByRole<HTMLInputElement>("radio");
     expect(radios.length).toBe(3);
     expect(radios.some((radio) => radio.checked)).toBe(false);
     const save = within(antigravity).getByRole("button", { name: "Save launcher" });
@@ -208,7 +208,7 @@ describe("choosing an app (D-19, PROJ-11)", () => {
     await settle();
     const desktop = panel("Claude Desktop");
     expect(within(desktop).getByText("Found Claude Desktop.")).toBeTruthy();
-    const radio = within(desktop).getByRole("radio", { name: /Claude/ }) as HTMLInputElement;
+    const radio = within(desktop).getByRole<HTMLInputElement>("radio", { name: /Claude/ });
     expect(radio.checked).toBe(true);
     expect(within(desktop).getByText("Unsaved changes")).toBeTruthy();
     expect(actions.save).not.toHaveBeenCalled();
@@ -236,7 +236,7 @@ describe("choosing an app (D-19, PROJ-11)", () => {
     await settle();
     const antigravity = panel("Antigravity");
     fireEvent.click(within(antigravity).getByRole("radio", { name: "Use a different bundle ID" }));
-    const input = within(antigravity).getByLabelText("Bundle ID") as HTMLInputElement;
+    const input = within(antigravity).getByLabelText<HTMLInputElement>("Bundle ID");
     expect(input.getAttribute("placeholder")).toBe("com.example.app");
     fireEvent.input(input, { target: { value: "not a bundle" } });
     fireEvent.click(within(antigravity).getByRole("button", { name: "Save launcher" }));
@@ -300,9 +300,9 @@ describe("drafts live in memory only (D-27, RR-25)", () => {
     mount(actions);
     await settle();
     const antigravity = panel("Antigravity");
-    const first = within(antigravity).getByRole("radio", {
+    const first = within(antigravity).getByRole<HTMLInputElement>("radio", {
       name: /^Antigravity com/,
-    }) as HTMLInputElement;
+    });
     expect(first.checked).toBe(true);
     expect(within(antigravity).queryByText("Unsaved changes")).toBeNull();
 
@@ -310,7 +310,7 @@ describe("drafts live in memory only (D-27, RR-25)", () => {
     expect(within(antigravity).getByText("Unsaved changes")).toBeTruthy();
     fireEvent.click(within(antigravity).getByRole("button", { name: "Discard changes" }));
     expect(
-      (within(antigravity).getByRole("radio", { name: /^Antigravity com/ }) as HTMLInputElement)
+      within(antigravity).getByRole<HTMLInputElement>("radio", { name: /^Antigravity com/ })
         .checked,
     ).toBe(true);
     expect(within(antigravity).queryByText("Unsaved changes")).toBeNull();
@@ -329,9 +329,9 @@ describe("drafts live in memory only (D-27, RR-25)", () => {
     first.unmount();
     mount(actions, session);
     await settle();
-    const preview = within(panel("Antigravity")).getByRole("radio", {
+    const preview = within(panel("Antigravity")).getByRole<HTMLInputElement>("radio", {
       name: /Antigravity Preview/,
-    }) as HTMLInputElement;
+    });
     expect(preview.checked).toBe(true);
     expect(actions.save).not.toHaveBeenCalled();
     expect(setItem).not.toHaveBeenCalled();

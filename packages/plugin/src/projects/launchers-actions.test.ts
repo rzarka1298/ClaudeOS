@@ -56,7 +56,7 @@ function unreadableSocketError(errno: string): SocketUnreachableError {
   return error;
 }
 
-function throwingClient(error: unknown): SocketApiClient {
+function throwingClient(error: Error): SocketApiClient {
   return {
     request(): Promise<never> {
       return Promise.reject(error);

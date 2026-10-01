@@ -1,6 +1,7 @@
 import type { LaunchersSummary } from "@ccc/domain";
 import type { VNode } from "preact";
 import type { DestinationId } from "./destinations.js";
+import { requestLaunchersFocus } from "./launchers-focus.js";
 
 /**
  * The S10 setup callout (D-30, RR-26): shown in S1 and S3 while none of
@@ -33,7 +34,15 @@ export function SetupCallout({ onNavigate }: SetupCalloutProps): VNode {
         Choose which apps open your projects, then test each one. Finder and GitHub work without
         setup.
       </p>
-      <button type="button" className="ccc-connect-button" onClick={() => onNavigate?.("settings")}>
+      <button
+        type="button"
+        className="ccc-connect-button"
+        onClick={() => {
+          // Focus lands on the Launchers heading, not the Settings tab (S6).
+          requestLaunchersFocus();
+          onNavigate?.("settings");
+        }}
+      >
         Set up launchers
       </button>
     </div>
