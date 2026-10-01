@@ -549,10 +549,14 @@ export function PanelFollowUps({
   useEffect(() => {
     if (!asking) return;
     // Move focus only from where the owner pressed Test (or from nowhere),
-    // never out of a field they have since moved to.
-    const active = document.activeElement;
-    if (active === null || active === document.body || active === testButtonRef.current) {
-      openedRef.current?.focus();
+    // never out of a field they have since moved to. The panel's own
+    // document, not the global one: in a popout window they differ.
+    const opened = openedRef.current;
+    if (opened === null) return;
+    const doc = opened.ownerDocument;
+    const active = doc.activeElement;
+    if (active === null || active === doc.body || active === testButtonRef.current) {
+      opened.focus();
     }
   }, [asking, testButtonRef]);
 
