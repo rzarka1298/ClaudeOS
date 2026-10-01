@@ -356,3 +356,22 @@ describe("one deadline covers preparing and launching a Test (codex review 3, fi
     expect(spawner.calls).toHaveLength(1);
   });
 });
+
+describe("a Test never rejects (codex review 3b, finding 4)", () => {
+  /** A store whose every query throws, as a locked or corrupt database does. */
+  function throwingStore(): OperationalStore {
+    const db = {
+      prepare(): never {
+        throw new Error("SQLITE_IOERR: disk I/O error");
+      },
+    };
+    return { ...store, db } as unknown as OperationalStore;
+  }
+
+  it("a store that throws while choosing the cap answers a failure, never a rejection", async () => {
+    const outcome = testLaunch("claude-code", deps({ store: throwingStore() }));
+    await expect(outcome).resolves.toEqual({ ok: false, error: "spawn-failed" });
+    expect(spawner.calls).toHaveLength(0);
+    expect(spawner.detached).toHaveLength(0);
+  });
+});
