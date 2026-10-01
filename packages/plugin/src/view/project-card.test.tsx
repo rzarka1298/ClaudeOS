@@ -252,6 +252,31 @@ describe("ProjectCard (Task 3, S3 card anatomy)", () => {
     expect(screen.getByText("Restore the folder, or remove the project.")).toBeTruthy();
   });
 
+  // PR-11: the card's next step is the same outcome-agnostic line the launch
+  // error uses — true whether macOS refused silently or asked first — and
+  // never the older Files & Folders "ask again" wording.
+  it("folder-access-denied shows the problem and the PR-11 next step", () => {
+    const { container } = render(
+      <ProjectCard
+        row={row({ git: { kind: "folder-access-denied" } })}
+        displayPath="~/code/example-project"
+        now={NOW}
+        connection={{ kind: "live" }}
+        actions={noopActions()}
+        onRemoved={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Folder access blocked by macOS/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Move the project out of Documents, Desktop, Downloads or iCloud Drive, or allow access in System Settings › Privacy & Security, then try again. Updating Node.js can make macOS block it again.",
+      ),
+    ).toBeTruthy();
+    expect(container.textContent).not.toContain("Files & Folders");
+    expect(container.textContent).not.toContain("ask again");
+  });
+
   it("pending shows skeleton lines with aria-busy", () => {
     const { container } = render(
       <ProjectCard
