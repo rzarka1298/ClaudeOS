@@ -47,14 +47,6 @@ until mkdir "$LOCK" 2>/dev/null; do
 done
 trap 'rm -rf "$WORK"; rmdir "$LOCK" 2>/dev/null || true' EXIT
 
-# Published branches: main plus every phase-N branch. Agent scratch branches
-# (worktree-agent-*) and the projection refs themselves are never published.
-BRANCHES="$(git -C "$REPO_ROOT" for-each-ref --format='%(refname:short)' refs/heads/main 'refs/heads/phase-*')"
-if [ -z "$BRANCHES" ]; then
-  echo "ERROR: no main or phase-* branches found — refusing." >&2
-  exit 1
-fi
-
 # Published commits carry the owner's GitHub NOREPLY address, never a real
 # mailbox: the metadata guard below denylists the real address, so identity
 # rewriting is a requirement of this projection, not a preference. The
@@ -83,6 +75,14 @@ case "$GH_USER" in
     ;;
 esac
 NOREPLY_EMAIL="${GH_USER}@users.noreply.github.com"
+
+# Published branches: main plus every phase-N branch. Agent scratch branches
+# (worktree-agent-*) and the projection refs themselves are never published.
+BRANCHES="$(git -C "$REPO_ROOT" for-each-ref --format='%(refname:short)' refs/heads/main 'refs/heads/phase-*')"
+if [ -z "$BRANCHES" ]; then
+  echo "ERROR: no main or phase-* branches found — refusing." >&2
+  exit 1
+fi
 
 git clone --no-local -q "$REPO_ROOT" "$WORK/filter"
 cd "$WORK/filter"
