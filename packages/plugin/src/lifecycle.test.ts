@@ -1,8 +1,11 @@
+import type { ProjectId } from "@ccc/domain";
 import type { EventClient, SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { connectionState } from "./connection-state.js";
 import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
 import { registerSetUpLaunchersCommand, SET_UP_LAUNCHERS_COMMAND_ID } from "./projects/commands.js";
+import { resetLaunchStatus } from "./projects/launch-status.js";
 import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js";
 import {
   createFakeDomTarget,
@@ -12,6 +15,7 @@ import {
 } from "./test-support/fake-obsidian-host.js";
 import { launchersFocusRequested } from "./view/launchers-focus.js";
 import { navigationRequest } from "./view/navigation-request.js";
+import { createPluginSwitcher } from "./view/plugin-switcher.js";
 import {
   createSwitcherOpener,
   registerSwitcherCommand,
@@ -101,6 +105,17 @@ function loadCycle(
     apply,
   });
   registry.settingTab({});
+  // The REAL plugin-level switcher (wave-7 finding 2): its launch timers and
+  // any open modal are released through the seam.
+  createPluginSwitcher({
+    registry,
+    client: NOOP_CLIENT,
+    notify: () => {},
+    reveal: () => {},
+    openSwitcher: () => {},
+    openModal: () => ({ close: () => {} }),
+    timers: { setTimer: () => 0, clearTimer: () => {} },
+  });
   return registry;
 }
 
@@ -334,5 +349,75 @@ describe("the relative-time clock (T-03-07)", () => {
 
     registry.disposeAll();
     expect(host.liveCounts().interval).toBe(0);
+  });
+});
+
+describe("the plugin-level switcher across twenty load/unload cycles (wave-7 finding 2)", () => {
+  const PROJECT = "abcdefghi0123456789abcd01" as ProjectId;
+
+  afterEach(() => {
+    connectionState.value = { kind: "connecting" };
+    navigationRequest.value = null;
+    resetLaunchStatus();
+  });
+
+  it("each unload closes the open switcher, clears its launch timers and leaves its host inert", async () => {
+    connectionState.value = { kind: "live" };
+    const request = vi.fn(() => new Promise<never>(() => {}));
+    const client: SocketApiClient = { request };
+    const pending = new Set<number>();
+    let nextId = 1;
+    const closes: Mock[] = [];
+    const reveal = vi.fn();
+    const hosts: ReturnType<typeof createPluginSwitcher>[] = [];
+
+    for (let i = 0; i < 20; i++) {
+      const registry = createHostRegistry(new FakeObsidianHost());
+      const switcher = createPluginSwitcher({
+        registry,
+        client,
+        notify: () => {},
+        reveal,
+        openSwitcher: () => {},
+        openModal: (_host, _prefill, onClosed) => {
+          const close = vi.fn(onClosed);
+          closes.push(close);
+          return { close };
+        },
+        timers: {
+          setTimer: () => {
+            const id = nextId++;
+            pending.add(id);
+            return id;
+          },
+          clearTimer: (id) => {
+            pending.delete(id);
+          },
+        },
+      });
+      hosts.push(switcher);
+      switcher.show("");
+      switcher.host.requestLaunch(PROJECT, "finder");
+      for (let n = 0; n < 10; n++) await Promise.resolve();
+      registry.disposeAll();
+      expect(registry.liveCount()).toBe(0);
+      resetLaunchStatus();
+    }
+
+    expect(closes).toHaveLength(20);
+    for (const close of closes) expect(close).toHaveBeenCalledTimes(1);
+    expect(pending.size).toBe(0);
+    expect(request).toHaveBeenCalledTimes(20);
+
+    // A choice reaching any unloaded instance afterwards does nothing.
+    for (const switcher of hosts) {
+      switcher.host.requestLaunch(PROJECT, "finder");
+      switcher.host.goTo("tasks");
+    }
+    for (let n = 0; n < 10; n++) await Promise.resolve();
+    expect(request).toHaveBeenCalledTimes(20);
+    expect(pending.size).toBe(0);
+    expect(reveal).not.toHaveBeenCalled();
+    expect(navigationRequest.value).toBeNull();
   });
 });
