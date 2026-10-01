@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { basename } from "node:path";
 import {
   type ApiErrorBody,
   LAUNCHERS_DETECT_PATH,
@@ -71,6 +72,9 @@ import { isExecutableFile } from "./terminal-launchers.js";
  *     in any spelling, no line break, at most 32 elements), and a custom
  *     terminal's argv as a terminal template (`{script}` required). The same
  *     checks run again before every launch (plan 04-09), whatever was saved.
+ *     Save also refuses an interpreter or launcher shim as the executable
+ *     (`executable-not-found`) and any `--settings` argument (`forbidden-flag`)
+ *     — wave-5 finding 8; ADR-0024 residual risks.
  *   - The stored executable is the candidate's SYMLINK path, never its
  *     realpath, so a Claude Code update does not break the launcher (D-21).
  * - A refusal is the one structured body `{ error, reason, index, template? }`
@@ -170,6 +174,42 @@ async function validateTemplate(
   return result.ok ? null : { reason: result.reason, index: result.index };
 }
 
+/**
+ * Programs that would run a Claude Code template's arguments as a program or
+ * script rather than as Claude Code's own options: shells, `env`, script
+ * interpreters, `osascript` and `open` (wave-5 finding 8). Matched on the
+ * basename of the saved executable, case-insensitively, with an optional
+ * version suffix (`python3.13`, `perl5.34`).
+ */
+const INTERPRETER_BASENAME =
+  /^(?:sh|bash|zsh|dash|ksh|csh|tcsh|fish|env|osascript|open|pwsh|node|python[0-9.]*|perl[0-9.]*|ruby[0-9.]*)$/;
+
+/**
+ * `--settings` loads a settings file (or inline JSON) whose permission mode
+ * the template validator cannot see, so it is refused outright in either
+ * spelling (wave-5 finding 8, ADR-0024 residual risks).
+ */
+function isSettingsFlag(element: string): boolean {
+  const flag = element.normalize("NFKC").toLowerCase();
+  return flag === "--settings" || flag.startsWith("--settings=");
+}
+
+/**
+ * The Claude Code checks the generic template validator cannot make
+ * (finding 8): `argv[0]` must not be an interpreter or launcher shim, and no
+ * argument may be `--settings`. `index` counts into `[executable, ...args]`.
+ */
+function claudeCodeShapeRefusal(
+  argv: readonly string[],
+): { readonly reason: TemplateRefusalReason; readonly index: number } | null {
+  const executable = argv[0];
+  if (executable !== undefined && INTERPRETER_BASENAME.test(basename(executable).toLowerCase())) {
+    return { reason: "executable-not-found", index: 0 };
+  }
+  const settings = argv.findIndex((element, index) => index > 0 && isSettingsFlag(element));
+  return settings === -1 ? null : { reason: "forbidden-flag", index: settings };
+}
+
 async function validateSave(
   body: SaveLauncherConfigRequest,
   launchers: LauncherServices,
@@ -185,6 +225,8 @@ async function validateSave(
       ? launchers.detector.candidatePath(body.executable.candidateId)
       : body.executable.path;
   if (executablePath === null) return refused("executable-not-found", 0, "claude-code");
+  const shape = claudeCodeShapeRefusal([executablePath, ...body.args]);
+  if (shape !== null) return refused(shape.reason, shape.index, "claude-code");
 
   const claude = await validateTemplate(
     [executablePath, ...body.args],

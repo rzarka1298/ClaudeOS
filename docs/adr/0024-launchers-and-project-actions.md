@@ -374,6 +374,22 @@ only enums and booleans.
 - **Templates are owner-authorised code.** A custom terminal template runs whatever executable the
   owner saved. Validation keeps it an absolute, existing, executable file with no permission bypass,
   but cannot judge what that program does.
+- **The Claude Code executable is judged by its name, and `--settings` is refused outright** (wave-5
+  review). Saving Claude Code refuses an executable whose basename is a shell, `env`, a script
+  interpreter, `osascript` or `open` (`sh`, `bash`, `zsh`, `dash`, `ksh`, `csh`, `tcsh`, `fish`,
+  `env`, `osascript`, `open`, `pwsh`, `node`, `python*`, `perl*`, `ruby*`) with
+  `executable-not-found`. Such a program would run the template's "arguments" as a script and step
+  around the permission-bypass check. Saving also refuses any `--settings` or `--settings=…`
+  argument with `forbidden-flag`: a settings file, or inline JSON, can set a permission mode that the
+  template validator cannot read. What remains:
+  - The check reads the saved path's basename, not what it resolves to. A symlink or wrapper script
+    named `claude` that points at an interpreter passes. That is still the owner's own file, which is
+    the same-user boundary ADR-0001 accepts.
+  - Claude Code also reads settings files it finds itself (user, project and local settings). This
+    check does not police those, and Claude Code's own permission system governs them.
+  - The checks run when Claude Code is saved. A launch re-runs the generic template validation
+    (permission bypass, placeholders, executable) but not these two checks. A row saved before the
+    checks existed is not re-judged until the owner saves it again.
 - **Git drivers are skipped, not neutralised** (E-2, above).
 - **Unexplained Downloads prompt.** During the spike the owner saw a Files & Folders prompt
   "… wants access to Downloads". The app name was not recorded, and the spike never touches
