@@ -24,8 +24,9 @@ import { isExecutableFile } from "./terminal-launchers.js";
  * `*` matches a prefix: both Antigravity bundles are found by one query).
  * Each `.app` it names is confirmed by reading its own `Info.plist` with
  * `plutil`, so a stale index entry or an impostor never counts. Spotlight
- * can be off (CI, a disabled index), so when `mdfind` fails or finds nothing
- * the detector lists the Applications folders itself and reads every
+ * can be off (CI, a disabled index) or stale, so when `mdfind` fails, finds
+ * nothing, or names only paths that no longer hold the bundle, the detector
+ * lists the Applications folders itself and reads every
  * bundle's `Info.plist` (RESEARCH Pattern 8). Each match is reported with its
  * bundle ID, display name and a location CATEGORY — never its path (T-04-09).
  *
@@ -218,11 +219,15 @@ export function createDetector(deps: DetectorDeps): Detector {
       const confirmed = await Promise.all(
         unique.map(async (path) => ({ path, bundleId: await readBundleId(path) })),
       );
-      return confirmed.flatMap((entry) =>
+      const found = confirmed.flatMap((entry) =>
         entry.bundleId !== null && matchesQuery(entry.bundleId, query)
           ? [{ path: entry.path, bundleId: entry.bundleId }]
           : [],
       );
+      // A stale index can name only paths that no longer hold the bundle
+      // (an app moved or deleted): then the folder scan decides, exactly as
+      // when Spotlight is off (wave-5 finding 9).
+      if (found.length > 0) return found;
     }
     return (await scan()).filter((entry) => matchesQuery(entry.bundleId, query));
   };
