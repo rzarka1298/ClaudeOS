@@ -6,9 +6,11 @@ import {
   LAUNCHERS_MARK_TESTED_PATH,
   LAUNCHERS_SAVE_PATH,
   LAUNCHERS_TEST_PATH,
+  type LaunchAction,
   type LauncherConfigRefusalBody,
   type LauncherConfigView,
   type LauncherId,
+  type LaunchResult,
   MarkLauncherTestedRequestSchema,
   OpenSystemSettingsRequestSchema,
   type ProjectMutationResponse,
@@ -81,7 +83,11 @@ import { isExecutableFile } from "./terminal-launchers.js";
  *   never marks anything: **mark-tested** does, when the owner answers
  *   "It opened", and only if the launcher's CURRENT saved configuration
  *   passed a Test in this service run (RR-14) — otherwise 409. A save in
- *   between invalidates the passing Test.
+ *   between invalidates the passing Test. One Test per launcher runs at a
+ *   time: a second Test of the same saved row while one is running shares
+ *   its result, and a Test of a row saved since then is refused with a
+ *   constant 409 (wave-5 finding 2). A Test that does not pass removes only
+ *   the pass its own row held (finding 3).
  * - **Open System Settings** takes a pane enum and opens one of two constant
  *   `x-apple.systempreferences:` URLs; no URL ever comes from a request
  *   (RR-16, T-04-22).
@@ -357,6 +363,54 @@ function fingerprint(record: LauncherConfigRecord): string {
   return `${record.updatedAt}\u0000${JSON.stringify(record.config)}`;
 }
 
+/** A second Test of a launcher whose running Test reads an older saved row (finding 2). */
+export const TEST_ALREADY_RUNNING_BODY: ApiErrorBody = {
+  error: "a test of this launcher is already running",
+};
+
+/** The running Test per launch action, per running service: the row it read and its result. */
+interface RunningTest {
+  readonly rowKey: string;
+  readonly result: Promise<LaunchResult>;
+}
+const runningTests = new WeakMap<LauncherServices, Map<LaunchAction, RunningTest>>();
+
+function runningTestsOf(launchers: LauncherServices): Map<LaunchAction, RunningTest> {
+  let running = runningTests.get(launchers);
+  if (running === undefined) {
+    running = new Map();
+    runningTests.set(launchers, running);
+  }
+  return running;
+}
+
+/**
+ * Records one Test's outcome against the launcher's pass (RR-14, finding 3).
+ * A pass counts only when the row the Test read is still the saved row. A
+ * Test that did not count removes the recorded pass only when that pass is
+ * for the row this Test read — never one a newer row earned meanwhile.
+ */
+export function recordTestOutcome(
+  passed: Map<LauncherId, string>,
+  launcherId: LauncherId,
+  result: LaunchResult,
+  before: LauncherConfigRecord | null,
+  after: LauncherConfigRecord | null,
+): void {
+  if (
+    result.ok &&
+    before !== null &&
+    after !== null &&
+    fingerprint(before) === fingerprint(after)
+  ) {
+    passed.set(launcherId, fingerprint(after));
+    return;
+  }
+  if (before !== null && passed.get(launcherId) === fingerprint(before)) {
+    passed.delete(launcherId);
+  }
+}
+
 function isLauncherId(action: string): action is LauncherId {
   return action === "antigravity" || action === "claude-code" || action === "claude-desktop";
 }
@@ -375,39 +429,71 @@ async function handleTest(
     // The row the Test reads, captured first: a save racing the Test must
     // not let the new configuration inherit this Test's pass.
     const before = isLauncherId(launcherId) ? getLauncherConfig(ctx.store.db, launcherId) : null;
-    const result = await testLaunch(launcherId, {
-      store: ctx.store,
-      spawner: launchers.spawner,
-      scriptDir: launchers.scriptDir,
-      homeDir: launchers.homeDir,
-      ...(launchers.isExecutable === undefined ? {} : { isExecutable: launchers.isExecutable }),
-      ...(launchers.testCapMs === undefined ? {} : { capMs: launchers.testCapMs }),
-      ...(launchers.automationTestCapMs === undefined
-        ? {}
-        : { automationCapMs: launchers.automationTestCapMs }),
-    });
-    if (isLauncherId(launcherId)) {
-      const passed = passedTestsOf(launchers);
-      const after = getLauncherConfig(ctx.store.db, launcherId);
-      if (
-        result.ok &&
-        before !== null &&
-        after !== null &&
-        fingerprint(before) === fingerprint(after)
-      ) {
-        passed.set(launcherId, fingerprint(after));
-      } else {
-        passed.delete(launcherId);
+    const rowKey = before === null ? "" : fingerprint(before);
+    const running = runningTestsOf(launchers);
+    const inFlight = running.get(launcherId);
+    if (inFlight !== undefined) {
+      // One Test per launcher at a time (finding 2). The same saved row: a
+      // double press or a second view — share the running Test's answer and
+      // launch nothing more. A row saved since: the running Test is not
+      // testing it, so refuse rather than answer for the wrong configuration.
+      if (inFlight.rowKey !== rowKey) {
+        logger.warn(
+          { route: LAUNCHERS_TEST_PATH, launcherId, reason: "test-running" },
+          "launcher test refused",
+        );
+        sendJson(res, 409, TEST_ALREADY_RUNNING_BODY);
+        return;
       }
+      sendJson(res, 200, await inFlight.result);
+      return;
+    }
+    const result = runTest(launcherId, before, launchers, ctx);
+    running.set(launcherId, { rowKey, result });
+    let outcome: LaunchResult;
+    try {
+      outcome = await result;
+    } finally {
+      running.delete(launcherId);
     }
     logger.info(
-      { route: LAUNCHERS_TEST_PATH, launcherId, kind: result.ok ? "ok" : result.error },
+      { route: LAUNCHERS_TEST_PATH, launcherId, kind: outcome.ok ? "ok" : outcome.error },
       "launcher test",
     );
-    sendJson(res, 200, result);
+    sendJson(res, 200, outcome);
   } catch (err: unknown) {
     sendInternalError(res, LAUNCHERS_TEST_PATH, err);
   }
+}
+
+/** Fires one Test and records its outcome against the launcher's pass (RR-14). */
+async function runTest(
+  launcherId: LaunchAction,
+  before: LauncherConfigRecord | null,
+  launchers: LauncherServices,
+  ctx: RouteContext,
+): Promise<LaunchResult> {
+  const result = await testLaunch(launcherId, {
+    store: ctx.store,
+    spawner: launchers.spawner,
+    scriptDir: launchers.scriptDir,
+    homeDir: launchers.homeDir,
+    ...(launchers.isExecutable === undefined ? {} : { isExecutable: launchers.isExecutable }),
+    ...(launchers.testCapMs === undefined ? {} : { capMs: launchers.testCapMs }),
+    ...(launchers.automationTestCapMs === undefined
+      ? {}
+      : { automationCapMs: launchers.automationTestCapMs }),
+  });
+  if (isLauncherId(launcherId)) {
+    recordTestOutcome(
+      passedTestsOf(launchers),
+      launcherId,
+      result,
+      before,
+      getLauncherConfig(ctx.store.db, launcherId),
+    );
+  }
+  return result;
 }
 
 async function handleMarkTested(

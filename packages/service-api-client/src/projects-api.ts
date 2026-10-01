@@ -5,6 +5,7 @@ import {
   type DetectionResponse,
   DetectionResponseSchema,
   LAUNCH_PATH,
+  LAUNCHER_TEST_AUTOMATION_CAP_MS,
   LAUNCHERS_DETECT_PATH,
   LAUNCHERS_GET_PATH,
   LAUNCHERS_MARK_TESTED_PATH,
@@ -49,6 +50,8 @@ import {
   SYSTEM_SETTINGS_OPEN_PATH,
   type SystemSettingsPane,
   type TemplateRefusalReason,
+  type TerminalChoice,
+  terminalMayPromptForAutomation,
 } from "@ccc/domain";
 import type { SocketApiClient } from "./socket-api-client.js";
 
@@ -64,8 +67,34 @@ import type { SocketApiClient } from "./socket-api-client.js";
  * Every helper here posts a validated body and validates the 200 response
  * with the matching domain schema, exactly like `socket-api-client.ts`'s
  * `postVaultSetupRequest`. This module never runs a timer: the 5 s launch
- * deadline lives in the plugin (plan 04-10), not the client.
+ * deadline lives in the plugin (plan 04-10), not the client. It does set a
+ * per-request transport budget on the two routes the service may keep open
+ * past the client's 5 s default — the Test step and detection (wave-5
+ * review finding 2).
  */
+
+/**
+ * The Test step's client budget for a Test that may meet macOS's first
+ * Automation prompt: longer than the service's own
+ * `LAUNCHER_TEST_AUTOMATION_CAP_MS`, so the service's answer (a pass, or
+ * `automation-denied` at its cap) always arrives before the client gives up.
+ */
+export const LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS = LAUNCHER_TEST_AUTOMATION_CAP_MS + 10_000;
+
+/**
+ * Every other Test's client budget: the service caps such a Test at its 4 s
+ * launch cap, and a Claude Code Test first checks the saved executable, so
+ * this leaves generous headroom without waiting a minute on a dead service.
+ */
+export const LAUNCHER_TEST_CLIENT_TIMEOUT_MS = 15_000;
+
+/**
+ * Detection's client budget. Detection is a sequence of bounded Spotlight
+ * and `plutil` reads (5 s and 2 s each) and, with Spotlight off, a folder
+ * scan reading one `Info.plist` per app — well past the 5 s default on a
+ * full Applications folder.
+ */
+export const LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS = 60_000;
 
 export class ProjectsRequestError extends Error {
   readonly status: number;
@@ -95,8 +124,13 @@ async function postValidated<T>(
   path: string,
   body: unknown,
   schema: ResponseParser<T>,
+  timeoutMs?: number,
 ): Promise<T> {
-  const res = await client.request<unknown>({ method: "POST", path, body });
+  const res = await client.request<unknown>(
+    timeoutMs === undefined
+      ? { method: "POST", path, body }
+      : { method: "POST", path, body, timeoutMs },
+  );
   if (res.status !== 200) {
     const parsed = ApiErrorBodySchema.safeParse(res.body);
     throw new ProjectsRequestError(
@@ -198,7 +232,13 @@ export function requestLaunch(
 
 /** `POST /api/v1/launchers/detect` — find candidate apps, executables and git. */
 export function detectLaunchers(client: SocketApiClient): Promise<DetectionResponse> {
-  return postValidated(client, LAUNCHERS_DETECT_PATH, {}, DetectionResponseSchema);
+  return postValidated(
+    client,
+    LAUNCHERS_DETECT_PATH,
+    {},
+    DetectionResponseSchema,
+    LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS,
+  );
 }
 
 /** `POST /api/v1/launchers/get` — the saved configuration, display-safe. */
@@ -264,13 +304,35 @@ export async function saveLauncherConfig(
  * configuration (any of the five actions; Finder and GitHub need no setup).
  * A Test of an osascript custom terminal can wait up to
  * `LAUNCHER_TEST_AUTOMATION_CAP_MS` on macOS's first Automation prompt, so a
- * caller's deadline for it must be longer than that (plan 04-12).
+ * caller's deadline for it must be longer than that (plan 04-12) — and so is
+ * this request's own transport budget (wave-5 finding 2). `opts.terminal` is
+ * the saved Claude Code terminal when the caller knows it; unknown, a Claude
+ * Code Test assumes the prompt may appear.
  */
 export function testLauncher(
   client: SocketApiClient,
   launcherId: LaunchAction,
+  opts: { readonly terminal?: TerminalChoice | null | undefined } = {},
 ): Promise<LaunchResult> {
-  return postValidated(client, LAUNCHERS_TEST_PATH, { launcherId }, LaunchResultSchema);
+  return postValidated(
+    client,
+    LAUNCHERS_TEST_PATH,
+    { launcherId },
+    LaunchResultSchema,
+    testBudgetMs(launcherId, opts.terminal),
+  );
+}
+
+/** The client budget for one Test (finding 2). */
+function testBudgetMs(
+  launcherId: LaunchAction,
+  terminal: TerminalChoice | null | undefined,
+): number {
+  if (launcherId !== "claude-code") return LAUNCHER_TEST_CLIENT_TIMEOUT_MS;
+  if (terminal == null || terminalMayPromptForAutomation(terminal)) {
+    return LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS;
+  }
+  return LAUNCHER_TEST_CLIENT_TIMEOUT_MS;
 }
 
 /** `POST /api/v1/launchers/mark-tested` — the owner answered "It opened" (RR-14). */

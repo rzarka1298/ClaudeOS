@@ -35,6 +35,14 @@ export interface SocketRequestOptions {
   path: string;
   headers?: Record<string, string>;
   body?: unknown;
+  /**
+   * This request's idle timeout, overriding the client's default. A route
+   * the service may legitimately keep open longer than the default (the
+   * Test step's Automation-prompt wait, a slow detection) sets its own, so
+   * the client does not give up while the service is still working
+   * (wave-5 review finding 2).
+   */
+  timeoutMs?: number;
 }
 
 export interface SocketResponse<T> {
@@ -76,7 +84,7 @@ export function createSocketApiClient({
             socketPath,
             path: opts.path,
             method: opts.method,
-            timeout: timeoutMs,
+            timeout: opts.timeoutMs ?? timeoutMs,
             headers: {
               ...(payload ? { "Content-Type": "application/json" } : {}),
               ...opts.headers,
