@@ -55,6 +55,17 @@ export interface ScanLogger {
   warn(fields: Record<string, unknown>, message: string): void;
 }
 
+/** How many directory entries one scan may visit before it stops, partial (T-04-13). */
+export const SCAN_ENTRY_CAP = 5000;
+/** How long one scan may run before it stops, partial (T-04-13). */
+export const SCAN_TIME_CAP_MS = 2000;
+
+/** The two filesystem calls the walker makes; injectable so tests can record and fail them. */
+export interface ScanFs {
+  readdir(path: string): Promise<Dirent[]>;
+  realpath(path: string): Promise<string>;
+}
+
 export interface ScanServiceDeps {
   readonly store: OperationalStore;
   /** The resolved home directory display paths are abbreviated against (D-43). */
@@ -63,11 +74,17 @@ export interface ScanServiceDeps {
   readonly readPolicy: () => RegistrationPolicyContext;
   readonly projects?: ScanProjectsPort | undefined;
   readonly log?: ScanLogger | undefined;
+  readonly fs?: ScanFs | undefined;
+  readonly entryCap?: number | undefined;
+  readonly timeCapMs?: number | undefined;
+  /** Milliseconds clock for the wall-clock cap; `Date.now` by default. */
+  readonly now?: (() => number) | undefined;
 }
 
 export type ScanStateOutcome =
   | { readonly kind: "state"; readonly state: ScanStateResponse }
   | { readonly kind: "refused" }
+  | { readonly kind: "invalid" }
   | { readonly kind: "unknown" };
 
 export type SuggestionRegisterOutcome =

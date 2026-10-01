@@ -60,6 +60,7 @@ function sendInternalError(res: ServerResponse, route: string, err: unknown): vo
 function sendStateOutcome(res: ServerResponse, outcome: ScanStateOutcome): void {
   if (outcome.kind === "state") sendJson(res, 200, outcome.state);
   else if (outcome.kind === "refused") sendJson(res, 422, SCAN_ROOT_REFUSED_BODY);
+  else if (outcome.kind === "invalid") sendJson(res, 400, INVALID_BODY_BODY);
   else sendJson(res, 404, NO_SUCH_SCAN_ROOT_BODY);
 }
 
