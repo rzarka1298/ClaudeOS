@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { EMPTY_PROJECTS_SNAPSHOT, newProjectId } from "@ccc/domain";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +25,44 @@ function noopActions(): ProjectsActions {
 afterEach(() => {
   cleanup();
   resetProjectsState();
+});
+
+// UI-SPEC spacing scale: `--ccc-space-sm` is the "gap between a label and
+// its input". The label, input and help sit inside a <form> nested in the
+// flex `.ccc-inline-form`, so the form itself must lay them out with that
+// gap — otherwise the "Folder path" label touches its input.
+describe("RegisterFlow typed form spacing (UI-SPEC spacing scale)", () => {
+  const STYLES = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "styles.css"),
+    "utf8",
+  );
+
+  it("separates the Folder path label from its input by --ccc-space-sm", () => {
+    const style = document.createElement("style");
+    style.textContent = STYLES;
+    document.head.appendChild(style);
+    try {
+      render(
+        <RegisterFlow
+          actions={noopActions()}
+          pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+          onRegistered={vi.fn()}
+          onDuplicate={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
+
+      const input = screen.getByLabelText("Folder path");
+      const form = input.closest("form");
+      expect(form).not.toBeNull();
+      const layout = getComputedStyle(form as HTMLFormElement);
+      expect(layout.display).toBe("flex");
+      expect(layout.flexDirection).toBe("column");
+      expect(layout.rowGap || layout.gap).toBe("var(--ccc-space-sm)");
+    } finally {
+      style.remove();
+    }
+  });
 });
 
 describe("RegisterFlow (Task 2, S4)", () => {
