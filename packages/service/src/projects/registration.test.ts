@@ -132,6 +132,44 @@ describe("validateProjectCandidate: the service's own directories (D-04, A-06)",
   });
 });
 
+// Codex review 2, finding 2: a policy location that does not exist (a vault
+// whose folder was deleted) used to fall back to its LEXICAL form, so a
+// symlinked ancestor in its stored path (/var → /private/var on macOS) hid
+// the real ancestor the candidate resolves to.
+describe("validateProjectCandidate: missing policy locations behind a symlinked ancestor", () => {
+  let realParent: string;
+  let linkParent: string;
+
+  beforeEach(() => {
+    realParent = join(base, "real-parent");
+    linkParent = join(base, "link-parent");
+    mkdirSync(join(realParent, "sub"), { recursive: true });
+    symlinkSync(realParent, linkParent);
+  });
+
+  it("refuses the real ancestor of a missing vault stored through a symlink as above-vault", async () => {
+    vaultRoot = join(linkParent, "missing-vault");
+    await expectRefused(realParent, "above-vault");
+  });
+
+  it("resolves through several missing components to the nearest existing ancestor", async () => {
+    vaultRoot = join(linkParent, "gone", "deeper", "missing-vault");
+    await expectRefused(realParent, "above-vault");
+  });
+
+  it("refuses the real ancestor of a missing runtime directory stored through a symlink", async () => {
+    runtimeDir = join(linkParent, "missing-runtime", "deeper");
+    await expectRefused(realParent, "runtime-dir");
+  });
+
+  it("still accepts a sibling of the missing vault's real location", async () => {
+    vaultRoot = join(linkParent, "missing-vault");
+    await expect(validateProjectCandidate(join(realParent, "sub"), policy())).resolves.toBe(
+      join(realParent, "sub"),
+    );
+  });
+});
+
 describe("validateProjectCandidate: what the path must be", () => {
   it("refuses a regular file", async () => {
     const file = join(base, "notes.txt");
