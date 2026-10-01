@@ -1,13 +1,16 @@
-import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
+import { EMPTY_PROJECTS_SNAPSHOT, type ProjectId, type ProjectView } from "@ccc/domain";
 import { signal } from "@preact/signals";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
+import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import type { WidgetState } from "../widgets/contract.js";
 import type { WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
+import { requestLaunchersFocus } from "./launchers-focus.js";
+import { navigationRequest, requestDestination } from "./navigation-request.js";
 import { Shell } from "./shell.js";
 
 /**
@@ -281,6 +284,115 @@ describe("Shell — Settings › Launchers (D-37, D-30)", () => {
       await Promise.resolve();
     });
     expect(document.activeElement).not.toBe(
+      screen.getByRole("heading", { level: 3, name: "Launchers" }),
+    );
+  });
+});
+
+/**
+ * The one-shot navigation request the S9 switcher and the `Set up launchers`
+ * command use from outside the shell's tree (plan 04-14, S9 Choosing, D-30).
+ */
+describe("Shell — navigation requests from the switcher and commands (S9, D-30)", () => {
+  const PROJECT_ID = "abcdefghi0123456789abcdef0123401" as ProjectId;
+
+  function view(overrides: Partial<ProjectView> & { projectId: ProjectId }): ProjectView {
+    return {
+      displayName: "example-project",
+      displayPath: "~/code/example-project",
+      pinned: false,
+      lastOpenedAt: null,
+      observedAt: null,
+      gitReadFailed: false,
+      git: { kind: "pending" },
+      github: { kind: "none" },
+      ...overrides,
+    };
+  }
+
+  afterEach(() => {
+    navigationRequest.value = null;
+    resetProjectsState();
+  });
+
+  it("Go to {destination} selects it, focuses its tab and clears the request", async () => {
+    connectionState.value = { kind: "live" };
+    render(<Shell />);
+    await act(async () => {
+      requestDestination("tasks");
+    });
+    const tab = screen.getByRole("tab", { name: "Tasks" });
+    expect(tab.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tab);
+    expect(navigationRequest.value).toBeNull();
+  });
+
+  it("a request made before the command center opens is honoured when it mounts", async () => {
+    connectionState.value = { kind: "live" };
+    requestDestination("knowledge");
+    render(<Shell initialDestination="overview" />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("tab", { name: "Knowledge" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(navigationRequest.value).toBeNull();
+  });
+
+  it("Go to {project} opens Projects with that card's heading focused", async () => {
+    connectionState.value = { kind: "live" };
+    projectsSnapshot.value = {
+      projects: [
+        view({ projectId: PROJECT_ID }),
+        view({
+          projectId: "abcdefghi0123456789abcdef0123402" as ProjectId,
+          displayName: "demo-api",
+          displayPath: "~/code/demo-api",
+        }),
+      ],
+      launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+    };
+    render(<Shell />);
+    await act(async () => {
+      requestDestination("projects", { focusProjectId: PROJECT_ID });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("tab", { name: "Projects" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    const heading = screen.getByRole("heading", { level: 4, name: "example-project" });
+    expect(document.activeElement).toBe(heading);
+    expect(navigationRequest.value).toBeNull();
+  });
+
+  it("the Set up launchers command's request lands on the Launchers heading", async () => {
+    connectionState.value = { kind: "live" };
+    render(
+      <Shell
+        launchersActions={{
+          detect: () => new Promise<never>(() => {}),
+          getConfigs: () => new Promise<never>(() => {}),
+          save: vi.fn(),
+          test: vi.fn(),
+          markTested: vi.fn(),
+          openSystemSettings: vi.fn(),
+        }}
+      />,
+    );
+    await act(async () => {
+      requestLaunchersFocus();
+      requestDestination("settings");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(document.activeElement).toBe(
       screen.getByRole("heading", { level: 3, name: "Launchers" }),
     );
   });

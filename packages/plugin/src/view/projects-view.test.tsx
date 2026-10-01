@@ -583,3 +583,31 @@ describe("ProjectsView reading order and setup state (plan 04-13 Task 3, UI-SPEC
     expect(screen.queryByText("Launchers aren't set up yet")).toBeNull();
   });
 });
+
+describe("ProjectsView search hint (plan 04-14, UI-SPEC S3)", () => {
+  const HINT =
+    "Search projects and actions: ⌘K while the command center has focus, or from the command palette.";
+
+  it("shows the hint under the toolbar, before Registered projects", () => {
+    projectsSnapshot.value = {
+      projects: [view({ projectId: newProjectId() })],
+      launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
+    };
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+    const hint = screen.getByText(HINT);
+    expect(hint.classList.contains("ccc-list-meta")).toBe(true);
+    const toolbarButton = screen.getByRole("button", { name: "Register a project" });
+    const heading = screen.getByRole("heading", { level: 3, name: "Registered projects" });
+    expect(
+      toolbarButton.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(hint.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

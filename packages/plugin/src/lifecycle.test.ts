@@ -2,6 +2,7 @@ import type { EventClient, SocketApiClient, SocketRequestOptions } from "@ccc/se
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
+import { registerSetUpLaunchersCommand, SET_UP_LAUNCHERS_COMMAND_ID } from "./projects/commands.js";
 import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js";
 import {
   createFakeDomTarget,
@@ -9,6 +10,8 @@ import {
   FakeDataAdapter,
   FakeObsidianHost,
 } from "./test-support/fake-obsidian-host.js";
+import { launchersFocusRequested } from "./view/launchers-focus.js";
+import { navigationRequest } from "./view/navigation-request.js";
 import {
   createSwitcherOpener,
   registerSwitcherCommand,
@@ -78,6 +81,7 @@ function loadCycle(
   registerVaultSetupCommand(registry, NOOP_SETUP_UI, NOOP_CLIENT);
   // The REAL quick-switcher command (plan 04-14), for the same reason.
   registerSwitcherCommand(registry, NOOP_SWITCHER_OPENER);
+  registerSetUpLaunchersCommand(registry, () => {});
   registry.event(WORKSPACE_EVENT, handler);
   registry.interval(() => {}, 60_000);
   registry.domEvent(domTarget, "click", () => {});
@@ -181,10 +185,10 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     }
 
     expect(host.liveCounts().view).toBe(1);
-    // Three commands now: "Open overview", "Set up managed vault" and
-    // "Search projects and actions". Twenty loads leave exactly one of each,
-    // not twenty of each.
-    expect(host.liveCounts().command).toBe(3);
+    // Four commands now: "Open overview", "Set up managed vault",
+    // "Search projects and actions" and "Set up launchers". Twenty loads
+    // leave exactly one of each, not twenty of each.
+    expect(host.liveCounts().command).toBe(4);
     // One tab after twenty loads, not twenty tabs.
     expect(host.liveCounts().settingTab).toBe(1);
   });
@@ -254,6 +258,46 @@ describe("the Search projects and actions command (plan 04-14, D-33, D-34)", () 
     registered(host, SWITCHER_COMMAND_ID).callback();
     expect(subscribe).toHaveBeenCalledTimes(2);
     expect(show).toHaveBeenCalledTimes(2);
+
+    registry.disposeAll();
+  });
+});
+
+describe("the Set up launchers command (plan 04-14, D-30, D-38)", () => {
+  afterEach(() => {
+    navigationRequest.value = null;
+    launchersFocusRequested.value = false;
+  });
+
+  it("registers through the seam with its id and name and no default hotkey", () => {
+    const host = new CommandCapturingHost();
+    const registry = createHostRegistry(host);
+    registerSetUpLaunchersCommand(registry, () => {});
+
+    const command = host.commands.find((c) => c.id === SET_UP_LAUNCHERS_COMMAND_ID);
+    expect(command?.id).toBe("set-up-launchers");
+    expect(command?.name).toBe("Set up launchers");
+    expect(command).not.toHaveProperty("hotkeys");
+
+    registry.disposeAll();
+    expect(host.liveCounts().command).toBe(0);
+  });
+
+  it("reveals the command center on Settings with the Launchers heading to focus, and nothing at load", () => {
+    const host = new CommandCapturingHost();
+    const registry = createHostRegistry(host);
+    const reveal = vi.fn();
+    registerSetUpLaunchersCommand(registry, reveal);
+
+    // D-30: registering runs nothing — no navigation, no focus, no reveal.
+    expect(reveal).not.toHaveBeenCalled();
+    expect(navigationRequest.value).toBeNull();
+    expect(launchersFocusRequested.value).toBe(false);
+
+    host.commands.find((c) => c.id === SET_UP_LAUNCHERS_COMMAND_ID)?.callback();
+    expect(navigationRequest.value).toEqual({ destination: "settings" });
+    expect(launchersFocusRequested.value).toBe(true);
+    expect(reveal).toHaveBeenCalledTimes(1);
 
     registry.disposeAll();
   });

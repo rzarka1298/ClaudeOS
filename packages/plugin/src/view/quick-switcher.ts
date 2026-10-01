@@ -1,7 +1,7 @@
 import type { LaunchAction, ProjectId, ProjectsSnapshot, ProjectView } from "@ccc/domain";
 import { compareProjectViews } from "@ccc/domain/browser";
 import type { EventClient } from "@ccc/service-api-client";
-import { type App, FuzzySuggestModal, type Instruction } from "obsidian";
+import { type App, FuzzySuggestModal, type Instruction, type Modifier } from "obsidian";
 import type { ConnectionState } from "../connection-state.js";
 import type { HostRegistry } from "../host-registry.js";
 import {
@@ -297,3 +297,10 @@ export function registerSwitcherCommand(
     callback: () => open(""),
   });
 }
+
+/** The part of Obsidian's `Scope` this needs. RED skeleton (plan 04-14 Task 2). */
+export interface SwitcherScope {
+  register(modifiers: Modifier[], key: string, func: () => false): unknown;
+}
+
+export function registerSwitcherScope(_scope: SwitcherScope, _open: () => void): void {}

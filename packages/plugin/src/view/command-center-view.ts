@@ -33,6 +33,8 @@ export interface CommandCenterViewHost {
   readonly client: AuthenticatedSocketApiClient;
   readonly eventClient: EventClient;
   saveSettings(): Promise<void>;
+  /** Opens the S9 quick-switcher with a query (plan 04-14). */
+  openSwitcher(prefill: string): void;
 }
 
 /**

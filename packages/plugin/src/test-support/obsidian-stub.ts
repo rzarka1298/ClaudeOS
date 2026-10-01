@@ -323,3 +323,32 @@ export function prepareFuzzySearch(query: string): (text: string) => { score: nu
     return { score: -needle.length };
   };
 }
+
+/**
+ * The leaf a test hands to a view: its app (with the app-level `Scope` a
+ * view scope chains to) and the element Obsidian would give the view as
+ * `contentEl`. Test-only shape — the real `WorkspaceLeaf` carries far more.
+ */
+export interface StubLeaf {
+  readonly app: { readonly scope: Scope };
+  readonly contentEl: HTMLElement & { empty(): void };
+}
+
+/**
+ * An inert `ItemView`, so `command-center-view.ts` loads and its
+ * `onOpen`/`onClose` and constructor-time `Scope` can be driven under test
+ * (plan 04-14). Obsidian's real view lifecycle, focus and scope push/pop
+ * exist only in live Obsidian (UAT).
+ */
+export class ItemView {
+  readonly app: { readonly scope: Scope };
+  readonly leaf: StubLeaf;
+  readonly contentEl: HTMLElement & { empty(): void };
+  scope: Scope | null = null;
+
+  constructor(leaf: StubLeaf) {
+    this.leaf = leaf;
+    this.app = leaf.app;
+    this.contentEl = leaf.contentEl;
+  }
+}

@@ -3,12 +3,16 @@ import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
 import type { App } from "obsidian";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import { resetLaunchStatus } from "../projects/launch-status.js";
-import type { SuggestModal as StubSuggestModal } from "../test-support/obsidian-stub.js";
+import {
+  Scope as StubScope,
+  type SuggestModal as StubSuggestModal,
+} from "../test-support/obsidian-stub.js";
 import { dispatchQuickAction } from "../widgets/quick-actions.js";
 import { DESTINATIONS } from "./destinations.js";
 import {
   buildSwitcherItems,
   ProjectSwitcherModal,
+  registerSwitcherScope,
   type SwitcherHost,
   type SwitcherItem,
 } from "./quick-switcher.js";
@@ -269,5 +273,24 @@ describe("choosing an item (tracer: search, choose Reveal {project} in Finder, i
     expect(dispatchQuickAction).toHaveBeenCalledTimes(1);
     expect(h.requestLaunch).toHaveBeenCalledWith(null, "claude-desktop");
     expect(h.notify).toHaveBeenCalledWith("Opening Claude Desktop…");
+  });
+});
+
+describe("registerSwitcherScope: Mod+K while the command center has focus (D-33, SC-5)", () => {
+  it("registers exactly Mod+K on the view's scope", () => {
+    const scope = new StubScope();
+    registerSwitcherScope(scope, () => {});
+    expect(scope.registrations.map(({ modifiers, key }) => ({ modifiers, key }))).toEqual([
+      { modifiers: ["Mod"], key: "k" },
+    ]);
+  });
+
+  it("opens the switcher and returns false so Obsidian prevents the key's default", () => {
+    const scope = new StubScope();
+    const open = vi.fn();
+    registerSwitcherScope(scope, open);
+    const result = scope.registrations[0]?.func();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(result).toBe(false);
   });
 });
