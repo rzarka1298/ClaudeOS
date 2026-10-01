@@ -49,6 +49,30 @@ const SCAN_FAILED: Problem = {
   problem: "Couldn't scan this folder.",
   nextStep: "Check that it still exists, then choose Rescan folder.",
 };
+/**
+ * A scan folder that no longer passes the scan-folder policy (a vault set up
+ * inside or around it since it was added). Not in 04-UI-SPEC.md: minimal
+ * copy consistent with S5's add refusal (wave-6 review, flagged).
+ */
+const SCAN_REFUSED: Problem = {
+  problem: "Couldn't scan this folder.",
+  nextStep:
+    "It now overlaps the managed vault or a system folder. Choose Stop scanning to remove it.",
+};
+/** Register on a suggestion the service no longer holds (404): not an outage (wave-6 review, flagged). */
+const SUGGESTION_GONE: Problem = {
+  problem: "This suggestion is no longer available.",
+  nextStep: "Choose Rescan folder to refresh the suggestions.",
+};
+/** A capped scan's row lines (wave-6 review; not in 04-UI-SPEC.md, flagged). Not an error: no ▲. */
+const PARTIAL_LINES = [
+  "The last scan stopped early, so some folders weren't checked.",
+  "Choose Rescan folder to try again, or look fewer levels deep.",
+] as const;
+const SUGGESTIONS_EMPTY_BODY = "Every Git folder found is already registered, or none were found.";
+const PARTIAL_NOTE = "A scan stopped early, so some folders weren't checked.";
+const PARTIAL_LIST_NOTE = "A scan stopped early, so this list may be incomplete.";
+
 /** PR-11's `folder-access-denied` lines, with "this folder" (UI-SPEC S5 scan failure). */
 const SCAN_ACCESS_DENIED: Problem = {
   problem: "macOS blocked access to this folder.",
@@ -70,12 +94,33 @@ function ProblemLines({ problem }: { readonly problem: Problem }): VNode {
 
 const FOLDERS_PLURAL = new Intl.PluralRules("en");
 
-/** `Found {n} new Git folder(s)` / `No new Git folders found.` (UI-SPEC S5 scan result). */
-export function scanResultLine(found: number): string {
-  if (found === 0) return "No new Git folders found.";
-  return FOLDERS_PLURAL.select(found) === "one"
-    ? `Found ${found} new Git folder`
-    : `Found ${found} new Git folders`;
+/**
+ * `Found {n} new Git folder(s)` / `No new Git folders found.` (UI-SPEC S5
+ * scan result). A scan a cap stopped early says so: it did not look
+ * everywhere, so "none found" alone would overclaim (wave-6 review).
+ */
+export function scanResultLine(found: number, partial = false): string {
+  if (found === 0) {
+    return partial
+      ? "No new Git folders found before the scan stopped."
+      : "No new Git folders found.";
+  }
+  const line =
+    FOLDERS_PLURAL.select(found) === "one"
+      ? `Found ${found} new Git folder`
+      : `Found ${found} new Git folders`;
+  return partial ? `${line} before the scan stopped` : line;
+}
+
+/** Re-reads the scan state after an add or rescan that did not answer one (wave-6 review). */
+async function resync(actions: ScanActions): Promise<void> {
+  let listed: ScanActionOutcome;
+  try {
+    listed = await actions.listScanState();
+  } catch {
+    return;
+  }
+  if (listed.kind === "state") applyScanState(listed.state);
 }
 
 /** The failure copy for any non-state add outcome: the service, never the folder, when it was unreachable. */
@@ -126,10 +171,17 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
   const [busy, setBusyState] = useState(false);
   const busyRef = useRef(false);
   const openerRef = useRef<HTMLButtonElement | null>(null);
+  const protectedHeadingRef = useRef<HTMLParagraphElement | null>(null);
   function setBusy(value: boolean): void {
     busyRef.current = value;
     setBusyState(value);
   }
+
+  // The protected-location step takes focus on its heading (wave-6 review).
+  const protectedStep = step.kind === "protected";
+  useEffect(() => {
+    if (protectedStep) protectedHeadingRef.current?.focus();
+  }, [protectedStep]);
 
   async function attemptAdd(path: string, acknowledge?: boolean): Promise<void> {
     setTypedPath(path);
@@ -147,6 +199,8 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
     setBusy(false);
     if (outcome.kind !== "state") {
       setStatus({ kind: "problem", problem: addFailure(outcome) });
+      // A timed-out add may still have landed: the service is the source.
+      void resync(actions);
       return;
     }
     if (outcome.state.protectedLocation !== undefined) {
@@ -158,6 +212,7 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
     setStep({ kind: "idle" });
     setTypedPath("");
     setStatus(NO_STATUS);
+    openerRef.current?.focus();
   }
 
   async function handleTriggerClick(): Promise<void> {
@@ -275,7 +330,7 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
       {step.kind === "protected" && (
         // biome-ignore lint/a11y/noStaticElementInteractions: the Escape handler is a keyboard-only affordance for this step; it gains no role or tabindex itself.
         <div className="ccc-inline-form" onKeyDown={handleKeyDown}>
-          <p className="ccc-state-heading">
+          <p ref={protectedHeadingRef} tabIndex={-1} className="ccc-state-heading">
             {`This folder is in ${PROTECTED_LOCATION_LABELS[step.location]}`}
           </p>
           <p className="ccc-state-body">
@@ -331,6 +386,17 @@ function currentState(fallback: ScanStateResponse | undefined): ScanStateRespons
   return scanState.value ?? fallback;
 }
 
+/** Where focus goes once an action's row has left the list (wave-6 review). */
+type FocusTarget =
+  | { readonly kind: "suggestion"; readonly index: number }
+  | { readonly kind: "root"; readonly index: number };
+
+/** The first button of the `index`th row matching `selector` under `container`, or `null`. */
+function rowButton(container: HTMLElement | null, selector: string, index: number) {
+  const rows = container?.querySelectorAll<HTMLElement>(selector);
+  return rows?.[index]?.querySelector<HTMLButtonElement>("button") ?? null;
+}
+
 /**
  * The Suggestions and Scan folders sections (UI-SPEC S3 reading order 5 and
  * 6, S5). Suggestions render only while at least one scan folder exists.
@@ -338,67 +404,155 @@ function currentState(fallback: ScanStateResponse | undefined): ScanStateRespons
 export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
   const roots = state?.scanRoots ?? [];
   const suggestions = state?.suggestions ?? [];
+  const partial = state?.partial === true || roots.some((r) => r.scanStatus === "partial");
   const [dismissedAny, setDismissedAny] = useState(false);
   const [announcement, setAnnouncement] = useState<StatusLine>(NO_STATUS);
   const [shownByRoot, setShownByRoot] = useState<Readonly<Record<string, number>>>({});
+  // One request per suggestion at a time: the ref guards, the state renders.
+  const inFlightRef = useRef(new Set<string>());
+  const [inFlight, setInFlight] = useState<ReadonlySet<string>>(new Set());
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
+  const suggestionsRef = useRef<HTMLElement | null>(null);
+  const suggestionsHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const rootsRef = useRef<HTMLElement | null>(null);
+  const rootsHeadingRef = useRef<HTMLHeadingElement | null>(null);
+
+  // Focus follows a row that left the list to the row now in its place, or
+  // to the list's heading when it was the last (wave-6 review).
+  useEffect(() => {
+    if (focusTarget === null) return;
+    setFocusTarget(null);
+    if (focusTarget.kind === "suggestion") {
+      (
+        rowButton(suggestionsRef.current, "li.ccc-suggestion-row", focusTarget.index) ??
+        suggestionsHeadingRef.current ??
+        rootsHeadingRef.current
+      )?.focus();
+      return;
+    }
+    (
+      rowButton(rootsRef.current, "li.ccc-scan-folder-row", focusTarget.index) ??
+      rootsHeadingRef.current
+    )?.focus();
+  }, [focusTarget]);
+
+  function begin(suggestionId: string): boolean {
+    if (inFlightRef.current.has(suggestionId)) return false;
+    inFlightRef.current.add(suggestionId);
+    setInFlight(new Set(inFlightRef.current));
+    return true;
+  }
+
+  function end(suggestionId: string): void {
+    inFlightRef.current.delete(suggestionId);
+    setInFlight(new Set(inFlightRef.current));
+  }
+
+  /** The suggestion's position among the rendered rows, for the focus hand-off. */
+  function rowIndexOf(suggestionId: string): number {
+    const rows = Array.from(
+      suggestionsRef.current?.querySelectorAll<HTMLElement>("li.ccc-suggestion-row") ?? [],
+    );
+    return Math.max(
+      0,
+      rows.findIndex((row) => row.dataset.suggestionId === suggestionId),
+    );
+  }
 
   async function register(suggestion: SuggestionView): Promise<void> {
-    const outcome = await actions.registerSuggestion(suggestion.suggestionId);
-    switch (outcome.kind) {
-      case "registered":
-        setAnnouncement({ kind: "text", text: `Registered ${suggestion.folderName}.` });
-        break;
-      case "already-registered":
-        setAnnouncement({
-          kind: "text",
-          text: `This folder is already registered as ${suggestion.folderName}.`,
-        });
-        break;
-      case "refused":
-      case "invalid":
-        setAnnouncement({ kind: "problem", problem: REGISTER_REFUSED });
-        return;
-      default:
-        setAnnouncement({ kind: "problem", problem: SERVICE_PROBLEM });
-        return;
+    if (!begin(suggestion.suggestionId)) return;
+    const index = rowIndexOf(suggestion.suggestionId);
+    try {
+      const outcome = await actions.registerSuggestion(suggestion.suggestionId);
+      switch (outcome.kind) {
+        case "registered":
+          setAnnouncement({ kind: "text", text: `Registered ${suggestion.folderName}.` });
+          break;
+        case "already-registered":
+          setAnnouncement({
+            kind: "text",
+            text: `This folder is already registered as ${suggestion.folderName}.`,
+          });
+          break;
+        case "refused":
+        case "invalid":
+          setAnnouncement({ kind: "problem", problem: REGISTER_REFUSED });
+          return;
+        case "not-found":
+          // Gone from the service's memory: show what it holds now.
+          setAnnouncement({ kind: "problem", problem: SUGGESTION_GONE });
+          await resync(actions);
+          return;
+        default:
+          setAnnouncement({ kind: "problem", problem: SERVICE_PROBLEM });
+          return;
+      }
+      // The registered folder leaves the suggestions; the service is the source.
+      const listed = await actions.listScanState();
+      if (listed.kind === "state") applyScanState(listed.state);
+      setFocusTarget({ kind: "suggestion", index });
+    } finally {
+      end(suggestion.suggestionId);
     }
-    // The registered folder leaves the suggestions; the service is the source.
-    const listed = await actions.listScanState();
-    if (listed.kind === "state") applyScanState(listed.state);
   }
 
   async function dismiss(suggestion: SuggestionView): Promise<void> {
-    const outcome = await actions.dismissSuggestion(suggestion.suggestionId);
-    if (outcome.kind !== "ok") {
-      setAnnouncement({ kind: "problem", problem: MANAGEMENT_FAILURE });
-      return;
+    if (!begin(suggestion.suggestionId)) return;
+    const index = rowIndexOf(suggestion.suggestionId);
+    try {
+      const outcome = await actions.dismissSuggestion(suggestion.suggestionId);
+      if (outcome.kind === "not-found") {
+        // Already gone: the dismissal's end state, read from the service.
+        await resync(actions);
+        setFocusTarget({ kind: "suggestion", index });
+        return;
+      }
+      if (outcome.kind !== "ok") {
+        setAnnouncement({ kind: "problem", problem: MANAGEMENT_FAILURE });
+        return;
+      }
+      const latest = currentState(state);
+      if (latest !== undefined) {
+        applyScanState({
+          ...latest,
+          suggestions: latest.suggestions.filter((s) => s.suggestionId !== suggestion.suggestionId),
+        });
+      }
+      setDismissedAny(true);
+      setFocusTarget({ kind: "suggestion", index });
+    } finally {
+      end(suggestion.suggestionId);
     }
-    const latest = currentState(state);
-    if (latest !== undefined) {
-      applyScanState({
-        ...latest,
-        suggestions: latest.suggestions.filter((s) => s.suggestionId !== suggestion.suggestionId),
-      });
-    }
-    setDismissedAny(true);
   }
 
   return (
     <>
       {roots.length > 0 && (
-        <section className="ccc-projects-section" aria-labelledby="ccc-suggestions-heading">
-          <h3 id="ccc-suggestions-heading" className="ccc-state-heading">
+        <section
+          ref={suggestionsRef}
+          className="ccc-projects-section"
+          aria-labelledby="ccc-suggestions-heading"
+        >
+          <h3
+            ref={suggestionsHeadingRef}
+            id="ccc-suggestions-heading"
+            className="ccc-state-heading"
+            tabIndex={-1}
+          >
             Suggestions
           </h3>
           {suggestions.length > 0 && (
             <p className="ccc-list-meta">{folderCount(suggestions.length)}</p>
+          )}
+          {suggestions.length > 0 && partial && (
+            <p className="ccc-list-meta">{PARTIAL_LIST_NOTE}</p>
           )}
           <StatusRegion line={announcement} />
           {suggestions.length === 0 ? (
             <div>
               <p className="ccc-state-heading">No suggestions.</p>
               <p className="ccc-state-body">
-                Every Git folder found is already registered, or none were found.
+                {partial ? `${SUGGESTIONS_EMPTY_BODY} ${PARTIAL_NOTE}` : SUGGESTIONS_EMPTY_BODY}
               </p>
             </div>
           ) : (
@@ -415,32 +569,41 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
                     {root.displayPath}
                   </h4>
                   <ul className="ccc-list">
-                    {group.slice(0, shown).map((suggestion) => (
-                      <li key={suggestion.suggestionId} className="ccc-suggestion-row">
-                        <div className="ccc-list-primary">
-                          <p className="ccc-list-primary">{suggestion.folderName}</p>
-                          <p className="ccc-mono-label ccc-display-path">
-                            {suggestion.displayPath}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          className="ccc-connect-button"
-                          aria-label={`Register ${suggestion.folderName}`}
-                          onClick={() => void register(suggestion)}
+                    {group.slice(0, shown).map((suggestion) => {
+                      const busy = inFlight.has(suggestion.suggestionId) ? "true" : undefined;
+                      return (
+                        <li
+                          key={suggestion.suggestionId}
+                          className="ccc-suggestion-row"
+                          data-suggestion-id={suggestion.suggestionId}
                         >
-                          Register
-                        </button>
-                        <button
-                          type="button"
-                          className="ccc-list-more"
-                          aria-label={`Dismiss ${suggestion.folderName}`}
-                          onClick={() => void dismiss(suggestion)}
-                        >
-                          Dismiss
-                        </button>
-                      </li>
-                    ))}
+                          <div className="ccc-list-primary">
+                            <p className="ccc-list-primary">{suggestion.folderName}</p>
+                            <p className="ccc-mono-label ccc-display-path">
+                              {suggestion.displayPath}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="ccc-connect-button"
+                            aria-label={`Register ${suggestion.folderName}`}
+                            aria-disabled={busy}
+                            onClick={() => void register(suggestion)}
+                          >
+                            Register
+                          </button>
+                          <button
+                            type="button"
+                            className="ccc-list-more"
+                            aria-label={`Dismiss ${suggestion.folderName}`}
+                            aria-disabled={busy}
+                            onClick={() => void dismiss(suggestion)}
+                          >
+                            Dismiss
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                   {remaining > 0 && (
                     <button
@@ -465,8 +628,17 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
           )}
         </section>
       )}
-      <section className="ccc-projects-section" aria-labelledby="ccc-scan-folders-heading">
-        <h3 id="ccc-scan-folders-heading" className="ccc-state-heading">
+      <section
+        ref={rootsRef}
+        className="ccc-projects-section"
+        aria-labelledby="ccc-scan-folders-heading"
+      >
+        <h3
+          ref={rootsHeadingRef}
+          id="ccc-scan-folders-heading"
+          className="ccc-state-heading"
+          tabIndex={-1}
+        >
           Scan folders
         </h3>
         {roots.length === 0 ? (
@@ -479,8 +651,14 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
           </div>
         ) : (
           <ul className="ccc-list">
-            {roots.map((root) => (
-              <ScanFolderRow key={root.scanRootId} root={root} actions={actions} now={now} />
+            {roots.map((root, index) => (
+              <ScanFolderRow
+                key={root.scanRootId}
+                root={root}
+                actions={actions}
+                now={now}
+                onRemoved={() => setFocusTarget({ kind: "root", index })}
+              />
             ))}
           </ul>
         )}
@@ -492,13 +670,15 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
 type RowStatus =
   | { readonly kind: "idle" }
   | { readonly kind: "scanning" }
-  | { readonly kind: "result"; readonly found: number }
+  | { readonly kind: "result"; readonly found: number; readonly partial: boolean }
   | { readonly kind: "problem"; readonly problem: Problem };
 
 interface ScanFolderRowProps {
   readonly root: ScanRootView;
   readonly actions: ScanActions;
   readonly now: number;
+  /** Called once this row's folder was removed, so the list can move focus on. */
+  readonly onRemoved: () => void;
 }
 
 /**
@@ -506,14 +686,19 @@ interface ScanFolderRowProps {
  * `Stop scanning` with the inline confirmation. Each row owns its own
  * in-flight state, so scanning one folder never blocks another (S5 loading).
  */
-function ScanFolderRow({ root, actions, now }: ScanFolderRowProps): VNode {
+function ScanFolderRow({ root, actions, now, onRemoved }: ScanFolderRowProps): VNode {
   const [status, setStatus] = useState<RowStatus>({ kind: "idle" });
   const [confirming, setConfirming] = useState(false);
   const [returnFocus, setReturnFocus] = useState(false);
+  const [removing, setRemovingState] = useState(false);
+  /** The depth a running rescan asked for; the select shows it until the rescan answers. */
+  const [pendingDepth, setPendingDepth] = useState<number | null>(null);
   const busyRef = useRef(false);
+  const removingRef = useRef(false);
   const stopRef = useRef<HTMLButtonElement | null>(null);
   const keepRef = useRef<HTMLButtonElement | null>(null);
   const depthId = `ccc-scan-depth-${root.scanRootId}`;
+  const shownDepth = String(pendingDepth ?? root.depth);
 
   useEffect(() => {
     if (confirming) keepRef.current?.focus();
@@ -523,11 +708,17 @@ function ScanFolderRow({ root, actions, now }: ScanFolderRowProps): VNode {
     }
   }, [confirming, returnFocus]);
 
+  function setRemoving(value: boolean): void {
+    removingRef.current = value;
+    setRemovingState(value);
+  }
+
   async function rescan(depth?: number): Promise<void> {
     if (busyRef.current) return;
     busyRef.current = true;
     // Written before the first await, so it shows in the same render (D-40).
     setStatus({ kind: "scanning" });
+    if (depth !== undefined) setPendingDepth(depth);
     let outcome: ScanActionOutcome;
     try {
       outcome =
@@ -538,14 +729,22 @@ function ScanFolderRow({ root, actions, now }: ScanFolderRowProps): VNode {
       outcome = { kind: "failed" };
     }
     busyRef.current = false;
+    setPendingDepth(null);
     if (outcome.kind !== "state") {
-      setStatus({ kind: "problem", problem: SERVICE_PROBLEM });
+      setStatus({
+        kind: "problem",
+        problem: outcome.kind === "refused" ? SCAN_REFUSED : SERVICE_PROBLEM,
+      });
+      // A timed-out rescan may still have run: the service is the source.
+      void resync(actions);
       return;
     }
     applyScanState(outcome.state);
+    const scanned = outcome.state.scanRoots.find((r) => r.scanRootId === root.scanRootId);
     setStatus({
       kind: "result",
       found: outcome.state.suggestions.filter((s) => s.scanRootId === root.scanRootId).length,
+      partial: scanned?.scanStatus === "partial",
     });
   }
 
@@ -555,12 +754,22 @@ function ScanFolderRow({ root, actions, now }: ScanFolderRowProps): VNode {
   }
 
   async function remove(): Promise<void> {
-    const outcome = await actions.removeScanRoot(root.scanRootId);
+    if (removingRef.current) return;
+    setRemoving(true);
+    let outcome: ScanActionOutcome;
+    try {
+      outcome = await actions.removeScanRoot(root.scanRootId);
+    } catch {
+      outcome = { kind: "failed" };
+    }
+    setRemoving(false);
     if (outcome.kind === "state") {
       applyScanState(outcome.state);
+      onRemoved();
       return;
     }
     setConfirming(false);
+    setReturnFocus(true);
     setStatus({ kind: "problem", problem: MANAGEMENT_FAILURE });
   }
 
@@ -569,8 +778,12 @@ function ScanFolderRow({ root, actions, now }: ScanFolderRowProps): VNode {
       ? SCAN_FAILED
       : root.scanStatus === "access-denied"
         ? SCAN_ACCESS_DENIED
-        : null;
+        : root.scanStatus === "refused"
+          ? SCAN_REFUSED
+          : null;
   const scanning = status.kind === "scanning";
+  // The row's own outcome already names the problem; never say it twice.
+  const showScanProblem = !scanning && scanProblem !== null && status.kind !== "problem";
 
   return (
     <li className="ccc-scan-folder-row">
@@ -581,11 +794,18 @@ function ScanFolderRow({ root, actions, now }: ScanFolderRowProps): VNode {
             ? "Not scanned yet"
             : `Scanned ${formatRelativeTime(root.lastScannedAt, now)}`}
         </p>
-        {!scanning && scanProblem !== null && <ProblemLines problem={scanProblem} />}
+        {showScanProblem && <ProblemLines problem={scanProblem} />}
+        {!scanning &&
+          root.scanStatus === "partial" &&
+          PARTIAL_LINES.map((line) => (
+            <p key={line} className="ccc-state-body">
+              {line}
+            </p>
+          ))}
         <div role="status">
           {scanning && <p className="ccc-state-body">Scanning…</p>}
           {status.kind === "result" && scanProblem === null && (
-            <p className="ccc-state-body">{scanResultLine(status.found)}</p>
+            <p className="ccc-state-body">{scanResultLine(status.found, status.partial)}</p>
           )}
           {status.kind === "problem" && <ProblemLines problem={status.problem} />}
         </div>
@@ -595,11 +815,16 @@ function ScanFolderRow({ root, actions, now }: ScanFolderRowProps): VNode {
         <select
           id={depthId}
           className="ccc-text-input"
-          value={String(root.depth)}
+          value={shownDepth}
           aria-disabled={scanning ? "true" : undefined}
           onChange={(event) => {
-            const depth = Number((event.target as HTMLSelectElement).value);
-            void rescan(depth);
+            const select = event.currentTarget;
+            if (busyRef.current) {
+              // Ignored while a rescan runs: the select keeps what is in effect.
+              select.value = shownDepth;
+              return;
+            }
+            void rescan(Number(select.value));
           }}
         >
           <option value="1">1 level (default)</option>
@@ -621,7 +846,12 @@ function ScanFolderRow({ root, actions, now }: ScanFolderRowProps): VNode {
             Stop scanning this folder? Projects already registered from it stay registered.
           </p>
           <div className="ccc-manage-toolbar">
-            <button type="button" className="ccc-button-danger" onClick={() => void remove()}>
+            <button
+              type="button"
+              className="ccc-button-danger"
+              aria-disabled={removing ? "true" : undefined}
+              onClick={() => void remove()}
+            >
               Remove scan folder
             </button>
             <button type="button" ref={keepRef} className="ccc-list-more" onClick={keep}>

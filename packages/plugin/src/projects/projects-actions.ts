@@ -38,6 +38,8 @@ export type ProjectActionOutcome =
   | { readonly kind: "ok" }
   | { readonly kind: "refused" }
   | { readonly kind: "invalid" }
+  /** Only a suggestion action: the suggestion is gone (registered, rescanned or restarted away). */
+  | { readonly kind: "not-found" }
   | { readonly kind: "service-disconnected" }
   | { readonly kind: "failed" };
 
@@ -183,6 +185,16 @@ export interface ScanActions {
   dismissSuggestion(suggestionId: string): Promise<ProjectActionOutcome>;
 }
 
+/**
+ * A suggestion route's 404 is not an outage: the suggestion is no longer in
+ * the service's memory (wave-6 review). Every other failure classifies as
+ * for any action.
+ */
+function classifySuggestionFailure(error: unknown): ProjectActionOutcome {
+  if (error instanceof ProjectsRequestError && error.status === 404) return { kind: "not-found" };
+  return classifyFailure(error);
+}
+
 /** The production {@link ScanActions}, bound to one authenticated client. */
 export function createScanActions(client: SocketApiClient): ScanActions {
   async function asState(request: Promise<ScanStateResponse>): Promise<ScanActionOutcome> {
@@ -218,7 +230,7 @@ export function createScanActions(client: SocketApiClient): ScanActions {
       try {
         return await registerSuggestion(client, { suggestionId });
       } catch (error: unknown) {
-        return classifyFailure(error);
+        return classifySuggestionFailure(error);
       }
     },
     async dismissSuggestion(suggestionId) {
@@ -226,7 +238,7 @@ export function createScanActions(client: SocketApiClient): ScanActions {
         await dismissSuggestion(client, { suggestionId });
         return { kind: "ok" };
       } catch (error: unknown) {
-        return classifyFailure(error);
+        return classifySuggestionFailure(error);
       }
     },
   };
