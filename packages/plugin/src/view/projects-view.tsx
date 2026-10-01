@@ -159,7 +159,7 @@ export function ProjectsView({
       return (
         <div className="ccc-projects-section">
           {registerFlow}
-          <h3 className="ccc-state-heading">Registered projects</h3>
+          <h3 className="ccc-section-label">Registered projects</h3>
           <div aria-busy="true" className="ccc-projects-grid">
             <span className="ccc-visually-hidden">Loading projects</span>
             <div className="ccc-card">
@@ -208,7 +208,7 @@ export function ProjectsView({
       <p role="status" className="ccc-state-body">
         {announcement}
       </p>
-      <h3 className="ccc-state-heading">Registered projects</h3>
+      <h3 className="ccc-section-label">Registered projects</h3>
       {rows.length === 0 ? (
         <div className="ccc-projects-empty">
           <h4 className="ccc-state-heading">Nothing here yet</h4>

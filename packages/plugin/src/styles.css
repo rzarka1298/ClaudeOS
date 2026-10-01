@@ -1110,6 +1110,46 @@
   padding: var(--ccc-space-xs) 0;
 }
 
+/* The row's text column takes the free width, so every row's buttons sit in
+ * one column at its end whatever the folder name's length (04-15 visual
+ * review, wave-6 note). `min-inline-size: 0` lets a long path wrap instead of
+ * pushing the buttons out of the row. */
+.ccc-suggestion-row > .ccc-list-primary,
+.ccc-scan-folder-row > .ccc-list-primary {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+/* The depth select's label sits inline before it; keep the two apart. */
+.ccc-scan-folder-row .ccc-field-label {
+  margin-inline-end: var(--ccc-space-sm);
+}
+
+/* The "uppercase Label" section role (UI-SPEC Typography: 600, tracked,
+ * uppercase) — S3/S5 section headings, the card's Pinned marker and Recent
+ * commits, S6 panel names and Preview, S8's Not available yet. The same
+ * declarations as `.ccc-card-header h3`; mono stays reserved for machine
+ * text. */
+.ccc-section-label {
+  margin: 0;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-section-label--muted {
+  color: var(--ccc-ink-muted);
+}
+
+/* A launcher status badge is a chip: in the panel's flex column it would
+ * otherwise stretch to the full width and read as an input (04-15 visual
+ * review, wave-6 note). */
+.ccc-launcher-panel .ccc-badge {
+  align-self: flex-start;
+}
+
 /* The Settings destination's own section width — prose-measure, so a
  * paragraph of launcher help text does not stretch edge to edge. */
 .ccc-settings-section {

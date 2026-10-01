@@ -54,7 +54,7 @@ const LIVE_WINDOW_MS = 60_000;
 /** A pinned card's visible `★` plus a visually hidden `Pinned: ` prefix (UI-SPEC S3, Glyph Vocabulary). */
 function PinnedMarker(): VNode {
   return (
-    <p className="ccc-list-meta ccc-mono-label">
+    <p className="ccc-section-label ccc-section-label--muted">
       <span className="ccc-meta-glyph" aria-hidden="true">
         ★
       </span>{" "}
@@ -174,7 +174,7 @@ function GitDetail({
             <p className="ccc-state-body">No commits yet</p>
           ) : (
             <>
-              <p className="ccc-list-meta ccc-mono-label">Recent commits</p>
+              <p className="ccc-section-label">Recent commits</p>
               <ul className="ccc-commit-list">
                 {git.commits.slice(0, 5).map((commit) => (
                   <li key={commit.hash} className="ccc-commit-row">

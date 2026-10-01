@@ -286,7 +286,7 @@ export function TemplateEditor({
           )}
         </div>
       </fieldset>
-      <h5 id={previewHeadingId} className="ccc-field-label">
+      <h5 id={previewHeadingId} className="ccc-section-label">
         Preview
       </h5>
       <p className="ccc-field-help">

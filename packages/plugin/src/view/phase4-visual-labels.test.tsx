@@ -29,10 +29,13 @@ const STYLES = readFileSync(
   "utf8",
 ).replace(/\/\*[\s\S]*?\*\//g, "");
 
+/** The body of the rule whose selector list names `selector` (grouped lists included). */
 function rule(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`(^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(STYLES);
-  return match?.[2] ?? "";
+  for (const match of STYLES.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = (match[1] ?? "").split(",").map((part) => part.trim());
+    if (selectors.includes(selector)) return match[2] ?? "";
+  }
+  return "";
 }
 
 const NOW = Date.parse("2026-09-30T12:00:00.000Z");

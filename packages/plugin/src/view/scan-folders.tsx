@@ -536,7 +536,7 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
           <h3
             ref={suggestionsHeadingRef}
             id="ccc-suggestions-heading"
-            className="ccc-state-heading"
+            className="ccc-section-label"
             tabIndex={-1}
           >
             Suggestions
@@ -636,7 +636,7 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
         <h3
           ref={rootsHeadingRef}
           id="ccc-scan-folders-heading"
-          className="ccc-state-heading"
+          className="ccc-section-label"
           tabIndex={-1}
         >
           Scan folders

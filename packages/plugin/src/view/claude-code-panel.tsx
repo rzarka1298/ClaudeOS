@@ -374,7 +374,7 @@ export function ClaudeCodePanel({
 
   return (
     <section className="ccc-card ccc-launcher-panel" aria-labelledby={headingId}>
-      <h4 id={headingId} className="ccc-field-label">
+      <h4 id={headingId} className="ccc-section-label">
         {LAUNCHER_PANEL_NAMES["claude-code"]}
       </h4>
       <LauncherStatusBadge badge={claudeBadge(saved)} />

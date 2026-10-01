@@ -692,7 +692,7 @@ function QuickActionsBody({
         onNavigate={onNavigate}
         openSystemSettings={openSystemSettings}
       />
-      <p className="ccc-list-meta">Not available yet</p>
+      <p className="ccc-section-label ccc-section-label--muted">Not available yet</p>
       <div className="ccc-card-actions">
         {unavailable.map((action) => (
           <button
