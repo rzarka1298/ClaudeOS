@@ -388,7 +388,9 @@ describe("the panels and the progress line (S6, RR-26)", () => {
     await settle();
     expect(within(panel("Antigravity")).getByText("Tested")).toBeTruthy();
     expect(within(panel("Claude Code")).getByText("Not set up")).toBeTruthy();
-    expect(within(panel("Claude Desktop")).getByText("App not found")).toBeTruthy();
+    // A bundle detection does not list is still set up: only the service's
+    // own app-not-found answer shows App not found (wave-6 review).
+    expect(within(panel("Claude Desktop")).getByText("Set up")).toBeTruthy();
   });
 
   it("a saved, untested launcher shows Set up; nothing saved shows Not set up", async () => {
