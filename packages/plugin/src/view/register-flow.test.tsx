@@ -32,36 +32,62 @@ afterEach(() => {
 // flex `.ccc-inline-form`, so the form itself must lay them out with that
 // gap — otherwise the "Folder path" label touches its input.
 describe("RegisterFlow typed form spacing (UI-SPEC spacing scale)", () => {
+  // The stylesheet's rules, comments stripped. Matched against the rendered
+  // DOM with `Element.matches`, so the assertion is about the rules that
+  // actually apply to the form (no injected <style>: obsidianmd forbids it).
   const STYLES = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), "..", "styles.css"),
     "utf8",
-  );
+  ).replace(/\/\*[\s\S]*?\*\//g, "");
+  const RULES = [...STYLES.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    selectors: (m[1] ?? "").split(",").map((sel) => sel.trim()),
+    body: m[2] ?? "",
+  }));
+
+  /** True when `sel` is a valid selector matching `el` (keyframe stops like `50%` are not selectors). */
+  function selectorMatches(el: Element, sel: string): boolean {
+    try {
+      return el.matches(sel);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The declarations of every plain (non-pseudo) rule that matches `el`, in source order. */
+  function declarationsFor(el: Element): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const rule of RULES) {
+      if (!rule.selectors.some((sel) => !sel.includes(":") && selectorMatches(el, sel))) {
+        continue;
+      }
+      for (const decl of rule.body.split(";")) {
+        const i = decl.indexOf(":");
+        if (i > 0) out.set(decl.slice(0, i).trim(), decl.slice(i + 1).trim());
+      }
+    }
+    return out;
+  }
 
   it("separates the Folder path label from its input by --ccc-space-sm", () => {
-    const style = document.createElement("style");
-    style.textContent = STYLES;
-    document.head.appendChild(style);
-    try {
-      render(
-        <RegisterFlow
-          actions={noopActions()}
-          pickFolder={() => Promise.resolve({ kind: "unavailable" })}
-          onRegistered={vi.fn()}
-          onDuplicate={vi.fn()}
-        />,
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
+    render(
+      <RegisterFlow
+        actions={noopActions()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        onRegistered={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
 
-      const input = screen.getByLabelText("Folder path");
-      const form = input.closest("form");
-      expect(form).not.toBeNull();
-      const layout = getComputedStyle(form as HTMLFormElement);
-      expect(layout.display).toBe("flex");
-      expect(layout.flexDirection).toBe("column");
-      expect(layout.getPropertyValue("gap")).toBe("var(--ccc-space-sm)");
-    } finally {
-      style.remove();
-    }
+    const input = screen.getByLabelText("Folder path");
+    const form = input.closest("form");
+    expect(form).not.toBeNull();
+    // The label and input are siblings directly inside this form.
+    expect(screen.getByText("Folder path").parentElement).toBe(form);
+    const layout = declarationsFor(form as HTMLFormElement);
+    expect(layout.get("display")).toBe("flex");
+    expect(layout.get("flex-direction")).toBe("column");
+    expect(layout.get("gap")).toBe("var(--ccc-space-sm)");
   });
 });
 
