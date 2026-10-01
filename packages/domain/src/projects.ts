@@ -433,10 +433,18 @@ export type SuggestionActionRequest = z.infer<typeof SuggestionActionRequestSche
  * How a folder's latest scan in this service session ended (plan 04-13):
  * `partial` when an entry or time cap stopped it or a subfolder could not be
  * read, `failed` when the folder is gone or was replaced, `access-denied`
- * when macOS refused to list it (PR-10). Absent until the folder is scanned
- * after a service start — suggestions live in memory only (D-07).
+ * when macOS refused to list it (PR-10), `refused` when the folder no longer
+ * passes the scan-folder policy (a managed vault was set up inside it or
+ * around it since it was added — wave-6 review). Absent until the folder is
+ * scanned after a service start — suggestions live in memory only (D-07).
  */
-export const ScanStatusSchema = z.enum(["complete", "partial", "failed", "access-denied"]);
+export const ScanStatusSchema = z.enum([
+  "complete",
+  "partial",
+  "failed",
+  "access-denied",
+  "refused",
+]);
 export type ScanStatus = z.infer<typeof ScanStatusSchema>;
 
 /** A scan root as the plugin sees it: home-abbreviated display path only. */

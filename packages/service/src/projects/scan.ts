@@ -51,8 +51,16 @@ import { validateAgainstSettledPolicy } from "./settled-policy.js";
  *   addressed by its ScanRootId; no request names a path after the add,
  *   and the add itself passes the registration policy (PR-06).
  * - **On request only.** A walk runs when a folder is added and on Rescan
- *   folder. This module creates no watcher, no interval and no timer — a
- *   test spies on all four — so nothing is ever scanned in the background.
+ *   folder. This module creates no watcher and no interval; its only timer
+ *   is the per-operation deadline below, cleared before the request answers
+ *   (a test spies on all of them), so nothing is ever scanned in the
+ *   background.
+ * - **Still allowed on rescan.** Rescan judges the stored folder against
+ *   the scan-folder policy as it stands NOW, exactly as Add did: a managed
+ *   vault set up inside or around it since (vault setup does not consult
+ *   scan folders — keeping the vault inside a scanned tree is the owner's
+ *   call) makes every rescan answer the same constant refusal, list nothing,
+ *   and leave the folder `refused` with no suggestions.
  * - **Never out of the root.** Symlinked entries are never followed (a
  *   `Dirent` that is a link is not a directory), and every directory that is
  *   followed must have a realpath strictly inside the scan root's realpath
@@ -63,6 +71,10 @@ import { validateAgainstSettledPolicy } from "./settled-policy.js";
  *   itself must still realpath to the stored path, or the walk reads nothing.
  *   Registering a suggestion runs the containment check again, after the
  *   full registration policy.
+ * - **Never into the vault.** The walk resolves the managed vault root and
+ *   neither lists it nor anything below it, and never suggests a Git folder
+ *   holding it (a vault set up while a walk runs); the listed state drops
+ *   any remembered suggestion that is or holds the vault.
  * - **Never into what the owner did not choose.** Hidden folders,
  *   `node_modules`, names with control characters and protected locations
  *   (Documents, CloudStorage, …) below a root that is not itself in one are
@@ -72,10 +84,13 @@ import { validateAgainstSettledPolicy } from "./settled-policy.js";
  *   candidate and is not descended into; the walk stops at the configured
  *   depth (1..3), after {@link SCAN_ENTRY_CAP} entries or after
  *   {@link SCAN_TIME_CAP_MS}, and then answers what it found, partial
- *   (T-04-13). The clock is read between steps, never by a timer, so a single
- *   stalled listing is bounded by the request, not by this module. Every
- *   filesystem call is asynchronous: a listing waiting on macOS never blocks
- *   the service's event loop.
+ *   (T-04-13). The cap holds even for one stalled call: every `readdir` and
+ *   `realpath` races a deadline of the time left (wave-6 review). A stalled
+ *   call below the root ends the walk partial; a stalled call on the root
+ *   itself reads `failed`. The stalled call is abandoned, not cancelled —
+ *   Node cannot cancel it — but the scan answers and the folder's queue
+ *   moves on. Every filesystem call is asynchronous: a listing waiting on
+ *   macOS never blocks the service's event loop.
  * - **Path-free logs.** A scan logs `{ scanRootId, found, partial }` (D-46).
  */
 
@@ -173,6 +188,44 @@ function hasGitEntry(entries: readonly Dirent[]): boolean {
   return entries.some((e) => e.name === ".git" && (e.isDirectory() || e.isFile()));
 }
 
+/** What {@link withDeadline} answers when the deadline passed first. */
+const DEADLINE: unique symbol = Symbol("scan deadline");
+
+/**
+ * `op`'s result, or {@link DEADLINE} once `ms` has passed, whichever comes
+ * first. The timer is cleared either way, so none outlives the call, and a
+ * late rejection of an abandoned `op` is absorbed rather than left unhandled.
+ */
+async function withDeadline<T>(op: Promise<T>, ms: number): Promise<T | typeof DEADLINE> {
+  op.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof DEADLINE>((resolve) => {
+    timer = setTimeout(() => resolve(DEADLINE), Math.max(0, ms));
+  });
+  try {
+    return await Promise.race([op, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** True when `child` is `parent` or lies below it. Both resolved; lexical. */
+function sameOrInside(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+/** True when `folder` is the vault, lies inside it, or holds it. */
+function touchesVault(folder: string, vault: string | null): boolean {
+  return vault !== null && (sameOrInside(folder, vault) || sameOrInside(vault, folder));
+}
+
+/** Policy refusals a rescan answers with the constant refusal; the rest are the walk's to report. */
+const READ_FAILURES: ReadonlySet<string> = new Set(["missing", "not-a-directory", "access-denied"]);
+
 export function createScanService(deps: ScanServiceDeps): ScanService {
   const { store } = deps;
   const log: ScanLogger = deps.log ?? serviceLogger;
@@ -189,17 +242,25 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
 
   async function walk(root: ScanRootRecord): Promise<WalkResult> {
     const startedAt = now();
+    const timeLeft = (): number => timeCapMs - (now() - startedAt);
     let rootReal: string;
     let rootEntries: Dirent[];
     try {
-      rootReal = await fs.realpath(root.path);
+      const resolvedRoot = await withDeadline(fs.realpath(root.path), timeLeft());
       // A root that moved, or was replaced by a symlink, is not followed.
-      if (rootReal !== root.path) return { found: [], status: "failed" };
-      rootEntries = await fs.readdir(rootReal);
+      if (resolvedRoot === DEADLINE || resolvedRoot !== root.path) {
+        return { found: [], status: "failed" };
+      }
+      rootReal = resolvedRoot;
+      const listing = await withDeadline(fs.readdir(rootReal), timeLeft());
+      if (listing === DEADLINE) return { found: [], status: "failed" };
+      rootEntries = listing;
     } catch (err: unknown) {
       return { found: [], status: isAccessError(err) ? "access-denied" : "failed" };
     }
-    const homeDir = deps.readPolicy().homeDir;
+    const policy = deps.readPolicy();
+    const homeDir = policy.homeDir;
+    const vaultReal = await resolveVault(policy.vaultRoot, timeLeft());
     const rootIsProtected = detectProtectedLocation(rootReal, homeDir) !== null;
     const found = new Set<string>();
     let partial = false;
@@ -224,18 +285,31 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
         if (name.startsWith(".") || name === "node_modules" || hasControlCharacter(name)) continue;
         const child = path.join(next.dir, name);
         if (!rootIsProtected && detectProtectedLocation(child, homeDir) !== null) continue;
+        if (vaultReal !== null && sameOrInside(child, vaultReal)) continue;
         let childReal: string;
         let childEntries: Dirent[];
         try {
-          childReal = await fs.realpath(child);
+          const resolvedChild = await withDeadline(fs.realpath(child), timeLeft());
+          if (resolvedChild === DEADLINE) {
+            partial = true;
+            break walking;
+          }
+          childReal = resolvedChild;
           if (!checkPathContainmentResolved(childReal, rootReal).contained) continue;
-          childEntries = await fs.readdir(childReal);
+          if (vaultReal !== null && sameOrInside(childReal, vaultReal)) continue;
+          const listing = await withDeadline(fs.readdir(childReal), timeLeft());
+          if (listing === DEADLINE) {
+            partial = true;
+            break walking;
+          }
+          childEntries = listing;
         } catch {
           partial = true;
           continue;
         }
         if (hasGitEntry(childEntries)) {
-          found.add(childReal);
+          // A repository holding the vault would be refused on Register.
+          if (!touchesVault(childReal, vaultReal)) found.add(childReal);
           continue;
         }
         if (next.level + 1 < root.depth) {
@@ -243,7 +317,50 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
         }
       }
     }
-    return { found: [...found].sort(), status: partial ? "partial" : "complete" };
+    // Vault setup may have landed while the walk ran: judge against it too.
+    const latestVault = deps.readPolicy().vaultRoot;
+    const finalVault =
+      latestVault === policy.vaultRoot ? vaultReal : await resolveVault(latestVault, timeLeft());
+    return {
+      found: [...found].filter((folder) => !touchesVault(folder, finalVault)).sort(),
+      status: partial ? "partial" : "complete",
+    };
+  }
+
+  /** The vault root's realpath (its lexical form when it cannot be resolved in time), or `null`. */
+  async function resolveVault(vaultRoot: string | null, ms: number): Promise<string | null> {
+    if (vaultRoot === null || vaultRoot.length === 0) return null;
+    try {
+      const resolved = await withDeadline(fs.realpath(vaultRoot), ms);
+      return resolved === DEADLINE ? path.resolve(vaultRoot) : resolved;
+    } catch {
+      return path.resolve(vaultRoot);
+    }
+  }
+
+  /**
+   * Whether the stored folder still passes the scan-folder policy (wave-6
+   * review). A folder that is gone, not a folder, or unreadable is not a
+   * policy answer: the walk reports it as `failed` / `access-denied`.
+   */
+  async function stillAllowed(root: ScanRootRecord): Promise<boolean> {
+    try {
+      await validateAgainstSettledPolicy(
+        root.path,
+        deps.readPolicy(),
+        deps.readPolicy,
+        validateScanRootCandidate,
+      );
+      return true;
+    } catch (err: unknown) {
+      if (!(err instanceof ProjectRefusedError)) throw err;
+      if (READ_FAILURES.has(err.reason)) return true;
+      log.warn(
+        { scanRootId: root.scanRootId, reason: err.reason },
+        "scan folder refused on rescan",
+      );
+      return false;
+    }
   }
 
   async function scanOnce(scanRootId: ScanRootId): Promise<void> {
@@ -287,6 +404,9 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
 
   function state(): ScanStateResponse {
     const registered = new Set(listProjects(store.db).map((p) => p.path));
+    // Lexical, so this stays synchronous; Register re-checks with realpaths.
+    const vaultRoot = deps.readPolicy().vaultRoot;
+    const vault = vaultRoot === null || vaultRoot.length === 0 ? null : path.resolve(vaultRoot);
     const scanRoots: ScanRootView[] = [];
     const suggestions: SuggestionView[] = [];
     let partial = false;
@@ -303,6 +423,7 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
       });
       for (const suggestion of remembered?.suggestions ?? []) {
         if (registered.has(suggestion.realPath)) continue;
+        if (touchesVault(suggestion.realPath, vault)) continue;
         suggestions.push({
           suggestionId: suggestion.suggestionId,
           scanRootId: suggestion.scanRootId,
@@ -388,7 +509,15 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
       if (depth !== undefined && !ScanDepthSchema.safeParse(depth).success) {
         return { kind: "invalid" };
       }
-      if (getScanRoot(store.db, scanRootId) === null) return { kind: "unknown" };
+      const root = getScanRoot(store.db, scanRootId);
+      if (root === null) return { kind: "unknown" };
+      if (!(await stillAllowed(root))) {
+        // Constant: the same refusal every time, nothing listed, nothing kept.
+        if (getScanRoot(store.db, scanRootId) !== null) {
+          memory.set(scanRootId, { suggestions: [], status: "refused" });
+        }
+        return { kind: "refused" };
+      }
       if (depth !== undefined) setScanRootDepth(store.db, scanRootId, depth);
       await scan(scanRootId);
       return { kind: "state", state: state() };

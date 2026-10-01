@@ -487,7 +487,7 @@ describe("project management contracts", () => {
       addedAt: "2026-09-01T00:00:00.000Z",
       lastScannedAt: null,
     };
-    for (const scanStatus of ["complete", "partial", "failed", "access-denied"]) {
+    for (const scanStatus of ["complete", "partial", "failed", "access-denied", "refused"]) {
       expect(
         ScanStateResponseSchema.safeParse({
           scanRoots: [{ ...root, scanStatus }],

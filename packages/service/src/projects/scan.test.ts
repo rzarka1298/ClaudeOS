@@ -348,7 +348,7 @@ describe("rescan re-validates the root and the walk skips the vault (wave-6 revi
     expect(await service.rescan(id)).toEqual({ kind: "refused" });
     expect(listed).toEqual([]);
     expect(service.state().suggestions).toEqual([]);
-    expect(service.state().scanRoots[0]?.scanStatus).toBe("failed");
+    expect(service.state().scanRoots[0]?.scanStatus).toBe("refused");
     // Constant: asking again answers the same refusal, still without a listing.
     expect(await service.rescan(id)).toEqual({ kind: "refused" });
     expect(listed).toEqual([]);
