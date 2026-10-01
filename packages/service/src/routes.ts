@@ -27,6 +27,7 @@ import { registeredProjectPaths } from "./projects/approved-roots.js";
 import { launchRoutes } from "./projects/launch-routes.js";
 import { launcherRoutes } from "./projects/launcher-routes.js";
 import { projectRoutes } from "./projects/project-routes.js";
+import { scanRoutes } from "./projects/scan-routes.js";
 import { readJsonBody } from "./request-body.js";
 import {
   type Handler,
@@ -278,6 +279,7 @@ const routeTable: Record<string, Record<string, Handler>> = {
   ...projectRoutes,
   ...launchRoutes,
   ...launcherRoutes,
+  ...scanRoutes,
 };
 
 /**

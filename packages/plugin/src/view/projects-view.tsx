@@ -2,7 +2,7 @@ import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
-import type { ProjectsActions } from "../projects/projects-actions.js";
+import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import {
   projectRowsFrom,
   projectsReceivedAt,
@@ -21,6 +21,8 @@ import { RegisterFlow } from "./register-flow.js";
  */
 export interface ProjectsViewProps {
   readonly actions: ProjectsActions;
+  /** Scan folders and suggestions (S5, plan 04-13); absent in a partial composition. */
+  readonly scanActions?: ScanActions | undefined;
   readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
   readonly connection: ConnectionState;
   readonly now: number;

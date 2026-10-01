@@ -1,4 +1,4 @@
-import type { ProjectId, ProtectedLocation } from "@ccc/domain";
+import type { ProjectId, ProtectedLocation, ScanRootId, ScanStateResponse } from "@ccc/domain";
 import {
   ProjectsRequestError,
   pinProject,
@@ -139,5 +139,34 @@ export function createProjectsActions(client: SocketApiClient): ProjectsActions 
         return classifyFailure(error);
       }
     },
+  };
+}
+
+/** RED stub (plan 04-13 Task 1). */
+export type ScanActionOutcome =
+  | { readonly kind: "state"; readonly state: ScanStateResponse }
+  | Extract<
+      ProjectActionOutcome,
+      { kind: "refused" | "invalid" | "service-disconnected" | "failed" }
+    >;
+
+export interface ScanActions {
+  addScanRoot(path: string, acknowledgeProtectedLocation?: boolean): Promise<ScanActionOutcome>;
+  removeScanRoot(scanRootId: ScanRootId): Promise<ScanActionOutcome>;
+  rescan(scanRootId: ScanRootId, depth?: number): Promise<ScanActionOutcome>;
+  listScanState(): Promise<ScanActionOutcome>;
+  registerSuggestion(suggestionId: string): Promise<ProjectActionOutcome>;
+  dismissSuggestion(suggestionId: string): Promise<ProjectActionOutcome>;
+}
+
+export function createScanActions(_client: SocketApiClient): ScanActions {
+  const failed = () => Promise.resolve({ kind: "failed" as const });
+  return {
+    addScanRoot: failed,
+    removeScanRoot: failed,
+    rescan: failed,
+    listScanState: failed,
+    registerSuggestion: failed,
+    dismissSuggestion: failed,
   };
 }

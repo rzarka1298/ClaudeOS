@@ -1,8 +1,19 @@
-import { newProjectId, type RegisterProjectResponse } from "@ccc/domain";
+import {
+  newProjectId,
+  newScanRootId,
+  type RegisterProjectResponse,
+  SCAN_ROOTS_ADD_PATH,
+  SCAN_ROOTS_LIST_PATH,
+  SCAN_ROOTS_REMOVE_PATH,
+  SCAN_ROOTS_RESCAN_PATH,
+  type ScanStateResponse,
+  SUGGESTION_DISMISS_PATH,
+  SUGGESTION_REGISTER_PATH,
+} from "@ccc/domain";
 import type { SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
 import { ProjectsRequestError, SocketUnreachableError } from "@ccc/service-api-client";
 import { describe, expect, it } from "vitest";
-import { createProjectsActions } from "./projects-actions.js";
+import { createProjectsActions, createScanActions } from "./projects-actions.js";
 
 /**
  * `createProjectsActions` (Task 1): the ONE seam through which
@@ -165,5 +176,99 @@ describe("createProjectsActions (Task 1)", () => {
     const actions = createProjectsActions(client);
 
     await expect(actions.remove(PROJECT_ID)).resolves.toEqual({ kind: "refused" });
+  });
+});
+
+const SCAN_ROOT_ID = newScanRootId();
+const SCAN_STATE: ScanStateResponse = {
+  scanRoots: [
+    {
+      scanRootId: SCAN_ROOT_ID,
+      displayPath: "~/code",
+      depth: 1,
+      addedAt: "2026-09-30T00:00:00.000Z",
+      lastScannedAt: "2026-09-30T00:00:01.000Z",
+    },
+  ],
+  suggestions: [
+    {
+      suggestionId: "abc123",
+      scanRootId: SCAN_ROOT_ID,
+      folderName: "example-project",
+      displayPath: "~/code/example-project",
+    },
+  ],
+  partial: false,
+};
+
+describe("createScanActions (plan 04-13 Task 1)", () => {
+  it("addScanRoot: resolves the scan state and posts exactly the path", async () => {
+    const { client, requests } = fakeClient({ status: 200, body: SCAN_STATE });
+    const outcome = await createScanActions(client).addScanRoot("/Users/USERNAME/code");
+    expect(outcome).toEqual({ kind: "state", state: SCAN_STATE });
+    expect(requests).toEqual([
+      { method: "POST", path: SCAN_ROOTS_ADD_PATH, body: { path: "/Users/USERNAME/code" } },
+    ]);
+  });
+
+  it("addScanRoot: forwards acknowledgeProtectedLocation only when given", async () => {
+    const { client, requests } = fakeClient({ status: 200, body: SCAN_STATE });
+    await createScanActions(client).addScanRoot("/Users/USERNAME/Documents/code", true);
+    expect(requests[0]?.body).toEqual({
+      path: "/Users/USERNAME/Documents/code",
+      acknowledgeProtectedLocation: true,
+    });
+  });
+
+  it("rescan, removeScanRoot and listScanState address the scan folder by ID only", async () => {
+    const { client, requests } = fakeClient({ status: 200, body: SCAN_STATE });
+    const actions = createScanActions(client);
+    expect(await actions.rescan(SCAN_ROOT_ID, 2)).toEqual({ kind: "state", state: SCAN_STATE });
+    expect(await actions.removeScanRoot(SCAN_ROOT_ID)).toEqual({
+      kind: "state",
+      state: SCAN_STATE,
+    });
+    expect(await actions.listScanState()).toEqual({ kind: "state", state: SCAN_STATE });
+    expect(requests).toEqual([
+      {
+        method: "POST",
+        path: SCAN_ROOTS_RESCAN_PATH,
+        body: { scanRootId: SCAN_ROOT_ID, depth: 2 },
+      },
+      { method: "POST", path: SCAN_ROOTS_REMOVE_PATH, body: { scanRootId: SCAN_ROOT_ID } },
+      { method: "POST", path: SCAN_ROOTS_LIST_PATH, body: {} },
+    ]);
+  });
+
+  it("registerSuggestion resolves registered and dismissSuggestion resolves ok, by suggestionId only", async () => {
+    const registered: RegisterProjectResponse = { kind: "registered", projectId: PROJECT_ID };
+    const reg = fakeClient({ status: 200, body: registered });
+    expect(await createScanActions(reg.client).registerSuggestion("abc123")).toEqual(registered);
+    expect(reg.requests).toEqual([
+      { method: "POST", path: SUGGESTION_REGISTER_PATH, body: { suggestionId: "abc123" } },
+    ]);
+    const dis = fakeClient({ status: 200, body: { ok: true } });
+    expect(await createScanActions(dis.client).dismissSuggestion("abc123")).toEqual({ kind: "ok" });
+    expect(dis.requests[0]?.path).toBe(SUGGESTION_DISMISS_PATH);
+  });
+
+  it("never rejects: 422 refused, 400 invalid, unreachable service-disconnected, anything else failed", async () => {
+    const refused = createScanActions(
+      fakeClient({ status: 422, body: { error: "folder cannot be scanned" } }).client,
+    );
+    expect(await refused.addScanRoot("/Users/USERNAME/code")).toEqual({ kind: "refused" });
+    expect(await refused.registerSuggestion("abc123")).toEqual({ kind: "refused" });
+    const invalid = createScanActions(
+      fakeClient({ status: 400, body: { error: "invalid request body" } }).client,
+    );
+    expect(await invalid.rescan(SCAN_ROOT_ID)).toEqual({ kind: "invalid" });
+    const cause = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+    const down = createScanActions(
+      throwingClient(new SocketUnreachableError("/tmp/ccc.sock", cause)),
+    );
+    expect(await down.listScanState()).toEqual({ kind: "service-disconnected" });
+    expect(await down.dismissSuggestion("abc123")).toEqual({ kind: "service-disconnected" });
+    const broken = createScanActions(throwingClient(new Error("boom")));
+    expect(await broken.removeScanRoot(SCAN_ROOT_ID)).toEqual({ kind: "failed" });
   });
 });

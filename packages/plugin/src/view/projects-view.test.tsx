@@ -1,13 +1,20 @@
 import {
   EMPTY_PROJECTS_SNAPSHOT,
   newProjectId,
+  newScanRootId,
   type ProjectId,
   type ProjectView,
 } from "@ccc/domain";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ProjectActionOutcome, ProjectsActions } from "../projects/projects-actions.js";
+import type {
+  ProjectActionOutcome,
+  ProjectsActions,
+  ScanActionOutcome,
+  ScanActions,
+} from "../projects/projects-actions.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
+import { applyScanState, resetScanState, scanState } from "../projects/scan-state.js";
 import { ProjectsView } from "./projects-view.js";
 
 /**
@@ -46,6 +53,7 @@ function view(overrides: Partial<ProjectView> & { projectId: ProjectId }): Proje
 afterEach(() => {
   cleanup();
   resetProjectsState();
+  resetScanState();
 });
 
 describe("ProjectsView (Task 1)", () => {
@@ -410,4 +418,103 @@ describe("ProjectsView pin reorder keeps keyboard focus (UI-SPEC S2/S3, codex fi
       );
     },
   );
+});
+
+function scanActionsWith(overrides: Partial<ScanActions> = {}): ScanActions {
+  const failed = (): Promise<ScanActionOutcome> => Promise.resolve({ kind: "failed" });
+  return {
+    addScanRoot: failed,
+    removeScanRoot: failed,
+    rescan: failed,
+    listScanState: failed,
+    registerSuggestion: () => Promise.resolve({ kind: "failed" }),
+    dismissSuggestion: () => Promise.resolve({ kind: "failed" }),
+    ...overrides,
+  };
+}
+
+describe("ProjectsView scan folders and suggestions (plan 04-13 Task 1)", () => {
+  const scanRootId = newScanRootId();
+  const scanStateWithOne = {
+    scanRoots: [
+      {
+        scanRootId,
+        displayPath: "~/code",
+        depth: 1,
+        addedAt: "2026-09-30T00:00:00.000Z",
+        lastScannedAt: "2026-09-30T00:00:01.000Z",
+      },
+    ],
+    suggestions: [
+      {
+        suggestionId: "abc123",
+        scanRootId,
+        folderName: "example-project",
+        displayPath: "~/code/example-project",
+      },
+    ],
+    partial: false,
+  };
+
+  it("loads the scan state once on mount and shows the suggestion under Suggestions", async () => {
+    projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
+    const listScanState = vi
+      .fn<ScanActions["listScanState"]>()
+      .mockResolvedValue({ kind: "state", state: scanStateWithOne });
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        scanActions={scanActionsWith({ listScanState })}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+    expect(await screen.findByRole("heading", { level: 3, name: "Suggestions" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: "Scan folders" })).toBeTruthy();
+    expect(screen.getByText("example-project")).toBeTruthy();
+    expect(listScanState).toHaveBeenCalledTimes(1);
+    expect(scanState.value).toEqual(scanStateWithOne);
+  });
+
+  it("Register calls registerSuggestion with the suggestion's ID", async () => {
+    projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
+    applyScanState(scanStateWithOne);
+    const registerSuggestion = vi
+      .fn<ScanActions["registerSuggestion"]>()
+      .mockResolvedValue({ kind: "registered", projectId: newProjectId() });
+    const listScanState = vi
+      .fn<ScanActions["listScanState"]>()
+      .mockResolvedValue({ kind: "state", state: scanStateWithOne });
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        scanActions={scanActionsWith({ registerSuggestion, listScanState })}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Register example-project" }));
+    expect(registerSuggestion).toHaveBeenCalledWith("abc123");
+  });
+
+  it("the toolbar offers Add a scan folder, which opens the picker with the S5 title", async () => {
+    projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
+    const pickFolder = vi.fn().mockResolvedValue({ kind: "cancelled" });
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        scanActions={scanActionsWith()}
+        pickFolder={pickFolder}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add a scan folder" }));
+    expect(pickFolder).toHaveBeenCalledWith({
+      title: "Choose a folder to scan",
+      buttonLabel: "Add scan folder",
+    });
+  });
 });

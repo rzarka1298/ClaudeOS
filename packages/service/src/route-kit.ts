@@ -6,6 +6,7 @@ import type { EventBus } from "./events/event-bus.js";
 import type { LaunchService } from "./projects/launch-service.js";
 import type { LauncherServices } from "./projects/launcher-routes.js";
 import type { ProjectServices } from "./projects/project-routes.js";
+import type { ScanService } from "./projects/scan.js";
 
 /**
  * The shared route toolkit: the handler type, the request context, the JSON
@@ -38,6 +39,8 @@ export interface RouteContext {
   readonly launch?: LaunchService | undefined;
   /** Detection, launcher setup, Test launches and the System Settings panes; plan 04-11. */
   readonly launchers?: LauncherServices | undefined;
+  /** Scan folders and their in-memory suggestions (PROJ-02, PROJ-03, D-07); plan 04-13. */
+  readonly scan?: ScanService | undefined;
 }
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;
