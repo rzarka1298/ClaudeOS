@@ -310,3 +310,49 @@ describe("the System Settings panes (RR-16, PR-10, T-04-22)", () => {
     expect(harness.spawner.calls).toHaveLength(0);
   });
 });
+
+describe("one deadline covers preparing and launching a Test (codex review 3, finding 5)", () => {
+  /** An executable check that answers only after `ms` (an unmounted volume, a privacy prompt). */
+  function slowCheck(ms: number): (path: string) => Promise<boolean> {
+    return () => new Promise((resolve) => setTimeout(() => resolve(true), ms));
+  }
+
+  it("a stalled executable check times out at the cap, and nothing is spawned when it finishes", async () => {
+    saveClaudeCode({ kind: "terminal-app" });
+
+    const started = Date.now();
+    const result = await testLaunch(
+      "claude-code",
+      deps({ capMs: 40, automationCapMs: 600, isExecutable: slowCheck(300) }),
+    );
+
+    expect(result).toEqual({ ok: false, error: "timeout" });
+    expect(Date.now() - started).toBeLessThan(250);
+    // The check finishes after the Test already answered: still no launch.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(spawner.calls).toHaveLength(0);
+    expect(spawner.detached).toHaveLength(0);
+  });
+
+  it("a check slower than the cap never launches, even for the Automation-capped terminal", async () => {
+    saveClaudeCode(ITERM2_TERMINAL);
+    const result = await testLaunch(
+      "claude-code",
+      deps({ capMs: 40, automationCapMs: 100, isExecutable: slowCheck(300) }),
+    );
+    // A stall before anything ran is a timeout, not an unanswered prompt.
+    expect(result).toEqual({ ok: false, error: "timeout" });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("a check inside the cap still launches", async () => {
+    saveClaudeCode({ kind: "terminal-app" });
+    const result = await testLaunch(
+      "claude-code",
+      deps({ capMs: 400, automationCapMs: 600, isExecutable: slowCheck(20) }),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(spawner.calls).toHaveLength(1);
+  });
+});
