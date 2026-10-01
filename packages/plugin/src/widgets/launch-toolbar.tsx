@@ -48,6 +48,21 @@ const LAUNCH_BUTTONS: readonly LaunchButtonSpec[] = [
   { action: "github", label: "GitHub", ariaLabel: (p) => `Open ${p} on GitHub` },
 ];
 
+/**
+ * The full-phrase accessible name of one project action — also the S9
+ * quick-switcher's item text, so a screen-reader user, a keyboard user and a
+ * switcher user all meet one vocabulary (UI-SPEC "Launch button labels",
+ * RR-02).
+ */
+export function launchPhrase(action: LaunchAction, projectName: string): string {
+  const spec = LAUNCH_BUTTONS.find((candidate) => candidate.action === action);
+  // `claude-desktop` has no project: its visible label is the full phrase (S8).
+  return spec === undefined ? CLAUDE_DESKTOP_PHRASE : spec.ariaLabel(projectName);
+}
+
+/** S8's and S9's text for the one launch with no project. */
+export const CLAUDE_DESKTOP_PHRASE = "Open Claude Desktop";
+
 /** The four project actions a row's single status line reports on. */
 export const PROJECT_LAUNCH_ACTIONS: readonly LaunchAction[] = LAUNCH_BUTTONS.map(
   (spec) => spec.action,

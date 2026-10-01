@@ -1,7 +1,7 @@
 import type { ProjectId, ProjectsSnapshot, ProjectView } from "@ccc/domain";
 import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
 import type { App } from "obsidian";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import { resetLaunchStatus } from "../projects/launch-status.js";
 import type { SuggestModal as StubSuggestModal } from "../test-support/obsidian-stub.js";
 import { dispatchQuickAction } from "../widgets/quick-actions.js";
@@ -68,14 +68,31 @@ const TWO_PROJECTS: ProjectsSnapshot = {
 
 const DESTINATION_TEXTS = DESTINATIONS.map((d) => `Go to ${d.label}`);
 
-function host(overrides: Partial<SwitcherHost> = {}): SwitcherHost {
+/** The host's spies, kept as plain functions so assertions never unbind a method. */
+interface HostSpies {
+  readonly notify: Mock<SwitcherHost["notify"]>;
+  readonly goTo: Mock<SwitcherHost["goTo"]>;
+  readonly requestLaunch: Mock<SwitcherHost["requestLaunch"]>;
+  readonly openSwitcher: Mock<SwitcherHost["openSwitcher"]>;
+}
+
+function spies(): HostSpies {
+  return {
+    notify: vi.fn<SwitcherHost["notify"]>(),
+    goTo: vi.fn<SwitcherHost["goTo"]>(),
+    requestLaunch: vi.fn<SwitcherHost["requestLaunch"]>(),
+    openSwitcher: vi.fn<SwitcherHost["openSwitcher"]>(),
+  };
+}
+
+function host(overrides: Partial<SwitcherHost> = {}, s: HostSpies = spies()): SwitcherHost {
   return {
     snapshot: () => TWO_PROJECTS,
     connection: () => ({ kind: "live" }),
-    notify: vi.fn(),
-    goTo: vi.fn(),
-    requestLaunch: vi.fn(),
-    openSwitcher: vi.fn(),
+    notify: s.notify,
+    goTo: s.goTo,
+    requestLaunch: s.requestLaunch,
+    openSwitcher: s.openSwitcher,
     ...overrides,
   };
 }
@@ -224,8 +241,8 @@ describe("ProjectSwitcherModal (S9 copy)", () => {
 
 describe("choosing an item (tracer: search, choose Reveal {project} in Finder, it launches)", () => {
   it("hands the descriptor to dispatchQuickAction, which requests exactly one launch, and acknowledges", () => {
-    const h = host();
-    const modal = new ProjectSwitcherModal({} as App, h);
+    const h = spies();
+    const modal = new ProjectSwitcherModal({} as App, host({}, h));
     const reveal = itemNamed(modal.getItems(), "Reveal example-project in Finder");
 
     modal.onChooseItem(reveal, new KeyboardEvent("keydown", { key: "Enter" }));
@@ -243,8 +260,8 @@ describe("choosing an item (tracer: search, choose Reveal {project} in Finder, i
   });
 
   it("Open Claude Desktop requests the project-less launch through the dispatcher", () => {
-    const h = host();
-    const modal = new ProjectSwitcherModal({} as App, h);
+    const h = spies();
+    const modal = new ProjectSwitcherModal({} as App, host({}, h));
     modal.onChooseItem(
       itemNamed(modal.getItems(), "Open Claude Desktop"),
       new KeyboardEvent("keydown"),

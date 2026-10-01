@@ -4,10 +4,15 @@ import {
   createAuthenticatedClient,
   createEventClient,
   createSocketApiClient,
+  refreshProjects,
 } from "@ccc/service-api-client";
-import { Plugin, type WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
+import { connectionState } from "./connection-state.js";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference } from "./motion.js";
+import { createLaunchRequester, windowLaunchTimers } from "./projects/launch-client.js";
+import { projectsSnapshot } from "./projects/projects-state.js";
+import { refreshProjectsOnConnect } from "./service-connection.js";
 import {
   assertNoCredentialFields,
   assertNoPrivatePathValues,
@@ -17,6 +22,12 @@ import {
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
+import {
+  createSwitcherOpener,
+  ProjectSwitcherModal,
+  registerSwitcherCommand,
+  type SwitcherHost,
+} from "./view/quick-switcher.js";
 import { CommandCenterSettingTab } from "./view/settings-tab.js";
 import { startClock } from "./widgets/clock.js";
 import { createAdapterLayoutSource, startLayoutPolling } from "./widgets/layout-source.js";
@@ -41,6 +52,12 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
   settings: CommandCenterSettings = DEFAULT_SETTINGS;
   client!: AuthenticatedSocketApiClient;
   eventClient!: EventClient;
+  /**
+   * Opens the S9 quick-switcher with a query (PROJ-16). Every way in — the
+   * palette command, the view's `Mod+K`, S8's `Start a Claude Code session`
+   * — calls this one function, which attaches the event client first.
+   */
+  openSwitcher: (prefill: string) => void = () => {};
   private hostRegistry!: HostRegistry;
 
   async onload(): Promise<void> {
@@ -129,6 +146,71 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     // never reaches the filesystem for this: it hands the service a path
     // and renders the plan the service sends back.
     registerVaultSetupCommand(this.hostRegistry, createObsidianVaultSetupUi(this.app), this.client);
+
+    // The quick-switcher (PROJ-16, D-31 – D-34), from the palette with no
+    // default hotkey (D-33). Opening it attaches the event client lazily, so
+    // it lists the last-good projects even before the view was opened.
+    const switcherHost = this.createSwitcherHost();
+    this.openSwitcher = createSwitcherOpener({
+      eventClient: this.eventClient,
+      onLive: refreshProjectsOnConnect(() => refreshProjects(this.client)),
+      show: (prefill) => new ProjectSwitcherModal(this.app, switcherHost).openWith(prefill),
+    });
+    registerSwitcherCommand(this.hostRegistry, this.openSwitcher);
+  }
+
+  /**
+   * The quick-switcher's reach (S9). Its launches go through their own
+   * requester — the switcher works with no command-center view open — whose
+   * pending 5 s deadlines and 6 s success clears are released on unload
+   * through the seam, after which a late answer is dropped (PLUG-03).
+   */
+  private createSwitcherHost(): SwitcherHost {
+    const notify = (message: string): void => {
+      new Notice(message);
+    };
+    const timers = windowLaunchTimers();
+    const pending = new Set<number>();
+    let unloaded = false;
+    this.hostRegistry.registerRaw("launchTimers", () => {
+      unloaded = true;
+      for (const id of pending) timers.clearTimer(id);
+      pending.clear();
+    });
+    const terminalLabel = (): string =>
+      projectsSnapshot.value?.launchers["claude-code"].terminalLabel ?? "Terminal";
+    const requestLaunch = createLaunchRequester({
+      client: this.client,
+      notify,
+      connection: () => connectionState.value,
+      projectName: (projectId) =>
+        projectsSnapshot.value?.projects.find((view) => view.projectId === projectId)
+          ?.displayName ?? null,
+      terminalLabel,
+      isDisposed: () => unloaded,
+      setTimer: (callback, ms) => {
+        const id = timers.setTimer(() => {
+          pending.delete(id);
+          callback();
+        }, ms);
+        pending.add(id);
+        return id;
+      },
+      clearTimer: (id) => {
+        pending.delete(id);
+        timers.clearTimer(id);
+      },
+    });
+    return {
+      snapshot: () => projectsSnapshot.value,
+      connection: () => connectionState.value,
+      notify,
+      goTo: () => {
+        void this.revealView();
+      },
+      requestLaunch,
+      openSwitcher: (prefill) => this.openSwitcher(prefill),
+    };
   }
 
   /**

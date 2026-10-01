@@ -94,6 +94,9 @@ const KNOWN_KINDS = [
   "command",
   "settingTab",
   "eventStream",
+  // The quick-switcher's launch requester (plan 04-14): its pending
+  // `window.setTimeout` deadlines, cleared on unload like the view's own.
+  "launchTimers",
 ] as const;
 type KnownKind = (typeof KNOWN_KINDS)[number];
 

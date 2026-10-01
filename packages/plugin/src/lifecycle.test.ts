@@ -38,8 +38,10 @@ const NOOP_CLIENT: SocketApiClient = {
 };
 
 /** An event client that records subscriptions and never connects. */
-function recordingEventClient(): EventClient & { subscribe: Mock<EventClient["subscribe"]> } {
-  return { subscribe: vi.fn<EventClient["subscribe"]>(), dispose: vi.fn() };
+function recordingEventClient(
+  subscribe: Mock<EventClient["subscribe"]> = vi.fn<EventClient["subscribe"]>(),
+): EventClient {
+  return { subscribe, dispose: vi.fn() };
 }
 
 /** The quick-switcher's opener with inert parts: this suite counts registrations. */
@@ -237,19 +239,20 @@ describe("the Search projects and actions command (plan 04-14, D-33, D-34)", () 
   it("attaches the event client only when run, then opens the switcher with an empty query", () => {
     const host = new CommandCapturingHost();
     const registry = createHostRegistry(host);
-    const eventClient = recordingEventClient();
+    const subscribe = vi.fn<EventClient["subscribe"]>();
+    const eventClient = recordingEventClient(subscribe);
     const show = vi.fn();
     registerSwitcherCommand(registry, createSwitcherOpener({ eventClient, show }));
 
     // Lazy: loading the plugin subscribes nothing (PR-09).
-    expect(eventClient.subscribe).not.toHaveBeenCalled();
+    expect(subscribe).not.toHaveBeenCalled();
 
     registered(host, SWITCHER_COMMAND_ID).callback();
-    expect(eventClient.subscribe).toHaveBeenCalledTimes(1);
+    expect(subscribe).toHaveBeenCalledTimes(1);
     expect(show).toHaveBeenCalledWith("");
     // Each run re-points the same client (attachEventClient is idempotent).
     registered(host, SWITCHER_COMMAND_ID).callback();
-    expect(eventClient.subscribe).toHaveBeenCalledTimes(2);
+    expect(subscribe).toHaveBeenCalledTimes(2);
     expect(show).toHaveBeenCalledTimes(2);
 
     registry.disposeAll();

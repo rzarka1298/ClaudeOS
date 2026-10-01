@@ -230,11 +230,11 @@ export class SuggestModal<T> extends Modal {
   limit = 100;
   emptyStateText = "No matches found";
   /**
-   * A real (jsdom) input, so a prefill that sets `value` and dispatches an
-   * `input` event — the way Obsidian's own modal re-runs its search — is
-   * observable under test (plan 04-14).
+   * A value plus a real `EventTarget`, so a prefill that sets `value` and
+   * dispatches an `input` event — the way Obsidian's own modal re-runs its
+   * search — is observable under test (plan 04-14).
    */
-  inputEl: HTMLInputElement = document.createElement("input");
+  inputEl: EventTarget & { value: string } = Object.assign(new EventTarget(), { value: "" });
   resultContainerEl: StubElement = createStubElement();
   /** Recorded, not rendered: what `setPlaceholder` and `setInstructions` were given. */
   placeholder = "";
