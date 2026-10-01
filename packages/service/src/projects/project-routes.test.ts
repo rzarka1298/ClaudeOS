@@ -80,6 +80,7 @@ const { assertPathAllowed, clearApprovedRoots, PathNotAllowedError } = await imp
 const { createRequestListener } = await import("../routes.js");
 const { startSocketServer } = await import("../socket-server.js");
 const { buildProjectView, launchersSummary } = await import("./project-views.js");
+const { defaultDisplayName } = await import("./project-routes.js");
 type ProjectServices = import("./project-routes.js").ProjectServices;
 
 afterAll(() => {
@@ -394,6 +395,44 @@ describe("registration policy at the route (D-04, PR-06)", () => {
     );
     expect(info.mock.calls.length).toBeGreaterThan(0);
     expect(acceptedFields.filter(([, value]) => JSON.stringify(value)?.includes(dir))).toEqual([]);
+  });
+});
+
+describe("default display names never repeat an existing project's name (judge ruling)", () => {
+  it("the folder's name when nothing else carries it", () => {
+    expect(defaultDisplayName("/Users/USERNAME/code/demo-api", new Set(["example-project"]))).toBe(
+      "demo-api",
+    );
+  });
+
+  it("adds (2), (3), … skipping any suffixed name already taken", () => {
+    expect(defaultDisplayName("/Users/USERNAME/a/demo-api", new Set(["demo-api"]))).toBe(
+      "demo-api (2)",
+    );
+    expect(
+      defaultDisplayName("/Users/USERNAME/a/demo-api", new Set(["demo-api", "demo-api (2)"])),
+    ).toBe("demo-api (3)");
+  });
+
+  it("keeps a suffixed name within the 64-character limit", () => {
+    const long = "x".repeat(64);
+    const name = defaultDisplayName(`/Users/USERNAME/a/${long}`, new Set([long]));
+    expect(name.length).toBeLessThanOrEqual(64);
+    expect(name.endsWith(" (2)")).toBe(true);
+  });
+
+  it("three folders with one name register as name, name (2), name (3) in registration order", async () => {
+    const ids: ProjectId[] = [];
+    for (const parent of ["one", "two", "three"]) {
+      const folder = join(dir, parent, "sample-notes");
+      mkdirSync(folder, { recursive: true });
+      ids.push(await registerId(folder));
+    }
+    expect(ids.map((id) => getProject(store.db, id)?.displayName)).toEqual([
+      "sample-notes",
+      "sample-notes (2)",
+      "sample-notes (3)",
+    ]);
   });
 });
 

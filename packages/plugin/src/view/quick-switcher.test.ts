@@ -205,6 +205,86 @@ describe("buildSwitcherItems: one flat list in the D-32 empty-query order", () =
   });
 });
 
+describe("projects that share a display name (judge ruling)", () => {
+  const FIRST = "abcdefghi0123456789abcdef0123411" as ProjectId;
+  const SECOND = "abcdefghi0123456789abcdef0123412" as ProjectId;
+  const THIRD = "abcdefghi0123456789abcdef0123413" as ProjectId;
+  const RENAMED = "abcdefghi0123456789abcdef0123414" as ProjectId;
+
+  function snapshotOf(projects: ProjectView[]): ProjectsSnapshot {
+    return { ...TWO_PROJECTS, projects };
+  }
+
+  function goToTarget(items: readonly SwitcherItem[], projectId: ProjectId): string {
+    const found = items.find((item) => item.kind === "project" && item.projectId === projectId);
+    if (found === undefined) throw new Error("no Go to item");
+    return found.text;
+  }
+
+  it("gives each colliding project an ordinal by ProjectId, whatever the pin and snapshot order", () => {
+    const items = buildSwitcherItems(
+      snapshotOf([
+        view({ projectId: SECOND, displayName: "demo-api", displayPath: "~/b/demo-api" }),
+        view({ projectId: FIRST, displayName: "demo-api", displayPath: "~/a/demo-api" }),
+        view({
+          projectId: THIRD,
+          displayName: "demo-api",
+          displayPath: "~/c/demo-api",
+          pinned: true,
+        }),
+      ]),
+    );
+    expect(goToTarget(items, FIRST)).toBe("Go to demo-api");
+    expect(goToTarget(items, SECOND)).toBe("Go to demo-api (2)");
+    expect(goToTarget(items, THIRD)).toBe("Go to demo-api (3)");
+    const secondLaunches = items.filter(
+      (item) => item.kind === "launch" && item.projectId === SECOND,
+    );
+    expect(secondLaunches.length).toBe(4);
+    for (const item of secondLaunches) {
+      if (item.kind !== "launch") throw new Error("unreachable");
+      expect(item.projectName).toBe("demo-api (2)");
+      expect(item.text).toContain("demo-api (2)");
+      expect(item.descriptor.label).toContain("demo-api (2)");
+    }
+  });
+
+  it("skips an ordinal another project already carries as its own name", () => {
+    const items = buildSwitcherItems(
+      snapshotOf([
+        view({ projectId: FIRST, displayName: "demo-api" }),
+        view({ projectId: SECOND, displayName: "demo-api" }),
+        view({ projectId: RENAMED, displayName: "demo-api (2)" }),
+      ]),
+    );
+    expect(goToTarget(items, FIRST)).toBe("Go to demo-api");
+    expect(goToTarget(items, SECOND)).toBe("Go to demo-api (3)");
+    expect(goToTarget(items, RENAMED)).toBe("Go to demo-api (2)");
+    const texts = items.map((item) => item.text);
+    expect(new Set(texts).size).toBe(texts.length);
+  });
+
+  it("never adds a path segment to tell them apart (UI-SPEC privacy rule 1)", () => {
+    const items = buildSwitcherItems(
+      snapshotOf([
+        view({ projectId: FIRST, displayName: "demo-api", displayPath: "~/a/demo-api" }),
+        view({ projectId: SECOND, displayName: "demo-api", displayPath: "~/b/demo-api" }),
+      ]),
+    );
+    for (const item of items) {
+      expect(item.text).not.toMatch(/[/~]/);
+      if (item.kind === "launch") expect(item.descriptor.label).not.toMatch(/[/~]/);
+    }
+  });
+
+  it("leaves distinct names untouched", () => {
+    const texts = buildSwitcherItems(TWO_PROJECTS).map((item) => item.text);
+    expect(texts).toContain("Go to demo-api");
+    expect(texts).toContain("Go to example-project");
+    expect(texts.some((text) => / \(\d+\)/.test(text))).toBe(false);
+  });
+});
+
 describe("ProjectSwitcherModal (S9 copy)", () => {
   it("sets the placeholder and the three instructions", () => {
     const modal = recorded(new ProjectSwitcherModal({} as App, host()));
