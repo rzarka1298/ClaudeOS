@@ -2,6 +2,7 @@ import type { Freshness, Partiality, ProjectId } from "@ccc/domain";
 import type { Ref, VNode } from "preact";
 import { useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
+import { LAUNCH_ERROR_COPY } from "../projects/launch-copy.js";
 import type { ProjectsActions } from "../projects/projects-actions.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { WidgetFooter } from "../widgets/footer.js";
@@ -152,10 +153,9 @@ function GitDetail({
         <p className="ccc-state-body">Restore the folder, or remove the project.</p>
       )}
       {git.kind === "folder-access-denied" && (
-        <p className="ccc-state-body">
-          Allow access in System Settings › Privacy & Security › Files & Folders, then try again.
-          Updating Node.js can make macOS ask again.
-        </p>
+        // PR-11: the launch error's own next step, true whether macOS
+        // refused silently or asked first — one string, two surfaces.
+        <p className="ccc-state-body">{LAUNCH_ERROR_COPY["folder-access-denied"].nextStep}</p>
       )}
       {git.kind !== "repo" && (
         <>
