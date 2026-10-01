@@ -27,6 +27,7 @@ import {
   type ProjectId,
   type ProjectMutationResponse,
   ProjectMutationResponseSchema,
+  type RefusedTemplate,
   type RegisterProjectResponse,
   RegisterProjectResponseSchema,
   type RemoveProjectRequest,
@@ -207,7 +208,13 @@ export function getLauncherConfigs(client: SocketApiClient): Promise<LauncherCon
 /** What {@link saveLauncherConfig} resolves to: success, or a structured D-22 refusal (PR-13). */
 export type SaveLauncherConfigResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: TemplateRefusalReason; readonly index: number | null };
+  | {
+      readonly ok: false;
+      readonly reason: TemplateRefusalReason;
+      readonly index: number | null;
+      /** Which Claude Code template `index` counts into, when the service said (plan 04-11). */
+      readonly template?: RefusedTemplate;
+    };
 
 /**
  * `POST /api/v1/launchers/save` — validate and save one launcher's
@@ -235,7 +242,10 @@ export async function saveLauncherConfig(
   if (res.status === 422) {
     const refusal = LauncherConfigRefusalBodySchema.safeParse(res.body);
     if (refusal.success) {
-      return { ok: false, reason: refusal.data.reason, index: refusal.data.index };
+      const { reason, index, template } = refusal.data;
+      return template === undefined
+        ? { ok: false, reason, index }
+        : { ok: false, reason, index, template };
     }
   }
   const parsed = ApiErrorBodySchema.safeParse(res.body);

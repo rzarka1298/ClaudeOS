@@ -28,13 +28,23 @@ import { type LauncherHarness, startLauncherHarness } from "../test-support/laun
 /** Scripted Spotlight + Info.plist answers for the installed apps of this fake Mac. */
 function installed(apps: readonly { path: string; bundleId: string; name: string }[]) {
   const script: ScriptedReply[] = [];
+  // The Antigravity wildcard query (D-27) answers every matching bundle at once.
+  const wildcard = "com.google.antigravity";
+  script.push({
+    match: (file, args) =>
+      file === "/usr/bin/mdfind" && args[0] === `kMDItemCFBundleIdentifier == '${wildcard}*'`,
+    outcome: {
+      exitCode: 0,
+      stdout: apps
+        .filter((app) => app.bundleId.startsWith(wildcard))
+        .map((app) => `${app.path}\n`)
+        .join(""),
+    },
+  });
   for (const app of apps) {
     script.push({
       match: (file, args) =>
-        file === "/usr/bin/mdfind" &&
-        (args[0] === `kMDItemCFBundleIdentifier == '${app.bundleId}'` ||
-          (args[0]?.endsWith("*'") === true &&
-            app.bundleId.startsWith(args[0].slice("kMDItemCFBundleIdentifier == '".length, -2)))),
+        file === "/usr/bin/mdfind" && args[0] === `kMDItemCFBundleIdentifier == '${app.bundleId}'`,
       outcome: { exitCode: 0, stdout: `${app.path}\n` },
     });
     for (const [key, value] of [

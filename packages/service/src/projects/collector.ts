@@ -266,7 +266,13 @@ export function createProjectsCollector(options: ProjectsCollectorOptions): Proj
       publish(syncRecords());
     },
     onLaunchersChanged() {
-      // RED stub (04-11 Task 1).
+      // Always published, even with no project change: the summary is what
+      // the toolbar and the setup callout read (RR-26).
+      options.eventBus.publish("projects.updated", {
+        upserted: [],
+        removed: [],
+        launchers: launchersSummary(options.readLauncherConfigs()),
+      });
     },
     gitState(projectId) {
       return entries.get(projectId)?.git ?? null;

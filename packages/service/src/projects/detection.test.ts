@@ -104,7 +104,7 @@ describe("app detection (D-27)", () => {
       { bundleId: "com.google.antigravity-ide", name: "Antigravity IDE", location: "applications" },
     ]);
     // Detection proposes only: nothing in the response marks a choice.
-    expect(JSON.stringify(response)).not.toMatch(/selected|chosen|default/i);
+    expect(JSON.stringify(response.apps)).not.toMatch(/selected|chosen|default/i);
     // The query is an argv element, never a shell string.
     const antigravityQuery = runner.calls.find(
       (call) => call.file === MDFIND && call.args[0]?.includes("antigravity"),

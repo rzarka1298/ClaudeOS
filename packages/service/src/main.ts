@@ -22,8 +22,10 @@ import {
 import { recomputeApprovedRoots } from "./projects/approved-roots.js";
 import { createProjectsCollector } from "./projects/collector.js";
 import { createExecFileCommandRunner } from "./projects/command-runner.js";
+import { createDetector } from "./projects/detection.js";
 import { createGitRunner, resolveGit } from "./projects/git-runner.js";
 import { createLaunchService } from "./projects/launch-service.js";
+import type { LauncherServices } from "./projects/launcher-routes.js";
 import { createStoreProjectLookup } from "./projects/project-lookup.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 import { resolveHomeDir } from "./projects/project-views.js";
@@ -175,9 +177,10 @@ async function main(): Promise<void> {
   // argv array, a fixed environment, stderr classified and dropped (D-46).
   // The launch service reads the collector's in-memory state only and never
   // waits on git (D-42); Phase 4's guard allows everything (D-49).
+  const spawner = createCommandSpawner(commandRunner);
   const launch = createLaunchService({
     store,
-    spawner: createCommandSpawner(commandRunner),
+    spawner,
     lookup: createStoreProjectLookup(store),
     collector: {
       refresh: (projectId) => projectsCollector.refresh(projectId),
@@ -191,12 +194,26 @@ async function main(): Promise<void> {
     scriptDir,
   });
 
+  // --- Phase 4 (projects and launchers): launcher setup (plan 04-11) -----
+  // Detection runs mdfind/plutil/xcode-select through the same command
+  // runner and only proposes (D-27); saves, Test launches and the System
+  // Settings panes go through the launcher routes. Test launches use the
+  // same spawner and script directory as real launches.
+  const launchers: LauncherServices = {
+    detector: createDetector({ runner: commandRunner, homeDir }),
+    homeDir,
+    onLaunchersChanged: () => projectsCollector.onLaunchersChanged(),
+    spawner,
+    scriptDir,
+  };
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
     eventBus,
     projects,
     launch,
+    launchers,
   });
   const server = await startSocketServer({ socketPath, requestListener });
 

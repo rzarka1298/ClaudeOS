@@ -271,14 +271,22 @@ export const TEMPLATE_REFUSAL_REASONS = [
 ] as const;
 export type TemplateRefusalReason = (typeof TEMPLATE_REFUSAL_REASONS)[number];
 
+/** Which argv template a Claude Code refusal is about: `[claude, ...args]` or the custom terminal's. */
+export const REFUSED_TEMPLATES = ["claude-code", "terminal"] as const;
+export type RefusedTemplate = (typeof REFUSED_TEMPLATES)[number];
+
 /**
  * The one structured refusal body in the phase: an enum plus an argument
  * index (`null` when the refusal is not about one argument). Never a path.
+ * A Claude Code save validates two templates, so its refusals also say
+ * which one `index` counts into (`template`, plan 04-11): index 0 is that
+ * template's executable row either way.
  */
 export const LauncherConfigRefusalBodySchema = z.object({
   error: z.literal("launcher config refused"),
   reason: z.enum(TEMPLATE_REFUSAL_REASONS),
   index: z.number().int().nonnegative().max(MAX_TEMPLATE_ARGUMENTS).nullable(),
+  template: z.enum(REFUSED_TEMPLATES).optional(),
 });
 export type LauncherConfigRefusalBody = z.infer<typeof LauncherConfigRefusalBodySchema>;
 

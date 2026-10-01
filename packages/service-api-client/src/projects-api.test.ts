@@ -253,6 +253,23 @@ describe("saveLauncherConfig", () => {
     expect(result).toEqual({ ok: false, reason: "empty-argument", index: 2 });
   });
 
+  it("passes through which Claude Code template a refusal is about", async () => {
+    const refusal = {
+      error: "launcher config refused",
+      reason: "forbidden-flag",
+      index: 1,
+      template: "terminal",
+    };
+    const { client } = fakeClient({ status: 422, body: refusal });
+    const result = await saveLauncherConfig(client, {
+      launcherId: "claude-code",
+      executable: { kind: "path", path: "/usr/local/bin/claude" },
+      args: [],
+      terminal: { kind: "custom", preset: "blank", argv: ["/usr/bin/open", "{script}"] },
+    });
+    expect(result).toEqual({ ok: false, reason: "forbidden-flag", index: 1, template: "terminal" });
+  });
+
   it("throws ProjectsRequestError for any other failure", async () => {
     const { client } = fakeClient({ status: 401, body: { error: "authentication required" } });
     await expect(
