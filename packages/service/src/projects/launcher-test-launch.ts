@@ -90,8 +90,6 @@ type PreparedTest =
   | {
       readonly kind: "terminal";
       readonly run: (signal: AbortSignal, capMs: number) => Promise<LaunchResult>;
-      /** The terminal is driven by osascript, so macOS may be showing its Automation prompt. */
-      readonly mayPromptForAutomation: boolean;
     };
 
 function failure(error: LaunchErrorKind): LaunchResult {
@@ -129,7 +127,6 @@ async function prepareClaudeCode(deps: TestLaunchDeps): Promise<PreparedTest> {
   const cwd = testFolder(deps);
   return {
     kind: "terminal",
-    mayPromptForAutomation: terminalMayPromptForAutomation(config.terminal),
     run: async (signal, capMs) => {
       const terminal = selectTerminalLauncher(config.terminal, {
         spawner: deps.spawner,
@@ -186,59 +183,70 @@ export async function testLaunch(
   launcherId: LaunchAction,
   deps: TestLaunchDeps,
 ): Promise<LaunchResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await runTest(launcherId, deps, (ms, onDeadline) => {
+      timer = setTimeout(onDeadline, ms);
+    });
+  } catch {
+    // A store that throws reading the saved row (a locked or corrupt
+    // database), or a builder refusal (LaunchArgumentError) — either message
+    // could name a value. Nothing past the throw ran (codex review 3b,
+    // finding 4: a Test never rejects).
+    return failure("spawn-failed");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** {@link testLaunch}'s body; any throw is the caller's to turn into a failure. */
+async function runTest(
+  launcherId: LaunchAction,
+  deps: TestLaunchDeps,
+  startDeadline: (ms: number, onDeadline: () => void) => void,
+): Promise<LaunchResult> {
   const automation = mayPromptForAutomation(launcherId, deps.store);
   const capMs = automation
     ? (deps.automationCapMs ?? LAUNCHER_TEST_AUTOMATION_CAP_MS)
     : (deps.capMs ?? LAUNCH_CAP_MS);
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<typeof DEADLINE>((resolve) => {
-    timer = setTimeout(() => {
+    startDeadline(capMs, () => {
       controller.abort();
       resolve(DEADLINE);
-    }, capMs);
+    });
   });
 
+  const preparing = prepare(launcherId, deps);
+  // A late rejection of an abandoned preparation is absorbed.
+  preparing.catch(() => undefined);
+  const prepared = await Promise.race([preparing, deadline]);
+  // Nothing ran yet, so this is a stall, never an unanswered prompt.
+  if (prepared === DEADLINE || controller.signal.aborted) return failure("timeout");
+  if (prepared.kind === "refuse") return failure(prepared.error);
+
+  const ready = prepared;
+  const attempt = async (): Promise<LaunchResult> => {
+    if (ready.kind === "terminal") return ready.run(controller.signal, capMs);
+    const outcome = await deps.spawner.run(ready.argv, {
+      timeoutMs: capMs,
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) return failure("timeout");
+    return outcome.exitCode === 0 ? { ok: true } : failure(mapLaunchFailure(outcome));
+  };
+
+  let result: LaunchResult;
   try {
-    let prepared: PreparedTest | typeof DEADLINE;
-    try {
-      const preparing = prepare(launcherId, deps);
-      // A late rejection of an abandoned preparation is absorbed.
-      preparing.catch(() => undefined);
-      prepared = await Promise.race([preparing, deadline]);
-    } catch {
-      // A builder refusal (LaunchArgumentError): its message could name a value.
-      return failure("spawn-failed");
-    }
-    // Nothing ran yet, so this is a stall, never an unanswered prompt.
-    if (prepared === DEADLINE || controller.signal.aborted) return failure("timeout");
-    if (prepared.kind === "refuse") return failure(prepared.error);
-
-    const ready = prepared;
-    const attempt = async (): Promise<LaunchResult> => {
-      if (ready.kind === "terminal") return ready.run(controller.signal, capMs);
-      const outcome = await deps.spawner.run(ready.argv, {
-        timeoutMs: capMs,
-        signal: controller.signal,
-      });
-      if (controller.signal.aborted) return failure("timeout");
-      return outcome.exitCode === 0 ? { ok: true } : failure(mapLaunchFailure(outcome));
-    };
-
-    let result: LaunchResult;
-    try {
-      const launched = await Promise.race([attempt(), deadline]);
-      result = launched === DEADLINE ? failure("timeout") : launched;
-    } catch {
-      result = failure("spawn-failed");
-    }
-    // osascript killed while macOS may still be asking the owner: explain the
-    // prompt (Automation pane, try again), not a bare timeout (ADR-0024).
-    if (automation && !result.ok && result.error === "timeout") {
-      return failure("automation-denied");
-    }
-    return result;
-  } finally {
-    clearTimeout(timer);
+    const launched = await Promise.race([attempt(), deadline]);
+    result = launched === DEADLINE ? failure("timeout") : launched;
+  } catch {
+    result = failure("spawn-failed");
   }
+  // osascript killed while macOS may still be asking the owner: explain the
+  // prompt (Automation pane, try again), not a bare timeout (ADR-0024).
+  if (automation && !result.ok && result.error === "timeout") {
+    return failure("automation-denied");
+  }
+  return result;
 }
