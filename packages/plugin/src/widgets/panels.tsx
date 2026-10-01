@@ -641,7 +641,12 @@ function QuickActionsBody({
   data,
   onNavigate,
   onQuickAction,
-}: WidgetBodyProps<QuickActionsData>): VNode {
+}: WidgetBodyProps<QuickActionsData>): VNode | null {
+  // The frame hands `onQuickAction` in only for `ready`/`stale` (RR-05). In
+  // `disconnected` the card hides its buttons (UI-SPEC S8, the Phase 3 rule)
+  // and the Claude Desktop status line with them — like S1's rows, nothing
+  // focusable and inert, and no stale error line, sits in the dimmed body.
+  if (onQuickAction === undefined) return null;
   const desktopOpening = launchStatus.value.get(CLAUDE_DESKTOP_KEY)?.kind === "opening";
   return (
     <>
@@ -657,7 +662,7 @@ function QuickActionsBody({
               data-launch-state={opening ? "opening" : undefined}
               onClick={() => {
                 // A second press while opening is ignored (UI-SPEC S2).
-                if (!opening) onQuickAction?.(action);
+                if (!opening) onQuickAction(action);
               }}
             >
               {action.label}
@@ -682,7 +687,7 @@ function QuickActionsBody({
             aria-disabled="true"
             // Still focusable and still dispatched: the dispatcher answers
             // with the existing "{label} isn't available yet." Notice.
-            onClick={() => onQuickAction?.(action)}
+            onClick={() => onQuickAction(action)}
           >
             {action.label}
           </button>
