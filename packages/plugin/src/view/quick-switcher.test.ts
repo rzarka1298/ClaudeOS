@@ -1,7 +1,13 @@
 import type { ProjectId, ProjectsSnapshot, ProjectView } from "@ccc/domain";
 import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
+import type {
+  SocketApiClient,
+  SocketRequestOptions,
+  SocketResponse,
+} from "@ccc/service-api-client";
 import type { App } from "obsidian";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
+import { createLaunchRequester } from "../projects/launch-client.js";
 import { resetLaunchStatus } from "../projects/launch-status.js";
 import {
   Scope as StubScope,
@@ -292,5 +298,113 @@ describe("registerSwitcherScope: Mod+K while the command center has focus (D-33,
     const result = scope.registrations[0]?.func();
     expect(open).toHaveBeenCalledTimes(1);
     expect(result).toBe(false);
+  });
+});
+
+describe("disconnected (D-34, RR-05, PR-09)", () => {
+  const DISCONNECTED = { kind: "disconnected", reason: "socket closed" } as const;
+  const SERVICE_DISCONNECTED_NOTICE =
+    "Couldn't reach the command center service. Check it in Settings → Diagnostics, then try again.";
+
+  /** A host whose launches go through the REAL requester over a recording client. */
+  function disconnectedHost(
+    snapshot: ProjectsSnapshot | undefined,
+    notices: string[],
+    sent: string[],
+  ): SwitcherHost {
+    const client: SocketApiClient = {
+      request<T>(opts: SocketRequestOptions): Promise<SocketResponse<T>> {
+        sent.push(opts.path);
+        return new Promise(() => {});
+      },
+    };
+    const notify = (message: string): void => {
+      notices.push(message);
+    };
+    const connection = () => DISCONNECTED;
+    return {
+      snapshot: () => snapshot,
+      connection,
+      notify,
+      goTo: vi.fn(),
+      requestLaunch: createLaunchRequester({
+        client,
+        notify,
+        connection,
+        projectName: (id) =>
+          snapshot?.projects.find((p) => p.projectId === id)?.displayName ?? null,
+        setTimer: () => 0,
+        clearTimer: () => {},
+      }),
+      openSwitcher: vi.fn(),
+    };
+  }
+
+  it("still lists the destinations, Open Claude Desktop and the last-good projects", () => {
+    const modal = new ProjectSwitcherModal({} as App, host({ connection: () => DISCONNECTED }));
+    expect(modal.getItems().map((item) => item.text)).toEqual(
+      buildSwitcherItems(TWO_PROJECTS).map((item) => item.text),
+    );
+  });
+
+  it("with no last-good list, lists only the destinations and Open Claude Desktop", () => {
+    const modal = new ProjectSwitcherModal(
+      {} as App,
+      host({ connection: () => DISCONNECTED, snapshot: () => undefined }),
+    );
+    expect(modal.getItems().map((item) => item.text)).toEqual([
+      "Open Claude Desktop",
+      ...DESTINATION_TEXTS,
+    ]);
+  });
+
+  it("a launch chosen while disconnected posts service-disconnected at once and sends no request", () => {
+    const notices: string[] = [];
+    const sent: string[] = [];
+    const modal = new ProjectSwitcherModal(
+      {} as App,
+      disconnectedHost(TWO_PROJECTS, notices, sent),
+    );
+
+    modal.onChooseItem(
+      itemNamed(modal.getItems(), "Reveal example-project in Finder"),
+      new KeyboardEvent("keydown"),
+    );
+    modal.onChooseItem(
+      itemNamed(modal.getItems(), "Open Claude Desktop"),
+      new KeyboardEvent("keydown"),
+    );
+
+    // No acknowledgement first: the refusal is the whole answer.
+    expect(notices).toEqual([SERVICE_DISCONNECTED_NOTICE, SERVICE_DISCONNECTED_NOTICE]);
+    expect(sent).toEqual([]);
+    // Still through the one dispatcher (D-24).
+    expect(dispatchQuickAction).toHaveBeenCalledTimes(2);
+  });
+
+  it("a destination chosen while disconnected still navigates", () => {
+    const goTo = vi.fn<SwitcherHost["goTo"]>();
+    const modal = new ProjectSwitcherModal(
+      {} as App,
+      host({ connection: () => DISCONNECTED, snapshot: () => undefined, goTo }),
+    );
+    modal.onChooseItem(itemNamed(modal.getItems(), "Go to Settings"), new KeyboardEvent("keydown"));
+    expect(goTo).toHaveBeenCalledWith("settings");
+  });
+
+  it("the GitHub item of a project without a remote says so and sends nothing", () => {
+    const notices: string[] = [];
+    const sent: string[] = [];
+    const modal = new ProjectSwitcherModal(
+      {} as App,
+      disconnectedHost(TWO_PROJECTS, notices, sent),
+    );
+    modal.onChooseItem(
+      itemNamed(modal.getItems(), "Open demo-api on GitHub — no GitHub remote"),
+      new KeyboardEvent("keydown"),
+    );
+    expect(notices).toEqual(["demo-api has no GitHub remote. Set a GitHub link in Projects."]);
+    expect(sent).toEqual([]);
+    expect(dispatchQuickAction).not.toHaveBeenCalled();
   });
 });
