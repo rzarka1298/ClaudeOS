@@ -285,9 +285,12 @@ export interface RecordedRegistration {
 
 export class Scope {
   readonly registrations: RecordedRegistration[] = [];
+  /** The scope this one chains to, recorded so a test can assert the chain (wave-7 finding 5). */
+  readonly parent: Scope | undefined;
 
-  // biome-ignore lint/complexity/noUselessConstructor: mirrors Obsidian's `new Scope(parent?)` signature so stubbed callers type-check the same way.
-  constructor(_parent?: Scope) {}
+  constructor(parent?: Scope) {
+    this.parent = parent;
+  }
 
   register(
     modifiers: string[] | null,

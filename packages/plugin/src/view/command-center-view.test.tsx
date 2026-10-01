@@ -101,10 +101,13 @@ describe("CommandCenterView wires the quick-switcher (plan 04-14)", () => {
 
   it("binds Mod+K on its own Scope, chained to the app scope, to the switcher with an empty query", () => {
     const openSwitcher = vi.fn<(prefill: string) => void>();
-    const { view } = viewWith(openSwitcher);
+    const { view, leaf } = viewWith(openSwitcher);
 
     const scope = view.scope as unknown as StubScope | null;
     expect(scope).toBeInstanceOf(StubScope);
+    // Chained to the app's scope, so every app-level key still works while
+    // the view has focus (wave-7 finding 5).
+    expect(scope?.parent).toBe(leaf.app.scope);
     expect(scope?.registrations.map(({ modifiers, key }) => ({ modifiers, key }))).toEqual([
       { modifiers: ["Mod"], key: "k" },
     ]);
