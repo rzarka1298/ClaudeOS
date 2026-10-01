@@ -386,17 +386,28 @@ export const LAUNCHERS_TEST_PATH = `${API_BASE}/launchers/test`;
  */
 export const LAUNCHER_TEST_AUTOMATION_CAP_MS = 60_000;
 
-/** The one executable whose launch sends an Apple Event (D-28). */
-const OSASCRIPT_PATH = "/usr/bin/osascript";
+/** The program whose launch sends an Apple Event (D-28), matched by basename. */
+const OSASCRIPT_NAME = "osascript";
+
+/** An argv element's last path segment, lower-cased (the macOS filesystem ignores case). */
+function elementBasename(element: string): string {
+  return element.slice(element.lastIndexOf("/") + 1).toLowerCase();
+}
 
 /**
  * Whether testing this terminal choice can raise macOS's Automation prompt:
- * a custom template run by `osascript` (D-28, PR-02). The default
- * mechanisms (`open -b`, `open -R`, `open <url>`, Terminal's `.command`
- * hand-off) send no Apple Event and never do.
+ * a custom template that runs `osascript` (D-28, PR-02) — as its executable,
+ * or anywhere in its argv (`env osascript …`, a shell handed an osascript
+ * path, a copy outside `/usr/bin`), matched by basename (wave-5 finding 10).
+ * Over-matching only lengthens a Test's cap; under-matching kills a Test
+ * mid-prompt. The default mechanisms (`open -b`, `open -R`, `open <url>`,
+ * Terminal's `.command` hand-off) send no Apple Event and never do.
  */
 export function terminalMayPromptForAutomation(terminal: TerminalChoice): boolean {
-  return terminal.kind === "custom" && terminal.argv[0] === OSASCRIPT_PATH;
+  return (
+    terminal.kind === "custom" &&
+    terminal.argv.some((element) => elementBasename(element) === OSASCRIPT_NAME)
+  );
 }
 
 /**
