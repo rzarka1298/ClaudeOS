@@ -5,6 +5,7 @@ import {
   LAUNCHERS_DETECT_PATH,
   LAUNCHERS_GET_PATH,
   LAUNCHERS_MARK_TESTED_PATH,
+  LAUNCHER_SAVE_VALIDATION_CAP_MS,
   LAUNCHERS_SAVE_PATH,
   LAUNCHERS_TEST_PATH,
   type LaunchAction,
@@ -117,6 +118,8 @@ export interface LauncherServices {
   readonly testCapMs?: number;
   /** Overrides the Test step's cap for an osascript terminal (the Automation prompt). */
   readonly automationTestCapMs?: number;
+  /** Overrides the save's validation cap (`LAUNCHER_SAVE_VALIDATION_CAP_MS`). */
+  readonly saveValidationCapMs?: number;
 }
 
 const MUTATION_OK: ProjectMutationResponse = { ok: true };
@@ -349,6 +352,36 @@ async function handleGet(
   }
 }
 
+/** The 503 for a save whose validation did not finish inside its cap; nothing was stored. */
+const SAVE_TIMED_OUT_BODY: ApiErrorBody = { error: "launcher check timed out" };
+
+const VALIDATION_CAP: unique symbol = Symbol("save validation cap");
+
+/**
+ * `op`'s result, or {@link VALIDATION_CAP} once `ms` passed first. The timer
+ * is cleared either way, and a late rejection of an abandoned `op` is
+ * absorbed rather than left unhandled.
+ */
+async function withinCap<T>(op: Promise<T>, ms: number): Promise<T | typeof VALIDATION_CAP> {
+  op.catch(() => undefined);
+  let timer: NodeJS.Timeout | undefined;
+  const cap = new Promise<typeof VALIDATION_CAP>((resolve) => {
+    timer = setTimeout(() => resolve(VALIDATION_CAP), ms);
+  });
+  try {
+    return await Promise.race([op, cap]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Validates, then stores — or refuses. Validation runs under
+ * `LAUNCHER_SAVE_VALIDATION_CAP_MS` (codex review 3, finding 4): a save it
+ * does not finish inside the cap answers 503 and stores nothing, even when
+ * the check later succeeds, so the service never persists a save the
+ * plugin's client already gave up on (its budget is longer than the cap).
+ */
 async function handleSave(
   req: IncomingMessage,
   res: ServerResponse,
@@ -360,7 +393,15 @@ async function handleSave(
   if (launchers === null) return;
   const launcherId = body.value.launcherId;
   try {
-    const validation = await validateSave(body.value, launchers);
+    const validation = await withinCap(
+      validateSave(body.value, launchers),
+      launchers.saveValidationCapMs ?? LAUNCHER_SAVE_VALIDATION_CAP_MS,
+    );
+    if (validation === VALIDATION_CAP) {
+      logger.warn({ route: LAUNCHERS_SAVE_PATH, launcherId }, "launcher check timed out");
+      sendJson(res, 503, SAVE_TIMED_OUT_BODY);
+      return;
+    }
     if (!validation.ok) {
       logger.warn(
         { route: LAUNCHERS_SAVE_PATH, launcherId, reason: validation.refusal.reason },

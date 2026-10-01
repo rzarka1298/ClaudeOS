@@ -356,6 +356,9 @@ export function ClaudeCodePanel({
           return;
         default:
           setPanelStatus(session, "claude-code", { kind: "save-failed" });
+          // An uncertain outcome may still have stored: re-read what the
+          // service holds; the draft stays (codex review 3, finding 4).
+          void loadConfigs(session, actions);
       }
     });
   }

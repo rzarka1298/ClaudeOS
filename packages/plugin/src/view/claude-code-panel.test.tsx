@@ -377,3 +377,22 @@ describe("the Claude Code Test (D-28, PR-02)", () => {
     expect(screen.getAllByText("Tested").length).toBeGreaterThan(0);
   });
 });
+
+describe("an uncertain save reconciles with the service (codex review 3, finding 4)", () => {
+  it("a failed save re-reads the saved configuration and keeps the draft", async () => {
+    const actions = {
+      ...fakeLaunchersActions(),
+      save: vi.fn(() => Promise.resolve<SaveOutcome>({ kind: "failed" })),
+    };
+    const session = sessionWith();
+    mount(actions, session);
+    fireEvent.click(screen.getByRole("radio", { name: "~/.local/bin/claude" }));
+    save();
+    await settle();
+    expect(actions.getConfigs).toHaveBeenCalledTimes(1);
+    expect(session.claudeDraft.value).not.toBeNull();
+    expect(
+      (screen.getByRole("radio", { name: "~/.local/bin/claude" }) as HTMLInputElement).checked,
+    ).toBe(true);
+  });
+});

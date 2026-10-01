@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type DetectionResponse,
+  LAUNCHER_SAVE_VALIDATION_CAP_MS,
   LAUNCHER_TEST_AUTOMATION_CAP_MS,
   newScanRootId,
   type ScanStateResponse,
@@ -12,12 +13,14 @@ import { describe, expect, it } from "vitest";
 import {
   addScanRoot,
   detectLaunchers,
+  LAUNCHER_SAVE_CLIENT_TIMEOUT_MS,
   LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS,
   LAUNCHER_TEST_CLIENT_TIMEOUT_MS,
   LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS,
   listScanState,
   rescanScanRoot,
   SCAN_ROOTS_CLIENT_TIMEOUT_MS,
+  saveLauncherConfig,
   testLauncher,
 } from "./projects-api.js";
 import {
@@ -166,5 +169,28 @@ describe("the scan routes' client budget (wave-6 review)", () => {
     const { client, seen } = recordingClient(SCAN_STATE);
     await listScanState(client);
     expect(seen[0]?.timeoutMs).toBeUndefined();
+  });
+});
+
+describe("saveLauncherConfig's client budget (codex review 3, finding 4)", () => {
+  it("outlasts the service's save validation cap, for an app and for Claude Code", async () => {
+    const { client, seen } = recordingClient({ ok: true });
+    await saveLauncherConfig(client, {
+      launcherId: "antigravity",
+      bundleId: "com.example.antigravity",
+    });
+    await saveLauncherConfig(client, {
+      launcherId: "claude-code",
+      executable: { kind: "candidate", candidateId: "local-bin" },
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    expect(seen.map((opts) => opts.timeoutMs)).toEqual([
+      LAUNCHER_SAVE_CLIENT_TIMEOUT_MS,
+      LAUNCHER_SAVE_CLIENT_TIMEOUT_MS,
+    ]);
+    expect(LAUNCHER_SAVE_CLIENT_TIMEOUT_MS).toBeGreaterThan(LAUNCHER_SAVE_VALIDATION_CAP_MS);
+    // The Spotlight query alone may take 5 s; the cap leaves room past it.
+    expect(LAUNCHER_SAVE_VALIDATION_CAP_MS).toBeGreaterThan(5000);
   });
 });

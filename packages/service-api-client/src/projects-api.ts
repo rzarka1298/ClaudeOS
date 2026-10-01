@@ -5,6 +5,7 @@ import {
   type DetectionResponse,
   DetectionResponseSchema,
   LAUNCH_PATH,
+  LAUNCHER_SAVE_VALIDATION_CAP_MS,
   LAUNCHER_TEST_AUTOMATION_CAP_MS,
   LAUNCHERS_DETECT_PATH,
   LAUNCHERS_GET_PATH,
@@ -91,6 +92,15 @@ export const LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS = LAUNCHER_TEST_AUTOMATI
  * this leaves generous headroom without waiting a minute on a dead service.
  */
 export const LAUNCHER_TEST_CLIENT_TIMEOUT_MS = 15_000;
+
+/**
+ * A launcher save's client budget (codex review 3, finding 4): longer than
+ * the service's own `LAUNCHER_SAVE_VALIDATION_CAP_MS`, so the service's
+ * answer — saved, refused, or timed out with nothing stored — always
+ * arrives before the client gives up. On any failure the plugin re-reads
+ * the saved configuration.
+ */
+export const LAUNCHER_SAVE_CLIENT_TIMEOUT_MS = LAUNCHER_SAVE_VALIDATION_CAP_MS + 10_000;
 
 /**
  * Detection's client budget. Detection is a sequence of bounded Spotlight
@@ -285,6 +295,7 @@ export async function saveLauncherConfig(
     method: "POST",
     path: LAUNCHERS_SAVE_PATH,
     body: request,
+    timeoutMs: LAUNCHER_SAVE_CLIENT_TIMEOUT_MS,
   });
   if (res.status === 200) {
     const parsed = ProjectMutationResponseSchema.safeParse(res.body);

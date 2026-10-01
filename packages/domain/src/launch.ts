@@ -386,6 +386,17 @@ export const LAUNCHERS_TEST_PATH = `${API_BASE}/launchers/test`;
  */
 export const LAUNCHER_TEST_AUTOMATION_CAP_MS = 60_000;
 
+/**
+ * The cap on a launcher save's validation (codex review 3, finding 4): an
+ * app save checks the bundle is installed (Spotlight, `Info.plist` reads,
+ * the Applications-folder fallback) and a Claude Code save checks its
+ * executables on disk — either can stall. A save not validated by this cap
+ * is answered as a failure and stores nothing, however late its check
+ * finishes; the plugin's save client waits slightly longer than this, so the
+ * service's answer always arrives first.
+ */
+export const LAUNCHER_SAVE_VALIDATION_CAP_MS = 20_000;
+
 /** The program whose launch sends an Apple Event (D-28), matched by basename. */
 const OSASCRIPT_NAME = "osascript";
 

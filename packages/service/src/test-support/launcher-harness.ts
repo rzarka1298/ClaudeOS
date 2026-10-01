@@ -185,6 +185,9 @@ export async function startLauncherHarness(
     ...(options.automationTestCapMs === undefined
       ? {}
       : { automationTestCapMs: options.automationTestCapMs }),
+    ...(options.saveValidationCapMs === undefined
+      ? {}
+      : { saveValidationCapMs: options.saveValidationCapMs }),
   };
   const secret = randomBytes(32);
   const token = mintToken(secret, { nowMs: Date.now() });

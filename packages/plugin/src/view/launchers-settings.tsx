@@ -430,6 +430,10 @@ function AppLauncherPanel({
           return;
         default:
           setPanelStatus(session, id, { kind: "save-failed" });
+          // An uncertain outcome (a timeout, a dropped connection) may still
+          // have stored: re-read what the service holds; the draft stays
+          // (codex review 3, finding 4).
+          void loadConfigs(session, actions);
       }
     });
   }
