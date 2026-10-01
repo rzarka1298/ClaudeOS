@@ -25,6 +25,7 @@ import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
 import { registeredProjectPaths } from "./projects/approved-roots.js";
 import { launchRoutes } from "./projects/launch-routes.js";
+import { launcherRoutes } from "./projects/launcher-routes.js";
 import { projectRoutes } from "./projects/project-routes.js";
 import { readJsonBody } from "./request-body.js";
 import {
@@ -276,6 +277,7 @@ const routeTable: Record<string, Record<string, Handler>> = {
   [SNAPSHOT_PATH]: { GET: withAuth(snapshotHandler) },
   ...projectRoutes,
   ...launchRoutes,
+  ...launcherRoutes,
 };
 
 /**

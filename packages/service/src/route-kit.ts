@@ -4,6 +4,7 @@ import type { OperationalStore } from "@ccc/operational-store";
 import { requireToken } from "./auth/require-token.js";
 import type { EventBus } from "./events/event-bus.js";
 import type { LaunchService } from "./projects/launch-service.js";
+import type { LauncherServices } from "./projects/launcher-routes.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 
 /**
@@ -35,6 +36,8 @@ export interface RouteContext {
   readonly projects?: ProjectServices | undefined;
   /** The launch pipeline behind `POST /api/v1/projects/launch`; plan 04-06. */
   readonly launch?: LaunchService | undefined;
+  /** Detection, launcher setup, Test launches and the System Settings panes; plan 04-11. */
+  readonly launchers?: LauncherServices | undefined;
 }
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;

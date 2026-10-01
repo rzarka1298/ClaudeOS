@@ -58,6 +58,8 @@ export interface ProjectsCollector {
   refresh(projectId?: ProjectId): void;
   /** Re-reads the store's project records and publishes what changed (register, remove, rename, pin, link). */
   onRegistryChanged(): void;
+  /** A launcher configuration changed (saved, marked tested): publishes the launchers summary. */
+  onLaunchersChanged(): void;
   /** The whole projects picture, in the PROJ-15 order. */
   snapshot(): ProjectsSnapshot;
   /**
@@ -262,6 +264,9 @@ export function createProjectsCollector(options: ProjectsCollectorOptions): Proj
     refresh,
     onRegistryChanged() {
       publish(syncRecords());
+    },
+    onLaunchersChanged() {
+      // RED stub (04-11 Task 1).
     },
     gitState(projectId) {
       return entries.get(projectId)?.git ?? null;

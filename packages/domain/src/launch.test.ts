@@ -318,6 +318,19 @@ describe("launcher-config refusal body (PR-13)", () => {
     ).toBe(false);
   });
 
+  it("may say which template a refusal is about, and nothing else", () => {
+    const body = {
+      error: "launcher config refused",
+      reason: "forbidden-flag",
+      index: 1,
+      template: "terminal",
+    };
+    expect(LauncherConfigRefusalBodySchema.parse(body)).toEqual(body);
+    expect(
+      LauncherConfigRefusalBodySchema.safeParse({ ...body, template: "/usr/bin/open" }).success,
+    ).toBe(false);
+  });
+
   it("a test request names a launcher id only", () => {
     expect(TestLauncherRequestSchema.safeParse({ launcherId: "claude-code" }).success).toBe(true);
     expect(TestLauncherRequestSchema.safeParse({ launcherId: "finder" }).success).toBe(false);
