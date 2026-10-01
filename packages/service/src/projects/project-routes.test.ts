@@ -30,6 +30,37 @@ import {
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VAULT_ROOT_META_KEY } from "./approved-roots.js";
 
+/**
+ * A controllable pause inside registration's asynchronous validation (codex
+ * review 2, finding 1). When `validationGate.hold` is set, the NEXT call to
+ * `validateProjectCandidate` runs the real policy and then waits on it before
+ * returning — exactly the window a macOS Files & Folders prompt opens while
+ * the route holds the policy it captured. Every other call passes through.
+ */
+const validationGate = vi.hoisted(() => ({
+  hold: null as Promise<void> | null,
+  reached: null as (() => void) | null,
+}));
+
+vi.mock("./registration.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./registration.js")>();
+  return {
+    ...actual,
+    validateProjectCandidate: async (
+      ...args: Parameters<typeof actual.validateProjectCandidate>
+    ): Promise<string> => {
+      const resolved = await actual.validateProjectCandidate(...args);
+      const hold = validationGate.hold;
+      if (hold !== null) {
+        validationGate.hold = null;
+        validationGate.reached?.();
+        await hold;
+      }
+      return resolved;
+    },
+  };
+});
+
 // `../routes.js` imports the service's redacting singleton logger, which
 // resolves its log file from `CCC_RUNTIME_DIR` at import time. Point it at a
 // throwaway directory BEFORE the dynamic imports below, so this test never
@@ -550,4 +581,40 @@ describe("vault root never overlaps a registered project, in either order (D-04)
     }
     expect(listProjects(store.db)).toHaveLength(0);
   });
+
+  // Codex review 2, finding 1: registration validates asynchronously while
+  // holding the policy it read first. A vault set up inside that window must
+  // still stop the folder from being stored — whichever request finishes first.
+  it.each([
+    ["the folder itself", (vault: string) => vault],
+    ["the folder's parent", (vault: string) => join(vault, "..")],
+  ])(
+    "a vault set up while registration of %s is validating refuses the registration, and nothing is stored",
+    async (_label, candidateFor) => {
+      const vault = makeVault(join(dir, "racing-parent", "racing-vault"));
+      let release: () => void = () => {};
+      const atGate = new Promise<void>((resolve) => {
+        validationGate.reached = resolve;
+      });
+      validationGate.hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      try {
+        const pending = register(candidateFor(vault));
+        // Validation has passed against the policy read before any vault existed.
+        await atGate;
+        const setup = await post(VAULT_SETUP_PATH, { vaultRoot: vault });
+        expect(setup.status).toBe(200);
+        release();
+        const res = await pending;
+        expect(res.status).toBe(422);
+        expect(res.raw).toBe(JSON.stringify({ error: "folder cannot be registered" }));
+        expect(listProjects(store.db)).toHaveLength(0);
+      } finally {
+        release();
+        validationGate.hold = null;
+        validationGate.reached = null;
+      }
+    },
+  );
 });
