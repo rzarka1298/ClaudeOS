@@ -37,6 +37,8 @@ export interface ProjectsViewProps {
   readonly focusProjectId?: string | null | undefined;
   /** Called as soon as the request is taken, so it is honoured once. */
   readonly onProjectFocusTaken?: (() => void) | undefined;
+  /** Called when the requested project is not among the loaded projects (wave-7 finding 6). */
+  readonly onProjectFocusMissing?: (() => void) | undefined;
 }
 
 /**
@@ -73,6 +75,7 @@ export function ProjectsView({
   openSystemSettings,
   focusProjectId,
   onProjectFocusTaken,
+  onProjectFocusMissing,
 }: ProjectsViewProps): VNode {
   const snapshot = projectsSnapshot.value;
   const rows = snapshot === undefined ? [] : projectRowsFrom(snapshot);
@@ -81,6 +84,8 @@ export function ProjectsView({
   );
 
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+  // S9's `Go to {project}`, held until the projects are loaded.
+  const [goToFocusId, setGoToFocusId] = useState<string | null>(null);
   // View-owned, so it outlives the card whose removal it announces (the
   // card and its own status region unmount with the row).
   const [announcement, setAnnouncement] = useState("");
@@ -116,14 +121,31 @@ export function ProjectsView({
     // `controlRefs` is a stable ref container, not reactive state.
   }, [rows, pendingFocusId]);
 
-  // S9's `Go to {project}`: hand the request to the same pending-focus path
-  // a registration uses, which waits until the row exists (plan 04-14).
+  // S9's `Go to {project}` (plan 04-14). Unlike a registration — whose row
+  // is still on its way — the switcher listed a project already loaded, so
+  // once projects are loaded the row either exists and its heading takes
+  // focus, or it was removed meanwhile: then the request is forgotten and
+  // the host focuses the Projects tab rather than leaving focus nowhere or
+  // stealing it later (wave-7 finding 6).
   // The host's callback is a per-render closure; the id alone decides when this runs.
   useEffect(() => {
     if (focusProjectId === null || focusProjectId === undefined) return;
-    setPendingFocusId(focusProjectId);
+    setGoToFocusId(focusProjectId);
     onProjectFocusTaken?.();
   }, [focusProjectId]);
+
+  const projectsLoaded = snapshot !== undefined;
+  useEffect(() => {
+    if (goToFocusId === null || !projectsLoaded) return;
+    setGoToFocusId(null);
+    if (rows.some((row) => row.id === goToFocusId)) {
+      controlRefs.current.get(headingKey(goToFocusId))?.focus();
+    } else {
+      onProjectFocusMissing?.();
+    }
+    // `controlRefs` is a stable ref container; `rows` is derived from the
+    // same snapshot `projectsLoaded` tracks.
+  }, [goToFocusId, projectsLoaded]);
 
   function handleRemoved(removedId: string, removedName: string): void {
     setAnnouncement(`Removed ${removedName} from projects.`);

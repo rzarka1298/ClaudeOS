@@ -16,6 +16,7 @@ import type { WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
 import { type WidgetHost, WidgetHostContext } from "../widgets/widget-host.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
+import { launchersFocusRequested } from "./launchers-focus.js";
 import { createLaunchersSession, type LaunchersSession } from "./launchers-settings.js";
 import { navigationRequest } from "./navigation-request.js";
 import { Overview } from "./overview.js";
@@ -139,6 +140,12 @@ export interface DestinationViewProps {
   readonly focusProjectId?: ProjectId | null | undefined;
   /** Called once the Projects destination has taken the focus request. */
   readonly onProjectFocusTaken?: (() => void) | undefined;
+  /**
+   * Called when the requested project is not in the loaded projects — it
+   * was removed after the switcher listed it. Focus goes to the Projects tab
+   * instead of nowhere (wave-7 finding 6).
+   */
+  readonly onProjectFocusMissing?: (() => void) | undefined;
 }
 
 const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewProps) => VNode>> = {
@@ -163,6 +170,7 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
     openSystemSettings,
     focusProjectId,
     onProjectFocusTaken,
+    onProjectFocusMissing,
   }) => (
     <ProjectsView
       actions={projectsActions}
@@ -175,6 +183,7 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
       openSystemSettings={openSystemSettings}
       focusProjectId={focusProjectId}
       onProjectFocusTaken={onProjectFocusTaken}
+      onProjectFocusMissing={onProjectFocusMissing}
     />
   ),
   settings: ({ connection, now, launchersActions, launchersSession }) => (
@@ -268,13 +277,24 @@ export function Shell({
   // `Set up launchers` command (plan 04-14) — is consumed once and cleared:
   // a request made before this shell mounted is honoured on mount.
   const request = navigationRequest.value;
+  // Read in the same render as the request: `Set up launchers` sets both, and
+  // the Launchers section — already mounted when Settings is open or is the
+  // initial destination — moves focus to its heading. Focusing the Settings
+  // tab here would overwrite that, whichever effect runs first (wave-7
+  // finding 1).
+  const launchersFocusPending = launchersFocusRequested.value;
   // `select`/`focusDestination` are per-render closures over stable setters;
   // the request value alone decides when this runs.
   useEffect(() => {
     if (request === null) return;
+    // Compare-and-clear: with two command-center views open, both see the
+    // same request, and only the first to get here takes it (wave-7
+    // finding 4).
+    if (navigationRequest.peek() !== request) return;
     navigationRequest.value = null;
     if (request.focusProjectId === undefined) {
-      focusDestination(request.destination);
+      if (request.destination === "settings" && launchersFocusPending) select("settings");
+      else focusDestination(request.destination);
       return;
     }
     select(request.destination);
@@ -385,6 +405,7 @@ export function Shell({
                 launchersSession={launchersSession}
                 focusProjectId={projectFocus}
                 onProjectFocusTaken={() => setProjectFocus(null)}
+                onProjectFocusMissing={() => tabRefs.current.projects?.focus()}
               />
             ) : (
               <p>{active.description}</p>
