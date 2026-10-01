@@ -17,6 +17,7 @@ export const SOCKET_PROBE_TIMEOUT_MS = 1000;
  * refuses and the live socket file is left exactly where it is.
  */
 export class SocketInUseError extends Error {
+  readonly code = "SOCKET_IN_USE";
   readonly socketPath: string;
 
   constructor(socketPath: string) {
@@ -40,6 +41,36 @@ export class SocketProbeError extends Error {
     this.name = "SocketProbeError";
     this.code = code;
   }
+}
+
+/** The minimal logger surface {@link logSocketClaimRefusal} needs. */
+interface ErrorLogger {
+  error(fields: Record<string, unknown>, message: string): void;
+}
+
+/**
+ * Logs a socket-claim refusal ({@link SocketInUseError} /
+ * {@link SocketProbeError}) and returns `true`; returns `false` without
+ * logging for any other error. Only the error's name and code reach the
+ * log — never its message or `socketPath`, which carry the socket path
+ * under the owner's home folder.
+ */
+export function logSocketClaimRefusal(logger: ErrorLogger, err: unknown): boolean {
+  if (err instanceof SocketInUseError) {
+    logger.error(
+      { error: err.name, code: err.code },
+      "startup refused: another service instance is already listening on the socket",
+    );
+    return true;
+  }
+  if (err instanceof SocketProbeError) {
+    logger.error(
+      { error: err.name, code: err.code },
+      "startup refused: could not tell whether the socket is in use",
+    );
+    return true;
+  }
+  return false;
 }
 
 /**

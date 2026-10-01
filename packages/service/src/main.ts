@@ -37,7 +37,7 @@ import {
 } from "./projects/script-dir.js";
 import { createCommandSpawner } from "./projects/spawner.js";
 import { createRequestListener } from "./routes.js";
-import { claimSocketPath, SocketInUseError, startSocketServer } from "./socket-server.js";
+import { claimSocketPath, logSocketClaimRefusal, startSocketServer } from "./socket-server.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
 
 /**
@@ -256,12 +256,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  if (err instanceof SocketInUseError) {
-    logger.error(
-      { socketPath: err.socketPath },
-      "startup refused: another service instance is already listening on the socket",
-    );
-  } else {
+  if (!logSocketClaimRefusal(logger, err)) {
     logger.error({ err }, "fatal startup error");
   }
   process.exit(1);
