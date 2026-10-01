@@ -77,6 +77,10 @@ export interface LauncherHarnessOptions {
   /** Shortens the Test step's caps. */
   readonly testCapMs?: number;
   readonly automationTestCapMs?: number;
+  /** Overrides the save's validation cap (codex review 3, finding 4). */
+  readonly saveValidationCapMs?: number;
+  /** Wraps the real detector, e.g. to slow `findBundle` down. */
+  readonly wrapDetector?: (detector: Detector) => Detector;
 }
 
 function request(
@@ -143,13 +147,14 @@ export async function startLauncherHarness(
     readLauncherConfigs: () => listLauncherConfigs(store.db),
     homeDir,
   });
-  const detector = createDetector({
+  const realDetector = createDetector({
     runner,
     homeDir,
     readdir: () => Promise.resolve([]),
     ...(options.isExecutable === undefined ? {} : { isExecutable: options.isExecutable }),
     resolveGit: () => Promise.resolve({ kind: "unavailable" }),
   });
+  const detector = options.wrapDetector?.(realDetector) ?? realDetector;
   const projects: ProjectServices = {
     snapshot: () => collector.snapshot(),
     onRegistryChanged: () => collector.onRegistryChanged(),

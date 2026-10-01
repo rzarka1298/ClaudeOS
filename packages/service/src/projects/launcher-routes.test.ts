@@ -567,3 +567,40 @@ describe("a candidate chosen before a service restart still saves (codex review 
     expect(getLauncherConfig(harness.store.db, "claude-code")).toBeNull();
   });
 });
+
+describe("a save's validation is bounded inside the client's budget (codex review 3, finding 4)", () => {
+  it("an app save whose install check outlasts the cap answers a failure and never stores late", async () => {
+    harness.close();
+    let finish: (() => void) | undefined;
+    const settled = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    harness = await startLauncherHarness({
+      script: installed([ANTIGRAVITY]),
+      saveValidationCapMs: 50,
+      // Spotlight stalls: the check answers "installed" long after the cap.
+      wrapDetector: (detector) => ({
+        ...detector,
+        findBundle: (bundleId) =>
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(detector.findBundle(bundleId));
+              setTimeout(() => finish?.(), 20);
+            }, 1000);
+          }),
+      }),
+    });
+
+    const started = Date.now();
+    const reply = await harness.post(LAUNCHERS_SAVE_PATH, {
+      launcherId: "antigravity",
+      bundleId: ANTIGRAVITY.bundleId,
+    });
+    expect(Date.now() - started).toBeLessThan(800);
+    expect(reply.status).not.toBe(200);
+    expect(reply.body).toEqual({ error: "launcher check timed out" });
+
+    await settled;
+    expect(getLauncherConfig(harness.store.db, "antigravity")).toBeNull();
+  });
+});
