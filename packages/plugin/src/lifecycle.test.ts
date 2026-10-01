@@ -1,6 +1,6 @@
-import type { SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createHostRegistry, type HostRegistry } from "./host-registry.js";
+import type { EventClient, SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
 import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js";
 import {
@@ -9,6 +9,11 @@ import {
   FakeDataAdapter,
   FakeObsidianHost,
 } from "./test-support/fake-obsidian-host.js";
+import {
+  createSwitcherOpener,
+  registerSwitcherCommand,
+  SWITCHER_COMMAND_ID,
+} from "./view/quick-switcher.js";
 import { nowTick, startClock } from "./widgets/clock.js";
 import { layoutOverride, setLayoutOverride } from "./widgets/layout.js";
 import { createAdapterLayoutSource, startLayoutPolling } from "./widgets/layout-source.js";
@@ -31,6 +36,17 @@ const NOOP_CLIENT: SocketApiClient = {
     return Promise.reject(new Error("not called"));
   },
 };
+
+/** An event client that records subscriptions and never connects. */
+function recordingEventClient(): EventClient & { subscribe: Mock<EventClient["subscribe"]> } {
+  return { subscribe: vi.fn<EventClient["subscribe"]>(), dispose: vi.fn() };
+}
+
+/** The quick-switcher's opener with inert parts: this suite counts registrations. */
+const NOOP_SWITCHER_OPENER = createSwitcherOpener({
+  eventClient: recordingEventClient(),
+  show: () => {},
+});
 
 /**
  * What a realistic `onload()` registers, all six kinds, routed entirely
@@ -58,6 +74,8 @@ function loadCycle(
   registry.ribbon("layout-dashboard", "Open command center", () => {});
   registry.command({ id: COMMAND_ID, name: "Open overview", callback: () => {} });
   registerVaultSetupCommand(registry, NOOP_SETUP_UI, NOOP_CLIENT);
+  // The REAL quick-switcher command (plan 04-14), for the same reason.
+  registerSwitcherCommand(registry, NOOP_SWITCHER_OPENER);
   registry.event(WORKSPACE_EVENT, handler);
   registry.interval(() => {}, 60_000);
   registry.domEvent(domTarget, "click", () => {});
@@ -161,9 +179,10 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     }
 
     expect(host.liveCounts().view).toBe(1);
-    // Two commands now: "Open overview" and "Set up managed vault". Twenty
-    // loads leave exactly one of each, not twenty of each.
-    expect(host.liveCounts().command).toBe(2);
+    // Three commands now: "Open overview", "Set up managed vault" and
+    // "Search projects and actions". Twenty loads leave exactly one of each,
+    // not twenty of each.
+    expect(host.liveCounts().command).toBe(3);
     // One tab after twenty loads, not twenty tabs.
     expect(host.liveCounts().settingTab).toBe(1);
   });
@@ -181,6 +200,59 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
 
     expect(host.saveDataCallCount).toBe(savesBefore);
     expect(await host.loadData()).toEqual({ lastOpenedDestination: "overview" });
+  });
+});
+
+/** Records each command object exactly as the registry handed it to the host. */
+class CommandCapturingHost extends FakeObsidianHost {
+  readonly commands: CommandLike[] = [];
+
+  override addCommand(command: CommandLike) {
+    this.commands.push(command);
+    return super.addCommand(command);
+  }
+}
+
+describe("the Search projects and actions command (plan 04-14, D-33, D-34)", () => {
+  function registered(host: CommandCapturingHost, id: string): CommandLike {
+    const command = host.commands.find((c) => c.id === id);
+    if (command === undefined) throw new Error(`no command ${id}`);
+    return command;
+  }
+
+  it("registers through the seam with its id and name and no default hotkey", () => {
+    const host = new CommandCapturingHost();
+    const registry = createHostRegistry(host);
+    registerSwitcherCommand(registry, () => {});
+
+    const command = registered(host, SWITCHER_COMMAND_ID);
+    expect(command.id).toBe("search-projects-and-actions");
+    expect(command.name).toBe("Search projects and actions");
+    expect(command).not.toHaveProperty("hotkeys");
+
+    registry.disposeAll();
+    expect(host.liveCounts().command).toBe(0);
+  });
+
+  it("attaches the event client only when run, then opens the switcher with an empty query", () => {
+    const host = new CommandCapturingHost();
+    const registry = createHostRegistry(host);
+    const eventClient = recordingEventClient();
+    const show = vi.fn();
+    registerSwitcherCommand(registry, createSwitcherOpener({ eventClient, show }));
+
+    // Lazy: loading the plugin subscribes nothing (PR-09).
+    expect(eventClient.subscribe).not.toHaveBeenCalled();
+
+    registered(host, SWITCHER_COMMAND_ID).callback();
+    expect(eventClient.subscribe).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledWith("");
+    // Each run re-points the same client (attachEventClient is idempotent).
+    registered(host, SWITCHER_COMMAND_ID).callback();
+    expect(eventClient.subscribe).toHaveBeenCalledTimes(2);
+    expect(show).toHaveBeenCalledTimes(2);
+
+    registry.disposeAll();
   });
 });
 

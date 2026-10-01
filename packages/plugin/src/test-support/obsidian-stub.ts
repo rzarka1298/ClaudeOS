@@ -229,12 +229,24 @@ export class FileSystemAdapter {
 export class SuggestModal<T> extends Modal {
   limit = 100;
   emptyStateText = "No matches found";
-  inputEl: { value: string } = { value: "" };
+  /**
+   * A real (jsdom) input, so a prefill that sets `value` and dispatches an
+   * `input` event — the way Obsidian's own modal re-runs its search — is
+   * observable under test (plan 04-14).
+   */
+  inputEl: HTMLInputElement = document.createElement("input");
   resultContainerEl: StubElement = createStubElement();
+  /** Recorded, not rendered: what `setPlaceholder` and `setInstructions` were given. */
+  placeholder = "";
+  instructions: unknown[] = [];
 
-  setPlaceholder(_placeholder: string): void {}
+  setPlaceholder(placeholder: string): void {
+    this.placeholder = placeholder;
+  }
 
-  setInstructions(_instructions: unknown[]): void {}
+  setInstructions(instructions: unknown[]): void {
+    this.instructions = instructions;
+  }
 
   onNoSuggestion(): void {}
 
