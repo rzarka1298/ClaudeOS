@@ -26,6 +26,8 @@ export interface ProjectsViewProps {
   readonly now: number;
   readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+  /** Opens one of the two fixed System Settings panes (RR-16) from a launch error's button. */
+  readonly openSystemSettings?: ((pane: "automation" | "privacy-security") => void) | undefined;
 }
 
 /** A ref-map key: one entry per project's per-control DOM node this view needs to refocus (currently only its name heading). */
@@ -33,7 +35,15 @@ function headingKey(projectId: string): string {
   return `${projectId}:heading`;
 }
 
-export function ProjectsView({ actions, pickFolder, connection, now }: ProjectsViewProps): VNode {
+export function ProjectsView({
+  actions,
+  pickFolder,
+  connection,
+  now,
+  onQuickAction,
+  onNavigate,
+  openSystemSettings,
+}: ProjectsViewProps): VNode {
   const snapshot = projectsSnapshot.value;
   const rows = snapshot === undefined ? [] : projectRowsFrom(snapshot);
   const displayPathById = new Map<string, string>(
@@ -157,6 +167,10 @@ export function ProjectsView({ actions, pickFolder, connection, now }: ProjectsV
               connection={connection}
               actions={actions}
               onRemoved={handleRemoved}
+              onQuickAction={onQuickAction}
+              terminalLabel={snapshot?.launchers["claude-code"].terminalLabel}
+              onNavigate={onNavigate}
+              openSystemSettings={openSystemSettings}
               headingRef={(el) => {
                 const key = headingKey(row.id);
                 if (el) controlRefs.current.set(key, el);

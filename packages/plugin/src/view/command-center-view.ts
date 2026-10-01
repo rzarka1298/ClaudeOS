@@ -1,6 +1,7 @@
 import {
   type AuthenticatedSocketApiClient,
   type EventClient,
+  openSystemSettings,
   refreshProjects,
 } from "@ccc/service-api-client";
 import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
@@ -113,6 +114,11 @@ export class CommandCenterView extends ItemView {
         // `dispatchQuickAction`, which calls this — the only place a launch
         // reaches the client (D-24).
         requestLaunch,
+        // A fixed pane enum only — the service owns the URL (RR-16, T-04-22).
+        // Failure is silent: the error's next-step line already names the path.
+        openSystemSettings: (pane: "automation" | "privacy-security") => {
+          openSystemSettings(this.host.client, pane).catch(() => undefined);
+        },
         projectsActions: createProjectsActions(this.host.client),
         pickFolder,
       }),

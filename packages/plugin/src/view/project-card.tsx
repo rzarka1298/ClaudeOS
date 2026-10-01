@@ -1,21 +1,29 @@
-import type { Freshness, Partiality } from "@ccc/domain";
+import type { Freshness, Partiality, ProjectId } from "@ccc/domain";
 import type { Ref, VNode } from "preact";
 import { useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import type { ProjectsActions } from "../projects/projects-actions.js";
+import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { WidgetFooter } from "../widgets/footer.js";
+import {
+  LaunchStatusLine,
+  LaunchToolbar,
+  PROJECT_LAUNCH_ACTIONS,
+} from "../widgets/launch-toolbar.js";
 import { type ProjectRow, projectMetaSegments } from "../widgets/panels.js";
 import type { FooterModel, FooterSource } from "../widgets/presentation.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
+import type { DestinationId } from "./destinations.js";
 import { ProjectManageToolbar } from "./project-manage-toolbar.js";
 
 /**
  * The complete S3 project card (Task 3: git detail, remote, recent commits,
  * the later-phase fields line, the manage toolbar and the per-project
  * `WidgetFooter`). Task 1 built the name/path/meta anatomy; this task fills
- * in everything below it, EXCEPT the S2 launch toolbar and its status line —
- * `LAUNCH_TOOLBAR_SLOT` marks exactly where plan 04-10 mounts them, between
- * the remote row and "Recent commits" (UI-SPEC S3 card anatomy).
+ * in everything below it. Plan 04-10 mounts the S2 launch toolbar and its
+ * status line between the remote row and "Recent commits" (UI-SPEC S3 card
+ * anatomy) — or after the git lines for a folder with no repository, which
+ * can still be opened.
  */
 export interface ProjectCardProps {
   readonly row: ProjectRow;
@@ -31,6 +39,12 @@ export interface ProjectCardProps {
    * move focus there after a register, pin, unpin or removal.
    */
   readonly headingRef?: Ref<HTMLHeadingElement> | undefined;
+  /** The one dispatcher every launch passes through (D-24). */
+  readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
+  /** The Claude Code terminal's display label (UI-SPEC `{Terminal}`). */
+  readonly terminalLabel?: string | undefined;
+  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+  readonly openSystemSettings?: ((pane: "automation" | "privacy-security") => void) | undefined;
 }
 
 /** How long a project's own git read stays `live` after `observedAt` (D-12) — the same window `projects-state.ts` uses for the S1 card. */
@@ -85,7 +99,16 @@ function GithubLinkRow({ row }: { readonly row: ProjectRow }): VNode | null {
 }
 
 /** The S3g git detail block: branch/dirty (or the error/pending states), remote and recent commits. */
-function GitDetail({ row, now }: { readonly row: ProjectRow; readonly now: number }): VNode {
+function GitDetail({
+  row,
+  now,
+  launch,
+}: {
+  readonly row: ProjectRow;
+  readonly now: number;
+  /** The S2 toolbar plus status line, or `null` while disconnected (RR-05). */
+  readonly launch: VNode | null;
+}): VNode {
   const git = row.git;
 
   // The very first read timed out or failed: the collector keeps `pending`
@@ -98,6 +121,7 @@ function GitDetail({ row, now }: { readonly row: ProjectRow; readonly now: numbe
         <MetaSegments row={row} />
         <p className="ccc-state-body">Choose Refresh git status to try again.</p>
         <GithubLinkRow row={row} />
+        {launch}
       </>
     );
   }
@@ -111,6 +135,7 @@ function GitDetail({ row, now }: { readonly row: ProjectRow; readonly now: numbe
           <p className="ccc-skeleton-line" />
         </div>
         <GithubLinkRow row={row} />
+        {launch}
       </>
     );
   }
@@ -132,17 +157,19 @@ function GitDetail({ row, now }: { readonly row: ProjectRow; readonly now: numbe
           Updating Node.js can make macOS ask again.
         </p>
       )}
-      {git.kind !== "repo" && <GithubLinkRow row={row} />}
+      {git.kind !== "repo" && (
+        <>
+          <GithubLinkRow row={row} />
+          {launch}
+        </>
+      )}
       {git.kind === "repo" && (
         <>
           <p className="ccc-list-meta">
             {git.remote === null ? "No remote" : `Remote ${git.remote.host}/${git.remote.path}`}
           </p>
           <GithubLinkRow row={row} />
-          {/* LAUNCH_TOOLBAR_SLOT: plan 04-10 mounts the S2 launch toolbar and
-              its persistent status line here, between the remote row and
-              "Recent commits" (UI-SPEC S3 card anatomy). Deliberately empty
-              in this plan. */}
+          {launch}
           {git.commits.length === 0 ? (
             <p className="ccc-state-body">No commits yet</p>
           ) : (
@@ -225,9 +252,37 @@ export function ProjectCard({
   actions,
   onRemoved,
   headingRef = noHeadingRef,
+  onQuickAction,
+  terminalLabel = "Terminal",
+  onNavigate,
+  openSystemSettings,
 }: ProjectCardProps): VNode {
   const headingId = `ccc-project-card-${row.id}`;
   const [status, setStatus] = useState("");
+  // `ProjectRow.id` is a plain string for `ListBody`'s generic key; it is
+  // always a service-issued ProjectId.
+  const projectId = row.id as ProjectId;
+  // Hidden while disconnected — the banner says why (RR-05, UI-SPEC S3).
+  const launch =
+    connection.kind === "disconnected" ? null : (
+      <>
+        <LaunchToolbar
+          projectId={projectId}
+          projectName={row.name}
+          github={row.github}
+          onQuickAction={onQuickAction}
+        />
+        <LaunchStatusLine
+          projectId={projectId}
+          projectName={row.name}
+          terminalLabel={terminalLabel}
+          actions={PROJECT_LAUNCH_ACTIONS}
+          inProjects
+          onNavigate={onNavigate}
+          openSystemSettings={openSystemSettings}
+        />
+      </>
+    );
 
   return (
     <article className="ccc-card ccc-project-card" aria-labelledby={headingId}>
@@ -245,7 +300,7 @@ export function ProjectCard({
         {row.name}
       </h4>
       <p className="ccc-display-path ccc-mono-label">{displayPath}</p>
-      <GitDetail row={row} now={now} />
+      <GitDetail row={row} now={now} launch={launch} />
       <p role="status" className="ccc-state-body">
         {status}
       </p>

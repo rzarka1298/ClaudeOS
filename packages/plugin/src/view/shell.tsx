@@ -44,6 +44,12 @@ export interface ShellProps {
   /** Opens the Claude Code quick switcher, prefilled. The default is a no-op. */
   openSwitcher?: (prefill: string) => void;
   /**
+   * Opens one of the two fixed System Settings panes (RR-16) through the
+   * service. Absent, the launch error buttons that need it are omitted —
+   * their next-step line already names the path.
+   */
+  openSystemSettings?: (pane: "automation" | "privacy-security") => void;
+  /**
    * The Projects destination's bound service actions (register, remove,
    * rename, pin, set-GitHub-link, refresh). The view host wires this to
    * `createProjectsActions(client)`; the default resolves `failed` for
@@ -93,6 +99,7 @@ export interface DestinationViewProps {
   readonly onNavigate: (destination: DestinationId) => void;
   readonly projectsActions: ProjectsActions;
   readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
+  readonly openSystemSettings?: ((pane: "automation" | "privacy-security") => void) | undefined;
 }
 
 const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewProps) => VNode>> = {
@@ -106,7 +113,15 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
       onNavigate={onNavigate}
     />
   ),
-  projects: ({ connection, now, onQuickAction, onNavigate, projectsActions, pickFolder }) => (
+  projects: ({
+    connection,
+    now,
+    onQuickAction,
+    onNavigate,
+    projectsActions,
+    pickFolder,
+    openSystemSettings,
+  }) => (
     <ProjectsView
       actions={projectsActions}
       pickFolder={pickFolder}
@@ -114,6 +129,7 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
       now={now}
       onQuickAction={onQuickAction}
       onNavigate={onNavigate}
+      openSystemSettings={openSystemSettings}
     />
   ),
 };
@@ -152,6 +168,7 @@ export function Shell({
   openSwitcher = noOpenSwitcher,
   projectsActions = noProjectsActions,
   pickFolder = noPickFolder,
+  openSystemSettings,
 }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
   const tabRefs = useRef<Partial<Record<DestinationId, HTMLButtonElement>>>({});
@@ -277,6 +294,7 @@ export function Shell({
               onNavigate={focusDestination}
               projectsActions={projectsActions}
               pickFolder={pickFolder}
+              openSystemSettings={openSystemSettings}
             />
           ) : (
             <p>{active.description}</p>

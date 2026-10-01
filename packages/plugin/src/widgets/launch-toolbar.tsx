@@ -1,12 +1,22 @@
 import type { GithubTarget, LaunchAction, ProjectId } from "@ccc/domain";
 import type { VNode } from "preact";
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
+  LAUNCH_ERROR_ACTION_LABELS,
+  LAUNCH_ERROR_COPY,
+  type LaunchErrorAction,
   launchAcknowledgement,
   launchAnnouncement,
+  launcherDisplayName,
   launchSuccessLine,
+  renderCopy,
 } from "../projects/launch-copy.js";
-import { latestLaunchStatus, launchStatus, launchStatusKey } from "../projects/launch-status.js";
+import {
+  latestLaunchStatus,
+  launchStatus,
+  launchStatusKey,
+  setLaunchError,
+} from "../projects/launch-status.js";
 import type { DestinationId } from "../view/destinations.js";
 import type { QuickActionDescriptor } from "./contract.js";
 import { nextToolbarIndex } from "./toolbar-keys.js";
@@ -52,9 +62,14 @@ export interface LaunchToolbarProps {
 export function LaunchToolbar({
   projectId,
   projectName,
+  github,
   onQuickAction,
 }: LaunchToolbarProps): VNode {
   const statuses = launchStatus.value;
+  const noRemoteNoteId = useId();
+  // Enabled when the remote's host is github.com or an override link is set
+  // (D-13) — both arrive as `kind: "github"`.
+  const hasGithub = github.kind === "github";
   const [focusedIndex, setFocusedIndex] = useState(0);
   const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
   // The index of the button that holds focus, kept while focus is merely
@@ -84,7 +99,13 @@ export function LaunchToolbar({
   }
 
   function activate(spec: LaunchButtonSpec): void {
-    if (statuses.get(launchStatusKey(projectId, spec.action))?.kind === "opening") return;
+    const key = launchStatusKey(projectId, spec.action);
+    if (statuses.get(key)?.kind === "opening") return;
+    // GitHub with nowhere to go: say why, inline, and send nothing (UI-SPEC S2).
+    if (spec.action === "github" && !hasGithub) {
+      setLaunchError(key, "no-github-remote");
+      return;
+    }
     onQuickAction?.({
       id: `launch-${spec.action}`,
       label: spec.ariaLabel(projectName),
@@ -102,13 +123,15 @@ export function LaunchToolbar({
     >
       {LAUNCH_BUTTONS.map((spec, index) => {
         const opening = statuses.get(launchStatusKey(projectId, spec.action))?.kind === "opening";
+        const noRemote = spec.action === "github" && !hasGithub;
         return (
           <button
             key={spec.action}
             type="button"
             className="ccc-quick-action"
             aria-label={spec.ariaLabel(projectName)}
-            aria-disabled={opening ? "true" : undefined}
+            aria-disabled={opening || noRemote ? "true" : undefined}
+            aria-describedby={noRemote ? noRemoteNoteId : undefined}
             data-launch-state={opening ? "opening" : undefined}
             tabIndex={index === focusedIndex ? 0 : -1}
             ref={(el) => {
@@ -133,6 +156,11 @@ export function LaunchToolbar({
           </button>
         );
       })}
+      {!hasGithub && (
+        <span id={noRemoteNoteId} className="ccc-visually-hidden">
+          No GitHub remote
+        </span>
+      )}
     </div>
   );
 }
@@ -145,21 +173,29 @@ export interface LaunchStatusLineProps {
   /** The Claude Code terminal's display label (UI-SPEC `{Terminal}`). */
   readonly terminalLabel: string;
   readonly actions: readonly LaunchAction[];
+  /** `true` on the Projects destination, where `Go to Projects` would go nowhere. */
   readonly inProjects?: boolean | undefined;
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+  /** Opens one of the two fixed System Settings panes through the service (RR-16). */
+  readonly openSystemSettings?: ((pane: "automation" | "privacy-security") => void) | undefined;
 }
 
 /**
  * The persistent `role="status"` line under a toolbar (Accessibility Floor
  * 2: the region exists, empty, before its text ever changes). It shows the
  * most recent status among `actions`; the visible copy never names the
- * project, while a visually hidden announcement does (UI-SPEC S2 table).
+ * project, while a visually hidden announcement does (UI-SPEC S2 table). An
+ * error's optional action button follows the region rather than sitting
+ * inside it, so the announcement is the two lines and nothing else.
  */
 export function LaunchStatusLine({
   projectId,
   projectName,
   terminalLabel,
   actions,
+  inProjects = false,
+  onNavigate,
+  openSystemSettings,
 }: LaunchStatusLineProps): VNode {
   const latest = latestLaunchStatus(launchStatus.value, projectId, actions);
   const tone =
@@ -168,24 +204,86 @@ export function LaunchStatusLine({
       : latest.status.kind === "success"
         ? "success"
         : "error";
+
+  let errorLines: { problem: string; nextStep: string } | null = null;
+  let errorAction: LaunchErrorAction | null = null;
+  if (latest?.status.kind === "error") {
+    const copy = LAUNCH_ERROR_COPY[latest.status.error];
+    const values = {
+      launcher: launcherDisplayName(latest.action),
+      terminal: terminalLabel,
+      project: projectId === null ? null : projectName,
+    };
+    errorLines = {
+      problem: renderCopy(copy.problem, values),
+      nextStep: renderCopy(copy.nextStep, values),
+    };
+    errorAction = copy.action ?? null;
+    // A button renders only when it can act: `Go to Projects` is pointless
+    // in Projects, and a surface with no System Settings route omits those
+    // two buttons — the next-step line already names the path (RR-16).
+    if (errorAction === "go-to-projects" && (inProjects || onNavigate === undefined))
+      errorAction = null;
+    if (errorAction === "set-up-launchers" && onNavigate === undefined) errorAction = null;
+    if (
+      (errorAction === "open-automation" || errorAction === "open-privacy-security") &&
+      openSystemSettings === undefined
+    )
+      errorAction = null;
+  }
+
+  function runErrorAction(action: LaunchErrorAction): void {
+    switch (action) {
+      case "set-up-launchers":
+        onNavigate?.("settings");
+        return;
+      case "go-to-projects":
+        onNavigate?.("projects");
+        return;
+      case "open-automation":
+        openSystemSettings?.("automation");
+        return;
+      case "open-privacy-security":
+        openSystemSettings?.("privacy-security");
+        return;
+    }
+  }
+
   return (
-    <p role="status" className="ccc-launch-status" data-tone={tone}>
-      {latest?.status.kind === "opening" && (
-        <>
-          <span aria-hidden="true">{launchAcknowledgement(latest.action, terminalLabel)}</span>
-          <span className="ccc-visually-hidden">
-            {launchAnnouncement(latest.action, terminalLabel, projectName)}
-          </span>
-        </>
+    <>
+      <p role="status" className="ccc-launch-status" data-tone={tone}>
+        {latest?.status.kind === "opening" && (
+          <>
+            <span aria-hidden="true">{launchAcknowledgement(latest.action, terminalLabel)}</span>
+            <span className="ccc-visually-hidden">
+              {launchAnnouncement(latest.action, terminalLabel, projectName)}
+            </span>
+          </>
+        )}
+        {latest?.status.kind === "success" && (
+          <>
+            <span className="ccc-meta-glyph" aria-hidden="true">
+              ✓
+            </span>{" "}
+            {launchSuccessLine(latest.action, terminalLabel)}
+          </>
+        )}
+        {errorLines !== null && (
+          <>
+            <span className="ccc-error-glyph" aria-hidden="true">
+              ▲
+            </span>
+            {errorLines.problem}
+            <br />
+            {errorLines.nextStep}
+          </>
+        )}
+      </p>
+      {errorAction !== null && (
+        <button type="button" className="ccc-list-more" onClick={() => runErrorAction(errorAction)}>
+          {LAUNCH_ERROR_ACTION_LABELS[errorAction]}
+        </button>
       )}
-      {latest?.status.kind === "success" && (
-        <>
-          <span className="ccc-meta-glyph" aria-hidden="true">
-            ✓
-          </span>{" "}
-          {launchSuccessLine(latest.action, terminalLabel)}
-        </>
-      )}
-    </p>
+    </>
   );
 }
