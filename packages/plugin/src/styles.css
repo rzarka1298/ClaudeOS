@@ -868,12 +868,29 @@
   gap: var(--ccc-space-md);
 }
 
+/* Suggestions and Scan folders are sections of their own inside the Projects
+ * destination: one section step below the grid, not flush against it. */
+.ccc-projects-section > .ccc-projects-section {
+  margin-block-start: var(--ccc-space-lg);
+}
+
+/* A project card is one top-down stack (UI-SPEC S3 anatomy). `.ccc-card`'s
+ * `auto 1fr auto` rows suit a header/body/footer frame, but here they hand a
+ * stretched card's spare height to its SECOND child and open a gap mid-card
+ * (wave-7 visual review). The spare height goes above the footer instead,
+ * so footers still line up across a grid row. */
 .ccc-project-card {
+  display: flex;
+  flex-direction: column;
   padding: var(--ccc-space-lg);
   border: var(--ccc-border-hairline) solid var(--ccc-border);
   border-radius: var(--ccc-radius-md);
   background-color: var(--ccc-surface-glass);
   box-shadow: var(--ccc-shadow-card);
+}
+
+.ccc-project-card > :last-child {
+  margin-block-start: auto;
 }
 
 /* Long project names clamp to two lines with the full text still in the DOM
@@ -952,12 +969,17 @@
   background-color: var(--ccc-surface-glass);
 }
 
+/* Prose wraps between words: `overflow-wrap: anywhere` would let a narrow
+ * pane (360 px) shrink each line to a single character's width and break
+ * `disconnected` mid-word. It stays on mono paths only. The body wraps under
+ * the heading when the two do not fit side by side. */
 .ccc-banner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--ccc-space-sm);
   padding: var(--ccc-space-sm) var(--ccc-space-md);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   border: var(--ccc-border-hairline) solid var(--ccc-border);
   border-radius: var(--ccc-radius-sm);
   color: var(--ccc-ink-muted);
@@ -1022,7 +1044,7 @@
   font-size: var(--ccc-text-label);
 }
 
-/* The two removal confirmations (S4 remove project, S6 launcher reset) share
+/* The two removal confirmations (S3 remove project, S5 remove scan folder) share
  * this one danger affordance: danger text and border, never a danger fill —
  * the pill still reads as a button, not an alarm. */
 .ccc-button-danger {
@@ -1054,6 +1076,23 @@
   display: flex;
   flex-direction: column;
   gap: var(--ccc-space-xs);
+}
+
+/* The launcher choices and template rows are <fieldset>s: the browser's own
+ * groove border and margins give way to the card hairline (wave-7 visual
+ * review). `min-inline-size: 0` lets a fieldset shrink with a narrow pane. */
+fieldset.ccc-radio-group,
+fieldset.ccc-template-rows {
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--ccc-space-sm) var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-sm);
+}
+
+fieldset.ccc-radio-group > legend,
+fieldset.ccc-template-rows > legend {
+  padding: 0 var(--ccc-space-xs);
 }
 
 .ccc-radio-group input {
