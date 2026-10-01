@@ -12,6 +12,7 @@ import {
   type ScanRootView,
   type ScanStateResponse,
   type ScanStatus,
+  type SuggestionsPageResponse,
   type SuggestionView,
 } from "@ccc/domain";
 import {
@@ -36,6 +37,7 @@ import {
   type RegistrationPolicyContext,
   validateScanRootCandidate,
 } from "./registration.js";
+import { fitScanState, fitSuggestionsPage } from "./scan-page.js";
 import { validateAgainstSettledPolicy } from "./settled-policy.js";
 
 /**
@@ -153,8 +155,17 @@ export interface ScanService {
   remove(scanRootId: ScanRootId): ScanStateOutcome;
   /** Scans one nominated folder again, optionally at a new depth. */
   rescan(scanRootId: ScanRootId, depth?: number): Promise<ScanStateOutcome>;
-  /** Every scan folder and every current suggestion. */
+  /**
+   * Every scan folder, with each one's suggestion count and the first page
+   * of its suggestions — as many as fit `SCAN_RESPONSE_BUDGET_BYTES`
+   * (codex review 3, finding 2).
+   */
   state(): ScanStateResponse;
+  /**
+   * One scan folder's suggestions from `offset` on: at most one page, fitted
+   * to the byte budget. `null` for a ScanRootId the store does not hold.
+   */
+  suggestionsPage(scanRootId: ScanRootId, offset: number): SuggestionsPageResponse | null;
   /** Registers one suggestion through the registration policy. */
   registerSuggestion(suggestionId: string): Promise<SuggestionRegisterOutcome>;
   /** Hides one suggestion until the next scan of its folder. `false` when unknown. */
@@ -402,17 +413,44 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
     return next;
   }
 
-  function state(): ScanStateResponse {
-    const registered = new Set(listProjects(store.db).map((p) => p.path));
+  /** The lexical vault root the visible suggestions are filtered against. */
+  function currentVault(): string | null {
     // Lexical, so this stays synchronous; Register re-checks with realpaths.
     const vaultRoot = deps.readPolicy().vaultRoot;
-    const vault = vaultRoot === null || vaultRoot.length === 0 ? null : path.resolve(vaultRoot);
+    return vaultRoot === null || vaultRoot.length === 0 ? null : path.resolve(vaultRoot);
+  }
+
+  /** A folder's suggestions as the plugin may see them, in scan order. */
+  function visibleSuggestions(
+    scanRootId: ScanRootId,
+    registered: ReadonlySet<string>,
+    vault: string | null,
+  ): SuggestionView[] {
+    const views: SuggestionView[] = [];
+    for (const suggestion of memory.get(scanRootId)?.suggestions ?? []) {
+      if (registered.has(suggestion.realPath)) continue;
+      if (touchesVault(suggestion.realPath, vault)) continue;
+      views.push({
+        suggestionId: suggestion.suggestionId,
+        scanRootId: suggestion.scanRootId,
+        folderName: suggestion.folderName,
+        displayPath: toDisplayPath(suggestion.realPath, deps.homeDir),
+      });
+    }
+    return views;
+  }
+
+  function state(): ScanStateResponse {
+    const registered = new Set(listProjects(store.db).map((p) => p.path));
+    const vault = currentVault();
     const scanRoots: ScanRootView[] = [];
-    const suggestions: SuggestionView[] = [];
+    const byRoot: SuggestionView[][] = [];
     let partial = false;
     for (const root of listScanRoots(store.db)) {
       const remembered = memory.get(root.scanRootId);
       if (remembered?.status === "partial") partial = true;
+      const visible = visibleSuggestions(root.scanRootId, registered, vault);
+      byRoot.push(visible);
       scanRoots.push({
         scanRootId: root.scanRootId,
         displayPath: toDisplayPath(root.path, deps.homeDir),
@@ -420,19 +458,16 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
         addedAt: root.addedAt,
         lastScannedAt: root.lastScannedAt,
         ...(remembered === undefined ? {} : { scanStatus: remembered.status }),
+        suggestionCount: visible.length,
       });
-      for (const suggestion of remembered?.suggestions ?? []) {
-        if (registered.has(suggestion.realPath)) continue;
-        if (touchesVault(suggestion.realPath, vault)) continue;
-        suggestions.push({
-          suggestionId: suggestion.suggestionId,
-          scanRootId: suggestion.scanRootId,
-          folderName: suggestion.folderName,
-          displayPath: toDisplayPath(suggestion.realPath, deps.homeDir),
-        });
-      }
     }
-    return { scanRoots, suggestions, partial };
+    return fitScanState(scanRoots, byRoot, partial);
+  }
+
+  function suggestionsPage(scanRootId: ScanRootId, offset: number): SuggestionsPageResponse | null {
+    if (getScanRoot(store.db, scanRootId) === null) return null;
+    const registered = new Set(listProjects(store.db).map((p) => p.path));
+    return fitSuggestionsPage(visibleSuggestions(scanRootId, registered, currentVault()), offset);
   }
 
   function findSuggestion(suggestionId: string): Suggestion | null {
@@ -524,6 +559,7 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
     },
 
     state,
+    suggestionsPage,
 
     async registerSuggestion(suggestionId) {
       const suggestion = findSuggestion(suggestionId);

@@ -57,6 +57,7 @@ function actionsWith(overrides: Partial<ScanActions> = {}): ScanActions {
     listScanState: failed,
     registerSuggestion: () => Promise.resolve({ kind: "failed" }),
     dismissSuggestion: () => Promise.resolve({ kind: "failed" }),
+    suggestionsPage: () => Promise.resolve({ kind: "failed" }),
     ...overrides,
   };
 }

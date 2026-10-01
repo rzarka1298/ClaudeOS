@@ -1,14 +1,21 @@
-import type {
-  ProtectedLocation,
-  ScanRootView,
-  ScanStateResponse,
-  SuggestionView,
+import {
+  type ProtectedLocation,
+  type ScanRootView,
+  type ScanStateResponse,
+  SUGGESTIONS_PAGE_SIZE,
+  type SuggestionView,
 } from "@ccc/domain";
 import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { ScanActionOutcome, ScanActions } from "../projects/projects-actions.js";
-import { applyScanState, scanState } from "../projects/scan-state.js";
+import {
+  appendSuggestionsPage,
+  applyScanState,
+  removeSuggestion,
+  scanState,
+  suggestionTotal,
+} from "../projects/scan-state.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
 import { PROTECTED_LOCATION_LABELS, validateTypedPath } from "./register-flow.js";
 
@@ -373,8 +380,12 @@ export interface ScanFoldersProps {
   readonly now: number;
 }
 
-/** Suggestions shown per scan folder before `Show {n} more` (RR-18). */
-export const SUGGESTIONS_PAGE = 25;
+/**
+ * Suggestions shown per scan folder before `Show {n} more` (RR-18) — the
+ * service's page size, so each `Show {n} more` is at most one page request
+ * (codex review 3, finding 2).
+ */
+export const SUGGESTIONS_PAGE = SUGGESTIONS_PAGE_SIZE;
 
 /** `{n} folder` / `{n} folders` (UI-SPEC S5 suggestions heading meta). */
 function folderCount(n: number): string {
@@ -404,10 +415,17 @@ function rowButton(container: HTMLElement | null, selector: string, index: numbe
 export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
   const roots = state?.scanRoots ?? [];
   const suggestions = state?.suggestions ?? [];
+  const groups = roots.map((root) => {
+    const group = suggestions.filter((s) => s.scanRootId === root.scanRootId);
+    return { root, group, total: suggestionTotal(root, group.length) };
+  });
+  const suggestionCount = groups.reduce((sum, { total }) => sum + total, 0);
   const partial = state?.partial === true || roots.some((r) => r.scanStatus === "partial");
   const [dismissedAny, setDismissedAny] = useState(false);
   const [announcement, setAnnouncement] = useState<StatusLine>(NO_STATUS);
   const [shownByRoot, setShownByRoot] = useState<Readonly<Record<string, number>>>({});
+  // One page request per scan folder at a time.
+  const loadingRef = useRef(new Set<string>());
   // One request per suggestion at a time: the ref guards, the state renders.
   const inFlightRef = useRef(new Set<string>());
   const [inFlight, setInFlight] = useState<ReadonlySet<string>>(new Set());
@@ -487,7 +505,10 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
           setAnnouncement({ kind: "problem", problem: SERVICE_PROBLEM });
           return;
       }
-      // The registered folder leaves the suggestions; the service is the source.
+      // The registered folder leaves the suggestions; the service is the
+      // source. Dropped here first, so pages already loaded stay loaded.
+      const before = currentState(state);
+      if (before !== undefined) removeSuggestion(before, suggestion);
       const listed = await actions.listScanState();
       if (listed.kind === "state") applyScanState(listed.state);
       setFocusTarget({ kind: "suggestion", index });
@@ -512,16 +533,52 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
         return;
       }
       const latest = currentState(state);
-      if (latest !== undefined) {
-        applyScanState({
-          ...latest,
-          suggestions: latest.suggestions.filter((s) => s.suggestionId !== suggestion.suggestionId),
-        });
-      }
+      if (latest !== undefined) removeSuggestion(latest, suggestion);
       setDismissedAny(true);
       setFocusTarget({ kind: "suggestion", index });
     } finally {
       end(suggestion.suggestionId);
+    }
+  }
+
+  /**
+   * `Show {n} more`: reveals rows already held, or first fetches the
+   * folder's next page from the service (codex review 3, finding 2).
+   */
+  async function showMore(root: ScanRootView, held: number, shown: number): Promise<void> {
+    const reveal = (): void =>
+      setShownByRoot((current) => ({
+        ...current,
+        [root.scanRootId]: (current[root.scanRootId] ?? SUGGESTIONS_PAGE) + SUGGESTIONS_PAGE,
+      }));
+    if (held >= shown + SUGGESTIONS_PAGE || held >= suggestionTotal(root, held)) {
+      reveal();
+      return;
+    }
+    if (loadingRef.current.has(root.scanRootId)) return;
+    loadingRef.current.add(root.scanRootId);
+    try {
+      const outcome = await actions.suggestionsPage(root.scanRootId, held);
+      if (outcome.kind === "page") {
+        const latest = currentState(state);
+        if (
+          latest !== undefined &&
+          appendSuggestionsPage(latest, root.scanRootId, held, outcome.page)
+        ) {
+          reveal();
+          return;
+        }
+        // The list changed underneath: show what the service holds now.
+        await resync(actions);
+        return;
+      }
+      if (outcome.kind === "not-found") {
+        await resync(actions);
+        return;
+      }
+      setAnnouncement({ kind: "problem", problem: SERVICE_PROBLEM });
+    } finally {
+      loadingRef.current.delete(root.scanRootId);
     }
   }
 
@@ -541,14 +598,10 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
           >
             Suggestions
           </h3>
-          {suggestions.length > 0 && (
-            <p className="ccc-list-meta">{folderCount(suggestions.length)}</p>
-          )}
-          {suggestions.length > 0 && partial && (
-            <p className="ccc-list-meta">{PARTIAL_LIST_NOTE}</p>
-          )}
+          {suggestionCount > 0 && <p className="ccc-list-meta">{folderCount(suggestionCount)}</p>}
+          {suggestionCount > 0 && partial && <p className="ccc-list-meta">{PARTIAL_LIST_NOTE}</p>}
           <StatusRegion line={announcement} />
-          {suggestions.length === 0 ? (
+          {suggestionCount === 0 ? (
             <div>
               <p className="ccc-state-heading">No suggestions.</p>
               <p className="ccc-state-body">
@@ -556,11 +609,10 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
               </p>
             </div>
           ) : (
-            roots.map((root) => {
-              const group = suggestions.filter((s) => s.scanRootId === root.scanRootId);
-              if (group.length === 0) return null;
+            groups.map(({ root, group, total }) => {
+              if (total === 0) return null;
               const shown = shownByRoot[root.scanRootId] ?? SUGGESTIONS_PAGE;
-              const remaining = group.length - shown;
+              const remaining = total - Math.min(shown, group.length);
               const headingId = `ccc-suggestions-${root.scanRootId}`;
               return (
                 // biome-ignore lint/a11y/useSemanticElements: a fieldset implies form controls and brings browser chrome; this is a labelled group of rows.
@@ -609,12 +661,7 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
                     <button
                       type="button"
                       className="ccc-list-more"
-                      onClick={() =>
-                        setShownByRoot({
-                          ...shownByRoot,
-                          [root.scanRootId]: shown + SUGGESTIONS_PAGE,
-                        })
-                      }
+                      onClick={() => void showMore(root, group.length, shown)}
                     >
                       {`Show ${Math.min(remaining, SUGGESTIONS_PAGE)} more`}
                     </button>

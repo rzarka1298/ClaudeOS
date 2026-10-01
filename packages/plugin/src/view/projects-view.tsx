@@ -62,6 +62,7 @@ const NO_SCAN_ACTIONS: ScanActions = {
   listScanState: FAILED_SCAN,
   registerSuggestion: FAILED_SCAN,
   dismissSuggestion: FAILED_SCAN,
+  suggestionsPage: FAILED_SCAN,
 };
 
 export function ProjectsView({

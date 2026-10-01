@@ -78,6 +78,7 @@ describe("section labels (UI-SPEC Typography: uppercase Label)", () => {
           listScanState: fail,
           registerSuggestion: fail,
           dismissSuggestion: fail,
+          suggestionsPage: fail,
         }}
         now={NOW}
       />,

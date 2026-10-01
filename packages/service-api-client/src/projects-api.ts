@@ -46,7 +46,11 @@ import {
   type SetGithubLinkRequest,
   SUGGESTION_DISMISS_PATH,
   SUGGESTION_REGISTER_PATH,
+  SUGGESTIONS_PAGE_PATH,
   type SuggestionActionRequest,
+  type SuggestionsPageRequest,
+  type SuggestionsPageResponse,
+  SuggestionsPageResponseSchema,
   SYSTEM_SETTINGS_OPEN_PATH,
   type SystemSettingsPane,
   type TemplateRefusalReason,
@@ -407,6 +411,17 @@ export function rescanScanRoot(
 /** `POST /api/v1/scan-roots/list` — scan roots plus current suggestions. */
 export function listScanState(client: SocketApiClient): Promise<ScanStateResponse> {
   return postValidated(client, SCAN_ROOTS_LIST_PATH, {}, ScanStateResponseSchema);
+}
+
+/**
+ * `POST /api/v1/scan-roots/suggestions/page` — one scan folder's next
+ * suggestions from `offset` (codex review 3, finding 2).
+ */
+export function listSuggestionsPage(
+  client: SocketApiClient,
+  request: SuggestionsPageRequest,
+): Promise<SuggestionsPageResponse> {
+  return postValidated(client, SUGGESTIONS_PAGE_PATH, request, SuggestionsPageResponseSchema);
 }
 
 /** `POST /api/v1/scan-roots/suggestions/register` — register a suggested folder. */

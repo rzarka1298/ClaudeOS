@@ -1,8 +1,15 @@
-import type { ProjectId, ProtectedLocation, ScanRootId, ScanStateResponse } from "@ccc/domain";
+import type {
+  ProjectId,
+  ProtectedLocation,
+  ScanRootId,
+  ScanStateResponse,
+  SuggestionsPageResponse,
+} from "@ccc/domain";
 import {
   addScanRoot,
   dismissSuggestion,
   listScanState,
+  listSuggestionsPage,
   ProjectsRequestError,
   pinProject,
   refreshProjects,
@@ -183,7 +190,18 @@ export interface ScanActions {
   registerSuggestion(suggestionId: string): Promise<ProjectActionOutcome>;
   /** Hides a suggestion until the next rescan or service restart. */
   dismissSuggestion(suggestionId: string): Promise<ProjectActionOutcome>;
+  /**
+   * One scan folder's next suggestions from `offset` — the number the
+   * plugin already holds for it (codex review 3, finding 2: a scan state
+   * carries only each folder's first page).
+   */
+  suggestionsPage(scanRootId: ScanRootId, offset: number): Promise<SuggestionsPageOutcome>;
 }
+
+/** A page of one scan folder's suggestions, or why none arrived. Never rejects. */
+export type SuggestionsPageOutcome =
+  | { readonly kind: "page"; readonly page: SuggestionsPageResponse }
+  | Extract<ProjectActionOutcome, { kind: "not-found" | "service-disconnected" | "failed" }>;
 
 /**
  * A suggestion route's 404 is not an outage: the suggestion is no longer in
@@ -239,6 +257,16 @@ export function createScanActions(client: SocketApiClient): ScanActions {
         return { kind: "ok" };
       } catch (error: unknown) {
         return classifySuggestionFailure(error);
+      }
+    },
+    async suggestionsPage(scanRootId, offset) {
+      try {
+        return { kind: "page", page: await listSuggestionsPage(client, { scanRootId, offset }) };
+      } catch (error: unknown) {
+        const outcome = classifySuggestionFailure(error);
+        return outcome.kind === "not-found" || outcome.kind === "service-disconnected"
+          ? outcome
+          : { kind: "failed" };
       }
     },
   };

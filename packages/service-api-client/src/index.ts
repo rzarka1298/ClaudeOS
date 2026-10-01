@@ -19,6 +19,7 @@ export {
   LAUNCHER_TEST_CLIENT_TIMEOUT_MS,
   LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS,
   listScanState,
+  listSuggestionsPage,
   markLauncherTested,
   openSystemSettings,
   ProjectsRequestError,

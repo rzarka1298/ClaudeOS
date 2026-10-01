@@ -12,7 +12,9 @@ import {
   SCAN_ROOTS_RESCAN_PATH,
   SUGGESTION_DISMISS_PATH,
   SUGGESTION_REGISTER_PATH,
+  SUGGESTIONS_PAGE_PATH,
   SuggestionActionRequestSchema,
+  SuggestionsPageRequestSchema,
 } from "@ccc/domain";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
@@ -37,6 +39,12 @@ import type { ScanService, ScanStateOutcome } from "./scan.js";
  * request after the nomination can name a directory (D-07). Every route is
  * a POST behind `withAuth` (T-04-24) with a strict body; every refusal is a
  * constant body that names nothing on disk (D-04, D-46).
+ *
+ * No response grows with the number of suggestions (codex review 3,
+ * finding 2): a scan state carries each folder's first page, fitted to
+ * `SCAN_RESPONSE_BUDGET_BYTES`, and the page route serves the rest one
+ * fitted page at a time — every body stays under the plugin client's
+ * 65,536-byte cap.
  */
 
 /** The one refusal body for a folder that cannot be nominated, whatever the reason. */
@@ -141,6 +149,13 @@ export const scanRoutes: Record<string, Record<string, Handler>> = {
         else sendJson(res, 404, NO_SUCH_SUGGESTION_BODY);
       },
     ),
+  },
+  [SUGGESTIONS_PAGE_PATH]: {
+    POST: scanHandler(SUGGESTIONS_PAGE_PATH, SuggestionsPageRequestSchema, (scan, body, res) => {
+      const page = scan.suggestionsPage(body.scanRootId, body.offset);
+      if (page === null) sendJson(res, 404, NO_SUCH_SCAN_ROOT_BODY);
+      else sendJson(res, 200, page);
+    }),
   },
   [SUGGESTION_DISMISS_PATH]: {
     POST: scanHandler(SUGGESTION_DISMISS_PATH, SuggestionActionRequestSchema, (scan, body, res) => {

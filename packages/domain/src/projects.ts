@@ -407,6 +407,25 @@ export const SCAN_ROOTS_LIST_PATH = `${API_BASE}/scan-roots/list`;
 export const SUGGESTION_REGISTER_PATH = `${API_BASE}/scan-roots/suggestions/register`;
 /** `POST /api/v1/scan-roots/suggestions/dismiss` — hide a suggestion until the next rescan. */
 export const SUGGESTION_DISMISS_PATH = `${API_BASE}/scan-roots/suggestions/dismiss`;
+/** `POST /api/v1/scan-roots/suggestions/page` — one scan folder's next suggestions. */
+export const SUGGESTIONS_PAGE_PATH = `${API_BASE}/scan-roots/suggestions/page`;
+
+/**
+ * At most this many suggestions per scan folder in one response — the S5
+ * `Show {n} more` step (RR-18). A scan response carries each folder's first
+ * page; `Show {n} more` asks {@link SUGGESTIONS_PAGE_PATH} for the next.
+ */
+export const SUGGESTIONS_PAGE_SIZE = 25;
+
+/**
+ * The byte budget for a scan response body (codex review 3, finding 2):
+ * well under the plugin client's 65,536-byte response cap, leaving room for
+ * the fields added after the suggestions are fitted (`protectedLocation`).
+ * The service stops adding suggestions once the next would pass it; a scan
+ * that finds thousands of Git folders still answers, and the rest arrive a
+ * page at a time.
+ */
+export const SCAN_RESPONSE_BUDGET_BYTES = 56 * 1024;
 
 /** How many levels below a scan root to look (D-07): default 1, at most 3. */
 export const ScanDepthSchema = z.number().int().min(1).max(3);
@@ -445,6 +464,16 @@ export const SuggestionActionRequestSchema = z
 export type SuggestionActionRequest = z.infer<typeof SuggestionActionRequestSchema>;
 
 /**
+ * One scan folder's suggestions from `offset` on: the number the plugin
+ * already holds for that folder (its list is always a prefix of the
+ * service's), so a page continues exactly where the last one stopped.
+ */
+export const SuggestionsPageRequestSchema = z
+  .object({ scanRootId: ScanRootIdSchema, offset: z.number().int().min(0).max(1_000_000) })
+  .strict();
+export type SuggestionsPageRequest = z.infer<typeof SuggestionsPageRequestSchema>;
+
+/**
  * How a folder's latest scan in this service session ended (plan 04-13):
  * `partial` when an entry or time cap stopped it or a subfolder could not be
  * read, `failed` when the folder is gone or was replaced, `access-denied`
@@ -470,6 +499,12 @@ export const ScanRootViewSchema = z.object({
   addedAt: z.string(),
   lastScannedAt: z.string().nullable(),
   scanStatus: ScanStatusSchema.optional(),
+  /**
+   * How many suggestions this folder has in all — a response carries only
+   * the first page of them (codex review 3, finding 2). Absent means the
+   * response's own suggestions for the folder are all there are.
+   */
+  suggestionCount: z.number().int().min(0).optional(),
 });
 export type ScanRootView = z.infer<typeof ScanRootViewSchema>;
 
@@ -494,3 +529,10 @@ export const ScanStateResponseSchema = z.object({
   protectedLocation: ProtectedLocationSchema.optional(),
 });
 export type ScanStateResponse = z.infer<typeof ScanStateResponseSchema>;
+
+/** One page of a scan folder's suggestions, and how many it has in all. */
+export const SuggestionsPageResponseSchema = z.object({
+  suggestions: z.array(SuggestionViewSchema),
+  total: z.number().int().min(0),
+});
+export type SuggestionsPageResponse = z.infer<typeof SuggestionsPageResponseSchema>;
