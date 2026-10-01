@@ -115,6 +115,22 @@ if (argv[0] === "app-server") {
     process.stdin.on("data", (d) => (s += d));
     process.stdin.on("end", () => run(s));
   } else run(null);
+} else if (argv.at(-3) === "mcp" && argv.at(-2) === "list" && argv.at(-1) === "--json") {
+  // The owner's MCP servers as Codex resolves them, after any -c overrides.
+  record({ query: "mcp" });
+  if (process.env.FAKE_CODEX_MCP === "fail") process.exit(1);
+  const servers = JSON.parse(process.env.FAKE_CODEX_MCP || '[{"name":"pencil","enabled":true},{"name":"computer-use","enabled":false}]');
+  const out = servers.map((sv) => {
+    const off = argv.includes("mcp_servers." + sv.name + ".enabled=false");
+    return { name: sv.name, enabled: sv.sticky ? sv.enabled : off ? false : sv.enabled, transport: { type: "stdio" } };
+  });
+  process.stdout.write(JSON.stringify(out));
+} else if (argv.at(-2) === "features" && argv.at(-1) === "list") {
+  record({ query: "features" });
+  if (process.env.FAKE_CODEX_FEATURES) { process.stdout.write(process.env.FAKE_CODEX_FEATURES); process.exit(0); }
+  const sticky = (process.env.FAKE_CODEX_STICKY_FEATURES || "").split(",");
+  const line = (f, stage) => f + "  " + stage + "  " + (argv.includes("features." + f + "=false") && !sticky.includes(f) ? "false" : "true") + "\n";
+  process.stdout.write(line("hooks", "stable") + line("plugins", "stable") + line("js_repl", "experimental") + "memories  stable  false\n");
 } else if (argv.includes("--ask-for-approval")) {
   // The interactive TUI, as the Antigravity tab runs it: writes a rollout the
   // way Codex does (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl).
@@ -241,6 +257,7 @@ if (process.env.FAKE_AG_MODE === "claim") {
       // The IDE's environment, not the wrapper's: it may have another CODEX_HOME.
       const env = { ...process.env };
       if (process.env.FAKE_AG_CODEX_HOME) env.CODEX_HOME = process.env.FAKE_AG_CODEX_HOME;
+      Object.assign(env, JSON.parse(process.env.FAKE_AG_EXTRA_ENV || "{}"));
       // An extension from before TUI mode always ran "follow".
       const argv = process.env.FAKE_AG_LEGACY ? ["follow", req.runId] : t.shellArgs;
       const child = spawn(t.shellPath, argv, { cwd: t.cwd, detached: true, stdio: "ignore", env });
@@ -268,7 +285,7 @@ interface Harness {
     args: string[],
     env?: Record<string, string>,
   ): { status: number | null; out: string; stdout: string };
-  calls(): Array<{ argv: string[]; cwd: string; stdin?: string | null }>;
+  calls(): Array<{ argv: string[]; cwd: string; stdin?: string | null; query?: string }>;
   execCalls(): Array<{ argv: string[]; cwd: string; stdin?: string | null }>;
 }
 
@@ -1363,8 +1380,15 @@ describe("tui: trust, withdrawal and cleanup", () => {
     expect(argv).toEqual(
       expect.arrayContaining(["-s", "read-only", "--ask-for-approval", "never"]),
     );
-    // The owner's MCP servers stay out of the worker, as --ignore-user-config does headless.
-    expect(argv).toEqual(expect.arrayContaining(["-c", "mcp_servers={}"]));
+    // The owner's MCP servers, plugins, hooks and notify stay out of the worker.
+    expect(argv).toEqual(
+      expect.arrayContaining(["-c", "mcp_servers.pencil.enabled=false", "-c", "notify=[]"]),
+    );
+    expect(argv).toEqual(expect.arrayContaining(["-c", "mcp_servers.computer-use.enabled=false"]));
+    expect(argv).toEqual(
+      expect.arrayContaining(["-c", "features.plugins=false", "-c", "features.hooks=false"]),
+    );
+    expect(argv).not.toContain("--ignore-user-config");
   });
 
   it("stops a TUI that shows no session in time (e.g. a trust prompt) and falls back headless", async () => {
@@ -1405,7 +1429,7 @@ describe("tui: trust, withdrawal and cleanup", () => {
     expect(await exited).toBe(130);
     expect(requestFiles(h)).toEqual([]);
     expect(readdirSync(join(h.bridgeState, "prompts"))).toEqual([]);
-    expect(h.calls().filter((c) => c.argv[0] !== "app-server")).toHaveLength(0);
+    expect(h.calls().filter((c) => c.argv[0] !== "app-server" && !c.query)).toHaveLength(0);
   });
 
   it("the watchdog kills the whole TUI worker tree before reporting (finding 2)", async () => {
@@ -1499,5 +1523,88 @@ describe("tui with an older extension", () => {
     expect(r.status).toBe(0);
     expect(h.calls().filter((c) => c.argv.includes("--ask-for-approval"))).toHaveLength(1);
     expect(h.execCalls()).toHaveLength(0);
+  });
+});
+
+describe("tui isolation from the owner's Codex config", () => {
+  const CLAIM = { FAKE_AG_MODE: "claim", CODEX_BRIDGE_CLAIM_TIMEOUT_MS: "8000" };
+  const tuiCalls = (h: Harness) => h.calls().filter((c) => c.argv.includes("--ask-for-approval"));
+  const liveLog = (h: Harness, stdout: string) =>
+    readFileSync(join(h.root, String(lastJson(stdout).liveLog)), "utf8");
+
+  it("disables every resolved MCP server by name, verifies it, and logs the check", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+      FAKE_CODEX_MCP: JSON.stringify([
+        { name: "pencil", enabled: true },
+        { name: "node_repl", enabled: true },
+        { name: "computer-use", enabled: false },
+      ]),
+    });
+    expect(r.status).toBe(0);
+    const argv = tuiCalls(h)[0]?.argv ?? [];
+    for (const n of ["pencil", "node_repl", "computer-use"])
+      expect(argv).toEqual(expect.arrayContaining(["-c", `mcp_servers.${n}.enabled=false`]));
+    expect(liveLog(h, r.stdout)).toContain("[tui] isolation ok: 3 MCP servers, 0 enabled");
+    // The helper re-checks right before launching, so the listing ran twice per side.
+    expect(h.calls().filter((c) => c.query === "mcp").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it.each([
+    [
+      "a server that ignores the disable",
+      { FAKE_CODEX_MCP: '[{"name":"pencil","enabled":true,"sticky":true}]' },
+      /MCP servers still enabled: pencil/,
+    ],
+    ["a failing MCP listing", { FAKE_CODEX_MCP: "fail" }, /could not list MCP servers/],
+    [
+      "a server name an override cannot address",
+      { FAKE_CODEX_MCP: '[{"name":"a.b","enabled":true}]' },
+      /cannot be disabled/,
+    ],
+    [
+      "plugins that stay enabled",
+      { FAKE_CODEX_STICKY_FEATURES: "plugins" },
+      /features still enabled: plugins/,
+    ],
+    [
+      "an unverifiable feature list",
+      { FAKE_CODEX_FEATURES: "memories stable false\n" },
+      /cannot verify features: hooks, plugins/,
+    ],
+  ])("fails closed to headless on %s", (_l, env, reason) => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      ...env,
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(tuiCalls(h)).toHaveLength(0);
+    // Only the headless run's follow tab may be queued, never a TUI request.
+    expect(requestFiles(h).length ? readRequest(h).mode : undefined).not.toBe("tui");
+    const [exec] = h.execCalls();
+    expect(exec?.argv).toContain("--ignore-user-config");
+    expect(liveLog(h, r.stdout)).toMatch(reason);
+  });
+
+  it("the tab helper refuses to launch if isolation fails at launch time", () => {
+    const h = harness();
+    // The wrapper's check passes; the IDE side sees a server that ignores the disable.
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+      FAKE_AG_EXTRA_ENV: JSON.stringify({
+        FAKE_CODEX_MCP: '[{"name":"pencil","enabled":true,"sticky":true}]',
+      }),
+    });
+    expect(r.status).toBe(0);
+    expect(tuiCalls(h)).toHaveLength(0);
+    expect(h.execCalls()).toHaveLength(1);
+    expect(liveLog(h, r.stdout)).toMatch(
+      /isolation failed in the tab: MCP servers still enabled: pencil/,
+    );
   });
 });
