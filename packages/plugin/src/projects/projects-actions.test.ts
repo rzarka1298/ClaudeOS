@@ -271,4 +271,11 @@ describe("createScanActions (plan 04-13 Task 1)", () => {
     const broken = createScanActions(throwingClient(new Error("boom")));
     expect(await broken.removeScanRoot(SCAN_ROOT_ID)).toEqual({ kind: "failed" });
   });
+  it("a 404 on register or dismiss resolves not-found, not an outage (wave-6 review)", async () => {
+    const gone = createScanActions(
+      fakeClient({ status: 404, body: { error: "no such suggestion" } }).client,
+    );
+    expect(await gone.registerSuggestion("abc123")).toEqual({ kind: "not-found" });
+    expect(await gone.dismissSuggestion("abc123")).toEqual({ kind: "not-found" });
+  });
 });
