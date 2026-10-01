@@ -11,19 +11,37 @@ import {
   type AppDraft,
   type AppLauncherId,
   createLaunchersSession,
+  FieldError,
   LAUNCHER_PANEL_NAMES,
   type LauncherBadge,
   LauncherStatusBadge,
   type LaunchersSession,
   PANEL_DESCRIPTIONS,
+  PanelFollowUps,
+  type PanelStatus,
   PanelStatusLine,
+  runLauncherTest,
+  setPanelStatus,
   setSaveError,
-  setPanelStatus as setStatus,
+  type TestBlock,
+  type TestCopy,
+  TestLauncherButton,
+  TestLines,
 } from "./launcher-panel-kit.js";
 import { launchersFocusRequested } from "./launchers-focus.js";
 
 export { createLaunchersSession, type LaunchersSession } from "./launcher-panel-kit.js";
 export { requestLaunchersFocus } from "./launchers-focus.js";
+
+/**
+ * The S6 Launchers section of the command center's own Settings destination
+ * (D-37, plan 04-12). Detection proposes; only the owner's explicit
+ * `Save launcher` sends anything to the service (D-27). Drafts live in a
+ * {@link LaunchersSession} — memory only, for the life of the view (RR-25)
+ * — and are never written to plugin settings, `data.json` or the vault
+ * (D-43). Each Test fires one real launch of the SAVED configuration, and
+ * only the owner's It opened marks a launcher Tested (D-28, RR-14).
+ */
 
 /** The preview's sample project when none is registered (RR-24). */
 export const FALLBACK_SAMPLE_PATH = "~/example-project";
@@ -40,20 +58,34 @@ function sampleDisplayPath(): string {
   );
 }
 
-/**
- * The S6 Launchers section of the command center's own Settings destination
- * (D-37, plan 04-12). Detection proposes; only the owner's explicit
- * `Save launcher` sends anything to the service (D-27). Drafts live in a
- * {@link LaunchersSession} — memory only, for the life of the view (RR-25)
- * — and are never written to plugin settings, `data.json` or the vault
- * (D-43).
- */
-
 const LOCATION_COPY: Readonly<Record<DetectedApp["location"], string>> = {
   applications: "In Applications",
   "user-applications": "In your Applications folder",
   other: "Elsewhere on this Mac",
 };
+
+/** What each Test launches, in the owner's words (RR-15, ADR-0024 Test step). */
+const TEST_EXPLANATIONS: Readonly<Record<Exclude<LaunchAction, "claude-code">, string>> = {
+  antigravity: "Test opens Antigravity without a project.",
+  "claude-desktop": "Test brings Claude Desktop to the front.",
+  finder: "Test reveals the managed vault folder in Finder.",
+  github: "Test opens github.com in your default browser.",
+};
+
+function defaultTestCopy(id: LaunchAction): TestCopy {
+  const appName = LAUNCHER_PANEL_NAMES[id];
+  return {
+    appName,
+    question: `Test sent. Did ${appName} open?`,
+    terminal: "Terminal",
+    mayPrompt: false,
+  };
+}
+
+/** A Test or a mark-tested call is in flight: the Test button waits. */
+function testBusy(status: PanelStatus): boolean {
+  return status.kind === "testing" || status.kind === "confirming";
+}
 
 function appBadge(
   id: AppLauncherId,
@@ -93,6 +125,15 @@ function appBaseline(
   return only === undefined ? null : { kind: "detected", bundleId: only.bundleId };
 }
 
+/**
+ * A radio that is `aria-disabled` stays focusable but must not change: the
+ * click's default (checking it) is cancelled, so the last-known choice stays
+ * selected while the service is away.
+ */
+function blockClickWhen(disabled: boolean): ((event: MouseEvent) => void) | undefined {
+  return disabled ? (event) => event.preventDefault() : undefined;
+}
+
 export interface LaunchersSettingsProps {
   readonly actions: LaunchersActions;
   readonly connection: ConnectionState;
@@ -110,10 +151,10 @@ export function LaunchersSettings({
   const [ownSession] = useState(createLaunchersSession);
   const session = providedSession ?? ownSession;
   const headingRef = useRef<HTMLHeadingElement | null>(null);
-  const connected = connection.kind !== "disconnected";
+  const disconnected = connection.kind === "disconnected";
 
   function runDetect(): void {
-    if (session.detectPhase.value === "detecting") return;
+    if (disconnected || session.detectPhase.value === "detecting") return;
     session.detectPhase.value = "detecting";
     void actions.detect().then((outcome) => {
       if (outcome.kind === "detected") {
@@ -122,12 +163,6 @@ export function LaunchersSettings({
       } else {
         session.detectPhase.value = "failed";
       }
-    });
-  }
-
-  function loadConfigs(): void {
-    void actions.getConfigs().then((outcome) => {
-      if (outcome.kind === "loaded") session.configs.value = outcome.configs;
     });
   }
 
@@ -140,16 +175,19 @@ export function LaunchersSettings({
   }, [focusRequested]);
 
   // Detection runs by itself only the first time the section opens with no
-  // prior detection (D-27); the saved configuration is re-read on each open.
+  // prior detection (D-27); the saved configuration is re-read on each open
+  // and whenever the service comes back. Nothing runs while disconnected.
   useEffect(() => {
-    if (!connected) return;
-    loadConfigs();
+    if (disconnected) return;
+    void actions.getConfigs().then((outcome) => {
+      if (outcome.kind === "loaded") session.configs.value = outcome.configs;
+    });
     if (session.detection.value === null && !session.autoDetected) {
       session.autoDetected = true;
       runDetect();
     }
     // `actions` and `session` are stable for the life of the view.
-  }, [connected]);
+  }, [disconnected]);
 
   const detection = session.detection.value;
   const detectPhase = session.detectPhase.value;
@@ -172,12 +210,18 @@ export function LaunchersSettings({
         Choose which apps open your projects, then test each one. Nothing is saved until you choose
         Save launcher.
       </p>
+      {disconnected && (
+        <div className="ccc-banner">
+          <p className="ccc-state-heading">Service disconnected</p>
+          <p className="ccc-state-body">Reconnect the service to detect, save or test launchers.</p>
+        </div>
+      )}
       <p className="ccc-list-meta">{`${setUpCount} of 3 launchers set up`}</p>
       <div className="ccc-manage-toolbar">
         <button
           type="button"
           className="ccc-connect-button"
-          aria-disabled={detectPhase === "detecting" ? "true" : undefined}
+          aria-disabled={disconnected || detectPhase === "detecting" ? "true" : undefined}
           onClick={() => runDetect()}
         >
           Detect apps
@@ -200,7 +244,13 @@ export function LaunchersSettings({
           </>
         )}
       </p>
-      <AppLauncherPanel id="antigravity" actions={actions} session={session} />
+      <AppLauncherPanel
+        id="antigravity"
+        actions={actions}
+        session={session}
+        now={now}
+        disabled={disconnected}
+      />
       <ClaudeCodePanel
         actions={actions}
         session={session}
@@ -208,36 +258,79 @@ export function LaunchersSettings({
         now={now}
         sampleDisplayPath={sampleDisplayPath()}
       />
-      <AppLauncherPanel id="claude-desktop" actions={actions} session={session} />
-      <PlaceholderPanel id="finder" badge={null} />
-      <PlaceholderPanel id="github" badge={null} />
+      <AppLauncherPanel
+        id="claude-desktop"
+        actions={actions}
+        session={session}
+        now={now}
+        disabled={disconnected}
+      />
+      <NoSetupPanel
+        id="finder"
+        actions={actions}
+        session={session}
+        now={now}
+        disabled={disconnected}
+      />
+      <NoSetupPanel
+        id="github"
+        actions={actions}
+        session={session}
+        now={now}
+        disabled={disconnected}
+      />
     </section>
   );
 }
 
-function PlaceholderPanel({
+interface PanelProps<Id extends LaunchAction> {
+  readonly id: Id;
+  readonly actions: LaunchersActions;
+  readonly session: LaunchersSession;
+  readonly now: number;
+  /** The service is disconnected: last-known values, every control `aria-disabled`. */
+  readonly disabled: boolean;
+}
+
+/** Finder and GitHub: nothing to set up, but each still has its Test step (RR-15). */
+function NoSetupPanel({
   id,
-  badge,
-}: {
-  readonly id: LaunchAction;
-  readonly badge: LauncherBadge | null;
-}): VNode {
+  actions,
+  session,
+  now,
+  disabled,
+}: PanelProps<"finder" | "github">): VNode {
   const headingId = useId();
+  const testButtonRef = useRef<HTMLButtonElement>(null);
+  const status = session.status.value[id] ?? { kind: "idle" };
+  const block: TestBlock = disabled ? "disconnected" : testBusy(status) ? "busy" : null;
   return (
     <section className="ccc-card ccc-launcher-panel" aria-labelledby={headingId}>
       <h4 id={headingId} className="ccc-field-label">
         {LAUNCHER_PANEL_NAMES[id]}
       </h4>
-      {badge !== null && <LauncherStatusBadge badge={badge} />}
+      {status.kind === "tested" && <LauncherStatusBadge badge="tested" />}
       <p className="ccc-state-body">{PANEL_DESCRIPTIONS[id]}</p>
+      <TestLines automation={false} explanation={TEST_EXPLANATIONS[id]} />
+      <div className="ccc-manage-toolbar">
+        <TestLauncherButton
+          appName={LAUNCHER_PANEL_NAMES[id]}
+          block={block}
+          buttonRef={testButtonRef}
+          onTest={() => runLauncherTest(session, actions, id, null)}
+        />
+      </div>
+      <PanelStatusLine id={id} status={status} now={now} copy={defaultTestCopy(id)} />
+      <PanelFollowUps
+        id={id}
+        status={status}
+        session={session}
+        actions={actions}
+        disabled={disabled}
+        testButtonRef={testButtonRef}
+      />
     </section>
   );
-}
-
-interface AppLauncherPanelProps {
-  readonly id: AppLauncherId;
-  readonly actions: LaunchersActions;
-  readonly session: LaunchersSession;
 }
 
 function detectionLines(id: AppLauncherId, detected: readonly DetectedApp[]): string[] {
@@ -250,13 +343,20 @@ function detectionLines(id: AppLauncherId, detected: readonly DetectedApp[]): st
 }
 
 /** S6's Antigravity and Claude Desktop panels: choose a detected bundle, or type one. */
-function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNode {
+function AppLauncherPanel({
+  id,
+  actions,
+  session,
+  now,
+  disabled,
+}: PanelProps<AppLauncherId>): VNode {
   const headingId = useId();
   const groupName = useId();
   const chooseNoteId = useId();
   const overrideInputId = useId();
   const overrideErrorId = useId();
   const choiceErrorId = useId();
+  const testButtonRef = useRef<HTMLButtonElement>(null);
 
   const appName = LAUNCHER_PANEL_NAMES[id];
   const detection = session.detection.value;
@@ -270,16 +370,24 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
   const status = session.status.value[id] ?? { kind: "idle" };
   const saveError = session.saveErrors.value[id];
   const saving = status.kind === "saving";
-  const canSave = choice !== null && !saving;
+  const canSave = choice !== null && !saving && !disabled;
+  const testBlock: TestBlock = disabled
+    ? "disconnected"
+    : savedBundle === null || dirty
+      ? "save-first"
+      : testBusy(status)
+        ? "busy"
+        : null;
 
   function setDraft(next: AppDraft | null): void {
+    if (disabled) return;
     const drafts = { ...session.appDrafts.value };
     if (next === null) delete drafts[id];
     else drafts[id] = next;
     session.appDrafts.value = drafts;
     setSaveError(session, id, null);
-    if (status.kind === "saved" || status.kind === "save-failed") {
-      setStatus(session, id, { kind: "idle" });
+    if (status.kind !== "idle" && !saving && !testBusy(status)) {
+      setPanelStatus(session, id, { kind: "idle" });
     }
   }
 
@@ -290,11 +398,11 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
       return;
     }
     setSaveError(session, id, null);
-    setStatus(session, id, { kind: "saving" });
+    setPanelStatus(session, id, { kind: "saving" });
     void actions.save({ launcherId: id, bundleId: value }).then((outcome) => {
       switch (outcome.kind) {
         case "saved":
-          setStatus(session, id, { kind: "saved" });
+          setPanelStatus(session, id, { kind: "saved" });
           void actions.getConfigs().then((loaded) => {
             if (loaded.kind !== "loaded") return;
             session.configs.value = loaded.configs;
@@ -304,7 +412,7 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
           });
           return;
         case "refused":
-          setStatus(session, id, { kind: "idle" });
+          setPanelStatus(session, id, { kind: "idle" });
           setSaveError(session, id, {
             kind: "refused",
             reason: outcome.reason,
@@ -313,7 +421,7 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
           });
           return;
         default:
-          setStatus(session, id, { kind: "save-failed" });
+          setPanelStatus(session, id, { kind: "save-failed" });
       }
     });
   }
@@ -323,6 +431,7 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
   const notFound = saveError?.kind === "refused" && saveError.reason === "bundle-not-found";
   const otherRefusal = saveError?.kind === "refused" && !notFound;
   const lines = detection === null ? [] : detectionLines(id, detected);
+  const ariaDisabled = disabled ? "true" : undefined;
 
   return (
     <section className="ccc-card ccc-launcher-panel" aria-labelledby={headingId}>
@@ -343,7 +452,9 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
             <input
               type="radio"
               name={groupName}
+              aria-disabled={ariaDisabled}
               checked={choice?.kind === "detected" && choice.bundleId === app.bundleId}
+              onClick={blockClickWhen(disabled)}
               onChange={() => setDraft({ kind: "detected", bundleId: app.bundleId })}
             />{" "}
             <span>{app.name}</span> <span className="ccc-display-path">{app.bundleId}</span>{" "}
@@ -354,7 +465,9 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
           <input
             type="radio"
             name={groupName}
+            aria-disabled={ariaDisabled}
             checked={overrideChosen}
+            onClick={blockClickWhen(disabled)}
             onChange={() =>
               setDraft({
                 kind: "override",
@@ -376,39 +489,31 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
             className="ccc-text-input ccc-text-input--mono"
             placeholder="com.example.app"
             spellcheck={false}
+            autocomplete="off"
             value={choice.text}
+            readOnly={disabled}
+            aria-disabled={ariaDisabled}
             aria-invalid={overrideInvalid || notFound ? "true" : undefined}
             aria-describedby={overrideInvalid || notFound ? overrideErrorId : undefined}
             onInput={(event) => setDraft({ kind: "override", text: event.currentTarget.value })}
           />
           {(overrideInvalid || notFound) && (
-            <p id={overrideErrorId} className="ccc-field-error">
-              <span className="ccc-error-glyph" aria-hidden="true">
-                ▲
-              </span>
-              {overrideInvalid
-                ? "Enter a bundle ID like com.example.app."
-                : "No installed app has this bundle ID."}
-            </p>
+            <FieldError
+              id={overrideErrorId}
+              text={
+                overrideInvalid
+                  ? "Enter a bundle ID like com.example.app."
+                  : "No installed app has this bundle ID."
+              }
+            />
           )}
         </div>
       )}
       {!overrideChosen && notFound && (
-        <p id={choiceErrorId} className="ccc-field-error">
-          <span className="ccc-error-glyph" aria-hidden="true">
-            ▲
-          </span>
-          No installed app has this bundle ID.
-        </p>
+        <FieldError id={choiceErrorId} text="No installed app has this bundle ID." />
       )}
-      {otherRefusal && (
-        <p className="ccc-field-error">
-          <span className="ccc-error-glyph" aria-hidden="true">
-            ▲
-          </span>
-          Enter a bundle ID like com.example.app.
-        </p>
-      )}
+      {otherRefusal && <FieldError text="Enter a bundle ID like com.example.app." />}
+      <TestLines automation={false} explanation={TEST_EXPLANATIONS[id]} />
       <div className="ccc-manage-toolbar">
         <button
           type="button"
@@ -424,14 +529,33 @@ function AppLauncherPanel({ id, actions, session }: AppLauncherPanelProps): VNod
             Choose an app first
           </span>
         )}
+        <TestLauncherButton
+          appName={appName}
+          block={testBlock}
+          buttonRef={testButtonRef}
+          onTest={() => runLauncherTest(session, actions, id, null)}
+        />
         {dirty && <span className="ccc-list-meta">Unsaved changes</span>}
         {draft !== undefined && dirty && (
-          <button type="button" className="ccc-list-more" onClick={() => setDraft(null)}>
+          <button
+            type="button"
+            className="ccc-list-more"
+            aria-disabled={ariaDisabled}
+            onClick={() => setDraft(null)}
+          >
             Discard changes
           </button>
         )}
       </div>
-      <PanelStatusLine status={status} />
+      <PanelStatusLine id={id} status={status} now={now} copy={defaultTestCopy(id)} />
+      <PanelFollowUps
+        id={id}
+        status={status}
+        session={session}
+        actions={actions}
+        disabled={disabled}
+        testButtonRef={testButtonRef}
+      />
     </section>
   );
 }

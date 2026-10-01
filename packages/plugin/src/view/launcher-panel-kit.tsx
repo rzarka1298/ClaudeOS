@@ -1,13 +1,28 @@
 import type {
   DetectionResponse,
   LaunchAction,
+  LaunchErrorKind,
   LauncherConfigView,
+  LauncherId,
   RefusedTemplate,
+  SystemSettingsPane,
   TemplateRefusalReason,
+  TerminalChoice,
   TerminalPresetId,
 } from "@ccc/domain";
 import { type Signal, signal } from "@preact/signals";
-import type { VNode } from "preact";
+import type { RefObject, VNode } from "preact";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
+import {
+  LAUNCH_ERROR_ACTION_LABELS,
+  LAUNCH_ERROR_COPY,
+  type LaunchErrorAction,
+  launcherDisplayName,
+  renderCopy,
+} from "../projects/launch-copy.js";
+import type { LaunchersActions } from "../projects/launchers-actions.js";
+import { SYSTEM_SETTINGS_OPEN_FAILED_NOTICE } from "../projects/system-settings-opener.js";
+import { formatRelativeTime } from "../widgets/relative-time.js";
 
 /**
  * What every S6 launcher panel shares (plan 04-12): the per-view session
@@ -51,7 +66,22 @@ export type PanelStatus =
   | { readonly kind: "idle" }
   | { readonly kind: "saving" }
   | { readonly kind: "saved" }
-  | { readonly kind: "save-failed" };
+  | { readonly kind: "save-failed" }
+  /** A Test is in flight (written in the same render as the click, D-40). */
+  | { readonly kind: "testing" }
+  /** The Test launch exited 0; the owner is asked whether the app opened (D-28). */
+  | { readonly kind: "test-sent" }
+  /** The owner answered It opened; mark-tested is in flight. */
+  | { readonly kind: "confirming" }
+  /** Only the owner's It opened gets here (RR-14). */
+  | { readonly kind: "tested"; readonly at: string }
+  | { readonly kind: "not-opened" }
+  | { readonly kind: "test-error"; readonly error: LaunchErrorKind }
+  /** The service was already testing a newer saved configuration (409). */
+  | { readonly kind: "test-conflict" }
+  /** mark-tested answered 409: the saved row has no passing Test in this service run. */
+  | { readonly kind: "needs-test" }
+  | { readonly kind: "confirm-failed" };
 
 /** One row problem: the template index it names and its copy. */
 export type RowError = readonly [index: number, copy: string];
@@ -184,13 +214,238 @@ export function FieldError({ id, text }: { readonly id?: string; readonly text: 
   );
 }
 
-/** The panel's persistent `role="status"` line (Accessibility Floor 2). */
-export function PanelStatusLine({ status }: { readonly status: PanelStatus }): VNode {
+// ---------------------------------------------------------------------------
+// The Test step (D-28, PR-02, RR-14, RR-15)
+
+/** Why a panel's Test launcher is `aria-disabled`, if it is. */
+export type TestBlock = "disconnected" | "save-first" | "busy" | null;
+
+/** `{Terminal}` inside a sentence: the blank preset's "Your terminal" reads lower-case there. */
+export function terminalInSentence(label: string): string {
+  return label === "Your terminal" ? "your terminal" : label;
+}
+
+/** The wording a panel's Test lines need (UI-SPEC S6 Test rows). */
+export interface TestCopy {
+  /** The panel's app name, as in `Did {app} open?`. */
+  readonly appName: string;
+  /** `Test sent. Did {app} open?`, or Claude Code's terminal question. */
+  readonly question: string;
+  /** `{Terminal}` for the D-26 lines (Claude Code only; `Terminal` elsewhere). */
+  readonly terminal: string;
+  /** A Test that may meet macOS's Automation prompt waits up to a minute (wave 5). */
+  readonly mayPrompt: boolean;
+}
+
+/** Fires one Test of the saved configuration. Never rejects; the status line carries every outcome. */
+export function runLauncherTest(
+  session: LaunchersSession,
+  actions: LaunchersActions,
+  id: LaunchAction,
+  terminal: TerminalChoice | null,
+): void {
+  setPanelStatus(session, id, { kind: "testing" });
+  void actions.test(id, terminal).then((outcome) => {
+    switch (outcome.kind) {
+      case "sent":
+        setPanelStatus(session, id, { kind: "test-sent" });
+        return;
+      case "conflict":
+        setPanelStatus(session, id, { kind: "test-conflict" });
+        return;
+      default:
+        setPanelStatus(session, id, { kind: "test-error", error: outcome.error });
+    }
+  });
+}
+
+function isLauncherId(id: LaunchAction): id is LauncherId {
+  return id === "antigravity" || id === "claude-code" || id === "claude-desktop";
+}
+
+/**
+ * The owner's answer to `Did {app} open?` (RR-14). Only It opened can mark
+ * a launcher Tested, and for the three configurable launchers only the
+ * service's mark-tested decides; Finder and GitHub have no saved row, so
+ * their confirmation is recorded for this view only.
+ */
+export function answerLauncherTest(
+  session: LaunchersSession,
+  actions: LaunchersActions,
+  id: LaunchAction,
+  opened: boolean,
+): void {
+  if (!opened) {
+    setPanelStatus(session, id, { kind: "not-opened" });
+    return;
+  }
+  if (!isLauncherId(id)) {
+    setPanelStatus(session, id, { kind: "tested", at: new Date().toISOString() });
+    return;
+  }
+  setPanelStatus(session, id, { kind: "confirming" });
+  void actions.markTested(id).then((outcome) => {
+    switch (outcome.kind) {
+      case "marked": {
+        setPanelStatus(session, id, { kind: "tested", at: new Date().toISOString() });
+        const configs = session.configs.value;
+        const saved = configs?.[id];
+        if (configs !== null && saved !== null && saved !== undefined) {
+          session.configs.value = { ...configs, [id]: { ...saved, tested: true } };
+        }
+        void actions.getConfigs().then((loaded) => {
+          if (loaded.kind === "loaded") session.configs.value = loaded.configs;
+        });
+        return;
+      }
+      case "needs-test":
+        setPanelStatus(session, id, { kind: "needs-test" });
+        return;
+      case "service-disconnected":
+        setPanelStatus(session, id, { kind: "test-error", error: "service-disconnected" });
+        return;
+      default:
+        setPanelStatus(session, id, { kind: "confirm-failed" });
+    }
+  });
+}
+
+/** The permission line and the Test explanation (D-28, PR-02, RR-15). */
+export function TestLines({
+  automation,
+  explanation,
+}: {
+  readonly automation: boolean;
+  readonly explanation: string;
+}): VNode {
+  return (
+    <>
+      <p className="ccc-list-meta">
+        {automation
+          ? "macOS may ask for Automation permission during this test. Choose OK so launches can work."
+          : "No permission needed"}
+      </p>
+      <p className="ccc-list-meta">{explanation}</p>
+    </>
+  );
+}
+
+/** `Test launcher`: `aria-disabled` (still focusable) while blocked, with the PR-13 hidden note. */
+export function TestLauncherButton({
+  appName,
+  block,
+  onTest,
+  buttonRef,
+}: {
+  readonly appName: string;
+  readonly block: TestBlock;
+  readonly onTest: () => void;
+  readonly buttonRef: RefObject<HTMLButtonElement>;
+}): VNode {
+  const noteId = useId();
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="ccc-connect-button"
+        aria-label={`Test the ${appName} launcher`}
+        aria-disabled={block === null ? undefined : "true"}
+        aria-describedby={block === "save-first" ? noteId : undefined}
+        onClick={() => {
+          if (block === null) onTest();
+        }}
+      >
+        Test launcher
+      </button>
+      {block === "save-first" && (
+        <span id={noteId} className="ccc-visually-hidden">
+          Save launcher first
+        </span>
+      )}
+    </>
+  );
+}
+
+/** A Test outcome's two lines (problem, next step) plus any extra explanation. */
+function testErrorLines(error: LaunchErrorKind, id: LaunchAction, copy: TestCopy): string[] {
+  const values = {
+    launcher: launcherDisplayName(id),
+    terminal: terminalInSentence(copy.terminal),
+    project: null,
+  };
+  if (error === "timeout") {
+    // The D-26 timeout line names the 5 s launch deadline; a Test waits longer.
+    return [
+      `${values.launcher} didn't respond in time.`,
+      "Check whether it opened. If it didn't, check the settings above, then test again.",
+    ];
+  }
+  const lines = [
+    renderCopy(LAUNCH_ERROR_COPY[error].problem, values),
+    renderCopy(LAUNCH_ERROR_COPY[error].nextStep, values),
+  ];
+  if (error === "automation-denied") {
+    // The service reports an unanswered first prompt (killed at its 60 s
+    // cap) as automation-denied, so say that case out loud (wave 5).
+    lines.push("If macOS asked and nobody answered within a minute, test again and choose OK.");
+  }
+  return lines;
+}
+
+function problemLines(status: PanelStatus, id: LaunchAction, copy: TestCopy): string[] | null {
+  switch (status.kind) {
+    case "save-failed":
+      return [
+        "Couldn't save launcher settings.",
+        "Check the service in Settings → Diagnostics, then try again.",
+      ];
+    case "not-opened":
+      return [`${copy.appName} didn't open.`, "Check the settings above, then test again."];
+    case "test-error":
+      return testErrorLines(status.error, id, copy);
+    case "test-conflict":
+      return [
+        "The launcher settings changed during this test.",
+        "Test again to check the saved settings.",
+      ];
+    case "needs-test":
+      return [
+        "This test no longer matches the saved settings.",
+        "Test again, then choose It opened.",
+      ];
+    case "confirm-failed":
+      return [
+        "Couldn't record the test.",
+        "Check the service in Settings → Diagnostics, then try again.",
+      ];
+    default:
+      return null;
+  }
+}
+
+/** The panel's persistent `role="status"` line (Accessibility Floor 2): save and Test, one region. */
+export function PanelStatusLine({
+  id,
+  status,
+  now,
+  copy,
+}: {
+  readonly id: LaunchAction;
+  readonly status: PanelStatus;
+  readonly now: number;
+  readonly copy: TestCopy;
+}): VNode {
+  const problem = problemLines(status, id, copy);
   const tone =
-    status.kind === "save-failed" ? "error" : status.kind === "saved" ? "success" : undefined;
+    problem !== null
+      ? "error"
+      : status.kind === "saved" || status.kind === "tested"
+        ? "success"
+        : undefined;
   return (
     <p role="status" className="ccc-launch-status" data-tone={tone}>
-      {status.kind === "saving" && "Saving…"}
+      {(status.kind === "saving" || status.kind === "confirming") && "Saving…"}
       {status.kind === "saved" && (
         <>
           <span className="ccc-meta-glyph" aria-hidden="true">
@@ -199,16 +454,133 @@ export function PanelStatusLine({ status }: { readonly status: PanelStatus }): V
           Saved
         </>
       )}
-      {status.kind === "save-failed" && (
+      {status.kind === "testing" && (
+        <>
+          <span>Testing…</span>
+          {copy.mayPrompt && (
+            <>
+              <br />
+              <span>This can take up to a minute if macOS asks for permission.</span>
+            </>
+          )}
+        </>
+      )}
+      {status.kind === "test-sent" && copy.question}
+      {status.kind === "tested" && (
+        <>
+          <span className="ccc-meta-glyph" aria-hidden="true">
+            ✓
+          </span>{" "}
+          {`Tested ${formatRelativeTime(status.at, now)}`}
+        </>
+      )}
+      {problem !== null && (
         <>
           <span className="ccc-error-glyph" aria-hidden="true">
             ▲
           </span>
-          <span>Couldn't save launcher settings.</span>
-          <br />
-          <span>Check the service in Settings → Diagnostics, then try again.</span>
+          {problem.map((line, index) => (
+            <span key={line}>
+              {index > 0 && <br />}
+              {line}
+            </span>
+          ))}
         </>
       )}
     </p>
+  );
+}
+
+const PANE_FOR_ACTION: Partial<Record<LaunchErrorAction, SystemSettingsPane>> = {
+  "open-automation": "automation",
+  "open-privacy-security": "privacy-security",
+};
+
+/**
+ * What follows the status line, outside the live region: It opened / It
+ * didn't open after a sent Test (focus moves to It opened), or a Test
+ * error's System Settings button (RR-16). Navigation actions are omitted —
+ * the owner is already in Settings › Launchers.
+ */
+export function PanelFollowUps({
+  id,
+  status,
+  session,
+  actions,
+  disabled,
+  testButtonRef,
+}: {
+  readonly id: LaunchAction;
+  readonly status: PanelStatus;
+  readonly session: LaunchersSession;
+  readonly actions: LaunchersActions;
+  readonly disabled: boolean;
+  readonly testButtonRef: RefObject<HTMLButtonElement>;
+}): VNode | null {
+  const openedRef = useRef<HTMLButtonElement | null>(null);
+  const [openFailed, setOpenFailed] = useState<SystemSettingsPane | null>(null);
+  const asking = status.kind === "test-sent";
+
+  useEffect(() => {
+    if (!asking) return;
+    // Move focus only from where the owner pressed Test (or from nowhere),
+    // never out of a field they have since moved to.
+    const active = document.activeElement;
+    if (active === null || active === document.body || active === testButtonRef.current) {
+      openedRef.current?.focus();
+    }
+  }, [asking, testButtonRef]);
+
+  if (asking) {
+    return (
+      <div className="ccc-manage-toolbar">
+        <button
+          ref={openedRef}
+          type="button"
+          className="ccc-connect-button"
+          aria-disabled={disabled ? "true" : undefined}
+          onClick={() => {
+            if (!disabled) answerLauncherTest(session, actions, id, true);
+          }}
+        >
+          It opened
+        </button>
+        <button
+          type="button"
+          className="ccc-list-more"
+          aria-disabled={disabled ? "true" : undefined}
+          onClick={() => {
+            if (!disabled) answerLauncherTest(session, actions, id, false);
+          }}
+        >
+          It didn't open
+        </button>
+      </div>
+    );
+  }
+
+  const action = status.kind === "test-error" ? LAUNCH_ERROR_COPY[status.error].action : undefined;
+  const pane = action === undefined ? undefined : PANE_FOR_ACTION[action];
+  if (action === undefined || pane === undefined) return null;
+  return (
+    <>
+      <button
+        type="button"
+        className="ccc-list-more"
+        aria-disabled={disabled ? "true" : undefined}
+        onClick={() => {
+          if (disabled) return;
+          setOpenFailed(null);
+          void actions.openSystemSettings(pane).then((outcome) => {
+            if (outcome.kind !== "opened") setOpenFailed(pane);
+          });
+        }}
+      >
+        {LAUNCH_ERROR_ACTION_LABELS[action]}
+      </button>
+      {openFailed !== null && (
+        <p className="ccc-field-help">{SYSTEM_SETTINGS_OPEN_FAILED_NOTICE[openFailed]}</p>
+      )}
+    </>
   );
 }

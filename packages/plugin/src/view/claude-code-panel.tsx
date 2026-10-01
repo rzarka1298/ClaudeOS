@@ -5,9 +5,10 @@ import {
   TERMINAL_PRESET_IDS,
   type TerminalChoice,
   type TerminalPresetId,
+  terminalMayPromptForAutomation,
 } from "@ccc/domain";
 import type { VNode } from "preact";
-import { useId } from "preact/hooks";
+import { useId, useRef } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import {
@@ -18,12 +19,19 @@ import {
   LauncherStatusBadge,
   type LaunchersSession,
   PANEL_DESCRIPTIONS,
+  PanelFollowUps,
+  type PanelStatus,
   PanelStatusLine,
   type RowError,
+  runLauncherTest,
   type SaveError,
   setPanelStatus,
   setSaveError,
   type TerminalDraft,
+  type TestBlock,
+  TestLauncherButton,
+  TestLines,
+  terminalInSentence,
 } from "./launcher-panel-kit.js";
 import { checkTemplate, refusalCopy, TemplateEditor } from "./template-editor.js";
 
@@ -193,9 +201,24 @@ export interface ClaudeCodePanelProps {
   readonly sampleDisplayPath: string;
 }
 
+/** A Test or a mark-tested call is in flight: the Test button waits. */
+function testBusy(status: PanelStatus): boolean {
+  return status.kind === "testing" || status.kind === "confirming";
+}
+
+/**
+ * A radio that is `aria-disabled` stays focusable but must not change: the
+ * click's default (checking it) is cancelled while the service is away.
+ */
+function blockClickWhen(disabled: boolean): ((event: MouseEvent) => void) | undefined {
+  return disabled ? (event) => event.preventDefault() : undefined;
+}
+
 export function ClaudeCodePanel({
   actions,
   session,
+  connection,
+  now,
   sampleDisplayPath,
 }: ClaudeCodePanelProps): VNode {
   const headingId = useId();
@@ -205,6 +228,9 @@ export function ClaudeCodePanel({
   const pathErrorId = useId();
   const presetSelectId = useId();
   const chooseNoteId = useId();
+  const testButtonRef = useRef<HTMLButtonElement>(null);
+  const disabled = connection.kind === "disconnected";
+  const ariaDisabled = disabled ? "true" : undefined;
 
   const detection = session.detection.value;
   const configs = session.configs.value;
@@ -218,16 +244,31 @@ export function ClaudeCodePanel({
   const dirty = baseline === null ? executableChosen : !sameDraft(current, baseline);
   const status = session.status.value["claude-code"] ?? { kind: "idle" };
   const saving = status.kind === "saving";
-  const canSave = current.executable !== null && !saving;
+  const canSave = current.executable !== null && !saving && !disabled;
   const errors = errorsFor(session.saveErrors.value["claude-code"], current);
   const candidates = detection?.claudeExecutables ?? [];
   const presets = presetsOf(detection);
   const terminalLabel = terminalLabelOf(current.terminal);
 
+  // A Test exercises the SAVED configuration (PR-13), so it is the saved
+  // terminal whose Automation prompt the Test may meet (wave 5).
+  const savedTerminal = saved?.terminal ?? null;
+  const savedTerminalLabel = terminalInSentence(
+    terminalLabelOf(savedTerminal ?? { kind: "terminal-app" }),
+  );
+  const testBlock: TestBlock = disabled
+    ? "disconnected"
+    : saved === null || dirty
+      ? "save-first"
+      : testBusy(status)
+        ? "busy"
+        : null;
+
   function setDraft(next: ClaudeCodeDraft | null): void {
+    if (disabled) return;
     session.claudeDraft.value = next;
     setSaveError(session, "claude-code", null);
-    if (status.kind === "saved" || status.kind === "save-failed") {
+    if (status.kind !== "idle" && !saving && !testBusy(status)) {
       setPanelStatus(session, "claude-code", { kind: "idle" });
     }
   }
@@ -349,6 +390,8 @@ export function ClaudeCodePanel({
             <input
               type="radio"
               name={executableGroup}
+              aria-disabled={ariaDisabled}
+              onClick={blockClickWhen(disabled)}
               checked={
                 current.executable?.kind === "candidate" &&
                 current.executable.candidateId === option.candidateId
@@ -364,6 +407,8 @@ export function ClaudeCodePanel({
           <input
             type="radio"
             name={executableGroup}
+            aria-disabled={ariaDisabled}
+            onClick={blockClickWhen(disabled)}
             checked={pathChosen}
             onChange={() =>
               update({
@@ -389,6 +434,8 @@ export function ClaudeCodePanel({
             spellcheck={false}
             autocomplete="off"
             value={current.executable.text}
+            readOnly={disabled}
+            aria-disabled={ariaDisabled}
             aria-invalid={errors.executable !== null ? "true" : undefined}
             aria-describedby={errors.executable !== null ? pathErrorId : undefined}
             onInput={(event) =>
@@ -405,6 +452,8 @@ export function ClaudeCodePanel({
           <input
             type="radio"
             name={terminalGroup}
+            aria-disabled={ariaDisabled}
+            onClick={blockClickWhen(disabled)}
             checked={current.terminal.kind === "terminal-app"}
             onChange={() => chooseTerminal("terminal-app")}
           />{" "}
@@ -414,6 +463,8 @@ export function ClaudeCodePanel({
           <input
             type="radio"
             name={terminalGroup}
+            aria-disabled={ariaDisabled}
+            onClick={blockClickWhen(disabled)}
             checked={current.terminal.kind === "custom"}
             onChange={() => chooseTerminal("custom")}
           />{" "}
@@ -430,7 +481,15 @@ export function ClaudeCodePanel({
             id={presetSelectId}
             className="ccc-text-input"
             value={customTerminal.preset}
-            onChange={(event) => choosePreset(event.currentTarget.value)}
+            aria-disabled={ariaDisabled}
+            onChange={(event) => {
+              if (disabled) {
+                // Keep the last-known preset while the service is away.
+                event.currentTarget.value = customTerminal.preset;
+                return;
+              }
+              choosePreset(event.currentTarget.value);
+            }}
           >
             {presets.map((preset) => (
               <option key={preset.id} value={preset.id}>
@@ -459,6 +518,7 @@ export function ClaudeCodePanel({
             generalError={errors.terminalGeneral}
             sampleDisplayPath={sampleDisplayPath}
             terminalLabel={terminalLabel}
+            disabled={disabled}
           />
         </div>
       )}
@@ -472,6 +532,12 @@ export function ClaudeCodePanel({
         sampleDisplayPath={sampleDisplayPath}
         terminalLabel={terminalLabel}
         executableDisplay={executableDisplay}
+        disabled={disabled}
+      />
+
+      <TestLines
+        automation={current.terminal.kind === "custom"}
+        explanation={`Test opens a new ${terminalInSentence(terminalLabel)} window at the managed vault folder that shows the Claude Code version.`}
       />
 
       <div className="ccc-manage-toolbar">
@@ -489,14 +555,43 @@ export function ClaudeCodePanel({
             Choose a claude executable first
           </span>
         )}
+        <TestLauncherButton
+          appName={LAUNCHER_PANEL_NAMES["claude-code"]}
+          block={testBlock}
+          buttonRef={testButtonRef}
+          onTest={() => runLauncherTest(session, actions, "claude-code", savedTerminal)}
+        />
         {dirty && <span className="ccc-list-meta">Unsaved changes</span>}
         {draft !== null && dirty && (
-          <button type="button" className="ccc-list-more" onClick={() => setDraft(null)}>
+          <button
+            type="button"
+            className="ccc-list-more"
+            aria-disabled={ariaDisabled}
+            onClick={() => setDraft(null)}
+          >
             Discard changes
           </button>
         )}
       </div>
-      <PanelStatusLine status={status} />
+      <PanelStatusLine
+        id="claude-code"
+        status={status}
+        now={now}
+        copy={{
+          appName: LAUNCHER_PANEL_NAMES["claude-code"],
+          question: `Test sent. Did a ${savedTerminalLabel} window open and show the Claude Code version?`,
+          terminal: savedTerminalLabel,
+          mayPrompt: savedTerminal !== null && terminalMayPromptForAutomation(savedTerminal),
+        }}
+      />
+      <PanelFollowUps
+        id="claude-code"
+        status={status}
+        session={session}
+        actions={actions}
+        disabled={disabled}
+        testButtonRef={testButtonRef}
+      />
     </section>
   );
 }
