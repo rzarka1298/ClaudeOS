@@ -176,9 +176,12 @@ export function LaunchersSettings({
 
   // Detection runs by itself only the first time the section opens with no
   // prior detection (D-27); the saved configuration is re-read on each open
-  // and whenever the service comes back. Nothing runs while disconnected.
+  // and whenever the service comes back. Both wait for a live connection, so
+  // opening Settings while the service is still connecting does not spend
+  // the one automatic detection on a request that cannot be answered.
+  const live = connection.kind === "live";
   useEffect(() => {
-    if (disconnected) return;
+    if (!live) return;
     void actions.getConfigs().then((outcome) => {
       if (outcome.kind === "loaded") session.configs.value = outcome.configs;
     });
@@ -187,7 +190,7 @@ export function LaunchersSettings({
       runDetect();
     }
     // `actions` and `session` are stable for the life of the view.
-  }, [disconnected]);
+  }, [live]);
 
   const detection = session.detection.value;
   const detectPhase = session.detectPhase.value;

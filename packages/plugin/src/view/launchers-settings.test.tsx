@@ -666,3 +666,16 @@ describe("disconnected (S6)", () => {
     expect(actions.test).not.toHaveBeenCalled();
   });
 });
+
+describe("automatic detection waits for a live service (D-27)", () => {
+  it("does not detect while connecting, then detects once the service is live", async () => {
+    const actions = fakeActions();
+    const session = createLaunchersSession();
+    const { rerender } = mount(actions, session, { kind: "connecting" });
+    await settle();
+    expect(actions.detect).not.toHaveBeenCalled();
+    rerender(<LaunchersSettings actions={actions} connection={LIVE} now={NOW} session={session} />);
+    await settle();
+    expect(actions.detect).toHaveBeenCalledTimes(1);
+  });
+});
