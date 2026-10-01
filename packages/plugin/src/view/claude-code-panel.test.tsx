@@ -278,3 +278,102 @@ describe("drafts (RR-25)", () => {
     expect(screen.queryByText("Unsaved changes")).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 3: the Claude Code Test (D-28, PR-02, RR-14, wave-5 Automation cap)
+
+const ITERM_SAVED: LauncherConfigView = {
+  ...NOTHING_SAVED,
+  "claude-code": {
+    executableDisplay: "~/.local/bin/claude",
+    args: [],
+    terminal: { kind: "custom", preset: "iterm2", argv: [...OSASCRIPT_PRESET_ARGV] },
+    tested: false,
+  },
+};
+
+describe("the Claude Code Test (D-28, PR-02)", () => {
+  it("a custom terminal shows the Automation line instead of No permission needed", () => {
+    mount(fakeLaunchersActions(), sessionWith(DETECTION, ITERM_SAVED));
+    expect(
+      screen.getByText(
+        "macOS may ask for Automation permission during this test. Choose OK so launches can work.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("No permission needed")).toBeNull();
+    expect(
+      screen.getByText(
+        "Test opens a new iTerm2 window at the managed vault folder that shows the Claude Code version.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("Testing… appears at once, says it may take a minute, and the Test carries the saved terminal", () => {
+    const actions = fakeLaunchersActions({ test: vi.fn(() => new Promise<never>(() => {})) });
+    mount(actions, sessionWith(DETECTION, ITERM_SAVED));
+    fireEvent.click(screen.getByRole("button", { name: "Test the Claude Code launcher" }));
+    const status = screen.getByRole("status").textContent ?? "";
+    expect(status).toContain("Testing…");
+    expect(status).toContain("This can take up to a minute if macOS asks for permission.");
+    expect(actions.test).toHaveBeenCalledWith("claude-code", ITERM_SAVED["claude-code"]?.terminal);
+  });
+
+  it("asks whether a {Terminal} window opened, and It opened marks Claude Code tested", async () => {
+    const actions = fakeLaunchersActions();
+    mount(actions, sessionWith(DETECTION, ITERM_SAVED));
+    fireEvent.click(screen.getByRole("button", { name: "Test the Claude Code launcher" }));
+    await settle();
+    expect(screen.getByRole("status").textContent).toContain(
+      "Test sent. Did a iTerm2 window open and show the Claude Code version?",
+    );
+    expect(actions.markTested).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "It opened" }));
+    await settle();
+    expect(actions.markTested).toHaveBeenCalledWith("claude-code");
+  });
+
+  it("an unanswered Automation prompt explains itself and offers the Automation settings", async () => {
+    const actions = fakeLaunchersActions({
+      test: vi.fn(() =>
+        Promise.resolve({ kind: "error" as const, error: "automation-denied" as const }),
+      ),
+    });
+    mount(actions, sessionWith(DETECTION, ITERM_SAVED));
+    fireEvent.click(screen.getByRole("button", { name: "Test the Claude Code launcher" }));
+    await settle();
+    const status = screen.getByRole("status").textContent ?? "";
+    expect(status).toContain("macOS blocked the command center from controlling iTerm2.");
+    expect(status).toContain(
+      "Allow it in System Settings › Privacy & Security › Automation, then try again.",
+    );
+    expect(status).toContain(
+      "If macOS asked and nobody answered within a minute, test again and choose OK.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open Automation settings" }));
+    expect(actions.openSystemSettings).toHaveBeenCalledWith("automation");
+  });
+
+  it("Test launcher is aria-disabled with Save launcher first while the panel has unsaved changes", () => {
+    const actions = fakeLaunchersActions();
+    mount(actions, sessionWith(DETECTION, ITERM_SAVED));
+    const editor = screen.getByRole("group", { name: "Claude Code arguments" });
+    fireEvent.click(within(editor).getByRole("button", { name: "Add argument" }));
+    const button = screen.getByRole("button", { name: "Test the Claude Code launcher" });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent,
+    ).toBe("Save launcher first");
+    fireEvent.click(button);
+    expect(actions.test).not.toHaveBeenCalled();
+  });
+
+  it("the preset badge reads Tested once the saved custom terminal passed a confirmed Test", () => {
+    const tested: LauncherConfigView = {
+      ...ITERM_SAVED,
+      "claude-code": ITERM_SAVED["claude-code"] && { ...ITERM_SAVED["claude-code"], tested: true },
+    };
+    mount(fakeLaunchersActions(), sessionWith(DETECTION, tested));
+    expect(screen.queryByText("Unverified")).toBeNull();
+    expect(screen.getAllByText("Tested").length).toBeGreaterThan(0);
+  });
+});

@@ -442,3 +442,227 @@ describe("focus hand-off (D-30, S6)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 3: Test launcher with explicit confirmation (D-28, PR-02, RR-14, RR-15)
+
+const ANTIGRAVITY_SAVED: LauncherConfigView = {
+  ...NOTHING_SAVED,
+  antigravity: { bundleId: BUNDLE_A, tested: false },
+};
+
+function savedActions(overrides: Partial<LaunchersActions> = {}): LaunchersActions {
+  return fakeActions({
+    getConfigs: vi.fn(() =>
+      Promise.resolve<ConfigsOutcome>({ kind: "loaded", configs: ANTIGRAVITY_SAVED }),
+    ),
+    ...overrides,
+  });
+}
+
+function testButton(name: string): HTMLElement {
+  return within(panel(name)).getByRole("button", { name: `Test the ${name} launcher` });
+}
+
+describe("Test launcher (D-28, RR-14)", () => {
+  it("writes Testing… in the same render as the click", async () => {
+    const pending = deferred<{ kind: "sent" }>();
+    const actions = savedActions({ test: vi.fn(() => pending.promise) });
+    mount(actions);
+    await settle();
+    fireEvent.click(testButton("Antigravity"));
+    expect(within(panel("Antigravity")).getByRole("status").textContent).toContain("Testing…");
+    expect(actions.test).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(actions.test).mock.calls[0]?.[0]).toBe("antigravity");
+  });
+
+  it("a sent Test asks whether the app opened, focuses It opened, and never marks tested by itself", async () => {
+    const actions = savedActions();
+    mount(actions);
+    await settle();
+    const button = testButton("Antigravity");
+    button.focus();
+    fireEvent.click(button);
+    await settle();
+    const antigravity = panel("Antigravity");
+    expect(within(antigravity).getByRole("status").textContent).toContain(
+      "Test sent. Did Antigravity open?",
+    );
+    expect(document.activeElement).toBe(
+      within(antigravity).getByRole("button", { name: "It opened" }),
+    );
+    expect(within(antigravity).getByRole("button", { name: "It didn't open" })).toBeTruthy();
+    expect(actions.markTested).not.toHaveBeenCalled();
+    expect(within(antigravity).getByText("Set up")).toBeTruthy();
+  });
+
+  it("It opened marks the launcher tested and shows ✓ Tested {relative time}", async () => {
+    let tested = false;
+    const actions = savedActions({
+      getConfigs: vi.fn(() =>
+        Promise.resolve<ConfigsOutcome>({
+          kind: "loaded",
+          configs: { ...NOTHING_SAVED, antigravity: { bundleId: BUNDLE_A, tested } },
+        }),
+      ),
+      markTested: vi.fn(() => {
+        tested = true;
+        return Promise.resolve({ kind: "marked" as const });
+      }),
+    });
+    mount(actions);
+    await settle();
+    fireEvent.click(testButton("Antigravity"));
+    await settle();
+    fireEvent.click(within(panel("Antigravity")).getByRole("button", { name: "It opened" }));
+    await settle();
+    expect(actions.markTested).toHaveBeenCalledWith("antigravity");
+    const antigravity = panel("Antigravity");
+    expect(within(antigravity).getByText("Tested")).toBeTruthy();
+    expect(within(antigravity).getByRole("status").textContent).toMatch(/✓ Tested /);
+  });
+
+  it("It didn't open shows the not-opened lines and leaves the badge alone", async () => {
+    const actions = savedActions();
+    mount(actions);
+    await settle();
+    fireEvent.click(testButton("Antigravity"));
+    await settle();
+    fireEvent.click(within(panel("Antigravity")).getByRole("button", { name: "It didn't open" }));
+    const antigravity = panel("Antigravity");
+    const status = within(antigravity).getByRole("status").textContent ?? "";
+    expect(status).toContain("Antigravity didn't open.");
+    expect(status).toContain("Check the settings above, then test again.");
+    expect(actions.markTested).not.toHaveBeenCalled();
+    expect(within(antigravity).getByText("Set up")).toBeTruthy();
+  });
+
+  it("a Test error shows that error's D-26 problem and next-step lines", async () => {
+    const actions = savedActions({
+      test: vi.fn(() =>
+        Promise.resolve({ kind: "error" as const, error: "app-not-found" as const }),
+      ),
+    });
+    mount(actions);
+    await settle();
+    fireEvent.click(testButton("Antigravity"));
+    await settle();
+    const status = within(panel("Antigravity")).getByRole("status").textContent ?? "";
+    expect(status).toContain("Antigravity couldn't be found on this Mac.");
+    expect(status).toContain("Reinstall it, or choose a different app in Settings → Launchers.");
+  });
+
+  it("the service no longer has a passing test for It opened: test again", async () => {
+    const actions = savedActions({
+      markTested: vi.fn(() => Promise.resolve({ kind: "needs-test" as const })),
+    });
+    mount(actions);
+    await settle();
+    fireEvent.click(testButton("Antigravity"));
+    await settle();
+    fireEvent.click(within(panel("Antigravity")).getByRole("button", { name: "It opened" }));
+    await settle();
+    const status = within(panel("Antigravity")).getByRole("status").textContent ?? "";
+    expect(status).toContain("Test again");
+    expect(within(panel("Antigravity")).getByText("Set up")).toBeTruthy();
+  });
+
+  it("Finder's Test needs no setup; It opened records it locally without mark-tested", async () => {
+    const actions = savedActions();
+    mount(actions);
+    await settle();
+    fireEvent.click(testButton("Finder"));
+    await settle();
+    expect(within(panel("Finder")).getByRole("status").textContent).toContain(
+      "Test sent. Did Finder open?",
+    );
+    fireEvent.click(within(panel("Finder")).getByRole("button", { name: "It opened" }));
+    await settle();
+    expect(actions.markTested).not.toHaveBeenCalled();
+    expect(within(panel("Finder")).getByRole("status").textContent).toMatch(/✓ Tested /);
+  });
+});
+
+describe("permission and explanation lines (D-28, PR-02, RR-15)", () => {
+  it("each default mechanism says No permission needed and explains its Test", async () => {
+    mount(savedActions());
+    await settle();
+    const explanations: Record<string, string> = {
+      Antigravity: "Test opens Antigravity without a project.",
+      "Claude Code":
+        "Test opens a new Terminal window at the managed vault folder that shows the Claude Code version.",
+      "Claude Desktop": "Test brings Claude Desktop to the front.",
+      Finder: "Test reveals the managed vault folder in Finder.",
+      GitHub: "Test opens github.com in your default browser.",
+    };
+    for (const [name, explanation] of Object.entries(explanations)) {
+      const section = panel(name);
+      expect(within(section).getByText("No permission needed")).toBeTruthy();
+      expect(within(section).getByText(explanation)).toBeTruthy();
+    }
+  });
+});
+
+describe("Save launcher first (PR-13)", () => {
+  it("Test launcher is aria-disabled with the hidden note while the panel has unsaved changes", async () => {
+    const actions = savedActions();
+    mount(actions);
+    await settle();
+    fireEvent.click(
+      within(panel("Antigravity")).getByRole("radio", { name: /Antigravity Preview/ }),
+    );
+    const button = testButton("Antigravity");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent,
+    ).toBe("Save launcher first");
+    fireEvent.click(button);
+    expect(actions.test).not.toHaveBeenCalled();
+  });
+
+  it("a launcher with nothing saved cannot be tested yet", async () => {
+    const actions = fakeActions();
+    mount(actions);
+    await settle();
+    const button = testButton("Claude Desktop");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(button);
+    expect(actions.test).not.toHaveBeenCalled();
+  });
+});
+
+describe("disconnected (S6)", () => {
+  it("shows the banner, keeps last-known values, and leaves every control aria-disabled but focusable", async () => {
+    const actions = savedActions();
+    const session = createLaunchersSession();
+    const live = mount(actions, session);
+    await settle();
+    live.unmount();
+    vi.mocked(actions.detect).mockClear();
+
+    const { container } = mount(actions, session, {
+      kind: "disconnected",
+      reason: "socket closed",
+    });
+    await settle();
+    expect(screen.getByText("Service disconnected")).toBeTruthy();
+    expect(
+      screen.getByText("Reconnect the service to detect, save or test launchers."),
+    ).toBeTruthy();
+    expect(
+      within(panel("Antigravity")).getByRole<HTMLInputElement>("radio", {
+        name: /^Antigravity com/,
+      }).checked,
+    ).toBe(true);
+    const controls = Array.from(container.querySelectorAll("button, input, select"));
+    expect(controls.length).toBeGreaterThan(10);
+    for (const control of controls) {
+      expect(control.getAttribute("aria-disabled"), control.outerHTML).toBe("true");
+      expect(control.hasAttribute("disabled")).toBe(false);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Detect apps" }));
+    fireEvent.click(testButton("Finder"));
+    expect(actions.detect).not.toHaveBeenCalled();
+    expect(actions.test).not.toHaveBeenCalled();
+  });
+});
