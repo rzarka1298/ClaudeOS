@@ -27,20 +27,23 @@ import type { SwitcherHost } from "./quick-switcher.js";
 
 const PROJECT = "abcdefghi0123456789abcd01" as ProjectId;
 
-type CountingClient = SocketApiClient & { readonly request: Mock };
+/** A client double whose `request` is a plain mock property, so it can be asserted on. */
+interface CountingClient {
+  readonly request: Mock<(opts: SocketRequestOptions) => Promise<unknown>>;
+}
 
 /** A client whose answers never arrive, counting what was sent. */
 function pendingClient(): CountingClient {
-  const request = vi.fn((_opts: SocketRequestOptions) => new Promise<never>(() => {}));
-  return { request } as unknown as CountingClient;
+  return { request: vi.fn((_opts: SocketRequestOptions) => new Promise<never>(() => {})) };
 }
 
 /** A client that answers every launch `ok`. */
 function okClient(): CountingClient {
-  const request = vi.fn((_opts: SocketRequestOptions) =>
-    Promise.resolve({ status: 200, body: { ok: true } }),
-  );
-  return { request } as unknown as CountingClient;
+  return {
+    request: vi.fn((_opts: SocketRequestOptions) =>
+      Promise.resolve({ status: 200, body: { ok: true } }),
+    ),
+  };
 }
 
 /** Timers that never fire on their own, tracking which are still pending. */
@@ -67,13 +70,13 @@ async function flush(): Promise<void> {
 /** Every registry built, disposed after each test so no launch hold leaks between tests. */
 const built: HostRegistry[] = [];
 
-function build(client: SocketApiClient = pendingClient()) {
+function build(client: CountingClient = pendingClient()) {
   const registry = createHostRegistry(new FakeObsidianHost());
   built.push(registry);
   const timers = trackedTimers();
   const notify = vi.fn<(message: string) => void>();
   const reveal = vi.fn<() => void>();
-  const modals: (SwitcherModalHandle & { close: ReturnType<typeof vi.fn> })[] = [];
+  const modals: { readonly close: Mock<() => void> }[] = [];
   const openModal = vi.fn(
     (_host: SwitcherHost, _prefill: string, onClosed: () => void): SwitcherModalHandle => {
       const modal = { close: vi.fn(() => onClosed()) };
@@ -83,7 +86,7 @@ function build(client: SocketApiClient = pendingClient()) {
   );
   const switcher = createPluginSwitcher({
     registry,
-    client,
+    client: client as unknown as SocketApiClient,
     notify,
     reveal,
     openSwitcher: () => {},
