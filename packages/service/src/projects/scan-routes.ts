@@ -51,6 +51,8 @@ import type { ScanService, ScanStateOutcome } from "./scan.js";
 
 /** The one refusal body for a folder that cannot be nominated, whatever the reason. */
 export const SCAN_ROOT_REFUSED_BODY: ApiErrorBody = { error: "folder cannot be scanned" };
+/** The one body for an add past `MAX_SCAN_ROOTS` (codex review 3b, finding 3). */
+export const SCAN_ROOT_LIMIT_BODY: ApiErrorBody = { error: "scan folder limit reached" };
 /** The one body for a ScanRootId the store does not hold. */
 export const NO_SUCH_SCAN_ROOT_BODY: ApiErrorBody = { error: "no such scan folder" };
 /** The one body for a suggestionId the service does not remember. */
@@ -70,6 +72,7 @@ function sendInternalError(res: ServerResponse, route: string, err: unknown): vo
 function sendStateOutcome(res: ServerResponse, outcome: ScanStateOutcome): void {
   if (outcome.kind === "state") sendJson(res, 200, outcome.state);
   else if (outcome.kind === "refused") sendJson(res, 422, SCAN_ROOT_REFUSED_BODY);
+  else if (outcome.kind === "limit") sendJson(res, 409, SCAN_ROOT_LIMIT_BODY);
   else if (outcome.kind === "invalid") sendJson(res, 400, INVALID_BODY_BODY);
   else sendJson(res, 404, NO_SUCH_SCAN_ROOT_BODY);
 }

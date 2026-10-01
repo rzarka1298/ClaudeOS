@@ -1,4 +1,5 @@
 import {
+  MAX_SCAN_ROOTS,
   type ProtectedLocation,
   type ScanRootId,
   type ScanRootView,
@@ -40,6 +41,10 @@ interface Problem {
 const ADD_REFUSED: Problem = {
   problem: "Couldn't add this scan folder.",
   nextStep: "Choose an existing folder outside the managed vault and outside system folders.",
+};
+const ADD_LIMIT: Problem = {
+  problem: `You can scan at most ${MAX_SCAN_ROOTS} folders.`,
+  nextStep: "Remove a scan folder, then add this one.",
 };
 const SERVICE_PROBLEM: Problem = {
   problem: "Couldn't reach the command center service.",
@@ -134,6 +139,7 @@ async function resync(actions: ScanActions, restart?: ScanRootId): Promise<void>
 
 /** The failure copy for any non-state add outcome: the service, never the folder, when it was unreachable. */
 function addFailure(outcome: Exclude<ScanActionOutcome, { kind: "state" }>): Problem {
+  if (outcome.kind === "limit") return ADD_LIMIT;
   return outcome.kind === "service-disconnected" || outcome.kind === "failed"
     ? SERVICE_PROBLEM
     : ADD_REFUSED;

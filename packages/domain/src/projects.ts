@@ -427,6 +427,45 @@ export const SUGGESTIONS_PAGE_SIZE = 25;
  */
 export const SCAN_RESPONSE_BUDGET_BYTES = 56 * 1024;
 
+/**
+ * How many scan folders the service keeps at most (codex review 3b,
+ * finding 3). Every scan response carries every scan folder, so this cap,
+ * with {@link MAX_SCAN_ROOT_PATH_LENGTH}, is what keeps the full list inside
+ * the plugin client's response cap; `scan-page.test.ts` proves the worst case.
+ */
+export const MAX_SCAN_ROOTS = 50;
+
+/**
+ * The longest path a scan folder may have, in UTF-16 units (codex review
+ * 3b, finding 3). Shorter than {@link MAX_PATH_LENGTH} so the full list of
+ * {@link MAX_SCAN_ROOTS} display paths fits one response.
+ */
+export const MAX_SCAN_ROOT_PATH_LENGTH = 255;
+
+/**
+ * True when `value` holds a UTF-16 surrogate without its pair — the one
+ * other thing besides a control character `JSON.stringify` escapes into six
+ * bytes. A path read from disk never holds one (macOS names are UTF-8).
+ */
+export function hasLoneSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i += 1;
+        continue;
+      }
+      return true;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) return true;
+  }
+  return false;
+}
+
+/** A store timestamp on the wire: `Date#toISOString`'s shape, bounded. */
+const ScanTimestampSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/);
+
 /** How many levels below a scan root to look (D-07): default 1, at most 3. */
 export const ScanDepthSchema = z.number().int().min(1).max(3);
 
@@ -509,10 +548,22 @@ export type ScanStatus = z.infer<typeof ScanStatusSchema>;
 /** A scan root as the plugin sees it: home-abbreviated display path only. */
 export const ScanRootViewSchema = z.object({
   scanRootId: ScanRootIdSchema,
-  displayPath: z.string().max(MAX_PATH_LENGTH),
+  /**
+   * Bounded, and free of what JSON escapes into six bytes, so the worst
+   * case of the full list is a fixed size (codex review 3b, finding 3).
+   */
+  displayPath: z
+    .string()
+    .max(MAX_SCAN_ROOT_PATH_LENGTH)
+    .refine((value) => !hasControlCharacter(value), {
+      message: "display path must not contain a control character",
+    })
+    .refine((value) => !hasLoneSurrogate(value), {
+      message: "display path must not contain a lone surrogate",
+    }),
   depth: ScanDepthSchema,
-  addedAt: z.string(),
-  lastScannedAt: z.string().nullable(),
+  addedAt: ScanTimestampSchema,
+  lastScannedAt: ScanTimestampSchema.nullable(),
   scanStatus: ScanStatusSchema.optional(),
   /**
    * How many suggestions this folder has in all — a response carries only

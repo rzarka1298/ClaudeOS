@@ -164,6 +164,8 @@ export function createProjectsActions(client: SocketApiClient): ProjectsActions 
  */
 export type ScanActionOutcome =
   | { readonly kind: "state"; readonly state: ScanStateResponse }
+  /** An add past the service's scan folder cap (409, codex review 3b, finding 3). */
+  | { readonly kind: "limit" }
   | Extract<
       ProjectActionOutcome,
       { kind: "refused" | "invalid" | "service-disconnected" | "failed" }
@@ -233,15 +235,21 @@ export function createScanActions(client: SocketApiClient): ScanActions {
     }
   }
   return {
-    addScanRoot(path, acknowledgeProtectedLocation) {
-      return asState(
-        addScanRoot(
-          client,
-          acknowledgeProtectedLocation === undefined
-            ? { path }
-            : { path, acknowledgeProtectedLocation },
-        ),
-      );
+    async addScanRoot(path, acknowledgeProtectedLocation) {
+      try {
+        return {
+          kind: "state",
+          state: await addScanRoot(
+            client,
+            acknowledgeProtectedLocation === undefined
+              ? { path }
+              : { path, acknowledgeProtectedLocation },
+          ),
+        };
+      } catch (error: unknown) {
+        if (error instanceof ProjectsRequestError && error.status === 409) return { kind: "limit" };
+        return classifyFailure(error);
+      }
     },
     removeScanRoot(scanRootId) {
       return asState(removeScanRoot(client, { scanRootId }));

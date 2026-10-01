@@ -5,6 +5,8 @@ import path from "node:path";
 import {
   checkPathContainmentResolved,
   hasControlCharacter,
+  MAX_SCAN_ROOT_PATH_LENGTH,
+  MAX_SCAN_ROOTS,
   type ProjectId,
   type RegisterProjectResponse,
   ScanDepthSchema,
@@ -138,6 +140,8 @@ export interface ScanServiceDeps {
 export type ScanStateOutcome =
   | { readonly kind: "state"; readonly state: ScanStateResponse }
   | { readonly kind: "refused" }
+  /** Already {@link MAX_SCAN_ROOTS} scan folders, and this is not one of them. */
+  | { readonly kind: "limit" }
   | { readonly kind: "invalid" }
   | { readonly kind: "unknown" };
 
@@ -250,6 +254,21 @@ function sameOrInside(child: string, parent: string): boolean {
 /** True when `folder` is the vault, lies inside it, or holds it. */
 function touchesVault(folder: string, vault: string | null): boolean {
   return vault !== null && (sameOrInside(folder, vault) || sameOrInside(vault, folder));
+}
+
+/**
+ * A scan folder's display path as the wire allows it (at most
+ * {@link MAX_SCAN_ROOT_PATH_LENGTH}). Add refuses longer folders, so only a
+ * row stored before that rule can be cut — kept to its tail, which names the
+ * folder, so the owner can still recognise and remove it.
+ */
+function boundedDisplayPath(displayPath: string): string {
+  if (displayPath.length <= MAX_SCAN_ROOT_PATH_LENGTH) return displayPath;
+  let tail = displayPath.slice(displayPath.length - (MAX_SCAN_ROOT_PATH_LENGTH - 1));
+  // Never start on the second half of a surrogate pair.
+  const first = tail.charCodeAt(0);
+  if (first >= 0xdc00 && first <= 0xdfff) tail = tail.slice(1);
+  return `…${tail}`;
 }
 
 /** Policy refusals a rescan answers with the constant refusal; the rest are the walk's to report. */
@@ -488,7 +507,7 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
       byRoot.push(visible);
       scanRoots.push({
         scanRootId: root.scanRootId,
-        displayPath: toDisplayPath(root.path, deps.homeDir),
+        displayPath: boundedDisplayPath(toDisplayPath(root.path, deps.homeDir)),
         depth: root.depth,
         addedAt: root.addedAt,
         lastScannedAt: root.lastScannedAt,
@@ -546,11 +565,28 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
     });
   }
 
+  /**
+   * True when {@link MAX_SCAN_ROOTS} folders are stored and `folder` is not
+   * one of them (codex review 3b, finding 3): adding a folder again, to
+   * change its depth, is never refused by the cap.
+   */
+  function atLimit(folder: string): boolean {
+    const roots = listScanRoots(store.db);
+    return roots.length >= MAX_SCAN_ROOTS && !roots.some((root) => root.path === folder);
+  }
+
+  function refuseAtLimit(): ScanStateOutcome {
+    log.warn({ reason: "scan-root-limit" }, "scan folder refused");
+    return { kind: "limit" };
+  }
+
   return {
     async add(candidate, options) {
       if (options.depth !== undefined && !ScanDepthSchema.safeParse(options.depth).success) {
         return { kind: "invalid" };
       }
+      // Before any prompt: a full list answers the limit, not a question.
+      if (atLimit(path.resolve(candidate))) return refuseAtLimit();
       const policy = deps.readPolicy();
       const lexical = options.acknowledged
         ? null
@@ -574,6 +610,12 @@ export function createScanService(deps: ScanServiceDeps): ScanService {
         log.warn({ reason: err.reason }, "scan folder refused");
         return { kind: "refused" };
       }
+      // The full list of display paths must fit one response (finding 3).
+      if (resolved.length > MAX_SCAN_ROOT_PATH_LENGTH) {
+        log.warn({ reason: "path-too-long" }, "scan folder refused");
+        return { kind: "refused" };
+      }
+      if (atLimit(resolved)) return refuseAtLimit();
       const resolvedLocation = options.acknowledged
         ? null
         : detectProtectedLocation(resolved, policy.homeDir);
