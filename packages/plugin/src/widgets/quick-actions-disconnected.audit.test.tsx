@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
+import { launchStatusKey, resetLaunchStatus, setLaunchError } from "../projects/launch-status.js";
 import type { WidgetState } from "./contract.js";
 import { WidgetFrame } from "./frame.js";
 import { type AnyWidgetDefinition, WIDGETS } from "./registry.js";
@@ -31,14 +32,14 @@ const READY: WidgetState<unknown> = {
 
 afterEach(() => {
   cleanup();
+  resetLaunchStatus();
   connectionState.value = { kind: "connecting" };
 });
 
 describe("S8 Quick actions while disconnected (audit)", () => {
-  // AUDIT-BUG (wave 5, 04-10): panels.tsx QuickActionsBody renders the live
-  // pair regardless of onQuickAction; they stay enabled and inert when
-  // disconnected, contrary to UI-SPEC S8. Un-skip once fixed.
-  it.skip("renders no enabled live launch button for Start a Claude Code session or Open Claude Desktop", () => {
+  // Was AUDIT-BUG (wave 5, 04-10): QuickActionsBody rendered the live pair
+  // regardless of onQuickAction, enabled and inert while disconnected.
+  it("renders no enabled live launch button for Start a Claude Code session or Open Claude Desktop", () => {
     const connection = { kind: "disconnected", reason: "The service is not running." } as const;
     connectionState.value = connection;
     render(
@@ -55,5 +56,23 @@ describe("S8 Quick actions while disconnected (audit)", () => {
       const button = screen.queryByRole("button", { name });
       if (button !== null) expect(button.getAttribute("aria-disabled")).toBe("true");
     }
+  });
+
+  it("renders no Claude Desktop status line (and no stale error) while disconnected", () => {
+    setLaunchError(launchStatusKey(null, "claude-desktop"), "app-not-found");
+    const connection = { kind: "disconnected", reason: "The service is not running." } as const;
+    connectionState.value = connection;
+    const { container } = render(
+      <WidgetFrame
+        definition={WIDGETS["quick-actions"] as AnyWidgetDefinition}
+        state={READY}
+        connection={connection}
+        size={WIDGETS["quick-actions"].preferredSize}
+        now={NOW}
+        onQuickAction={vi.fn()}
+      />,
+    );
+    expect(container.querySelector(".ccc-launch-status")).toBeNull();
+    expect(container.querySelector(".ccc-error-glyph")).toBeNull();
   });
 });
