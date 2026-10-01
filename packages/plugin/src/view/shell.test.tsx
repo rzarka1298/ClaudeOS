@@ -1,8 +1,10 @@
+import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
 import { signal } from "@preact/signals";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
+import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { WidgetState } from "../widgets/contract.js";
 import type { WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
@@ -204,5 +206,82 @@ describe("Shell", () => {
 
     expect(requestLaunch).toHaveBeenCalledTimes(1);
     expect(requestLaunch).toHaveBeenCalledWith("project-1", "finder");
+  });
+});
+
+/**
+ * The Settings destination and the "Set up launchers" focus hand-off
+ * (plan 04-12 Task 1, D-30, D-37): the Launchers section lives in the
+ * command center's own Settings destination, the callout's button selects
+ * it and focuses the Launchers heading, and nothing runs at plugin load.
+ */
+describe("Shell — Settings › Launchers (D-37, D-30)", () => {
+  function fakeLaunchersActions(): LaunchersActions {
+    return {
+      detect: vi.fn(() => new Promise<never>(() => {})),
+      getConfigs: vi.fn(() => new Promise<never>(() => {})),
+      save: vi.fn(),
+      test: vi.fn(),
+      markTested: vi.fn(),
+      openSystemSettings: vi.fn(),
+    } as unknown as LaunchersActions;
+  }
+
+  /** Project shortcuts in its empty state with no launcher set up, so S10's callout renders. */
+  function stateForWithCallout(id: WidgetId) {
+    if (id !== "project-shortcuts") return widgetStateFor(id);
+    return signal<WidgetState<unknown>>({
+      kind: "ready",
+      data: { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers },
+      observedAt: "2026-09-30T10:00:00.000Z",
+      freshness: "live",
+      partiality: { partial: false },
+      isEmpty: true,
+    });
+  }
+
+  it("renders the Launchers section in the Settings destination", () => {
+    connectionState.value = { kind: "live" };
+    render(<Shell launchersActions={fakeLaunchersActions()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByRole("heading", { level: 3, name: "Launchers" })).toBeTruthy();
+  });
+
+  it("never calls detect or getConfigs while only the Overview has rendered (D-30)", () => {
+    connectionState.value = { kind: "live" };
+    const actions = fakeLaunchersActions();
+    render(<Shell launchersActions={actions} />);
+    expect(actions.detect).not.toHaveBeenCalled();
+    expect(actions.getConfigs).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("Set up launchers selects Settings and focuses the Launchers heading", async () => {
+    connectionState.value = { kind: "live" };
+    render(<Shell launchersActions={fakeLaunchersActions()} stateFor={stateForWithCallout} />);
+    fireEvent.click(screen.getByRole("button", { name: "Set up launchers" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    const heading = screen.getByRole("heading", { level: 3, name: "Launchers" });
+    expect(heading.getAttribute("tabindex")).toBe("-1");
+    expect(document.activeElement).toBe(heading);
+  });
+
+  it("reaching Settings by its tab does not move focus to the heading", async () => {
+    connectionState.value = { kind: "live" };
+    render(<Shell launchersActions={fakeLaunchersActions()} />);
+    const tab = screen.getByRole("tab", { name: "Settings" });
+    tab.focus();
+    fireEvent.click(tab);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.activeElement).not.toBe(
+      screen.getByRole("heading", { level: 3, name: "Launchers" }),
+    );
   });
 });

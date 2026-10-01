@@ -1,6 +1,6 @@
 import type { GithubTarget, LaunchAction, LaunchErrorKind, ProjectId } from "@ccc/domain";
 import { LAUNCH_ERROR_KINDS, newProjectId } from "@ccc/domain";
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import type { VNode } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LAUNCH_ERROR_COPY, launcherDisplayName, renderCopy } from "../projects/launch-copy.js";
@@ -10,6 +10,8 @@ import {
   setLaunchError,
   setLaunchOpening,
 } from "../projects/launch-status.js";
+import type { LaunchersActions } from "../projects/launchers-actions.js";
+import { createLaunchersSession, LaunchersSettings } from "../view/launchers-settings.js";
 import type { QuickActionDescriptor } from "./contract.js";
 import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
 
@@ -169,6 +171,37 @@ describe("every D-26 error renders inline (D-26, PROJ-12)", () => {
     render(<Row onNavigate={onNavigate} />);
     fireEvent.click(screen.getByRole("button", { name: "Set up launchers" }));
     expect(onNavigate).toHaveBeenCalledWith("settings");
+  });
+
+  it("Set up launchers requests the Launchers heading focus before navigating (plan 04-12)", async () => {
+    const onNavigate = vi.fn();
+    setLaunchError(launchStatusKey(PROJECT_ID, "antigravity"), "app-not-found");
+    render(<Row onNavigate={onNavigate} />);
+    fireEvent.click(screen.getByRole("button", { name: "Set up launchers" }));
+    cleanup();
+    const pending = () => new Promise<never>(() => {});
+    const actions = {
+      detect: pending,
+      getConfigs: pending,
+      save: pending,
+      test: pending,
+      markTested: pending,
+      openSystemSettings: pending,
+    } as unknown as LaunchersActions;
+    render(
+      <LaunchersSettings
+        actions={actions}
+        connection={{ kind: "live" }}
+        now={0}
+        session={createLaunchersSession()}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 3, name: "Launchers" }),
+    );
   });
 
   it("Go to Projects navigates to Projects, and is hidden when already in Projects", () => {

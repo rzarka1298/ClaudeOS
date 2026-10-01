@@ -1,5 +1,7 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { LaunchersActions } from "../projects/launchers-actions.js";
+import { createLaunchersSession, LaunchersSettings } from "./launchers-settings.js";
 import { launchersNeedSetup, SetupCallout } from "./setup-callout.js";
 
 /**
@@ -81,5 +83,39 @@ describe("SetupCallout (S10)", () => {
     const { container } = render(<SetupCallout />);
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(container.querySelector(".ccc-setup-callout")).toBeTruthy();
+  });
+});
+
+describe("SetupCallout hands focus to the Launchers heading (plan 04-12, S6)", () => {
+  it("requests the Launchers focus before navigating, so the section focuses its heading", async () => {
+    const onNavigate = vi.fn();
+    render(<SetupCallout onNavigate={onNavigate} />);
+    fireEvent.click(screen.getByRole("button", { name: "Set up launchers" }));
+    expect(onNavigate).toHaveBeenCalledWith("settings");
+    cleanup();
+
+    const pending = () => new Promise<never>(() => {});
+    const actions = {
+      detect: pending,
+      getConfigs: pending,
+      save: pending,
+      test: pending,
+      markTested: pending,
+      openSystemSettings: pending,
+    } as unknown as LaunchersActions;
+    render(
+      <LaunchersSettings
+        actions={actions}
+        connection={{ kind: "live" }}
+        now={0}
+        session={createLaunchersSession()}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 3, name: "Launchers" }),
+    );
   });
 });
