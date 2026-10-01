@@ -1,8 +1,9 @@
 import type { GithubTarget, LaunchersSummary, ProjectGitState, ProjectId } from "@ccc/domain";
 import type { VNode } from "preact";
+import { launchStatus, launchStatusKey } from "../projects/launch-status.js";
 import type { DestinationId } from "../view/destinations.js";
 import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
-import type { WidgetBodyProps, WidgetDefinition } from "./contract.js";
+import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
 import { ListBody } from "./list-body.js";
 
@@ -596,34 +597,115 @@ export const githubDiscoveriesWidget: WidgetDefinition<GithubDiscoveriesData> = 
 };
 
 // ---------------------------------------------------------------------------
-// 7. Quick actions (PRD §7.1.7) — unavailable until its actions' phases land
+// 7. Quick actions (PRD §7.1.7) — two live actions in Phase 4 (D-38)
 // ---------------------------------------------------------------------------
 
 /**
- * This panel has no body: its content IS its `quickActions`, which the shared
- * frame renders (and which `dispatchQuickAction` refuses to execute in this
- * phase). The descriptors are declared now so Phase 6's approval engine has a
- * capability to classify before there is anything to approve.
+ * S8 (D-38, PR-08, PR-12). Two actions are live in Phase 4 — `Start a Claude
+ * Code session` opens the quick switcher prefilled, `Open Claude Desktop` is
+ * an S2-style launch — and the other four stay honestly unavailable until
+ * their phases land. All six stay declared on `quickActions` so Phase 6's
+ * approval engine has a capability to classify; `actionsInBody` tells the
+ * frame to skip its generic row because this body lays them out itself.
+ * Every button still emits a DESCRIPTOR through `onQuickAction` — the one
+ * dispatcher — and the frame hands that channel in only for `ready`/`stale`,
+ * so nothing here can launch while disconnected (RR-05).
  */
-export type QuickActionsData = Record<string, never>;
+export interface QuickActionsData {
+  readonly launchers: LaunchersSummary;
+}
+
+const QUICK_ACTIONS: readonly QuickActionDescriptor[] = [
+  { id: "run-skill", label: "Run a skill", capability: "skill:run" },
+  { id: "start-session", label: "Start a Claude Code session", capability: "switcher:claude-code" },
+  { id: "create-task", label: "Create a task", capability: "task:create" },
+  { id: "capture-note", label: "Capture an inbox note", capability: "note:capture" },
+  { id: "refresh-data", label: "Refresh selected data", capability: "data:refresh" },
+  { id: "open-claude-desktop", label: "Open Claude Desktop", capability: "launch:claude-desktop" },
+];
+
+function isLive(action: QuickActionDescriptor): boolean {
+  return action.capability.startsWith("launch:") || action.capability.startsWith("switcher:");
+}
+
+/** The live pair in S8 order: the session first, then Claude Desktop (UI-SPEC S8). */
+const LIVE_QUICK_ACTIONS = ["start-session", "open-claude-desktop"].flatMap((id) =>
+  QUICK_ACTIONS.filter((action) => action.id === id),
+);
+const UNAVAILABLE_QUICK_ACTIONS = QUICK_ACTIONS.filter((action) => !isLive(action));
+
+const CLAUDE_DESKTOP_KEY = launchStatusKey(null, "claude-desktop");
+const CLAUDE_DESKTOP_ACTIONS = ["claude-desktop"] as const;
+
+function QuickActionsBody({
+  data,
+  onNavigate,
+  onQuickAction,
+}: WidgetBodyProps<QuickActionsData>): VNode {
+  const desktopOpening = launchStatus.value.get(CLAUDE_DESKTOP_KEY)?.kind === "opening";
+  return (
+    <>
+      <div className="ccc-card-actions">
+        {LIVE_QUICK_ACTIONS.map((action) => {
+          const opening = action.capability === "launch:claude-desktop" && desktopOpening;
+          return (
+            <button
+              key={action.id}
+              type="button"
+              className="ccc-quick-action"
+              aria-disabled={opening ? "true" : undefined}
+              data-launch-state={opening ? "opening" : undefined}
+              onClick={() => {
+                // A second press while opening is ignored (UI-SPEC S2).
+                if (!opening) onQuickAction?.(action);
+              }}
+            >
+              {action.label}
+            </button>
+          );
+        })}
+      </div>
+      <LaunchStatusLine
+        projectId={null}
+        projectName="Claude Desktop"
+        terminalLabel={data.launchers["claude-code"].terminalLabel}
+        actions={CLAUDE_DESKTOP_ACTIONS}
+        onNavigate={onNavigate}
+      />
+      <p className="ccc-list-meta">Not available yet</p>
+      <div className="ccc-card-actions">
+        {UNAVAILABLE_QUICK_ACTIONS.map((action) => (
+          <button
+            key={action.id}
+            type="button"
+            className="ccc-quick-action"
+            aria-disabled="true"
+            // Still focusable and still dispatched: the dispatcher answers
+            // with the existing "{label} isn't available yet." Notice.
+            onClick={() => onQuickAction?.(action)}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
 
 export const quickActionsWidget: WidgetDefinition<QuickActionsData> = {
   id: "quick-actions",
   title: "Quick actions",
-  description: "The six PRD §7.1 quick actions. Each is enabled by the phase that owns it.",
-  dataKeys: [{ key: "skills.registry", transport: "service", sourceLabel: "Skill registry" }],
+  description:
+    "The six PRD §7.1 quick actions. Claude Code and Claude Desktop are live; each other action is enabled by the phase that owns it.",
+  // RR-18: the skill registry returns with the skill-run phase; until then
+  // the Source panel names only what this card actually reads.
+  dataKeys: [{ key: "launchers.config", transport: "service", sourceLabel: "Launcher settings" }],
   refresh: { kind: "manual" },
   minSize: "small",
   preferredSize: "small",
   featureFlag: "widget.quick-actions",
-  quickActions: [
-    { id: "run-skill", label: "Run a skill", capability: "skill:run" },
-    { id: "start-session", label: "Start a Claude Code session", capability: "session:start" },
-    { id: "create-task", label: "Create a task", capability: "task:create" },
-    { id: "capture-note", label: "Capture an inbox note", capability: "note:capture" },
-    { id: "refresh-data", label: "Refresh selected data", capability: "data:refresh" },
-    { id: "open-claude-desktop", label: "Open Claude Desktop", capability: "app:open" },
-  ],
-  renderBody: () => null,
+  quickActions: QUICK_ACTIONS,
+  actionsInBody: true,
+  renderBody: QuickActionsBody,
   renderEmpty: () => null,
 };

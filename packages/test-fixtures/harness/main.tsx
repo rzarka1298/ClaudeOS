@@ -308,8 +308,9 @@ function adaptGithubDiscoveries(data: Fields): GithubDiscoveriesData {
 }
 
 function adaptQuickActions(): QuickActionsData {
-  // The panel's content IS its declared quick actions, rendered by the frame.
-  return {};
+  // S8 reads the launcher summary (D-38); every launcher set up, so the live
+  // pair renders (visual cells re-baselined in plan 04-15).
+  return { launchers: HARNESS_LAUNCHERS_SET_UP };
 }
 
 /** Every adapter sees which fixture variant it is reshaping; most ignore it. */

@@ -30,12 +30,19 @@ describe("widgetStateFor is one signal per widget", () => {
     expect(new Set(signals).size).toBe(WIDGET_IDS.length);
   });
 
-  it.each(PRD_PANEL_ORDER.filter((id) => id !== "project-shortcuts"))(
+  it.each(PRD_PANEL_ORDER.filter((id) => id !== "project-shortcuts" && id !== "quick-actions"))(
     "%s: never holds a ready payload (D-17)",
     (id) => {
       expect(["permission-required", "unavailable"]).toContain(widgetStateFor(id).value.kind);
     },
   );
+
+  // quick-actions is real now (plan 04-10, D-38): fed by the launcher summary
+  // in the projects snapshot. Its honest-state coverage lives in
+  // projects-state.test.ts and panels.test.tsx.
+  it("quick-actions: loading before any snapshot has arrived", () => {
+    expect(widgetStateFor("quick-actions").value.kind).toBe("loading");
+  });
 
   // project-shortcuts is real now (plan 04-07, D-35): a service-fed signal,
   // not a D-17 constant. Its own honest-state coverage lives in
@@ -130,8 +137,16 @@ describe("every button on every registered card routes through the dispatcher", 
     expect(ctx.notify.mock.calls[0]?.[0]).toMatch(/Google Calendar and Gmail.*Settings/);
   });
 
-  it("every PRD quick action reports unavailable and never navigates", () => {
-    for (const action of WIDGETS["quick-actions"].quickActions) {
+  // SC-6 (rewritten, not deleted): the two live Quick actions (D-38, PR-08)
+  // are covered in quick-actions.test.ts; every other one still reports
+  // unavailable.
+  it("every not-yet-live PRD quick action reports unavailable and never navigates", () => {
+    const notLive = WIDGETS["quick-actions"].quickActions.filter(
+      (action) =>
+        !action.capability.startsWith("launch:") && !action.capability.startsWith("switcher:"),
+    );
+    expect(notLive).toHaveLength(4);
+    for (const action of notLive) {
       const ctx = {
         navigate: vi.fn(),
         notify: vi.fn(),

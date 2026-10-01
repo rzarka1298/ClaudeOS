@@ -16,7 +16,7 @@ import type { ConnectionState } from "../connection-state.js";
 import { connectionState } from "../connection-state.js";
 import { nowTick } from "../widgets/clock.js";
 import type { WidgetState } from "../widgets/contract.js";
-import type { ProjectRow, ProjectShortcutsData } from "../widgets/panels.js";
+import type { ProjectRow, ProjectShortcutsData, QuickActionsData } from "../widgets/panels.js";
 
 /**
  * The plugin's one in-memory picture of Projects (D-43, D-11).
@@ -210,5 +210,44 @@ export const projectShortcutsState = computed<WidgetState<ProjectShortcutsData>>
     connectionState.value,
     new Date(nowTick.value).toISOString(),
     projectsReceivedAt.value,
+  ),
+);
+
+/**
+ * The S8 Quick actions card's state (D-38): `loading` until the first
+ * projects snapshot brings the launcher summary, then `ready` with it. With
+ * no snapshot and a connection that is no longer resolving, the honest
+ * answer is `unavailable`, not a skeleton forever (the Project shortcuts
+ * card's own rule). The
+ * summary is pushed on every change, so it is `live` whenever it is shown —
+ * the frame itself presents `disconnected` when the service goes away. It is
+ * dated when the registry arrived, or `now` when that is not recorded.
+ */
+export function quickActionsStateFor(
+  snapshot: ProjectsSnapshot | undefined,
+  receivedAt: string | null,
+  nowIso: string,
+  connection: ConnectionState = { kind: "connecting" },
+): WidgetState<QuickActionsData> {
+  if (snapshot === undefined) {
+    return connection.kind === "connecting" ? { kind: "loading" } : { kind: "unavailable" };
+  }
+  return {
+    kind: "ready",
+    data: { launchers: snapshot.launchers },
+    observedAt: receivedAt ?? nowIso,
+    freshness: "live",
+    partiality: { partial: false },
+    isEmpty: false,
+  };
+}
+
+/** The Quick actions card's live signal — replaces `widget-data.ts`'s constant. */
+export const quickActionsState = computed<WidgetState<QuickActionsData>>(() =>
+  quickActionsStateFor(
+    projectsSnapshot.value,
+    projectsReceivedAt.value,
+    new Date(nowTick.value).toISOString(),
+    connectionState.value,
   ),
 );

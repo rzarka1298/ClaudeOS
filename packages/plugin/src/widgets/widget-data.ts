@@ -1,5 +1,5 @@
 import { type ReadonlySignal, signal } from "@preact/signals";
-import { projectShortcutsState } from "../projects/projects-state.js";
+import { projectShortcutsState, quickActionsState } from "../projects/projects-state.js";
 import type { WidgetState } from "./contract.js";
 import type { WidgetId } from "./registry.js";
 import { serviceHealthState } from "./service-health.js";
@@ -50,7 +50,7 @@ const WIDGET_STATES: Readonly<Record<WidgetId, ReadonlySignal<WidgetState<unknow
   "project-shortcuts": projectShortcutsState,
   "claude-usage": constantState(UNAVAILABLE_STATE),
   "tech-intel": constantState(UNAVAILABLE_STATE),
-  "quick-actions": constantState(UNAVAILABLE_STATE),
+  "quick-actions": quickActionsState,
 };
 
 /**

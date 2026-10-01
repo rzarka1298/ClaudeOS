@@ -305,6 +305,15 @@ describe("quickActionsStateFor (S8, D-38)", () => {
     });
   });
 
+  it("is unavailable, not a skeleton forever, once the connection stops resolving with no snapshot", () => {
+    expect(
+      quickActionsStateFor(undefined, null, NOW_ISO, { kind: "disconnected", reason: "x" }),
+    ).toEqual({ kind: "unavailable" });
+    expect(quickActionsStateFor(undefined, null, NOW_ISO, { kind: "live" })).toEqual({
+      kind: "unavailable",
+    });
+  });
+
   it("dates a snapshot with no receipt time at now", () => {
     const state = quickActionsStateFor(snapshotOf([]), null, NOW_ISO);
     expect(state.kind === "ready" ? state.observedAt : null).toBe(NOW_ISO);

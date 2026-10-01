@@ -226,7 +226,13 @@ const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
   "claude-usage": { bars: [], tokens: { input: 0, output: 0, cache: 0 }, estimate: null },
   "tech-intel": { stories: [], marketSummary: null },
   "github-discoveries": { repos: [] },
-  "quick-actions": {},
+  "quick-actions": {
+    launchers: {
+      antigravity: "set-up",
+      "claude-code": { status: "set-up", terminalLabel: "Terminal" },
+      "claude-desktop": "set-up",
+    },
+  },
 };
 
 function cachedReady(id: WidgetId): WidgetState<unknown> {
