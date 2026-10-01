@@ -730,7 +730,8 @@ const CLAIM_TIMEOUT_MS = Number(process.env.CODEX_BRIDGE_CLAIM_TIMEOUT_MS) || 20
 // before it is stopped and the run goes headless.
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: tuning knob
 const SESSION_WAIT_MS = Number(process.env.CODEX_BRIDGE_SESSION_WAIT_MS) || 180_000;
-const HELPER_START_MS = 15_000;
+// biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only tuning knob
+const HELPER_START_MS = Number(process.env.CODEX_BRIDGE_HELPER_START_MS) || 15_000;
 const ROLLOUT_SCAN_BYTES = 1024 * 1024;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -825,11 +826,12 @@ function codexQuery(args, { cwd, env }) {
  * Resolves the overrides that keep the TUI isolated, and proves them with
  * Codex's own listings. Returns { ok, args, mcp, reason }.
  */
-export function tuiIsolation({ cwd, env = process.env }) {
+export function tuiIsolation({ cwd, env = process.env, trusted = [cwd] }) {
   const no = (reason) => ({ ok: false, reason, args: null, mcp: null });
-  const before = parseMcpList(
-    codexQuery([...ISOLATION_PINS, "mcp", "list", "--json"], { cwd, env }),
-  );
+  // Queried with exactly the trust the launch grants: a trusted project also
+  // loads its own .codex/config.toml, which may add servers.
+  const pins = [...ISOLATION_PINS, "-c", trustOverride(trusted)];
+  const before = parseMcpList(codexQuery([...pins, "mcp", "list", "--json"], { cwd, env }));
   if (!before) return no("could not list MCP servers");
   const odd = before.filter((s) => !MCP_NAME_RE.test(s.name));
   if (odd.length) return no(`MCP server name(s) cannot be disabled by override: ${odd.length}`);
@@ -837,11 +839,12 @@ export function tuiIsolation({ cwd, env = process.env }) {
     ...ISOLATION_PINS,
     ...before.flatMap((s) => ["-c", `mcp_servers.${s.name}.enabled=false`]),
   ];
-  const after = parseMcpList(codexQuery([...args, "mcp", "list", "--json"], { cwd, env }));
+  const queryArgs = [...args, "-c", trustOverride(trusted)];
+  const after = parseMcpList(codexQuery([...queryArgs, "mcp", "list", "--json"], { cwd, env }));
   if (!after) return no("could not re-list MCP servers with the overrides");
   const still = after.filter((s) => s.enabled).map((s) => s.name);
   if (still.length) return no(`MCP servers still enabled: ${still.join(", ")}`);
-  const features = parseFeatures(codexQuery([...args, "features", "list"], { cwd, env }));
+  const features = parseFeatures(codexQuery([...queryArgs, "features", "list"], { cwd, env }));
   if (!features) return no("could not list features");
   const on = MUST_BE_OFF.filter((f) => features[f] === true);
   if (on.length) return no(`features still enabled: ${on.join(", ")}`);
@@ -1006,7 +1009,11 @@ async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession
   if (process.env.CODEX_BRIDGE_TAB === "0" || process.env.CODEX_BRIDGE_TUI === "0") return null;
   const cli = bridge.antigravityCli(process.env);
   if (!cli) return null;
-  const iso = tuiIsolation({ cwd, env: { ...process.env, CODEX_HOME: codexHome() } });
+  const iso = tuiIsolation({
+    cwd,
+    env: { ...process.env, CODEX_HOME: codexHome() },
+    trusted: [cwd, MAIN],
+  });
   if (!iso.ok) {
     live.write([`[tui] isolation check failed: ${iso.reason}; running headless`]);
     say(`TUI isolation check failed (${iso.reason}); running headless`);
@@ -1949,19 +1956,27 @@ async function cmdTui({ positional }) {
   };
   // The Codex home the wrapper checked usage against and watches for the session.
   if (req.codexHome) env.CODEX_HOME = req.codexHome;
+  // Published before the (slow) preflight, so the wrapper counts the tab as started.
+  status({ status: "starting" });
   // Re-verified here, in the environment Codex will actually run in.
-  const iso = tuiIsolation({ cwd: req.cwd, env });
+  const trusted = [req.cwd, req.projectRoot];
+  const iso = tuiIsolation({ cwd: req.cwd, env, trusted });
   if (!iso.ok) {
     status({ status: "exited", code: 3, error: `isolation failed in the tab: ${iso.reason}` });
     fail(EXIT.REFUSED, `refused: TUI isolation failed (${iso.reason}); the run goes headless`);
   }
-  const args = tuiArgs(req.role, req.cwd, prompt, [req.cwd, req.projectRoot], iso.args);
+  const args = tuiArgs(req.role, req.cwd, prompt, trusted, iso.args);
   const flags = args.slice(0, -1).join(" ").toLowerCase();
   if (BANNED.some((b) => flags.includes(b))) fail(EXIT.REFUSED, "refused: bypass flag");
   const r = ROLES[req.role];
   process.stdout.write(
     `codex-bridge: Codex ${req.kind} run ${req.runId} — ${r.model} (${r.effort}), sandbox ${r.sandbox}, approvals never\n`,
   );
+  // Withdrawn while the preflight ran (the wrapper went headless): never launch.
+  if (existsSync(stopFile)) {
+    status({ status: "exited", code: null });
+    fail(EXIT.USAGE, `run ${req.runId} was withdrawn`);
+  }
   status({ status: "running" });
   // stderr is passed through and its tail kept: a TUI that refuses to start
   // (bad flag, config error) says why there, and the wrapper logs it.
@@ -2062,7 +2077,8 @@ async function main() {
     case "tui-check": {
       // Diagnostics: what the TUI isolation check sees (names + enabled only).
       const env = { ...process.env };
-      const r = tuiIsolation({ cwd: process.cwd(), env });
+      const cwd = realpathSync(process.cwd());
+      const r = tuiIsolation({ cwd, env, trusted: [cwd, mainCheckoutOf(cwd) ?? cwd] });
       printResult({ ok: r.ok, reason: r.reason, mcp: r.mcp });
       process.exit(r.ok ? EXIT.OK : EXIT.REFUSED);
       return;

@@ -118,8 +118,12 @@ if (argv[0] === "app-server") {
 } else if (argv.at(-3) === "mcp" && argv.at(-2) === "list" && argv.at(-1) === "--json") {
   // The owner's MCP servers as Codex resolves them, after any -c overrides.
   record({ query: "mcp" });
+  if (process.env.FAKE_CODEX_QUERY_DELAY_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_CODEX_QUERY_DELAY_MS));
   if (process.env.FAKE_CODEX_MCP === "fail") process.exit(1);
   const servers = JSON.parse(process.env.FAKE_CODEX_MCP || '[{"name":"pencil","enabled":true},{"name":"computer-use","enabled":false}]');
+  // Like Codex: a project's own .codex/config.toml loads only once the project is trusted.
+  const trusted = argv.some((a) => a.startsWith("projects=") && a.includes(JSON.stringify(process.cwd())));
+  if (process.env.FAKE_CODEX_PROJECT_MCP && trusted) servers.push({ name: "proj_srv", enabled: true });
   const out = servers.map((sv) => {
     const off = argv.includes("mcp_servers." + sv.name + ".enabled=false");
     return { name: sv.name, enabled: sv.sticky ? sv.enabled : off ? false : sv.enabled, transport: { type: "stdio" } };
@@ -127,6 +131,7 @@ if (argv[0] === "app-server") {
   process.stdout.write(JSON.stringify(out));
 } else if (argv.at(-2) === "features" && argv.at(-1) === "list") {
   record({ query: "features" });
+  if (process.env.FAKE_CODEX_QUERY_DELAY_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_CODEX_QUERY_DELAY_MS));
   if (process.env.FAKE_CODEX_FEATURES) { process.stdout.write(process.env.FAKE_CODEX_FEATURES); process.exit(0); }
   const sticky = (process.env.FAKE_CODEX_STICKY_FEATURES || "").split(",");
   const line = (f, stage) => f + "  " + stage + "  " + (argv.includes("features." + f + "=false") && !sticky.includes(f) ? "false" : "true") + "\n";
@@ -1606,5 +1611,53 @@ describe("tui isolation from the owner's Codex config", () => {
     expect(liveLog(h, r.stdout)).toMatch(
       /isolation failed in the tab: MCP servers still enabled: pencil/,
     );
+  });
+});
+
+describe("tui isolation: review of the isolation fix", () => {
+  const CLAIM = { FAKE_AG_MODE: "claim", CODEX_BRIDGE_CLAIM_TIMEOUT_MS: "8000" };
+  const tuiCalls = (h: Harness) => h.calls().filter((c) => c.argv.includes("--ask-for-approval"));
+
+  it("checks isolation with the same trust the launch uses, so project MCP servers are disabled too", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      FAKE_CODEX_PROJECT_MCP: "1",
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    const argv = tuiCalls(h)[0]?.argv ?? [];
+    expect(argv).toEqual(expect.arrayContaining(["-c", "mcp_servers.proj_srv.enabled=false"]));
+    // Every query ran with the launch's trust override.
+    for (const q of h.calls().filter((c) => c.query))
+      expect(q.argv.some((a) => a.startsWith("projects="))).toBe(true);
+  });
+
+  it("a slow preflight in the tab counts as started, not as a tab that never started", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_HELPER_START_MS: "500",
+      FAKE_AG_EXTRA_ENV: JSON.stringify({ FAKE_CODEX_QUERY_DELAY_MS: "400" }),
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(tuiCalls(h)).toHaveLength(1);
+    expect(h.execCalls()).toHaveLength(0);
+  });
+
+  it("a tab withdrawn during its preflight never launches Codex", async () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_SESSION_WAIT_MS: "300",
+      FAKE_AG_EXTRA_ENV: JSON.stringify({ FAKE_CODEX_QUERY_DELAY_MS: "700" }),
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(h.execCalls()).toHaveLength(1);
+    // Give the tab helper time to finish its preflight: it must still not launch.
+    await new Promise((res) => setTimeout(res, 3000));
+    expect(tuiCalls(h)).toHaveLength(0);
   });
 });
