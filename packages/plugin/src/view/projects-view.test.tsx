@@ -518,3 +518,68 @@ describe("ProjectsView scan folders and suggestions (plan 04-13 Task 1)", () => 
     });
   });
 });
+
+describe("ProjectsView reading order and setup state (plan 04-13 Task 3, UI-SPEC S3)", () => {
+  it("orders Registered projects, then Suggestions, then Scan folders", () => {
+    projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
+    const scanRootId = newScanRootId();
+    applyScanState({
+      scanRoots: [
+        {
+          scanRootId,
+          displayPath: "~/code",
+          depth: 1,
+          addedAt: "2026-09-30T00:00:00.000Z",
+          lastScannedAt: null,
+        },
+      ],
+      suggestions: [],
+      partial: false,
+    });
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        scanActions={scanActionsWith()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
+    expect(headings.map((h) => h.replace(/\d+ folders?$/, "").trim())).toEqual([
+      "Registered projects",
+      "Suggestions",
+      "Scan folders",
+    ]);
+  });
+
+  it("shows the S10 setup callout first while no launcher is set up, and not once one is", () => {
+    projectsSnapshot.value = { projects: [], launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
+    const { unmount } = render(
+      <ProjectsView
+        actions={noopActions()}
+        scanActions={scanActionsWith()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+    expect(screen.getByText("Launchers aren't set up yet")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Set up launchers" })).toBeTruthy();
+    unmount();
+    projectsSnapshot.value = {
+      projects: [],
+      launchers: { ...EMPTY_PROJECTS_SNAPSHOT.launchers, antigravity: "set-up" },
+    };
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        scanActions={scanActionsWith()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={Date.now()}
+      />,
+    );
+    expect(screen.queryByText("Launchers aren't set up yet")).toBeNull();
+  });
+});
