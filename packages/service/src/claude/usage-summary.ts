@@ -384,6 +384,10 @@ function latestObservedAt(snapshots: readonly CostSnapshot[]): string | null {
   );
 }
 
+function earlier(a: string, b: string): string {
+  return Date.parse(a) < Date.parse(b) ? a : b;
+}
+
 /**
  * The cost for one range (D-42, USAGE-03). A session's own status-line
  * estimate stands for it only when the session lies wholly inside the
@@ -429,7 +433,9 @@ export function buildRangeCost(
   for (const snapshot of covered) {
     const own = queryTokenActivity(db, {
       start: bounds.start,
-      end: bounds.queryEnd,
+      // Only activity up to the snapshot is covered by it; later activity
+      // stays in `remaining` and is priced from list prices (Codex 4).
+      end: earlier(snapshot.observedAt, bounds.queryEnd),
       claudeSessionId: snapshot.claudeSessionId,
     });
     for (const row of own.byModel) {

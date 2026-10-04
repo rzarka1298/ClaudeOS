@@ -97,7 +97,8 @@ export interface TranscriptFileStat {
 export interface TranscriptIo {
   readChunk(path: string, position: number, length: number): Promise<Uint8Array>;
   stat(path: string): Promise<TranscriptFileStat>;
-  listFiles(root: string): Promise<TranscriptListing>;
+  /** Lists up to the cap, skipping the first `offset` candidates (rotation). */
+  listFiles(root: string, offset?: number): Promise<TranscriptListing>;
   parse: typeof parseTranscriptChunk;
 }
 
@@ -106,6 +107,8 @@ export interface TranscriptListing {
   readonly files: readonly string[];
   /** Directories whose listing failed with anything but a missing entry; they hold coverage back. */
   readonly failedDirs: number;
+  /** True when candidates beyond the cap were omitted; the listing is then incomplete. */
+  readonly truncated: boolean;
 }
 
 export interface TranscriptJobDeps extends TranscriptIo {
@@ -186,7 +189,7 @@ function defaultYield(): Promise<void> {
  * `<root>/<project>/*.jsonl` and `<root>/<project>/<session>/subagents/*.jsonl`,
  * never following a symlinked entry.
  */
-export function nodeTranscriptIo(): Omit<TranscriptIo, "parse"> {
+export function nodeTranscriptIo(maxFiles: number = MAX_SWEEP_FILES): Omit<TranscriptIo, "parse"> {
   return {
     async readChunk(path, position, length) {
       const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -206,8 +209,10 @@ export function nodeTranscriptIo(): Omit<TranscriptIo, "parse"> {
         birthtimeMs: Number(info.birthtimeMs),
       };
     },
-    async listFiles(root) {
+    async listFiles(root, offset = 0) {
       const files: string[] = [];
+      let seen = 0;
+      let truncated = false;
       let failedDirs = 0;
       // A missing directory is simply empty (no transcripts yet, no
       // subagents); any other failure is counted, so a sweep that could
@@ -221,23 +226,34 @@ export function nodeTranscriptIo(): Omit<TranscriptIo, "parse"> {
           return [];
         }
       };
-      for (const project of await entries(root)) {
+      // Returns false once the cap is hit with more candidates remaining.
+      const add = (path: string): boolean => {
+        if (seen++ < offset) return true;
+        if (files.length >= maxFiles) {
+          truncated = true;
+          return false;
+        }
+        files.push(path);
+        return true;
+      };
+      const byName = (x: { name: string }, y: { name: string }) => x.name.localeCompare(y.name);
+      for (const project of (await entries(root)).sort(byName)) {
         if (!project.isDirectory()) continue;
         const projectDir = join(root, project.name);
-        for (const entry of await entries(projectDir)) {
-          if (files.length >= MAX_SWEEP_FILES) return { files, failedDirs };
+        for (const entry of (await entries(projectDir)).sort(byName)) {
           if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-            files.push(join(projectDir, entry.name));
+            if (!add(join(projectDir, entry.name))) return { files, failedDirs, truncated };
           } else if (entry.isDirectory()) {
             const subagents = join(projectDir, entry.name, "subagents");
-            for (const sub of await entries(subagents)) {
-              if (sub.isFile() && sub.name.endsWith(".jsonl"))
-                files.push(join(subagents, sub.name));
+            for (const sub of (await entries(subagents)).sort(byName)) {
+              if (sub.isFile() && sub.name.endsWith(".jsonl")) {
+                if (!add(join(subagents, sub.name))) return { files, failedDirs, truncated };
+              }
             }
           }
         }
       }
-      return { files, failedDirs };
+      return { files, failedDirs, truncated };
     },
   };
 }
@@ -268,6 +284,8 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
   let generation = 0;
   let chain: Promise<unknown> = Promise.resolve();
   let lastScanAt: string | null = null;
+  /** Where the next sweep resumes listing after a truncated one (rotation). */
+  let listOffset = 0;
   /** The earliest record timestamp (or creation time) per resolved transcript path. */
   const firstSeen = new Map<string, number>();
 
@@ -478,7 +496,16 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
     if (verdict().kind === "unavailable") {
       return { completed: false, files: 0, failedFiles: 0, failedDirs: 0, held: true };
     }
-    const { files, failedDirs } = await deps.listFiles(deps.claudeProjectsRoot);
+    const startOffset = listOffset;
+    const { files, failedDirs, truncated } = await deps.listFiles(
+      deps.claudeProjectsRoot,
+      startOffset,
+    );
+    // A truncated listing never reads as complete: the next sweep resumes
+    // past what this one saw, wrapping once the end is reached.
+    listOffset = truncated ? startOffset + files.length : 0;
+    if (truncated)
+      logger.warn({ cap: files.length }, "transcript listing truncated; coverage held");
     if (failedDirs > 0) {
       logger.warn({ failedDirs }, "transcript directories could not be listed; coverage held");
     }
@@ -520,7 +547,9 @@ export function createTranscriptJob(deps: TranscriptJobDeps): TranscriptJob {
     // review): a single-file scan (a Stop or SessionEnd) must never make one
     // session's tokens read as a complete day, and an unreadable file leaves
     // the days honestly not-scanned.
-    if (failedFiles === 0 && failedDirs === 0) markRetainedDaysCovered();
+    if (failedFiles === 0 && failedDirs === 0 && !truncated && startOffset === 0) {
+      markRetainedDaysCovered();
+    }
     lastScanAt = now().toISOString();
     return { completed: true, files: scanned, failedFiles, failedDirs, held: false };
   }

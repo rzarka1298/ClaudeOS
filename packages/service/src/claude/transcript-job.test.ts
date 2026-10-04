@@ -871,3 +871,25 @@ describe("Codex 4: usage summaries refresh periodically with transcript analysis
     expect(io.stat).not.toHaveBeenCalled();
   });
 });
+
+describe("Codex 7: a listing truncated at the file cap is incomplete and rotates", () => {
+  it("marks nothing covered while truncated and eventually visits every file", async () => {
+    writeFixture();
+    const capped = nodeTranscriptIo(2);
+    const io = { ...spies(), listFiles: vi.fn(capped.listFiles) };
+    const job = makeJob(io);
+    const first = await job.sweep();
+    expect(first.files).toBe(2);
+    expect(coveredDays()).toEqual([]);
+    for (let i = 0; i < 5; i++) await job.sweep();
+    expect(queryTokenActivity(store.db, WIDE).totals).toEqual(EXPECTED_TOTALS);
+  });
+
+  it("enforces the cap inside the subagent loop", async () => {
+    write(file("-p", "s.jsonl"), "");
+    for (const n of ["a", "b", "c", "d"]) write(file("-p", "s", "subagents", `${n}.jsonl`), "");
+    const listing = await nodeTranscriptIo(2).listFiles(root, 0);
+    expect(listing.files.length).toBe(2);
+    expect(listing.truncated).toBe(true);
+  });
+});

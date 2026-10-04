@@ -257,6 +257,26 @@ describe("estimated cost basis (Test 7, D-42, USAGE-03)", () => {
     expect(cost.priceTableDate).toBe(PRICE_TABLE_EFFECTIVE_FROM);
   });
 
+  it("prices activity recorded after a snapshot from list prices instead of dropping it (Codex 4)", () => {
+    recordUsage(
+      store.db,
+      [
+        record("msg_p1", "2026-09-20T13:00:00.000Z", { input: 1_000_000 }, undefined, "sess-late"),
+        record("msg_p2", "2026-09-20T15:00:00.000Z", { input: 1_000_000 }, undefined, "sess-late"),
+      ],
+      NOW.toISOString(),
+    );
+    upsertCostSnapshot(store.db, {
+      claudeSessionId: "sess-late",
+      totalCostUsd: 1,
+      observedAt: "2026-09-20T14:00:00.000Z",
+    });
+    const cost = summarize(SCANNED).ranges.today.cost;
+    if (cost.kind !== "available") throw new Error("expected available");
+    expect(cost.basis).toBe("mixed");
+    expect(cost.usd).toBeCloseTo(1 + 5, 10);
+  });
+
   it("never charges a session's estimate to a range its lifetime straddles", () => {
     recordUsage(
       store.db,
