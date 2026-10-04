@@ -29,6 +29,13 @@ export const serviceMeta = sqliteTable("service_meta", {
  * Project-to-Workspace binding lives here, on the Project side, per
  * ADR-0005 — a Workspace's stable ID is safe to reference from vault
  * content, a Project's path is not.
+ *
+ * Phase 4 (migration 0002, D-02) adds the owner's own choices only:
+ * `pinned` (`"true"` / `"false"` per this file's all-text rule),
+ * `last_opened_at` (drives the PROJ-15 order) and `github_url_override`
+ * (an owner-typed `https://github.com/owner/repo`, RR-12). Git state is
+ * NOT stored here — branch names, commit subjects and remote URLs are
+ * read live and held in service memory only (D-46, PROJ-14).
  */
 export const projects = sqliteTable("projects", {
   projectId: text("project_id").primaryKey(),
@@ -36,6 +43,45 @@ export const projects = sqliteTable("projects", {
   workspaceId: text("workspace_id"),
   displayName: text("display_name").notNull(),
   registeredAt: text("registered_at").notNull(),
+  pinned: text("pinned").notNull().default("false"),
+  lastOpenedAt: text("last_opened_at"),
+  githubUrlOverride: text("github_url_override"),
+});
+
+/**
+ * A folder the owner asked the service to scan for project suggestions
+ * (PROJ-02, D-02). `depth` is `"1"`..`"3"` stored as text per this file's
+ * all-text rule. Suggestions themselves are derived on each scan and held
+ * in service memory; only the owner's scan roots persist.
+ *
+ * Never stored here: the names or paths of folders a scan found, and any
+ * error text from reading them.
+ */
+export const scanRoots = sqliteTable("scan_roots", {
+  scanRootId: text("scan_root_id").primaryKey(),
+  path: text("path").notNull().unique(),
+  depth: text("depth").notNull().default("1"),
+  addedAt: text("added_at").notNull(),
+  lastScannedAt: text("last_scanned_at"),
+});
+
+/**
+ * One row per launcher (`antigravity`, `claude-code`, `claude-desktop`):
+ * the owner-confirmed configuration as JSON-in-text, validated with the
+ * domain launcher-config schema before it is saved, plus whether a test
+ * launch succeeded (`tested`, `"true"` / `"false"`, RR-14).
+ *
+ * `config_json` holds only bundle IDs, an absolute executable path and argv
+ * TEMPLATE elements (with `{projectPath}` / `{script}` placeholders). Never
+ * stored here, and none may be added (D-46, PROJ-14): a rendered command
+ * line for a real project, launch stderr or exit output, a git remote URL
+ * or its userinfo, or any credential.
+ */
+export const launcherConfig = sqliteTable("launcher_config", {
+  launcherId: text("launcher_id").primaryKey(),
+  configJson: text("config_json").notNull(),
+  tested: text("tested").notNull().default("false"),
+  updatedAt: text("updated_at").notNull(),
 });
 
 /**

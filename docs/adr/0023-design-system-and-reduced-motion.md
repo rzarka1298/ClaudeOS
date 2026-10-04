@@ -548,6 +548,23 @@ Consequence: thirteen amendments land in one token-build plan rather than in a
 fourth prototype. The review is closed; a further change to the direction
 reopens this ADR.
 
+### Phase 4 (projects and launchers)
+
+Three existing tokens take a wider role (`04-UI-SPEC.md` "Notes for ADR-0023",
+`D-39`). **No token value changed**, no token was added, and the `A11Y-02`
+token test and the contrast matrix are unchanged.
+
+- **`--ccc-danger`** also colours the confirm button of the two removal
+  confirmations (`Remove project`, `Remove scan folder`) and
+  `aria-invalid` input borders; both are error-adjacent, audited at
+  6.38 : 1 on glass.
+- **`--ccc-font-mono`** also sets bundle IDs, executable paths, template
+  arguments, commit hashes and home-abbreviated display paths, always at the
+  Label size.
+- **Label** is weight 400 or 600 (400 for row meta, secondary and tertiary
+  buttons, status lines and badges; 600 for section labels, field labels and
+  primary buttons) — still exactly two weights.
+
 ## Consequences
 
 The costs this ADR accepts, stated plainly so a later reader does not mistake

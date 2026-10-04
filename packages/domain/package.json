@@ -14,6 +14,10 @@
     "./*.js": {
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"
+    },
+    "./browser": {
+      "types": "./dist/index.browser.d.ts",
+      "default": "./dist/index.browser.js"
     }
   },
   "scripts": {

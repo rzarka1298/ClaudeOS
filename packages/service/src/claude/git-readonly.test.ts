@@ -113,7 +113,14 @@ function serviceSources(): string[] {
   return out;
 }
 
-describe("the gateway is the only git spawn in the service (Test 2, source scan)", () => {
+// Two gateways exist after the Phase 4 / Phase 5 merge (plan 05-16): Phase 5's
+// read-only `claude/git-readonly.ts` (worktree, rev-parse, branch facts) and
+// Phase 4's `projects/git-runner.ts` (status, log, remote for project cards).
+// Both carry the same layered hygiene (D-09, PR-05); no other file may spawn
+// or name git. `test-support/` fixtures run git only against temp repos.
+const GIT_GATEWAYS = [join("claude", "git-readonly.ts"), join("projects", "git-runner.ts")];
+
+describe("the gateways are the only git spawns in the service (Test 2, source scan)", () => {
   const quote = "[\"'`]";
   const spawnOfGit = new RegExp(
     `\\b(?:execFile|execFileSync|spawn|spawnSync|exec|execSync|fork)\\s*\\(\\s*${quote}[^"'\`]*\\bgit${quote}`,
@@ -126,11 +133,12 @@ describe("the gateway is the only git spawn in the service (Test 2, source scan)
     expect(gitLiteral.test(`const GIT = "/usr/bin/git";`)).toBe(true);
   });
 
-  it("no file other than git-readonly.ts spawns git or names the git binary", () => {
+  it("no file other than the two git gateways spawns git or names the git binary", () => {
     const sources = serviceSources();
     expect(sources.length).toBeGreaterThan(10);
     const offenders = sources
-      .filter((path) => !path.endsWith(join("claude", "git-readonly.ts")))
+      .filter((path) => !GIT_GATEWAYS.some((gateway) => path.endsWith(gateway)))
+      .filter((path) => !path.includes(`${join("src", "test-support")}`))
       .filter((path) => {
         const text = readFileSync(path, "utf8");
         return spawnOfGit.test(text) || gitLiteral.test(text);

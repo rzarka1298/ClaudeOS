@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServiceEvent, SessionView, SnapshotResponse } from "@ccc/domain";
+import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
 import { beforeEach, describe, expect, it } from "vitest";
 import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./claude-events.js";
 import {
@@ -141,7 +142,14 @@ describe("applySessionUpserted: schema safety (Test 3, T-05-23, SESS-05)", () =>
 
 describe("adoptClaudeSnapshot (Test 4, ADR-0007)", () => {
   function snapshot(state: Partial<SnapshotResponse["state"]> = {}): SnapshotResponse {
-    return { lastEventId: 1, state: { serviceStartedAt: "2026-09-25T10:00:00.000Z", ...state } };
+    return {
+      lastEventId: 1,
+      state: {
+        serviceStartedAt: "2026-09-25T10:00:00.000Z",
+        projects: EMPTY_PROJECTS_SNAPSHOT,
+        ...state,
+      },
+    };
   }
 
   it("replaces the whole session map from state.sessions", () => {

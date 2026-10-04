@@ -18,12 +18,11 @@
 -- rescan rebuilds exact quarter-hour buckets from retained transcripts.
 -- Counters and identifiers only; no content column (D-49).
 --
--- Merge-order rule (D-59, PR-21): this file, like 0002_claude_sessions_usage,
--- is Phase 5 schema. Plan 05-16 renumbers every Phase 5 migration after
--- Phase 4's on merge: keep this file (with its data-carrying INSERT) as its
--- own migration, ordered after the regenerated Phase 5 base migration, and
--- re-point its meta snapshot's prevId. Do not fold it into a regenerated
--- base migration, or stores already at this version would skip the carry-over.
+-- Numbering (D-59, PR-21): renumbered from 0003 to 0004 when Phase 5 merged on
+-- top of Phase 4's 0002 (plan 05-16). This file keeps its data-carrying
+-- INSERT as its own migration, ordered after the Phase 5 base migration; do
+-- not fold it into 0003, or stores already at this version would skip the
+-- carry-over.
 CREATE TABLE IF NOT EXISTS `usage_quarter_hourly` (
 	`bucket_start` text NOT NULL,
 	`claude_session_id` text NOT NULL,

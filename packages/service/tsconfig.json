@@ -9,6 +9,7 @@
     { "path": "../collectors" },
     { "path": "../domain" },
     { "path": "../keychain" },
+    { "path": "../launchers" },
     { "path": "../operational-store" },
     { "path": "../vault-repo" }
   ]

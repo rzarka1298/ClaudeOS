@@ -1,9 +1,13 @@
-// Uses the global Web Crypto `crypto.randomUUID()`, not `node:crypto`'s named
-// export (05-06 deviation, Rule 3): this module is reachable from `@ccc/domain`'s
-// barrel, which `@ccc/plugin` — esbuild-bundled for a browser context — imports
-// for its session types. `globalThis.crypto` is the same UUIDv4 generator in
-// Node 19+, Electron renderers and every evergreen browser, so this is a
-// portability fix, not a behavior change.
+/**
+ * ID minting uses the Web Crypto `crypto.randomUUID()` global rather than
+ * `node:crypto`'s `randomUUID` import deliberately: this file is reachable
+ * from `@ccc/plugin`'s public entry, which the visual-regression harness
+ * bundles for a plain browser page with zero Node built-ins (see
+ * `posix-path.ts`'s docblock for the fuller rationale). `crypto.randomUUID`
+ * has been a standard global in both Node (18.14+) and every evergreen
+ * browser for years, so this is a like-for-like swap, not a weaker one.
+ */
+
 declare const brand: unique symbol;
 
 /** A nominal type helper: `T` branded with the literal string `B`. */
@@ -87,4 +91,30 @@ export function newWorkspaceId(): WorkspaceId {
   const time = Date.now().toString(36).padStart(9, "0");
   const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as WorkspaceId;
+}
+
+/**
+ * Mints a sortable, opaque ProjectId — same shape as {@link newRunId}. This
+ * is the only ProjectId minting site; display names and paths never reach
+ * the ID. Like {@link newWorkspaceId} it takes no arguments, so renaming a
+ * project or moving its folder can never change its identity, and nothing
+ * about the folder is recoverable from the ID the plugin holds (D-01, D-43).
+ */
+export function newProjectId(): ProjectId {
+  const time = Date.now().toString(36).padStart(9, "0");
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  return `${time}${random}` as ProjectId;
+}
+
+/**
+ * A registered scan folder's opaque identity (D-02). Suggestions and
+ * scan-folder actions address a scan root by this ID, never by its path.
+ */
+export type ScanRootId = Brand<string, "ScanRootId">;
+
+/** Mints a ScanRootId — the one minting home for scan-root IDs, same shape as {@link newProjectId}. */
+export function newScanRootId(): ScanRootId {
+  const time = Date.now().toString(36).padStart(9, "0");
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  return `${time}${random}` as ScanRootId;
 }

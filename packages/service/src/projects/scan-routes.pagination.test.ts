@@ -1,0 +1,391 @@
+import { randomBytes } from "node:crypto";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import http, { type Server } from "node:http";
+import { join } from "node:path";
+import {
+  MAX_SCAN_ROOT_PATH_LENGTH,
+  MAX_SCAN_ROOTS,
+  type ProjectsSnapshot,
+  SCAN_ROOTS_ADD_PATH,
+  SCAN_ROOTS_LIST_PATH,
+  SCAN_ROOTS_RESCAN_PATH,
+  ScanStateResponseSchema,
+  SUGGESTIONS_PAGE_PATH,
+  SUGGESTIONS_PAGE_SIZE,
+  SuggestionsPageResponseSchema,
+  type SuggestionView,
+} from "@ccc/domain";
+import {
+  applyMigrations,
+  insertProject,
+  listLauncherConfigs,
+  listProjects,
+  type OperationalStore,
+  openStore,
+} from "@ccc/operational-store";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { VAULT_ROOT_META_KEY } from "./approved-roots.js";
+
+/**
+ * Codex review 3, finding 2: a scan response must fit the plugin client's
+ * 65,536-byte response cap (`SocketApiClient`), however many Git folders a
+ * scan finds (the walker stops at 5,000 entries). Over the real socket.
+ *
+ * Nothing here touches the real home folder or the real runtime directory:
+ * the tree, the socket, the store and the "home" the service abbreviates
+ * against all live under one short `/tmp` mkdtemp (the socket path must stay
+ * under the sun_path cap, ADR-0001), and `CCC_RUNTIME_DIR` points the
+ * redacting logger at a throwaway directory before any service module loads.
+ */
+
+const runtimeDir = realpathSync.native(mkdtempSync("/tmp/ccc-scan-rt-"));
+process.env.CCC_RUNTIME_DIR = runtimeDir;
+
+const { mintToken } = await import("../auth/token.js");
+const { createEventBus } = await import("../events/event-bus.js");
+const { createRequestListener } = await import("../routes.js");
+const { startSocketServer } = await import("../socket-server.js");
+const { clearApprovedRoots } = await import("../path-allowlist.js");
+const { buildProjectView, launchersSummary } = await import("./project-views.js");
+const { createScanService } = await import("./scan.js");
+type ProjectServices = import("./project-routes.js").ProjectServices;
+
+afterAll(() => {
+  delete process.env.CCC_RUNTIME_DIR;
+  rmSync(runtimeDir, { recursive: true, force: true });
+});
+
+interface SocketReply<T> {
+  status: number;
+  body: T;
+  raw: string;
+}
+
+function request<T>(
+  socketPath: string,
+  opts: { method: string; path: string; body?: unknown; token?: string },
+): Promise<SocketReply<T>> {
+  return new Promise((resolve, reject) => {
+    const payload = opts.body === undefined ? "" : JSON.stringify(opts.body);
+    const req = http.request(
+      {
+        socketPath,
+        path: opts.path,
+        method: opts.method,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+          ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          const raw = Buffer.concat(chunks).toString("utf8");
+          resolve({
+            status: res.statusCode ?? 0,
+            body: (raw.length > 0 ? JSON.parse(raw) : undefined) as T,
+            raw,
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end(payload);
+  });
+}
+
+/** What `SocketApiClient` accepts at most (`MAX_RESPONSE_BYTES`, 64 KiB). */
+const CLIENT_RESPONSE_LIMIT = 64 * 1024;
+/** Well past the 74.5 KB the review measured at 500, and under the walker's cap. */
+const REPO_COUNT = 600;
+
+function repoName(i: number): string {
+  return `repository-number-${String(i).padStart(4, "0")}`;
+}
+
+let base: string;
+let fakeHome: string;
+let scanRoot: string;
+let socketPath: string;
+let store: OperationalStore;
+let server: Server;
+let token: string;
+
+function storeBackedProjects(): ProjectServices {
+  return {
+    snapshot(): ProjectsSnapshot {
+      return {
+        projects: listProjects(store.db).map((r) =>
+          buildProjectView(r, { kind: "pending" }, null, false, fakeHome),
+        ),
+        launchers: launchersSummary(listLauncherConfigs(store.db)),
+      };
+    },
+    onRegistryChanged() {},
+    refresh() {},
+    homeDir: fakeHome,
+    runtimeDir,
+  };
+}
+
+beforeEach(async () => {
+  clearApprovedRoots();
+  base = realpathSync.native(mkdtempSync("/tmp/ccc-scan-"));
+  fakeHome = join(base, "home");
+  scanRoot = join(fakeHome, "code");
+  for (let i = 0; i < REPO_COUNT; i++) {
+    mkdirSync(join(scanRoot, repoName(i), ".git"), { recursive: true });
+  }
+  socketPath = join(base, "t.sock");
+  store = openStore(join(base, "operational.db"));
+  applyMigrations(store.db);
+  const secret = randomBytes(32);
+  token = mintToken(secret, { nowMs: Date.now() });
+  const projects = storeBackedProjects();
+  server = await startSocketServer({
+    socketPath,
+    requestListener: createRequestListener({
+      store,
+      getSecret: () => secret,
+      eventBus: createEventBus(),
+      projects,
+      scan: createScanService({
+        store,
+        homeDir: fakeHome,
+        readPolicy: () => {
+          const vaultRoot = store.readServiceMeta(VAULT_ROOT_META_KEY);
+          return {
+            homeDir: fakeHome,
+            runtimeDir,
+            vaultRoot: vaultRoot !== null && vaultRoot.length > 0 ? vaultRoot : null,
+          };
+        },
+        projects,
+      }),
+    }),
+  });
+});
+
+afterEach(() => {
+  server.close();
+  store.close();
+  clearApprovedRoots();
+  rmSync(base, { recursive: true, force: true });
+});
+
+function post(path: string, body: unknown, withToken = true) {
+  return request<unknown>(socketPath, {
+    method: "POST",
+    path,
+    body,
+    ...(withToken ? { token } : {}),
+  });
+}
+
+describe("scan responses fit the client's response cap (codex review 3, finding 2)", () => {
+  it("add, rescan and list each answer within 64 KiB for a folder of 600 repositories", async () => {
+    const added = await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot });
+    expect(added.status).toBe(200);
+    expect(Buffer.byteLength(added.raw)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
+    const state = ScanStateResponseSchema.parse(added.body);
+    const scanRootId = state.scanRoots[0]?.scanRootId;
+
+    const rescanned = await post(SCAN_ROOTS_RESCAN_PATH, { scanRootId });
+    expect(rescanned.status).toBe(200);
+    expect(Buffer.byteLength(rescanned.raw)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
+
+    const listed = await post(SCAN_ROOTS_LIST_PATH, {});
+    expect(listed.status).toBe(200);
+    expect(Buffer.byteLength(listed.raw)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
+  });
+
+  it("each folder's count is exact, and paging after the last held suggestion walks every one once", async () => {
+    const added = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
+    );
+    const root = added.scanRoots[0];
+    expect(root?.suggestionCount).toBe(REPO_COUNT);
+    expect(added.suggestions).toHaveLength(SUGGESTIONS_PAGE_SIZE);
+
+    const seen: SuggestionView[] = [...added.suggestions];
+    while (seen.length < REPO_COUNT) {
+      const res = await post(SUGGESTIONS_PAGE_PATH, {
+        scanRootId: root?.scanRootId,
+        scanGeneration: root?.scanGeneration,
+        afterSuggestionId: seen.at(-1)?.suggestionId,
+      });
+      expect(res.status).toBe(200);
+      expect(Buffer.byteLength(res.raw)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
+      const page = SuggestionsPageResponseSchema.parse(res.body);
+      if (page.kind !== "page") throw new Error("expected a page");
+      expect(page.total).toBe(REPO_COUNT);
+      expect(page.suggestions.length).toBeGreaterThan(0);
+      seen.push(...page.suggestions);
+    }
+    expect(new Set(seen.map((s) => s.suggestionId)).size).toBe(REPO_COUNT);
+    expect(seen.map((s) => s.folderName)).toEqual(
+      Array.from({ length: REPO_COUNT }, (_, i) => repoName(i)),
+    );
+
+    const past = SuggestionsPageResponseSchema.parse(
+      (
+        await post(SUGGESTIONS_PAGE_PATH, {
+          scanRootId: root?.scanRootId,
+          scanGeneration: root?.scanGeneration,
+          afterSuggestionId: seen.at(-1)?.suggestionId,
+        })
+      ).body,
+    );
+    expect(past).toEqual({ kind: "page", suggestions: [], total: REPO_COUNT });
+  });
+
+  it("no cursor serves the folder's first page (a response had no room for it)", async () => {
+    const added = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
+    );
+    const root = added.scanRoots[0];
+    const page = SuggestionsPageResponseSchema.parse(
+      (
+        await post(SUGGESTIONS_PAGE_PATH, {
+          scanRootId: root?.scanRootId,
+          scanGeneration: root?.scanGeneration,
+        })
+      ).body,
+    );
+    if (page.kind !== "page") throw new Error("expected a page");
+    expect(page.suggestions[0]?.folderName).toBe(repoName(0));
+  });
+
+  it("a suggestion registered out of band before the cursor skips nothing (codex review 3b, finding 2)", async () => {
+    const added = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
+    );
+    const root = added.scanRoots[0];
+    const held = added.suggestions;
+    // Registered elsewhere (not through the suggestion): the folder's list
+    // shrinks by one ahead of what the plugin holds.
+    insertProject(store.db, { path: join(scanRoot, repoName(3)), displayName: "elsewhere" });
+
+    const page = SuggestionsPageResponseSchema.parse(
+      (
+        await post(SUGGESTIONS_PAGE_PATH, {
+          scanRootId: root?.scanRootId,
+          scanGeneration: root?.scanGeneration,
+          afterSuggestionId: held.at(-1)?.suggestionId,
+        })
+      ).body,
+    );
+    if (page.kind !== "page") throw new Error("expected a page");
+    expect(page.total).toBe(REPO_COUNT - 1);
+    expect(page.suggestions[0]?.folderName).toBe(repoName(SUGGESTIONS_PAGE_SIZE));
+  });
+
+  it("a cursor from another scan, or one the service never minted, answers the constant reload", async () => {
+    const added = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
+    );
+    const root = added.scanRoots[0];
+    const lastHeld = added.suggestions.at(-1)?.suggestionId;
+    await post(SCAN_ROOTS_RESCAN_PATH, { scanRootId: root?.scanRootId });
+
+    const staleGeneration = await post(SUGGESTIONS_PAGE_PATH, {
+      scanRootId: root?.scanRootId,
+      scanGeneration: root?.scanGeneration,
+      afterSuggestionId: lastHeld,
+    });
+    expect(staleGeneration.status).toBe(200);
+    expect(staleGeneration.body).toEqual({ kind: "reload" });
+
+    const relisted = ScanStateResponseSchema.parse((await post(SCAN_ROOTS_LIST_PATH, {})).body);
+    const unknownCursor = await post(SUGGESTIONS_PAGE_PATH, {
+      scanRootId: root?.scanRootId,
+      scanGeneration: relisted.scanRoots[0]?.scanGeneration,
+      afterSuggestionId: lastHeld,
+    });
+    expect(unknownCursor.status).toBe(200);
+    expect(unknownCursor.raw).toBe(JSON.stringify({ kind: "reload" }));
+  });
+
+  it("the page route needs the token, a strict bounded body, and a known scan folder", async () => {
+    await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot });
+    const unknown = { scanRootId: "000000000aaaaaaaaaaaaaaaa", scanGeneration: "abc" };
+    expect((await post(SUGGESTIONS_PAGE_PATH, unknown, false)).status).toBe(401);
+    expect((await post(SUGGESTIONS_PAGE_PATH, { ...unknown, path: scanRoot })).status).toBe(400);
+    expect((await post(SUGGESTIONS_PAGE_PATH, { ...unknown, offset: 0 })).status).toBe(400);
+    expect(
+      (await post(SUGGESTIONS_PAGE_PATH, { ...unknown, afterSuggestionId: "a".repeat(65) })).status,
+    ).toBe(400);
+    expect(
+      (await post(SUGGESTIONS_PAGE_PATH, { ...unknown, afterSuggestionId: "../x" })).status,
+    ).toBe(400);
+    expect(
+      (await post(SUGGESTIONS_PAGE_PATH, { ...unknown, scanGeneration: "A".repeat(10) })).status,
+    ).toBe(400);
+    expect((await post(SUGGESTIONS_PAGE_PATH, { scanRootId: unknown.scanRootId })).status).toBe(
+      400,
+    );
+    const res = await post(SUGGESTIONS_PAGE_PATH, unknown);
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "no such scan folder" });
+  });
+});
+
+describe("each scan of a folder has its own generation (codex review 3b, finding 1)", () => {
+  it("list repeats the generation; a rescan mints a new one with new suggestion IDs", async () => {
+    const added = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_ADD_PATH, { path: scanRoot })).body,
+    );
+    const first = added.scanRoots[0];
+    expect(first?.scanGeneration).toMatch(/^[0-9a-z]{1,64}$/);
+
+    const listed = ScanStateResponseSchema.parse((await post(SCAN_ROOTS_LIST_PATH, {})).body);
+    expect(listed.scanRoots[0]?.scanGeneration).toBe(first?.scanGeneration);
+
+    const rescanned = ScanStateResponseSchema.parse(
+      (await post(SCAN_ROOTS_RESCAN_PATH, { scanRootId: first?.scanRootId })).body,
+    );
+    expect(rescanned.scanRoots[0]?.scanGeneration).toMatch(/^[0-9a-z]{1,64}$/);
+    expect(rescanned.scanRoots[0]?.scanGeneration).not.toBe(first?.scanGeneration);
+    const before = new Set(added.suggestions.map((s) => s.suggestionId));
+    expect(rescanned.suggestions.some((s) => before.has(s.suggestionId))).toBe(false);
+  });
+});
+
+describe("the scan folder limit (codex review 3b, finding 3)", () => {
+  /** Empty folders under the fake home, one per scan folder. */
+  function folders(count: number): string[] {
+    return Array.from({ length: count }, (_, i) => {
+      const dir = join(fakeHome, "many", `folder-${String(i).padStart(3, "0")}`);
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    });
+  }
+
+  it(`refuses a scan folder past ${MAX_SCAN_ROOTS} with one constant answer; the list still fits`, async () => {
+    const dirs = folders(MAX_SCAN_ROOTS + 1);
+    for (const dir of dirs.slice(0, MAX_SCAN_ROOTS)) {
+      expect((await post(SCAN_ROOTS_ADD_PATH, { path: dir })).status).toBe(200);
+    }
+    const refused = await post(SCAN_ROOTS_ADD_PATH, { path: dirs[MAX_SCAN_ROOTS] });
+    expect(refused.status).toBe(409);
+    expect(refused.raw).toBe(JSON.stringify({ error: "scan folder limit reached" }));
+
+    // A folder already scanned may still be added again (a new depth).
+    const again = await post(SCAN_ROOTS_ADD_PATH, { path: dirs[0], depth: 2 });
+    expect(again.status).toBe(200);
+    expect(Buffer.byteLength(again.raw)).toBeLessThanOrEqual(CLIENT_RESPONSE_LIMIT);
+    const listed = await post(SCAN_ROOTS_LIST_PATH, {});
+    expect(ScanStateResponseSchema.parse(listed.body).scanRoots).toHaveLength(MAX_SCAN_ROOTS);
+  });
+
+  it("refuses a folder whose path is longer than a scan folder may be, with the constant refusal", async () => {
+    const deep = join(fakeHome, "a".repeat(200), "b".repeat(200));
+    mkdirSync(deep, { recursive: true });
+    expect(deep.length).toBeGreaterThan(MAX_SCAN_ROOT_PATH_LENGTH);
+    const res = await post(SCAN_ROOTS_ADD_PATH, { path: deep });
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "folder cannot be scanned" });
+  });
+});

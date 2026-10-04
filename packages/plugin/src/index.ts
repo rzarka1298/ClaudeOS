@@ -6,14 +6,11 @@
 export type { SessionView } from "@ccc/domain/session.js";
 export type { UsageSummary } from "@ccc/domain/usage.js";
 export type { ConnectionState, LastEventInfo } from "./connection-state.js";
-export {
-  attachEventClient,
-  connectionChangedAt,
-  connectionState,
-  lastEvent,
-} from "./connection-state.js";
+export { connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
 export type { MotionMode } from "./motion.js";
 export { motionMode } from "./motion.js";
+export { projectShortcutsStateFor } from "./projects/projects-state.js";
+export { attachEventClient } from "./service-connection.js";
 export { AgentRuns } from "./view/agent-runs.js";
 export { RECENT_PAGE_SIZE, selectedRunId } from "./view/agent-runs-state.js";
 export type {
@@ -32,6 +29,7 @@ export type {
   ActiveSessionsData,
   ClaudeUsageData,
   GithubDiscoveriesData,
+  ProjectRow,
   ProjectShortcutsData,
   QuickActionsData,
   TechIntelData,
@@ -60,3 +58,5 @@ export {
   UNAVAILABLE_STATE,
   widgetStateFor,
 } from "./widgets/widget-data.js";
+export type { WidgetHost } from "./widgets/widget-host.js";
+export { WidgetHostContext } from "./widgets/widget-host.js";

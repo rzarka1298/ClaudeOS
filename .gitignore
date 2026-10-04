@@ -36,5 +36,13 @@ PRIVACY-GATE-REPORT.md
 # GSD local runtime state (isolation sentinels, never shared)
 .gsd/
 
-# Owner UAT layout override (dev vault symlinks this folder) — never commit
+# Obsidian writes plugin data (settings, the Overview layout override) into
+# the plugin folder, which the dev vault symlinks into this repository. That
+# data is owner state and must never be tracked (D-44, PR-03).
+# scripts/check-privacy.sh rule 4 fails the gate if either is ever tracked.
+packages/plugin/data.json
 packages/plugin/layout.json
+
+# Codex wrapper runtime state (reports, sessions, live logs, pending resume):
+# local-only, may hold command output and absolute worktree paths.
+.planning/codex/

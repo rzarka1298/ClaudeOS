@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e210bbf2-67bc-42ae-bf19-782c739bf59a",
-  "prevId": "7e819932-f761-4f60-9798-171affd6e61d",
+  "id": "7e819932-f761-4f60-9798-171affd6e61d",
+  "prevId": "b51a4cee-340a-49a2-90d3-78ac7e97897a",
   "tables": {
     "analysis_toggle_log": {
       "name": "analysis_toggle_log",
@@ -307,6 +307,28 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "pinned": {
+          "name": "pinned",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'false'"
+        },
+        "last_opened_at": {
+          "name": "last_opened_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "github_url_override": {
+          "name": "github_url_override",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         }
       },
@@ -680,11 +702,11 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "usage_quarter_hourly": {
-      "name": "usage_quarter_hourly",
+    "usage_hourly": {
+      "name": "usage_hourly",
       "columns": {
-        "bucket_start": {
-          "name": "bucket_start",
+        "hour_bucket": {
+          "name": "hour_bucket",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -750,15 +772,15 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "usage_quarter_hourly_bucket_start_claude_session_id_project_key_model_skill_key_pk": {
+        "usage_hourly_hour_bucket_claude_session_id_project_key_model_skill_key_pk": {
           "columns": [
-            "bucket_start",
+            "hour_bucket",
             "claude_session_id",
             "project_key",
             "model",
             "skill_key"
           ],
-          "name": "usage_quarter_hourly_bucket_start_claude_session_id_project_key_model_skill_key_pk"
+          "name": "usage_hourly_hour_bucket_claude_session_id_project_key_model_skill_key_pk"
         }
       },
       "uniqueConstraints": {},
@@ -883,6 +905,99 @@
             "stage"
           ],
           "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "launcher_config": {
+      "name": "launcher_config",
+      "columns": {
+        "launcher_id": {
+          "name": "launcher_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "config_json": {
+          "name": "config_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tested": {
+          "name": "tested",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'false'"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "scan_roots": {
+      "name": "scan_roots",
+      "columns": {
+        "scan_root_id": {
+          "name": "scan_root_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "path": {
+          "name": "path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "depth": {
+          "name": "depth",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'1'"
+        },
+        "added_at": {
+          "name": "added_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_scanned_at": {
+          "name": "last_scanned_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "scan_roots_path_unique": {
+          "name": "scan_roots_path_unique",
+          "columns": [
+            "path"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {},

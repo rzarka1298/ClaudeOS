@@ -24,12 +24,11 @@
 -- `worktree_root`, `transcript_path`, cursor `path`) live only in this
 -- store.
 --
--- Merge-order rule (D-59, PR-21): Phase 5 merges after Phase 4, whose own
--- migration is also numbered 0002. Plan 05-16 therefore deletes this file,
--- `meta/0002_snapshot.json` and this file's `meta/_journal.json` entry, and
--- regenerates the same schema as `0003_*` on top of Phase 4's migration.
--- `migrate.test.ts` derives the expected schema_version from the migration
--- file count, so it needs no edit when that happens.
+-- Numbering (D-59, PR-21): Phase 4 merged first and owns 0002
+-- (projects_launchers); this Phase 5 base schema was renumbered to 0003 when
+-- Phase 5 merged on top of it (plan 05-16). The tables are disjoint, so the
+-- SQL is unchanged. `migrate.test.ts` derives the expected schema_version
+-- from the migration file count.
 --
 -- If schema.ts changes and this file is regenerated, re-apply these edits.
 CREATE TABLE IF NOT EXISTS `analysis_toggle_log` (

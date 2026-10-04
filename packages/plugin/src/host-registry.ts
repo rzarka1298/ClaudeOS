@@ -60,6 +60,15 @@ export interface HostRegistry {
    */
   settingTab(tab: unknown): void;
   /**
+   * The quick-switcher's own launch requester (plan 04-14): `dispose` clears
+   * its pending 5 s deadlines and 6 s success clears and makes a late
+   * answer or a late choice inert. Not an Obsidian host method, so the
+   * disposer is the caller's own (wave-7 finding 2).
+   */
+  launchTimers(dispose: Disposer): void;
+  /** Closes a quick-switcher modal still open when the plugin unloads (wave-7 finding 2). */
+  switcherModal(dispose: Disposer): void;
+  /**
    * Removes every live registration, calling each underlying disposer
    * exactly once in total across however many times `disposeAll()` itself
    * is called. A disposer that throws is collected as a failure rather
@@ -94,6 +103,11 @@ const KNOWN_KINDS = [
   "command",
   "settingTab",
   "eventStream",
+  // The quick-switcher's launch requester (plan 04-14): its pending
+  // `window.setTimeout` deadlines, cleared on unload like the view's own.
+  "launchTimers",
+  // A quick-switcher modal still open at unload (wave-7 finding 2).
+  "switcherModal",
 ] as const;
 type KnownKind = (typeof KNOWN_KINDS)[number];
 
@@ -136,6 +150,12 @@ export function createHostRegistry(host: RegistrationHost): HostRegistry {
     },
     settingTab(tab) {
       registerRaw("settingTab", host.addSettingTab(tab));
+    },
+    launchTimers(dispose) {
+      registerRaw("launchTimers", dispose);
+    },
+    switcherModal(dispose) {
+      registerRaw("switcherModal", dispose);
     },
     registerRaw,
     disposeAll(): DisposalFailure[] {

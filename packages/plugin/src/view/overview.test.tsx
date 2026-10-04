@@ -104,7 +104,11 @@ describe("the Overview renders the default layout (UI-07, D-12)", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
     expect(container.querySelector(".ccc-overview-grid")).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "Projects" })).toBeTruthy();
-    expect(screen.getByText(/Registered project shortcuts and their git status/)).toBeTruthy();
+    // SC-6 (plan 04-08): the Projects destination now renders the real S3
+    // view (Shell's no-op `projectsActions`/`pickFolder` defaults let it
+    // render with no host, D-24) instead of the placeholder description this
+    // test used to assert.
+    expect(screen.getByRole("heading", { level: 3, name: "Registered projects" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
     expect(overviewCards(container)).toHaveLength(8);
@@ -236,7 +240,14 @@ const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
     sessions: [syntheticSession(1)],
     nowMs: Date.parse("2026-09-25T11:58:00Z"),
   },
-  "project-shortcuts": { projects: [] },
+  "project-shortcuts": {
+    projects: [],
+    launchers: {
+      antigravity: "set-up",
+      "claude-code": { status: "set-up", terminalLabel: "Terminal" },
+      "claude-desktop": "set-up",
+    },
+  },
   "claude-usage": {
     summary: {
       capacity: { kind: "unavailable", reason: "wrapper-not-installed", version: null },
@@ -261,7 +272,13 @@ const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
   },
   "tech-intel": { stories: [], marketSummary: null },
   "github-discoveries": { repos: [] },
-  "quick-actions": {},
+  "quick-actions": {
+    launchers: {
+      antigravity: "set-up",
+      "claude-code": { status: "set-up", terminalLabel: "Terminal" },
+      "claude-desktop": "set-up",
+    },
+  },
 };
 
 function cachedReady(id: WidgetId): WidgetState<unknown> {
@@ -467,12 +484,26 @@ function projects(n: number): unknown {
       id: `p-${i}`,
       name: `Project ${i}`,
       pinned: false,
-      branch: "main",
-      dirty: false,
-      openItems: 0,
-      sessionCount: 0,
+      git: {
+        kind: "repo",
+        branch: "main",
+        detached: false,
+        dirty: false,
+        commits: [],
+        remote: null,
+      },
+      gitReadFailed: false,
+      github: { kind: "none" },
+      observedAt: null,
+      openItems: null,
+      sessionCount: null,
       nextTask: null,
     })),
+    launchers: {
+      antigravity: "set-up",
+      "claude-code": { status: "set-up", terminalLabel: "Terminal" },
+      "claude-desktop": "set-up",
+    },
   };
 }
 

@@ -10,11 +10,8 @@
 -- and the coverage ledger. "Delete cached usage analytics" empties this
 -- table too. Counters and version strings only; no content column (D-49).
 --
--- Merge-order rule (D-59, PR-21): Phase 5 schema. Plan 05-16 renumbers every
--- Phase 5 migration after Phase 4's on merge; this file needs only its
--- number, its journal tag and its meta snapshot's prevId re-pointed (it
--- carries no data, so it may also be folded into a regenerated Phase 5 base
--- migration, unlike 0003_claude_usage_quarter_hours).
+-- Numbering (D-59, PR-21): renumbered from 0004 to 0005 when Phase 5 merged on
+-- top of Phase 4's 0002 (plan 05-16). It carries no data.
 CREATE TABLE IF NOT EXISTS `transcript_recognition` (
 	`parser_version` integer NOT NULL,
 	`claude_version` text NOT NULL,

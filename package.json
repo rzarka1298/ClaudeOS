@@ -20,7 +20,7 @@
     "ci:lint": "biome lint .",
     "ci:boundaries": "turbo run build && eslint --config eslint.config.mjs packages --ext .ts,.tsx --ignore-pattern 'packages/test-fixtures/boundary-violations/**' --ignore-pattern 'packages/plugin/lint-fixtures/**'",
     "ci:backstop": "sh scripts/check-boundaries.sh",
-    "ci:obsidianmd": "cd packages/plugin && pnpm exec eslint --config eslint.config.mjs src --ext .ts,.tsx",
+    "ci:obsidianmd": "turbo run build && cd packages/plugin && pnpm exec eslint --config eslint.config.mjs src --ext .ts,.tsx",
     "ci:typecheck": "turbo run typecheck",
     "ci:test": "turbo run test",
     "ci:privacy": "sh scripts/check-privacy.sh",

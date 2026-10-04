@@ -11,7 +11,9 @@
       "packages/**/*.tsx",
       "*.json",
       "*.mjs",
-      "scripts/claude-hooks/**/*.mjs"
+      "scripts/**/*.mjs",
+      "scripts/**/*.js",
+      "scripts/**/*.json"
     ],
     "ignoreUnknown": true
   },

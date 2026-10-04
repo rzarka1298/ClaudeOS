@@ -276,7 +276,7 @@ export function WidgetFrame<T>({
             <p className="ccc-state-body">
               {`${definition.title} has no items right now. New items appear as they arrive.`}
             </p>
-            <Empty />
+            <Empty onNavigate={onNavigate} data={state.kind === "ready" ? state.data : undefined} />
           </>
         );
       case "ready":
@@ -301,13 +301,10 @@ export function WidgetFrame<T>({
                     now,
                   )}. They may be out of date.`}
             </p>
+            {/* No `onQuickAction` here (RR-05): while the service is unreachable
+                a body cannot emit a launch or session action at all. */}
             {state.kind === "ready" ? (
-              <Body
-                data={state.data}
-                size={hint}
-                onNavigate={onNavigate}
-                onQuickAction={onQuickAction}
-              />
+              <Body data={state.data} size={hint} onNavigate={onNavigate} />
             ) : null}
           </>
         );
@@ -384,6 +381,7 @@ export function WidgetFrame<T>({
 
   const showsActions =
     definition.quickActions.length > 0 &&
+    !definition.actionsInBody &&
     (presentation.kind === "ready" || presentation.kind === "stale");
 
   // The hero head (UI-SPEC S1, D-50): absent means the existing glass card,

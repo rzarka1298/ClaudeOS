@@ -37,6 +37,8 @@ const SESSION_VIEW: SessionView = {
   terminateRequested: false,
 };
 
+import { EMPTY_PROJECTS_SNAPSHOT } from "./projects.js";
+
 describe("ServiceEventSchema", () => {
   it("parses a valid service.heartbeat envelope", () => {
     const result = ServiceEventSchema.safeParse({
@@ -92,16 +94,27 @@ describe("ServiceEventSchema", () => {
 });
 
 describe("SnapshotResponseSchema", () => {
-  it("parses a valid snapshot response", () => {
+  it("parses a valid snapshot response carrying the projects state", () => {
     const result = SnapshotResponseSchema.safeParse({
       lastEventId: 3,
-      state: { serviceStartedAt: new Date().toISOString() },
+      state: { serviceStartedAt: new Date().toISOString(), projects: EMPTY_PROJECTS_SNAPSHOT },
     });
     expect(result.success).toBe(true);
   });
 
-  it("parses a snapshot from an older service carrying only serviceStartedAt (Pitfall 17)", () => {
-    const input = { lastEventId: 0, state: { serviceStartedAt: "2026-09-26T13:00:00.000Z" } };
+  it("rejects a snapshot whose state has no projects field (D-50)", () => {
+    const result = SnapshotResponseSchema.safeParse({
+      lastEventId: 3,
+      state: { serviceStartedAt: new Date().toISOString() },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("parses a snapshot from an older service carrying no Phase 5 fields (Pitfall 17)", () => {
+    const input = {
+      lastEventId: 0,
+      state: { serviceStartedAt: "2026-09-26T13:00:00.000Z", projects: EMPTY_PROJECTS_SNAPSHOT },
+    };
     const result = SnapshotResponseSchema.safeParse(input);
     expect(result.success).toBe(true);
     expect(result.data).toEqual(input);
@@ -110,7 +123,11 @@ describe("SnapshotResponseSchema", () => {
   it("parses a snapshot carrying sessions and keeps them (Test 7)", () => {
     const input = {
       lastEventId: 7,
-      state: { serviceStartedAt: "2026-09-26T13:00:00.000Z", sessions: [SESSION_VIEW] },
+      state: {
+        serviceStartedAt: "2026-09-26T13:00:00.000Z",
+        projects: EMPTY_PROJECTS_SNAPSHOT,
+        sessions: [SESSION_VIEW],
+      },
     };
     const result = SnapshotResponseSchema.safeParse(input);
     expect(result.success).toBe(true);
@@ -122,6 +139,7 @@ describe("SnapshotResponseSchema", () => {
       lastEventId: 7,
       state: {
         serviceStartedAt: "2026-09-26T13:00:00.000Z",
+        projects: EMPTY_PROJECTS_SNAPSHOT,
         sessions: [{ ...SESSION_VIEW, state: "stuck" }],
       },
     });
@@ -133,6 +151,7 @@ describe("SnapshotResponseSchema", () => {
       lastEventId: 9,
       state: {
         serviceStartedAt: "2026-09-26T13:00:00.000Z",
+        projects: EMPTY_PROJECTS_SNAPSHOT,
         usage: {
           capacity: { kind: "unavailable", reason: "wrapper-not-installed", version: null },
           ranges: {
@@ -181,10 +200,11 @@ describe("SnapshotResponseSchema", () => {
 
 describe("Phase 5 event types (append-only, D-59)", () => {
   it("keeps the Phase 1 types first and appends the three Phase 5 types", () => {
-    expect(SERVICE_EVENT_TYPES.slice(0, 3)).toEqual([
+    expect(SERVICE_EVENT_TYPES.slice(0, 4)).toEqual([
       "service.heartbeat",
       "connection.state",
       "stream.resync",
+      "projects.updated",
     ]);
     expect(SERVICE_EVENT_TYPES).toEqual(
       expect.arrayContaining(["session.upserted", "usage.updated", "claude-integration.updated"]),
@@ -207,6 +227,23 @@ describe("Phase 5 event types (append-only, D-59)", () => {
     const payload = SessionUpsertedPayloadSchema.safeParse(envelope.data?.payload);
     expect(payload.success).toBe(true);
     expect(payload.data).toEqual({ session: SESSION_VIEW });
+  });
+});
+
+describe("projects.updated (D-50 additive rule)", () => {
+  it("parses a ServiceEvent of type projects.updated", () => {
+    const result = ServiceEventSchema.safeParse({
+      id: 4,
+      type: "projects.updated",
+      occurredAt: new Date().toISOString(),
+      payload: { upserted: [], removed: [] },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("appends projects.updated directly after the three base types (Phase 5 appends after it)", () => {
+    expect(SERVICE_EVENT_TYPES).toHaveLength(7);
+    expect(SERVICE_EVENT_TYPES[3]).toBe("projects.updated");
   });
 });
 

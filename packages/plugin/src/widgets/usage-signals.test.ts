@@ -1,5 +1,5 @@
 import type { ServiceEvent, SnapshotResponse, UsageSummary } from "@ccc/domain";
-import { UsageSummarySchema } from "@ccc/domain";
+import { EMPTY_PROJECTS_SNAPSHOT, UsageSummarySchema } from "@ccc/domain";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ConnectionState } from "../connection-state.js";
 import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./claude-events.js";
@@ -151,7 +151,11 @@ describe("adoptClaudeSnapshot: usage adoption (Test 6, ADR-0007)", () => {
   it("adopts state.usage from a full-resync snapshot", () => {
     const snapshot: SnapshotResponse = {
       lastEventId: 5,
-      state: { serviceStartedAt: "2026-09-26T00:00:00.000Z", usage: summary() },
+      state: {
+        serviceStartedAt: "2026-09-26T00:00:00.000Z",
+        projects: EMPTY_PROJECTS_SNAPSHOT,
+        usage: summary(),
+      },
     };
     adoptClaudeSnapshot(snapshot);
     expect(usageSummary.value).not.toBeNull();
@@ -162,7 +166,7 @@ describe("adoptClaudeSnapshot: usage adoption (Test 6, ADR-0007)", () => {
     const before = usageSummary.value;
     const snapshot: SnapshotResponse = {
       lastEventId: 6,
-      state: { serviceStartedAt: "2026-09-26T00:00:00.000Z" },
+      state: { serviceStartedAt: "2026-09-26T00:00:00.000Z", projects: EMPTY_PROJECTS_SNAPSHOT },
     };
     adoptClaudeSnapshot(snapshot);
     expect(usageSummary.value).toBe(before);

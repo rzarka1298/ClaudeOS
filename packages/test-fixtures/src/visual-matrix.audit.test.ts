@@ -2,8 +2,9 @@
 // contract that the plan's own tests left to inspection — the cell count,
 // the off-Linux skip guard, the determinism pins, and that no fixture leaks
 // into the plugin. 05-13 Task 3 added a second spec file (`agent-runs.spec.ts`,
-// 4 fixed cells for the Agent runs destination), so the total is now 72
-// tests across 2 files rather than the original 68 in 1.
+// 4 fixed cells for the Agent runs destination), and plan
+// 04-15 added a fifth motion cell (Project shortcuts, reduced), so the total
+// is now 73 tests across 2 files (68 original + 1 + 4).
 
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -31,9 +32,9 @@ function filesUnder(dir: string): string[] {
 }
 
 describe("visual matrix (audit)", () => {
-  it("lists exactly 72 cells: 8 widgets x 8 presentations + 4 motion cells + 4 Agent runs cells", () => {
+  it("lists exactly 73 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 72 tests in 2 files/);
+    expect(out).toMatch(/Total: 73 tests in 2 files/);
     for (const cell of [
       "background — full",
       "background — reduced",
@@ -43,6 +44,7 @@ describe("visual matrix (audit)", () => {
       "agent-runs — selected-stale",
       "agent-runs — narrow-detail",
       "agent-runs — disconnected",
+      "project-shortcuts — ready — reduced",
     ]) {
       expect(out).toContain(cell);
     }

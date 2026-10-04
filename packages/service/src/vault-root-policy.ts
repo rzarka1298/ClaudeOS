@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { checkPathContainment } from "@ccc/domain";
 
 /**
  * Thrown when a caller names a directory that is real, absolute, and
@@ -25,7 +26,10 @@ export class VaultRootRefusedError extends Error {
 }
 
 /** Why a root was refused — logged locally, never returned. */
-export type VaultRootRefusalReason = "forbidden-location" | "not-an-obsidian-vault";
+export type VaultRootRefusalReason =
+  | "forbidden-location"
+  | "not-an-obsidian-vault"
+  | "overlaps-project";
 
 /**
  * Directories that are categorically not a personal knowledge vault.
@@ -45,6 +49,67 @@ const FORBIDDEN_ROOTS: readonly string[] = [
   "/Volumes",
   homedir(),
 ];
+
+/**
+ * System trees that are never a vault or a project, in addition to
+ * {@link FORBIDDEN_ROOTS}. On macOS `/etc`, `/tmp` and `/var` are symlinks
+ * into `/private`, so the `/private` forms are what a realpath'd candidate
+ * actually looks like.
+ */
+const SYSTEM_ROOTS: readonly string[] = [
+  "/private",
+  "/private/etc",
+  "/private/var",
+  "/private/tmp",
+  "/usr",
+  "/bin",
+  "/sbin",
+  "/opt",
+];
+
+/** Where macOS mounts every volume other than the boot volume. */
+const VOLUMES_DIR = "/Volumes";
+
+/** The forbidden set in realpath form, computed once on first use. */
+let resolvedForbiddenRoots: ReadonlySet<string> | null = null;
+
+function forbiddenRootSet(): ReadonlySet<string> {
+  if (resolvedForbiddenRoots === null) {
+    const roots = new Set<string>();
+    for (const literal of [...FORBIDDEN_ROOTS, ...SYSTEM_ROOTS]) {
+      roots.add(literal);
+      try {
+        roots.add(realpathSync.native(literal));
+      } catch {
+        // An entry that does not resolve on this machine stays in literal
+        // form only; nothing can realpath to it anyway.
+      }
+    }
+    resolvedForbiddenRoots = roots;
+  }
+  return resolvedForbiddenRoots;
+}
+
+/**
+ * True when `resolved` — an already-`realpathSync.native`'d path — is a
+ * location this service will never adopt as a vault root or a project
+ * (E-3, PR-06): any {@link FORBIDDEN_ROOTS} entry, the system trees above,
+ * a filesystem root (`dirname(x) === x`), or a mounted volume's root
+ * (`/Volumes/<name>`). On macOS every non-boot volume mounts at
+ * `/Volumes/<name>` and realpaths there — it is never `dirname(x) === x` —
+ * so the filesystem-root test alone let a whole external or network drive
+ * through. A folder INSIDE a volume stays allowed.
+ *
+ * The comparison is against the REALPATH form of every entry. The old check
+ * compared a realpath'd candidate against the literals, and on macOS
+ * `realpath("/etc")` is `/private/etc` — so the `/etc` entry could never
+ * match and was inert. Resolving the list once, the same way the candidate
+ * is resolved, makes both sides comparable.
+ */
+export function isForbiddenRoot(resolved: string): boolean {
+  const parent = dirname(resolved);
+  return parent === resolved || parent === VOLUMES_DIR || forbiddenRootSet().has(resolved);
+}
 
 /** The directory Obsidian itself creates in every vault. Its presence is
  * the only cheap, local, non-guessing evidence that a directory is a vault
@@ -71,8 +136,14 @@ const OBSIDIAN_MARKER = ".obsidian";
  * Applied by BOTH vault-setup routes, because a plan that described a
  * vault the apply would refuse would break VAULT-01's "the modal shows
  * exactly what setup will write".
+ *
+ * `projectRoots` is every registered project's stored realpath. The vault
+ * must be none of them, inside none of them and above none of them (D-04):
+ * project registration enforces the same rule against the vault, but only
+ * once a vault exists — so without this side a project registered BEFORE
+ * setup would silently end up sharing a tree with the managed vault.
  */
-export function assertUsableVaultRoot(vaultRoot: string): void {
+export function assertUsableVaultRoot(vaultRoot: string, projectRoots: readonly string[]): void {
   let resolved: string;
   try {
     resolved = realpathSync.native(vaultRoot);
@@ -83,13 +154,32 @@ export function assertUsableVaultRoot(vaultRoot: string): void {
     return;
   }
 
-  // `dirname(x) === x` only at a filesystem root, which catches a volume
-  // root the hard-coded list does not name.
-  if (FORBIDDEN_ROOTS.includes(resolved) || dirname(resolved) === resolved) {
+  if (isForbiddenRoot(resolved)) {
     throw new VaultRootRefusedError(resolved, "forbidden-location");
+  }
+
+  if (projectRoots.some((projectRoot) => overlaps(resolved, projectRoot))) {
+    throw new VaultRootRefusedError(resolved, "overlaps-project");
   }
 
   if (!existsSync(join(resolved, OBSIDIAN_MARKER))) {
     throw new VaultRootRefusedError(resolved, "not-an-obsidian-vault");
   }
+}
+
+/** True when `resolved` (a realpath) is `other`, inside it, or above it. */
+function overlaps(resolved: string, other: string): boolean {
+  let otherResolved: string;
+  try {
+    otherResolved = realpathSync.native(other);
+  } catch {
+    // A registered folder that has since moved: compare its stored form,
+    // which is still where the owner's project lived.
+    otherResolved = other;
+  }
+  return (
+    resolved === otherResolved ||
+    checkPathContainment(resolved, otherResolved).contained ||
+    checkPathContainment(otherResolved, resolved).contained
+  );
 }

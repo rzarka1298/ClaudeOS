@@ -380,16 +380,18 @@ describe("quick-action buttons in the frame (UI-04, A11Y-01)", () => {
     label: "Run a skill",
     capability: "skill:run",
   };
+  // SC-6: the Phase 4 capability name (PR-08), replacing the Phase 3 placeholder.
   const OPEN_DESKTOP: QuickActionDescriptor = {
     id: "open-claude-desktop",
     label: "Open Claude Desktop",
-    capability: "app:open",
+    capability: "launch:claude-desktop",
   };
 
   const ACTION_PANEL: WidgetDefinition<string> = {
     id: "action-panel",
     title: "Quick actions",
-    dataKeys: [{ key: "skills.registry", transport: "service", sourceLabel: "Skill registry" }],
+    // SC-6: the S8 data key after RR-18 (the skill registry returns with the skill-run phase).
+    dataKeys: [{ key: "launchers.config", transport: "service", sourceLabel: "Launcher settings" }],
     refresh: { kind: "manual" },
     minSize: "small",
     preferredSize: "small",
@@ -861,7 +863,7 @@ describe("setup-state copy, unavailable reason and body quick-action (D-53, SESS
     isEmpty: false,
   };
 
-  it("Test 4: the frame threads onQuickAction into the body in ready, stale and disconnected, and calls nothing else itself", () => {
+  it("Test 4: the frame threads onQuickAction into the body in ready and stale, withholds it when disconnected (RR-05), and calls nothing else itself", () => {
     const onQuickAction = vi.fn();
     const { rerender } = render(
       <WidgetFrame
@@ -903,9 +905,9 @@ describe("setup-state copy, unavailable reason and body quick-action (D-53, SESS
         onQuickAction={onQuickAction}
       />,
     );
+    // RR-05: the body is handed no channel while disconnected, so the click is inert.
     fireEvent.click(screen.getByRole("button", { name: "emit" }));
-    expect(onQuickAction).toHaveBeenCalledTimes(1);
-    expect(onQuickAction).toHaveBeenCalledWith(ROW_ACTION);
+    expect(onQuickAction).not.toHaveBeenCalled();
   });
 });
 
@@ -964,5 +966,145 @@ describe("a panel title used mid-sentence keeps its proper nouns", () => {
     );
     expect(screen.getByText(`Couldn't load ${panel}.`)).toBeTruthy();
     expect(screen.getByText(`Sources for ${panel}`)).toBeTruthy();
+  });
+});
+
+/**
+ * A widget body's own `onQuickAction` channel (PR-08, PR-12, RR-05). A body
+ * emits a launch descriptor only in `ready`/`stale` — never `disconnected`,
+ * where no launch control may render at all — and a card whose body lays out
+ * its own actions (`actionsInBody`) keeps the frame from also rendering the
+ * generic `.ccc-card-actions` row, while `renderEmpty` gets the same
+ * `onNavigate` channel the ordinary body already has.
+ */
+describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
+  const BODY_ACTION: QuickActionDescriptor = {
+    id: "body-launch",
+    label: "Launch Finder",
+    capability: "launch:finder",
+    target: { projectId: "project-1" as never },
+  };
+
+  const READY_STATE: WidgetState<string> = {
+    kind: "ready",
+    data: "payload",
+    observedAt: EVENT_AT,
+    freshness: "live",
+    partiality: { partial: false },
+    isEmpty: false,
+  };
+
+  function bodyWidget(overrides: Partial<WidgetDefinition<string>> = {}): WidgetDefinition<string> {
+    return {
+      id: "body-widget",
+      title: "Body widget",
+      dataKeys: [{ key: "test.key", transport: "service", sourceLabel: "Test source" }],
+      refresh: { kind: "manual" },
+      minSize: "small",
+      preferredSize: "small",
+      featureFlag: "widget.body-widget",
+      quickActions: [],
+      renderBody: ({ onQuickAction }) => (
+        <button type="button" onClick={() => onQuickAction?.(BODY_ACTION)}>
+          Emit
+        </button>
+      ),
+      renderEmpty: () => null,
+      ...overrides,
+    };
+  }
+
+  it("threads onQuickAction into the body in ready, and the body's click reaches it", () => {
+    const onQuickAction = vi.fn();
+    render(
+      <WidgetFrame
+        definition={bodyWidget()}
+        state={READY_STATE}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={onQuickAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Emit" }));
+    expect(onQuickAction).toHaveBeenCalledTimes(1);
+    expect(onQuickAction).toHaveBeenCalledWith(BODY_ACTION);
+  });
+
+  it("threads onQuickAction into the body in stale too", () => {
+    const onQuickAction = vi.fn();
+    render(
+      <WidgetFrame
+        definition={bodyWidget()}
+        state={{ ...READY_STATE, freshness: "stale" }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={onQuickAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Emit" }));
+    expect(onQuickAction).toHaveBeenCalledWith(BODY_ACTION);
+  });
+
+  it("hands the body onQuickAction === undefined when disconnected — no launch control may render", () => {
+    const bodySpy = vi.fn((_props: { onQuickAction?: unknown }) => <p>disconnected-body</p>);
+    render(
+      <WidgetFrame
+        definition={bodyWidget({ renderBody: bodySpy })}
+        state={READY_STATE}
+        connection={{ kind: "disconnected", reason: "connect ECONNREFUSED" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={vi.fn()}
+      />,
+    );
+    expect(bodySpy).toHaveBeenCalled();
+    expect(bodySpy.mock.calls[0]?.[0].onQuickAction).toBeUndefined();
+  });
+
+  it("skips the generic .ccc-card-actions row when actionsInBody is true, while still threading the channel", () => {
+    const { container } = render(
+      <WidgetFrame
+        definition={bodyWidget({ quickActions: [BODY_ACTION], actionsInBody: true })}
+        state={READY_STATE}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={vi.fn()}
+      />,
+    );
+    expect(container.querySelector(".ccc-card-actions")).toBeNull();
+    expect(screen.getByRole("button", { name: "Emit" })).toBeTruthy();
+  });
+
+  it("still renders the generic .ccc-card-actions row when actionsInBody is not set", () => {
+    const { container } = render(
+      <WidgetFrame
+        definition={bodyWidget({ quickActions: [BODY_ACTION] })}
+        state={READY_STATE}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onQuickAction={vi.fn()}
+      />,
+    );
+    expect(container.querySelector(".ccc-card-actions")).toBeTruthy();
+  });
+
+  it("passes onNavigate and the ready state's own data to renderEmpty", () => {
+    const emptySpy = vi.fn((_props: { onNavigate?: unknown }) => null);
+    const onNavigate = vi.fn();
+    render(
+      <WidgetFrame
+        definition={bodyWidget({ renderEmpty: emptySpy })}
+        state={{ ...READY_STATE, isEmpty: true }}
+        connection={{ kind: "live" }}
+        size="small"
+        now={TWO_MINUTES_LATER}
+        onNavigate={onNavigate}
+      />,
+    );
+    expect(emptySpy.mock.calls[0]?.[0]).toEqual({ onNavigate, data: READY_STATE.data });
   });
 });

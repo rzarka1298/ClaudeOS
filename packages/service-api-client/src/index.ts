@@ -18,6 +18,35 @@ export type {
   CreateAuthenticatedClientOptions,
 } from "./handshake.js";
 export { createAuthenticatedClient } from "./handshake.js";
+export type { SaveLauncherConfigResult } from "./projects-api.js";
+export {
+  addScanRoot,
+  detectLaunchers,
+  dismissSuggestion,
+  getLauncherConfigs,
+  LAUNCHER_SAVE_CLIENT_TIMEOUT_MS,
+  LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS,
+  LAUNCHER_TEST_CLIENT_TIMEOUT_MS,
+  LAUNCHERS_DETECT_CLIENT_TIMEOUT_MS,
+  listScanState,
+  listSuggestionsPage,
+  markLauncherTested,
+  openSystemSettings,
+  ProjectsRequestError,
+  pinProject,
+  refreshProjects,
+  registerProject,
+  registerSuggestion,
+  removeProject,
+  removeScanRoot,
+  renameProject,
+  requestLaunch,
+  rescanScanRoot,
+  SCAN_ROOTS_CLIENT_TIMEOUT_MS,
+  saveLauncherConfig,
+  setGithubLink,
+  testLauncher,
+} from "./projects-api.js";
 export type {
   SocketApiClient,
   SocketApiClientOptions,

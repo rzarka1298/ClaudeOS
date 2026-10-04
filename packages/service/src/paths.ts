@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Logger } from "pino";
 
 const SUN_PATH_MAX_BYTES = 104;
@@ -24,9 +24,45 @@ export class SocketPathTooLongError extends Error {
   }
 }
 
+/**
+ * Thrown when code running under a test runner resolves the real, installed
+ * runtime directory or socket. A test that reaches the owner's live socket
+ * could unlink it out from under the running service, and one that reaches
+ * the real directory writes logs, scripts and the store beside it — so this
+ * fails loudly instead. Every test that starts the service or touches the
+ * socket sets `CCC_RUNTIME_DIR` to a temporary directory (the vitest setup
+ * files in `@ccc/service` and `@ccc/test-fixtures` do this for every test
+ * file).
+ */
+export class RealRuntimeDirUnderTestError extends Error {
+  constructor(what: "runtime directory" | "socket") {
+    super(
+      `Refusing the real ${what} under a test runner: set CCC_RUNTIME_DIR to a temporary directory.`,
+    );
+    this.name = "RealRuntimeDirUnderTestError";
+  }
+}
+
+function defaultRuntimeDir(): string {
+  return join(homedir(), ".claude-command-center");
+}
+
+/**
+ * True inside a vitest worker, and inside any process it spawns (the
+ * variable is inherited) — so a service child started by a test harness is
+ * guarded too. Never set for the installed LaunchAgent.
+ */
+function underTestRunner(): boolean {
+  return process.env.VITEST !== undefined;
+}
+
 /** The short, fixed runtime directory holding the socket, database, logs, and spool. */
 export function resolveRuntimeDir(): string {
-  return process.env.CCC_RUNTIME_DIR ?? join(homedir(), ".claude-command-center");
+  const dir = process.env.CCC_RUNTIME_DIR ?? defaultRuntimeDir();
+  if (underTestRunner() && resolve(dir) === resolve(defaultRuntimeDir())) {
+    throw new RealRuntimeDirUnderTestError("runtime directory");
+  }
+  return dir;
 }
 
 /**
@@ -54,6 +90,9 @@ export function ensureRuntimeDir(runtimeDir: string, logger?: Pick<Logger, "warn
 /** The Unix domain socket path, guarded against the sun_path cap. */
 export function resolveSocketPath(): string {
   const path = process.env.CCC_SOCKET_PATH ?? join(resolveRuntimeDir(), "svc.sock");
+  if (underTestRunner() && resolve(path) === resolve(defaultRuntimeDir(), "svc.sock")) {
+    throw new RealRuntimeDirUnderTestError("socket");
+  }
   const byteLength = Buffer.byteLength(path);
   if (byteLength >= SUN_PATH_MAX_BYTES) {
     throw new SocketPathTooLongError(path, byteLength);

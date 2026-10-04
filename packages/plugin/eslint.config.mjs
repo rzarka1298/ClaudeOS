@@ -15,6 +15,103 @@
 import obsidianmd from "eslint-plugin-obsidianmd";
 
 /**
+ * `obsidianmd/ui/sentence-case`'s `brands` option REPLACES the rule's own
+ * default brand list rather than merging with it (verified by reading the
+ * installed rule's `resolveSentenceCaseConfig`:
+ * `const brands = (options?.brands ?? DEFAULT_BRANDS)...` — no `[...]`
+ * concatenation). Passing `brands` without restating the defaults would
+ * therefore make every previously-allowed proper noun (`Claude`, `Git`,
+ * `GitHub`, `macOS`, …) a new sentence-case violation the instant this
+ * option is set. This list is the installed rule's own `DEFAULT_BRANDS`
+ * (`dist/lib/rules/ui/brands.js`) plus the proper nouns Phase 4's launcher
+ * and Settings copy uses (04-UI-SPEC.md; D-39).
+ *
+ * Only product names belong here. A brand is accepted capitalised ANYWHERE
+ * in a string, so a bare common word ("Terminal", "Desktop", "Documents",
+ * "Downloads", "Automation") would license Title Case for that word in every
+ * UI string — exactly what the rule exists to catch. Copy that names one of
+ * those macOS folders or apps mid-sentence carries a scoped, commented
+ * `eslint-disable-next-line` instead, so each use is a reviewed decision.
+ */
+const SENTENCE_CASE_BRANDS = [
+  // eslint-plugin-obsidianmd@0.4.2's own defaults, restated in full because
+  // `brands` replaces rather than merges (see comment above).
+  "iOS",
+  "iPadOS",
+  "macOS",
+  "Windows",
+  "Android",
+  "Linux",
+  "Obsidian",
+  "Obsidian Sync",
+  "Obsidian Publish",
+  "Google",
+  "Gemini",
+  "Vertex AI",
+  "OpenAI",
+  "GPT",
+  "Anthropic",
+  "Claude",
+  "Cursor",
+  "Microsoft",
+  "Google Drive",
+  "Dropbox",
+  "OneDrive",
+  "iCloud Drive",
+  "YouTube",
+  "Slack",
+  "Discord",
+  "Telegram",
+  "WhatsApp",
+  "Twitter",
+  "X",
+  "Readwise",
+  "Zotero",
+  "Excalidraw",
+  "Mermaid",
+  "Markdown",
+  "LaTeX",
+  "JavaScript",
+  "TypeScript",
+  "Node.js",
+  "npm",
+  "pnpm",
+  "Yarn",
+  "Git",
+  "GitHub",
+  "GitLab",
+  "Anki",
+  "CalDAV",
+  "CardDAV",
+  "Evernote",
+  "IntelliJ IDEA",
+  "Jekyll",
+  "Logseq",
+  "Notion",
+  "PyCharm",
+  "React",
+  "Reddit",
+  "Roam Research",
+  "Svelte",
+  "VS Code",
+  "Visual Studio Code",
+  "WebDAV",
+  "WebStorm",
+  // Phase 4 additions (04-UI-SPEC.md launcher and Settings copy, D-39).
+  "Antigravity",
+  "Claude Code",
+  "Claude Desktop",
+  "Finder",
+  "iTerm2",
+  "Ghostty",
+  "WezTerm",
+  "System Settings",
+  "Privacy & Security",
+  "Files & Folders",
+  "Xcode",
+];
+
+/**
  * Rules eslint-plugin-obsidianmd@0.4.2 ships at "warn" but this repository
  * treats as build-failing, because they correspond to what the Obsidian
  * review bot labels "Required" (blocks merging), not merely "Recommended":
@@ -49,7 +146,10 @@ const REQUIRED_SEVERITY_OVERRIDES = {
   "obsidianmd/prefer-window-timers": "error",
   "obsidianmd/validate-manifest": "error",
   "obsidianmd/validate-license": "error",
-  "obsidianmd/ui/sentence-case": ["error", { enforceCamelCaseLower: true }],
+  "obsidianmd/ui/sentence-case": [
+    "error",
+    { enforceCamelCaseLower: true, brands: SENTENCE_CASE_BRANDS },
+  ],
   "obsidianmd/prefer-create-el": "error",
   "obsidianmd/prefer-file-manager-trash-file": "error",
   "obsidianmd/prefer-instanceof": "error",

@@ -76,7 +76,9 @@ function visit(suite, fileName) {
       tests++;
       const declared = (test.annotations ?? []).filter((a) => a.type === ANNOTATION);
       if (declared.length !== 1) {
-        refuse(`"${spec.title}" declares ${declared.length} baseline annotations (exactly 1 required)`);
+        refuse(
+          `"${spec.title}" declares ${declared.length} baseline annotations (exactly 1 required)`,
+        );
       }
       const stem = declared[0].description ?? "";
       if (!STEM.test(stem)) refuse(`"${spec.title}" declares a malformed baseline name "${stem}"`);

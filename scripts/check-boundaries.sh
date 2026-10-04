@@ -28,18 +28,22 @@
 #      (innerHTML/outerHTML/insertAdjacentHTML/dangerouslySetInnerHTML)
 #   7. no file inside packages/plugin assigns an inline style -- state
 #      reaches CSS through data-* attributes and --ccc-* tokens (UI-03)
-#   8. no file inside packages/service, packages/collectors or
+#   8. no file in packages/launchers or packages/service starts a process
+#      through a shell (exec/execSync, a `shell:` option whose value is not
+#      false, a dynamic import of child_process) -- D-18
+#   9. no file inside packages/service, packages/collectors or
 #      packages/plugin sends the interrupt signal to a process (PR-01) --
 #      by name in a kill call, held in a variable or constant, or as a
 #      kill(1) flag via execFile; receiving it in a handler stays allowed
-#   9. no non-test file forges a CapabilityToken -- a cast, a typed
+#  10. no non-test file forges a CapabilityToken -- a cast, a typed
 #      initializer, JSON.parse or `any` fed to a capability-typed call --
 #      only the approval engine issues one (ADR-0012, PR-26)
 #
 # Rules 6 and 7 mirror DOM_SAFETY_RULES, and rule 2 mirrors
-# NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs. The
-# duplication is the point: this script is the layer that still reports when
-# the lint's config silently stops matching.
+# NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs; rule 8
+# mirrors the process-spawn no-restricted-syntax block in the root
+# eslint.config.mjs. The duplication is the point: this script is the layer
+# that still reports when the lint's config silently stops matching.
 #
 # Note on patterns: every pattern below is passed to awk via `-v`, which
 # processes backslash escapes BEFORE awk sees the regex -- `\b` becomes a
@@ -187,7 +191,31 @@ check_rule \
   "[.]style[.][A-Za-z]+[[:space:]]*=|[.]style[[:space:]]*=[^=]|setAttribute[(][[:space:]]*[\"']style[\"']|[[:space:]]style=[{]" \
   $PLUGIN_FILES
 
-# --- Rule 8: no file inside packages/service, packages/collectors or
+# --- Rule 8: no file in packages/launchers or packages/service starts a
+# process through a shell (D-18, PROJ-13). A project path or command
+# template that reaches a shell string is an injection; every spawn in the
+# two packages that start processes must be execFile/spawn with an argv
+# array and no `shell` option. The `.` in the negated class keeps a method
+# call such as a RegExp's or a SQLite handle's `.exec(` from tripping the
+# rule -- only a bare `exec(`/`execSync(` (the child_process import) does.
+# A `shell` key (bare or double-quoted) followed by any value that does not
+# begin with the word `false` trips the rule: `true`, a shell path and a
+# variable all run a shell. ERE has no negative lookahead, so "not false"
+# is spelled out prefix by prefix. A dynamic `import(` of child_process is
+# refused outright, which also covers `(await import(...)).exec(`: the
+# method call there is preceded by `.`, so the bare-call alternative cannot
+# see it. The lint sees import shapes; this sees the call text. ---
+SPAWN_OWNER_FILES=$(printf '%s\n' "$SRC_FILES" | grep -E '^packages/(launchers|service)/' || true)
+RULE8_BARE_EXEC='(^|[^A-Za-z0-9_.])(exec|execSync)[(]'
+RULE8_SHELL_OPTION='(^|[^A-Za-z0-9_.])["]?shell["]?[[:space:]]*:[[:space:]]*([^f[:space:]]|f[^a]|fa[^l]|fal[^s]|fals[^e]|false[A-Za-z0-9_])'
+RULE8_DYNAMIC_IMPORT='(^|[^A-Za-z0-9_.])import[(][[:space:]]*[^A-Za-z0-9_[:space:]](node:)?child_process'
+# shellcheck disable=SC2086
+check_rule \
+  "a file in packages/launchers or packages/service starts a process through a shell (use execFile/spawn with an argv array and no shell option, D-18)" \
+  "${RULE8_BARE_EXEC}|${RULE8_SHELL_OPTION}|${RULE8_DYNAMIC_IMPORT}" \
+  $SPAWN_OWNER_FILES
+
+# --- Rule 9: no file inside packages/service, packages/collectors or
 # packages/plugin sends the interrupt signal to a process (PR-01, SESS-16).
 # Signalled, it ends an interactive Claude Code session instead of
 # interrupting the turn, so "interrupt" is focus plus Esc (PR-27) and no code
@@ -210,7 +238,7 @@ report_rule \
   "a file sends the interrupt signal to a process (PR-01: it ends a Claude Code session; interrupt is focus plus Esc)" \
   "$(printf '%s\n%s\n' "$kill_hits" "$held_hits" | grep -v '^$' | sort -u || true)"
 
-# --- Rule 9: no non-test file forges a CapabilityToken (PR-26, ADR-0012,
+# --- Rule 10: no non-test file forges a CapabilityToken (PR-26, ADR-0012,
 # PATTERNS correction 4). A write method typed on a capability is only a
 # choke point while nothing but the approval engine can produce one. The
 # ways around the type are all refused outside tests: a cast (`as

@@ -1,4 +1,5 @@
 import { type ReadonlySignal, signal } from "@preact/signals";
+import { projectShortcutsState, quickActionsState } from "../projects/projects-state.js";
 import type { WidgetState } from "./contract.js";
 import type { WidgetId } from "./registry.js";
 import { serviceHealthState } from "./service-health.js";
@@ -53,9 +54,10 @@ const WIDGET_STATES: Readonly<Record<WidgetId, ReadonlySignal<WidgetState<unknow
   "claude-usage": claudeUsageState,
   // The three with no connector to click: `unavailable`, not a plausible lie
   // that reads as "one click away" (ADR-0023 rejected alternative).
-  "project-shortcuts": constantState(UNAVAILABLE_STATE),
+  // Plan 04-07: a service-fed signal (D-35), replacing the constant above.
+  "project-shortcuts": projectShortcutsState,
   "tech-intel": constantState(UNAVAILABLE_STATE),
-  "quick-actions": constantState(UNAVAILABLE_STATE),
+  "quick-actions": quickActionsState,
 };
 
 /**

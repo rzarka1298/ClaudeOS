@@ -102,8 +102,8 @@ function gitEnv(): Record<string, string> {
 export const runGit: RunGit = async (cwd, argv, options = {}) => {
   if (!isAllowed(argv)) throw new GitArgvRefusedError("argv-not-allowed");
   if (!isAbsolute(cwd) || cwd.includes("\0")) throw new GitArgvRefusedError("cwd-not-absolute");
-  const exec = options.execFile ?? nodeGitExecFile;
-  const { stdout } = await exec(GIT, ["-c", "core.fsmonitor=false", ...argv], {
+  const runGit = options.execFile ?? nodeGitExecFile;
+  const { stdout } = await runGit(GIT, ["-c", "core.fsmonitor=false", ...argv], {
     cwd,
     env: gitEnv(),
     timeout: options.timeoutMs ?? GIT_TIMEOUT_MS,

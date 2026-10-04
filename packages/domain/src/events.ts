@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
 import { ClaudeIntegrationStatusSchema } from "./claude-integration.js";
+import { ProjectsSnapshotSchema } from "./projects.js";
 import { SessionViewSchema } from "./session.js";
 import { UsageSummarySchema } from "./usage.js";
 
@@ -56,6 +57,7 @@ export const SERVICE_EVENT_TYPES = [
   "service.heartbeat",
   "connection.state",
   "stream.resync",
+  "projects.updated",
   // Phase 5 (append-only, D-59): a Run's view changed; the usage summary
   // changed; the Claude integration status changed.
   "session.upserted",
@@ -96,6 +98,7 @@ export const SnapshotResponseSchema = z.object({
     sessions: z.array(SessionViewSchema).optional(),
     usage: UsageSummarySchema.optional(),
     claudeIntegration: ClaudeIntegrationStatusSchema.optional(),
+    projects: ProjectsSnapshotSchema,
   }),
 });
 export type SnapshotResponse = z.infer<typeof SnapshotResponseSchema>;

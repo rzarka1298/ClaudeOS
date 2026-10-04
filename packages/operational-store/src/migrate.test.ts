@@ -109,6 +109,8 @@ describe("applyMigrations", () => {
         "cache_index",
         "vault_notes",
         ...PHASE_5_TABLES,
+        "scan_roots",
+        "launcher_config",
       ]) {
         expect(tables).toContain(table);
       }
@@ -131,6 +133,38 @@ describe("applyMigrations", () => {
       expect(indexes).toContain("vault_notes_stage_idx");
     } finally {
       db.close();
+    }
+  });
+
+  it("upgrades a database already at the previous schema version to the latest, keeping its rows", () => {
+    const previousDir = mkdtempSync(join(tmpdir(), "ccc-previous-migrations-"));
+    const files = readdirSync(REAL_MIGRATIONS_DIR)
+      .filter((n) => n.endsWith(".sql"))
+      .sort();
+    for (const name of files.slice(0, -1)) {
+      copyFileSync(join(REAL_MIGRATIONS_DIR, name), join(previousDir, name));
+    }
+    const db = new Database(dbPath);
+    try {
+      applyMigrations(db, previousDir);
+      db.prepare(
+        "INSERT INTO projects (project_id, path, display_name, registered_at) VALUES (?, ?, ?, ?)",
+      ).run("0000000000123456789abcdef", "/Users/USERNAME/code/example-project", "example", "t");
+
+      applyMigrations(db, REAL_MIGRATIONS_DIR);
+
+      const version = db.prepare("SELECT version FROM schema_version").get() as { version: number };
+      expect(version.version).toBe(EXPECTED_SCHEMA_VERSION);
+      const row = db.prepare("SELECT display_name, pinned FROM projects").get() as {
+        display_name: string;
+        pinned: string;
+      };
+      expect(row.display_name).toBe("example");
+      // Migration 0002's NOT NULL DEFAULT backfills rows that predate it.
+      expect(row.pinned).toBe("false");
+    } finally {
+      db.close();
+      rmSync(previousDir, { recursive: true, force: true });
     }
   });
 

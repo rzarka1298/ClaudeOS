@@ -185,21 +185,25 @@ describe("honest panel states (D-17, ADR-0023 Panel state assignment)", () => {
     });
   });
 
-  it.each(["project-shortcuts", "claude-usage", "tech-intel", "quick-actions"])(
-    "%s has no source yet",
-    (id) => {
-      expect(widgetStateFor(id as WidgetId).value.kind).toBe("unavailable");
-    },
-  );
+  it.each(["claude-usage", "tech-intel"])("%s has no source yet", (id) => {
+    expect(widgetStateFor(id as WidgetId).value.kind).toBe("unavailable");
+  });
 
-  // 05-06: `active-sessions` is wired to the real session signals (a
-  // `computed`, not a constant — D-17 is satisfied because it derives
-  // honestly from the connection and the session map, never fixture data).
-  // A fresh module load with no live connection and no session ever
-  // observed is the same honest "we don't know yet" `service-health`
-  // itself uses on first render.
+  // 05-06 / 05-12: `active-sessions` and `claude-usage` are wired to the real
+  // session and usage signals (a `computed`, not a constant — D-17 is satisfied
+  // because each derives honestly from the connection and the signals, never
+  // fixture data). A fresh module load with no live connection is the same
+  // honest "we don't know yet" `service-health` itself uses on first render.
   it("active-sessions is honest before anything has connected: loading, not a fixture", () => {
     expect(widgetStateFor("active-sessions").value.kind).toBe("loading");
+  });
+
+  it("quick-actions is a live signal now (plan 04-10, D-38): loading before a snapshot arrives, never a hardcoded unavailable", () => {
+    expect(widgetStateFor("quick-actions").value.kind).toBe("loading");
+  });
+
+  it("project-shortcuts is a live signal now (plan 04-07, D-35): loading before a snapshot arrives, never a hardcoded unavailable", () => {
+    expect(widgetStateFor("project-shortcuts").value.kind).toBe("loading");
   });
 });
 

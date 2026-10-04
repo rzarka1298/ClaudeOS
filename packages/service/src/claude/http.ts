@@ -1,28 +1,7 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { requireToken } from "../auth/require-token.js";
-import type { RouteContext } from "../routes.js";
-
 /**
- * The Claude route helpers (PR-18). Phase 4 owns any extraction of the
- * shared route kit out of `routes.ts`, so Phase 5 keeps its own three small
- * helpers here instead of moving code out of that file. They are the same
- * shapes as `routes.ts`'s private `Handler`, `sendJson` and `withAuth`.
- * `RouteContext` is imported type-only, so there is no runtime cycle.
+ * The Claude route helpers (PR-18). Phase 4's `route-kit.ts` owns the one
+ * implementation; this module re-exports it under the names Phase 5's route
+ * modules already import, so there is a single copy and no import churn.
  */
-export type ClaudeHandler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;
-
-/** Writes `body` as JSON with `status`, exactly as `routes.ts`'s `sendJson` does. */
-export function sendClaudeJson(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(payload);
-}
-
-/**
- * Wraps a Claude route in the bearer-token requirement, exactly as
- * `routes.ts`'s `withAuth` does. Every Claude route goes through this; only
- * the handshake is ever unwrapped (D-06, ADR-0016).
- */
-export function withClaudeAuth(handler: ClaudeHandler): ClaudeHandler {
-  return (req, res, ctx) => requireToken(ctx.getSecret, (r, s) => handler(r, s, ctx))(req, res);
-}
+export type { Handler as ClaudeHandler } from "../route-kit.js";
+export { sendJson as sendClaudeJson, withAuth as withClaudeAuth } from "../route-kit.js";

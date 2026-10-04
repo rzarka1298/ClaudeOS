@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DestinationId } from "../view/destinations.js";
-import { ListBody, ROW_BUDGET } from "./list-body.js";
+import { ACTION_ROW_BUDGET, ListBody, ROW_BUDGET } from "./list-body.js";
 
 /**
  * The E4 list-bearing-panel contract (UI-SPEC "UI Considerations" rows empty,
@@ -281,5 +281,174 @@ describe("the optional onSelectRow primary-line link (UI-SPEC S1 primary line)",
     const primary = container.querySelector("p.ccc-list-primary");
     expect(primary?.textContent).toBe("alpha");
     expect(primary?.classList.contains("ccc-clamp-2")).toBe(true);
+  });
+});
+
+describe("renderMetaSegments (UI-SPEC S1 structured meta, plan 04-07, A11Y-04)", () => {
+  it("renders one span per glyph segment, aria-hidden with a non-empty text sibling", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={[{ id: "r", primary: "Row", meta: "unused" }]}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        renderMetaSegments={() => [
+          { glyph: "⎇", text: "main" },
+          { glyph: "✓", text: "Clean" },
+        ]}
+        moreDestination="tasks"
+      />,
+    );
+    const meta = container.querySelector(".ccc-list-meta");
+    const glyphs = meta?.querySelectorAll(".ccc-meta-glyph") ?? [];
+    expect(glyphs).toHaveLength(2);
+    for (const glyph of Array.from(glyphs)) {
+      expect(glyph.getAttribute("aria-hidden")).toBe("true");
+      expect(glyph.textContent?.length).toBeGreaterThan(0);
+    }
+    expect(meta?.textContent).toContain("main");
+    expect(meta?.textContent).toContain("Clean");
+    expect(meta?.textContent).toContain(" · ");
+  });
+
+  it("renders a segment with no glyph as text only, still inside the meta line", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={[{ id: "r", primary: "Row", meta: "unused" }]}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        renderMetaSegments={() => [{ text: "Checking Git status…" }]}
+        moreDestination="tasks"
+      />,
+    );
+    const meta = container.querySelector(".ccc-list-meta");
+    expect(meta?.querySelectorAll(".ccc-meta-glyph")).toHaveLength(0);
+    expect(meta?.textContent).toBe("Checking Git status…");
+  });
+
+  it("existing callers with no renderMetaSegments prop are unaffected — a plain string meta renders as before", () => {
+    const { container } = renderList(1, "medium");
+    const meta = container.querySelector(".ccc-list-meta");
+    expect(meta?.classList.contains("ccc-meta-segments")).toBe(false);
+    expect(meta?.textContent).toBe("Meta 0");
+  });
+});
+
+describe("primaryBadge (UI-SPEC S1 pinned marker, plan 04-07)", () => {
+  it("prepends a visually hidden label and an aria-hidden glyph before the primary text", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={[{ id: "r", primary: "example-project", meta: "unused" }]}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        primaryBadge={() => ({ hiddenLabel: "Pinned: ", glyph: "★" })}
+        moreDestination="tasks"
+      />,
+    );
+    const primary = container.querySelector(".ccc-list-primary");
+    const hidden = primary?.querySelector(".ccc-visually-hidden");
+    const glyph = primary?.querySelector(".ccc-meta-glyph");
+    expect(hidden?.textContent).toBe("Pinned: ");
+    expect(glyph?.getAttribute("aria-hidden")).toBe("true");
+    expect(glyph?.textContent).toBe("★");
+    expect(primary?.textContent).toBe("Pinned: ★ example-project");
+  });
+
+  it("renders no badge when the callback returns null", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={[{ id: "r", primary: "example-project", meta: "unused" }]}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        primaryBadge={() => null}
+        moreDestination="tasks"
+      />,
+    );
+    const primary = container.querySelector(".ccc-list-primary");
+    expect(primary?.querySelector(".ccc-visually-hidden")).toBeNull();
+    expect(primary?.textContent).toBe("example-project");
+  });
+});
+
+describe("renderActions / renderStatus (UI-SPEC S1, S2 toolbar slot, plan 04-10)", () => {
+  it("fixes ACTION_ROW_BUDGET at small 2, medium 3, wide 3, tall 5 (RR-06)", () => {
+    expect(ACTION_ROW_BUDGET).toEqual({ small: 2, medium: 3, wide: 3, tall: 5 });
+  });
+
+  it("uses ACTION_ROW_BUDGET instead of ROW_BUDGET once renderActions is present", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={rows(5)}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        renderActions={() => <div className="ccc-test-actions">A</div>}
+        moreDestination="tasks"
+      />,
+    );
+    expect(container.querySelectorAll("li.ccc-list-row")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "+2 more" })).toBeTruthy();
+  });
+
+  it.each([
+    ["small", 2],
+    ["wide", 3],
+    ["tall", 5],
+  ] as const)("budgets rows to the action budget at size=%s (%i)", (size, expected) => {
+    const { container, unmount } = render(
+      <ListBody<Row>
+        rows={rows(expected + 2)}
+        size={size}
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        renderActions={() => <span>A</span>}
+        moreDestination="tasks"
+      />,
+    );
+    expect(container.querySelectorAll("li.ccc-list-row")).toHaveLength(expected);
+    unmount();
+  });
+
+  it("with no renderActions the ordinary ROW_BUDGET still applies (existing callers unaffected)", () => {
+    const { container } = renderList(9, "medium");
+    expect(container.querySelectorAll("li.ccc-list-row")).toHaveLength(ROW_BUDGET.medium);
+  });
+
+  it("renders the actions slot after the meta line, and the status slot after the actions", () => {
+    const { container } = render(
+      <ListBody<Row>
+        rows={[{ id: "r", primary: "Row", meta: "Meta" }]}
+        size="medium"
+        keyOf={(row) => row.id}
+        renderPrimary={(row) => row.primary}
+        renderMeta={(row) => row.meta}
+        renderActions={() => <div className="ccc-test-actions">A</div>}
+        renderStatus={() => <p className="ccc-test-status">S</p>}
+        moreDestination="tasks"
+      />,
+    );
+    const row = container.querySelector("li.ccc-list-row");
+    const classes = Array.from(row?.children ?? []).map((el) => el.className);
+    expect(classes).toEqual([
+      "ccc-list-primary ccc-clamp-2",
+      "ccc-list-meta",
+      "ccc-test-actions",
+      "ccc-test-status",
+    ]);
+  });
+
+  it("renders no actions or status slot when neither prop is given", () => {
+    const { container } = renderList(1, "medium");
+    const row = container.querySelector("li.ccc-list-row");
+    expect(row?.children).toHaveLength(2);
   });
 });

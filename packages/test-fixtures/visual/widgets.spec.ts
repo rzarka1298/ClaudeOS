@@ -122,3 +122,22 @@ for (const motion of ["full", "reduced"] as const) {
     },
   );
 }
+
+// The Project shortcuts reduced-motion cell (plan 04-15, UI-SPEC UI Considerations
+// "reduced motion" backstop, A11Y-03). Phase 4 adds no animation; its new colour
+// transitions (the S1 launch toolbar's `.ccc-quick-action` pills) run on
+// --ccc-motion-fast, which `data-motion="reduced"` zeroes. As with the cells
+// above, the switch is asserted through computed style before the screenshot,
+// because pixels alone cannot tell a finished transition from no transition.
+cell(
+  "project-shortcuts — ready — reduced",
+  "project-shortcuts-ready-reduced.png",
+  async (page, snapshot) => {
+    await page.goto(harnessUrl({ widget: "project-shortcuts", state: "ready", motion: "reduced" }));
+    await expect(page.locator('.ccc-card [role="toolbar"] .ccc-quick-action').first()).toHaveCSS(
+      "transition-duration",
+      "0s",
+    );
+    await expect(page.locator(".ccc-card")).toHaveScreenshot(snapshot);
+  },
+);

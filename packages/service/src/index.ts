@@ -4,6 +4,7 @@
 // file exists so the package follows the same `src/index.ts` shape every
 // other workspace package does; it re-exports the side-effect-free pieces.
 export {
+  RealRuntimeDirUnderTestError,
   resolveDbPath,
   resolveRuntimeDir,
   resolveSocketPath,

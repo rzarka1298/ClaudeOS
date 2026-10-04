@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ProjectId } from "@ccc/domain";
 import { describe, expect, it, vi } from "vitest";
 import type { QuickActionDescriptor } from "./contract.js";
 import { dispatchQuickAction } from "./quick-actions.js";
@@ -26,8 +27,10 @@ const SRC_DIR = dirname(fileURLToPath(import.meta.url));
 const DISPATCHER_SOURCE = readFileSync(join(SRC_DIR, "quick-actions.ts"), "utf8");
 
 function context() {
-  return { navigate: vi.fn(), notify: vi.fn() };
+  return { navigate: vi.fn(), notify: vi.fn(), requestLaunch: vi.fn(), openSwitcher: vi.fn() };
 }
+
+const PROJECT_ID = "project-1" as ProjectId;
 
 const CONNECT_GOOGLE: QuickActionDescriptor = {
   id: "connect-google",
@@ -73,14 +76,141 @@ describe("every other capability reports that it is unavailable", () => {
     expect(ctx.navigate).not.toHaveBeenCalled();
   });
 
-  it.each(WIDGETS["quick-actions"].quickActions.map((action) => [action.label, action] as const))(
+  // SC-6 (rewritten, not deleted): Phase 4 makes two Quick actions live
+  // (D-38, PR-08); every OTHER declared action still executes nothing.
+  const UNAVAILABLE_QUICK_ACTIONS = WIDGETS["quick-actions"].quickActions.filter(
+    (action) =>
+      !action.capability.startsWith("launch:") && !action.capability.startsWith("switcher:"),
+  );
+
+  it("four Quick actions stay unavailable in this phase", () => {
+    expect(UNAVAILABLE_QUICK_ACTIONS.map((action) => action.id)).toEqual([
+      "run-skill",
+      "create-task",
+      "capture-note",
+      "refresh-data",
+    ]);
+  });
+
+  it.each(UNAVAILABLE_QUICK_ACTIONS.map((action) => [action.label, action] as const))(
     "%s executes nothing in this phase",
     (_label, action) => {
       const ctx = context();
       expect(dispatchQuickAction(action, ctx)).toEqual({ kind: "unavailable" });
       expect(ctx.navigate).not.toHaveBeenCalled();
+      expect(ctx.requestLaunch).not.toHaveBeenCalled();
+      expect(ctx.openSwitcher).not.toHaveBeenCalled();
+      expect(ctx.notify).toHaveBeenCalledWith(`${action.label} isn't available yet.`);
     },
   );
+
+  it("the two live Quick actions call requestLaunch / openSwitcher exactly once", () => {
+    const actions = WIDGETS["quick-actions"].quickActions;
+    const desktop = actions.find((action) => action.id === "open-claude-desktop");
+    const session = actions.find((action) => action.id === "start-session");
+    if (desktop === undefined || session === undefined) throw new Error("missing live actions");
+    expect(desktop.capability).toBe("launch:claude-desktop");
+    expect(session.capability).toBe("switcher:claude-code");
+
+    const ctx = context();
+    expect(dispatchQuickAction(desktop, ctx)).toEqual({
+      kind: "launch-requested",
+      action: "claude-desktop",
+    });
+    expect(ctx.requestLaunch).toHaveBeenCalledTimes(1);
+    expect(ctx.requestLaunch).toHaveBeenCalledWith(null, "claude-desktop");
+
+    expect(dispatchQuickAction(session, ctx)).toEqual({ kind: "switcher-opened" });
+    expect(ctx.openSwitcher).toHaveBeenCalledTimes(1);
+    expect(ctx.openSwitcher).toHaveBeenCalledWith("Start Claude Code in ");
+    expect(ctx.navigate).not.toHaveBeenCalled();
+    expect(ctx.notify).not.toHaveBeenCalled();
+  });
+});
+
+describe("a launch:* capability requests a launch and touches nothing else (D-24, PR-08)", () => {
+  it("requests a launch for a project-targeted action, calling requestLaunch exactly once", () => {
+    const ctx = context();
+    const descriptor: QuickActionDescriptor = {
+      id: "x",
+      label: "Finder",
+      capability: "launch:finder",
+      target: { projectId: PROJECT_ID },
+    };
+
+    const result = dispatchQuickAction(descriptor, ctx);
+
+    expect(result).toEqual({ kind: "launch-requested", action: "finder" });
+    expect(ctx.requestLaunch).toHaveBeenCalledTimes(1);
+    expect(ctx.requestLaunch).toHaveBeenCalledWith(PROJECT_ID, "finder");
+    expect(ctx.notify).not.toHaveBeenCalled();
+    expect(ctx.navigate).not.toHaveBeenCalled();
+    expect(ctx.openSwitcher).not.toHaveBeenCalled();
+  });
+
+  it("requests claude-desktop with a null projectId when the descriptor carries no target", () => {
+    const ctx = context();
+    const descriptor: QuickActionDescriptor = {
+      id: "x",
+      label: "Claude Desktop",
+      capability: "launch:claude-desktop",
+    };
+
+    const result = dispatchQuickAction(descriptor, ctx);
+
+    expect(result).toEqual({ kind: "launch-requested", action: "claude-desktop" });
+    expect(ctx.requestLaunch).toHaveBeenCalledTimes(1);
+    expect(ctx.requestLaunch).toHaveBeenCalledWith(null, "claude-desktop");
+  });
+
+  it("reports unavailable when a project-targeted action has no target", () => {
+    const ctx = context();
+    const descriptor: QuickActionDescriptor = {
+      id: "x",
+      label: "Finder",
+      capability: "launch:finder",
+    };
+
+    const result = dispatchQuickAction(descriptor, ctx);
+
+    expect(result).toEqual({ kind: "unavailable" });
+    expect(ctx.requestLaunch).not.toHaveBeenCalled();
+    expect(ctx.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports unavailable for an unrecognised launch action", () => {
+    const ctx = context();
+    const descriptor: QuickActionDescriptor = {
+      id: "x",
+      label: "Bogus",
+      capability: "launch:bogus",
+    };
+
+    const result = dispatchQuickAction(descriptor, ctx);
+
+    expect(result).toEqual({ kind: "unavailable" });
+    expect(ctx.requestLaunch).not.toHaveBeenCalled();
+  });
+});
+
+describe("switcher:claude-code opens the switcher and touches nothing else", () => {
+  it("opens the switcher prefilled with the Claude Code prompt", () => {
+    const ctx = context();
+    const descriptor: QuickActionDescriptor = {
+      id: "x",
+      label: "Claude Code",
+      capability: "switcher:claude-code",
+    };
+
+    const result = dispatchQuickAction(descriptor, ctx);
+
+    expect(result).toEqual({ kind: "switcher-opened" });
+    expect(ctx.openSwitcher).toHaveBeenCalledTimes(1);
+    expect(ctx.openSwitcher).toHaveBeenCalledWith("Start Claude Code in ");
+    expect(ctx.notify).not.toHaveBeenCalled();
+    expect(ctx.navigate).not.toHaveBeenCalled();
+    expect(ctx.requestLaunch).not.toHaveBeenCalled();
+  });
 });
 
 describe("the dispatcher has no second side-effect channel (T-03-13)", () => {

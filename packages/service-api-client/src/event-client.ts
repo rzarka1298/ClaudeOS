@@ -144,12 +144,20 @@ export function createEventClient({
    * directly (not through the JSON-response-shaped `SocketApiClient`) to
    * keep this module's only outbound surface `http.request({socketPath})`,
    * matching `socket-api-client.ts`'s own convention.
+   *
+   * Resolves `true` only when a valid snapshot was adopted. Anything else —
+   * a transport error, a non-200, a body that fails the schema — resolves
+   * `false`, and the caller must NOT resume the stream: every event after a
+   * resync is a delta against the snapshot, so delivering them with no
+   * adopted base (and advancing `lastEventId` past them) would silently lose
+   * state until the next full resync, which a replaying reconnect never asks
+   * for.
    */
-  function fetchSnapshotAndResume(): Promise<void> {
+  function fetchSnapshotAndResume(): Promise<boolean> {
     return getToken()
       .then(
         (token) =>
-          new Promise<void>((resolve, reject) => {
+          new Promise<boolean>((resolve, reject) => {
             const req = http.request(
               {
                 socketPath,
@@ -162,14 +170,20 @@ export function createEventClient({
                 res.on("data", (c: Buffer) => chunks.push(c));
                 res.on("end", () => {
                   try {
+                    if (res.statusCode !== 200) {
+                      resolve(false);
+                      return;
+                    }
                     const raw = Buffer.concat(chunks).toString("utf8");
                     const parsed: unknown = raw.length > 0 ? JSON.parse(raw) : undefined;
                     const result = SnapshotResponseSchema.safeParse(parsed);
-                    if (result.success) {
-                      lastEventId = result.data.lastEventId;
-                      onSnapshotCb?.(result.data);
+                    if (!result.success) {
+                      resolve(false);
+                      return;
                     }
-                    resolve();
+                    lastEventId = result.data.lastEventId;
+                    onSnapshotCb?.(result.data);
+                    resolve(true);
                   } catch (err) {
                     reject(err instanceof Error ? err : new Error(String(err)));
                   }
@@ -180,17 +194,21 @@ export function createEventClient({
             req.end();
           }),
       )
-      .catch(() => {
-        // A failed snapshot fetch is not fatal to the subscription: the
-        // next reconnect (stream end/error already schedules one) retries
-        // the whole handshake -> connect -> resync flow from scratch.
-      });
+      .catch(() => false);
   }
 
-  async function handleChunk(chunk: string, res: IncomingMessage): Promise<void> {
+  /** The one connection attempt a chunk arrived on. */
+  interface Connection {
+    /** True once this connection has ended; its remaining chunks are discarded. */
+    settled(): boolean;
+    end(reason: string): void;
+  }
+
+  async function handleChunk(chunk: string, res: IncomingMessage, conn: Connection): Promise<void> {
+    if (conn.settled()) return;
     const results = parser.feed(chunk);
     for (const result of results) {
-      if (disposed) return;
+      if (disposed || conn.settled()) return;
       if (result.kind !== "event") continue; // parse-error entries are dropped; logging them is a later phase's concern
       const parsed = ServiceEventSchema.safeParse(result.data);
       if (!parsed.success) continue;
@@ -201,7 +219,16 @@ export function createEventClient({
         // fetched and adopted -- the ordering the resync path depends on
         // being race-free.
         res.pause();
-        await fetchSnapshotAndResume();
+        const adopted = await fetchSnapshotAndResume();
+        if (!adopted) {
+          // Not fatal to the subscription, but the stream cannot continue
+          // without a base: forget the resume point so the reconnect asks
+          // for a full resync (the service answers a header-less connection
+          // with `stream.resync`), and retry the whole flow from scratch.
+          lastEventId = undefined;
+          conn.end("snapshot fetch failed");
+          return;
+        }
         res.resume();
         continue;
       }
@@ -255,6 +282,10 @@ export function createEventClient({
       scheduleReconnect();
     }
     currentEndConnection = endConnection;
+    const connection: Connection = {
+      settled: () => connectionSettled,
+      end: endConnection,
+    };
 
     const req = http.request({ socketPath, path: EVENTS_PATH, method: "GET", headers }, (res) => {
       if (res.statusCode !== 200) {
@@ -280,7 +311,9 @@ export function createEventClient({
         // not just a fully-parsed event -- reset before processing so a
         // slow/partial chunk still counts.
         resetWatchdog();
-        processingChain = processingChain.then(() => handleChunk(chunk, res)).catch(() => {});
+        processingChain = processingChain
+          .then(() => handleChunk(chunk, res, connection))
+          .catch(() => {});
       });
       res.on("end", () => endConnection("stream ended"));
       res.on("close", () => endConnection("stream closed"));
