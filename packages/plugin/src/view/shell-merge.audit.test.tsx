@@ -47,7 +47,7 @@ function session(overrides: Partial<SessionView> = {}): SessionView {
     hasTranscript: false,
     terminateRequested: false,
     ...overrides,
-  } as SessionView;
+  };
 }
 
 function reset(): void {
