@@ -16,6 +16,7 @@ import {
   SessionActionRequestSchema,
   TerminateRequestResponseSchema,
   TranscriptAnalysisRequestSchema,
+  WorktreeListRequestSchema,
   WorktreeListResponseSchema,
 } from "./session-actions.js";
 
@@ -265,5 +266,20 @@ describe("launch port failures map onto session action error codes", () => {
       // One-to-one: no failure is relabelled as a different reason.
       expect(code).toBe(failure);
     }
+  });
+});
+
+describe("WorktreeListRequestSchema (05-17)", () => {
+  it("keeps the { runId } shape and adds a strict { projectId } shape", () => {
+    expect(WorktreeListRequestSchema.safeParse({ runId: RUN_ID }).success).toBe(true);
+    expect(
+      WorktreeListRequestSchema.safeParse({ projectId: "abcdefghi0123456789abcdef" }).success,
+    ).toBe(true);
+    expect(WorktreeListRequestSchema.safeParse({ projectId: "../x" }).success).toBe(false);
+    expect(
+      WorktreeListRequestSchema.safeParse({ runId: RUN_ID, projectId: "abcdefghi0123456789abcdef" })
+        .success,
+    ).toBe(false);
+    expect(WorktreeListRequestSchema.safeParse({}).success).toBe(false);
   });
 });

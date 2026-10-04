@@ -393,6 +393,7 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
       kind: result.ok ? "ok" : "conflict" in result ? "conflict" : result.error,
     };
     if (result.ok) deps.logger.info(fields, "launch");
+    else if ("conflict" in result) deps.logger.info(fields, "launch conflict");
     else deps.logger.warn(fields, "launch failed");
     return result;
   };

@@ -238,11 +238,58 @@ describe("a guard conflict from Start Claude Code opens the concurrent-choice UI
     });
 
     expect(chooseOnConflict).toHaveBeenCalledTimes(1);
-    expect(chooseOnConflict).toHaveBeenCalledWith(CONFLICT_BODY.conflict);
+    expect(chooseOnConflict).toHaveBeenCalledWith(CONFLICT_BODY.conflict, PROJECT_ID);
     expect(bodies).toEqual([
       { action: "claude-code", projectId: PROJECT_ID },
       { action: "claude-code", projectId: PROJECT_ID, choice: { kind: "plan" } },
     ]);
+  });
+
+  it("passes the launched projectId to the chooser", async () => {
+    const { client } = recordingClient([CONFLICT_BODY, { ok: true }]);
+    const chooseOnConflict = vi.fn(() => Promise.resolve({ kind: "plan" as const }));
+    createLaunchRequester({ ...deps(client), chooseOnConflict })(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(chooseOnConflict).toHaveBeenCalledWith(CONFLICT_BODY.conflict, PROJECT_ID);
+    });
+  });
+
+  it("a second conflict after a retry loops back to the choice instead of failing", async () => {
+    const { client, bodies } = recordingClient([CONFLICT_BODY, CONFLICT_BODY, { ok: true }]);
+    const chooseOnConflict = vi
+      .fn()
+      .mockResolvedValueOnce({ kind: "existing-worktree", worktreeId: "wt1" })
+      .mockResolvedValueOnce({ kind: "plan" });
+    const notify = vi.fn();
+    createLaunchRequester({ ...deps(client, notify), chooseOnConflict })(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(launchStatus.value.get(launchStatusKey(PROJECT_ID, "claude-code"))?.kind).toBe(
+        "success",
+      );
+    });
+    expect(chooseOnConflict).toHaveBeenCalledTimes(2);
+    expect(bodies).toHaveLength(3);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("gives up with spawn-failed after three conflict rounds", async () => {
+    const { client, bodies } = recordingClient([
+      CONFLICT_BODY,
+      CONFLICT_BODY,
+      CONFLICT_BODY,
+      CONFLICT_BODY,
+      CONFLICT_BODY,
+    ]);
+    const chooseOnConflict = vi.fn(() => Promise.resolve({ kind: "continue" as const }));
+    createLaunchRequester({ ...deps(client), chooseOnConflict })(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(launchStatus.value.get(launchStatusKey(PROJECT_ID, "claude-code"))).toEqual({
+        kind: "error",
+        error: "spawn-failed",
+      });
+    });
+    expect(chooseOnConflict).toHaveBeenCalledTimes(3);
+    expect(bodies).toHaveLength(4);
   });
 
   it("cancel sends nothing more and clears the opening status", async () => {

@@ -35,6 +35,7 @@ import {
   type SessionTerminalLauncher,
   type TerminateRequestResponse,
   WORKTREE_NAME_PATTERN,
+  WorktreeListRequestSchema,
   type WorktreeListResponse,
 } from "@ccc/domain";
 import {
@@ -528,11 +529,21 @@ const handleResume = actionRoute(
 /** `POST /api/v1/sessions/worktrees` `{ runId }`: the launch root's worktrees, by opaque id (D-28, PR-25). */
 const handleWorktrees = actionRoute(
   SESSION_WORKTREES_PATH,
-  SessionActionRequestSchema,
+  WorktreeListRequestSchema,
   async (body, res, { actions }) => {
-    const run = getSessionRun(actions.db, body.runId as RunId);
-    if (run === null) return sendError(res, "run-not-found");
-    const root = launchRootOf(run, actions);
+    let root: LaunchRoot | null;
+    if ("projectId" in body) {
+      // A fresh Start's conflict modal: the launched project's own root.
+      const project = actions.lookup.list().find((p) => p.projectId === body.projectId);
+      root =
+        project !== undefined && isAbsolute(project.root) && isDirectory(project.root)
+          ? { root: realpathSync.native(project.root), projectName: project.name }
+          : null;
+    } else {
+      const run = getSessionRun(actions.db, body.runId as RunId);
+      if (run === null) return sendError(res, "run-not-found");
+      root = launchRootOf(run, actions);
+    }
     if (root === null) return sendError(res, "project-missing");
     const entries = await actions.listWorktrees(root.root);
     const response: WorktreeListResponse = {

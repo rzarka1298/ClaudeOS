@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
 import type { GuardConflict, LaunchPortFailure } from "./ports.js";
+import { ProjectIdSchema } from "./projects.js";
 import { RUN_STATES } from "./run.js";
 import { RunIdSchema } from "./session.js";
 
@@ -43,6 +44,17 @@ export const SESSION_TERMINATE_REQUEST_PATH = `${API_BASE}/sessions/terminate-re
 /** The body of every action that addresses one Session. */
 export const SessionActionRequestSchema = z.strictObject({ runId: RunIdSchema });
 export type SessionActionRequest = z.infer<typeof SessionActionRequestSchema>;
+
+/**
+ * The worktrees list is keyed by a Run (resume and branch) or, for a fresh
+ * Start conflict where the owner is choosing a worktree for a project, by that
+ * project (05-17). Additive: the `{ runId }` shape is unchanged.
+ */
+export const WorktreeListRequestSchema = z.union([
+  SessionActionRequestSchema,
+  z.strictObject({ projectId: ProjectIdSchema }),
+]);
+export type WorktreeListRequest = z.infer<typeof WorktreeListRequestSchema>;
 
 /** An existing worktree is addressed by the opaque id the worktree list returned, never by path. */
 const WorktreeIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, {

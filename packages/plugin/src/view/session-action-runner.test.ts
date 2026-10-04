@@ -237,6 +237,19 @@ describe("Task 1: an unresolvable descriptor (Test 4)", () => {
   });
 });
 
+describe("session:force-terminate is unreachable (SESS-16)", () => {
+  it("answers unavailable and never calls requestSessionAction", async () => {
+    const requestSessionAction = vi.fn();
+    const notify = vi.fn();
+    const deps = makeDeps({ requestSessionAction, ui: fakeUi({ notify }) });
+
+    await runSessionAction(descriptor("session:force-terminate", RUN_ID_1, "Terminate"), deps);
+
+    expect(notify).toHaveBeenCalledExactlyOnceWith("Terminate isn't available yet.");
+    expect(requestSessionAction).not.toHaveBeenCalled();
+  });
+});
+
 describe("Task 1 (source scan, Test 5): no interrupt-signal action name; only domain action names", () => {
   const SRC_DIR = dirname(fileURLToPath(import.meta.url));
   const SOURCE = readFileSync(join(SRC_DIR, "session-action-runner.ts"), "utf8");

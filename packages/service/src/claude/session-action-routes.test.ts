@@ -369,6 +369,30 @@ describe("POST /api/v1/sessions/resume (Task 1 tracer, SESS-13, D-32, PR-10, PR-
     });
   });
 
+  it("lists the worktrees of a launched project by projectId, not by a Run's project (05-17)", async () => {
+    const token = await handshake();
+    const otherId = "otherproj0123456789abcdef";
+    const otherRepo = join(dir, "other");
+    mkdirSync(otherRepo);
+    testGit(otherRepo, "init", "-q", "-b", "trunk");
+    testGit(otherRepo, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init");
+    registerProject(otherId, otherRepo, "Other");
+
+    const byProject = await post(SESSION_WORKTREES_PATH, { projectId: otherId }, token);
+    expect(byProject.status).toBe(200);
+    expect(WorktreeListResponseSchema.parse(byProject.body).worktrees.map((w) => w.branch)).toEqual(
+      ["trunk"],
+    );
+    expect(JSON.stringify(byProject.body)).not.toContain(dir);
+
+    const unknown = await post(
+      SESSION_WORKTREES_PATH,
+      { projectId: "missingpr0123456789abcdef" },
+      token,
+    );
+    expect(unknown.status).toBe(409);
+  });
+
   it("returns the conflict list first, then launches each of the four choices (Test 3, D-28)", async () => {
     const token = await handshake();
     const source = seedRun({ projectId: "alpha", cwd: repo });

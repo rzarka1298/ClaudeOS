@@ -13,6 +13,7 @@ import {
   type ProjectId,
   SESSION_BRANCH_PATH,
   SESSION_RESUME_PATH,
+  SESSION_WORKTREES_PATH,
   type SessionRun,
 } from "@ccc/domain";
 import {
@@ -392,6 +393,40 @@ describe("the concurrent-write guard runs inside Phase 4's Start Claude Code lau
 
     expect(res.body).toEqual({ ok: false, error: "spawn-failed" });
     expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("an existing-worktree choice launches in the worktree while {projectPath} stays the project root", async () => {
+    const token = await handshake();
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: CLAUDE_EXE,
+      args: ["--add-dir", "{projectPath}"],
+      terminal: { kind: "terminal-app" },
+    });
+    const tree = join(dir, "trees", "feature");
+    mkdirSync(join(dir, "trees"));
+    testGit(repo, "worktree", "add", "-q", "-b", "feature", tree);
+    const listed = await post<{ worktrees: Array<{ worktreeId: string; branch: string }> }>(
+      SESSION_WORKTREES_PATH,
+      { projectId },
+      token,
+    );
+    const feature = listed.body.worktrees.find((w) => w.branch === "feature");
+    expect(feature).toBeDefined();
+
+    const res = await post<LaunchResponse>(
+      LAUNCH_PATH,
+      {
+        action: "claude-code",
+        projectId,
+        choice: { kind: "existing-worktree", worktreeId: feature?.worktreeId },
+      },
+      token,
+    );
+
+    expect(res.body).toEqual({ ok: true });
+    const script = lastScript();
+    expect(script).toContain(`cd -- '${realpathSync(tree)}'`);
+    expect(script).toContain(`'--add-dir' '${repo}'`);
   });
 
   it("launches straight through when nothing conflicts", async () => {

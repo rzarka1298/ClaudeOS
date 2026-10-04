@@ -103,7 +103,11 @@ export interface CreateLaunchRequesterOptions {
 export type ConflictChoice = LaunchChoice | { readonly kind: "cancel" };
 export type ConflictChooser = (
   conflict: LaunchConflictResult["conflict"],
+  projectId: ProjectId,
 ) => Promise<ConflictChoice>;
+
+/** How many times the owner is asked before a still-conflicting launch is reported as failed. */
+export const MAX_CONFLICT_ROUNDS = 3;
 
 type Outcome =
   | { readonly settled: "timeout" }
@@ -203,21 +207,26 @@ export function createLaunchRequester({
 
     const run = async (): Promise<void> => {
       let outcome = await send(request);
-      if (
-        request.action === "claude-code" &&
-        outcome.settled === "result" &&
-        "conflict" in outcome.result &&
-        !isDisposed()
-      ) {
-        // The guard found another writer: ask the owner how to proceed, then
-        // re-send with the answer (D-29). Cancel launches nothing.
+      // The guard found another writer: ask the owner how to proceed, then
+      // re-send with the answer (D-29). A second conflict (another launch won
+      // the race, or the chosen worktree is busy too) loops back to the
+      // choice, up to MAX_CONFLICT_ROUNDS. Cancel launches nothing.
+      for (let round = 0; round < MAX_CONFLICT_ROUNDS; round++) {
+        if (
+          request.action !== "claude-code" ||
+          outcome.settled !== "result" ||
+          !("conflict" in outcome.result) ||
+          isDisposed()
+        ) {
+          break;
+        }
         if (chooseOnConflict === undefined) {
           fail("spawn-failed");
           return;
         }
         let choice: ConflictChoice;
         try {
-          choice = await chooseOnConflict(outcome.result.conflict);
+          choice = await chooseOnConflict(outcome.result.conflict, request.projectId);
         } catch {
           if (!isDisposed()) fail("spawn-failed");
           return;
@@ -233,7 +242,7 @@ export function createLaunchRequester({
       if (outcome.settled === "threw") fail(classifyLaunchFailure(outcome.error));
       else if (outcome.settled === "timeout") fail("timeout");
       else if ("conflict" in outcome.result)
-        fail("spawn-failed"); // a second conflict (a race with another launch)
+        fail("spawn-failed"); // still conflicting after MAX_CONFLICT_ROUNDS
       else if (outcome.result.ok)
         setLaunchResult(key, { kind: "success", at: new Date().toISOString() }, timers);
       else fail(outcome.result.error);

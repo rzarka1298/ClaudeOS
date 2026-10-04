@@ -284,7 +284,7 @@ describe("session:* and usage:* descriptors reach the one runner (D-36, 05-17)",
     );
   });
 
-  it("force-terminate stays unreachable: no capability names an executor (SESS-16)", () => {
+  it("the dispatcher names no terminate executor and routes a session:* descriptor to the session runner (SESS-16)", () => {
     expect(DISPATCHER_SOURCE).not.toMatch(/force-terminate|executeTerminate|terminate-execute/);
     const ctx = { ...context(), runSessionAction: vi.fn() };
     const result = dispatchQuickAction(

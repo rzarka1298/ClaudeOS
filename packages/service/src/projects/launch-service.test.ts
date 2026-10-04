@@ -121,6 +121,30 @@ describe("the launch guard (D-49)", () => {
   });
 });
 
+describe("a guard conflict is an answer, not a failure (05-17)", () => {
+  it("logs at info with a conflict message, never warn 'launch failed'", async () => {
+    const calls: Array<{ level: string; msg: string; kind: string }> = [];
+    const guard: LaunchGuard = {
+      check: () =>
+        Promise.resolve({ ok: false, conflict: { projectName: "Example", conflicts: [] } }),
+    };
+    const logger = {
+      info: (f: LaunchLogFields, msg: string) => calls.push({ level: "info", msg, kind: f.kind }),
+      warn: (f: LaunchLogFields, msg: string) => calls.push({ level: "warn", msg, kind: f.kind }),
+    };
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    await service({ guard, logger, scriptDir: ensureScriptDir(join(base, "runtime")) }).launch({
+      projectId,
+      action: "claude-code",
+    });
+    expect(calls).toEqual([{ level: "info", msg: "launch conflict", kind: "conflict" }]);
+  });
+});
+
 describe("after a successful launch (D-42, D-11)", () => {
   it("touches last_opened_at, tells the collector, and queues a refresh", async () => {
     await expect(service().launch({ projectId, action: "finder" })).resolves.toEqual({ ok: true });

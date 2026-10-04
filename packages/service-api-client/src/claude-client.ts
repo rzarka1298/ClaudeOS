@@ -37,6 +37,8 @@ import {
   TerminateRequestResponseSchema,
   type TranscriptAnalysisRequest,
   TranscriptAnalysisRequestSchema,
+  type WorktreeListRequest,
+  WorktreeListRequestSchema,
   type WorktreeListResponse,
   WorktreeListResponseSchema,
 } from "@ccc/domain";
@@ -205,7 +207,7 @@ const SESSION_ACTION_SPECS = {
   },
   worktrees: {
     path: SESSION_WORKTREES_PATH,
-    request: SessionActionRequestSchema,
+    request: WorktreeListRequestSchema,
     response: WorktreeListResponseSchema,
   },
   "open-transcript": {
@@ -230,7 +232,7 @@ interface SessionActionTable {
   focus: { request: SessionActionRequest; response: FocusResponse };
   resume: { request: ResumeRequest; response: ResumeResponse };
   branch: { request: BranchRequest; response: BranchResponse };
-  worktrees: { request: SessionActionRequest; response: WorktreeListResponse };
+  worktrees: { request: WorktreeListRequest; response: WorktreeListResponse };
   "open-transcript": { request: OpenTranscriptRequest; response: unknown };
   associate: { request: AssociateRequest; response: unknown };
   "terminate-request": { request: SessionActionRequest; response: TerminateRequestResponse };

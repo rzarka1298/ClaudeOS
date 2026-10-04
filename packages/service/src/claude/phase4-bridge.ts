@@ -1,3 +1,4 @@
+import { accessSync, constants, statSync } from "node:fs";
 import {
   type LaunchErrorKind,
   type LaunchGuard,
@@ -87,6 +88,17 @@ function portFailure(error: LaunchErrorKind): LaunchPortFailure {
 function storedClaudeCode(store: OperationalStore) {
   const record = getLauncherConfig(store.db, "claude-code");
   return record === null ? null : parseStoredLauncherConfig("claude-code", record.config);
+}
+
+/** A stored path that is gone, a directory or not executable must not shadow the installer's binary. */
+function isExecutableFileSync(path: string): boolean {
+  try {
+    if (!statSync(path).isFile()) return false;
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function createTerminalLauncher(deps: Phase4BridgeDeps): SessionTerminalLauncher {
@@ -188,7 +200,15 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
       case "new-worktree":
         // The schema holds the name to the pattern; a leading `-` is also
         // refused so it can never read as a flag.
-        if (!WORKTREE_NAME_PATTERN.test(choice.name) || choice.name.startsWith("-")) return null;
+        // Like the domain schema, "." and ".." are refused, and so is a
+        // leading "." (a hidden or traversal-shaped name).
+        if (
+          !WORKTREE_NAME_PATTERN.test(choice.name) ||
+          choice.name.startsWith("-") ||
+          choice.name.startsWith(".")
+        ) {
+          return null;
+        }
         return {
           ...at,
           extra: { extraArgv: ["--worktree", choice.name] },
@@ -233,7 +253,12 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
 export function createPhase4Bridge(deps: Phase4BridgeDeps): Phase4Bridge {
   return {
     terminalLauncher: createTerminalLauncher(deps),
-    claudeBin: () => storedClaudeCode(deps.store)?.executablePath ?? deps.installedClaudeBin(),
+    claudeBin: () => {
+      const stored = storedClaudeCode(deps.store)?.executablePath;
+      return stored !== undefined && isExecutableFileSync(stored)
+        ? stored
+        : deps.installedClaudeBin();
+    },
     startGuard: createStartGuard(deps),
   };
 }
