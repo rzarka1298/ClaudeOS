@@ -79,6 +79,16 @@ export interface RunAttribution {
 /** A Run whose only change is activity time is written and published at most once per window (PR-05). */
 export const COALESCE_WINDOW_MS = 5000;
 
+/** The session metadata a status-line snapshot carries (Codex 6). */
+export interface StatusLineMetadata {
+  readonly claudeSessionId: string;
+  readonly observedAt: string;
+  readonly name?: string | undefined;
+  readonly model?: string | undefined;
+  readonly effort?: string | undefined;
+  readonly claudeVersion?: string | undefined;
+}
+
 /** What one ingest did. The route maps it to 202 or a constant 400. */
 export type IngestOutcome =
   | "applied"
@@ -116,6 +126,14 @@ export interface ClaudePipeline {
    * resolves false when the Run is unknown, terminal or already has one.
    */
   backfillPidStart(runId: RunId, pidStartedAt: string): Promise<boolean>;
+  /**
+   * Merges status-line session metadata (name, model, effort, version) into
+   * the session's live Run, at revision + 1, never touching its state. Only
+   * a snapshot at least as new as the Run's last evidence applies, a missing
+   * field never clears a known value, and a terminal or unknown Run is left
+   * alone. Queued with ingest; resolves false when nothing changed.
+   */
+  applyStatusMetadata(metadata: StatusLineMetadata): Promise<boolean>;
   /** Synchronous: non-terminal Runs plus terminal Runs that ended within 7 days. */
   listSessionViews(): SessionView[];
   health(): PipelineHealth;
@@ -477,6 +495,32 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
         const worktreeRoot = attribution.worktreeRoot ?? run.worktreeRoot;
         if (projectId === run.projectId && worktreeRoot === run.worktreeRoot) return false;
         writeAndPublish([{ ...run, projectId, worktreeRoot, revision: run.revision + 1 }]);
+        return true;
+      }),
+    applyStatusMetadata: (metadata) =>
+      enqueue(() => {
+        const run = index.latestBySession(metadata.claudeSessionId);
+        if (run === null || isTerminalRunState(run.state)) return false;
+        // A snapshot older than the Run's last evidence must not roll a newer
+        // hook-reported value back.
+        const observed = Date.parse(metadata.observedAt);
+        if (!Number.isFinite(observed)) return false;
+        if (run.lastActivityAt !== null && observed < Date.parse(run.lastActivityAt)) return false;
+        const next = {
+          name: metadata.name !== undefined && metadata.name !== "" ? metadata.name : run.name,
+          model: metadata.model ?? run.model,
+          effort: metadata.effort ?? run.effort,
+          claudeVersion: metadata.claudeVersion ?? run.claudeVersion,
+        };
+        if (
+          next.name === run.name &&
+          next.model === run.model &&
+          next.effort === run.effort &&
+          next.claudeVersion === run.claudeVersion
+        ) {
+          return false;
+        }
+        writeAndPublish([{ ...run, ...next, revision: run.revision + 1 }]);
         return true;
       }),
     backfillPidStart: (runId, pidStartedAt) =>

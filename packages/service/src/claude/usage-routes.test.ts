@@ -152,6 +152,7 @@ let store: OperationalStore;
 let bus: EventBus;
 let server: Server;
 let usage: UsageServices;
+let pipelineRef: ReturnType<typeof createClaudePipeline>;
 let spooledSink: ((snapshot: unknown) => void) | undefined;
 
 beforeEach(async () => {
@@ -170,6 +171,7 @@ beforeEach(async () => {
     mintRunId: newRunId,
     facts: NULL_FACTS,
   });
+  pipelineRef = pipeline;
   spooledSink = undefined;
   usage = startUsageServices({
     db: store.db,
@@ -245,6 +247,44 @@ describe("POST /api/v1/claude/statusline (Task 1 tracer, D-02, D-42, D-43)", () 
     ]);
     expect(summary.capacity.freshness).toBe("live");
     expect(summary.capacity.source).toBe("claude-code-status-line");
+  });
+
+  it("merges status-line session metadata into the matching Run and publishes it (Codex 6)", async () => {
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+    await pipelineRef.ingest(
+      {
+        eventId: randomUUID(),
+        observedAt: startedAt,
+        hook_event_name: "SessionStart",
+        session_id: "sess-usage-1",
+        source: "startup",
+        model: "old-model",
+        session_title: "old name",
+        env: { CLAUDE_PID: "4242" },
+      },
+      "socket",
+    );
+    const before = pipelineRef.listSessionViews();
+    expect(before).toHaveLength(1);
+    const token = await handshake(socketPath);
+    const res = await request<unknown>(socketPath, {
+      method: "POST",
+      path: CLAUDE_STATUSLINE_PATH,
+      rawBody: JSON.stringify(
+        statusLine({ session_name: "Renamed", model_id: "new-model", effort_level: "high" }),
+      ),
+      token,
+    });
+    expect(res.status).toBe(202);
+    const [view] = pipelineRef.listSessionViews();
+    expect(view).toMatchObject({
+      name: "Renamed",
+      model: "new-model",
+      effort: "high",
+      claudeVersion: "2.1.283",
+      state: before[0]?.state,
+    });
+    expect(view?.revision).toBeGreaterThan(before[0]?.revision ?? 0);
   });
 
   it("keeps the latest cost per session, never summed, over the socket and from the spool (Test 2)", async () => {

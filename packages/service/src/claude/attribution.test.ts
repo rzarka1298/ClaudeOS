@@ -314,6 +314,33 @@ describe("the session facts provider carries the attribution (05-08 hand-off, SE
     expect(calls).toBe(2);
   });
 
+  it("an owner override made while attribution is pending is not overwritten (Codex 3)", async () => {
+    let override: string | null = null;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const facts = createSessionFactsProvider({
+      processFacts,
+      claudeProjectsRoot: base,
+      logger,
+      getOverride: () => override,
+      attribute: async () => {
+        calls += 1;
+        const seen = override; // read before the slow filesystem/git work
+        if (calls === 1) await gate;
+        return seen === null
+          ? { projectId: "alpha", worktreeRoot: "/w", reason: "project-root" }
+          : { projectId: seen, worktreeRoot: "/w", reason: "override" };
+      },
+    });
+    const pending = facts.deferredFactsFor?.(recordOf("SessionStart", "/c"));
+    override = "beta"; // the owner associates the Run while attribution is pending
+    release();
+    expect(await pending).toMatchObject({ projectId: "beta" });
+  });
+
   it("an attribution that throws reads as unknown, never a failed ingest", async () => {
     const facts = createSessionFactsProvider({
       processFacts,

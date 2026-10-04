@@ -71,7 +71,7 @@ export interface UsageSettingsFacts {
 export interface UsageServicesDeps {
   readonly db: Database.Database;
   readonly bus: Pick<EventBus, "publish">;
-  readonly pipeline: Pick<ClaudePipeline, "onRunSettled" | "health">;
+  readonly pipeline: Pick<ClaudePipeline, "onRunSettled" | "health" | "applyStatusMetadata">;
   readonly poller: Pick<SpoolPoller, "setStatusLineSink" | "dropCount">;
   readonly logger: Logger;
   readonly env: NodeJS.ProcessEnv;
@@ -286,6 +286,21 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
     }
     try {
       applySnapshot(parsed.data);
+      const snapshot = parsed.data;
+      // Off the status-line reply path: a metadata merge failure never fails
+      // the snapshot, which is already stored.
+      void deps.pipeline
+        .applyStatusMetadata({
+          claudeSessionId: snapshot.session_id,
+          observedAt: new Date(snapshot.observedAt).toISOString(),
+          name: snapshot.session_name,
+          model: snapshot.model_id,
+          effort: snapshot.effort_level,
+          claudeVersion: snapshot.version,
+        })
+        .catch((err: unknown) => {
+          logger.warn({ err }, "status-line session metadata could not be applied");
+        });
     } catch (err: unknown) {
       logger.error({ err }, "status-line snapshot could not be stored");
       throw err;

@@ -248,6 +248,9 @@ export interface SessionFactsProviderOptions {
 
 const START_EVENT: KnownHookEvent = "SessionStart";
 
+/** Bounded recomputes when the owner override changes mid-attribution. */
+const OVERRIDE_RECOMPUTE_LIMIT = 3;
+
 /** How many (session, cwd) attributions the provider remembers between SessionStarts. */
 const ATTRIBUTION_CACHE_CAPACITY = 1000;
 
@@ -317,13 +320,25 @@ export function createSessionFactsProvider(
     if (running !== undefined) return running;
     const attribute = options.attribute;
     if (attribute === undefined) return Promise.resolve(NO_PROJECT);
-    const override = options.getOverride?.(record.session_id) ?? null;
     const work = (async (): Promise<ProjectFacts> => {
       try {
-        const result = await attribute({
-          cwd: record.cwd ?? null,
-          claudeSessionId: record.session_id,
-        });
+        // The owner may associate the session while the filesystem/git work
+        // is pending; an answer computed under a superseded override must
+        // not overwrite that choice, so it is recomputed (Codex 3).
+        let override: string | null = null;
+        let result: Awaited<ReturnType<typeof attribute>>;
+        let attempts = 0;
+        do {
+          override = options.getOverride?.(record.session_id) ?? null;
+          result = await attribute({
+            cwd: record.cwd ?? null,
+            claudeSessionId: record.session_id,
+          });
+          attempts += 1;
+        } while (
+          attempts < OVERRIDE_RECOMPUTE_LIMIT &&
+          (options.getOverride?.(record.session_id) ?? null) !== override
+        );
         const facts = { projectId: result.projectId, worktreeRoot: result.worktreeRoot };
         attributed.delete(key);
         attributed.set(key, { facts, override });
