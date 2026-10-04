@@ -5,7 +5,9 @@ import type { RunId, RunState, SessionView } from "@ccc/domain";
 import type { SessionUsage } from "@ccc/domain/usage.js";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { connectionState } from "../connection-state.js";
 import { sessionsById } from "../widgets/session-signals.js";
+import { lastUsageEventAt } from "../widgets/usage-signals.js";
 import { APPROVAL_INBOX_READY, controlsFor, DetailPane } from "./agent-runs-detail.js";
 import { selectedRunId } from "./agent-runs-state.js";
 import { clearActionStatus, setActionStatus } from "./session-action-status.js";
@@ -412,6 +414,45 @@ describe("Test 6: per-session usage", () => {
     expect(
       screen.getByText("Estimated API-equivalent cost — an estimate, not your bill: $1.23"),
     ).toBeTruthy();
+  });
+});
+
+describe("Test 6b: per-session usage refetches (codex finding 5)", () => {
+  const off: SessionUsage = {
+    runId: runId(1),
+    activity: { kind: "unavailable", reason: "analysis-off", version: null },
+    cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+  };
+  const other: SessionUsage = {
+    runId: runId(1),
+    activity: { kind: "unavailable", reason: "no-data", version: null } as never,
+    cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+  };
+  afterEach(() => {
+    lastUsageEventAt.value = null;
+    connectionState.value = { kind: "connecting" };
+  });
+
+  it("refetches when a usage update arrives or the connection becomes live again", async () => {
+    const loader = vi.fn().mockResolvedValueOnce(off).mockResolvedValue(other);
+    const headingRef = { current: null as HTMLHeadingElement | null };
+    render(
+      <DetailPane
+        session={session({ state: "running" })}
+        nowMs={NOW_MS}
+        connected={true}
+        projectCount={5}
+        onQuickAction={vi.fn()}
+        loadSessionUsage={loader}
+        headingRef={headingRef}
+      />,
+    );
+    expect(await screen.findByText("Transcript analysis is off")).toBeTruthy();
+    expect(loader).toHaveBeenCalledTimes(1);
+    lastUsageEventAt.value = "2026-09-25T12:00:01.000Z";
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+    connectionState.value = { kind: "live" };
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(3));
   });
 });
 

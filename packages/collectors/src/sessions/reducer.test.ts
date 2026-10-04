@@ -482,6 +482,24 @@ describe("session reducer — activity (D-18)", () => {
       },
     },
     {
+      name: "Notification and PostModelSwitch advance lastActivityAt like other live evidence",
+      initial: [seedRun({ runId: R1, lastActivityAt: at(1) })],
+      evidence: [
+        hook("Notification", {
+          observedAt: at(50),
+          fields: { notification_type: "permission_prompt" },
+        }),
+        hook("PostModelSwitch", {
+          observedAt: at(60),
+          fields: { from_model: "claude-synthetic-1", to_model: "claude-synthetic-3" },
+        }),
+      ],
+      check: (o) => {
+        expect(o.results[0]?.upserts[0]?.lastActivityAt).toBe(at(50));
+        expect(o.only().lastActivityAt).toBe(at(60));
+      },
+    },
+    {
       name: "a record stamped after now is recorded at now",
       initial: [seedRun({ runId: R1 })],
       evidence: [hook("PostToolUse", { observedAt: at(200_000) })],

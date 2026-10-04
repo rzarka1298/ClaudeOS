@@ -496,18 +496,23 @@ function reduceHook(
     case "Notification":
       return apply(true, (run) => {
         if (record.notification_type === "permission_prompt") {
-          return { state: "waiting-for-approval" };
+          return { state: "waiting-for-approval", lastActivityAt: later(run.lastActivityAt, at) };
         }
         if (record.notification_type === "idle_prompt") {
-          return { state: alive(run.state), activity: "idle" };
+          return {
+            state: alive(run.state),
+            activity: "idle",
+            lastActivityAt: later(run.lastActivityAt, at),
+          };
         }
-        return { state: alive(run.state) };
+        return { state: alive(run.state), lastActivityAt: later(run.lastActivityAt, at) };
       });
 
     case "PostModelSwitch":
       return apply(true, (run) => ({
         state: alive(run.state),
         model: record.to_model ?? record.model ?? run.model,
+        lastActivityAt: later(run.lastActivityAt, at),
       }));
   }
 }

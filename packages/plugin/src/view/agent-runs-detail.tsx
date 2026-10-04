@@ -17,16 +17,18 @@ import {
 import type { SessionUsage } from "@ccc/domain/usage.js";
 import type { VNode } from "preact";
 import { useEffect, useId, useState } from "preact/hooks";
+import { connectionState } from "../connection-state.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatDuration } from "../widgets/duration.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
-import { sessionsById } from "../widgets/session-signals.js";
+import { claudeIntegration, sessionsById } from "../widgets/session-signals.js";
 import {
   formatExactTokens,
   formatMonthDay,
   formatTimeOfDay,
   formatUsd,
 } from "../widgets/usage-format.js";
+import { lastUsageEventAt, usageSummary } from "../widgets/usage-signals.js";
 import { selectedRunId } from "./agent-runs-state.js";
 import { clearActionStatus, sessionActionStatus } from "./session-action-status.js";
 
@@ -451,6 +453,13 @@ function PerSessionUsage({
   readonly onQuickAction: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }): VNode | null {
   const [state, setState] = useState<UsageLoadState>({ kind: "idle" });
+  // Refetch triggers (codex finding 5): analysis toggled, usage updated or
+  // deleted, or the stream becoming live again. Reading `.value` in render
+  // also subscribes this component to each signal.
+  const analysisKey = claudeIntegration.value;
+  const summaryKey = usageSummary.value;
+  const usageEventKey = lastUsageEventAt.value;
+  const liveKey = connectionState.value.kind === "live";
 
   useEffect(() => {
     if (loadSessionUsage === undefined) {
@@ -470,7 +479,7 @@ function PerSessionUsage({
     return () => {
       cancelled = true;
     };
-  }, [runId, loadSessionUsage]);
+  }, [runId, loadSessionUsage, analysisKey, summaryKey, usageEventKey, liveKey]);
 
   if (loadSessionUsage === undefined || state.kind === "idle") return null;
   if (state.kind === "loading") {
