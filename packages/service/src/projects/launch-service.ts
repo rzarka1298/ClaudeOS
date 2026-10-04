@@ -275,7 +275,8 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     if (state.cancelled) return failure("timeout");
     if (prepared.kind === "refuse") return failure(prepared.error);
     const decision = await guard.check({ projectId, action: request.action });
-    if (!decision.ok) return failure(decision.error);
+    // RED scaffold (05-17 Task 2): GREEN answers a conflict as itself.
+    if (!decision.ok) return failure("error" in decision ? decision.error : "spawn-failed");
     if (state.cancelled) return failure("timeout");
     if (prepared.kind === "delegate") {
       const delegated = await prepared.run(state.signal);

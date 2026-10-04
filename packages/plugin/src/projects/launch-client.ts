@@ -1,8 +1,10 @@
 import type {
   LaunchAction,
+  LaunchChoice,
+  LaunchConflictResult,
   LaunchErrorKind,
   LaunchRequest,
-  LaunchResult,
+  LaunchResponse,
   ProjectId,
 } from "@ccc/domain";
 import type { SocketApiClient } from "@ccc/service-api-client";
@@ -87,13 +89,24 @@ export interface CreateLaunchRequesterOptions {
    * (wave-7 finding 3). A view needs none: it holds the store while open.
    */
   readonly holdStatus?: (() => () => void) | undefined;
+  /**
+   * Opens the concurrent-write choice when Start Claude Code answers a guard
+   * conflict (05-17, D-29). Absent, a conflict is reported as a failed launch.
+   */
+  readonly chooseOnConflict?: ConflictChooser | undefined;
   readonly setTimer: LaunchTimerControls["setTimer"];
   readonly clearTimer: LaunchTimerControls["clearTimer"];
 }
 
+/** The owner's answer to the guard: one of the four launch choices, or cancel. */
+export type ConflictChoice = LaunchChoice | { readonly kind: "cancel" };
+export type ConflictChooser = (
+  conflict: LaunchConflictResult["conflict"],
+) => Promise<ConflictChoice>;
+
 type Outcome =
   | { readonly settled: "timeout" }
-  | { readonly settled: "result"; readonly result: LaunchResult };
+  | { readonly settled: "result"; readonly result: LaunchResponse };
 
 /**
  * Builds `ctx.requestLaunch`. The returned function never throws and never
@@ -181,6 +194,8 @@ export function createLaunchRequester({
             if (outcome.settled === "timeout") fail("timeout");
             else if (outcome.result.ok)
               setLaunchResult(key, { kind: "success", at: new Date().toISOString() }, timers);
+            else if ("conflict" in outcome.result)
+              fail("spawn-failed"); // RED scaffold (05-17)
             else fail(outcome.result.error);
           } finally {
             settle();

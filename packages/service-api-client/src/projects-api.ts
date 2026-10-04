@@ -18,6 +18,8 @@ import {
   LauncherConfigViewSchema,
   type LauncherId,
   type LaunchRequest,
+  type LaunchResponse,
+  LaunchResponseSchema,
   type LaunchResult,
   LaunchResultSchema,
   type PinProjectRequest,
@@ -246,8 +248,8 @@ export function setGithubLink(
 export function requestLaunch(
   client: SocketApiClient,
   request: LaunchRequest,
-): Promise<LaunchResult> {
-  return postValidated(client, LAUNCH_PATH, request, LaunchResultSchema);
+): Promise<LaunchResponse> {
+  return postValidated(client, LAUNCH_PATH, request, LaunchResponseSchema);
 }
 
 // ---------------------------------------------------------------------------
