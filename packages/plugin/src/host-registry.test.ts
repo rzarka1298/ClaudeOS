@@ -99,4 +99,19 @@ describe("createHostRegistry", () => {
     expect(dispose).toHaveBeenCalledTimes(1);
     expect(registry.liveCount()).toBe(0);
   });
+
+  it("routes the switcher's launch timers and open modal through named methods (wave-7 finding 2)", () => {
+    const registry = createHostRegistry(createStubHost());
+    const timers = vi.fn();
+    const modal = vi.fn();
+
+    registry.launchTimers(timers);
+    registry.switcherModal(modal);
+    expect(registry.liveCount()).toBe(2);
+
+    registry.disposeAll();
+    expect(timers).toHaveBeenCalledTimes(1);
+    expect(modal).toHaveBeenCalledTimes(1);
+    expect(registry.liveCount()).toBe(0);
+  });
 });

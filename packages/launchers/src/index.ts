@@ -1,9 +1,15 @@
-// Owned by Phase 4 (project registration, git state, application and
-// terminal launchers). This package exists now, with an empty functional
-// surface, so the import-boundary lint (REPO-03, plan 01-03) has a real
-// package to constrain from day one.
+// @ccc/launchers — Phase 4 (project registration, git state, application
+// and terminal launchers).
+//
+// Package rule: pure, deterministic logic only. No process spawning, no
+// filesystem access, no network; the service composes these functions and
+// owns every side effect. The only internal import allowed is @ccc/domain
+// (eslint.config.mjs boundary map, SC-7).
 
-/** The mechanism that opens a Project in an external macOS application. */
-export interface Launcher {
-  readonly launcherId: string;
-}
+export * from "./app-actions.js";
+export * from "./command-template.js";
+export * from "./error-map.js";
+export * from "./git-parse.js";
+export * from "./github-url.js";
+export * from "./launch-script.js";
+export * from "./sh-quote.js";

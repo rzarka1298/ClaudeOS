@@ -4,18 +4,29 @@ import {
   createAuthenticatedClient,
   createEventClient,
   createSocketApiClient,
+  refreshProjects,
 } from "@ccc/service-api-client";
-import { Plugin, type WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference } from "./motion.js";
+import { registerSetUpLaunchersCommand } from "./projects/commands.js";
+import { createPluginLauncher, type RequestLaunch } from "./projects/plugin-launcher.js";
+import { refreshProjectsOnConnect } from "./service-connection.js";
 import {
   assertNoCredentialFields,
+  assertNoPrivatePathValues,
   type CommandCenterSettings,
   DEFAULT_SETTINGS,
 } from "./settings.js";
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
+import { createPluginSwitcher } from "./view/plugin-switcher.js";
+import {
+  createSwitcherOpener,
+  ProjectSwitcherModal,
+  registerSwitcherCommand,
+} from "./view/quick-switcher.js";
 import { CommandCenterSettingTab } from "./view/settings-tab.js";
 import { startClock } from "./widgets/clock.js";
 import { createAdapterLayoutSource, startLayoutPolling } from "./widgets/layout-source.js";
@@ -40,6 +51,19 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
   settings: CommandCenterSettings = DEFAULT_SETTINGS;
   client!: AuthenticatedSocketApiClient;
   eventClient!: EventClient;
+  /**
+   * Opens the S9 quick-switcher with a query (PROJ-16). Every way in — the
+   * palette command, the view's `Mod+K`, S8's `Start a Claude Code session`
+   * — calls this one function, which attaches the event client first.
+   */
+  openSwitcher: (prefill: string) => void = () => {};
+  /**
+   * The plugin's one launch requester, shared by every command-center view
+   * and the quick-switcher, so a launch outlives the view that started it
+   * (codex review 3, finding 1). Built in `onload` before the view type is
+   * registered; its timers are released on unload through the seam.
+   */
+  requestLaunch: RequestLaunch = () => {};
   private hostRegistry!: HostRegistry;
 
   async onload(): Promise<void> {
@@ -99,6 +123,16 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       window.matchMedia(REDUCED_MOTION_QUERY),
     );
 
+    // One launch requester for the whole plugin: views and the switcher
+    // share its deadlines and store holds (codex review 3, finding 1).
+    this.requestLaunch = createPluginLauncher({
+      registry: this.hostRegistry,
+      client: this.client,
+      notify: (message) => {
+        new Notice(message);
+      },
+    });
+
     this.hostRegistry.view(VIEW_TYPE, (leaf: WorkspaceLeaf) => new CommandCenterView(leaf, this));
 
     this.hostRegistry.ribbon("layout-dashboard", "Open command center", () => {
@@ -128,6 +162,41 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     // never reaches the filesystem for this: it hands the service a path
     // and renders the plan the service sends back.
     registerVaultSetupCommand(this.hostRegistry, createObsidianVaultSetupUi(this.app), this.client);
+
+    // The quick-switcher (PROJ-16, D-31 – D-34), from the palette with no
+    // default hotkey (D-33). Opening it attaches the event client lazily, so
+    // it lists the last-good projects even before the view was opened.
+    // Its launches share the plugin launcher above (whose timers are
+    // released on unload); a modal still open is closed through the seam,
+    // after which a late choice does nothing (PLUG-03).
+    const switcher = createPluginSwitcher({
+      registry: this.hostRegistry,
+      client: this.client,
+      notify: (message) => {
+        new Notice(message);
+      },
+      reveal: () => {
+        void this.revealView();
+      },
+      openSwitcher: (prefill) => this.openSwitcher(prefill),
+      requestLaunch: this.requestLaunch,
+      openModal: (host, prefill, onClosed) => {
+        const modal = new ProjectSwitcherModal(this.app, host, onClosed);
+        modal.openWith(prefill);
+        return modal;
+      },
+    });
+    this.openSwitcher = createSwitcherOpener({
+      eventClient: this.eventClient,
+      onLive: refreshProjectsOnConnect(() => refreshProjects(this.client)),
+      show: switcher.show,
+    });
+    registerSwitcherCommand(this.hostRegistry, this.openSwitcher);
+
+    // Reruns launcher onboarding anytime: Settings › Launchers, focused (D-30).
+    registerSetUpLaunchersCommand(this.hostRegistry, () => {
+      void this.revealView();
+    });
   }
 
   /**
@@ -150,9 +219,10 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     this.settings = { ...DEFAULT_SETTINGS, ...loaded };
   }
 
-  /** The plugin's only write path to Obsidian's plugin-data storage — always guarded (PLUG-07). */
+  /** The plugin's only write path to Obsidian's plugin-data storage — always guarded (PLUG-07, D-43). */
   async saveSettings(): Promise<void> {
     assertNoCredentialFields(this.settings);
+    assertNoPrivatePathValues(this.settings);
     await this.saveData(this.settings);
   }
 

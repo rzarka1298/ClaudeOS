@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkPathContainment, isContained } from "./path-containment.js";
+import {
+  checkPathContainment,
+  checkPathContainmentResolved,
+  isContained,
+} from "./path-containment.js";
 
 let dir: string;
 let root: string;
@@ -112,5 +116,30 @@ describe("checkPathContainment is total", () => {
     if (result.contained) return;
     expect(result.reason).not.toContain(outside);
     expect(result.reason).not.toContain("/");
+  });
+});
+
+describe("checkPathContainmentResolved (already-resolved paths, no fs, plan 04-13)", () => {
+  it("applies the same strict-descendant rule without touching the filesystem", () => {
+    expect(checkPathContainmentResolved("/r/a/b", "/r")).toEqual({
+      contained: true,
+      resolved: "/r/a/b",
+    });
+    expect(checkPathContainmentResolved("/r", "/r")).toEqual({
+      contained: false,
+      reason: "is-root",
+    });
+    expect(checkPathContainmentResolved("/rx/a", "/r")).toEqual({
+      contained: false,
+      reason: "not-descendant",
+    });
+    expect(checkPathContainmentResolved("/elsewhere", "/r")).toEqual({
+      contained: false,
+      reason: "not-descendant",
+    });
+    expect(checkPathContainmentResolved("/r/a\0", "/r")).toEqual({
+      contained: false,
+      reason: "nul-byte",
+    });
   });
 });

@@ -1,5 +1,3 @@
-import type { ServiceEvent } from "@ccc/domain";
-import type { EventClient, EventClientState } from "@ccc/service-api-client";
 import { signal } from "@preact/signals";
 
 /**
@@ -10,6 +8,11 @@ import { signal } from "@preact/signals";
  * with stale data: a widget that freezes on its last good value while its
  * source is gone is the specific dishonesty the freshness model exists to
  * prevent (PLUG-04).
+ *
+ * This module holds signals only and imports nothing of the plugin's own:
+ * `service-connection.ts` wires an event client onto them, so the modules
+ * that read connection state (`projects-state.ts`) never sit in an import
+ * cycle with the router that feeds them.
  */
 export type ConnectionState =
   | { kind: "connecting" }
@@ -36,34 +39,3 @@ export const lastEvent = signal<LastEventInfo | undefined>(undefined);
  * rather than an invented one or a blank footer (UI-06, D-16).
  */
 export const connectionChangedAt = signal<string>(new Date().toISOString());
-
-function mapClientState(state: EventClientState): ConnectionState {
-  switch (state.kind) {
-    case "connecting":
-      return { kind: "connecting" };
-    case "live":
-      return { kind: "live" };
-    case "disconnected":
-      return { kind: "disconnected", reason: state.reason };
-  }
-}
-
-/**
- * Wires an {@link EventClient}'s transitions onto the {@link connectionState}
- * and {@link lastEvent} signals the shell reads directly (never a client —
- * PERF-01). Safe to call more than once with the same client: `EventClient`
- * itself only ever opens one underlying connection (see
- * `event-client.ts`'s own idempotency guard), so calling this again on a
- * view reopen just re-points the callbacks at the still-live subscription.
- */
-export function attachEventClient(client: EventClient): void {
-  client.subscribe(
-    (event: ServiceEvent) => {
-      lastEvent.value = { type: event.type, occurredAt: event.occurredAt };
-    },
-    (state: EventClientState) => {
-      connectionState.value = mapClientState(state);
-      connectionChangedAt.value = new Date().toISOString();
-    },
-  );
-}

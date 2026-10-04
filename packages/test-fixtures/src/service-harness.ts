@@ -1,10 +1,12 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import http from "node:http";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVICE_ENTRY = path.resolve(__dirname, "../../service/dist/main.js");
+const REAL_RUNTIME_DIR = path.join(homedir(), ".claude-command-center");
 
 export interface StartServiceForTestOptions {
   socketPath: string;
@@ -52,6 +54,13 @@ function waitForSocket(socketPath: string, attempts = 50, delayMs = 100): Promis
 export async function startServiceForTest({
   socketPath,
 }: StartServiceForTestOptions): Promise<TestServiceHandle> {
+  // Belt and braces beside the service's own RealRuntimeDirUnderTestError:
+  // never even spawn a service aimed at the real runtime directory.
+  if (path.resolve(path.dirname(socketPath)) === path.resolve(REAL_RUNTIME_DIR)) {
+    throw new Error(
+      "startServiceForTest refuses the real runtime directory; use withTempSocketDir.",
+    );
+  }
   const child: ChildProcess = spawn(process.execPath, [SERVICE_ENTRY], {
     env: {
       ...process.env,

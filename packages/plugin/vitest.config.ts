@@ -31,6 +31,12 @@ export default defineConfig({
     // truth, and the production bundle never sees this file.
     alias: {
       obsidian: fileURLToPath(new URL("./src/test-support/obsidian-stub.ts", import.meta.url)),
+      // `electron` is externalised by esbuild.config.mjs for the same reason
+      // `obsidian` is: Obsidian's own Electron process supplies it at
+      // runtime, so a module reaching for `electron.remote.dialog` (the
+      // folder-picker seam) has nothing to load under Vitest without this
+      // stand-in (plan 04-05 SC-5).
+      electron: fileURLToPath(new URL("./src/test-support/electron-stub.ts", import.meta.url)),
     },
   },
 });

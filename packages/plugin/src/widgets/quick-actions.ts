@@ -1,23 +1,27 @@
+import type { LaunchAction, ProjectId } from "@ccc/domain";
+import { launchActionSchema } from "@ccc/domain";
 import type { DestinationId } from "../view/destinations.js";
 import type { QuickActionDescriptor } from "./contract.js";
 
 /**
  * THE choke point every quick action passes through (C-11, APPR-01,
- * ADR-0012, threat T-03-13).
+ * ADR-0012, ADR-0024, threat T-03-13, D-24, PR-08).
  *
- * This function has exactly two outcomes — navigate to the plugin's own
- * settings destination, or report that the action is not available — and it
- * MUST NEVER grow a third. No launch, no write, no network, no shell, no
- * navigation anywhere but `settings`. It exists now, before any action can do
- * anything, precisely so Phase 6's approval engine has ONE place to insert its
- * check; a per-widget callback would be a hole in that boundary that no later
- * phase could close (PATTERNS Pitfall 6).
+ * This function has exactly four outcomes — navigate to the plugin's own
+ * settings destination, request a launch, open the quick switcher, or report
+ * that the action is not available — and it MUST NEVER grow a fifth. No
+ * write, no network, no shell, no navigation anywhere but `settings`. It
+ * exists now, before any action can do anything, precisely so Phase 6's
+ * approval engine has ONE place to insert its check; a per-widget callback
+ * would be a hole in that boundary that no later phase could close (PATTERNS
+ * Pitfall 6). Launches need no approval in this phase — the `launch:*`
+ * branch below calls `ctx.requestLaunch` directly — and Phase 6 inserts its
+ * check between the capability classification and that call, not around it.
  *
  * `ctx` is the ONLY surface it can reach: the module imports nothing from
  * `obsidian`, `node:child_process` or `@ccc/service-api-client`, names no
  * side-effecting global, and `quick-actions.test.ts` scans this source to
- * prove it. A future approval check goes between the capability classification
- * below and the `ctx` call, not around it.
+ * prove it.
  *
  * On `connect:*` the honest action is "take me to where this will be
  * configured": no OAuth flow exists before Phase 6/7, so a browser hand-off
@@ -29,14 +33,29 @@ import type { QuickActionDescriptor } from "./contract.js";
 export interface QuickActionContext {
   navigate(id: DestinationId): void;
   notify(message: string): void;
+  /** `projectId` is `null` for the one action with no project target (`claude-desktop`). */
+  requestLaunch(projectId: ProjectId | null, action: LaunchAction): void;
+  /**
+   * Absent until the host wires a quick switcher (plan 04-14): the
+   * `switcher:*` capability then answers like any unavailable action.
+   */
+  readonly openSwitcher?: ((prefill: string) => void) | undefined;
 }
 
 export type QuickActionResult =
   | { readonly kind: "navigated"; readonly destination: DestinationId }
-  | { readonly kind: "unavailable" };
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "launch-requested"; readonly action: LaunchAction }
+  | { readonly kind: "switcher-opened" };
 
 /** Where a connector is configured once its phase lands. */
 const SETTINGS: DestinationId = "settings";
+
+/** The action that needs no project (D-06). */
+const NO_TARGET_ACTION: LaunchAction = "claude-desktop";
+
+/** The quick switcher's prefill for a Claude Code launch (S8, UI-SPEC). */
+export const SWITCHER_CLAUDE_CODE_PREFILL = "Start Claude Code in ";
 
 /** `Connect Google Calendar and Gmail` → `Google Calendar and Gmail`. */
 function sourceFromLabel(label: string): string {
@@ -54,6 +73,30 @@ export function dispatchQuickAction(
       `Connect ${source} from Settings → Claude command center once its connector is available.`,
     );
     return { kind: "navigated", destination: SETTINGS };
+  }
+
+  if (descriptor.capability.startsWith("launch:")) {
+    const suffix = descriptor.capability.slice("launch:".length);
+    const parsed = launchActionSchema.safeParse(suffix);
+    if (parsed.success) {
+      const action = parsed.data;
+      if (action === NO_TARGET_ACTION) {
+        ctx.requestLaunch(null, action);
+        return { kind: "launch-requested", action };
+      }
+      const projectId = descriptor.target?.projectId;
+      if (projectId !== undefined) {
+        ctx.requestLaunch(projectId, action);
+        return { kind: "launch-requested", action };
+      }
+    }
+    ctx.notify(`${descriptor.label} isn't available yet.`);
+    return { kind: "unavailable" };
+  }
+
+  if (descriptor.capability === "switcher:claude-code" && ctx.openSwitcher !== undefined) {
+    ctx.openSwitcher(SWITCHER_CLAUDE_CODE_PREFILL);
+    return { kind: "switcher-opened" };
   }
 
   ctx.notify(`${descriptor.label} isn't available yet.`);

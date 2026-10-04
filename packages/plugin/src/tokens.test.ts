@@ -56,6 +56,20 @@ const FOCUSABLE = [
   // The footer's "last updated" time takes focus so the absolute timestamp is
   // reachable without a mouse (D-16; judge-r1 finding 2).
   ".ccc-footer-time",
+  // Phase 4 (D-39): the two removal confirmations' danger button, the one
+  // text-input shape, and each radio in a launcher's terminal-choice group.
+  // The launch toolbar's own buttons are `.ccc-quick-action` (unchanged) and
+  // are already covered by that entry above.
+  ".ccc-button-danger",
+  ".ccc-text-input",
+  ".ccc-radio-group input",
+];
+
+/** The Phase 4 interactive classes new to this section (D-39). */
+const PHASE_4_MIN_TARGET_CLASSES = [
+  ".ccc-button-danger",
+  ".ccc-text-input",
+  ".ccc-radio-group input",
 ];
 
 // ---------------------------------------------------------------------------
@@ -410,6 +424,47 @@ describe("focus visibility (A11Y-01)", () => {
     );
     expect(rules.length).toBeGreaterThan(0);
     expect(rules.some((rule) => /outline\s*:/.test(rule.body))).toBe(true);
+  });
+});
+
+describe("Phase 4 interactive classes: target size and input boundary (D-39)", () => {
+  it.each(PHASE_4_MIN_TARGET_CLASSES)(
+    "%s has a minimum target of --ccc-space-lg in both dimensions",
+    (selector) => {
+      const rule = RULES.find((r) => r.selector === selector);
+      expect(rule, `no rule for ${selector}`).toBeDefined();
+      const declarations = declarationsOf(rule as StyleRule);
+      const blockSize = declarations.find((d) => d.property === "min-block-size");
+      const inlineSize = declarations.find((d) => d.property === "min-inline-size");
+      expect(blockSize?.value, `${selector} min-block-size`).toBe("var(--ccc-space-lg)");
+      expect(inlineSize?.value, `${selector} min-inline-size`).toBe("var(--ccc-space-lg)");
+    },
+  );
+
+  it(".ccc-text-input's border colour is --ccc-ink-muted (the audited 3:1 control boundary)", () => {
+    const rule = RULES.find((r) => r.selector === ".ccc-text-input");
+    expect(rule).toBeDefined();
+    const border = declarationsOf(rule as StyleRule).find((d) => d.property === "border");
+    expect(border?.value).toContain("var(--ccc-ink-muted)");
+  });
+
+  it(".ccc-radio-group input sets accent-color to --ccc-ink", () => {
+    const rule = RULES.find((r) => r.selector === ".ccc-radio-group input");
+    expect(rule).toBeDefined();
+    const accent = declarationsOf(rule as StyleRule).find((d) => d.property === "accent-color");
+    expect(accent?.value).toBe("var(--ccc-ink)");
+  });
+
+  it("declares no new --ccc-* custom property in the Phase 4 section (D-39)", () => {
+    // The token block's own declaration count — asserted at the top of this
+    // file — is unchanged by this section; every Phase 4 rule below reuses
+    // an existing --ccc-* token or a plain literal already used elsewhere
+    // (e.g. the 0.55 dim opacity `.ccc-source-button[aria-disabled]` set).
+    const phase4Start = STYLESHEET.indexOf("Phase 4 — Projects & Launchers");
+    expect(phase4Start).toBeGreaterThan(-1);
+    const phase4Section = STYLESHEET.slice(phase4Start);
+    const declaredCustomProps = [...phase4Section.matchAll(/^\s*(--ccc-[\w-]+)\s*:/gm)];
+    expect(declaredCustomProps).toEqual([]);
   });
 });
 

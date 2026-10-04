@@ -7,6 +7,7 @@ import {
   SNAPSHOT_PATH,
   SnapshotResponseSchema,
 } from "./events.js";
+import { EMPTY_PROJECTS_SNAPSHOT } from "./projects.js";
 
 describe("ServiceEventSchema", () => {
   it("parses a valid service.heartbeat envelope", () => {
@@ -63,17 +64,42 @@ describe("ServiceEventSchema", () => {
 });
 
 describe("SnapshotResponseSchema", () => {
-  it("parses a valid snapshot response", () => {
+  it("parses a valid snapshot response carrying the projects state", () => {
+    const result = SnapshotResponseSchema.safeParse({
+      lastEventId: 3,
+      state: { serviceStartedAt: new Date().toISOString(), projects: EMPTY_PROJECTS_SNAPSHOT },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a snapshot whose state has no projects field (D-50)", () => {
     const result = SnapshotResponseSchema.safeParse({
       lastEventId: 3,
       state: { serviceStartedAt: new Date().toISOString() },
     });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   it("rejects a snapshot missing state", () => {
     const result = SnapshotResponseSchema.safeParse({ lastEventId: 3 });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("projects.updated (D-50 additive rule)", () => {
+  it("parses a ServiceEvent of type projects.updated", () => {
+    const result = ServiceEventSchema.safeParse({
+      id: 4,
+      type: "projects.updated",
+      occurredAt: new Date().toISOString(),
+      payload: { upserted: [], removed: [] },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("appends projects.updated as the last of exactly four event types", () => {
+    expect(SERVICE_EVENT_TYPES).toHaveLength(4);
+    expect(SERVICE_EVENT_TYPES[SERVICE_EVENT_TYPES.length - 1]).toBe("projects.updated");
   });
 });
 

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import http from "node:http";
-import { SNAPSHOT_PATH } from "@ccc/domain";
+import { EMPTY_PROJECTS_SNAPSHOT, SNAPSHOT_PATH } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEventClient, type EventClientState } from "./event-client.js";
 
@@ -158,16 +158,81 @@ describe("createEventClient", () => {
     snapshotCall?.respond();
     snapshotCall?.res.emit(
       "data",
-      Buffer.from(JSON.stringify({ lastEventId: 5, state: { serviceStartedAt: "t" } })),
+      Buffer.from(
+        JSON.stringify({
+          lastEventId: 5,
+          state: { serviceStartedAt: "t", projects: EMPTY_PROJECTS_SNAPSHOT },
+        }),
+      ),
     );
     snapshotCall?.res.emit("end");
     await flush();
 
-    expect(snapshots).toEqual([{ lastEventId: 5, state: { serviceStartedAt: "t" } }]);
+    expect(snapshots).toEqual([
+      { lastEventId: 5, state: { serviceStartedAt: "t", projects: EMPTY_PROJECTS_SNAPSHOT } },
+    ]);
     expect(events).toHaveLength(1);
     expect((events[0] as { id: number }).id).toBe(6);
     client.dispose();
   });
+
+  it.each([
+    [
+      "an unusable snapshot body",
+      (call: PendingCall) => {
+        call.respond(500);
+        call.res.emit("data", Buffer.from(JSON.stringify({ error: "internal error" })));
+        call.res.emit("end");
+      },
+    ],
+    [
+      "a failed snapshot request",
+      (call: PendingCall) => {
+        call.req.emit("error", connectionRefused());
+      },
+    ],
+  ])(
+    "%s forces a full resync: the stream is dropped, no later event is delivered, and the reconnect carries no last-event header",
+    async (_label, fail) => {
+      const getToken = vi.fn().mockResolvedValue("tok");
+      const events: unknown[] = [];
+      const snapshots: unknown[] = [];
+      const states: EventClientState[] = [];
+      const client = createEventClient({ socketPath: "/tmp/sock", getToken });
+      client.subscribe(
+        (e) => events.push(e),
+        (s) => states.push(s),
+        (s) => snapshots.push(s),
+      );
+      await flush();
+
+      const stream = pendingCalls[0];
+      stream?.respond();
+      stream?.res.emit("data", resyncRecord(5));
+      await flush();
+      const snapshotCall = pendingCalls[1];
+      expect(snapshotCall?.options.path).toBe(SNAPSHOT_PATH);
+
+      // A delta queued behind the resync on the same stream: with no adopted
+      // base it must never be delivered, nor may its id become the resume point.
+      stream?.res.emit("data", heartbeatRecord(6));
+      if (snapshotCall) fail(snapshotCall);
+      await flush();
+
+      expect(snapshots).toEqual([]);
+      expect(events).toEqual([]);
+      expect(states.at(-1)?.kind).toBe("disconnected");
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await flush();
+      const reconnect = pendingCalls.find(
+        (call, index) => index > 1 && call.options.path !== SNAPSHOT_PATH,
+      );
+      expect(reconnect).toBeDefined();
+      expect(reconnect?.options.headers?.["X-Last-Event-Id"]).toBeUndefined();
+      client.dispose();
+    },
+  );
 
   it("consecutive reconnect failures produce strictly increasing delays capped at 30 seconds", async () => {
     const getToken = vi.fn().mockResolvedValue("tok");

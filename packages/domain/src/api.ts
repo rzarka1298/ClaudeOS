@@ -1,5 +1,5 @@
-import path from "node:path";
 import { z } from "zod";
+import { isAbsolutePosixPath } from "./posix-path.js";
 
 /** The versioned base path every companion-service HTTP route lives under. */
 export const API_BASE = "/api/v1";
@@ -49,7 +49,7 @@ export const VaultSetupRequestSchema = z.object({
     .refine((value) => !value.includes("\0"), {
       message: "vaultRoot must not contain a NUL byte",
     })
-    .refine((value) => path.isAbsolute(value), {
+    .refine((value) => isAbsolutePosixPath(value), {
       message: "vaultRoot must be an absolute path",
     }),
 });

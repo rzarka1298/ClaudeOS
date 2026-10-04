@@ -179,8 +179,8 @@ describe("the grid CSS is the one auto-placement contract (D-12, UI-SPEC E3)", (
   });
 });
 
-describe("honest data: an unavailable count never reads as zero", () => {
-  it("a project whose open-item count is unavailable does not render a number", () => {
+describe("honest data: an unavailable count never reads as zero (D-15, SC-6 — rewritten, not deleted)", () => {
+  it("a project's openItems/sessionCount never render — not the word 'open items', not a 0, not a real count either", () => {
     const states = loadingStates();
     const { container } = render(
       <Overview
@@ -194,13 +194,27 @@ describe("honest data: an unavailable count never reads as zero", () => {
                       id: "p",
                       name: "P",
                       pinned: false,
-                      branch: "main",
-                      dirty: false,
+                      git: {
+                        kind: "repo",
+                        branch: "main",
+                        detached: false,
+                        dirty: false,
+                        commits: [],
+                        remote: null,
+                      },
+                      gitReadFailed: false,
+                      github: { kind: "none" },
+                      observedAt: OBSERVED,
                       openItems: null,
-                      sessionCount: 0,
+                      sessionCount: 3,
                       nextTask: null,
                     },
                   ],
+                  launchers: {
+                    antigravity: "set-up",
+                    "claude-code": { status: "set-up", terminalLabel: "Terminal" },
+                    "claude-desktop": "set-up",
+                  },
                 }),
               )
             : states[id]
@@ -210,8 +224,10 @@ describe("honest data: an unavailable count never reads as zero", () => {
       />,
     );
     const text = container.textContent ?? "";
-    expect(text).not.toMatch(/\b0 open items|null open items|undefined open items/);
-    expect(text).toMatch(/open items unavailable|unavailable/i);
+    expect(text).not.toMatch(/open item/i);
+    expect(text).not.toMatch(/\b0\b/);
+    expect(text).not.toMatch(/\b3\b/);
+    expect(text).toMatch(/main/);
   });
 });
 

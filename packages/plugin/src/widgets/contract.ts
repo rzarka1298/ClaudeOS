@@ -1,4 +1,4 @@
-import type { Freshness, Partiality, SizeHint } from "@ccc/domain";
+import type { Freshness, Partiality, ProjectId, SizeHint } from "@ccc/domain";
 import type { VNode } from "preact";
 import type { DestinationId } from "../view/destinations.js";
 
@@ -56,11 +56,17 @@ export type RefreshPolicy =
  * nothing itself, so Phase 6's approval engine stays the one choke point every
  * consequential action must pass through. An executable callback on a widget
  * definition would be a hole in that boundary that no later phase could close.
+ *
+ * `target` is the descriptor's only way to name a project: DATA, never a
+ * callback (C-11, D-24). A `launch:*` capability whose action needs a project
+ * carries `target.projectId`; `dispatchQuickAction` reads it and nothing else
+ * about the project ever needs to reach this type.
  */
 export interface QuickActionDescriptor {
   readonly id: string;
   readonly label: string;
   readonly capability: string;
+  readonly target?: { readonly projectId: ProjectId } | undefined;
 }
 
 /**
@@ -102,11 +108,19 @@ export type WidgetState<T> =
  * focuses a shell destination, which is how `+{n} more` reaches the page that
  * owns the full list (MAJOR 1). It navigates and does nothing else; anything
  * consequential is a quick-action DESCRIPTOR, never a body callback (C-11).
+ *
+ * `onQuickAction` is the body's own channel to the same single dispatcher
+ * every generic `.ccc-card-actions` button already uses (PR-08). The frame
+ * hands it in only for the `ready`/`stale` presentations (RR-05) — never
+ * `disconnected` — so a body cannot render a launch control while the
+ * service is unreachable. A body still emits a DESCRIPTOR only; it executes
+ * nothing itself.
  */
 export interface WidgetBodyProps<T> {
   readonly data: T;
   readonly size: SizeHint;
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+  readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }
 
 /**
@@ -138,6 +152,22 @@ export interface WidgetDefinition<T> {
   readonly preferredSize: SizeHint;
   readonly featureFlag: string;
   readonly quickActions: readonly QuickActionDescriptor[];
+  /**
+   * `true` when this card lays out its own actions inside its body (S8 Quick
+   * actions, PR-12) rather than relying on the frame's generic
+   * `.ccc-card-actions` row. `quickActions` still declares the descriptors so
+   * Phase 6's approval engine has a capability to classify; the frame simply
+   * skips its own row so the same actions are not rendered twice.
+   */
+  readonly actionsInBody?: boolean | undefined;
   readonly renderBody: (props: WidgetBodyProps<T>) => VNode | null;
-  readonly renderEmpty: (props: Record<string, never>) => VNode | null;
+  /**
+   * `data` is the `ready` state's own payload when the frame presents it as
+   * `empty` — an empty list can still carry context (S1's launcher setup
+   * state), and reading it here keeps the renderer off global signals.
+   */
+  readonly renderEmpty: (props: {
+    readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+    readonly data?: T | undefined;
+  }) => VNode | null;
 }

@@ -32,7 +32,7 @@ export function requireToken(getSecret: () => Buffer, handler: Handler): Handler
   return (req, res) => {
     const header = req.headers[AUTH_HEADER];
     const headerValue = Array.isArray(header) ? header[0] : header;
-    if (!headerValue || !headerValue.startsWith(BEARER_PREFIX)) {
+    if (!headerValue?.startsWith(BEARER_PREFIX)) {
       rejectUnauthenticated(res, "missing");
       return;
     }

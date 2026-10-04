@@ -185,12 +185,17 @@ describe("honest panel states (D-17, ADR-0023 Panel state assignment)", () => {
     });
   });
 
-  it.each(["active-sessions", "project-shortcuts", "claude-usage", "tech-intel", "quick-actions"])(
-    "%s has no source yet",
-    (id) => {
-      expect(widgetStateFor(id as WidgetId).value.kind).toBe("unavailable");
-    },
-  );
+  it.each(["active-sessions", "claude-usage", "tech-intel"])("%s has no source yet", (id) => {
+    expect(widgetStateFor(id as WidgetId).value.kind).toBe("unavailable");
+  });
+
+  it("quick-actions is a live signal now (plan 04-10, D-38): loading before a snapshot arrives, never a hardcoded unavailable", () => {
+    expect(widgetStateFor("quick-actions").value.kind).toBe("loading");
+  });
+
+  it("project-shortcuts is a live signal now (plan 04-07, D-35): loading before a snapshot arrives, never a hardcoded unavailable", () => {
+    expect(widgetStateFor("project-shortcuts").value.kind).toBe("loading");
+  });
 });
 
 describe("a registered panel renders its honest state through the shared frame", () => {

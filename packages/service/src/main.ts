@@ -1,7 +1,12 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "@ccc/domain";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
-import { applyMigrations, openStore } from "@ccc/operational-store";
+import {
+  applyMigrations,
+  listLauncherConfigs,
+  listProjects,
+  openStore,
+} from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
 import { createEventBus } from "./events/event-bus.js";
 import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
@@ -14,8 +19,25 @@ import {
   resolveSocketPath,
   resolveSpoolPath,
 } from "./paths.js";
+import { recomputeApprovedRoots, VAULT_ROOT_META_KEY } from "./projects/approved-roots.js";
+import { createProjectsCollector } from "./projects/collector.js";
+import { createExecFileCommandRunner } from "./projects/command-runner.js";
+import { createDetector } from "./projects/detection.js";
+import { createGitRunner, resolveGit } from "./projects/git-runner.js";
+import { createLaunchService } from "./projects/launch-service.js";
+import type { LauncherServices } from "./projects/launcher-routes.js";
+import { createStoreProjectLookup } from "./projects/project-lookup.js";
+import type { ProjectServices } from "./projects/project-routes.js";
+import { resolveHomeDir } from "./projects/project-views.js";
+import { createScanService } from "./projects/scan.js";
+import {
+  ensureScriptDir,
+  STARTUP_SCRIPT_MIN_AGE_MS,
+  sweepStaleScripts,
+} from "./projects/script-dir.js";
+import { createCommandSpawner } from "./projects/spawner.js";
 import { createRequestListener } from "./routes.js";
-import { startSocketServer } from "./socket-server.js";
+import { claimSocketPath, logSocketClaimRefusal, startSocketServer } from "./socket-server.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
 
 /**
@@ -34,6 +56,24 @@ async function main(): Promise<void> {
   const dbPath = resolveDbPath();
 
   ensureRuntimeDir(runtimeDir, logger);
+
+  // A second instance must refuse BEFORE it changes anything a live
+  // instance depends on — the launch-script sweep, the store (migrations,
+  // run recovery, the spool drain) and above all the socket file itself.
+  // Probing, not unlinking: a live listener throws SocketInUseError (the
+  // file stays); only a stale socket from an unclean shutdown is removed.
+  await claimSocketPath(socketPath);
+
+  // Phase 4 (plan 04-09): the private launch-script directory, before the
+  // socket listens. Leftovers from interrupted launches go, but only those
+  // older than a short threshold: a launchd KeepAlive restart can follow a
+  // hand-off within seconds, before Terminal has read that script (D-20,
+  // Pitfall 5). Only the count is logged.
+  const scriptDir = ensureScriptDir(runtimeDir, logger);
+  const sweptScripts = sweepStaleScripts(scriptDir, { olderThanMs: STARTUP_SCRIPT_MIN_AGE_MS });
+  if (sweptScripts > 0) {
+    logger.info({ count: sweptScripts }, "startup: removed leftover launch scripts");
+  }
 
   const store = openStore(dbPath);
   // ADR-0018: migrations apply before anything else touches the store, so
@@ -72,6 +112,17 @@ async function main(): Promise<void> {
     "startup: reloaded managed vault root into the path allowlist",
   );
 
+  // --- Phase 4 (projects and launchers) startup block -------------------
+  // Phase 5 appends its own block after this one; keep Phase 4's calls
+  // together here.
+  //
+  // The approved roots are a pure function of the store (D-05): the vault
+  // root plus every registered project. Recomputed here, after migrations
+  // and the vault-root reload, so a restart restores project access exactly
+  // as persisted. Only the count is logged — never a path (D-46).
+  const approvedRoots = recomputeApprovedRoots(store);
+  logger.info({ count: approvedRoots.length }, "startup: recomputed approved path roots");
+
   const secretStore = createSecurityCliSecretStore();
   const installSecret = await getInstallSecret(secretStore);
 
@@ -87,10 +138,102 @@ async function main(): Promise<void> {
     eventBus.publish("service.heartbeat", { at: new Date().toISOString() });
   }, heartbeatIntervalMs);
 
+  // --- Phase 4 (projects and launchers): git status collection ---------
+  // Built after the event bus because the collector publishes into it and
+  // gates its interval on `eventBus.subscriberCount()` (D-11).
+  //
+  // One process port for every child the projects code starts; `main.ts` is
+  // the only place a real one is constructed (Shared Pattern 3).
+  const commandRunner = createExecFileCommandRunner();
+  // Resolved once: `/usr/bin/git` is a shim that opens the Command Line
+  // Tools installer when no developer directory is selected, so it is only
+  // used when `xcode-select -p` succeeds (D-10).
+  const gitResolution = await resolveGit(commandRunner);
+  logger.info({ gitAvailable: gitResolution.kind === "available" }, "startup: resolved git");
+  const gitRunner = createGitRunner({ runner: commandRunner, git: gitResolution });
+  // Git state lives in memory only (D-11); every project starts `pending`
+  // and is read on the first tick with a subscriber, or on refresh.
+  // One resolved home for every home comparison: display paths and
+  // protected-location detection both judge realpaths (D-43, D-29).
+  const homeDir = resolveHomeDir();
+  const projectsCollector = createProjectsCollector({
+    eventBus,
+    gitRunner,
+    readRecords: () => listProjects(store.db),
+    readLauncherConfigs: () => listLauncherConfigs(store.db),
+    homeDir,
+  });
+  projectsCollector.start();
+  // The routes see the collector only through this narrow port (SC-2).
+  const projects: ProjectServices = {
+    snapshot: () => projectsCollector.snapshot(),
+    onRegistryChanged: () => projectsCollector.onRegistryChanged(),
+    refresh: (projectId) => projectsCollector.refresh(projectId),
+    homeDir,
+    runtimeDir,
+  };
+
+  // --- Phase 4 (projects and launchers): the launch pipeline ------------
+  // Every app launch goes through this one spawner (D-18): execFile with an
+  // argv array, a fixed environment, stderr classified and dropped (D-46).
+  // The launch service reads the collector's in-memory state only and never
+  // waits on git (D-42); Phase 4's guard allows everything (D-49).
+  const spawner = createCommandSpawner(commandRunner);
+  const launch = createLaunchService({
+    store,
+    spawner,
+    lookup: createStoreProjectLookup(store),
+    collector: {
+      refresh: (projectId) => projectsCollector.refresh(projectId),
+      onRegistryChanged: () => projectsCollector.onRegistryChanged(),
+      gitState: (projectId) => projectsCollector.gitState(projectId),
+    },
+    logger,
+    // Claude Code reaches its terminal through a generated script in this
+    // directory; the executable check (access X_OK) runs inside the launch
+    // service before every launch (D-20, D-22).
+    scriptDir,
+  });
+
+  // --- Phase 4 (projects and launchers): launcher setup (plan 04-11) -----
+  // Detection runs mdfind/plutil/xcode-select through the same command
+  // runner and only proposes (D-27); saves, Test launches and the System
+  // Settings panes go through the launcher routes. Test launches use the
+  // same spawner and script directory as real launches.
+  const launchers: LauncherServices = {
+    detector: createDetector({ runner: commandRunner, homeDir }),
+    homeDir,
+    onLaunchersChanged: () => projectsCollector.onLaunchersChanged(),
+    spawner,
+    scriptDir,
+  };
+
+  // --- Phase 4 (projects and launchers): scan folders (plan 04-13) -------
+  // Scans run only when a folder is nominated and when the owner chooses
+  // Rescan folder: nothing here schedules, watches or repeats (D-07). The
+  // policy is read fresh on every call, so a vault set up later applies.
+  const scan = createScanService({
+    store,
+    homeDir,
+    readPolicy: () => {
+      const persistedVault = store.readServiceMeta(VAULT_ROOT_META_KEY);
+      return {
+        homeDir,
+        runtimeDir,
+        vaultRoot: persistedVault !== null && persistedVault.length > 0 ? persistedVault : null,
+      };
+    },
+    projects,
+  });
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
     eventBus,
+    projects,
+    launch,
+    launchers,
+    scan,
   });
   const server = await startSocketServer({ socketPath, requestListener });
 
@@ -98,6 +241,7 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     clearInterval(heartbeatTimer);
+    projectsCollector.stop();
     server.close(() => {
       store.close();
       if (existsSync(socketPath)) {
@@ -112,6 +256,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  logger.error({ err }, "fatal startup error");
+  if (!logSocketClaimRefusal(logger, err)) {
+    logger.error({ err }, "fatal startup error");
+  }
   process.exit(1);
 });

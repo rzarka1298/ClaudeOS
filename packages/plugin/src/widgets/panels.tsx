@@ -1,6 +1,13 @@
+import type { GithubTarget, LaunchersSummary, ProjectGitState, ProjectId } from "@ccc/domain";
 import type { VNode } from "preact";
-import type { WidgetBodyProps, WidgetDefinition } from "./contract.js";
+import { useContext } from "preact/hooks";
+import { launchStatus, launchStatusKey } from "../projects/launch-status.js";
+import type { DestinationId } from "../view/destinations.js";
+import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
+import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
+import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
 import { ListBody } from "./list-body.js";
+import { WidgetHostContext } from "./widget-host.js";
 
 /**
  * The seven PRD §7.1 panels, in the PRD's own desktop ordering.
@@ -226,40 +233,171 @@ export interface ProjectRow {
   readonly id: string;
   readonly name: string;
   readonly pinned: boolean;
-  readonly branch: string;
-  readonly dirty: boolean;
-  /** Issue/task count from a source that can fail independently of git status. */
+  readonly git: ProjectGitState;
+  /** A last-good `git` value whose latest refresh failed (ADR-0002). */
+  readonly gitReadFailed: boolean;
+  readonly github: GithubTarget;
+  /** When `git` was last read; `null` while still `pending`. */
+  readonly observedAt: string | null;
+  /** Issue/task count from a source that can fail independently of git status. Never populated in Phase 4 (D-15). */
   readonly openItems: MaybeCount;
-  /** From Claude Code hooks; unknown when no lifecycle event has arrived. */
+  /** From Claude Code hooks; unknown when no lifecycle event has arrived. Never populated in Phase 4 (D-15). */
   readonly sessionCount: MaybeCount;
+  /** Never populated in Phase 4 (D-15). */
   readonly nextTask: string | null;
 }
 
 export interface ProjectShortcutsData {
   readonly projects: readonly ProjectRow[];
+  readonly launchers: LaunchersSummary;
+}
+
+/** A plain-text rendering of {@link projectMetaSegments}, joined by " · " (Task 3 renders segments). */
+function projectMetaLine(row: ProjectRow): string {
+  return projectMetaSegments(row)
+    .map((segment) => segment.text)
+    .join(" · ");
+}
+
+/**
+ * The S1 row meta content, per git kind (UI-SPEC "S1 Project shortcuts card
+ * copy", Glyph Vocabulary). A failed read appends `◔ Stale` regardless of
+ * kind (ADR-0002: freshness is stated, never implied).
+ */
+export function projectMetaSegments(
+  row: ProjectRow,
+): readonly { readonly glyph?: string; readonly text: string }[] {
+  const segments: { readonly glyph?: string; readonly text: string }[] = [];
+  const git = row.git;
+  switch (git.kind) {
+    case "repo":
+      // `⎇` pairs only with a branch name or `Detached HEAD` (UI-SPEC Glyph
+      // Vocabulary). A branch git could not name while HEAD is attached is
+      // not a detached HEAD: it reads unavailable, like every unknown value.
+      if (git.detached) segments.push({ glyph: "⎇", text: "Detached HEAD" });
+      else if (git.branch === null) segments.push({ text: "Branch unavailable" });
+      else segments.push({ glyph: "⎇", text: git.branch });
+      segments.push(
+        git.dirty ? { glyph: "✱", text: "Uncommitted changes" } : { glyph: "✓", text: "Clean" },
+      );
+      break;
+    case "not-a-repo":
+      segments.push({ glyph: "◌", text: "Not a Git repository" });
+      break;
+    case "git-unavailable":
+      segments.push({ glyph: "▲", text: "Git unavailable" });
+      break;
+    case "folder-missing":
+      segments.push({ glyph: "▲", text: "Folder not found" });
+      break;
+    case "skipped":
+      segments.push({ text: "Git status skipped" });
+      break;
+    case "folder-access-denied":
+      segments.push({ glyph: "▲", text: "Folder access blocked by macOS" });
+      break;
+    case "pending":
+      // A pending state whose read already failed was never read at all:
+      // it is a failure with nothing stale to qualify, not a check in
+      // progress (codex finding 4).
+      if (row.gitReadFailed) {
+        segments.push({ glyph: "▲", text: "Couldn't read Git status" });
+        return segments;
+      }
+      segments.push({ text: "Checking Git status…" });
+      break;
+  }
+  if (row.gitReadFailed) {
+    segments.push({ glyph: "◔", text: "Stale" });
+  }
+  return segments;
+}
+
+/** A pinned row's primary line carries a hidden "Pinned: " prefix plus a visible "★" (UI-SPEC S1, Glyph Vocabulary). */
+function projectPrimaryBadge(project: ProjectRow): { hiddenLabel: string; glyph: string } | null {
+  return project.pinned ? { hiddenLabel: "Pinned: ", glyph: "★" } : null;
 }
 
 function ProjectShortcutsBody({
   data,
   size,
   onNavigate,
+  onQuickAction,
 }: WidgetBodyProps<ProjectShortcutsData>): VNode | null {
+  const terminalLabel = data.launchers["claude-code"].terminalLabel;
+  const { openSystemSettings } = useContext(WidgetHostContext);
+  // The frame hands `onQuickAction` in only for `ready`/`stale` (RR-05): a
+  // disconnected card renders its dimmed rows with no toolbar and no status
+  // line, so no launch control — and no danger-coloured line — ever sits
+  // inside the 0.55-opacity body.
+  const live = onQuickAction !== undefined;
   return (
-    <ListBody<ProjectRow>
-      rows={data.projects}
-      size={size}
-      onMore={onNavigate}
-      keyOf={(project) => project.id}
-      renderPrimary={(project) => project.name}
-      renderMeta={(project) =>
-        `${project.branch}${project.dirty ? " · uncommitted changes" : ""} · ${count(
-          project.openItems,
-          "open item",
-          "open items",
-        )}`
-      }
-      moreDestination="projects"
-    />
+    <>
+      {launchersNeedSetup(data.launchers) && <SetupCallout onNavigate={onNavigate} />}
+      <ListBody<ProjectRow>
+        rows={data.projects}
+        size={size}
+        onMore={onNavigate}
+        keyOf={(project) => project.id}
+        renderPrimary={(project) => project.name}
+        renderMeta={projectMetaLine}
+        renderMetaSegments={projectMetaSegments}
+        primaryBadge={projectPrimaryBadge}
+        renderActions={
+          live
+            ? (project) => (
+                <LaunchToolbar
+                  // `ProjectRow.id` is a plain string for `ListBody`'s generic
+                  // key; it is always a service-issued ProjectId.
+                  projectId={project.id as ProjectId}
+                  projectName={project.name}
+                  github={project.github}
+                  onQuickAction={onQuickAction}
+                />
+              )
+            : undefined
+        }
+        renderStatus={
+          live
+            ? (project) => (
+                <LaunchStatusLine
+                  projectId={project.id as ProjectId}
+                  projectName={project.name}
+                  terminalLabel={terminalLabel}
+                  actions={PROJECT_LAUNCH_ACTIONS}
+                  onNavigate={onNavigate}
+                  openSystemSettings={openSystemSettings}
+                />
+              )
+            : undefined
+        }
+        moreDestination="projects"
+      />
+    </>
+  );
+}
+
+/** S1's empty copy (UI-SPEC "Copywriting Contract", RR-27): the frame's own `Nothing here yet` precedes this. */
+function ProjectShortcutsEmpty({
+  onNavigate,
+  data,
+}: {
+  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+  readonly data?: ProjectShortcutsData | undefined;
+}): VNode {
+  return (
+    <>
+      <p className="ccc-state-body">Register a project in Projects to see it here.</p>
+      <button
+        type="button"
+        className="ccc-connect-button ccc-empty-action"
+        onClick={() => onNavigate?.("projects")}
+      >
+        Go to Projects
+      </button>
+      {/* The setup state comes from the card's own widget state (RR-27, S10). */}
+      {launchersNeedSetup(data?.launchers) && <SetupCallout onNavigate={onNavigate} />}
+    </>
   );
 }
 
@@ -270,6 +408,7 @@ export const projectShortcutsWidget: WidgetDefinition<ProjectShortcutsData> = {
   dataKeys: [
     { key: "projects.registered", transport: "service", sourceLabel: "Project registry" },
     { key: "projects.git-status", transport: "service", sourceLabel: "Local git status" },
+    { key: "launchers.config", transport: "service", sourceLabel: "Launcher settings" },
   ],
   refresh: { kind: "interval", everyMs: 30_000 },
   minSize: "small",
@@ -277,7 +416,7 @@ export const projectShortcutsWidget: WidgetDefinition<ProjectShortcutsData> = {
   featureFlag: "widget.project-shortcuts",
   quickActions: [],
   renderBody: ProjectShortcutsBody,
-  renderEmpty: () => <p className="ccc-state-body">No projects are registered yet.</p>,
+  renderEmpty: ProjectShortcutsEmpty,
 };
 
 // ---------------------------------------------------------------------------
@@ -462,34 +601,131 @@ export const githubDiscoveriesWidget: WidgetDefinition<GithubDiscoveriesData> = 
 };
 
 // ---------------------------------------------------------------------------
-// 7. Quick actions (PRD §7.1.7) — unavailable until its actions' phases land
+// 7. Quick actions (PRD §7.1.7) — two live actions in Phase 4 (D-38)
 // ---------------------------------------------------------------------------
 
 /**
- * This panel has no body: its content IS its `quickActions`, which the shared
- * frame renders (and which `dispatchQuickAction` refuses to execute in this
- * phase). The descriptors are declared now so Phase 6's approval engine has a
- * capability to classify before there is anything to approve.
+ * S8 (D-38, PR-08, PR-12). Two actions are live in Phase 4 — `Start a Claude
+ * Code session` opens the quick switcher prefilled, `Open Claude Desktop` is
+ * an S2-style launch — and the other four stay honestly unavailable until
+ * their phases land. All six stay declared on `quickActions` so Phase 6's
+ * approval engine has a capability to classify; `actionsInBody` tells the
+ * frame to skip its generic row because this body lays them out itself.
+ * Every button still emits a DESCRIPTOR through `onQuickAction` — the one
+ * dispatcher — and the frame hands that channel in only for `ready`/`stale`,
+ * so nothing here can launch while disconnected (RR-05).
  */
-export type QuickActionsData = Record<string, never>;
+export interface QuickActionsData {
+  readonly launchers: LaunchersSummary;
+}
+
+const QUICK_ACTIONS: readonly QuickActionDescriptor[] = [
+  { id: "run-skill", label: "Run a skill", capability: "skill:run" },
+  { id: "start-session", label: "Start a Claude Code session", capability: "switcher:claude-code" },
+  { id: "create-task", label: "Create a task", capability: "task:create" },
+  { id: "capture-note", label: "Capture an inbox note", capability: "note:capture" },
+  { id: "refresh-data", label: "Refresh selected data", capability: "data:refresh" },
+  { id: "open-claude-desktop", label: "Open Claude Desktop", capability: "launch:claude-desktop" },
+];
+
+function isLive(action: QuickActionDescriptor): boolean {
+  return action.capability.startsWith("launch:") || action.capability.startsWith("switcher:");
+}
+
+/** The live pair in S8 order: the session first, then Claude Desktop (UI-SPEC S8). */
+const LIVE_QUICK_ACTIONS = ["start-session", "open-claude-desktop"].flatMap((id) =>
+  QUICK_ACTIONS.filter((action) => action.id === id),
+);
+const UNAVAILABLE_QUICK_ACTIONS = QUICK_ACTIONS.filter((action) => !isLive(action));
+
+const CLAUDE_DESKTOP_KEY = launchStatusKey(null, "claude-desktop");
+const CLAUDE_DESKTOP_ACTIONS = ["claude-desktop"] as const;
+
+function QuickActionsBody({
+  data,
+  onNavigate,
+  onQuickAction,
+}: WidgetBodyProps<QuickActionsData>): VNode | null {
+  const { switcherAvailable, openSystemSettings } = useContext(WidgetHostContext);
+  // The frame hands `onQuickAction` in only for `ready`/`stale` (RR-05). In
+  // `disconnected` the card hides its buttons (UI-SPEC S8, the Phase 3 rule)
+  // and the Claude Desktop status line with them — like S1's rows, nothing
+  // focusable and inert, and no stale error line, sits in the dimmed body.
+  if (onQuickAction === undefined) return null;
+  const desktopOpening = launchStatus.value.get(CLAUDE_DESKTOP_KEY)?.kind === "opening";
+  // `Start a Claude Code session` is live only once the host wires a quick
+  // switcher (plan 04-14); until then it takes the unavailable treatment
+  // rather than sitting live and doing nothing (wave-5 finding 4).
+  const live = LIVE_QUICK_ACTIONS.filter(
+    (action) => switcherAvailable || !action.capability.startsWith("switcher:"),
+  );
+  const unavailable = switcherAvailable
+    ? UNAVAILABLE_QUICK_ACTIONS
+    : QUICK_ACTIONS.filter((action) => !live.includes(action));
+  return (
+    <>
+      <div className="ccc-card-actions">
+        {live.map((action) => {
+          const opening = action.capability === "launch:claude-desktop" && desktopOpening;
+          return (
+            <button
+              key={action.id}
+              type="button"
+              className="ccc-quick-action"
+              aria-disabled={opening ? "true" : undefined}
+              data-launch-state={opening ? "opening" : undefined}
+              onClick={() => {
+                // A second press while opening is ignored (UI-SPEC S2).
+                if (!opening) onQuickAction(action);
+              }}
+            >
+              {action.label}
+            </button>
+          );
+        })}
+      </div>
+      <LaunchStatusLine
+        projectId={null}
+        projectName="Claude Desktop"
+        terminalLabel={data.launchers["claude-code"].terminalLabel}
+        actions={CLAUDE_DESKTOP_ACTIONS}
+        onNavigate={onNavigate}
+        openSystemSettings={openSystemSettings}
+      />
+      <p className="ccc-section-label ccc-section-label--muted">Not available yet</p>
+      <div className="ccc-card-actions">
+        {unavailable.map((action) => (
+          <button
+            key={action.id}
+            type="button"
+            className="ccc-quick-action"
+            aria-disabled="true"
+            // Still focusable and still dispatched: the dispatcher answers
+            // with the existing "{label} isn't available yet." Notice.
+            onClick={() => onQuickAction(action)}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
 
 export const quickActionsWidget: WidgetDefinition<QuickActionsData> = {
   id: "quick-actions",
   title: "Quick actions",
-  description: "The six PRD §7.1 quick actions. Each is enabled by the phase that owns it.",
-  dataKeys: [{ key: "skills.registry", transport: "service", sourceLabel: "Skill registry" }],
+  description:
+    "The six PRD §7.1 quick actions. Claude Code and Claude Desktop are live; each other action is enabled by the phase that owns it.",
+  // RR-18: the skill registry returns with the skill-run phase; until then
+  // the Source panel names only what this card actually reads.
+  dataKeys: [{ key: "launchers.config", transport: "service", sourceLabel: "Launcher settings" }],
   refresh: { kind: "manual" },
   minSize: "small",
   preferredSize: "small",
   featureFlag: "widget.quick-actions",
-  quickActions: [
-    { id: "run-skill", label: "Run a skill", capability: "skill:run" },
-    { id: "start-session", label: "Start a Claude Code session", capability: "session:start" },
-    { id: "create-task", label: "Create a task", capability: "task:create" },
-    { id: "capture-note", label: "Capture an inbox note", capability: "note:capture" },
-    { id: "refresh-data", label: "Refresh selected data", capability: "data:refresh" },
-    { id: "open-claude-desktop", label: "Open Claude Desktop", capability: "app:open" },
-  ],
-  renderBody: () => null,
+  quickActions: QUICK_ACTIONS,
+  actionsInBody: true,
+  renderBody: QuickActionsBody,
   renderEmpty: () => null,
 };

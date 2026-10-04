@@ -2,6 +2,7 @@ import type { IncomingMessage, RequestListener, ServerResponse } from "node:http
 import {
   API_BASE,
   type ApiErrorBody,
+  EMPTY_PROJECTS_SNAPSHOT,
   EVENTS_PATH,
   HANDSHAKE_PATH,
   type HandshakeResponse,
@@ -16,32 +17,33 @@ import {
   VaultSetupRequestSchema,
   type VaultSetupResponse,
 } from "@ccc/domain";
-import { listAllRuns, type OperationalStore } from "@ccc/operational-store";
+import { listAllRuns } from "@ccc/operational-store";
 import { initializeVault, planVaultSetup, VaultRootMissingError } from "@ccc/vault-repo";
-import { requireToken } from "./auth/require-token.js";
 import { mintToken } from "./auth/token.js";
-import type { EventBus } from "./events/event-bus.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
+import { registeredProjectPaths } from "./projects/approved-roots.js";
+import { launchRoutes } from "./projects/launch-routes.js";
+import { launcherRoutes } from "./projects/launcher-routes.js";
+import { projectRoutes } from "./projects/project-routes.js";
+import { scanRoutes } from "./projects/scan-routes.js";
 import { readJsonBody } from "./request-body.js";
+import {
+  type Handler,
+  INTERNAL_ERROR_BODY,
+  INVALID_BODY_BODY,
+  type RouteContext,
+  sendJson,
+  withAuth,
+} from "./route-kit.js";
 import { persistVaultRoot } from "./vault-root.js";
 import { assertUsableVaultRoot, VaultRootRefusedError } from "./vault-root-policy.js";
 
-export interface RouteContext {
-  store: OperationalStore;
-  /** Returns the per-install secret used to mint and verify bearer tokens. */
-  getSecret: () => Buffer;
-  eventBus: EventBus;
-}
-
-type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(payload);
-}
+// `RouteContext`, `Handler`, `sendJson`, `withAuth` and the shared constant
+// bodies live in `route-kit.ts` (SC-1), so feature route files can use them
+// without importing this module. Re-exported for existing importers.
+export type { RouteContext } from "./route-kit.js";
 
 const healthHandler: Handler = (_req, res, ctx) => {
   const startedAt = ctx.store.readServiceMeta("started_at");
@@ -100,11 +102,6 @@ export function sendPathNotAllowed(res: ServerResponse, err: PathNotAllowedError
   sendJson(res, 403, body);
 }
 
-/** Wraps a route `Handler` in the bearer-token requirement. Every route this plan and later plans add other than the handshake itself is registered through this. */
-function withAuth(handler: Handler): Handler {
-  return (req, res, ctx) => requireToken(ctx.getSecret, (r, s) => handler(r, s, ctx))(req, res);
-}
-
 /**
  * `GET /api/v1/events` — the same token requirement as every other
  * non-handshake route (SVC-07's own threat register, T-01-31). The stream
@@ -128,7 +125,14 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
   const startedAt = ctx.store.readServiceMeta("started_at") ?? new Date(0).toISOString();
   const body: SnapshotResponse = {
     lastEventId: ctx.eventBus.buffer.latestId(),
-    state: { serviceStartedAt: startedAt },
+    // The projects state is read synchronously in this same tick, like
+    // `lastEventId` above: the collector publishes only from its own async
+    // callbacks, so no `projects.updated` event can land between the two
+    // reads. A context with no project services answers the empty state.
+    state: {
+      serviceStartedAt: startedAt,
+      projects: ctx.projects?.snapshot() ?? EMPTY_PROJECTS_SNAPSHOT,
+    },
   };
   sendJson(res, 200, body);
 };
@@ -140,7 +144,6 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
  * of this machine's filesystem layout; the specific candidate stays in the
  * local redacting log, exactly as it does for a denied path.
  */
-const INVALID_BODY_BODY: ApiErrorBody = { error: "invalid request body" };
 const VAULT_ROOT_MISSING_BODY: ApiErrorBody = { error: "vault root does not exist" };
 /** Constant like its neighbours: it names neither the candidate nor the
  * refused locations, so a caller cannot use the response to map this
@@ -148,7 +151,6 @@ const VAULT_ROOT_MISSING_BODY: ApiErrorBody = { error: "vault root does not exis
 const VAULT_ROOT_REFUSED_BODY: ApiErrorBody = {
   error: "vault root is not an Obsidian vault this service will manage",
 };
-const INTERNAL_ERROR_BODY: ApiErrorBody = { error: "internal error" };
 
 /**
  * Maps a vault-setup failure onto its response. `VaultRootMissingError` is
@@ -188,7 +190,11 @@ function sendVaultSetupFailure(res: ServerResponse, err: unknown, route: string)
  * `computeSetupEntries`), which is what makes "the modal shows exactly
  * what setup will write" a structural fact rather than a promise.
  */
-async function handleVaultSetupPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleVaultSetupPlan(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: RouteContext,
+): Promise<void> {
   const parsed = await readJsonBody(req, VaultSetupRequestSchema);
   if (!parsed.ok) {
     logger.warn({ route: VAULT_SETUP_PLAN_PATH, reason: parsed.reason }, "rejected request body");
@@ -198,7 +204,7 @@ async function handleVaultSetupPlan(req: IncomingMessage, res: ServerResponse): 
   try {
     // Both routes assert this, in the same order, so a plan can never
     // describe a vault the corresponding apply would refuse.
-    assertUsableVaultRoot(parsed.value.vaultRoot);
+    assertUsableVaultRoot(parsed.value.vaultRoot, registeredProjectPaths(ctx.store));
     const plan = planVaultSetup(parsed.value.vaultRoot);
     const body: VaultSetupPlanResponse = {
       vaultRoot: plan.vaultRoot,
@@ -237,7 +243,7 @@ async function handleVaultSetup(
   }
   const { vaultRoot } = parsed.value;
   try {
-    assertUsableVaultRoot(vaultRoot);
+    assertUsableVaultRoot(vaultRoot, registeredProjectPaths(ctx.store));
     const result = initializeVault(vaultRoot);
     persistVaultRoot(ctx.store, vaultRoot);
     const body: VaultSetupResponse = {
@@ -250,12 +256,12 @@ async function handleVaultSetup(
   }
 }
 
-const vaultSetupPlanHandler: Handler = (req, res) => {
+const vaultSetupPlanHandler: Handler = (req, res, ctx) => {
   // `Handler` is synchronous by contract (it writes to `res` and returns);
   // the body read is not. Every failure path inside resolves to a written
   // response, so the floating promise carries nothing a caller could act
   // on — `void` says that deliberately rather than by omission.
-  void handleVaultSetupPlan(req, res);
+  void handleVaultSetupPlan(req, res, ctx);
 };
 
 const vaultSetupHandler: Handler = (req, res, ctx) => {
@@ -270,6 +276,10 @@ const routeTable: Record<string, Record<string, Handler>> = {
   [RUNS_PATH]: { GET: withAuth(listRunsHandler) },
   [EVENTS_PATH]: { GET: withAuth(eventsHandler) },
   [SNAPSHOT_PATH]: { GET: withAuth(snapshotHandler) },
+  ...projectRoutes,
+  ...launchRoutes,
+  ...launcherRoutes,
+  ...scanRoutes,
 };
 
 /**
