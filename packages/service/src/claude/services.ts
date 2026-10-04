@@ -169,6 +169,9 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
           guard,
           listWorktrees: (projectRoot) => listWorktrees(projectRoot, { runGit, realpath }),
           installedClaudeBin,
+          pipeline,
+          mintRunId: newRunId,
+          now: () => new Date(),
         });
   const actions: SessionActionDeps = {
     db: store.db,

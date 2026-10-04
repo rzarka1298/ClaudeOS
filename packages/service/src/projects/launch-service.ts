@@ -246,6 +246,8 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
           // The owner's choice (plan mode, a new worktree) goes after the
           // stored template and nothing else (D-29).
           argv: grant.extraArgv === undefined ? argv : [...argv, ...grant.extraArgv],
+          // The pre-registered Run's identity and dashboard source (finding 1).
+          ...(grant.env === undefined ? {} : { env: grant.env }),
           signal,
         }),
     };
@@ -285,6 +287,19 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     void deps.collector.refresh(projectId);
   };
 
+  /** Reports the hand-off's outcome for a Run the guard pre-registered; bookkeeping never fails a launch. */
+  const settle = async (
+    decision: Extract<LaunchGuardDecision, { ok: true }>,
+    outcome: "started" | "failed" | "timeout",
+  ): Promise<void> => {
+    if (decision.runId === undefined || guard.settle === undefined) return;
+    try {
+      await guard.settle(decision.runId, outcome);
+    } catch {
+      // The Run stays queued; the start-timeout sweep marks it stale (PR-17).
+    }
+  };
+
   const attempt = async (request: LaunchRequest, state: Attempt): Promise<LaunchResponse> => {
     const projectId = projectIdOf(request);
     const prepared = await prepare(request);
@@ -297,7 +312,11 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
         ? { choice: request.choice }
         : {}),
     });
-    if (state.cancelled) return failure("timeout");
+    if (state.cancelled) {
+      // Nothing was opened, so a Run the guard registered is dead, not stale.
+      if (decision.ok) await settle(decision, "failed");
+      return failure("timeout");
+    }
     if (!decision.ok) {
       // A conflict is an answer: nothing was launched and the plugin asks
       // the owner how to proceed (D-29).
@@ -305,9 +324,23 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
       return failure(decision.error);
     }
     if (prepared.kind === "delegate") {
-      const delegated = await prepared.run(state.signal, decision);
-      if (state.cancelled) return failure("timeout");
-      if (!delegated.ok) return delegated;
+      let delegated: LaunchResult;
+      try {
+        delegated = await prepared.run(state.signal, decision);
+      } catch (err: unknown) {
+        await settle(decision, "failed");
+        throw err;
+      }
+      if (state.cancelled) {
+        // The terminal may still open late: the Run stays stale, never failed.
+        await settle(decision, "timeout");
+        return failure("timeout");
+      }
+      if (!delegated.ok) {
+        await settle(decision, delegated.error === "timeout" ? "timeout" : "failed");
+        return delegated;
+      }
+      await settle(decision, "started");
     } else {
       const outcome = await deps.spawner.run(prepared.argv, {
         timeoutMs: capMs,

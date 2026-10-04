@@ -7,6 +7,7 @@ import {
   type LaunchPortResult,
   type ProjectLookup,
   parseStoredLauncherConfig,
+  type RunId,
   type SessionTerminalLauncher,
   type TerminalLaunchRequest,
   WORKTREE_NAME_PATTERN,
@@ -15,6 +16,8 @@ import { getLauncherConfig, type OperationalStore } from "@ccc/operational-store
 import type { Spawner } from "../projects/spawner.js";
 import { isExecutableFile, selectTerminalLauncher } from "../projects/terminal-launchers.js";
 import type { ServiceLaunchGuard, WorktreeEntry } from "./launch-guard.js";
+import { serializedOnTree } from "./launch-locks.js";
+import type { ClaudePipeline } from "./pipeline.js";
 
 /**
  * Binds Phase 5's session ports to Phase 4's real implementations (05-17,
@@ -50,6 +53,10 @@ export interface Phase4BridgeDeps {
   readonly installedClaudeBin: () => string | null;
   /** The hand-off's own deadline; defaults to Phase 4's 4 s launch cap. */
   readonly capMs?: number;
+  /** Where a fresh Start's Run is pre-registered, under the same lock resume and branch use. */
+  readonly pipeline: ClaudePipeline;
+  readonly mintRunId: () => RunId;
+  readonly now: () => Date;
 }
 
 export interface Phase4Bridge {
@@ -119,17 +126,84 @@ function createTerminalLauncher(deps: Phase4BridgeDeps): SessionTerminalLauncher
 
 const REFUSED: LaunchGuardDecision = { ok: false, error: "spawn-failed" };
 
+/** What a Start choice means for the launch: where it runs, what the guard checks, how it registers. */
+interface StartPlan {
+  readonly cwd: string;
+  readonly extra: Pick<Extract<LaunchGuardDecision, { ok: true }>, "cwd" | "extraArgv">;
+  /** The tree the guard must check, or null when the owner's choice skips it. */
+  readonly guardTarget: string | null;
+  readonly planMode: boolean;
+  /** False for a new worktree, which does not exist yet. */
+  readonly treeKnown: boolean;
+}
+
 function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
-  async function checkTree(
-    cwd: string,
+  /** Guard, then pre-register the fresh Run, atomically per working tree (finding 1). */
+  async function guardThenRegister(
+    plan: StartPlan,
     projectName: string,
-    extra: Pick<Extract<LaunchGuardDecision, { ok: true }>, "cwd" | "extraArgv">,
   ): Promise<LaunchGuardDecision> {
-    const verdict = await deps.guard.check({ cwd });
-    if (verdict.kind === "conflict") {
-      return { ok: false, conflict: { projectName, conflicts: [...verdict.conflicts] } };
+    if (plan.guardTarget !== null) {
+      const verdict = await deps.guard.check({ cwd: plan.guardTarget });
+      if (verdict.kind === "conflict") {
+        return { ok: false, conflict: { projectName, conflicts: [...verdict.conflicts] } };
+      }
     }
-    return { ok: true, ...extra };
+    const worktreeRoot = plan.treeKnown ? await deps.guard.worktreeRootOf(plan.cwd) : null;
+    const runId = deps.mintRunId();
+    await deps.pipeline.apply({
+      kind: "launch-registered",
+      runId,
+      claudeSessionId: null,
+      linkKind: null,
+      linkedFromRunId: null,
+      cwd: plan.cwd,
+      worktreeRoot,
+      permissionMode: plan.planMode ? "plan" : null,
+      at: deps.now().toISOString(),
+    });
+    return {
+      ok: true,
+      ...plan.extra,
+      runId,
+      env: { CCC_RUN_ID: runId, CCC_LAUNCH_SOURCE: "dashboard" },
+    };
+  }
+
+  async function planOf(input: LaunchGuardInput, root: string): Promise<StartPlan | null> {
+    const choice = input.choice;
+    const at = { cwd: root, extra: {}, planMode: false, treeKnown: true };
+    switch (choice?.kind) {
+      case undefined:
+        return { ...at, guardTarget: root };
+      case "continue":
+        return { ...at, guardTarget: null };
+      case "plan":
+        return {
+          ...at,
+          extra: { extraArgv: ["--permission-mode", "plan"] },
+          guardTarget: null,
+          planMode: true,
+        };
+      case "new-worktree":
+        // The schema holds the name to the pattern; a leading `-` is also
+        // refused so it can never read as a flag.
+        if (!WORKTREE_NAME_PATTERN.test(choice.name) || choice.name.startsWith("-")) return null;
+        return {
+          ...at,
+          extra: { extraArgv: ["--worktree", choice.name] },
+          guardTarget: null,
+          treeKnown: false,
+        };
+      case "existing-worktree": {
+        // The opaque id resolves against the service's own list; an id it
+        // did not issue launches nothing.
+        const entries = await deps.listWorktrees(root);
+        const entry = entries.find((candidate) => candidate.worktreeId === choice.worktreeId);
+        if (entry === undefined) return null;
+        return { ...at, cwd: entry.path, extra: { cwd: entry.path }, guardTarget: entry.path };
+      }
+    }
   }
 
   return {
@@ -139,29 +213,19 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
       const project = await deps.lookup.resolve(input.projectId);
       // The launch service already refused an unresolvable project.
       if ("error" in project) return { ok: true };
-      const choice = input.choice;
-      switch (choice?.kind) {
-        case undefined:
-          return checkTree(project.path, project.displayName, {});
-        case "continue":
-          return { ok: true };
-        case "plan":
-          return { ok: true, extraArgv: ["--permission-mode", "plan"] };
-        case "new-worktree":
-          // The schema holds the name to the pattern; a leading `-` is also
-          // refused so it can never read as a flag.
-          if (!WORKTREE_NAME_PATTERN.test(choice.name) || choice.name.startsWith("-"))
-            return REFUSED;
-          return { ok: true, extraArgv: ["--worktree", choice.name] };
-        case "existing-worktree": {
-          // The opaque id resolves against the service's own list; an id it
-          // did not issue launches nothing.
-          const entries = await deps.listWorktrees(project.path);
-          const entry = entries.find((candidate) => candidate.worktreeId === choice.worktreeId);
-          if (entry === undefined) return REFUSED;
-          return checkTree(entry.path, project.displayName, { cwd: entry.path });
-        }
-      }
+      const plan = await planOf(input, project.path);
+      if (plan === null) return REFUSED;
+      // One chain per resolved worktree root, shared with resume and branch.
+      const tree = (await deps.guard.worktreeRootOf(plan.cwd)) ?? plan.cwd;
+      return serializedOnTree(deps.guard, tree, () => guardThenRegister(plan, project.displayName));
+    },
+
+    async settle(runId, outcome): Promise<void> {
+      const at = deps.now().toISOString();
+      if (outcome === "started") await deps.pipeline.apply({ kind: "launch-started", runId, at });
+      else if (outcome === "failed")
+        await deps.pipeline.apply({ kind: "launch-failed", runId, at });
+      else await deps.pipeline.apply({ kind: "start-timeout", runId, observedAt: at });
     },
   };
 }

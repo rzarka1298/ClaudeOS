@@ -18,6 +18,7 @@ import {
 import {
   applyMigrations,
   insertProject,
+  listConflictCandidates,
   type OperationalStore,
   openStore,
   saveLauncherConfig,
@@ -221,6 +222,9 @@ beforeEach(async () => {
     guard,
     listWorktrees: (root) => listWorktrees(root, { runGit, realpath }),
     installedClaudeBin: () => "/opt/installer-recorded/claude",
+    pipeline,
+    mintRunId: newRunId,
+    now: () => new Date(),
   });
   const actions: SessionActionDeps = {
     db: store.db,
@@ -406,5 +410,83 @@ describe("the concurrent-write guard runs inside Phase 4's Start Claude Code lau
     seedRun({ state: "running", endedAt: null });
     const res = await post<LaunchResponse>(LAUNCH_PATH, { action: "finder", projectId }, token);
     expect(res.body).toEqual({ ok: true });
+  });
+});
+
+describe("Codex review findings 1 and 2: launch registration and serialization", () => {
+  it("finding 1: a fresh Start is pre-registered as a dashboard Run before the terminal opens, so a second Start conflicts", async () => {
+    const token = await handshake();
+
+    const first = await post<LaunchResponse>(
+      LAUNCH_PATH,
+      { action: "claude-code", projectId },
+      token,
+    );
+    expect(first.body).toEqual({ ok: true });
+
+    // No SessionStart hook has arrived: the Run exists only because the launch registered it.
+    const candidates = listConflictCandidates(store.db);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.state).toBe("starting");
+    expect(lastScript()).toContain(`CCC_RUN_ID='${candidates[0]?.runId}'`);
+    expect(lastScript()).toContain("CCC_LAUNCH_SOURCE='dashboard'");
+
+    const second = await post<LaunchResponse>(
+      LAUNCH_PATH,
+      { action: "claude-code", projectId },
+      token,
+    );
+    expect(second.body).toMatchObject({ ok: false, conflict: { projectName: "Alpha" } });
+    expect(spawner.calls).toHaveLength(1);
+  });
+
+  it("finding 1: a refused hand-off leaves no pre-registered Run behind", async () => {
+    const token = await handshake();
+    const bad = await post<LaunchResponse>(
+      LAUNCH_PATH,
+      {
+        action: "claude-code",
+        projectId,
+        choice: { kind: "existing-worktree", worktreeId: "0123456789abcdef" },
+      },
+      token,
+    );
+    expect(bad.body).toEqual({ ok: false, error: "spawn-failed" });
+    expect(listConflictCandidates(store.db)).toHaveLength(0);
+  });
+
+  it("finding 2: concurrent resumes from different subdirectories of one repo cannot both write", async () => {
+    const token = await handshake();
+    const subA = join(repo, "sub-a");
+    const subB = join(repo, "sub-b");
+    mkdirSync(subA);
+    mkdirSync(subB);
+    const a = seedRun({ projectId: null, cwd: subA, worktreeRoot: null });
+    const b = seedRun({ projectId: null, cwd: subB, worktreeRoot: null });
+
+    const [ra, rb] = await Promise.all([
+      post<{ outcome: string }>(SESSION_RESUME_PATH, { runId: a.runId }, token),
+      post<{ outcome: string }>(SESSION_RESUME_PATH, { runId: b.runId }, token),
+    ]);
+
+    expect([ra.body.outcome, rb.body.outcome].sort()).toEqual(["conflict", "launched"]);
+    expect(spawner.calls).toHaveLength(1);
+  });
+
+  it("finding 2: a fresh Start and a resume into the same repo share one lock", async () => {
+    const token = await handshake();
+    const sub = join(repo, "sub-c");
+    mkdirSync(sub);
+    const src = seedRun({ projectId: null, cwd: sub, worktreeRoot: null });
+
+    const [start, resume] = await Promise.all([
+      post<LaunchResponse>(LAUNCH_PATH, { action: "claude-code", projectId }, token),
+      post<{ outcome: string }>(SESSION_RESUME_PATH, { runId: src.runId }, token),
+    ]);
+
+    const startOk = "ok" in start.body && start.body.ok === true;
+    const resumeOk = resume.body.outcome === "launched";
+    expect(startOk !== resumeOk).toBe(true);
+    expect(spawner.calls).toHaveLength(1);
   });
 });

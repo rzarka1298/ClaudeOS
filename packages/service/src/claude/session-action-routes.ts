@@ -49,6 +49,7 @@ import type { RouteContext } from "../routes.js";
 import type { FocusService } from "./focus.js";
 import { type ClaudeHandler, sendClaudeJson, withClaudeAuth } from "./http.js";
 import type { ServiceLaunchGuard, WorktreeEntry } from "./launch-guard.js";
+import { serializedOnTree } from "./launch-locks.js";
 import type { ClaudePipeline } from "./pipeline.js";
 import { assertTranscriptPath, TranscriptPathRefusedError } from "./transcript-path.js";
 
@@ -287,13 +288,11 @@ async function beforeDeadline<T>(
 /**
  * In-flight launches, per composition (wave 5 review): the source Runs
  * with a resume or branch in progress (a second one for the same Run is
- * refused), and a per-tree chain that serializes "guard, then
- * pre-register", so two launches into one tree can never both pass the
- * guard before either Run exists.
+ * refused). The per-tree chain that serializes "guard, then pre-register"
+ * lives in launch-locks.ts, shared with fresh Start launches.
  */
 interface LaunchLocks {
   readonly sources: Set<RunId>;
-  readonly trees: Map<string, Promise<unknown>>;
 }
 
 const LOCKS = new WeakMap<SessionActionDeps, LaunchLocks>();
@@ -301,25 +300,10 @@ const LOCKS = new WeakMap<SessionActionDeps, LaunchLocks>();
 function locksOf(deps: SessionActionDeps): LaunchLocks {
   let locks = LOCKS.get(deps);
   if (locks === undefined) {
-    locks = { sources: new Set(), trees: new Map() };
+    locks = { sources: new Set() };
     LOCKS.set(deps, locks);
   }
   return locks;
-}
-
-/** Runs `work` after every earlier holder of `tree` has finished. */
-async function serializedOn<T>(locks: LaunchLocks, tree: string, work: () => Promise<T>) {
-  const previous = locks.trees.get(tree) ?? Promise.resolve();
-  const current = previous.then(work, work);
-  const settled = current.then(
-    () => undefined,
-    () => undefined,
-  );
-  locks.trees.set(tree, settled);
-  void settled.then(() => {
-    if (locks.trees.get(tree) === settled) locks.trees.delete(tree);
-  });
-  return current;
 }
 
 type LaunchOutcome =
@@ -375,10 +359,16 @@ async function launchLinked(
     if (!plan.ok) return { kind: "refused", code: plan.code };
 
     const launch = spec(sessionId);
+    // Serialized by the resolved git worktree root (the launch directory
+    // outside git), on the chain fresh Start launches share (finding 2).
     const registered = await beforeDeadline(
-      serializedOn(locks, plan.cwd, () =>
-        guardThenRegister(run, root, plan, launch, deadline, deps, pipeline),
-      ),
+      deps.guard
+        .worktreeRootOf(plan.cwd)
+        .then((tree) =>
+          serializedOnTree(deps.guard, tree ?? plan.cwd, () =>
+            guardThenRegister(run, root, plan, launch, deadline, deps, pipeline),
+          ),
+        ),
       deadline,
     );
     if (registered === TIMED_OUT) return { kind: "refused", code: "timeout" };

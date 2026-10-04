@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
-import type { ProjectId } from "./ids.js";
+import type { ProjectId, RunId } from "./ids.js";
 import { AbsolutePathSchema, hasControlCharacter, ProjectIdSchema } from "./projects.js";
 import { GuardConflictSchema, type LaunchChoice, LaunchChoiceSchema } from "./session-actions.js";
 
@@ -555,6 +555,13 @@ export type LaunchGuardDecision =
       readonly ok: true;
       readonly cwd?: string | undefined;
       readonly extraArgv?: readonly string[] | undefined;
+      /**
+       * The environment the terminal exports for the session (`CCC_RUN_ID`,
+       * `CCC_LAUNCH_SOURCE`), set when the guard pre-registered the Run.
+       */
+      readonly env?: Readonly<Record<string, string>> | undefined;
+      /** The Run the guard pre-registered under its lock; settled through {@link LaunchGuard.settle}. */
+      readonly runId?: RunId | undefined;
     }
   | { readonly ok: false; readonly error: LaunchErrorKind }
   | { readonly ok: false; readonly conflict: LaunchConflictResult["conflict"] };
@@ -566,4 +573,10 @@ export type LaunchGuardDecision =
  */
 export interface LaunchGuard {
   check(input: LaunchGuardInput): Promise<LaunchGuardDecision>;
+  /**
+   * Records how the hand-off to the terminal ended for a Run the guard
+   * pre-registered: `started`, `failed` (definitely nothing opened) or
+   * `timeout` (a terminal may still open late).
+   */
+  settle?(runId: RunId, outcome: "started" | "failed" | "timeout"): Promise<void>;
 }
