@@ -24,6 +24,7 @@ import { createLaunchersSession, type LaunchersSession } from "./launchers-setti
 import { navigationRequest } from "./navigation-request.js";
 import { Overview } from "./overview.js";
 import { ProjectsView } from "./projects-view.js";
+import type { SessionActionHost } from "./session-action-runner.js";
 import { SettingsDestination } from "./settings-destination.js";
 
 export interface ShellProps {
@@ -100,6 +101,12 @@ export interface ShellProps {
    * — never a constructed client living inside `agent-runs-detail.tsx`.
    */
   loadSessionUsage?: (runId: string) => Promise<SessionUsage>;
+  /**
+   * The client-bound pieces of the Phase 5 session-action runner. The view
+   * host builds them from its authenticated client and Obsidian's modal
+   * seam; absent, every `session:*` control answers unavailable.
+   */
+  sessionActions?: SessionActionHost;
 }
 
 function noNotify(_message: string): void {}
@@ -249,6 +256,7 @@ export function Shell({
   openSystemSettings,
   launchersActions = noLaunchersActions,
   loadSessionUsage,
+  sessionActions: _sessionActions,
 }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
   // One per view: leaving Settings keeps detection and drafts in memory (RR-25).

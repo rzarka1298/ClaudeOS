@@ -40,13 +40,21 @@ export interface QuickActionContext {
    * `switcher:*` capability then answers like any unavailable action.
    */
   readonly openSwitcher?: ((prefill: string) => void) | undefined;
+  /**
+   * Runs one `session:*` or `usage:*` descriptor through the Phase 5 action
+   * runner (05-15). Absent, those capabilities answer like any unavailable
+   * action. The runner owns the modal, the client call and the outcome copy;
+   * this dispatcher only hands the descriptor over (D-36).
+   */
+  readonly runSessionAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }
 
 export type QuickActionResult =
   | { readonly kind: "navigated"; readonly destination: DestinationId }
   | { readonly kind: "unavailable" }
   | { readonly kind: "launch-requested"; readonly action: LaunchAction }
-  | { readonly kind: "switcher-opened" };
+  | { readonly kind: "switcher-opened" }
+  | { readonly kind: "session-action-requested"; readonly capability: string };
 
 /** Where a connector is configured once its phase lands. */
 const SETTINGS: DestinationId = "settings";

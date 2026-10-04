@@ -122,6 +122,17 @@ export interface SessionActionDeps {
 }
 
 /**
+ * The host-supplied half of {@link SessionActionDeps}: the client-bound
+ * calls and the Obsidian modal seam. The shell adds the signal-derived
+ * members (`getSession`, `listProjects`, `cleanupPeriodDays`) itself, so no
+ * view code builds a client (05-17).
+ */
+export type SessionActionHost = Pick<
+  SessionActionDeps,
+  "requestSessionAction" | "setTranscriptAnalysis" | "ui"
+>;
+
+/**
  * The UI-SPEC "Reason vocabulary (fixed)" plus every {@link SessionActionErrorCode}
  * this plan's routes can answer with, so a failure Notice never shows a raw
  * code. `transcript-missing` is interpolated with the actual retention
