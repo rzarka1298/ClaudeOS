@@ -2,7 +2,11 @@ import type { LaunchAction, ProjectId } from "@ccc/domain";
 import type { SocketApiClient } from "@ccc/service-api-client";
 import { connectionState } from "../connection-state.js";
 import type { HostRegistry } from "../host-registry.js";
-import { createLaunchRequester, windowLaunchTimers } from "./launch-client.js";
+import {
+  type ConflictChooser,
+  createLaunchRequester,
+  windowLaunchTimers,
+} from "./launch-client.js";
 import { type LaunchTimerControls, retainLaunchStatus } from "./launch-status.js";
 import { projectsSnapshot } from "./projects-state.js";
 
@@ -13,6 +17,8 @@ export interface PluginLauncherOptions {
   readonly notify: (message: string) => void;
   /** Defaults to `window.setTimeout`/`window.clearTimeout`. */
   readonly timers?: LaunchTimerControls | undefined;
+  /** Opens the concurrent-write choice when Start Claude Code hits the guard (05-17). */
+  readonly chooseOnConflict?: ConflictChooser | undefined;
 }
 
 export type RequestLaunch = (projectId: ProjectId | null, action: LaunchAction) => void;
@@ -42,6 +48,7 @@ export function createPluginLauncher({
   client,
   notify,
   timers = windowLaunchTimers(),
+  chooseOnConflict,
 }: PluginLauncherOptions): RequestLaunch {
   let unloaded = false;
   const pending = new Set<number>();
@@ -75,6 +82,7 @@ export function createPluginLauncher({
       projectsSnapshot.value?.launchers["claude-code"].terminalLabel ?? "Terminal",
     isDisposed: () => unloaded,
     holdStatus,
+    chooseOnConflict,
     setTimer: (callback, ms) => {
       const id = timers.setTimer(() => {
         pending.delete(id);

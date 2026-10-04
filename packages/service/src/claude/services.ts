@@ -1,6 +1,11 @@
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { newRunId, type SessionTerminator } from "@ccc/domain";
+import {
+  type LaunchGuard,
+  newRunId,
+  type ProjectLookup,
+  type SessionTerminator,
+} from "@ccc/domain";
 import { getSessionOverride, type OperationalStore } from "@ccc/operational-store";
 import type { Logger } from "pino";
 import type { EventBus } from "../events/event-bus.js";
@@ -11,6 +16,7 @@ import {
   resolveSpoolPath,
   resolveStatusLineSpoolPath,
 } from "../paths.js";
+import type { Spawner } from "../projects/spawner.js";
 import { createAttribution } from "./attribution.js";
 import { approvalUnavailableProposer, unconfiguredTerminalLauncher } from "./default-ports.js";
 import { createFocusService, nodeFocusExecFile } from "./focus.js";
@@ -19,6 +25,7 @@ import { readInstallRecord } from "./integration-status.js";
 import { createLaunchGuard, listWorktrees } from "./launch-guard.js";
 import { classifyLaunchSource } from "./launch-source.js";
 import { createLivenessSweeper, type LivenessSweeper, livenessConfigFromEnv } from "./liveness.js";
+import { createPhase4Bridge } from "./phase4-bridge.js";
 import { type ClaudePipeline, createClaudePipeline } from "./pipeline.js";
 import { createProcessFacts, createSessionFactsProvider, nodeExecFile } from "./process-facts.js";
 import { createStoreProjectLookup } from "./project-lookup.js";
@@ -35,6 +42,18 @@ export interface ClaudeServicesDeps {
   readonly bus: EventBus;
   readonly logger: Logger;
   readonly env: NodeJS.ProcessEnv;
+  /**
+   * Phase 4's real launch machinery (05-17). With it, resume and branch open
+   * terminals through Phase 4's adapter and `startGuard` carries Phase 5's
+   * concurrent-write guard for Phase 4's launch service. Absent (unit tests,
+   * a composition without projects), the launcher answers
+   * `launcher-not-configured` and `startGuard` allows everything.
+   */
+  readonly phase4?: {
+    readonly spawner: Spawner;
+    readonly scriptDir: string;
+    readonly lookup: ProjectLookup;
+  };
 }
 
 export interface ClaudeServices {
@@ -43,6 +62,8 @@ export interface ClaudeServices {
   readonly sweeper: LivenessSweeper;
   /** What `createRequestListener` carries as `RouteContext.claude`. */
   readonly routeDeps: ClaudeRouteDeps;
+  /** Phase 5's guard in Phase 4's `LaunchGuard` shape, for `createLaunchService({ guard })` (D-29). */
+  readonly startGuard: LaunchGuard | undefined;
   /**
    * The force-terminate executor (05-14), typed on
    * `CapabilityToken<"session.force-terminate">`. Deliberately NOT in
@@ -130,14 +151,29 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     attribute,
   });
 
-  // Session actions (05-14). Before Phase 4 the launcher answers
-  // launcher-not-configured and before Phase 6 the terminate request answers
-  // approval-unavailable (PR-17, PR-26): both honest, neither reaches the OS.
-  // Plan 05-17 swaps in Phase 4's launcher. Git stays read-only (D-30).
+  // Session actions (05-14, 05-17). Resume and branch open terminals through
+  // Phase 4's launcher (the adapter its saved configuration selects), and
+  // before Phase 6 the terminate request answers approval-unavailable
+  // (PR-26): honest, never reaching the OS. Git stays read-only (D-30).
+  const guard = createLaunchGuard({ db: store.db, runGit, realpath });
+  const installedClaudeBin = (): string | null =>
+    readInstallRecord(resolveRuntimeDir())?.claudeBin ?? null;
+  const bridge =
+    deps.phase4 === undefined
+      ? undefined
+      : createPhase4Bridge({
+          store,
+          spawner: deps.phase4.spawner,
+          scriptDir: deps.phase4.scriptDir,
+          lookup: deps.phase4.lookup,
+          guard,
+          listWorktrees: (projectRoot) => listWorktrees(projectRoot, { runGit, realpath }),
+          installedClaudeBin,
+        });
   const actions: SessionActionDeps = {
     db: store.db,
-    launcher: unconfiguredTerminalLauncher,
-    guard: createLaunchGuard({ db: store.db, runGit, realpath }),
+    launcher: bridge?.terminalLauncher ?? unconfiguredTerminalLauncher,
+    guard,
     lookup: createStoreProjectLookup(store.db),
     listWorktrees: (projectRoot) => listWorktrees(projectRoot, { runGit, realpath }),
     focus: createFocusService({
@@ -147,8 +183,9 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
       logger,
     }),
     proposer: approvalUnavailableProposer,
-    // Read per request, so an install after the service started is picked up.
-    claudeBin: () => readInstallRecord(resolveRuntimeDir())?.claudeBin ?? null,
+    // Read per request: the owner's saved launcher first (Phase 4 D-21), then
+    // the installer's record, so a change after startup is picked up.
+    claudeBin: bridge?.claudeBin ?? installedClaudeBin,
     claudeProjectsRoot: join(resolveClaudeConfigDir(), "projects"),
     openFile: nodeOpenFile,
     now: () => new Date(),
@@ -181,6 +218,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     poller,
     sweeper,
     routeDeps: { pipeline, actions },
+    startGuard: bridge?.startGuard,
     terminator,
     async stop() {
       // The sweeper first: its evidence goes through the pipeline, which

@@ -66,6 +66,12 @@ function clearStatus(key: string): void {
   launchStatus.value = next;
 }
 
+/** Removes `key`'s status (the owner cancelled the conflict choice, 05-17), and its pending clear timer. */
+export function clearLaunchStatus(key: string): void {
+  cancelPendingClear(key);
+  clearStatus(key);
+}
+
 /**
  * Writes `opening` for `key`, cancelling any pending success-clear timer for
  * the same key (RR-04: "a new launch replaces a previous error" applies to a

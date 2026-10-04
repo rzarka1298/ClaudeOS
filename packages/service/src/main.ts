@@ -123,6 +123,15 @@ async function main(): Promise<void> {
   // because the startup spool drain already publishes session events.
   const eventBus = createEventBus();
 
+  // Phase 4's process ports, built before the Claude services because Phase
+  // 5's resume and branch open terminals through the same spawner (05-17).
+  // One process port for every child the projects code starts; `main.ts` is
+  // the only place a real one is constructed (Shared Pattern 3).
+  const commandRunner = createExecFileCommandRunner();
+  // Every app launch goes through this one spawner (D-18): execFile with an
+  // argv array, a fixed environment, stderr classified and dropped (D-46).
+  const spawner = createCommandSpawner(commandRunner);
+
   // Claude (Phase 5): the session pipeline, then the spool drain it runs
   // before returning. After recovery and before the socket opens (D-22):
   // recovery, then the drain, then the socket. A drained ending applies to
@@ -132,6 +141,7 @@ async function main(): Promise<void> {
     bus: eventBus,
     logger,
     env: process.env,
+    phase4: { spawner, scriptDir, lookup: createStoreProjectLookup(store) },
   });
   // Usage (05-12): status-line capacity and cost, the opt-in transcript
   // scanner and integration status. It hooks the pipeline and the poller
@@ -162,9 +172,6 @@ async function main(): Promise<void> {
   // Built after the event bus because the collector publishes into it and
   // gates its interval on `eventBus.subscriberCount()` (D-11).
   //
-  // One process port for every child the projects code starts; `main.ts` is
-  // the only place a real one is constructed (Shared Pattern 3).
-  const commandRunner = createExecFileCommandRunner();
   // Resolved once: the system git path is a shim that opens the Command Line
   // Tools installer when no developer directory is selected, so it is only
   // used when `xcode-select -p` succeeds (D-10).
@@ -194,11 +201,10 @@ async function main(): Promise<void> {
   };
 
   // --- Phase 4 (projects and launchers): the launch pipeline ------------
-  // Every app launch goes through this one spawner (D-18): execFile with an
-  // argv array, a fixed environment, stderr classified and dropped (D-46).
-  // The launch service reads the collector's in-memory state only and never
-  // waits on git (D-42); Phase 4's guard allows everything (D-49).
-  const spawner = createCommandSpawner(commandRunner);
+  // The one spawner (D-18) is built above, beside the command runner, because
+  // Phase 5's session launches reuse it. The launch service reads the
+  // collector's in-memory state only and never waits on git (D-42); its guard
+  // is Phase 5's concurrent-write guard (D-29), or allow-all without one.
   const launch = createLaunchService({
     store,
     spawner,
@@ -213,6 +219,8 @@ async function main(): Promise<void> {
     // directory; the executable check (access X_OK) runs inside the launch
     // service before every launch (D-20, D-22).
     scriptDir,
+    // Phase 5's concurrent-write guard, adapted to this seam (05-17, D-29).
+    ...(claudeServices.startGuard === undefined ? {} : { guard: claudeServices.startGuard }),
   });
 
   // --- Phase 4 (projects and launchers): launcher setup (plan 04-11) -----

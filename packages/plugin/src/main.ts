@@ -25,6 +25,7 @@ import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-c
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 import { openDeleteUsageModal as openDeleteUsageModalDialog } from "./view/delete-usage-modal.js";
+import { createLaunchConflictChooser } from "./view/launch-conflict-choice.js";
 import { createPluginSwitcher } from "./view/plugin-switcher.js";
 import {
   createSwitcherOpener,
@@ -135,6 +136,8 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       notify: (message) => {
         new Notice(message);
       },
+      // Start Claude Code shows the same four-choice modal as resume (D-29).
+      chooseOnConflict: createLaunchConflictChooser(this.app, this.client),
     });
 
     this.hostRegistry.view(VIEW_TYPE, (leaf: WorkspaceLeaf) => new CommandCenterView(leaf, this));

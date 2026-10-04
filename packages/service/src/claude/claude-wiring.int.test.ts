@@ -359,6 +359,37 @@ describe("the concurrent-write guard runs inside Phase 4's Start Claude Code lau
     expect(lastScript()).not.toContain("--permission-mode");
   });
 
+  it("a new worktree choice appends --worktree NAME and nothing else", async () => {
+    const token = await handshake();
+    seedRun({ state: "running", endedAt: null });
+
+    const res = await post<LaunchResponse>(
+      LAUNCH_PATH,
+      { action: "claude-code", projectId, choice: { kind: "new-worktree", name: "feature-x" } },
+      token,
+    );
+
+    expect(res.body).toEqual({ ok: true });
+    expect(lastScript()).toContain(`'${CLAUDE_EXE}' '--worktree' 'feature-x'`);
+  });
+
+  it("an existing-worktree id the service never issued launches nothing", async () => {
+    const token = await handshake();
+
+    const res = await post<LaunchResponse>(
+      LAUNCH_PATH,
+      {
+        action: "claude-code",
+        projectId,
+        choice: { kind: "existing-worktree", worktreeId: "0123456789abcdef" },
+      },
+      token,
+    );
+
+    expect(res.body).toEqual({ ok: false, error: "spawn-failed" });
+    expect(spawner.calls).toHaveLength(0);
+  });
+
   it("launches straight through when nothing conflicts", async () => {
     const token = await handshake();
     const res = await post<LaunchResponse>(

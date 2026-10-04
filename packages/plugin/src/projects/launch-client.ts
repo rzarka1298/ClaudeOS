@@ -15,6 +15,7 @@ import {
 import type { ConnectionState } from "../connection-state.js";
 import { launchErrorNotice, launcherDisplayName } from "./launch-copy.js";
 import {
+  clearLaunchStatus,
   type LaunchTimerControls,
   launchStatus,
   launchStatusKey,
@@ -130,6 +131,7 @@ export function createLaunchRequester({
   terminalLabel = () => "Terminal",
   isDisposed = () => false,
   holdStatus,
+  chooseOnConflict,
   setTimer,
   clearTimer,
 }: CreateLaunchRequesterOptions): (projectId: ProjectId | null, action: LaunchAction) => void {
@@ -177,41 +179,70 @@ export function createLaunchRequester({
       return;
     }
 
-    let deadlineId: number | undefined;
-    const deadline = new Promise<Outcome>((resolve) => {
-      deadlineId = timers.setTimer(() => resolve({ settled: "timeout" }), LAUNCH_DEADLINE_MS);
-    });
-    const answer = postLaunchRequest(client, request).then(
-      (result): Outcome => ({ settled: "result", result }),
-    );
+    // One request raced against its own 5 s deadline. The deadline belongs to
+    // the request, not the launch: the owner's time in the conflict modal
+    // between two requests never counts against it (D-40).
+    const send = async (
+      body: LaunchRequest,
+    ): Promise<Outcome | { readonly settled: "threw"; readonly error: unknown }> => {
+      let deadlineId: number | undefined;
+      const deadline = new Promise<Outcome>((resolve) => {
+        deadlineId = timers.setTimer(() => resolve({ settled: "timeout" }), LAUNCH_DEADLINE_MS);
+      });
+      try {
+        const answer = postLaunchRequest(client, body).then(
+          (result): Outcome => ({ settled: "result", result }),
+        );
+        return await Promise.race([answer, deadline]);
+      } catch (error: unknown) {
+        return { settled: "threw", error };
+      } finally {
+        if (deadlineId !== undefined) timers.clearTimer(deadlineId);
+      }
+    };
 
-    Promise.race([answer, deadline])
-      .then(
-        (outcome) => {
-          try {
-            if (deadlineId !== undefined) timers.clearTimer(deadlineId);
-            if (isDisposed()) return;
-            if (outcome.settled === "timeout") fail("timeout");
-            else if (outcome.result.ok)
-              setLaunchResult(key, { kind: "success", at: new Date().toISOString() }, timers);
-            else if ("conflict" in outcome.result)
-              fail("spawn-failed"); // RED scaffold (05-17)
-            else fail(outcome.result.error);
-          } finally {
-            settle();
-          }
-        },
-        (error: unknown) => {
-          try {
-            if (deadlineId !== undefined) timers.clearTimer(deadlineId);
-            if (isDisposed()) return;
-            fail(classifyLaunchFailure(error));
-          } finally {
-            settle();
-          }
-        },
-      )
-      // A throwing `notify` must not become an unhandled rejection.
-      .catch(() => undefined);
+    const run = async (): Promise<void> => {
+      let outcome = await send(request);
+      if (
+        request.action === "claude-code" &&
+        outcome.settled === "result" &&
+        "conflict" in outcome.result &&
+        !isDisposed()
+      ) {
+        // The guard found another writer: ask the owner how to proceed, then
+        // re-send with the answer (D-29). Cancel launches nothing.
+        if (chooseOnConflict === undefined) {
+          fail("spawn-failed");
+          return;
+        }
+        let choice: ConflictChoice;
+        try {
+          choice = await chooseOnConflict(outcome.result.conflict);
+        } catch {
+          if (!isDisposed()) fail("spawn-failed");
+          return;
+        }
+        if (isDisposed()) return;
+        if (choice.kind === "cancel") {
+          clearLaunchStatus(key);
+          return;
+        }
+        outcome = await send({ ...request, choice });
+      }
+      if (isDisposed()) return;
+      if (outcome.settled === "threw") fail(classifyLaunchFailure(outcome.error));
+      else if (outcome.settled === "timeout") fail("timeout");
+      else if ("conflict" in outcome.result)
+        fail("spawn-failed"); // a second conflict (a race with another launch)
+      else if (outcome.result.ok)
+        setLaunchResult(key, { kind: "success", at: new Date().toISOString() }, timers);
+      else fail(outcome.result.error);
+    };
+
+    run()
+      .catch(() => {
+        // A throwing `notify` must not become an unhandled rejection.
+      })
+      .finally(settle);
   };
 }
