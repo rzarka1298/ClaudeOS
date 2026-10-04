@@ -5,6 +5,8 @@ import {
   getSessionUsage,
   openSystemSettings,
   refreshProjects,
+  requestSessionAction,
+  setTranscriptAnalysis,
 } from "@ccc/service-api-client";
 import { ItemView, Notice, Scope, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
@@ -18,6 +20,7 @@ import { attachEventClient, refreshProjectsOnConnect } from "../service-connecti
 import type { CommandCenterSettings } from "../settings.js";
 import type { DestinationId } from "./destinations.js";
 import { registerSwitcherScope } from "./quick-switcher.js";
+import { createObsidianSessionActionUi } from "./session-modals.js";
 import { Shell } from "./shell.js";
 
 export const VIEW_TYPE = "claude-command-center-view";
@@ -131,6 +134,15 @@ export class CommandCenterView extends ItemView {
         // constructed inside `agent-runs-detail.tsx` (05-13 acceptance
         // criteria: no `@ccc/service-api-client` import there).
         loadSessionUsage: (runId: string) => getSessionUsage(this.host.client, runId),
+        // The client-bound half of the session-action runner (05-17); the
+        // shell adds its signal-derived members. Modals are Obsidian's, via
+        // the one seam in session-modals.ts.
+        sessionActions: {
+          requestSessionAction: (action, body) =>
+            requestSessionAction(this.host.client, action, body as never) as never,
+          setTranscriptAnalysis: (enabled) => setTranscriptAnalysis(this.host.client, enabled),
+          ui: createObsidianSessionActionUi(this.app),
+        },
       }),
       this.contentEl,
     );

@@ -65,6 +65,10 @@ const NO_TARGET_ACTION: LaunchAction = "claude-desktop";
 /** The quick switcher's prefill for a Claude Code launch (S8, UI-SPEC). */
 export const SWITCHER_CLAUDE_CODE_PREFILL = "Start Claude Code in ";
 
+/** The `connect:claude-hooks` Notice (UI-SPEC setup state): the install is a command the owner runs. */
+const CLAUDE_HOOKS_NOTICE =
+  "Claude Code hooks are installed by a command you run yourself. Copy it from Obsidian settings → Claude command center → Claude.";
+
 /** `Connect Google Calendar and Gmail` → `Google Calendar and Gmail`. */
 function sourceFromLabel(label: string): string {
   return label.startsWith("Connect ") ? label.slice("Connect ".length) : label;
@@ -74,6 +78,12 @@ export function dispatchQuickAction(
   descriptor: QuickActionDescriptor,
   ctx: QuickActionContext,
 ): QuickActionResult {
+  if (descriptor.capability === "connect:claude-hooks") {
+    ctx.navigate(SETTINGS);
+    ctx.notify(CLAUDE_HOOKS_NOTICE);
+    return { kind: "navigated", destination: SETTINGS };
+  }
+
   if (descriptor.capability.startsWith("connect:")) {
     const source = sourceFromLabel(descriptor.label);
     ctx.navigate(SETTINGS);
@@ -81,6 +91,16 @@ export function dispatchQuickAction(
       `Connect ${source} from Settings → Claude command center once its connector is available.`,
     );
     return { kind: "navigated", destination: SETTINGS };
+  }
+
+  if (
+    (descriptor.capability.startsWith("session:") || descriptor.capability.startsWith("usage:")) &&
+    ctx.runSessionAction !== undefined
+  ) {
+    // The runner owns every modal, client call and outcome (05-15). It only
+    // ever requests a proposal for terminate; nothing here executes one.
+    ctx.runSessionAction(descriptor);
+    return { kind: "session-action-requested", capability: descriptor.capability };
   }
 
   if (descriptor.capability.startsWith("launch:")) {

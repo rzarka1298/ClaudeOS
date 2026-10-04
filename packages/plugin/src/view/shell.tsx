@@ -9,11 +9,13 @@ import { motionMode } from "../motion.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
+import { projectsSnapshot } from "../projects/projects-state.js";
 import { nowTick } from "../widgets/clock.js";
 import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
 import { resolvedLayout } from "../widgets/layout.js";
 import { dispatchQuickAction } from "../widgets/quick-actions.js";
 import type { WidgetId } from "../widgets/registry.js";
+import { claudeIntegration, sessionsById } from "../widgets/session-signals.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
 import { type WidgetHost, WidgetHostContext } from "../widgets/widget-host.js";
 import { AgentRuns } from "./agent-runs.js";
@@ -24,8 +26,34 @@ import { createLaunchersSession, type LaunchersSession } from "./launchers-setti
 import { navigationRequest } from "./navigation-request.js";
 import { Overview } from "./overview.js";
 import { ProjectsView } from "./projects-view.js";
-import type { SessionActionHost } from "./session-action-runner.js";
+import {
+  runSessionAction,
+  type SessionActionDeps,
+  type SessionActionHost,
+} from "./session-action-runner.js";
 import { SettingsDestination } from "./settings-destination.js";
+
+/**
+ * The runner's signal-derived members, added to the host-supplied pieces
+ * (05-17). `listProjects` is `null` (unknown, never "zero projects") until
+ * the Projects snapshot has arrived.
+ */
+function sessionActionDeps(host: SessionActionHost): SessionActionDeps {
+  return {
+    ...host,
+    getSession: (runId) => sessionsById.value.get(runId) ?? null,
+    listProjects: () => {
+      const snapshot = projectsSnapshot.value;
+      if (snapshot === undefined) return null;
+      return snapshot.projects.map((view) => ({
+        id: view.projectId,
+        name: view.displayName,
+        pinned: view.pinned,
+      }));
+    },
+    cleanupPeriodDays: () => claudeIntegration.value?.cleanupPeriodDays ?? null,
+  };
+}
 
 export interface ShellProps {
   /** The destination selected before this render — usually the last-saved one (PLUG-05). */
@@ -256,7 +284,7 @@ export function Shell({
   openSystemSettings,
   launchersActions = noLaunchersActions,
   loadSessionUsage,
-  sessionActions: _sessionActions,
+  sessionActions,
 }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
   // One per view: leaving Settings keeps detection and drafts in memory (RR-25).
@@ -306,6 +334,12 @@ export function Shell({
       notify,
       requestLaunch,
       openSwitcher,
+      runSessionAction:
+        sessionActions === undefined
+          ? undefined
+          : (action) => {
+              void runSessionAction(action, sessionActionDeps(sessionActions));
+            },
     });
   }
 

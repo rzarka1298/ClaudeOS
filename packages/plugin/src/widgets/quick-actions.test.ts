@@ -225,24 +225,27 @@ describe("session:* and usage:* descriptors reach the one runner (D-36, 05-17)",
     "usage:enable-transcript-analysis",
   ];
 
-  it.each(SESSION_CAPABILITIES)("%s calls ctx.runSessionAction exactly once with it", (capability) => {
-    const runSessionAction = vi.fn();
-    const ctx = { ...context(), runSessionAction };
-    const descriptor: QuickActionDescriptor = {
-      id: "x",
-      label: "A session control",
-      capability,
-      target: { runId: "run-1" },
-    };
+  it.each(SESSION_CAPABILITIES)(
+    "%s calls ctx.runSessionAction exactly once with it",
+    (capability) => {
+      const runSessionAction = vi.fn();
+      const ctx = { ...context(), runSessionAction };
+      const descriptor: QuickActionDescriptor = {
+        id: "x",
+        label: "A session control",
+        capability,
+        target: { runId: "run-1" },
+      };
 
-    const result = dispatchQuickAction(descriptor, ctx);
+      const result = dispatchQuickAction(descriptor, ctx);
 
-    expect(result).toEqual({ kind: "session-action-requested", capability });
-    expect(runSessionAction).toHaveBeenCalledTimes(1);
-    expect(runSessionAction).toHaveBeenCalledWith(descriptor);
-    expect(ctx.navigate).not.toHaveBeenCalled();
-    expect(ctx.requestLaunch).not.toHaveBeenCalled();
-  });
+      expect(result).toEqual({ kind: "session-action-requested", capability });
+      expect(runSessionAction).toHaveBeenCalledTimes(1);
+      expect(runSessionAction).toHaveBeenCalledWith(descriptor);
+      expect(ctx.navigate).not.toHaveBeenCalled();
+      expect(ctx.requestLaunch).not.toHaveBeenCalled();
+    },
+  );
 
   it("answers unavailable, calling nothing, when the host wired no runner", () => {
     const ctx = context();
@@ -258,7 +261,11 @@ describe("session:* and usage:* descriptors reach the one runner (D-36, 05-17)",
   it("connect:claude-hooks navigates to settings and posts the exact UI-SPEC Notice", () => {
     const ctx = context();
     const result = dispatchQuickAction(
-      { id: "connect-claude-hooks", label: "Set up Claude hooks", capability: "connect:claude-hooks" },
+      {
+        id: "connect-claude-hooks",
+        label: "Set up Claude hooks",
+        capability: "connect:claude-hooks",
+      },
       ctx,
     );
     expect(result).toEqual({ kind: "navigated", destination: "settings" });
