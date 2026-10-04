@@ -25,7 +25,7 @@ export const KILL_WAIT_MS = 5000;
  * The only two signals this module can send. The interrupt signal is not
  * representable: it ends an interactive Claude Code session rather than
  * interrupting the turn (PR-01), so "interrupt" is focus plus guidance
- * (PR-27), never a signal. Backstop rule 8 enforces the same in source.
+ * (PR-27), never a signal. Backstop rule 9 enforces the same in source.
  */
 export type TerminateSignal = "SIGTERM" | "SIGKILL";
 
@@ -56,7 +56,7 @@ function isNoSuchProcess(err: unknown): boolean {
  * T-05-58, T-05-59). It implements the domain `SessionTerminator` port, and
  * its one method takes `CapabilityToken<"session.force-terminate">` first:
  * a call without an approval-issued token does not compile, and no code
- * outside tests may cast one (backstop rule 9). Nothing in this service
+ * outside tests may cast one (backstop rule 10). Nothing in this service
  * issues a token; the approval engine does (ADR-0012, Phase 6), and the
  * engine owns single-use and expiry. No route calls this before Phase 6:
  * `POST /sessions/terminate-request` only proposes.

@@ -198,12 +198,12 @@ export function ListBody<Row>({
             ) : (
               <MetaSegments segments={segments} />
             )}
-            {action !== null && (
+            {action !== null && onAction !== undefined && (
               <button
                 type="button"
                 className="ccc-row-action"
                 aria-label={renderActionLabel?.(row) ?? action.label}
-                onClick={() => onAction?.(action)}
+                onClick={() => onAction(action)}
               >
                 {action.label}
               </button>

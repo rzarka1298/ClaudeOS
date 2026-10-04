@@ -187,7 +187,7 @@ describe("applyMigrations", () => {
 
   it("upgrades a store already at the previous version: existing runs rows keep their values and the new columns read null", () => {
     const previousDir = mkdtempSync(join(tmpdir(), "ccc-previous-migrations-"));
-    for (const file of MIGRATION_FILES.slice(0, 2)) {
+    for (const file of MIGRATION_FILES.slice(0, 3)) {
       copyFileSync(join(REAL_MIGRATIONS_DIR, file), join(previousDir, file));
     }
     const db = new Database(dbPath);

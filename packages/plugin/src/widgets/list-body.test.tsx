@@ -222,6 +222,7 @@ describe("the optional row action (UI-SPEC S1 row action, C-11, A11Y floor 6)", 
           capability: "session:focus",
         })}
         renderActionLabel={(row) => `Focus terminal for ${row.primary}`}
+        onAction={() => undefined}
       />,
     );
     expect(container.querySelectorAll("li.ccc-list-row")).toHaveLength(6);

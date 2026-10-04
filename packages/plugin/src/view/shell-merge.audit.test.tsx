@@ -132,7 +132,7 @@ describe("disconnected frame withholds onQuickAction (RR-05)", () => {
   // Resume button that does nothing, which the 04-10 quick-actions audit
   // (quick-actions-disconnected.audit.test.tsx) already treats as a defect for
   // the S8 pair. Remove `.skip` once ListBody hides or disables the button.
-  it.skip("renders no enabled row action button while disconnected", () => {
+  it("renders no enabled row action button while disconnected", () => {
     const connection = { kind: "disconnected", reason: "connect ECONNREFUSED" } as const;
     connectionState.value = connection;
     render(

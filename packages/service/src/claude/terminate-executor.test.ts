@@ -53,7 +53,7 @@ const NULL_FACTS: SessionFactsProvider = {
 /**
  * Tests only: the approval engine (Phase 6) is the one issuer of a real
  * token. A local cast here is the sanctioned test pattern (PATTERNS
- * correction 4); backstop rule 9 forbids it in non-test source.
+ * correction 4); backstop rule 10 forbids it in non-test source.
  */
 function tokenFor(
   subject: string,
@@ -417,7 +417,7 @@ describe("no Phase 5 package ever sends the interrupt signal (Task 3 Test 6, PR-
   });
 });
 
-describe("backstop rules 8 and 9, widened (wave 5 review)", () => {
+describe("backstop rules 9 and 10, widened (wave 5 review)", () => {
   /** Runs the backstop over a scratch repo holding exactly `files`; returns its stdout and status. */
   function backstopOver(files: Record<string, string>) {
     const scratch = realpathSync(mkdtempSync(join(base, "backstop-w5-")));
@@ -438,7 +438,7 @@ describe("backstop rules 8 and 9, widened (wave 5 review)", () => {
   const bare = INTERRUPT.slice(3);
   const token = `${"Capability"}Token<"session.force-terminate">`;
 
-  it("rule 8 catches the signal held in a variable, by constant, and kill -INT / -2 via execFile", () => {
+  it("rule 9 catches the signal held in a variable, by constant, and kill -INT / -2 via execFile", () => {
     const samples = [
       `const sig = ${quoted};\nprocess.kill(pid, sig);\n`,
       `process.kill(pid, os.constants.signals.${INTERRUPT});\n`,
@@ -458,7 +458,7 @@ describe("backstop rules 8 and 9, widened (wave 5 review)", () => {
     expect(handler.stdout).toContain("0 rule(s) violated");
   }, 60_000);
 
-  it("rule 9 catches a token built from JSON.parse or any, in non-test files only", () => {
+  it("rule 10 catches a token built from JSON.parse or any, in non-test files only", () => {
     const samples = [
       `const t: ${token} = JSON.parse(raw);\n`,
       `void executor.terminate(JSON.parse(raw), runId);\n`,
@@ -475,7 +475,7 @@ describe("backstop rules 8 and 9, widened (wave 5 review)", () => {
   }, 60_000);
 });
 
-describe("backstop rules 8 and 9 (Task 3 Test 7)", () => {
+describe("backstop rules 9 and 10 (Task 3 Test 7)", () => {
   it("pass on the tree, reporting all rules clean", () => {
     const out = execFileSync("sh", ["scripts/check-boundaries.sh"], {
       cwd: REPO_ROOT,
@@ -483,8 +483,8 @@ describe("backstop rules 8 and 9 (Task 3 Test 7)", () => {
     });
     expect(out).toContain("0 rule(s) violated");
     const script = readFileSync(join(REPO_ROOT, "scripts", "check-boundaries.sh"), "utf8");
-    expect(script).toMatch(/Rule 8:/);
     expect(script).toMatch(/Rule 9:/);
+    expect(script).toMatch(/Rule 10:/);
     expect(script).toMatch(/packages\/plugin/);
   }, 30_000);
 

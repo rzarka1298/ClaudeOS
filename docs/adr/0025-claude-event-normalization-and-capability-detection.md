@@ -343,9 +343,9 @@ for milestone 2.
     is never finalized early.
   - Resume and branch give the terminal launcher 5 s before answering
     `timeout`. Reveal and open of a transcript use a 3 s `open` timeout.
-- **Backstop rules 8 and 9.** `scripts/check-boundaries.sh` rule 8 fails the
+- **Backstop rules 9 and 10.** `scripts/check-boundaries.sh` rule 9 fails the
   build on any kill call in `packages/service`, `packages/collectors` or
-  `packages/plugin` that names `SIGINT` (or the bare number 2). Rule 9 fails
+  `packages/plugin` that names `SIGINT` (or the bare number 2). Rule 10 fails
   it on any cast to `CapabilityToken` in a non-test file. Together with the
   executor's `TerminateSignal` type, which admits only `SIGTERM` and
   `SIGKILL`, these keep the two forbidden paths unreachable in source.
