@@ -145,6 +145,38 @@ describe("a guard conflict is an answer, not a failure (05-17)", () => {
   });
 });
 
+describe("an uncertain terminal hand-off stays non-terminal (Codex 05-codex-1)", () => {
+  async function settledAs(result: LaunchResult): Promise<string[]> {
+    const outcomes: string[] = [];
+    const guard: LaunchGuard = {
+      check: () => Promise.resolve({ ok: true, runId: "run-1" }),
+      settle: (_runId, outcome) => {
+        outcomes.push(outcome);
+        return Promise.resolve();
+      },
+    };
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    const launcher: TerminalLauncher = { launch: () => Promise.resolve(result) };
+    await service({ guard, terminalLauncher: launcher }).launch({
+      projectId,
+      action: "claude-code",
+    });
+    return outcomes;
+  }
+
+  it("settles an unclassified spawn failure as stale, never failed", async () => {
+    expect(await settledAs({ ok: false, error: "spawn-failed" })).toEqual(["timeout"]);
+  });
+
+  it("still settles a definite refusal as failed", async () => {
+    expect(await settledAs({ ok: false, error: "automation-denied" })).toEqual(["failed"]);
+  });
+});
+
 describe("after a successful launch (D-42, D-11)", () => {
   it("touches last_opened_at, tells the collector, and queues a refresh", async () => {
     await expect(service().launch({ projectId, action: "finder" })).resolves.toEqual({ ok: true });

@@ -337,7 +337,10 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
         return failure("timeout");
       }
       if (!delegated.ok) {
-        await settle(decision, delegated.error === "timeout" ? "timeout" : "failed");
+        // `spawn-failed` (and `timeout`) cannot say whether the terminal opened:
+        // the Run stays stale, never an invented failed state (PR-17).
+        const uncertain = delegated.error === "timeout" || delegated.error === "spawn-failed";
+        await settle(decision, uncertain ? "timeout" : "failed");
         return delegated;
       }
       await settle(decision, "started");
