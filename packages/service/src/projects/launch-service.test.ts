@@ -12,6 +12,7 @@ import type {
   TerminalLauncher,
   TerminalLaunchInput,
 } from "@ccc/domain";
+import { newRunId } from "@ccc/domain";
 import {
   applyMigrations,
   getProject,
@@ -149,7 +150,7 @@ describe("an uncertain terminal hand-off stays non-terminal (Codex 05-codex-1)",
   async function settledAs(result: LaunchResult): Promise<string[]> {
     const outcomes: string[] = [];
     const guard: LaunchGuard = {
-      check: () => Promise.resolve({ ok: true, runId: "run-1" }),
+      check: () => Promise.resolve({ ok: true, runId: newRunId() }),
       settle: (_runId, outcome) => {
         outcomes.push(outcome);
         return Promise.resolve();
