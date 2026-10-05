@@ -677,3 +677,41 @@ describe("Codex 3: deferred attribution from a superseded record is discarded", 
     });
   });
 });
+
+describe("status-line metadata ordering (Codex 05-codex-2)", () => {
+  const at = (offsetMs: number): string => new Date(T0 + offsetMs).toISOString();
+
+  it("a snapshot older than one already merged cannot roll the metadata back", async () => {
+    const pipeline = pipelineWith();
+    const runId = await startRun(pipeline);
+    time.advanceTo(T0 + 60_000);
+    expect(
+      await pipeline.applyStatusMetadata({
+        claudeSessionId: "sess-pipe-1",
+        observedAt: at(30_000),
+        model: "new-model",
+      }),
+    ).toBe(true);
+    expect(
+      await pipeline.applyStatusMetadata({
+        claudeSessionId: "sess-pipe-1",
+        observedAt: at(10_000),
+        model: "old-model",
+      }),
+    ).toBe(false);
+    expect(getSessionRun(store.db, runId)?.model).toBe("new-model");
+  });
+
+  it("a snapshot that predates the Run's start cannot overwrite its metadata", async () => {
+    const pipeline = pipelineWith();
+    const runId = await startRun(pipeline);
+    expect(
+      await pipeline.applyStatusMetadata({
+        claudeSessionId: "sess-pipe-1",
+        observedAt: at(-60_000),
+        model: "stale-model",
+      }),
+    ).toBe(false);
+    expect(getSessionRun(store.db, runId)?.model).not.toBe("stale-model");
+  });
+});

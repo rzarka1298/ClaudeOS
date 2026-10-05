@@ -206,6 +206,10 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
   const shapes = new Map<KnownHookEvent, ShapeHistory>();
   /** Insertion-ordered: the oldest id is evicted first once over capacity. */
   const appliedEventIds = new Set<string>();
+  // The newest status-line observation merged per Run: merging metadata does
+  // not advance `lastActivityAt`, so an older snapshot arriving later (spool
+  // after socket) needs its own high-water mark.
+  const metadataObservedMs = new Map<string, number>();
   /** The latest reduced state of a Run whose write is being coalesced, never yet persisted. */
   const pending = new Map<RunId, SessionRun>();
   const flushTimers = new Map<RunId, () => void>();
@@ -506,6 +510,12 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
         const observed = Date.parse(metadata.observedAt);
         if (!Number.isFinite(observed)) return false;
         if (run.lastActivityAt !== null && observed < Date.parse(run.lastActivityAt)) return false;
+        // Nor may one that predates the Run itself, or one older than a
+        // snapshot already merged.
+        if (observed < Date.parse(run.startedAt)) return false;
+        const newest = metadataObservedMs.get(run.runId);
+        if (newest !== undefined && observed < newest) return false;
+        metadataObservedMs.set(run.runId, Math.max(observed, newest ?? observed));
         const next = {
           name: metadata.name !== undefined && metadata.name !== "" ? metadata.name : run.name,
           model: metadata.model ?? run.model,
