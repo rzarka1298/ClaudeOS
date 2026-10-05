@@ -72,7 +72,8 @@ export type Evidence =
       readonly claudeSessionId: string | null;
       readonly linkKind: RunLinkKind | null;
       readonly linkedFromRunId: RunId | null;
-      readonly cwd: string;
+      /** The destination cwd, null until Claude creates a new worktree. */
+      readonly cwd: string | null;
       /**
        * The working tree the launch will write to, known before any hook
        * arrives, so the queued/starting Run is already a concurrent-write
@@ -519,14 +520,37 @@ function reduceHook(
 
 /**
  * The Run a pre-registered dashboard launch waits in, when this record's
- * `CCC_RUN_ID` names one that has not yet attached to a process. A Run
+ * `CCC_RUN_ID` names one that has not yet attached to a process, or a resume
+ * matches its unclaimed session identity. A Run
  * that already has a PID is never re-adopted: every later hook in that
  * process still carries the variable.
  */
 function preRegistered(index: RunIndex, record: KnownHookRecord): SessionRun | null {
   const hinted = record.env?.CCC_RUN_ID;
-  if (hinted === undefined) return null;
-  const run = index.byRunId(hinted as RunId);
+  let run = hinted === undefined ? null : index.byRunId(hinted as RunId);
+  if (
+    run === null ||
+    run.pid !== null ||
+    (run.state !== "queued" && run.state !== "starting" && run.state !== "stale")
+  ) {
+    // Resume keeps the conversation ID. If the launch environment was lost
+    // or still names the completed parent,
+    // the unclaimed (session, null) attachment still identifies its launch.
+    if (record.hook_event_name !== "SessionStart" || record.source !== "resume") return null;
+    run = index.byIdentity(record.session_id, null);
+    if (run?.linkKind !== "resume" || run.linkedFromRunId === null) return null;
+    // A retained spool event, or another start from an attached process,
+    // must not steal a later launch's pending Run.
+    if (Date.parse(record.observedAt) < Date.parse(run.startedAt)) return null;
+    const attached = index.byIdentity(record.session_id, pidOf(record));
+    if (
+      attached !== null &&
+      attached.runId !== run.runId &&
+      (!TERMINAL.has(attached.state) ||
+        Date.parse(record.observedAt) <= Date.parse(latestTimeOf(attached)))
+    )
+      return null;
+  }
   if (run === null || run.pid !== null) return null;
   return run.state === "queued" || run.state === "starting" || run.state === "stale" ? run : null;
 }

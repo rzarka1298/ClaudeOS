@@ -7,13 +7,22 @@ import { join } from "node:path";
 import { newRunId, type SessionRun } from "@ccc/domain";
 import {
   applyMigrations,
+  insertProject,
   type OperationalStore,
   openStore,
+  saveLauncherConfig,
   upsertSessionRun,
 } from "@ccc/operational-store";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import pino from "pino";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createEventBus } from "../events/event-bus.js";
+import { createLaunchService } from "../projects/launch-service.js";
+import { createStoreProjectLookup } from "../projects/project-lookup.js";
+import { createFakeSpawner } from "../test-support/fake-spawner.js";
 import { READ_ONLY_GIT_ARGV, type RunGit, runGit } from "./git-readonly.js";
 import { createLaunchGuard, listWorktrees } from "./launch-guard.js";
+import { createPhase4Bridge } from "./phase4-bridge.js";
+import { createClaudePipeline } from "./pipeline.js";
 
 const TEST_BASE = join(homedir(), ".ccc-test");
 
@@ -103,6 +112,125 @@ afterEach(() => {
 });
 
 describe("the concurrent-write guard (Task 1 Test 1, D-27, SESS-10)", () => {
+  it.each(["conflict", "unavailable"])(
+    "opens no terminal for a project-card launch when the guard is %s",
+    async (kind) => {
+      const repo = makeRepo("repo");
+      seedRun({ cwd: repo, worktreeRoot: repo });
+      const projectId = insertProject(store.db, { path: repo, displayName: "Alpha" }).record
+        .projectId;
+      saveLauncherConfig(store.db, "claude-code", {
+        executablePath: "/usr/bin/true",
+        args: [],
+        terminal: { kind: "terminal-app" },
+      });
+      const logger = pino({ level: "silent" });
+      const pipeline = createClaudePipeline({
+        db: store.db,
+        bus: createEventBus(),
+        logger,
+        now: () => new Date(),
+        mintRunId: newRunId,
+        facts: {
+          factsFor: async () => ({
+            pidStartedAt: null,
+            launchSource: null,
+            projectId: null,
+            worktreeRoot: null,
+            transcriptPath: null,
+          }),
+        },
+      });
+      const guard = createLaunchGuard({
+        db: store.db,
+        realpath,
+        runGit:
+          kind === "conflict"
+            ? spyGit
+            : async () => {
+                throw new Error("git unavailable");
+              },
+      });
+      const spawner = createFakeSpawner();
+      const lookup = createStoreProjectLookup(store);
+      const bridge = createPhase4Bridge({
+        store,
+        spawner,
+        scriptDir: base,
+        lookup,
+        guard,
+        listWorktrees: async () => [],
+        installedClaudeBin: () => null,
+        pipeline,
+        mintRunId: newRunId,
+        now: () => new Date(),
+      });
+      const terminalLaunch = vi.fn(async () => ({ ok: true as const }));
+      const launch = createLaunchService({
+        store,
+        spawner,
+        lookup,
+        logger,
+        guard: bridge.startGuard,
+        terminalLauncher: { launch: terminalLaunch },
+        collector: {
+          refresh: () => undefined,
+          onRegistryChanged: () => undefined,
+          gitState: () => null,
+        },
+      });
+
+      const response = await launch.launch({ action: "claude-code", projectId });
+      if (kind === "conflict")
+        expect(response).toMatchObject({ ok: false, conflict: { projectName: "Alpha" } });
+      else expect(response).toEqual({ ok: false, error: "spawn-failed" });
+      expect(terminalLaunch).not.toHaveBeenCalled();
+      expect(spawner.calls).toHaveLength(0);
+      await pipeline.stop();
+    },
+  );
+
+  it("fails closed when git cannot determine the launch target's working tree", async () => {
+    const repo = makeRepo("repo");
+    seedRun({ worktreeRoot: repo, cwd: repo });
+    const guard = createLaunchGuard({
+      db: store.db,
+      runGit: async () => {
+        throw new Error("git unavailable");
+      },
+      realpath,
+    });
+
+    await expect(guard.check({ cwd: repo })).rejects.toThrow();
+  });
+
+  it("checks a write-capable Run whose working tree has not been attributed yet", async () => {
+    const repo = makeRepo("repo");
+    const run = seedRun({ cwd: join(repo, "sub"), worktreeRoot: null });
+    const guard = createLaunchGuard({ db: store.db, runGit: spyGit, realpath });
+
+    expect(await guard.check({ cwd: repo })).toMatchObject({
+      kind: "conflict",
+      conflicts: [{ runId: run.runId }],
+    });
+  });
+
+  it("does not assign a Run with no observed location to the target tree", async () => {
+    const repo = makeRepo("repo");
+    seedRun({ cwd: null, worktreeRoot: null });
+    const guard = createLaunchGuard({ db: store.db, runGit: spyGit, realpath });
+
+    expect(await guard.check({ cwd: repo })).toEqual({ kind: "clear" });
+  });
+
+  it("fails closed when a candidate's known location cannot be read", async () => {
+    const repo = makeRepo("repo");
+    seedRun({ cwd: join(base, "missing"), worktreeRoot: null });
+    const guard = createLaunchGuard({ db: store.db, runGit: spyGit, realpath });
+
+    await expect(guard.check({ cwd: repo })).rejects.toThrow();
+  });
+
   it("returns the three write-capable Runs in the same toplevel, stale included, and not the plan one", async () => {
     const repo = makeRepo("repo");
     const other = makeRepo("other");

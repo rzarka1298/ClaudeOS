@@ -17,9 +17,8 @@ import type { RunGit } from "./git-readonly.js";
  *
  * Every git call goes through the read-only gateway (`runGit`), so the
  * guard can observe a repository and never change one (SESS-11, D-30). A
- * target that is not inside a git working tree, or whose toplevel cannot be
- * read, is clear: the guard exists to stop two writers in one working tree,
- * and without a working tree there is nothing it can compare.
+ * non-git directory is compared by its realpath. An unreadable working tree
+ * fails closed: inability to compare writers is never a clear verdict.
  */
 
 /** One existing worktree. `path` is private and never leaves the service; the plugin sees the rest. */
@@ -42,29 +41,31 @@ export interface LaunchGuardDeps {
 const MAX_SESSION_NAME = 256;
 const DETACHED_BRANCH = "(detached)";
 
-/** The realpath'd git toplevel containing `cwd`, or null when it has none or cannot be read. */
+/** The realpath'd git toplevel containing `cwd`, or null when git confirms it has none. */
 async function toplevelOf(
   cwd: string,
   deps: Pick<LaunchGuardDeps, "runGit" | "realpath">,
 ): Promise<string | null> {
+  let top: string;
   try {
-    const top = await deps.runGit(cwd, ["rev-parse", "--show-toplevel"]);
-    return top.length > 0 && isAbsolute(top) ? await deps.realpath(top) : null;
-  } catch {
-    return null;
+    top = await deps.runGit(cwd, ["rev-parse", "--show-toplevel"]);
+  } catch (error: unknown) {
+    // Only git's explicit non-repository answer means there is no tree.
+    // Timeouts, permissions and process failures must stop the launch.
+    if (
+      error !== null &&
+      typeof error === "object" &&
+      "stderr" in error &&
+      typeof error.stderr === "string" &&
+      error.stderr.split("\n").some((line) => line.startsWith("fatal: not a git repository"))
+    )
+      return null;
+    throw new Error("Unable to check concurrent Claude sessions");
   }
-}
-
-/** A stored worktree root, realpath'd when it still resolves; as stored otherwise. */
-async function resolvedRoot(
-  root: string,
-  deps: Pick<LaunchGuardDeps, "realpath">,
-): Promise<string> {
-  try {
-    return await deps.realpath(root);
-  } catch {
-    return root;
+  if (top.length === 0 || !isAbsolute(top)) {
+    throw new Error("Unable to check concurrent Claude sessions");
   }
+  return deps.realpath(top);
 }
 
 /**
@@ -89,12 +90,18 @@ export function createLaunchGuard(deps: LaunchGuardDeps): ServiceLaunchGuard {
   return {
     worktreeRootOf: (cwd) => toplevelOf(cwd, deps),
     async check(target): Promise<LaunchGuardResult> {
-      const top = await toplevelOf(target.cwd, deps);
-      if (top === null) return { kind: "clear" };
+      const top = (await toplevelOf(target.cwd, deps)) ?? (await deps.realpath(target.cwd));
       const conflicts: GuardConflict[] = [];
       for (const run of listConflictCandidates(deps.db)) {
-        if (run.worktreeRoot === null) continue;
-        if ((await resolvedRoot(run.worktreeRoot, deps)) !== top) continue;
+        let root = run.worktreeRoot;
+        if (root === null) {
+          // No location has been observed yet (including a --worktree
+          // launch whose destination Claude has not created). This is
+          // distinct from a known location that cannot be read.
+          if (run.cwd === null) continue;
+          root = (await toplevelOf(run.cwd, deps)) ?? run.cwd;
+        }
+        if ((await deps.realpath(root)) !== top) continue;
         conflicts.push({
           runId: run.runId,
           sessionName: sessionDisplayName(toSessionView(run, null)).slice(0, MAX_SESSION_NAME),

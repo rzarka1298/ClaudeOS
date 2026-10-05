@@ -139,6 +139,18 @@ function lastSegment(fullPath: string | null): string | null {
  * PR-28), and `pid` facts stay in the store.
  */
 export function toSessionView(run: SessionRun, projectName: string | null): SessionView {
+  let name = run.name;
+  if (
+    run.pid === null &&
+    run.linkedFromRunId !== null &&
+    (run.linkKind === "resume" || run.linkKind === "fork")
+  ) {
+    const parentName =
+      name !== null && name.trim().length > 0
+        ? name
+        : `Session ${run.claudeSessionId?.slice(0, 8) ?? run.linkedFromRunId.slice(-8)}`;
+    name = `${run.linkKind === "resume" ? "Resume" : "Branch"} of ${parentName}`.slice(0, 256);
+  }
   return {
     runId: run.runId,
     revision: run.revision,
@@ -147,7 +159,7 @@ export function toSessionView(run: SessionRun, projectName: string | null): Sess
     activity: run.activity,
     projectId: run.projectId,
     projectName,
-    name: run.name,
+    name,
     model: run.model,
     effort: run.effort,
     launchSource: run.launchSource,

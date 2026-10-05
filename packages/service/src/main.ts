@@ -204,7 +204,7 @@ async function main(): Promise<void> {
   // The one spawner (D-18) is built above, beside the command runner, because
   // Phase 5's session launches reuse it. The launch service reads the
   // collector's in-memory state only and never waits on git (D-42); its guard
-  // is Phase 5's concurrent-write guard (D-29), or allow-all without one.
+  // is Phase 5's concurrent-write guard (D-29), failing closed without one.
   const launch = createLaunchService({
     store,
     spawner,
@@ -220,7 +220,12 @@ async function main(): Promise<void> {
     // service before every launch (D-20, D-22).
     scriptDir,
     // Phase 5's concurrent-write guard, adapted to this seam (05-17, D-29).
-    ...(claudeServices.startGuard === undefined ? {} : { guard: claudeServices.startGuard }),
+    guard: claudeServices.startGuard ?? {
+      check: (input) =>
+        Promise.resolve(
+          input.action === "claude-code" ? { ok: false, error: "spawn-failed" } : { ok: true },
+        ),
+    },
   });
 
   // --- Phase 4 (projects and launchers): launcher setup (plan 04-11) -----

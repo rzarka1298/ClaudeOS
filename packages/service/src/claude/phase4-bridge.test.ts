@@ -1,24 +1,28 @@
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ProjectId } from "@ccc/domain";
+import { newRunId, type ProjectId } from "@ccc/domain";
 import {
   applyMigrations,
+  getSessionRun,
   insertProject,
   type OperationalStore,
   openStore,
   saveLauncherConfig,
 } from "@ccc/operational-store";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import pino from "pino";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createEventBus } from "../events/event-bus.js";
 import { createFakeSpawner } from "../test-support/fake-spawner.js";
-import { createPhase4Bridge } from "./phase4-bridge.js";
+import { createPhase4Bridge, type Phase4BridgeDeps } from "./phase4-bridge.js";
+import { createClaudePipeline } from "./pipeline.js";
 
 let base: string;
 let store: OperationalStore;
 let projectId: ProjectId;
 const INSTALLED = "/opt/installer-recorded/claude";
 
-function bridge() {
+function bridge(overrides: Partial<Phase4BridgeDeps> = {}) {
   const unused = (): never => {
     throw new Error("not reached");
   };
@@ -35,6 +39,7 @@ function bridge() {
     pipeline: { apply: unused } as never,
     mintRunId: unused,
     now: () => new Date(),
+    ...overrides,
   });
 }
 
@@ -95,5 +100,47 @@ describe("startGuard new-worktree names", () => {
       choice: { kind: "new-worktree", name },
     });
     expect(decision).toEqual({ ok: false, error: "spawn-failed" });
+  });
+
+  it("leaves a new worktree's destination unset until Claude supplies it", async () => {
+    const runId = newRunId();
+    const check = vi.fn();
+    const pipeline = createClaudePipeline({
+      db: store.db,
+      bus: createEventBus(),
+      logger: pino({ level: "silent" }),
+      now: () => new Date(),
+      mintRunId: newRunId,
+      facts: {
+        factsFor: async () => ({
+          pidStartedAt: null,
+          launchSource: null,
+          projectId: null,
+          worktreeRoot: null,
+          transcriptPath: null,
+        }),
+      },
+    });
+    try {
+      const decision = await bridge({
+        guard: { check, worktreeRootOf: async (cwd) => cwd },
+        pipeline,
+        mintRunId: () => runId,
+      }).startGuard.check({
+        projectId,
+        action: "claude-code",
+        choice: { kind: "new-worktree", name: "isolated" },
+      });
+
+      expect(decision).toMatchObject({ ok: true, runId });
+      expect(check).not.toHaveBeenCalled();
+      expect(getSessionRun(store.db, runId)).toMatchObject({
+        state: "queued",
+        cwd: null,
+        worktreeRoot: null,
+      });
+    } finally {
+      await pipeline.stop();
+    }
   });
 });

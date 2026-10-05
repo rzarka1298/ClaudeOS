@@ -169,7 +169,8 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
       claudeSessionId: null,
       linkKind: null,
       linkedFromRunId: null,
-      cwd: plan.cwd,
+      // Claude creates the destination; the launch cwd is only its parent.
+      cwd: plan.treeKnown ? plan.cwd : null,
       worktreeRoot,
       permissionMode: plan.planMode ? "plan" : null,
       at: deps.now().toISOString(),
@@ -231,8 +232,8 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
       // Only a Claude Code session can write to a working tree concurrently.
       if (input.action !== "claude-code" || input.projectId === null) return { ok: true };
       const project = await deps.lookup.resolve(input.projectId);
-      // The launch service already refused an unresolvable project.
-      if ("error" in project) return { ok: true };
+      // Re-checks can race with a moved project; never bypass the guard.
+      if ("error" in project) return { ok: false, error: project.error };
       const plan = await planOf(input, project.path);
       if (plan === null) return REFUSED;
       // One chain per resolved worktree root, shared with resume and branch.

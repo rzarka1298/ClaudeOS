@@ -55,8 +55,9 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
 }
 
 /** Wraps a route `Handler` in the bearer-token requirement. Every route this plan and later plans add other than the handshake itself is registered through this. */
-export function withAuth(handler: Handler): Handler {
-  return (req, res, ctx) => requireToken(ctx.getSecret, (r, s) => handler(r, s, ctx))(req, res);
+export function withAuth(handler: Handler, unauthorizedBody?: ApiErrorBody): Handler {
+  return (req, res, ctx) =>
+    requireToken(ctx.getSecret, (r, s) => handler(r, s, ctx), unauthorizedBody)(req, res);
 }
 
 /**

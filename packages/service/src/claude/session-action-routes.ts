@@ -5,7 +5,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, isAbsolute } from "node:path";
 import { promisify } from "node:util";
 import {
-  type ApiErrorBody,
   AssociateRequestSchema,
   BranchRequestSchema,
   type BranchResponse,
@@ -122,10 +121,6 @@ const ACTION_BODY_LIMIT_BYTES = 2048;
  * timeout.
  */
 export const LAUNCH_TIMEOUT_MS = 5000;
-
-const INVALID_BODY_BODY: ApiErrorBody = { error: "invalid request body" };
-const UNAVAILABLE_BODY: ApiErrorBody = { error: "session actions unavailable" };
-const INTERNAL_ERROR_BODY: ApiErrorBody = { error: "internal error" };
 
 /** One frozen constant body per code, built once (T-02-19): nothing request-derived is ever echoed. */
 const ERROR_BODIES = Object.freeze(
@@ -443,7 +438,9 @@ async function guardThenRegister(
     claudeSessionId: launch.claudeSessionId,
     linkKind: launch.linkKind,
     linkedFromRunId: run.runId,
-    cwd: plan.cwd,
+    // The launcher's cwd is the parent, not the future worktree's
+    // destination. Its first hook supplies the actual location.
+    cwd: plan.treeKnown ? plan.cwd : null,
     worktreeRoot,
     permissionMode: plan.planMode ? "plan" : null,
     at: deps.now().toISOString(),
@@ -463,7 +460,7 @@ function actionDeps(
 
 /**
  * One authenticated action route: the deps (503 without them), a strict
- * body (constant 400 otherwise) and a 500 for anything unexpected, logged
+ * body (constant 400 otherwise) and a fixed failure code for anything unexpected, logged
  * with the route only.
  */
 function actionRoute<T>(
@@ -479,25 +476,25 @@ function actionRoute<T>(
     const deps = actionDeps(ctx);
     if (deps === null) {
       req.resume();
-      sendClaudeJson(res, 503, UNAVAILABLE_BODY);
+      sendClaudeJson(res, 503, ERROR_BODIES["service-disconnected"]);
       return;
     }
     const parsed = await readJsonBody(req, schema, ACTION_BODY_LIMIT_BYTES);
     if (!parsed.ok) {
       logger.warn({ route: path, reason: parsed.reason }, "rejected request body");
-      sendClaudeJson(res, 400, INVALID_BODY_BODY);
+      sendClaudeJson(res, 400, ERROR_BODIES["invalid-state"]);
       return;
     }
     try {
       await handle(parsed.value, res, deps);
     } catch (err: unknown) {
       logger.error({ route: path, err }, "session action failed");
-      if (!res.headersSent) sendClaudeJson(res, 500, INTERNAL_ERROR_BODY);
+      if (!res.headersSent) sendError(res, "service-disconnected");
     }
   };
   return withClaudeAuth((req, res, ctx) => {
     void run(req, res, ctx);
-  });
+  }, ERROR_BODIES["service-disconnected"]);
 }
 
 /** `POST /api/v1/sessions/resume` `{ runId, choice? }` (SESS-13, D-32, PR-10). */

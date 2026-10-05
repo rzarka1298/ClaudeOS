@@ -101,6 +101,32 @@ describe("RUN_STATE_DISPLAY (Test 5, D-16, UI-SPEC Run-state vocabulary)", () =>
 });
 
 describe("sessionDisplayName (Test 6)", () => {
+  it.each(["starting", "stale"] as const)(
+    "labels an unclaimed %s resume distinctly from its parent",
+    (state) => {
+      const parent = run({ state: "completed" });
+      const pending = run({ state, pid: null, linkKind: "resume", linkedFromRunId: parent.runId });
+      expect(sessionDisplayName(toSessionView(pending, null))).toBe("Resume of Session 0f3c2a8e");
+      expect(sessionDisplayName(toSessionView(parent, null))).toBe("Session 0f3c2a8e");
+    },
+  );
+
+  it("uses the reported name after a resume attaches to a process", () => {
+    expect(
+      sessionDisplayName(
+        toSessionView(
+          run({
+            linkKind: "resume",
+            linkedFromRunId: "0mfk1a2b3000000000000aaaa" as RunId,
+            name: "Fix the parser",
+            pid: 4242,
+          }),
+          null,
+        ),
+      ),
+    ).toBe("Fix the parser");
+  });
+
   it("prefers the reported name", () => {
     expect(sessionDisplayName(toSessionView(run({ name: "Fix the parser" }), null))).toBe(
       "Fix the parser",

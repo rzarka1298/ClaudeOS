@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { AUTH_HEADER } from "@ccc/domain";
+import { type ApiErrorBody, AUTH_HEADER } from "@ccc/domain";
 import { logger } from "../logging.js";
 import { verifyToken } from "./token.js";
 
@@ -8,7 +8,7 @@ type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 const UNAUTHENTICATED_BODY = JSON.stringify({ error: "authentication required" });
 const BEARER_PREFIX = "Bearer ";
 
-function rejectUnauthenticated(res: ServerResponse, reason: string): void {
+function rejectUnauthenticated(res: ServerResponse, reason: string, body: string): void {
   // Routed through the service's redacting pino logger (`./logging.js`,
   // ADR-0016/ADR-0017), the same as every other diagnostic line in this
   // service — never a raw console write. The reason itself never carries
@@ -17,7 +17,7 @@ function rejectUnauthenticated(res: ServerResponse, reason: string): void {
   // never written to the response body below.
   logger.warn({ reason }, "authentication rejected");
   res.writeHead(401, { "Content-Type": "application/json" });
-  res.end(UNAUTHENTICATED_BODY);
+  res.end(body);
 }
 
 /**
@@ -28,18 +28,24 @@ function rejectUnauthenticated(res: ServerResponse, reason: string): void {
  * caller cannot use the endpoint as an oracle for which part of its token
  * is wrong — the specific reason stays local to the log.
  */
-export function requireToken(getSecret: () => Buffer, handler: Handler): Handler {
+export function requireToken(
+  getSecret: () => Buffer,
+  handler: Handler,
+  unauthorizedBody?: ApiErrorBody,
+): Handler {
+  const body =
+    unauthorizedBody === undefined ? UNAUTHENTICATED_BODY : JSON.stringify(unauthorizedBody);
   return (req, res) => {
     const header = req.headers[AUTH_HEADER];
     const headerValue = Array.isArray(header) ? header[0] : header;
     if (!headerValue?.startsWith(BEARER_PREFIX)) {
-      rejectUnauthenticated(res, "missing");
+      rejectUnauthenticated(res, "missing", body);
       return;
     }
     const token = headerValue.slice(BEARER_PREFIX.length);
     const result = verifyToken(getSecret(), token, { nowMs: Date.now() });
     if (!result.ok) {
-      rejectUnauthenticated(res, result.reason);
+      rejectUnauthenticated(res, result.reason, body);
       return;
     }
     handler(req, res);

@@ -318,8 +318,9 @@ export function listSessionRunsForView(
 /**
  * The Runs a launch into the same working tree could collide with (D-27):
  * queued, starting, running, waiting or stale, not in plan mode (an unknown mode
- * counts as write-capable), and with a known working tree. The caller
- * compares `worktreeRoot` with the launch target's.
+ * counts as write-capable). The caller resolves missing working trees from
+ * `cwd` and compares them with the launch target's. Runs with neither location
+ * observed yet cannot be assigned to a tree (notably a new-worktree launch).
  */
 export function listConflictCandidates(db: Database.Database): SessionRun[] {
   return allRows(
@@ -327,7 +328,6 @@ export function listConflictCandidates(db: Database.Database): SessionRun[] {
     `SELECT * FROM runs WHERE kind = 'session'
        AND state IN (${placeholders(CONFLICT_STATES)})
        AND (permission_mode IS NULL OR permission_mode <> 'plan')
-       AND worktree_root IS NOT NULL
      ${LATEST_FIRST}`,
     ...CONFLICT_STATES,
   );

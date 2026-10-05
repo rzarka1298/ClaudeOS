@@ -136,6 +136,99 @@ async function startRun(pipeline: ClaudePipeline): Promise<RunId> {
   return runId as RunId;
 }
 
+describe("dashboard resume attachment", () => {
+  it.each([
+    { state: "starting", hint: "missing" },
+    { state: "stale", hint: "missing" },
+    { state: "starting", hint: "parent" },
+    { state: "stale", hint: "parent" },
+  ])(
+    "attaches a resume hook with a $hint run hint to its $state pending Run",
+    async ({ state, hint }) => {
+      const pipeline = pipelineWith({
+        facts: {
+          factsFor: async () => ({
+            pidStartedAt: LSTART,
+            launchSource: null,
+            projectId: null,
+            worktreeRoot: null,
+            transcriptPath: null,
+          }),
+        },
+      });
+      const parentId = await startRun(pipeline);
+      time.advanceTo(T0 + 1000);
+      await pipeline.ingest(record("SessionEnd", { reason: "prompt_input_exit" }), "socket");
+      time.advanceTo(T0 + 2000);
+      const resumeId = newRunId();
+      await pipeline.apply({
+        kind: "launch-registered",
+        runId: resumeId,
+        claudeSessionId: "sess-pipe-1",
+        linkKind: "resume",
+        linkedFromRunId: parentId,
+        cwd: dir,
+        worktreeRoot: null,
+        permissionMode: null,
+        at: time.now().toISOString(),
+      });
+      await pipeline.apply({
+        kind: "launch-started",
+        runId: resumeId,
+        at: time.now().toISOString(),
+      });
+      if (state === "stale") {
+        await pipeline.apply({
+          kind: "start-timeout",
+          runId: resumeId,
+          observedAt: time.now().toISOString(),
+        });
+      }
+      time.advanceTo(T0 + 3000);
+      await pipeline.ingest(
+        record("SessionStart", {
+          source: "resume",
+          env: {
+            CLAUDE_PID: String(PID + 1),
+            ...(hint === "parent" ? { CCC_RUN_ID: parentId } : {}),
+          },
+        }),
+        "socket",
+      );
+
+      expect(getSessionRun(store.db, resumeId)).toMatchObject({
+        state: "running",
+        pid: PID + 1,
+        pidStartedAt: LSTART,
+        claudeSessionId: "sess-pipe-1",
+        linkKind: "resume",
+        linkedFromRunId: parentId,
+      });
+      time.advanceTo(T0 + 4000);
+      await pipeline.ingest(
+        record("SessionStart", {
+          source: "resume",
+          env: { CLAUDE_PID: String(PID + 1), CCC_RUN_ID: resumeId },
+        }),
+        "socket",
+      );
+      await pipeline.ingest(
+        record("UserPromptSubmit", {
+          env: { CLAUDE_PID: String(PID + 1) },
+        }),
+        "socket",
+      );
+      expect(getSessionRun(store.db, resumeId)).toMatchObject({
+        state: "running",
+        activity: "working",
+      });
+      expect(getSessionRun(store.db, parentId)?.state).toBe("completed");
+      expect(pipeline.listSessionViews()).toHaveLength(2);
+      await pipeline.stop();
+    },
+  );
+});
+
 describe("shape degradation (Test 1, SESS-18, D-12)", () => {
   it("never applies a known event whose shape changed, and flags it until a later valid one", async () => {
     const pipeline = pipelineWith();
