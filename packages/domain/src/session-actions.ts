@@ -197,6 +197,9 @@ export const SESSION_ACTION_ERROR_CODES = [
   "spawn-failed",
   "project-moved",
   "app-not-found",
+  // The service is up but the action failed unexpectedly, or the concurrent-write guard could not read the target's working tree.
+  "action-failed",
+  "guard-unavailable",
 ] as const;
 export type SessionActionErrorCode = (typeof SESSION_ACTION_ERROR_CODES)[number];
 

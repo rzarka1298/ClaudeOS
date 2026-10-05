@@ -159,6 +159,8 @@ export const REASON_COPY: Record<SessionActionErrorCode | "unrecognised-response
   "spawn-failed": "the terminal couldn't be started",
   "project-moved": "the project's folder has moved",
   "app-not-found": "the terminal app isn't installed",
+  "action-failed": "the action failed unexpectedly — try again",
+  "guard-unavailable": "couldn't check for other Claude sessions in this folder, so nothing was launched",
   "unrecognised-response": "the service sent a response this app doesn't recognise",
 };
 

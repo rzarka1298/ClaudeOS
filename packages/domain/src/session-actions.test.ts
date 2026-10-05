@@ -223,7 +223,7 @@ describe("responses and errors (Tests 4-5)", () => {
   });
 
   it("accepts only the fixed error codes", () => {
-    expect(SESSION_ACTION_ERROR_CODES).toHaveLength(18);
+    expect(SESSION_ACTION_ERROR_CODES).toHaveLength(20);
     for (const error of SESSION_ACTION_ERROR_CODES) {
       expect(SessionActionErrorBodySchema.safeParse({ error }).success).toBe(true);
     }

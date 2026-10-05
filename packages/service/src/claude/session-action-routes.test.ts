@@ -243,13 +243,17 @@ let logger: Logger;
 /** Wave 5: extra latency before each guard check, and the flow budget override. */
 let guardDelayMs: number;
 let launchBudgetMs: number | undefined;
+/** When true, every git read fails, so the guard cannot read the launch target's tree. */
+let gitFailure = false;
 
 const spyGit: RunGit = (cwd, argv, options) => {
   gitCalls.push([...argv]);
+  if (gitFailure) return Promise.reject(new Error("git unavailable"));
   return runGit(cwd, argv, options);
 };
 
 beforeEach(async () => {
+  gitFailure = false;
   mkdirSync(TEST_BASE, { recursive: true });
   dir = realpathSync(mkdtempSync(join(TEST_BASE, "sa-")));
   socketPath = join(dir, "t.sock");
@@ -615,7 +619,7 @@ describe("every session action is authenticated and answers a fixed code (Test 6
       rawBody: JSON.stringify({ runId: newRunId() }),
     });
     expect(res.status).toBe(401);
-    expect(res.body).toEqual({ error: "service-disconnected" });
+    expect(res.body).toEqual({ error: "authentication required" });
   });
 
   it("every error body is a SESSION_ACTION_ERROR_CODES entry with no path or pid inside", async () => {
@@ -651,11 +655,11 @@ describe("every session action is authenticated and answers a fixed code (Test 6
   it("maps unreadable guard state to a fixed code without registering or launching", async () => {
     const token = await handshake();
     const source = seedRun({ projectId: "alpha", cwd: repo });
-    seedRun({ state: "running", cwd: join(dir, "missing"), pid: 4242 });
+    gitFailure = true;
 
     const reply = await post(SESSION_RESUME_PATH, { runId: source.runId }, token);
 
-    expect(reply).toEqual({ status: 409, body: { error: "service-disconnected" } });
+    expect(reply).toEqual({ status: 409, body: { error: "guard-unavailable" } });
     expect(childrenOf(source.runId)).toEqual([]);
     expect(fake.requests).toEqual([]);
   });

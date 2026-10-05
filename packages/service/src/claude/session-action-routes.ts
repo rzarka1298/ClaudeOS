@@ -48,7 +48,11 @@ import { type BodyParser, readJsonBody } from "../request-body.js";
 import type { RouteContext } from "../routes.js";
 import type { FocusService } from "./focus.js";
 import { type ClaudeHandler, sendClaudeJson, withClaudeAuth } from "./http.js";
-import type { ServiceLaunchGuard, WorktreeEntry } from "./launch-guard.js";
+import {
+  GuardUnavailableError,
+  type ServiceLaunchGuard,
+  type WorktreeEntry,
+} from "./launch-guard.js";
 import { serializedOnTree } from "./launch-locks.js";
 import type { ClaudePipeline } from "./pipeline.js";
 import { assertTranscriptPath, TranscriptPathRefusedError } from "./transcript-path.js";
@@ -476,7 +480,7 @@ function actionRoute<T>(
     const deps = actionDeps(ctx);
     if (deps === null) {
       req.resume();
-      sendClaudeJson(res, 503, ERROR_BODIES["service-disconnected"]);
+      sendClaudeJson(res, 503, ERROR_BODIES["action-failed"]);
       return;
     }
     const parsed = await readJsonBody(req, schema, ACTION_BODY_LIMIT_BYTES);
@@ -489,12 +493,15 @@ function actionRoute<T>(
       await handle(parsed.value, res, deps);
     } catch (err: unknown) {
       logger.error({ route: path, err }, "session action failed");
-      if (!res.headersSent) sendError(res, "service-disconnected");
+      if (!res.headersSent) {
+        if (err instanceof GuardUnavailableError) sendError(res, "guard-unavailable");
+        else sendClaudeJson(res, 500, ERROR_BODIES["action-failed"]);
+      }
     }
   };
   return withClaudeAuth((req, res, ctx) => {
     void run(req, res, ctx);
-  }, ERROR_BODIES["service-disconnected"]);
+  });
 }
 
 /** `POST /api/v1/sessions/resume` `{ runId, choice? }` (SESS-13, D-32, PR-10). */

@@ -41,6 +41,14 @@ export interface LaunchGuardDeps {
 const MAX_SESSION_NAME = 256;
 const DETACHED_BRANCH = "(detached)";
 
+/** The guard could not determine the launch target's working tree; the launch is refused. */
+export class GuardUnavailableError extends Error {
+  constructor() {
+    super("Unable to check concurrent Claude sessions");
+    this.name = "GuardUnavailableError";
+  }
+}
+
 /** The realpath'd git toplevel containing `cwd`, or null when git confirms it has none. */
 async function toplevelOf(
   cwd: string,
@@ -60,12 +68,43 @@ async function toplevelOf(
       error.stderr.split("\n").some((line) => line.startsWith("fatal: not a git repository"))
     )
       return null;
-    throw new Error("Unable to check concurrent Claude sessions");
+    throw new GuardUnavailableError();
   }
   if (top.length === 0 || !isAbsolute(top)) {
-    throw new Error("Unable to check concurrent Claude sessions");
+    throw new GuardUnavailableError();
   }
-  return deps.realpath(top);
+  try {
+    return await deps.realpath(top);
+  } catch {
+    throw new GuardUnavailableError();
+  }
+}
+
+/**
+ * A conflict candidate's comparable root. Only the launch target fails
+ * closed: a stale Run whose folder is gone must not block unrelated
+ * launches, so an unresolvable candidate compares by its stored path.
+ */
+async function candidateRoot(
+  run: { readonly worktreeRoot: string | null; readonly cwd: string | null },
+  deps: Pick<LaunchGuardDeps, "runGit" | "realpath">,
+): Promise<string | null> {
+  let root = run.worktreeRoot;
+  if (root === null) {
+    // No location has been observed yet (including a --worktree
+    // launch whose destination Claude has not created).
+    if (run.cwd === null) return null;
+    try {
+      root = (await toplevelOf(run.cwd, deps)) ?? run.cwd;
+    } catch {
+      root = run.cwd;
+    }
+  }
+  try {
+    return await deps.realpath(root);
+  } catch {
+    return root;
+  }
 }
 
 /**
@@ -93,15 +132,8 @@ export function createLaunchGuard(deps: LaunchGuardDeps): ServiceLaunchGuard {
       const top = (await toplevelOf(target.cwd, deps)) ?? (await deps.realpath(target.cwd));
       const conflicts: GuardConflict[] = [];
       for (const run of listConflictCandidates(deps.db)) {
-        let root = run.worktreeRoot;
-        if (root === null) {
-          // No location has been observed yet (including a --worktree
-          // launch whose destination Claude has not created). This is
-          // distinct from a known location that cannot be read.
-          if (run.cwd === null) continue;
-          root = (await toplevelOf(run.cwd, deps)) ?? run.cwd;
-        }
-        if ((await deps.realpath(root)) !== top) continue;
+        const root = await candidateRoot(run, deps);
+        if (root === null || root !== top) continue;
         conflicts.push({
           runId: run.runId,
           sessionName: sessionDisplayName(toSessionView(run, null)).slice(0, MAX_SESSION_NAME),

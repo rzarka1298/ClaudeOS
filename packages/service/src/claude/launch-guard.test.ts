@@ -223,12 +223,29 @@ describe("the concurrent-write guard (Task 1 Test 1, D-27, SESS-10)", () => {
     expect(await guard.check({ cwd: repo })).toEqual({ kind: "clear" });
   });
 
-  it("fails closed when a candidate's known location cannot be read", async () => {
+  it("does not let a stale Run with a deleted cwd block an unrelated launch", async () => {
     const repo = makeRepo("repo");
     seedRun({ cwd: join(base, "missing"), worktreeRoot: null });
+    seedRun({ cwd: join(base, "gone"), worktreeRoot: join(base, "gone-root") });
     const guard = createLaunchGuard({ db: store.db, runGit: spyGit, realpath });
 
-    await expect(guard.check({ cwd: repo })).rejects.toThrow();
+    expect(await guard.check({ cwd: repo })).toEqual({ kind: "clear" });
+  });
+
+  it("still conflicts for a candidate in the same tree whose stored root no longer resolves", async () => {
+    const repo = makeRepo("repo");
+    const run = seedRun({ cwd: repo, worktreeRoot: repo });
+    const failing = async (path: string): Promise<string> => {
+      if (path === repo && calls++ > 0) throw new Error("ENOENT");
+      return realpath(path);
+    };
+    let calls = 0;
+    const guard = createLaunchGuard({ db: store.db, runGit: spyGit, realpath: failing });
+
+    expect(await guard.check({ cwd: repo })).toMatchObject({
+      kind: "conflict",
+      conflicts: [{ runId: run.runId }],
+    });
   });
 
   it("returns the three write-capable Runs in the same toplevel, stale included, and not the plan one", async () => {
