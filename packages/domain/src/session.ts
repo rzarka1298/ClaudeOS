@@ -145,11 +145,18 @@ export function toSessionView(run: SessionRun, projectName: string | null): Sess
     run.linkedFromRunId !== null &&
     (run.linkKind === "resume" || run.linkKind === "fork")
   ) {
-    const parentName =
-      name !== null && name.trim().length > 0
-        ? name
-        : `Session ${run.claudeSessionId?.slice(0, 8) ?? run.linkedFromRunId.slice(-8)}`;
-    name = `${run.linkKind === "resume" ? "Resume" : "Branch"} of ${parentName}`.slice(0, 256);
+    const hasName = name !== null && name.trim().length > 0;
+    const shortId = run.claudeSessionId?.slice(0, 8) ?? run.linkedFromRunId.slice(-8);
+    if (run.linkKind === "resume") {
+      // A resume reuses the parent's session id, so the fallback names the parent.
+      name = `Resume of ${hasName ? name : `Session ${shortId}`}`.slice(0, 256);
+    } else if (hasName) {
+      name = `Branch of ${name}`.slice(0, 256);
+    } else {
+      // A branch's session id is its own, minted at launch: it must not be
+      // presented as the parent's identity.
+      name = `Branch ${shortId}`;
+    }
   }
   return {
     runId: run.runId,

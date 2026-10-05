@@ -111,6 +111,21 @@ describe("sessionDisplayName (Test 6)", () => {
     },
   );
 
+  it("never calls a pending branch's own id its parent's (Codex 05-codex-3)", () => {
+    const parent = run({ state: "completed", name: "Fix the parser" });
+    const child = run({
+      state: "starting",
+      pid: null,
+      name: null,
+      claudeSessionId: "b1b2b3b4-0000-4000-8000-000000000000",
+      linkKind: "fork",
+      linkedFromRunId: parent.runId,
+    });
+    const label = sessionDisplayName(toSessionView(child, null));
+    expect(label).not.toContain("Branch of Session");
+    expect(label).toBe("Branch b1b2b3b4");
+  });
+
   it("uses the reported name after a resume attaches to a process", () => {
     expect(
       sessionDisplayName(
