@@ -166,8 +166,15 @@ if (argv[0] === "app-server") {
   w({ type: "session_meta", payload: { id: "${SESSION_ID}", cwd: process.cwd(), originator: "codex-tui", source: "cli" } });
   w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>x</environment_context>" }] } });
   w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] } });
-  w({ type: "event_msg", payload: { type: "task_started", turn_id: "t1" } });
   if (process.env.FAKE_CODEX_PIDFILE) fs.writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(process.pid));
+  if (mode === "silent") {
+    // Session created and prompt recorded, but the TUI never starts a turn.
+    setInterval(() => {}, 1000);
+    return;
+  }
+  const firstTurnDelay = Number(process.env.FAKE_CODEX_FIRST_TURN_DELAY_MS || 0);
+  const startTurn = () => {
+  w({ type: "event_msg", payload: { type: "task_started", turn_id: "t1" } });
   if (mode === "hang") {
     if (process.env.FAKE_CODEX_CHILD_PIDFILE) {
       // A tool process Codex started that ignores SIGTERM.
@@ -189,6 +196,8 @@ if (argv[0] === "app-server") {
     // The TUI stays open for the owner's chat; the fake lingers briefly.
     setTimeout(() => process.exit(0), Number(process.env.FAKE_CODEX_TUI_LINGER_MS || 300));
   }, 200);
+  };
+  if (firstTurnDelay) setTimeout(startTurn, firstTurnDelay); else startTurn();
 } else {
   record({});
   process.stdout.write("fake codex\n");
@@ -1410,6 +1419,48 @@ describe("tui: trust, withdrawal and cleanup", () => {
     expect(h.execCalls()).toHaveLength(1);
     // The waiting TUI is gone, so a late answer cannot start a duplicate run.
     expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+  });
+
+  it("falls back headless when the TUI creates a session but never starts a turn", async () => {
+    const h = harness();
+    const pidfile = join(h.bin, "silent.pid");
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_FIRST_ACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "silent",
+      FAKE_CODEX_PIDFILE: pidfile,
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(h.execCalls()).toHaveLength(1);
+    expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain("[tui] no activity within 1.5s — falling back to headless");
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report.status).toBe("ok");
+    expect(report.mode).toBe("headless");
+    expect(report.fallback).toMatchObject({
+      from: "tui",
+      to: "headless",
+      reason: "no-first-activity",
+    });
+  });
+
+  it("does not fall back when the first turn starts just inside the window", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_FIRST_ACTIVITY_MS: "4000",
+      FAKE_CODEX_FIRST_TURN_DELAY_MS: "1500",
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report.mode).toBe("tui");
+    expect(report.fallback).toBeUndefined();
   });
 
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {

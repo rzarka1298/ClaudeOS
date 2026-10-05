@@ -730,6 +730,11 @@ const CLAIM_TIMEOUT_MS = Number(process.env.CODEX_BRIDGE_CLAIM_TIMEOUT_MS) || 20
 // before it is stopped and the run goes headless.
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: tuning knob
 const SESSION_WAIT_MS = Number(process.env.CODEX_BRIDGE_SESSION_WAIT_MS) || 180_000;
+// Once the session exists, how long the TUI may go without any turn or agent
+// activity (an update notice, a question, unsubmitted input) before it is
+// stopped and the run goes headless.
+// biome-ignore lint/suspicious/noUndeclaredEnvVars: tuning knob
+const FIRST_ACTIVITY_MS = Number(process.env.CODEX_BRIDGE_FIRST_ACTIVITY_MS) || 120_000;
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only tuning knob
 const HELPER_START_MS = Number(process.env.CODEX_BRIDGE_HELPER_START_MS) || 15_000;
 const ROLLOUT_SCAN_BYTES = 1024 * 1024;
@@ -1004,7 +1009,7 @@ async function waitHelperExit(id) {
   while (helperState(id) === "running" && Date.now() < until) await sleep(100);
 }
 
-async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession }) {
+async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession, fallback }) {
   // biome-ignore lint/suspicious/noUndeclaredEnvVars: owner opt-out
   if (process.env.CODEX_BRIDGE_TAB === "0" || process.env.CODEX_BRIDGE_TUI === "0") return null;
   const cli = bridge.antigravityCli(process.env);
@@ -1097,15 +1102,27 @@ async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession
     timeoutSec,
     live,
     onSession,
+    fallback,
   });
-  if (res === null) {
+  if (res === null && fallback?.reason === "no-first-activity") {
+    withdraw();
+    say("the TUI started no turn in time (stopped it); running headless");
+  } else if (res === null) {
     live.write(["[tui] no Codex session started in the tab; it was stopped; running headless"]);
     say("no Codex session started in the tab (stopped it); running headless");
   }
   return res;
 }
 
-async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession }) {
+const fallbackRecord = (f) => ({
+  from: "tui",
+  to: "headless",
+  reason: f.reason,
+  tuiSessionId: f.sessionId ?? null,
+  windowSec: f.windowSec,
+});
+
+async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession, fallback }) {
   const state = { sessionId: null, limitHit: false, timedOut: false, lastMessage: null, code: 1 };
   const onSignal = (sig) => {
     live.write([`[end] interrupted by ${sig}`]);
@@ -1120,9 +1137,17 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
   let partial = "";
   let done = false;
   let fellBack = false;
+  let sessionFoundAt = 0;
+  let active = false;
 
   const handle = (o) => {
     const p = o?.payload ?? {};
+    // Turn/agent activity: a started turn, any agent output or tool call.
+    if (
+      (o.type === "event_msg" && p.type !== "user_message") ||
+      (o.type === "response_item" && !(p.type === "message" && p.role !== "assistant"))
+    )
+      active = true;
     if (o.type === "session_meta" && bridge.UUID_RE.test(p.id ?? "")) {
       state.sessionId = p.id;
       live.write([`[session] ${p.id}`]);
@@ -1157,7 +1182,10 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
   for (;;) {
     if (!rollout) {
       rollout = findRollout(id, launchedAt);
-      if (rollout) live.write(["[tui] following the Codex session"]);
+      if (rollout) {
+        sessionFoundAt = Date.now();
+        live.write(["[tui] following the Codex session"]);
+      }
     }
     if (rollout) {
       try {
@@ -1209,6 +1237,22 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
     if (!rollout && (helper === "none" ? waited > HELPER_START_MS : waited > SESSION_WAIT_MS)) {
       stopTui(id);
       await waitHelperExit(id);
+      fellBack = true;
+      break;
+    }
+    // Session but no turn: the TUI sits at a prompt after creating it. Stop
+    // the whole tree, then go headless (nothing ran, so a task is idempotent).
+    if (rollout && !active && Date.now() - sessionFoundAt > FIRST_ACTIVITY_MS) {
+      live.write([
+        `[tui] no activity within ${FIRST_ACTIVITY_MS / 1000}s — falling back to headless`,
+      ]);
+      stopTui(id);
+      await waitHelperExit(id);
+      if (fallback) {
+        fallback.reason = "no-first-activity";
+        fallback.sessionId = state.sessionId;
+        fallback.windowSec = FIRST_ACTIVITY_MS / 1000;
+      }
       fellBack = true;
       break;
     }
@@ -1498,9 +1542,11 @@ async function cmdReview({ positional, opts, extras }) {
   ];
   const onSession = (sid) =>
     openBridgeTab({ id, kind: "review", cwd: worktree, sessionId: sid, liveLog: live.log });
+  const fallback = {};
   let res = extras.length
     ? null
     : await runTui({
+        fallback,
         kind: "review",
         id,
         role: "review",
@@ -1510,6 +1556,7 @@ async function cmdReview({ positional, opts, extras }) {
         live,
       });
   const mode = res ? "tui" : "headless";
+  const fallbackInfo = fallback.reason ? fallbackRecord(fallback) : null;
   res ??= await runCodex({ args, cwd: worktree, stdinText: null, timeoutSec, live, onSession });
 
   let text = existsSync(lastMessage) ? readFileSync(lastMessage, "utf8").trim() : "";
@@ -1535,6 +1582,7 @@ async function cmdReview({ positional, opts, extras }) {
     kind: "review",
     advisory: true,
     mode,
+    ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
     status,
     format: status === "ok" ? format : null,
     verdict: status === "ok" ? parsed.verdict : null,
@@ -1615,8 +1663,10 @@ async function runWorker({
     openBridgeTab({ id, kind, cwd: worktree, sessionId: sid, liveLog: live.log });
   };
   const tuiSession = (sid) => writeJson(sessionPath, { ...session, sessionId: sid, mode: "tui" });
+  const fallback = {};
   let res = tuiPrompt
     ? await runTui({
+        fallback,
         kind,
         id,
         role,
@@ -1628,6 +1678,7 @@ async function runWorker({
       })
     : null;
   session.mode = res ? "tui" : "headless";
+  if (fallback.reason) session.fallback = fallbackRecord(fallback);
   res ??= await runCodex({ args, cwd: worktree, stdinText, timeoutSec, live, onSession });
   session.sessionId = res.sessionId ?? session.sessionId;
 
@@ -1720,6 +1771,7 @@ function finishWorker({ live, res, status, exit, session, resetsAt }, lastMessag
     kind: session.kind,
     role,
     mode: session.mode ?? "headless",
+    ...(session.fallback ? { fallback: session.fallback } : {}),
     status,
     sessionId: session.sessionId,
     worktree: session.worktree,
