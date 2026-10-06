@@ -28,4 +28,5 @@ export {
   type SweeperTimerHandle,
   type SweeperTimers,
 } from "./expiry.js";
+export { PAYLOAD_RETENTION_MS, type RecoverySummary } from "./recovery.js";
 export { buildOperationRegistry } from "./registry.js";

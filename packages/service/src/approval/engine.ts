@@ -33,7 +33,6 @@ import {
   PAYLOAD_HASH_PATTERN,
   type ProposalId,
   ProposalIdSchema,
-  type ReconcileVerdict,
   type Requester,
   RequesterSchema,
   RunIdSchema,
@@ -42,6 +41,13 @@ import {
 } from "@ccc/domain";
 import { payloadHashOf, recomputeFromStored } from "./canonical-hash.js";
 import { mintToken } from "./mint/mint-token.js";
+import {
+  type ExecuteResult,
+  type FinishDecision,
+  resolveOutcome,
+  unknownDecision,
+} from "./outcome.js";
+import { createRecovery, type RecoverySummary, tokenExpiryMs } from "./recovery.js";
 import {
   assembleSnapshot,
   buildApprovalView,
@@ -206,6 +212,13 @@ export type WithdrawOutcome =
   | { readonly kind: "withdrawn" }
   | { readonly kind: "not-withdrawable" };
 
+export {
+  type ExecuteResult,
+  type FinishDecision,
+  resolveOutcome,
+} from "./outcome.js";
+export type { RecoverySummary } from "./recovery.js";
+
 /** What one expiry sweep changed. Counts only: never an id or a word of text. */
 export interface SweepSummary {
   /** Pending requests past their expiry, denied automatically. */
@@ -231,6 +244,12 @@ export interface ApprovalEngine {
    * Safe to call at any time and as often as wanted; a sweep with nothing due changes nothing.
    */
   sweepExpired(): SweepSummary;
+  /**
+   * Startup recovery (D-17): brings every in-flight request to an honest state from evidence,
+   * reconciling before any retry, and returns once each change is persisted, without waiting
+   * for a retried effect. Run it after the Phase 5 spool drain and revival sweep, before the socket opens.
+   */
+  recover(): Promise<RecoverySummary>;
   /** Resolves when every execution the engine started has finished (tests, shutdown). */
   settled(): Promise<void>;
 }
@@ -272,88 +291,6 @@ function isoAfter(now: string, ms: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Outcome handling (D-17, D-42, A-7, Codex finding 1)
-
-/** What the engine writes to the store when an attempt ends. Every code is a fixed token, never free text. */
-export interface FinishDecision {
-  readonly state: "executed" | "failed" | "unknown";
-  readonly code: string;
-  readonly note: string | null;
-  readonly evidence: string | null;
-  readonly reconciled: boolean;
-}
-
-/** `threw: true` is an `execute` that rejected. Its message is never read. */
-export type ExecuteResult =
-  | { readonly threw: true }
-  | { readonly threw: false; readonly outcome: ExecuteOutcome };
-
-const FIXED_TOKEN = /^[a-z][a-z0-9-]{0,63}$/;
-/** Used when an operation hands back evidence that is not a fixed token: the fact is kept, the text is not. */
-const GENERIC_EVIDENCE = "reconcile-evidence";
-
-function fixedToken(value: string, fallback: string): string {
-  return FIXED_TOKEN.test(value) ? value : fallback;
-}
-
-/**
- * The one place an attempt's result becomes a recorded outcome, used by the
- * first run and by crash recovery (06-12).
- *
- * - A rejected `execute` is `unknown` (`executor-threw`), never `failed`: an
- *   effect may already have started.
- * - On the first attempt a refusal or failure is definitive: nothing was done,
- *   so `failed` with the reason code is truthful.
- * - On a retry attempt (2 or more) any non-executed result is routed through
- *   the operation's read-only `reconcile`: `effect-proven` records `executed`
- *   (flagged reconciled, with the evidence code); anything else records
- *   `unknown`. A plain `failed` is never written for a retry.
- */
-export async function resolveOutcome(
-  definition: RegisteredDefinition,
-  payload: unknown,
-  context: ExecuteContext,
-  result: ExecuteResult,
-): Promise<FinishDecision> {
-  if (result.threw) return unknownDecision("executor-threw", null);
-  const outcome = result.outcome;
-  if (outcome.kind === "executed") {
-    const note = outcome.note !== undefined && FIXED_TOKEN.test(outcome.note) ? outcome.note : null;
-    return { state: "executed", code: "executed", note, evidence: null, reconciled: false };
-  }
-  if (context.attempt < 2) {
-    return {
-      state: "failed",
-      code: fixedToken(outcome.reason, "refused"),
-      note: null,
-      evidence: null,
-      reconciled: false,
-    };
-  }
-  let verdict: ReconcileVerdict;
-  try {
-    verdict = await definition.reconcile(payload, context);
-  } catch {
-    return unknownDecision("reconcile-threw", null);
-  }
-  if (verdict.kind === "effect-proven") {
-    return {
-      state: "executed",
-      code: "executed",
-      note: null,
-      evidence: fixedToken(verdict.evidence, GENERIC_EVIDENCE),
-      reconciled: true,
-    };
-  }
-  if (verdict.kind === "effect-absent") return unknownDecision("outcome-unknown", "effect-absent");
-  return unknownDecision("outcome-unknown", fixedToken(verdict.reason, GENERIC_EVIDENCE));
-}
-
-function unknownDecision(code: string, evidence: string | null): FinishDecision {
-  return { state: "unknown", code, note: null, evidence, reconciled: false };
-}
-
-// ---------------------------------------------------------------------------
 // The engine
 
 export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
@@ -361,6 +298,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
   const ids = deps.ids ?? { proposalId: newProposalId, noteId: newNoteId };
   const ledger = createTokenLedger();
   const inflight = new Set<Promise<void>>();
+  /** Proposal ids this engine is itself claiming or carrying out: recovery and sweeps leave them alone. */
+  const active = new Set<string>();
 
   /** The owner-facing title of a stored request, rendered from its stored payload; the operation's label when that is not possible. */
   function titleOf(stored: StoredProposal): string {
@@ -556,18 +495,22 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     return expiredIds.length;
   }
 
-  function sweepExpired(): SweepSummary {
-    const now = clock.now();
-    const expired = expireDueRows(now);
+  /** Lapses approved requests never claimed within their operation's age (one store call), then publishes each. */
+  function lapseStaleRows(now: string): number {
     const lapsedIds = store.lapseStaleApproved(now, maxApprovalAges);
     for (const lapsedId of lapsedIds) {
       const lapsed = store.get(lapsedId);
       if (lapsed !== null) announce(lapsed);
     }
-    if (expired > 0 || lapsedIds.length > 0) {
-      log.info({ code: "swept", counts: { expired, lapsed: lapsedIds.length } });
-    }
-    return { expired, lapsed: lapsedIds.length };
+    return lapsedIds.length;
+  }
+
+  function sweepExpired(): SweepSummary {
+    const now = clock.now();
+    const expired = expireDueRows(now);
+    const lapsed = lapseStaleRows(now);
+    if (expired > 0 || lapsed > 0) log.info({ code: "swept", counts: { expired, lapsed } });
+    return { expired, lapsed };
   }
 
   function withdraw(proposalId: string): WithdrawOutcome {
@@ -663,41 +606,68 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       log.error({ proposalId: approved.proposalId, code: "operation-unregistered" });
       return decided(approved);
     }
-    let facts: ClaimFacts = {};
-    if (definition.claimFacts !== undefined) {
-      const parsed = parseStoredPayload(definition, approved.payloadJson);
-      if (parsed.ok) {
-        try {
-          facts = await withTimeout(
-            definition.claimFacts(parsed.value),
-            deps.claimFactsTimeoutMs ?? DEFAULT_CLAIM_FACTS_TIMEOUT_MS,
-          );
-        } catch {
-          // Facts are an aid to recovery, never a gate: claim with none and never log the error text.
-          log.warn({ proposalId: approved.proposalId, code: "claim-facts-failed" });
+    const claimed = await claimAndStart(approved, definition);
+    if (claimed === null) return decided(store.get(approved.proposalId) ?? approved);
+    return decided(claimed);
+  }
+
+  /**
+   * Gathers the operation's claim facts (an aid, never a gate), claims the request and starts the
+   * effect WITHOUT awaiting it. Returns the claimed row, or null when another caller claimed first.
+   */
+  async function claimAndStart(
+    approved: StoredProposal,
+    definition: RegisteredDefinition,
+  ): Promise<StoredProposal | null> {
+    active.add(approved.proposalId);
+    try {
+      let facts: ClaimFacts = {};
+      if (definition.claimFacts !== undefined) {
+        const parsed = parseStoredPayload(definition, approved.payloadJson);
+        if (parsed.ok) {
+          try {
+            facts = await withTimeout(
+              definition.claimFacts(parsed.value),
+              deps.claimFactsTimeoutMs ?? DEFAULT_CLAIM_FACTS_TIMEOUT_MS,
+            );
+          } catch {
+            // Facts are an aid to recovery, never a gate: claim with none and never log the error text.
+            log.warn({ proposalId: approved.proposalId, code: "claim-facts-failed" });
+          }
         }
       }
+      const claim = store.claim(approved.proposalId, facts, clock.now());
+      if (claim.kind === "lost") {
+        active.delete(approved.proposalId);
+        return null;
+      }
+      announce(claim.proposal);
+      startAttempt(claim.proposal);
+      return claim.proposal;
+    } catch (error) {
+      active.delete(approved.proposalId);
+      throw error;
     }
-    const claim = store.claim(approved.proposalId, facts, clock.now());
-    if (claim.kind === "lost") {
-      return decided(store.get(approved.proposalId) ?? approved);
-    }
-    announce(claim.proposal);
-    const response = decided(claim.proposal);
-    const run: Promise<void> = runAttempt(claim.proposal)
+  }
+
+  /** Runs one claimed attempt without awaiting it; `settled()` waits for it. */
+  function startAttempt(proposal: StoredProposal): void {
+    active.add(proposal.proposalId);
+    const run: Promise<void> = runAttempt(proposal)
       .catch(() => {
-        log.error({ proposalId: claim.proposal.proposalId, code: "engine-fault" });
+        log.error({ proposalId: proposal.proposalId, code: "engine-fault" });
       })
       .finally(() => {
         inflight.delete(run);
+        active.delete(proposal.proposalId);
       });
     inflight.add(run);
-    return response;
   }
 
   // --- execute --------------------------------------------------------------
 
-  function finishWith(proposal: StoredProposal, initial: FinishDecision): void {
+  /** Records an attempt's outcome and publishes it. Returns the finished row, or null when none was written. */
+  function finishWith(proposal: StoredProposal, initial: FinishDecision): StoredProposal | null {
     let decision = initial;
     const write = (d: FinishDecision): StoredProposal | null =>
       store.finish({
@@ -721,15 +691,16 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
         finished = write(decision);
       } catch {
         log.error({ proposalId: proposal.proposalId, code: "finish-failed" });
-        return;
+        return null;
       }
     }
     if (finished === null) {
       log.warn({ proposalId: proposal.proposalId, code: "finish-lost" });
-      return;
+      return null;
     }
     log.info({ proposalId: proposal.proposalId, state: finished.state, code: decision.code });
     announce(finished);
+    return finished;
   }
 
   /**
@@ -745,6 +716,21 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     );
   }
 
+  /** The stored payload, re-hashed against the stored hash (integrity) and parsed against the operation's strict schema. */
+  function verifiedPayload(
+    definition: RegisteredDefinition,
+    stored: StoredProposal,
+  ):
+    | { readonly ok: true; readonly value: unknown }
+    | { readonly ok: false; readonly code: string } {
+    if (recomputeFromStored(stored) !== stored.payloadHash) {
+      log.error({ proposalId: stored.proposalId, code: "stored-hash-mismatch" });
+      return { ok: false, code: "integrity-check-failed" };
+    }
+    const parsed = parseStoredPayload(definition, stored.payloadJson);
+    return parsed.ok ? { ok: true, value: parsed.value } : { ok: false, code: "payload-invalid" };
+  }
+
   /** Carries out one attempt of a claimed request and records the outcome. */
   async function runAttempt(proposal: StoredProposal): Promise<void> {
     const definition = registry.lookup(proposal.operation);
@@ -753,22 +739,14 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       failBeforeExecute(proposal, "capability-refused");
       return;
     }
-    if (recomputeFromStored(proposal) !== proposal.payloadHash) {
-      log.error({ proposalId: proposal.proposalId, code: "stored-hash-mismatch" });
-      failBeforeExecute(proposal, "integrity-check-failed");
-      return;
-    }
-    const parsed = parseStoredPayload(definition, proposal.payloadJson);
+    const parsed = verifiedPayload(definition, proposal);
     if (!parsed.ok) {
-      failBeforeExecute(proposal, "payload-invalid");
+      failBeforeExecute(proposal, parsed.code);
       return;
     }
 
     // D-18: the earlier of the proposal's own expiry and approval time plus the operation's age.
-    const expiresMs = Math.min(
-      Date.parse(proposal.expiresAt),
-      Date.parse(proposal.approvedAt) + row.maxApprovalAgeMs,
-    );
+    const expiresMs = tokenExpiryMs(proposal, row.maxApprovalAgeMs);
     if (!(expiresMs > Date.parse(clock.now()))) {
       // The authorisation is already stale: it is never honoured (T-06-05).
       failBeforeExecute(proposal, "token-expired");
@@ -858,5 +836,31 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     }
   }
 
-  return { submit, decide, withdraw, get, list, snapshot, sweepExpired, settled };
+  const recovery = createRecovery({
+    store,
+    registry,
+    clock,
+    log,
+    expireDue: expireDueRows,
+    lapseStale: lapseStaleRows,
+    announce,
+    isActive: (proposalId) => active.has(proposalId),
+    verifiedPayload,
+    finish: finishWith,
+    startAttempt,
+    claimAndStart: async (approved, definition) =>
+      (await claimAndStart(approved, definition)) !== null,
+  });
+
+  return {
+    submit,
+    decide,
+    withdraw,
+    get,
+    list,
+    snapshot,
+    sweepExpired,
+    recover: recovery.recover,
+    settled,
+  };
 }
