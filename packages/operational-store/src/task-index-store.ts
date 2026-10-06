@@ -697,3 +697,30 @@ export function queryTasks(db: Database.Database, query: TaskQuery): TaskPage {
     chooseProject: false,
   };
 }
+
+/** Every chip's count and the open total for one context and day. */
+export interface TaskCounts {
+  readonly counts: Readonly<Record<TaskFilter, number>>;
+  /** Actionable tasks: not done, cancelled or proposed. */
+  readonly open: number;
+}
+
+/** RED skeleton (plan 06-14 task 2): counts nothing yet. */
+export function countTasks(
+  _db: Database.Database,
+  _query: { readonly context: TaskQueryContext; readonly day: LocalDayBounds },
+): TaskCounts {
+  return {
+    counts: {
+      all: 0,
+      today: 0,
+      upcoming: 0,
+      overdue: 0,
+      project: 0,
+      proposed: 0,
+      blocked: 0,
+      completed: 0,
+    },
+    open: 0,
+  };
+}
