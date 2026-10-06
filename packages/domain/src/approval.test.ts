@@ -418,6 +418,16 @@ describe("requester (Test 5)", () => {
     expect(RequesterSchema.safeParse({ kind: "skill", label: "" }).success).toBe(false);
   });
 
+  it("rejects invisible format characters such as bidi overrides and zero-width spaces (review MINOR-4)", () => {
+    for (const cp of [0x202e, 0x200b, 0x2066, 0xfeff, 0x00ad]) {
+      const invisible = String.fromCodePoint(cp);
+      expect(
+        RequesterSchema.safeParse({ kind: "skill", label: `a${invisible}b` }).success,
+        cp.toString(16),
+      ).toBe(false);
+    }
+  });
+
   it("is strict: an extra key fails", () => {
     expect(RequesterSchema.safeParse({ kind: "skill", label: "x", extra: 1 }).success).toBe(false);
   });
@@ -662,6 +672,18 @@ describe("summary and snapshot (Test 7)", () => {
     expect(ApprovalSummarySchema.safeParse(summary(1, { createdAt: "yesterday" })).success).toBe(
       false,
     );
+  });
+
+  it("rejects invisible format and control characters in every summary text field (review MINOR-4)", () => {
+    for (const cp of [0x202e, 0x200b, 0x0007]) {
+      const invisible = String.fromCodePoint(cp);
+      for (const field of ["title", "operationLabel", "requesterLabel", "projectName"] as const) {
+        expect(
+          ApprovalSummarySchema.safeParse(summary(1, { [field]: `a${invisible}b` })).success,
+          `${field} ${cp.toString(16)}`,
+        ).toBe(false);
+      }
+    }
   });
 
   it("exports the bounds: chip 50, pending 25 per operation and 50 total, budget 56 KiB under the 64 KiB client cap", () => {

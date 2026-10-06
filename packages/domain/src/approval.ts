@@ -111,10 +111,19 @@ export type RequesterKind = (typeof REQUESTER_KINDS)[number];
 /** The longest requester label the engine stores or shows (UI-SPEC "Untrusted content rules"). */
 export const REQUESTER_LABEL_MAX = 64;
 
-/** True when `value` contains a Unicode control character (C0, DEL or C1). */
+/**
+ * True when `value` contains a Unicode control (Cc) or format (Cf) character:
+ * C0, DEL, C1, bidi overrides and isolates, zero-width characters, the BOM and
+ * the soft hyphen. Requester-authored text must not carry an invisible
+ * character that could reorder or hide what the owner reads (review MINOR-4).
+ */
 function hasControl(value: string): boolean {
-  return /\p{Cc}/u.test(value);
+  return /[\p{Cc}\p{Cf}]/u.test(value);
 }
+
+const INVISIBLE_MESSAGE = "text must not contain a control or invisible format character";
+const visibleText = (schema: z.ZodString) =>
+  schema.refine((v) => !hasControl(v), { message: INVISIBLE_MESSAGE });
 
 export const RequesterSchema = z.strictObject({
   kind: z.enum(REQUESTER_KINDS),
@@ -123,7 +132,7 @@ export const RequesterSchema = z.strictObject({
     .min(1)
     .max(REQUESTER_LABEL_MAX)
     .refine((label) => !hasControl(label), {
-      message: "label must not contain a control character",
+      message: "label must not contain a control or invisible format character",
     }),
 });
 export type Requester = z.infer<typeof RequesterSchema>;
@@ -385,11 +394,11 @@ export const ApprovalSummarySchema = z.object({
   proposalId: ProposalIdSchema,
   state: ProposalStateSchema,
   revision: z.number().int().nonnegative(),
-  title: z.string().min(1).max(120),
-  operationLabel: z.string().min(1).max(80),
+  title: visibleText(z.string().min(1).max(120)),
+  operationLabel: visibleText(z.string().min(1).max(80)),
   requesterKind: z.enum(REQUESTER_KINDS),
-  requesterLabel: z.string().max(REQUESTER_LABEL_MAX),
-  projectName: z.string().max(120).nullable(),
+  requesterLabel: visibleText(z.string().max(REQUESTER_LABEL_MAX)),
+  projectName: visibleText(z.string().max(120)).nullable(),
   runId: RunIdSchema.nullable(),
   createdAt: IsoSchema,
   expiresAt: IsoSchema,
