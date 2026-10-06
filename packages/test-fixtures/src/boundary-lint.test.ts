@@ -7,6 +7,7 @@
 // type each fixture is meant to impersonate.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
@@ -156,5 +157,109 @@ describe("process-spawn lint (D-18)", () => {
 
     const messages = restrictedSyntaxMessages(runEslintJson(SHELL_EXEC_FIXTURE));
     expect(messages).toHaveLength(0);
+  });
+});
+
+// Research C-1 / defects A and B (plan 06-02, task 1). The committed config used
+// to classify every file under packages/service/src/untrusted/ as plain
+// `service` (exclusive descriptors were listed after the package descriptors)
+// and could not resolve a `./x.js` specifier to its `x.ts` source, so every
+// intra-package edge was invisible to `boundaries/dependencies`. These cases
+// use ESLint#lintText with a VIRTUAL importer path and a REAL target: no
+// physical violation fixture is needed, and each firing case has a quiet half.
+const requireFromRoot = createRequire(join(REPO_ROOT, "package.json"));
+const { ESLint } = requireFromRoot("eslint") as {
+  ESLint: new (options: {
+    cwd: string;
+    overrideConfigFile: string;
+  }) => {
+    lintText(
+      code: string,
+      options: { filePath: string },
+    ): Promise<Array<{ messages: EslintMessage[] }>>;
+  };
+};
+const lintEngine = new ESLint({ cwd: REPO_ROOT, overrideConfigFile: ESLINT_CONFIG });
+
+/** Lints `code` as if it lived at `virtualPath` (relative to the repo root). */
+async function boundariesFor(virtualPath: string, code: string): Promise<EslintMessage[]> {
+  const results = await lintEngine.lintText(code, { filePath: join(REPO_ROOT, virtualPath) });
+  return results
+    .flatMap((r) => r.messages)
+    .filter((m) => m.ruleId?.startsWith("boundaries/") === true);
+}
+
+const DOMAIN_TYPE_IMPORT = 'import type { RunId } from "@ccc/domain";\nexport type X = RunId;\n';
+
+describe("boundary classification and resolver (research C-1, defects A and B)", () => {
+  test("a file under packages/service/src/untrusted/ is the untrusted element: importing the operational store fires", async () => {
+    const messages = await boundariesFor(
+      "packages/service/src/untrusted/probe.ts",
+      'import "@ccc/operational-store";\n',
+    );
+    expect(messages.length).toBeGreaterThan(0);
+  });
+
+  test("the same untrusted file importing only @ccc/domain is quiet", async () => {
+    expect(
+      await boundariesFor("packages/service/src/untrusted/probe.ts", DOMAIN_TYPE_IMPORT),
+    ).toHaveLength(0);
+  });
+
+  test("an intra-service ./x.js edge from the untrusted folder is evaluated and fires", async () => {
+    const messages = await boundariesFor(
+      "packages/service/src/untrusted/probe.ts",
+      'import { createLogger } from "../logging.js";\nexport const l = createLogger;\n',
+    );
+    expect(messages.length).toBeGreaterThan(0);
+  });
+
+  test("the same untrusted file importing a domain type instead is quiet", async () => {
+    expect(
+      await boundariesFor("packages/service/src/untrusted/probe.ts", DOMAIN_TYPE_IMPORT),
+    ).toHaveLength(0);
+  });
+
+  test("a plain service file importing a sibling .js is quiet (service may import service)", async () => {
+    expect(
+      await boundariesFor(
+        "packages/service/src/probe.ts",
+        'import { createLogger } from "./logging.js";\nexport const l = createLogger;\n',
+      ),
+    ).toHaveLength(0);
+  });
+});
+
+describe("local .js-to-.ts resolver (research defect B)", () => {
+  const resolverPath = join(REPO_ROOT, "eslint.boundary-resolver.cjs");
+  const loadResolver = () =>
+    requireFromRoot(resolverPath) as {
+      interfaceVersion: number;
+      resolve(source: string, file: string): { found: boolean; path?: string | null };
+    };
+  const importer = join(REPO_ROOT, "packages", "service", "src", "untrusted", "probe.ts");
+
+  test("declares interface version 2", () => {
+    expect(loadResolver().interfaceVersion).toBe(2);
+  });
+
+  test("maps a ./x.js specifier to the real x.ts sibling", () => {
+    const result = loadResolver().resolve("../logging.js", importer);
+    expect(result.found).toBe(true);
+    expect(result.path?.endsWith(join("service", "src", "logging.ts"))).toBe(true);
+  });
+
+  test("reports not found for a nonexistent relative specifier", () => {
+    expect(loadResolver().resolve("../does-not-exist.js", importer).found).toBe(false);
+  });
+
+  test("treats a Node built-in as found with a null path", () => {
+    expect(loadResolver().resolve("node:fs", importer)).toEqual({ found: true, path: null });
+  });
+
+  test("resolves a bare workspace package through the importer's own node_modules", () => {
+    const result = loadResolver().resolve("@ccc/domain", importer);
+    expect(result.found).toBe(true);
+    expect(typeof result.path).toBe("string");
   });
 });
