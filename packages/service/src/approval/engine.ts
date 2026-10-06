@@ -1,11 +1,15 @@
 import {
+  APPROVAL_CHIP_BOUND,
   APPROVAL_PENDING_CAP_PER_OPERATION,
   APPROVAL_PENDING_CAP_TOTAL,
+  type ApprovalBucket,
   type ApprovalDecision,
+  type ApprovalItemView,
   type ApprovalLog,
   type ApprovalPublisher,
   type ApprovalStorePort,
   type ApprovalSummary,
+  type ApprovalsSnapshot,
   buildEnvelope,
   type CapabilityToken,
   type ClaimFacts,
@@ -38,7 +42,13 @@ import {
 } from "@ccc/domain";
 import { payloadHashOf, recomputeFromStored } from "./canonical-hash.js";
 import { mintToken } from "./mint/mint-token.js";
-import { operationLabelFor, summaryOf } from "./view.js";
+import {
+  assembleSnapshot,
+  buildApprovalView,
+  historyOf,
+  operationLabelFor,
+  summaryOf,
+} from "./view.js";
 
 /**
  * The approval engine core (APPR-01, APPR-02, APPR-04, APPR-10, D-01, D-02,
@@ -160,6 +170,21 @@ export interface EngineDecideInput {
   readonly via: DecidedVia;
 }
 
+/** The detail of one request: the service-built view, or the reason there is none, plus what is always known. */
+export type ApprovalDetail =
+  | { readonly kind: "not-found" }
+  | {
+      readonly kind: "found";
+      readonly summary: ApprovalSummary;
+      /** Null when the payload was purged (`purged`) or can no longer be rendered (`unreadable`). */
+      readonly view: ApprovalItemView | null;
+      readonly purged: boolean;
+      readonly unreadable: boolean;
+      readonly history: ApprovalItemView["history"];
+      /** The first twelve characters of the payload hash. */
+      readonly fingerprint: string;
+    };
+
 export type WithdrawOutcome =
   | { readonly kind: "withdrawn" }
   | { readonly kind: "not-withdrawable" };
@@ -169,6 +194,12 @@ export interface ApprovalEngine {
   decide(input: EngineDecideInput): Promise<DecideResponse>;
   /** The requester takes back a request that is still pending. */
   withdraw(proposalId: string): WithdrawOutcome;
+  /** One request's detail, built from its stored row and audit trail. */
+  get(proposalId: string): ApprovalDetail;
+  /** Summaries of one bucket of requests. */
+  list(bucket: ApprovalBucket, limit?: number): ApprovalSummary[];
+  /** The inbox as the snapshot carries it, within the response budget (bytes of the approvals part). */
+  snapshot(budgetBytes?: number): ApprovalsSnapshot;
   /** Resolves when every execution the engine started has finished (tests, shutdown). */
   settled(): Promise<void>;
 }
@@ -667,11 +698,65 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     finishWith(proposal, await resolveOutcome(definition, parsed.value, context, result));
   }
 
+  // --- read side ------------------------------------------------------------
+
+  function get(proposalId: string): ApprovalDetail {
+    const id = ProposalIdSchema.safeParse(proposalId);
+    if (!id.success) return { kind: "not-found" };
+    const stored = store.get(id.data);
+    if (stored === null) return { kind: "not-found" };
+    const audit = store.auditFor(id.data);
+    const common = {
+      kind: "found" as const,
+      summary: summaryFor(stored),
+      history: historyOf(audit),
+      fingerprint: stored.payloadHash.slice(0, 12),
+    };
+    if (stored.payloadJson === null) {
+      return { ...common, view: null, purged: true, unreadable: false };
+    }
+    const definition = registry.lookup(stored.operation);
+    const parsed =
+      definition === undefined ? null : parseStoredPayload(definition, stored.payloadJson);
+    if (definition !== undefined && parsed?.ok === true) {
+      try {
+        const draft = definition.render(parsed.value, { requester: stored.requester });
+        const view = buildApprovalView(
+          stored,
+          draft,
+          audit,
+          { projectName: projectNameOf(stored) },
+          registry.table,
+        );
+        return { ...common, view, purged: false, unreadable: false };
+      } catch {
+        // fall through: a row that cannot be rendered is reported, never half-built
+      }
+    }
+    return { ...common, view: null, purged: false, unreadable: true };
+  }
+
+  function list(bucket: ApprovalBucket, limit: number = APPROVAL_CHIP_BOUND): ApprovalSummary[] {
+    return store.list(bucket, limit).map(summaryFor);
+  }
+
+  function snapshot(budgetBytes?: number): ApprovalsSnapshot {
+    const input = {
+      pending: list("pending"),
+      decided: list("decided"),
+      expired: list("expired"),
+      counts: store.counts(),
+    };
+    return budgetBytes === undefined
+      ? assembleSnapshot(input)
+      : assembleSnapshot(input, budgetBytes);
+  }
+
   async function settled(): Promise<void> {
     while (inflight.size > 0) {
       await Promise.allSettled([...inflight]);
     }
   }
 
-  return { submit, decide, withdraw, settled };
+  return { submit, decide, withdraw, get, list, snapshot, settled };
 }

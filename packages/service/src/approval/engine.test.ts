@@ -683,13 +683,13 @@ describe("outcomes, first attempt (Task 2, Test 7)", () => {
   );
 
   it("a rejected execute finishes unknown with executor-threw, never failed, and logs no message text", async () => {
-    const { stored, h, id } = await runWith(new Error("BOOM-SECRET-TEXT /Users/someone/secret"));
+    const { stored, h, id } = await runWith(new Error("BOOM-SECRET-TEXT /Users/USERNAME/secret"));
     expect(stored?.state).toBe("unknown");
     expect(stored?.outcomeCode).toBe("executor-threw");
     expect(h.diagnostic.reconcileCalls).toHaveLength(0);
     expect(h.store.auditEvents(id).at(-1)).toBe("outcome-unknown");
     expect(JSON.stringify(h.log.lines)).not.toContain("BOOM-SECRET-TEXT");
-    expect(JSON.stringify(h.log.lines)).not.toContain("/Users/someone");
+    expect(JSON.stringify(h.log.lines)).not.toContain("/Users/USERNAME");
   });
 });
 
@@ -782,7 +782,7 @@ describe("outcomes, retry attempt (Task 2, Test 8)", () => {
 
   it("an evidence or reason string that is not a fixed token is replaced, never stored", async () => {
     const op = createFakeOperation_();
-    op.verdicts.push({ kind: "effect-proven", evidence: "Free text /Users/someone" });
+    op.verdicts.push({ kind: "effect-proven", evidence: "Free text /Users/USERNAME" });
     const decision = await resolveOutcome(op.definition, payload, retry, {
       threw: false,
       outcome: NON_EXECUTED[0] as ExecuteOutcome,
@@ -994,15 +994,23 @@ describe("get, list and snapshot (Task 3)", () => {
     expect(snapshot.truncated).toBe(false);
   });
 
-  it("snapshot stays under a budget by trimming decided and expired, never pending", () => {
+  it("snapshot stays under a budget by trimming decided and expired, never pending", async () => {
     const h = createHarness();
+    for (let i = 0; i < 10; i += 1) {
+      await decideWith(h, h.propose({ subject: `x${i}` }), "deny");
+    }
     for (let i = 0; i < 25; i += 1) h.propose({ subject: `d${i}` });
     for (let i = 0; i < 25; i += 1) {
       h.propose({ operation: "session.force-terminate", subject: `t${i}` });
     }
-    const snapshot = h.engine.snapshot(9000);
-    expect(Buffer.byteLength(JSON.stringify(snapshot), "utf8")).toBeLessThanOrEqual(9000);
+    const whole = h.engine.snapshot();
+    expect(whole.decided).toHaveLength(10);
+    const budget = Buffer.byteLength(JSON.stringify(whole), "utf8") - 1500;
+    const snapshot = h.engine.snapshot(budget);
+    expect(Buffer.byteLength(JSON.stringify(snapshot), "utf8")).toBeLessThanOrEqual(budget);
     expect(snapshot.pending).toHaveLength(50);
-    expect(snapshot.counts.pending).toBe(50);
+    expect(snapshot.decided.length).toBeLessThan(10);
+    expect(snapshot.truncated).toBe(true);
+    expect(snapshot.counts).toEqual({ pending: 50, decided: 10, expired: 0 });
   });
 });

@@ -8,6 +8,7 @@
 // package. This is the engine's one door: the engine factory and its types.
 
 export {
+  type ApprovalDetail,
   type ApprovalEngine,
   type ApprovalEngineDeps,
   createApprovalEngine,

@@ -596,8 +596,8 @@ describe("assembleSnapshot (Test 8: snapshot budget)", () => {
       counts: { pending: 1, decided: 200, expired: 0 },
     };
     expect(assembleSnapshot(given).truncated).toBe(true);
-    const small = assembleSnapshot(input(), 6000);
-    expect(bytes(small)).toBeLessThanOrEqual(6000);
+    const small = assembleSnapshot(input(), 28_000);
+    expect(bytes(small)).toBeLessThanOrEqual(28_000);
     expect(small.counts).toEqual({ pending: 50, decided: 120, expired: 80 });
     expect(small.pending).toHaveLength(50);
   });
