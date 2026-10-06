@@ -135,6 +135,8 @@ export const runs = sqliteTable(
     subagentLastType: text("subagent_last_type"),
     terminateRequestedAt: text("terminate_requested_at"),
     endObservedAt: text("end_observed_at"),
+    /** First proof of a turn (a prompt, tool use or stop); null = no conversation saved. */
+    promptSeenAt: text("prompt_seen_at"),
   },
   (table) => [
     index("runs_state_idx").on(table.state),

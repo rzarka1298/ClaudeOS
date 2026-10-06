@@ -72,6 +72,8 @@ export const SessionViewSchema = z.strictObject({
   cwdBasename: BasenameSchema.nullable(),
   worktreeBasename: BasenameSchema.nullable(),
   hasTranscript: z.boolean(),
+  /** True once a prompt (or other proof of a turn) was observed; a Run without one saved no conversation. */
+  hasConversation: z.boolean(),
   terminateRequested: z.boolean(),
 });
 export type SessionView = z.infer<typeof SessionViewSchema>;
@@ -117,6 +119,8 @@ export interface SessionRun {
   readonly endedAt: string | null;
   readonly terminateRequestedAt: string | null;
   readonly endObservedAt: string | null;
+  /** When the first proof of a turn (a prompt, a tool use, a stop) was observed, else null. */
+  readonly promptSeenAt: string | null;
 }
 
 /**
@@ -182,8 +186,20 @@ export function toSessionView(run: SessionRun, projectName: string | null): Sess
     cwdBasename: lastSegment(run.cwd),
     worktreeBasename: lastSegment(run.worktreeRoot),
     hasTranscript: run.transcriptPath !== null,
+    hasConversation: run.promptSeenAt !== null,
     terminateRequested: run.terminateRequestedAt !== null,
   };
+}
+
+/**
+ * Whether a Run is listed (hero card, Agent runs, counts). A Run that ended
+ * (completed, or stale/unknown) without a conversation saved nothing to
+ * resume, so it is hidden; one still running may be about to get a prompt.
+ * Failed and cancelled launches stay visible: they carry a reason.
+ */
+export function isSessionListed(view: Pick<SessionView, "state" | "hasConversation">): boolean {
+  if (view.hasConversation) return true;
+  return view.state !== "completed" && view.state !== "stale";
 }
 
 /** How a run state is shown everywhere (UI-SPEC "Run-state vocabulary"). */

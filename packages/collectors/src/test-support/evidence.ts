@@ -303,6 +303,7 @@ export function seedRun(overrides: Partial<SessionRun> & Pick<SessionRun, "runId
     endedAt: null,
     terminateRequestedAt: null,
     endObservedAt: null,
+    promptSeenAt: null,
     ...overrides,
   };
 }

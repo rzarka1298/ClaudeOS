@@ -162,5 +162,6 @@ function sessionRun(runId: RunId, state: RunState, revision: number): SessionRun
     endedAt: null,
     terminateRequestedAt: null,
     endObservedAt: null,
+    promptSeenAt: null,
   };
 }

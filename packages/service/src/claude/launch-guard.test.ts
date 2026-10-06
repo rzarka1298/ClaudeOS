@@ -92,6 +92,7 @@ function seedRun(patch: Partial<SessionRun>): SessionRun {
     endedAt: null,
     terminateRequestedAt: null,
     endObservedAt: null,
+    promptSeenAt: null,
     ...patch,
   };
   upsertSessionRun(store.db, run);

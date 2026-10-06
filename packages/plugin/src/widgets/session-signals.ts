@@ -8,6 +8,7 @@ import {
 } from "@ccc/domain/claude-integration.js";
 import type { RunState } from "@ccc/domain/run.js";
 import {
+  isSessionListed,
   isTerminalRunState,
   SessionUpsertedPayloadSchema,
   type SessionView,
@@ -115,6 +116,7 @@ export function orderSessionRows(
   nowMs: number,
 ): readonly SessionView[] {
   const withinWindow = sessions.filter((session) => {
+    if (!isSessionListed(session)) return false;
     if (!isTerminalRunState(session.state)) return true;
     if (session.endedAt === null) return false;
     return nowMs - Date.parse(session.endedAt) <= TERMINAL_ROW_WINDOW_MS;

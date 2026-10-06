@@ -113,6 +113,7 @@ function focusTerminalControl(view: SessionView, ctx: ControlsContext): SessionC
 
 function resumeControl(view: SessionView, ctx: ControlsContext): SessionControl | null {
   if (!RESUMABLE_STATES.has(view.state) || view.claudeSessionId === null) return null;
+  if (!view.hasConversation) return null;
   const noTarget = view.projectId === null && view.cwdBasename === null;
   return control(
     "session:resume",
@@ -123,7 +124,7 @@ function resumeControl(view: SessionView, ctx: ControlsContext): SessionControl 
 }
 
 function branchControl(view: SessionView, ctx: ControlsContext): SessionControl | null {
-  if (view.claudeSessionId === null) return null;
+  if (view.claudeSessionId === null || !view.hasConversation) return null;
   return control("session:branch", "Branch", ctx, null);
 }
 

@@ -3,7 +3,7 @@
 // barrel's `export *` chain pulls in `path-containment.ts`
 // (`node:fs`/`node:path`), which the visual harness's browser-platform
 // bundle cannot resolve.
-import { isTerminalRunState, type SessionView } from "@ccc/domain/session.js";
+import { isSessionListed, isTerminalRunState, type SessionView } from "@ccc/domain/session.js";
 import { signal } from "@preact/signals";
 import { orderSessionRows } from "../widgets/session-signals.js";
 
@@ -79,7 +79,10 @@ export function groupSessions(sessions: readonly SessionView[], nowMs: number): 
   );
 
   const recentWindow = sessions.filter(
-    (session) => isTerminalRunState(session.state) && endedWithinWindow(session, nowMs),
+    (session) =>
+      isSessionListed(session) &&
+      isTerminalRunState(session.state) &&
+      endedWithinWindow(session, nowMs),
   );
   const recent = recentWindow.filter((session) => session.projectId !== null).sort(byMostRecentEnd);
   const unclassified = recentWindow

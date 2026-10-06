@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RunId } from "./ids.js";
 import { RUN_STATES } from "./run.js";
 import {
+  isSessionListed,
   isTerminalRunState,
   LAUNCH_SOURCES,
   NOT_REPORTED,
@@ -46,6 +47,7 @@ function run(overrides: Partial<SessionRun> = {}): SessionRun {
     endedAt: null,
     terminateRequestedAt: null,
     endObservedAt: null,
+    promptSeenAt: null,
     ...overrides,
   };
 }
@@ -254,4 +256,22 @@ describe("SessionViewSchema", () => {
       false,
     );
   });
+});
+
+describe("isSessionListed", () => {
+  it.each([
+    ["running", false, true],
+    ["queued", false, true],
+    ["waiting-for-approval", false, true],
+    ["completed", false, false],
+    ["stale", false, false],
+    ["failed", false, true],
+    ["completed", true, true],
+    ["stale", true, true],
+  ] as const)(
+    "%s without/with a conversation (%s) is listed: %s",
+    (state, hasConversation, listed) => {
+      expect(isSessionListed({ state, hasConversation })).toBe(listed);
+    },
+  );
 });

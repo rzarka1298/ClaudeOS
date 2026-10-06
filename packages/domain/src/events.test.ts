@@ -35,6 +35,7 @@ const SESSION_VIEW: SessionView = {
   worktreeBasename: null,
   hasTranscript: false,
   terminateRequested: false,
+  hasConversation: true,
 };
 
 import { EMPTY_PROJECTS_SNAPSHOT } from "./projects.js";

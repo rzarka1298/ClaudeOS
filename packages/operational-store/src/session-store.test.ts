@@ -62,6 +62,7 @@ function sessionRun(overrides: Partial<SessionRun> = {}): SessionRun {
     endedAt: null,
     terminateRequestedAt: null,
     endObservedAt: null,
+    promptSeenAt: null,
     ...overrides,
   };
 }
@@ -97,6 +98,7 @@ describe("session Run persistence (Test 4, SESS-07, D-21)", () => {
       subagentActiveIds: [],
       endedAt: "2026-09-28T10:30:00.000Z",
       endObservedAt: "2026-09-28T10:30:00.000Z",
+      promptSeenAt: null,
     });
     upsertSessionRun(db, updated);
     expect(runCount()).toBe(1);

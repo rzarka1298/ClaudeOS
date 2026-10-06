@@ -227,6 +227,7 @@ function blankRun(runId: RunId, startedAt: string): SessionRun {
     endedAt: null,
     terminateRequestedAt: null,
     endObservedAt: null,
+    promptSeenAt: null,
   };
 }
 
@@ -407,6 +408,11 @@ function applyToRun(
   return upserted(write(run, { ...metadata(run, record, facts), ...transition(run) }));
 }
 
+/** The first proof of a turn is kept; later events never move it. */
+function proven(run: SessionRun, at: string): Patch {
+  return { promptSeenAt: run.promptSeenAt ?? at };
+}
+
 function activity(clearsWaiting: boolean, at: string): Transition {
   return (run) => ({
     state:
@@ -417,6 +423,7 @@ function activity(clearsWaiting: boolean, at: string): Transition {
         : alive(run.state),
     activity: "working",
     lastActivityAt: later(run.lastActivityAt, at),
+    ...proven(run, at),
   });
 }
 
@@ -470,6 +477,7 @@ function reduceHook(
         state: alive(run.state),
         subagentActiveIds: run.subagentActiveIds.filter((id) => id !== agentId),
         lastActivityAt: later(run.lastActivityAt, at),
+        ...proven(run, at),
       }));
     }
 
@@ -478,6 +486,7 @@ function reduceHook(
         state: run.state === "waiting-for-approval" ? "running" : alive(run.state),
         activity: "idle",
         lastActivityAt: later(run.lastActivityAt, at),
+        ...proven(run, at),
       }));
 
     case "StopFailure":
@@ -486,18 +495,24 @@ function reduceHook(
         activity: "idle",
         lastError: record.stop_error,
         lastActivityAt: later(run.lastActivityAt, at),
+        ...proven(run, at),
       }));
 
     case "PermissionRequest":
       return apply(true, (run) => ({
         state: "waiting-for-approval",
         lastActivityAt: later(run.lastActivityAt, at),
+        ...proven(run, at),
       }));
 
     case "Notification":
       return apply(true, (run) => {
         if (record.notification_type === "permission_prompt") {
-          return { state: "waiting-for-approval", lastActivityAt: later(run.lastActivityAt, at) };
+          return {
+            state: "waiting-for-approval",
+            lastActivityAt: later(run.lastActivityAt, at),
+            ...proven(run, at),
+          };
         }
         if (record.notification_type === "idle_prompt") {
           return {

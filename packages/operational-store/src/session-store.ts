@@ -50,6 +50,7 @@ export interface SessionRunRow {
   subagent_last_type: string | null;
   terminate_requested_at: string | null;
   end_observed_at: string | null;
+  prompt_seen_at: string | null;
 }
 
 /** Thrown by {@link upsertSessionRun} when a Run's numeric facts are not safe integers. */
@@ -105,6 +106,7 @@ export function rowToSessionRun(row: SessionRunRow): SessionRun {
     endedAt: row.ended_at,
     terminateRequestedAt: row.terminate_requested_at,
     endObservedAt: row.end_observed_at,
+    promptSeenAt: row.prompt_seen_at,
   };
 }
 
@@ -142,6 +144,7 @@ const UPSERT_COLUMNS = [
   "subagent_last_type",
   "terminate_requested_at",
   "end_observed_at",
+  "prompt_seen_at",
 ] as const;
 
 const UPSERT_SQL = `INSERT INTO runs (run_id, kind, ${UPSERT_COLUMNS.join(", ")})
@@ -186,6 +189,7 @@ export function upsertSessionRun(db: Database.Database, run: SessionRun): void {
     subagent_last_type: run.subagentLastType,
     terminate_requested_at: run.terminateRequestedAt,
     end_observed_at: run.endObservedAt,
+    prompt_seen_at: run.promptSeenAt,
   });
 }
 

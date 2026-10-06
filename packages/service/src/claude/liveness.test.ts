@@ -147,6 +147,7 @@ function seedRun(patch: Partial<SessionRun> = {}): SessionRun {
     endedAt: null,
     terminateRequestedAt: null,
     endObservedAt: null,
+    promptSeenAt: null,
     ...patch,
   };
   upsertSessionRun(store.db, run);
@@ -234,6 +235,7 @@ describe("process liveness sweep (Task 1, SESS-06, D-19)", () => {
     const run = seedRun({
       terminateRequestedAt: new Date(T0 - 2_000).toISOString(),
       endObservedAt: new Date(T0 - 1_000).toISOString(),
+      promptSeenAt: null,
     });
     const sweeper = sweeperWith();
     await sweeper.sweepNow();

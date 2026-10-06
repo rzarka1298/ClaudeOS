@@ -39,6 +39,7 @@ const SESSION = {
   worktreeBasename: null,
   hasTranscript: false,
   terminateRequested: false,
+  hasConversation: true,
 };
 
 const OFF_RANGE = {

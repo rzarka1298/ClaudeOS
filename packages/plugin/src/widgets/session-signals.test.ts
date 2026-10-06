@@ -52,6 +52,7 @@ function baseSession(overrides: Record<string, unknown> = {}): unknown {
     worktreeBasename: null,
     hasTranscript: false,
     terminateRequested: false,
+    hasConversation: true,
     ...overrides,
   };
 }

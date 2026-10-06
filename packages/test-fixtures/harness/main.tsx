@@ -252,6 +252,7 @@ function adaptActiveSessions(data: Fields): ActiveSessionsData {
     worktreeBasename: null,
     hasTranscript: false,
     terminateRequested: false,
+    hasConversation: true,
   }));
   return { sessions, nowMs: NOW } as unknown as ActiveSessionsData;
 }
@@ -609,6 +610,7 @@ function syntheticSession(overrides: Partial<SessionView>): SessionView {
     worktreeBasename: null,
     hasTranscript: true,
     terminateRequested: false,
+    hasConversation: true,
     ...overrides,
   } as SessionView;
 }

@@ -60,6 +60,7 @@ function run(n: number, overrides: Partial<SessionRun> = {}): SessionRun {
     endedAt: null,
     terminateRequestedAt: null,
     endObservedAt: null,
+    promptSeenAt: null,
     ...overrides,
   };
 }

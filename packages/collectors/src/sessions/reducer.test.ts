@@ -558,6 +558,7 @@ describe("session reducer — endings, stale and terminate (D-18, D-19, D-20, PR
           state: "cancelled",
           terminateRequestedAt: at(29),
           endObservedAt: at(30),
+          promptSeenAt: null,
           endedAt: at(31),
         });
       },
@@ -793,5 +794,26 @@ describe("session reducer — never completed by inference (property, SESS-06)",
     }
     // A generator that never reached the reducer's write paths would prove nothing.
     expect(upsertCount).toBeGreaterThan(2000);
+  });
+});
+
+describe("session reducer — conversation proof (05-UAT)", () => {
+  it("UserPromptSubmit records the first proof of a turn and keeps it", () => {
+    const o = play(
+      [seedRun({ runId: R1 })],
+      [
+        hook("UserPromptSubmit", { observedAt: at(7) }),
+        hook("UserPromptSubmit", { observedAt: at(9) }),
+      ],
+    );
+    expect(o.only().promptSeenAt).toBe(at(7));
+  });
+
+  it("a session that ends without a prompt never records one", () => {
+    const o = play(
+      [seedRun({ runId: R1 })],
+      [hook("Notification", { observedAt: at(5) }), hook("SessionEnd", { observedAt: at(8) })],
+    );
+    expect(o.only()).toMatchObject({ state: "completed", promptSeenAt: null });
   });
 });

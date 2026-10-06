@@ -52,6 +52,7 @@ function session(overrides: Partial<SessionView> = {}): SessionView {
     worktreeBasename: null,
     hasTranscript: true,
     terminateRequested: false,
+    hasConversation: true,
     ...overrides,
   };
 }

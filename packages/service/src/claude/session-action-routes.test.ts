@@ -210,6 +210,7 @@ function seedRun(patch: Partial<SessionRun>): SessionRun {
     endedAt: patch.state === undefined || patch.state === "completed" ? now : null,
     terminateRequestedAt: null,
     endObservedAt: null,
+    promptSeenAt: null,
     ...patch,
   };
   upsertSessionRun(store.db, run);

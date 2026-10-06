@@ -3,6 +3,7 @@
 // pulls in `path-containment.ts` (`node:fs`/`node:path`), which the visual
 // harness's browser-platform bundle cannot resolve.
 import {
+  isSessionListed,
   NOT_REPORTED,
   RUN_STATE_DISPLAY,
   type SessionView,
@@ -369,7 +370,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
     activeSessionsWidget.dataKeys,
   );
 
-  const allSessions = [...sessionsById.value.values()];
+  const allSessions = [...sessionsById.value.values()].filter(isSessionListed);
   const groups = groupSessions(allSessions, now);
   const selected = selectedRunId.value;
   const selectedSession = selected === null ? null : (sessionsById.value.get(selected) ?? null);
@@ -466,7 +467,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
   // text, and it is never itself dimmed.
   const dimmed = presentation.kind === "disconnected" ? "true" : undefined;
 
-  const totalSessions = sessionsById.value.size;
+  const totalSessions = allSessions.length;
   const runningCount = allSessions.filter((s) => s.state === "running").length;
   const waitingCount = allSessions.filter((s) => s.state === "waiting-for-approval").length;
   const unknownCount = allSessions.filter((s) => s.state === "stale").length;
