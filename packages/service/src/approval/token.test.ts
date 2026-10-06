@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { type CapabilityToken, type EnabledOperation, type ExecuteContext } from "@ccc/domain";
+import type { CapabilityToken, EnabledOperation, ExecuteContext } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import { createTokenLedger, dispatchWithToken } from "./engine.js";
 import { createFakeOperation } from "./test-support/fake-operation.js";

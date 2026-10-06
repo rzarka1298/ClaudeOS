@@ -13,6 +13,7 @@ import {
   type AuditRow,
   type ClaimFacts,
   type ClaimResult,
+  classifyOperation,
   type DecideInput,
   type DecideResult,
   type FinishInput,
@@ -24,7 +25,6 @@ import {
   type RetryResult,
   type StoredProposal,
   type SubmitResult,
-  classifyOperation,
 } from "@ccc/domain";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };

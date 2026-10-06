@@ -4,16 +4,16 @@
 // both what the engine did and what it did NOT do. There is deliberately no
 // token construction in this file: a test that needs a forged token builds one
 // with a local cast inside its own `*.test.ts` file (backstop rule 10).
-import {
-  type ApprovalItemDraft,
-  type CapabilityToken,
-  type ClaimFacts,
-  type EnabledOperation,
-  type ExecuteContext,
-  type ExecuteOutcome,
-  type OperationDefinition,
-  type ReconcileVerdict,
-  type RenderContext,
+import type {
+  ApprovalItemDraft,
+  CapabilityToken,
+  ClaimFacts,
+  EnabledOperation,
+  ExecuteContext,
+  ExecuteOutcome,
+  OperationDefinition,
+  ReconcileVerdict,
+  RenderContext,
 } from "@ccc/domain";
 import { z } from "zod";
 
