@@ -455,6 +455,33 @@ describe("computed imports are refused in every service module extension (Codex 
   }
 });
 
+describe("computed require and createRequire are refused in the service (Codex review MAJOR)", () => {
+  const ROUTE = "packages/service/src/routes/x.ts";
+  const cases: ReadonlyArray<readonly [string, string]> = [
+    ["computed require argument", `declare const n: string;\nrequire(n);\n`],
+    ["template require argument", `declare const n: string;\nrequire(${"`"}../${"$"}{n}${"`"});\n`],
+    ["require of the minter path", `require("../approval/mint/mint-token.js");\n`],
+    ["require of an executor path", `require("../executors/index.js");\n`],
+    ["createRequire named import", `import { createRequire } from "node:module";\nexport const r = createRequire;\n`],
+    ["createRequire via dynamic import", `const m = await import("node:module");\nexport const r = m.createRequire;\n`],
+    ["createRequire via namespace import", `import * as m from "node:module";\nexport const r = m;\n`],
+    ["module.require", `declare const n: string;\nmodule.require(n);\n`],
+  ];
+  for (const [name, code] of cases) {
+    test(`FIRES: ${name}`, async () => {
+      const messages = await allMessagesFor(ROUTE, code);
+      expect(messages.map((m) => m.ruleId)).toContain("no-restricted-syntax");
+    });
+  }
+  test("QUIET: a string-literal require of an allowed module and an unrelated identifier", async () => {
+    const messages = await allMessagesFor(
+      ROUTE,
+      'const require2 = (x: string) => x;\nrequire2("a");\nrequire("@ccc/domain");\n',
+    );
+    expect(messages.filter((m) => m.ruleId === "no-restricted-syntax")).toHaveLength(0);
+  });
+});
+
 describe("the approval public door never re-exports the minter (review MAJOR-2)", () => {
   const DOOR = "packages/service/src/approval/index.ts";
   test("FIRES: export * from the minter", async () => {

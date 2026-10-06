@@ -486,6 +486,35 @@ export default [
             "T-06-15: a dynamic import() must take a plain string-literal specifier so the boundary lint can see it.",
         },
         {
+          // `require(...)` is a module edge the boundary rule does not follow.
+          // A computed argument hides it entirely, and a literal one naming
+          // the minter or an executor folder is the same bypass the import
+          // rules close (Codex review MAJOR, T-06-15).
+          selector:
+            'CallExpression[callee.name="require"]:not([arguments.0.type="Literal"])',
+          message:
+            "T-06-15: require() must take a plain string-literal specifier so the boundary lint can see it.",
+        },
+        {
+          selector:
+            'CallExpression[callee.name="require"][arguments.0.type="Literal"][arguments.0.value=/approval\\/mint|(^|\\/)executors(\\/|$)/]',
+          message:
+            "T-06-01/T-06-02: never require() the approval minter or an executor -- the boundary lint cannot follow it.",
+        },
+        {
+          selector: 'CallExpression[callee.object.name="module"][callee.property.name="require"]',
+          message:
+            "T-06-15: module.require() hides a module edge from the boundary lint -- use an import declaration.",
+        },
+        {
+          // createRequire is the only way ESM code gets a `require`, so
+          // refusing node:module (static, namespace or dynamic) closes it.
+          selector:
+            ":matches(ImportDeclaration, ImportExpression)[source.value=/^(node:)?module$/]",
+          message:
+            "T-06-15: node:module (createRequire) hides module edges from the boundary lint -- do not import it in the service.",
+        },
+        {
           // `import x = require("...")` is a module edge the boundary rule does
           // not follow (review MAJOR-1); use a normal import declaration.
           selector: 'TSImportEqualsDeclaration[moduleReference.type="TSExternalModuleReference"]',
