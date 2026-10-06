@@ -3,6 +3,7 @@ import {
   APPROVAL_DECIDE_PATH,
   APPROVAL_GET_PATH,
   APPROVAL_LIST_PATH,
+  APPROVAL_RESPONSE_BUDGET_BYTES,
   APPROVAL_TEST_PATH,
   type ApprovalErrorBody,
   ApprovalGetRequestSchema,
@@ -21,7 +22,7 @@ import {
   sendJson,
   withAuth,
 } from "../route-kit.js";
-import type { ApprovalServices } from "./types.js";
+import { type ApprovalServices, CLIENT_RESPONSE_CAP_BYTES } from "./types.js";
 
 /**
  * The approval routes (plan 06-13, APPR-03, APPR-04, D-28): list, get, decide
@@ -67,6 +68,21 @@ export function approvalsSnapshotFor(
 ): ApprovalsSnapshot {
   const snapshot = services.snapshot(budgetBytes);
   return snapshot.ready && !services.ready ? { ...snapshot, ready: false } : snapshot;
+}
+
+/** Room left for the member's key, a comma and the envelope's own rounding. */
+const SNAPSHOT_MEMBER_OVERHEAD_BYTES = 256;
+
+/**
+ * The budget the approvals member of the snapshot may take, given the UTF-8
+ * size of the rest of the snapshot body. The client rejects any response over
+ * 64 KiB, which would drop the whole snapshot silently, so the approvals part
+ * gets what the rest leaves, never more than the domain's own budget (T-06-30).
+ */
+export function approvalsBudgetFor(restOfSnapshotBytes: number): number {
+  const remaining =
+    CLIENT_RESPONSE_CAP_BYTES - restOfSnapshotBytes - SNAPSHOT_MEMBER_OVERHEAD_BYTES;
+  return Math.max(0, Math.min(APPROVAL_RESPONSE_BUDGET_BYTES, remaining));
 }
 
 /** The decision channel: the plugin's own header value exactly, anything else is `other`. */

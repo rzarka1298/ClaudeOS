@@ -42,8 +42,11 @@ describe("createApprovalPublisher (test 2)", () => {
       target: [{ label: "Path", value: "/Users/USERNAME/x" }],
     };
     publisher.publish("approval.upserted", { approval: hostile as never });
-    const sent = JSON.stringify(bus.buffer.since(0));
-    expect(sent).toContain("approval.upserted");
+    const replay = bus.buffer.since(0);
+    if (replay.mode !== "replay") throw new Error("unreachable");
+    expect(replay.events).toHaveLength(1);
+    // The event's own payload member only: the envelope key is named payload too.
+    const sent = JSON.stringify(replay.events[0]?.payload);
     for (const word of ["secret diff", "secret reason", "/Users/", "payload", "target"]) {
       expect(sent).not.toContain(word);
     }

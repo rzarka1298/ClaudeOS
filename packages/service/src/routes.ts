@@ -19,7 +19,11 @@ import {
 } from "@ccc/domain";
 import { listAllRuns } from "@ccc/operational-store";
 import { initializeVault, planVaultSetup, VaultRootMissingError } from "@ccc/vault-repo";
-import { approvalRoutes } from "./approval-wiring/routes.js";
+import {
+  approvalRoutes,
+  approvalsBudgetFor,
+  approvalsSnapshotFor,
+} from "./approval-wiring/routes.js";
 import { mintToken } from "./auth/token.js";
 import { claudeRouteTable } from "./claude/routes.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
@@ -142,6 +146,22 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
       ...(ctx.claude?.usage ? { claudeIntegration: ctx.claude.usage.integration() } : {}),
     },
   };
+  // Phase 6 (D-28): the approvals member, built in this same synchronous tick.
+  // The client rejects a response over 64 KiB, so the approvals part is given
+  // only the bytes the rest of the snapshot leaves (T-06-30). A failure leaves
+  // the member out: the inbox is repaired by the list route and the next event,
+  // and the rest of the snapshot must still resync.
+  if (ctx.approvals) {
+    try {
+      const restBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
+      body.state.approvals = approvalsSnapshotFor(ctx.approvals, approvalsBudgetFor(restBytes));
+    } catch (err: unknown) {
+      logger.error(
+        { route: SNAPSHOT_PATH, errorName: err instanceof Error ? err.name : typeof err },
+        "approvals snapshot failed",
+      );
+    }
+  }
   sendJson(res, 200, body);
 };
 
