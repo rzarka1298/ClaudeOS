@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,6 +18,8 @@ import { applyMigrations } from "./migrate.js";
 import {
   columnNames,
   openMigratedFileDb,
+  openMigratedMemoryDb,
+  openSecondConnection,
   REAL_MIGRATIONS_DIR,
   triggerNames,
 } from "./test-support/migration-helper.js";
@@ -529,5 +531,824 @@ describe("the stored row is an untrusted boundary", () => {
       "payload_hash",
       "detail",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2
+
+/** An ISO time `ms` after T0, used for the lifecycle after approval. */
+const APPROVED_AT = at(60_000);
+const CLAIMED_AT = at(61_000);
+const FINISHED_AT = at(62_000);
+
+function approve(proposal: NewProposal): void {
+  expect(store.decide(decideInput(proposal, { now: APPROVED_AT })).kind).toBe("approved");
+}
+
+function submitApproved(overrides: Partial<NewProposal> = {}): NewProposal {
+  const proposal = submitPending(overrides);
+  approve(proposal);
+  return proposal;
+}
+
+function submitExecuting(overrides: Partial<NewProposal> = {}): NewProposal {
+  const proposal = submitApproved(overrides);
+  expect(store.claim(proposal.proposalId, { pid: 4242, startedAt: "t" }, CLAIMED_AT).kind).toBe(
+    "claimed",
+  );
+  return proposal;
+}
+
+interface ExecutionRow {
+  proposal_id: string;
+  attempt: number;
+  started_at: string;
+  finished_at: string | null;
+  result_code: string | null;
+}
+
+function executionRows(proposalId: string): ExecutionRow[] {
+  return db
+    .prepare("SELECT * FROM approval_executions WHERE proposal_id = ? ORDER BY attempt")
+    .all(proposalId) as ExecutionRow[];
+}
+
+describe("claim (Test 1)", () => {
+  it("moves approved to executing with the claim facts, attempt 1, a ledger row and a claimed audit row", () => {
+    const proposal = submitApproved();
+    const result = store.claim(
+      proposal.proposalId,
+      { pid: 4242, processStartedAt: "Tue Oct  6 10:00:00 2026", alive: true, note: null },
+      CLAIMED_AT,
+    );
+    expect(result.kind).toBe("claimed");
+    if (result.kind !== "claimed") return;
+    expect(result.proposal.state).toBe("executing");
+    expect(result.proposal.attempts).toBe(1);
+    expect(result.proposal.revision).toBe(3);
+    expect(result.proposal.claimFacts).toEqual({
+      pid: 4242,
+      processStartedAt: "Tue Oct  6 10:00:00 2026",
+      alive: true,
+      note: null,
+    });
+    expect(rowOf(proposal.proposalId).claimed_at).toBe(CLAIMED_AT);
+    expect(executionRows(proposal.proposalId)).toEqual([
+      {
+        proposal_id: proposal.proposalId,
+        attempt: 1,
+        started_at: CLAIMED_AT,
+        finished_at: null,
+        result_code: null,
+      },
+    ]);
+    const claimed = auditRows(proposal.proposalId).at(-1);
+    expect(claimed?.event).toBe("claimed");
+    expect(claimed?.at).toBe(CLAIMED_AT);
+    expect(claimed?.payload_hash).toBe(proposal.payloadHash);
+  });
+
+  it("a second claim on the same row is lost and writes nothing", () => {
+    const proposal = submitApproved();
+    expect(store.claim(proposal.proposalId, { pid: 1 }, CLAIMED_AT).kind).toBe("claimed");
+    const auditBefore = auditRows();
+    const rowBefore = rowOf(proposal.proposalId);
+    expect(store.claim(proposal.proposalId, { pid: 1 }, at(63_000))).toEqual({ kind: "lost" });
+    expect(auditRows()).toEqual(auditBefore);
+    expect(rowOf(proposal.proposalId)).toEqual(rowBefore);
+    expect(executionRows(proposal.proposalId)).toHaveLength(1);
+  });
+
+  it("is lost for a pending row, an unknown id and every settled state", () => {
+    const pending = submitPending();
+    expect(store.claim(pending.proposalId, {}, CLAIMED_AT)).toEqual({ kind: "lost" });
+    expect(store.claim(newProposalId(), {}, CLAIMED_AT)).toEqual({ kind: "lost" });
+    const denied = submitPending();
+    store.decide(decideInput(denied, { decision: "deny" }));
+    expect(store.claim(denied.proposalId, {}, CLAIMED_AT)).toEqual({ kind: "lost" });
+    expect(auditEvents(pending.proposalId)).toEqual(["requested"]);
+    expect(executionRows(pending.proposalId)).toHaveLength(0);
+  });
+
+  it("refuses claim facts that are not flat JSON scalars", () => {
+    const proposal = submitApproved();
+    for (const facts of [
+      { nested: { a: 1 } },
+      { list: [1] },
+      { bad: Number.NaN },
+      { bad: Number.POSITIVE_INFINITY },
+      { big: "x".repeat(5000) },
+    ] as unknown as Record<string, never>[]) {
+      expect(() => store.claim(proposal.proposalId, facts, CLAIMED_AT)).toThrow();
+    }
+    expect(rowOf(proposal.proposalId).state).toBe("approved");
+  });
+
+  it("reads a corrupted claim_facts_json as an invalid row rather than guessing", () => {
+    const proposal = submitExecuting();
+    db.prepare("UPDATE proposals SET claim_facts_json = ? WHERE proposal_id = ?").run(
+      '{"nested":{"a":1}}',
+      proposal.proposalId,
+    );
+    expect(() => store.get(proposal.proposalId)).toThrow();
+    db.prepare("UPDATE proposals SET claim_facts_json = ? WHERE proposal_id = ?").run(
+      "not json",
+      proposal.proposalId,
+    );
+    expect(() => store.get(proposal.proposalId)).toThrow();
+  });
+});
+
+describe("two connections racing (Test 2)", () => {
+  let other: Database.Database;
+  let otherStore: ReturnType<typeof createApprovalStore>;
+
+  beforeEach(() => {
+    other = openSecondConnection(dbPath);
+    otherStore = createApprovalStore(other);
+  });
+
+  afterEach(() => {
+    other.close();
+  });
+
+  it("exactly one connection wins decide and exactly one wins claim", () => {
+    const proposal = submitPending();
+    const winner = store.decide(decideInput(proposal, { now: APPROVED_AT }));
+    const loser = otherStore.decide(decideInput(proposal, { now: at(60_500), via: "other" }));
+    expect(winner.kind).toBe("approved");
+    expect(loser).toEqual({ kind: "already-decided", state: "approved" });
+
+    const claimWinner = otherStore.claim(proposal.proposalId, { pid: 1 }, CLAIMED_AT);
+    const claimLoser = store.claim(proposal.proposalId, { pid: 1 }, at(61_500));
+    expect(claimWinner.kind).toBe("claimed");
+    expect(claimLoser).toEqual({ kind: "lost" });
+
+    expect(auditEvents(proposal.proposalId)).toEqual(["requested", "approved", "claimed"]);
+    expect(executionRows(proposal.proposalId)).toHaveLength(1);
+    // The decision that won is the one recorded: the loser's channel never appears.
+    expect(auditRows(proposal.proposalId)[1]?.decided_via).toBe("plugin");
+  });
+
+  it("a connection that read the row before the other committed cannot decide it again", () => {
+    const proposal = submitPending();
+    // The second connection has the row in its page cache before the first decides.
+    expect(otherStore.get(proposal.proposalId)?.state).toBe("pending");
+    expect(store.decide(decideInput(proposal, { decision: "deny", now: APPROVED_AT })).kind).toBe(
+      "denied",
+    );
+    expect(otherStore.decide(decideInput(proposal, { now: at(60_500) }))).toEqual({
+      kind: "already-decided",
+      state: "denied",
+    });
+    expect(auditEvents(proposal.proposalId)).toEqual(["requested", "denied"]);
+  });
+
+  it("two connections submitting the same pending request produce one row", () => {
+    const first = makeProposal({ subject: "same-subject" });
+    const second = makeProposal({ subject: "same-subject" });
+    expect(store.submit(first, CAPS).kind).toBe("created");
+    const result = otherStore.submit(second, CAPS);
+    expect(result.kind).toBe("deduped");
+    if (result.kind === "deduped") expect(result.proposal.proposalId).toBe(first.proposalId);
+    expect(db.prepare("SELECT count(*) AS n FROM proposals").get()).toEqual({ n: 1 });
+  });
+});
+
+describe("finish (Test 3)", () => {
+  it("records executed with the outcome, stamps finished_at, finishes the ledger row and audits executed", () => {
+    const proposal = submitExecuting();
+    const result = store.finish({
+      proposalId: proposal.proposalId,
+      state: "executed",
+      code: "executed",
+      note: "awaiting-exit",
+      evidence: null,
+      reconciled: false,
+      now: FINISHED_AT,
+    });
+    expect(result?.state).toBe("executed");
+    expect(result?.outcomeCode).toBe("executed");
+    expect(result?.outcomeNote).toBe("awaiting-exit");
+    expect(result?.revision).toBe(4);
+    expect(rowOf(proposal.proposalId).finished_at).toBe(FINISHED_AT);
+    expect(executionRows(proposal.proposalId)[0]).toMatchObject({
+      finished_at: FINISHED_AT,
+      result_code: "executed",
+    });
+    const last = auditRows(proposal.proposalId).at(-1);
+    expect(last?.event).toBe("executed");
+    expect(last?.at).toBe(FINISHED_AT);
+  });
+
+  it.each([
+    ["failed", "execution-failed", false, "failed"],
+    ["unknown", "outcome-not-confirmed", false, "outcome-unknown"],
+    ["executed", "run-cancelled-same-process", true, "reconciled-executed"],
+  ] as const)(
+    "records %s (%s, reconciled %s) with the audit event %s",
+    (state, code, reconciled, event) => {
+      const proposal = submitExecuting();
+      const result = store.finish({
+        proposalId: proposal.proposalId,
+        state,
+        code,
+        note: null,
+        evidence: reconciled ? code : null,
+        reconciled,
+        now: FINISHED_AT,
+      });
+      expect(result?.state).toBe(state);
+      expect(result?.outcomeNote).toBeNull();
+      const last = auditRows(proposal.proposalId).at(-1);
+      expect(last?.event).toBe(event);
+      expect(last?.detail).toBe(code);
+    },
+  );
+
+  it("returns null for a row that is not executing and writes nothing", () => {
+    const pending = submitPending();
+    const approved = submitApproved();
+    const finished = submitExecuting();
+    const input = (proposalId: ProposalIdLike) => ({
+      proposalId,
+      state: "executed" as const,
+      code: "executed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: FINISHED_AT,
+    });
+    expect(store.finish(input(finished.proposalId))).not.toBeNull();
+    const auditBefore = auditRows();
+    for (const target of [pending, approved, finished]) {
+      expect(store.finish(input(target.proposalId))).toBeNull();
+    }
+    expect(store.finish(input(newProposalId()))).toBeNull();
+    expect(auditRows()).toEqual(auditBefore);
+  });
+
+  it("finishes the ledger row of the attempt that was running", () => {
+    const proposal = submitExecuting();
+    expect(store.beginRetry(proposal.proposalId, at(70_000)).kind).toBe("retrying");
+    store.finish({
+      proposalId: proposal.proposalId,
+      state: "unknown",
+      code: "outcome-not-confirmed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: at(71_000),
+    });
+    const ledger = executionRows(proposal.proposalId);
+    expect(ledger.map((row) => row.finished_at)).toEqual([null, at(71_000)]);
+  });
+
+  it("refuses an outcome code or note that is free text", () => {
+    const proposal = submitExecuting();
+    const base = {
+      proposalId: proposal.proposalId,
+      state: "failed" as const,
+      code: "execution-failed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: FINISHED_AT,
+    };
+    expect(() => store.finish({ ...base, code: "it went wrong, sorry" })).toThrow();
+    expect(() => store.finish({ ...base, code: "" })).toThrow();
+    expect(() => store.finish({ ...base, note: "line one\nline two" })).toThrow();
+    expect(() => store.finish({ ...base, evidence: "x".repeat(200) })).toThrow();
+    expect(() => store.finish({ ...base, state: "denied" as never })).toThrow();
+    expect(rowOf(proposal.proposalId).state).toBe("executing");
+  });
+});
+
+type ProposalIdLike = ReturnType<typeof newProposalId>;
+
+describe("beginRetry (Test 4)", () => {
+  it("increments attempts to 2, adds ledger attempt 2 and audits retried-after-restart", () => {
+    const proposal = submitExecuting();
+    const result = store.beginRetry(proposal.proposalId, at(70_000));
+    expect(result.kind).toBe("retrying");
+    if (result.kind !== "retrying") return;
+    expect(result.proposal.attempts).toBe(2);
+    expect(result.proposal.state).toBe("executing");
+    expect(executionRows(proposal.proposalId).map((row) => [row.attempt, row.started_at])).toEqual([
+      [1, CLAIMED_AT],
+      [2, at(70_000)],
+    ]);
+    const last = auditRows(proposal.proposalId).at(-1);
+    expect(last?.event).toBe("retried-after-restart");
+    expect(last?.at).toBe(at(70_000));
+  });
+
+  it("a third attempt returns exhausted and writes nothing", () => {
+    const proposal = submitExecuting();
+    store.beginRetry(proposal.proposalId, at(70_000));
+    const auditBefore = auditRows();
+    expect(store.beginRetry(proposal.proposalId, at(71_000))).toEqual({ kind: "exhausted" });
+    expect(auditRows()).toEqual(auditBefore);
+    expect(executionRows(proposal.proposalId)).toHaveLength(2);
+    expect(store.get(proposal.proposalId)?.attempts).toBe(2);
+  });
+
+  it("returns not-executing for a row in any other state or an unknown id", () => {
+    const approved = submitApproved();
+    const pending = submitPending();
+    expect(store.beginRetry(approved.proposalId, at(70_000))).toEqual({ kind: "not-executing" });
+    expect(store.beginRetry(pending.proposalId, at(70_000))).toEqual({ kind: "not-executing" });
+    expect(store.beginRetry(newProposalId(), at(70_000))).toEqual({ kind: "not-executing" });
+    expect(auditEvents(approved.proposalId)).toEqual(["requested", "approved"]);
+  });
+});
+
+describe("withdraw (Test 5)", () => {
+  it("moves a pending row to withdrawn with an audit row", () => {
+    const proposal = submitPending();
+    const result = store.withdraw(proposal.proposalId, at(5_000));
+    expect(result?.state).toBe("withdrawn");
+    expect(result?.decidedAt).toBe(at(5_000));
+    expect(result?.revision).toBe(2);
+    const last = auditRows(proposal.proposalId).at(-1);
+    expect(last?.event).toBe("withdrawn");
+    expect(last?.at).toBe(at(5_000));
+  });
+
+  it("refuses every other state and an unknown id", () => {
+    const approved = submitApproved();
+    const denied = submitPending();
+    store.decide(decideInput(denied, { decision: "deny" }));
+    const executing = submitExecuting();
+    for (const target of [approved, denied, executing]) {
+      expect(store.withdraw(target.proposalId, at(5_000))).toBeNull();
+    }
+    expect(store.withdraw(newProposalId(), at(5_000))).toBeNull();
+    expect(auditEvents(approved.proposalId)).toEqual(["requested", "approved"]);
+    expect(auditEvents(denied.proposalId)).toEqual(["requested", "denied"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Triggers (Tests 6, 7 and 8). The attack suites are plain functions over a
+// database handle, so Test 8 runs the very same assertions against a database
+// built from every real migration.
+
+const APPEND_ONLY = /append-only/;
+
+function snapshotTable(handle: Database.Database, table: string): unknown[] {
+  return handle.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all();
+}
+
+function expectAborts(
+  handle: Database.Database,
+  table: string,
+  sql: string,
+  message: RegExp,
+): void {
+  const before = snapshotTable(handle, table);
+  expect(() => handle.exec(sql), sql).toThrow(message);
+  expect(snapshotTable(handle, table), `${table} unchanged after: ${sql}`).toEqual(before);
+}
+
+function runAuditAttacks(
+  handle: Database.Database,
+  handleStore: ReturnType<typeof createApprovalStore>,
+): void {
+  const proposal = makeProposal();
+  expect(handleStore.submit(proposal, CAPS).kind).toBe("created");
+  const seq = (handle.prepare("SELECT seq FROM approval_audit").get() as { seq: number }).seq;
+  const insertColumns = "(seq, proposal_id, event, at, decided_via, payload_hash, detail)";
+  const insertValues = `(${seq}, 'forged', 'approved', '${T0}', NULL, NULL, NULL)`;
+
+  expectAborts(handle, "approval_audit", "UPDATE approval_audit SET event = 'denied'", APPEND_ONLY);
+  expectAborts(
+    handle,
+    "approval_audit",
+    `UPDATE approval_audit SET detail = 'x' WHERE seq = ${seq}`,
+    APPEND_ONLY,
+  );
+  expectAborts(handle, "approval_audit", "DELETE FROM approval_audit", APPEND_ONLY);
+  expectAborts(
+    handle,
+    "approval_audit",
+    `INSERT OR REPLACE INTO approval_audit ${insertColumns} VALUES ${insertValues}`,
+    APPEND_ONLY,
+  );
+  expectAborts(
+    handle,
+    "approval_audit",
+    `REPLACE INTO approval_audit ${insertColumns} VALUES ${insertValues}`,
+    APPEND_ONLY,
+  );
+  expectAborts(
+    handle,
+    "approval_audit",
+    `INSERT INTO approval_audit ${insertColumns} VALUES ${insertValues} ON CONFLICT(seq) DO UPDATE SET event = 'denied'`,
+    APPEND_ONLY,
+  );
+  // An ordinary append still works: the guard is not a blanket refusal.
+  handle.exec(
+    `INSERT INTO approval_audit (proposal_id, event, at) VALUES ('${proposal.proposalId}', 'withdrawn', '${T0}')`,
+  );
+  expect(handle.prepare("SELECT count(*) AS n FROM approval_audit").get()).toEqual({ n: 2 });
+}
+
+describe("audit triggers (Test 6)", () => {
+  it("UPDATE, DELETE, INSERT OR REPLACE, REPLACE and upsert-update each abort and leave the table unchanged", () => {
+    runAuditAttacks(db, store);
+  });
+});
+
+const IDENTITY_COLUMNS = [
+  "proposal_id",
+  "operation",
+  "subject",
+  "payload_hash",
+  "dedupe_key",
+  "expires_at",
+  "created_at",
+  "requester_kind",
+  "requester_label",
+  "project_id",
+  "run_id",
+  "reason",
+  "mirror_note_id",
+  "supersedes",
+] as const;
+
+function runProposalAttacks(
+  handle: Database.Database,
+  handleStore: ReturnType<typeof createApprovalStore>,
+): void {
+  const make = (state: "pending" | "approved" | "executing" | "denied" | "executed") => {
+    const proposal = makeProposal({ operation: "session.force-terminate" });
+    expect(handleStore.submit(proposal, CAPS).kind).toBe("created");
+    const id = proposal.proposalId;
+    const step = (to: string) =>
+      handle.prepare("UPDATE proposals SET state = ? WHERE proposal_id = ?").run(to, id);
+    if (state === "denied") step("denied");
+    if (state === "approved" || state === "executing" || state === "executed") step("approved");
+    if (state === "executing" || state === "executed") step("executing");
+    if (state === "executed") step("executed");
+    return { proposal, id };
+  };
+
+  const pending = make("pending");
+  const approved = make("approved");
+  const executing = make("executing");
+  const denied = make("denied");
+  const executed = make("executed");
+  const ILLEGAL = /illegal proposal state transition/;
+
+  // Transition guard: skipping a step, going backwards and leaving a terminal state all abort.
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET state = 'executed' WHERE proposal_id = '${pending.id}'`,
+    ILLEGAL,
+  );
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET state = 'executing' WHERE proposal_id = '${pending.id}'`,
+    ILLEGAL,
+  );
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET state = 'pending' WHERE proposal_id = '${approved.id}'`,
+    ILLEGAL,
+  );
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET state = 'executed' WHERE proposal_id = '${approved.id}'`,
+    ILLEGAL,
+  );
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET state = 'approved' WHERE proposal_id = '${denied.id}'`,
+    ILLEGAL,
+  );
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET state = 'executing' WHERE proposal_id = '${executed.id}'`,
+    ILLEGAL,
+  );
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET state = 'pending' WHERE proposal_id = '${executing.id}'`,
+    ILLEGAL,
+  );
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET state = 'approved' WHERE proposal_id = '${executing.id}'`,
+    ILLEGAL,
+  );
+
+  // Identity columns are immutable in every state.
+  for (const column of IDENTITY_COLUMNS) {
+    for (const target of [pending, approved, executing, denied, executed]) {
+      expectAborts(
+        handle,
+        "proposals",
+        `UPDATE proposals SET ${column} = 'changed-value' WHERE proposal_id = '${target.id}'`,
+        /immutable/,
+      );
+    }
+  }
+
+  // The payload text cannot change while the request is live, nor be rewritten after a purge.
+  const PURGE = /payload may only be purged/;
+  for (const target of [pending, approved, executing]) {
+    expectAborts(
+      handle,
+      "proposals",
+      `UPDATE proposals SET payload_json = '{"x":1}' WHERE proposal_id = '${target.id}'`,
+      PURGE,
+    );
+    expectAborts(
+      handle,
+      "proposals",
+      `UPDATE proposals SET payload_json = NULL WHERE proposal_id = '${target.id}'`,
+      PURGE,
+    );
+  }
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET payload_json = '{"x":1}' WHERE proposal_id = '${denied.id}'`,
+    PURGE,
+  );
+  handle.exec(`UPDATE proposals SET payload_json = NULL WHERE proposal_id = '${denied.id}'`);
+  expect(
+    handle.prepare("SELECT payload_json FROM proposals WHERE proposal_id = ?").get(denied.id),
+  ).toEqual({ payload_json: null });
+  expectAborts(
+    handle,
+    "proposals",
+    `UPDATE proposals SET payload_json = '{"forged":true}' WHERE proposal_id = '${denied.id}'`,
+    PURGE,
+  );
+  handle.exec(`UPDATE proposals SET payload_json = NULL WHERE proposal_id = '${executed.id}'`);
+
+  // Replacing a row, by any spelling, and deleting a row abort.
+  const base = handle
+    .prepare("SELECT * FROM proposals WHERE proposal_id = ?")
+    .get(pending.id) as Record<string, unknown>;
+  const columns = Object.keys(base);
+  const asValues = (overrides: Record<string, string>) =>
+    columns
+      .map((column) => {
+        const value = overrides[column] ?? base[column];
+        return value === null || value === undefined
+          ? "NULL"
+          : typeof value === "number"
+            ? String(value)
+            : `'${String(value).replaceAll("'", "''")}'`;
+      })
+      .join(", ");
+  const columnList = columns.join(", ");
+  expectAborts(
+    handle,
+    "proposals",
+    `INSERT OR REPLACE INTO proposals (${columnList}) VALUES (${asValues({ payload_hash: "f".repeat(64) })})`,
+    /replace|exists|pending/,
+  );
+  expectAborts(
+    handle,
+    "proposals",
+    `REPLACE INTO proposals (${columnList}) VALUES (${asValues({})})`,
+    /replace|exists|pending/,
+  );
+  expectAborts(
+    handle,
+    "proposals",
+    `INSERT INTO proposals (${columnList}) VALUES (${asValues({})}) ON CONFLICT(proposal_id) DO UPDATE SET state = 'executed'`,
+    /replace|exists|pending/,
+  );
+  // REPLACE through the pending-dedupe unique index: a NEW id that collides on the key would delete the pending row.
+  expectAborts(
+    handle,
+    "proposals",
+    `INSERT OR REPLACE INTO proposals (${columnList}) VALUES (${asValues({ proposal_id: "zzzzzzzzzzzzzzzzzzzzzzzzz" })})`,
+    /replace|exists|pending/,
+  );
+  expectAborts(handle, "proposals", "DELETE FROM proposals", /cannot be deleted/);
+  expectAborts(
+    handle,
+    "proposals",
+    `DELETE FROM proposals WHERE proposal_id = '${executed.id}'`,
+    /cannot be deleted/,
+  );
+}
+
+describe("proposals triggers (Test 7)", () => {
+  it("abort skipped transitions, terminal exits, identity rewrites, early payload changes, replaces and deletes", () => {
+    runProposalAttacks(db, store);
+  });
+
+  it("the store's own statements pass through every guard", () => {
+    const proposal = submitPending();
+    approve(proposal);
+    store.claim(proposal.proposalId, { pid: 1 }, CLAIMED_AT);
+    store.beginRetry(proposal.proposalId, at(70_000));
+    store.finish({
+      proposalId: proposal.proposalId,
+      state: "executed",
+      code: "executed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: FINISHED_AT,
+    });
+    expect(store.get(proposal.proposalId)?.state).toBe("executed");
+  });
+});
+
+const EXPECTED_TRIGGERS = [
+  "approval_audit_no_delete",
+  "approval_audit_no_replace",
+  "approval_audit_no_update",
+  "proposals_identity_immutable",
+  "proposals_no_delete",
+  "proposals_no_replace",
+  "proposals_payload_purge_only",
+  "proposals_transition_guard",
+];
+
+function missingTriggers(handle: Database.Database): string[] {
+  const present = triggerNames(handle);
+  return EXPECTED_TRIGGERS.filter((name) => !present.includes(name));
+}
+
+describe("survival (Test 8, permanent)", () => {
+  it("lists exactly the eight trigger names on a database built from every real migration", () => {
+    const fresh = openMigratedMemoryDb();
+    try {
+      expect(triggerNames(fresh)).toEqual(EXPECTED_TRIGGERS);
+      expect(missingTriggers(fresh)).toEqual([]);
+    } finally {
+      fresh.close();
+    }
+  });
+
+  it("every audit and proposals attack still aborts against that fresh database", () => {
+    const fresh = openMigratedMemoryDb();
+    try {
+      const freshStore = createApprovalStore(fresh);
+      runAuditAttacks(fresh, freshStore);
+      runProposalAttacks(fresh, freshStore);
+    } finally {
+      fresh.close();
+    }
+  });
+
+  it("is not vacuous: a later migration that rebuilds a table and drops its triggers is caught", () => {
+    const rebuildDir = mkdtempSync(join(tmpdir(), "ccc-approval-rebuild-"));
+    const rebuilt = new Database(":memory:");
+    try {
+      for (const name of readdirSync(REAL_MIGRATIONS_DIR).filter((file) => file.endsWith(".sql"))) {
+        copyFileSync(join(REAL_MIGRATIONS_DIR, name), join(rebuildDir, name));
+      }
+      // The classic drizzle-kit rebuild: new table, copy, DROP, RENAME. The DROP deletes the triggers.
+      writeFileSync(
+        join(rebuildDir, "9999_rebuild_proposals.sql"),
+        [
+          "CREATE TABLE `__new_proposals` AS SELECT * FROM `proposals`;",
+          "DROP TABLE `proposals`;",
+          "ALTER TABLE `__new_proposals` RENAME TO `proposals`;",
+        ].join("\n"),
+      );
+      applyMigrations(rebuilt, rebuildDir);
+      expect(missingTriggers(rebuilt)).toEqual([
+        "proposals_identity_immutable",
+        "proposals_no_delete",
+        "proposals_no_replace",
+        "proposals_payload_purge_only",
+        "proposals_transition_guard",
+      ]);
+    } finally {
+      rebuilt.close();
+      rmSync(rebuildDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// APPR-05 and the compare-and-set statements (Tests 9 and 10)
+
+describe("no always-allow column (Test 9, APPR-05)", () => {
+  const FORBIDDEN =
+    /always|remember|persist|preference|allow|blanket|auto.?approve|token|secret|credential/i;
+  const TABLES = ["proposals", "approval_audit", "approval_executions", "diagnostic_effects"];
+
+  it.each(TABLES)(
+    "%s has no column named for an always-allow, remember or token concept",
+    (table) => {
+      const columns = columnNames(db, table);
+      expect(columns.length).toBeGreaterThan(0);
+      for (const column of columns) {
+        expect(column, `${table}.${column}`).not.toMatch(FORBIDDEN);
+      }
+    },
+  );
+
+  it("the pattern would catch a bad column (the scan is not vacuous)", () => {
+    for (const bad of [
+      "always_allow",
+      "remember_choice",
+      "persist_ok",
+      "preference",
+      "allow_all",
+      "blanket",
+      "auto_approve",
+      "api_token",
+    ]) {
+      expect(bad).toMatch(FORBIDDEN);
+    }
+  });
+
+  it("approval_audit holds no payload body column", () => {
+    for (const column of columnNames(db, "approval_audit")) {
+      expect(column).not.toMatch(/payload_json|body|content|text|prompt|message|transcript/i);
+    }
+  });
+});
+
+describe("compare-and-set statements (Test 10)", () => {
+  /** Makes every state UPDATE silently change zero rows, as if another writer had won, without raising. */
+  function loseEveryRace(): void {
+    db.exec(
+      "CREATE TEMP TRIGGER lose_race BEFORE UPDATE OF state ON proposals BEGIN SELECT RAISE(IGNORE); END;",
+    );
+  }
+
+  it("decide reports a lost compare-and-set as already-decided and writes no audit row", () => {
+    const proposal = submitPending();
+    loseEveryRace();
+    expect(store.decide(decideInput(proposal))).toEqual({
+      kind: "already-decided",
+      state: "pending",
+    });
+    expect(store.decide(decideInput(proposal, { now: at(2 * HOUR) }))).toEqual({
+      kind: "already-decided",
+      state: "pending",
+    });
+    expect(auditEvents(proposal.proposalId)).toEqual(["requested"]);
+  });
+
+  it("claim, finish, beginRetry and withdraw report a lost compare-and-set and write nothing", () => {
+    const approved = submitApproved();
+    const executing = submitExecuting();
+    const pending = submitPending();
+    const auditBefore = auditRows();
+    const ledgerBefore = db.prepare("SELECT * FROM approval_executions ORDER BY rowid").all();
+    loseEveryRace();
+    expect(store.claim(approved.proposalId, { pid: 1 }, CLAIMED_AT)).toEqual({ kind: "lost" });
+    expect(
+      store.finish({
+        proposalId: executing.proposalId,
+        state: "executed",
+        code: "executed",
+        note: null,
+        evidence: null,
+        reconciled: false,
+        now: FINISHED_AT,
+      }),
+    ).toBeNull();
+    expect(store.withdraw(pending.proposalId, at(5_000))).toBeNull();
+    expect(auditRows()).toEqual(auditBefore);
+    expect(db.prepare("SELECT * FROM approval_executions ORDER BY rowid").all()).toEqual(
+      ledgerBefore,
+    );
+  });
+
+  it("beginRetry reports a lost compare-and-set on the attempt count", () => {
+    const executing = submitExecuting();
+    db.exec(
+      "CREATE TEMP TRIGGER lose_retry BEFORE UPDATE OF attempts ON proposals BEGIN SELECT RAISE(IGNORE); END;",
+    );
+    const auditBefore = auditRows();
+    expect(store.beginRetry(executing.proposalId, at(70_000))).toEqual({ kind: "lost" });
+    expect(auditRows()).toEqual(auditBefore);
+    expect(executionRows(executing.proposalId)).toHaveLength(1);
+  });
+
+  it("every state-changing statement in the store is a compare-and-set on its source state", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(join(import.meta.dirname, "approval-store.ts"), "utf8");
+    const updates = source.match(/UPDATE proposals[\s\S]*?(?:`|")/g) ?? [];
+    const stateUpdates = updates.filter((statement) => /SET[\s\S]*\bstate\s*=/.test(statement));
+    expect(stateUpdates.length).toBeGreaterThanOrEqual(6);
+    for (const statement of stateUpdates) {
+      expect(statement).toMatch(/WHERE[\s\S]*\bstate\s*=\s*'(pending|approved|executing)'/);
+    }
   });
 });
