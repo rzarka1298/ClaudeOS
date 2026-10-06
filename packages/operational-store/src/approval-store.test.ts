@@ -453,6 +453,26 @@ describe("decide, repeat after the deadline (Test 5b)", () => {
   });
 });
 
+describe("decide, settled rows answer before any other check (Test 5b, continued)", () => {
+  it("reports already-decided, not hash-mismatch, for a settled row given a wrong hash", () => {
+    const proposal = submitPending();
+    store.decide(decideInput(proposal, { decision: "deny" }));
+    expect(store.decide(decideInput(proposal, { expectedHash: sha256("wrong") }))).toEqual({
+      kind: "already-decided",
+      state: "denied",
+    });
+  });
+
+  it("reports already-decided, not operation-reserved, for a settled row of a reserved operation", () => {
+    const proposal = submitPending({ operation: "vault.delete", subject: "note-2" });
+    store.withdraw(proposal.proposalId, at(1000));
+    expect(store.decide(decideInput(proposal))).toEqual({
+      kind: "already-decided",
+      state: "withdrawn",
+    });
+  });
+});
+
 describe("decide, atomicity (Test 6)", () => {
   it("a failing audit insert rolls the state change back", () => {
     const proposal = submitPending();

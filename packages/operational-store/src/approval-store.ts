@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import {
+  APPROVAL_AUDIT_EVENTS,
   APPROVAL_PENDING_CAP_PER_OPERATION,
   APPROVAL_PENDING_CAP_TOTAL,
   type ApprovalAuditEvent,
@@ -13,6 +14,7 @@ import {
   type DecidedVia,
   type DecideInput,
   type DecideResult,
+  type DiagnosticEffectsPort,
   dedupeKeyOf,
   type FinishInput,
   type NewProposal,
@@ -237,6 +239,15 @@ function parseClaimFacts(json: string): ClaimFacts {
   return facts;
 }
 
+function isAuditEvent(value: string): value is ApprovalAuditEvent {
+  return (APPROVAL_AUDIT_EVENTS as readonly string[]).includes(value);
+}
+
+const BUCKETS = ["pending", "decided", "expired"] as const satisfies readonly ApprovalBucket[];
+
+/** The most audit events one read returns; a request never has more than a handful. */
+const AUDIT_READ_LIMIT = 20;
+
 /** True only for an approval-required operation whose row is `enabled`; reserved, no-approval and unknown names are false. */
 function isEnabledApprovalOperation(operation: string): boolean {
   const row = classifyOperation(operation)?.row;
@@ -276,15 +287,14 @@ function rowToProposal(row: ProposalRow): StoredProposal {
   };
 }
 
-/** Thrown by a port method a later task of this plan has not implemented yet. */
-export class ApprovalStoreNotImplementedError extends Error {
-  constructor(method: string) {
-    super(`approval store method not implemented: ${method}`);
-    this.name = "ApprovalStoreNotImplementedError";
-  }
-}
-
-export type ApprovalStore = ApprovalStorePort;
+/**
+ * The store as built here: the domain port, with the pending caps optional on
+ * `submit` (they default to the domain constants). It remains assignable to
+ * {@link ApprovalStorePort}, which the tests assert at compile time.
+ */
+export type ApprovalStore = Omit<ApprovalStorePort, "submit"> & {
+  submit(proposal: NewProposal, caps?: PendingCaps): SubmitResult;
+};
 
 /**
  * Builds the store over a migrated database. The tables must already exist
@@ -361,6 +371,46 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
   const finishAttempt = db.prepare(
     `UPDATE approval_executions SET finished_at = @now, result_code = @code
      WHERE proposal_id = @proposalId AND attempt = @attempt AND finished_at IS NULL`,
+  );
+
+  const lapseOne = db.prepare(
+    `UPDATE proposals SET state = 'lapsed', decided_at = @now, revision = revision + 1
+     WHERE proposal_id = @proposalId AND state = 'approved'`,
+  );
+  const selectDue = db.prepare(
+    `SELECT * FROM proposals WHERE state = 'pending' AND expires_at <= ?
+     ORDER BY expires_at ASC, rowid ASC`,
+  );
+  const selectApprovedUnclaimed = db.prepare(
+    "SELECT * FROM proposals WHERE state = 'approved' ORDER BY approved_at ASC, rowid ASC",
+  );
+  const selectExecuting = db.prepare(
+    "SELECT * FROM proposals WHERE state = 'executing' ORDER BY claimed_at ASC, rowid ASC",
+  );
+  const listPending = db.prepare(
+    `SELECT * FROM proposals WHERE state = 'pending'
+     ORDER BY expires_at ASC, created_at ASC, rowid ASC LIMIT ?`,
+  );
+  // "Decided" is every state past pending that is not an expiry; most recent change first.
+  const listDecided = db.prepare(
+    `SELECT * FROM proposals
+     WHERE state IN ('approved', 'executing', 'executed', 'failed', 'unknown', 'denied', 'withdrawn', 'lapsed')
+     ORDER BY COALESCE(finished_at, claimed_at, decided_at, created_at) DESC, rowid DESC LIMIT ?`,
+  );
+  const listExpired = db.prepare(
+    "SELECT * FROM proposals WHERE state = 'expired' ORDER BY expires_at DESC, rowid DESC LIMIT ?",
+  );
+  const countByState = db.prepare("SELECT state, count(*) AS n FROM proposals GROUP BY state");
+  const purgeOlder = db.prepare(
+    `UPDATE proposals SET payload_json = NULL
+     WHERE payload_json IS NOT NULL
+       AND state IN ('denied', 'expired', 'withdrawn', 'lapsed', 'executed', 'failed', 'unknown')
+       AND COALESCE(finished_at, decided_at, created_at) < ?`,
+  );
+  const selectAudit = db.prepare(
+    `SELECT event, at, detail FROM (
+       SELECT seq, event, at, detail FROM approval_audit WHERE proposal_id = ? ORDER BY seq DESC LIMIT ?
+     ) ORDER BY seq ASC`,
   );
 
   /** Runs `fn` as one write transaction taken up front, so two connections racing a read-then-write queue instead of failing. */
@@ -543,6 +593,53 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     return mustRead(proposalId);
   });
 
+  const expireDueTx = immediate((now: string): ProposalId[] => {
+    const expired: ProposalId[] = [];
+    for (const row of selectDue.all(now) as ProposalRow[]) {
+      const changed = expireOne.run({ proposalId: row.proposal_id, now });
+      if (changed.changes !== 1) continue;
+      writeAudit(row.proposal_id, "expired", now, null, row.payload_hash, null);
+      expired.push(row.proposal_id as ProposalId);
+    }
+    return expired;
+  });
+
+  const lapseTx = immediate(
+    (now: string, maxAgeMsByOperation: Readonly<Record<string, number>>): ProposalId[] => {
+      const nowMs = Date.parse(now);
+      const lapsed: ProposalId[] = [];
+      for (const row of selectApprovedUnclaimed.all() as ProposalRow[]) {
+        if (!isStale(row, nowMs, maxAgeMsByOperation)) continue;
+        const changed = lapseOne.run({ proposalId: row.proposal_id, now });
+        if (changed.changes !== 1) continue;
+        writeAudit(row.proposal_id, "lapsed", now, null, row.payload_hash, null);
+        lapsed.push(row.proposal_id as ProposalId);
+      }
+      return lapsed;
+    },
+  );
+
+  /**
+   * An approval is stale when its operation's maximum approval age has passed. Every doubt fails
+   * closed: an operation with no age in the table, an unreadable approval time, or an age that is
+   * not a finite number all lapse the approval, and the boundary itself counts as stale.
+   */
+  function isStale(
+    row: ProposalRow,
+    nowMs: number,
+    maxAgeMsByOperation: Readonly<Record<string, number>>,
+  ): boolean {
+    const maxAge = Object.hasOwn(maxAgeMsByOperation, row.operation)
+      ? maxAgeMsByOperation[row.operation]
+      : undefined;
+    if (maxAge === undefined || !Number.isFinite(maxAge) || maxAge < 0) return true;
+    const approvedMs = row.approved_at === null ? Number.NaN : Date.parse(row.approved_at);
+    if (!Number.isFinite(approvedMs)) return true;
+    return nowMs - approvedMs >= maxAge;
+  }
+
+  const purgeTx = immediate((before: string): number => purgeOlder.run(before).changes);
+
   /** A compare-and-set that lost: report whatever the row now says, never throw. */
   function currentStateResult(proposalId: string): DecideResult {
     const row = readRow(proposalId);
@@ -572,11 +669,23 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
       if (!isDecidedVia(input.via)) throw new InvalidApprovalInputError("via");
       return decideTx(input);
     },
-    list(_bucket: ApprovalBucket, _limit: number): StoredProposal[] {
-      throw new ApprovalStoreNotImplementedError("list");
+    list(bucket: ApprovalBucket, limit: number): StoredProposal[] {
+      if (!BUCKETS.includes(bucket)) throw new InvalidApprovalInputError("bucket");
+      if (!Number.isInteger(limit) || limit < 0) throw new InvalidApprovalInputError("limit");
+      const statement =
+        bucket === "pending" ? listPending : bucket === "decided" ? listDecided : listExpired;
+      return (statement.all(limit) as ProposalRow[]).map(rowToProposal);
     },
     counts() {
-      throw new ApprovalStoreNotImplementedError("counts");
+      let pending = 0;
+      let expired = 0;
+      let decided = 0;
+      for (const row of countByState.all() as { state: string; n: number }[]) {
+        if (row.state === "pending") pending += row.n;
+        else if (row.state === "expired") expired += row.n;
+        else decided += row.n;
+      }
+      return { pending, decided, expired };
     },
     claim(proposalId: ProposalId, facts: ClaimFacts, now: string): ClaimResult {
       assertProposalId(proposalId, "proposalId");
@@ -599,28 +708,76 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
       if (input.evidence !== null) assertOutcomeCode(input.evidence, "evidence");
       return finishTx(input);
     },
-    expireDue(_now: string): ProposalId[] {
-      throw new ApprovalStoreNotImplementedError("expireDue");
+    expireDue(now: string): ProposalId[] {
+      assertIso(now, "now");
+      return expireDueTx(now);
     },
-    lapseStaleApproved(): ProposalId[] {
-      throw new ApprovalStoreNotImplementedError("lapseStaleApproved");
+    lapseStaleApproved(
+      now: string,
+      maxAgeMsByOperation: Readonly<Record<string, number>>,
+    ): ProposalId[] {
+      assertIso(now, "now");
+      if (typeof maxAgeMsByOperation !== "object" || maxAgeMsByOperation === null) {
+        throw new InvalidApprovalInputError("maxAgeMsByOperation");
+      }
+      return lapseTx(now, maxAgeMsByOperation);
     },
     listExecuting(): StoredProposal[] {
-      throw new ApprovalStoreNotImplementedError("listExecuting");
+      return (selectExecuting.all() as ProposalRow[]).map(rowToProposal);
     },
     listApprovedUnclaimed(): StoredProposal[] {
-      throw new ApprovalStoreNotImplementedError("listApprovedUnclaimed");
+      return (selectApprovedUnclaimed.all() as ProposalRow[]).map(rowToProposal);
     },
     withdraw(proposalId: ProposalId, now: string): StoredProposal | null {
       assertProposalId(proposalId, "proposalId");
       assertIso(now, "now");
       return withdrawTx(proposalId, now);
     },
-    purgeDecidedPayloads(_before: string): number {
-      throw new ApprovalStoreNotImplementedError("purgeDecidedPayloads");
+    purgeDecidedPayloads(before: string): number {
+      assertIso(before, "before");
+      return purgeTx(before);
     },
-    auditFor(_proposalId: ProposalId): AuditRow[] {
-      throw new ApprovalStoreNotImplementedError("auditFor");
+    auditFor(proposalId: ProposalId): AuditRow[] {
+      assertProposalId(proposalId, "proposalId");
+      return (
+        selectAudit.all(proposalId, AUDIT_READ_LIMIT) as {
+          event: string;
+          at: string;
+          detail: string | null;
+        }[]
+      ).map((row) => {
+        if (!isAuditEvent(row.event)) throw new InvalidApprovalRowError("event");
+        return { event: row.event, at: row.at, code: row.detail };
+      });
+    },
+  };
+}
+
+/**
+ * The effect ledger of the zero-impact `diagnostic.test` operation (D-43): one
+ * row per proposal id with insert-or-ignore semantics, so a test can count
+ * executions and effects apart and a second execution of one proposal is
+ * visible as `already-recorded`. `now` is injected because this module never
+ * reads the clock.
+ */
+export function createDiagnosticEffects(
+  db: Database.Database,
+  now: () => string,
+): DiagnosticEffectsPort {
+  const insert = db.prepare(
+    "INSERT OR IGNORE INTO diagnostic_effects (proposal_id, recorded_at) VALUES (?, ?)",
+  );
+  const exists = db.prepare("SELECT 1 AS present FROM diagnostic_effects WHERE proposal_id = ?");
+  return {
+    record(proposalId: ProposalId): "recorded" | "already-recorded" {
+      assertProposalId(proposalId, "proposalId");
+      const recordedAt = now();
+      assertIso(recordedAt, "recordedAt");
+      return insert.run(proposalId, recordedAt).changes === 1 ? "recorded" : "already-recorded";
+    },
+    exists(proposalId: ProposalId): boolean {
+      assertProposalId(proposalId, "proposalId");
+      return exists.get(proposalId) !== undefined;
     },
   };
 }

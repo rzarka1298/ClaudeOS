@@ -1,7 +1,7 @@
 export type { ApprovalStore } from "./approval-store.js";
 export {
-  ApprovalStoreNotImplementedError,
   createApprovalStore,
+  createDiagnosticEffects,
   InvalidApprovalInputError,
   InvalidApprovalRowError,
 } from "./approval-store.js";
