@@ -7,7 +7,10 @@ import {
   parseUntrustedFrontmatter,
 } from "./frontmatter.js";
 import { regenerateIndex, WorkspaceIdentityUnreadableError } from "./index-generation.js";
+import { emptyTaskCounts, isTasksFolderPath, WORKSPACE_LEAF_FOLDERS } from "./managed-folders.js";
 import { computeSetupEntries, VaultRootMissingError } from "./setup.js";
+import { parseTaskNote, TaskNoteError } from "./task-note.js";
+import { scanTaskNotes } from "./task-scan.js";
 
 /** The one generated file repair rewrites, and the one it never reads as a note. */
 const INDEX_FILENAME = "index.md";
@@ -15,12 +18,12 @@ const INDEX_FILENAME = "index.md";
 /** The managed root beneath which every workspace tree lives. */
 const WORKSPACES_FOLDER = "workspaces";
 
-/** The three knowledge folders `createWorkspace` mints inside a workspace
- * — the only descendants of a workspace root that this package owns. */
-const WORKSPACE_LEAF_FOLDERS = new Set(["raw", "wiki", "output"]);
+/** The folders `createWorkspace` mints inside a workspace — the only
+ * descendants of a workspace root that this package owns. */
+const WORKSPACE_LEAF_SET: ReadonlySet<string> = new Set(WORKSPACE_LEAF_FOLDERS);
 
 /**
- * True for `workspaces/<id>` and for `workspaces/<id>/{raw,wiki,output}` —
+ * True for `workspaces/<id>` and for `workspaces/<id>/{raw,wiki,output,tasks}` —
  * and for nothing else beneath `workspaces/`.
  *
  * The previous test was `folder.startsWith(join(vaultRoot, "workspaces") +
@@ -40,7 +43,7 @@ function isManagedWorkspaceFolder(folder: string, vaultRoot: string): boolean {
   if (rel === "" || rel.startsWith("..")) return false;
   const segments = rel.split(sep);
   if (segments.length === 1) return true;
-  return segments.length === 2 && WORKSPACE_LEAF_FOLDERS.has(segments[1] as string);
+  return segments.length === 2 && WORKSPACE_LEAF_SET.has(segments[1] as string);
 }
 
 /**
@@ -251,6 +254,11 @@ function readIndexNoteIds(indexPath: string): string[] {
  * there is one — "this note is invalid" is not actionable; naming the field
  * is. */
 function describeParseFailure(error: unknown): string {
+  if (error instanceof TaskNoteError) {
+    const issue = error.issues[0] as { message?: unknown } | undefined;
+    const detail = typeof issue?.message === "string" ? `: ${issue.message}` : "";
+    return `${error.message}${detail}`;
+  }
   if (error instanceof InvalidNoteFrontmatterError) {
     const issue = error.issues[0] as { message?: unknown } | undefined;
     const detail = typeof issue?.message === "string" ? `: ${issue.message}` : "";
@@ -384,7 +392,13 @@ export function repairVault(vaultRoot: string): RepairReport {
         continue;
       }
       try {
-        const { frontmatter } = parseNote(raw);
+        // A task note is read with the task reader: the generic reader's
+        // default YAML schema turns an unquoted instant (what Obsidian's
+        // property editor writes) into a Date and would call a healthy,
+        // hand-edited task invalid.
+        const { frontmatter } = isTasksFolderPath(toVaultRelative(vaultRoot, folder))
+          ? parseTaskNote(raw)
+          : parseNote(raw);
         frontmatterByPath.set(notePath, frontmatter);
         const existing = pathsById.get(frontmatter.id);
         if (existing === undefined) {
@@ -444,9 +458,25 @@ export function repairVault(vaultRoot: string): RepairReport {
     }
   }
 
+  // The tasks summary indexes carry per-status counts, which only a walk of
+  // the tasks can give; repair is one of the three walkers (with setup and
+  // rebuild). Scanned once, after the notes were read and before any index is
+  // rewritten, and only if a tasks folder is among the folders to regenerate.
+  const taskScan = indexFolders.some((folder) =>
+    isTasksFolderPath(toVaultRelative(vaultRoot, folder)),
+  )
+    ? scanTaskNotes(vaultRoot)
+    : undefined;
+
   for (const folder of indexFolders) {
     try {
-      regenerateIndex(folder, { vaultRoot });
+      const folderKey = toVaultRelative(vaultRoot, folder);
+      regenerateIndex(
+        folder,
+        isTasksFolderPath(folderKey)
+          ? { vaultRoot, taskCounts: taskScan?.folderCounts[folderKey] ?? emptyTaskCounts() }
+          : { vaultRoot },
+      );
     } catch (error) {
       // Non-fatal BY DESIGN. This loop has already rewritten some indexes
       // by the time any one folder fails, so letting the failure propagate

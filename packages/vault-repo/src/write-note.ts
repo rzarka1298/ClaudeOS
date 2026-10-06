@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import {
   type ClaimType,
   type ConfidenceState,
@@ -15,6 +15,7 @@ import {
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { stringifyNote } from "./frontmatter.js";
 import { regenerateIndex } from "./index-generation.js";
+import { isInsideTasksFolder } from "./managed-folders.js";
 import { assertScopedWrite, WorkspaceScopeViolationError } from "./workspace-scope.js";
 
 /** Thrown when the generic writer is pointed at a tasks folder; only the task writer may write there. */
@@ -92,6 +93,12 @@ export function writeNote(options: WriteNoteOptions): WrittenNote {
     options.scope,
     options.vaultRoot,
   );
+
+  // A task note carries keys this writer does not know, and a generic rewrite
+  // would strip them (D-30). Refused before any directory or file exists.
+  if (isInsideTasksFolder(relative(realpathSync.native(options.vaultRoot), target).split(sep))) {
+    throw new TasksFolderWriteRefusedError();
+  }
 
   // Validated rather than asserted: the same schema that guards untrusted
   // on-disk YAML also guards what this package is about to put there, so a

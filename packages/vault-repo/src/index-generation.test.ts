@@ -516,9 +516,11 @@ describe("Test 3 (06-15): the tasks summary index", () => {
     for (const [status, count] of Object.entries(counts)) {
       expect(first.content).toMatch(new RegExp(`${status}[^\\n]*${count}`));
     }
-    expect(first.content.split("\n").length - without.split("\n").length).toBe(
-      Object.keys(counts).length + 3,
-    );
+    // The counts section is appended to the same fixed prose.
+    expect(first.content.startsWith(without)).toBe(true);
+    for (const [status, count] of Object.entries(counts)) {
+      expect(first.content).toContain(`\n- ${status}: ${count}\n`);
+    }
     // The counts come from the caller: the files are never read for them.
     expect(regenerateIndex(folder, { vaultRoot }).content).toBe(without);
   });

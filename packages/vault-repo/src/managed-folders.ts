@@ -10,6 +10,7 @@ export const MANAGED_FOLDERS = [
   "global/raw",
   "global/wiki",
   "global/output",
+  `global/${TASKS_FOLDER_NAME}`,
   "workspaces",
   "inbox",
   "daily",
@@ -18,7 +19,7 @@ export const MANAGED_FOLDERS = [
 ] as const;
 
 /** The knowledge folders every workspace tree carries. */
-export const WORKSPACE_LEAF_FOLDERS = ["raw", "wiki", "output"] as const;
+export const WORKSPACE_LEAF_FOLDERS = ["raw", "wiki", "output", TASKS_FOLDER_NAME] as const;
 
 /** Per-status task counts, one entry for every status. */
 export type TaskStatusCounts = Readonly<Record<TaskStatus, number>>;
@@ -37,4 +38,18 @@ const WORKSPACE_TASKS_FOLDER = new RegExp(`^workspaces/[0-9a-z]{25}/${TASKS_FOLD
  */
 export function isTasksFolderPath(folderKey: string): boolean {
   return folderKey === `global/${TASKS_FOLDER_NAME}` || WORKSPACE_TASKS_FOLDER.test(folderKey);
+}
+
+/**
+ * True when a vault-relative path, split into segments, is the tasks folder of
+ * either scope or anything beneath it. Compared without regard to case, because
+ * the macOS file system folds it: `global/Tasks` is the same folder as
+ * `global/tasks` there, and a generic write must not slip in through the
+ * other spelling.
+ */
+export function isInsideTasksFolder(segments: readonly string[]): boolean {
+  const lower = segments.map((segment) => segment.toLowerCase());
+  if (lower[0] === "global") return lower[1] === TASKS_FOLDER_NAME;
+  if (lower[0] === "workspaces") return lower[2] === TASKS_FOLDER_NAME;
+  return false;
 }

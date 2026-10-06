@@ -565,7 +565,7 @@ describe("Test 7: writeTaskNote", () => {
 
   test("the write leaves no temporary file behind", () => {
     const written = writeTaskNote({ vaultRoot, scope: "global", title: "Atomic", now: NOW });
-    expect(treeNames(dirname(written.absolutePath))).toEqual([basename(written.path)]);
+    expect(treeNames(dirname(written.absolutePath))).toEqual([basename(written.path), "index.md"]);
   });
 });
 
@@ -605,6 +605,7 @@ describe("Test 8: scope and containment are checked before any directory exists"
     initializeVault(vaultRoot);
     const outside = mkdtempSync(join(TEST_BASE, "vtask-outside-"));
     try {
+      rmSync(join(vaultRoot, "global", "tasks"), { recursive: true });
       symlinkSync(outside, join(vaultRoot, "global", "tasks"));
       expect(() => writeTaskNote({ vaultRoot, scope: "global", title: "Leak", now: NOW })).toThrow(
         WorkspaceScopeViolationError,

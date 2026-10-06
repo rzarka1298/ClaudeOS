@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type ClaimType,
   type ConfidenceState,
@@ -23,6 +23,7 @@ import {
 import yaml from "js-yaml";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { assertPlainYamlDelimiter, parseWithYamlEngine } from "./frontmatter.js";
+import { regenerateIndex } from "./index-generation.js";
 import { assertScopedWrite, WorkspaceScopeViolationError } from "./workspace-scope.js";
 
 /** Why a task note was refused. Each code is fixed so an attention list can show it. */
@@ -402,7 +403,7 @@ export function writeTaskNote(options: WriteTaskNoteOptions): WrittenTaskNote {
   });
 
   const text = stringifyTaskNote(frontmatter, options.body ?? "");
-  mkdirSync(join(options.vaultRoot, ...folder.split("/")), { recursive: true });
+  ensureTasksFolder(options.vaultRoot, options.scope);
   atomicWriteFileSync(target, text);
 
   return {
@@ -414,7 +415,31 @@ export function writeTaskNote(options: WriteTaskNoteOptions): WrittenTaskNote {
   };
 }
 
-/** Creates the tasks folder for a scope and its summary index when they are absent. Returns the absolute folder. */
-export function ensureTasksFolder(_vaultRoot: string, _scope: NoteScope): string {
-  return "";
+/**
+ * Creates a scope's tasks folder and its summary index when they are absent,
+ * and returns the absolute folder. Existing workspaces predate the folder, so
+ * the first task write calls this (D-31); a folder that already has its index
+ * is left exactly as it is, which is what keeps every later write free of any
+ * index work. The index it writes has no counts: only setup, repair and
+ * rebuild walk the tasks.
+ *
+ * Scope and containment are verified before anything is created.
+ *
+ * @throws {WorkspaceScopeViolationError} for a malformed scope, a workspace
+ *   that is not on disk, or a folder that resolves outside its scope.
+ */
+export function ensureTasksFolder(vaultRoot: string, scope: NoteScope): string {
+  const folderKey = tasksFolderFor(scope);
+  if (folderKey === null) throw new WorkspaceScopeViolationError(scope);
+  const indexTarget = assertScopedWrite(
+    join(vaultRoot, ...folderKey.split("/"), "index.md"),
+    scope,
+    vaultRoot,
+  );
+  const folder = dirname(indexTarget);
+  if (!existsSync(indexTarget)) {
+    mkdirSync(folder, { recursive: true });
+    regenerateIndex(folder, { vaultRoot });
+  }
+  return folder;
 }

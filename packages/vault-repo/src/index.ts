@@ -26,6 +26,8 @@ export {
   regenerateIndex,
   WorkspaceIdentityUnreadableError,
 } from "./index-generation.js";
+export type { TaskStatusCounts } from "./managed-folders.js";
+export { emptyTaskCounts, MANAGED_FOLDERS, WORKSPACE_LEAF_FOLDERS } from "./managed-folders.js";
 export type {
   RepairedNote,
   RepairReport,
@@ -54,6 +56,7 @@ export type {
   WrittenTaskNote,
 } from "./task-note.js";
 export {
+  ensureTasksFolder,
   hashTaskNoteBytes,
   parseTaskNote,
   stringifyTaskNote,
@@ -64,7 +67,14 @@ export {
   tasksFolderFor,
   writeTaskNote,
 } from "./task-note.js";
+export type {
+  ScannedTask,
+  TaskAttention,
+  TaskAttentionReason,
+  TaskScanResult,
+} from "./task-scan.js";
+export { scanTaskNotes } from "./task-scan.js";
 export { VAULT_CLAUDE_MD } from "./vault-claude-md.js";
 export { assertScopedWrite, WorkspaceScopeViolationError } from "./workspace-scope.js";
 export type { WriteNoteOptions, WrittenNote } from "./write-note.js";
-export { writeNote } from "./write-note.js";
+export { TasksFolderWriteRefusedError, writeNote } from "./write-note.js";
