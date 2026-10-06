@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ApprovalSummary, DecideResponse } from "@ccc/domain/approval.js";
 import type { ApprovalItemView } from "@ccc/domain/approval-view.js";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ApprovalDecideInput,
@@ -15,7 +18,7 @@ import {
   selectedProposalId,
 } from "../approvals/signals.js";
 import { connectionState } from "../connection-state.js";
-import { approvalsSnapshot, proposalId, summary } from "../test-support/approval-fixtures.js";
+import { approvalsSnapshot, summary } from "../test-support/approval-fixtures.js";
 import {
   approvalDetail,
   approvalView,
@@ -111,9 +114,7 @@ function hydrate(
   pending: readonly ApprovalSummary[],
   rest: { decided?: readonly ApprovalSummary[]; expired?: readonly ApprovalSummary[] } = {},
 ): void {
-  act(() => {
-    adoptApprovalsSnapshot(approvalsSnapshot({ pending, ...rest }));
-  });
+  adoptApprovalsSnapshot(approvalsSnapshot({ pending, ...rest }));
 }
 
 function renderSection(now = FIXTURE_NOW_MS) {
@@ -281,9 +282,9 @@ describe("Test 5 (visibility)", () => {
 });
 
 describe("the section's own imports", () => {
-  it("imports no obsidian module and no service client", async () => {
-    const { readFileSync } = await import("node:fs");
-    const source = readFileSync(new URL("./approvals-section.tsx", import.meta.url), "utf8");
+  it("imports no obsidian module and no service client", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(join(here, "approvals-section.tsx"), "utf8");
     const imports = source
       .split("\n")
       .filter((line) => /^\s*(import|export)\b.*\bfrom\b/.test(line));
@@ -291,6 +292,6 @@ describe("the section's own imports", () => {
       expect(line).not.toMatch(/from\s+["']obsidian["']/);
       expect(line).not.toMatch(/service-api-client/);
     }
-    expect(proposalId(1)).toHaveLength(25);
+    expect(imports.length).toBeGreaterThan(5);
   });
 });
