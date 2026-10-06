@@ -3,6 +3,7 @@ import { APPROVAL_STATE_DISPLAY, type ApprovalFilter } from "@ccc/domain/approva
 import { signal } from "@preact/signals";
 import { type ApprovalDetailResponse, approvalsApi } from "../approvals/api.js";
 import type { ApprovalCounts } from "../approvals/signals.js";
+import type { FooterModel } from "../widgets/presentation.js";
 import { FILTER_LABEL } from "./approvals-copy.js";
 
 /**
@@ -98,6 +99,53 @@ export function announceApproval(text: string): void {
 export function showMoreApprovals(filter: ApprovalFilter): void {
   const pages = approvalPages.value;
   approvalPages.value = { ...pages, [filter]: pages[filter] + APPROVAL_PAGE_SIZE };
+}
+
+// ---------------------------------------------------------------------------
+// Time phrases, expiry, arrival and the provenance strip (RED skeleton)
+
+export interface TimePhrase {
+  readonly text: string;
+  /** Under five minutes (or expiring): the phrase carries weight 600. */
+  readonly urgent: boolean;
+}
+
+export function approvalTimePhrase(_summary: ApprovalSummary, _nowMs: number): TimePhrase {
+  return { text: "", urgent: false };
+}
+
+export function expiredPendingIds(
+  _byId: ReadonlyMap<string, ApprovalSummary>,
+  _nowMs: number,
+): readonly string[] {
+  return [];
+}
+
+export function pendingIdSet(_byId: ReadonlyMap<string, ApprovalSummary>): ReadonlySet<string> {
+  return new Set();
+}
+
+export function hasArrival(_previous: ReadonlySet<string>, _current: ReadonlySet<string>): boolean {
+  return false;
+}
+
+/** Set when the list may have missed a change; cleared when a snapshot or event arrives while live. */
+export const approvalsMissedSync = signal(false);
+
+/** Set when the first load failed, so the section shows its error state. */
+export const approvalsLoadFailed = signal(false);
+
+export interface FooterInput {
+  readonly hydrated: boolean;
+  readonly ready: boolean | null;
+  readonly disconnected: boolean;
+  readonly missedSync: boolean;
+  /** ISO time of the last list change this view saw, or null. */
+  readonly observedAt: string | null;
+}
+
+export function approvalsFooterModel(_input: FooterInput): FooterModel {
+  return { observedAt: null, freshness: null, partiality: null, sources: [] };
 }
 
 // ---------------------------------------------------------------------------

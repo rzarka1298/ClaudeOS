@@ -439,3 +439,67 @@ export function settledStatus(
       };
   }
 }
+
+// ---------------------------------------------------------------------------
+// The Approvals section (UI-SPEC S1): chips, list, states and the polite line
+
+export const FILTER_GROUP_LABEL = "Approval filter";
+
+/** `1 request needs your decision` / `2 requests need your decision`, through `Intl.PluralRules`. */
+export function needsDecisionText(count: number): string {
+  return PLURAL.select(count) === "one"
+    ? `${COUNT.format(count)} request needs your decision`
+    : `${COUNT.format(count)} requests need your decision`;
+}
+
+/** The one SSE-driven announcement: no payload, no requester text. */
+export const NEW_REQUEST_ANNOUNCEMENT = "A new request needs your decision.";
+
+/** `25 more requests loaded.` — said after `Show 25 more`. */
+export function moreLoadedText(count: number): string {
+  return PLURAL.select(count) === "one"
+    ? `${COUNT.format(count)} more request loaded.`
+    : `${COUNT.format(count)} more requests loaded.`;
+}
+
+export function showMoreLabel(count: number): string {
+  return `Show ${COUNT.format(count)} more`;
+}
+
+/** The note a bounded list ends with (D-28). */
+export const BOUND_NOTE =
+  "Showing the 50 most recent. Older decisions are kept in the audit record.";
+
+export const BACK_TO_REQUESTS = "Back to requests";
+export const REFRESH_APPROVALS = "Refresh approvals";
+export const REFRESHED_STATUS = "Approvals refreshed.";
+
+export const LOADING_SECTION = "Loading approval requests";
+export const SECTION_ERROR_HEADING = "Couldn't load approval requests.";
+export const SECTION_ERROR_BODY = "Check the service in Settings → Diagnostics, then refresh.";
+
+/** The Phase 5 approval-unavailable copy, kept for a service that reports no engine (D-42). */
+export const NOT_READY_HEADING = "Approvals aren't available yet.";
+export const NOT_READY_BODY =
+  "The companion service doesn't have the approval engine, so Force-terminate stays disabled.";
+
+export const KEPT_SAFELY =
+  "Pending requests are kept safely and appear again when the service is back.";
+
+/** The three empty variants, as heading then body lines (UI-SPEC "Section states"). */
+export const EMPTY_COPY: Readonly<Record<ApprovalFilter, readonly string[]>> = {
+  pending: [
+    "Nothing needs your decision right now.",
+    "When a skill, automation or the dashboard asks to do something consequential, it appears here first.",
+    "To try it, use Obsidian settings → Claude command center → Approvals → Send a test approval.",
+  ],
+  decided: ["No decisions yet.", "Requests you approve or deny are listed here."],
+  expired: [
+    "Nothing has expired.",
+    "A request nobody decides in time is denied automatically and listed here.",
+  ],
+};
+
+/** The provenance strip's one data key and its slash-free source label (PRIV-04). */
+export const APPROVALS_DATA_KEY = "approvals.inbox";
+export const APPROVALS_SOURCE_LABEL = "Approval inbox";

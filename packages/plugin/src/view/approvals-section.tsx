@@ -45,6 +45,12 @@ export interface ApprovalsSectionProps {
   readonly now: number;
   /** Selects the originating Run in the sessions layout. Defaults to the Agent runs selection signals. */
   readonly onOpenRun?: ((runId: string) => void) | undefined;
+  /**
+   * Fetches one request again when its expiry passes, so the list learns the
+   * outcome; it never decides. Defaults to asking the service for the request
+   * and adopting the summary it returns.
+   */
+  readonly refreshOne?: ((proposalId: string) => Promise<void>) | undefined;
 }
 
 function openRunInSessions(runId: string): void {
