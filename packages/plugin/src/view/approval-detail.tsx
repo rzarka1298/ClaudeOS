@@ -1,9 +1,5 @@
 import type { DecideResponse } from "@ccc/domain/approval.js";
-import {
-  APPROVAL_STATE_DISPLAY,
-  type ApprovalItemView,
-  type ViewChange,
-} from "@ccc/domain/approval-view.js";
+import { APPROVAL_STATE_DISPLAY, type ApprovalItemView } from "@ccc/domain/approval-view.js";
 import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import type { ApprovalDecideInput, ApprovalDetailResponse } from "../approvals/api.js";
@@ -14,6 +10,7 @@ import {
   type RefetchResult,
   subjectOfView,
 } from "./approval-decision.js";
+import { ApprovalDiff, changeExceedsCaps } from "./approval-diff.js";
 import { UntrustedText } from "./approval-text.js";
 import {
   BLOCK_HEADING,
@@ -24,15 +21,18 @@ import {
   formatApprovalTime,
   HISTORY_LABEL,
   LOADING_LABEL,
-  NO_CHANGE,
   NO_PROJECT,
   NO_RISKS,
   NOT_IN_A_RUN,
   NOT_PROVIDED,
   REQUESTER_KIND_LABEL,
   requestedByText,
+  SHOW_FULL_TEXT,
+  SHOW_SHORTER_TEXT,
   stateExplanation,
   TERM,
+  TEXT_SHORTENED,
+  TOO_LARGE,
 } from "./approvals-copy.js";
 
 /**
@@ -190,23 +190,29 @@ function RunButton({
   );
 }
 
-/** The change block's lines. Task 2 replaces this with the full diff component. */
-function ChangeLines({ change }: { readonly change: ViewChange }): VNode {
-  if (change.type === "none") return <p>{NO_CHANGE}</p>;
+/** The reason: shown text, a line when it was shortened, and a toggle to the larger cap. */
+function ReasonText({ reason }: { readonly reason: ApprovalItemView["reason"] }): VNode {
+  const [expanded, setExpanded] = useState(false);
+  const hasMore = reason.full !== reason.shown;
+  const text = expanded ? reason.full : reason.shown;
+  const shortened = (hasMore && !expanded) || reason.shortened;
   return (
-    <ol className="ccc-diff" aria-label="Changes">
-      {change.type === "diff"
-        ? change.lines.map((line, index) => (
-            <li className="ccc-diff-line" data-kind={line.kind} key={index}>
-              <UntrustedText text={line.text} />
-            </li>
-          ))
-        : change.fields.map((field, index) => (
-            <li className="ccc-diff-line" data-kind="added" key={index}>
-              <UntrustedText text={`${field.label}: ${field.value}`} />
-            </li>
-          ))}
-    </ol>
+    <>
+      <p className="ccc-approval-reason">
+        {text === "" ? NOT_PROVIDED : <UntrustedText text={text} />}
+      </p>
+      {shortened && <p className="ccc-list-meta">{TEXT_SHORTENED}</p>}
+      {hasMore && (
+        <button
+          type="button"
+          className="ccc-list-more"
+          aria-expanded={expanded ? "true" : "false"}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {expanded ? SHOW_SHORTER_TEXT : SHOW_FULL_TEXT}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -407,6 +413,7 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
 
   const requester = view.requester;
   const run = view.run;
+  const tooLarge = !view.reviewable || changeExceedsCaps(view.change);
 
   return (
     <section className="ccc-approval-detail" aria-labelledby={headingId} data-state={view.state}>
@@ -426,6 +433,7 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
           <Field
             term={TERM.requestedBy}
             value={<UntrustedText text={requestedByText(requester.kind, requester.label)} />}
+            title={requestedByText(requester.kind, requester.label)}
           />
           <Field
             term={TERM.project}
@@ -471,12 +479,11 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
         )}
       </Block>
       <Block name="change" heading={BLOCK_HEADING.change} origin={view.change.origin} view={view}>
-        <ChangeLines change={view.change} />
+        {tooLarge && <p className="ccc-approval-too-large">{TOO_LARGE}</p>}
+        <ApprovalDiff change={view.change} />
       </Block>
       <Block name="reason" heading={BLOCK_HEADING.reason} origin="requester" view={view}>
-        <p className="ccc-approval-reason">
-          <UntrustedText text={view.reason.shown === "" ? NOT_PROVIDED : view.reason.shown} />
-        </p>
+        <ReasonText reason={view.reason} />
       </Block>
       <Block name="risks" heading={BLOCK_HEADING.risks} origin="engine" view={view}>
         {view.risks.length === 0 ? (
@@ -496,7 +503,7 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
           <ApprovalDecision
             subject={subjectOfView(view)}
             shownHash={view.record.payloadHash}
-            reviewable={view.reviewable}
+            reviewable={!tooLarge}
             nowMs={props.now}
             connected={props.connected}
             stale={props.stale}
