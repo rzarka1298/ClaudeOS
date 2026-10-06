@@ -1,3 +1,4 @@
+import { PROPOSAL_ID_PATTERN } from "@ccc/domain/approval.js";
 import type { HostRegistry, ProtocolParams } from "../host-registry.js";
 
 /** The `obsidian://ccc-approval?id=...` action (D-26). */
@@ -12,13 +13,20 @@ export interface ApprovalProtocolDeps extends ApprovalProtocolHandlerDeps {
   readonly log: (message: string) => void;
 }
 
-/** The handler for a delivered link. It navigates and does nothing else. */
+/**
+ * The handler for a delivered link (T-06-11). The URL is attacker-controllable,
+ * so it reads exactly one own property, `id`, and passes it on only when it is
+ * a string matching the minted id shape; everything else, including every other
+ * parameter, is ignored and yields `null` (the unknown-request pane). It
+ * navigates and does nothing else.
+ */
 export function createApprovalProtocolHandler(
   deps: ApprovalProtocolHandlerDeps,
 ): (params: Readonly<Record<string, unknown>>) => void {
   return (params) => {
-    const raw = params.id;
-    deps.navigateToApproval(typeof raw === "string" ? raw : null);
+    // `hasOwn`: an `id` inherited from a prototype is not a parameter of this URL.
+    const raw: unknown = Object.hasOwn(params, "id") ? params.id : undefined;
+    deps.navigateToApproval(typeof raw === "string" && PROPOSAL_ID_PATTERN.test(raw) ? raw : null);
   };
 }
 

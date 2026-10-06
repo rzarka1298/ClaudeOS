@@ -20,6 +20,7 @@ import {
   assertNoPrivatePathValues,
   type CommandCenterSettings,
   DEFAULT_SETTINGS,
+  mergeSettings,
 } from "./settings.js";
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
@@ -235,8 +236,7 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
   }
 
   private async loadSettings(): Promise<void> {
-    const loaded = (await this.loadData()) as Partial<CommandCenterSettings> | null;
-    this.settings = { ...DEFAULT_SETTINGS, ...loaded };
+    this.settings = mergeSettings(await this.loadData());
   }
 
   /** The plugin's only write path to Obsidian's plugin-data storage — always guarded (PLUG-07, D-43). */

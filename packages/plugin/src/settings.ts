@@ -19,13 +19,41 @@ export interface CommandCenterSettings {
    * without a single line of upgrade code.
    */
   reducedMotion: MotionPreference;
+  /**
+   * Whether a new pending approval request raises a macOS notification while
+   * Obsidian is unfocused (APPR-09, D-26). Plugin-owned and a pure preference:
+   * no approval state, request or decision is ever persisted here (D-21).
+   */
+  notifyApprovals: boolean;
 }
 
 export const DEFAULT_SETTINGS: CommandCenterSettings = {
   socketPathOverride: null,
   lastOpenedDestination: "overview",
   reducedMotion: "auto",
+  notifyApprovals: true,
 };
+
+/**
+ * The settings object a plugin-data file resolves to: whatever is on disk
+ * merged over {@link DEFAULT_SETTINGS}, so a file written before a key existed
+ * resolves it to its default without upgrade code. `notifyApprovals` is the
+ * one key coerced: a persisted non-boolean falls back to the default rather
+ * than turning a notification off by accident.
+ */
+export function mergeSettings(loaded: unknown): CommandCenterSettings {
+  const onDisk =
+    loaded !== null && typeof loaded === "object" && !Array.isArray(loaded)
+      ? (loaded as Partial<CommandCenterSettings>)
+      : {};
+  const merged: CommandCenterSettings = { ...DEFAULT_SETTINGS, ...onDisk };
+  const notifyApprovals: unknown = merged.notifyApprovals;
+  return {
+    ...merged,
+    notifyApprovals:
+      typeof notifyApprovals === "boolean" ? notifyApprovals : DEFAULT_SETTINGS.notifyApprovals,
+  };
+}
 
 /** Case-insensitive: catches `token`, `Token`, `refreshToken`, `INSTALL_SECRET`, etc. */
 const CREDENTIAL_KEY_PATTERN = /token|secret|password|authorization/i;
