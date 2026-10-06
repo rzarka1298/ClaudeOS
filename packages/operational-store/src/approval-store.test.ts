@@ -3,7 +3,6 @@ import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type ApprovalAuditEvent,
   type DecideInput,
   dedupeKeyOf,
   type NewProposal,
@@ -222,8 +221,12 @@ describe("migration (Test 1)", () => {
     const file = readdirSync(REAL_MIGRATIONS_DIR).find((name) => name.endsWith("_approvals.sql"));
     expect(file).toBeDefined();
     const sql = readFileSync(join(REAL_MIGRATIONS_DIR, file as string), "utf8");
+    const statements = sql
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
     const creates =
-      sql.match(/CREATE\s+(UNIQUE\s+)?(TABLE|INDEX|TRIGGER)\s+(IF NOT EXISTS\s+)?/g) ?? [];
+      statements.match(/CREATE\s+(UNIQUE\s+)?(TABLE|INDEX|TRIGGER)\s+(IF NOT EXISTS\s+)?/g) ?? [];
     expect(creates.length).toBeGreaterThan(0);
     for (const create of creates) {
       expect(create).toContain("IF NOT EXISTS");

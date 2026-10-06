@@ -1,3 +1,10 @@
+export type { ApprovalStore } from "./approval-store.js";
+export {
+  ApprovalStoreNotImplementedError,
+  createApprovalStore,
+  InvalidApprovalInputError,
+  InvalidApprovalRowError,
+} from "./approval-store.js";
 export { applyMigrations, SchemaAheadOfCodeError } from "./migrate.js";
 export type { OperationalStore } from "./open-store.js";
 export { openStore } from "./open-store.js";

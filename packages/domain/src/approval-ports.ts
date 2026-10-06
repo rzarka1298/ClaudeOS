@@ -99,7 +99,9 @@ export type DecideResult =
   | { readonly kind: "expired"; readonly proposal: StoredProposal }
   | { readonly kind: "hash-mismatch" }
   | { readonly kind: "already-decided"; readonly state: ProposalState }
-  | { readonly kind: "not-found" };
+  | { readonly kind: "not-found" }
+  /** The stored operation is reserved, not an approval-required operation, or unknown: nothing is decided (T-06-15). */
+  | { readonly kind: "operation-reserved" };
 
 export type ClaimResult =
   | { readonly kind: "claimed"; readonly proposal: StoredProposal }
@@ -107,6 +109,11 @@ export type ClaimResult =
 
 export type RetryResult =
   | { readonly kind: "retrying"; readonly proposal: StoredProposal }
+  /** The row is not in `executing`, so there is nothing to retry. */
+  | { readonly kind: "not-executing" }
+  /** Two attempts are already recorded: never a third (D-17). */
+  | { readonly kind: "exhausted" }
+  /** Another caller changed the attempt count first. */
   | { readonly kind: "lost" };
 
 export interface FinishInput {
