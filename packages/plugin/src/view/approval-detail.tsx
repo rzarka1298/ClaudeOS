@@ -1,11 +1,17 @@
-import type { DecideResponse } from "@ccc/domain/approval.js";
-import { APPROVAL_STATE_DISPLAY, type ApprovalItemView } from "@ccc/domain/approval-view.js";
+import type { ApprovalSummary, DecideResponse } from "@ccc/domain/approval.js";
+import {
+  APPROVAL_HISTORY_MAX,
+  APPROVAL_STATE_DISPLAY,
+  type ApprovalFilter,
+  type ApprovalItemView,
+} from "@ccc/domain/approval-view.js";
 import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import type { ApprovalDecideInput, ApprovalDetailResponse } from "../approvals/api.js";
 import {
   ApprovalDecision,
   type DecisionFollowUp,
+  type DecisionSubject,
   OpenRunControl,
   type RefetchResult,
   subjectOfView,
@@ -16,19 +22,27 @@ import {
   BLOCK_HEADING,
   COMPUTED_CAPTION,
   DECIDED_THROUGH,
+  DETAILS_CHANGED,
   DISABLED_REASONS,
   expiryParts,
   formatApprovalTime,
   HISTORY_LABEL,
+  LOAD_ERROR_BODY,
+  LOAD_ERROR_HEADING,
   LOADING_LABEL,
+  listedUnder,
   NO_PROJECT,
   NO_RISKS,
+  NOT_FOUND_BODY,
+  NOT_FOUND_HEADING,
   NOT_IN_A_RUN,
   NOT_PROVIDED,
+  PURGED_BODY,
   REQUESTER_KIND_LABEL,
   requestedByText,
   SHOW_FULL_TEXT,
   SHOW_SHORTER_TEXT,
+  showFilter,
   stateExplanation,
   TERM,
   TEXT_SHORTENED,
@@ -69,6 +83,11 @@ export interface ApprovalDetailProps {
    */
   readonly focusOnLoad?: boolean | undefined;
   readonly headingRef?: { current: HTMLHeadingElement | null } | undefined;
+  /** What the list already knows of this request; shown while the full request loads. */
+  readonly summary?: ApprovalSummary | undefined;
+  /** The chip the list is on. A request listed under another chip says so, and never switches it. */
+  readonly activeFilter?: ApprovalFilter | undefined;
+  readonly onShowFilter?: ((filter: ApprovalFilter) => void) | undefined;
 }
 
 type PaneState =
@@ -232,9 +251,11 @@ function executedAtOf(view: ApprovalItemView): string | null {
 function StateBlock({
   view,
   now,
+  children,
 }: {
   readonly view: ApprovalItemView;
   readonly now: number;
+  readonly children?: ComponentChildren;
 }): VNode {
   const display = APPROVAL_STATE_DISPLAY[view.state];
   const lines = stateExplanation({
@@ -257,6 +278,7 @@ function StateBlock({
         </span>{" "}
         <span className="ccc-approval-state-label">{display.label}</span>
       </p>
+      {children}
       {expiry !== null && expiry.kind === "counting" ? (
         <p className="ccc-approval-explanation">
           <span className="ccc-approval-time" data-urgent={expiry.urgent ? "true" : undefined}>
@@ -278,9 +300,61 @@ function StateBlock({
 // ---------------------------------------------------------------------------
 // The pane
 
+/** The h4 every form of the pane shares, so focus has one place to land. */
+function PaneHeading({
+  id,
+  headingRef,
+  children,
+}: {
+  readonly id: string;
+  readonly headingRef: { current: HTMLHeadingElement | null };
+  readonly children: ComponentChildren;
+}): VNode {
+  return (
+    <h4
+      id={id}
+      tabIndex={-1}
+      ref={(element) => {
+        headingRef.current = element;
+      }}
+      data-block="heading"
+    >
+      {children}
+    </h4>
+  );
+}
+
+function Skeleton(): VNode {
+  return (
+    <div className="ccc-approval-skeleton" aria-hidden="true">
+      <div className="ccc-skeleton-line" />
+      <div className="ccc-skeleton-line" />
+      <div className="ccc-skeleton-line" />
+    </div>
+  );
+}
+
+/** What the loading form needs of the request: only what the list already knew. */
+function subjectOfSummary(summary: ApprovalSummary): DecisionSubject {
+  return {
+    proposalId: summary.proposalId,
+    title: summary.title,
+    state: summary.state,
+    revision: summary.revision,
+    expiresAt: summary.expiresAt,
+    destructive: false,
+    effect: null,
+    run: null,
+  };
+}
+
 export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
   const [pane, setPane] = useState<PaneState>({ kind: "loading" });
   const [focusToken, setFocusToken] = useState(0);
+  /** Shown from a hash mismatch until the pane closes. */
+  const [changedLine, setChangedLine] = useState(false);
+  /** The hash that was displayed when a mismatch was reported; Approve once waits for a different one. */
+  const [mismatchHash, setMismatchHash] = useState<string | null>(null);
   const localHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const headingRef = props.headingRef ?? localHeadingRef;
   const denyRef = useRef<HTMLButtonElement | null>(null);
@@ -293,8 +367,8 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
   const lastRevision = useRef(props.revision);
   const headingId = useId();
 
-  function fetchDetail(): Promise<RefetchResult> {
-    const id = latest.current.proposalId;
+  /** Fetches one request. The id is fixed at the call, so a late answer can never describe another request. */
+  function fetchDetail(id: string): Promise<RefetchResult> {
     return Promise.resolve()
       .then(() => latest.current.get(id))
       .then(
@@ -307,10 +381,13 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
 
   // Load on selection. A different request starts from the skeleton again.
   useEffect(() => {
+    const id = props.proposalId;
     let cancelled = false;
     setPane({ kind: "loading" });
+    setChangedLine(false);
+    setMismatchHash(null);
     focusedFor.current = null;
-    const load = fetchDetail();
+    const load = fetchDetail(id);
     loadRef.current = load;
     void load.then((result) => {
       if (cancelled) return;
@@ -327,7 +404,7 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
     if (lastRevision.current === props.revision) return;
     lastRevision.current = props.revision;
     const id = props.proposalId;
-    void fetchDetail().then((result) => {
+    void fetchDetail(id).then((result) => {
       if (latest.current.proposalId !== id) return;
       if (result.kind === "ok") setPane({ kind: "ready", detail: result.detail });
       else if (result.kind === "not-found") setPane({ kind: "not-found" });
@@ -336,7 +413,7 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
 
   // Focus on arrival: Deny for a destructive pending request, otherwise the heading.
   useEffect(() => {
-    if (pane.kind !== "ready") return;
+    if (pane.kind !== "ready" && pane.kind !== "not-found") return;
     if (focusedFor.current === props.proposalId) return;
     focusedFor.current = props.proposalId;
     if (props.focusOnLoad === false) return;
@@ -344,7 +421,7 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
     if (heading !== null && typeof heading.scrollIntoView === "function") {
       heading.scrollIntoView({ block: "nearest" });
     }
-    const view = pane.detail.view;
+    const view = pane.kind === "ready" ? pane.detail.view : null;
     if (view !== null && view.state === "pending" && view.destructive && denyRef.current !== null) {
       denyRef.current.focus({ preventScroll: true });
     } else {
@@ -358,12 +435,22 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
     headingRef.current?.focus();
   }, [focusToken, headingRef]);
 
-  function onFollowUp(followUp: DecisionFollowUp): void {
+  /** Applies what a settled decision learned, unless the pane has moved on to another request. */
+  function handleFollowUp(id: string, followUp: DecisionFollowUp): void {
+    if (latest.current.proposalId !== id) return;
     switch (followUp.kind) {
-      case "refetched":
+      case "refetched": {
+        if (followUp.mismatch) {
+          const current = paneRef.current;
+          const shown =
+            current.kind === "ready" ? (current.detail.view?.record.payloadHash ?? null) : null;
+          setMismatchHash(shown);
+          setChangedLine(true);
+        }
         setPane({ kind: "ready", detail: followUp.detail });
         if (followUp.focusHeading) setFocusToken((token) => token + 1);
         return;
+      }
       case "patched": {
         const current = paneRef.current;
         if (current.kind === "ready") {
@@ -389,45 +476,155 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
     }
   }
 
-  if (pane.kind === "loading") {
+  const id = props.proposalId;
+  const dimmed = props.connected ? undefined : "true";
+
+  /** The decision group, bound to this request: its calls and its follow-up cannot reach another one. */
+  function decisionGroup(
+    subject: DecisionSubject,
+    shownHash: string | null,
+    reviewable: boolean,
+    approveHold: boolean,
+    omitOpenRun: boolean,
+  ): VNode {
     return (
-      <section className="ccc-approval-detail" aria-busy="true" aria-labelledby={headingId}>
-        <h4
-          id={headingId}
-          tabIndex={-1}
-          ref={(el) => {
-            headingRef.current = el;
-          }}
-          data-block="heading"
-        >
-          {LOADING_LABEL}
-        </h4>
+      <ApprovalDecision
+        key={subject.proposalId}
+        subject={subject}
+        shownHash={shownHash}
+        reviewable={reviewable}
+        nowMs={props.now}
+        connected={props.connected}
+        stale={props.stale}
+        approveHold={approveHold}
+        omitOpenRun={omitOpenRun}
+        decide={(input) => props.decide(input)}
+        refetch={() => fetchDetail(id)}
+        awaitHash={() =>
+          loadRef.current.then((result) =>
+            result.kind === "ok" && result.detail.view?.state === "pending"
+              ? result.detail.view.record.payloadHash
+              : null,
+          )
+        }
+        announce={(text) => props.announce(text)}
+        notify={(text) => props.notify(text)}
+        onFollowUp={(followUp) => handleFollowUp(id, followUp)}
+        isRunLoaded={props.isRunLoaded}
+        onOpenRun={props.onOpenRun}
+        denyRef={denyRef}
+      />
+    );
+  }
+
+  if (pane.kind === "loading") {
+    const { summary } = props;
+    return (
+      <section
+        className="ccc-approval-detail"
+        aria-busy="true"
+        aria-labelledby={headingId}
+        data-dimmed={dimmed}
+      >
+        <PaneHeading id={headingId} headingRef={headingRef}>
+          {summary === undefined ? LOADING_LABEL : <UntrustedText text={summary.title} />}
+        </PaneHeading>
+        {summary !== undefined && <p className="ccc-visually-hidden">{LOADING_LABEL}</p>}
+        <Skeleton />
+        {summary !== undefined && summary.state === "pending" && (
+          <div className="ccc-approval-block" data-block="decision">
+            {decisionGroup(subjectOfSummary(summary), null, true, false, true)}
+          </div>
+        )}
       </section>
     );
   }
-  if (pane.kind !== "ready") return null;
+
+  if (pane.kind === "not-found") {
+    return (
+      <section className="ccc-approval-detail" aria-labelledby={headingId} data-dimmed={dimmed}>
+        <PaneHeading id={headingId} headingRef={headingRef}>
+          {NOT_FOUND_HEADING}
+        </PaneHeading>
+        <p className="ccc-approval-explanation">{NOT_FOUND_BODY}</p>
+      </section>
+    );
+  }
+
+  const loadError = (
+    <section className="ccc-approval-detail" aria-labelledby={headingId} data-dimmed={dimmed}>
+      <PaneHeading id={headingId} headingRef={headingRef}>
+        <span className="ccc-error-glyph" aria-hidden="true">
+          {"\u25b2"}
+        </span>
+        {LOAD_ERROR_HEADING}
+      </PaneHeading>
+      <p className="ccc-approval-explanation">{LOAD_ERROR_BODY}</p>
+    </section>
+  );
+  if (pane.kind === "error") return loadError;
 
   const { detail } = pane;
   const view = detail.view;
-  if (view === null) return null;
+  if (view === null) {
+    // A request whose details were purged can only be read, never decided.
+    if (detail.summary.state === "pending") return loadError;
+    const display = APPROVAL_STATE_DISPLAY[detail.summary.state];
+    return (
+      <section
+        className="ccc-approval-detail"
+        aria-labelledby={headingId}
+        data-state={detail.summary.state}
+        data-dimmed={dimmed}
+      >
+        <PaneHeading id={headingId} headingRef={headingRef}>
+          <UntrustedText text={detail.summary.title} />
+        </PaneHeading>
+        <div className="ccc-approval-state" data-block="state" data-state={detail.summary.state}>
+          <p className="ccc-approval-state-line">
+            <span className="ccc-approval-glyph" aria-hidden="true">
+              {display.glyph}
+            </span>{" "}
+            <span className="ccc-approval-state-label">{display.label}</span>
+          </p>
+          <p className="ccc-approval-explanation">{PURGED_BODY}</p>
+        </div>
+      </section>
+    );
+  }
 
   const requester = view.requester;
   const run = view.run;
   const tooLarge = !view.reviewable || changeExceedsCaps(view.change);
+  const approveHold = mismatchHash !== null && view.record.payloadHash === mismatchHash;
+  const requestFilter = APPROVAL_STATE_DISPLAY[view.state].filter;
+  const relocated = props.activeFilter !== undefined && props.activeFilter !== requestFilter;
 
   return (
-    <section className="ccc-approval-detail" aria-labelledby={headingId} data-state={view.state}>
-      <h4
-        id={headingId}
-        tabIndex={-1}
-        ref={(el) => {
-          headingRef.current = el;
-        }}
-        data-block="heading"
-      >
+    <section
+      className="ccc-approval-detail"
+      aria-labelledby={headingId}
+      data-state={view.state}
+      data-dimmed={dimmed}
+    >
+      <PaneHeading id={headingId} headingRef={headingRef}>
         <UntrustedText text={view.title} />
-      </h4>
-      <StateBlock view={view} now={props.now} />
+      </PaneHeading>
+      <StateBlock view={view} now={props.now}>
+        {relocated && (
+          <p className="ccc-approval-relocated">
+            {listedUnder(requestFilter)}{" "}
+            <button
+              type="button"
+              className="ccc-list-more"
+              onClick={() => props.onShowFilter?.(requestFilter)}
+            >
+              {showFilter(requestFilter)}
+            </button>
+          </p>
+        )}
+        {changedLine && <p className="ccc-approval-changed">{DETAILS_CHANGED}</p>}
+      </StateBlock>
       <Block name="who" heading={BLOCK_HEADING.who} origin={null} view={view}>
         <dl className="ccc-detail-fields">
           <Field
@@ -500,23 +697,13 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
       </Block>
       {view.state === "pending" ? (
         <div className="ccc-approval-block" data-block="decision">
-          <ApprovalDecision
-            subject={subjectOfView(view)}
-            shownHash={view.record.payloadHash}
-            reviewable={!tooLarge}
-            nowMs={props.now}
-            connected={props.connected}
-            stale={props.stale}
-            approveHold={false}
-            decide={(input) => props.decide(input)}
-            refetch={fetchDetail}
-            announce={(text) => props.announce(text)}
-            notify={(text) => props.notify(text)}
-            onFollowUp={onFollowUp}
-            isRunLoaded={props.isRunLoaded}
-            onOpenRun={props.onOpenRun}
-            denyRef={denyRef}
-          />
+          {decisionGroup(
+            subjectOfView(view),
+            detail.payloadHash === view.record.payloadHash ? view.record.payloadHash : null,
+            !tooLarge,
+            approveHold,
+            false,
+          )}
         </div>
       ) : (
         <div className="ccc-approval-block" data-block="actions">
@@ -550,8 +737,8 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
       </Block>
       <Block name="history" heading={BLOCK_HEADING.history} origin={null} view={view}>
         <ol className="ccc-approval-history">
-          {view.history.map((entry, index) => (
-            <li key={index}>
+          {view.history.slice(0, APPROVAL_HISTORY_MAX).map((entry, index) => (
+            <li key={`${index}-${entry.event}`}>
               {HISTORY_LABEL[entry.event]}{" "}
               <span className="ccc-list-meta">{formatApprovalTime(entry.at, props.now)}</span>
             </li>

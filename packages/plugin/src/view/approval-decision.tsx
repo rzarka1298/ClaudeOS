@@ -199,6 +199,8 @@ export interface ApprovalDecisionProps {
   readonly connected: boolean;
   readonly stale: boolean;
   readonly approveHold: boolean;
+  /** Leaves out Open originating run, for the loading form where the Run is not yet known. */
+  readonly omitOpenRun?: boolean | undefined;
   decide(input: ApprovalDecideInput): Promise<DecideResponse>;
   refetch(): Promise<RefetchResult>;
   /** Resolves with the hash once the full request has loaded, or `null` if it never will. */
@@ -254,7 +256,6 @@ export function ApprovalDecision(props: ApprovalDecisionProps): VNode {
     knownState: ProposalState | null,
   ): Promise<void> {
     const result = await props.refetch();
-    if (!mounted.current) return;
     if (result.kind === "ok") {
       props.onFollowUp({ kind: "refetched", detail: result.detail, mismatch, focusHeading });
     } else if (result.kind === "not-found") {
@@ -279,17 +280,15 @@ export function ApprovalDecision(props: ApprovalDecisionProps): VNode {
       const settled = settledStatus(state, title, code);
       props.announce(settled.status);
       if (settled.notice !== null) props.notify(settled.notice);
-      if (mounted.current) {
-        props.onFollowUp({
-          kind: "refetched",
-          detail,
-          mismatch: false,
-          focusHeading: state !== "pending",
-        });
-      }
+      props.onFollowUp({
+        kind: "refetched",
+        detail,
+        mismatch: false,
+        focusHeading: state !== "pending",
+      });
     } else if (result.kind === "not-found") {
       props.announce(APPROVAL_STATUS.notFound);
-      if (mounted.current) props.onFollowUp({ kind: "not-found" });
+      props.onFollowUp({ kind: "not-found" });
     } else {
       setConfirmFailed(true);
       props.announce(APPROVAL_STATUS.confirmFailed);
@@ -432,12 +431,14 @@ export function ApprovalDecision(props: ApprovalDecisionProps): VNode {
           </p>
         )}
       </div>
-      <OpenRunControl
-        run={subject.run}
-        connected={props.connected}
-        isRunLoaded={props.isRunLoaded}
-        onOpenRun={props.onOpenRun}
-      />
+      {props.omitOpenRun !== true && (
+        <OpenRunControl
+          run={subject.run}
+          connected={props.connected}
+          isRunLoaded={props.isRunLoaded}
+          onOpenRun={props.onOpenRun}
+        />
+      )}
     </div>
   );
 }

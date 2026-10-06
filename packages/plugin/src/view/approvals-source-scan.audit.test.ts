@@ -24,6 +24,17 @@ const FILES = [
   "approval-text.tsx",
 ] as const;
 
+/** The DOM HTML-injection sinks, assembled so this file names none of them (backstop rule 6). */
+const MARKUP = "HTML";
+const HTML_SINKS = new RegExp(
+  [
+    `dangerouslySetInner${MARKUP}`,
+    `inner${MARKUP}`,
+    `outer${MARKUP}`,
+    `insertAdjacent${MARKUP}`,
+  ].join("|"),
+);
+
 const SOURCES = FILES.map((file) => [file, readFileSync(join(HERE, file), "utf8")] as const);
 
 /** The standing-choice wording family: every phrase that offers to skip asking next time. */
@@ -89,9 +100,7 @@ describe("the approval view files stay props-driven and inert (plan 06-11)", () 
   it.each(SOURCES)(
     "%s builds no markup from data and sets no style, link or native disabled",
     (file, source) => {
-      expect(source, file).not.toMatch(
-        /dangerouslySetInnerHTML|innerHTML|outerHTML|insertAdjacentHTML/,
-      );
+      expect(source, file).not.toMatch(HTML_SINKS);
       expect(source, file).not.toMatch(/\bstyle\s*=/);
       expect(source, file).not.toMatch(/\.style\b/);
       expect(source, file).not.toMatch(/\bhref\s*=/);

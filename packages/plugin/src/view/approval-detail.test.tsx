@@ -514,7 +514,7 @@ describe("the ten states (Task 3, Test 1)", () => {
   it.each(Object.keys(SENTENCES))(
     "renders %s with its glyph, label and explanation",
     async (state) => {
-      const proposal = state as keyof typeof SENTENCES & Parameters<typeof decidedView>[0];
+      const proposal = state as Parameters<typeof decidedView>[0];
       const view =
         state === "pending"
           ? approvalView()
