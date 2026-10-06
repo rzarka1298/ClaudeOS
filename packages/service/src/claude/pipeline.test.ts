@@ -714,4 +714,24 @@ describe("status-line metadata ordering (Codex 05-codex-2)", () => {
     ).toBe(false);
     expect(getSessionRun(store.db, runId)?.model).not.toBe("stale-model");
   });
+
+  it("a future-dated snapshot cannot freeze later metadata updates", async () => {
+    const pipeline = pipelineWith();
+    const runId = await startRun(pipeline);
+    time.advanceTo(T0 + 60_000);
+    await pipeline.applyStatusMetadata({
+      claudeSessionId: "sess-pipe-1",
+      observedAt: at(10 * 365 * 24 * 3_600_000),
+      model: "skewed-model",
+    });
+    time.advanceTo(T0 + 120_000);
+    expect(
+      await pipeline.applyStatusMetadata({
+        claudeSessionId: "sess-pipe-1",
+        observedAt: at(100_000),
+        model: "real-model",
+      }),
+    ).toBe(true);
+    expect(getSessionRun(store.db, runId)?.model).toBe("real-model");
+  });
 });

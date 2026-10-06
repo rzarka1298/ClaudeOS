@@ -816,4 +816,29 @@ describe("session reducer — conversation proof (05-UAT)", () => {
     );
     expect(o.only()).toMatchObject({ state: "completed", promptSeenAt: null });
   });
+
+  it("a resume of a conversation inherits the proof, so it is not hidden when it ends silent", () => {
+    const parent = seedRun({ runId: R1, state: "completed", endedAt: at(5), promptSeenAt: at(2) });
+    const o = play([parent], [sessionStart("resume", { pid: PID_2, observedAt: at(10) })]);
+    expect(created(o, [parent]).promptSeenAt).not.toBeNull();
+  });
+
+  it("a pre-registered resume or fork inherits the parent's proof", () => {
+    for (const linkKind of ["resume", "fork"] as const) {
+      const parent = seedRun({
+        runId: R1,
+        state: "completed",
+        endedAt: at(5),
+        promptSeenAt: at(2),
+      });
+      const o = play([parent], [launchRegistered(R2, at(6), { linkKind, linkedFromRunId: R1 })]);
+      expect(o.run(R2).promptSeenAt).not.toBeNull();
+    }
+  });
+
+  it("a resume of a parent with no conversation stays without one", () => {
+    const parent = seedRun({ runId: R1, state: "completed", endedAt: at(5), promptSeenAt: null });
+    const o = play([parent], [sessionStart("resume", { pid: PID_2, observedAt: at(10) })]);
+    expect(created(o, [parent]).promptSeenAt).toBeNull();
+  });
 });

@@ -232,6 +232,18 @@ function blankRun(runId: RunId, startedAt: string): SessionRun {
 }
 
 /** A new Run at revision 1. */
+/**
+ * A resume or fork continues its parent's conversation: when the parent
+ * proved one, so has the child, even if it ends without a new prompt.
+ */
+function inheritedProof(
+  linkKind: RunLinkKind | null,
+  parent: SessionRun | null,
+): { promptSeenAt: string } | Record<string, never> {
+  if ((linkKind !== "resume" && linkKind !== "fork") || parent?.promptSeenAt == null) return {};
+  return { promptSeenAt: parent.promptSeenAt };
+}
+
 function create(runId: RunId, startedAt: string, patch: Patch): SessionRun {
   return { ...blankRun(runId, startedAt), ...patch, revision: 1 };
 }
@@ -257,6 +269,10 @@ export function reduce(
           claudeSessionId: evidence.claudeSessionId,
           linkKind: evidence.linkKind,
           linkedFromRunId: evidence.linkedFromRunId,
+          ...inheritedProof(
+            evidence.linkKind,
+            evidence.linkedFromRunId === null ? null : index.byRunId(evidence.linkedFromRunId),
+          ),
           cwd: evidence.cwd,
           worktreeRoot: evidence.worktreeRoot,
           permissionMode: evidence.permissionMode,
@@ -654,6 +670,15 @@ function sessionStart(
               (resumedFrom !== null && resumedFrom.runId !== registered.runId
                 ? resumedFrom.runId
                 : null),
+            ...(registered.promptSeenAt === null
+              ? inheritedProof(
+                  source === "fork" ? "fork" : registered.linkKind,
+                  resumedFrom ??
+                    (registered.linkedFromRunId === null
+                      ? null
+                      : index.byRunId(registered.linkedFromRunId)),
+                )
+              : {}),
           }),
         );
       }
@@ -719,6 +744,7 @@ function sessionStart(
         state: "running",
         linkKind,
         linkedFromRunId: linkedFrom?.runId ?? null,
+        ...inheritedProof(linkKind, linkedFrom),
       });
       return upserted(ended, opened);
     }

@@ -507,8 +507,12 @@ export function createClaudePipeline(deps: ClaudePipelineDeps): ClaudePipeline {
         if (run === null || isTerminalRunState(run.state)) return false;
         // A snapshot older than the Run's last evidence must not roll a newer
         // hook-reported value back.
-        const observed = Date.parse(metadata.observedAt);
-        if (!Number.isFinite(observed)) return false;
+        const claimed = Date.parse(metadata.observedAt);
+        if (!Number.isFinite(claimed)) return false;
+        // A snapshot cannot be observed after the service received it: a
+        // skewed or bogus future stamp is clamped, so it cannot freeze the
+        // high-water mark and reject every later real update.
+        const observed = Math.min(claimed, deps.now().getTime());
         if (run.lastActivityAt !== null && observed < Date.parse(run.lastActivityAt)) return false;
         // Nor may one that predates the Run itself, or one older than a
         // snapshot already merged.
