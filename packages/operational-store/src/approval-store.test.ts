@@ -3,6 +3,7 @@ import { copyFileSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type ApprovalStorePort,
   type DecideInput,
   dedupeKeyOf,
   type NewProposal,
@@ -13,7 +14,7 @@ import {
 } from "@ccc/domain";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createApprovalStore } from "./approval-store.js";
+import { createApprovalStore, createDiagnosticEffects } from "./approval-store.js";
 import { applyMigrations } from "./migrate.js";
 import {
   columnNames,
@@ -1350,5 +1351,542 @@ describe("compare-and-set statements (Test 10)", () => {
     for (const statement of stateUpdates) {
       expect(statement).toMatch(/WHERE[\s\S]*\bstate\s*=\s*'(pending|approved|executing)'/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3
+
+/** Compile-time proof that the store implements every method of the domain port. */
+export const _storeImplementsThePort = (candidate: ReturnType<typeof createApprovalStore>) => {
+  const port: ApprovalStorePort = candidate;
+  return port;
+};
+
+function ids(proposals: readonly { proposalId: string }[]): string[] {
+  return proposals.map((proposal) => proposal.proposalId);
+}
+
+describe("expireDue (Test 1)", () => {
+  it("expires every pending row at or past expires_at in one transaction, one audit row each, in expiry order", () => {
+    const later = submitPending({ expiresAt: at(2 * HOUR) });
+    const first = submitPending({ expiresAt: at(30 * 60_000) });
+    const exact = submitPending({ expiresAt: at(HOUR) });
+    const changed = store.expireDue(at(HOUR));
+    expect(changed).toEqual([first.proposalId, exact.proposalId]);
+    expect(store.get(first.proposalId)?.state).toBe("expired");
+    expect(store.get(exact.proposalId)?.state).toBe("expired");
+    expect(store.get(later.proposalId)?.state).toBe("pending");
+    for (const proposal of [first, exact]) {
+      const rows = auditRows(proposal.proposalId);
+      expect(rows.map((row) => row.event)).toEqual(["requested", "expired"]);
+      expect(rows[1]?.at).toBe(at(HOUR));
+      expect(rows[1]?.decided_via).toBeNull();
+    }
+    expect(auditEvents(later.proposalId)).toEqual(["requested"]);
+    expect(store.get(first.proposalId)?.revision).toBe(2);
+    expect(store.get(first.proposalId)?.decidedAt).toBe(at(HOUR));
+  });
+
+  it("returns an empty result when nothing is due and is a no-op the second time", () => {
+    const proposal = submitPending();
+    expect(store.expireDue(at(HOUR - 1))).toEqual([]);
+    expect(store.expireDue(at(HOUR))).toEqual([proposal.proposalId]);
+    const auditBefore = auditRows();
+    expect(store.expireDue(at(HOUR))).toEqual([]);
+    expect(store.expireDue(at(5 * HOUR))).toEqual([]);
+    expect(auditRows()).toEqual(auditBefore);
+  });
+
+  it("only ever touches pending rows, whatever the deadline of the others", () => {
+    const approved = submitApproved();
+    const executing = submitExecuting();
+    expect(store.expireDue(at(9 * HOUR))).toEqual([]);
+    expect(store.get(approved.proposalId)?.state).toBe("approved");
+    expect(store.get(executing.proposalId)?.state).toBe("executing");
+  });
+
+  it("rolls every expiry back when one audit insert fails", () => {
+    const a = submitPending({ expiresAt: at(HOUR) });
+    const b = submitPending({ expiresAt: at(HOUR + 1) });
+    db.exec(
+      `CREATE TEMP TRIGGER fail_second BEFORE INSERT ON approval_audit WHEN NEW.event = 'expired' AND NEW.proposal_id = '${b.proposalId}' BEGIN SELECT RAISE(ABORT, 'audit down'); END;`,
+    );
+    expect(() => store.expireDue(at(2 * HOUR))).toThrow();
+    expect(store.get(a.proposalId)?.state).toBe("pending");
+    expect(store.get(b.proposalId)?.state).toBe("pending");
+  });
+
+  it("refuses a malformed now", () => {
+    submitPending();
+    expect(() => store.expireDue("")).toThrow();
+    expect(() => store.expireDue("2999")).toThrow();
+  });
+});
+
+describe("lapseStaleApproved (Test 2)", () => {
+  const FIVE_MINUTES = 5 * 60_000;
+  const AGES = { "session.force-terminate": FIVE_MINUTES, "diagnostic.test": 24 * HOUR };
+
+  it("lapses approved rows never claimed and at least their operation's maximum approval age old", () => {
+    const old = submitPending();
+    store.decide(decideInput(old, { now: at(60_000) }));
+    const young = submitPending();
+    store.decide(decideInput(young, { now: at(4 * 60_000) }));
+    const claimed = submitPending();
+    store.decide(decideInput(claimed, { now: at(60_000) }));
+    store.claim(claimed.proposalId, { pid: 1 }, at(90_000));
+
+    expect(store.lapseStaleApproved(at(7 * 60_000), AGES)).toEqual([old.proposalId]);
+    const lapsed = store.get(old.proposalId);
+    expect(lapsed?.state).toBe("lapsed");
+    expect(lapsed?.decidedAt).toBe(at(7 * 60_000));
+    expect(auditRows(old.proposalId).at(-1)).toMatchObject({ event: "lapsed", at: at(7 * 60_000) });
+    expect(store.get(young.proposalId)?.state).toBe("approved");
+    expect(store.get(claimed.proposalId)?.state).toBe("executing");
+    expect(store.lapseStaleApproved(at(7 * 60_000), AGES)).toEqual([]);
+  });
+
+  it("takes the age per operation from the parameter", () => {
+    const terminate = submitApproved({ operation: "session.force-terminate" });
+    const diagnostic = submitApproved({ operation: "diagnostic.test" });
+    expect(store.lapseStaleApproved(at(HOUR), AGES)).toEqual([terminate.proposalId]);
+    expect(store.get(diagnostic.proposalId)?.state).toBe("approved");
+    expect(store.lapseStaleApproved(at(HOUR), { ...AGES, "diagnostic.test": 1000 })).toEqual([
+      diagnostic.proposalId,
+    ]);
+  });
+
+  it("lapses at exactly the maximum age (a boundary fails closed) and not a millisecond before", () => {
+    const proposal = submitApproved();
+    const approvedAt = APPROVED_AT;
+    expect(store.lapseStaleApproved(at(FIVE_MINUTES - 1, approvedAt), AGES)).toEqual([]);
+    expect(store.lapseStaleApproved(at(FIVE_MINUTES, approvedAt), AGES)).toEqual([
+      proposal.proposalId,
+    ]);
+  });
+
+  it("fails closed for an operation with no age in the parameter", () => {
+    const proposal = submitApproved();
+    expect(store.lapseStaleApproved(at(1000), {})).toEqual([proposal.proposalId]);
+  });
+
+  it("never touches a pending, executing or settled row", () => {
+    const pending = submitPending();
+    const executing = submitExecuting();
+    expect(store.lapseStaleApproved(at(9 * HOUR), AGES)).toEqual([]);
+    expect(store.get(pending.proposalId)?.state).toBe("pending");
+    expect(store.get(executing.proposalId)?.state).toBe("executing");
+  });
+});
+
+describe("list and counts (Test 3)", () => {
+  it("returns the three buckets in their orders, each bounded by the limit", () => {
+    const soon = submitPending({ expiresAt: at(30 * 60_000) });
+    const middle = submitPending({ expiresAt: at(45 * 60_000) });
+    const far = submitPending({ expiresAt: at(3 * HOUR) });
+
+    const denied = submitPending();
+    store.decide(decideInput(denied, { decision: "deny", now: at(10_000) }));
+    const approved = submitPending();
+    store.decide(decideInput(approved, { now: at(20_000) }));
+    const executed = submitPending();
+    store.decide(decideInput(executed, { now: at(5_000) }));
+    store.claim(executed.proposalId, { pid: 1 }, at(6_000));
+    store.finish({
+      proposalId: executed.proposalId,
+      state: "executed",
+      code: "executed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: at(30_000),
+    });
+    const executing = submitPending();
+    store.decide(decideInput(executing, { now: at(4_000) }));
+    store.claim(executing.proposalId, { pid: 1 }, at(25_000));
+    const withdrawn = submitPending();
+    store.withdraw(withdrawn.proposalId, at(15_000));
+
+    const expiredOld = submitPending({ expiresAt: at(10 * 60_000) });
+    const expiredNew = submitPending({ expiresAt: at(20 * 60_000) });
+    store.expireDue(at(25 * 60_000));
+
+    expect(ids(store.list("pending", 50))).toEqual([soon, middle, far].map((p) => p.proposalId));
+    expect(ids(store.list("pending", 2))).toEqual([soon, middle].map((p) => p.proposalId));
+    expect(ids(store.list("decided", 50))).toEqual(
+      [executed, executing, approved, withdrawn, denied].map((p) => p.proposalId),
+    );
+    expect(ids(store.list("decided", 3))).toEqual(
+      [executed, executing, approved].map((p) => p.proposalId),
+    );
+    expect(ids(store.list("expired", 50))).toEqual(
+      [expiredNew, expiredOld].map((p) => p.proposalId),
+    );
+    expect(ids(store.list("expired", 1))).toEqual([expiredNew.proposalId]);
+    expect(store.list("pending", 0)).toEqual([]);
+
+    // Counts are the true totals, whatever the list limit was.
+    expect(store.counts()).toEqual({ pending: 3, decided: 5, expired: 2 });
+    expect(ids(store.listExecuting())).toEqual([executing.proposalId]);
+    expect(ids(store.listApprovedUnclaimed())).toEqual([approved.proposalId]);
+  });
+
+  it("puts every non-pending, non-expired state in the decided bucket", () => {
+    const lapsed = submitApproved();
+    store.lapseStaleApproved(at(HOUR), {});
+    const failed = submitExecuting();
+    store.finish({
+      proposalId: failed.proposalId,
+      state: "failed",
+      code: "execution-failed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: FINISHED_AT,
+    });
+    const unknown = submitExecuting();
+    store.finish({
+      proposalId: unknown.proposalId,
+      state: "unknown",
+      code: "outcome-not-confirmed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: at(63_000),
+    });
+    expect(new Set(ids(store.list("decided", 50)))).toEqual(
+      new Set([lapsed, failed, unknown].map((p) => p.proposalId)),
+    );
+    expect(store.counts()).toEqual({ pending: 0, decided: 3, expired: 0 });
+  });
+
+  it("refuses a negative or fractional limit and an unknown bucket", () => {
+    expect(() => store.list("pending", -1)).toThrow();
+    expect(() => store.list("pending", 1.5)).toThrow();
+    expect(() => store.list("everything" as never, 5)).toThrow();
+  });
+});
+
+describe("dedupe (Test 4)", () => {
+  it("returns deduped with the existing id and creates no row or audit for an identical pending request", () => {
+    const first = submitPending({ subject: "run-7" });
+    const auditBefore = auditRows();
+    const second = makeProposal({ subject: "run-7" });
+    const result = store.submit(second, CAPS);
+    expect(result.kind).toBe("deduped");
+    if (result.kind === "deduped") expect(result.proposal.proposalId).toBe(first.proposalId);
+    expect(store.get(second.proposalId)).toBeNull();
+    expect(auditRows()).toEqual(auditBefore);
+    expect(db.prepare("SELECT count(*) AS n FROM proposals").get()).toEqual({ n: 1 });
+  });
+
+  it("allows a new pending request once the first is decided", () => {
+    const first = submitPending({ subject: "run-8" });
+    store.decide(decideInput(first, { decision: "deny" }));
+    const second = makeProposal({ subject: "run-8" });
+    expect(store.submit(second, CAPS).kind).toBe("created");
+    expect(store.get(second.proposalId)?.state).toBe("pending");
+  });
+
+  it("treats a different subject or operation as a different request", () => {
+    submitPending({ subject: "run-9" });
+    expect(store.submit(makeProposal({ subject: "run-10" }), CAPS).kind).toBe("created");
+    expect(
+      store.submit(makeProposal({ subject: "run-9", operation: "diagnostic.test" }), CAPS).kind,
+    ).toBe("created");
+  });
+
+  it("refuses a dedupe key that does not match the operation and subject", () => {
+    expect(() => store.submit(makeProposal({ dedupeKey: "forged-key" }), CAPS)).toThrow();
+  });
+});
+
+describe("pending caps (Test 5)", () => {
+  it("returns capped with the scope: the 26th pending for one operation, the 51st overall", () => {
+    for (let i = 0; i < 25; i++) {
+      expect(store.submit(makeProposal({ operation: "op-a", subject: `s${i}` })).kind).toBe(
+        "created",
+      );
+    }
+    expect(store.submit(makeProposal({ operation: "op-a", subject: "s-over" }))).toEqual({
+      kind: "capped",
+      scope: "operation",
+    });
+    for (let i = 0; i < 25; i++) {
+      expect(store.submit(makeProposal({ operation: "op-b", subject: `s${i}` })).kind).toBe(
+        "created",
+      );
+    }
+    expect(store.submit(makeProposal({ operation: "op-c", subject: "s-over" }))).toEqual({
+      kind: "capped",
+      scope: "total",
+    });
+    expect(db.prepare("SELECT count(*) AS n FROM proposals").get()).toEqual({ n: 50 });
+    expect(auditRows()).toHaveLength(50);
+  });
+
+  it("does not count decided rows and honours the caps passed in", () => {
+    const small: PendingCaps = { perOperation: 2, total: 3 };
+    const a = makeProposal({ operation: "op-a", subject: "1" });
+    const b = makeProposal({ operation: "op-a", subject: "2" });
+    expect(store.submit(a, small).kind).toBe("created");
+    expect(store.submit(b, small).kind).toBe("created");
+    expect(store.submit(makeProposal({ operation: "op-a", subject: "3" }), small)).toEqual({
+      kind: "capped",
+      scope: "operation",
+    });
+    store.withdraw(a.proposalId, at(1000));
+    expect(store.submit(makeProposal({ operation: "op-a", subject: "3" }), small).kind).toBe(
+      "created",
+    );
+    expect(store.submit(makeProposal({ operation: "op-b", subject: "1" }), small).kind).toBe(
+      "created",
+    );
+    expect(store.submit(makeProposal({ operation: "op-b", subject: "2" }), small)).toEqual({
+      kind: "capped",
+      scope: "total",
+    });
+  });
+
+  it("refuses nonsense caps", () => {
+    expect(() => store.submit(makeProposal(), { perOperation: -1, total: 5 })).toThrow();
+    expect(() => store.submit(makeProposal(), { perOperation: 1.5, total: 5 })).toThrow();
+  });
+});
+
+describe("supersedes (Test 6)", () => {
+  it("records the most recent expired request with the same key as superseded (APPR-06, D-08)", () => {
+    const first = submitPending({ subject: "run-1", expiresAt: at(HOUR) });
+    store.expireDue(at(2 * HOUR));
+    const second = makeProposal({
+      subject: "run-1",
+      createdAt: at(2 * HOUR),
+      expiresAt: at(3 * HOUR),
+    });
+    const created = store.submit(second, CAPS);
+    expect(created.kind).toBe("created");
+    expect(store.get(second.proposalId)?.supersedes).toBe(first.proposalId);
+
+    store.expireDue(at(4 * HOUR));
+    const third = makeProposal({
+      subject: "run-1",
+      createdAt: at(4 * HOUR),
+      expiresAt: at(5 * HOUR),
+    });
+    store.submit(third, CAPS);
+    // The first request is already superseded, so the newest expired one is the second.
+    expect(store.get(third.proposalId)?.supersedes).toBe(second.proposalId);
+  });
+
+  it("stores an explicit supersedes id and records nothing when no expired request exists", () => {
+    const named = newProposalId();
+    const explicit = makeProposal({ supersedes: named });
+    store.submit(explicit, CAPS);
+    expect(store.get(explicit.proposalId)?.supersedes).toBe(named);
+
+    const none = submitPending({ subject: "unrelated" });
+    expect(store.get(none.proposalId)?.supersedes).toBeNull();
+  });
+
+  it("ignores an expired request for a different key and any non-expired one", () => {
+    const otherKey = submitPending({ subject: "other", expiresAt: at(HOUR) });
+    store.expireDue(at(2 * HOUR));
+    const denied = submitPending({ subject: "mine" });
+    store.decide(decideInput(denied, { decision: "deny" }));
+    const fresh = submitPending({
+      subject: "mine",
+      createdAt: at(2 * HOUR),
+      expiresAt: at(3 * HOUR),
+    });
+    expect(store.get(fresh.proposalId)?.supersedes).toBeNull();
+    expect(store.get(otherKey.proposalId)?.state).toBe("expired");
+  });
+
+  it("takes an expiry noticed at decide time as an expired request too", () => {
+    const first = submitPending({ subject: "run-2", expiresAt: at(HOUR) });
+    store.decide(decideInput(first, { now: at(2 * HOUR) }));
+    const second = submitPending({
+      subject: "run-2",
+      createdAt: at(2 * HOUR),
+      expiresAt: at(3 * HOUR),
+    });
+    expect(store.get(second.proposalId)?.supersedes).toBe(first.proposalId);
+  });
+});
+
+describe("purgeDecidedPayloads (Test 7)", () => {
+  it("nulls payload_json for decided rows older than the cutoff and touches nothing else", () => {
+    const oldDenied = submitPending();
+    store.decide(decideInput(oldDenied, { decision: "deny", now: at(1_000) }));
+    const oldExecuted = submitExecuting();
+    store.finish({
+      proposalId: oldExecuted.proposalId,
+      state: "executed",
+      code: "executed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: at(2_000),
+    });
+    const oldExpired = submitPending({ expiresAt: at(HOUR) });
+    store.expireDue(at(HOUR));
+    const oldWithdrawn = submitPending();
+    store.withdraw(oldWithdrawn.proposalId, at(3_000));
+    const youngDenied = submitPending();
+    store.decide(decideInput(youngDenied, { decision: "deny", now: at(10 * HOUR) }));
+    const pending = submitPending();
+    const approved = submitApproved();
+    const executing = submitExecuting();
+
+    const auditBefore = auditRows();
+    const purged = store.purgeDecidedPayloads(at(5 * HOUR));
+    expect(purged).toBe(4);
+    for (const proposal of [oldDenied, oldExecuted, oldExpired, oldWithdrawn]) {
+      expect(store.get(proposal.proposalId)?.payloadJson).toBeNull();
+      expect(store.get(proposal.proposalId)?.payloadHash).toBe(proposal.payloadHash);
+    }
+    for (const proposal of [youngDenied, pending, approved, executing]) {
+      expect(store.get(proposal.proposalId)?.payloadJson).toBe(proposal.payloadJson);
+    }
+    expect(auditRows()).toEqual(auditBefore);
+    expect(store.purgeDecidedPayloads(at(5 * HOUR))).toBe(0);
+  });
+
+  it("uses the finish time of an executed row, not its approval time, and the cutoff is exclusive", () => {
+    const proposal = submitExecuting();
+    store.finish({
+      proposalId: proposal.proposalId,
+      state: "executed",
+      code: "executed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: at(2 * HOUR),
+    });
+    expect(store.purgeDecidedPayloads(at(2 * HOUR))).toBe(0);
+    expect(store.purgeDecidedPayloads(at(2 * HOUR + 1))).toBe(1);
+  });
+});
+
+describe("auditFor (Test 8)", () => {
+  it("returns the events for one proposal in order with a code and no payload", () => {
+    const proposal = submitExecuting();
+    store.finish({
+      proposalId: proposal.proposalId,
+      state: "failed",
+      code: "execution-failed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: FINISHED_AT,
+    });
+    const other = submitPending();
+    const rows = store.auditFor(proposal.proposalId);
+    expect(rows.map((row) => row.event)).toEqual(["requested", "approved", "claimed", "failed"]);
+    expect(rows.at(-1)).toEqual({ event: "failed", at: FINISHED_AT, code: "execution-failed" });
+    expect(rows[0]).toEqual({ event: "requested", at: T0, code: null });
+    for (const row of rows) expect(Object.keys(row).sort()).toEqual(["at", "code", "event"]);
+    expect(store.auditFor(other.proposalId).map((row) => row.event)).toEqual(["requested"]);
+    expect(store.auditFor(newProposalId())).toEqual([]);
+  });
+
+  it("is bounded to twenty events, keeping the newest", () => {
+    const proposal = submitPending();
+    for (let i = 0; i < 25; i++) {
+      db.prepare(
+        "INSERT INTO approval_audit (proposal_id, event, at, detail) VALUES (?, 'withdrawn', ?, ?)",
+      ).run(proposal.proposalId, at(i * 1000), `n${i}`);
+    }
+    const rows = store.auditFor(proposal.proposalId);
+    expect(rows).toHaveLength(20);
+    expect(rows.at(-1)?.code).toBe("n24");
+    expect(rows[0]?.code).toBe("n5");
+  });
+
+  it("throws on a stored event outside the audit vocabulary", () => {
+    const proposal = submitPending();
+    db.prepare(
+      "INSERT INTO approval_audit (proposal_id, event, at) VALUES (?, 'something-else', ?)",
+    ).run(proposal.proposalId, T0);
+    expect(() => store.auditFor(proposal.proposalId)).toThrow();
+  });
+});
+
+describe("diagnostic effects (Test 9)", () => {
+  it("records once and reports already-recorded afterwards", () => {
+    const effects = createDiagnosticEffects(db, () => at(1234));
+    const id = newProposalId();
+    expect(effects.exists(id)).toBe(false);
+    expect(effects.record(id)).toBe("recorded");
+    expect(effects.exists(id)).toBe(true);
+    expect(effects.record(id)).toBe("already-recorded");
+    expect(
+      (
+        db.prepare("SELECT recorded_at FROM diagnostic_effects WHERE proposal_id = ?").get(id) as {
+          recorded_at: string;
+        }
+      ).recorded_at,
+    ).toBe(at(1234));
+  });
+
+  it("a hundred sequential calls leave exactly one row, and ids are independent", () => {
+    const effects = createDiagnosticEffects(db, () => T0);
+    const id = newProposalId();
+    const results = Array.from({ length: 100 }, () => effects.record(id));
+    expect(results.filter((result) => result === "recorded")).toHaveLength(1);
+    expect(db.prepare("SELECT count(*) AS n FROM diagnostic_effects").get()).toEqual({ n: 1 });
+    const other = newProposalId();
+    expect(effects.exists(other)).toBe(false);
+    expect(effects.record(other)).toBe("recorded");
+  });
+
+  it("refuses a malformed id or clock value", () => {
+    const effects = createDiagnosticEffects(db, () => "not a time");
+    expect(() => effects.record(newProposalId())).toThrow();
+    expect(() => createDiagnosticEffects(db, () => T0).record("x" as never)).toThrow();
+    expect(() => createDiagnosticEffects(db, () => T0).exists("x" as never)).toThrow();
+  });
+});
+
+describe("volume (Test 10)", () => {
+  it("lists and counts 1,000 decided and 100 pending proposals in under 50 ms each", () => {
+    const insert = db.prepare(
+      `INSERT INTO proposals (
+         proposal_id, operation, subject, state, requester_kind, requester_label, reason,
+         payload_json, payload_hash, dedupe_key, mirror_note_id, created_at, expires_at, decided_at, finished_at
+       ) VALUES (?, 'session.force-terminate', ?, ?, 'dashboard', 'Volume', 'r', '{}', ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const hash = "a".repeat(64);
+    db.transaction(() => {
+      for (let i = 0; i < 1100; i++) {
+        const decided = i < 1000;
+        const subject = `volume-${i}`;
+        insert.run(
+          newProposalId(),
+          subject,
+          decided ? (i % 2 === 0 ? "denied" : "executed") : "pending",
+          hash,
+          dedupeKeyOf("session.force-terminate", subject),
+          newNoteId(),
+          T0,
+          at(HOUR + i),
+          decided ? at(i * 1000) : null,
+          decided && i % 2 === 1 ? at(i * 1000) : null,
+        );
+      }
+    })();
+
+    const time = (run: () => unknown): number => {
+      const started = performance.now();
+      run();
+      return performance.now() - started;
+    };
+    expect(time(() => store.list("decided", 50))).toBeLessThan(50);
+    expect(time(() => store.list("pending", 50))).toBeLessThan(50);
+    expect(time(() => store.list("expired", 50))).toBeLessThan(50);
+    expect(time(() => store.counts())).toBeLessThan(50);
+    expect(store.counts()).toEqual({ pending: 100, decided: 1000, expired: 0 });
+    expect(store.list("decided", 50)).toHaveLength(50);
   });
 });
