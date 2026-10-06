@@ -208,7 +208,7 @@ function projectMetaLine(row: ProjectRow): string {
 
 /**
  * The S1 row meta content, per git kind (UI-SPEC "S1 Project shortcuts card
- * copy", Glyph Vocabulary). A failed read appends `◔ Stale` regardless of
+ * copy", Glyph Vocabulary). A failed read appends `◷ Stale` regardless of
  * kind (ADR-0002: freshness is stated, never implied).
  */
 export function projectMetaSegments(
@@ -255,7 +255,7 @@ export function projectMetaSegments(
       break;
   }
   if (row.gitReadFailed) {
-    segments.push({ glyph: "◔", text: "Stale" });
+    segments.push({ glyph: "◷", text: "Stale" });
   }
   return segments;
 }

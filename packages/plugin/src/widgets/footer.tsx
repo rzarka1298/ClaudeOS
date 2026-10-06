@@ -33,7 +33,7 @@ const FRESHNESS_LABEL: Readonly<Record<Freshness, string>> = {
 const FRESHNESS_GLYPH: Readonly<Record<Freshness, string>> = {
   live: "●",
   cached: "◐",
-  stale: "◔",
+  stale: "◷",
   unavailable: "○",
 };
 

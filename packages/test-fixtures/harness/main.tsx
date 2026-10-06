@@ -294,7 +294,7 @@ type RowShape =
 /**
  * `live` (the ready and disconnected cells): one pinned row, one unpinned row
  * with uncommitted changes, one detached HEAD. `stale`: a last-good row whose
- * refresh failed (`◔ Stale`), a branch git could not name, and a project
+ * refresh failed (`◷ Stale`), a branch git could not name, and a project
  * whose very first read failed (`▲ Couldn't read Git status`).
  */
 const ROW_SHAPES: Readonly<Partial<Record<FixtureStateKey, readonly RowShape[]>>> = {

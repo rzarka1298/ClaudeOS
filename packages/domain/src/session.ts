@@ -212,7 +212,7 @@ export interface RunStateDisplay {
 /**
  * The single display mapping for the eight run states (UI-SPEC "Run-state
  * vocabulary", D-16). `stale` reads as unknown with `?`, never as "Stale":
- * that word and the `● ◐ ◔ ○` glyphs belong to freshness, and the two
+ * that word and the `● ◐ ◷ ○` glyphs belong to freshness, and the two
  * meanings of "stale" never share a label or a glyph. Every glyph here is a
  * text-presentation code point.
  */

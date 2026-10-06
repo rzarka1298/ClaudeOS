@@ -74,7 +74,7 @@ describe("RUN_STATE_DISPLAY (Test 5, D-16, UI-SPEC Run-state vocabulary)", () =>
   it("never labels a run state 'Stale' and never reuses a freshness glyph", () => {
     for (const entry of Object.values(RUN_STATE_DISPLAY)) {
       expect(entry.label).not.toBe("Stale");
-      expect(["●", "◐", "◔", "○"]).not.toContain(entry.glyph);
+      expect(["●", "◐", "◷", "○"]).not.toContain(entry.glyph);
     }
   });
 

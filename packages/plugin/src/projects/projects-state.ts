@@ -176,7 +176,7 @@ function newestObservedAt(rows: readonly ProjectRow[]): string | null {
  * while connected, since the registry list itself is pushed on every change.
  * Any row whose last git read failed marks the whole card `Partial`, naming
  * `Local git status` (ADR-0002, D-12) — the row itself keeps its last-good
- * values and gains `◔ Stale` in its own meta (panels.tsx).
+ * values and gains `◷ Stale` in its own meta (panels.tsx).
  */
 export function projectShortcutsStateFor(
   snapshot: ProjectsSnapshot | undefined,
