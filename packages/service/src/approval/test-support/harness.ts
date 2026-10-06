@@ -68,6 +68,10 @@ export interface Harness {
   readonly diagnostic: FakeOperation;
   readonly terminate: FakeOperation;
   readonly published: ApprovalUpsertedPayload[];
+  /** The event name of every publish call, in order (the engine publishes only `approval.upserted`). */
+  readonly publishedEvents: string[];
+  /** The dependencies the engine was built from, so a test can build a second engine over the same store (a restart). */
+  readonly deps: ApprovalEngineDeps;
   readonly mirrored: StoredProposal[];
   readonly log: RecordingLog;
   /** Submits the diagnostic operation with defaults; `overrides` change what a test is about. */
@@ -90,6 +94,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const diagnostic = createFakeOperation("diagnostic.test");
   const terminate = createFakeOperation("session.force-terminate");
   const published: ApprovalUpsertedPayload[] = [];
+  const publishedEvents: string[] = [];
   const mirrored: StoredProposal[] = [];
   const log = createRecordingLog();
   let counter = 0;
@@ -112,8 +117,9 @@ export function createHarness(options: HarnessOptions = {}): Harness {
       },
     },
     publisher: {
-      publish(_event, payload) {
+      publish(event, payload) {
         if (options.publisherThrows === true) throw new Error("publisher down");
+        publishedEvents.push(event);
         published.push(payload);
       },
     },
@@ -147,6 +153,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     diagnostic,
     terminate,
     published,
+    publishedEvents,
+    deps,
     mirrored,
     log,
     submit: (overrides = {}) => engine.submit({ ...defaults, ...overrides }),
