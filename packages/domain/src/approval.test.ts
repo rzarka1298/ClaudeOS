@@ -149,7 +149,8 @@ describe("canonicalJson (Test 2)", () => {
     expect(canonicalJson(parsed)).toBe(expected);
     // The published text form too (a backslash sequence is spelled out, not decoded).
     expect(expected).toBe(
-      String.raw`{"literals":[null,true,false],"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27],"string":"€$\u000f\nA'B\"\\\\\"/"}`,
+      `{"literals":[null,true,false],"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27],"string":"${"\u20ac"}` +
+        String.raw`$\u000f\nA'B\"\\\\\"/"}`,
     );
   });
 
@@ -164,7 +165,7 @@ describe("canonicalJson (Test 2)", () => {
       "\u00f6": "Latin Small Letter O With Diaeresis",
     };
     const expected =
-      '{"\\r":"Carriage Return","1":"One","\u0080":"Control","ö":"Latin Small Letter O With Diaeresis","€":"Euro Sign","😀":"Emoji: Grinning Face","דּ":"Hebrew Letter Dalet With Dagesh"}';
+      '{"\\r":"Carriage Return","1":"One","\u0080":"Control","\u00f6":"Latin Small Letter O With Diaeresis","\u20ac":"Euro Sign","\u{1f600}":"Emoji: Grinning Face","\ufb33":"Hebrew Letter Dalet With Dagesh"}';
     expect(canonicalJson(parsed)).toBe(expected);
   });
 
@@ -269,7 +270,7 @@ describe("canonicalJson (Test 2)", () => {
     expect(() => canonicalJson("\ud800")).toThrow(TypeError);
     expect(() => canonicalJson("a\udc00b")).toThrow(/lone surrogate/);
     expect(() => canonicalJson({ "\ud800": 1 })).toThrow(/lone surrogate/);
-    expect(() => canonicalJson({ k: "😀" })).not.toThrow();
+    expect(() => canonicalJson({ k: "\u{1f600}" })).not.toThrow();
   });
 
   it("rejects Dates, Maps, Sets, class instances, functions, symbols and bigints", () => {
@@ -299,8 +300,8 @@ describe("canonicalJson (Test 2)", () => {
   });
 
   it("gives NFC and NFD forms of the same text different strings (the safe direction)", () => {
-    const nfc = "é";
-    const nfd = "é";
+    const nfc = "\u00e9";
+    const nfd = "e\u0301";
     expect(nfc.normalize("NFD")).toBe(nfd);
     expect(canonicalJson(nfc)).not.toBe(canonicalJson(nfd));
   });
