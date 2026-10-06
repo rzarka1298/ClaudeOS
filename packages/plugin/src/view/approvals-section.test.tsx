@@ -180,7 +180,7 @@ describe("Test 1 (chips): the filter group and its counts", () => {
   });
 
   it("renders the labels without numbers while the counts are unknown", () => {
-    install();
+    install({ list: () => new Promise<ApprovalsSnapshot>(() => {}) });
     renderSection();
     expect(chip("Pending").textContent).toBe("Pending");
     expect(chip("Decided").textContent).toBe("Decided");
@@ -266,9 +266,7 @@ describe("Test 3 (decide)", () => {
     expect(approvalsById.value.get(view.proposalId)?.state).toBe("approved");
     expect(container.querySelectorAll(".ccc-approval-list > li").length).toBe(0);
     fireEvent.click(chip(/^Decided/));
-    expect(
-      within(container.querySelector(".ccc-approval-list") as HTMLElement).getByText(/Approved/),
-    ).toBeTruthy();
+    expect(container.querySelector(".ccc-approval-row-meta")?.textContent).toContain("▣ Approved");
   });
 });
 
@@ -553,7 +551,7 @@ describe("Test 5 (countdown silence)", () => {
 
 describe("Test 6 (arrival announcement)", () => {
   it("stays silent for the first snapshot, whether it arrives before or after the mount", async () => {
-    install();
+    install({ list: () => new Promise<ApprovalsSnapshot>(() => {}) });
     const { container } = renderSection();
     await update(() => adoptApprovalsSnapshot(approvalsSnapshot({ pending: [summary(1)] })));
     expect(statusText(container)).toBe("");
@@ -660,13 +658,17 @@ describe("Test 7 (section states)", () => {
     expect(screen.getByRole("button", { name: "Refresh approvals" })).toBeTruthy();
     fireEvent.click(rowButtons(container)[0] as HTMLElement);
     const approve = await screen.findByRole("button", { name: /^Approve once/ });
-    await waitFor(() => expect(approve.getAttribute("aria-disabled")).toBe("true"));
-    expect(screen.getByText("This list may be out of date. Refresh, then decide.")).toBeTruthy();
+    expect(
+      await screen.findByText("This list may be out of date. Refresh, then decide."),
+    ).toBeTruthy();
+    expect(approve.getAttribute("aria-disabled")).toBe("true");
     expect(screen.getByRole("button", { name: /^Deny/ }).getAttribute("aria-disabled")).toBeNull();
   });
 
   it("stale: Refresh approvals adopts a fresh snapshot, clears the badge and says so", async () => {
-    const list = vi.fn(async () => approvalsSnapshot({ pending: [summary(1), summary(5)] }));
+    const list = vi.fn(async () =>
+      approvalsSnapshot({ pending: [summary(1)], decided: [summary(5, "denied", 2)] }),
+    );
     install({ list });
     hydrate([summary(1)]);
     const { container } = renderSection();
@@ -677,7 +679,7 @@ describe("Test 7 (section states)", () => {
     await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(statusText(container)).toBe("Approvals refreshed."));
     expect(screen.queryByRole("button", { name: "Refresh approvals" })).toBeNull();
-    expect(chip(/^Pending/).textContent).toBe("Pending (2)");
+    expect(chip(/^Decided/).textContent).toBe("Decided (1)");
   });
 
   it("disconnected: dims with the hook, says the requests are kept, disables the pane's controls", async () => {
@@ -686,7 +688,7 @@ describe("Test 7 (section states)", () => {
     hydrate([summaryOf(view)]);
     const { container } = renderSection();
     fireEvent.click(rowButtons(container)[0] as HTMLElement);
-    await screen.findByRole("button", { name: /^Approve once/ });
+    await screen.findByRole("button", { name: /^Open originating run/ });
     await update(() => {
       connectionState.value = { kind: "disconnected", reason: "connect ECONNREFUSED" };
     });
@@ -762,7 +764,9 @@ describe("Test 8 (deep links)", () => {
 
   it("never switches the chip for a request that merely changed state, and shows its relocation line", async () => {
     const view = approvalView();
-    install({ detail: () => approvalDetail(view) });
+    install({
+      detail: (_id, call) => approvalDetail(call === 1 ? view : decidedView("denied")),
+    });
     hydrate([summaryOf(view)]);
     const { container } = renderSection();
     fireEvent.click(rowButtons(container)[0] as HTMLElement);
@@ -785,8 +789,12 @@ describe("Test 8 (deep links)", () => {
     selectedProposalId.value = "0mfk1a2b3c4d5e6f7a8b9czzz";
     approvalDetailFocusRequested.value = true;
     renderSection();
-    const heading = await screen.findByRole("heading", { level: 4 });
-    expect(heading.textContent).toBe("That request isn't in the inbox.");
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 4 }).textContent).toBe(
+        "That request isn't in the inbox.",
+      ),
+    );
+    const heading = screen.getByRole("heading", { level: 4 });
     await waitFor(() => expect(document.activeElement).toBe(heading));
     expect(approvalDetailFocusRequested.value).toBe(false);
   });

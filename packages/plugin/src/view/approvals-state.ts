@@ -4,7 +4,8 @@ import { signal } from "@preact/signals";
 import { type ApprovalDetailResponse, approvalsApi } from "../approvals/api.js";
 import type { ApprovalCounts } from "../approvals/signals.js";
 import type { FooterModel } from "../widgets/presentation.js";
-import { FILTER_LABEL } from "./approvals-copy.js";
+import { formatRelativeTime } from "../widgets/relative-time.js";
+import { APPROVALS_SOURCE_LABEL, EXPIRING, expiryParts, FILTER_LABEL } from "./approvals-copy.js";
 
 /**
  * The Approvals section's own view state (UI-SPEC S1), held in memory only.
@@ -102,7 +103,7 @@ export function showMoreApprovals(filter: ApprovalFilter): void {
 }
 
 // ---------------------------------------------------------------------------
-// Time phrases, expiry, arrival and the provenance strip (RED skeleton)
+// Time phrases, expiry, arrival and the provenance strip
 
 export interface TimePhrase {
   readonly text: string;
@@ -110,30 +111,75 @@ export interface TimePhrase {
   readonly urgent: boolean;
 }
 
-export function approvalTimePhrase(_summary: ApprovalSummary, _nowMs: number): TimePhrase {
-  return { text: "", urgent: false };
+/**
+ * The time phrase a row ends with (UI-SPEC S1 "List"): a Pending request counts
+ * down (`Expires in 14 min`) under 24 hours and reads an absolute time beyond,
+ * then `Expiring…` at zero; a Decided one says what happened and when; an
+ * Expired one says when it ran out. `nowMs` is the prop clock, never the ambient one.
+ */
+export function approvalTimePhrase(summary: ApprovalSummary, nowMs: number): TimePhrase {
+  if (summary.state === "pending") {
+    const parts = expiryParts(nowMs, summary.expiresAt);
+    return parts.kind === "expiring"
+      ? { text: EXPIRING, urgent: true }
+      : { text: parts.phrase, urgent: parts.urgent };
+  }
+  const display = APPROVAL_STATE_DISPLAY[summary.state];
+  if (display.filter === "expired") {
+    return { text: `Expired ${formatRelativeTime(settledAt(summary), nowMs)}`, urgent: false };
+  }
+  return {
+    text:
+      summary.decidedAt === null
+        ? display.label
+        : `${display.label} ${formatRelativeTime(summary.decidedAt, nowMs)}`,
+    urgent: false,
+  };
 }
 
+/** The pending requests whose expiry is at or before `nowMs`, in the map's order. */
 export function expiredPendingIds(
-  _byId: ReadonlyMap<string, ApprovalSummary>,
-  _nowMs: number,
+  byId: ReadonlyMap<string, ApprovalSummary>,
+  nowMs: number,
 ): readonly string[] {
-  return [];
+  const due: string[] = [];
+  for (const summary of byId.values()) {
+    if (summary.state === "pending" && Date.parse(summary.expiresAt) <= nowMs) {
+      due.push(summary.proposalId);
+    }
+  }
+  return due;
 }
 
-export function pendingIdSet(_byId: ReadonlyMap<string, ApprovalSummary>): ReadonlySet<string> {
-  return new Set();
+/** The ids of every pending request. */
+export function pendingIdSet(byId: ReadonlyMap<string, ApprovalSummary>): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const summary of byId.values()) {
+    if (summary.state === "pending") ids.add(summary.proposalId);
+  }
+  return ids;
 }
 
-export function hasArrival(_previous: ReadonlySet<string>, _current: ReadonlySet<string>): boolean {
+/** Whether `current` holds a pending id that `previous` did not: the one arrival worth announcing. */
+export function hasArrival(previous: ReadonlySet<string>, current: ReadonlySet<string>): boolean {
+  for (const id of current) {
+    if (!previous.has(id)) return true;
+  }
   return false;
 }
 
-/** Set when the list may have missed a change; cleared when a snapshot or event arrives while live. */
+/**
+ * Set when the list may have missed a change: the stream dropped, or a refresh
+ * failed. Cleared when a snapshot or an event arrives while the stream is live.
+ * View state in memory, like everything here.
+ */
 export const approvalsMissedSync = signal(false);
 
 /** Set when the first load failed, so the section shows its error state. */
 export const approvalsLoadFailed = signal(false);
+
+/** When this view last saw the list change, as an ISO time, or `null`. */
+export const approvalsObservedAt = signal<string | null>(null);
 
 export interface FooterInput {
   readonly hydrated: boolean;
@@ -144,8 +190,37 @@ export interface FooterInput {
   readonly observedAt: string | null;
 }
 
-export function approvalsFooterModel(_input: FooterInput): FooterModel {
-  return { observedAt: null, freshness: null, partiality: null, sources: [] };
+const SOURCE_LABEL = APPROVALS_SOURCE_LABEL;
+
+/**
+ * The provenance strip's model (UI-SPEC S1): one source, `Approval inbox`.
+ * Live while the stream is healthy and nothing was missed, stale after a missed
+ * sync, unavailable when the engine is not ready and, with the last observation
+ * kept, while the service is away.
+ */
+export function approvalsFooterModel(input: FooterInput): FooterModel {
+  if (input.hydrated && input.ready === false) {
+    return {
+      observedAt: null,
+      freshness: "unavailable",
+      partiality: null,
+      sources: [{ label: SOURCE_LABEL, status: "no-source" }],
+    };
+  }
+  if (input.disconnected) {
+    return {
+      observedAt: input.observedAt,
+      freshness: "unavailable",
+      partiality: null,
+      sources: [{ label: SOURCE_LABEL, status: "disconnected" }],
+    };
+  }
+  return {
+    observedAt: input.observedAt,
+    freshness: input.missedSync ? "stale" : "live",
+    partiality: null,
+    sources: [{ label: SOURCE_LABEL, status: "ok" }],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -234,5 +309,8 @@ export function resetApprovalsView(): void {
   };
   approvalsStatus.value = "";
   approvalsSectionVisible.value = false;
+  approvalsMissedSync.value = false;
+  approvalsLoadFailed.value = false;
+  approvalsObservedAt.value = null;
   approvalDetailCache.clear();
 }
