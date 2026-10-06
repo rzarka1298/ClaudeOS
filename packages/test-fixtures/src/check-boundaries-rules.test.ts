@@ -2,7 +2,8 @@
 // shell rule is rule 8; Phase 5's interrupt-signal and token-forgery rules are
 // 9 and 10 after the renumber. Each rule must fire on a planted violation, name
 // its own description (so a swapped number or body shows up), stay quiet on the
-// allowed neighbour, and the script must still count all ten.
+// allowed neighbour, and the script must count every rule: ten here plus the
+// four Phase 6 confinement rules (check-boundaries.test.ts), fourteen in all.
 
 import { afterEach, describe, expect, it } from "vitest";
 import { type GateRepo, gateRepo } from "./gate-repo.js";
@@ -31,10 +32,10 @@ const RULE9 = "sends the interrupt signal";
 const RULE10 = "forges a CapabilityToken";
 
 describe("check-boundaries.sh rules 8, 9 and 10", () => {
-  it("counts ten rules and passes on a clean tree", () => {
+  it("counts fourteen rules and passes on a clean tree", () => {
     const result = backstop({});
     expect(result.status).toBe(0);
-    expect(result.out).toContain("checked 10 rules");
+    expect(result.out).toContain("checked 14 rules");
   });
 
   it("rule 8 fires on a shell-string exec in packages/service, and only rule 8", () => {
