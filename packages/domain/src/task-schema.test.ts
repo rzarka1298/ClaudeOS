@@ -10,6 +10,7 @@ import {
 } from "./task-corpus.js";
 import {
   isOpenTaskStatus,
+  isTaskNotePath,
   TASK_DECISION_KEY_ORDER,
   TASK_FILE_MAX_BYTES,
   TASK_FRONTMATTER_KEY_ORDER,
@@ -21,6 +22,8 @@ import {
   TaskDecisionSchema,
   TaskFrontmatterSchema,
   TaskTitleSchema,
+  taskFileName,
+  taskSlug,
 } from "./task-schema.js";
 
 const ID_A = "abcdefghi0123456789abcdef";
@@ -507,5 +510,107 @@ describe("Test 9 (hostile corpus)", () => {
     );
     // biome-ignore lint/suspicious/noControlCharactersInRegex: the point is to find any non-ASCII byte
     expect(source).not.toMatch(/[^\x09\x0a\x20-\x7e]/);
+  });
+});
+
+describe("task 2 Test 7 (slug and filename)", () => {
+  it("lowercases, keeps ASCII letters and digits and joins runs with a single hyphen", () => {
+    expect(taskSlug("Draft the Weekly Review!")).toBe("draft-the-weekly-review");
+    expect(taskSlug("  --hello__world--  ")).toBe("hello-world");
+    expect(taskSlug("Q4 2026: plan & ship")).toBe("q4-2026-plan-ship");
+    expect(taskSlug("Caf\u00e9 au lait")).toBe("caf-au-lait");
+  });
+
+  it("caps at 48 characters and never ends on a hyphen", () => {
+    expect(taskSlug("a".repeat(100))).toBe("a".repeat(48));
+    const cut = `${"a".repeat(47)} b`;
+    expect(taskSlug(cut)).toBe("a".repeat(47));
+    expect(taskSlug("word ".repeat(30)).length).toBeLessThanOrEqual(48);
+    expect(taskSlug("word ".repeat(30)).endsWith("-")).toBe(false);
+  });
+
+  it("returns task for empty or all-hostile input", () => {
+    for (const title of ["", "   ", "---", "!!!", "\u65e5\u672c\u8a9e", "\u202e\u202e", "../.."]) {
+      expect(taskSlug(title), JSON.stringify(title)).toBe("task");
+    }
+  });
+
+  it("joins the slug, a hyphen, the last eight characters of the id and .md", () => {
+    expect(taskFileName("Draft the Weekly Review", ID_A)).toBe(
+      "draft-the-weekly-review-89abcdef.md",
+    );
+    expect(taskFileName("", ID_A)).toBe("task-89abcdef.md");
+    expect(taskFileName("Draft the Weekly Review", ID_B)).toBe(
+      `draft-the-weekly-review-${ID_B.slice(-8)}.md`,
+    );
+  });
+
+  it("gives different names to titles that differ only by case or punctuation when the ids differ", () => {
+    expect(taskFileName("Buy milk", ID_A)).not.toBe(taskFileName("buy, milk!", ID_B));
+    // Same slug, so the id suffix is the only thing that tells them apart.
+    expect(taskSlug("Buy milk")).toBe(taskSlug("buy, milk!"));
+  });
+
+  it("is pure: the same inputs give the same name", () => {
+    expect(taskFileName("Same", ID_A)).toBe(taskFileName("Same", ID_A));
+  });
+
+  it("refuses an id that is not a note id, so a hostile id cannot shape a file name", () => {
+    for (const id of ["", "short", "../../etc/passwd", `${ID_A}x`, ID_A.toUpperCase()]) {
+      expect(() => taskFileName("x", id), id).toThrow(RangeError);
+    }
+  });
+
+  it("produces names that are always ASCII, separator-free and a task note path", () => {
+    for (const title of HOSTILE_TASK_TITLES) {
+      const name = taskFileName(title, ID_A);
+      expect(name, JSON.stringify(title)).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/);
+      expect(name.length).toBeLessThanOrEqual(48 + 1 + 8 + 3);
+      expect(isTaskNotePath(`global/tasks/${name}`), name).toBe(true);
+    }
+  });
+});
+
+describe("task 2 Test 8 (task note path)", () => {
+  const WS = "abcdefghi0123456789abcdef";
+
+  it("accepts a task note in the global scope or in one workspace", () => {
+    expect(isTaskNotePath("global/tasks/x-abc12345.md")).toBe(true);
+    expect(isTaskNotePath(`workspaces/${WS}/tasks/x-abc12345.md`)).toBe(true);
+    expect(isTaskNotePath("global/tasks/Buy milk.md")).toBe(true);
+  });
+
+  it("rejects the folder index, nested folders, traversal, a leading slash, a backslash and non-markdown files", () => {
+    for (const path of [
+      "global/tasks/index.md",
+      `workspaces/${WS}/tasks/index.md`,
+      "global/tasks/sub/x.md",
+      "global/tasks/../x.md",
+      "global/../tasks/x.md",
+      "../global/tasks/x.md",
+      "/global/tasks/x.md",
+      "global\\tasks\\x.md",
+      "global/tasks/x\\y.md",
+      "global/tasks/x.txt",
+      "global/tasks/x.md.exe",
+      "global/tasks/.md",
+      "global/tasks/.hidden.md",
+      "global/tasks/..md",
+      "global/tasks/",
+      "global/tasks",
+      "tasks/x.md",
+      "global/notes/x.md",
+      `workspaces/${WS.slice(1)}/tasks/x.md`,
+      `workspaces/${WS.toUpperCase()}/tasks/x.md`,
+      "workspaces/global/tasks/x.md",
+      `workspaces/${WS}/x.md`,
+      "global/tasks/x\u0000.md",
+      "global/tasks/x\n.md",
+      "global/tasks/x\u202e.md",
+      `global/tasks/${"a".repeat(300)}.md`,
+      "",
+    ]) {
+      expect(isTaskNotePath(path), JSON.stringify(path)).toBe(false);
+    }
   });
 });
