@@ -10,6 +10,7 @@ import {
   type NoteId,
   normaliseDue,
   ProjectIdSchema,
+  TASK_DUE_TODAY_LIMIT,
   TASK_FILTERS,
   TASK_PAGE_SIZE,
   TASK_PRIORITIES,
@@ -375,15 +376,35 @@ function clearStalePathHolder(db: Database.Database, path: string, noteId: strin
   }
 }
 
-function writeValidated(db: Database.Database, validated: ValidatedTask): void {
+interface TaskWriters {
+  readonly upsert: Database.Statement;
+  readonly deleteTags: Database.Statement;
+  readonly deleteDeps: Database.Statement;
+  readonly insertTag: Database.Statement;
+  readonly insertDep: Database.Statement;
+}
+
+function prepareTaskWriters(db: Database.Database): TaskWriters {
+  return {
+    upsert: db.prepare(UPSERT_TASK_SQL),
+    deleteTags: db.prepare("DELETE FROM task_tags WHERE note_id = ?"),
+    deleteDeps: db.prepare("DELETE FROM task_deps WHERE note_id = ?"),
+    insertTag: db.prepare("INSERT INTO task_tags (note_id, tag) VALUES (?, ?)"),
+    insertDep: db.prepare("INSERT INTO task_deps (note_id, dep_id) VALUES (?, ?)"),
+  };
+}
+
+function writeValidated(
+  db: Database.Database,
+  writers: TaskWriters,
+  validated: ValidatedTask,
+): void {
   const { columns } = validated;
-  db.prepare(UPSERT_TASK_SQL).run(columns);
-  db.prepare("DELETE FROM task_tags WHERE note_id = ?").run(columns.noteId);
-  db.prepare("DELETE FROM task_deps WHERE note_id = ?").run(columns.noteId);
-  const insertTag = db.prepare("INSERT INTO task_tags (note_id, tag) VALUES (?, ?)");
-  for (const tag of validated.tags) insertTag.run(columns.noteId, tag);
-  const insertDep = db.prepare("INSERT INTO task_deps (note_id, dep_id) VALUES (?, ?)");
-  for (const dep of validated.dependencies) insertDep.run(columns.noteId, dep);
+  writers.upsert.run(columns);
+  writers.deleteTags.run(columns.noteId);
+  writers.deleteDeps.run(columns.noteId);
+  for (const tag of validated.tags) writers.insertTag.run(columns.noteId, tag);
+  for (const dep of validated.dependencies) writers.insertDep.run(columns.noteId, dep);
   upsertVaultNote(db, {
     noteId: columns.noteId as NoteId,
     path: columns.path,
@@ -408,9 +429,10 @@ function writeValidated(db: Database.Database, validated: ValidatedTask): void {
  */
 export function upsertTask(db: Database.Database, record: TaskIndexRecord): void {
   const validated = validateTaskRecord(record);
+  const writers = prepareTaskWriters(db);
   db.transaction(() => {
     clearStalePathHolder(db, validated.columns.path, validated.columns.noteId);
-    writeValidated(db, validated);
+    writeValidated(db, writers, validated);
   })();
 }
 
@@ -811,27 +833,160 @@ export type TaskBlockedByItem =
     }
   | { readonly resolved: false; readonly id: string };
 
-/** RED skeletons (plan 06-14 task 3). */
-export function rebuildTaskIndex(
-  _db: Database.Database,
-  _records: readonly TaskIndexRecord[],
-): void {}
-export function removeTaskByPath(_db: Database.Database, _path: string): boolean {
-  return false;
+// ---------------------------------------------------------------------------
+// Rebuild, removal, lookups and the due-today feed (D-35, D-37, D-38)
+
+/**
+ * The two task path shapes in GLOB form. The workspace id is exactly 25
+ * lowercase base-36 characters. `*` also matches `/` in GLOB, so the NOT GLOB
+ * halves exclude anything nested below the tasks folder: only a note directly in
+ * a `tasks/` folder is a task row, never a note elsewhere that merely shares a
+ * prefix.
+ */
+const WORKSPACE_ID_GLOB = "[0-9a-z]".repeat(25);
+const TASK_PATH_SQL = `((path GLOB 'global/tasks/*.md' AND path NOT GLOB 'global/tasks/*/*')
+  OR (path GLOB 'workspaces/${WORKSPACE_ID_GLOB}/tasks/*.md' AND path NOT GLOB 'workspaces/*/tasks/*/*'))`;
+
+/**
+ * Replaces the whole task index and the task rows of `vault_notes` with
+ * `records`, atomically: the delete and every insert run in ONE transaction, and
+ * each record is validated INSIDE it (as `rebuildVaultNotes` does), so a bad
+ * record on row 5,000 rolls back the delete along with the first 4,999 inserts
+ * and a concurrent reader only ever sees the old complete index or the new one.
+ * `vault_notes` rows that are not task notes are left untouched. A batch that
+ * names one note id or one path twice is refused (the service lists duplicates
+ * under "attention" before it gets here, D-37).
+ */
+export function rebuildTaskIndex(db: Database.Database, records: readonly TaskIndexRecord[]): void {
+  const writers = prepareTaskWriters(db);
+  const clearTaskNotes = db.prepare(`DELETE FROM vault_notes WHERE ${TASK_PATH_SQL}`);
+  db.transaction(() => {
+    db.prepare("DELETE FROM task_tags").run();
+    db.prepare("DELETE FROM task_deps").run();
+    db.prepare("DELETE FROM task_index").run();
+    clearTaskNotes.run();
+    const ids = new Set<string>();
+    const paths = new Set<string>();
+    for (const record of records) {
+      const validated = validateTaskRecord(record);
+      if (ids.has(validated.columns.noteId)) fail("unique note id", validated.columns.noteId);
+      if (paths.has(validated.columns.path)) fail("unique path", validated.columns.path);
+      ids.add(validated.columns.noteId);
+      paths.add(validated.columns.path);
+      writeValidated(db, writers, validated);
+    }
+  })();
 }
+
+/**
+ * Removes the task at a vault-relative task path, with its tags, its
+ * dependencies and its `vault_notes` row. Returns whether a task was removed. A
+ * path that is not a task note path, or names no indexed task, does nothing, so
+ * this can never delete a note that is not a task.
+ */
+export function removeTaskByPath(db: Database.Database, path: string): boolean {
+  if (!isTaskNotePath(path)) return false;
+  return db.transaction(() => {
+    const row = db.prepare("SELECT note_id FROM task_index WHERE path = ?").get(path) as
+      | { note_id: string }
+      | undefined;
+    if (row === undefined) return false;
+    db.prepare("DELETE FROM task_tags WHERE note_id = ?").run(row.note_id);
+    db.prepare("DELETE FROM task_deps WHERE note_id = ?").run(row.note_id);
+    db.prepare("DELETE FROM task_index WHERE note_id = ?").run(row.note_id);
+    db.prepare("DELETE FROM vault_notes WHERE note_id = ? AND path = ?").run(row.note_id, path);
+    return true;
+  })();
+}
+
+/** Reads one task by its vault-relative path, or null. `day` only affects the overdue flag. */
 export function getTaskByPath(
-  _db: Database.Database,
-  _path: string,
-  _day?: LocalDayBounds,
+  db: Database.Database,
+  path: string,
+  day?: LocalDayBounds,
 ): TaskIndexDetail | null {
-  return null;
+  if (day !== undefined) assertDay(day);
+  const row = db
+    .prepare(`SELECT ${ROW_COLUMNS} FROM task_index t WHERE t.path = @path`)
+    .get({ path, ...dayParams(day) }) as TaskRowSql | undefined;
+  return row === undefined ? null : rowToDetail(row);
 }
-export function blockedBy(_db: Database.Database, _noteId: string): TaskBlockedByItem[] {
-  return [];
+
+interface BlockedByRow {
+  dep_id: string;
+  title: string | null;
+  status: string | null;
 }
+
+/**
+ * The dependencies of a task that are not finished, in id order: each with its
+ * title and status, or, for an id naming no task, an unresolved entry carrying
+ * only the id. A task with none (or an unknown task) gets an empty list.
+ */
+export function blockedBy(db: Database.Database, noteId: string): TaskBlockedByItem[] {
+  const rows = db
+    .prepare(
+      `SELECT d.dep_id AS dep_id, x.title AS title, x.status AS status
+       FROM task_deps d LEFT JOIN task_index x ON x.note_id = d.dep_id
+       WHERE d.note_id = @noteId AND (x.note_id IS NULL OR x.status NOT IN ('done','cancelled'))
+       ORDER BY d.dep_id LIMIT 50`,
+    )
+    .all({ noteId }) as BlockedByRow[];
+  return rows.map((row) =>
+    row.title === null || row.status === null
+      ? { resolved: false, id: row.dep_id }
+      : { resolved: true, id: row.dep_id, title: row.title, status: row.status as TaskStatus },
+  );
+}
+
+interface FeedRowSql {
+  note_id: string;
+  title: string;
+  due_date: string | null;
+  due_at: string | null;
+  sched_date: string | null;
+  sched_at: string | null;
+}
+
+function feedRow(row: FeedRowSql): TaskDueTodayRow {
+  return {
+    taskId: row.note_id,
+    title: row.title,
+    ...(row.due_date === null ? {} : { dueDate: row.due_date }),
+    ...(row.due_at === null ? {} : { dueAt: row.due_at }),
+    ...(row.sched_date === null ? {} : { scheduledDate: row.sched_date }),
+    ...(row.sched_at === null ? {} : { scheduledAt: row.sched_at }),
+  };
+}
+
+/**
+ * The due-today and overdue feed Phase 8 surfaces (D-38): actionable tasks (not
+ * done, cancelled or proposed) due or scheduled in the local day, in the Today
+ * order, and the overdue ones, oldest due first, each at most
+ * {@link TASK_DUE_TODAY_LIMIT} rows. Follows the scope when one is given.
+ */
 export function listDueToday(
-  _db: Database.Database,
-  _query: { readonly day: LocalDayBounds; readonly scope?: string },
+  db: Database.Database,
+  query: { readonly day: LocalDayBounds; readonly scope?: string },
 ): { readonly due: TaskDueTodayRow[]; readonly overdue: TaskDueTodayRow[] } {
-  return { due: [], overdue: [] };
+  assertDay(query.day);
+  const context = contextClause({ scope: query.scope ?? "all" });
+  const params = { ...dayParams(query.day), ...context.params, limit: TASK_DUE_TODAY_LIMIT };
+  const scoped = context.sql === "" ? "" : ` AND ${context.sql}`;
+  const columns = "t.note_id, t.title, t.due_date, t.due_at, t.sched_date, t.sched_at";
+  const todayView = VIEWS.today;
+  const overdueView = VIEWS.overdue;
+  const order = (view: ViewDefinition) =>
+    [...view.keys.map((key) => `${key.expr} ${key.direction}`), "t.note_id ASC"].join(", ");
+  const due = db
+    .prepare(
+      `SELECT ${columns} FROM task_index t WHERE ${todayView.predicate}${scoped} ORDER BY ${order(todayView)} LIMIT @limit`,
+    )
+    .all(params) as FeedRowSql[];
+  const overdue = db
+    .prepare(
+      `SELECT ${columns} FROM task_index t WHERE ${overdueView.predicate}${scoped} ORDER BY ${order(overdueView)} LIMIT @limit`,
+    )
+    .all(params) as FeedRowSql[];
+  return { due: due.map(feedRow), overdue: overdue.map(feedRow) };
 }

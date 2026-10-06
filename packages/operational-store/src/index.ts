@@ -76,8 +76,10 @@ export {
   upsertSessionRun,
 } from "./session-store.js";
 export type {
+  TaskBlockedByItem,
   TaskCounts,
   TaskCursor,
+  TaskDueTodayRow,
   TaskIndexDetail,
   TaskIndexRecord,
   TaskIndexRow,
@@ -86,12 +88,17 @@ export type {
   TaskQueryContext,
 } from "./task-index-store.js";
 export {
+  blockedBy,
   countTasks,
   getTask,
+  getTaskByPath,
   InvalidTaskCursorError,
   InvalidTaskIndexError,
   InvalidTaskQueryError,
+  listDueToday,
   queryTasks,
+  rebuildTaskIndex,
+  removeTaskByPath,
   upsertTask,
 } from "./task-index-store.js";
 export type {
