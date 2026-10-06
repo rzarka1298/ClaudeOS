@@ -344,7 +344,7 @@ OUTSIDE_CLAUDE_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/serv
 # shellcheck disable=SC2086
 check_rule \
   "a file outside packages/service/src/claude/ calls process.kill( (only the Claude services may signal a process, T-06-02)" \
-  "(^|[^A-Za-z0-9_])process[.]kill[[:space:]]*[(]|(^|[^A-Za-z0-9_])process[[:space:]]*[[][[:space:]]*[\"'\`]kill[\"'\`][[:space:]]*[]]|[{,][[:space:]]*kill[[:space:]]*([,}]|:[^,}]*[,}])[^=]*=[[:space:]]*(globalThis[.])?process([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])kill[^;]*from[[:space:]]*[\"'\`](node:)?process[\"'\`]" \
+  "(^|[^A-Za-z0-9_])process[[:space:]]*([?][.]|[.])[[:space:]]*kill[[:space:]]*([?][.][[:space:]]*)?[(]|(^|[^A-Za-z0-9_])process[[:space:]]*([?][.])?[[:space:]]*[[][[:space:]]*[\"'\`]kill[\"'\`][[:space:]]*[]]|[{,][[:space:]]*kill[[:space:]]*([,}]|:[^,}]*[,}])[^=]*=[[:space:]]*(globalThis[.])?process([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])kill[^;]*from[[:space:]]*[\"'\`](node:)?process[\"'\`]" \
   $OUTSIDE_CLAUDE_FILES
 
 # --- Rule 14: no file outside packages/service/src/executors/ calls
@@ -355,7 +355,7 @@ NON_EXECUTOR_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/servic
 # shellcheck disable=SC2086
 check_rule \
   "a file outside packages/service/src/executors/ calls .terminate( (only the executors may invoke the session terminator, T-06-02)" \
-  "[.]terminate[[:space:]]*[(]|[[][[:space:]]*[\"'\`]terminate[\"'\`][[:space:]]*[]]|[{,][[:space:]]*terminate[[:space:]]*([,}]|:[^,}]*[,}])[[:space:]]*=[^=>]" \
+  "[.]terminate[[:space:]]*([?][.][[:space:]]*)?[(]|[[][[:space:]]*[\"'\`]terminate[\"'\`][[:space:]]*[]]|[{,][[:space:]]*terminate[[:space:]]*([,}]|:[^,}]*[,}])[[:space:]]*=[^=>]" \
   $NON_EXECUTOR_FILES
 
 # --- Rule 15: the approval engine's public door, packages/service/src/approval/

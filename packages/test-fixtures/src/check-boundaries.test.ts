@@ -395,6 +395,22 @@ describe("check-boundaries.sh process.kill confinement (T-06-02)", () => {
     expect(result.status).toBe(0);
   });
 
+  it("fires on optional-chained kill calls (Codex review MAJOR)", () => {
+    const bodies = [
+      `process?${"."}kill(1, 0);\n`,
+      `process${"."}kill?${"."}(1, 0);\n`,
+      `process?${"."}kill?${"."}(1, 0);\n`,
+      `globalThis${"."}process?${"."}kill(1, 0);\n`,
+      `process?${"."}["kill"](1, 0);\n`,
+      `process["kill"]?${"."}(1, 0);\n`,
+    ];
+    bodies.forEach((body, i) => {
+      const result = backstop({ [`packages/service/src/o${i}.ts`]: body });
+      expect(result.status, body).toBe(1);
+      expect(result.out, body).toContain(PROCESS_KILL_DESCRIPTION);
+    });
+  });
+
   it("stays anchored: a look-alike or nested claude folder is not the allowed one", () => {
     for (const path of [
       "packages/service/src/claude-extra/services.ts",
@@ -490,6 +506,19 @@ describe("check-boundaries.sh terminate-call confinement (T-06-02)", () => {
     });
     expect(result.out).not.toContain(TERMINATE_CALL_DESCRIPTION);
     expect(result.status).toBe(0);
+  });
+
+  it("fires on an optional call of terminate (Codex review MAJOR)", () => {
+    const bodies = [
+      `export const f = (s: S) => s${"."}terminate?${"."}(t, r);\n`,
+      `export const f = (s: S) => s?${"."}terminate?${"."}(t, r);\n`,
+      `export const f = (s: S) => s["terminate"]?${"."}(t, r);\n`,
+    ];
+    bodies.forEach((body, i) => {
+      const result = backstop({ [`packages/service/src/t${i}.ts`]: body });
+      expect(result.status, body).toBe(1);
+      expect(result.out, body).toContain(TERMINATE_CALL_DESCRIPTION);
+    });
   });
 
   it("stays anchored: a look-alike or nested executors folder is not the allowed one", () => {
