@@ -183,6 +183,35 @@ function isDecidedVia(value: string): value is DecidedVia {
   return (DECIDED_VIA as readonly string[]).includes(value);
 }
 
+/** The most characters the claim facts may serialise to; the facts are a pid and a start time, never a document. */
+const CLAIM_FACTS_MAX_CHARS = 4096;
+
+function serialiseClaimFacts(facts: ClaimFacts): string {
+  if (typeof facts !== "object" || facts === null || Array.isArray(facts)) {
+    throw new InvalidApprovalInputError("claimFacts");
+  }
+  for (const value of Object.values(facts)) {
+    const ok =
+      value === null ||
+      typeof value === "string" ||
+      typeof value === "boolean" ||
+      (typeof value === "number" && Number.isFinite(value));
+    if (!ok) throw new InvalidApprovalInputError("claimFacts");
+  }
+  const json = JSON.stringify(facts);
+  if (json.length > CLAIM_FACTS_MAX_CHARS) throw new InvalidApprovalInputError("claimFacts");
+  return json;
+}
+
+/** An outcome code, evidence code or note: a short fixed-vocabulary token, never free text (APPR-08). */
+const OUTCOME_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+
+function assertOutcomeCode(value: unknown, field: string): asserts value is string {
+  if (typeof value !== "string" || !OUTCOME_CODE_PATTERN.test(value)) {
+    throw new InvalidApprovalInputError(field);
+  }
+}
+
 function parseClaimFacts(json: string): ClaimFacts {
   let parsed: unknown;
   try {
@@ -305,6 +334,35 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
      WHERE proposal_id = @proposalId AND state = 'pending'`,
   );
 
+  const claimOne = db.prepare(
+    `UPDATE proposals
+     SET state = 'executing', claimed_at = @now, claim_facts_json = @facts, attempts = 1,
+         revision = revision + 1
+     WHERE proposal_id = @proposalId AND state = 'approved'`,
+  );
+  const retryOne = db.prepare(
+    `UPDATE proposals SET attempts = attempts + 1, revision = revision + 1
+     WHERE proposal_id = @proposalId AND state = 'executing' AND attempts = @expectedAttempts`,
+  );
+  const finishOne = db.prepare(
+    `UPDATE proposals
+     SET state = @state, outcome_code = @code, outcome_note = @note, finished_at = @now,
+         revision = revision + 1
+     WHERE proposal_id = @proposalId AND state = 'executing'`,
+  );
+  const withdrawOne = db.prepare(
+    `UPDATE proposals SET state = 'withdrawn', decided_at = @now, revision = revision + 1
+     WHERE proposal_id = @proposalId AND state = 'pending'`,
+  );
+  const insertAttempt = db.prepare(
+    `INSERT INTO approval_executions (proposal_id, attempt, started_at)
+     VALUES (@proposalId, @attempt, @startedAt)`,
+  );
+  const finishAttempt = db.prepare(
+    `UPDATE approval_executions SET finished_at = @now, result_code = @code
+     WHERE proposal_id = @proposalId AND attempt = @attempt AND finished_at IS NULL`,
+  );
+
   /** Runs `fn` as one write transaction taken up front, so two connections racing a read-then-write queue instead of failing. */
   function immediate<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
     const transaction = db.transaction(fn);
@@ -420,6 +478,71 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     return approve ? { kind: "approved", proposal } : { kind: "denied", proposal };
   });
 
+  const claimTx = immediate((proposalId: ProposalId, facts: string, now: string): ClaimResult => {
+    const changed = claimOne.run({ proposalId, facts, now });
+    if (changed.changes !== 1) return { kind: "lost" };
+    insertAttempt.run({ proposalId, attempt: 1, startedAt: now });
+    const proposal = mustRead(proposalId);
+    writeAudit(proposalId, "claimed", now, null, proposal.payloadHash, null);
+    return { kind: "claimed", proposal };
+  });
+
+  const retryTx = immediate((proposalId: ProposalId, now: string): RetryResult => {
+    const row = readRow(proposalId);
+    if (row?.state !== "executing") return { kind: "not-executing" };
+    if (row.attempts >= 2) return { kind: "exhausted" };
+    const changed = retryOne.run({ proposalId, expectedAttempts: row.attempts });
+    if (changed.changes !== 1) return { kind: "lost" };
+    insertAttempt.run({ proposalId, attempt: row.attempts + 1, startedAt: now });
+    writeAudit(proposalId, "retried-after-restart", now, null, row.payload_hash, null);
+    return { kind: "retrying", proposal: mustRead(proposalId) };
+  });
+
+  const finishTx = immediate((input: FinishInput): StoredProposal | null => {
+    const row = readRow(input.proposalId);
+    if (row?.state !== "executing") return null;
+    const changed = finishOne.run({
+      proposalId: input.proposalId,
+      state: input.state,
+      code: input.code,
+      note: input.note,
+      now: input.now,
+    });
+    if (changed.changes !== 1) return null;
+    finishAttempt.run({
+      proposalId: input.proposalId,
+      attempt: row.attempts,
+      now: input.now,
+      code: input.code,
+    });
+    const event: ApprovalAuditEvent =
+      input.state === "executed"
+        ? input.reconciled
+          ? "reconciled-executed"
+          : "executed"
+        : input.state === "failed"
+          ? "failed"
+          : "outcome-unknown";
+    writeAudit(
+      input.proposalId,
+      event,
+      input.now,
+      null,
+      row.payload_hash,
+      input.evidence ?? input.code,
+    );
+    return mustRead(input.proposalId);
+  });
+
+  const withdrawTx = immediate((proposalId: ProposalId, now: string): StoredProposal | null => {
+    const row = readRow(proposalId);
+    if (!row) return null;
+    const changed = withdrawOne.run({ proposalId, now });
+    if (changed.changes !== 1) return null;
+    writeAudit(proposalId, "withdrawn", now, null, row.payload_hash, null);
+    return mustRead(proposalId);
+  });
+
   /** A compare-and-set that lost: report whatever the row now says, never throw. */
   function currentStateResult(proposalId: string): DecideResult {
     const row = readRow(proposalId);
@@ -455,14 +578,26 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     counts() {
       throw new ApprovalStoreNotImplementedError("counts");
     },
-    claim(_proposalId: ProposalId, _facts: ClaimFacts, _now: string): ClaimResult {
-      throw new ApprovalStoreNotImplementedError("claim");
+    claim(proposalId: ProposalId, facts: ClaimFacts, now: string): ClaimResult {
+      assertProposalId(proposalId, "proposalId");
+      assertIso(now, "now");
+      return claimTx(proposalId, serialiseClaimFacts(facts), now);
     },
-    beginRetry(_proposalId: ProposalId, _now: string): RetryResult {
-      throw new ApprovalStoreNotImplementedError("beginRetry");
+    beginRetry(proposalId: ProposalId, now: string): RetryResult {
+      assertProposalId(proposalId, "proposalId");
+      assertIso(now, "now");
+      return retryTx(proposalId, now);
     },
-    finish(_input: FinishInput): StoredProposal | null {
-      throw new ApprovalStoreNotImplementedError("finish");
+    finish(input: FinishInput): StoredProposal | null {
+      assertProposalId(input.proposalId, "proposalId");
+      assertIso(input.now, "now");
+      if (input.state !== "executed" && input.state !== "failed" && input.state !== "unknown") {
+        throw new InvalidApprovalInputError("state");
+      }
+      assertOutcomeCode(input.code, "code");
+      if (input.note !== null) assertOutcomeCode(input.note, "note");
+      if (input.evidence !== null) assertOutcomeCode(input.evidence, "evidence");
+      return finishTx(input);
     },
     expireDue(_now: string): ProposalId[] {
       throw new ApprovalStoreNotImplementedError("expireDue");
@@ -476,8 +611,10 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     listApprovedUnclaimed(): StoredProposal[] {
       throw new ApprovalStoreNotImplementedError("listApprovedUnclaimed");
     },
-    withdraw(_proposalId: ProposalId, _now: string): StoredProposal | null {
-      throw new ApprovalStoreNotImplementedError("withdraw");
+    withdraw(proposalId: ProposalId, now: string): StoredProposal | null {
+      assertProposalId(proposalId, "proposalId");
+      assertIso(now, "now");
+      return withdrawTx(proposalId, now);
     },
     purgeDecidedPayloads(_before: string): number {
       throw new ApprovalStoreNotImplementedError("purgeDecidedPayloads");

@@ -100,3 +100,59 @@ WHEN EXISTS (SELECT 1 FROM `approval_audit` WHERE `seq` = NEW.`seq`)
 BEGIN
 	SELECT RAISE(ABORT, 'approval_audit is append-only');
 END;
+--> statement-breakpoint
+-- proposals: the state machine, enforced in SQL as well as by the store's
+-- compare-and-set statements (the store is the first layer, these are the
+-- second). Legal transitions come from PROPOSAL_TRANSITIONS in @ccc/domain:
+--   pending   -> approved, denied, expired, withdrawn
+--   approved  -> executing, lapsed
+--   executing -> executed, failed, unknown
+-- Every other state is terminal. `UPDATE OF` fires when the column is named in
+-- the SET list, so even a no-op assignment to a guarded column is refused.
+CREATE TRIGGER IF NOT EXISTS `proposals_transition_guard` BEFORE UPDATE OF `state` ON `proposals`
+WHEN NOT (
+	(OLD.`state` = 'pending' AND NEW.`state` IN ('approved', 'denied', 'expired', 'withdrawn'))
+	OR (OLD.`state` = 'approved' AND NEW.`state` IN ('executing', 'lapsed'))
+	OR (OLD.`state` = 'executing' AND NEW.`state` IN ('executed', 'failed', 'unknown'))
+)
+BEGIN
+	SELECT RAISE(ABORT, 'illegal proposal state transition');
+END;
+--> statement-breakpoint
+-- Everything the owner saw and the payload hash covers, plus the identifiers
+-- and times a decision depends on, can never be rewritten after submit.
+CREATE TRIGGER IF NOT EXISTS `proposals_identity_immutable`
+BEFORE UPDATE OF `proposal_id`, `operation`, `subject`, `payload_hash`, `dedupe_key`, `expires_at`, `created_at`, `requester_kind`, `requester_label`, `project_id`, `run_id`, `reason`, `mirror_note_id`, `supersedes` ON `proposals`
+BEGIN
+	SELECT RAISE(ABORT, 'proposal identity columns are immutable');
+END;
+--> statement-breakpoint
+-- The payload text can change in exactly one way: to NULL, once the proposal
+-- is decided (retention, D-19). It can never change while the request is
+-- pending, approved or executing, and a purged payload can never be rewritten.
+CREATE TRIGGER IF NOT EXISTS `proposals_payload_purge_only` BEFORE UPDATE OF `payload_json` ON `proposals`
+WHEN NEW.`payload_json` IS NOT OLD.`payload_json`
+	AND (NEW.`payload_json` IS NOT NULL OR OLD.`state` IN ('pending', 'approved', 'executing'))
+BEGIN
+	SELECT RAISE(ABORT, 'payload may only be purged after the proposal is decided');
+END;
+--> statement-breakpoint
+-- INSERT OR REPLACE and REPLACE delete the conflicting row without firing the
+-- BEFORE DELETE trigger, so a row can only be inserted when no row has its id
+-- and, if it is pending, no other pending row has its dedupe key (the partial
+-- unique index is the other conflict a REPLACE would resolve by deleting).
+-- The store checks for a duplicate pending request first and so never trips
+-- the second branch; it is here to close the REPLACE path.
+CREATE TRIGGER IF NOT EXISTS `proposals_no_replace` BEFORE INSERT ON `proposals`
+WHEN EXISTS (SELECT 1 FROM `proposals` WHERE `proposal_id` = NEW.`proposal_id`)
+	OR (NEW.`state` = 'pending' AND EXISTS (
+		SELECT 1 FROM `proposals` WHERE `state` = 'pending' AND `dedupe_key` = NEW.`dedupe_key`
+	))
+BEGIN
+	SELECT RAISE(ABORT, 'proposals cannot be replaced');
+END;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS `proposals_no_delete` BEFORE DELETE ON `proposals`
+BEGIN
+	SELECT RAISE(ABORT, 'proposals cannot be deleted');
+END;

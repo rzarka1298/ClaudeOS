@@ -514,7 +514,7 @@ describe("the stored row is an untrusted boundary", () => {
 
   it("throws, never guesses, when a stored enum was corrupted behind the store's back", () => {
     const proposal = submitPending();
-    db.prepare("UPDATE proposals SET requester_kind = 'root' WHERE proposal_id = ?").run(
+    db.prepare("UPDATE proposals SET decided_via = 'root' WHERE proposal_id = ?").run(
       proposal.proposalId,
     );
     expect(() => store.get(proposal.proposalId)).toThrow();
