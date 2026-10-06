@@ -4,6 +4,11 @@
 import { describe, expect, it } from "vitest";
 import { NOTE_FRONTMATTER_KEY_ORDER } from "./note-schema.js";
 import {
+  HOSTILE_TASK_TITLES,
+  VALID_HOSTILE_TASK_TITLES,
+  YAML_NOTE_VARIANTS,
+} from "./task-corpus.js";
+import {
   isOpenTaskStatus,
   TASK_DECISION_KEY_ORDER,
   TASK_FILE_MAX_BYTES,
@@ -17,11 +22,6 @@ import {
   TaskFrontmatterSchema,
   TaskTitleSchema,
 } from "./task-schema.js";
-import {
-  HOSTILE_TASK_TITLES,
-  VALID_HOSTILE_TASK_TITLES,
-  YAML_NOTE_VARIANTS,
-} from "./task-corpus.js";
 
 const ID_A = "abcdefghi0123456789abcdef";
 const ID_B = "zyxwvutsr9876543210fedcba";
@@ -62,7 +62,7 @@ describe("Test 1 (shape)", () => {
         due: "2026-10-09",
         scheduled: "2026-10-08T09:30:00-04:00",
         completed: "2026-10-10T10:00:00Z",
-        projectId: "abcdefghi0123456789abcdef".slice(0, 9) + "0123456789abcdef",
+        projectId: "abcdefghi0123456789abcdef",
         assignee: "automation",
         sourceType: "email",
         sourceLink: "message-id-in-plain-text",
@@ -149,18 +149,27 @@ describe("Test 3 (title)", () => {
 
   it("rejects a control, line-separator or paragraph-separator character", () => {
     for (const cp of [0x00, 0x09, 0x0a, 0x0d, 0x1b, 0x7f, 0x85, 0x2028, 0x2029]) {
-      expect(parses({ title: `a${String.fromCodePoint(cp)}b` }), `U+${cp.toString(16)}`).toBe(false);
+      expect(parses({ title: `a${String.fromCodePoint(cp)}b` }), `U+${cp.toString(16)}`).toBe(
+        false,
+      );
     }
   });
 
   it("rejects every bidi control and every zero-width or soft-hyphen format character", () => {
     for (const cp of [...BIDI_CODE_POINTS, 0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x00ad]) {
-      expect(parses({ title: `a${String.fromCodePoint(cp)}b` }), `U+${cp.toString(16)}`).toBe(false);
+      expect(parses({ title: `a${String.fromCodePoint(cp)}b` }), `U+${cp.toString(16)}`).toBe(
+        false,
+      );
     }
   });
 
   it("accepts ordinary international text", () => {
-    for (const title of ["Review the budget", "Buy caf\u00e9 beans", "Prepare slides", "Plan the trip"]) {
+    for (const title of [
+      "Review the budget",
+      "Buy caf\u00e9 beans",
+      "Prepare slides",
+      "Plan the trip",
+    ]) {
       expect(TaskTitleSchema.safeParse(title).success, title).toBe(true);
     }
   });
@@ -181,7 +190,14 @@ describe("Test 4 (dates)", () => {
   });
 
   it("rejects an offset-less datetime and a nonsense string", () => {
-    for (const value of ["2026-10-09T15:00:00", "2026-10-09 15:00:00", "next friday", "2026-02-30", "", "15:00"]) {
+    for (const value of [
+      "2026-10-09T15:00:00",
+      "2026-10-09 15:00:00",
+      "next friday",
+      "2026-02-30",
+      "",
+      "15:00",
+    ]) {
       expect(parses({ due: value }), value).toBe(false);
       expect(parses({ scheduled: value }), value).toBe(false);
     }
@@ -195,7 +211,9 @@ describe("Test 4 (dates)", () => {
   });
 
   it("never confuses the two forms: a date stays a date and an instant stays an instant", () => {
-    const parsed = TaskFrontmatterSchema.parse(base({ due: "2026-10-09", scheduled: "2026-10-09T15:00:00Z" }));
+    const parsed = TaskFrontmatterSchema.parse(
+      base({ due: "2026-10-09", scheduled: "2026-10-09T15:00:00Z" }),
+    );
     expect(parsed.due).toBe("2026-10-09");
     expect(parsed.scheduled).toBe("2026-10-09T15:00:00Z");
   });
@@ -216,10 +234,26 @@ describe("Test 5 (relations and tags)", () => {
   });
 
   it("follows Obsidian's tag rules", () => {
-    for (const tag of ["work", "Work_2", "q4-review", "projects/alpha/beta", "2026-q1", "caf\u00e9"]) {
+    for (const tag of [
+      "work",
+      "Work_2",
+      "q4-review",
+      "projects/alpha/beta",
+      "2026-q1",
+      "caf\u00e9",
+    ]) {
       expect(parses({ tags: [tag] }), tag).toBe(true);
     }
-    for (const tag of ["has space", "1984", "#hash", "a,b", "", "x".repeat(65), "tab\tin", "emoji\u{1F600}"]) {
+    for (const tag of [
+      "has space",
+      "1984",
+      "#hash",
+      "a,b",
+      "",
+      "x".repeat(65),
+      "tab\tin",
+      "emoji\u{1F600}",
+    ]) {
       expect(parses({ tags: [tag] }), tag).toBe(false);
     }
     expect(parses({ tags: ["x".repeat(64)] })).toBe(true);
@@ -238,17 +272,26 @@ describe("Test 6 (decision)", () => {
   });
 
   it("carries an outcome of accepted or dismissed plus an instant", () => {
-    expect(TaskDecisionSchema.safeParse({ outcome: "accepted", at: "2026-10-05T13:00:00Z" }).success).toBe(true);
-    expect(TaskDecisionSchema.safeParse({ outcome: "approved", at: "2026-10-05T13:00:00Z" }).success).toBe(false);
-    expect(TaskDecisionSchema.safeParse({ outcome: "accepted", at: "yesterday" }).success).toBe(false);
+    expect(
+      TaskDecisionSchema.safeParse({ outcome: "accepted", at: "2026-10-05T13:00:00Z" }).success,
+    ).toBe(true);
+    expect(
+      TaskDecisionSchema.safeParse({ outcome: "approved", at: "2026-10-05T13:00:00Z" }).success,
+    ).toBe(false);
+    expect(TaskDecisionSchema.safeParse({ outcome: "accepted", at: "yesterday" }).success).toBe(
+      false,
+    );
     expect(TaskDecisionSchema.safeParse({ outcome: "accepted" }).success).toBe(false);
   });
 
   it("is strict: an extra key is rejected", () => {
     expect(
-      TaskDecisionSchema.safeParse({ outcome: "accepted", at: "2026-10-05T13:00:00Z", by: "me" }).success,
+      TaskDecisionSchema.safeParse({ outcome: "accepted", at: "2026-10-05T13:00:00Z", by: "me" })
+        .success,
     ).toBe(false);
-    expect(parses({ decision: { outcome: "accepted", at: "2026-10-05T13:00:00Z", extra: 1 } })).toBe(false);
+    expect(
+      parses({ decision: { outcome: "accepted", at: "2026-10-05T13:00:00Z", extra: 1 } }),
+    ).toBe(false);
   });
 });
 
@@ -287,7 +330,9 @@ describe("Test 7 (key order)", () => {
 
   it("gives the decision map its own two-key order, outcome then at", () => {
     expect([...TASK_DECISION_KEY_ORDER]).toEqual(["outcome", "at"]);
-    expect(Object.keys(TaskDecisionSchema.shape).sort()).toEqual([...TASK_DECISION_KEY_ORDER].sort());
+    expect(Object.keys(TaskDecisionSchema.shape).sort()).toEqual(
+      [...TASK_DECISION_KEY_ORDER].sort(),
+    );
   });
 
   it("names the tasks folder", () => {
@@ -309,33 +354,99 @@ describe("Test 9 (hostile corpus)", () => {
   });
 
   it("covers every hostile family the research names", () => {
-    const has = (predicate: (title: string) => boolean): boolean => HOSTILE_TASK_TITLES.some(predicate);
+    const has = (predicate: (title: string) => boolean): boolean =>
+      HOSTILE_TASK_TITLES.some(predicate);
     for (const word of ["yes", "no", "on", "off", "null", "~", "true", "false"]) {
       expect(HOSTILE_TASK_TITLES, word).toContain(word);
     }
-    expect(has((t) => /^-?\d+$/.test(t)), "integer").toBe(true);
-    expect(has((t) => /^0x[0-9a-f]+$/i.test(t)), "hex").toBe(true);
-    expect(has((t) => /^0o?[0-7]+$/.test(t)), "octal").toBe(true);
-    expect(has((t) => /^\d+:\d\d:\d\d$/.test(t)), "sexagesimal").toBe(true);
-    expect(has((t) => /^\d{4}-\d\d-\d\d$/.test(t)), "date").toBe(true);
-    expect(has((t) => /^\d{4}-\d\d-\d\dT[\d:]+Z$/.test(t)), "timestamp").toBe(true);
-    for (const lead of ["-", "?", ":", "[", "{", "#", "&", "*", "!", "|", ">", "'", '"', "%", "@", "`"]) {
-      expect(has((t) => t.startsWith(lead)), `leading ${lead}`).toBe(true);
+    expect(
+      has((t) => /^-?\d+$/.test(t)),
+      "integer",
+    ).toBe(true);
+    expect(
+      has((t) => /^0x[0-9a-f]+$/i.test(t)),
+      "hex",
+    ).toBe(true);
+    expect(
+      has((t) => /^0o?[0-7]+$/.test(t)),
+      "octal",
+    ).toBe(true);
+    expect(
+      has((t) => /^\d+:\d\d:\d\d$/.test(t)),
+      "sexagesimal",
+    ).toBe(true);
+    expect(
+      has((t) => /^\d{4}-\d\d-\d\d$/.test(t)),
+      "date",
+    ).toBe(true);
+    expect(
+      has((t) => /^\d{4}-\d\d-\d\dT[\d:]+Z$/.test(t)),
+      "timestamp",
+    ).toBe(true);
+    for (const lead of [
+      "-",
+      "?",
+      ":",
+      "[",
+      "{",
+      "#",
+      "&",
+      "*",
+      "!",
+      "|",
+      ">",
+      "'",
+      '"',
+      "%",
+      "@",
+      "`",
+    ]) {
+      expect(
+        has((t) => t.startsWith(lead)),
+        `leading ${lead}`,
+      ).toBe(true);
     }
-    expect(has((t) => t.includes(": ")), "colon space").toBe(true);
-    expect(has((t) => t.includes(" #")), "hash").toBe(true);
-    expect(has((t) => t.includes("'") && t.includes('"')), "both quotes").toBe(true);
-    expect(has((t) => t.startsWith("&") || t.startsWith("*")), "anchor or alias").toBe(true);
-    expect(has((t) => t.startsWith("!!")), "tag").toBe(true);
+    expect(
+      has((t) => t.includes(": ")),
+      "colon space",
+    ).toBe(true);
+    expect(
+      has((t) => t.includes(" #")),
+      "hash",
+    ).toBe(true);
+    expect(
+      has((t) => t.includes("'") && t.includes('"')),
+      "both quotes",
+    ).toBe(true);
+    expect(
+      has((t) => t.startsWith("&") || t.startsWith("*")),
+      "anchor or alias",
+    ).toBe(true);
+    expect(
+      has((t) => t.startsWith("!!")),
+      "tag",
+    ).toBe(true);
     expect(HOSTILE_TASK_TITLES).toContain("---");
     expect(HOSTILE_TASK_TITLES).toContain("...");
     expect(HOSTILE_TASK_TITLES).toContain("---js");
-    expect(has((t) => t.length === 300), "300 characters").toBe(true);
+    expect(
+      has((t) => t.length === 300),
+      "300 characters",
+    ).toBe(true);
     for (const cp of [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069]) {
-      expect(has((t) => t.includes(String.fromCodePoint(cp))), `U+${cp.toString(16)}`).toBe(true);
+      expect(
+        has((t) => t.includes(String.fromCodePoint(cp))),
+        `U+${cp.toString(16)}`,
+      ).toBe(true);
     }
-    expect(has((t) => t.includes("\n")), "newline").toBe(true);
-    expect(has((t) => t.includes("\0")), "NUL").toBe(true);
+    expect(
+      has((t) => t.includes("\n")),
+      "newline",
+    ).toBe(true);
+    expect(
+      has((t) => t.includes("\0")),
+      "NUL",
+    ).toBe(true);
   });
 
   it("parses every single-line entry as a title and rejects every other entry", () => {
@@ -390,7 +501,10 @@ describe("Test 9 (hostile corpus)", () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, join } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "task-corpus.ts"), "utf8");
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "task-corpus.ts"),
+      "utf8",
+    );
     // biome-ignore lint/suspicious/noControlCharactersInRegex: the point is to find any non-ASCII byte
     expect(source).not.toMatch(/[^\x09\x0a\x20-\x7e]/);
   });
