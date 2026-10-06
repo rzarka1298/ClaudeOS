@@ -436,6 +436,25 @@ describe("non-literal and require-form imports are refused in the service (revie
   });
 });
 
+describe("computed imports are refused in every service module extension (Codex review MAJOR)", () => {
+  const CODE = `const n = "../approval/mint/mint-token.js";\nawait import(n);\n`;
+  for (const ext of ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"]) {
+    test(`FIRES: computed import in a .${ext} service file`, async () => {
+      const messages = await allMessagesFor(`packages/service/src/routes/x.${ext}`, CODE);
+      expect(messages.map((m) => m.ruleId)).toContain("no-restricted-syntax");
+    });
+  }
+  for (const ext of ["ts", "tsx", "mts", "cts", "mjs", "cjs"]) {
+    test(`QUIET: literal import in a .${ext} service file`, async () => {
+      const messages = await allMessagesFor(
+        `packages/service/src/routes/x.${ext}`,
+        'await import("@ccc/domain");\n',
+      );
+      expect(messages).toHaveLength(0);
+    });
+  }
+});
+
 describe("the approval public door never re-exports the minter (review MAJOR-2)", () => {
   const DOOR = "packages/service/src/approval/index.ts";
   test("FIRES: export * from the minter", async () => {

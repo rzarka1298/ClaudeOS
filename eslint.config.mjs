@@ -433,10 +433,14 @@ export default [
     // named-import check cannot see. scripts/check-boundaries.sh
     // rule 8 is the independent literal-grep layer under this one.
     files: [
-      "packages/launchers/**/*.ts",
-      "packages/service/**/*.ts",
+      "packages/launchers/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+      "packages/service/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
       "packages/test-fixtures/boundary-violations/service/**/*.ts",
     ],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: { sourceType: "module" },
+    },
     rules: {
       "no-restricted-syntax": [
         "error",
