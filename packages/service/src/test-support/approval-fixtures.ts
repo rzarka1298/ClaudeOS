@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   ApprovalDecision,
+  ApprovalItemView,
   ApprovalSummary,
   ApprovalsSnapshot,
   ApprovalTestRequest,
@@ -242,4 +243,53 @@ export async function startRouteHarness(
       rmSync(dir, { recursive: true, force: true });
     },
   };
+}
+
+/** A syntactically valid run id. */
+export const RUN_ID = "0mfk1a2b3c4d5e6f7a8b9c0d1";
+
+/** A complete, valid, pending item view (a force-terminate request), with synthetic data only. */
+export function approvalView(overrides: Record<string, unknown> = {}): ApprovalItemView {
+  return {
+    proposalId: proposalId(1),
+    state: "pending",
+    revision: 1,
+    title: "Force-terminate Refactor parser",
+    destructive: true,
+    effect: "force-terminate Refactor parser",
+    expiresAt: "2026-10-06T12:14:00.000Z",
+    requester: { kind: "dashboard", label: "Dashboard" },
+    project: "example-project",
+    run: { runId: RUN_ID, name: "Refactor parser" },
+    action: "Force-terminate the Claude Code session Refactor parser by ending its process.",
+    target: [{ label: "Session", value: "Refactor parser", mono: false }],
+    change: {
+      type: "diff",
+      origin: "engine",
+      lines: [
+        { kind: "removed", text: "state: running", count: null },
+        { kind: "added", text: "state: cancelled", count: null },
+      ],
+    },
+    reason: {
+      origin: "requester",
+      shown: "The session stopped responding.",
+      full: "The session stopped responding.",
+      shortened: false,
+    },
+    risks: ["Unsaved work in that session is lost."],
+    checkHint: null,
+    record: {
+      requestedAt: "2026-10-06T11:59:00.000Z",
+      payloadHash: HASH,
+      fingerprint: HASH.slice(0, 12),
+      decidedAt: null,
+      decidedVia: null,
+      outcomeCode: null,
+      outcomeNote: null,
+    },
+    history: [{ event: "requested", at: "2026-10-06T11:59:00.000Z" }],
+    reviewable: true,
+    ...overrides,
+  } as unknown as ApprovalItemView;
 }

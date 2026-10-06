@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   APPROVAL_AUDIT_EVENTS,
+  ApprovalSummarySchema,
   DECIDED_VIA,
   PAYLOAD_HASH_PATTERN,
   ProposalIdSchema,
@@ -297,6 +298,21 @@ export type ApprovalItemView = z.infer<typeof ApprovalItemViewSchema>;
 /** `POST` get response: the one request's view. */
 export const ApprovalGetResponseSchema = z.strictObject({ view: ApprovalItemViewSchema });
 export type ApprovalGetResponse = z.infer<typeof ApprovalGetResponseSchema>;
+
+/**
+ * `POST` get response as the approval route sends it (plan 06-13): the summary,
+ * the service-built view (null once the payload was purged or can no longer be
+ * rendered), whether it was purged, and the FULL payload hash a decision must
+ * echo back. The hash is from the stored row, so it is present when the view is
+ * not. The plugin renders the view and never parses a payload.
+ */
+export const ApprovalDetailResponseSchema = z.strictObject({
+  summary: ApprovalSummarySchema,
+  view: ApprovalItemViewSchema.nullable(),
+  purged: z.boolean(),
+  payloadHash: z.string().regex(PAYLOAD_HASH_PATTERN),
+});
+export type ApprovalDetailResponse = z.infer<typeof ApprovalDetailResponseSchema>;
 
 /** Which parts of a view were cut by a cap or by the output bound when it was built. */
 export interface ViewTruncation {

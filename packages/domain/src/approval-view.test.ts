@@ -11,6 +11,7 @@ import {
   APPROVAL_HISTORY_MAX,
   APPROVAL_STATE_DISPLAY,
   APPROVAL_TEXT_CAPS,
+  ApprovalDetailResponseSchema,
   ApprovalGetResponseSchema,
   type ApprovalItemView,
   ApprovalItemViewSchema,
@@ -440,6 +441,38 @@ describe("ApprovalItemView (Test 3)", () => {
     expect(ApprovalGetResponseSchema.safeParse({ view }).success).toBe(true);
     expect(ApprovalGetResponseSchema.safeParse({ view, extra: 1 }).success).toBe(false);
     expect(ApprovalGetResponseSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("wraps the summary, the view or null, the purged flag and the full hash in the detail response (plan 06-13)", () => {
+    const view = markReviewability(fixture(), { change: false, reason: false, target: false });
+    const summary = {
+      proposalId: view.proposalId,
+      state: "pending",
+      revision: 1,
+      title: "Test approval",
+      operationLabel: "Test approval",
+      requesterKind: "dashboard",
+      requesterLabel: "Dashboard",
+      projectName: null,
+      runId: null,
+      createdAt: "2026-10-04T15:00:00.000Z",
+      expiresAt: "2026-10-04T15:20:00.000Z",
+      decidedAt: null,
+      outcomeCode: null,
+    };
+    const hash = "ab12".repeat(16);
+    const body = { summary, view, purged: false, payloadHash: hash };
+    expect(ApprovalDetailResponseSchema.safeParse(body).success).toBe(true);
+    expect(
+      ApprovalDetailResponseSchema.safeParse({ ...body, view: null, purged: true }).success,
+    ).toBe(true);
+    expect(ApprovalDetailResponseSchema.safeParse({ ...body, extra: 1 }).success).toBe(false);
+    expect(
+      ApprovalDetailResponseSchema.safeParse({ ...body, payloadHash: hash.slice(0, 12) }).success,
+    ).toBe(false);
+    expect(ApprovalDetailResponseSchema.safeParse({ summary, view, purged: false }).success).toBe(
+      false,
+    );
   });
 });
 

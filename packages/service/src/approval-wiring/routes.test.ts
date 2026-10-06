@@ -6,17 +6,25 @@ import {
   APPROVAL_DECIDE_PATH,
   APPROVAL_GET_PATH,
   APPROVAL_LIST_PATH,
+  APPROVAL_RESPONSE_BUDGET_BYTES,
   APPROVAL_TEST_PATH,
+  ApprovalDetailResponseSchema,
+  type ApprovalSummary,
+  type ApprovalsSnapshot,
   ApprovalTestRequestSchema,
+  capDiffLines,
   DECIDED_VIA_HEADER,
   DECIDED_VIA_PLUGIN,
   DecideResponseSchema,
+  fitApprovalsSnapshotToBudget,
   HANDSHAKE_PATH,
+  markReviewability,
 } from "@ccc/domain";
 import { applyMigrations, type OperationalStore, openStore } from "@ccc/operational-store";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../logging.js";
 import {
+  approvalView,
   createFakeServices,
   type FakeServices,
   HASH,
@@ -393,5 +401,167 @@ describe("errors (tracer test 9)", () => {
     }
     expect(logged).toContain("TypeError");
     expect(logged).toContain("RangeError");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: the get route, the ready flag and the response-size guarantee
+
+const ID_1 = proposalId(1);
+
+/** Every text field of a summary at its schema maximum, in a three-byte script. */
+function maxSummary(n: number, state: ApprovalSummary["state"] = "pending"): ApprovalSummary {
+  const cjk = (count: number) => "\u6f22".repeat(count);
+  return summary(n, state, {
+    title: cjk(120),
+    operationLabel: cjk(80),
+    requesterLabel: cjk(64),
+    projectName: cjk(120),
+    runId: "0mfk1a2b3c4d5e6f7a8b9c0d1",
+    decidedAt: "2026-10-06T10:30:00.000Z",
+    outcomeCode: "x".repeat(64),
+  });
+}
+
+describe("get route (task 2 test 1)", () => {
+  it("answers the summary, the view, the purged flag and the full hash", async () => {
+    const view = approvalView();
+    fake.script.getResult = {
+      kind: "found",
+      summary: summary(1),
+      view,
+      purged: false,
+      payloadHash: HASH,
+    };
+    const reply = await call<unknown>(APPROVAL_GET_PATH, { body: { proposalId: ID_1 } });
+    expect(reply.status).toBe(200);
+    const parsed = ApprovalDetailResponseSchema.parse(reply.body);
+    expect(parsed.payloadHash).toBe(HASH);
+    expect(parsed.purged).toBe(false);
+    expect(parsed.view?.proposalId).toBe(ID_1);
+    expect(fake.getCalls).toEqual([ID_1]);
+  });
+
+  it("answers a null view for a purged request", async () => {
+    fake.script.getResult = {
+      kind: "found",
+      summary: summary(1, "executed"),
+      view: null,
+      purged: true,
+      payloadHash: HASH,
+    };
+    const reply = await call<unknown>(APPROVAL_GET_PATH, { body: { proposalId: ID_1 } });
+    expect(reply.status).toBe(200);
+    const parsed = ApprovalDetailResponseSchema.parse(reply.body);
+    expect(parsed.view).toBeNull();
+    expect(parsed.purged).toBe(true);
+  });
+
+  it("answers the closed not-found error for an unknown id and 400 for a bad body", async () => {
+    const missing = await call(APPROVAL_GET_PATH, { body: { proposalId: proposalId(9) } });
+    expect(missing.status).toBe(404);
+    expect(missing.body).toEqual({ error: "not-found" });
+    for (const body of [{}, { proposalId: "short" }, { proposalId: ID_1, extra: 1 }]) {
+      const bad = await call(APPROVAL_GET_PATH, { body });
+      expect(bad.status).toBe(400);
+      expect(bad.body).toEqual(INVALID_BODY);
+    }
+    expect(fake.getCalls).toHaveLength(1);
+  });
+});
+
+describe("ready flag (task 2 test 4)", () => {
+  it("reports ready only while the services report ready", async () => {
+    fake.script.ready = true;
+    const ready = await call<ApprovalsSnapshot>(APPROVAL_LIST_PATH, { method: "GET" });
+    expect(ready.body.ready).toBe(true);
+    fake.script.ready = false;
+    const notReady = await call<ApprovalsSnapshot>(APPROVAL_LIST_PATH, { method: "GET" });
+    expect(notReady.body.ready).toBe(false);
+    fake.script.snapshot = { ...fake.script.snapshot, ready: false };
+    fake.script.ready = true;
+    const engineNotReady = await call<ApprovalsSnapshot>(APPROVAL_LIST_PATH, { method: "GET" });
+    expect(engineNotReady.body.ready).toBe(false);
+  });
+});
+
+describe("response size (task 2 test 5)", () => {
+  const CAP = 64 * 1024;
+
+  it("sends a maximum-size snapshot byte for byte and under the client cap", async () => {
+    const wide: ApprovalsSnapshot = {
+      ready: true,
+      pending: Array.from({ length: 50 }, (_, i) => maxSummary(i + 1)),
+      decided: Array.from({ length: 50 }, (_, i) => maxSummary(i + 100, "executed")),
+      expired: Array.from({ length: 50 }, (_, i) => maxSummary(i + 200, "expired")),
+      counts: { pending: 50, decided: 50, expired: 50 },
+      truncated: false,
+    };
+    // The untrimmed inbox is far over the cap; the services' budgeted builder trims it.
+    expect(Buffer.byteLength(JSON.stringify(wide))).toBeGreaterThan(CAP);
+    const trimmed = fitApprovalsSnapshotToBudget(wide, APPROVAL_RESPONSE_BUDGET_BYTES);
+    fake.script.snapshot = trimmed;
+    const reply = await call<unknown>(APPROVAL_LIST_PATH, { method: "GET" });
+    expect(reply.status).toBe(200);
+    expect(reply.raw).toBe(JSON.stringify(trimmed));
+    expect(Buffer.byteLength(reply.raw, "utf8")).toBeLessThan(CAP);
+    // Multibyte: the character count would pass a naive check the byte count would not.
+    expect(Buffer.byteLength(reply.raw, "utf8")).toBeGreaterThan(reply.raw.length);
+  });
+
+  it("sends a maximum-size detail byte for byte and under the client cap", async () => {
+    const cjk = (count: number) => "\u6f22".repeat(count);
+    const lines = Array.from({ length: 30 }, (_, i) => ({
+      kind: i % 2 === 0 ? ("removed" as const) : ("added" as const),
+      text: cjk(400),
+    }));
+    const { change } = capDiffLines(lines, "engine");
+    const view = markReviewability(
+      {
+        ...approvalView(),
+        change,
+        reason: {
+          origin: "requester",
+          shown: cjk(1000),
+          full: cjk(4000),
+          shortened: false,
+        },
+      },
+      { change: false, reason: false, target: false },
+    );
+    // The precondition the engine guarantees: the view alone is within its budget.
+    expect(Buffer.byteLength(JSON.stringify({ view }), "utf8")).toBeLessThanOrEqual(
+      APPROVAL_RESPONSE_BUDGET_BYTES,
+    );
+    // And it is big in bytes while modest in characters.
+    const found = {
+      kind: "found",
+      summary: maxSummary(1),
+      view,
+      purged: false,
+      payloadHash: HASH,
+    } as const;
+    fake.script.getResult = found;
+    const reply = await call<unknown>(APPROVAL_GET_PATH, { body: { proposalId: ID_1 } });
+    expect(reply.status).toBe(200);
+    const expected = JSON.stringify({
+      summary: found.summary,
+      view: found.view,
+      purged: false,
+      payloadHash: HASH,
+    });
+    expect(reply.raw).toBe(expected);
+    expect(Buffer.byteLength(reply.raw, "utf8")).toBeLessThan(CAP);
+    expect(Buffer.byteLength(reply.raw, "utf8")).toBeGreaterThan(reply.raw.length);
+    expect(Buffer.byteLength(reply.raw, "utf8")).toBeGreaterThan(40 * 1024);
+  });
+
+  it("sends a decided response carrying a maximum-size summary under the client cap", async () => {
+    fake.script.decideResult = { outcome: "decided", approval: maxSummary(1, "approved") };
+    const reply = await call<unknown>(APPROVAL_DECIDE_PATH, {
+      body: { proposalId: ID_1, decision: "approve", payloadHash: HASH },
+    });
+    expect(reply.raw).toBe(JSON.stringify(fake.script.decideResult));
+    expect(Buffer.byteLength(reply.raw, "utf8")).toBeLessThan(CAP);
   });
 });
