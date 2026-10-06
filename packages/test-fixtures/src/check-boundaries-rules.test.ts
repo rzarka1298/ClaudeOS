@@ -35,7 +35,7 @@ describe("check-boundaries.sh rules 8, 9 and 10", () => {
   it("counts fourteen rules and passes on a clean tree", () => {
     const result = backstop({});
     expect(result.status).toBe(0);
-    expect(result.out).toContain("checked 14 rules");
+    expect(result.out).toContain("checked 15 rules");
   });
 
   it("rule 8 fires on a shell-string exec in packages/service, and only rule 8", () => {

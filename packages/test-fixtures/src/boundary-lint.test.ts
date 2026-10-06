@@ -333,6 +333,11 @@ const FIRES: readonly FireCase[] = [
     specifier: "../../service/src/approval/mint/mint-token.js",
   },
   {
+    name: "approval public door -> minter (review MAJOR-2)",
+    importer: "packages/service/src/approval/index.ts",
+    specifier: "./mint/mint-token.js",
+  },
+  {
     name: "minter file -> approval index",
     importer: "packages/service/src/approval/mint/probe.ts",
     specifier: "../index.js",
@@ -428,6 +433,17 @@ describe("non-literal and require-form imports are refused in the service (revie
   test("QUIET: a string-literal dynamic import of an allowed module", async () => {
     const messages = await allMessagesFor(ROUTE, 'await import("@ccc/domain");\n');
     expect(messages.filter((m) => m.ruleId === "no-restricted-syntax")).toHaveLength(0);
+  });
+});
+
+describe("the approval public door never re-exports the minter (review MAJOR-2)", () => {
+  const DOOR = "packages/service/src/approval/index.ts";
+  test("FIRES: export * from the minter", async () => {
+    const messages = await boundariesFor(DOOR, 'export * from "./mint/mint-token.js";\n');
+    expect(messages.map((m) => m.ruleId)).toContain("boundaries/dependencies");
+  });
+  test("QUIET: export * from an engine file", async () => {
+    expect(await boundariesFor(DOOR, 'export * from "./engine.js";\n')).toHaveLength(0);
   });
 });
 

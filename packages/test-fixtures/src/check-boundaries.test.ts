@@ -141,6 +141,7 @@ const MINTER_IMPORT_DESCRIPTION = "imports the approval minter";
 const EXECUTOR_IMPORT_DESCRIPTION = "imports an executor";
 const PROCESS_KILL_DESCRIPTION = "calls process.kill";
 const TERMINATE_CALL_DESCRIPTION = "calls .terminate";
+const PUBLIC_DOOR_DESCRIPTION = "public door";
 const ALL_CONFINEMENT_DESCRIPTIONS = [
   MINTER_IMPORT_DESCRIPTION,
   EXECUTOR_IMPORT_DESCRIPTION,
@@ -210,6 +211,22 @@ describe("check-boundaries.sh minter import confinement (T-06-01, T-06-15)", () 
     });
     expect(result.status).toBe(1);
     expect(result.out).toContain(EXECUTOR_IMPORT_DESCRIPTION);
+  });
+
+  it("fires when the public door (approval/index.ts) references the minter (review MAJOR-2)", () => {
+    const path = "packages/service/src/approval/index.ts";
+    const result = backstop({ [path]: `export * from "./mint${"/"}mint-token.js";\n` });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain(PUBLIC_DOOR_DESCRIPTION);
+    expect(result.out).toContain(path);
+  });
+
+  it("is quiet for the public door when it only re-exports engine files", () => {
+    const result = backstop({
+      "packages/service/src/approval/index.ts": `export * from "./engine.js";\n`,
+    });
+    expect(result.out).not.toContain(PUBLIC_DOOR_DESCRIPTION);
+    expect(result.status).toBe(0);
   });
 
   it("fires on a multi-line import whose specifier is on the closing line", () => {

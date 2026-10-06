@@ -52,6 +52,8 @@
 #  14. no file outside packages/service/src/executors/ calls .terminate( with
 #      a leading dot; a method definition named terminate is not a call
 #      (T-06-02)
+#  15. the approval public door approval/index.ts never references the minter
+#      (MAJOR-2)
 #  Rules 11 to 14 scan non-test source files only and skip comment lines;
 #  every allow-list below is an anchored `^...` path match, never a substring.
 #
@@ -350,6 +352,19 @@ check_rule \
   "a file outside packages/service/src/executors/ calls .terminate( (only the executors may invoke the session terminator, T-06-02)" \
   "[.]terminate[[:space:]]*[(]" \
   $NON_EXECUTOR_FILES
+
+# --- Rule 15: the approval engine's public door, packages/service/src/approval/
+# index.ts, never references the minter (review MAJOR-2, T-06-01). Every service
+# file may import the door, so a door that imports or re-exports the minter
+# (`export * from "./mint/mint-token.js"`) would hand it to all of them; rule
+# 11 cannot see this because the door lives inside the approval folder. Any
+# non-comment line mentioning `mint/` in that one file is a hit. ---
+DOOR_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -E '^packages/service/src/approval/index[.](ts|mts|cts)$' || true)
+# shellcheck disable=SC2086
+check_rule \
+  "the approval public door (packages/service/src/approval/index.ts) references the minter (the public door must never import or re-export approval/mint, T-06-01)" \
+  "mint/|mint-token" \
+  $DOOR_FILES
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: checked ${RULES} rules."

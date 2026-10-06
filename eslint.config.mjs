@@ -269,8 +269,15 @@ export default [
             // its own minter; nothing else, so it can never reach an
             // executor, the store, the service or a route.
             {
-              from: { element: { type: "approval" } },
+              from: { element: { type: "approval", fileInternalPath: "!index.ts" } },
               allow: allowElementTypes(["domain", "approval-minter"]),
+            },
+            // The engine's PUBLIC DOOR (approval/index.ts) is importable by
+            // every service file, so it must never reach the minter -- not by
+            // import and not by `export * from` (review MAJOR-2, T-06-01).
+            {
+              from: { element: { type: "approval", fileInternalPath: "index.ts" } },
+              allow: allowElementTypes(["domain"]),
             },
             // approval-minter -- the single token-minting module. Domain
             // only, and (below) importable by nothing outside the approval
