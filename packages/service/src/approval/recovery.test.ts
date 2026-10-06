@@ -4,7 +4,8 @@ import { recomputeFromStored } from "./canonical-hash.js";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
 import type { FakeOperation } from "./test-support/fake-operation.js";
-import { createHarness, type Harness } from "./test-support/harness.js";
+import { createHarness, type Harness, type LoggedLine } from "./test-support/harness.js";
+import { codesOf, logViolations } from "./test-support/log-allow-list.js";
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -672,5 +673,79 @@ describe("one bad row does not stop recovery (Task 2, beyond the plan)", () => {
     expect(stateOf(h, good)).toBe("executed");
     expect(h.log.lines.some((line) => line.fields.code === "recovery-row-failed")).toBe(true);
     expect(JSON.stringify(h.log.lines)).not.toContain("USERNAME");
+  });
+});
+
+describe("logging allow-list over every recovery branch (Task 3, Test 4)", () => {
+  it("logs only allow-listed keys and short fixed values in every branch of recovery", async () => {
+    const lines: LoggedLine[] = [];
+    const take = (h: Harness) => void lines.push(...h.log.lines);
+
+    {
+      // proven, retried, an unknown verdict, a thrown reconcile
+      const h = createHarness();
+      const ids = ["a", "b", "c", "d"].map((subject) => h.propose({ subject }));
+      for (const id of ids) leaveExecuting(h, id);
+      h.diagnostic.verdicts.push(
+        { kind: "effect-proven", evidence: "effect-row-found" },
+        { kind: "effect-absent" },
+        { kind: "unknown", reason: "run-unreadable" },
+        new Error("reconcile broke /Users/USERNAME"),
+      );
+      await h.engine.recover();
+      await h.engine.settled();
+      take(h);
+    }
+    {
+      // expired, lapsed, claimed, reserved (executing and approved), purge
+      const h = createHarness();
+      const base = h.propose({ subject: "base" });
+      h.propose({ subject: "overdue", requestedTtlMs: MINUTE });
+      const stale = h.propose({ subject: "stale" });
+      approveInStore(h, stale);
+      h.clock.advance(6 * MINUTE);
+      const fresh = h.propose({ subject: "fresh" });
+      approveInStore(h, fresh);
+      rawRow(h, base, { operation: "vault.delete" });
+      rawRow(h, base, { operation: "no.such.operation", state: "approved", attempts: 0 });
+      h.diagnostic.verdicts.push({ kind: "unknown", reason: "run-unreadable" });
+      await h.engine.recover();
+      await h.engine.settled();
+      h.clock.advance(31 * DAY);
+      await h.engine.recover();
+      take(h);
+    }
+    {
+      // a row whose store write throws; a payload that fails its hash
+      const h = createHarness();
+      const bad = h.propose({ subject: "bad" });
+      const tampered = h.propose({ subject: "tampered", payload: { note: "one" } });
+      leaveExecuting(h, bad);
+      leaveExecuting(h, tampered);
+      h.store.tamperPayloadJson(tampered, '{"note":"two"}');
+      h.diagnostic.verdicts.push({ kind: "effect-absent" });
+      const store = h.store as { beginRetry: Harness["store"]["beginRetry"] };
+      store.beginRetry = () => {
+        throw new Error("database is locked /Users/USERNAME");
+      };
+      await h.engine.recover();
+      take(h);
+    }
+
+    expect(logViolations(lines)).toEqual([]);
+    const codes = codesOf(lines);
+    for (const required of [
+      "retried-after-restart",
+      "recovered",
+      "recovery-row-failed",
+      "executed",
+      "outcome-unknown",
+      "reconcile-threw",
+      "operation-reserved",
+      "stored-hash-mismatch",
+    ]) {
+      expect(codes.has(required), `recovery never logged "${required}"`).toBe(true);
+    }
+    expect(JSON.stringify(lines)).not.toContain("USERNAME");
   });
 });

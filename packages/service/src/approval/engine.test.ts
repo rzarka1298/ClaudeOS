@@ -16,7 +16,14 @@ import { resolveOutcome } from "./engine.js";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
 import { createFakeOperation } from "./test-support/fake-operation.js";
-import { createHarness, flush, type Harness, REQUESTER } from "./test-support/harness.js";
+import {
+  createHarness,
+  flush,
+  type Harness,
+  type LoggedLine,
+  REQUESTER,
+} from "./test-support/harness.js";
+import { codesOf, logViolations } from "./test-support/log-allow-list.js";
 
 const createFakeOperation_ = () => createFakeOperation("diagnostic.test");
 
@@ -1092,5 +1099,197 @@ describe("subject must match the payload target (06-w3 finding 5)", () => {
   it("leaves operations without subjectOf unconstrained", () => {
     const h = createHarness();
     expect(h.submit({ subject: "anything" }).kind).toBe("proposed");
+  });
+});
+
+// ===========================================================================
+// 06-12 Task 3: the logging allow-list (A-6, T-06-09)
+
+describe("logging allow-list recorder (06-12 Task 3, Test 4)", () => {
+  const line = (
+    fields: Record<string, unknown>,
+    message?: string,
+    level: LoggedLine["level"] = "info",
+  ): LoggedLine => ({ level, fields, message });
+
+  describe("the recorder itself fails on a violating call (fire-proof)", () => {
+    it("accepts a clean line", () => {
+      expect(
+        logViolations([
+          line({
+            proposalId: "p000000000000000000000001",
+            operation: "diagnostic.test",
+            state: "executed",
+            payloadHash: "a".repeat(64),
+            attempt: 2,
+            reason: "token-expired",
+            code: "executed",
+            count: 3,
+            counts: { expired: 1, purged: 0 },
+          }),
+        ]),
+      ).toEqual([]);
+    });
+
+    it("rejects a key outside the list, whatever it holds", () => {
+      for (const key of ["payload", "diff", "err", "requester", "label", "summary", "message"]) {
+        expect(logViolations([line({ [key]: "x" })]), key).toHaveLength(1);
+      }
+    });
+
+    it("rejects a string longer than 120 characters, and accepts exactly 120", () => {
+      expect(logViolations([line({ reason: "x".repeat(121) })])).toHaveLength(1);
+      expect(logViolations([line({ reason: "x".repeat(120) })])).toEqual([]);
+    });
+
+    it("rejects an error object, an array, an object that is not counts, and a message string", () => {
+      expect(logViolations([line({ code: new Error("boom") })])).toHaveLength(1);
+      expect(logViolations([line({ code: ["a"] })])).toHaveLength(1);
+      expect(logViolations([line({ state: { nested: "x" } })])).toHaveLength(1);
+      expect(logViolations([line({ code: "ok" }, "free text")])).toHaveLength(1);
+      expect(logViolations([line({ counts: { expired: "1" } })])).toHaveLength(1);
+      expect(logViolations([line({ counts: ["1"] })])).toHaveLength(1);
+    });
+
+    it("does not echo a violating value in its report", () => {
+      const report = logViolations([line({ payload: "SECRET-IN-REPORT" })]).join("\n");
+      expect(report).not.toContain("SECRET-IN-REPORT");
+    });
+
+    it("catches a deliberately violating call made through the engine's own log dependency", () => {
+      const h = createHarness();
+      h.propose();
+      expect(logViolations(h.log.lines)).toEqual([]);
+      h.log.warn({ proposalId: "p1", payload: { note: "leak" } });
+      expect(logViolations(h.log.lines)).toHaveLength(1);
+    });
+  });
+
+  describe("the engine scenario matrix logs only allow-listed keys", () => {
+    const REQUIRED_CODES = [
+      "submitted",
+      "approved",
+      "denied",
+      "executed",
+      "withdrawn",
+      "refused",
+      "executor-threw",
+      "token-expired",
+      "stored-hash-mismatch",
+      "integrity-check-failed",
+      "operation-not-decidable",
+      "claim-facts-failed",
+      "finish-failed",
+      "finish-lost",
+      "publish-failed",
+      "mirror-failed",
+      "swept",
+    ];
+
+    it("covers submit, dedupe, rejection, decide, hash mismatch, expiry, claim, execute and every finish state", async () => {
+      const lines: LoggedLine[] = [];
+      const take = (h: Harness) => void lines.push(...h.log.lines);
+
+      {
+        // submit, deduped, rejected, approve, execute, deny, withdraw
+        const h = createHarness();
+        const a = h.propose({ subject: "a" });
+        h.submit({ subject: "a" });
+        h.submit({ operation: "vault.delete", subject: "x" });
+        h.submit({ payload: { nope: true } });
+        const b = h.propose({ subject: "b" });
+        const c = h.propose({ subject: "c" });
+        await decideWith(h, a, "approve");
+        await decideWith(h, b, "deny");
+        h.engine.withdraw(c);
+        await h.engine.settled();
+        take(h);
+      }
+      {
+        // a tampered row: refused at approve, and tampered after approval
+        const h = createHarness();
+        const a = h.propose({ subject: "a", payload: { note: "one" } });
+        h.store.tamperPayloadJson(a, '{"note":"two"}');
+        await decideWith(h, a, "approve", h.store.get(a)?.payloadHash);
+        const b = h.propose({ subject: "b" });
+        h.diagnostic.onClaimFacts = () => h.store.tamperReason(b, "changed after approval");
+        await decideWith(h, b, "approve");
+        await h.engine.settled();
+        take(h);
+      }
+      {
+        // a hand-inserted reserved row
+        const h = createHarness();
+        h.store.insertRaw(rawRow());
+        await decideWith(h, "z000000000000000000000001", "approve", "b".repeat(64));
+        take(h);
+      }
+      {
+        // expiry: the sweep, and a decide at the expiry instant
+        const h = createHarness();
+        h.propose({ subject: "a", requestedTtlMs: MINUTE });
+        const b = h.propose({ subject: "b", requestedTtlMs: 2 * MINUTE });
+        h.clock.advance(MINUTE);
+        h.engine.sweepExpired();
+        h.clock.advance(MINUTE);
+        await decideWith(h, b, "approve");
+        take(h);
+      }
+      {
+        // every finish state: failed (refused), unknown (rejected execute), claim facts failing
+        const h = createHarness();
+        h.diagnostic.claimFactsResult = new Error("facts broke /Users/USERNAME");
+        h.diagnostic.outcomes.push(
+          { kind: "failed", reason: "Has Spaces" as never },
+          new Error("boom /Users/USERNAME"),
+        );
+        for (const subject of ["a", "b"]) {
+          await decideWith(h, h.propose({ subject }), "approve");
+          await h.engine.settled();
+        }
+        take(h);
+      }
+      {
+        // a token past its age before the run
+        const h = createHarness();
+        h.diagnostic.onClaimFacts = () => h.clock.advance(6 * MINUTE);
+        await decideWith(h, h.propose(), "approve");
+        await h.engine.settled();
+        take(h);
+      }
+      {
+        // the store refusing, then losing, the finish
+        const h = createHarness();
+        const store = h.store as { finish: Harness["store"]["finish"] };
+        const original = store.finish.bind(h.store);
+        let calls = 0;
+        store.finish = (input) => {
+          calls += 1;
+          if (calls === 1) throw new Error("disk full /Users/USERNAME");
+          if (calls === 2) return null;
+          return original(input);
+        };
+        for (const subject of ["a", "b"]) {
+          await decideWith(h, h.propose({ subject }), "approve");
+          await h.engine.settled();
+        }
+        take(h);
+      }
+      {
+        // a publisher that throws and a mirror that rejects
+        const h = createHarness({ publisherThrows: true, mirrorRejects: true });
+        await decideWith(h, h.propose(), "approve");
+        await h.engine.settled();
+        await flush();
+        take(h);
+      }
+
+      expect(logViolations(lines)).toEqual([]);
+      const codes = codesOf(lines);
+      for (const required of REQUIRED_CODES) {
+        expect(codes.has(required), `matrix never logged "${required}"`).toBe(true);
+      }
+      expect(JSON.stringify(lines)).not.toContain("USERNAME");
+    });
   });
 });
