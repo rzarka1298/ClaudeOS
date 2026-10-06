@@ -518,6 +518,11 @@ describe("backstop rules 9 and 10 (Task 3 Test 7)", () => {
     expect(result.stdout).toContain("BOUNDARY VIOLATION: a non-test file forges a CapabilityToken");
     expect(result.stdout).toContain("packages/plugin/src/cast.ts:1:");
     expect(result.stdout).not.toContain("cast.test.ts");
-    expect(result.stdout).toContain("2 rule(s) violated");
+    // Three rules fire: 9 (interrupt signal), 10 (token forgery) and, since
+    // plan 06-03, 13 (a process.kill( outside packages/service/src/claude/).
+    expect(result.stdout).toContain(
+      "a file outside packages/service/src/claude/ calls process.kill(",
+    );
+    expect(result.stdout).toContain("3 rule(s) violated");
   }, 30_000);
 });
