@@ -489,7 +489,7 @@ describe("Test 7: writeTaskNote", () => {
       priority: "high",
       due: "2026-10-09",
       tags: ["money", "admin"],
-      projectId: "p-1",
+      projectId: "a1b2c3d4e0123456789abcdef",
       now: NOW,
     });
     expect(written.frontmatter.status).toBe("inbox");

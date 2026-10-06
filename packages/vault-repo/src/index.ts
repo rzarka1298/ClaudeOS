@@ -47,6 +47,23 @@ export {
   planVaultSetup,
   VaultRootMissingError,
 } from "./setup.js";
+export type {
+  ParsedTaskNote,
+  TaskNoteReason,
+  WriteTaskNoteOptions,
+  WrittenTaskNote,
+} from "./task-note.js";
+export {
+  hashTaskNoteBytes,
+  parseTaskNote,
+  stringifyTaskNote,
+  TaskNoteError,
+  TaskNoteInvalidError,
+  TaskNoteRefusedDelimiterError,
+  TaskNoteTooLargeError,
+  tasksFolderFor,
+  writeTaskNote,
+} from "./task-note.js";
 export { VAULT_CLAUDE_MD } from "./vault-claude-md.js";
 export { assertScopedWrite, WorkspaceScopeViolationError } from "./workspace-scope.js";
 export type { WriteNoteOptions, WrittenNote } from "./write-note.js";

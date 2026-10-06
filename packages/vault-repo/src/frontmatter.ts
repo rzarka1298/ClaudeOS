@@ -204,7 +204,7 @@ export interface YamlEngine {
  * refusals, so the executable-engine defence has one definition.
  */
 export function hardenedMatterOptions(yamlEngine?: YamlEngine): {
-  engines: Record<string, unknown>;
+  engines: Record<string, YamlEngine>;
 } {
   return {
     engines: {
@@ -212,6 +212,21 @@ export function hardenedMatterOptions(yamlEngine?: YamlEngine): {
       ...(yamlEngine === undefined ? {} : { yaml: yamlEngine }),
     },
   };
+}
+
+/**
+ * Splits a raw file into its frontmatter data and its body with a caller-chosen
+ * YAML engine, under the same hardened options as every other parse here. This
+ * is the only way another module in this package reaches gray-matter, so the
+ * "never a bare `matter(raw)`" rule stays one definition. The caller must run
+ * {@link assertPlainYamlDelimiter} first; the refusing engines are the second layer.
+ */
+export function parseWithYamlEngine(
+  raw: string,
+  yamlEngine: YamlEngine,
+): { data: unknown; content: string } {
+  const parsed = matter(raw, hardenedMatterOptions(yamlEngine));
+  return { data: parsed.data, content: parsed.content };
 }
 
 /**
