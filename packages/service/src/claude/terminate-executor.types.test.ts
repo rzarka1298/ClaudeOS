@@ -16,7 +16,7 @@ import type { createTerminateExecutor } from "./terminate-executor.js";
 function typeClaims(
   executor: SessionTerminator,
   runId: RunId,
-  otherOperation: CapabilityToken<"vault.write">,
+  otherOperation: CapabilityToken<"diagnostic.test">,
 ): void {
   // @ts-expect-error -- no token at all
   void executor.terminate(runId);
