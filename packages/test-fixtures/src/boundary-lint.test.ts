@@ -382,6 +382,7 @@ describe("approval, approval-minter and executors elements (D-01, D-03, A-4)", (
     test(`FIRES: ${c.name}`, async () => {
       const messages = await boundariesFor(c.importer, `import "${c.specifier}";\n`);
       expect(messages.length).toBeGreaterThan(0);
+      expect(messages.map((m) => m.ruleId)).toContain("boundaries/dependencies");
     });
     test(`quiet half of "${c.name}": the import replaced by a domain type import`, async () => {
       expect(await boundariesFor(c.importer, DOMAIN_TYPE_IMPORT)).toHaveLength(0);
@@ -392,6 +393,42 @@ describe("approval, approval-minter and executors elements (D-01, D-03, A-4)", (
       expect(await boundariesFor(c.importer, `import "${c.specifier}";\n`)).toHaveLength(0);
     });
   }
+});
+
+/** Every lint message (any rule) for `code` linted as `virtualPath`. */
+async function allMessagesFor(virtualPath: string, code: string): Promise<EslintMessage[]> {
+  const results = await lintEngine.lintText(code, { filePath: join(REPO_ROOT, virtualPath) });
+  return results.flatMap((r) => r.messages);
+}
+
+describe("non-literal and require-form imports are refused in the service (review MAJOR-1)", () => {
+  const BT = "`";
+  const ROUTE = "packages/service/src/routes/x.ts";
+  const cases: ReadonlyArray<readonly [string, string]> = [
+    [
+      "template literal without substitution",
+      `await import(${BT}../approval/mint/mint-token.js${BT});\n`,
+    ],
+    [
+      "template literal with substitution",
+      `const n = "mint-token";\nawait import(${BT}../approval/mint/${"$"}{n}.js${BT});\n`,
+    ],
+    ["computed specifier", `const n = "../approval/mint/mint-token.js";\nawait import(n);\n`],
+    [
+      "import-equals require",
+      `import m = require("../approval/mint/mint-token.js");\nexport { m };\n`,
+    ],
+  ];
+  for (const [name, code] of cases) {
+    test(`FIRES: ${name}`, async () => {
+      const messages = await allMessagesFor(ROUTE, code);
+      expect(messages.map((m) => m.ruleId)).toContain("no-restricted-syntax");
+    });
+  }
+  test("QUIET: a string-literal dynamic import of an allowed module", async () => {
+    const messages = await allMessagesFor(ROUTE, 'await import("@ccc/domain");\n');
+    expect(messages.filter((m) => m.ruleId === "no-restricted-syntax")).toHaveLength(0);
+  });
 });
 
 describe("element list and config shape (plan 06-02)", () => {

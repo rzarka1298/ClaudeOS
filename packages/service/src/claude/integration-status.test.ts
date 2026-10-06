@@ -31,6 +31,7 @@ interface HookLib {
   SUBSCRIBED_EVENTS: readonly string[];
 }
 const LIB_URL = new URL("../../../../scripts/claude-hooks/lib.mjs", import.meta.url);
+// eslint-disable-next-line no-restricted-syntax -- test-only load of a repo script by URL; not a module edge the boundary lint governs
 const lib = (await import(LIB_URL.href)) as HookLib;
 
 const TEST_BASE = join(homedir(), ".ccc-test");

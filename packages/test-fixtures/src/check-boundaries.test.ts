@@ -187,6 +187,31 @@ describe("check-boundaries.sh minter import confinement (T-06-01, T-06-15)", () 
     }
   });
 
+  it("fires on a dynamic import whose specifier is a template literal (review MAJOR-1)", () => {
+    const BT = "`";
+    const path = "packages/service/src/routes/x.ts";
+    const plain = backstop({
+      [path]: `const m = await import(${BT}../${MINT_FOLDER}mint-token.js${BT});\nexport { m };\n`,
+    });
+    const interpolated = backstop({
+      "packages/service/src/routes/y.ts": `const m = await import(${BT}../${MINT_FOLDER}${"$"}{"mint-token"}.js${BT});\nexport { m };\n`,
+    });
+    for (const result of [plain, interpolated]) {
+      expect(result.status).toBe(1);
+      expect(result.out).toContain(MINTER_IMPORT_DESCRIPTION);
+    }
+    expect(plain.out).toContain(path);
+  });
+
+  it("fires on a template-literal executor import (review MAJOR-1)", () => {
+    const BT = "`";
+    const result = backstop({
+      "packages/service/src/routes/z.ts": `const m = await import(${BT}../${EXECUTORS_FOLDER}index.js${BT});\nexport { m };\n`,
+    });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain(EXECUTOR_IMPORT_DESCRIPTION);
+  });
+
   it("fires on a multi-line import whose specifier is on the closing line", () => {
     const result = backstop({
       "packages/service/src/multi.ts": `import {\n  one,\n  two,\n} from "./${MINT_FOLDER}mint-token.js";\nexport { one, two };\n`,

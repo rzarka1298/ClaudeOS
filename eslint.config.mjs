@@ -465,6 +465,22 @@ export default [
           message:
             "D-18: import child_process statically, by name (execFile, spawn) -- never through a dynamic import.",
         },
+        {
+          // A template-literal or computed specifier is invisible to
+          // boundaries/dependencies, so a route could load the minter or an
+          // executor through one (review MAJOR-1, T-06-15). Only a plain
+          // string literal is allowed as a dynamic-import argument.
+          selector: 'ImportExpression:not([source.type="Literal"])',
+          message:
+            "T-06-15: a dynamic import() must take a plain string-literal specifier so the boundary lint can see it.",
+        },
+        {
+          // `import x = require("...")` is a module edge the boundary rule does
+          // not follow (review MAJOR-1); use a normal import declaration.
+          selector: 'TSImportEqualsDeclaration[moduleReference.type="TSExternalModuleReference"]',
+          message:
+            "T-06-15: import-equals require() hides a module edge from the boundary lint -- use an import declaration.",
+        },
       ],
     },
   },

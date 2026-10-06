@@ -306,12 +306,12 @@ report_rule \
 # is on the specifier text (`approval/mint` followed by a slash or the closing
 # quote), because a file outside the folder has to name the folder to reach it.
 # Test files are not in NON_TEST_FILES. ---
-SPECIFIER_HEAD="(from|import|require)[[:space:]]*[(]?[[:space:]]*[\"'][^\"']*"
+SPECIFIER_HEAD="(from|import|require)[[:space:]]*[(]?[[:space:]]*[\"'\`][^\"'\`]*"
 OUTSIDE_APPROVAL_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/service/src/approval/' || true)
 # shellcheck disable=SC2086
 check_rule \
   "a file outside packages/service/src/approval/ imports the approval minter (a specifier containing approval/mint; only the engine's own folder may reach it, T-06-01)" \
-  "${SPECIFIER_HEAD}approval/mint(/|[\"'])" \
+  "${SPECIFIER_HEAD}approval/mint(/|[\"'\`])" \
   $OUTSIDE_APPROVAL_FILES
 
 # --- Rule 12: nothing outside packages/service/src/executors/ and the
@@ -324,7 +324,7 @@ OUTSIDE_EXECUTORS_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/s
 # shellcheck disable=SC2086
 check_rule \
   "a file outside packages/service/src/executors/ and packages/service/src/main.ts imports an executor (a specifier reaching the executors folder; effect code is wired only by the composition root, T-06-02)" \
-  "${SPECIFIER_HEAD}/executors(/|[\"'])" \
+  "${SPECIFIER_HEAD}/executors(/|[\"'\`])" \
   $OUTSIDE_EXECUTORS_FILES
 
 # --- Rule 13: no file outside packages/service/src/claude/ calls process.kill(
