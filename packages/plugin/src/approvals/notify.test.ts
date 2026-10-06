@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ApprovalSummary } from "@ccc/domain";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -173,8 +175,9 @@ describe("the notifier decides what is new (plan 06-09, D-11, Pitfall 10)", () =
   });
 
   it("defaults the load time to the injected clock at construction", () => {
-    const h = harness({ loadedAt: undefined, now: () => LOADED_AT + 600_000 });
-    createApprovalNotifier(h.deps)(summary());
+    const h = harness({ now: () => LOADED_AT + 600_000 });
+    const { loadedAt: _ignored, ...withoutLoadedAt } = h.deps;
+    createApprovalNotifier(withoutLoadedAt)(summary());
     expect(h.created).toHaveLength(0);
   });
 
@@ -220,7 +223,7 @@ describe("notificationContent (APPR-09, T-06-10)", () => {
   });
 
   it("strips control, format and bidi characters from the label and cuts it to 40 characters", () => {
-    const hostile = `Dai\u0000ly‮ digest​  ${"x".repeat(80)}`;
+    const hostile = `Dai\u0000ly\u202E digest\u200B\u2028 ${"x".repeat(80)}`;
     const content = notificationContent(summary({ requesterLabel: hostile }));
     const requester = content.body.split(" asks to ")[0] ?? "";
     expect(requester).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
@@ -229,7 +232,7 @@ describe("notificationContent (APPR-09, T-06-10)", () => {
   });
 
   it("falls back to a kind-based requester when nothing visible is left of the label", () => {
-    const content = notificationContent(summary({ requesterLabel: "​‮" }));
+    const content = notificationContent(summary({ requesterLabel: "\u200B\u202E" }));
     expect(content.body).toBe("A skill asks to force-terminate a Claude session.");
   });
 
@@ -291,7 +294,7 @@ describe("the notification shape and its click (APPR-09, T-06-13)", () => {
   });
 
   it("neither the notifier nor the web notification helper imports a client or a decide path", () => {
-    const source = readFileSync(new URL("./notify.ts", import.meta.url), "utf8");
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "notify.ts"), "utf8");
     const specifiers = [...source.matchAll(/(?:from|import)\s+["']([^"']+)["']/g)].map((m) => m[1]);
     for (const specifier of specifiers) {
       expect(specifier).toBe("@ccc/domain");
