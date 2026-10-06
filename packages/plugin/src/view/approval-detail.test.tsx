@@ -1019,7 +1019,7 @@ describe("out-of-order fetches (06-w3 finding 4)", () => {
     second.resolve(approvalDetail(decidedView("executed")));
     await waitFor(() => expect(screen.getAllByText("Carried out")[0]).toBeTruthy());
     first.resolve(approvalDetail());
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
     expect(screen.getAllByText("Carried out")[0]).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Decision" })).toBeNull();
   });
