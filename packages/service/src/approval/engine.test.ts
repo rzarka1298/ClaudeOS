@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import {
+  ApprovalItemViewSchema,
+  ApprovalsSnapshotSchema,
   buildEnvelope,
   canonicalJson,
   type DecideResponse,
@@ -884,5 +886,123 @@ describe("withdraw and decidedVia (Task 2, Test 10)", () => {
     expect(h.store.get(a)?.decidedVia).toBe("other");
     expect(h.store.get(b)?.decidedVia).toBe("plugin");
     expect(h.store.get(c)?.decidedVia).toBe("other");
+  });
+});
+
+// ===========================================================================
+// Task 3: get, list and snapshot
+
+describe("get, list and snapshot (Task 3)", () => {
+  it("get returns the service-built view of a pending request, with the fingerprint and history", async () => {
+    const h = createHarness({ projectName: () => "Project one" });
+    const id = h.propose({
+      projectId: "project-1",
+      reason: "Because.",
+      requester: { kind: "skill", label: "Planner" },
+    });
+    const detail = h.engine.get(id);
+    expect(detail.kind).toBe("found");
+    if (detail.kind !== "found") return;
+    expect(detail.purged).toBe(false);
+    expect(detail.unreadable).toBe(false);
+    expect(detail.view).not.toBeNull();
+    expect(ApprovalItemViewSchema.safeParse(detail.view).success).toBe(true);
+    expect(detail.view?.state).toBe("pending");
+    expect(detail.view?.project).toBe("Project one");
+    expect(detail.view?.reason.shown).toBe("Because.");
+    expect(detail.view?.reviewable).toBe(true);
+    expect(detail.fingerprint).toBe(h.store.get(id)?.payloadHash.slice(0, 12));
+    expect(detail.summary.proposalId).toBe(id);
+    expect(detail.history.map((e) => e.event)).toEqual(["requested"]);
+  });
+
+  it("get follows the request through to its outcome", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    await decideWith(h, id, "approve");
+    await h.engine.settled();
+    const detail = h.engine.get(id);
+    if (detail.kind !== "found") throw new Error("expected found");
+    expect(detail.view?.state).toBe("executed");
+    expect(detail.view?.record.outcomeCode).toBe("executed");
+    expect(detail.view?.record.decidedVia).toBe("plugin");
+    expect(detail.history.map((e) => e.event)).toEqual([
+      "requested",
+      "approved",
+      "claimed",
+      "executed",
+    ]);
+  });
+
+  it("get answers not-found for an unknown or malformed id", () => {
+    const h = createHarness();
+    expect(h.engine.get("q".repeat(25))).toEqual({ kind: "not-found" });
+    expect(h.engine.get("bad")).toEqual({ kind: "not-found" });
+  });
+
+  it("a decided request whose payload was purged returns a null view with purged true, and still the summary, history and fingerprint (Test 9)", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    await decideWith(h, id, "deny");
+    h.store.purgeDecidedPayloads("2099-01-01T00:00:00.000Z");
+    expect(h.store.get(id)?.payloadJson).toBeNull();
+    const detail = h.engine.get(id);
+    if (detail.kind !== "found") throw new Error("expected found");
+    expect(detail.view).toBeNull();
+    expect(detail.purged).toBe(true);
+    expect(detail.summary.state).toBe("denied");
+    expect(detail.history.map((e) => e.event)).toEqual(["requested", "denied"]);
+    expect(detail.fingerprint).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it("a request whose draft can no longer be rendered is reported unreadable, never half-built", () => {
+    const h = createHarness();
+    const id = h.propose();
+    h.diagnostic.renderThrows = true;
+    const detail = h.engine.get(id);
+    if (detail.kind !== "found") throw new Error("expected found");
+    expect(detail.view).toBeNull();
+    expect(detail.unreadable).toBe(true);
+    expect(detail.purged).toBe(false);
+    expect(detail.summary.title.length).toBeGreaterThan(0);
+  });
+
+  it("list returns summaries for a bucket, soonest expiry first for pending", () => {
+    const h = createHarness();
+    const late = h.propose({ subject: "late" });
+    const soon = h.propose({ subject: "soon", requestedTtlMs: MINUTE });
+    expect(h.engine.list("pending").map((s) => s.proposalId)).toEqual([soon, late]);
+    expect(h.engine.list("decided")).toEqual([]);
+    expect(h.engine.list("expired")).toEqual([]);
+  });
+
+  it("snapshot lists pending, decided and expired with true counts and parses against the domain schema", async () => {
+    const h = createHarness();
+    const a = h.propose({ subject: "a" });
+    const b = h.propose({ subject: "b" });
+    const c = h.propose({ subject: "c", requestedTtlMs: MINUTE });
+    await decideWith(h, a, "deny");
+    h.clock.advance(2 * MINUTE);
+    h.store.expireDue(h.clock.now());
+    const snapshot = h.engine.snapshot();
+    expect(ApprovalsSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(snapshot.ready).toBe(true);
+    expect(snapshot.pending.map((s) => s.proposalId)).toEqual([b]);
+    expect(snapshot.decided.map((s) => s.proposalId)).toEqual([a]);
+    expect(snapshot.expired.map((s) => s.proposalId)).toEqual([c]);
+    expect(snapshot.counts).toEqual({ pending: 1, decided: 1, expired: 1 });
+    expect(snapshot.truncated).toBe(false);
+  });
+
+  it("snapshot stays under a budget by trimming decided and expired, never pending", () => {
+    const h = createHarness();
+    for (let i = 0; i < 25; i += 1) h.propose({ subject: `d${i}` });
+    for (let i = 0; i < 25; i += 1) {
+      h.propose({ operation: "session.force-terminate", subject: `t${i}` });
+    }
+    const snapshot = h.engine.snapshot(9000);
+    expect(Buffer.byteLength(JSON.stringify(snapshot), "utf8")).toBeLessThanOrEqual(9000);
+    expect(snapshot.pending).toHaveLength(50);
+    expect(snapshot.counts.pending).toBe(50);
   });
 });

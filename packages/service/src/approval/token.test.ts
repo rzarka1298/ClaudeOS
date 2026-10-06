@@ -98,7 +98,8 @@ describe("token confinement (Test 4)", () => {
   it("the public entry exports no minter, ledger or dispatch symbol", async () => {
     const entry = await import("./index.js");
     const keys = Object.keys(entry);
-    expect(keys).toContain("createApprovalEngine");
+    // Test 10 (public entry): the engine factory and the registry builder, nothing else at run time.
+    expect([...keys].sort()).toEqual(["buildOperationRegistry", "createApprovalEngine"]);
     for (const key of keys) expect(key).not.toMatch(/mint|token|ledger|dispatch|execute/i);
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(/mint\/|mint-token/);
