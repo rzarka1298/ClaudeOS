@@ -29,11 +29,14 @@ import {
   PAYLOAD_HASH_PATTERN,
   type ProposalId,
   ProposalIdSchema,
+  type ReconcileVerdict,
   type Requester,
+  RequesterSchema,
+  RunIdSchema,
   resolveTtlMs,
   type StoredProposal,
 } from "@ccc/domain";
-import { payloadHashOf } from "./canonical-hash.js";
+import { payloadHashOf, recomputeFromStored } from "./canonical-hash.js";
 import { mintToken } from "./mint/mint-token.js";
 import { operationLabelFor, summaryOf } from "./view.js";
 
@@ -157,9 +160,15 @@ export interface EngineDecideInput {
   readonly via: DecidedVia;
 }
 
+export type WithdrawOutcome =
+  | { readonly kind: "withdrawn" }
+  | { readonly kind: "not-withdrawable" };
+
 export interface ApprovalEngine {
   submit(input: SubmitInput): SubmitOutcome;
   decide(input: EngineDecideInput): Promise<DecideResponse>;
+  /** The requester takes back a request that is still pending. */
+  withdraw(proposalId: string): WithdrawOutcome;
   /** Resolves when every execution the engine started has finished (tests, shutdown). */
   settled(): Promise<void>;
 }
@@ -191,8 +200,89 @@ function parseStoredPayload(
   return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
 }
 
+/** Bounds on requester-supplied text the engine stores (T-06-14). */
+const REASON_MAX_CHARS = 16_000;
+const SUBJECT_MAX_CHARS = 1024;
+const PROJECT_ID_MAX_CHARS = 128;
+
 function isoAfter(now: string, ms: number): string {
   return new Date(Date.parse(now) + ms).toISOString();
+}
+
+// ---------------------------------------------------------------------------
+// Outcome handling (D-17, D-42, A-7, Codex finding 1)
+
+/** What the engine writes to the store when an attempt ends. Every code is a fixed token, never free text. */
+export interface FinishDecision {
+  readonly state: "executed" | "failed" | "unknown";
+  readonly code: string;
+  readonly note: string | null;
+  readonly evidence: string | null;
+  readonly reconciled: boolean;
+}
+
+/** `threw: true` is an `execute` that rejected. Its message is never read. */
+export type ExecuteResult =
+  | { readonly threw: true }
+  | { readonly threw: false; readonly outcome: ExecuteOutcome };
+
+const FIXED_TOKEN = /^[a-z][a-z0-9-]{0,63}$/;
+/** Used when an operation hands back evidence that is not a fixed token: the fact is kept, the text is not. */
+const GENERIC_EVIDENCE = "reconcile-evidence";
+
+function fixedToken(value: string, fallback: string): string {
+  return FIXED_TOKEN.test(value) ? value : fallback;
+}
+
+/**
+ * The one place an attempt's result becomes a recorded outcome, used by the
+ * first run and by crash recovery (06-12).
+ *
+ * - A rejected `execute` is `unknown` (`executor-threw`), never `failed`: an
+ *   effect may already have started.
+ * - On the first attempt a refusal or failure is definitive: nothing was done,
+ *   so `failed` with the reason code is truthful.
+ * - On a retry attempt (2 or more) any non-executed result is routed through
+ *   the operation's read-only `reconcile`: `effect-proven` records `executed`
+ *   (flagged reconciled, with the evidence code); anything else records
+ *   `unknown`. A plain `failed` is never written for a retry.
+ */
+export async function resolveOutcome(
+  definition: RegisteredDefinition,
+  payload: unknown,
+  context: ExecuteContext,
+  result: ExecuteResult,
+): Promise<FinishDecision> {
+  if (result.threw) return unknownDecision("executor-threw", null);
+  const outcome = result.outcome;
+  if (outcome.kind === "executed") {
+    const note = outcome.note !== undefined && FIXED_TOKEN.test(outcome.note) ? outcome.note : null;
+    return { state: "executed", code: "executed", note, evidence: null, reconciled: false };
+  }
+  if (context.attempt < 2) {
+    return { state: "failed", code: outcome.reason, note: null, evidence: null, reconciled: false };
+  }
+  let verdict: ReconcileVerdict;
+  try {
+    verdict = await definition.reconcile(payload, context);
+  } catch {
+    return unknownDecision("reconcile-threw", null);
+  }
+  if (verdict.kind === "effect-proven") {
+    return {
+      state: "executed",
+      code: "executed",
+      note: null,
+      evidence: fixedToken(verdict.evidence, GENERIC_EVIDENCE),
+      reconciled: true,
+    };
+  }
+  if (verdict.kind === "effect-absent") return unknownDecision("outcome-unknown", "effect-absent");
+  return unknownDecision("outcome-unknown", fixedToken(verdict.reason, GENERIC_EVIDENCE));
+}
+
+function unknownDecision(code: string, evidence: string | null): FinishDecision {
+  return { state: "unknown", code, note: null, evidence, reconciled: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -255,15 +345,44 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
 
   // --- submit ---------------------------------------------------------------
 
+  /** The shape checks a requester-supplied request must pass before anything is stored (T-06-14, T-06-15). */
+  function wellFormed(input: SubmitInput): boolean {
+    return (
+      RequesterSchema.safeParse(input.requester).success &&
+      typeof input.reason === "string" &&
+      input.reason.length <= REASON_MAX_CHARS &&
+      typeof input.subject === "string" &&
+      input.subject.length >= 1 &&
+      input.subject.length <= SUBJECT_MAX_CHARS &&
+      (input.projectId === null ||
+        (typeof input.projectId === "string" &&
+          input.projectId.length >= 1 &&
+          input.projectId.length <= PROJECT_ID_MAX_CHARS)) &&
+      (input.runId === null || RunIdSchema.safeParse(input.runId).success)
+    );
+  }
+
   function submit(input: SubmitInput): SubmitOutcome {
-    const definition = registry.lookup(input.operation);
-    const row = approvalRowOf(registry.table, input.operation);
-    if (definition === undefined || row === undefined) {
-      return { kind: "rejected", reason: "operation-unknown" };
+    const row = Object.hasOwn(registry.table, input.operation)
+      ? registry.table[input.operation]
+      : undefined;
+    if (row === undefined) return { kind: "rejected", reason: "operation-unknown" };
+    if (row.class !== "approval-required") {
+      return { kind: "rejected", reason: "operation-not-approvable" };
     }
+    if (row.status !== "enabled") return { kind: "rejected", reason: "operation-reserved" };
+    const definition = registry.lookup(input.operation);
+    if (definition === undefined) return { kind: "rejected", reason: "operation-unknown" };
+    if (!wellFormed(input)) return { kind: "rejected", reason: "invalid-payload" };
 
     const parsed = definition.payload.safeParse(input.payload);
     if (!parsed.success) return { kind: "rejected", reason: "invalid-payload" };
+    // A request the owner could not be shown is never stored: the draft must render.
+    try {
+      definition.render(parsed.data, { requester: input.requester });
+    } catch {
+      return { kind: "rejected", reason: "invalid-payload" };
+    }
 
     const now = clock.now();
     const expiresAt = isoAfter(now, resolveTtlMs(input.requestedTtlMs, row));
@@ -301,10 +420,20 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       mirrorNoteId: ids.noteId(),
       supersedes: null,
     };
-    const result = store.submit(proposal, {
+    const caps = {
       perOperation: APPROVAL_PENDING_CAP_PER_OPERATION,
       total: APPROVAL_PENDING_CAP_TOTAL,
-    });
+    };
+    let result = store.submit(proposal, caps);
+    if (result.kind === "deduped" && result.proposal.expiresAt <= now) {
+      // The pending twin is already past its expiry and not yet swept: settle it as expired and
+      // submit afresh, so a requester is never handed a request nobody can decide.
+      for (const expiredId of store.expireDue(now)) {
+        const expired = store.get(expiredId);
+        if (expired !== null) announce(expired);
+      }
+      result = store.submit(proposal, caps);
+    }
     if (result.kind === "capped") return { kind: "rejected", reason: "inbox-full" };
     if (result.kind === "deduped") {
       return {
@@ -330,12 +459,32 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     };
   }
 
+  function withdraw(proposalId: string): WithdrawOutcome {
+    const id = ProposalIdSchema.safeParse(proposalId);
+    if (!id.success) return { kind: "not-withdrawable" };
+    const withdrawn = store.withdraw(id.data, clock.now());
+    if (withdrawn === null) return { kind: "not-withdrawable" };
+    log.info({ proposalId: id.data, state: "withdrawn", code: "withdrawn" });
+    announce(withdrawn);
+    return { kind: "withdrawn" };
+  }
+
   // --- decide ---------------------------------------------------------------
 
   const decided = (stored: StoredProposal): DecideResponse => ({
     outcome: "decided",
     approval: summaryFor(stored),
   });
+
+  /** True when the registry's table says `operation` is an enabled approval-required row with a definition (T-06-15). */
+  function isDecidable(operation: string): boolean {
+    const row = Object.hasOwn(registry.table, operation) ? registry.table[operation] : undefined;
+    return (
+      row?.class === "approval-required" &&
+      row.status === "enabled" &&
+      registry.lookup(operation) !== undefined
+    );
+  }
 
   async function decide(input: EngineDecideInput): Promise<DecideResponse> {
     const id = ProposalIdSchema.safeParse(input.proposalId);
@@ -348,6 +497,21 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       if (row === null) return { outcome: "not-found" };
       if (row.state !== "pending") return { outcome: "already-decided", state: row.state };
       return { outcome: "hash-mismatch" };
+    }
+
+    // The engine's own checks, before the store is asked to decide (T-06-03, T-06-15). The store
+    // repeats the ones it can and settles every race inside its transaction.
+    const current = store.get(proposalId);
+    if (current?.state === "pending") {
+      if (!isDecidable(current.operation)) {
+        log.error({ proposalId, code: "operation-not-decidable" });
+        return { outcome: "operation-reserved" };
+      }
+      if (input.decision === "approve" && recomputeFromStored(current) !== current.payloadHash) {
+        // The row no longer says what was hashed at submit: never approve it, never run it.
+        log.error({ proposalId, code: "stored-hash-mismatch", payloadHash: current.payloadHash });
+        return { outcome: "hash-mismatch" };
+      }
     }
 
     const result = store.decide({
@@ -419,31 +583,35 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
 
   // --- execute --------------------------------------------------------------
 
-  function finishWith(
-    proposal: StoredProposal,
-    outcome: {
-      readonly state: "executed" | "failed" | "unknown";
-      readonly code: string;
-      readonly note?: string | null;
-      readonly evidence?: string | null;
-      readonly reconciled?: boolean;
-    },
-  ): void {
+  function finishWith(proposal: StoredProposal, decision: FinishDecision): void {
     const finished = store.finish({
       proposalId: proposal.proposalId,
-      state: outcome.state,
-      code: outcome.code,
-      note: outcome.note ?? null,
-      evidence: outcome.evidence ?? null,
-      reconciled: outcome.reconciled ?? false,
+      state: decision.state,
+      code: decision.code,
+      note: decision.note,
+      evidence: decision.evidence,
+      reconciled: decision.reconciled,
       now: clock.now(),
     });
     if (finished === null) {
       log.warn({ proposalId: proposal.proposalId, code: "finish-lost" });
       return;
     }
-    log.info({ proposalId: proposal.proposalId, state: finished.state, code: outcome.code });
+    log.info({ proposalId: proposal.proposalId, state: finished.state, code: decision.code });
     announce(finished);
+  }
+
+  /**
+   * A failure before `execute` was ever called. On the first attempt nothing was done, so `failed`
+   * is truthful; on a retry an earlier attempt may have had an effect, so it is `unknown`.
+   */
+  function failBeforeExecute(proposal: StoredProposal, code: string): void {
+    finishWith(
+      proposal,
+      proposal.attempts < 2
+        ? { state: "failed", code, note: null, evidence: null, reconciled: false }
+        : unknownDecision(code, null),
+    );
   }
 
   /** Carries out one attempt of a claimed request and records the outcome. */
@@ -451,37 +619,52 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     const definition = registry.lookup(proposal.operation);
     const row = approvalRowOf(registry.table, proposal.operation);
     if (definition === undefined || row === undefined || proposal.approvedAt === null) {
-      finishWith(proposal, { state: "failed", code: "capability-refused" });
+      failBeforeExecute(proposal, "capability-refused");
+      return;
+    }
+    if (recomputeFromStored(proposal) !== proposal.payloadHash) {
+      log.error({ proposalId: proposal.proposalId, code: "stored-hash-mismatch" });
+      failBeforeExecute(proposal, "integrity-check-failed");
       return;
     }
     const parsed = parseStoredPayload(definition, proposal.payloadJson);
     if (!parsed.ok) {
-      finishWith(proposal, { state: "failed", code: "payload-invalid" });
+      failBeforeExecute(proposal, "payload-invalid");
       return;
     }
 
-    const expiresAt = new Date(
-      Math.min(
-        Date.parse(proposal.expiresAt),
-        Date.parse(proposal.approvedAt) + row.maxApprovalAgeMs,
-      ),
-    ).toISOString();
+    // D-18: the earlier of the proposal's own expiry and approval time plus the operation's age.
+    const expiresMs = Math.min(
+      Date.parse(proposal.expiresAt),
+      Date.parse(proposal.approvedAt) + row.maxApprovalAgeMs,
+    );
+    if (!(expiresMs > Date.parse(clock.now()))) {
+      // The authorisation is already stale: it is never honoured (T-06-05).
+      failBeforeExecute(proposal, "token-expired");
+      return;
+    }
     const token = ledger.issue({
       proposalId: proposal.proposalId,
       operation: definition.operation,
       subject: proposal.subject,
-      expiresAt,
+      expiresAt: new Date(expiresMs).toISOString(),
     });
-    const outcome = await dispatchWithToken(ledger, definition, token, parsed.value, {
+    const context: ExecuteContext = {
       idempotencyKey: proposal.proposalId,
       claimFacts: proposal.claimFacts ?? {},
       attempt: proposal.attempts,
-    });
-    if (outcome.kind === "executed") {
-      finishWith(proposal, { state: "executed", code: "executed", note: outcome.note ?? null });
-    } else {
-      finishWith(proposal, { state: "failed", code: outcome.reason });
+    };
+    let result: ExecuteResult;
+    try {
+      result = {
+        threw: false,
+        outcome: await dispatchWithToken(ledger, definition, token, parsed.value, context),
+      };
+    } catch {
+      // The message is never read or logged: it may carry a path or a name.
+      result = { threw: true };
     }
+    finishWith(proposal, await resolveOutcome(definition, parsed.value, context, result));
   }
 
   async function settled(): Promise<void> {
@@ -490,5 +673,5 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     }
   }
 
-  return { submit, decide, settled };
+  return { submit, decide, withdraw, settled };
 }

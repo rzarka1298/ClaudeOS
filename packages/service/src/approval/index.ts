@@ -6,6 +6,7 @@
 // A relative import out of this folder also fails the compiler: the folder is
 // its own composite project (./tsconfig.json) that references only the domain
 // package. This is the engine's one door: the engine factory and its types.
+
 export {
   type ApprovalEngine,
   type ApprovalEngineDeps,
@@ -15,4 +16,6 @@ export {
   type SubmitInput,
   type SubmitOutcome,
   type SubmitRejection,
+  type WithdrawOutcome,
 } from "./engine.js";
+export { buildOperationRegistry } from "./registry.js";
