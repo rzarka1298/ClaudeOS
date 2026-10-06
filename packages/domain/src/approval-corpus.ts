@@ -79,6 +79,7 @@ export const HOSTILE_CORPUS: readonly HostileCorpusEntry[] = [
   { name: "variation-selector-1", text: "a\uFE00b", tokens: ["[U+FE00]"] },
   { name: "variation-selector-supplement", text: "a\u{E0100}b", tokens: ["[U+E0100]"] },
   { name: "mongolian-free-variation-selector", text: "a\u180Bb", tokens: ["[U+180B]"] },
+  { name: "mongolian-free-variation-selector-4", text: "a\u180Fb", tokens: ["[U+180F]"] },
   { name: "private-use-bmp", text: "a\uE000b", tokens: ["[U+E000]"] },
   { name: "private-use-plane-15", text: "a\u{F0000}b", tokens: ["[U+F0000]"] },
   { name: "unassigned-bmp", text: "a\u0378b", tokens: ["[U+0378]"] },

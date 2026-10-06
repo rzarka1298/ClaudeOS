@@ -74,7 +74,7 @@ const CATEGORY_HIDDEN = /^(?:[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]|[^\S \n])$/u;
  * ones (review MINOR-5).
  */
 const VARIATION_OR_UNMAPPED =
-  /^(?:[\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{180B}-\u{180D}]|[\p{Co}\p{Cn}])$/u;
+  /^(?:[\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{180B}-\u{180F}]|[\p{Co}\p{Cn}])$/u;
 
 function isLineBreak(code: number): boolean {
   return code === 0x0a || code === 0x0d || code === 0x2028 || code === 0x2029 || code === 0x85;

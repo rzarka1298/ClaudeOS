@@ -30,7 +30,7 @@ const CATEGORY_HIDDEN = /^(?:[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]|[^\S \n])$/u;
 
 /** Variation selectors, private-use and unassigned code points (review MINOR-5). */
 const VARIATION_OR_UNMAPPED =
-  /^(?:[\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{180B}-\u{180D}]|[\p{Co}\p{Cn}])$/u;
+  /^(?:[\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{180B}-\u{180F}]|[\p{Co}\p{Cn}])$/u;
 
 /**
  * True when `text` still holds a character the neutraliser must never let
