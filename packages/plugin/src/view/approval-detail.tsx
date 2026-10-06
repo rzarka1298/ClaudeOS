@@ -365,6 +365,8 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
   const loadRef = useRef<Promise<RefetchResult>>(Promise.resolve({ kind: "error" }));
   const focusedFor = useRef<string | null>(null);
   const lastRevision = useRef(props.revision);
+  /** Monotonic: only the fetch started last may change the pane, whatever order answers arrive in. */
+  const fetchSeq = useRef(0);
   const headingId = useId();
 
   /** Fetches one request. The id is fixed at the call, so a late answer can never describe another request. */
@@ -387,10 +389,11 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
     setChangedLine(false);
     setMismatchHash(null);
     focusedFor.current = null;
+    const seq = ++fetchSeq.current;
     const load = fetchDetail(id);
     loadRef.current = load;
     void load.then((result) => {
-      if (cancelled) return;
+      if (cancelled || seq !== fetchSeq.current) return;
       if (result.kind === "ok") setPane({ kind: "ready", detail: result.detail });
       else setPane({ kind: result.kind });
     });
@@ -404,10 +407,12 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
     if (lastRevision.current === props.revision) return;
     lastRevision.current = props.revision;
     const id = props.proposalId;
+    const seq = ++fetchSeq.current;
     void fetchDetail(id).then((result) => {
-      if (latest.current.proposalId !== id) return;
+      if (latest.current.proposalId !== id || seq !== fetchSeq.current) return;
       if (result.kind === "ok") setPane({ kind: "ready", detail: result.detail });
       else if (result.kind === "not-found") setPane({ kind: "not-found" });
+      else if (paneRef.current.kind === "loading") setPane({ kind: "error" });
     });
   }, [props.revision]);
 

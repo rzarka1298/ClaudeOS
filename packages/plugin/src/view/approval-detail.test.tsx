@@ -993,3 +993,34 @@ describe("disconnected (Task 3, Test 12)", () => {
     ).toBe("true");
   });
 });
+
+describe("out-of-order fetches (06-w3 finding 4)", () => {
+  it("applies only the latest fetch when an older one for the same request resolves last", async () => {
+    const first = deferred<ApprovalDetailResponse>();
+    const second = deferred<ApprovalDetailResponse>();
+    const get = vi
+      .fn<() => Promise<ApprovalDetailResponse>>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const base: ApprovalDetailProps = {
+      proposalId: proposalId(1),
+      now: FIXTURE_NOW_MS,
+      connected: true,
+      stale: false,
+      revision: 1,
+      get,
+      decide: vi.fn(),
+      announce: vi.fn(),
+      notify: vi.fn(),
+    };
+    const view = render(<ApprovalDetail {...base} />);
+    view.rerender(<ApprovalDetail {...base} revision={2} />);
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    second.resolve(approvalDetail(decidedView("executed")));
+    await waitFor(() => expect(screen.getAllByText("Carried out")[0]).toBeTruthy());
+    first.resolve(approvalDetail());
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(screen.getAllByText("Carried out")[0]).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Decision" })).toBeNull();
+  });
+});
