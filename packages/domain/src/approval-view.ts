@@ -68,13 +68,25 @@ const EXTRA_HIDDEN_CODE_POINTS: ReadonlySet<number> = new Set([
  */
 const CATEGORY_HIDDEN = /^(?:[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]|[^\S \n])$/u;
 
+/**
+ * Variation selectors (they change or hide how the previous character is drawn),
+ * private-use code points (their glyph is whatever a font says) and unassigned
+ * ones (review MINOR-5).
+ */
+const VARIATION_OR_UNMAPPED =
+  /^(?:[\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{180B}-\u{180D}]|[\p{Co}\p{Cn}])$/u;
+
 function isLineBreak(code: number): boolean {
   return code === 0x0a || code === 0x0d || code === 0x2028 || code === 0x2029 || code === 0x85;
 }
 
 function isHidden(code: number, char: string): boolean {
   if (code >= 0xd800 && code <= 0xdfff) return true; // an unpaired surrogate half
-  return EXTRA_HIDDEN_CODE_POINTS.has(code) || CATEGORY_HIDDEN.test(char);
+  return (
+    EXTRA_HIDDEN_CODE_POINTS.has(code) ||
+    CATEGORY_HIDDEN.test(char) ||
+    VARIATION_OR_UNMAPPED.test(char)
+  );
 }
 
 function tokenFor(code: number): string {

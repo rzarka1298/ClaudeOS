@@ -28,6 +28,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const EXTRA_HIDDEN = new Set([0x115f, 0x1160, 0x2800, 0x3164, 0xffa0, 0x034f, 0x17b4, 0x17b5]);
 const CATEGORY_HIDDEN = /^(?:[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]|[^\S \n])$/u;
 
+/** Variation selectors, private-use and unassigned code points (review MINOR-5). */
+const VARIATION_OR_UNMAPPED =
+  /^(?:[\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{180B}-\u{180D}]|[\p{Co}\p{Cn}])$/u;
+
 /**
  * True when `text` still holds a character the neutraliser must never let
  * through: control, format, line or paragraph separator, non-space blank,
@@ -40,6 +44,7 @@ function hasRawHidden(text: string, allowLineFeed = false): boolean {
     if (allowLineFeed && code === 0x0a) continue;
     if (code >= 0xd800 && code <= 0xdfff) return true;
     if (EXTRA_HIDDEN.has(code) || CATEGORY_HIDDEN.test(char)) return true;
+    if (VARIATION_OR_UNMAPPED.test(char)) return true;
   }
   return false;
 }
