@@ -30,7 +30,7 @@ const FRESHNESS_LABEL: Readonly<Record<Freshness, string>> = {
  * (A11Y-04). The glyph is decorative reinforcement — `aria-hidden`, with the
  * label always present as text.
  */
-const FRESHNESS_GLYPH: Readonly<Record<Freshness, string>> = {
+export const FRESHNESS_GLYPH: Readonly<Record<Freshness, string>> = {
   live: "●",
   cached: "◐",
   stale: "◔",
