@@ -5,6 +5,9 @@
 // folder, so no route or other module can reach an executor except through the
 // approval engine's injected wiring. A relative import out of this folder also
 // fails the compiler: the folder is its own composite project
-// (./tsconfig.json). Later plans add the executors; this plan adds only the
-// boundary.
-export {};
+// (./tsconfig.json). This file is the folder's only export surface.
+export {
+  createDiagnosticTestOperation,
+  type DiagnosticTestDeps,
+  type DiagnosticTestPayload,
+} from "./diagnostic-test-operation.js";

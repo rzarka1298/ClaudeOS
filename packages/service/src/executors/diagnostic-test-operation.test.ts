@@ -1,4 +1,4 @@
-import { CLASSIFICATION, type CapabilityToken, newProposalId, type Requester } from "@ccc/domain";
+import { type CapabilityToken, CLASSIFICATION, newProposalId, type Requester } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import { createDiagnosticTestOperation } from "./diagnostic-test-operation.js";
 import { createFakeEffects } from "./test-support/fakes.js";
