@@ -76,6 +76,7 @@ export {
   upsertSessionRun,
 } from "./session-store.js";
 export type {
+  TaskCounts,
   TaskCursor,
   TaskIndexDetail,
   TaskIndexRecord,
@@ -85,6 +86,7 @@ export type {
   TaskQueryContext,
 } from "./task-index-store.js";
 export {
+  countTasks,
   getTask,
   InvalidTaskCursorError,
   InvalidTaskIndexError,

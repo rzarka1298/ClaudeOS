@@ -555,7 +555,24 @@ interface ViewDefinition {
 const PRIORITY_RANK =
   "CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END";
 
-const VIEWS: Partial<Record<TaskFilter, ViewDefinition>> = {
+const DUE_KEY = "COALESCE(t.due_sort, '~')";
+
+/**
+ * The earliest FUTURE due or scheduled value, so a task due in the past but
+ * scheduled ahead is listed by its schedule. `'~'` sorts after every digit, so a
+ * missing value never wins the scalar `min`.
+ */
+const UPCOMING_KEY =
+  "min(COALESCE(CASE WHEN t.due_date > @today THEN t.due_date WHEN t.due_at >= @e THEN t.due_at END, '~'), " +
+  "COALESCE(CASE WHEN t.sched_date > @today THEN t.sched_date WHEN t.sched_at >= @e THEN t.sched_at END, '~'))";
+
+const BLOCKED_PREDICATE = `${OPEN} AND (t.status = 'blocked' OR EXISTS (SELECT 1 FROM task_deps d LEFT JOIN task_index x ON x.note_id = d.dep_id WHERE d.note_id = t.note_id AND (x.note_id IS NULL OR x.status NOT IN ('done','cancelled'))))`;
+
+const VIEWS: Readonly<Record<TaskFilter, ViewDefinition>> = {
+  all: {
+    predicate: "1 = 1",
+    keys: [{ expr: "t.updated_at", direction: "DESC", kind: "text" }],
+  },
   today: {
     predicate: TODAY_PREDICATE,
     keys: [
@@ -566,6 +583,33 @@ const VIEWS: Partial<Record<TaskFilter, ViewDefinition>> = {
       },
       { expr: PRIORITY_RANK, direction: "ASC", kind: "int" },
     ],
+  },
+  upcoming: {
+    predicate: `${OPEN} AND (t.due_date > @today OR t.due_at >= @e OR t.sched_date > @today OR t.sched_at >= @e)`,
+    keys: [{ expr: UPCOMING_KEY, direction: "ASC", kind: "text" }],
+  },
+  overdue: {
+    predicate: `${OPEN} AND ${IS_OVERDUE}`,
+    keys: [{ expr: DUE_KEY, direction: "ASC", kind: "text" }],
+  },
+  project: {
+    predicate: `${OPEN} AND t.project_id IS NOT NULL`,
+    keys: [
+      { expr: PRIORITY_RANK, direction: "ASC", kind: "int" },
+      { expr: DUE_KEY, direction: "ASC", kind: "text" },
+    ],
+  },
+  proposed: {
+    predicate: "t.status = 'proposed'",
+    keys: [{ expr: "t.created_at", direction: "DESC", kind: "text" }],
+  },
+  blocked: {
+    predicate: BLOCKED_PREDICATE,
+    keys: [{ expr: DUE_KEY, direction: "ASC", kind: "text" }],
+  },
+  completed: {
+    predicate: "t.status = 'done'",
+    keys: [{ expr: "COALESCE(t.completed_at, t.updated_at)", direction: "DESC", kind: "text" }],
   },
 };
 
@@ -647,10 +691,11 @@ export function queryTasks(db: Database.Database, query: TaskQuery): TaskPage {
   assertDay(query.day);
   const limit = clampLimit(query.limit);
   const view = VIEWS[query.filter];
-  if (view === undefined) {
-    throw new InvalidTaskQueryError("filter", query.filter);
-  }
   const context = contextClause(query.context);
+  if (query.filter === "project" && query.context.projectId === undefined) {
+    // The Project chip needs a project: the page is empty by design and says so.
+    return { rows: [], total: 0, nextCursor: null, chooseProject: true };
+  }
   const params: Record<string, string | number | null> = {
     ...dayParams(query.day),
     ...context.params,
@@ -705,22 +750,43 @@ export interface TaskCounts {
   readonly open: number;
 }
 
-/** RED skeleton (plan 06-14 task 2): counts nothing yet. */
+/**
+ * Every chip count and the open total for one context, from ONE statement: a
+ * single `SELECT` of conditional sums over the same scope and project clause the
+ * list uses, with the same day bounds, so a chip can never disagree with its list
+ * (UI-SPEC R-11, D-34). With a project in the context every count is narrowed to
+ * that project; the `project` chip is then the open tasks of that project.
+ */
 export function countTasks(
-  _db: Database.Database,
-  _query: { readonly context: TaskQueryContext; readonly day: LocalDayBounds },
+  db: Database.Database,
+  query: { readonly context: TaskQueryContext; readonly day: LocalDayBounds },
 ): TaskCounts {
+  assertDay(query.day);
+  const context = contextClause(query.context);
+  const sums = TASK_FILTERS.filter((filter) => filter !== "all")
+    .map(
+      (filter) =>
+        `COALESCE(SUM(CASE WHEN ${VIEWS[filter].predicate} THEN 1 ELSE 0 END), 0) AS c_${filter}`,
+    )
+    .join(", ");
+  const where = context.sql === "" ? "" : ` WHERE ${context.sql}`;
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c_all, ${sums}, COALESCE(SUM(CASE WHEN ${OPEN} THEN 1 ELSE 0 END), 0) AS c_open FROM task_index t${where}`,
+    )
+    .get({ ...dayParams(query.day), ...context.params }) as Record<string, number>;
+  const count = (key: string): number => row[key] ?? 0;
   return {
     counts: {
-      all: 0,
-      today: 0,
-      upcoming: 0,
-      overdue: 0,
-      project: 0,
-      proposed: 0,
-      blocked: 0,
-      completed: 0,
+      all: count("c_all"),
+      today: count("c_today"),
+      upcoming: count("c_upcoming"),
+      overdue: count("c_overdue"),
+      project: count("c_project"),
+      proposed: count("c_proposed"),
+      blocked: count("c_blocked"),
+      completed: count("c_completed"),
     },
-    open: 0,
+    open: count("c_open"),
   };
 }
