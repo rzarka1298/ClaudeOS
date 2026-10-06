@@ -49,7 +49,10 @@ describe("Test 1 (ordinary day)", () => {
   it("handles a half-hour offset and an offset beyond twelve hours", () => {
     const now = new Date("2026-10-05T12:00:00Z");
     expect(localDayBounds(now, "Asia/Kolkata").startsAt).toBe("2026-10-04T18:30:00.000Z");
-    expect(localDayBounds(now, "Pacific/Kiritimati").startsAt).toBe("2026-10-04T10:00:00.000Z");
+    // UTC+14: 12:00Z is 02:00 on the next local date, which began at 10:00Z the day before.
+    const kiritimati = localDayBounds(now, "Pacific/Kiritimati");
+    expect(kiritimati.localDate).toBe("2026-10-06");
+    expect(kiritimati.startsAt).toBe("2026-10-05T10:00:00.000Z");
     expect(localDayBounds(now, "UTC")).toEqual({
       localDate: "2026-10-05",
       startsAt: "2026-10-05T00:00:00.000Z",

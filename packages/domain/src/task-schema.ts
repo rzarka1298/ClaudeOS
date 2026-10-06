@@ -206,3 +206,78 @@ export const TASK_DECISION_KEY_ORDER = [
   "outcome",
   "at",
 ] as const satisfies readonly (keyof TaskDecision)[];
+
+/** The longest slug a task file name carries (D-29). */
+export const TASK_SLUG_MAX_LENGTH = 48;
+
+/** How many trailing characters of the note id close a task file name. */
+export const TASK_FILE_SUFFIX_LENGTH = 8;
+
+/**
+ * The readable half of a task's file name: ASCII letters and digits, lowercase,
+ * runs of anything else joined by one hyphen, at most 48 characters and never
+ * ending on a hyphen. A title with no ASCII letters or digits (empty, blank,
+ * non-Latin, all punctuation, all hostile) gives `task`. Because every
+ * character comes from `[a-z0-9-]`, no title can inject a separator, a
+ * traversal segment, a control character or an extension into a file name.
+ */
+export function taskSlug(title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, TASK_SLUG_MAX_LENGTH)
+    .replace(/-+$/, "");
+  return slug === "" ? "task" : slug;
+}
+
+/**
+ * A task's file name: the slug, a hyphen, the last eight characters of the note
+ * id and `.md`. It is minted once, by the service, when the task is created and
+ * is never derived again: a later title edit does not rename the file, so links
+ * to the note and the index row's path stay valid (D-29). The id suffix keeps two
+ * tasks with the same title apart. Pure: no clock, no randomness.
+ *
+ * @throws RangeError when `id` is not a note id. The id comes from the minter, so
+ * this is a programming error, and refusing it keeps an untrusted value out of a path.
+ */
+export function taskFileName(title: string, id: string): string {
+  if (!NOTE_ID_PATTERN.test(id)) {
+    throw new RangeError("a task file name needs a note id");
+  }
+  return `${taskSlug(title)}-${id.slice(-TASK_FILE_SUFFIX_LENGTH)}.md`;
+}
+
+/** The longest file name (not path) a task note path may carry. */
+const TASK_NOTE_NAME_MAX_LENGTH = 255;
+
+/** The longest vault-relative task note path any request or response carries. */
+export const TASK_NOTE_PATH_MAX_LENGTH = 400;
+
+const TASK_NOTE_PATH = /^(?:global|workspaces\/[0-9a-z]{25})\/tasks\/([^/\\]+\.md)$/;
+
+/**
+ * True when `path` is a vault-relative task note path: exactly
+ * `global/tasks/<name>.md` or `workspaces/<25-character id>/tasks/<name>.md`
+ * (threat T-06-20). The file name is one path segment, so no nested folder, no
+ * `..` segment, no leading slash and no backslash can occur; it is markdown, it
+ * does not begin with a dot, it is not the folder's `index.md` (compared without
+ * regard to case, because the macOS file system folds it), and it carries no
+ * control or invisible format character.
+ *
+ * Names a person typed in Obsidian (spaces, accents) are accepted: the watcher
+ * must recognise a hand-made task. The service's own minted names are a subset.
+ * This checks the SHAPE only; the service still resolves containment on disk.
+ */
+export function isTaskNotePath(path: string): boolean {
+  if (typeof path !== "string" || path.length === 0 || path.length > TASK_NOTE_PATH_MAX_LENGTH) {
+    return false;
+  }
+  const match = TASK_NOTE_PATH.exec(path);
+  const name = match?.[1];
+  if (name === undefined) return false;
+  if (name.length > TASK_NOTE_NAME_MAX_LENGTH) return false;
+  if (name.startsWith(".")) return false;
+  if (name.toLowerCase() === "index.md") return false;
+  return !hasDisallowedTextCharacter(name);
+}
