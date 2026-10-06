@@ -1,8 +1,15 @@
+import { HOSTILE_TASK_TITLES } from "@ccc/domain/task-corpus.js";
 import type { TaskRow } from "@ccc/domain/tasks.js";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { useState } from "preact/hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { taskRow, taskRows } from "../test-support/task-view-fixtures.js";
+import {
+  projectIdFor,
+  TASK_NOW_MS,
+  TASK_ZONE,
+  taskRow,
+  taskRows,
+} from "../test-support/task-view-fixtures.js";
 import { TaskList, type TaskListProps, type TaskRowAction } from "./task-list.js";
 
 afterEach(cleanup);
@@ -33,6 +40,8 @@ function baseProps(
     total: rows.length,
     selectedId: null,
     connected: true,
+    now: TASK_NOW_MS,
+    zone: TASK_ZONE,
     onSelect: vi.fn(),
     onAction: vi.fn(async () => undefined),
     ...overrides,
@@ -264,5 +273,341 @@ describe("Test 6: selection", () => {
       .getAllByRole("listitem")
       .filter((item) => item.getAttribute("data-selected") === "true");
     expect(selectedRows).toHaveLength(1);
+  });
+});
+
+function region(): HTMLElement {
+  return document.querySelector(".ccc-task-list-region") as HTMLElement;
+}
+
+describe("Test 2: meta line 2 (date, project, tags)", () => {
+  const PROJECT = projectIdFor(1);
+
+  it("joins the date phrase, project and tags with a middle dot", () => {
+    setup(
+      [
+        taskRow(1, {
+          dueDate: "2026-10-05",
+          projectId: PROJECT,
+          tags: ["writing", "review"],
+          tagCount: 2,
+        }),
+      ],
+      { projectNames: { [PROJECT]: "example-project" } },
+    );
+    const line = document.querySelector('[data-line="details"]');
+    expect(line?.textContent).toBe("Due today · example-project · #writing #review");
+  });
+
+  it("shows three tags then +N more", () => {
+    setup([taskRow(1, { tags: ["a", "b", "c"], tagCount: 5 })]);
+    expect(document.querySelector('[data-line="details"]')?.textContent).toBe("#a #b #c +2 more");
+  });
+
+  it("omits empty segments, and the whole line when nothing is left", () => {
+    setup([taskRow(1, { projectId: PROJECT }), taskRow(2)], {
+      projectNames: { [PROJECT]: "example-project" },
+    });
+    const [first, second] = screen.getAllByRole("listitem");
+    expect(first?.querySelector('[data-line="details"]')?.textContent).toBe("example-project");
+    expect(second?.querySelector('[data-line="details"]')).toBeNull();
+  });
+
+  it("marks an overdue phrase with a data hook, not a colour", () => {
+    setup([taskRow(1, { dueDate: "2026-10-02", overdue: true })]);
+    const phrase = document.querySelector(".ccc-task-date");
+    expect(phrase?.textContent).toBe("Overdue — due Oct 2");
+    expect(phrase?.getAttribute("data-overdue")).toBe("true");
+  });
+
+  it("renders each tag with its full text in a title attribute", () => {
+    setup([taskRow(1, { tags: ["review"], tagCount: 1 })]);
+    expect(document.querySelector(".ccc-task-tag")?.getAttribute("title")).toBe("review");
+  });
+});
+
+describe("Test 3: the blocked line", () => {
+  it("states how many unfinished tasks it waits on, plural-safe, without rewriting the status", () => {
+    setup([
+      taskRow(1, { unmetDependencies: 2 }),
+      taskRow(2, { unmetDependencies: 1 }),
+      taskRow(3, { unmetDependencies: 0 }),
+    ]);
+    const [two, one, none] = screen.getAllByRole("listitem");
+    expect(two?.querySelector('[data-line="blocked"]')?.textContent).toBe(
+      "‖ Blocked — waiting on 2 unfinished tasks",
+    );
+    expect(one?.querySelector('[data-line="blocked"]')?.textContent).toBe(
+      "‖ Blocked — waiting on 1 unfinished task",
+    );
+    expect(none?.querySelector('[data-line="blocked"]')).toBeNull();
+    expect(two?.querySelector('[data-line="status"]')?.textContent).toContain("Ready");
+  });
+
+  it("shows no blocked line on a finished task", () => {
+    setup([taskRow(1, { status: "done", unmetDependencies: 3 })]);
+    expect(document.querySelector('[data-line="blocked"]')).toBeNull();
+  });
+});
+
+describe("Test 4: pagination", () => {
+  it("shows Show 25 more and a Showing line, and nothing when no more are available", () => {
+    const rows = taskRows(25);
+    const utils = render(<TaskList {...baseProps(rows, { total: 212, hasMore: true })} />);
+    expect(screen.getByRole("button", { name: "Show 25 more" })).toBeTruthy();
+    expect(screen.getByRole("heading").textContent).toBe("Showing 25 of 212");
+    utils.rerender(<TaskList {...baseProps(rows, { total: 25, hasMore: false })} />);
+    expect(screen.queryByRole("button", { name: /Show \d+ more/ })).toBeNull();
+  });
+
+  it("calls onLoadMore, then focuses the first new title and announces how many arrived", async () => {
+    const rows = taskRows(30);
+    const onLoadMore = vi.fn();
+    const announce = vi.fn();
+    const first = rows.slice(0, 25);
+    const utils = render(
+      <TaskList {...baseProps(first, { total: 30, hasMore: true, onLoadMore, announce })} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show 5 more" }));
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+    expect(announce).not.toHaveBeenCalled();
+    utils.rerender(
+      <TaskList {...baseProps(rows, { total: 30, hasMore: false, onLoadMore, announce })} />,
+    );
+    await waitFor(() => expect(document.activeElement).toBe(titleButton("Task 26")));
+    expect(announce).toHaveBeenCalledExactlyOnceWith("5 more tasks loaded.");
+  });
+
+  it("announces 25 more tasks loaded for a full page and 1 more task for a single one", async () => {
+    const rows = taskRows(51);
+    const announce = vi.fn();
+    const utils = render(
+      <TaskList {...baseProps(rows.slice(0, 25), { total: 51, hasMore: true, announce })} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show 25 more" }));
+    utils.rerender(
+      <TaskList {...baseProps(rows.slice(0, 50), { total: 51, hasMore: true, announce })} />,
+    );
+    await waitFor(() => expect(announce).toHaveBeenLastCalledWith("25 more tasks loaded."));
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 more" }));
+    utils.rerender(<TaskList {...baseProps(rows, { total: 51, hasMore: false, announce })} />);
+    await waitFor(() => expect(announce).toHaveBeenLastCalledWith("1 more task loaded."));
+  });
+
+  it("has no live region of its own", () => {
+    setup(taskRows(2), { hasMore: true });
+    expect(document.querySelector('[role="status"], [aria-live]')).toBeNull();
+  });
+
+  it("makes Show more aria-disabled with the reason when the service is down", () => {
+    const onLoadMore = vi.fn();
+    setup(taskRows(2), { total: 9, hasMore: true, connected: false, onLoadMore });
+    const more = screen.getByRole("button", { name: /Show \d+ more/ });
+    expect(more.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(more);
+    expect(onLoadMore).not.toHaveBeenCalled();
+  });
+});
+
+describe("Test 5: arrow keys between title buttons", () => {
+  it("moves with Down and Up, jumps with Home and End, and never scrolls smoothly", () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      setup(taskRows(4));
+      const buttons = screen.getAllByRole("button", { name: /^Task \d$/ });
+      buttons[0]?.focus();
+      fireEvent.keyDown(buttons[0] as HTMLElement, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(buttons[1]);
+      fireEvent.keyDown(buttons[1] as HTMLElement, { key: "ArrowUp" });
+      expect(document.activeElement).toBe(buttons[0]);
+      fireEvent.keyDown(buttons[0] as HTMLElement, { key: "End" });
+      expect(document.activeElement).toBe(buttons[3]);
+      fireEvent.keyDown(buttons[3] as HTMLElement, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(buttons[3]);
+      fireEvent.keyDown(buttons[3] as HTMLElement, { key: "Home" });
+      expect(document.activeElement).toBe(buttons[0]);
+      expect(scroll).not.toHaveBeenCalled();
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+});
+
+describe("Test 6: a chip change", () => {
+  it("keeps the previous rows visible and marks the list busy, with no spinner", () => {
+    setup(taskRows(3), { busy: true });
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(document.querySelector("ul.ccc-task-list")?.getAttribute("aria-busy")).toBe("true");
+    expect(document.querySelector('[role="progressbar"], progress, .ccc-spinner')).toBeNull();
+  });
+
+  it("is not busy once the page has arrived", () => {
+    setup(taskRows(3));
+    expect(document.querySelector("ul.ccc-task-list")?.getAttribute("aria-busy")).toBeNull();
+  });
+});
+
+describe("Test 7: every destination state", () => {
+  it("shows three skeleton lines and hidden loading text while loading", () => {
+    setup([], { status: "loading" });
+    expect(document.querySelectorAll(".ccc-skeleton-line")).toHaveLength(3);
+    expect(screen.getByText("Loading tasks").className).toContain("ccc-visually-hidden");
+    expect(region().querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it.each([
+    ["all", false],
+    ["today", true],
+  ] as const)(
+    "shows the first-run state with Create a task for the %s empty case (no tasks at all: %s)",
+    (filter, noTasks) => {
+      const onCreate = vi.fn();
+      setup([], { filter, noTasksAtAll: noTasks, onCreate });
+      expect(screen.getByRole("heading").textContent).toBe("Nothing here yet");
+      expect(
+        screen.getByText("Tasks has no items right now. New items appear as they arrive."),
+      ).toBeTruthy();
+      expect(screen.getByText("Create your first task to start your list.")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Create a task" }));
+      expect(onCreate).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    [
+      "today",
+      "Nothing due today.",
+      "Tasks with a due or scheduled date of today appear here.",
+      true,
+    ],
+    ["upcoming", "Nothing coming up.", "Tasks dated after today appear here.", false],
+    ["overdue", "Nothing is overdue.", "Open tasks past their due date appear here.", false],
+    [
+      "proposed",
+      "No suggested tasks.",
+      "Tasks suggested by skills or automations appear here for you to accept or dismiss.",
+      false,
+    ],
+    [
+      "blocked",
+      "Nothing is blocked.",
+      "Tasks marked blocked, or waiting on unfinished tasks, appear here.",
+      false,
+    ],
+    ["completed", "Nothing completed yet.", "Tasks you mark done appear here.", false],
+  ] as const)("renders the %s empty line and its next step", (filter, heading, next, cta) => {
+    setup([], { filter });
+    expect(screen.getByRole("heading").textContent).toBe(heading);
+    expect(screen.getByText(next)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create a task" }) !== null).toBe(cta);
+  });
+
+  it("asks for a project when none is chosen, and names the project when it has no tasks", () => {
+    const first = render(
+      <TaskList {...baseProps([], { filter: "project", chooseProject: true })} />,
+    );
+    expect(screen.getByRole("heading").textContent).toBe("Choose a project to see its tasks.");
+    expect(screen.getByText("Pick one from the Project list.")).toBeTruthy();
+    first.unmount();
+    render(<TaskList {...baseProps([], { filter: "project", projectName: "example-project" })} />);
+    expect(screen.getByRole("heading").textContent).toBe("No tasks for example-project yet.");
+    expect(screen.getByText("Create a task and it appears here.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create a task" })).toBeTruthy();
+  });
+
+  it("keeps the rows readable and carries a hook when stale, and says so while rebuilding", () => {
+    setup(taskRows(2), { stale: true, rebuilding: true });
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(region().getAttribute("data-stale")).toBe("true");
+    expect(screen.getByText("Rebuilding the task index…")).toBeTruthy();
+    expect(document.querySelector("ul.ccc-task-list")?.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("dims the list and disables every service-backed control when disconnected", () => {
+    const onCreate = vi.fn();
+    const rows = [taskRow(1), taskRow(2, { status: "proposed" })];
+    render(
+      <TaskList
+        {...baseProps(rows, { connected: false, lastReceived: "3 minutes ago", onCreate })}
+      />,
+    );
+    expect(screen.getByText("Service disconnected")).toBeTruthy();
+    expect(
+      screen.getByText("Showing the last values received 3 minutes ago. They may be out of date."),
+    ).toBeTruthy();
+    expect(screen.getByText("The companion service isn't running.")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Task notes are still editable in Obsidian; the lists catch up when the service is back.",
+      ),
+    ).toBeTruthy();
+    expect(document.querySelector("ul.ccc-task-list")?.getAttribute("data-dimmed")).toBe("true");
+    for (const pill of document.querySelectorAll(".ccc-task-action")) {
+      expect(pill.getAttribute("aria-disabled")).toBe("true");
+    }
+  });
+
+  it("disables Create a task, with the reason, in an empty disconnected list", () => {
+    const onCreate = vi.fn();
+    setup([], { filter: "today", connected: false, onCreate });
+    const create = screen.getByRole("button", { name: "Create a task" });
+    expect(create.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(create);
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it("shows the load failure and its diagnostics hint", () => {
+    setup([], { status: "error" });
+    expect(document.querySelector(".ccc-state-heading")?.textContent).toBe(
+      "▲ Couldn't load tasks.",
+    );
+    expect(
+      screen.getByText("Check the service in Settings → Diagnostics, then refresh."),
+    ).toBeTruthy();
+  });
+});
+
+describe("Test 8: hostile titles", () => {
+  it("renders every title in the shared corpus as literal clamped text with no markup", () => {
+    expect(HOSTILE_TASK_TITLES.length).toBeGreaterThan(30);
+    for (const title of HOSTILE_TASK_TITLES) {
+      const { container, unmount } = render(
+        <TaskList {...baseProps([taskRow(1, { title, status: "ready" })])} />,
+      );
+      const button = container.querySelector(".ccc-task-title") as HTMLElement;
+      expect(button.textContent, title).toBe(title);
+      expect(button.getAttribute("title"), title).toBe(title);
+      expect(button.querySelector(".ccc-clamp-2"), title).not.toBeNull();
+      expect(container.querySelector("a, img, script, iframe, style, svg"), title).toBeNull();
+      expect(button.children, title).toHaveLength(1);
+      unmount();
+    }
+  });
+
+  it("renders a 5,000-character title once as text, with the full text in the title attribute", () => {
+    const title = "x".repeat(5000);
+    const { container } = render(<TaskList {...baseProps([taskRow(1, { title })])} />);
+    const button = container.querySelector(".ccc-task-title") as HTMLElement;
+    expect(button.getAttribute("title")).toBe(title);
+    expect(button.textContent).toBe(title);
+    const occurrences = container.innerHTML.split(title).length - 1;
+    // The text node and the title attribute; the accessible names are clamped.
+    expect(occurrences).toBe(2);
+  });
+
+  it("renders a hostile project name and tag as text only", () => {
+    const hostile = "<img src=x onerror=alert(1)>[U+202E]";
+    const PROJECT = projectIdFor(2);
+    const { container } = render(
+      <TaskList
+        {...baseProps([taskRow(1, { projectId: PROJECT, tags: [hostile], tagCount: 1 })], {
+          projectNames: { [PROJECT]: hostile },
+        })}
+      />,
+    );
+    expect(container.querySelector("img, a, script")).toBeNull();
+    expect(container.textContent).toContain(hostile);
   });
 });

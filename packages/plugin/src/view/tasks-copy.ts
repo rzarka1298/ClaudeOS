@@ -88,3 +88,65 @@ export function dismissName(title: string): string {
 export function showingLine(shown: number, total: number): string {
   return `Showing ${formatCount(shown)} of ${formatCount(total)}`;
 }
+
+// ---------------------------------------------------------------------------
+// Row meta
+
+/** `‖ Blocked — waiting on 2 unfinished tasks` (the status label itself is never rewritten). */
+export function blockedLine(_unmet: number): string {
+  return "";
+}
+
+/** `+2 more`, for the tags past the three a row shows. */
+export function tagOverflow(_hidden: number): string {
+  return "";
+}
+
+// ---------------------------------------------------------------------------
+// Pagination
+
+export function showMoreLabel(_remaining: number): string {
+  return "";
+}
+
+export function moreLoadedStatus(_count: number): string {
+  return "";
+}
+
+// ---------------------------------------------------------------------------
+// Destination states
+
+export const LOADING_LABEL = "";
+export const ERROR_HEADING = "";
+export const ERROR_HINT = "";
+export const REBUILDING_LINE = "";
+export const DISCONNECTED_HEADING = "";
+export const NOTES_EDITABLE_LINE = "";
+export const CHOOSE_PROJECT_HEADING = "";
+export const EMPTY_ALL_HEADING = "";
+export const EMPTY_ALL_BODY = "";
+export const EMPTY_ALL_PROMPT = "";
+
+export interface EmptyLines {
+  readonly heading: string;
+  readonly next: string;
+}
+
+export const FILTER_EMPTY: Readonly<Record<TaskFilter, EmptyLines>> = {
+  all: { heading: "", next: "" },
+  today: { heading: "", next: "" },
+  upcoming: { heading: "", next: "" },
+  overdue: { heading: "", next: "" },
+  project: { heading: "", next: "" },
+  proposed: { heading: "", next: "" },
+  blocked: { heading: "", next: "" },
+  completed: { heading: "", next: "" },
+};
+
+export function projectEmpty(_project: string): EmptyLines {
+  return { heading: "", next: "" };
+}
+
+export function lastValuesLine(_received: string | null): string {
+  return "";
+}

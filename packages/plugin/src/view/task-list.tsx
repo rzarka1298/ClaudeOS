@@ -39,6 +39,30 @@ export interface TaskListProps {
   readonly selectedId: string | null;
   /** False while the companion service is away: every action is then aria-disabled. */
   readonly connected: boolean;
+  /** The owner's clock and zone, so no phrase reads the machine's (UI-SPEC "Number and time formatting"). */
+  readonly now: number;
+  readonly zone: string;
+  /** Project display names by id; untrusted text, rendered as text nodes. */
+  readonly projectNames?: Readonly<Record<string, string>> | undefined;
+  /** `loading` shows the skeleton, `error` the load failure; default `ready`. */
+  readonly status?: "loading" | "ready" | "error" | undefined;
+  /** A new page is on its way: the previous rows stay visible, marked busy, with no spinner. */
+  readonly busy?: boolean | undefined;
+  readonly stale?: boolean | undefined;
+  readonly rebuilding?: boolean | undefined;
+  /** The Project filter with no project chosen. */
+  readonly chooseProject?: boolean | undefined;
+  /** The chosen project's display name, for its empty line. */
+  readonly projectName?: string | null | undefined;
+  /** The whole index is empty: every filter then shows the first-run state. */
+  readonly noTasksAtAll?: boolean | undefined;
+  /** How long ago the last good values arrived, for the disconnected line. */
+  readonly lastReceived?: string | null | undefined;
+  readonly hasMore?: boolean | undefined;
+  onLoadMore?(): void;
+  onCreate?(): void;
+  /** The status line of the section: the only live region this list talks to. */
+  announce?(text: string): void;
   onSelect(id: string): void;
   /** Resolves when the action is done; a rejection frees the pills and keeps focus where it was. */
   onAction(action: TaskRowAction, row: TaskRow): Promise<void>;
