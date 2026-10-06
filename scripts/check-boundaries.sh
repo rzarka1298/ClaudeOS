@@ -37,7 +37,10 @@
 #      kill(1) flag via execFile; receiving it in a handler stays allowed
 #  10. no non-test file forges a CapabilityToken -- a cast, a typed
 #      initializer, JSON.parse or `any` fed to a capability-typed call --
-#      only the approval engine issues one (ADR-0012, PR-26)
+#      only the approval engine issues one (ADR-0012, PR-26); the one
+#      anchored carve-out is the engine's minter file,
+#      packages/service/src/approval/mint/mint-token.ts (D-02), and it is
+#      still subject to the `any` scan
 #
 # Rules 6 and 7 mirror DOM_SAFETY_RULES, and rule 2 mirrors
 # NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs; rule 8
@@ -246,12 +249,23 @@ report_rule \
 # CapabilityToken<...> = ...`); JSON.parse fed straight to terminate(); and,
 # in any file that names CapabilityToken or SessionTerminator, `any` in any
 # form (wave 5 review). Tests may cast locally to exercise a
-# capability-typed method, so files named *.test.* are exempt. ---
+# capability-typed method, so files named *.test.* are exempt.
+#
+# The approval engine has to produce a token somewhere, so the forgery scan
+# (and ONLY the forgery scan) skips exactly one path, MINTER_PATH: the
+# engine's minter file (D-02, T-06-01). The skip is a whole-line match
+# anchored at both ends (`^...$`, the dot as `[.]`), so a path that merely
+# contains the minter path, starts with it, or ends with it is still scanned
+# (judge-r1 finding 9). The `any` scan below keeps the minter file in its
+# list, so the carve-out removes the cast pattern for that one file and nothing
+# else. ---
+MINTER_PATH_PATTERN='^packages/service/src/approval/mint/mint-token[.]ts$'
 NON_TEST_FILES=$(printf '%s\n' "$SRC_FILES" | grep -v '[.]test[.]' || true)
+FORGERY_SCAN_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v "$MINTER_PATH_PATTERN" || true)
 # shellcheck disable=SC2086
 forge_hits=$(grep_noncomment \
   "(^|[^A-Za-z0-9_])as[[:space:]]+CapabilityToken|[=(,][[:space:]]*<CapabilityToken|:[[:space:]]*CapabilityToken[[:space:]]*<[^>]*>[[:space:]]*=[^=>]|terminate[[:space:]]*[(][[:space:]]*JSON[.]parse" \
-  $NON_TEST_FILES || true)
+  $FORGERY_SCAN_FILES || true)
 CAPABILITY_FILES=""
 for f in $NON_TEST_FILES; do
   [ -f "$f" ] || continue
@@ -267,7 +281,7 @@ if [ -n "$CAPABILITY_FILES" ]; then
     $CAPABILITY_FILES || true)
 fi
 report_rule \
-  "a non-test file forges a CapabilityToken (a cast, typed initializer, JSON.parse or any; only the approval engine issues one; tests may cast locally)" \
+  "a non-test file forges a CapabilityToken (a cast, typed initializer, JSON.parse or any; only the approval engine issues one, and its minter file packages/service/src/approval/mint/mint-token.ts is the single path allowed to cast; tests may cast locally)" \
   "$(printf '%s\n%s\n' "$forge_hits" "$any_hits" | grep -v '^$' | sort -u || true)"
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
