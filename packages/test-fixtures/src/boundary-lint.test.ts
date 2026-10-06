@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -261,5 +261,213 @@ describe("local .js-to-.ts resolver (research defect B)", () => {
     const result = loadResolver().resolve("@ccc/domain", importer);
     expect(result.found).toBe(true);
     expect(typeof result.path).toBe("string");
+  });
+});
+
+// Phase 6 elements (plan 06-02, task 2; D-01, D-03, A-4). `approval` is the
+// engine folder, `approval-minter` the single file that will hold the token
+// cast, `executors` the effect code. Every FIRES case has a control in which
+// the forbidden import is replaced by a type import from @ccc/domain and no
+// boundaries/ message remains; the QUIET cases prove the allowed edges.
+interface FireCase {
+  readonly name: string;
+  readonly importer: string;
+  readonly specifier: string;
+}
+
+const MINTER = "../approval/mint/mint-token.js";
+const FIRES: readonly FireCase[] = [
+  {
+    name: "service file -> minter",
+    importer: "packages/service/src/probe.ts",
+    specifier: "./approval/mint/mint-token.js",
+  },
+  {
+    name: "service file -> executors index",
+    importer: "packages/service/src/probe.ts",
+    specifier: "./executors/index.js",
+  },
+  {
+    name: "composition root -> minter",
+    importer: "packages/service/src/main.ts",
+    specifier: "./approval/mint/mint-token.js",
+  },
+  {
+    name: "approval file -> executors index",
+    importer: "packages/service/src/approval/probe.ts",
+    specifier: "../executors/index.js",
+  },
+  {
+    name: "approval file -> service file",
+    importer: "packages/service/src/approval/probe.ts",
+    specifier: "../logging.js",
+  },
+  {
+    name: "approval file -> operational store",
+    importer: "packages/service/src/approval/probe.ts",
+    specifier: "@ccc/operational-store",
+  },
+  {
+    name: "executors file -> service file",
+    importer: "packages/service/src/executors/probe.ts",
+    specifier: "../logging.js",
+  },
+  {
+    name: "executors file -> approval index",
+    importer: "packages/service/src/executors/probe.ts",
+    specifier: "../approval/index.js",
+  },
+  {
+    name: "untrusted file -> minter",
+    importer: "packages/service/src/untrusted/probe.ts",
+    specifier: MINTER,
+  },
+  {
+    name: "plugin file -> approval index",
+    importer: "packages/plugin/src/probe.ts",
+    specifier: "../../service/src/approval/index.js",
+  },
+  {
+    name: "test-fixtures file -> minter",
+    importer: "packages/test-fixtures/src/probe.ts",
+    specifier: "../../service/src/approval/mint/mint-token.js",
+  },
+  {
+    name: "minter file -> approval index",
+    importer: "packages/service/src/approval/mint/probe.ts",
+    specifier: "../index.js",
+  },
+];
+
+const QUIET: readonly FireCase[] = [
+  {
+    name: "approval file -> minter",
+    importer: "packages/service/src/approval/probe.ts",
+    specifier: "./mint/mint-token.js",
+  },
+  {
+    name: "service file -> approval public entry",
+    importer: "packages/service/src/probe.ts",
+    specifier: "./approval/index.js",
+  },
+  {
+    name: "composition root -> executors index",
+    importer: "packages/service/src/main.ts",
+    specifier: "./executors/index.js",
+  },
+  {
+    name: "composition root -> approval public entry",
+    importer: "packages/service/src/main.ts",
+    specifier: "./approval/index.js",
+  },
+  {
+    name: "approval file -> domain",
+    importer: "packages/service/src/approval/probe.ts",
+    specifier: "@ccc/domain",
+  },
+  {
+    name: "executors file -> domain",
+    importer: "packages/service/src/executors/probe.ts",
+    specifier: "@ccc/domain",
+  },
+  {
+    name: "minter file -> domain",
+    importer: "packages/service/src/approval/mint/probe.ts",
+    specifier: "@ccc/domain",
+  },
+];
+
+describe("approval, approval-minter and executors elements (D-01, D-03, A-4)", () => {
+  for (const c of FIRES) {
+    test(`FIRES: ${c.name}`, async () => {
+      const messages = await boundariesFor(c.importer, `import "${c.specifier}";\n`);
+      expect(messages.length).toBeGreaterThan(0);
+    });
+    test(`quiet half of "${c.name}": the import replaced by a domain type import`, async () => {
+      expect(await boundariesFor(c.importer, DOMAIN_TYPE_IMPORT)).toHaveLength(0);
+    });
+  }
+  for (const c of QUIET) {
+    test(`QUIET: ${c.name}`, async () => {
+      expect(await boundariesFor(c.importer, `import "${c.specifier}";\n`)).toHaveLength(0);
+    });
+  }
+});
+
+describe("element list and config shape (plan 06-02)", () => {
+  type ConfigBlock = Record<string, unknown>;
+  interface Descriptor {
+    readonly type: string;
+    readonly pattern: string;
+  }
+  async function loadConfig(): Promise<ConfigBlock[]> {
+    const mod = (await import(pathToFileURL(ESLINT_CONFIG).href)) as { default: ConfigBlock[] };
+    return mod.default;
+  }
+  async function loadDescriptors(): Promise<Descriptor[]> {
+    for (const block of await loadConfig()) {
+      const settings = block.settings as Record<string, unknown> | undefined;
+      const elements = settings?.["boundaries/elements"];
+      if (Array.isArray(elements)) return elements as Descriptor[];
+    }
+    throw new Error("no boundaries/elements settings block in eslint.config.mjs");
+  }
+  const EXPECTED_ELEMENT_TYPES = [
+    "adapters",
+    "approval",
+    "approval-minter",
+    "collectors",
+    "domain",
+    "executors",
+    "keychain",
+    "launchers",
+    "operational-store",
+    "plugin",
+    "scheduler",
+    "service",
+    "service-api-client",
+    "test-fixtures",
+    "untrusted",
+    "vault-repo",
+  ];
+
+  test("the element descriptors cover exactly the sixteen asserted types", async () => {
+    const elements = await loadDescriptors();
+    expect([...new Set(elements.map((e) => e.type))].sort()).toEqual(EXPECTED_ELEMENT_TYPES);
+    expect(EXPECTED_ELEMENT_TYPES).toHaveLength(16);
+  });
+
+  test("the three new types and untrusted are never generated as package descriptors", async () => {
+    const elements = await loadDescriptors();
+    for (const t of ["approval", "approval-minter", "executors", "untrusted"]) {
+      expect(elements.some((e) => e.pattern === `packages/${t}`)).toBe(false);
+      expect(elements.some((e) => e.pattern === `node_modules/@ccc/${t}`)).toBe(false);
+    }
+  });
+
+  test("nested exclusive descriptors are listed before every package descriptor, most specific first", async () => {
+    const patterns = (await loadDescriptors()).map((e) => e.pattern);
+    const firstPackage = patterns.indexOf("packages/domain");
+    for (const nested of [
+      "packages/service/src/untrusted",
+      "packages/service/src/approval/mint",
+      "packages/service/src/approval",
+      "packages/service/src/executors",
+    ]) {
+      expect(patterns.indexOf(nested)).toBeGreaterThanOrEqual(0);
+      expect(patterns.indexOf(nested)).toBeLessThan(firstPackage);
+    }
+    expect(patterns.indexOf("packages/service/src/approval/mint")).toBeLessThan(
+      patterns.indexOf("packages/service/src/approval"),
+    );
+  });
+
+  test("a single boundaries/dependencies block exists and no-restricted-syntax keeps one block", async () => {
+    const config = await loadConfig();
+    const ruleCount = (id: string) =>
+      config.filter((b) => (b.rules as Record<string, unknown> | undefined)?.[id] !== undefined)
+        .length;
+    expect(ruleCount("boundaries/dependencies")).toBe(1);
+    expect(ruleCount("no-restricted-syntax")).toBe(1);
   });
 });
