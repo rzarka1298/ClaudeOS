@@ -1,6 +1,10 @@
 import type { DecideResponse } from "@ccc/domain/approval.js";
 import { HOSTILE_CORPUS } from "@ccc/domain/approval-corpus.js";
-import { capDiffLines, neutraliseUntrustedText } from "@ccc/domain/approval-view.js";
+import {
+  APPROVAL_STATE_DISPLAY,
+  capDiffLines,
+  neutraliseUntrustedText,
+} from "@ccc/domain/approval-view.js";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalDetailResponse } from "../approvals/api.js";
@@ -8,17 +12,32 @@ import { proposalId, summary } from "../test-support/approval-fixtures.js";
 import {
   approvalDetail,
   approvalView,
+  decidedView,
   FIXTURE_HASH,
   FIXTURE_NOW_MS,
+  OTHER_HASH,
   testApprovalView,
 } from "../test-support/approval-view-fixtures.js";
 import { ApprovalDetail, type ApprovalDetailProps } from "./approval-detail.js";
-import { APPROVAL_STATUS } from "./approvals-copy.js";
+import { APPROVAL_STATUS, DISABLED_REASONS, formatApprovalTime } from "./approvals-copy.js";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 function setup(
   options: {
@@ -469,5 +488,508 @@ describe("long values (Task 2, Test 8)", () => {
     const requestedBy = container.querySelector('[data-block="who"] dd') as Element;
     expect(requestedBy.getAttribute("title")).toBe(`Skill: ${label}`);
     expect(requestedBy.className).toContain("ccc-approval-value");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: the ten states, the edge states and the disconnected pane
+
+const SENTENCES: Readonly<Record<string, RegExp>> = {
+  pending: /Expires in 14 min .*If you don't decide, it's denied automatically\./,
+  approved: /Approved .*\. Waiting to start\./,
+  executing: /Approved .*\. The action is being carried out\. This updates when it finishes\./,
+  executed: /Approved .* and carried out .*\./,
+  failed: /Approved .*, but it failed: .*\./,
+  unknown:
+    /The app stopped while this was being carried out, so the result couldn't be confirmed\. .*Nothing is retried automatically\. Ask for a new request if you still need it\./,
+  denied: /You denied this request .*\. Nothing was changed\./,
+  withdrawn: /The requester withdrew this request\. Nothing was changed\./,
+  lapsed:
+    /This was approved but not carried out in time, so it was dropped\. Nothing was changed\. Ask for a new request if you still need it\./,
+  expired:
+    /No decision arrived before .*, so it was denied automatically\. Nothing was changed\. The requester can raise a new request against the current state\./,
+};
+
+describe("the ten states (Task 3, Test 1)", () => {
+  it.each(Object.keys(SENTENCES))(
+    "renders %s with its glyph, label and explanation",
+    async (state) => {
+      const proposal = state as keyof typeof SENTENCES & Parameters<typeof decidedView>[0];
+      const view =
+        state === "pending"
+          ? approvalView()
+          : decidedView(
+              proposal,
+              {},
+              state === "executed"
+                ? {
+                    history: [
+                      { event: "requested", at: "2026-10-06T11:59:00.000Z" },
+                      { event: "executed", at: "2026-10-06T11:59:40.000Z" },
+                    ],
+                  }
+                : {},
+            );
+      const { container } = setup({ detail: approvalDetail(view) });
+      await loaded();
+      const display = APPROVAL_STATE_DISPLAY[proposal];
+      const block = container.querySelector('[data-block="state"]') as HTMLElement;
+      expect(block.getAttribute("data-state")).toBe(state);
+      expect(block.querySelector(".ccc-approval-glyph")?.textContent).toBe(display.glyph);
+      expect(block.querySelector(".ccc-approval-glyph")?.getAttribute("aria-hidden")).toBe("true");
+      expect(block.querySelector(".ccc-approval-state-label")?.textContent).toBe(display.label);
+      expect(block.textContent).toMatch(SENTENCES[state] as RegExp);
+    },
+  );
+
+  it("offers the decision group only for a pending request, and Open originating run for the rest", async () => {
+    for (const state of [
+      "approved",
+      "executed",
+      "failed",
+      "unknown",
+      "denied",
+      "withdrawn",
+      "lapsed",
+      "expired",
+    ] as const) {
+      const { container } = setup({ detail: approvalDetail(decidedView(state)) });
+      await loaded();
+      expect(screen.queryByRole("group", { name: "Decision" }), state).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Deny/ }), state).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Approve once/ }), state).toBeNull();
+      expect(screen.getByRole("button", { name: /^Open originating run/ }), state).toBeTruthy();
+      expect(container.querySelector('[data-block="actions"]'), state).toBeTruthy();
+      cleanup();
+    }
+  });
+
+  it("removes both decision buttons for an executing request and shows static text with no spinner", async () => {
+    const { container } = setup({ detail: approvalDetail(decidedView("executing")) });
+    await loaded();
+    expect(screen.queryByRole("button", { name: /Deny|Approve once/ })).toBeNull();
+    expect(screen.getByText("Carrying out")).toBeTruthy();
+    expect(container.querySelector("progress, svg, [role='progressbar'], .ccc-spinner")).toBeNull();
+  });
+
+  it("uses the absolute times the request carries", async () => {
+    setup({ detail: approvalDetail(decidedView("executed")) });
+    await loaded();
+    expect(
+      screen.getAllByText(
+        new RegExp(formatApprovalTime("2026-10-06T11:59:30.000Z", FIXTURE_NOW_MS)),
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+});
+
+describe("failed and unknown (Task 3, Test 2)", () => {
+  it.each([
+    ["process-ended", "the session's process had already ended"],
+    ["run-not-found", "that session is no longer listed"],
+    ["identity-mismatch", "the process no longer matches the one you approved"],
+    [
+      "execution-failed",
+      "the command center couldn't run it. Check the service in Settings \u2192 Diagnostics.",
+    ],
+    [
+      "payload-invalid",
+      "the command center couldn't run it. Check the service in Settings \u2192 Diagnostics.",
+    ],
+  ])("explains a failed request with code %s", async (code, phrase) => {
+    const { container } = setup({
+      detail: approvalDetail(decidedView("failed", { outcomeCode: code })),
+    });
+    await loaded();
+    const text = (container.querySelector('[data-block="state"]') as Element).textContent ?? "";
+    expect(text).toContain(`, but it failed: ${phrase}`);
+    expect(text).toContain(
+      "Check whether the session's process is still running before asking again.",
+    );
+  });
+
+  it("explains an unknown outcome with the check hint and no failure", async () => {
+    const { container } = setup({
+      detail: approvalDetail(decidedView("unknown", { outcomeCode: "process-ended" })),
+    });
+    await loaded();
+    const text = (container.querySelector('[data-block="state"]') as Element).textContent ?? "";
+    expect(text).toContain(
+      "Check whether the session's process is still running before asking again.",
+    );
+    expect(text).toContain("Nothing is retried automatically.");
+  });
+
+  it.each(["unknown", "executed"] as const)(
+    "never renders a retry refusal on a %s request as Failed",
+    async (state) => {
+      const { container } = setup({
+        detail: approvalDetail(decidedView(state, { outcomeCode: "run-not-found" })),
+      });
+      await loaded();
+      expect(container.textContent ?? "").not.toMatch(/\bfailed\b/i);
+    },
+  );
+});
+
+describe("a carried-out request whose process is still shutting down (Task 3, Test 3)", () => {
+  it("adds the fixed sentence only for the awaiting-exit note", async () => {
+    setup({ detail: approvalDetail(decidedView("executed", { outcomeNote: "awaiting-exit" })) });
+    await loaded();
+    expect(screen.getByText("Carried out. The session is still shutting down.")).toBeTruthy();
+    cleanup();
+    setup({ detail: approvalDetail(decidedView("executed")) });
+    await loaded();
+    expect(screen.queryByText("Carried out. The session is still shutting down.")).toBeNull();
+  });
+});
+
+describe("expiry (Task 3, Test 4)", () => {
+  it("reads Expiring\u2026 at the expiry instant and disables both decisions with the reason", async () => {
+    setup({
+      props: { now: Date.parse("2026-10-06T12:14:00.000Z") },
+      detail: approvalDetail(),
+    });
+    await loaded();
+    expect(screen.getByText("Expiring\u2026")).toBeTruthy();
+    for (const name of [/^Deny:/, /^Approve once:/]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      const reason = document.getElementById(
+        (button.getAttribute("aria-describedby") ?? "").split(" ").pop() ?? "",
+      );
+      expect(reason?.textContent).toBe(DISABLED_REASONS.expired);
+    }
+  });
+
+  it("marks the time phrase with an emphasis hook in the last five minutes only", async () => {
+    const { container } = setup({ props: { now: Date.parse("2026-10-06T12:10:00.000Z") } });
+    await loaded();
+    expect(container.querySelector('[data-urgent="true"]')?.textContent).toBe("Expires in 4 min");
+    cleanup();
+    const later = setup();
+    await loaded();
+    expect(later.container.querySelector('[data-urgent="true"]')).toBeNull();
+  });
+});
+
+describe("a hash mismatch (Task 3, Test 5)", () => {
+  function changedDetail() {
+    return approvalDetail(
+      approvalView({
+        revision: 2,
+        record: {
+          requestedAt: "2026-10-06T11:59:00.000Z",
+          payloadHash: OTHER_HASH,
+          fingerprint: OTHER_HASH.slice(0, 12),
+          decidedAt: null,
+          decidedVia: null,
+          outcomeCode: null,
+          outcomeNote: null,
+        },
+      }),
+    );
+  }
+
+  function mismatchSetup(second: ApprovalDetailResponse) {
+    const decide = vi.fn(
+      async (_input: Parameters<ApprovalDetailProps["decide"]>[0]): Promise<DecideResponse> => ({
+        outcome: "hash-mismatch",
+      }),
+    );
+    const get = vi
+      .fn<() => Promise<ApprovalDetailResponse>>()
+      .mockResolvedValueOnce(approvalDetail())
+      .mockResolvedValue(second);
+    const announce = vi.fn();
+    const notify = vi.fn();
+    const utils = render(
+      <ApprovalDetail
+        proposalId={proposalId(1)}
+        now={FIXTURE_NOW_MS}
+        connected={true}
+        stale={false}
+        get={get}
+        decide={decide}
+        announce={announce}
+        notify={notify}
+      />,
+    );
+    return { ...utils, decide, get, announce, notify };
+  }
+
+  it("re-fetches once, shows the changed line until closed, focuses the heading and enables Approve once on the new details", async () => {
+    const { decide, get, announce, container } = mismatchSetup(changedDetail());
+    const heading = await loaded();
+    fireEvent.click(await screen.findByRole("button", { name: /^Approve once:/ }));
+    await waitFor(() =>
+      expect(
+        screen.getByText("The details changed since you first opened this request."),
+      ).toBeTruthy(),
+    );
+    expect(announce).toHaveBeenCalledWith(APPROVAL_STATUS.hashMismatch);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-block="record"]')?.textContent).toContain(
+      OTHER_HASH.slice(0, 12),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    const approve = screen.getByRole("button", { name: /^Approve once:/ });
+    expect(approve.getAttribute("aria-disabled")).toBeNull();
+    decide.mockResolvedValueOnce({ outcome: "hash-mismatch" });
+    fireEvent.click(approve);
+    await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
+    expect(decide.mock.calls[1]?.[0]).toMatchObject({ payloadHash: OTHER_HASH });
+  });
+
+  it("keeps Approve once disabled while the re-fetched details carry the same fingerprint", async () => {
+    mismatchSetup(approvalDetail());
+    await loaded();
+    fireEvent.click(await screen.findByRole("button", { name: /^Approve once:/ }));
+    await waitFor(() =>
+      expect(
+        screen.getByText("The details changed since you first opened this request."),
+      ).toBeTruthy(),
+    );
+    expect(
+      screen.getByRole("button", { name: /^Approve once:/ }).getAttribute("aria-disabled"),
+    ).toBe("true");
+    expect(screen.getByRole("button", { name: /^Deny:/ }).getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("drops the changed line when the pane closes onto another request", async () => {
+    const { rerender, get, decide, announce, notify } = mismatchSetup(changedDetail());
+    await loaded();
+    fireEvent.click(await screen.findByRole("button", { name: /^Approve once:/ }));
+    await waitFor(() =>
+      expect(
+        screen.getByText("The details changed since you first opened this request."),
+      ).toBeTruthy(),
+    );
+    rerender(
+      <ApprovalDetail
+        proposalId={proposalId(2)}
+        now={FIXTURE_NOW_MS}
+        connected={true}
+        stale={false}
+        get={get}
+        decide={decide}
+        announce={announce}
+        notify={notify}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("The details changed since you first opened this request."),
+      ).toBeNull(),
+    );
+  });
+});
+
+describe("other decision outcomes in the pane (Task 3, Test 6)", () => {
+  function outcomeSetup(response: DecideResponse, after: ApprovalDetailResponse) {
+    const decide = vi.fn(async (): Promise<DecideResponse> => response);
+    const get = vi
+      .fn<() => Promise<ApprovalDetailResponse>>()
+      .mockResolvedValueOnce(approvalDetail())
+      .mockResolvedValue(after);
+    const announce = vi.fn();
+    const notify = vi.fn();
+    const utils = render(
+      <ApprovalDetail
+        proposalId={proposalId(1)}
+        now={FIXTURE_NOW_MS}
+        connected={true}
+        stale={false}
+        get={get}
+        decide={decide}
+        announce={announce}
+        notify={notify}
+      />,
+    );
+    return { ...utils, decide, get, announce, notify };
+  }
+
+  it("posts the fixed line and Notice when the request expired during the decision, and shows it expired", async () => {
+    const { announce, notify } = outcomeSetup(
+      { outcome: "expired" },
+      approvalDetail(decidedView("expired")),
+    );
+    await loaded();
+    fireEvent.click(await screen.findByRole("button", { name: /^Deny:/ }));
+    await waitFor(() => expect(announce).toHaveBeenCalledWith(APPROVAL_STATUS.expiredDuringDecide));
+    expect(notify).toHaveBeenCalledWith(APPROVAL_STATUS.expiredDuringDecide);
+    await waitFor(() =>
+      expect(screen.getByText("Expired \u2014 denied automatically")).toBeTruthy(),
+    );
+  });
+
+  it("posts the fixed line and Notice when the request was already decided", async () => {
+    const { announce, notify } = outcomeSetup(
+      { outcome: "already-decided", state: "denied" },
+      approvalDetail(decidedView("denied")),
+    );
+    await loaded();
+    fireEvent.click(await screen.findByRole("button", { name: /^Deny:/ }));
+    await waitFor(() => expect(announce).toHaveBeenCalledWith(APPROVAL_STATUS.alreadyDecided));
+    expect(notify).toHaveBeenCalledWith(APPROVAL_STATUS.alreadyDecided);
+    await waitFor(() => expect(screen.getByText("Denied")).toBeTruthy());
+  });
+
+  it("posts the fixed line for a missing request, sends no Notice and leaves the pane as it was", async () => {
+    const { announce, notify, get } = outcomeSetup(
+      { outcome: "not-found" },
+      approvalDetail(decidedView("denied")),
+    );
+    await loaded();
+    fireEvent.click(await screen.findByRole("button", { name: /^Deny:/ }));
+    await waitFor(() => expect(announce).toHaveBeenCalledWith(APPROVAL_STATUS.notFound));
+    expect(notify).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Deny:/ }).getAttribute("aria-busy")).toBeNull(),
+    );
+    expect(screen.getByText("Needs your decision")).toBeTruthy();
+  });
+});
+
+describe("unknown id, load failure and loading (Task 3, Test 7)", () => {
+  it("says the request is not in the inbox and moves focus to the heading", async () => {
+    const get = vi.fn(async (): Promise<ApprovalDetailResponse> => {
+      throw Object.assign(new Error("not-found"), { code: "not-found" });
+    });
+    setup({ props: { get } });
+    const heading = await screen.findByRole("heading", {
+      name: "That request isn't in the inbox.",
+    });
+    expect(
+      screen.getByText("It may have been cleared. Pending and recent requests are listed here."),
+    ).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(screen.queryByRole("button", { name: /Deny|Approve once/ })).toBeNull();
+  });
+
+  it("shows the load error with both decisions withheld", async () => {
+    const get = vi.fn(async (): Promise<ApprovalDetailResponse> => {
+      throw new Error("boom");
+    });
+    setup({ props: { get } });
+    const heading = await screen.findByRole("heading", { name: /Couldn't load this request\./ });
+    expect(heading.textContent).toContain("\u25b2");
+    expect(
+      screen.getByText("Check the service in Settings \u2192 Diagnostics, then refresh."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Deny|Approve once/ })).toBeNull();
+  });
+
+  it("renders skeleton rows with Approve once held for the full request and Deny available", async () => {
+    const gate = deferred<ApprovalDetailResponse>();
+    const { container } = setup({
+      props: {
+        get: () => gate.promise,
+        summary: summary(1, "pending", 1, { title: "Test approval 1" }),
+      },
+    });
+    expect(container.querySelectorAll(".ccc-skeleton-line").length).toBeGreaterThanOrEqual(3);
+    const approve = screen.getByRole("button", { name: /^Approve once/ });
+    expect(approve.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      document.getElementById(
+        (approve.getAttribute("aria-describedby") ?? "").split(" ").pop() ?? "",
+      )?.textContent,
+    ).toBe(DISABLED_REASONS.loading);
+    expect(screen.getByRole("button", { name: /^Deny/ }).getAttribute("aria-disabled")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Open originating run/ })).toBeNull();
+    gate.resolve(approvalDetail());
+    await loaded();
+  });
+
+  it("shows no decision group while loading a request the list does not know to be pending", () => {
+    const gate = deferred<ApprovalDetailResponse>();
+    setup({ props: { get: () => gate.promise, summary: summary(1, "denied", 1) } });
+    expect(screen.queryByRole("group", { name: "Decision" })).toBeNull();
+  });
+});
+
+describe("a selection the current chip does not list (Task 3, Test 8)", () => {
+  it("names the chip the request is listed under and offers a button that only calls back", async () => {
+    const onShowFilter = vi.fn();
+    setup({
+      detail: approvalDetail(decidedView("executed")),
+      props: { activeFilter: "pending", onShowFilter },
+    });
+    await loaded();
+    expect(screen.getByText("This request is listed under Decided.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show Decided" }));
+    expect(onShowFilter).toHaveBeenCalledWith("decided");
+  });
+
+  it("says nothing when the request is in the active chip", async () => {
+    setup({ props: { activeFilter: "pending", onShowFilter: vi.fn() } });
+    await loaded();
+    expect(screen.queryByText(/is listed under/)).toBeNull();
+  });
+});
+
+describe("the record and history (Task 3, Test 9)", () => {
+  it("shows the request, its id and the twelve-character fingerprint", async () => {
+    const { container } = setup();
+    await loaded();
+    const record = container.querySelector('[data-block="record"]') as HTMLElement;
+    expect(within(record).getByText("Requested")).toBeTruthy();
+    expect(within(record).getByText(proposalId(1)).className).toContain("ccc-mono");
+    const fingerprint = within(record).getByText(FIXTURE_HASH.slice(0, 12));
+    expect(fingerprint.className).toContain("ccc-mono");
+    expect(fingerprint.textContent).toHaveLength(12);
+    expect(within(record).queryByText("Decided through")).toBeNull();
+  });
+
+  it("says a decision came through the command center, or from another local client in weight 600", async () => {
+    const { container } = setup({ detail: approvalDetail(decidedView("denied")) });
+    await loaded();
+    expect(within(container as HTMLElement).getByText("The command center")).toBeTruthy();
+    cleanup();
+    const other = setup({
+      detail: approvalDetail(decidedView("denied", { decidedVia: "other" })),
+    });
+    await loaded();
+    const channel = within(other.container as HTMLElement).getByText("Another local client");
+    expect(channel.getAttribute("data-channel")).toBe("other");
+  });
+
+  it("lists at most twenty audit events in the fixed vocabulary with absolute times", async () => {
+    const history = Array.from({ length: 25 }, (_, index) => ({
+      event: index === 0 ? ("requested" as const) : ("claimed" as const),
+      at: "2026-10-06T11:59:00.000Z",
+    }));
+    const { container } = setup({ detail: approvalDetail(approvalView({ history })) });
+    await loaded();
+    const items = container.querySelectorAll('[data-block="history"] ol > li');
+    expect(items).toHaveLength(20);
+    expect(items[0]?.textContent).toContain("Requested");
+    expect(items[1]?.textContent).toContain("Started carrying out");
+    expect(items[0]?.textContent).toContain(
+      formatApprovalTime("2026-10-06T11:59:00.000Z", FIXTURE_NOW_MS),
+    );
+  });
+});
+
+describe("disconnected (Task 3, Test 12)", () => {
+  it("dims the pane and disables every service-backed control with the fixed reason", async () => {
+    const { container } = setup({ props: { connected: false } });
+    await loaded();
+    expect(container.querySelector("section")?.getAttribute("data-dimmed")).toBe("true");
+    const names = [/^Deny:/, /^Approve once:/, /^Open originating run/];
+    for (const name of names) {
+      const button = screen.getByRole("button", { name });
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(button.hasAttribute("disabled")).toBe(false);
+      const reason = document.getElementById(
+        (button.getAttribute("aria-describedby") ?? "").split(" ").pop() ?? "",
+      );
+      expect(reason?.textContent).toBe(DISABLED_REASONS.disconnected);
+    }
+    expect(
+      screen.getByRole("button", { name: "Refactor parser" }).getAttribute("aria-disabled"),
+    ).toBe("true");
   });
 });
