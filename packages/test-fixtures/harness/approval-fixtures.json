@@ -1,0 +1,1140 @@
+{
+  "now": "2026-10-06T12:00:00.000Z",
+  "ids": {
+    "forceTerminate": "0apprfixture0000000000001",
+    "requesterSkill": "0apprfixture0000000000002",
+    "testApproval": "0apprfixture0000000000003",
+    "executing": "0apprfixture0000000000004",
+    "executed": "0apprfixture0000000000005",
+    "failed": "0apprfixture0000000000006",
+    "unknown": "0apprfixture0000000000007",
+    "expired": "0apprfixture0000000000008",
+    "tooLarge": "0apprfixture0000000000009",
+    "denied": "0apprfixture0000000000010",
+    "automation": "0apprfixture0000000000012"
+  },
+  "inbox": {
+    "pending": [
+      "0apprfixture0000000000001",
+      "0apprfixture0000000000002",
+      "0apprfixture0000000000003",
+      "0apprfixture0000000000009",
+      "0apprfixture0000000000012"
+    ],
+    "decided": [
+      "0apprfixture0000000000004",
+      "0apprfixture0000000000005",
+      "0apprfixture0000000000006",
+      "0apprfixture0000000000007",
+      "0apprfixture0000000000010"
+    ],
+    "expired": [
+      "0apprfixture0000000000008"
+    ]
+  },
+  "alternateHash": "ea01f373478d701c57634d04e70bbe3ebd86e43b6d242af755d5aa23707611d7",
+  "details": {
+    "0apprfixture0000000000001": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000001",
+        "state": "pending",
+        "revision": 1,
+        "title": "Force-terminate Refactor parser",
+        "operationLabel": "Force-terminate a Claude session",
+        "requesterKind": "dashboard",
+        "requesterLabel": "Dashboard",
+        "projectName": "example-project",
+        "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+        "createdAt": "2026-10-06T11:59:00.000Z",
+        "expiresAt": "2026-10-06T12:14:00.000Z",
+        "decidedAt": null,
+        "outcomeCode": null
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000001",
+        "state": "pending",
+        "revision": 1,
+        "title": "Force-terminate Refactor parser",
+        "destructive": true,
+        "effect": "force-terminate Refactor parser",
+        "expiresAt": "2026-10-06T12:14:00.000Z",
+        "requester": {
+          "kind": "dashboard",
+          "label": "Dashboard"
+        },
+        "project": "example-project",
+        "run": {
+          "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+          "name": "Refactor parser"
+        },
+        "action": "Force-terminate the Claude Code session Refactor parser by ending its process.",
+        "target": [
+          {
+            "label": "Session",
+            "value": "Refactor parser",
+            "mono": false
+          },
+          {
+            "label": "Process",
+            "value": "claude · PID 4242",
+            "mono": true
+          },
+          {
+            "label": "Process started",
+            "value": "Oct 6, 11:00 AM",
+            "mono": false
+          }
+        ],
+        "change": {
+          "type": "diff",
+          "origin": "engine",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "session: Refactor parser",
+              "count": null
+            },
+            {
+              "kind": "removed",
+              "text": "state: running",
+              "count": null
+            },
+            {
+              "kind": "added",
+              "text": "state: cancelled",
+              "count": null
+            },
+            {
+              "kind": "omitted",
+              "text": "",
+              "count": 3
+            }
+          ]
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "The session stopped responding.",
+          "full": "The session stopped responding.",
+          "shortened": false
+        },
+        "risks": [
+          "Unsaved work in that session is lost.",
+          "The process is ended without a clean exit."
+        ],
+        "checkHint": "Check whether the session's process is still running before asking again.",
+        "record": {
+          "requestedAt": "2026-10-06T11:59:00.000Z",
+          "payloadHash": "1c1c1965b75385c1e473ae21bd721cd0214d9df9a35578b505d06d99e2a884f4",
+          "fingerprint": "1c1c1965b753",
+          "decidedAt": null,
+          "decidedVia": null,
+          "outcomeCode": null,
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:59:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "1c1c1965b75385c1e473ae21bd721cd0214d9df9a35578b505d06d99e2a884f4"
+    },
+    "0apprfixture0000000000002": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000002",
+        "state": "pending",
+        "revision": 1,
+        "title": "Write the weekly review note",
+        "operationLabel": "Test approval",
+        "requesterKind": "skill",
+        "requesterLabel": "System",
+        "projectName": "sample-notes",
+        "runId": null,
+        "createdAt": "2026-10-06T11:59:00.000Z",
+        "expiresAt": "2026-10-06T14:00:00.000Z",
+        "decidedAt": null,
+        "outcomeCode": null
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000002",
+        "state": "pending",
+        "revision": 1,
+        "title": "Write the weekly review note",
+        "destructive": false,
+        "effect": null,
+        "expiresAt": "2026-10-06T14:00:00.000Z",
+        "requester": {
+          "kind": "skill",
+          "label": "System"
+        },
+        "project": "sample-notes",
+        "run": null,
+        "action": "Create the note named in the target. Nothing else changes.",
+        "target": [
+          {
+            "label": "Note",
+            "value": "global/notes/weekly-review.md",
+            "mono": true
+          }
+        ],
+        "change": {
+          "type": "payload",
+          "origin": "requester",
+          "fields": [
+            {
+              "label": "title",
+              "value": "Weekly review"
+            },
+            {
+              "label": "folder",
+              "value": "global/notes"
+            },
+            {
+              "label": "link",
+              "value": "https://example.invalid/review"
+            }
+          ]
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "Please run the weekly review. **bold** [link](https://example.invalid) <script>alert(1)</script> [U+202E]evil",
+          "full": "Please run the weekly review. **bold** [link](https://example.invalid) <script>alert(1)</script> [U+202E]evil This reason continues with a long explanation of why the request is needed. This reason continues with a long explanation of why the request is needed. This reason continues with a long explanation of why the request is needed. This reason continues with a long explanation of why the request is needed. This reason continues with a long explanation of why the request is needed. This reason continues with a long explanation of why the request is needed.",
+          "shortened": true
+        },
+        "risks": [],
+        "checkHint": null,
+        "record": {
+          "requestedAt": "2026-10-06T11:59:00.000Z",
+          "payloadHash": "02bb412895a325c6107cf9a544e5bd688aaa9c6b189fc40a2b4266a0995e6590",
+          "fingerprint": "02bb412895a3",
+          "decidedAt": null,
+          "decidedVia": null,
+          "outcomeCode": null,
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:59:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "02bb412895a325c6107cf9a544e5bd688aaa9c6b189fc40a2b4266a0995e6590"
+    },
+    "0apprfixture0000000000003": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000003",
+        "state": "pending",
+        "revision": 1,
+        "title": "Test approval",
+        "operationLabel": "Test approval",
+        "requesterKind": "dashboard",
+        "requesterLabel": "Dashboard",
+        "projectName": null,
+        "runId": null,
+        "createdAt": "2026-10-06T11:59:00.000Z",
+        "expiresAt": "2026-10-06T12:30:00.000Z",
+        "decidedAt": null,
+        "outcomeCode": null
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000003",
+        "state": "pending",
+        "revision": 1,
+        "title": "Test approval",
+        "destructive": false,
+        "effect": null,
+        "expiresAt": "2026-10-06T12:30:00.000Z",
+        "requester": {
+          "kind": "dashboard",
+          "label": "Dashboard"
+        },
+        "project": null,
+        "run": null,
+        "action": "Do nothing. This request exists only to try the approval inbox.",
+        "target": [],
+        "change": {
+          "type": "none",
+          "origin": "engine"
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "Trying the approval inbox.",
+          "full": "Trying the approval inbox.",
+          "shortened": false
+        },
+        "risks": [],
+        "checkHint": null,
+        "record": {
+          "requestedAt": "2026-10-06T11:59:00.000Z",
+          "payloadHash": "9e79f20f806d13ffc41091f64b58d3c35d7882e40e7e8204d7a6de0f1eb5a490",
+          "fingerprint": "9e79f20f806d",
+          "decidedAt": null,
+          "decidedVia": null,
+          "outcomeCode": null,
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:59:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "9e79f20f806d13ffc41091f64b58d3c35d7882e40e7e8204d7a6de0f1eb5a490"
+    },
+    "0apprfixture0000000000004": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000004",
+        "state": "executing",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "operationLabel": "Force-terminate a Claude session",
+        "requesterKind": "dashboard",
+        "requesterLabel": "Dashboard",
+        "projectName": "example-project",
+        "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+        "createdAt": "2026-10-06T11:54:00.000Z",
+        "expiresAt": "2026-10-06T12:08:00.000Z",
+        "decidedAt": "2026-10-06T11:58:00.000Z",
+        "outcomeCode": null
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000004",
+        "state": "executing",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "destructive": true,
+        "effect": "force-terminate Refactor parser",
+        "expiresAt": "2026-10-06T12:08:00.000Z",
+        "requester": {
+          "kind": "dashboard",
+          "label": "Dashboard"
+        },
+        "project": "example-project",
+        "run": {
+          "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+          "name": "Refactor parser"
+        },
+        "action": "Force-terminate the Claude Code session Refactor parser by ending its process.",
+        "target": [
+          {
+            "label": "Session",
+            "value": "Refactor parser",
+            "mono": false
+          },
+          {
+            "label": "Process",
+            "value": "claude · PID 4242",
+            "mono": true
+          },
+          {
+            "label": "Process started",
+            "value": "Oct 6, 11:00 AM",
+            "mono": false
+          }
+        ],
+        "change": {
+          "type": "diff",
+          "origin": "engine",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "session: Refactor parser",
+              "count": null
+            },
+            {
+              "kind": "removed",
+              "text": "state: running",
+              "count": null
+            },
+            {
+              "kind": "added",
+              "text": "state: cancelled",
+              "count": null
+            },
+            {
+              "kind": "omitted",
+              "text": "",
+              "count": 3
+            }
+          ]
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "The session stopped responding.",
+          "full": "The session stopped responding.",
+          "shortened": false
+        },
+        "risks": [
+          "Unsaved work in that session is lost.",
+          "The process is ended without a clean exit."
+        ],
+        "checkHint": "Check whether the session's process is still running before asking again.",
+        "record": {
+          "requestedAt": "2026-10-06T11:54:00.000Z",
+          "payloadHash": "17b3c96f9eb36809072caade2f9d2cfe879c6da205df2804cf1c4719e9318de0",
+          "fingerprint": "17b3c96f9eb3",
+          "decidedAt": "2026-10-06T11:58:00.000Z",
+          "decidedVia": "plugin",
+          "outcomeCode": null,
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:54:00.000Z"
+          },
+          {
+            "event": "approved",
+            "at": "2026-10-06T11:58:00.000Z"
+          },
+          {
+            "event": "claimed",
+            "at": "2026-10-06T11:58:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "17b3c96f9eb36809072caade2f9d2cfe879c6da205df2804cf1c4719e9318de0"
+    },
+    "0apprfixture0000000000005": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000005",
+        "state": "executed",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "operationLabel": "Force-terminate a Claude session",
+        "requesterKind": "dashboard",
+        "requesterLabel": "Dashboard",
+        "projectName": "example-project",
+        "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+        "createdAt": "2026-10-06T11:36:00.000Z",
+        "expiresAt": "2026-10-06T11:50:00.000Z",
+        "decidedAt": "2026-10-06T11:40:00.000Z",
+        "outcomeCode": null
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000005",
+        "state": "executed",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "destructive": true,
+        "effect": "force-terminate Refactor parser",
+        "expiresAt": "2026-10-06T11:50:00.000Z",
+        "requester": {
+          "kind": "dashboard",
+          "label": "Dashboard"
+        },
+        "project": "example-project",
+        "run": {
+          "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+          "name": "Refactor parser"
+        },
+        "action": "Force-terminate the Claude Code session Refactor parser by ending its process.",
+        "target": [
+          {
+            "label": "Session",
+            "value": "Refactor parser",
+            "mono": false
+          },
+          {
+            "label": "Process",
+            "value": "claude · PID 4242",
+            "mono": true
+          },
+          {
+            "label": "Process started",
+            "value": "Oct 6, 11:00 AM",
+            "mono": false
+          }
+        ],
+        "change": {
+          "type": "diff",
+          "origin": "engine",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "session: Refactor parser",
+              "count": null
+            },
+            {
+              "kind": "removed",
+              "text": "state: running",
+              "count": null
+            },
+            {
+              "kind": "added",
+              "text": "state: cancelled",
+              "count": null
+            },
+            {
+              "kind": "omitted",
+              "text": "",
+              "count": 3
+            }
+          ]
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "The session stopped responding.",
+          "full": "The session stopped responding.",
+          "shortened": false
+        },
+        "risks": [
+          "Unsaved work in that session is lost.",
+          "The process is ended without a clean exit."
+        ],
+        "checkHint": "Check whether the session's process is still running before asking again.",
+        "record": {
+          "requestedAt": "2026-10-06T11:36:00.000Z",
+          "payloadHash": "f02a74cf1c203bb5a964b80483e314082a736e1765cabd65eb608f9922859ddb",
+          "fingerprint": "f02a74cf1c20",
+          "decidedAt": "2026-10-06T11:40:00.000Z",
+          "decidedVia": "plugin",
+          "outcomeCode": null,
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:36:00.000Z"
+          },
+          {
+            "event": "approved",
+            "at": "2026-10-06T11:40:00.000Z"
+          },
+          {
+            "event": "claimed",
+            "at": "2026-10-06T11:40:00.000Z"
+          },
+          {
+            "event": "executed",
+            "at": "2026-10-06T11:41:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "f02a74cf1c203bb5a964b80483e314082a736e1765cabd65eb608f9922859ddb"
+    },
+    "0apprfixture0000000000006": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000006",
+        "state": "failed",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "operationLabel": "Force-terminate a Claude session",
+        "requesterKind": "dashboard",
+        "requesterLabel": "Dashboard",
+        "projectName": "example-project",
+        "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+        "createdAt": "2026-10-06T11:26:00.000Z",
+        "expiresAt": "2026-10-06T11:40:00.000Z",
+        "decidedAt": "2026-10-06T11:30:00.000Z",
+        "outcomeCode": "process-ended"
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000006",
+        "state": "failed",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "destructive": true,
+        "effect": "force-terminate Refactor parser",
+        "expiresAt": "2026-10-06T11:40:00.000Z",
+        "requester": {
+          "kind": "dashboard",
+          "label": "Dashboard"
+        },
+        "project": "example-project",
+        "run": {
+          "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+          "name": "Refactor parser"
+        },
+        "action": "Force-terminate the Claude Code session Refactor parser by ending its process.",
+        "target": [
+          {
+            "label": "Session",
+            "value": "Refactor parser",
+            "mono": false
+          },
+          {
+            "label": "Process",
+            "value": "claude · PID 4242",
+            "mono": true
+          },
+          {
+            "label": "Process started",
+            "value": "Oct 6, 11:00 AM",
+            "mono": false
+          }
+        ],
+        "change": {
+          "type": "diff",
+          "origin": "engine",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "session: Refactor parser",
+              "count": null
+            },
+            {
+              "kind": "removed",
+              "text": "state: running",
+              "count": null
+            },
+            {
+              "kind": "added",
+              "text": "state: cancelled",
+              "count": null
+            },
+            {
+              "kind": "omitted",
+              "text": "",
+              "count": 3
+            }
+          ]
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "The session stopped responding.",
+          "full": "The session stopped responding.",
+          "shortened": false
+        },
+        "risks": [
+          "Unsaved work in that session is lost.",
+          "The process is ended without a clean exit."
+        ],
+        "checkHint": "Check whether the session's process is still running before asking again.",
+        "record": {
+          "requestedAt": "2026-10-06T11:26:00.000Z",
+          "payloadHash": "62de847863463f96091cf8004815dc2f77a34de720930e8ad59b1cd40549cefb",
+          "fingerprint": "62de84786346",
+          "decidedAt": "2026-10-06T11:30:00.000Z",
+          "decidedVia": "plugin",
+          "outcomeCode": "process-ended",
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:26:00.000Z"
+          },
+          {
+            "event": "approved",
+            "at": "2026-10-06T11:30:00.000Z"
+          },
+          {
+            "event": "claimed",
+            "at": "2026-10-06T11:30:00.000Z"
+          },
+          {
+            "event": "failed",
+            "at": "2026-10-06T11:31:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "62de847863463f96091cf8004815dc2f77a34de720930e8ad59b1cd40549cefb"
+    },
+    "0apprfixture0000000000007": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000007",
+        "state": "unknown",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "operationLabel": "Force-terminate a Claude session",
+        "requesterKind": "dashboard",
+        "requesterLabel": "Dashboard",
+        "projectName": "example-project",
+        "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+        "createdAt": "2026-10-06T11:11:00.000Z",
+        "expiresAt": "2026-10-06T11:25:00.000Z",
+        "decidedAt": "2026-10-06T11:15:00.000Z",
+        "outcomeCode": "outcome-unknown"
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000007",
+        "state": "unknown",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "destructive": true,
+        "effect": "force-terminate Refactor parser",
+        "expiresAt": "2026-10-06T11:25:00.000Z",
+        "requester": {
+          "kind": "dashboard",
+          "label": "Dashboard"
+        },
+        "project": "example-project",
+        "run": {
+          "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+          "name": "Refactor parser"
+        },
+        "action": "Force-terminate the Claude Code session Refactor parser by ending its process.",
+        "target": [
+          {
+            "label": "Session",
+            "value": "Refactor parser",
+            "mono": false
+          },
+          {
+            "label": "Process",
+            "value": "claude · PID 4242",
+            "mono": true
+          },
+          {
+            "label": "Process started",
+            "value": "Oct 6, 11:00 AM",
+            "mono": false
+          }
+        ],
+        "change": {
+          "type": "diff",
+          "origin": "engine",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "session: Refactor parser",
+              "count": null
+            },
+            {
+              "kind": "removed",
+              "text": "state: running",
+              "count": null
+            },
+            {
+              "kind": "added",
+              "text": "state: cancelled",
+              "count": null
+            },
+            {
+              "kind": "omitted",
+              "text": "",
+              "count": 3
+            }
+          ]
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "The session stopped responding.",
+          "full": "The session stopped responding.",
+          "shortened": false
+        },
+        "risks": [
+          "Unsaved work in that session is lost.",
+          "The process is ended without a clean exit."
+        ],
+        "checkHint": "Check whether the session's process is still running before asking again.",
+        "record": {
+          "requestedAt": "2026-10-06T11:11:00.000Z",
+          "payloadHash": "1abf1969f16dfda0fc1f64394a5a65b98f7f213cba334af96968edfee1964c1b",
+          "fingerprint": "1abf1969f16d",
+          "decidedAt": "2026-10-06T11:15:00.000Z",
+          "decidedVia": "plugin",
+          "outcomeCode": "outcome-unknown",
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:11:00.000Z"
+          },
+          {
+            "event": "approved",
+            "at": "2026-10-06T11:15:00.000Z"
+          },
+          {
+            "event": "claimed",
+            "at": "2026-10-06T11:15:00.000Z"
+          },
+          {
+            "event": "outcome-unknown",
+            "at": "2026-10-06T11:20:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "1abf1969f16dfda0fc1f64394a5a65b98f7f213cba334af96968edfee1964c1b"
+    },
+    "0apprfixture0000000000008": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000008",
+        "state": "expired",
+        "revision": 2,
+        "title": "Force-terminate Refactor parser",
+        "operationLabel": "Force-terminate a Claude session",
+        "requesterKind": "dashboard",
+        "requesterLabel": "Dashboard",
+        "projectName": "example-project",
+        "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+        "createdAt": "2026-10-06T11:15:00.000Z",
+        "expiresAt": "2026-10-06T11:30:00.000Z",
+        "decidedAt": "2026-10-06T11:30:00.000Z",
+        "outcomeCode": null
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000008",
+        "state": "expired",
+        "revision": 2,
+        "title": "Force-terminate Refactor parser",
+        "destructive": true,
+        "effect": "force-terminate Refactor parser",
+        "expiresAt": "2026-10-06T11:30:00.000Z",
+        "requester": {
+          "kind": "dashboard",
+          "label": "Dashboard"
+        },
+        "project": "example-project",
+        "run": {
+          "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+          "name": "Refactor parser"
+        },
+        "action": "Force-terminate the Claude Code session Refactor parser by ending its process.",
+        "target": [
+          {
+            "label": "Session",
+            "value": "Refactor parser",
+            "mono": false
+          },
+          {
+            "label": "Process",
+            "value": "claude · PID 4242",
+            "mono": true
+          },
+          {
+            "label": "Process started",
+            "value": "Oct 6, 11:00 AM",
+            "mono": false
+          }
+        ],
+        "change": {
+          "type": "diff",
+          "origin": "engine",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "session: Refactor parser",
+              "count": null
+            },
+            {
+              "kind": "removed",
+              "text": "state: running",
+              "count": null
+            },
+            {
+              "kind": "added",
+              "text": "state: cancelled",
+              "count": null
+            },
+            {
+              "kind": "omitted",
+              "text": "",
+              "count": 3
+            }
+          ]
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "The session stopped responding.",
+          "full": "The session stopped responding.",
+          "shortened": false
+        },
+        "risks": [
+          "Unsaved work in that session is lost.",
+          "The process is ended without a clean exit."
+        ],
+        "checkHint": "Check whether the session's process is still running before asking again.",
+        "record": {
+          "requestedAt": "2026-10-06T11:15:00.000Z",
+          "payloadHash": "fad8d5525367f33d6566fc6b8cdb58413dcee1b50fe49e48b903f2620012222f",
+          "fingerprint": "fad8d5525367",
+          "decidedAt": "2026-10-06T11:30:00.000Z",
+          "decidedVia": null,
+          "outcomeCode": null,
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:15:00.000Z"
+          },
+          {
+            "event": "expired",
+            "at": "2026-10-06T11:30:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "fad8d5525367f33d6566fc6b8cdb58413dcee1b50fe49e48b903f2620012222f"
+    },
+    "0apprfixture0000000000009": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000009",
+        "state": "pending",
+        "revision": 1,
+        "title": "Write the large export note",
+        "operationLabel": "Test approval",
+        "requesterKind": "skill",
+        "requesterLabel": "research-brief",
+        "projectName": "demo-api",
+        "runId": null,
+        "createdAt": "2026-10-06T11:59:00.000Z",
+        "expiresAt": "2026-10-06T12:20:00.000Z",
+        "decidedAt": null,
+        "outcomeCode": null
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000009",
+        "state": "pending",
+        "revision": 1,
+        "title": "Write the large export note",
+        "destructive": false,
+        "effect": null,
+        "expiresAt": "2026-10-06T12:20:00.000Z",
+        "requester": {
+          "kind": "skill",
+          "label": "research-brief"
+        },
+        "project": "demo-api",
+        "run": null,
+        "action": "Create the note named in the target. Nothing else changes.",
+        "target": [
+          {
+            "label": "Note",
+            "value": "global/notes/export.md",
+            "mono": true
+          }
+        ],
+        "change": {
+          "type": "diff",
+          "origin": "requester",
+          "lines": [
+            {
+              "kind": "added",
+              "text": "line one of the export",
+              "count": null
+            },
+            {
+              "kind": "omitted",
+              "text": "",
+              "count": 900
+            }
+          ]
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "Nightly export.",
+          "full": "Nightly export.",
+          "shortened": false
+        },
+        "risks": [],
+        "checkHint": null,
+        "record": {
+          "requestedAt": "2026-10-06T11:59:00.000Z",
+          "payloadHash": "6ff1a418d148fcfd48d7c5ad5bd8e0756c9d7d7bbc67e925d7d85d8f9f01eb8a",
+          "fingerprint": "6ff1a418d148",
+          "decidedAt": null,
+          "decidedVia": null,
+          "outcomeCode": null,
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:59:00.000Z"
+          }
+        ],
+        "reviewable": false
+      },
+      "purged": false,
+      "payloadHash": "6ff1a418d148fcfd48d7c5ad5bd8e0756c9d7d7bbc67e925d7d85d8f9f01eb8a"
+    },
+    "0apprfixture0000000000010": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000010",
+        "state": "denied",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "operationLabel": "Force-terminate a Claude session",
+        "requesterKind": "dashboard",
+        "requesterLabel": "Dashboard",
+        "projectName": "example-project",
+        "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+        "createdAt": "2026-10-06T08:56:00.000Z",
+        "expiresAt": "2026-10-06T09:10:00.000Z",
+        "decidedAt": "2026-10-06T09:00:00.000Z",
+        "outcomeCode": null
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000010",
+        "state": "denied",
+        "revision": 3,
+        "title": "Force-terminate Refactor parser",
+        "destructive": true,
+        "effect": "force-terminate Refactor parser",
+        "expiresAt": "2026-10-06T09:10:00.000Z",
+        "requester": {
+          "kind": "dashboard",
+          "label": "Dashboard"
+        },
+        "project": "example-project",
+        "run": {
+          "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+          "name": "Refactor parser"
+        },
+        "action": "Force-terminate the Claude Code session Refactor parser by ending its process.",
+        "target": [
+          {
+            "label": "Session",
+            "value": "Refactor parser",
+            "mono": false
+          },
+          {
+            "label": "Process",
+            "value": "claude · PID 4242",
+            "mono": true
+          },
+          {
+            "label": "Process started",
+            "value": "Oct 6, 11:00 AM",
+            "mono": false
+          }
+        ],
+        "change": {
+          "type": "diff",
+          "origin": "engine",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "session: Refactor parser",
+              "count": null
+            },
+            {
+              "kind": "removed",
+              "text": "state: running",
+              "count": null
+            },
+            {
+              "kind": "added",
+              "text": "state: cancelled",
+              "count": null
+            },
+            {
+              "kind": "omitted",
+              "text": "",
+              "count": 3
+            }
+          ]
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "The session stopped responding.",
+          "full": "The session stopped responding.",
+          "shortened": false
+        },
+        "risks": [
+          "Unsaved work in that session is lost.",
+          "The process is ended without a clean exit."
+        ],
+        "checkHint": "Check whether the session's process is still running before asking again.",
+        "record": {
+          "requestedAt": "2026-10-06T08:56:00.000Z",
+          "payloadHash": "0f583f8aa92ea9eec063ff0b4a020fa62b637e25b324bfaee4f2c9bd82bd95db",
+          "fingerprint": "0f583f8aa92e",
+          "decidedAt": "2026-10-06T09:00:00.000Z",
+          "decidedVia": "plugin",
+          "outcomeCode": null,
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T08:56:00.000Z"
+          },
+          {
+            "event": "denied",
+            "at": "2026-10-06T09:00:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "0f583f8aa92ea9eec063ff0b4a020fa62b637e25b324bfaee4f2c9bd82bd95db"
+    },
+    "0apprfixture0000000000012": {
+      "summary": {
+        "proposalId": "0apprfixture0000000000012",
+        "state": "pending",
+        "revision": 1,
+        "title": "Test approval",
+        "operationLabel": "Test approval",
+        "requesterKind": "automation",
+        "requesterLabel": "daily-news",
+        "projectName": "demo-api",
+        "runId": null,
+        "createdAt": "2026-10-06T11:59:00.000Z",
+        "expiresAt": "2026-10-06T17:00:00.000Z",
+        "decidedAt": null,
+        "outcomeCode": null
+      },
+      "view": {
+        "proposalId": "0apprfixture0000000000012",
+        "state": "pending",
+        "revision": 1,
+        "title": "Test approval",
+        "destructive": false,
+        "effect": null,
+        "expiresAt": "2026-10-06T17:00:00.000Z",
+        "requester": {
+          "kind": "automation",
+          "label": "daily-news"
+        },
+        "project": "demo-api",
+        "run": null,
+        "action": "Do nothing. This request exists only to try the approval inbox.",
+        "target": [],
+        "change": {
+          "type": "none",
+          "origin": "engine"
+        },
+        "reason": {
+          "origin": "requester",
+          "shown": "Daily check.",
+          "full": "Daily check.",
+          "shortened": false
+        },
+        "risks": [],
+        "checkHint": null,
+        "record": {
+          "requestedAt": "2026-10-06T11:59:00.000Z",
+          "payloadHash": "451dd9b69e3521b846b634cd93da649750790d824bfb1e86cb2db4704db6b3c2",
+          "fingerprint": "451dd9b69e35",
+          "decidedAt": null,
+          "decidedVia": null,
+          "outcomeCode": null,
+          "outcomeNote": null
+        },
+        "history": [
+          {
+            "event": "requested",
+            "at": "2026-10-06T11:59:00.000Z"
+          }
+        ],
+        "reviewable": true
+      },
+      "purged": false,
+      "payloadHash": "451dd9b69e3521b846b634cd93da649750790d824bfb1e86cb2db4704db6b3c2"
+    }
+  }
+}

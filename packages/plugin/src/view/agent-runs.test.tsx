@@ -2,11 +2,14 @@ import type { ClaudeIntegrationStatus, RunId, SessionView } from "@ccc/domain";
 import type { UsageSummary } from "@ccc/domain/usage.js";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { adoptApprovalsSnapshot, resetApprovalsState } from "../approvals/signals.js";
 import { connectionState } from "../connection-state.js";
+import { approvalsSnapshot, summary } from "../test-support/approval-fixtures.js";
 import { claudeIntegration, sessionsById } from "../widgets/session-signals.js";
 import { usageSummary } from "../widgets/usage-signals.js";
 import { AgentRuns } from "./agent-runs.js";
 import { selectedRunId } from "./agent-runs-state.js";
+import { resetApprovalsView } from "./approvals-state.js";
 import { Shell } from "./shell.js";
 
 /** A 25-char `[0-9a-z]` RunId, varied by `n` (RUN_ID_PATTERN) — mirrors
@@ -548,4 +551,101 @@ describe("Codex 6: unavailable hook reasons are said out loud in Agent runs (D-1
       expect(screen.getAllByText("Refactor parser").length).toBeGreaterThan(0);
     },
   );
+});
+
+describe("Plan 06-17 Task 3: the Approvals section inside Agent runs", () => {
+  beforeEach(() => {
+    resetApprovalsState();
+    resetApprovalsView();
+  });
+  afterEach(() => {
+    resetApprovalsState();
+    resetApprovalsView();
+  });
+
+  const fiveSessions = (): SessionView[] => [
+    session({ runId: runId(1), name: "One", state: "running" }),
+    session({ runId: runId(2), name: "Two", state: "running" }),
+    session({ runId: runId(3), name: "Three", state: "running" }),
+    session({ runId: runId(4), name: "Four", state: "waiting-for-approval" }),
+    session({ runId: runId(5), name: "Five", state: "stale", endedAt: null }),
+  ];
+
+  function hydrateApprovals(pending: number): void {
+    adoptApprovalsSnapshot(
+      approvalsSnapshot({
+        pending: Array.from({ length: pending }, (_, index) => summary(index + 1, "pending")),
+      }),
+    );
+  }
+
+  it("Test 1 (mount): the section is the first block under the summary, footer and banner, above the sessions layout", () => {
+    seed(fiveSessions());
+    hydrateApprovals(1);
+    const { container } = render(<AgentRuns now={NOW_MS} />);
+    const root = container.querySelector(".ccc-agent-runs") as HTMLElement;
+    const children = [...root.children];
+    const section = root.querySelector("section.ccc-approvals") as HTMLElement;
+    const layout = root.querySelector(".ccc-agent-runs-layout") as HTMLElement;
+    expect(section).not.toBeNull();
+    expect(layout).not.toBeNull();
+    expect(children.indexOf(section)).toBeGreaterThan(-1);
+    expect(children.indexOf(section)).toBeLessThan(children.indexOf(layout));
+    // below the summary line and the provenance strip
+    expect(children[0]?.tagName).toBe("P");
+    expect(children.indexOf(section)).toBeGreaterThan(
+      children.indexOf(root.querySelector("footer") as HTMLElement),
+    );
+    // the sessions layout still renders its three groups unchanged
+    expect(screen.getByText("Active (4)")).toBeTruthy();
+    expect(screen.getByText("Recent (0)")).toBeTruthy();
+    expect(screen.getByText("Unclassified (0)")).toBeTruthy();
+  });
+
+  it("Test 2 (summary line): adds a final segment beside the Phase 5 segments, omitted at zero", () => {
+    seed(fiveSessions());
+    hydrateApprovals(2);
+    const { container } = render(<AgentRuns now={NOW_MS} />);
+    const line = container.querySelector(".ccc-agent-runs > p.ccc-state-body")?.textContent;
+    expect(line).toBe(
+      "3 active · 1 waiting for approval · 1 unknown · 2 requests need your decision",
+    );
+  });
+
+  it("Test 2 (summary line): the singular form, and the Phase 5 text byte-identical with none pending", () => {
+    seed(fiveSessions());
+    hydrateApprovals(1);
+    const one = render(<AgentRuns now={NOW_MS} />);
+    expect(one.container.querySelector(".ccc-agent-runs > p.ccc-state-body")?.textContent).toBe(
+      "3 active · 1 waiting for approval · 1 unknown · 1 request needs your decision",
+    );
+    one.unmount();
+    resetApprovalsState();
+    hydrateApprovals(0);
+    const none = render(<AgentRuns now={NOW_MS} />);
+    expect(none.container.querySelector(".ccc-agent-runs > p.ccc-state-body")?.textContent).toBe(
+      "3 active · 1 waiting for approval · 1 unknown",
+    );
+  });
+
+  it("Test 2 (summary line): no segment before the first snapshot, never a zero", () => {
+    seed(fiveSessions());
+    const { container } = render(<AgentRuns now={NOW_MS} />);
+    expect(container.querySelector(".ccc-agent-runs > p.ccc-state-body")?.textContent).toBe(
+      "3 active · 1 waiting for approval · 1 unknown",
+    );
+  });
+
+  it("the Approvals section also appears beside a hook banner and beside the empty state, so a pending request is never hidden", () => {
+    connectionState.value = { kind: "live" };
+    hydrateApprovals(1);
+    const empty = render(<AgentRuns now={NOW_MS} />);
+    expect(empty.container.querySelector("section.ccc-approvals")).not.toBeNull();
+    expect(screen.getByText("Nothing here yet")).toBeTruthy();
+    empty.unmount();
+    claudeIntegration.value = integrationWith({ disableAllHooks: true });
+    const banner = render(<AgentRuns now={NOW_MS} />);
+    expect(banner.container.querySelector("section.ccc-approvals")).not.toBeNull();
+    expect(screen.getByText("Session tracking paused")).toBeTruthy();
+  });
 });
