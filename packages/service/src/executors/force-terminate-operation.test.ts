@@ -129,44 +129,45 @@ describe("session.force-terminate operation: payload, claim facts and render", (
         state: "waiting-for-approval",
       });
       const facts = await op.claimFacts?.(payload);
+      // pid and start are the approved payload's, never the Run's current ones.
       expect(facts).toEqual({
         runId: payload.runId,
-        pid: 777,
-        processStartedAt: "Mon Oct  6 02:00:00 2026",
+        pid: payload.pid,
+        processStartedAt: payload.processStartedAt,
         state: "waiting-for-approval",
       });
       expect(inspector.readCalls).toEqual([payload.runId]);
     });
 
-    it("returns null pid and start, instead of throwing, when the inspector finds no Run", async () => {
+    it("keeps the approved pid and start, with a null state, when the inspector finds no Run", async () => {
       const { op, inspector } = build();
       const payload = parsed();
       inspector.run = null;
       const facts = await op.claimFacts?.(payload);
       expect(facts).toEqual({
         runId: payload.runId,
-        pid: null,
-        processStartedAt: null,
+        pid: payload.pid,
+        processStartedAt: payload.processStartedAt,
         state: null,
       });
     });
 
-    it("returns null pid and start, instead of throwing, when the inspector throws", async () => {
+    it("keeps the approved pid and start, with a null state, instead of throwing when the inspector throws", async () => {
       const { op, inspector, log } = build();
       const payload = parsed();
       inspector.readRunError = new Error("boom at /Users/USERNAME/secret-place");
       const facts = await op.claimFacts?.(payload);
       expect(facts).toEqual({
         runId: payload.runId,
-        pid: null,
-        processStartedAt: null,
+        pid: payload.pid,
+        processStartedAt: payload.processStartedAt,
         state: null,
       });
       // The error text is never logged.
       expect(JSON.stringify(log.lines)).not.toContain("secret-place");
     });
 
-    it("keeps null where the Run has no recorded pid or start", async () => {
+    it("keeps the approved pid and start where the Run has no recorded ones", async () => {
       const { op, inspector } = build();
       const payload = parsed();
       inspector.run = makeRunFacts({
@@ -178,8 +179,8 @@ describe("session.force-terminate operation: payload, claim facts and render", (
       const facts = await op.claimFacts?.(payload);
       expect(facts).toEqual({
         runId: payload.runId,
-        pid: null,
-        processStartedAt: null,
+        pid: payload.pid,
+        processStartedAt: payload.processStartedAt,
         state: "starting",
       });
     });
@@ -379,6 +380,55 @@ describe("session.force-terminate operation: execute and reconcile", () => {
     });
   });
 
+  describe("Test 1b: approved identity (what you approve is what runs)", () => {
+    it("never calls the terminator when the Run's current pid differs from the approved one", async () => {
+      const { op, terminator, inspector } = build();
+      const payload = parsed({ pid: 111 });
+      inspector.run = makeRunFacts({
+        runId: payload.runId,
+        pid: 222,
+        processStartedAt: payload.processStartedAt,
+      });
+      const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
+      expect(outcome).toEqual({ kind: "refused", reason: "identity-mismatch" });
+      expect(terminator.calls).toHaveLength(0);
+    });
+
+    it("never calls the terminator when the Run's current process start differs from the approved one", async () => {
+      const { op, terminator, inspector } = build();
+      const payload = parsed();
+      inspector.run = makeRunFacts({
+        runId: payload.runId,
+        pid: payload.pid,
+        processStartedAt: "Tue Oct  7 09:00:00 2026",
+      });
+      const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
+      expect(outcome).toEqual({ kind: "refused", reason: "identity-mismatch" });
+      expect(terminator.calls).toHaveLength(0);
+    });
+
+    it("never calls the terminator when the Run has lost its recorded pid", async () => {
+      const { op, terminator, inspector } = build();
+      const payload = parsed();
+      inspector.run = makeRunFacts({ runId: payload.runId, pid: null, processStartedAt: null });
+      const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
+      expect(outcome).toEqual({ kind: "refused", reason: "identity-mismatch" });
+      expect(terminator.calls).toHaveLength(0);
+    });
+
+    it("calls the terminator when the Run still has the approved pid and start", async () => {
+      const { op, terminator, inspector } = build();
+      const payload = parsed();
+      inspector.run = makeRunFacts({
+        runId: payload.runId,
+        pid: payload.pid,
+        processStartedAt: payload.processStartedAt,
+      });
+      await op.execute(tokenFor(payload.runId), payload, contextFor());
+      expect(terminator.calls).toHaveLength(1);
+    });
+  });
+
   describe("Test 2: ok", () => {
     it("is executed with no note when the Run is now cancelled", async () => {
       const { op, inspector } = build();
@@ -386,7 +436,7 @@ describe("session.force-terminate operation: execute and reconcile", () => {
       inspector.run = makeRunFacts({ runId: payload.runId, state: "cancelled" });
       const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
       expect(outcome).toEqual({ kind: "executed" });
-      expect(inspector.readCalls).toEqual([payload.runId]);
+      expect(inspector.readCalls).toEqual([payload.runId, payload.runId]);
     });
 
     it("is executed with the awaiting-exit note when the Run is still non-terminal", async () => {
@@ -557,6 +607,24 @@ describe("session.force-terminate operation: execute and reconcile", () => {
         expect(verdict.kind).toBe("unknown");
         expect(inspector.statusCalls).toHaveLength(0);
       }
+    });
+
+    it("reports unknown, not executed, when the claim facts name a different process than the approved one", async () => {
+      const { op, inspector } = build();
+      const payload = parsed();
+      inspector.run = makeRunFacts({
+        runId: payload.runId,
+        state: "cancelled",
+        pid: payload.pid + 1,
+        processStartedAt: payload.processStartedAt,
+      });
+      inspector.status = "gone";
+      const verdict = await op.reconcile(
+        payload,
+        contextFor(claimed(payload, { pid: payload.pid + 1 })),
+      );
+      expect(verdict.kind).toBe("unknown");
+      expect(inspector.statusCalls).toHaveLength(0);
     });
 
     it("reports unknown when the Run is missing", async () => {

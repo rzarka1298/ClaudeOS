@@ -62,6 +62,7 @@ const AWAITING_EXIT_NOTE = "awaiting-exit";
 const EVIDENCE_RUN_CANCELLED_SAME_PROCESS = "run-cancelled-same-process";
 const EVIDENCE_PROCESS_GONE = "process-gone";
 const UNKNOWN_CLAIM_FACTS_MISSING = "claim-facts-missing";
+const UNKNOWN_CLAIM_FACTS_MISMATCH = "claim-facts-mismatch";
 const UNKNOWN_RUN_NOT_FOUND = "run-not-found";
 const UNKNOWN_INSPECTOR_FAILED = "inspector-failed";
 
@@ -136,10 +137,13 @@ export function createForceTerminateOperation(
       } catch {
         run = null;
       }
+      // The pid and process start recorded are the ones the owner approved (the
+      // payload's), never the Run's current ones: reconcile must be about the
+      // approved process, not whatever the Run points at after a restart.
       return {
         runId: payload.runId,
-        pid: run?.pid ?? null,
-        processStartedAt: run?.processStartedAt ?? null,
+        pid: payload.pid,
+        processStartedAt: payload.processStartedAt,
         state: run?.state ?? null,
       };
     },
@@ -161,6 +165,22 @@ export function createForceTerminateOperation(
       ) {
         log.error({ proposalId, code: "token-mismatch" }, "force-terminate: token mismatch");
         return { kind: "failed", reason: "capability-refused" };
+      }
+
+      // What you approve is what runs: the Run must still point at the process
+      // the owner approved. A missing Run or a failing read is left to the
+      // terminator, which re-checks identity itself and refuses run-not-found.
+      let current: RunFacts | null = null;
+      try {
+        current = inspector.readRun(payload.runId);
+      } catch {
+        current = null;
+      }
+      if (
+        current !== null &&
+        (current.pid !== payload.pid || current.processStartedAt !== payload.processStartedAt)
+      ) {
+        return { kind: "refused", reason: "identity-mismatch" };
       }
 
       // Deliberately not wrapped in a catch: once the terminator is called a
@@ -206,6 +226,11 @@ export function createForceTerminateOperation(
         processStartedAt === ""
       ) {
         return { kind: "unknown", reason: UNKNOWN_CLAIM_FACTS_MISSING };
+      }
+      // The claim must be about the approved process; anything else says
+      // nothing about whether the approved action happened.
+      if (pid !== payload.pid || processStartedAt !== payload.processStartedAt) {
+        return { kind: "unknown", reason: UNKNOWN_CLAIM_FACTS_MISMATCH };
       }
 
       let run: RunFacts | null;
