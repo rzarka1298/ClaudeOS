@@ -76,6 +76,23 @@ export {
   upsertSessionRun,
 } from "./session-store.js";
 export type {
+  TaskCursor,
+  TaskIndexDetail,
+  TaskIndexRecord,
+  TaskIndexRow,
+  TaskPage,
+  TaskQuery,
+  TaskQueryContext,
+} from "./task-index-store.js";
+export {
+  getTask,
+  InvalidTaskCursorError,
+  InvalidTaskIndexError,
+  InvalidTaskQueryError,
+  queryTasks,
+  upsertTask,
+} from "./task-index-store.js";
+export type {
   AnalysisOffInterval,
   AnalysisToggle,
   CapacitySnapshot,

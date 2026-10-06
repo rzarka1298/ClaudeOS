@@ -57,6 +57,13 @@
       "when": 1791265342590,
       "tag": "0007_approvals",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791281003931,
+      "tag": "0008_task_index",
+      "breakpoints": true
     }
   ]
 }
