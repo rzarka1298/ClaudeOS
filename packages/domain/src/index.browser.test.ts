@@ -6,6 +6,7 @@ import * as approvalCorpus from "./approval-corpus.js";
 import * as browser from "./index.browser.js";
 import * as full from "./index.js";
 import * as pathContainment from "./path-containment.js";
+import * as taskCorpus from "./task-corpus.js";
 
 /**
  * `index.browser.ts` is `index.ts` minus the documented Node-only module(s)
@@ -22,7 +23,7 @@ const NODE_ONLY_MODULES = ["./path-containment.js"];
  * out: the hostile-text corpus is not product code, so no browser bundle should
  * carry it (plan 06-04, D-40).
  */
-const INDEX_ONLY_MODULES = ["./approval-corpus.js"];
+const INDEX_ONLY_MODULES = ["./approval-corpus.js", "./task-corpus.js"];
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -40,7 +41,11 @@ describe("the browser barrel (index.browser.ts)", () => {
   });
 
   it("exposes exactly index.ts's runtime exports minus path-containment's", () => {
-    const nodeOnly = new Set([...Object.keys(pathContainment), ...Object.keys(approvalCorpus)]);
+    const nodeOnly = new Set([
+      ...Object.keys(pathContainment),
+      ...Object.keys(approvalCorpus),
+      ...Object.keys(taskCorpus),
+    ]);
     const expected = Object.keys(full)
       .filter((name) => !nodeOnly.has(name))
       .sort();
