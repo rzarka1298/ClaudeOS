@@ -419,6 +419,41 @@ describe("check-boundaries.sh process.kill confinement (T-06-02)", () => {
     }
   });
 
+  it("fires on bracket access, destructuring and a node:process named import (review MINOR-3)", () => {
+    const bracket = backstop({
+      "packages/service/src/b.ts": `process["kill"](1, 0);\n`,
+    });
+    const template = backstop({
+      "packages/service/src/t.ts": `process[${"`"}kill${"`"}](1, 0);\n`,
+    });
+    const destructured = backstop({
+      "packages/service/src/d.ts": `const { kill } = process;\nkill(1, 0);\n`,
+    });
+    const namedImport = backstop({
+      "packages/service/src/n.ts": `import { kill } from "node:process";\nkill(1, 0);\n`,
+    });
+    for (const result of [bracket, template, destructured, namedImport]) {
+      expect(result.status).toBe(1);
+      expect(result.out).toContain(PROCESS_KILL_DESCRIPTION);
+    }
+  });
+
+  it("fires in .mts, .cts, .js, .mjs and .cjs files too (review MINOR-3)", () => {
+    for (const ext of ["mts", "cts", "js", "mjs", "cjs"]) {
+      const result = backstop({ [`packages/service/src/ext.${ext}`]: PROCESS_KILL });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain(PROCESS_KILL_DESCRIPTION);
+    }
+  });
+
+  it("is quiet for an unrelated node:process import and a destructured env", () => {
+    const result = backstop({
+      "packages/service/src/ok2.ts": `import { env } from "node:process";\nconst { pid } = process;\nexport { env, pid };\n`,
+    });
+    expect(result.out).not.toContain(PROCESS_KILL_DESCRIPTION);
+    expect(result.status).toBe(0);
+  });
+
   it("is quiet for an injected kill callback and for another object's kill method", () => {
     const result = backstop({
       "packages/service/src/ok.ts": `export const a = (deps: D, pid: number) => deps${"."}kill(pid, 0);\nexport const b = (subprocess: P) => subprocess${"."}kill();\n`,
@@ -479,6 +514,41 @@ describe("check-boundaries.sh terminate-call confinement (T-06-02)", () => {
       expect(result.out).not.toContain(TERMINATE_CALL_DESCRIPTION);
       expect(result.status).toBe(0);
     }
+  });
+
+  it("fires on bracket access and destructuring of terminate (review MINOR-3)", () => {
+    const bracket = backstop({
+      "packages/service/src/b.ts": `export const f = (s: S) => s["terminate"](t, r);\n`,
+    });
+    const single = backstop({
+      "packages/service/src/b2.ts": `export const f = (s: S) => s['terminate'](t, r);\n`,
+    });
+    const destructured = backstop({
+      "packages/service/src/d.ts": `const { terminate } = s;\nawait terminate(t, r);\n`,
+    });
+    const renamed = backstop({
+      "packages/service/src/d2.ts": `const { a, terminate: end } = s;\nawait end(t, r);\n`,
+    });
+    for (const result of [bracket, single, destructured, renamed]) {
+      expect(result.status).toBe(1);
+      expect(result.out).toContain(TERMINATE_CALL_DESCRIPTION);
+    }
+  });
+
+  it("fires in .mts, .cts, .js, .mjs and .cjs files too (review MINOR-3)", () => {
+    for (const ext of ["mts", "cts", "js", "mjs", "cjs"]) {
+      const result = backstop({ [`packages/service/src/ext.${ext}`]: TERMINATE_CALL });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain(TERMINATE_CALL_DESCRIPTION);
+    }
+  });
+
+  it("is quiet for a destructured parameter typed after the brace and an object with a terminate key", () => {
+    const result = backstop({
+      "packages/service/src/ok3.ts": `export const f = ({ terminate }: Deps) => terminate;\nexport const o = { terminate: 1 };\n`,
+    });
+    expect(result.out).not.toContain(TERMINATE_CALL_DESCRIPTION);
+    expect(result.status).toBe(0);
   });
 
   it("is quiet for a method definition named terminate (no leading dot), as in Phase 5", () => {

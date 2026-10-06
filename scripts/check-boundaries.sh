@@ -86,7 +86,7 @@ RULES=0
 # merely contained `lint-fixtures/` or `boundary-violations/`, so a file could
 # escape the backstop by the name of its directory.
 list_source_files() {
-  git ls-files -z -- 'packages/*.ts' 'packages/*.tsx' 2>/dev/null | \
+  git ls-files -z -- "$@" 2>/dev/null | \
     tr '\0' '\n' | \
     grep -v '/dist/' | \
     grep -v '/node_modules/' | \
@@ -137,7 +137,12 @@ report_rule() {
   fi
 }
 
-SRC_FILES=$(list_source_files)
+SRC_FILES=$(list_source_files 'packages/*.ts' 'packages/*.tsx')
+# Rules 10 to 15 (the approval and process-signal confinement) also scan the
+# other module extensions a service file could be written in (review MINOR-3);
+# the broad rules above stay on .ts/.tsx because the plugin's JS config files
+# legitimately name the very APIs those rules forbid.
+EXTRA_EXT_FILES=$(list_source_files 'packages/*.mts' 'packages/*.cts' 'packages/*.js' 'packages/*.mjs' 'packages/*.cjs' 'packages/*.jsx' || true)
 
 # --- Rule 1: no file outside packages/plugin imports the Obsidian API ---
 NON_PLUGIN_FILES=$(printf '%s\n' "$SRC_FILES" | grep -v '^packages/plugin/' || true)
@@ -275,7 +280,7 @@ report_rule \
 # list, so the carve-out removes the cast pattern for that one file and nothing
 # else. ---
 MINTER_PATH_PATTERN='^packages/service/src/approval/mint/mint-token[.]ts$'
-NON_TEST_FILES=$(printf '%s\n' "$SRC_FILES" | grep -v '[.]test[.]' || true)
+NON_TEST_FILES=$(printf '%s\n%s\n' "$SRC_FILES" "$EXTRA_EXT_FILES" | grep -v '[.]test[.]' | grep . || true)
 FORGERY_SCAN_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v "$MINTER_PATH_PATTERN" || true)
 # shellcheck disable=SC2086
 forge_hits=$(grep_noncomment \
@@ -339,7 +344,7 @@ OUTSIDE_CLAUDE_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/serv
 # shellcheck disable=SC2086
 check_rule \
   "a file outside packages/service/src/claude/ calls process.kill( (only the Claude services may signal a process, T-06-02)" \
-  "(^|[^A-Za-z0-9_])process[.]kill[[:space:]]*[(]" \
+  "(^|[^A-Za-z0-9_])process[.]kill[[:space:]]*[(]|(^|[^A-Za-z0-9_])process[[:space:]]*[[][[:space:]]*[\"'\`]kill[\"'\`][[:space:]]*[]]|[{,][[:space:]]*kill[[:space:]]*([,}]|:[^,}]*[,}])[^=]*=[[:space:]]*(globalThis[.])?process([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])kill[^;]*from[[:space:]]*[\"'\`](node:)?process[\"'\`]" \
   $OUTSIDE_CLAUDE_FILES
 
 # --- Rule 14: no file outside packages/service/src/executors/ calls
@@ -350,7 +355,7 @@ NON_EXECUTOR_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/servic
 # shellcheck disable=SC2086
 check_rule \
   "a file outside packages/service/src/executors/ calls .terminate( (only the executors may invoke the session terminator, T-06-02)" \
-  "[.]terminate[[:space:]]*[(]" \
+  "[.]terminate[[:space:]]*[(]|[[][[:space:]]*[\"'\`]terminate[\"'\`][[:space:]]*[]]|[{,][[:space:]]*terminate[[:space:]]*([,}]|:[^,}]*[,}])[[:space:]]*=[^=>]" \
   $NON_EXECUTOR_FILES
 
 # --- Rule 15: the approval engine's public door, packages/service/src/approval/
