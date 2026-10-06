@@ -490,8 +490,7 @@ export default [
           // A computed argument hides it entirely, and a literal one naming
           // the minter or an executor folder is the same bypass the import
           // rules close (Codex review MAJOR, T-06-15).
-          selector:
-            'CallExpression[callee.name="require"]:not([arguments.0.type="Literal"])',
+          selector: 'CallExpression[callee.name="require"]:not([arguments.0.type="Literal"])',
           message:
             "T-06-15: require() must take a plain string-literal specifier so the boundary lint can see it.",
         },

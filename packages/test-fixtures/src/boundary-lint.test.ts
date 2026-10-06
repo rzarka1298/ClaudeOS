@@ -462,9 +462,18 @@ describe("computed require and createRequire are refused in the service (Codex r
     ["template require argument", `declare const n: string;\nrequire(${"`"}../${"$"}{n}${"`"});\n`],
     ["require of the minter path", `require("../approval/mint/mint-token.js");\n`],
     ["require of an executor path", `require("../executors/index.js");\n`],
-    ["createRequire named import", `import { createRequire } from "node:module";\nexport const r = createRequire;\n`],
-    ["createRequire via dynamic import", `const m = await import("node:module");\nexport const r = m.createRequire;\n`],
-    ["createRequire via namespace import", `import * as m from "node:module";\nexport const r = m;\n`],
+    [
+      "createRequire named import",
+      `import { createRequire } from "node:module";\nexport const r = createRequire;\n`,
+    ],
+    [
+      "createRequire via dynamic import",
+      `const m = await import("node:module");\nexport const r = m.createRequire;\n`,
+    ],
+    [
+      "createRequire via namespace import",
+      `import * as m from "node:module";\nexport const r = m;\n`,
+    ],
     ["module.require", `declare const n: string;\nmodule.require(n);\n`],
   ];
   for (const [name, code] of cases) {
