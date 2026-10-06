@@ -291,7 +291,13 @@ export async function resolveOutcome(
     return { state: "executed", code: "executed", note, evidence: null, reconciled: false };
   }
   if (context.attempt < 2) {
-    return { state: "failed", code: outcome.reason, note: null, evidence: null, reconciled: false };
+    return {
+      state: "failed",
+      code: fixedToken(outcome.reason, "refused"),
+      note: null,
+      evidence: null,
+      reconciled: false,
+    };
   }
   let verdict: ReconcileVerdict;
   try {
@@ -614,16 +620,33 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
 
   // --- execute --------------------------------------------------------------
 
-  function finishWith(proposal: StoredProposal, decision: FinishDecision): void {
-    const finished = store.finish({
-      proposalId: proposal.proposalId,
-      state: decision.state,
-      code: decision.code,
-      note: decision.note,
-      evidence: decision.evidence,
-      reconciled: decision.reconciled,
-      now: clock.now(),
-    });
+  function finishWith(proposal: StoredProposal, initial: FinishDecision): void {
+    let decision = initial;
+    const write = (d: FinishDecision): StoredProposal | null =>
+      store.finish({
+        proposalId: proposal.proposalId,
+        state: d.state,
+        code: d.code,
+        note: d.note,
+        evidence: d.evidence,
+        reconciled: d.reconciled,
+        now: clock.now(),
+      });
+    let finished: StoredProposal | null;
+    try {
+      finished = write(decision);
+    } catch {
+      // The store refused the outcome (never log its message). The request must not stay
+      // `executing`: an effect may already have happened, so the truthful terminal state is unknown.
+      log.error({ proposalId: proposal.proposalId, code: "finish-failed" });
+      try {
+        decision = unknownDecision("outcome-unknown", null);
+        finished = write(decision);
+      } catch {
+        log.error({ proposalId: proposal.proposalId, code: "finish-failed" });
+        return;
+      }
+    }
     if (finished === null) {
       log.warn({ proposalId: proposal.proposalId, code: "finish-lost" });
       return;

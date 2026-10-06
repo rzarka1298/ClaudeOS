@@ -1014,3 +1014,47 @@ describe("get, list and snapshot (Task 3)", () => {
     expect(snapshot.counts).toEqual({ pending: 50, decided: 10, expired: 0 });
   });
 });
+
+describe("outcome codes and stuck requests (06-w3 finding 2)", () => {
+  const STORE_CODE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+
+  /** Makes the memory store as strict about outcome codes as the real one. */
+  function strictFinish(h: Harness): void {
+    const store = h.store as { finish: Harness["store"]["finish"] };
+    const original = store.finish.bind(h.store);
+    store.finish = (input) => {
+      if (!STORE_CODE.test(input.code)) throw new Error("invalid outcome code");
+      return original(input);
+    };
+  }
+
+  it("an operation returning a reason that is not a fixed token still ends terminal", async () => {
+    const h = createHarness();
+    strictFinish(h);
+    h.diagnostic.outcomes.push({ kind: "failed", reason: "Has Spaces" as never });
+    const id = h.propose();
+    await decideWith(h, id, "approve");
+    await h.engine.settled();
+    const stored = h.store.get(id);
+    expect(stored?.state).toBe("failed");
+    expect(stored?.outcomeCode).toBe("refused");
+  });
+
+  it("a store.finish that throws ends in a terminal unknown, never stuck executing", async () => {
+    const h = createHarness();
+    const store = h.store as { finish: Harness["store"]["finish"] };
+    const original = store.finish.bind(h.store);
+    let calls = 0;
+    store.finish = (input) => {
+      calls += 1;
+      if (calls === 1) throw new Error("disk full");
+      return original(input);
+    };
+    const id = h.propose();
+    await decideWith(h, id, "approve");
+    await h.engine.settled();
+    const stored = h.store.get(id);
+    expect(stored?.state).toBe("unknown");
+    expect(JSON.stringify(h.log.lines)).not.toContain("disk full");
+  });
+});
