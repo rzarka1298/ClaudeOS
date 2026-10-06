@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  APPROVAL_DECIDE_PATH,
   APPROVAL_DECIDE_OUTCOMES,
+  APPROVAL_DECIDE_PATH,
   APPROVAL_GET_PATH,
   APPROVAL_LIST_PATH,
   APPROVAL_TEST_PATH,
@@ -302,7 +302,10 @@ describe("decided via (tracer test 7)", () => {
   const body = { proposalId: proposalId(1), decision: "approve", payloadHash: HASH };
 
   it("derives plugin only from the exact client header value", async () => {
-    await call(APPROVAL_DECIDE_PATH, { body, headers: { [DECIDED_VIA_HEADER]: DECIDED_VIA_PLUGIN } });
+    await call(APPROVAL_DECIDE_PATH, {
+      body,
+      headers: { [DECIDED_VIA_HEADER]: DECIDED_VIA_PLUGIN },
+    });
     expect(fake.decideCalls.at(-1)?.via).toBe("plugin");
   });
 

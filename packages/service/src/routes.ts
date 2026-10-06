@@ -19,6 +19,7 @@ import {
 } from "@ccc/domain";
 import { listAllRuns } from "@ccc/operational-store";
 import { initializeVault, planVaultSetup, VaultRootMissingError } from "@ccc/vault-repo";
+import { approvalRoutes } from "./approval-wiring/routes.js";
 import { mintToken } from "./auth/token.js";
 import { claudeRouteTable } from "./claude/routes.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
@@ -288,6 +289,8 @@ const routeTable: Record<string, Record<string, Handler>> = {
   ...launcherRoutes,
   ...scanRoutes,
   ...claudeRouteTable,
+  // Phase 6 (append-only, D-28): the approval inbox routes, spread last.
+  ...approvalRoutes,
 };
 
 /**

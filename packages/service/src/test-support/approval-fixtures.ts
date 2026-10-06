@@ -15,8 +15,8 @@ import type {
 import type { OperationalStore } from "@ccc/operational-store";
 import { mintToken } from "../auth/token.js";
 import { createEventBus } from "../events/event-bus.js";
-import { createRequestListener } from "../routes.js";
 import type { RouteContext } from "../route-kit.js";
+import { createRequestListener } from "../routes.js";
 
 /**
  * Shared fixtures for the approval route, snapshot and client tests (plan

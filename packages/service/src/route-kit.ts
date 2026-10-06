@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ApiErrorBody } from "@ccc/domain";
 import type { OperationalStore } from "@ccc/operational-store";
+import type { ApprovalServices } from "./approval-wiring/types.js";
 import { requireToken } from "./auth/require-token.js";
 import type { ClaudeRouteDeps } from "./claude/routes.js";
 import type { EventBus } from "./events/event-bus.js";
@@ -44,6 +45,8 @@ export interface RouteContext {
   readonly scan?: ScanService | undefined;
   /** The Claude session pipeline (Phase 5). Absent in an older composition: its routes answer 503. */
   readonly claude?: ClaudeRouteDeps | undefined;
+  /** The approval inbox services (Phase 6, D-28). Absent: its routes answer 503 and the snapshot omits the member. */
+  readonly approvals?: ApprovalServices | undefined;
 }
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;

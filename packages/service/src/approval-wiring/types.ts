@@ -1,7 +1,7 @@
 import type {
   ApprovalItemView,
-  ApprovalsSnapshot,
   ApprovalSummary,
+  ApprovalsSnapshot,
   ApprovalTestRequest,
   ApprovalTestResponse,
   DecideResponse,
