@@ -54,7 +54,9 @@ describe("the locked strings (UI-SPEC Copywriting Contract, Test 8)", () => {
   });
 
   it("builds the accessible names and the destructive sub-label", () => {
-    expect(denyName("Force-terminate Refactor parser")).toBe("Deny: Force-terminate Refactor parser");
+    expect(denyName("Force-terminate Refactor parser")).toBe(
+      "Deny: Force-terminate Refactor parser",
+    );
     expect(destructiveSublabel("force-terminate Refactor parser")).toBe(
       "This will force-terminate Refactor parser.",
     );

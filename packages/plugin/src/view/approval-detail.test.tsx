@@ -47,7 +47,8 @@ function setup(
 }
 
 async function loaded(): Promise<HTMLElement> {
-  return screen.findByRole("heading", { level: 4 });
+  await waitFor(() => expect(screen.queryByText("Loading approval request")).toBeNull());
+  return screen.getByRole("heading", { level: 4 });
 }
 
 describe("block order (Test 1)", () => {
@@ -89,7 +90,9 @@ describe("block order (Test 1)", () => {
     expect(screen.getByText("example-project")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Refactor parser" })).toBeTruthy();
     expect(
-      screen.getByText("Force-terminate the Claude Code session Refactor parser by ending its process."),
+      screen.getByText(
+        "Force-terminate the Claude Code session Refactor parser by ending its process.",
+      ),
     ).toBeTruthy();
     expect(screen.getByText("claude · PID 4242")).toBeTruthy();
     expect(screen.getByText("The session stopped responding.")).toBeTruthy();
@@ -161,9 +164,7 @@ describe("focus on arrival (Test 2)", () => {
     const heading = await loaded();
     await waitFor(() => expect(document.activeElement).toBe(heading));
     expect(heading.getAttribute("tabindex")).toBe("-1");
-    expect(screen.getByRole("button", { name: /^Approve once:/ })).not.toBe(
-      document.activeElement,
-    );
+    expect(screen.getByRole("button", { name: /^Approve once:/ })).not.toBe(document.activeElement);
   });
 
   it("does not move focus when the parent has not asked for it", async () => {

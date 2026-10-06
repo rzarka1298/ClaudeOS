@@ -1,6 +1,8 @@
 import type { DecideResponse } from "@ccc/domain/approval.js";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ApprovalDecideInput } from "../approvals/api.js";
+import { proposalId, summary } from "../test-support/approval-fixtures.js";
 import {
   approvalDetail,
   approvalView,
@@ -9,7 +11,6 @@ import {
   FIXTURE_NOW_MS,
   testApprovalView,
 } from "../test-support/approval-view-fixtures.js";
-import { proposalId, summary } from "../test-support/approval-fixtures.js";
 import {
   ApprovalDecision,
   type ApprovalDecisionProps,
@@ -46,7 +47,7 @@ function setup(overrides: Partial<ApprovalDecisionProps> = {}) {
   const announce = vi.fn();
   const notify = vi.fn();
   const onFollowUp = vi.fn();
-  const decide = vi.fn(async () => DECIDED);
+  const decide = vi.fn(async (_input: ApprovalDecideInput): Promise<DecideResponse> => DECIDED);
   const refetch = vi.fn(
     async (): Promise<RefetchResult> => ({
       kind: "ok",
@@ -97,11 +98,7 @@ describe("the decision group (UI-SPEC S2, Test 3)", () => {
     setup();
     const { all, group } = buttons();
     expect(group.getAttribute("role")).toBe("group");
-    expect(all.map((b) => b.textContent)).toEqual([
-      "Deny",
-      "Approve once",
-      "Open originating run",
-    ]);
+    expect(all.map((b) => b.textContent)).toEqual(["Deny", "Approve once", "Open originating run"]);
     expect(all.map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual([
       "Deny: Force-terminate Refactor parser",
       "Approve once: force-terminate Refactor parser",
@@ -180,7 +177,7 @@ describe("gating (Test 4)", () => {
       denyEnabled: false,
     },
   ] as const)("withholds Approve once when $name, with its visible reason", (row) => {
-    setup(row.change as Partial<ApprovalDecisionProps>);
+    setup(row.change);
     const { deny, approve } = buttons();
     expect(approve.getAttribute("aria-disabled")).toBe("true");
     expect(approve.hasAttribute("disabled")).toBe(false);
@@ -228,7 +225,7 @@ describe("the decide call (Test 5)", () => {
   });
 
   it("carries the hash of what was shown even when the pane later holds another one", async () => {
-    const decide = vi.fn(async () => DECIDED);
+    const decide = vi.fn(async (_input: ApprovalDecideInput): Promise<DecideResponse> => DECIDED);
     const { rerender, props } = setup({ decide });
     rerender(<ApprovalDecision {...props} shownHash={"cd34".repeat(16)} />);
     fireEvent.click(buttons().deny);
@@ -238,13 +235,16 @@ describe("the decide call (Test 5)", () => {
 
   it("while the full request is still loading, a pressed Deny waits for the hash instead of sending none", async () => {
     const hash = deferred<string | null>();
-    const decide = vi.fn(async () => DECIDED);
+    const decide = vi.fn(async (_input: ApprovalDecideInput): Promise<DecideResponse> => DECIDED);
     setup({ shownHash: null, decide, awaitHash: () => hash.promise });
     fireEvent.click(buttons().deny);
     expect(decide).not.toHaveBeenCalled();
     hash.resolve(FIXTURE_HASH);
     await waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
-    expect(decide.mock.calls[0]?.[0]).toMatchObject({ decision: "deny", payloadHash: FIXTURE_HASH });
+    expect(decide.mock.calls[0]?.[0]).toMatchObject({
+      decision: "deny",
+      payloadHash: FIXTURE_HASH,
+    });
   });
 });
 
@@ -291,9 +291,15 @@ describe("outcomes (Test 7)", () => {
   });
 
   it("re-fetches once after a hash mismatch, says so, and marks the follow-up as a mismatch", async () => {
-    const { announce, notify, onFollowUp, refetch } = setup({
+    const refetch = vi.fn(
+      async (): Promise<RefetchResult> => ({
+        kind: "ok",
+        detail: approvalDetail(approvalView({ revision: 2 })),
+      }),
+    );
+    const { announce, notify, onFollowUp } = setup({
       decide: async () => ({ outcome: "hash-mismatch" }),
-      refetch: async () => ({ kind: "ok", detail: approvalDetail(approvalView({ revision: 2 })) }),
+      refetch,
     });
     fireEvent.click(buttons().approve);
     await waitFor(() => expect(onFollowUp).toHaveBeenCalled());
@@ -317,7 +323,7 @@ describe("outcomes (Test 7)", () => {
     { response: { outcome: "not-found" }, line: APPROVAL_STATUS.notFound, notice: false },
   ] as const)("posts the fixed line for $response.outcome", async ({ response, line, notice }) => {
     const { announce, notify, onFollowUp } = setup({
-      decide: async () => response as DecideResponse,
+      decide: async () => response,
       refetch: async () => ({ kind: "ok", detail: approvalDetail(decidedView("expired")) }),
     });
     fireEvent.click(buttons().approve);
@@ -364,9 +370,9 @@ describe("outcomes (Test 7)", () => {
       expect(announce).toHaveBeenCalledWith(APPROVAL_STATUS.denied);
       expect(notify).toHaveBeenCalledWith("Denied: Force-terminate Refactor parser.");
       expect(announce).not.toHaveBeenCalledWith(APPROVAL_STATUS.notThrough);
-      expect(
-        announce.mock.calls.some((call) => /nothing was decided/i.test(String(call[0]))),
-      ).toBe(false);
+      expect(announce.mock.calls.some((call) => /nothing was decided/i.test(String(call[0])))).toBe(
+        false,
+      );
       expect(onFollowUp.mock.calls.at(-1)?.[0]).toMatchObject({
         kind: "refetched",
         focusHeading: true,
