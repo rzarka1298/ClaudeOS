@@ -119,7 +119,7 @@ function actionName(action: TaskRowAction, title: string): string {
   }
 }
 
-/** The acted-on row, remembered until focus has left a control that no longer exists. */
+/** The acted-on row, held until focus has left a control that no longer exists. */
 interface PendingMove {
   readonly id: string;
   /** The ids in list order when the pill was pressed. */

@@ -1813,6 +1813,597 @@
 }
 
 /* ===========================================================================
+ * Phase 6 — Tasks (06-UI-SPEC.md S3, S4; plan 06-16)
+ *
+ * The whole Tasks family, written once so the detail, form, attention list and
+ * project panel plans change no CSS: the destination and the project panel
+ * (both size containers, measured against their own box), the toolbar, the
+ * list and its rows, the empty, error, loading and disconnected states, the
+ * detail pane, the create and edit form, the attention list and the state
+ * hooks. Tokens only: no new token, no colour literal, no inline style, no
+ * animation. The filter chips are the approvals family's `.ccc-filter-chip`
+ * (pressed cream fill included), so the one cream surface here is the pressed
+ * chip. The accent is spent on focus rings only and the danger colour not at
+ * all in this family. State reaches CSS through `data-*` attributes.
+ * ========================================================================= */
+
+.ccc-tasks,
+.ccc-project-tasks {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+  padding: var(--ccc-space-lg);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+  box-shadow: var(--ccc-shadow-card);
+}
+
+.ccc-tasks-header,
+.ccc-project-tasks-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-tasks-header h2,
+.ccc-project-tasks-header h3 {
+  margin: 0;
+  overflow-wrap: break-word;
+  font-size: var(--ccc-text-heading);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-tasks-header h2:focus-visible,
+.ccc-project-tasks-header h3:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-tasks-summary {
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-body);
+}
+
+.ccc-tasks-status,
+.ccc-tasks-note {
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+/* The scope and project selects sit beside the chips; below 34rem they take the
+ * full width and the chips wrap onto as many rows as they need. */
+.ccc-tasks-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ccc-space-md);
+}
+
+.ccc-tasks-select {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+  min-width: 0;
+}
+
+/* Master/detail at 48rem and wider, the list taking the wider share; below
+ * that the detail stacks under the list and renders only when a task is
+ * selected. Measured against the destination's own box. */
+.ccc-tasks-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ccc-space-lg);
+}
+
+@container (min-width: 48rem) {
+  .ccc-tasks-layout {
+    grid-template-columns: minmax(0, 3fr) minmax(20rem, 2fr);
+  }
+}
+
+/* "Back to tasks" exists as a control only where the detail stacks. */
+.ccc-tasks-back {
+  display: none;
+}
+
+@container (max-width: 48rem) {
+  .ccc-tasks-back {
+    display: inline-flex;
+    align-self: flex-start;
+    min-width: var(--ccc-space-lg);
+    min-height: var(--ccc-space-lg);
+    padding: var(--ccc-space-xs) var(--ccc-space-sm);
+    border: var(--ccc-border-hairline) solid var(--ccc-border);
+    border-radius: var(--ccc-radius-pill);
+    background: transparent;
+    color: var(--ccc-ink);
+    font-family: inherit;
+    font-size: var(--ccc-text-label);
+    cursor: pointer;
+  }
+}
+
+.ccc-tasks-back:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* Disconnected: the list dims through the one audited opacity token while the
+ * last-good rows stay legible. The notice stating why is never dimmed. */
+.ccc-tasks [data-dimmed="true"] {
+  opacity: var(--ccc-dim-opacity);
+}
+
+.ccc-project-tasks [data-dimmed="true"] {
+  opacity: var(--ccc-dim-opacity);
+}
+
+/* ---- The list ---------------------------------------------------------- */
+
+.ccc-task-list-region {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+  min-width: 0;
+}
+
+/* The muted `Showing {shown} of {total}` line is also the list's heading, the
+ * target focus falls back to when the last row leaves. */
+.ccc-task-list-heading {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.ccc-task-list-heading:focus-visible,
+.ccc-task-list-empty .ccc-state-heading:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-task-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One row: meta line 1, the title and its one pill group side by side, meta
+ * line 2, then the blocked line. Lines span both columns; the title takes the
+ * first and the pills the second (auto-placement in DOM order, no coordinates:
+ * a Phase 3 audit forbids named grid areas). Below 34rem the pills drop beneath
+ * the meta, last, through `order`. */
+.ccc-task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--ccc-space-sm);
+  row-gap: var(--ccc-space-xs);
+  align-items: center;
+  padding: var(--ccc-space-sm) 0;
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-task-row:last-child {
+  border-bottom: none;
+}
+
+@container (max-width: 34rem) {
+  .ccc-task-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ccc-task-row .ccc-task-row-actions {
+    grid-column: 1;
+    order: 1;
+  }
+}
+
+/* The selected row: an inset bar, the opaque surface and weight 600 on the
+ * title, with aria-current on the title button carrying it for assistive
+ * technology. Three non-colour cues; never accent. */
+.ccc-task-row[data-selected="true"] {
+  background-color: var(--ccc-surface);
+  box-shadow: inset var(--ccc-focus-ring) 0 0 0 var(--ccc-ink);
+}
+
+.ccc-task-row[data-selected="true"] .ccc-task-title {
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-task-row-meta {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ccc-task-row > [data-line="status"],
+.ccc-task-row > [data-line="details"],
+.ccc-task-row > .ccc-task-row-blocked {
+  grid-column: 1 / -1;
+}
+
+/* Status in primary ink; the two states that need the owner's eye also take
+ * weight 600, and a finished task is muted. The glyph and the word carry the
+ * meaning, never the ink. */
+.ccc-task-status {
+  color: var(--ccc-ink);
+}
+
+.ccc-task-row[data-status="proposed"] .ccc-task-status,
+.ccc-task-row[data-status="blocked"] .ccc-task-status {
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-task-row[data-status="done"] .ccc-task-status,
+.ccc-task-row[data-status="cancelled"] .ccc-task-status {
+  color: var(--ccc-ink-muted);
+}
+
+/* The title is a button that selects the task. Scoped under the row so it
+ * outranks Obsidian's global button rules (fixed height, nowrap, background). */
+.ccc-task-row .ccc-task-title {
+  grid-column: 1;
+  display: block;
+  width: 100%;
+  min-width: var(--ccc-space-lg);
+  min-height: var(--ccc-space-lg);
+  height: auto;
+  padding: 0;
+  overflow-wrap: anywhere;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  white-space: normal;
+  color: var(--ccc-ink);
+  font-family: inherit;
+  font-size: var(--ccc-text-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ccc-task-row .ccc-task-title:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-task-row .ccc-task-row-actions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-task-row .ccc-task-action {
+  min-width: var(--ccc-space-lg);
+  min-height: var(--ccc-space-lg);
+  height: auto;
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  overflow-wrap: anywhere;
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-pill);
+  background: transparent;
+  box-shadow: none;
+  color: var(--ccc-ink);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  cursor: pointer;
+  transition: color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-task-row .ccc-task-action:hover {
+  color: var(--ccc-ink);
+}
+
+.ccc-task-row .ccc-task-action:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-task-row .ccc-task-action[aria-disabled="true"] {
+  border-color: var(--ccc-ink-muted);
+  color: var(--ccc-ink-muted);
+  cursor: default;
+}
+
+/* A pill that is working changes its border shape as well as its state. */
+.ccc-task-row[data-busy="true"] .ccc-task-action {
+  border-style: dashed;
+}
+
+/* Overdue is a weight and a word (`Overdue — due Oct 2`), never colour. */
+.ccc-task-date[data-overdue="true"] {
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-task-tags {
+  overflow-wrap: anywhere;
+}
+
+.ccc-task-row-blocked {
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-task-list-notice,
+.ccc-task-list-empty,
+.ccc-task-list-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ccc-space-xs);
+  max-width: 68ch;
+  overflow-wrap: break-word;
+}
+
+.ccc-task-list-notice {
+  padding: var(--ccc-space-sm) var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-sm);
+}
+
+.ccc-task-list-notice p,
+.ccc-task-list-empty p,
+.ccc-task-list-empty h3,
+.ccc-task-list-error p {
+  margin: 0;
+}
+
+.ccc-task-list-empty {
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-task-skeleton {
+  display: block;
+}
+
+.ccc-task-more,
+.ccc-task-create {
+  align-self: flex-start;
+}
+
+/* ---- The detail pane and the forms ------------------------------------- */
+
+.ccc-task-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+  min-width: 0;
+  padding: var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+}
+
+.ccc-task-detail h3 {
+  margin: 0;
+  overflow-wrap: break-word;
+  font-size: var(--ccc-text-heading);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-task-detail h3:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-task-detail-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--ccc-space-xs) var(--ccc-space-sm);
+  margin: 0;
+  font-size: var(--ccc-text-body);
+}
+
+.ccc-task-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  overflow-wrap: anywhere;
+}
+
+/* The form root. The create form is an inline glass panel between the status
+ * line and the list (`data-panel`), never a modal. */
+.ccc-task-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+  min-width: 0;
+}
+
+.ccc-task-form[data-panel="true"] {
+  padding: var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+}
+
+/* One column, then two from 34rem. A wide field spans both. */
+.ccc-task-form-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ccc-space-md);
+}
+
+@container (min-width: 34rem) {
+  .ccc-task-form-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ccc-task-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+  min-width: 0;
+}
+
+.ccc-task-field[data-wide="true"] {
+  grid-column: 1 / -1;
+}
+
+.ccc-task-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+}
+
+/* `Unsaved changes` is a word in weight 600 beside the actions. */
+.ccc-task-dirty {
+  margin: 0;
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-task-note {
+  max-width: 68ch;
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+/* Provenance has a shape cue as well as a word: text an automation supplied
+ * sits in a dashed block under a `Provided by` caption (R-19). */
+.ccc-task-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  min-width: 0;
+  max-width: 68ch;
+}
+
+.ccc-task-block[data-origin="requester"] {
+  padding: var(--ccc-space-md);
+  border: var(--ccc-border-hairline) dashed var(--ccc-ink-muted);
+  border-radius: var(--ccc-radius-sm);
+}
+
+.ccc-task-block-caption {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-task-block-text {
+  margin: 0;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.ccc-task-dependencies {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ccc-task-dependency {
+  min-width: var(--ccc-space-lg);
+  min-height: var(--ccc-space-lg);
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  overflow-wrap: anywhere;
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-pill);
+  background: transparent;
+  color: var(--ccc-ink);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-task-dependency:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* The inline confirmation that replaces the actions while changes are unsaved
+ * and the owner leaves. */
+.ccc-task-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+  padding: var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-ink-muted);
+  border-radius: var(--ccc-radius-sm);
+}
+
+/* ---- Notes that need attention ----------------------------------------- */
+
+.ccc-attention {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+  padding: var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+}
+
+.ccc-attention h3 {
+  margin: 0;
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-attention-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ccc-attention-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  padding: var(--ccc-space-sm) 0;
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-attention-row:last-child {
+  border-bottom: none;
+}
+
+.ccc-attention-path {
+  overflow-wrap: anywhere;
+  color: var(--ccc-ink-muted);
+  font-family: var(--ccc-font-mono);
+  font-size: var(--ccc-text-label);
+}
+
+/* Narrow: the select takes the full width and the form is one column already. */
+@container (max-width: 34rem) {
+  .ccc-tasks-select {
+    width: 100%;
+  }
+
+  .ccc-tasks-select .ccc-text-input {
+    width: 100%;
+  }
+}
+
+/* ===========================================================================
  * Phase 4 — Projects & Launchers (04-UI-SPEC.md)
  *
  * Every selector below is a descendant of `.ccc-command-center`, reuses the

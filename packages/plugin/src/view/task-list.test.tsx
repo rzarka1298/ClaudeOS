@@ -1,5 +1,5 @@
 import { HOSTILE_TASK_TITLES } from "@ccc/domain/task-corpus.js";
-import type { TaskRow } from "@ccc/domain/tasks.js";
+import { TASK_PRIORITY_DISPLAY, TASK_STATUS_DISPLAY, type TaskRow } from "@ccc/domain/tasks.js";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { useState } from "preact/hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -609,5 +609,75 @@ describe("Test 8: hostile titles", () => {
     );
     expect(container.querySelector("img, a, script")).toBeNull();
     expect(container.textContent).toContain(hostile);
+  });
+});
+
+describe("Test 7 (stylesheet task): no state is carried by colour alone", () => {
+  it("gives every status a glyph and a word, in every row", () => {
+    const statuses = Object.keys(TASK_STATUS_DISPLAY) as (keyof typeof TASK_STATUS_DISPLAY)[];
+    const { container } = render(
+      <TaskList {...baseProps(statuses.map((status, index) => taskRow(index + 1, { status })))} />,
+    );
+    const rows = container.querySelectorAll(".ccc-task-row");
+    expect(rows).toHaveLength(statuses.length);
+    statuses.forEach((status, index) => {
+      const line = rows[index]?.querySelector('[data-line="status"]');
+      const glyph = line?.querySelector(".ccc-task-glyph");
+      expect(glyph?.getAttribute("aria-hidden"), status).toBe("true");
+      expect(glyph?.textContent, status).toBe(TASK_STATUS_DISPLAY[status].glyph);
+      expect(line?.textContent, status).toContain(TASK_STATUS_DISPLAY[status].label);
+    });
+  });
+
+  it("gives every priority a glyph and a word, and no priority nothing at all", () => {
+    const priorities = ["urgent", "high", "medium", "low"] as const;
+    const { container } = render(
+      <TaskList
+        {...baseProps([
+          ...priorities.map((priority, index) => taskRow(index + 1, { priority })),
+          taskRow(9),
+        ])}
+      />,
+    );
+    const rows = container.querySelectorAll(".ccc-task-row");
+    priorities.forEach((priority, index) => {
+      const part = rows[index]?.querySelector(".ccc-task-priority");
+      expect(part?.querySelector(".ccc-task-glyph")?.textContent, priority).toBe(
+        TASK_PRIORITY_DISPLAY[priority].glyph,
+      );
+      expect(part?.textContent, priority).toContain(TASK_PRIORITY_DISPLAY[priority].label);
+    });
+    expect(rows[4]?.querySelector(".ccc-task-priority")).toBeNull();
+  });
+
+  it("states overdue and blocked in words with a data hook or a glyph", () => {
+    const { container } = render(
+      <TaskList
+        {...baseProps([taskRow(1, { dueDate: "2026-10-02", overdue: true, unmetDependencies: 1 })])}
+      />,
+    );
+    const date = container.querySelector(".ccc-task-date");
+    expect(date?.textContent).toMatch(/^Overdue — due /);
+    expect(date?.getAttribute("data-overdue")).toBe("true");
+    const blocked = container.querySelector(".ccc-task-row-blocked");
+    expect(blocked?.querySelector(".ccc-task-glyph")?.getAttribute("aria-hidden")).toBe("true");
+    expect(blocked?.textContent).toContain("Blocked — waiting on 1 unfinished task");
+  });
+
+  it("states selection, busy and disabled with an attribute and visible text, not colour", async () => {
+    const pending = deferred<undefined>();
+    const rows = [taskRow(1, { title: "First" }), taskRow(2, { title: "Second" })];
+    const { container } = render(
+      <TaskList
+        {...baseProps(rows, { selectedId: rows[0]?.id ?? null, onAction: () => pending.promise })}
+      />,
+    );
+    expect(container.querySelector('[data-selected="true"] [aria-current="true"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Mark done: Second" }));
+    const busy = container.querySelector('[data-busy="true"] .ccc-task-action');
+    expect(busy?.getAttribute("aria-busy")).toBe("true");
+    expect(busy?.textContent).toBe("Mark done");
+    pending.resolve(undefined);
+    await waitFor(() => expect(container.querySelector('[data-busy="true"]')).toBeNull());
   });
 });

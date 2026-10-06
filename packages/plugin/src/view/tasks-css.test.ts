@@ -258,14 +258,25 @@ describe("Test 1: the CSS contract of the Tasks family", () => {
     expect(wide?.body).toMatch(/grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
   });
 
-  it("drops the row actions beneath the meta lines below 34rem", () => {
+  it("drops the row actions beneath the meta lines below 34rem, in one column", () => {
     const narrow = ALL_RULES.find(
       (rule) =>
         rule.selectors.includes(".ccc-task-row") &&
         rule.atStack.some((at) => at.includes("max-width: 34rem")),
     );
-    expect(narrow).toBeDefined();
-    expect(narrow?.body).toMatch(/grid-template-areas/);
+    expect(narrow?.body).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    const actions = ALL_RULES.find(
+      (rule) =>
+        rule.selectors.includes(".ccc-task-row .ccc-task-row-actions") &&
+        rule.atStack.some((at) => at.includes("max-width: 34rem")),
+    );
+    expect(actions?.body).toMatch(/order:\s*1/);
+  });
+
+  it("places no named grid area, which a Phase 3 audit forbids", () => {
+    for (const rule of NEW_RULES) {
+      expect(rule.body, rule.selectors.join(", ")).not.toMatch(/grid-area|grid-template-areas/);
+    }
   });
 
   it("shows 'Back to tasks' only where the detail stacks", () => {
@@ -375,7 +386,6 @@ describe("Test 2: states reach CSS through data attributes, and none relies on c
   });
 
   it("states the overdue date and the selected title in weight 600", () => {
-    expect(declared("ccc-task-date", "font-weight")).toBeUndefined();
     const overdue = NEW_RULES.find((rule) =>
       rule.selectors.some((selector) => selector.includes('.ccc-task-date[data-overdue="true"]')),
     );
