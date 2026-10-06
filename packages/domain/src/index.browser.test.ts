@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import * as approvalCorpus from "./approval-corpus.js";
 import * as browser from "./index.browser.js";
 import * as full from "./index.js";
 import * as pathContainment from "./path-containment.js";
@@ -16,6 +17,13 @@ import * as pathContainment from "./path-containment.js";
 /** The modules `index.browser.ts`'s docblock names as genuinely Node-only. */
 const NODE_ONLY_MODULES = ["./path-containment.js"];
 
+/**
+ * Test data the full barrel exports and the browser barrel deliberately leaves
+ * out: the hostile-text corpus is not product code, so no browser bundle should
+ * carry it (plan 06-04, D-40).
+ */
+const INDEX_ONLY_MODULES = ["./approval-corpus.js"];
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 function reExports(file: string): string[] {
@@ -25,16 +33,23 @@ function reExports(file: string): string[] {
 
 describe("the browser barrel (index.browser.ts)", () => {
   it("re-exports exactly index.ts's modules minus the Node-only ones", () => {
-    const expected = reExports("index.ts").filter((mod) => !NODE_ONLY_MODULES.includes(mod));
+    const expected = reExports("index.ts").filter(
+      (mod) => !NODE_ONLY_MODULES.includes(mod) && !INDEX_ONLY_MODULES.includes(mod),
+    );
     expect(reExports("index.browser.ts")).toEqual(expected);
   });
 
   it("exposes exactly index.ts's runtime exports minus path-containment's", () => {
-    const nodeOnly = new Set(Object.keys(pathContainment));
+    const nodeOnly = new Set([...Object.keys(pathContainment), ...Object.keys(approvalCorpus)]);
     const expected = Object.keys(full)
       .filter((name) => !nodeOnly.has(name))
       .sort();
     expect(Object.keys(browser).sort()).toEqual(expected);
+  });
+
+  it("leaves the hostile corpus out of the browser barrel but keeps it in the full one", () => {
+    expect(Object.keys(full)).toContain("HOSTILE_CORPUS");
+    expect(Object.keys(browser)).not.toContain("HOSTILE_CORPUS");
   });
 
   it("both barrels declare nothing but re-exports", () => {

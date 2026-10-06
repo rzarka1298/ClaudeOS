@@ -34,9 +34,10 @@ const CATEGORY_HIDDEN = /^(?:[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]|[^\S \n])$/u;
  * filler, or an unpaired surrogate. Walks code points, so a surrogate pair is
  * one character and a lone half is its own.
  */
-function hasRawHidden(text: string): boolean {
+function hasRawHidden(text: string, allowLineFeed = false): boolean {
   for (const char of text) {
     const code = char.codePointAt(0) ?? 0;
+    if (allowLineFeed && code === 0x0a) continue;
     if (code >= 0xd800 && code <= 0xdfff) return true;
     if (EXTRA_HIDDEN.has(code) || CATEGORY_HIDDEN.test(char)) return true;
   }
@@ -85,7 +86,9 @@ describe("neutraliseUntrustedText over the hostile corpus (Test 1)", () => {
 
     it(`neutralises ${entry.name} in a multiline field`, () => {
       const result = neutraliseUntrustedText(entry.text, { multiline: true, max: 4000 });
-      expect(hasRawHidden(result.text), `raw hidden character left in ${entry.name}`).toBe(false);
+      expect(hasRawHidden(result.text, true), `raw hidden character left in ${entry.name}`).toBe(
+        false,
+      );
       for (const expected of entry.tokens) {
         expect(result.text).toContain(expected);
       }

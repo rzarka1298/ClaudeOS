@@ -5,6 +5,10 @@
  * equivalent; this is inherently service-only logic, not a bundling
  * limitation).
  *
+ * `approval-corpus.ts` is also left out: it is test data (the hostile-text
+ * corpus), not product code, so no browser bundle should carry it. It is
+ * exported from the full barrel only.
+ *
  * Every other domain file is now free of top-level Node built-in imports
  * (`posix-path.ts`'s and `ids.ts`'s docblocks record the two swaps that made
  * this true), so this entry point is safe to import from code that must run
@@ -23,8 +27,13 @@
  * who need none of its exports. This second, narrower barrel is the fix.
  */
 export * from "./api.js";
+export * from "./approval.js";
+export * from "./approval-operations.js";
+export * from "./approval-ports.js";
+export * from "./approval-view.js";
 export * from "./auth.js";
 export * from "./capability.js";
+export * from "./classification.js";
 export * from "./claude-hook-events.js";
 export * from "./claude-integration.js";
 export * from "./claude-statusline.js";
