@@ -132,6 +132,23 @@ export interface ApprovalEngineDeps {
   readonly ids?: { proposalId(): ProposalId; noteId(): NoteId };
   /** The display name of a registered project, or null. Display only; never a path. */
   readonly projectName?: (projectId: string) => string | null;
+  /** The longest `claimFacts` may take before the claim goes ahead with no facts. Defaults to 5000. */
+  readonly claimFactsTimeoutMs?: number;
+}
+
+const DEFAULT_CLAIM_FACTS_TIMEOUT_MS = 5000;
+
+/** Rejects after `ms`; the timer is always cleared once the race settles. */
+async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface SubmitInput {
@@ -594,7 +611,10 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       const parsed = parseStoredPayload(definition, approved.payloadJson);
       if (parsed.ok) {
         try {
-          facts = await definition.claimFacts(parsed.value);
+          facts = await withTimeout(
+            definition.claimFacts(parsed.value),
+            deps.claimFactsTimeoutMs ?? DEFAULT_CLAIM_FACTS_TIMEOUT_MS,
+          );
         } catch {
           // Facts are an aid to recovery, never a gate: claim with none and never log the error text.
           log.warn({ proposalId: approved.proposalId, code: "claim-facts-failed" });

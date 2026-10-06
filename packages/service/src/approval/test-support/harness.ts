@@ -81,6 +81,7 @@ export interface HarnessOptions {
   readonly publisherThrows?: boolean;
   readonly mirrorRejects?: boolean;
   readonly projectName?: ApprovalEngineDeps["projectName"];
+  readonly claimFactsTimeoutMs?: number;
 }
 
 export function createHarness(options: HarnessOptions = {}): Harness {
@@ -123,6 +124,9 @@ export function createHarness(options: HarnessOptions = {}): Harness {
       },
     },
     ...(options.projectName === undefined ? {} : { projectName: options.projectName }),
+    ...(options.claimFactsTimeoutMs === undefined
+      ? {}
+      : { claimFactsTimeoutMs: options.claimFactsTimeoutMs }),
   };
   const engine = createApprovalEngine(deps);
 

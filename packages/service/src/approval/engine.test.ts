@@ -1015,7 +1015,7 @@ describe("get, list and snapshot (Task 3)", () => {
   });
 });
 
-describe("outcome codes and stuck requests (06-w3 finding 2)", () => {
+describe("outcome codes and stuck requests (06-w3 findings 2 and 3)", () => {
   const STORE_CODE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 
   /** Makes the memory store as strict about outcome codes as the real one. */
@@ -1056,5 +1056,18 @@ describe("outcome codes and stuck requests (06-w3 finding 2)", () => {
     const stored = h.store.get(id);
     expect(stored?.state).toBe("unknown");
     expect(JSON.stringify(h.log.lines)).not.toContain("disk full");
+  });
+
+  it("a claimFacts that never settles is cut off and the request is claimed with empty facts", async () => {
+    const h = createHarness({ claimFactsTimeoutMs: 20 });
+    h.diagnostic.definition.claimFacts = () => new Promise(() => undefined);
+    const id = h.propose();
+    const decided = await decideWith(h, id, "approve");
+    expect(decided.outcome).toBe("decided");
+    await h.engine.settled();
+    const stored = h.store.get(id);
+    expect(stored?.claimFacts).toEqual({});
+    expect(stored?.state).toBe("executed");
+    expect(h.log.lines.some((line) => line.fields.code === "claim-facts-failed")).toBe(true);
   });
 });
