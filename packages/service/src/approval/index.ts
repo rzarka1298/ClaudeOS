@@ -17,6 +17,15 @@ export {
   type SubmitInput,
   type SubmitOutcome,
   type SubmitRejection,
+  type SweepSummary,
   type WithdrawOutcome,
 } from "./engine.js";
+export {
+  createExpirySweeper,
+  DEFAULT_SWEEP_INTERVAL_MS,
+  type ExpirySweeper,
+  type ExpirySweeperDeps,
+  type SweeperTimerHandle,
+  type SweeperTimers,
+} from "./expiry.js";
 export { buildOperationRegistry } from "./registry.js";

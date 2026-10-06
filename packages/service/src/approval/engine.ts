@@ -206,6 +206,14 @@ export type WithdrawOutcome =
   | { readonly kind: "withdrawn" }
   | { readonly kind: "not-withdrawable" };
 
+/** What one expiry sweep changed. Counts only: never an id or a word of text. */
+export interface SweepSummary {
+  /** Pending requests past their expiry, denied automatically. */
+  readonly expired: number;
+  /** Approved requests never claimed within their operation's maximum approval age. */
+  readonly lapsed: number;
+}
+
 export interface ApprovalEngine {
   submit(input: SubmitInput): SubmitOutcome;
   decide(input: EngineDecideInput): Promise<DecideResponse>;
@@ -217,6 +225,12 @@ export interface ApprovalEngine {
   list(bucket: ApprovalBucket, limit?: number): ApprovalSummary[];
   /** The inbox as the snapshot carries it, within the response budget (bytes of the approvals part). */
   snapshot(budgetBytes?: number): ApprovalsSnapshot;
+  /**
+   * Denies every pending request past its expiry and lapses approved requests never claimed
+   * within their maximum approval age, publishing each change after the store call (D-08, D-09).
+   * Safe to call at any time and as often as wanted; a sweep with nothing due changes nothing.
+   */
+  sweepExpired(): SweepSummary;
   /** Resolves when every execution the engine started has finished (tests, shutdown). */
   settled(): Promise<void>;
 }
@@ -493,10 +507,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     if (result.kind === "deduped" && result.proposal.expiresAt <= now) {
       // The pending twin is already past its expiry and not yet swept: settle it as expired and
       // submit afresh, so a requester is never handed a request nobody can decide.
-      for (const expiredId of store.expireDue(now)) {
-        const expired = store.get(expiredId);
-        if (expired !== null) announce(expired);
-      }
+      expireDueRows(now);
       result = store.submit(proposal, caps);
     }
     if (result.kind === "capped") return { kind: "rejected", reason: "inbox-full" };
@@ -522,6 +533,41 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       deduped: false,
       supersedes: result.proposal.supersedes,
     };
+  }
+
+  // --- expiry ---------------------------------------------------------------
+
+  /** The maximum approval age of every enabled approval-required row; any other approved row lapses. */
+  const maxApprovalAges: Readonly<Record<string, number>> = Object.fromEntries(
+    Object.entries(registry.table).flatMap(([operation, row]) =>
+      row.class === "approval-required" && row.status === "enabled"
+        ? [[operation, row.maxApprovalAgeMs] as const]
+        : [],
+    ),
+  );
+
+  /** Denies every pending request past its expiry (one store call), then publishes each. Returns how many. */
+  function expireDueRows(now: string): number {
+    const expiredIds = store.expireDue(now);
+    for (const expiredId of expiredIds) {
+      const expired = store.get(expiredId);
+      if (expired !== null) announce(expired);
+    }
+    return expiredIds.length;
+  }
+
+  function sweepExpired(): SweepSummary {
+    const now = clock.now();
+    const expired = expireDueRows(now);
+    const lapsedIds = store.lapseStaleApproved(now, maxApprovalAges);
+    for (const lapsedId of lapsedIds) {
+      const lapsed = store.get(lapsedId);
+      if (lapsed !== null) announce(lapsed);
+    }
+    if (expired > 0 || lapsedIds.length > 0) {
+      log.info({ code: "swept", counts: { expired, lapsed: lapsedIds.length } });
+    }
+    return { expired, lapsed: lapsedIds.length };
   }
 
   function withdraw(proposalId: string): WithdrawOutcome {
@@ -812,5 +858,5 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     }
   }
 
-  return { submit, decide, withdraw, get, list, snapshot, settled };
+  return { submit, decide, withdraw, get, list, snapshot, sweepExpired, settled };
 }
