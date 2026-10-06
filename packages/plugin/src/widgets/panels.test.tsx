@@ -661,8 +661,10 @@ describe("Quick actions is live (S8, D-38, PR-08, PR-12, RR-18)", () => {
     connectionState.value = { kind: "live" };
     const notify = vi.fn();
     renderShell({ notify });
-    fireEvent.click(within(quickCard()).getByRole("button", { name: "Create a task" }));
-    expect(notify).toHaveBeenCalledWith("Create a task isn't available yet.");
+    // Amended in plan 06-10: `task:create` is now a live dispatcher branch
+    // (D-37), so this case uses `Run a skill`, a reserved capability.
+    fireEvent.click(within(quickCard()).getByRole("button", { name: "Run a skill" }));
+    expect(notify).toHaveBeenCalledWith("Run a skill isn't available yet.");
   });
 
   it("the Source panel lists Launcher settings, never Skill registry", () => {

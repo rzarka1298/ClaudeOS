@@ -150,15 +150,17 @@ describe("every button on every registered card routes through the dispatcher", 
     expect(ctx.notify.mock.calls[0]?.[0]).toMatch(/Google Calendar and Gmail.*Settings/);
   });
 
-  // SC-6 (rewritten, not deleted): the two live Quick actions (D-38, PR-08)
-  // are covered in quick-actions.test.ts; every other one still reports
-  // unavailable.
+  // SC-6 (rewritten, not deleted): the live Quick actions (D-38, PR-08, and
+  // `task:create` from plan 06-10) are covered in quick-actions.test.ts; every
+  // other one still reports unavailable.
   it("every not-yet-live PRD quick action reports unavailable and never navigates", () => {
     const notLive = WIDGETS["quick-actions"].quickActions.filter(
       (action) =>
-        !action.capability.startsWith("launch:") && !action.capability.startsWith("switcher:"),
+        !action.capability.startsWith("launch:") &&
+        !action.capability.startsWith("switcher:") &&
+        action.capability !== "task:create",
     );
-    expect(notLive).toHaveLength(4);
+    expect(notLive).toHaveLength(3);
     for (const action of notLive) {
       const ctx = {
         navigate: vi.fn(),
