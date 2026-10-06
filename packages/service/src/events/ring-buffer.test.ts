@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRingBuffer, EVENT_BUFFER_CAPACITY } from "./ring-buffer.js";
 
 describe("createRingBuffer", () => {
@@ -99,5 +99,28 @@ describe("createRingBuffer", () => {
     }
     expect(buffer.has(1)).toBe(false);
     expect(buffer.has(2)).toBe(true);
+  });
+
+  describe("capacity default (Test 7, PR-05)", () => {
+    const saved = process.env.CCC_EVENT_BUFFER_CAPACITY;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.CCC_EVENT_BUFFER_CAPACITY;
+      else process.env.CCC_EVENT_BUFFER_CAPACITY = saved;
+      vi.resetModules();
+    });
+
+    it("holds 500 events by default, re-tuned for tool events", async () => {
+      delete process.env.CCC_EVENT_BUFFER_CAPACITY;
+      vi.resetModules();
+      const fresh = await import("./ring-buffer.js");
+      expect(fresh.EVENT_BUFFER_CAPACITY).toBe(500);
+    });
+
+    it("still honours the CCC_EVENT_BUFFER_CAPACITY override", async () => {
+      process.env.CCC_EVENT_BUFFER_CAPACITY = "7";
+      vi.resetModules();
+      const fresh = await import("./ring-buffer.js");
+      expect(fresh.EVENT_BUFFER_CAPACITY).toBe(7);
+    });
   });
 });

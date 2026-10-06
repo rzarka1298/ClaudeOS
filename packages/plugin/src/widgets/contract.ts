@@ -50,6 +50,23 @@ export type RefreshPolicy =
   | { readonly kind: "manual" };
 
 /**
+ * The metric a `variant: { kind: "hero" }` widget's frame-owned head renders
+ * (UI-SPEC S1 "Contract field", D-50).
+ *
+ * `value` is the numeral (Display step); `caption` is the sub-caption text
+ * beneath it; `share` drives the decorative progress line and is `null` when
+ * there is nothing to show a ratio of (the meter is omitted, never shown at
+ * zero); `srLabel` is the screen-reader text that follows the numeral, so an
+ * assistive-technology user hears the same number the sighted numeral shows.
+ */
+export interface HeroMetric {
+  readonly value: number;
+  readonly caption: string;
+  readonly share: { readonly value: number; readonly max: number } | null;
+  readonly srLabel: string;
+}
+
+/**
  * A quick action is DATA, never a callback (C-11, APPR-01, PATTERNS Pitfall 6).
  *
  * `WidgetFrame` emits the descriptor to a single handler prop and executes
@@ -66,8 +83,33 @@ export interface QuickActionDescriptor {
   readonly id: string;
   readonly label: string;
   readonly capability: string;
-  readonly target?: { readonly projectId: ProjectId } | undefined;
+  /**
+   * What the descriptor refers to (PR-20). Optional: most descriptors (card-
+   * level quick actions, `connect:*`) name nothing beyond the capability.
+   * `ListBody`'s row action fills this with `{ runId }` so the single
+   * dispatcher can resolve which session a `session:*` capability targets.
+   */
+  readonly target?: { readonly projectId: ProjectId } | { readonly runId: string } | undefined;
 }
+
+/**
+ * Why a source is unavailable for a reportable reason (SESS-18, D-12). A
+ * reason is a code plus the facts its copy needs — never prose: the frame
+ * owns every word it renders, keyed by `code`, so no free string from a
+ * payload can reach the card verbatim.
+ */
+export type UnavailableReason =
+  /** Claude Code at `version` sends hook events in a shape this build does not recognise. */
+  | { readonly code: "session-telemetry-changed"; readonly version: string }
+  /** Claude Code at `version` is below the supported floor. */
+  | { readonly code: "claude-version-unsupported"; readonly version: string }
+  /** Claude Code's `disableAllHooks` is on: no hook can fire, so no session is reported (D-15). */
+  | { readonly code: "hooks-disabled" }
+  /** The installed hook cannot find its Node.js runtime, so no session is reported. */
+  | { readonly code: "hook-runtime-missing" }
+  /** The service could not read Claude Code's hook settings and no session has been seen. */
+  | { readonly code: "hooks-status-unknown" };
+export type UnavailableReasonCode = UnavailableReason["code"];
 
 /**
  * What a widget currently knows. `ready` is the only member carrying data, and
@@ -85,7 +127,17 @@ export type WidgetState<T> =
       readonly sourceLabel: string;
     }
   | { readonly kind: "error"; readonly message: string }
-  | { readonly kind: "unavailable" }
+  | {
+      readonly kind: "unavailable";
+      /**
+       * Set when the source is unavailable for a reportable reason — a
+       * telemetry-shape change, a Claude Code version below the floor
+       * (SESS-18, D-12), or hooks that cannot report at all (D-15) — rather
+       * than simply having no route yet. Absent
+       * keeps Phase 3's "No source yet" copy unchanged.
+       */
+      readonly reason?: UnavailableReason | undefined;
+    }
   | {
       readonly kind: "ready";
       readonly data: T;
@@ -108,6 +160,9 @@ export type WidgetState<T> =
  * focuses a shell destination, which is how `+{n} more` reaches the page that
  * owns the full list (MAJOR 1). It navigates and does nothing else; anything
  * consequential is a quick-action DESCRIPTOR, never a body callback (C-11).
+ * The optional `selection` lets a body ask the destination to focus one item
+ * — the S1 row link uses it to select a Run in Agent runs — without adding a
+ * second navigation channel.
  *
  * `onQuickAction` is the body's own channel to the same single dispatcher
  * every generic `.ccc-card-actions` button already uses (PR-08). The frame
@@ -119,7 +174,9 @@ export type WidgetState<T> =
 export interface WidgetBodyProps<T> {
   readonly data: T;
   readonly size: SizeHint;
-  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+  readonly onNavigate?:
+    | ((destination: DestinationId, selection?: { readonly runId: string }) => void)
+    | undefined;
   readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }
 
@@ -170,4 +227,25 @@ export interface WidgetDefinition<T> {
     readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
     readonly data?: T | undefined;
   }) => VNode | null;
+  /**
+   * When true, the frame's `empty` body is `renderEmpty` alone: the shared
+   * "Nothing here yet" / "{title} has no items right now" pair is list copy,
+   * and a card whose empty state is defined per section (the Claude usage
+   * card, UI-SPEC E3 empty row) supplies all of its own copy. Absent means
+   * the Phase 3 behaviour, unchanged for every other widget.
+   */
+  readonly ownsEmptyCopy?: boolean | undefined;
+  /**
+   * Declares a frame-owned hero head (UI-SPEC S1, D-50): absent means the
+   * existing glass card, so no other widget changes. `WidgetFrame` reads this
+   * field and renders the head itself — the body still renders only its rows
+   * (Phase 3 D-13..D-17 "frame owns the card, widget owns the body").
+   *
+   * `metric` is a PLAIN FUNCTION SIGNATURE, matching `renderBody` (`:121-130`
+   * docblock), so it stays contravariant in `T` and `WidgetDefinition<never>`
+   * remains a real supertype of every hero-variant `WidgetDefinition<T>`.
+   */
+  readonly variant?:
+    | { readonly kind: "hero"; readonly metric: (data: T) => HeroMetric }
+    | undefined;
 }

@@ -83,6 +83,48 @@ export function payloadTypeClaims(erased: AnyWidgetDefinition): void {
   void registered;
 }
 
+interface HeroFixtureData {
+  readonly value: number;
+}
+
+const HERO_DEFINITION: WidgetDefinition<HeroFixtureData> = {
+  id: "hero-type-fixture",
+  title: "Hero type fixture",
+  dataKeys: [{ key: "hero.fixture", transport: "local", sourceLabel: "Fixture" }],
+  refresh: { kind: "manual" },
+  minSize: "tall",
+  preferredSize: "tall",
+  featureFlag: "widget.hero-type-fixture",
+  quickActions: [],
+  variant: {
+    kind: "hero",
+    metric: (data) => ({
+      value: data.value,
+      caption: "",
+      share: null,
+      srLabel: "",
+    }),
+  },
+  renderBody: () => null,
+  renderEmpty: () => null,
+};
+
+/**
+ * Compile-time claims for the hero variant (D-50): a hero-variant definition
+ * registers under the registry's `WidgetDefinition<never>` bound with no cast,
+ * and `variant.metric` is contravariant in its payload just like `renderBody`
+ * — an erased `metric` cannot be called with any concrete payload.
+ */
+export function heroVariantTypeClaims(erased: AnyWidgetDefinition): void {
+  const registered: AnyWidgetDefinition = HERO_DEFINITION;
+  void registered;
+
+  if (erased.variant) {
+    // @ts-expect-error an erased hero variant's metric is contravariant like renderBody: it accepts no payload
+    erased.variant.metric({ value: 3 });
+  }
+}
+
 afterEach(cleanup);
 
 describe("a typed definition renders a payload of its own shape", () => {
@@ -97,5 +139,6 @@ describe("a typed definition renders a payload of its own shape", () => {
     );
     expect(container.querySelector(".ccc-card-body")?.textContent).toContain("Example project");
     expect(payloadTypeClaims).toBeTypeOf("function");
+    expect(heroVariantTypeClaims).toBeTypeOf("function");
   });
 });

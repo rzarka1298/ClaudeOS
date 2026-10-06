@@ -2,7 +2,9 @@ import {
   type LaunchAction,
   type LaunchErrorKind,
   type LaunchGuard,
+  type LaunchGuardDecision,
   type LaunchRequest,
+  type LaunchResponse,
   type LaunchResult,
   type ProjectGitState,
   type ProjectId,
@@ -102,7 +104,7 @@ export interface LaunchCollector {
 export interface LaunchLogFields {
   readonly projectId: ProjectId | null;
   readonly action: LaunchAction;
-  readonly kind: LaunchErrorKind | "ok";
+  readonly kind: LaunchErrorKind | "ok" | "conflict";
 }
 
 export interface LaunchLogger {
@@ -135,13 +137,20 @@ export interface LaunchServiceDeps {
 }
 
 export interface LaunchService {
-  launch(request: LaunchRequest): Promise<LaunchResult>;
+  launch(request: LaunchRequest): Promise<LaunchResponse>;
 }
 
 /** What a resolved action hands to the spawn step. */
 type Prepared =
   | { readonly kind: "spawn"; readonly argv: readonly string[] }
-  | { readonly kind: "delegate"; readonly run: (signal: AbortSignal) => Promise<LaunchResult> }
+  | {
+      readonly kind: "delegate";
+      /** `grant` carries what the guard's verdict changes: a working directory, extra arguments. */
+      readonly run: (
+        signal: AbortSignal,
+        grant: Extract<LaunchGuardDecision, { ok: true }>,
+      ) => Promise<LaunchResult>;
+    }
   | { readonly kind: "refuse"; readonly error: LaunchErrorKind };
 
 /** Tracks one launch so a spawn that finishes after the cap cannot act as a success. */
@@ -231,7 +240,16 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
       kind: "delegate",
       // The cap's signal travels with the hand-off, so an adapter can refuse
       // to open (or kill what it started) once `timeout` has been reported.
-      run: (signal) => terminalLauncher.launch({ cwd: project.path, argv, signal }),
+      run: (signal, grant) =>
+        terminalLauncher.launch({
+          cwd: grant.cwd ?? project.path,
+          // The owner's choice (plan mode, a new worktree) goes after the
+          // stored template and nothing else (D-29).
+          argv: grant.extraArgv === undefined ? argv : [...argv, ...grant.extraArgv],
+          // The pre-registered Run's identity and dashboard source (finding 1).
+          ...(grant.env === undefined ? {} : { env: grant.env }),
+          signal,
+        }),
     };
   };
 
@@ -269,18 +287,63 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     void deps.collector.refresh(projectId);
   };
 
-  const attempt = async (request: LaunchRequest, state: Attempt): Promise<LaunchResult> => {
+  /** Reports the hand-off's outcome for a Run the guard pre-registered; bookkeeping never fails a launch. */
+  const settle = async (
+    decision: Extract<LaunchGuardDecision, { ok: true }>,
+    outcome: "started" | "failed" | "timeout",
+  ): Promise<void> => {
+    if (decision.runId === undefined || guard.settle === undefined) return;
+    try {
+      await guard.settle(decision.runId, outcome);
+    } catch {
+      // The Run stays queued; the start-timeout sweep marks it stale (PR-17).
+    }
+  };
+
+  const attempt = async (request: LaunchRequest, state: Attempt): Promise<LaunchResponse> => {
     const projectId = projectIdOf(request);
     const prepared = await prepare(request);
     if (state.cancelled) return failure("timeout");
     if (prepared.kind === "refuse") return failure(prepared.error);
-    const decision = await guard.check({ projectId, action: request.action });
-    if (!decision.ok) return failure(decision.error);
-    if (state.cancelled) return failure("timeout");
+    const decision = await guard.check({
+      projectId,
+      action: request.action,
+      ...(request.action === "claude-code" && request.choice !== undefined
+        ? { choice: request.choice }
+        : {}),
+    });
+    if (state.cancelled) {
+      // Nothing was opened, so a Run the guard registered is dead, not stale.
+      if (decision.ok) await settle(decision, "failed");
+      return failure("timeout");
+    }
+    if (!decision.ok) {
+      // A conflict is an answer: nothing was launched and the plugin asks
+      // the owner how to proceed (D-29).
+      if ("conflict" in decision) return { ok: false, conflict: decision.conflict };
+      return failure(decision.error);
+    }
     if (prepared.kind === "delegate") {
-      const delegated = await prepared.run(state.signal);
-      if (state.cancelled) return failure("timeout");
-      if (!delegated.ok) return delegated;
+      let delegated: LaunchResult;
+      try {
+        delegated = await prepared.run(state.signal, decision);
+      } catch (err: unknown) {
+        await settle(decision, "failed");
+        throw err;
+      }
+      if (state.cancelled) {
+        // The terminal may still open late: the Run stays stale, never failed.
+        await settle(decision, "timeout");
+        return failure("timeout");
+      }
+      if (!delegated.ok) {
+        // `spawn-failed` (and `timeout`) cannot say whether the terminal opened:
+        // the Run stays stale, never an invented failed state (PR-17).
+        const uncertain = delegated.error === "timeout" || delegated.error === "spawn-failed";
+        await settle(decision, uncertain ? "timeout" : "failed");
+        return delegated;
+      }
+      await settle(decision, "started");
     } else {
       const outcome = await deps.spawner.run(prepared.argv, {
         timeoutMs: capMs,
@@ -302,22 +365,22 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
    * retried request while the first is still running joins it and gets the
    * very same promise — one spawn, one window, one result (wave-3 review).
    */
-  const inFlight = new Map<string, Promise<LaunchResult>>();
+  const inFlight = new Map<string, Promise<LaunchResponse>>();
 
-  const run = async (request: LaunchRequest): Promise<LaunchResult> => {
+  const run = async (request: LaunchRequest): Promise<LaunchResponse> => {
     // The cap both answers the caller and aborts the spawn, so a hung
     // LaunchServices hand-off is killed rather than left running (D-40).
     const controller = new AbortController();
     const state: Attempt = { cancelled: false, signal: controller.signal };
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const cap = new Promise<LaunchResult>((resolve) => {
+    const cap = new Promise<LaunchResponse>((resolve) => {
       timer = setTimeout(() => {
         state.cancelled = true;
         controller.abort();
         resolve(failure("timeout"));
       }, capMs);
     });
-    let result: LaunchResult;
+    let result: LaunchResponse;
     try {
       result = await Promise.race([attempt(request, state), cap]);
     } catch {
@@ -330,16 +393,19 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     const fields: LaunchLogFields = {
       projectId: projectIdOf(request),
       action: request.action,
-      kind: result.ok ? "ok" : result.error,
+      kind: result.ok ? "ok" : "conflict" in result ? "conflict" : result.error,
     };
     if (result.ok) deps.logger.info(fields, "launch");
+    else if ("conflict" in result) deps.logger.info(fields, "launch conflict");
     else deps.logger.warn(fields, "launch failed");
     return result;
   };
 
   return {
     launch(request) {
-      const key = `${request.action}\u0000${projectIdOf(request) ?? ""}`;
+      // A retry with a different choice is a different launch, not a join.
+      const choice = request.action === "claude-code" ? JSON.stringify(request.choice ?? null) : "";
+      const key = `${request.action}\u0000${projectIdOf(request) ?? ""}\u0000${choice}`;
       const joined = inFlight.get(key);
       if (joined !== undefined) return joined;
       const pending = run(request).finally(() => {

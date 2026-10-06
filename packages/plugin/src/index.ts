@@ -3,12 +3,16 @@
 // file exists so the package follows the same `src/index.ts` shape every
 // other workspace package does; it re-exports the side-effect-free pieces.
 
+export type { SessionView } from "@ccc/domain/session.js";
+export type { UsageSummary } from "@ccc/domain/usage.js";
 export type { ConnectionState, LastEventInfo } from "./connection-state.js";
 export { connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
 export type { MotionMode } from "./motion.js";
 export { motionMode } from "./motion.js";
 export { projectShortcutsStateFor } from "./projects/projects-state.js";
 export { attachEventClient } from "./service-connection.js";
+export { AgentRuns } from "./view/agent-runs.js";
+export { RECENT_PAGE_SIZE, selectedRunId } from "./view/agent-runs-state.js";
 export type {
   DataDependencyKey,
   QuickActionDescriptor,
@@ -47,6 +51,8 @@ export {
   serviceHealthStateFor,
   serviceHealthWidget,
 } from "./widgets/service-health.js";
+export { claudeIntegration, sessionsById } from "./widgets/session-signals.js";
+export { usageSummary } from "./widgets/usage-signals.js";
 export {
   permissionRequiredState,
   UNAVAILABLE_STATE,

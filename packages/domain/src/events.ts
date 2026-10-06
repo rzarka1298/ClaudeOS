@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
+import { ClaudeIntegrationStatusSchema } from "./claude-integration.js";
 import { ProjectsSnapshotSchema } from "./projects.js";
+import { SessionViewSchema } from "./session.js";
+import { UsageSummarySchema } from "./usage.js";
 
 /** `GET /api/v1/events` — the authenticated event-stream endpoint (SVC-07). */
 export const EVENTS_PATH = `${API_BASE}/events`;
@@ -55,6 +58,11 @@ export const SERVICE_EVENT_TYPES = [
   "connection.state",
   "stream.resync",
   "projects.updated",
+  // Phase 5 (append-only, D-59): a Run's view changed; the usage summary
+  // changed; the Claude integration status changed.
+  "session.upserted",
+  "usage.updated",
+  "claude-integration.updated",
 ] as const;
 export type ServiceEventType = (typeof SERVICE_EVENT_TYPES)[number];
 
@@ -85,6 +93,11 @@ export const SnapshotResponseSchema = z.object({
   lastEventId: z.number().int().nonnegative(),
   state: z.object({
     serviceStartedAt: z.string(),
+    // Phase 5 (append-only, D-59). Optional so an older service's snapshot
+    // still parses (Pitfall 17).
+    sessions: z.array(SessionViewSchema).optional(),
+    usage: UsageSummarySchema.optional(),
+    claudeIntegration: ClaudeIntegrationStatusSchema.optional(),
     projects: ProjectsSnapshotSchema,
   }),
 });

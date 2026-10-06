@@ -5,7 +5,10 @@ import type { ConnectionState } from "../connection-state.js";
 import type { DestinationId } from "../view/destinations.js";
 import type {
   DataDependencyKey,
+  HeroMetric,
   QuickActionDescriptor,
+  UnavailableReason,
+  UnavailableReasonCode,
   WidgetDefinition,
   WidgetState,
 } from "./contract.js";
@@ -70,6 +73,154 @@ function midSentenceTitle(title: string): string {
   return title.charAt(0).toLowerCase() + title.slice(1);
 }
 
+/**
+ * Per-capability override of the generic `permission-required` template
+ * (UI-SPEC "Setup state: hooks not installed", D-53). The generic template
+ * ("{source} isn't connected") is ungrammatical for "Claude Code hooks", so
+ * this is the one exception; every other capability falls back to it
+ * unchanged. `descriptorLabel` is what `dispatchQuickAction`'s existing
+ * `connect:*` resolution shows in its Notice — it stays a real English
+ * phrase ("Connect Claude Code hooks"), not the heading.
+ */
+const PERMISSION_COPY: Partial<
+  Record<
+    string,
+    {
+      readonly heading: string;
+      readonly body: string;
+      readonly button: string;
+      readonly descriptorLabel: string;
+    }
+  >
+> = {
+  "claude-hooks": {
+    heading: "Claude Code hooks aren't installed",
+    body: "Install the optional hook package to see your Claude Code sessions here. Obsidian settings → Claude command center → Claude shows the command to run.",
+    button: "Set up Claude hooks",
+    descriptorLabel: "Connect Claude Code hooks",
+  },
+};
+
+/**
+ * A Claude Code version as the copy may show it: dotted digits only. Anything
+ * else (a path, a message, markup) is replaced by a neutral phrase, so the
+ * one datum a reason carries into copy cannot smuggle text onto the card.
+ */
+const VERSION_SHAPE = /^\d{1,6}(?:\.\d{1,6}){0,3}$/;
+
+function claudeCodeVersion(version: string): string {
+  return VERSION_SHAPE.test(version) ? `Claude Code ${version}` : "Your Claude Code version";
+}
+
+/**
+ * Plugin-owned copy for each {@link UnavailableReasonCode} (UI-SPEC
+ * "Telemetry shape changed (SESS-18, D-12)"). The heading is keyed by code,
+ * so "Session tracking paused" is only ever said about session tracking; the
+ * body is built from the reason's version and nothing else.
+ */
+const UNAVAILABLE_COPY: Record<
+  UnavailableReasonCode,
+  { readonly heading: string; readonly body: (version: string) => string }
+> = {
+  "session-telemetry-changed": {
+    heading: "Session tracking paused",
+    body: (version) =>
+      `${claudeCodeVersion(version)} reports sessions in a format this build doesn't recognise, so they're hidden rather than shown wrong.`,
+  },
+  "claude-version-unsupported": {
+    heading: "Session tracking paused",
+    body: (version) => `${claudeCodeVersion(version)} is older than the minimum supported 2.1.214.`,
+  },
+  // Hook states in which no event can arrive (wave 2 review, D-15): each is
+  // said out loud rather than shown as "0 active sessions".
+  "hooks-disabled": {
+    heading: "Session tracking paused",
+    body: () =>
+      "Claude Code has all hooks turned off (disableAllHooks), so no sessions are reported. Turn hooks back on in Claude Code's settings to resume tracking.",
+  },
+  "hook-runtime-missing": {
+    heading: "Session tracking paused",
+    body: () =>
+      "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+  },
+  "hooks-status-unknown": {
+    heading: "Session tracking status unknown",
+    body: () =>
+      "The service couldn't read Claude Code's hook settings, so it can't tell whether sessions are being reported.",
+  },
+};
+
+/**
+ * The copy for an unavailable reason, or null when there is none to show.
+ * An erased widget's state is unvalidated at runtime (see {@link FrameState}),
+ * so a reason whose code has no copy — a free string, a future code — is
+ * treated as no reason: it reads "No source yet" and is never rendered.
+ */
+function unavailableCopy(
+  reason: UnavailableReason | undefined,
+): { readonly heading: string; readonly body: string } | null {
+  if (typeof reason !== "object" || reason === null) return null;
+  if (!Object.hasOwn(UNAVAILABLE_COPY, reason.code)) return null;
+  const copy = UNAVAILABLE_COPY[reason.code];
+  const version = "version" in reason && typeof reason.version === "string" ? reason.version : "";
+  return { heading: copy.heading, body: copy.body(version) };
+}
+
+/**
+ * The surface a hero-variant card renders on, derived from the presentation
+ * (UI-SPEC S1 "Surface by presentation"). Cream is reserved for the four
+ * presentations that carry last-good numbers; every presentation that needs
+ * `--ccc-danger`, the disconnected dim, or the connect-button styling
+ * renders on glass, where those treatments are audited.
+ */
+const CREAM_PRESENTATIONS: ReadonlySet<CardPresentation["kind"]> = new Set([
+  "loading",
+  "ready",
+  "empty",
+  "stale",
+]);
+
+function heroSurfaceFor(presentationKind: CardPresentation["kind"]): "cream" | "glass" {
+  return CREAM_PRESENTATIONS.has(presentationKind) ? "cream" : "glass";
+}
+
+/**
+ * The frame-owned hero head (UI-SPEC S1 "Anatomy", D-50): a Display-step
+ * numeral, its screen-reader label, a sub-caption and a decorative meter.
+ * Loading renders three skeleton lines instead — never both, so a
+ * hero-variant widget's loading card shows exactly three skeleton lines in
+ * total, not six.
+ */
+function HeroHead({ metric }: { readonly metric: HeroMetric }): VNode {
+  return (
+    <div className="ccc-hero-head">
+      <p className="ccc-kpi-number">{metric.value}</p>
+      <span className="ccc-visually-hidden">{metric.srLabel}</span>
+      <p className="ccc-hero-caption">{metric.caption}</p>
+      {metric.share !== null && (
+        <meter
+          className="ccc-hero-meter"
+          min={0}
+          max={metric.share.max}
+          value={metric.share.value}
+          aria-hidden="true"
+        />
+      )}
+    </div>
+  );
+}
+
+function HeroHeadSkeleton({ panel }: { readonly panel: string }): VNode {
+  return (
+    <div className="ccc-hero-head">
+      <div className="ccc-skeleton-line" />
+      <div className="ccc-skeleton-line" />
+      <div className="ccc-skeleton-line" />
+      <span className="ccc-visually-hidden">{`Loading ${panel}`}</span>
+    </div>
+  );
+}
+
 /** The footer a card shows before its first observation has arrived. */
 function pendingFooter(dataKeys: readonly DataDependencyKey[]): FooterModel {
   return {
@@ -107,7 +258,9 @@ export function WidgetFrame<T>({
   const body: ComponentChildren = ((): ComponentChildren => {
     switch (presentation.kind) {
       case "loading":
-        return (
+        // A hero-variant widget's skeleton lives in the hero head (below),
+        // so the generic body skeleton would otherwise duplicate it.
+        return definition.variant ? null : (
           <>
             <div className="ccc-skeleton-line" />
             <div className="ccc-skeleton-line" />
@@ -116,6 +269,7 @@ export function WidgetFrame<T>({
           </>
         );
       case "empty":
+        if (definition.ownsEmptyCopy === true) return <Empty />;
         return (
           <>
             <p className="ccc-state-heading">Nothing here yet</p>
@@ -147,6 +301,8 @@ export function WidgetFrame<T>({
                     now,
                   )}. They may be out of date.`}
             </p>
+            {/* No `onQuickAction` here (RR-05): while the service is unreachable
+                a body cannot emit a launch or session action at all. */}
             {state.kind === "ready" ? (
               <Body data={state.data} size={hint} onNavigate={onNavigate} />
             ) : null}
@@ -172,10 +328,15 @@ export function WidgetFrame<T>({
       case "permission-required": {
         const source = presentation.sourceLabel;
         const capability = presentation.capability;
+        const override = PERMISSION_COPY[capability];
+        const heading = override?.heading ?? `${source} isn't connected`;
+        const bodyText = override?.body ?? `Connect ${source} to see ${panel} here.`;
+        const buttonLabel = override?.button ?? `Connect ${source}`;
+        const descriptorLabel = override?.descriptorLabel ?? `Connect ${source}`;
         return (
           <>
-            <p className="ccc-state-heading">{`${source} isn't connected`}</p>
-            <p className="ccc-state-body">{`Connect ${source} to see ${panel} here.`}</p>
+            <p className="ccc-state-heading">{heading}</p>
+            <p className="ccc-state-body">{bodyText}</p>
             {/* A DESCRIPTOR goes to one handler prop and nothing runs here
                 (C-11, APPR-01, T-03-13). In this phase the dispatcher resolves
                 it to the shell's settings destination; Phase 6/7 replaces that
@@ -186,25 +347,28 @@ export function WidgetFrame<T>({
               onClick={() =>
                 onQuickAction?.({
                   id: `connect-${capability}`,
-                  label: `Connect ${source}`,
+                  label: descriptorLabel,
                   capability: `connect:${capability}`,
                 })
               }
             >
-              {`Connect ${source}`}
+              {buttonLabel}
             </button>
           </>
         );
       }
-      case "unavailable":
+      case "unavailable": {
+        const copy = unavailableCopy(presentation.reason);
         return (
           <>
-            <p className="ccc-state-heading">No source yet</p>
+            <p className="ccc-state-heading">{copy?.heading ?? "No source yet"}</p>
             <p className="ccc-state-body">
-              {`${definition.title} has no data source in this build. It fills in once its source is available.`}
+              {copy?.body ??
+                `${definition.title} has no data source in this build. It fills in once its source is available.`}
             </p>
           </>
         );
+      }
     }
   })();
 
@@ -220,17 +384,40 @@ export function WidgetFrame<T>({
     !definition.actionsInBody &&
     (presentation.kind === "ready" || presentation.kind === "stale");
 
+  // The hero head (UI-SPEC S1, D-50): absent means the existing glass card,
+  // so no other widget's render tree changes at all.
+  const surface: "cream" | "glass" | undefined = definition.variant
+    ? heroSurfaceFor(presentation.kind)
+    : undefined;
+
+  const heroHead: ComponentChildren = ((): ComponentChildren => {
+    if (!definition.variant) return null;
+    if (presentation.kind === "loading") return <HeroHeadSkeleton panel={panel} />;
+    if (
+      (presentation.kind === "ready" ||
+        presentation.kind === "empty" ||
+        presentation.kind === "stale") &&
+      state.kind === "ready"
+    ) {
+      return <HeroHead metric={definition.variant.metric(state.data)} />;
+    }
+    return null;
+  })();
+
   return (
     <section
       className="ccc-card"
       data-presentation={presentation.kind}
       data-size={hint}
+      data-variant={definition.variant ? "hero" : undefined}
+      data-surface={surface}
       aria-labelledby={titleId}
       aria-busy={presentation.kind === "loading" ? "true" : undefined}
     >
       <header className="ccc-card-header">
         <h3 id={titleId}>{definition.title}</h3>
       </header>
+      {heroHead}
       <div
         className="ccc-card-body"
         data-dimmed={presentation.kind === "disconnected" ? "true" : undefined}

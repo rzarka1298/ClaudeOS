@@ -6,6 +6,7 @@
   },
   "include": ["src"],
   "references": [
+    { "path": "../collectors" },
     { "path": "../domain" },
     { "path": "../keychain" },
     { "path": "../launchers" },

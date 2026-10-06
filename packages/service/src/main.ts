@@ -8,17 +8,12 @@ import {
   openStore,
 } from "@ccc/operational-store";
 import { getInstallSecret } from "./auth/install-secret.js";
+import { startClaudeServices } from "./claude/services.js";
+import { startUsageServices } from "./claude/usage-services.js";
 import { createEventBus } from "./events/event-bus.js";
 import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
-import { drainSpool } from "./lifecycle/spool-drain.js";
 import { logger } from "./logging.js";
-import {
-  ensureRuntimeDir,
-  resolveDbPath,
-  resolveRuntimeDir,
-  resolveSocketPath,
-  resolveSpoolPath,
-} from "./paths.js";
+import { ensureRuntimeDir, resolveDbPath, resolveRuntimeDir, resolveSocketPath } from "./paths.js";
 import { recomputeApprovedRoots, VAULT_ROOT_META_KEY } from "./projects/approved-roots.js";
 import { createProjectsCollector } from "./projects/collector.js";
 import { createExecFileCommandRunner } from "./projects/command-runner.js";
@@ -98,8 +93,6 @@ async function main(): Promise<void> {
   if (reconciledCount > 0) {
     logger.info({ reconciledCount }, "startup: reconciled interrupted runs");
   }
-  const spoolRecords = drainSpool(resolveSpoolPath(), logger);
-  logger.info({ count: spoolRecords.length }, "startup: drained hook spool");
 
   // The managed vault root is the only approved path root this phase
   // introduces, and the allowlist is in-memory — so it has to be rebuilt
@@ -123,14 +116,51 @@ async function main(): Promise<void> {
   const approvedRoots = recomputeApprovedRoots(store);
   logger.info({ count: approvedRoots.length }, "startup: recomputed approved path roots");
 
-  const secretStore = createSecurityCliSecretStore();
-  const installSecret = await getInstallSecret(secretStore);
-
   // ADR-0007: the bus (and the bounded buffer it publishes into) is
   // in-process memory only, never written to the store or a file — a
   // service restart loses it by design, and the client implements full
-  // resync for exactly that case.
+  // resync for exactly that case. Created here, ahead of the Claude block,
+  // because the startup spool drain already publishes session events.
   const eventBus = createEventBus();
+
+  // Phase 4's process ports, built before the Claude services because Phase
+  // 5's resume and branch open terminals through the same spawner (05-17).
+  // One process port for every child the projects code starts; `main.ts` is
+  // the only place a real one is constructed (Shared Pattern 3).
+  const commandRunner = createExecFileCommandRunner();
+  // Every app launch goes through this one spawner (D-18): execFile with an
+  // argv array, a fixed environment, stderr classified and dropped (D-46).
+  const spawner = createCommandSpawner(commandRunner);
+
+  // Claude (Phase 5): the session pipeline, then the spool drain it runs
+  // before returning. After recovery and before the socket opens (D-22):
+  // recovery, then the drain, then the socket. A drained ending applies to
+  // a recovered-stale Run; recovery itself never promotes to completed.
+  const claudeServices = await startClaudeServices({
+    store,
+    bus: eventBus,
+    logger,
+    env: process.env,
+    phase4: { spawner, scriptDir, lookup: createStoreProjectLookup(store) },
+  });
+  // Usage (05-12): status-line capacity and cost, the opt-in transcript
+  // scanner and integration status. It hooks the pipeline and the poller
+  // only through their listener APIs, and its background work (the startup
+  // transcript sweep) begins only once the socket is open, never blocking
+  // startup (D-55).
+  const usageServices = startUsageServices({
+    db: store.db,
+    bus: eventBus,
+    pipeline: claudeServices.pipeline,
+    poller: claudeServices.poller,
+    logger,
+    env: process.env,
+    now: () => new Date(),
+  });
+
+  const secretStore = createSecurityCliSecretStore();
+  const installSecret = await getInstallSecret(secretStore);
+
   const heartbeatIntervalMs = Number(
     process.env.CCC_HEARTBEAT_INTERVAL_MS ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
   );
@@ -142,10 +172,7 @@ async function main(): Promise<void> {
   // Built after the event bus because the collector publishes into it and
   // gates its interval on `eventBus.subscriberCount()` (D-11).
   //
-  // One process port for every child the projects code starts; `main.ts` is
-  // the only place a real one is constructed (Shared Pattern 3).
-  const commandRunner = createExecFileCommandRunner();
-  // Resolved once: `/usr/bin/git` is a shim that opens the Command Line
+  // Resolved once: the system git path is a shim that opens the Command Line
   // Tools installer when no developer directory is selected, so it is only
   // used when `xcode-select -p` succeeds (D-10).
   const gitResolution = await resolveGit(commandRunner);
@@ -174,11 +201,10 @@ async function main(): Promise<void> {
   };
 
   // --- Phase 4 (projects and launchers): the launch pipeline ------------
-  // Every app launch goes through this one spawner (D-18): execFile with an
-  // argv array, a fixed environment, stderr classified and dropped (D-46).
-  // The launch service reads the collector's in-memory state only and never
-  // waits on git (D-42); Phase 4's guard allows everything (D-49).
-  const spawner = createCommandSpawner(commandRunner);
+  // The one spawner (D-18) is built above, beside the command runner, because
+  // Phase 5's session launches reuse it. The launch service reads the
+  // collector's in-memory state only and never waits on git (D-42); its guard
+  // is Phase 5's concurrent-write guard (D-29), failing closed without one.
   const launch = createLaunchService({
     store,
     spawner,
@@ -193,6 +219,13 @@ async function main(): Promise<void> {
     // directory; the executable check (access X_OK) runs inside the launch
     // service before every launch (D-20, D-22).
     scriptDir,
+    // Phase 5's concurrent-write guard, adapted to this seam (05-17, D-29).
+    guard: claudeServices.startGuard ?? {
+      check: (input) =>
+        Promise.resolve(
+          input.action === "claude-code" ? { ok: false, error: "spawn-failed" } : { ok: true },
+        ),
+    },
   });
 
   // --- Phase 4 (projects and launchers): launcher setup (plan 04-11) -----
@@ -230,6 +263,7 @@ async function main(): Promise<void> {
     store,
     getSecret: () => installSecret,
     eventBus,
+    claude: { ...claudeServices.routeDeps, usage: usageServices },
     projects,
     launch,
     launchers,
@@ -238,16 +272,34 @@ async function main(): Promise<void> {
   const server = await startSocketServer({ socketPath, requestListener });
 
   logger.info({ socketPath }, "listening");
+  usageServices.start();
 
+  // The store closes only after the Claude services have drained (the
+  // pipeline's queue, its pending coalesced writes, the in-flight spool
+  // tick) AND every open connection has ended, so no write ever runs
+  // against a closed store (wave 3 review).
+  let shuttingDown = false;
   const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     clearInterval(heartbeatTimer);
+    // Usage first: its scans read the store and its listeners hang off the
+    // pipeline and the poller, which stop next.
     projectsCollector.stop();
+    const claudeStopped = usageServices
+      .stop()
+      .then(() => claudeServices.stop())
+      .catch((err: unknown) => {
+        logger.error({ err }, "shutdown: claude services did not stop cleanly");
+      });
     server.close(() => {
-      store.close();
-      if (existsSync(socketPath)) {
-        unlinkSync(socketPath);
-      }
-      process.exit(0);
+      void claudeStopped.then(() => {
+        store.close();
+        if (existsSync(socketPath)) {
+          unlinkSync(socketPath);
+        }
+        process.exit(0);
+      });
     });
   };
 

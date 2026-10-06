@@ -12,6 +12,7 @@ import type {
   TerminalLauncher,
   TerminalLaunchInput,
 } from "@ccc/domain";
+import { newRunId } from "@ccc/domain";
 import {
   applyMigrations,
   getProject,
@@ -118,6 +119,62 @@ describe("the launch guard (D-49)", () => {
     expect(seen).toEqual([{ projectId, action: "finder" }]);
     expect(spawner.calls).toHaveLength(0);
     expect(getProject(store.db, projectId)?.lastOpenedAt).toBeNull();
+  });
+});
+
+describe("a guard conflict is an answer, not a failure (05-17)", () => {
+  it("logs at info with a conflict message, never warn 'launch failed'", async () => {
+    const calls: Array<{ level: string; msg: string; kind: string }> = [];
+    const guard: LaunchGuard = {
+      check: () =>
+        Promise.resolve({ ok: false, conflict: { projectName: "Example", conflicts: [] } }),
+    };
+    const logger = {
+      info: (f: LaunchLogFields, msg: string) => calls.push({ level: "info", msg, kind: f.kind }),
+      warn: (f: LaunchLogFields, msg: string) => calls.push({ level: "warn", msg, kind: f.kind }),
+    };
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    await service({ guard, logger, scriptDir: ensureScriptDir(join(base, "runtime")) }).launch({
+      projectId,
+      action: "claude-code",
+    });
+    expect(calls).toEqual([{ level: "info", msg: "launch conflict", kind: "conflict" }]);
+  });
+});
+
+describe("an uncertain terminal hand-off stays non-terminal (Codex 05-codex-1)", () => {
+  async function settledAs(result: LaunchResult): Promise<string[]> {
+    const outcomes: string[] = [];
+    const guard: LaunchGuard = {
+      check: () => Promise.resolve({ ok: true, runId: newRunId() }),
+      settle: (_runId, outcome) => {
+        outcomes.push(outcome);
+        return Promise.resolve();
+      },
+    };
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: "/usr/bin/true",
+      args: [],
+      terminal: { kind: "terminal-app" },
+    });
+    const launcher: TerminalLauncher = { launch: () => Promise.resolve(result) };
+    await service({ guard, terminalLauncher: launcher }).launch({
+      projectId,
+      action: "claude-code",
+    });
+    return outcomes;
+  }
+
+  it("settles an unclassified spawn failure as stale, never failed", async () => {
+    expect(await settledAs({ ok: false, error: "spawn-failed" })).toEqual(["timeout"]);
+  });
+
+  it("still settles a definite refusal as failed", async () => {
+    expect(await settledAs({ ok: false, error: "automation-denied" })).toEqual(["failed"]);
   });
 });
 

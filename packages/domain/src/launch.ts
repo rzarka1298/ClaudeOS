@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
-import type { ProjectId } from "./ids.js";
+import type { ProjectId, RunId } from "./ids.js";
 import { AbsolutePathSchema, hasControlCharacter, ProjectIdSchema } from "./projects.js";
+import { GuardConflictSchema, type LaunchChoice, LaunchChoiceSchema } from "./session-actions.js";
 
 /**
  * Launch vocabulary, launcher configuration and the launch ports (Phase 4,
@@ -91,7 +92,15 @@ function projectLaunch<A extends Exclude<LaunchAction, "claude-desktop">>(action
  */
 export const LaunchRequestSchema = z.discriminatedUnion("action", [
   projectLaunch("antigravity"),
-  projectLaunch("claude-code"),
+  // Claude Code alone takes the concurrent-write guard's answer (05-17, D-29):
+  // the retry after a conflict names how the owner chose to proceed.
+  z
+    .object({
+      action: z.literal("claude-code"),
+      projectId: ProjectIdSchema,
+      choice: LaunchChoiceSchema.optional(),
+    })
+    .strict(),
   projectLaunch("finder"),
   projectLaunch("github"),
   z.object({ action: z.literal("claude-desktop") }).strict(),
@@ -104,6 +113,30 @@ export const LaunchResultSchema = z.union([
   z.object({ ok: z.literal(false), error: launchErrorKindSchema }).strict(),
 ]);
 export type LaunchResult = z.infer<typeof LaunchResultSchema>;
+
+/**
+ * The concurrent-write guard found another Run able to write to the target
+ * working tree (05-17, D-27). It is an answer, not a failure: nothing was
+ * launched, and the plugin opens the four-choice modal and re-sends the
+ * launch with the owner's `choice`. Kept apart from {@link LaunchResult} so
+ * every pre-existing consumer of the D-26 error kinds is unaffected.
+ */
+export const LaunchConflictResultSchema = z
+  .object({
+    ok: z.literal(false),
+    conflict: z
+      .object({
+        projectName: z.string().min(1).max(256),
+        conflicts: z.array(GuardConflictSchema).min(1),
+      })
+      .strict(),
+  })
+  .strict();
+export type LaunchConflictResult = z.infer<typeof LaunchConflictResultSchema>;
+
+/** What `POST /api/v1/projects/launch` answers: a {@link LaunchResult} or a guard conflict. */
+export const LaunchResponseSchema = z.union([LaunchResultSchema, LaunchConflictResultSchema]);
+export type LaunchResponse = z.infer<typeof LaunchResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Launcher configuration (wire and stored shapes)
@@ -506,11 +539,32 @@ export interface ProjectLookup {
 export interface LaunchGuardInput {
   readonly projectId: ProjectId | null;
   readonly action: LaunchAction;
+  /** The owner's answer to an earlier conflict (Claude Code only, 05-17). */
+  readonly choice?: LaunchChoice | undefined;
 }
 
+/**
+ * The guard's verdict. `ok` may carry what the owner's choice changes about
+ * the launch: a different working directory (an existing worktree) and
+ * extra arguments appended after the stored template (plan mode, a new
+ * worktree). `conflict` is not a failure: the launch is answered with
+ * {@link LaunchConflictResult} and nothing is started.
+ */
 export type LaunchGuardDecision =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly error: LaunchErrorKind };
+  | {
+      readonly ok: true;
+      readonly cwd?: string | undefined;
+      readonly extraArgv?: readonly string[] | undefined;
+      /**
+       * The environment the terminal exports for the session (`CCC_RUN_ID`,
+       * `CCC_LAUNCH_SOURCE`), set when the guard pre-registered the Run.
+       */
+      readonly env?: Readonly<Record<string, string>> | undefined;
+      /** The Run the guard pre-registered under its lock; settled through {@link LaunchGuard.settle}. */
+      readonly runId?: RunId | undefined;
+    }
+  | { readonly ok: false; readonly error: LaunchErrorKind }
+  | { readonly ok: false; readonly conflict: LaunchConflictResult["conflict"] };
 
 /**
  * A pre-launch check the launch pipeline consults before spawning anything.
@@ -519,4 +573,10 @@ export type LaunchGuardDecision =
  */
 export interface LaunchGuard {
   check(input: LaunchGuardInput): Promise<LaunchGuardDecision>;
+  /**
+   * Records how the hand-off to the terminal ended for a Run the guard
+   * pre-registered: `started`, `failed` (definitely nothing opened) or
+   * `timeout` (a terminal may still open late).
+   */
+  settle?(runId: RunId, outcome: "started" | "failed" | "timeout"): Promise<void>;
 }

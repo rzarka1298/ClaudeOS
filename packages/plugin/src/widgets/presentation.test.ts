@@ -94,6 +94,24 @@ const ROWS: readonly Row[] = [
       if (presentation.kind !== "unavailable") throw new Error("wrong kind");
       expect(presentation.footer.freshness).toBe("unavailable");
       expect(presentation.footer.sources).toEqual([{ label: "GitHub", status: "no-source" }]);
+      expect(presentation.reason).toBeUndefined();
+    },
+  },
+  {
+    name: "unavailable with a reason (SESS-18, D-12) carries that reason code through unchanged",
+    state: {
+      kind: "unavailable",
+      reason: { code: "session-telemetry-changed", version: "2.1.300" },
+    },
+    connection: LIVE,
+    keys: [SERVICE_KEY],
+    expected: "unavailable",
+    check: (presentation) => {
+      if (presentation.kind !== "unavailable") throw new Error("wrong kind");
+      expect(presentation.reason).toEqual({
+        code: "session-telemetry-changed",
+        version: "2.1.300",
+      });
     },
   },
   {

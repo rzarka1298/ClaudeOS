@@ -20,6 +20,7 @@ import {
 import { listAllRuns } from "@ccc/operational-store";
 import { initializeVault, planVaultSetup, VaultRootMissingError } from "@ccc/vault-repo";
 import { mintToken } from "./auth/token.js";
+import { claudeRouteTable } from "./claude/routes.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
@@ -132,6 +133,12 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
     state: {
       serviceStartedAt: startedAt,
       projects: ctx.projects?.snapshot() ?? EMPTY_PROJECTS_SNAPSHOT,
+      // Phase 5: read synchronously in the same tick as `lastEventId` (race-free resync).
+      ...(ctx.claude ? { sessions: ctx.claude.pipeline.listSessionViews() } : {}),
+      // The usage summary (05-12, PR-23), also read synchronously in this tick.
+      ...(ctx.claude?.usage ? { usage: ctx.claude.usage.summary() } : {}),
+      // The Claude integration status (05-12, PR-24).
+      ...(ctx.claude?.usage ? { claudeIntegration: ctx.claude.usage.integration() } : {}),
     },
   };
   sendJson(res, 200, body);
@@ -280,6 +287,7 @@ const routeTable: Record<string, Record<string, Handler>> = {
   ...launchRoutes,
   ...launcherRoutes,
   ...scanRoutes,
+  ...claudeRouteTable,
 };
 
 /**

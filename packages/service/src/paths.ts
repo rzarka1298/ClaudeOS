@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Logger } from "pino";
 
 const SUN_PATH_MAX_BYTES = 104;
@@ -106,10 +106,42 @@ export function resolveDbPath(): string {
 }
 
 /**
- * The hook spool file `drainSpool` (`./lifecycle/spool-drain.ts`) reads and
- * truncates on every startup — a transient queue, never a retained record
- * of session activity (ADR-0007, ADR-0010).
+ * The hook spool file the spool poller (`./claude/spool-poller.ts`) renames
+ * aside, reads and deletes, at startup and on every poll — a transient
+ * queue, never a retained record of session activity (ADR-0007, ADR-0010).
+ * The hook writes `<runtimeDir>/spool/hooks.ndjson` (collectors
+ * `hook/limits.ts`); a test pins the two names equal.
  */
 export function resolveSpoolPath(): string {
   return process.env.CCC_SPOOL_PATH ?? join(resolveRuntimeDir(), "spool", "hooks.ndjson");
+}
+
+/**
+ * The status-line wrapper's latest-only snapshot file, beside the hook
+ * spool (collectors `STATUSLINE_SPOOL_FILE_NAME`, wave 2 review).
+ */
+export function resolveStatusLineSpoolPath(): string {
+  return join(dirname(resolveSpoolPath()), "statusline.latest.json");
+}
+
+/** One byte per record the hook dropped at the spool cap (collectors `SPOOL_DROP_FILE_NAME`). */
+export function resolveSpoolDropPath(): string {
+  return join(dirname(resolveSpoolPath()), "hooks.dropped");
+}
+
+/**
+ * Where the installer copies the hook bundle (D-07): `<runtimeDir>/hooks`.
+ * Read-only for the service; it never writes here.
+ */
+export function resolveHooksDir(): string {
+  return join(resolveRuntimeDir(), "hooks");
+}
+
+/**
+ * Claude Code's own config dir: `CLAUDE_CONFIG_DIR`, else `~/.claude`. The
+ * service only ever READS under it (transcripts, `<dir>/projects`) and never
+ * registers it as a write root (PR-07). Every test points it at a temp dir.
+ */
+export function resolveClaudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
 }

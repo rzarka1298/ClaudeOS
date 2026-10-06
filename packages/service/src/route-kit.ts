@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ApiErrorBody } from "@ccc/domain";
 import type { OperationalStore } from "@ccc/operational-store";
 import { requireToken } from "./auth/require-token.js";
+import type { ClaudeRouteDeps } from "./claude/routes.js";
 import type { EventBus } from "./events/event-bus.js";
 import type { LaunchService } from "./projects/launch-service.js";
 import type { LauncherServices } from "./projects/launcher-routes.js";
@@ -41,6 +42,8 @@ export interface RouteContext {
   readonly launchers?: LauncherServices | undefined;
   /** Scan folders and their in-memory suggestions (PROJ-02, PROJ-03, D-07); plan 04-13. */
   readonly scan?: ScanService | undefined;
+  /** The Claude session pipeline (Phase 5). Absent in an older composition: its routes answer 503. */
+  readonly claude?: ClaudeRouteDeps | undefined;
 }
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;

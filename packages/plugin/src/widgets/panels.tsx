@@ -67,11 +67,6 @@ function count(
   return `${grouped(n)} ${n === 1 ? singular : plural}`;
 }
 
-/** A number shown bare (`output 20`); unavailable reads `unavailable`. */
-function amount(n: MaybeCount): string {
-  return n === null ? "unavailable" : grouped(n);
-}
-
 /** Sentence case for a line assembled from mid-sentence pieces. */
 function upperFirst(line: string): string {
   return line.charAt(0).toUpperCase() + line.slice(1);
@@ -169,61 +164,13 @@ export const todayWidget: WidgetDefinition<TodayData> = {
 };
 
 // ---------------------------------------------------------------------------
-// 2. Active Claude sessions (PRD §7.1.2) — unavailable until Phase 5
+// 2. Active Claude sessions (PRD §7.1.2) — moved to `active-sessions.tsx`
+// (plan 05-06). Re-exported here so `registry.ts` needs no change (PATTERNS
+// "Moving them"). This is the ONE line Phase 4's `projectShortcutsWidget`
+// region below never has to see move.
 // ---------------------------------------------------------------------------
 
-export type SessionStatus =
-  | "running"
-  | "waiting-for-approval"
-  | "recently-completed"
-  | "failed"
-  | "unknown";
-
-export interface SessionRow {
-  readonly id: string;
-  readonly project: string;
-  readonly name: string;
-  readonly model: string | null;
-  readonly elapsed: string;
-  readonly lastActivity: string;
-  readonly status: SessionStatus;
-}
-
-export interface ActiveSessionsData {
-  readonly rows: readonly SessionRow[];
-}
-
-function ActiveSessionsBody({
-  data,
-  size,
-  onNavigate,
-}: WidgetBodyProps<ActiveSessionsData>): VNode | null {
-  return (
-    <ListBody<SessionRow>
-      rows={data.rows}
-      size={size}
-      keyOf={(row) => row.id}
-      renderPrimary={(row) => `${row.project} · ${row.name}`}
-      renderMeta={(row) => `${row.status} · ${row.elapsed} · ${row.lastActivity}`}
-      moreDestination="agent-runs"
-      onMore={onNavigate}
-    />
-  );
-}
-
-export const activeSessionsWidget: WidgetDefinition<ActiveSessionsData> = {
-  id: "active-sessions",
-  title: "Active Claude sessions",
-  description: "Running, waiting, completed and failed sessions. Filled in by phase 5.",
-  dataKeys: [{ key: "sessions.active", transport: "service", sourceLabel: "Claude Code hooks" }],
-  refresh: { kind: "event-driven" },
-  minSize: "medium",
-  preferredSize: "tall",
-  featureFlag: "widget.active-sessions",
-  quickActions: [],
-  renderBody: ActiveSessionsBody,
-  renderEmpty: () => <p className="ccc-state-body">No sessions are running right now.</p>,
-};
+export { type ActiveSessionsData, activeSessionsWidget } from "./active-sessions.js";
 
 // ---------------------------------------------------------------------------
 // 3. Project shortcuts (PRD §7.1.3) — unavailable until Phase 4
@@ -420,75 +367,12 @@ export const projectShortcutsWidget: WidgetDefinition<ProjectShortcutsData> = {
 };
 
 // ---------------------------------------------------------------------------
-// 4. Claude usage (PRD §7.1.4) — unavailable until Phase 5
+// 4. Claude usage (PRD §7.1.4) — moved to `claude-usage.tsx` (plan 05-10).
+// Re-exported here so `registry.ts` needs no change (PATTERNS "Moving
+// them"), the same move plan 05-06 made for section 2 above.
 // ---------------------------------------------------------------------------
 
-export interface UsageBar {
-  readonly label: string;
-  readonly used: MaybeCount;
-  readonly limit: MaybeCount;
-}
-
-export interface UsageTokens {
-  readonly input: MaybeCount;
-  readonly output: MaybeCount;
-  readonly cache: MaybeCount;
-}
-
-export interface ClaudeUsageData {
-  readonly bars: readonly UsageBar[];
-  readonly tokens: UsageTokens;
-  /**
-   * Always rendered as an ESTIMATE — subscription spend is the plan price.
-   * `null` is an estimate that could not be computed, and reads unavailable.
-   */
-  readonly estimate: string | null;
-}
-
-function ClaudeUsageBody({ data }: { readonly data: ClaudeUsageData }): VNode {
-  return (
-    <>
-      <ul className="ccc-list">
-        {data.bars.map((bar) => (
-          <li className="ccc-list-row" key={bar.label}>
-            <p className="ccc-list-primary">{bar.label}</p>
-            <p className="ccc-list-meta">
-              {/* An unknown limit reads `unavailable`, never zero — the
-                  data-integrity rule in the project constraints. */}
-              {bar.used === null || bar.limit === null
-                ? "Capacity unavailable"
-                : `${grouped(bar.used)} of ${grouped(bar.limit)}`}
-            </p>
-          </li>
-        ))}
-      </ul>
-      <p className="ccc-state-body">
-        {`Input ${amount(data.tokens.input)} · output ${amount(data.tokens.output)} · cache ${amount(
-          data.tokens.cache,
-        )}`}
-      </p>
-      <p className="ccc-state-body">
-        {data.estimate === null
-          ? "Estimated API-equivalent cost unavailable"
-          : `Estimated API-equivalent cost: ${data.estimate}`}
-      </p>
-    </>
-  );
-}
-
-export const claudeUsageWidget: WidgetDefinition<ClaudeUsageData> = {
-  id: "claude-usage",
-  title: "Claude usage",
-  description: "Plan capacity, token activity and an estimated cost. Filled in by phase 5.",
-  dataKeys: [{ key: "usage.rollup", transport: "service", sourceLabel: "Claude usage collector" }],
-  refresh: { kind: "interval", everyMs: 300_000 },
-  minSize: "medium",
-  preferredSize: "wide",
-  featureFlag: "widget.claude-usage",
-  quickActions: [],
-  renderBody: ClaudeUsageBody,
-  renderEmpty: () => <p className="ccc-state-body">No usage has been recorded yet.</p>,
-};
+export { type ClaudeUsageData, claudeUsageWidget } from "./claude-usage.js";
 
 // ---------------------------------------------------------------------------
 // 5. Technology and market intelligence (PRD §7.1.5) — unavailable, Phase 7

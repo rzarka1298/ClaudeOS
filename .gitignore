@@ -26,6 +26,9 @@ playwright-report/
 # so it cannot be staged by accident. `scripts/check-images.sh` is the CI half.
 packages/test-fixtures/visual/widgets.spec.ts-snapshots/*
 !packages/test-fixtures/visual/widgets.spec.ts-snapshots/*-chromium-linux.png
+# 05-13 Task 3: a second spec file, same allowlist rule.
+packages/test-fixtures/visual/agent-runs.spec.ts-snapshots/*
+!packages/test-fixtures/visual/agent-runs.spec.ts-snapshots/*-chromium-linux.png
 .DS_Store
 .obsidian/
 PRIVACY-GATE-REPORT.md

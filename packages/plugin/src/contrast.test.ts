@@ -57,6 +57,131 @@ describe("relativeLuminance and contrastRatio (WCAG 2.2 SC 1.4.3)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The shipped stylesheet (`packages/plugin/src/styles.css`) — the cream-surface
+// colour guard, meter accessibility and reduced-motion proof (Phase 5 plan 02
+// Task 3). Parsed into real `{selector, body}` rules, exactly the technique
+// `tokens.test.ts` already uses for the same file, never a regex over
+// arbitrary text — so a selector that merely LOOKS like a match (inside a
+// comment, or a substring of a longer token name) cannot slip past.
+// ---------------------------------------------------------------------------
+
+const PLUGIN_STYLESHEET_PATH = join(REPO_ROOT, "packages", "plugin", "src", "styles.css");
+const PLUGIN_STYLESHEET = readFileSync(PLUGIN_STYLESHEET_PATH, "utf8");
+
+/** Blanks comment text while preserving line count (same technique as tokens.test.ts). */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, " "));
+}
+
+interface PluginStyleRule {
+  readonly selector: string;
+  readonly body: string;
+}
+
+/** Every style rule in the file, flattened out of any enclosing at-rule. */
+function parsePluginRules(source: string): PluginStyleRule[] {
+  const rules: PluginStyleRule[] = [];
+  let prelude = "";
+  let index = 0;
+
+  while (index < source.length) {
+    const char = source[index];
+
+    if (char === "{") {
+      let depth = 1;
+      let cursor = index + 1;
+      while (cursor < source.length && depth > 0) {
+        if (source[cursor] === "{") depth++;
+        else if (source[cursor] === "}") depth--;
+        cursor++;
+      }
+      const body = source.slice(index + 1, cursor - 1);
+      const selector = prelude.trim();
+      if (selector.startsWith("@")) {
+        rules.push(...parsePluginRules(body));
+      } else if (selector.length > 0) {
+        rules.push({ selector, body });
+      }
+      prelude = "";
+      index = cursor;
+      continue;
+    }
+
+    if (char === ";" && prelude.trim().startsWith("@")) {
+      prelude = "";
+      index++;
+      continue;
+    }
+
+    prelude += char;
+    index++;
+  }
+
+  return rules;
+}
+
+const PLUGIN_RULES = parsePluginRules(codeOnly(PLUGIN_STYLESHEET));
+
+describe("cream surface never uses --ccc-accent or --ccc-danger (UI-SPEC Non-Negotiable 2)", () => {
+  it('Test 1: no rule whose selector includes [data-surface="cream"] references --ccc-accent or --ccc-danger', () => {
+    const offenders = PLUGIN_RULES.filter((rule) =>
+      rule.selector.includes('[data-surface="cream"]'),
+    )
+      .filter(
+        (rule) => /--ccc-accent\b(?!-deep)/.test(rule.body) || /--ccc-danger\b/.test(rule.body),
+      )
+      .map((rule) => rule.selector);
+    expect(offenders).toEqual([]);
+  });
+
+  it("still finds at least one cream-scoped rule, so the assertion above is not vacuous", () => {
+    const creamRules = PLUGIN_RULES.filter((rule) =>
+      rule.selector.includes('[data-surface="cream"]'),
+    );
+    expect(creamRules.length).toBeGreaterThan(0);
+  });
+});
+
+describe("the hero meter and row action never animate or lose their focus/motion guarantees (UI-SPEC 'the fill does not animate', D-19)", () => {
+  it("Test 2: .ccc-hero-meter and its pseudo-elements declare no transition or animation", () => {
+    const meterRules = PLUGIN_RULES.filter((rule) => rule.selector.includes(".ccc-hero-meter"));
+    expect(meterRules.length).toBeGreaterThan(0);
+    for (const rule of meterRules) {
+      expect(rule.body, rule.selector).not.toMatch(/\btransition\s*:/);
+      expect(rule.body, rule.selector).not.toMatch(/\banimation\s*:/);
+    }
+  });
+
+  it("Test 2: the existing reduced-motion override on .ccc-kpi-number still applies inside the hero head", () => {
+    // The selector is `.ccc-command-center[data-motion="reduced"] .ccc-kpi-number`
+    // — an ordinary descendant combinator, so it matches a `.ccc-kpi-number`
+    // inside `.ccc-hero-head` exactly as it matches the top-level one; no
+    // hero-specific override exists or is needed.
+    const rule = PLUGIN_RULES.find(
+      (r) =>
+        r.selector.includes('[data-motion="reduced"]') && r.selector.includes(".ccc-kpi-number"),
+    );
+    expect(rule).toBeDefined();
+    expect(rule?.body).toMatch(/transition\s*:\s*none/);
+    expect(rule?.selector.includes(".ccc-hero-head")).toBe(false);
+  });
+
+  it("Test 3: .ccc-row-action declares a min-height and min-width that resolve to --ccc-space-lg", () => {
+    const rowActionRules = PLUGIN_RULES.filter((rule) =>
+      rule.selector.split(",").some((selector) => selector.trim() === ".ccc-row-action"),
+    );
+    const minHeight = rowActionRules.flatMap((rule) =>
+      [...rule.body.matchAll(/min-height\s*:\s*([^;]+);/g)].map((match) => match[1]?.trim()),
+    );
+    const minWidth = rowActionRules.flatMap((rule) =>
+      [...rule.body.matchAll(/min-width\s*:\s*([^;]+);/g)].map((match) => match[1]?.trim()),
+    );
+    expect(minHeight).toContain("var(--ccc-space-lg)");
+    expect(minWidth).toContain("var(--ccc-space-lg)");
+  });
+});
+
 describe("provisional palette clears WCAG AA before the review (A11Y-02, research A9)", () => {
   // A separate describe so a palette failure reads as "the colours are wrong"
   // rather than "the formula is wrong" -- they are fixed in different files

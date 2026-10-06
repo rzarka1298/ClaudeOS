@@ -191,6 +191,41 @@ describe("zero, one and many widgets (UI-SPEC E3 empty and zero-one-many rows)",
 // PERF-02 / PERF-03 (research Pattern 8) and the quick-action path (C-11)
 // ---------------------------------------------------------------------------
 
+/**
+ * A synthetic `SessionView` (05-06). Only the fields the hero body reads are
+ * varied per call site; the rest are fixed, honest defaults — never `null`
+ * where the real domain schema requires a value.
+ */
+function syntheticSession(i: number): unknown {
+  return {
+    runId: `01hzxksession${i.toString().padStart(11, "0")}`,
+    revision: 1,
+    claudeSessionId: `synthetic-session-${i}`,
+    state: "running",
+    activity: "working",
+    projectId: "example-project",
+    projectName: "Example project",
+    name: `Session ${i}`,
+    model: null,
+    effort: null,
+    launchSource: "terminal",
+    permissionMode: null,
+    claudeVersion: null,
+    startedAt: "2026-09-25T11:53:00Z",
+    endedAt: null,
+    lastActivityAt: "2026-09-25T11:57:55Z",
+    subagents: { active: 0, lastType: null },
+    lastError: null,
+    linkKind: null,
+    linkedFromRunId: null,
+    cwdBasename: null,
+    worktreeBasename: null,
+    hasTranscript: false,
+    terminateRequested: false,
+    hasConversation: true,
+  };
+}
+
 /** Minimal, synthetic body data per widget — shaped to each body's data type. */
 const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
   "service-health": { connection: "live" },
@@ -203,17 +238,8 @@ const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
     failures: [],
   },
   "active-sessions": {
-    rows: [
-      {
-        id: "s-1",
-        project: "Example project",
-        name: "Example session",
-        model: null,
-        elapsed: "5 min",
-        lastActivity: "just now",
-        status: "running",
-      },
-    ],
+    sessions: [syntheticSession(1)],
+    nowMs: Date.parse("2026-09-25T11:58:00Z"),
   },
   "project-shortcuts": {
     projects: [],
@@ -223,7 +249,28 @@ const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
       "claude-desktop": "set-up",
     },
   },
-  "claude-usage": { bars: [], tokens: { input: 0, output: 0, cache: 0 }, estimate: null },
+  "claude-usage": {
+    summary: {
+      capacity: { kind: "unavailable", reason: "wrapper-not-installed", version: null },
+      ranges: {
+        today: {
+          activity: { kind: "unavailable", reason: "analysis-off", version: null },
+          cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+        },
+        "last-7-days": {
+          activity: { kind: "unavailable", reason: "analysis-off", version: null },
+          cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+        },
+        "this-month": {
+          activity: { kind: "unavailable", reason: "analysis-off", version: null },
+          cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+        },
+      },
+      analysis: { enabled: false, firstScanPending: false },
+      observedAt: "2026-09-25T11:58:00Z",
+    },
+    nowMs: Date.parse("2026-09-25T11:58:00Z"),
+  },
   "tech-intel": { stories: [], marketSummary: null },
   "github-discoveries": { repos: [] },
   "quick-actions": {
@@ -414,15 +461,8 @@ describe("quick actions reach the one dispatcher through the shell (C-11)", () =
 
 function sessions(n: number): unknown {
   return {
-    rows: Array.from({ length: n }, (_, i) => ({
-      id: `s-${i}`,
-      project: "Example project",
-      name: `Session ${i}`,
-      model: null,
-      elapsed: "5 min",
-      lastActivity: "just now",
-      status: "running",
-    })),
+    sessions: Array.from({ length: n }, (_, i) => syntheticSession(i)),
+    nowMs: Date.parse("2026-09-25T12:00:00Z"),
   };
 }
 

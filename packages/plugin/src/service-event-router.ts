@@ -1,5 +1,6 @@
 import type { ServiceEvent, ServiceEventType, SnapshotResponse } from "@ccc/domain";
 import { applyProjectsDelta, applyProjectsSnapshot } from "./projects/projects-state.js";
+import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./widgets/claude-events.js";
 
 /**
  * The appendable fan-out router every phase's own event handling plugs into
@@ -11,10 +12,16 @@ import { applyProjectsDelta, applyProjectsSnapshot } from "./projects/projects-s
  */
 export const EVENT_HANDLERS: Partial<Record<ServiceEventType, (event: ServiceEvent) => void>> = {
   "projects.updated": applyProjectsDelta,
+  // Phase 5 (PR-19): one table entry per Claude event type, all delegating to
+  // the single Claude entry point.
+  "session.upserted": applyClaudeServiceEvent,
+  "usage.updated": applyClaudeServiceEvent,
+  "claude-integration.updated": applyClaudeServiceEvent,
 };
 
 export const SNAPSHOT_APPLIERS: ReadonlyArray<(snapshot: SnapshotResponse) => void> = [
   applyProjectsSnapshot,
+  adoptClaudeSnapshot,
 ];
 
 /** Routes one event through {@link EVENT_HANDLERS}; an event with no handler is a no-op. */

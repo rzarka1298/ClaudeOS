@@ -1,4 +1,5 @@
 import type { LaunchAction, ProjectId } from "@ccc/domain";
+import type { SessionUsage } from "@ccc/domain/usage.js";
 import type { ReadonlySignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -8,20 +9,51 @@ import { motionMode } from "../motion.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
+import { projectsSnapshot } from "../projects/projects-state.js";
 import { nowTick } from "../widgets/clock.js";
 import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
 import { resolvedLayout } from "../widgets/layout.js";
 import { dispatchQuickAction } from "../widgets/quick-actions.js";
 import type { WidgetId } from "../widgets/registry.js";
+import { claudeIntegration, sessionsById } from "../widgets/session-signals.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
 import { type WidgetHost, WidgetHostContext } from "../widgets/widget-host.js";
+import { AgentRuns } from "./agent-runs.js";
+import { detailFocusRequested, selectedRunId } from "./agent-runs-state.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 import { launchersFocusRequested } from "./launchers-focus.js";
 import { createLaunchersSession, type LaunchersSession } from "./launchers-settings.js";
 import { navigationRequest } from "./navigation-request.js";
 import { Overview } from "./overview.js";
 import { ProjectsView } from "./projects-view.js";
+import {
+  runSessionAction,
+  type SessionActionDeps,
+  type SessionActionHost,
+} from "./session-action-runner.js";
 import { SettingsDestination } from "./settings-destination.js";
+
+/**
+ * The runner's signal-derived members, added to the host-supplied pieces
+ * (05-17). `listProjects` is `null` (unknown, never "zero projects") until
+ * the Projects snapshot has arrived.
+ */
+function sessionActionDeps(host: SessionActionHost): SessionActionDeps {
+  return {
+    ...host,
+    getSession: (runId) => sessionsById.value.get(runId) ?? null,
+    listProjects: () => {
+      const snapshot = projectsSnapshot.value;
+      if (snapshot === undefined) return null;
+      return snapshot.projects.map((view) => ({
+        id: view.projectId,
+        name: view.displayName,
+        pinned: view.pinned,
+      }));
+    },
+    cleanupPeriodDays: () => claudeIntegration.value?.cleanupPeriodDays ?? null,
+  };
+}
 
 export interface ShellProps {
   /** The destination selected before this render — usually the last-saved one (PLUG-05). */
@@ -90,6 +122,19 @@ export interface ShellProps {
    * opens Settings (D-30).
    */
   launchersActions?: LaunchersActions;
+  /**
+   * Loads one Run's own token activity and cost for the Agent runs detail
+   * pane (05-07's `getSessionUsage`, built from the view's authenticated
+   * client). Absent means the pane's per-session usage section stays empty
+   * — never a constructed client living inside `agent-runs-detail.tsx`.
+   */
+  loadSessionUsage?: (runId: string) => Promise<SessionUsage>;
+  /**
+   * The client-bound pieces of the Phase 5 session-action runner. The view
+   * host builds them from its authenticated client and Obsidian's modal
+   * seam; absent, every `session:*` control answers unavailable.
+   */
+  sessionActions?: SessionActionHost;
 }
 
 function noNotify(_message: string): void {}
@@ -128,7 +173,7 @@ export interface DestinationViewProps {
   readonly connection: ConnectionState;
   readonly now: number;
   readonly onQuickAction: (descriptor: QuickActionDescriptor) => void;
-  readonly onNavigate: (destination: DestinationId) => void;
+  readonly onNavigate: (destination: DestinationId, selection?: { readonly runId: string }) => void;
   readonly projectsActions: ProjectsActions;
   readonly scanActions?: ScanActions | undefined;
   readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
@@ -146,6 +191,8 @@ export interface DestinationViewProps {
    * instead of nowhere (wave-7 finding 6).
    */
   readonly onProjectFocusMissing?: (() => void) | undefined;
+  /** Loads one Run's own usage for the Agent runs detail pane (05-07). */
+  readonly loadSessionUsage?: ((runId: string) => Promise<SessionUsage>) | undefined;
 }
 
 const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewProps) => VNode>> = {
@@ -185,6 +232,9 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
       onProjectFocusTaken={onProjectFocusTaken}
       onProjectFocusMissing={onProjectFocusMissing}
     />
+  ),
+  "agent-runs": ({ now, onQuickAction, loadSessionUsage }) => (
+    <AgentRuns now={now} onQuickAction={onQuickAction} loadSessionUsage={loadSessionUsage} />
   ),
   settings: ({ connection, now, launchersActions, launchersSession }) => (
     <SettingsDestination
@@ -233,6 +283,8 @@ export function Shell({
   pickFolder = noPickFolder,
   openSystemSettings,
   launchersActions = noLaunchersActions,
+  loadSessionUsage,
+  sessionActions,
 }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
   // One per view: leaving Settings keeps detection and drafts in memory (RR-25).
@@ -252,8 +304,20 @@ export function Shell({
    * or a connect action — because the control the owner just activated is
    * unmounted with the grid; without this, focus would fall back to the
    * document body and a keyboard user would lose their place (A11Y-01).
+   *
+   * The optional `selection` is the S1 hero row's `{ runId }` channel
+   * (UI-SPEC S1 "Primary line", R-06): it sets `agent-runs-state.ts`'s
+   * `selectedRunId` signal before switching tabs, so Agent runs mounts with
+   * that Run already selected, and raises `detailFocusRequested`. The tab
+   * itself still receives focus here; `AgentRuns`'s own mount effect then
+   * moves it on to the detail heading only because that flag is set — a
+   * plain tab switch never does.
    */
-  function focusDestination(id: DestinationId): void {
+  function focusDestination(id: DestinationId, selection?: { readonly runId: string }): void {
+    if (selection?.runId !== undefined) {
+      selectedRunId.value = selection.runId;
+      detailFocusRequested.value = true;
+    }
     select(id);
     tabRefs.current[id]?.focus();
   }
@@ -270,6 +334,12 @@ export function Shell({
       notify,
       requestLaunch,
       openSwitcher,
+      runSessionAction:
+        sessionActions === undefined
+          ? undefined
+          : (action) => {
+              void runSessionAction(action, sessionActionDeps(sessionActions));
+            },
     });
   }
 
@@ -406,6 +476,7 @@ export function Shell({
                 focusProjectId={projectFocus}
                 onProjectFocusTaken={() => setProjectFocus(null)}
                 onProjectFocusMissing={() => tabRefs.current.projects?.focus()}
+                loadSessionUsage={loadSessionUsage}
               />
             ) : (
               <p>{active.description}</p>

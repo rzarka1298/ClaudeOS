@@ -14,7 +14,13 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "lint": "biome check ."
+  },
+  "dependencies": {
+    "@ccc/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.4"
   }
 }

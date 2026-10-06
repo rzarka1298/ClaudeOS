@@ -1,4 +1,4 @@
-import { listNonTerminalRuns, updateRunState } from "@ccc/operational-store";
+import { listNonTerminalRuns, recoverRunToStale } from "@ccc/operational-store";
 import type Database from "better-sqlite3";
 import type { Logger } from "pino";
 
@@ -6,9 +6,13 @@ import type { Logger } from "pino";
  * Reconciles every non-terminal Run left behind by a process that died
  * mid-execution: each is moved to `stale` (CONTEXT.md — the state of a Run
  * whose ending was never observed, distinct from `failed`, which is
- * evidence). `updateRunState` only ever writes the `state` column, so
- * `endedAt` is left exactly as it was — null, since a non-terminal Run has
- * never ended and this recovery has no observed ending to record.
+ * evidence). `recoverRunToStale` writes the `state` column (and, for a
+ * session Run, bumps `revision` so subscribers see the change — wave 2
+ * review), so `endedAt` is left exactly as it was — null, since a
+ * non-terminal Run has never ended and this recovery has no observed ending
+ * to record. Session Runs are recovered too, not only automation Runs: D-22
+ * puts every Run through stale at restart, and the liveness sweep
+ * (`listRevivableRuns`) then revives the ones whose process is still alive.
  *
  * SVC-11: interrupted work must never be marked complete. This module
  * writes exactly one state, `stale`, and never `completed`, `failed`, or
@@ -24,7 +28,7 @@ import type { Logger } from "pino";
 export function recoverInterruptedRuns(db: Database.Database, logger: Logger): number {
   const interrupted = listNonTerminalRuns(db);
   for (const run of interrupted) {
-    updateRunState(db, run.runId, "stale");
+    recoverRunToStale(db, run.runId);
   }
   logger.info({ count: interrupted.length }, "reconciled interrupted runs to stale");
   return interrupted.length;

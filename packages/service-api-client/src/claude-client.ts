@@ -1,0 +1,273 @@
+import {
+  ApiErrorBodySchema,
+  type AssociateRequest,
+  AssociateRequestSchema,
+  type BranchRequest,
+  BranchRequestSchema,
+  type BranchResponse,
+  BranchResponseSchema,
+  CLAUDE_INTEGRATION_PATH,
+  CLAUDE_SESSION_USAGE_PATH,
+  CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
+  CLAUDE_USAGE_DELETE_PATH,
+  type ClaudeIntegrationStatus,
+  ClaudeIntegrationStatusSchema,
+  type FocusResponse,
+  FocusResponseSchema,
+  type OpenTranscriptRequest,
+  OpenTranscriptRequestSchema,
+  type ResumeRequest,
+  ResumeRequestSchema,
+  type ResumeResponse,
+  ResumeResponseSchema,
+  SESSION_ASSOCIATE_PATH,
+  SESSION_BRANCH_PATH,
+  SESSION_FOCUS_PATH,
+  SESSION_OPEN_TRANSCRIPT_PATH,
+  SESSION_RESUME_PATH,
+  SESSION_TERMINATE_REQUEST_PATH,
+  SESSION_WORKTREES_PATH,
+  SessionActionErrorBodySchema,
+  type SessionActionErrorCode,
+  type SessionActionRequest,
+  SessionActionRequestSchema,
+  type SessionUsage,
+  SessionUsageSchema,
+  type TerminateRequestResponse,
+  TerminateRequestResponseSchema,
+  type TranscriptAnalysisRequest,
+  TranscriptAnalysisRequestSchema,
+  type WorktreeListRequest,
+  WorktreeListRequestSchema,
+  type WorktreeListResponse,
+  WorktreeListResponseSchema,
+} from "@ccc/domain";
+import type { SocketApiClient } from "./socket-api-client.js";
+import { SocketUnreachableError } from "./socket-api-client.js";
+
+/**
+ * Every Phase 5 route through one typed, validated client (UI-SPEC S5,
+ * PATTERNS Group F). Modelled on `socket-api-client.ts`'s
+ * `postVaultSetupRequest`: a single generic poster, thin exported wrappers,
+ * and errors that carry only a fixed code -- never the server's raw text
+ * (the plugin owns all copy, UI-SPEC "reason vocabulary").
+ */
+
+/**
+ * A client-side failure this package can report for ANY Claude route,
+ * beyond the server's own {@link SessionActionErrorCode} vocabulary: the
+ * 200 body (or an error body) did not parse against the expected schema.
+ */
+export type ClaudeClientErrorCode = SessionActionErrorCode | "unrecognised-response";
+
+/**
+ * Thrown by every function in this module. `code` is always one fixed
+ * value from {@link ClaudeClientErrorCode} -- `message` mirrors it so a
+ * bare `error.message` in a log is still meaningful, but no caller may
+ * treat `message` as user-facing copy: the plugin owns that (UI-SPEC
+ * reason vocabulary).
+ */
+export class ClaudeRequestError extends Error {
+  readonly status: number;
+  readonly code: ClaudeClientErrorCode;
+
+  constructor(status: number, code: ClaudeClientErrorCode) {
+    super(code);
+    this.name = "ClaudeRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** The structural shape zod schemas satisfy -- also what `unknownResponse` below implements. */
+interface ResponseParser<T> {
+  safeParse(input: unknown): { success: true; data: T } | { success: false };
+}
+
+/**
+ * Accepts any 200 body without validating its shape. Used for routes whose
+ * success response carries nothing the caller needs to read (e.g. a bare
+ * "deleted" acknowledgement) -- `requestClaude` still enforces the 200
+ * status and the fixed error-code vocabulary on failure.
+ */
+const unknownResponse: ResponseParser<unknown> = {
+  safeParse: (input: unknown) => ({ success: true, data: input }),
+};
+
+/**
+ * The one place a Claude route's response becomes a value or a
+ * {@link ClaudeRequestError}. A transport failure maps by `errno`
+ * (`ETIMEDOUT` -> `timeout`, anything else -> `service-disconnected`); a
+ * non-200 body is parsed as {@link SessionActionErrorBodySchema} first (the
+ * server's fixed vocabulary), falling back to a schema-shape check via
+ * {@link ApiErrorBodySchema} whose free-text field is never surfaced; and a
+ * 200 body failing `schema` is `unrecognised-response` -- the same
+ * "validate, don't cast" discipline `postVaultSetupRequest` uses, so a
+ * malformed response becomes a visible failure here rather than a
+ * downstream `undefined`.
+ */
+async function requestClaude<T>(
+  client: SocketApiClient,
+  method: string,
+  path: string,
+  body: unknown,
+  schema: ResponseParser<T>,
+): Promise<T> {
+  let res: { status: number; body: unknown };
+  try {
+    res = await client.request<unknown>({ method, path, body });
+  } catch (error) {
+    if (error instanceof SocketUnreachableError) {
+      throw new ClaudeRequestError(
+        0,
+        error.errno === "ETIMEDOUT" ? "timeout" : "service-disconnected",
+      );
+    }
+    throw error;
+  }
+  if (res.status !== 200) {
+    const actionParsed = SessionActionErrorBodySchema.safeParse(res.body);
+    if (actionParsed.success) throw new ClaudeRequestError(res.status, actionParsed.data.error);
+    // Confirms a generic error shape without ever surfacing its free text --
+    // the plugin owns all copy (UI-SPEC reason vocabulary), so an error this
+    // client does not recognise collapses to the same fixed code either way.
+    ApiErrorBodySchema.safeParse(res.body);
+    throw new ClaudeRequestError(res.status, "unrecognised-response");
+  }
+  const parsed = schema.safeParse(res.body);
+  if (!parsed.success) throw new ClaudeRequestError(res.status, "unrecognised-response");
+  return parsed.data;
+}
+
+/** `GET /api/v1/claude/integration` -- the status Settings shows (PR-24, UI-SPEC S5). */
+export function getClaudeIntegration(client: SocketApiClient): Promise<ClaudeIntegrationStatus> {
+  return requestClaude(
+    client,
+    "GET",
+    CLAUDE_INTEGRATION_PATH,
+    undefined,
+    ClaudeIntegrationStatusSchema,
+  );
+}
+
+/** `POST /api/v1/claude/transcript-analysis` -- turns transcript analysis on or off (D-03, D-48). */
+export function setTranscriptAnalysis(
+  client: SocketApiClient,
+  enabled: boolean,
+): Promise<TranscriptAnalysisRequest> {
+  const body = TranscriptAnalysisRequestSchema.parse({ enabled });
+  return requestClaude(
+    client,
+    "POST",
+    CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
+    body,
+    TranscriptAnalysisRequestSchema,
+  );
+}
+
+/**
+ * `POST /api/v1/claude/usage/delete` -- deletes cached usage analytics
+ * (D-46, USAGE-08). Pulled forward from Task 2's scope because `main.ts`
+ * builds the settings tab's whole `SettingsClaudeSeam` in this task, and
+ * `main.ts` is not touched again by a later task in this plan.
+ */
+export function deleteUsageAnalytics(client: SocketApiClient): Promise<void> {
+  return requestClaude(client, "POST", CLAUDE_USAGE_DELETE_PATH, undefined, unknownResponse).then(
+    () => undefined,
+  );
+}
+
+/** Validates and parses -- the shape zod schemas satisfy, reused for outgoing request bodies. */
+interface RequestValidator<T> {
+  parse(input: unknown): T;
+}
+
+/**
+ * Every Session action, by name: its route, its strict request schema (used
+ * to VALIDATE the outgoing body -- an extra key, including a smuggled path,
+ * throws before the request ever reaches the wire, T-05-03) and its
+ * response schema. `open-transcript` and `associate` have no domain
+ * response schema yet, so they accept any 200 body via `unknownResponse`.
+ */
+const SESSION_ACTION_SPECS = {
+  focus: {
+    path: SESSION_FOCUS_PATH,
+    request: SessionActionRequestSchema,
+    response: FocusResponseSchema,
+  },
+  resume: {
+    path: SESSION_RESUME_PATH,
+    request: ResumeRequestSchema,
+    response: ResumeResponseSchema,
+  },
+  branch: {
+    path: SESSION_BRANCH_PATH,
+    request: BranchRequestSchema,
+    response: BranchResponseSchema,
+  },
+  worktrees: {
+    path: SESSION_WORKTREES_PATH,
+    request: WorktreeListRequestSchema,
+    response: WorktreeListResponseSchema,
+  },
+  "open-transcript": {
+    path: SESSION_OPEN_TRANSCRIPT_PATH,
+    request: OpenTranscriptRequestSchema,
+    response: unknownResponse,
+  },
+  associate: {
+    path: SESSION_ASSOCIATE_PATH,
+    request: AssociateRequestSchema,
+    response: unknownResponse,
+  },
+  "terminate-request": {
+    path: SESSION_TERMINATE_REQUEST_PATH,
+    request: SessionActionRequestSchema,
+    response: TerminateRequestResponseSchema,
+  },
+} as const;
+
+/** The request/response payload shapes for each {@link SessionActionName}. */
+interface SessionActionTable {
+  focus: { request: SessionActionRequest; response: FocusResponse };
+  resume: { request: ResumeRequest; response: ResumeResponse };
+  branch: { request: BranchRequest; response: BranchResponse };
+  worktrees: { request: WorktreeListRequest; response: WorktreeListResponse };
+  "open-transcript": { request: OpenTranscriptRequest; response: unknown };
+  associate: { request: AssociateRequest; response: unknown };
+  "terminate-request": { request: SessionActionRequest; response: TerminateRequestResponse };
+}
+
+export type SessionActionName = keyof SessionActionTable;
+
+/**
+ * Every Phase 5 Session action through one typed, validated poster. The
+ * outgoing body is parsed (not cast) against the action's own strict
+ * schema before it is sent -- an extra key rejects synchronously, so a
+ * caller bug can never smuggle an unexpected field, let alone a path, onto
+ * the wire (T-05-03).
+ */
+export async function requestSessionAction<K extends SessionActionName>(
+  client: SocketApiClient,
+  action: K,
+  body: SessionActionTable[K]["request"],
+): Promise<SessionActionTable[K]["response"]> {
+  const spec = SESSION_ACTION_SPECS[action];
+  // Inside an `async` function, a synchronous `.parse()` throw (an
+  // unrecognised key, including a smuggled path) becomes a REJECTED
+  // promise rather than an exception thrown before the caller ever gets a
+  // promise to await -- the same contract every other function here keeps.
+  const validatedBody = (spec.request as RequestValidator<unknown>).parse(body);
+  return requestClaude(client, "POST", spec.path, validatedBody, spec.response);
+}
+
+/** `POST /api/v1/claude/usage/session` -- per-Session usage for the Agent runs detail pane (PR-23). */
+export async function getSessionUsage(
+  client: SocketApiClient,
+  runId: string,
+): Promise<SessionUsage> {
+  // `async` so a malformed `runId` (not the 25-char minted shape) rejects
+  // rather than throwing before the caller has a promise to await.
+  const body = SessionActionRequestSchema.parse({ runId });
+  return requestClaude(client, "POST", CLAUDE_SESSION_USAGE_PATH, body, SessionUsageSchema);
+}

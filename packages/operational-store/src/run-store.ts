@@ -57,7 +57,8 @@ export class InvalidRunStateError extends Error {
   }
 }
 
-function assertValidRunState(state: string): asserts state is RunState {
+/** Throws {@link InvalidRunStateError} unless `state` is one of the eight `RunState` members. Shared with `session-store.ts`. */
+export function assertValidRunState(state: string): asserts state is RunState {
   if (!RUN_STATES.includes(state as RunState)) {
     throw new InvalidRunStateError(state);
   }
@@ -122,6 +123,22 @@ export function getRun(db: Database.Database, runId: RunId): RunRecord | null {
 export function updateRunState(db: Database.Database, runId: RunId, state: RunState): void {
   assertValidRunState(state);
   db.prepare("UPDATE runs SET state = ? WHERE run_id = ?").run(state, runId);
+}
+
+/**
+ * Restart recovery's one write (SVC-11, D-22): moves a Run to `stale`,
+ * leaving `ended_at` untouched, and bumps `revision` for a session Run
+ * (automation Runs carry no revision). Subscribers apply a session Run only
+ * when its revision advances, so a state change without a bump would be
+ * invisible to a client that already holds the pre-restart row (wave 2
+ * review). Callers pass only non-terminal Runs.
+ */
+export function recoverRunToStale(db: Database.Database, runId: RunId): void {
+  db.prepare(
+    `UPDATE runs SET state = 'stale',
+       revision = CASE WHEN kind = 'session' THEN COALESCE(revision, 0) + 1 ELSE revision END
+     WHERE run_id = ?`,
+  ).run(runId);
 }
 
 /** Every Run whose state is one of the four non-terminal members — the query restart recovery consumes on every service start. */

@@ -197,3 +197,155 @@ describe("classifyLaunchFailure (SC-3)", () => {
     expect(classifyLaunchFailure(new Error("boom"))).toBe("spawn-failed");
   });
 });
+
+describe("a guard conflict from Start Claude Code opens the concurrent-choice UI (05-17, D-29)", () => {
+  const CONFLICT_BODY = {
+    ok: false,
+    conflict: {
+      projectName: "Alpha",
+      conflicts: [
+        {
+          runId: "0mfk1a2b3c4d5e6f7a8b9c0d1",
+          sessionName: "Refactor parser",
+          state: "running",
+          lastActivityAt: "2026-09-25T11:59:30.000Z",
+        },
+      ],
+    },
+  };
+
+  function recordingClient(answers: unknown[]) {
+    const bodies: unknown[] = [];
+    const client: SocketApiClient = {
+      request: <T>(opts: { body?: unknown }) => {
+        bodies.push(opts.body);
+        return Promise.resolve({ status: 200, body: answers.shift() as T });
+      },
+    };
+    return { client, bodies };
+  }
+
+  it("opens the chooser with the conflict and re-sends the launch with the owner's choice", async () => {
+    const { client, bodies } = recordingClient([CONFLICT_BODY, { ok: true }]);
+    const chooseOnConflict = vi.fn(() => Promise.resolve({ kind: "plan" as const }));
+    const requestLaunch = createLaunchRequester({ ...deps(client), chooseOnConflict });
+
+    requestLaunch(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(launchStatus.value.get(launchStatusKey(PROJECT_ID, "claude-code"))?.kind).toBe(
+        "success",
+      );
+    });
+
+    expect(chooseOnConflict).toHaveBeenCalledTimes(1);
+    expect(chooseOnConflict).toHaveBeenCalledWith(CONFLICT_BODY.conflict, PROJECT_ID);
+    expect(bodies).toEqual([
+      { action: "claude-code", projectId: PROJECT_ID },
+      { action: "claude-code", projectId: PROJECT_ID, choice: { kind: "plan" } },
+    ]);
+  });
+
+  it("passes the launched projectId to the chooser", async () => {
+    const { client } = recordingClient([CONFLICT_BODY, { ok: true }]);
+    const chooseOnConflict = vi.fn(() => Promise.resolve({ kind: "plan" as const }));
+    createLaunchRequester({ ...deps(client), chooseOnConflict })(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(chooseOnConflict).toHaveBeenCalledWith(CONFLICT_BODY.conflict, PROJECT_ID);
+    });
+  });
+
+  it("a second conflict after a retry loops back to the choice instead of failing", async () => {
+    const { client, bodies } = recordingClient([CONFLICT_BODY, CONFLICT_BODY, { ok: true }]);
+    const chooseOnConflict = vi
+      .fn()
+      .mockResolvedValueOnce({ kind: "existing-worktree", worktreeId: "wt1" })
+      .mockResolvedValueOnce({ kind: "plan" });
+    const notify = vi.fn();
+    createLaunchRequester({ ...deps(client, notify), chooseOnConflict })(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(launchStatus.value.get(launchStatusKey(PROJECT_ID, "claude-code"))?.kind).toBe(
+        "success",
+      );
+    });
+    expect(chooseOnConflict).toHaveBeenCalledTimes(2);
+    expect(bodies).toHaveLength(3);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("gives up with spawn-failed after three conflict rounds", async () => {
+    const { client, bodies } = recordingClient([
+      CONFLICT_BODY,
+      CONFLICT_BODY,
+      CONFLICT_BODY,
+      CONFLICT_BODY,
+      CONFLICT_BODY,
+    ]);
+    const chooseOnConflict = vi.fn(() => Promise.resolve({ kind: "continue" as const }));
+    createLaunchRequester({ ...deps(client), chooseOnConflict })(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(launchStatus.value.get(launchStatusKey(PROJECT_ID, "claude-code"))).toEqual({
+        kind: "error",
+        error: "spawn-failed",
+      });
+    });
+    expect(chooseOnConflict).toHaveBeenCalledTimes(3);
+    expect(bodies).toHaveLength(4);
+  });
+
+  it("cancel sends nothing more and clears the opening status", async () => {
+    const { client, bodies } = recordingClient([CONFLICT_BODY]);
+    const chooseOnConflict = vi.fn(() => Promise.resolve({ kind: "cancel" as const }));
+    const notify = vi.fn();
+    const requestLaunch = createLaunchRequester({ ...deps(client, notify), chooseOnConflict });
+
+    requestLaunch(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(chooseOnConflict).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(launchStatus.value.has(launchStatusKey(PROJECT_ID, "claude-code"))).toBe(false);
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("the owner's think time in the modal does not count against the 5 s deadline", async () => {
+    const { client } = recordingClient([CONFLICT_BODY, { ok: true }]);
+    let choose: (value: { kind: "continue" }) => void = () => {};
+    const chooseOnConflict = vi.fn(
+      () =>
+        new Promise<{ kind: "continue" }>((resolve) => {
+          choose = resolve;
+        }),
+    );
+    const notify = vi.fn();
+    const requestLaunch = createLaunchRequester({ ...deps(client, notify), chooseOnConflict });
+
+    requestLaunch(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(chooseOnConflict).toHaveBeenCalled();
+    });
+    await vi.advanceTimersByTimeAsync(LAUNCH_DEADLINE_MS * 3);
+    choose({ kind: "continue" });
+    await vi.waitFor(() => {
+      expect(launchStatus.value.get(launchStatusKey(PROJECT_ID, "claude-code"))?.kind).toBe(
+        "success",
+      );
+    });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("with no chooser wired, a conflict is reported as a failed launch, never a silent no-op", async () => {
+    const { client } = recordingClient([CONFLICT_BODY]);
+    const requestLaunch = createLaunchRequester(deps(client));
+
+    requestLaunch(PROJECT_ID, "claude-code");
+    await vi.waitFor(() => {
+      expect(launchStatus.value.get(launchStatusKey(PROJECT_ID, "claude-code"))).toEqual({
+        kind: "error",
+        error: "spawn-failed",
+      });
+    });
+  });
+});

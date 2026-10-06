@@ -34,16 +34,22 @@ import type {
   ProjectShortcutsData,
   QuickActionsData,
   ServiceHealthData,
+  SessionView,
   TechIntelData,
   TodayData,
+  UsageSummary,
   WidgetId,
   WidgetState,
 } from "@ccc/plugin";
 import {
+  AgentRuns,
   connectionState,
   isWidgetId,
   motionMode,
+  selectedRunId,
   serviceHealthStateFor,
+  sessionsById,
+  usageSummary,
   WIDGETS,
   WidgetFrame,
   WidgetHostContext,
@@ -184,28 +190,71 @@ function adaptToday(data: Fields): TodayData {
   };
 }
 
-const SESSION_STATUS: Readonly<Record<string, ActiveSessionsData["rows"][number]["status"]>> = {
-  Running: "running",
-  "Waiting for approval": "waiting-for-approval",
-  "Recently completed": "recently-completed",
-  Failed: "failed",
-};
+/**
+ * The eight domain `RunState` values (05-06). This file cannot import
+ * `@ccc/domain` (the three-module purity list above), so the set is a local,
+ * harness-only copy used only to validate the fixture's own `state` field —
+ * never a second source of truth for the production mapping, which lives in
+ * `RUN_STATE_DISPLAY` and is exercised by the real component this harness
+ * renders.
+ */
+const RUN_STATES = new Set([
+  "queued",
+  "starting",
+  "running",
+  "waiting-for-approval",
+  "stale",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
+/** An unrecognised state maps to `stale` (unknown) — never an invented terminal state. */
+function sessionState(value: unknown): string {
+  const state = text(value);
+  return RUN_STATES.has(state) ? state : "stale";
+}
+
+const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * `ActiveSessionsData` (05-06) carries real `SessionView` rows, which this
+ * file cannot import the type for (the purity list above). The object below
+ * is built to that shape from the fixture's own fields, with an honest
+ * default for every field the prototype fixture never carried (subagents,
+ * link kind, transcript, …) — never a value the fixture does not say.
+ */
 function adaptActiveSessions(data: Fields): ActiveSessionsData {
-  return {
-    rows: list(data.rows).map((row) => ({
-      id: `${text(row.project)}-${text(row.name)}`,
-      project: text(row.project),
-      name: text(row.name),
-      model: typeof row.model === "string" ? row.model : null,
-      elapsed: text(row.elapsed),
-      // No prototype counterpart; stated rather than invented.
-      lastActivity: "last activity not reported",
-      // "Stale or unknown" and anything unrecognised map to `unknown` — never
-      // an invented terminal state (project data-integrity constraint).
-      status: SESSION_STATUS[text(row.status)] ?? "unknown",
-    })),
-  };
+  const sessions = list(data.rows).map((row) => ({
+    runId: `${text(row.project)}-${text(row.name)}`,
+    revision: 1,
+    claudeSessionId: typeof row.claudeSessionId === "string" ? row.claudeSessionId : null,
+    state: sessionState(row.state),
+    activity: null,
+    projectId: text(row.project),
+    projectName: text(row.project),
+    name: text(row.name),
+    model: typeof row.model === "string" ? row.model : null,
+    effort: null,
+    launchSource: "terminal",
+    permissionMode: null,
+    claudeVersion: null,
+    startedAt: text(row.startedAt, FIXTURES.now),
+    endedAt: TERMINAL_STATES.has(sessionState(row.state))
+      ? text(row.lastActivityAt, FIXTURES.now)
+      : null,
+    lastActivityAt: text(row.lastActivityAt, FIXTURES.now),
+    subagents: { active: 0, lastType: null },
+    lastError: null,
+    linkKind: null,
+    linkedFromRunId: null,
+    cwdBasename: null,
+    worktreeBasename: null,
+    hasTranscript: false,
+    terminateRequested: false,
+    hasConversation: true,
+  }));
+  return { sessions, nowMs: NOW } as unknown as ActiveSessionsData;
 }
 
 /** All three launchers set up: S10's setup callout stays out of the ready and stale cells. */
@@ -302,45 +351,44 @@ function adaptProjectShortcuts(data: Fields, variant: FixtureStateKey): ProjectS
 }
 
 /**
- * A bar's capacity, derived from the fixture's OWN percentage: `used` is
- * `pct` percent of the limit, so the limit is `used × 100 ÷ pct`. Nothing is
- * invented — a bar with no usable percentage or no usable amount has an
- * unknown limit (`null`, rendered "Capacity unavailable").
+ * The 05-10 fixture's `data.summary` is already a `UsageSummary`-shaped
+ * plain object — no display-string parsing (`quantity()`) needed, since the
+ * production body now takes typed data straight from the service, not a
+ * prototype's display strings. This file cannot import `@ccc/domain`'s
+ * `UsageSummary` type (the three-module purity list above), so the field is
+ * read as `ClaudeUsageData["summary"]` — the one type this harness already
+ * carries via `@ccc/plugin`.
+ *
+ * A fallback "everything off" summary covers the `empty` /
+ * `permission-required` / `failure` fixture states, whose `data` is `{}`:
+ * `WidgetFrame` never calls `renderBody` for those presentations (frame.tsx
+ * `case "empty"` renders its own generic copy without reading `state.data`),
+ * so this value is never actually drawn — it exists only so `ADAPTERS`
+ * stays a total function over every `FixtureStateKey`.
  */
-function limitFromPercent(used: number | null, pct: unknown): number | null {
-  if (used === null || typeof pct !== "number" || !(pct > 0)) return null;
-  return Math.round((used * 100) / pct);
-}
+const EMPTY_USAGE_SUMMARY: ClaudeUsageData["summary"] = {
+  capacity: { kind: "unavailable", reason: "wrapper-not-installed", version: null },
+  ranges: {
+    today: {
+      activity: { kind: "unavailable", reason: "analysis-off", version: null },
+      cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+    },
+    "last-7-days": {
+      activity: { kind: "unavailable", reason: "analysis-off", version: null },
+      cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+    },
+    "this-month": {
+      activity: { kind: "unavailable", reason: "analysis-off", version: null },
+      cost: { kind: "unavailable", reason: "needs-activity-or-wrapper" },
+    },
+  },
+  analysis: { enabled: false, firstScanPending: false },
+  observedAt: FIXTURES.now,
+};
 
-function adaptClaudeUsage(data: Fields, variant: FixtureStateKey): ClaudeUsageData {
-  const tokens = data.tokens as Fields | null | undefined;
-  const estimate = data.estimate as Fields | null | undefined;
-  return {
-    // Both capacity paths are screenshotted (03-09 review MINOR): the ready
-    // (`live`) cell derives each limit from the bar's own percentage, so the
-    // known-capacity `used of limit` line is drawn; every other variant keeps
-    // the prototype's "Account capacity unavailable" note, so its limits are
-    // `null` and read "Capacity unavailable" — never zero.
-    bars: list(data.bars).map((bar) => {
-      const used = quantity(bar.valueText);
-      return {
-        label: text(bar.label),
-        used,
-        limit: variant === "live" ? limitFromPercent(used, bar.pct) : null,
-      };
-    }),
-    // A fixture with no token block is three UNKNOWN counts, never three
-    // zeroes (null-not-0; 03-09 review MINOR).
-    tokens:
-      tokens === null || tokens === undefined
-        ? { input: null, output: null, cache: null }
-        : {
-            input: quantity(tokens.input),
-            output: quantity(tokens.output),
-            cache: quantity(tokens.cache),
-          },
-    estimate: estimate === null || estimate === undefined ? null : text(estimate.value),
-  };
+function adaptClaudeUsage(data: Fields): ClaudeUsageData {
+  const summary = data.summary as ClaudeUsageData["summary"] | undefined;
+  return { summary: summary ?? EMPTY_USAGE_SUMMARY, nowMs: NOW };
 }
 
 function adaptTechIntel(data: Fields): TechIntelData {
@@ -513,8 +561,191 @@ function Root({
   );
 }
 
+// ---------------------------------------------------------------------------
+// The Agent runs destination cells (UI-SPEC "Visual regression" S3, plan
+// 05-13 Task 3). Synthetic project and session names only (PRIV-04); every
+// timestamp is relative to the fixture's own frozen `NOW`, matching the
+// widget-matrix determinism rule above.
+// ---------------------------------------------------------------------------
+
+const AGENT_RUNS_CASES = [
+  "selected-waiting",
+  "selected-stale",
+  "narrow-detail",
+  "disconnected",
+] as const;
+type AgentRunsCase = (typeof AGENT_RUNS_CASES)[number];
+
+function isAgentRunsCase(value: string): value is AgentRunsCase {
+  return (AGENT_RUNS_CASES as readonly string[]).includes(value);
+}
+
+/** Builds one synthetic `SessionView`. Every field the domain schema
+ * requires is given an honest value — `Not reported` fields stay `null`
+ * rather than a guessed string, matching the data-integrity rule the real
+ * component renders under. */
+function syntheticSession(overrides: Partial<SessionView>): SessionView {
+  return {
+    runId: "0mfk1a2b3c4d5e6f7a8b9c0d1",
+    revision: 1,
+    claudeSessionId: "claude-session-fixture",
+    state: "running",
+    activity: "working",
+    projectId: "proj-fixture",
+    projectName: "fixture-project",
+    name: "Refactor the parser",
+    model: "claude-opus",
+    effort: null,
+    launchSource: "terminal",
+    permissionMode: null,
+    claudeVersion: "2.1.220",
+    startedAt: new Date(NOW - 45 * 60_000).toISOString(),
+    endedAt: null,
+    lastActivityAt: new Date(NOW - 5_000).toISOString(),
+    subagents: { active: 0, lastType: null },
+    lastError: null,
+    linkKind: null,
+    linkedFromRunId: null,
+    cwdBasename: "fixture-project",
+    worktreeBasename: null,
+    hasTranscript: true,
+    terminateRequested: false,
+    hasConversation: true,
+    ...overrides,
+  } as SessionView;
+}
+
+const SYNTHETIC_USAGE_SUMMARY: UsageSummary = (() => {
+  const today = {
+    activity: {
+      kind: "available",
+      range: "today",
+      bounds: {
+        start: new Date(NOW - 12 * 3_600_000).toISOString(),
+        end: new Date(NOW).toISOString(),
+      },
+      totals: { input: 120_000, output: 48_000, cacheWrite: 6_000, cacheRead: 18_000 },
+      byProject: [
+        {
+          projectId: "proj-fixture",
+          projectName: "fixture-project",
+          counters: { input: 90_000, output: 36_000, cacheWrite: 4_000, cacheRead: 12_000 },
+        },
+        {
+          projectId: null,
+          projectName: null,
+          counters: { input: 30_000, output: 12_000, cacheWrite: 2_000, cacheRead: 6_000 },
+        },
+      ],
+      byModel: [
+        {
+          model: "claude-opus",
+          counters: { input: 120_000, output: 48_000, cacheWrite: 6_000, cacheRead: 18_000 },
+        },
+      ],
+      bySkill: [],
+      observedAt: new Date(NOW).toISOString(),
+      source: "local-transcript-analysis",
+      freshness: "live",
+      partiality: { partial: false },
+      coverage: { horizonDate: null, uncoveredDays: 0, analysisOffDays: 0 },
+    },
+    cost: {
+      kind: "available",
+      range: "today",
+      bounds: {
+        start: new Date(NOW - 12 * 3_600_000).toISOString(),
+        end: new Date(NOW).toISOString(),
+      },
+      usd: 12.4,
+      basis: "list-prices",
+      priceTableDate: "2026-09-01",
+      excludedModelCount: 0,
+      observedAt: new Date(NOW).toISOString(),
+      source: "claude-code-estimates-and-list-prices",
+      freshness: "live",
+      partiality: { partial: false },
+    },
+  };
+  return {
+    capacity: { kind: "unavailable", reason: "wrapper-not-installed", version: null },
+    ranges: { today, "last-7-days": today, "this-month": today },
+    analysis: { enabled: true, firstScanPending: false },
+    observedAt: new Date(NOW).toISOString(),
+  } as UsageSummary;
+})();
+
+/** Seeds the Agent runs signals for one visual-matrix case (UI-SPEC S3). */
+function seedAgentRunsCase(agentRunsCase: AgentRunsCase): ConnectionState {
+  const waiting = syntheticSession({
+    runId: "0mfk1a2b3c4d5e6f7a8b9c0d1" as SessionView["runId"],
+    name: "Refactor the parser",
+    state: "waiting-for-approval",
+  });
+  const stale = syntheticSession({
+    runId: "0mfk1a2b3c4d5e6f7a8b9c0d2" as SessionView["runId"],
+    name: "Investigate the flaky test",
+    state: "stale",
+    lastActivityAt: new Date(NOW - 20 * 60_000).toISOString(),
+  });
+  const running = syntheticSession({
+    runId: "0mfk1a2b3c4d5e6f7a8b9c0d3" as SessionView["runId"],
+    name: "Draft the release notes",
+    state: "running",
+  });
+
+  const sessions = new Map<string, SessionView>([
+    [waiting.runId, waiting],
+    [stale.runId, stale],
+    [running.runId, running],
+  ]);
+  sessionsById.value = sessions;
+  usageSummary.value = SYNTHETIC_USAGE_SUMMARY;
+
+  switch (agentRunsCase) {
+    case "selected-waiting":
+      selectedRunId.value = waiting.runId;
+      return { kind: "live" };
+    case "selected-stale":
+      selectedRunId.value = stale.runId;
+      return { kind: "live" };
+    case "narrow-detail":
+      selectedRunId.value = running.runId;
+      return { kind: "live" };
+    case "disconnected":
+      selectedRunId.value = running.runId;
+      return { kind: "disconnected", reason: "connect ECONNREFUSED" };
+  }
+}
+
+function AgentRunsCell({ agentRunsCase }: { readonly agentRunsCase: AgentRunsCase }) {
+  connectionState.value = seedAgentRunsCase(agentRunsCase);
+
+  const body = (
+    <div className="ccc-content">
+      <h2>Agent runs</h2>
+      <AgentRuns now={NOW} onQuickAction={() => {}} />
+    </div>
+  );
+
+  if (agentRunsCase === "narrow-detail") {
+    // Harness-only: a fixed pixel width stands in for the `48rem` container
+    // query threshold the production CSS reads (UI-SPEC S3 "Layout"). This
+    // is test infrastructure in `test-fixtures`, not plugin production code,
+    // so it does not fall under the plugin's own "no inline style" rule.
+    return (
+      <Root motion={motionMode.value}>
+        <div style={{ width: "24rem" }}>{body}</div>
+      </Root>
+    );
+  }
+
+  return <Root motion={motionMode.value}>{body}</Root>;
+}
+
 function HarnessCell() {
   const params = new URLSearchParams(location.search);
+  const view = params.get("view") ?? "";
   const widget = params.get("widget") ?? "";
   const state = params.get("state") ?? "ready";
   const motion = params.get("motion") ?? "full";
@@ -523,6 +754,14 @@ function HarnessCell() {
     return <HarnessError message={`Unknown motion "${motion}" — expected full or reduced.`} />;
   }
   motionMode.value = motion;
+
+  if (view === "agent-runs") {
+    const agentRunsCase = params.get("case") ?? "";
+    if (!isAgentRunsCase(agentRunsCase)) {
+      return <HarnessError message={`Unknown agent-runs case "${agentRunsCase}".`} />;
+    }
+    return <AgentRunsCell agentRunsCase={agentRunsCase} />;
+  }
 
   if (widget === BACKGROUND) {
     return (

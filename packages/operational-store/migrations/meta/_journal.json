@@ -22,6 +22,34 @@
       "when": 1790444291239,
       "tag": "0002_projects_launchers",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790638305441,
+      "tag": "0003_claude_sessions_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790740788470,
+      "tag": "0004_claude_usage_quarter_hours",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790740911199,
+      "tag": "0005_claude_transcript_recognition",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791256029271,
+      "tag": "0006_session_prompt_seen",
+      "breakpoints": true
     }
   ]
 }

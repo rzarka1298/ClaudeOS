@@ -170,7 +170,12 @@ describe("buildSwitcherItems: one flat list in the D-32 empty-query order", () =
     });
 
     const github = itemNamed(items, "Open demo-api on GitHub — no GitHub remote");
-    expect(github.kind === "launch" && github.descriptor.target?.projectId).toBe(UNPINNED_ID);
+    expect(
+      github.kind === "launch" &&
+        github.descriptor.target &&
+        "projectId" in github.descriptor.target &&
+        github.descriptor.target.projectId,
+    ).toBe(UNPINNED_ID);
     expect(github.kind === "launch" && github.noGithubRemote).toBe(true);
 
     const desktop = itemNamed(items, "Open Claude Desktop");

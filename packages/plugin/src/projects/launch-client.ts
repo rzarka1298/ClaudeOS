@@ -1,8 +1,10 @@
 import type {
   LaunchAction,
+  LaunchChoice,
+  LaunchConflictResult,
   LaunchErrorKind,
   LaunchRequest,
-  LaunchResult,
+  LaunchResponse,
   ProjectId,
 } from "@ccc/domain";
 import type { SocketApiClient } from "@ccc/service-api-client";
@@ -13,6 +15,7 @@ import {
 import type { ConnectionState } from "../connection-state.js";
 import { launchErrorNotice, launcherDisplayName } from "./launch-copy.js";
 import {
+  clearLaunchStatus,
   type LaunchTimerControls,
   launchStatus,
   launchStatusKey,
@@ -87,13 +90,28 @@ export interface CreateLaunchRequesterOptions {
    * (wave-7 finding 3). A view needs none: it holds the store while open.
    */
   readonly holdStatus?: (() => () => void) | undefined;
+  /**
+   * Opens the concurrent-write choice when Start Claude Code answers a guard
+   * conflict (05-17, D-29). Absent, a conflict is reported as a failed launch.
+   */
+  readonly chooseOnConflict?: ConflictChooser | undefined;
   readonly setTimer: LaunchTimerControls["setTimer"];
   readonly clearTimer: LaunchTimerControls["clearTimer"];
 }
 
+/** The owner's answer to the guard: one of the four launch choices, or cancel. */
+export type ConflictChoice = LaunchChoice | { readonly kind: "cancel" };
+export type ConflictChooser = (
+  conflict: LaunchConflictResult["conflict"],
+  projectId: ProjectId,
+) => Promise<ConflictChoice>;
+
+/** How many times the owner is asked before a still-conflicting launch is reported as failed. */
+export const MAX_CONFLICT_ROUNDS = 3;
+
 type Outcome =
   | { readonly settled: "timeout" }
-  | { readonly settled: "result"; readonly result: LaunchResult };
+  | { readonly settled: "result"; readonly result: LaunchResponse };
 
 /**
  * Builds `ctx.requestLaunch`. The returned function never throws and never
@@ -117,6 +135,7 @@ export function createLaunchRequester({
   terminalLabel = () => "Terminal",
   isDisposed = () => false,
   holdStatus,
+  chooseOnConflict,
   setTimer,
   clearTimer,
 }: CreateLaunchRequesterOptions): (projectId: ProjectId | null, action: LaunchAction) => void {
@@ -164,39 +183,75 @@ export function createLaunchRequester({
       return;
     }
 
-    let deadlineId: number | undefined;
-    const deadline = new Promise<Outcome>((resolve) => {
-      deadlineId = timers.setTimer(() => resolve({ settled: "timeout" }), LAUNCH_DEADLINE_MS);
-    });
-    const answer = postLaunchRequest(client, request).then(
-      (result): Outcome => ({ settled: "result", result }),
-    );
+    // One request raced against its own 5 s deadline. The deadline belongs to
+    // the request, not the launch: the owner's time in the conflict modal
+    // between two requests never counts against it (D-40).
+    const send = async (
+      body: LaunchRequest,
+    ): Promise<Outcome | { readonly settled: "threw"; readonly error: unknown }> => {
+      let deadlineId: number | undefined;
+      const deadline = new Promise<Outcome>((resolve) => {
+        deadlineId = timers.setTimer(() => resolve({ settled: "timeout" }), LAUNCH_DEADLINE_MS);
+      });
+      try {
+        const answer = postLaunchRequest(client, body).then(
+          (result): Outcome => ({ settled: "result", result }),
+        );
+        return await Promise.race([answer, deadline]);
+      } catch (error: unknown) {
+        return { settled: "threw", error };
+      } finally {
+        if (deadlineId !== undefined) timers.clearTimer(deadlineId);
+      }
+    };
 
-    Promise.race([answer, deadline])
-      .then(
-        (outcome) => {
-          try {
-            if (deadlineId !== undefined) timers.clearTimer(deadlineId);
-            if (isDisposed()) return;
-            if (outcome.settled === "timeout") fail("timeout");
-            else if (outcome.result.ok)
-              setLaunchResult(key, { kind: "success", at: new Date().toISOString() }, timers);
-            else fail(outcome.result.error);
-          } finally {
-            settle();
-          }
-        },
-        (error: unknown) => {
-          try {
-            if (deadlineId !== undefined) timers.clearTimer(deadlineId);
-            if (isDisposed()) return;
-            fail(classifyLaunchFailure(error));
-          } finally {
-            settle();
-          }
-        },
-      )
-      // A throwing `notify` must not become an unhandled rejection.
-      .catch(() => undefined);
+    const run = async (): Promise<void> => {
+      let outcome = await send(request);
+      // The guard found another writer: ask the owner how to proceed, then
+      // re-send with the answer (D-29). A second conflict (another launch won
+      // the race, or the chosen worktree is busy too) loops back to the
+      // choice, up to MAX_CONFLICT_ROUNDS. Cancel launches nothing.
+      for (let round = 0; round < MAX_CONFLICT_ROUNDS; round++) {
+        if (
+          request.action !== "claude-code" ||
+          outcome.settled !== "result" ||
+          !("conflict" in outcome.result) ||
+          isDisposed()
+        ) {
+          break;
+        }
+        if (chooseOnConflict === undefined) {
+          fail("spawn-failed");
+          return;
+        }
+        let choice: ConflictChoice;
+        try {
+          choice = await chooseOnConflict(outcome.result.conflict, request.projectId);
+        } catch {
+          if (!isDisposed()) fail("spawn-failed");
+          return;
+        }
+        if (isDisposed()) return;
+        if (choice.kind === "cancel") {
+          clearLaunchStatus(key);
+          return;
+        }
+        outcome = await send({ ...request, choice });
+      }
+      if (isDisposed()) return;
+      if (outcome.settled === "threw") fail(classifyLaunchFailure(outcome.error));
+      else if (outcome.settled === "timeout") fail("timeout");
+      else if ("conflict" in outcome.result)
+        fail("spawn-failed"); // still conflicting after MAX_CONFLICT_ROUNDS
+      else if (outcome.result.ok)
+        setLaunchResult(key, { kind: "success", at: new Date().toISOString() }, timers);
+      else fail(outcome.result.error);
+    };
+
+    run()
+      .catch(() => {
+        // A throwing `notify` must not become an unhandled rejection.
+      })
+      .finally(settle);
   };
 }

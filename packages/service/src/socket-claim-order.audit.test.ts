@@ -14,7 +14,7 @@ describe("main.ts claims the socket path before any startup side effect", () => 
     expect(claim).toBeGreaterThan(ensureRuntime);
     expect(claim).toBeLessThan(src.indexOf("ensureScriptDir(runtimeDir"));
     expect(claim).toBeLessThan(src.indexOf("openStore(dbPath)"));
-    expect(claim).toBeLessThan(src.indexOf("drainSpool("));
+    expect(claim).toBeLessThan(src.indexOf("startClaudeServices("));
     expect(claim).toBeLessThan(src.indexOf("startSocketServer("));
   });
 

@@ -30,12 +30,19 @@ describe("widgetStateFor is one signal per widget", () => {
     expect(new Set(signals).size).toBe(WIDGET_IDS.length);
   });
 
-  it.each(PRD_PANEL_ORDER.filter((id) => id !== "project-shortcuts" && id !== "quick-actions"))(
-    "%s: never holds a ready payload (D-17)",
-    (id) => {
-      expect(["permission-required", "unavailable"]).toContain(widgetStateFor(id).value.kind);
-    },
+  // 05-06: `active-sessions` is excluded — it is the one PRD panel this
+  // phase gives a real route, so its state is a live derivation
+  // (`session-signals.ts`'s `activeSessionsState`), never a constant. The
+  // D-17 property it must still hold — no fixture data reaches it — is
+  // checked below by source scan and by its honest pre-connection state.
+  // `project-shortcuts` and `quick-actions` are real too (Phase 4).
+  const CONSTANT_PANEL_ORDER = PRD_PANEL_ORDER.filter(
+    (id) => id !== "active-sessions" && id !== "project-shortcuts" && id !== "quick-actions",
   );
+
+  it.each(CONSTANT_PANEL_ORDER)("%s: never holds a ready payload (D-17)", (id) => {
+    expect(["permission-required", "unavailable"]).toContain(widgetStateFor(id).value.kind);
+  });
 
   // quick-actions is real now (plan 04-10, D-38): fed by the launcher summary
   // in the projects snapshot. Its honest-state coverage lives in
@@ -49,6 +56,12 @@ describe("widgetStateFor is one signal per widget", () => {
   // projects-state.test.ts and panels.test.tsx.
   it("project-shortcuts: loading before any snapshot has arrived", () => {
     expect(widgetStateFor("project-shortcuts").value.kind).toBe("loading");
+  });
+
+  it("active-sessions: derives from the live connection, never a fixture (D-17)", () => {
+    // Fresh module load, nothing has connected and no session has ever been
+    // observed: the one honest thing left to say is `loading`.
+    expect(widgetStateFor("active-sessions").value.kind).toBe("loading");
   });
 });
 

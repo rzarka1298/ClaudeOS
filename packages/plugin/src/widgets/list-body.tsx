@@ -1,6 +1,7 @@
 import type { SizeHint } from "@ccc/domain";
 import { Fragment, type VNode } from "preact";
 import type { DestinationId } from "../view/destinations.js";
+import type { QuickActionDescriptor } from "./contract.js";
 
 /**
  * The one list body every list-bearing panel renders (UI-SPEC surface E4).
@@ -94,6 +95,23 @@ export interface ListBodyProps<Row> {
   readonly moreDestination: DestinationId;
   /** The shell's destination focus, threaded from the frame via `WidgetBodyProps.onNavigate`. */
   readonly onMore?: ((destination: DestinationId) => void) | undefined;
+  /**
+   * The row's optional action (UI-SPEC S1 row action, D-36). When present,
+   * every row whose call returns a descriptor (not `null`) renders one
+   * right-aligned `.ccc-row-action` pill. The row itself executes nothing —
+   * it only emits the descriptor to {@link onAction} (C-11).
+   */
+  readonly renderAction?: ((row: Row) => QuickActionDescriptor | null) | undefined;
+  /** The action button's accessible name (`aria-label`), distinct per row. */
+  readonly renderActionLabel?: ((row: Row) => string) | undefined;
+  readonly onAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
+  /**
+   * Turns the primary line into a button that selects the row (UI-SPEC S1
+   * "Primary line"). Absent leaves the existing `<p>`, so every current
+   * widget renders unchanged (Active sessions wires this to
+   * `onNavigate("agent-runs", { runId })`).
+   */
+  readonly onSelectRow?: ((row: Row) => void) | undefined;
 }
 
 /** The meta line as segments — `renderMetaSegments`' contract (UI-SPEC S1, A11Y-04). */
@@ -129,6 +147,10 @@ export function ListBody<Row>({
   renderStatus,
   moreDestination,
   onMore,
+  renderAction,
+  renderActionLabel,
+  onAction,
+  onSelectRow,
 }: ListBodyProps<Row>): VNode | null {
   if (rows.length === 0) return null;
 
@@ -140,6 +162,7 @@ export function ListBody<Row>({
     <ul className="ccc-list">
       {visible.map((row) => {
         const primary = renderPrimary(row);
+        const action = renderAction?.(row) ?? null;
         const badge = primaryBadge?.(row) ?? null;
         const segments = renderMetaSegments?.(row);
         return (
@@ -148,21 +171,42 @@ export function ListBody<Row>({
                 therefore in the accessible name; `title` surfaces it on hover.
                 No `aria-label` here — assistive technology ignores it on a
                 role=paragraph element, and biome rejects it outright. */}
-            <p className="ccc-list-primary ccc-clamp-2" title={primary}>
-              {badge === null ? null : (
-                <>
-                  <span className="ccc-visually-hidden">{badge.hiddenLabel}</span>
-                  <span className="ccc-meta-glyph" aria-hidden="true">
-                    {badge.glyph}
-                  </span>{" "}
-                </>
-              )}
-              {primary}
-            </p>
+            {onSelectRow ? (
+              <button
+                type="button"
+                className="ccc-list-primary ccc-clamp-2 ccc-session-row-link"
+                title={primary}
+                onClick={() => onSelectRow(row)}
+              >
+                {primary}
+              </button>
+            ) : (
+              <p className="ccc-list-primary ccc-clamp-2" title={primary}>
+                {badge === null ? null : (
+                  <>
+                    <span className="ccc-visually-hidden">{badge.hiddenLabel}</span>
+                    <span className="ccc-meta-glyph" aria-hidden="true">
+                      {badge.glyph}
+                    </span>{" "}
+                  </>
+                )}
+                {primary}
+              </p>
+            )}
             {segments === undefined ? (
               <p className="ccc-list-meta">{renderMeta(row)}</p>
             ) : (
               <MetaSegments segments={segments} />
+            )}
+            {action !== null && onAction !== undefined && (
+              <button
+                type="button"
+                className="ccc-row-action"
+                aria-label={renderActionLabel?.(row) ?? action.label}
+                onClick={() => onAction(action)}
+              >
+                {action.label}
+              </button>
             )}
             {renderActions?.(row)}
             {renderStatus?.(row)}

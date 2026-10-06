@@ -185,8 +185,17 @@ describe("honest panel states (D-17, ADR-0023 Panel state assignment)", () => {
     });
   });
 
-  it.each(["active-sessions", "claude-usage", "tech-intel"])("%s has no source yet", (id) => {
+  it.each(["claude-usage", "tech-intel"])("%s has no source yet", (id) => {
     expect(widgetStateFor(id as WidgetId).value.kind).toBe("unavailable");
+  });
+
+  // 05-06 / 05-12: `active-sessions` and `claude-usage` are wired to the real
+  // session and usage signals (a `computed`, not a constant — D-17 is satisfied
+  // because each derives honestly from the connection and the signals, never
+  // fixture data). A fresh module load with no live connection is the same
+  // honest "we don't know yet" `service-health` itself uses on first render.
+  it("active-sessions is honest before anything has connected: loading, not a fixture", () => {
+    expect(widgetStateFor("active-sessions").value.kind).toBe("loading");
   });
 
   it("quick-actions is a live signal now (plan 04-10, D-38): loading before a snapshot arrives, never a hardcoded unavailable", () => {
@@ -226,11 +235,15 @@ describe("a registered panel renders its honest state through the shared frame",
     expect(labels).toEqual(["Connect Google Calendar and Gmail", "Source"]);
   });
 
-  it("Active Claude sessions says it has no source yet", () => {
+  // 05-06: `active-sessions` is a live hero card now, not a constant. Before
+  // the plugin ever connects, its honest state is `loading` (the same state
+  // `service-health` renders on first paint), never a fixture and never a
+  // fabricated "ready".
+  it("Active Claude sessions renders its live loading state before it has ever connected", () => {
     const { container } = renderWidget("active-sessions");
     const card = container.querySelector("section.ccc-card");
 
-    expect(card?.getAttribute("data-presentation")).toBe("unavailable");
-    expect(card?.textContent).toContain("No source yet");
+    expect(card?.getAttribute("data-presentation")).toBe("loading");
+    expect(card?.getAttribute("aria-busy")).toBe("true");
   });
 });

@@ -51,7 +51,12 @@ set -eu
 
 IMAGE="mcr.microsoft.com/playwright:v1.63.0-noble"
 PLATFORM="linux/amd64"
-SNAPSHOTS="packages/test-fixtures/visual/widgets.spec.ts-snapshots"
+# One directory per `packages/test-fixtures/visual/*.spec.ts` file
+# (Playwright's own `{testFileName}` snapshotPathTemplate token, 05-13 Task
+# 3 added `agent-runs.spec.ts` alongside `widgets.spec.ts`) — copied back
+# and forth by NAME below, never the whole `visual/` directory (which also
+# holds the spec source files themselves).
+SNAPSHOTS_PARENT="packages/test-fixtures/visual"
 # The Node every CI job sets up, and the official SHA-256 of its linux-x64
 # tarball (nodejs.org/dist/v24.20.0/SHASUMS256.txt).
 NODE_VERSION="24.20.0"
@@ -118,7 +123,7 @@ STATUS=0
 docker run --rm --init --ipc=host --platform "$PLATFORM" \
   -e CCC_VISUAL_CONTAINER=1 \
   -e CCC_UPDATE="$UPDATE" \
-  -e CCC_SNAPSHOTS="$SNAPSHOTS" \
+  -e CCC_SNAPSHOTS_PARENT="$SNAPSHOTS_PARENT" \
   -e CCC_NODE_VERSION="$NODE_VERSION" \
   -e CCC_NODE_SHA256="$NODE_SHA256" \
   -e HOST_UID="$(id -u)" \
@@ -149,16 +154,27 @@ docker run --rm --init --ipc=host --platform "$PLATFORM" \
       pnpm run ci:visual || status=$?
     fi
     mkdir -p /out/snapshots
-    if [ -d "$CCC_SNAPSHOTS" ]; then cp -a "$CCC_SNAPSHOTS/." /out/snapshots/; fi
+    # Copy each spec file'\''s own `*-snapshots` directory by name, never the
+    # whole `visual/` parent (which also holds the `.spec.ts` sources).
+    for d in "$CCC_SNAPSHOTS_PARENT"/*-snapshots; do
+      [ -d "$d" ] || continue
+      name=$(basename "$d")
+      mkdir -p "/out/snapshots/$name"
+      cp -a "$d/." "/out/snapshots/$name/"
+    done
     if [ -d test-results ]; then cp -a test-results /out/test-results; fi
     chown -R "$HOST_UID:$HOST_GID" /out
     exit "$status"
   ' || STATUS=$?
 
 if [ "$STATUS" -eq 0 ] && [ "$UPDATE" -eq 1 ]; then
-  mkdir -p "$REPO_ROOT/$SNAPSHOTS"
-  rsync -a --delete "$WORK/out/snapshots/" "$REPO_ROOT/$SNAPSHOTS/"
-  echo "scripts/ci/visual-in-container.sh: baselines rendered from $HEAD_SHA copied back to $SNAPSHOTS — commit them ALONE, with a justification."
+  for d in "$WORK/out/snapshots"/*; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    mkdir -p "$REPO_ROOT/$SNAPSHOTS_PARENT/$name"
+    rsync -a --delete "$d/" "$REPO_ROOT/$SNAPSHOTS_PARENT/$name/"
+  done
+  echo "scripts/ci/visual-in-container.sh: baselines rendered from $HEAD_SHA copied back under $SNAPSHOTS_PARENT/*-snapshots — commit them ALONE, with a justification."
 fi
 
 if [ "$STATUS" -ne 0 ] && [ -d "$WORK/out/test-results" ]; then

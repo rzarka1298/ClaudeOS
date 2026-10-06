@@ -9,6 +9,14 @@
 // repository that lister is replaced by a stub that prints a fixed list (or
 // fails), so these cases pin the gate's own logic; the last describe block
 // runs the REAL lister against the real suite and the committed baselines.
+//
+// 05-13 Task 3 gave `list-visual-baselines.mjs` a second, spec-file-scoped
+// path shape (`{specFile}-snapshots/{baseline}.png`, since Playwright's own
+// `{testFileName}` snapshotPathTemplate token now gives `agent-runs.spec.ts`
+// its own snapshot directory alongside `widgets.spec.ts`'s). Every fixture
+// path below carries that same `widgets.spec.ts-snapshots/` prefix, so the
+// stub lister and the tracked-file fixtures agree with the gate's real
+// (now spec-file-aware) allowlist matching.
 
 import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
@@ -18,11 +26,16 @@ import { type GateRepo, gateRepo, REPO_ROOT } from "./gate-repo.js";
 
 const SCRIPT = "scripts/check-images.sh";
 const LISTER = "scripts/list-visual-baselines.mjs";
-const SNAPSHOTS = "packages/test-fixtures/visual/widgets.spec.ts-snapshots";
+const VISUAL_DIR = "packages/test-fixtures/visual";
+const SNAPSHOTS = `${VISUAL_DIR}/widgets.spec.ts-snapshots`;
 
-/** The baselines the stub lister declares unless a case says otherwise. */
-const DECLARED = ["background-full-chromium-linux.png", "today-ready-chromium-linux.png"];
-const DECLARED_PATHS = DECLARED.map((name) => `${SNAPSHOTS}/${name}`);
+/** The baselines the stub lister declares unless a case says otherwise —
+ * already carrying the spec-file-scoped prefix the real lister emits. */
+const DECLARED = [
+  "widgets.spec.ts-snapshots/background-full-chromium-linux.png",
+  "widgets.spec.ts-snapshots/today-ready-chromium-linux.png",
+];
+const DECLARED_PATHS = DECLARED.map((name) => `${VISUAL_DIR}/${name}`);
 
 const repos: GateRepo[] = [];
 afterEach(() => {
@@ -82,9 +95,16 @@ describe("check-images.sh (PRIV-04 layer 3)", () => {
     expect(result.out).toContain("today-ready-chromium-darwin.png");
   });
 
-  it("fails on an image nested below the snapshot directory", () => {
+  it("fails on an image directly in the visual/ directory, not inside any *-snapshots directory", () => {
+    const result = gate(repoTracking([`${VISUAL_DIR}/loose-chromium-linux.png`]));
+    expect(result.status).toBe(1);
+    expect(result.out).toContain("not inside a *-snapshots directory");
+  });
+
+  it("fails on an image nested below a spec file's own snapshot directory", () => {
     const result = gate(repoTracking([`${SNAPSHOTS}/extra/x-chromium-linux.png`]));
     expect(result.status).toBe(1);
+    expect(result.out).toContain("nested below the snapshot directory");
   });
 
   it("fails on a planted iPhone photo (.heic), naming it (judge-r1 finding 3)", () => {
@@ -141,7 +161,9 @@ describe("the allowlist is the set the tests declare, not a name shape (judge-r1
   });
 
   it("fails when a declared baseline is not tracked, naming it", () => {
-    const result = gate(repoTracking([], [...DECLARED, "github-ready-chromium-linux.png"]));
+    const result = gate(
+      repoTracking([], [...DECLARED, "widgets.spec.ts-snapshots/github-ready-chromium-linux.png"]),
+    );
     expect(result.status).toBe(1);
     expect(result.out).toContain(`MISSING BASELINE: ${SNAPSHOTS}/github-ready-chromium-linux.png`);
   });
@@ -178,12 +200,17 @@ describe("an empty scan never passes (judge-r1 finding 4)", () => {
 });
 
 describe("the real lister against the real suite", () => {
-  it("declares exactly the committed baselines", () => {
+  it("declares exactly the committed baselines, across every spec file's own snapshot directory", () => {
     const run = spawnSync("node", [join(REPO_ROOT, LISTER)], { cwd: REPO_ROOT, encoding: "utf8" });
     expect(run.status, run.stderr).toBe(0);
     const listed = run.stdout.split("\n").filter((line) => line.length > 0);
-    const committed = readdirSync(join(REPO_ROOT, SNAPSHOTS)).filter((name) =>
-      name.endsWith("-chromium-linux.png"),
+    const specSnapshotDirs = readdirSync(join(REPO_ROOT, VISUAL_DIR)).filter((name) =>
+      name.endsWith("-snapshots"),
+    );
+    const committed = specSnapshotDirs.flatMap((dirName) =>
+      readdirSync(join(REPO_ROOT, VISUAL_DIR, dirName))
+        .filter((name) => name.endsWith("-chromium-linux.png"))
+        .map((name) => `${dirName}/${name}`),
     );
     expect(listed.length).toBeGreaterThan(0);
     expect(listed).toEqual([...committed].sort());

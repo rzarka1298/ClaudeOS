@@ -4,7 +4,10 @@ import {
   createAuthenticatedClient,
   createEventClient,
   createSocketApiClient,
+  deleteUsageAnalytics,
+  getClaudeIntegration,
   refreshProjects,
+  setTranscriptAnalysis,
 } from "@ccc/service-api-client";
 import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
@@ -21,6 +24,8 @@ import {
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
+import { openDeleteUsageModal as openDeleteUsageModalDialog } from "./view/delete-usage-modal.js";
+import { createLaunchConflictChooser } from "./view/launch-conflict-choice.js";
 import { createPluginSwitcher } from "./view/plugin-switcher.js";
 import {
   createSwitcherOpener,
@@ -131,6 +136,8 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       notify: (message) => {
         new Notice(message);
       },
+      // Start Claude Code shows the same four-choice modal as resume (D-29).
+      chooseOnConflict: createLaunchConflictChooser(this.app, this.client),
     });
 
     this.hostRegistry.view(VIEW_TYPE, (leaf: WorkspaceLeaf) => new CommandCenterView(leaf, this));
@@ -154,6 +161,19 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         settings: this.settings,
         saveSettings: () => this.saveSettings(),
         mql: window.matchMedia(REDUCED_MOTION_QUERY),
+        // The Claude section's service seam (UI-SPEC S5). Built from the
+        // existing authenticated client -- the tab never reaches the
+        // service any other way, and nothing here touches plugin settings.
+        claude: {
+          getIntegration: () => getClaudeIntegration(this.client),
+          setTranscriptAnalysis: (enabled: boolean) => setTranscriptAnalysis(this.client, enabled),
+          deleteUsageAnalytics: () => deleteUsageAnalytics(this.client),
+          copyText: (text: string) => navigator.clipboard.writeText(text),
+        },
+        // Row 6's confirmation modal (UI-SPEC S4-d). Behind the same seam
+        // pattern as every other modal opener in this plugin.
+        openDeleteUsageModal: (horizonDate: string | null, analysisOn: boolean) =>
+          openDeleteUsageModalDialog(this.app, horizonDate, analysisOn),
       }),
     );
 

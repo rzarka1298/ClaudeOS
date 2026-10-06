@@ -63,6 +63,12 @@ export interface StubElement {
   createDiv(): StubElement;
   addEventListener(type: string, handler: () => void): void;
   empty(): void;
+  /** Mirrors Obsidian's `Element.setText` DOM extension -- inert (plan 05-07). */
+  setText(text: string): void;
+  /** Mirrors the real `titleEl`/`buttonEl`'s native `HTMLElement.focus` -- inert. */
+  focus(): void;
+  /** Added wave 5 review (ids, `aria-describedby`, `<label for>` on the session modals) -- inert. */
+  setAttribute(name: string, value: string): void;
 }
 
 function createStubElement(): StubElement {
@@ -71,6 +77,9 @@ function createStubElement(): StubElement {
     createDiv: () => createStubElement(),
     addEventListener: () => {},
     empty: () => {},
+    setText: () => {},
+    focus: () => {},
+    setAttribute: () => {},
   };
 }
 
@@ -85,6 +94,8 @@ export class Notice {
 export class Modal {
   readonly app: unknown;
   contentEl: StubElement = createStubElement();
+  /** Added plan 05-07 (delete-usage modal); every other modal in this file predates it. */
+  titleEl: StubElement = createStubElement();
 
   constructor(app: unknown) {
     this.app = app;
@@ -101,6 +112,61 @@ export class Modal {
   onOpen(): void {}
 
   onClose(): void {}
+}
+
+/**
+ * Inert stand-in for Obsidian's `ButtonComponent` (plan 05-07, delete-usage
+ * modal). Deliberately minimal, same rationale as `Modal`/`PluginSettingTab`
+ * above: `setCta`/`setDestructive`/`setButtonText` are no-ops that return
+ * `this` for chaining, and `onClick` does not wire a real DOM listener --
+ * the modal's OWN `confirm()`/`close()` methods are what a test calls
+ * directly, never a simulated click through this stub.
+ */
+export class ButtonComponent {
+  buttonEl: StubElement = createStubElement();
+  /**
+   * Added wave 5 review: mirrors the real `BaseComponent.disabled` field, and
+   * `setDisabled` below RECORDS into it, so a test reading a button's state
+   * sees what the code under test last set -- never an inert default that
+   * could make a never-updated disabled state look correct.
+   */
+  disabled = false;
+
+  constructor(_containerEl: StubElement) {}
+
+  setButtonText(_text: string): this {
+    return this;
+  }
+
+  setCta(): this {
+    return this;
+  }
+
+  setDestructive(): this {
+    return this;
+  }
+
+  /** Added plan 05-15 (session-modals.ts's worktree-step Launch button); records into `disabled` since the wave 5 review. */
+  setDisabled(disabled: boolean): this {
+    this.disabled = disabled;
+    return this;
+  }
+
+  onClick(_handler: (evt: MouseEvent) => unknown): this {
+    return this;
+  }
+}
+
+/** Mirrors obsidian's `Instruction` (`{ command, purpose }`) closely enough for a shape test. */
+export interface StubInstruction {
+  command: string;
+  purpose: string;
+}
+
+/** Mirrors obsidian's `FuzzyMatch<T>` (`{ item, match }`) closely enough for a choose-order test. */
+export interface StubFuzzyMatch<T> {
+  item: T;
+  match: { score: number; matches: [number, number][] };
 }
 
 /**
@@ -268,6 +334,20 @@ export abstract class FuzzySuggestModal<T> extends SuggestModal<{ item: T; match
 
   onChooseSuggestion(match: { item: T; match: unknown }, evt: MouseEvent | KeyboardEvent): void {
     this.onChooseItem(match.item, evt);
+  }
+
+  /**
+   * Mirrors the ORDER of Obsidian's real `SuggestModal.selectSuggestion` (wave
+   * 5 review, plan 05-15): it closes the modal FIRST (so `onClose` runs) and
+   * only then calls `onChooseSuggestion`. A subclass that settles "no choice"
+   * in `onClose` would discard every pick; this ordering lets a test catch it.
+   */
+  override selectSuggestion(
+    match: { item: T; match: unknown },
+    evt: MouseEvent | KeyboardEvent,
+  ): void {
+    this.close();
+    this.onChooseSuggestion(match, evt);
   }
 }
 

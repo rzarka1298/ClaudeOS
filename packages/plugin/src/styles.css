@@ -449,6 +449,156 @@
   font-size: var(--ccc-text-body);
 }
 
+/*
+ * The hero head (UI-SPEC S1 "Anatomy", ADR-0023, D-50): a Display-step
+ * numeral, a hidden screen-reader label, a sub-caption and a decorative
+ * meter, rendered by the frame between the header and the body when a
+ * widget declares `variant: { kind: "hero" }`. It never appears without
+ * `data-variant="hero"`, so nothing here touches a card that has not opted
+ * in.
+ */
+.ccc-hero-head {
+  display: flex;
+  flex-direction: column;
+}
+
+.ccc-hero-head .ccc-kpi-number,
+.ccc-hero-head .ccc-hero-caption {
+  margin: 0;
+}
+
+.ccc-hero-caption {
+  font-size: var(--ccc-text-body);
+}
+
+.ccc-hero-head .ccc-hero-caption {
+  margin-top: var(--ccc-space-xs);
+}
+
+.ccc-hero-meter {
+  appearance: none;
+  width: 100%;
+  height: var(--ccc-hero-bar-height);
+  margin-top: var(--ccc-space-sm);
+  border: none;
+}
+
+/* A card that owns a hero head needs a fourth grid row for it — scoped to
+ * the cream surface only, because that is the one presentation set where the
+ * head actually renders (UI-SPEC "Surface by presentation"); every glass
+ * presentation of a hero widget keeps the plain three-row template with no
+ * `.ccc-hero-head` node in the DOM at all. */
+.ccc-card[data-variant="hero"][data-surface="cream"] {
+  grid-template-rows: auto auto 1fr auto;
+  background-color: var(--ccc-cream);
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] > .ccc-card-header {
+  grid-row: 1;
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] > .ccc-hero-head {
+  grid-row: 2;
+  /* Grid `gap` already supplies --ccc-space-sm between every row (matching
+   * "title → numeral"); this adds the extra delta the UI-SPEC's
+   * "meter → row list" gap needs on top of that shared gap. */
+  margin-bottom: calc(var(--ccc-space-md) - var(--ccc-space-sm));
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] > .ccc-card-body {
+  grid-row: 3;
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] > .ccc-card-footer {
+  grid-row: 4;
+}
+
+/* Every text descendant of the cream hero switches ink per the UI-SPEC
+ * "Ink pairs by surface" table. Primary text and the numeral use the
+ * stronger inverse ink; everything else (labels, meta, footer, sub-caption,
+ * badges, the Source button) uses the muted inverse ink. Neither
+ * `--ccc-accent` nor `--ccc-danger` is ever referenced here (Non-Negotiable
+ * 2): the progress line and every focus ring use `--ccc-accent-deep`
+ * instead, and a card that would need danger red renders on glass, never
+ * cream. */
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-card-header h3,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-hero-caption,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-state-body,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-service-line,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-meta,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-badge,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-source-button,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-more,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-row-action,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-card-footer,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-footer-time {
+  color: var(--ccc-ink-inverse-muted);
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-kpi-number,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-state-heading,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-primary,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-session-row-link,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-footer-absolute,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-badge[data-badge="live"],
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-badge[data-badge="partial"],
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-quick-action {
+  color: var(--ccc-ink-inverse);
+}
+
+/* Hairlines: the card boundary, row separators, badge outlines and control
+ * outlines all switch to the cream-audited hairline. */
+.ccc-card[data-variant="hero"][data-surface="cream"] {
+  border-color: var(--ccc-border-cream);
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-row,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-card-footer,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-badge,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-source-button,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-more,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-row-action,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-quick-action {
+  border-color: var(--ccc-border-cream);
+}
+
+/* The loading skeleton's blocks are filled with the cream hairline tone:
+ * the glass --ccc-border fill is a light translucent tone that vanishes on
+ * cream, leaving the loading hero an empty box (UI-SPEC S1 loading row). */
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-skeleton-line {
+  background-color: var(--ccc-border-cream);
+}
+
+/* Focus rings on cream use the deep accent (5.13:1) — the bright accent
+ * cannot identify a control there (ADR-0023 "the bright accent on cream at
+ * 2.47:1 and cannot carry text or identify a control"). */
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-source-button:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-list-more:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-quick-action:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-row-action:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-session-row-link:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-footer-time:focus-visible,
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-card-body[tabindex]:focus-visible {
+  outline-color: var(--ccc-accent-deep);
+}
+
+/* The progress line: track and fill both come from the cream-safe pair, and
+ * neither pseudo-element declares a transition — the fill never animates
+ * (UI-SPEC "the fill does not animate"). */
+.ccc-card[data-variant="hero"][data-surface="cream"] .ccc-hero-meter::-webkit-meter-bar {
+  background: var(--ccc-border-cream);
+  border-radius: var(--ccc-radius-pill);
+}
+
+.ccc-card[data-variant="hero"][data-surface="cream"]
+  .ccc-hero-meter::-webkit-meter-optimum-value,
+.ccc-card[data-variant="hero"][data-surface="cream"]
+  .ccc-hero-meter::-webkit-meter-suboptimum-value,
+.ccc-card[data-variant="hero"][data-surface="cream"]
+  .ccc-hero-meter::-webkit-meter-even-less-good-value {
+  background: var(--ccc-accent-deep);
+}
+
 /* A `tall` card scrolls inside its body slot only — the header and the
  * provenance footer never scroll away (UI-SPEC E1 overflow row). */
 .ccc-card[data-size="tall"] .ccc-card-body {
@@ -476,6 +626,15 @@
   color: var(--ccc-ink-muted);
   font-size: var(--ccc-text-body);
   overflow-wrap: anywhere;
+}
+
+/* The disconnected hero keeps its last-good rows under the "Service
+ * disconnected" copy. With no hero head in that state, the copy stands where
+ * the meter would, so it takes the UI-SPEC's "meter → row list" gap
+ * (--ccc-space-md) above the first row instead of butting against it (wave 2
+ * visual audit). */
+.ccc-card[data-variant="hero"][data-presentation="disconnected"] .ccc-state-body + * {
+  margin-top: var(--ccc-space-md);
 }
 
 .ccc-error-glyph {
@@ -623,6 +782,42 @@
   font-size: var(--ccc-text-body);
 }
 
+/* A button-reset variant of `.ccc-list-primary`, used only when a list body
+ * is given `onSelectRow` (UI-SPEC S1 "Primary line"). It carries the same
+ * ink, size and clamp classes; the reset below removes button chrome so it
+ * reads identically to the plain `<p>` it replaces. */
+/* Scoped under .ccc-card, or under .ccc-agent-runs for the S3 table's own
+ * row-link buttons (05-13) — both (0,2,0) — so it outranks Obsidian's global
+ * `button:not(.clickable-icon)` rules (0,1,1): fixed height, nowrap,
+ * background and box-shadow would otherwise break the two-line clamp. */
+.ccc-card .ccc-session-row-link,
+.ccc-agent-runs .ccc-session-row-link {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  white-space: normal;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Inside a card the row link also carries `.ccc-list-primary`, which gives
+ * it the ink and the Body size. The S3 table's name button carries neither,
+ * so without this it kept the browser's own `button` colour — near-black on
+ * the glass panel and all but invisible (05 wave 4 review). The Agent runs
+ * destination has no cream surface (UI-SPEC S3), so this is the light ink,
+ * audited on glass and on the selected row's opaque --ccc-surface
+ * (ADR-0023); the cream-card override above stays scoped to cream cards. */
+.ccc-agent-runs .ccc-session-row-link {
+  overflow-wrap: anywhere;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+}
+
 .ccc-list-meta {
   margin: 0;
   overflow-wrap: anywhere;
@@ -630,11 +825,39 @@
   font-size: var(--ccc-text-label);
 }
 
-/* The quick-action button and the `+{n} more` overflow control: one Label-step
- * pill each, a hairline outline, and a hit area no smaller than
- * `--ccc-space-lg` in either direction. */
+/* Only a row that actually uses the optional row action (UI-SPEC S1 row
+ * action) switches its layout: the primary and meta lines stay in a left
+ * column, and the action pill sits in a right column spanning both text
+ * rows. Every existing widget — none of which pass `renderAction` — keeps
+ * its current block layout untouched, so no committed visual baseline is
+ * affected by this rule (05-06 is the first widget to opt in). */
+.ccc-list-row:has(.ccc-row-action) {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: var(--ccc-space-sm);
+  align-items: center;
+}
+
+.ccc-list-row:has(.ccc-row-action) > .ccc-list-primary,
+.ccc-list-row:has(.ccc-row-action) > .ccc-session-row-link,
+.ccc-list-row:has(.ccc-row-action) > .ccc-list-meta {
+  grid-column: 1;
+}
+
+.ccc-list-row:has(.ccc-row-action) > .ccc-row-action {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  margin-left: 0;
+}
+
+/* The quick-action button, the `+{n} more` overflow control and the S1 row
+ * action: one Label-step pill each, a hairline outline, and a hit area no
+ * smaller than `--ccc-space-lg` in either direction. The row action's only
+ * animated property is colour, on `--ccc-motion-fast` (UI-SPEC S1 row
+ * action). */
 .ccc-quick-action,
-.ccc-list-more {
+.ccc-list-more,
+.ccc-row-action {
   min-width: var(--ccc-space-lg);
   min-height: var(--ccc-space-lg);
   padding: var(--ccc-space-xs) var(--ccc-space-sm);
@@ -654,7 +877,8 @@
 }
 
 .ccc-quick-action:hover,
-.ccc-list-more:hover {
+.ccc-list-more:hover,
+.ccc-row-action:hover {
   color: var(--ccc-ink);
 }
 
@@ -663,6 +887,8 @@
  * focusable control has (A11Y-01). */
 .ccc-quick-action:focus-visible,
 .ccc-list-more:focus-visible,
+.ccc-row-action:focus-visible,
+.ccc-session-row-link:focus-visible,
 .ccc-card-body[tabindex]:focus-visible {
   outline: var(--ccc-focus-ring) solid var(--ccc-accent);
   outline-offset: calc(-1 * var(--ccc-focus-ring));
@@ -714,6 +940,130 @@
 .ccc-badge[data-badge="partial"] {
   color: var(--ccc-ink);
   border-style: dashed;
+}
+
+/*
+ * The Claude usage card (UI-SPEC S2, plan 05-10). A glass `wide` card, never
+ * cream: cream is reserved for the S1 hero (UI-SPEC Color, "Layout
+ * accent"). Three fixed-order sections that stack in a narrow pane at the
+ * CARD's own width (`.ccc-card`'s existing `container-type: inline-size`,
+ * no new container declared here) — never a breakpoint layout.
+ */
+.ccc-usage-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--ccc-space-lg);
+}
+
+.ccc-usage-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  min-width: 0;
+}
+
+.ccc-usage-section > h4 {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-usage-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+}
+
+/* The usage bar's height is `--ccc-space-sm` (0.5rem) per the ADR-0023
+ * spacing table's own row for it — a deliberately different thickness from
+ * the S1 hero's 0.25rem progress line. `--ccc-ink` fill on `--ccc-border`
+ * track, aria-hidden, and NO transition on value change (UI-SPEC Motion:
+ * "no transition on value change"). */
+.ccc-usage-meter {
+  appearance: none;
+  width: 100%;
+  height: var(--ccc-space-sm);
+  border-radius: var(--ccc-radius-pill);
+}
+
+.ccc-usage-meter::-webkit-meter-bar {
+  background: var(--ccc-border);
+  border-radius: var(--ccc-radius-pill);
+}
+
+.ccc-usage-meter::-webkit-meter-optimum-value,
+.ccc-usage-meter::-webkit-meter-suboptimum-value,
+.ccc-usage-meter::-webkit-meter-even-less-good-value {
+  background: var(--ccc-ink);
+  border-radius: var(--ccc-radius-pill);
+}
+
+/* At CARD widths under three 12rem columns plus their gaps, the sections
+ * have already stacked (the grid's own `auto-fit` does that with no query);
+ * this only adds the hairline separator UI-SPEC's "Layout" paragraph
+ * describes for the stacked case. */
+@container (max-width: 39rem) {
+  .ccc-usage-section {
+    padding-top: var(--ccc-space-lg);
+    border-top: var(--ccc-border-hairline) solid var(--ccc-border);
+  }
+
+  .ccc-usage-section:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+}
+
+/* The Section 2 range selector (UI-SPEC "Range selector", R-19). Unpressed
+ * pills use the existing outline-pill look (`--ccc-ink-muted`, hairline
+ * border); the pressed pill is the ADR-0023 selected-pill treatment — cream
+ * fill, `--ccc-ink-inverse` text, weight 600 — the one place outside the S1
+ * hero that `--ccc-cream` is used (UI-SPEC Color, "Layout accent"). */
+.ccc-range-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-range-pill {
+  min-width: var(--ccc-space-lg);
+  min-height: var(--ccc-space-lg);
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  overflow-wrap: anywhere;
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-pill);
+  background: transparent;
+  color: var(--ccc-ink-muted);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  cursor: pointer;
+  transition:
+    color var(--ccc-motion-fast) ease-out,
+    background-color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-range-pill:hover {
+  color: var(--ccc-ink);
+}
+
+.ccc-range-pill[aria-pressed="true"] {
+  background-color: var(--ccc-cream);
+  color: var(--ccc-ink-inverse);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-range-pill:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* The bright accent is unaudited on the cream pressed-pill fill (ADR-0023);
+ * the deep accent is the cream-safe focus ring everywhere else it appears. */
+.ccc-range-pill[aria-pressed="true"]:focus-visible {
+  outline-color: var(--ccc-accent-deep);
 }
 
 /* Long values clamp to two lines with the full text still in the DOM, so the
@@ -779,6 +1129,261 @@
  * empty row) — one column, never a stretched banner. */
 .ccc-layout-empty {
   grid-column: span 1;
+}
+
+/*
+ * The Agent runs destination (UI-SPEC S3, D-52, plan 05-13). No cream
+ * surface anywhere — cream is reserved for the S1 hero (UI-SPEC Color,
+ * "Layout accent"). Every panel is glass, at the same radius/shadow/padding
+ * as every other card. `48rem` and `24rem` are the only new literals this
+ * phase adds (UI-SPEC "Phase 5 adds zero new design tokens"), following the
+ * Phase 3 precedent of hand-picked container-query thresholds.
+ */
+.ccc-agent-runs {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-lg);
+}
+
+.ccc-agent-runs-banner,
+.ccc-detail-pane {
+  padding: var(--ccc-space-lg);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+  box-shadow: var(--ccc-shadow-card);
+}
+
+/* Master/detail at 48rem and wider; below that the detail stacks beneath the
+ * sessions panel (UI-SPEC S3 "Layout"). Never horizontal scroll — columns
+ * hide by priority instead (below). */
+.ccc-agent-runs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ccc-space-lg);
+}
+
+@container (min-width: 48rem) {
+  .ccc-agent-runs-layout {
+    grid-template-columns: minmax(0, 3fr) minmax(20rem, 2fr);
+  }
+}
+
+/* "Back to sessions" only exists as a control below 48rem, where the detail
+ * pane stacks under the table instead of sitting beside it (UI-SPEC S3
+ * "Layout", "Overflow"). Always present in the DOM — the surrounding
+ * container query is the only thing that shows or hides it — so a keyboard
+ * user tabbing through source order finds it exactly where the narrow
+ * layout puts it, and no environment that cannot evaluate a container query
+ * (a test runner) loses the control entirely. */
+.ccc-back-to-sessions {
+  display: none;
+}
+
+@container (max-width: 48rem) {
+  .ccc-back-to-sessions {
+    display: inline-flex;
+    min-width: var(--ccc-space-lg);
+    min-height: var(--ccc-space-lg);
+    margin-bottom: var(--ccc-space-sm);
+    padding: var(--ccc-space-xs) var(--ccc-space-sm);
+    border: var(--ccc-border-hairline) solid var(--ccc-border);
+    border-radius: var(--ccc-radius-pill);
+    background: transparent;
+    color: var(--ccc-ink);
+    font-family: inherit;
+    font-size: var(--ccc-text-label);
+    cursor: pointer;
+  }
+
+  .ccc-back-to-sessions:focus-visible {
+    outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+    outline-offset: calc(-1 * var(--ccc-focus-ring));
+  }
+}
+
+/* The sessions panel is the table's own query container: the priority
+ * collapse below measures the box the columns are actually laid out in. In
+ * the master/detail layout that is 3/5 of the destination, and measured
+ * against the whole destination eight whole-word columns were forced into
+ * roughly 36rem (05 wave 4 review, mid-word breaks). */
+.ccc-agent-runs-sessions {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+}
+
+/* Disconnected (UI-SPEC S3 "Destination states"): the sessions/detail
+ * layout and the usage section dim like a Phase 3 card body, through the
+ * same audited token (A11Y-02); the banner stating why is never dimmed. */
+.ccc-agent-runs [data-dimmed="true"] {
+  opacity: var(--ccc-dim-opacity);
+}
+
+.ccc-agent-runs-sessions > section > h3 {
+  margin: 0 0 var(--ccc-space-sm);
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-agent-runs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Whole words only (05 wave 4 review: `anywhere` let the table squeeze a
+ * column below its longest word, so headers read `PROJ/ECT` and cells
+ * `claud/e-opus`). `break-word` keeps each word's width in the column's
+ * minimum, so a cell wraps at spaces and hyphens and a word only ever breaks
+ * if it alone is wider than the whole table. Columns that no longer fit
+ * whole collapse by priority instead (below). */
+.ccc-agent-runs-table th,
+.ccc-agent-runs-table td {
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  overflow-wrap: break-word;
+  text-align: left;
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-agent-runs-table th[scope="col"] {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-agent-runs-table th[scope="row"] {
+  font-weight: var(--ccc-weight-regular);
+}
+
+.ccc-agent-runs-table td {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-agent-runs-table tr {
+  min-height: var(--ccc-space-lg);
+}
+
+/* The selected row: three non-colour cues (an inset bar, the opaque
+ * surface, weight 600 on the name) plus `aria-current`, never colour alone
+ * (UI-SPEC "Sessions table", "Selected row"). */
+.ccc-agent-runs-table tr[data-selected="true"] {
+  background-color: var(--ccc-surface);
+  box-shadow: inset var(--ccc-focus-ring) 0 0 0 var(--ccc-ink);
+}
+
+.ccc-agent-runs-table tr[data-selected="true"] .ccc-session-row-link {
+  font-weight: var(--ccc-weight-strong);
+  color: var(--ccc-ink);
+}
+
+/* Columns 3-4 hide below 24rem; columns 5-8 hide below 48rem (UI-SPEC
+ * "Sessions table" priority column) — every hidden field stays reachable in
+ * the detail pane, so table semantics only ever drop rendering, never data.
+ * For the sessions tables the container is `.ccc-agent-runs-sessions`; the
+ * usage section's tables still measure the full-width destination. */
+@container (max-width: 24rem) {
+  .ccc-agent-runs-table [data-priority="secondary"] {
+    display: none;
+  }
+}
+
+@container (max-width: 48rem) {
+  .ccc-agent-runs-table [data-priority="tertiary"] {
+    display: none;
+  }
+}
+
+.ccc-detail-pane h3 {
+  margin: 0 0 var(--ccc-space-xs);
+  font-size: var(--ccc-text-heading);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-detail-pane h3:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* Session/Run IDs (UI-SPEC "Detail pane" #4): mono, selectable, never a
+ * path — the class carries no colour, only the type family. */
+.ccc-mono {
+  font-family: var(--ccc-font-mono);
+  overflow-wrap: anywhere;
+}
+
+/* The controls row (UI-SPEC "Detail pane" #2). Wrapped pills with a
+ * destructive control (Force-terminate) separated by --ccc-space-md from
+ * the rest, per "the order is fixed: primary first, destructive last …
+ * destructive is separated by --ccc-space-md". */
+.ccc-session-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-session-control:last-child .ccc-quick-action[data-capability="session:terminate"] {
+  margin-left: var(--ccc-space-md);
+  color: var(--ccc-danger);
+}
+
+.ccc-session-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  max-width: 16rem;
+}
+
+.ccc-quick-action[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* A linked-Run button whose Run isn't loaded (UI-SPEC S3 "Detail pane" #4):
+ * the visible reason beneath it carries the state, not the styling. */
+.ccc-list-more[aria-disabled="true"] {
+  cursor: default;
+}
+
+/* The fields dl (UI-SPEC "Detail pane" #4): `max-content 1fr` columns, row
+ * gap --ccc-space-xs, column gap --ccc-space-md. */
+.ccc-detail-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  row-gap: var(--ccc-space-xs);
+  column-gap: var(--ccc-space-md);
+  margin: var(--ccc-space-md) 0 0;
+}
+
+.ccc-detail-fields dt {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-detail-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+}
+
+/* Below 24rem the dl collapses to one column (UI-SPEC S3 "Overflow"). */
+@container (max-width: 24rem) {
+  .ccc-detail-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ===========================================================================
