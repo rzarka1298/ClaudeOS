@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
+import { ApprovalsSnapshotSchema } from "./approval.js";
 import { ClaudeIntegrationStatusSchema } from "./claude-integration.js";
 import { ProjectsSnapshotSchema } from "./projects.js";
 import { SessionViewSchema } from "./session.js";
@@ -63,6 +64,8 @@ export const SERVICE_EVENT_TYPES = [
   "session.upserted",
   "usage.updated",
   "claude-integration.updated",
+  // Phase 6 (append-only, D-28): an approval request's summary changed.
+  "approval.upserted",
 ] as const;
 export type ServiceEventType = (typeof SERVICE_EVENT_TYPES)[number];
 
@@ -98,6 +101,9 @@ export const SnapshotResponseSchema = z.object({
     sessions: z.array(SessionViewSchema).optional(),
     usage: UsageSummarySchema.optional(),
     claudeIntegration: ClaudeIntegrationStatusSchema.optional(),
+    // Phase 6 (append-only, D-28). Optional so an older service's snapshot
+    // still parses (Pitfall 17).
+    approvals: ApprovalsSnapshotSchema.optional(),
     projects: ProjectsSnapshotSchema,
   }),
 });

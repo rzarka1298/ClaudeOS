@@ -133,13 +133,12 @@ function fromHex(hex: string): string {
 
 describe("canonicalJson (Test 2)", () => {
   it("reproduces the RFC 8785 section 3.2.2 / 3.2.4 sample byte for byte", () => {
-    const parsed = JSON.parse(
-      String.raw`{
-        "numbers": [333333333.33333329, 1E30, 4.50, 2e-3, 0.000000000000000000000000001],
-        "string": "€$\u000F\u000aA'B"\\\\"\/",
-        "literals": [null, true, false]
-      }`,
-    );
+    // The RFC's input, spelled as the JavaScript values its parser produces.
+    const parsed = {
+      numbers: [Number("333333333.33333329"), 1e30, 4.5, 0.002, 1e-27],
+      string: '\u20ac$\u000f\nA\'B"\\\\"/',
+      literals: [null, true, false],
+    };
     const expected = fromHex(`
       7b 22 6c 69 74 65 72 61 6c 73 22 3a 5b 6e 75 6c 6c 2c 74 72
       75 65 2c 66 61 6c 73 65 5d 2c 22 6e 75 6d 62 65 72 73 22 3a
@@ -155,17 +154,15 @@ describe("canonicalJson (Test 2)", () => {
   });
 
   it("reproduces the RFC 8785 section 3.2.3 key-order sample", () => {
-    const parsed = JSON.parse(
-      String.raw`{
-        "€": "Euro Sign",
-        "\r": "Carriage Return",
-        "דּ": "Hebrew Letter Dalet With Dagesh",
-        "1": "One",
-        "😀": "Emoji: Grinning Face",
-        "\u0080": "Control",
-        "ö": "Latin Small Letter O With Diaeresis"
-      }`,
-    );
+    const parsed = {
+      "\u20ac": "Euro Sign",
+      "\r": "Carriage Return",
+      "\ufb33": "Hebrew Letter Dalet With Dagesh",
+      "1": "One",
+      "\ud83d\ude00": "Emoji: Grinning Face",
+      "\u0080": "Control",
+      "\u00f6": "Latin Small Letter O With Diaeresis",
+    };
     const expected =
       '{"\\r":"Carriage Return","1":"One","\u0080":"Control","ö":"Latin Small Letter O With Diaeresis","€":"Euro Sign","😀":"Emoji: Grinning Face","דּ":"Hebrew Letter Dalet With Dagesh"}';
     expect(canonicalJson(parsed)).toBe(expected);
@@ -336,7 +333,7 @@ describe("envelope and fingerprint (Test 3)", () => {
 
   it("changes the canonical form when any single covered member changes", () => {
     const base = canonicalJson(buildEnvelope(input));
-    const variants = [
+    const variants: Array<Parameters<typeof buildEnvelope>[0]> = [
       { ...input, operation: "session.force-terminate" },
       { ...input, subject: "subject-2" },
       { ...input, requester: { kind: "skill", label: "Dashboard" } },

@@ -244,8 +244,8 @@ describe("projects.updated (D-50 additive rule)", () => {
     expect(result.success).toBe(true);
   });
 
-  it("appends projects.updated directly after the three base types (Phase 5 appends after it)", () => {
-    expect(SERVICE_EVENT_TYPES).toHaveLength(7);
+  it("appends projects.updated directly after the three base types (Phase 5 and 6 append after it)", () => {
+    expect(SERVICE_EVENT_TYPES).toHaveLength(8);
     expect(SERVICE_EVENT_TYPES[3]).toBe("projects.updated");
   });
 });
