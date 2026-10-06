@@ -83,22 +83,29 @@ function packageDescriptors(type) {
 }
 
 /**
- * Element descriptors. Order matters for the `untrusted` entry and the three
- * "violation fixture" entries at the end: they use `exclusive: true` so a
- * file is reclassified as the element type it is impersonating instead of
- * accumulating the broader pattern it is nested inside (`service` for
- * `untrusted`; `test-fixtures` for the violation fixtures, which is allowed
- * to import everything and would make the fixture inert). `exclusive`
- * descriptors must be evaluated after the broader pattern they override, so
- * they are listed after it.
+ * Element descriptors. Order matters, and the order is the OPPOSITE of what
+ * this file used to claim: nested `exclusive: true` descriptors (today only
+ * `untrusted`; the Phase 6 approval elements join it in task 2) are listed
+ * BEFORE the per-package descriptors, most specific first. With them listed
+ * after `packages/service`, a file under `packages/service/src/untrusted/`
+ * was classified as plain `service` (verified with
+ * ESLINT_PLUGIN_BOUNDARIES_DEBUG=1: `types: ["service"]`), so the
+ * `untrusted` boundary never fired. The three "violation fixture" entries at
+ * the end are the only exclusive descriptors that stay after the package
+ * descriptors: their paths (`boundary-violations/<element>`) are not nested
+ * inside a broader element that would claim them first, and the fixtures must
+ * not be reclassified as `test-fixtures` (allowed to import everything,
+ * which would make the fixture inert). Regression cases live in
+ * packages/test-fixtures/src/boundary-lint.test.ts (research C-1, spike S6).
  */
 const elements = [
-  ...PACKAGE_ELEMENT_TYPES.flatMap(packageDescriptors),
+  // Nested exclusive elements first, most specific first (see above).
   {
     type: "untrusted",
     pattern: "packages/service/src/untrusted",
     exclusive: true,
   },
+  ...PACKAGE_ELEMENT_TYPES.flatMap(packageDescriptors),
   // Violation fixtures (plan 01-03, task 1) live under
   // packages/test-fixtures/boundary-violations/<element>/ so
   // packages/test-fixtures/src/boundary-lint.test.ts can exercise them, but
@@ -169,6 +176,13 @@ export default [
       // `local` so the rule actually evaluates it. Verified empirically via
       // ESLINT_PLUGIN_BOUNDARIES_DEBUG=1.
       "boundaries/flag-as-external": { inNodeModules: false },
+      // `./x.js` specifiers have no x.js on disk (only x.ts), so the default
+      // resolver leaves every intra-package edge unresolved and the
+      // dependencies rule skips it. This local resolver maps .js to .ts
+      // (eslint.boundary-resolver.cjs, research defect B).
+      "import/resolver": {
+        [new URL("./eslint.boundary-resolver.cjs", import.meta.url).pathname]: {},
+      },
     },
     rules: {
       "boundaries/no-private": "error",
