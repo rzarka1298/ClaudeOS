@@ -13,12 +13,17 @@ import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyMigrations } from "./migrate.js";
 import {
+  blockedBy,
   countTasks,
   getTask,
+  getTaskByPath,
   InvalidTaskCursorError,
   InvalidTaskIndexError,
   InvalidTaskQueryError,
+  listDueToday,
   queryTasks,
+  rebuildTaskIndex,
+  removeTaskByPath,
   type TaskCursor,
   type TaskIndexRecord,
   upsertTask,
@@ -26,6 +31,7 @@ import {
 import {
   columnNames,
   openMigratedFileDb,
+  openSecondConnection,
   REAL_MIGRATIONS_DIR,
   triggerNames,
 } from "./test-support/migration-helper.js";
@@ -38,7 +44,7 @@ import {
   SYNTHETIC_TASK_ZONE,
   syntheticScopes,
 } from "./test-support/synthetic-tasks.js";
-import { getVaultNote } from "./vault-notes-store.js";
+import { countVaultNotes, getVaultNote, upsertVaultNote } from "./vault-notes-store.js";
 
 const WORKSPACE_A = "workspace:aaaaaaaaa0123456789abcdef";
 const DAY = localDayBounds(SYNTHETIC_TASK_NOW, SYNTHETIC_TASK_ZONE);
@@ -929,6 +935,416 @@ describe("Filters 8: limits, totals and row views", () => {
       const context = filter === "project" ? { scope: "all", projectId: P1 } : { scope: "all" };
       const page = queryTasks(db, { context, filter, day: DAY });
       for (const row of page.rows) expect(() => TaskRowSchema.parse(row)).not.toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: rebuild, removal, lookups, the due-today feed and the 10,000-task budget
+
+function vaultNoteRows(): { note_id: string; path: string }[] {
+  return db.prepare("SELECT note_id, path FROM vault_notes ORDER BY path").all() as {
+    note_id: string;
+    path: string;
+  }[];
+}
+
+function putWikiNote(n: number): void {
+  upsertVaultNote(db, {
+    noteId: fixtureId(n) as never,
+    path: `global/wiki/note-${n}.md`,
+    scope: "global",
+    stage: "wiki",
+    aiGenerated: false,
+    claimType: null,
+    confidence: "verified",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    contentHash: null,
+  });
+}
+
+function snapshotOfIndex() {
+  return {
+    tasks: db.prepare("SELECT * FROM task_index ORDER BY note_id").all(),
+    tags: db.prepare("SELECT * FROM task_tags ORDER BY note_id, tag").all(),
+    deps: db.prepare("SELECT * FROM task_deps ORDER BY note_id, dep_id").all(),
+    notes: db.prepare("SELECT * FROM vault_notes ORDER BY note_id").all(),
+  };
+}
+
+describe("Rebuild 1: rebuildTaskIndex", () => {
+  it("replaces every task, tag and dependency row and the task rows in vault_notes, leaving other notes alone", () => {
+    putWikiNote(900);
+    put(1, { tags: ["old"], dependencies: ids(2) });
+    put(2, {});
+    // A stale task-shaped vault_notes row with no task_index row (an earlier path).
+    upsertVaultNote(db, {
+      noteId: fixtureId(901) as never,
+      path: "workspaces/aaaaaaaaa0123456789abcdef/tasks/stale-name.md",
+      scope: WORKSPACE_A,
+      stage: "capture",
+      aiGenerated: false,
+      claimType: null,
+      confidence: "unverified",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      contentHash: null,
+    });
+
+    rebuildTaskIndex(db, [
+      makeTaskRecord({ noteId: fixtureId(3), tags: ["x", "y"], dependencies: ids(4) }),
+      makeTaskRecord({ noteId: fixtureId(4), scope: WORKSPACE_A }),
+    ]);
+
+    expect(db.prepare("SELECT note_id FROM task_index ORDER BY note_id").all()).toEqual([
+      { note_id: fixtureId(3) },
+      { note_id: fixtureId(4) },
+    ]);
+    expect(db.prepare("SELECT tag FROM task_tags ORDER BY tag").all()).toEqual([
+      { tag: "x" },
+      { tag: "y" },
+    ]);
+    expect(db.prepare("SELECT dep_id FROM task_deps").all()).toEqual([{ dep_id: fixtureId(4) }]);
+    expect(
+      vaultNoteRows()
+        .map((row) => row.note_id)
+        .sort(),
+    ).toEqual([fixtureId(3), fixtureId(4), fixtureId(900)].sort());
+    expect(getVaultNote(db, fixtureId(900) as never)).not.toBeNull();
+    expect(getVaultNote(db, fixtureId(901) as never)).toBeNull();
+    expect(getVaultNote(db, fixtureId(1) as never)).toBeNull();
+    expect(countVaultNotes(db)).toBe(3);
+  });
+
+  it("matches task paths by the two task shapes, not by a free-form prefix", () => {
+    upsertVaultNote(db, {
+      noteId: fixtureId(800) as never,
+      path: "global/tasks-archive/keep.md",
+      scope: "global",
+      stage: "wiki",
+      aiGenerated: false,
+      claimType: null,
+      confidence: "verified",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      contentHash: null,
+    });
+    upsertVaultNote(db, {
+      noteId: fixtureId(801) as never,
+      path: "global/tasks/nested/keep.md",
+      scope: "global",
+      stage: "wiki",
+      aiGenerated: false,
+      claimType: null,
+      confidence: "verified",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      contentHash: null,
+    });
+    rebuildTaskIndex(db, []);
+    expect(countVaultNotes(db)).toBe(2);
+  });
+
+  it("leaves the previous index intact when a record mid-batch is invalid", () => {
+    put(1, { tags: ["keep"], dependencies: ids(2) });
+    put(2, {});
+    const before = snapshotOfIndex();
+    expect(() =>
+      rebuildTaskIndex(db, [
+        makeTaskRecord({ noteId: fixtureId(5) }),
+        makeTaskRecord({ noteId: fixtureId(6) }),
+        makeTaskRecord({ noteId: fixtureId(7), status: "archived" as never }),
+        makeTaskRecord({ noteId: fixtureId(8) }),
+      ]),
+    ).toThrow(InvalidTaskIndexError);
+    expect(snapshotOfIndex()).toEqual(before);
+  });
+
+  it("refuses a batch that names one id or one path twice, leaving the index intact", () => {
+    put(1, {});
+    const before = snapshotOfIndex();
+    expect(() =>
+      rebuildTaskIndex(db, [
+        makeTaskRecord({ noteId: fixtureId(5) }),
+        makeTaskRecord({ noteId: fixtureId(5) }),
+      ]),
+    ).toThrow(InvalidTaskIndexError);
+    expect(() =>
+      rebuildTaskIndex(db, [
+        makeTaskRecord({ noteId: fixtureId(5), path: "global/tasks/same.md" }),
+        makeTaskRecord({ noteId: fixtureId(6), path: "global/tasks/same.md" }),
+      ]),
+    ).toThrow(InvalidTaskIndexError);
+    expect(snapshotOfIndex()).toEqual(before);
+  });
+});
+
+describe("Rebuild 2: removeTaskByPath", () => {
+  it("deletes the task, its tags, its dependencies and its vault_notes row", () => {
+    const record = put(1, { tags: ["a"], dependencies: ids(2) });
+    put(3, { tags: ["b"] });
+    expect(removeTaskByPath(db, record.path)).toBe(true);
+    expect(db.prepare("SELECT note_id FROM task_index").all()).toEqual([{ note_id: fixtureId(3) }]);
+    expect(db.prepare("SELECT note_id FROM task_tags").all()).toEqual([{ note_id: fixtureId(3) }]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM task_deps").get()).toEqual({ n: 0 });
+    expect(vaultNoteRows().map((row) => row.note_id)).toEqual([fixtureId(3)]);
+  });
+
+  it("does nothing for an unknown path and never touches a note that is not a task", () => {
+    put(1, {});
+    putWikiNote(900);
+    expect(removeTaskByPath(db, "global/tasks/missing.md")).toBe(false);
+    expect(removeTaskByPath(db, "global/wiki/note-900.md")).toBe(false);
+    expect(removeTaskByPath(db, "../../etc/passwd")).toBe(false);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM task_index").get()).toEqual({ n: 1 });
+    expect(countVaultNotes(db)).toBe(2);
+  });
+});
+
+describe("Rebuild 3: lookups", () => {
+  it("returns the row view and the whole-file content hash by id and by path", () => {
+    const record = put(1, { title: "Hash me", contentHash: "c".repeat(64), priority: "low" });
+    const byId = getTask(db, fixtureId(1), DAY);
+    const byPath = getTaskByPath(db, record.path, DAY);
+    expect(byId).toEqual(byPath);
+    expect(byId).toMatchObject({
+      id: fixtureId(1),
+      title: "Hash me",
+      priority: "low",
+      path: record.path,
+      contentHash: "c".repeat(64),
+      sourceType: "manual",
+      aiGenerated: false,
+      confidence: "unverified",
+    });
+    expect(getTask(db, fixtureId(2))).toBeNull();
+    expect(getTaskByPath(db, "global/tasks/none.md")).toBeNull();
+  });
+
+  it("changes the stored hash on a metadata-only edit with an identical body", () => {
+    // Same note id, same body: only the status and the file hash differ, as a whole-file hash would.
+    put(1, { status: "ready", contentHash: "1".repeat(64) });
+    put(1, { status: "done", completed: "2026-10-05T10:00:00Z", contentHash: "2".repeat(64) });
+    expect(getTask(db, fixtureId(1))).toMatchObject({
+      status: "done",
+      contentHash: "2".repeat(64),
+      completedAt: "2026-10-05T10:00:00.000Z",
+    });
+    expect(getVaultNote(db, fixtureId(1) as never)?.contentHash).toBe("2".repeat(64));
+  });
+
+  it("lists unfinished dependencies with status and title, and a dangling id as unresolved", () => {
+    put(1, { dependencies: ids(2, 3, 4, 5, 99) });
+    put(2, { title: "Still ready", status: "ready" });
+    put(3, { title: "In flight", status: "in-progress" });
+    put(4, { title: "Finished", status: "done" });
+    put(5, { title: "Dropped", status: "cancelled" });
+    expect(blockedBy(db, fixtureId(1))).toEqual([
+      { resolved: true, id: fixtureId(2), title: "Still ready", status: "ready" },
+      { resolved: true, id: fixtureId(3), title: "In flight", status: "in-progress" },
+      { resolved: false, id: fixtureId(99) },
+    ]);
+    expect(blockedBy(db, fixtureId(4))).toEqual([]);
+    expect(blockedBy(db, fixtureId(777))).toEqual([]);
+  });
+});
+
+describe("Rebuild 4: the decision is derived from the note", () => {
+  it("stores the outcome and time, and a dismissed task appears under All and nowhere else", () => {
+    put(1, {
+      status: "cancelled",
+      due: "2026-10-05",
+      projectId: P1,
+      decision: { outcome: "dismissed", at: "2026-10-04T09:00:00Z" },
+    });
+    put(2, {
+      status: "ready",
+      decision: { outcome: "accepted", at: "2026-10-04T10:00:00+02:00" },
+    });
+    expect(getTask(db, fixtureId(1))?.decision).toEqual({
+      outcome: "dismissed",
+      at: "2026-10-04T09:00:00.000Z",
+    });
+    expect(getTask(db, fixtureId(2))?.decision).toEqual({
+      outcome: "accepted",
+      at: "2026-10-04T08:00:00.000Z",
+    });
+    expect(allIds("all").sort()).toEqual(ids(1, 2));
+    for (const filter of TASK_FILTERS.filter((f) => f !== "all" && f !== "project")) {
+      expect(allIds(filter)).not.toContain(fixtureId(1));
+    }
+    expect(allIds("project", { scope: "all", projectId: P1 })).toEqual([]);
+  });
+
+  it("rejects an unknown decision outcome", () => {
+    expect(() =>
+      put(1, { decision: { outcome: "maybe" as never, at: "2026-10-04T09:00:00Z" } }),
+    ).toThrow(InvalidTaskIndexError);
+  });
+});
+
+describe("Rebuild 5: the due-today feed", () => {
+  it("returns actionable tasks due or scheduled today and the overdue ones, bounded", () => {
+    putPredicateFixture();
+    const feed = listDueToday(db, { day: DAY });
+    // The Today order: timed first, then priority, all-day last.
+    expect(feed.due.map((row) => row.taskId)).toEqual(ids(2, 1, 16));
+    expect(feed.overdue.map((row) => row.taskId)).toEqual(ids(4, 5));
+    // Done, cancelled and proposed tasks due today are in neither list.
+    for (const id of ids(7, 12, 13)) {
+      expect(feed.due.map((row) => row.taskId)).not.toContain(id);
+      expect(feed.overdue.map((row) => row.taskId)).not.toContain(id);
+    }
+    expect(feed.due.find((row) => row.taskId === fixtureId(1))).toEqual({
+      taskId: fixtureId(1),
+      title: "Task 1",
+      dueDate: "2026-10-05",
+    });
+    expect(feed.due.find((row) => row.taskId === fixtureId(2))).toEqual({
+      taskId: fixtureId(2),
+      title: "Task 2",
+      dueAt: "2026-10-05T20:00:00.000Z",
+    });
+    expect(feed.due.find((row) => row.taskId === fixtureId(16))).toEqual({
+      taskId: fixtureId(16),
+      title: "Task 16",
+      scheduledDate: "2026-10-05",
+    });
+  });
+
+  it("follows a scope and is bounded to 50 rows per list", () => {
+    for (let n = 1; n <= 70; n++) put(n, { due: "2026-10-05" });
+    for (let n = 101; n <= 170; n++) put(n, { due: "2026-10-01" });
+    put(300, { due: "2026-10-05", scope: WORKSPACE_A });
+    const feed = listDueToday(db, { day: DAY });
+    expect(feed.due).toHaveLength(50);
+    expect(feed.overdue).toHaveLength(50);
+    const scoped = listDueToday(db, { day: DAY, scope: WORKSPACE_A });
+    expect(scoped.due.map((row) => row.taskId)).toEqual(ids(300));
+    expect(scoped.overdue).toEqual([]);
+  });
+});
+
+describe("Rebuild 6: privacy", () => {
+  it("no table carries a body-like column and a stored title is only ever a validated single line", () => {
+    const forbidden = /body|descr|content(?!_hash)|excerpt|markdown|^text$/i;
+    for (const table of ["task_index", "task_tags", "task_deps"]) {
+      expect(columnNames(db, table).filter((name) => forbidden.test(name))).toEqual([]);
+    }
+    expect(() => put(1, { title: "line one\nline two" })).toThrow(InvalidTaskIndexError);
+    expect(() => put(1, { title: "hidden\u202etext" })).toThrow(InvalidTaskIndexError);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM task_index").get()).toEqual({ n: 0 });
+  });
+});
+
+describe("Rebuild 7: TASK-09, ten thousand tasks inside 250 ms", () => {
+  const CEILING_MS = 250;
+  const TASK_COUNT = 10_000;
+  const REBUILD_CEILING_MS = 5_000;
+
+  it("answers every view in every scope, the counts, deep pages and the feed under the ceiling", () => {
+    const records = generateSyntheticTasks(TASK_COUNT);
+    const scopes = ["all", ...syntheticScopes()];
+    const rebuildStart = performance.now();
+    rebuildTaskIndex(db, records);
+    const rebuildMs = performance.now() - rebuildStart;
+    console.log(`[TASK-09] rebuild of ${TASK_COUNT} tasks: ${rebuildMs.toFixed(1)}ms`);
+    expect(rebuildMs).toBeLessThan(REBUILD_CEILING_MS);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM task_index").get()).toEqual({ n: TASK_COUNT });
+    expect(countVaultNotes(db)).toBe(TASK_COUNT);
+
+    const timings: { label: string; ms: number }[] = [];
+    const measure = <T>(label: string, run: () => T): T => {
+      const started = performance.now();
+      const result = run();
+      const ms = performance.now() - started;
+      timings.push({ label, ms });
+      return result;
+    };
+
+    for (const scope of scopes) {
+      for (const filter of TASK_FILTERS) {
+        const context = filter === "project" ? { scope, projectId: P1 } : { scope };
+        measure(`list ${filter} / ${scope === "all" ? "all" : scope.slice(0, 18)}`, () =>
+          queryTasks(db, { context, filter, day: DAY }),
+        );
+      }
+      measure(`counts / ${scope === "all" ? "all" : scope.slice(0, 18)}`, () =>
+        countTasks(db, { context: { scope }, day: DAY }),
+      );
+    }
+
+    // Deep keyset pages: walk the whole unfiltered list and time every page.
+    let cursor: TaskCursor | undefined;
+    let pages = 0;
+    for (let guard = 0; guard < 2_000; guard++) {
+      const page = measure(`all page ${pages}`, () =>
+        queryTasks(db, {
+          context: { scope: "all" },
+          filter: "all",
+          day: DAY,
+          ...(cursor === undefined ? {} : { cursor }),
+        }),
+      );
+      pages++;
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+    }
+    expect(pages).toBe(Math.ceil(TASK_COUNT / 25));
+
+    measure("due-today feed", () => listDueToday(db, { day: DAY }));
+    measure("blockedBy", () =>
+      blockedBy(db, (records.find((r) => r.dependencies.length > 0) as TaskIndexRecord).noteId),
+    );
+
+    const worst = timings.reduce((a, b) => (b.ms > a.ms ? b : a));
+    console.log(
+      `[TASK-09] ${timings.length} measurements, worst ${worst.label}: ${worst.ms.toFixed(2)}ms`,
+    );
+    for (const filter of TASK_FILTERS) {
+      const sample = timings.filter((t) => t.label.startsWith(`list ${filter} /`));
+      console.log(`[TASK-09] ${filter}: ${sample.map((t) => `${t.ms.toFixed(1)}ms`).join(", ")}`);
+    }
+    console.log(
+      `[TASK-09] counts: ${timings
+        .filter((t) => t.label.startsWith("counts"))
+        .map((t) => `${t.ms.toFixed(1)}ms`)
+        .join(", ")}`,
+    );
+    for (const timing of timings) expect(timing.ms, timing.label).toBeLessThan(CEILING_MS);
+  }, 120_000);
+});
+
+describe("Rebuild 8: a reader during a rebuild sees the old or the new index, never a partial one", () => {
+  it("shows the previous complete index to a second connection while the rebuild is mid-transaction", () => {
+    for (let n = 1; n <= 5; n++) put(n, { tags: ["old"] });
+    const reader = openSecondConnection(join(dir, "operational.db"));
+    try {
+      const countOf = () =>
+        reader
+          .prepare(
+            "SELECT (SELECT COUNT(*) FROM task_index) AS tasks, (SELECT COUNT(*) FROM task_tags) AS tags, (SELECT COUNT(*) FROM vault_notes) AS notes",
+          )
+          .get();
+      const fresh = Array.from({ length: 200 }, (_unused, i) =>
+        makeTaskRecord({ noteId: fixtureId(1000 + i), tags: ["new"] }),
+      );
+      const seen: unknown[] = [];
+      const batch = [...fresh];
+      const real = batch[120] as TaskIndexRecord;
+      Object.defineProperty(batch, 120, {
+        enumerable: true,
+        get() {
+          seen.push(countOf());
+          return real;
+        },
+      });
+      rebuildTaskIndex(db, batch);
+      expect(seen).toEqual([{ tasks: 5, tags: 5, notes: 5 }]);
+      expect(countOf()).toEqual({ tasks: 200, tags: 200, notes: 200 });
+    } finally {
+      reader.close();
     }
   });
 });

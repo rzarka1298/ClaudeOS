@@ -790,3 +790,48 @@ export function countTasks(
     open: count("c_open"),
   };
 }
+
+/** A feed row: the task id, its title and the date values it carries. */
+export interface TaskDueTodayRow {
+  readonly taskId: string;
+  readonly title: string;
+  readonly dueDate?: string;
+  readonly dueAt?: string;
+  readonly scheduledDate?: string;
+  readonly scheduledAt?: string;
+}
+
+/** A dependency that is not finished: a task with its title and status, or an id naming no task. */
+export type TaskBlockedByItem =
+  | {
+      readonly resolved: true;
+      readonly id: string;
+      readonly title: string;
+      readonly status: TaskStatus;
+    }
+  | { readonly resolved: false; readonly id: string };
+
+/** RED skeletons (plan 06-14 task 3). */
+export function rebuildTaskIndex(
+  _db: Database.Database,
+  _records: readonly TaskIndexRecord[],
+): void {}
+export function removeTaskByPath(_db: Database.Database, _path: string): boolean {
+  return false;
+}
+export function getTaskByPath(
+  _db: Database.Database,
+  _path: string,
+  _day?: LocalDayBounds,
+): TaskIndexDetail | null {
+  return null;
+}
+export function blockedBy(_db: Database.Database, _noteId: string): TaskBlockedByItem[] {
+  return [];
+}
+export function listDueToday(
+  _db: Database.Database,
+  _query: { readonly day: LocalDayBounds; readonly scope?: string },
+): { readonly due: TaskDueTodayRow[]; readonly overdue: TaskDueTodayRow[] } {
+  return { due: [], overdue: [] };
+}
