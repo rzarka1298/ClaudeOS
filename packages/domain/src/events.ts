@@ -66,6 +66,8 @@ export const SERVICE_EVENT_TYPES = [
   "claude-integration.updated",
   // Phase 6 (append-only, D-28): an approval request's summary changed.
   "approval.upserted",
+  // Phase 6 (append-only, D-28): the task index changed; carries a generation.
+  "tasks.changed",
 ] as const;
 export type ServiceEventType = (typeof SERVICE_EVENT_TYPES)[number];
 

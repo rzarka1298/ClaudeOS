@@ -191,22 +191,33 @@ describe("Test 2 (display maps)", () => {
     for (const glyph of glyphs) {
       expect(codePoints(glyph), glyph).toBe(1);
       expect(/\p{Emoji_Presentation}/u.test(glyph), `emoji presentation: ${glyph}`).toBe(false);
-      expect(/[︎️]/.test(glyph), `variation selector: ${glyph}`).toBe(false);
+      expect(
+        [...glyph].some(
+          (ch) => ch === String.fromCodePoint(0xfe0e) || ch === String.fromCodePoint(0xfe0f),
+        ),
+        `variation selector: ${glyph}`,
+      ).toBe(false);
     }
   });
 
   it("repeats a glyph across vocabularies only for the three outcome glyphs", () => {
-    const OUTCOME = new Set(["✓", "✕", "⊘"]);
+    const OUTCOME = new Set(["\u2713", "\u2715", "\u2298"]);
+    const taskStatus = Object.values(TASK_STATUS_DISPLAY).map((entry) => entry.glyph);
+    const taskPriority = Object.values(TASK_PRIORITY_DISPLAY)
+      .map((entry) => entry.glyph)
+      .filter((glyph): glyph is string => glyph !== null);
+    const approval = Object.values(APPROVAL_STATE_DISPLAY).map((entry) => entry.glyph);
+    const run = Object.values(RUN_STATE_DISPLAY).map((entry) => entry.glyph);
+    // The freshness and Phase 4 sets are documented in the UI-SPEC glyph rule.
+    const freshness = ["\u25cf", "\u25d0", "\u25d4", "\u25cb"];
+    const phase4 = ["\u2387", "\u2731", "\u25cc", "\u25b2", "\u2605", "\u25c8", "\u25b3"];
     const vocabularies: Record<string, readonly string[]> = {
-      taskStatus: Object.values(TASK_STATUS_DISPLAY).map((entry) => entry.glyph),
-      taskPriority: Object.values(TASK_PRIORITY_DISPLAY)
-        .map((entry) => entry.glyph)
-        .filter((glyph): glyph is string => glyph !== null),
-      approval: Object.values(APPROVAL_STATE_DISPLAY).map((entry) => entry.glyph),
-      run: Object.values(RUN_STATE_DISPLAY).map((entry) => entry.glyph),
-      // The freshness and Phase 4 sets are documented in the UI-SPEC glyph rule.
-      freshness: ["●", "◐", "◔", "○"],
-      phase4: ["⎇", "✱", "◌", "▲", "★", "◈", "△"],
+      taskStatus,
+      taskPriority,
+      approval,
+      run,
+      freshness,
+      phase4,
     };
     const owners = new Map<string, string[]>();
     for (const [name, glyphs] of Object.entries(vocabularies)) {
@@ -215,18 +226,14 @@ describe("Test 2 (display maps)", () => {
       }
     }
     // Earlier-phase overlaps (Phase 4's diamond and quarter circle) are out of scope and untouched.
-    const taskOwned = new Set([...vocabularies.taskStatus, ...vocabularies.taskPriority]);
-    for (const glyph of taskOwned) {
-      const names = owners.get(glyph) ?? [];
+    for (const glyph of new Set([...taskStatus, ...taskPriority])) {
       if (OUTCOME.has(glyph)) continue;
-      expect(names, `glyph ${glyph}`).toHaveLength(1);
+      expect(owners.get(glyph), `glyph ${glyph}`).toHaveLength(1);
     }
-    // And within the task and approval maps, every non-outcome glyph is unique.
-    const own = [
-      ...vocabularies.taskStatus,
-      ...(vocabularies.taskPriority as string[]),
-      ...(vocabularies.approval as string[]),
-    ].filter((glyph) => !OUTCOME.has(glyph));
+    // And within the task, priority and approval maps, every non-outcome glyph is unique.
+    const own = [...taskStatus, ...taskPriority, ...approval].filter(
+      (glyph) => !OUTCOME.has(glyph),
+    );
     expect(new Set(own).size).toBe(own.length);
   });
 
@@ -317,7 +324,12 @@ describe("Test 3 (routes)", () => {
         TaskCreateRequestSchema.safeParse({ ...minimal, title: "x".repeat(200) }).success,
       ).toBe(true);
       expect(TaskCreateRequestSchema.safeParse({ ...minimal, title: "a\nb" }).success).toBe(false);
-      expect(TaskCreateRequestSchema.safeParse({ ...minimal, title: "a‮b" }).success).toBe(false);
+      expect(
+        TaskCreateRequestSchema.safeParse({
+          ...minimal,
+          title: `a${String.fromCodePoint(0x202e)}b`,
+        }).success,
+      ).toBe(false);
     });
 
     it("rejects a bad zone, date, time, scope, priority and tag list", () => {

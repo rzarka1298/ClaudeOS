@@ -22,4 +22,8 @@ export * from "./projects.js";
 export * from "./run.js";
 export * from "./session.js";
 export * from "./session-actions.js";
+export * from "./task-corpus.js";
+export * from "./task-schema.js";
+export * from "./task-time.js";
+export * from "./tasks.js";
 export * from "./usage.js";

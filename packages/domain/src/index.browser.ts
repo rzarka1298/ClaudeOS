@@ -5,9 +5,9 @@
  * equivalent; this is inherently service-only logic, not a bundling
  * limitation).
  *
- * `approval-corpus.ts` is also left out: it is test data (the hostile-text
- * corpus), not product code, so no browser bundle should carry it. It is
- * exported from the full barrel only.
+ * `approval-corpus.ts` and `task-corpus.ts` are also left out: they are test
+ * data (the hostile-text and hostile-task corpora), not product code, so no
+ * browser bundle should carry them. They are exported from the full barrel only.
  *
  * Every other domain file is now free of top-level Node built-in imports
  * (`posix-path.ts`'s and `ids.ts`'s docblocks record the two swaps that made
@@ -48,4 +48,7 @@ export * from "./projects.js";
 export * from "./run.js";
 export * from "./session.js";
 export * from "./session-actions.js";
+export * from "./task-schema.js";
+export * from "./task-time.js";
+export * from "./tasks.js";
 export * from "./usage.js";
