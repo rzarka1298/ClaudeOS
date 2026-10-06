@@ -29,7 +29,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TaskFrontmatterSchema, workspaceScope } from "@ccc/domain";
@@ -404,5 +404,33 @@ describe("Test 2 (06-15): the tasks folder in setup and createWorkspace", () => 
     const index = readFileSync(join(workspace.path, "tasks", "index.md"), "utf8");
     expect(matter(index).data.folder).toBe(`workspaces/${workspace.workspaceId}/tasks`);
     expect(index).not.toContain("_No notes yet._");
+  });
+});
+
+describe("Test 1 (06-15 task 3): the vault CLAUDE.md names the tasks folder", () => {
+  test("it describes tasks as one note each with a stable id and a summary index", () => {
+    expect(VAULT_CLAUDE_MD).toContain("`global/tasks/`");
+    expect(VAULT_CLAUDE_MD).toMatch(/every workspace/);
+    expect(VAULT_CLAUDE_MD).toMatch(/\*\*one note\*\*/);
+    expect(VAULT_CLAUDE_MD).toMatch(/stable `id`/);
+    expect(VAULT_CLAUDE_MD).toMatch(/summary, not a listing/);
+    expect(VAULT_CLAUDE_MD).toMatch(/through the plugin, or by hand in Obsidian/);
+    expect(VAULT_CLAUDE_MD).toMatch(/leave the `id` alone/);
+  });
+
+  test("it carries no owner name, absolute path, project name or email", () => {
+    expect(VAULT_CLAUDE_MD).not.toContain(homedir());
+    expect(VAULT_CLAUDE_MD).not.toContain(userInfo().username);
+    expect(VAULT_CLAUDE_MD).not.toMatch(/\/Users\/|\/home\/|[A-Za-z]:\\/);
+    expect(VAULT_CLAUDE_MD).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
+  });
+
+  test("the seeded file on disk is exactly the generated text and still has the three required sections", () => {
+    initializeVault(vaultRoot);
+    const onDisk = readFileSync(join(vaultRoot, "CLAUDE.md"), "utf8");
+    expect(onDisk).toBe(VAULT_CLAUDE_MD);
+    for (const heading of ["## Lifecycle", "## Finding notes", "## Tasks", "## Scope boundaries"]) {
+      expect(onDisk).toContain(heading);
+    }
   });
 });
