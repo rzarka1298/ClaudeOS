@@ -22,9 +22,12 @@ import tsParser from "@typescript-eslint/parser";
 import boundaries from "eslint-plugin-boundaries";
 
 /**
- * Every element type this repository recognises. Exactly 13 -- one per
- * REPO-02 package plus `untrusted`, the sub-package element ADR-0014
- * carves out of `service`. Keep this list and the `elements` array below in
+ * Every element type this repository recognises. Exactly 16 -- one per
+ * REPO-02 package (12), plus four sub-package elements carved out of
+ * `service`: `untrusted` (ADR-0014) and the three Phase 6 elements
+ * `approval` (the engine folder), `approval-minter` (the one file that can
+ * mint a capability token) and `executors` (effect code), per D-01, D-03 and
+ * A-4 of the Phase 6 context. Keep this list and the `elements` array below in
  * sync: every `type` used in `elements` must appear here, and every entry
  * here must have at least one descriptor in `elements`.
  */
@@ -39,17 +42,25 @@ const ELEMENT_TYPES = [
   "collectors",
   "launchers",
   "untrusted",
+  "approval",
+  "approval-minter",
+  "executors",
   "service",
   "plugin",
   "test-fixtures",
 ];
 
 /**
- * The 12 element types that are also real pnpm workspace packages (every
- * `ELEMENT_TYPES` entry except `untrusted`, which is a subfolder of
- * `service` with no npm name of its own).
+ * The sub-package elements: subfolders of `service` with no npm name of
+ * their own, so they are never generated as package descriptors.
  */
-const PACKAGE_ELEMENT_TYPES = ELEMENT_TYPES.filter((t) => t !== "untrusted");
+const SUBFOLDER_ELEMENT_TYPES = ["untrusted", "approval", "approval-minter", "executors"];
+
+/**
+ * The 12 element types that are also real pnpm workspace packages (every
+ * `ELEMENT_TYPES` entry except the sub-package elements).
+ */
+const PACKAGE_ELEMENT_TYPES = ELEMENT_TYPES.filter((t) => !SUBFOLDER_ELEMENT_TYPES.includes(t));
 
 /**
  * Two descriptors per real package: one for its own source path
@@ -105,6 +116,25 @@ const elements = [
     pattern: "packages/service/src/untrusted",
     exclusive: true,
   },
+  // The Phase 6 approval elements (D-03). `approval/mint` is listed before
+  // `approval` because it is nested inside it and must win. A single file
+  // cannot be an element in this plugin version (ADR-0019 finding 3), so the
+  // minter lives alone in its own folder.
+  {
+    type: "approval-minter",
+    pattern: "packages/service/src/approval/mint",
+    exclusive: true,
+  },
+  {
+    type: "approval",
+    pattern: "packages/service/src/approval",
+    exclusive: true,
+  },
+  {
+    type: "executors",
+    pattern: "packages/service/src/executors",
+    exclusive: true,
+  },
   ...PACKAGE_ELEMENT_TYPES.flatMap(packageDescriptors),
   // Violation fixtures (plan 01-03, task 1) live under
   // packages/test-fixtures/boundary-violations/<element>/ so
@@ -138,9 +168,17 @@ const elements = [
   },
 ];
 
-/** Every element except `plugin` -- the "service may import everything
- * except plugin" allow list. */
-const NOT_PLUGIN = ELEMENT_TYPES.filter((t) => t !== "plugin");
+/** The elements the rest of the service may NOT import freely: the approval
+ * engine internals, the minter and the executors (D-01, D-03). The engine's
+ * public entry and the composition root's executors import are separate,
+ * narrower policies below. */
+const APPROVAL_SIDE = ["approval", "approval-minter", "executors"];
+
+/** Every element except `plugin` and the approval side -- the "service may
+ * import everything else" allow list. */
+const SERVICE_FREE_IMPORTS = ELEMENT_TYPES.filter(
+  (t) => t !== "plugin" && !APPROVAL_SIDE.includes(t),
+);
 
 /** Builds a `boundaries/dependencies` `allow` clause for one or more target
  * element types (object-selector syntax -- the only shape that actually
@@ -180,6 +218,13 @@ export default [
       // resolver leaves every intra-package edge unresolved and the
       // dependencies rule skips it. This local resolver maps .js to .ts
       // (eslint.boundary-resolver.cjs, research defect B).
+      // Element patterns are matched against paths relative to a root. The
+      // plugin defaults that root to process.cwd(), so lint results used to
+      // depend on where the process was started (a vitest run inside
+      // packages/test-fixtures classified `packages/test-fixtures/...` files
+      // as unclassified and the policy stayed silent). Pin it to the
+      // repository root.
+      "boundaries/root-path": new URL(".", import.meta.url).pathname,
       "import/resolver": {
         [new URL("./eslint.boundary-resolver.cjs", import.meta.url).pathname]: {},
       },
@@ -220,9 +265,44 @@ export default [
             // else. No adapters, no vault-repo, no operational-store, no
             // keychain.
             { from: { element: { type: "untrusted" } }, allow: allowElementTypes(["domain"]) },
-            // service -- the composition root. May import everything
-            // except plugin.
-            { from: { element: { type: "service" } }, allow: allowElementTypes(NOT_PLUGIN) },
+            // approval -- the engine folder (APPR-01). May import domain and
+            // its own minter; nothing else, so it can never reach an
+            // executor, the store, the service or a route.
+            {
+              from: { element: { type: "approval" } },
+              allow: allowElementTypes(["domain", "approval-minter"]),
+            },
+            // approval-minter -- the single token-minting module. Domain
+            // only, and (below) importable by nothing outside the approval
+            // folder.
+            {
+              from: { element: { type: "approval-minter" } },
+              allow: allowElementTypes(["domain"]),
+            },
+            // executors -- effect code. Domain only; reachable only from the
+            // composition root (policy below).
+            { from: { element: { type: "executors" } }, allow: allowElementTypes(["domain"]) },
+            // service -- the composition root. May import everything except
+            // plugin and the approval side (approval, approval-minter,
+            // executors), which get their own narrower policies below.
+            {
+              from: { element: { type: "service" } },
+              allow: allowElementTypes(SERVICE_FREE_IMPORTS),
+            },
+            // ...but the approval engine's PUBLIC ENTRY (`index.ts` inside the
+            // approval folder) is importable by any service file (D-01): the
+            // engine is the one door, deep files and the minter stay shut.
+            {
+              from: { element: { type: "service" } },
+              allow: { to: { element: { type: "approval", fileInternalPath: "index.ts" } } },
+            },
+            // ...and only the composition root, packages/service/src/main.ts,
+            // may import the executors (D-03, T-06-02): no route or other
+            // module can reach effect code.
+            {
+              from: { element: { type: "service", fileInternalPath: "src/main.ts" } },
+              allow: allowElementTypes(["executors"]),
+            },
             // plugin -- the only element permitted to import the Obsidian
             // API (enforced separately below via no-restricted-imports). It
             // may import domain and service-api-client only; it must speak
@@ -232,10 +312,12 @@ export default [
               from: { element: { type: "plugin" } },
               allow: allowElementTypes(["domain", "service-api-client"]),
             },
-            // test-fixtures -- may import every element.
+            // test-fixtures -- may import every element except the minter, so
+            // no test can import the one module that mints a token (T-06-01;
+            // tests that need a token cast it locally, see backstop rule 10).
             {
               from: { element: { type: "test-fixtures" } },
-              allow: allowElementTypes(ELEMENT_TYPES),
+              allow: allowElementTypes(ELEMENT_TYPES.filter((t) => t !== "approval-minter")),
             },
           ],
         },
