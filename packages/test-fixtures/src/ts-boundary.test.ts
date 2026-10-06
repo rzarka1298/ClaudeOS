@@ -71,6 +71,8 @@ describe("real nested approval and executors projects", () => {
       const config = readTsConfig(configPath);
       expect(config.extends).toBe("../../../../tsconfig.base.json");
       expect(config.compilerOptions?.composite).toBe(true);
+      // A violating build must not scatter emitted files outside the folder.
+      expect(config.compilerOptions?.noEmitOnError).toBe(true);
       expect(config.compilerOptions?.rootDir).toBe(".");
       expect(config.compilerOptions?.outDir).toBe(`../../dist/${folder}`);
       expect(config.include).toEqual(["**/*.ts"]);

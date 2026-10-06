@@ -1,0 +1,12 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmitOnError": true,
+    "rootDir": ".",
+    "outDir": "../../dist/approval",
+    "tsBuildInfoFile": "../../dist/approval/tsconfig.tsbuildinfo"
+  },
+  "include": ["**/*.ts"],
+  "references": [{ "path": "../../../domain" }]
+}
