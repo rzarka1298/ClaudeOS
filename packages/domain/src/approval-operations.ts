@@ -118,6 +118,12 @@ export interface OperationDefinition<Op extends EnabledOperation, Payload> {
   readonly operation: Op;
   /** Strict. Validated at submit and validated again at execute, from the stored row. */
   readonly payload: z.ZodType<Payload>;
+  /**
+   * The subject the payload targets (for force-terminate, the run id). When
+   * present the engine requires a request's `subject` to equal it, so the
+   * subject a capability token covers is the target the owner was shown.
+   */
+  subjectOf?(payload: Payload): string;
   /** Read-only facts gathered before the claim transaction. */
   claimFacts?(payload: Payload): Promise<ClaimFacts>;
   /** Carries the approved action out. Reads the payload from the stored row, never from a request. */

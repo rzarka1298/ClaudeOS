@@ -127,6 +127,8 @@ export function createForceTerminateOperation(
     operation: OPERATION,
     payload: ForceTerminatePayloadSchema,
 
+    subjectOf: (payload: ForceTerminatePayload) => payload.runId,
+
     async claimFacts(payload: ForceTerminatePayload): Promise<ClaimFacts> {
       // Read-only. A missing Run or a failing inspector yields null facts rather
       // than an error, so the engine can still claim and let the executor refuse

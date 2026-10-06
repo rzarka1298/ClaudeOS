@@ -31,6 +31,9 @@ export interface DiagnosticTestDeps {
 
 const OPERATION = "diagnostic.test" as const;
 
+/** The one subject a diagnostic request has: it targets nothing. */
+const DIAGNOSTIC_SUBJECT = "diagnostic";
+
 /** Evidence code recorded when reconcile finds the effect row. */
 const EVIDENCE_EFFECT_RECORDED = "diagnostic-effect-recorded";
 const UNKNOWN_INVALID_KEY = "invalid-idempotency-key";
@@ -61,6 +64,8 @@ export function createDiagnosticTestOperation(
   return {
     operation: OPERATION,
     payload: DiagnosticTestPayloadSchema,
+
+    subjectOf: () => DIAGNOSTIC_SUBJECT,
 
     async execute(token, _payload, context: ExecuteContext): Promise<ExecuteOutcome> {
       // Defense in depth: the engine minted this token for this proposal, so a

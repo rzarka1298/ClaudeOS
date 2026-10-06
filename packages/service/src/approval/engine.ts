@@ -431,6 +431,17 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
 
     const parsed = definition.payload.safeParse(input.payload);
     if (!parsed.success) return { kind: "rejected", reason: "invalid-payload" };
+    // The subject names what the capability token will cover: it must be the target the payload
+    // (and so the owner's view) names, never a separate claim by the requester.
+    if (definition.subjectOf !== undefined) {
+      let expected: string;
+      try {
+        expected = definition.subjectOf(parsed.data);
+      } catch {
+        return { kind: "rejected", reason: "invalid-payload" };
+      }
+      if (input.subject !== expected) return { kind: "rejected", reason: "invalid-payload" };
+    }
     // A request the owner could not be shown is never stored: the draft must render.
     try {
       definition.render(parsed.data, { requester: input.requester });

@@ -27,6 +27,11 @@ function contextFor(idempotencyKey: string, attempt = 1) {
 const REQUESTER: Requester = { kind: "dashboard", label: "ZZ-requester-label" };
 
 describe("diagnostic.test operation", () => {
+  it("has the fixed subject \"diagnostic\" for every payload", () => {
+    const op = createDiagnosticTestOperation({ effects: createFakeEffects() });
+    expect(op.subjectOf?.({})).toBe("diagnostic");
+  });
+
   describe("Test 1: payload", () => {
     it("accepts only an empty object", () => {
       const { payload } = createDiagnosticTestOperation({ effects: createFakeEffects() });

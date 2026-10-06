@@ -293,6 +293,11 @@ describe("session.force-terminate operation: payload, claim facts and render", (
       expect(Object.keys(op)).not.toContain("maxApprovalAgeMs");
     });
 
+    it("derives its subject from the payload's run id", () => {
+      const payload = parsed();
+      expect(op.subjectOf?.(payload)).toBe(payload.runId);
+    });
+
     it("has a claimFacts hook", () => {
       expect(typeof op.claimFacts).toBe("function");
     });

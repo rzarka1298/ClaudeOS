@@ -1071,3 +1071,26 @@ describe("outcome codes and stuck requests (06-w3 findings 2 and 3)", () => {
     expect(h.log.lines.some((line) => line.fields.code === "claim-facts-failed")).toBe(true);
   });
 });
+
+describe("subject must match the payload target (06-w3 finding 5)", () => {
+  it("rejects a subject that differs from what the operation derives from the payload", () => {
+    const h = createHarness();
+    h.diagnostic.definition.subjectOf = () => "the-real-target";
+    expect(h.submit({ subject: "something-else" })).toEqual({
+      kind: "rejected",
+      reason: "invalid-payload",
+    });
+    expect(h.store.calls).not.toContain("submit");
+  });
+
+  it("accepts the subject the operation derives", () => {
+    const h = createHarness();
+    h.diagnostic.definition.subjectOf = () => "the-real-target";
+    expect(h.submit({ subject: "the-real-target" }).kind).toBe("proposed");
+  });
+
+  it("leaves operations without subjectOf unconstrained", () => {
+    const h = createHarness();
+    expect(h.submit({ subject: "anything" }).kind).toBe("proposed");
+  });
+});
