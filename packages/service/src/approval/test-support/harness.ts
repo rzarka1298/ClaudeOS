@@ -20,6 +20,7 @@ import {
   type SubmitInput,
   type SubmitOutcome,
 } from "../engine.js";
+import { buildOperationRegistry } from "../registry.js";
 import { createTestClock, type TestClock } from "./clock.js";
 import { createFakeOperation, type FakeOperation, type FakePayload } from "./fake-operation.js";
 import { createMemoryApprovalStore, type MemoryApprovalStore } from "./memory-store.js";
@@ -51,6 +52,11 @@ export function createLooseRegistry(fakes: readonly FakeOperation[]): OperationR
     lookup: (operation) => byName.get(operation),
     operations: () => [...byName.keys()],
   };
+}
+
+/** The real, fail-closed registry over the given fakes. */
+export function defaultRegistry(fakes: readonly FakeOperation[]): OperationRegistry {
+  return buildOperationRegistry(fakes.map((fake) => fake.definition));
 }
 
 export const REQUESTER: Requester = { kind: "dashboard", label: "Test dashboard" };
@@ -87,7 +93,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const log = createRecordingLog();
   let counter = 0;
   const pad = (n: number): string => n.toString(36).padStart(24, "0");
-  const registry = (options.registry ?? createLooseRegistry)([diagnostic, terminate]);
+  const registry = (options.registry ?? defaultRegistry)([diagnostic, terminate]);
 
   const deps: ApprovalEngineDeps = {
     store,

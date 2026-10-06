@@ -1,7 +1,22 @@
 import { createHash } from "node:crypto";
-import { buildEnvelope, canonicalJson, type DecideResponse } from "@ccc/domain";
+import {
+  buildEnvelope,
+  canonicalJson,
+  type DecideResponse,
+  type ExecuteContext,
+  type ExecuteOutcome,
+  type NoteId,
+  type ProposalId,
+  type StoredProposal,
+} from "@ccc/domain";
 import { describe, expect, it } from "vitest";
+import { resolveOutcome } from "./engine.js";
+import { buildOperationRegistry } from "./registry.js";
+import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
+import { createFakeOperation } from "./test-support/fake-operation.js";
 import { createHarness, flush, type Harness, REQUESTER } from "./test-support/harness.js";
+
+const createFakeOperation_ = () => createFakeOperation("diagnostic.test");
 
 function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -221,5 +236,653 @@ describe("tracer: submit, approve, claim, execute, finish (Task 1)", () => {
       expect(h.log.lines.length).toBeGreaterThan(0);
       expect(written).toContain(id);
     });
+  });
+});
+
+// ===========================================================================
+// Task 2: submit and decide rules, and outcome handling
+
+const HOUR = 60 * MINUTE;
+const ZEROS = "0".repeat(64);
+
+/** A row the engine never wrote, for the double (a reserved operation, an odd state). */
+function rawRow(patch: Partial<StoredProposal> = {}): StoredProposal {
+  return {
+    proposalId: "z000000000000000000000001" as ProposalId,
+    operation: "vault.delete",
+    subject: "some-note",
+    dedupeKey: "k",
+    requester: { kind: "skill", label: "Raw" },
+    projectId: null,
+    runId: null,
+    reason: "raw",
+    payloadJson: "{}",
+    payloadHash: "b".repeat(64),
+    state: "pending",
+    revision: 1,
+    createdAt: "2026-10-06T12:00:00.000Z",
+    expiresAt: "2026-10-07T12:00:00.000Z",
+    approvedAt: null,
+    decidedAt: null,
+    decidedVia: null,
+    claimFacts: null,
+    attempts: 0,
+    outcomeCode: null,
+    outcomeNote: null,
+    mirrorNoteId: "n000000000000000000000009" as NoteId,
+    supersedes: null,
+    ...patch,
+  };
+}
+
+async function decideWith(
+  h: Harness,
+  id: string,
+  decision: "approve" | "deny",
+  hash?: string,
+  via: "plugin" | "other" = "plugin",
+): Promise<DecideResponse> {
+  return h.engine.decide({
+    proposalId: id,
+    decision,
+    payloadHash: hash ?? h.store.get(id as ProposalId)?.payloadHash ?? "",
+    via,
+  });
+}
+
+describe("submit rejections (Task 2, Test 2)", () => {
+  it("rejects a reserved operation as operation-reserved and writes nothing", () => {
+    const h = createHarness();
+    expect(h.submit({ operation: "vault.delete" })).toEqual({
+      kind: "rejected",
+      reason: "operation-reserved",
+    });
+    expect(h.store.calls).not.toContain("submit");
+    expect(h.published).toHaveLength(0);
+    expect(h.mirrored).toHaveLength(0);
+  });
+
+  it("rejects an unknown name as operation-unknown", () => {
+    const h = createHarness();
+    expect(h.submit({ operation: "made.up" })).toEqual({
+      kind: "rejected",
+      reason: "operation-unknown",
+    });
+    expect(h.submit({ operation: "__proto__" })).toEqual({
+      kind: "rejected",
+      reason: "operation-unknown",
+    });
+    expect(h.store.calls).not.toContain("submit");
+  });
+
+  it("rejects a no-approval or direct-gesture name as operation-not-approvable", () => {
+    const h = createHarness();
+    for (const operation of ["task.write", "launch.finder", "session.focus", "vault.write-note"]) {
+      expect(h.submit({ operation }), operation).toEqual({
+        kind: "rejected",
+        reason: "operation-not-approvable",
+      });
+    }
+    expect(h.store.calls).not.toContain("submit");
+  });
+
+  it("rejects a payload that fails the operation's strict schema", () => {
+    const h = createHarness();
+    for (const payload of [
+      { extra: 1 },
+      "text",
+      null,
+      [],
+      { note: 5 },
+      { note: "x".repeat(201) },
+    ]) {
+      expect(h.submit({ payload }), JSON.stringify(payload)).toEqual({
+        kind: "rejected",
+        reason: "invalid-payload",
+      });
+    }
+    expect(h.store.calls).not.toContain("submit");
+  });
+
+  it("rejects a malformed requester, run id, subject or reason as invalid-payload", () => {
+    const h = createHarness();
+    const bad = [
+      { requester: { kind: "dashboard", label: "" } },
+      { requester: { kind: "dashboard", label: "x".repeat(65) } },
+      { requester: { kind: "dashboard", label: "bad\u202elabel" } },
+      { requester: { kind: "robot", label: "x" } },
+      { runId: "not a run id" },
+      { subject: "" },
+      { subject: "s".repeat(1025) },
+      { reason: "r".repeat(16_001) },
+      { projectId: "" },
+    ];
+    for (const patch of bad) {
+      expect(h.submit(patch as never), JSON.stringify(patch)).toEqual({
+        kind: "rejected",
+        reason: "invalid-payload",
+      });
+    }
+    expect(h.store.calls).not.toContain("submit");
+  });
+
+  it("answers inbox-full for the 26th pending request of one operation", () => {
+    const h = createHarness();
+    for (let i = 0; i < 25; i += 1) {
+      expect(h.submit({ subject: `s${i}` }).kind, `submit ${i}`).toBe("proposed");
+    }
+    expect(h.submit({ subject: "s25" })).toEqual({ kind: "rejected", reason: "inbox-full" });
+    // another operation still has room
+    expect(h.submit({ operation: "session.force-terminate", subject: "t0" }).kind).toBe("proposed");
+  });
+
+  it("answers inbox-full for the 51st pending request overall", () => {
+    const third = fakeNamed("connector.fake-send");
+    const h = createHarness({
+      registry: ([a, b]) =>
+        buildOperationRegistry(
+          [a, b, third].map((f) => f?.definition).filter((d) => d !== undefined),
+          EXTENDED_TABLE,
+        ),
+    });
+    for (let i = 0; i < 25; i += 1) {
+      expect(h.submit({ subject: `d${i}` }).kind).toBe("proposed");
+      expect(h.submit({ operation: "session.force-terminate", subject: `t${i}` }).kind).toBe(
+        "proposed",
+      );
+    }
+    expect(h.submit({ operation: "connector.fake-send", subject: "c0" })).toEqual({
+      kind: "rejected",
+      reason: "inbox-full",
+    });
+  });
+});
+
+describe("lifetime (Task 2, Test 3)", () => {
+  const expiry = (h: Harness, id: ProposalId) => Date.parse(h.store.get(id)?.expiresAt ?? "");
+
+  it("honours a shorter requested lifetime", () => {
+    const h = createHarness();
+    const id = h.propose({ requestedTtlMs: 90_000 });
+    expect(h.store.get(id)?.expiresAt).toBe("2026-10-06T12:01:30.000Z");
+  });
+
+  it("clamps a longer request, and one beyond the seven day ceiling, to the row default", () => {
+    const h = createHarness();
+    const longer = h.propose({ requestedTtlMs: 48 * HOUR, subject: "a" });
+    const beyond = h.propose({ requestedTtlMs: 30 * 24 * HOUR, subject: "b" });
+    expect(h.store.get(longer)?.expiresAt).toBe("2026-10-07T12:00:00.000Z");
+    expect(h.store.get(beyond)?.expiresAt).toBe("2026-10-07T12:00:00.000Z");
+    const terminate = h.propose({
+      operation: "session.force-terminate",
+      subject: "r",
+      payload: {},
+      requestedTtlMs: HOUR,
+    });
+    expect(h.store.get(terminate)?.expiresAt).toBe("2026-10-06T12:15:00.000Z");
+  });
+
+  it("never yields an expiry later than now plus the row default, whatever is requested", () => {
+    const h = createHarness();
+    const start = Date.parse(h.clock.now());
+    const requests = [
+      undefined,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      -1,
+      0,
+      1,
+      1.5,
+      24 * HOUR - 1,
+      24 * HOUR,
+      24 * HOUR + 1,
+      7 * 24 * HOUR,
+      1e15,
+      Number.MAX_SAFE_INTEGER,
+    ];
+    requests.forEach((requested, index) => {
+      const id = h.propose({
+        subject: `s${index}`,
+        ...(requested === undefined ? {} : { requestedTtlMs: requested }),
+      });
+      expect(expiry(h, id), String(requested)).toBeLessThanOrEqual(start + 24 * HOUR);
+      expect(expiry(h, id), String(requested)).toBeGreaterThan(start);
+    });
+  });
+});
+
+describe("dedupe and supersede (Task 2, Test 4)", () => {
+  it("returns the same id with deduped true for an identical pending request, publishing nothing new", () => {
+    const h = createHarness();
+    const first = h.propose();
+    const publishedBefore = h.published.length;
+    const mirroredBefore = h.mirrored.length;
+    const second = h.submit();
+    expect(second).toEqual({
+      kind: "proposed",
+      proposalId: first,
+      deduped: true,
+      supersedes: null,
+    });
+    expect(h.published).toHaveLength(publishedBefore);
+    expect(h.mirrored).toHaveLength(mirroredBefore);
+  });
+
+  it("creates a new id that supersedes the expired one once the first has expired and been swept", () => {
+    const h = createHarness();
+    const first = h.propose();
+    h.clock.advance(24 * HOUR);
+    h.store.expireDue(h.clock.now());
+    const second = h.submit();
+    expect(second.kind).toBe("proposed");
+    if (second.kind !== "proposed") return;
+    expect(second.proposalId).not.toBe(first);
+    expect(second.deduped).toBe(false);
+    expect(second.supersedes).toBe(first);
+    expect(h.store.get(second.proposalId)?.supersedes).toBe(first);
+  });
+
+  it("does not hand back a pending request that is already past its expiry and not yet swept", () => {
+    const h = createHarness();
+    const first = h.propose();
+    h.clock.advance(24 * HOUR + 1000);
+    const second = h.submit();
+    expect(second.kind).toBe("proposed");
+    if (second.kind !== "proposed") return;
+    expect(second.deduped).toBe(false);
+    expect(second.proposalId).not.toBe(first);
+    expect(second.supersedes).toBe(first);
+    expect(h.store.get(first)?.state).toBe("expired");
+    expect(
+      h.published.some((e) => e.approval.proposalId === first && e.approval.state === "expired"),
+    ).toBe(true);
+  });
+});
+
+describe("decide vocabulary (Task 2, Test 5)", () => {
+  it("hash-mismatch leaves the request pending and executes nothing", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    expect(await decideWith(h, id, "approve", ZEROS)).toEqual({ outcome: "hash-mismatch" });
+    await h.engine.settled();
+    expect(h.store.get(id)?.state).toBe("pending");
+    expect(h.store.calls).not.toContain("claim");
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+  });
+
+  it("a hash that is not even shaped like one is a hash-mismatch for a pending request, not-found for none, already-decided for a settled one", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    expect(await decideWith(h, id, "approve", "xyz")).toEqual({ outcome: "hash-mismatch" });
+    expect(await decideWith(h, "q".repeat(25), "approve", "xyz")).toEqual({ outcome: "not-found" });
+    await decideWith(h, id, "deny");
+    expect(await decideWith(h, id, "approve", "xyz")).toEqual({
+      outcome: "already-decided",
+      state: "denied",
+    });
+  });
+
+  it("expired, including at exactly the expiry instant; one millisecond earlier still decides", async () => {
+    const h = createHarness();
+    const early = h.propose({ subject: "early", requestedTtlMs: MINUTE });
+    const exact = h.propose({ subject: "exact", requestedTtlMs: MINUTE });
+    h.clock.set("2026-10-06T12:00:59.999Z");
+    expect((await decideWith(h, early, "deny")).outcome).toBe("decided");
+    h.clock.set("2026-10-06T12:01:00.000Z");
+    expect(await decideWith(h, exact, "approve")).toEqual({ outcome: "expired" });
+    await h.engine.settled();
+    expect(h.store.get(exact)?.state).toBe("expired");
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+    expect(h.store.auditEvents(exact)).toEqual(["requested", "expired"]);
+  });
+
+  it("already-decided reports the state, and two simultaneous approvals execute exactly once", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    const hash = h.store.get(id)?.payloadHash;
+    const results = await Promise.all([
+      decideWith(h, id, "approve", hash),
+      decideWith(h, id, "approve", hash),
+    ]);
+    await h.engine.settled();
+    const outcomes = results.map((r) => r.outcome).sort();
+    expect(outcomes).toEqual(["already-decided", "decided"]);
+    expect(h.diagnostic.executeCalls).toHaveLength(1);
+    expect(h.diagnostic.effects.size).toBe(1);
+    expect(await decideWith(h, id, "deny", hash)).toEqual({
+      outcome: "already-decided",
+      state: "executed",
+    });
+  });
+
+  it("not-found for an unknown well-formed id and for a malformed one", async () => {
+    const h = createHarness();
+    expect(await decideWith(h, "q".repeat(25), "approve", ZEROS)).toEqual({ outcome: "not-found" });
+    expect(await decideWith(h, "short", "approve", ZEROS)).toEqual({ outcome: "not-found" });
+    expect(await decideWith(h, "", "deny", ZEROS)).toEqual({ outcome: "not-found" });
+  });
+
+  it("operation-reserved for a reserved row inserted by hand: changes nothing and executes nothing", async () => {
+    const h = createHarness();
+    h.store.insertRaw(rawRow());
+    const before = h.store.get("z000000000000000000000001" as ProposalId);
+    expect(await decideWith(h, "z000000000000000000000001", "approve", "b".repeat(64))).toEqual({
+      outcome: "operation-reserved",
+    });
+    expect(await decideWith(h, "z000000000000000000000001", "deny", "b".repeat(64))).toEqual({
+      outcome: "operation-reserved",
+    });
+    expect(h.store.get("z000000000000000000000001" as ProposalId)).toEqual(before);
+    expect(h.store.calls).not.toContain("claim");
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+    expect(h.terminate.executeCalls).toHaveLength(0);
+  });
+});
+
+describe("stored payload corruption (Task 2, Test 6)", () => {
+  it("refuses to approve when the stored payload no longer hashes to the stored hash, and never executes", async () => {
+    const h = createHarness();
+    const id = h.propose({ payload: { note: "original" } });
+    const hash = h.store.get(id)?.payloadHash;
+    h.store.tamperPayloadJson(id, '{"note":"edited"}');
+    expect(await decideWith(h, id, "approve", hash)).toEqual({ outcome: "hash-mismatch" });
+    await h.engine.settled();
+    expect(h.store.get(id)?.state).toBe("pending");
+    expect(h.store.calls).not.toContain("claim");
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+    expect(h.log.lines.some((l) => l.fields.code === "stored-hash-mismatch")).toBe(true);
+  });
+
+  it("covers every column of the envelope: an edited reason, or a purged or unreadable payload, is refused", async () => {
+    const h = createHarness();
+    const a = h.propose({ subject: "a" });
+    const b = h.propose({ subject: "b" });
+    const c = h.propose({ subject: "c" });
+    h.store.tamperReason(a, "a different reason");
+    h.store.tamperPayloadJson(b, null);
+    h.store.tamperPayloadJson(c, "{not json");
+    for (const id of [a, b, c]) {
+      expect(await decideWith(h, id, "approve", h.store.get(id)?.payloadHash)).toEqual({
+        outcome: "hash-mismatch",
+      });
+    }
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+  });
+
+  it("a deny of a corrupted row is still honoured: denying executes nothing", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    h.store.tamperPayloadJson(id, '{"note":"edited"}');
+    const result = await decideWith(h, id, "deny");
+    expect(result.outcome).toBe("decided");
+    expect(h.store.get(id)?.state).toBe("denied");
+  });
+
+  it("re-checks the stored row at execution: a row edited after approval is finished failed and never executed", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    h.diagnostic.onClaimFacts = () => h.store.tamperReason(id, "changed after approval");
+    await decideWith(h, id, "approve");
+    await h.engine.settled();
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+    expect(h.store.get(id)?.state).toBe("failed");
+    expect(h.store.get(id)?.outcomeCode).toBe("integrity-check-failed");
+  });
+});
+
+describe("outcomes, first attempt (Task 2, Test 7)", () => {
+  async function runWith(outcome: ExecuteOutcome | Error) {
+    const h = createHarness();
+    h.diagnostic.outcomes.push(outcome);
+    const id = h.propose();
+    await decideWith(h, id, "approve");
+    await h.engine.settled();
+    return { h, id, stored: h.store.get(id) };
+  }
+
+  it("executed with no note finishes executed", async () => {
+    const { stored, h, id } = await runWith({ kind: "executed" });
+    expect(stored?.state).toBe("executed");
+    expect(stored?.outcomeCode).toBe("executed");
+    expect(stored?.outcomeNote).toBeNull();
+    expect(h.store.auditEvents(id).at(-1)).toBe("executed");
+  });
+
+  it("executed with the awaiting-exit note finishes executed with that note", async () => {
+    const { stored } = await runWith({ kind: "executed", note: "awaiting-exit" });
+    expect(stored?.state).toBe("executed");
+    expect(stored?.outcomeNote).toBe("awaiting-exit");
+  });
+
+  it("drops a note that is not a fixed token rather than storing free text", async () => {
+    const { stored } = await runWith({ kind: "executed", note: "Some free text here!" });
+    expect(stored?.state).toBe("executed");
+    expect(stored?.outcomeNote).toBeNull();
+  });
+
+  it.each(["process-ended", "run-not-found", "identity-mismatch"] as const)(
+    "a refusal (%s) finishes failed with that reason code and never calls reconcile",
+    async (reason) => {
+      const { stored, h } = await runWith({ kind: "refused", reason });
+      expect(stored?.state).toBe("failed");
+      expect(stored?.outcomeCode).toBe(reason);
+      expect(h.diagnostic.reconcileCalls).toHaveLength(0);
+    },
+  );
+
+  it.each(["execution-failed", "capability-refused", "payload-invalid"] as const)(
+    "a failure (%s) finishes failed with its code",
+    async (reason) => {
+      const { stored } = await runWith({ kind: "failed", reason });
+      expect(stored?.state).toBe("failed");
+      expect(stored?.outcomeCode).toBe(reason);
+    },
+  );
+
+  it("a rejected execute finishes unknown with executor-threw, never failed, and logs no message text", async () => {
+    const { stored, h, id } = await runWith(new Error("BOOM-SECRET-TEXT /Users/someone/secret"));
+    expect(stored?.state).toBe("unknown");
+    expect(stored?.outcomeCode).toBe("executor-threw");
+    expect(h.diagnostic.reconcileCalls).toHaveLength(0);
+    expect(h.store.auditEvents(id).at(-1)).toBe("outcome-unknown");
+    expect(JSON.stringify(h.log.lines)).not.toContain("BOOM-SECRET-TEXT");
+    expect(JSON.stringify(h.log.lines)).not.toContain("/Users/someone");
+  });
+});
+
+describe("outcomes, retry attempt (Task 2, Test 8)", () => {
+  const retry: ExecuteContext = { idempotencyKey: "k", claimFacts: {}, attempt: 2 };
+  const first: ExecuteContext = { idempotencyKey: "k", claimFacts: {}, attempt: 1 };
+  const payload = {};
+  const NON_EXECUTED: ExecuteOutcome[] = [
+    { kind: "refused", reason: "process-ended" },
+    { kind: "refused", reason: "run-not-found" },
+    { kind: "refused", reason: "identity-mismatch" },
+    { kind: "failed", reason: "execution-failed" },
+    { kind: "failed", reason: "capability-refused" },
+  ];
+
+  it("routes every non-executed result through reconcile; effect-proven finishes executed, reconciled, with the evidence", async () => {
+    for (const outcome of NON_EXECUTED) {
+      const op = createFakeOperation_();
+      op.verdicts.push({ kind: "effect-proven", evidence: "process-gone" });
+      const decision = await resolveOutcome(op.definition, payload, retry, {
+        threw: false,
+        outcome,
+      });
+      expect(decision, JSON.stringify(outcome)).toMatchObject({
+        state: "executed",
+        code: "executed",
+        reconciled: true,
+        evidence: "process-gone",
+      });
+      expect(op.reconcileCalls).toHaveLength(1);
+      expect(op.reconcileCalls[0]?.context.attempt).toBe(2);
+    }
+  });
+
+  it("effect-absent and unknown both finish unknown", async () => {
+    for (const outcome of NON_EXECUTED) {
+      const absent = createFakeOperation_();
+      absent.verdicts.push({ kind: "effect-absent" });
+      expect(
+        await resolveOutcome(absent.definition, payload, retry, { threw: false, outcome }),
+      ).toMatchObject({
+        state: "unknown",
+        reconciled: false,
+      });
+      const unknown = createFakeOperation_();
+      unknown.verdicts.push({ kind: "unknown", reason: "ambiguous-run" });
+      expect(
+        await resolveOutcome(unknown.definition, payload, retry, { threw: false, outcome }),
+      ).toMatchObject({
+        state: "unknown",
+        evidence: "ambiguous-run",
+      });
+    }
+  });
+
+  it("a plain failed is never produced for an attempt of 2 or more, whatever the verdict", async () => {
+    const verdicts = [
+      { kind: "effect-proven", evidence: "x" },
+      { kind: "effect-absent" },
+      { kind: "unknown", reason: "y" },
+      new Error("reconcile broke"),
+    ] as const;
+    for (const attempt of [2, 3]) {
+      for (const outcome of NON_EXECUTED) {
+        for (const verdict of verdicts) {
+          const op = createFakeOperation_();
+          op.verdicts.push(verdict);
+          const decision = await resolveOutcome(
+            op.definition,
+            payload,
+            { ...retry, attempt },
+            { threw: false, outcome },
+          );
+          expect(decision.state, `${attempt} ${JSON.stringify(outcome)}`).not.toBe("failed");
+        }
+      }
+    }
+  });
+
+  it("a reconcile that throws finishes unknown with a fixed code and no message", async () => {
+    const op = createFakeOperation_();
+    op.verdicts.push(new Error("SECRET-RECONCILE-TEXT"));
+    const decision = await resolveOutcome(op.definition, payload, retry, {
+      threw: false,
+      outcome: NON_EXECUTED[0] as ExecuteOutcome,
+    });
+    expect(decision).toMatchObject({ state: "unknown", code: "reconcile-threw" });
+    expect(JSON.stringify(decision)).not.toContain("SECRET-RECONCILE-TEXT");
+  });
+
+  it("an evidence or reason string that is not a fixed token is replaced, never stored", async () => {
+    const op = createFakeOperation_();
+    op.verdicts.push({ kind: "effect-proven", evidence: "Free text /Users/someone" });
+    const decision = await resolveOutcome(op.definition, payload, retry, {
+      threw: false,
+      outcome: NON_EXECUTED[0] as ExecuteOutcome,
+    });
+    expect(decision.state).toBe("executed");
+    expect(decision.evidence).toBe("reconcile-evidence");
+  });
+
+  it("an executed result on a retry is executed without asking reconcile; a throw is unknown", async () => {
+    const op = createFakeOperation_();
+    expect(
+      await resolveOutcome(op.definition, payload, retry, {
+        threw: false,
+        outcome: { kind: "executed" },
+      }),
+    ).toMatchObject({ state: "executed", reconciled: false });
+    expect(await resolveOutcome(op.definition, payload, retry, { threw: true })).toMatchObject({
+      state: "unknown",
+      code: "executor-threw",
+    });
+    expect(op.reconcileCalls).toHaveLength(0);
+  });
+
+  it("on the first attempt the same results are definitive and reconcile is not asked", async () => {
+    const op = createFakeOperation_();
+    const decision = await resolveOutcome(op.definition, payload, first, {
+      threw: false,
+      outcome: { kind: "refused", reason: "process-ended" },
+    });
+    expect(decision).toMatchObject({ state: "failed", code: "process-ended" });
+    expect(op.reconcileCalls).toHaveLength(0);
+  });
+});
+
+describe("token not executed when expired (Task 2, Test 9)", () => {
+  it("does not call execute and finishes failed token-expired when the maximum approval age passed before the run", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    h.diagnostic.onClaimFacts = () => h.clock.advance(6 * MINUTE);
+    await decideWith(h, id, "approve");
+    await h.engine.settled();
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+    expect(h.diagnostic.effects.size).toBe(0);
+    expect(h.store.get(id)?.state).toBe("failed");
+    expect(h.store.get(id)?.outcomeCode).toBe("token-expired");
+  });
+
+  it("does the same when the proposal's own expiry has passed", async () => {
+    const h = createHarness();
+    const id = h.propose({ requestedTtlMs: MINUTE });
+    h.diagnostic.onClaimFacts = () => h.clock.advance(2 * MINUTE);
+    await decideWith(h, id, "approve");
+    await h.engine.settled();
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+    expect(h.store.get(id)?.outcomeCode).toBe("token-expired");
+  });
+
+  it("still executes when the token expiry is in the future", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    h.diagnostic.onClaimFacts = () => h.clock.advance(4 * MINUTE);
+    await decideWith(h, id, "approve");
+    await h.engine.settled();
+    expect(h.diagnostic.executeCalls).toHaveLength(1);
+  });
+});
+
+describe("withdraw and decidedVia (Task 2, Test 10)", () => {
+  it("withdraws a pending request and refuses every other state", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    expect(h.engine.withdraw(id)).toEqual({ kind: "withdrawn" });
+    expect(h.store.get(id)?.state).toBe("withdrawn");
+    expect(h.store.auditEvents(id)).toEqual(["requested", "withdrawn"]);
+    expect(h.published.at(-1)?.approval.state).toBe("withdrawn");
+    expect(h.engine.withdraw(id)).toEqual({ kind: "not-withdrawable" });
+
+    const done = h.propose({ subject: "other" });
+    await decideWith(h, done, "approve");
+    await h.engine.settled();
+    expect(h.engine.withdraw(done)).toEqual({ kind: "not-withdrawable" });
+    expect(h.store.get(done)?.state).toBe("executed");
+    expect(h.engine.withdraw("q".repeat(25))).toEqual({ kind: "not-withdrawable" });
+    expect(h.engine.withdraw("bad")).toEqual({ kind: "not-withdrawable" });
+  });
+
+  it("stores the supplied decided-via value on an approval and on a denial, and any other value as other", async () => {
+    const h = createHarness();
+    const a = h.propose({ subject: "a" });
+    const b = h.propose({ subject: "b" });
+    const c = h.propose({ subject: "c" });
+    await decideWith(h, a, "approve", undefined, "other");
+    await decideWith(h, b, "deny", undefined, "plugin");
+    await h.engine.decide({
+      proposalId: c,
+      decision: "deny",
+      payloadHash: h.store.get(c)?.payloadHash ?? "",
+      via: "someone-else" as never,
+    });
+    await h.engine.settled();
+    expect(h.store.get(a)?.decidedVia).toBe("other");
+    expect(h.store.get(b)?.decidedVia).toBe("plugin");
+    expect(h.store.get(c)?.decidedVia).toBe("other");
   });
 });
