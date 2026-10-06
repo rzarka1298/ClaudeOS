@@ -17,6 +17,14 @@ import { stringifyNote } from "./frontmatter.js";
 import { regenerateIndex } from "./index-generation.js";
 import { assertScopedWrite, WorkspaceScopeViolationError } from "./workspace-scope.js";
 
+/** Thrown when the generic writer is pointed at a tasks folder; only the task writer may write there. */
+export class TasksFolderWriteRefusedError extends Error {
+  constructor() {
+    super("task notes are written with writeTaskNote, not writeNote");
+    this.name = "TasksFolderWriteRefusedError";
+  }
+}
+
 /**
  * Everything a caller supplies to write one managed note. Deliberately
  * NOT a `NoteFrontmatter` plus a path: the fields this package derives

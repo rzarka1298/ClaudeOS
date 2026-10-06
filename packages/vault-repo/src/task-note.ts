@@ -413,3 +413,8 @@ export function writeTaskNote(options: WriteTaskNoteOptions): WrittenTaskNote {
     contentHash: hashTaskNoteBytes(text),
   };
 }
+
+/** Creates the tasks folder for a scope and its summary index when they are absent. Returns the absolute folder. */
+export function ensureTasksFolder(_vaultRoot: string, _scope: NoteScope): string {
+  return "";
+}

@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -35,6 +36,7 @@ import {
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createWorkspace, initializeVault } from "./setup.js";
 import {
+  ensureTasksFolder,
   parseTaskNote,
   stringifyTaskNote,
   type TaskNoteError,
@@ -44,6 +46,7 @@ import {
   writeTaskNote,
 } from "./task-note.js";
 import { WorkspaceScopeViolationError } from "./workspace-scope.js";
+import { TasksFolderWriteRefusedError, writeNote } from "./write-note.js";
 
 const TEST_BASE = join(homedir(), ".ccc-test");
 const NOW = new Date("2026-10-05T12:00:00.000Z");
@@ -629,9 +632,13 @@ describe("Test 9: no index and no delete", () => {
     expect(readFileSync(join(vaultRoot, "global", "tasks", "hand-made.md"), "utf8")).toBe("mine\n");
   });
 
-  test("a write into a folder with no index does not create one", () => {
+  // Superseded in plan task 2: a folder created by the first write gets the
+  // constant-size SUMMARY index once, never a per-note listing.
+  test("a write into a folder with no index leaves only the constant-size summary, never a listing", () => {
     const written = writeTaskNote({ vaultRoot, scope: "global", title: "No index", now: NOW });
-    expect(existsSync(join(dirname(written.absolutePath), "index.md"))).toBe(false);
+    const index = readFileSync(join(dirname(written.absolutePath), "index.md"), "utf8");
+    expect(index).not.toContain(written.id);
+    expect(index).not.toContain(basename(written.path));
   });
 });
 
@@ -658,5 +665,126 @@ describe("Test 10: the manifest and the lockfile", () => {
     expect(entries.filter((line) => line.startsWith("  js-yaml@3.15.2:"))).toHaveLength(2);
     expect(entries.every((line) => line.startsWith("  js-yaml@3.15.2:"))).toBe(true);
     expect(lock).not.toMatch(/@types\/js-yaml/);
+  });
+});
+
+describe("Test 4 (06-15): a task write costs the same at any folder size", () => {
+  test("1,000 writes: no per-note index work, and the last hundred are not slower than the first", () => {
+    initializeVault(vaultRoot);
+    const indexPath = join(vaultRoot, "global", "tasks", "index.md");
+    const indexBefore = readFileSync(indexPath, "utf8");
+    const millis: number[] = [];
+    for (let i = 0; i < 1000; i++) {
+      const start = performance.now();
+      writeTaskNote({ vaultRoot, scope: "global", title: `Bulk task ${i}`, now: NOW });
+      millis.push(performance.now() - start);
+    }
+    const sum = (values: number[]): number => values.reduce((a, b) => a + b, 0);
+    const first = sum(millis.slice(0, 100));
+    const last = sum(millis.slice(-100));
+    expect(last).toBeLessThanOrEqual(first * 2);
+    expect(readFileSync(indexPath, "utf8")).toBe(indexBefore);
+  }, 60_000);
+});
+
+describe("Test 5 (06-15): ensureTasksFolder", () => {
+  test("creates the folder and a summary index for a workspace that predates the folder", () => {
+    initializeVault(vaultRoot);
+    const workspace = createWorkspace(vaultRoot, "Older");
+    rmSync(join(workspace.path, "tasks"), { recursive: true });
+    const folder = ensureTasksFolder(vaultRoot, workspaceScope(workspace.workspaceId));
+    expect(folder).toBe(join(workspace.path, "tasks"));
+    const index = readFileSync(join(folder, "index.md"), "utf8");
+    expect(index).toContain(`folder: workspaces/${workspace.workspaceId}/tasks`);
+    expect(index).not.toContain("_No notes yet._");
+  });
+
+  test("is a no-op when the folder and its index exist", () => {
+    initializeVault(vaultRoot);
+    const indexPath = join(vaultRoot, "global", "tasks", "index.md");
+    writeFileSync(indexPath, "user-visible bytes\n", "utf8");
+    const before = statSync(indexPath).mtimeMs;
+    ensureTasksFolder(vaultRoot, "global");
+    ensureTasksFolder(vaultRoot, "global");
+    expect(readFileSync(indexPath, "utf8")).toBe("user-visible bytes\n");
+    expect(statSync(indexPath).mtimeMs).toBe(before);
+  });
+
+  test("the first write into an older workspace creates the folder once, with a constant-size index", () => {
+    initializeVault(vaultRoot);
+    const workspace = createWorkspace(vaultRoot, "Lazy");
+    rmSync(join(workspace.path, "tasks"), { recursive: true });
+    const written = writeTaskNote({
+      vaultRoot,
+      scope: workspaceScope(workspace.workspaceId),
+      title: "First task",
+      now: NOW,
+    });
+    const index = readFileSync(join(workspace.path, "tasks", "index.md"), "utf8");
+    expect(index).not.toContain(basename(written.path));
+    expect(index).not.toContain(written.id);
+    expect(existsSync(written.absolutePath)).toBe(true);
+  });
+
+  test("a scope that does not exist is refused and creates nothing", () => {
+    initializeVault(vaultRoot);
+    expect(() => ensureTasksFolder(vaultRoot, "workspace:zzzzzzzzzzzzzzzzzzzzzzzzz")).toThrow(
+      WorkspaceScopeViolationError,
+    );
+    expect(() => ensureTasksFolder(vaultRoot, "workspace:../x")).toThrow(
+      WorkspaceScopeViolationError,
+    );
+    expect(existsSync(join(vaultRoot, "workspaces", "zzzzzzzzzzzzzzzzzzzzzzzzz"))).toBe(false);
+  });
+});
+
+describe("Test 6 (06-15): the generic writer refuses a tasks folder", () => {
+  const generic = (relativePath: string, scope: string) =>
+    writeNote({
+      vaultRoot,
+      relativePath,
+      body: "text\n",
+      scope,
+      stage: "capture",
+      generatedBy: {},
+      aiGenerated: false,
+      confidence: "unverified",
+    });
+
+  test("a target inside global/tasks or a workspace tasks folder throws a typed error naming the task writer", () => {
+    initializeVault(vaultRoot);
+    const workspace = createWorkspace(vaultRoot, "Guarded");
+    const scope = workspaceScope(workspace.workspaceId);
+    for (const [path, noteScope] of [
+      ["global/tasks/x.md", "global"],
+      ["global/tasks/deeper/x.md", "global"],
+      ["global/Tasks/x.md", "global"],
+      [`workspaces/${workspace.workspaceId}/tasks/x.md`, scope],
+    ] as const) {
+      let caught: unknown;
+      try {
+        generic(path, noteScope);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught, path).toBeInstanceOf(TasksFolderWriteRefusedError);
+      expect((caught as Error).message).toContain("writeTaskNote");
+    }
+    expect(treeNames(join(vaultRoot, "global", "tasks"))).toEqual(["index.md"]);
+    expect(existsSync(join(vaultRoot, "global", "Tasks", "x.md"))).toBe(false);
+  });
+
+  test("a refused write creates no directory", () => {
+    mkdirSync(join(vaultRoot, "global"), { recursive: true });
+    expect(() => generic("global/tasks/deeper/x.md", "global")).toThrow(
+      TasksFolderWriteRefusedError,
+    );
+    expect(existsSync(join(vaultRoot, "global", "tasks"))).toBe(false);
+  });
+
+  test("everywhere else the generic writer behaves as before", () => {
+    initializeVault(vaultRoot);
+    expect(() => generic("global/wiki/ok.md", "global")).not.toThrow();
+    expect(() => generic("global/wiki/tasks/ok.md", "global")).not.toThrow();
   });
 });

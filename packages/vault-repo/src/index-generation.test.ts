@@ -437,3 +437,116 @@ describe("writeNote integration", () => {
     expect(written.frontmatter.id).toBe(written.noteId);
   });
 });
+
+describe("Test 3 (06-15): the tasks summary index", () => {
+  const WORKSPACE_ID = "w0123456789abcdefghijklmn";
+
+  function tasksFolder(scope: "global" | "workspace"): { folder: string; key: string } {
+    const key = scope === "global" ? "global/tasks" : `workspaces/${WORKSPACE_ID}/tasks`;
+    const path = join(vaultRoot, ...key.split("/"));
+    mkdirSync(path, { recursive: true });
+    return { folder: path, key };
+  }
+
+  test("a tasks folder gets the fixed-size summary whatever it holds", () => {
+    const { folder: empty } = tasksFolder("global");
+    const emptyIndex = regenerateIndex(empty, { vaultRoot });
+    // 2,000 files that would each be an "Unreadable" row in a normal listing.
+    for (let i = 0; i < 2000; i++) {
+      writeFileSync(join(empty, `junk-${i}.md`), "no frontmatter at all\n", "utf8");
+    }
+    const crowded = regenerateIndex(empty, { vaultRoot });
+    expect(crowded.content).toBe(emptyIndex.content);
+    expect(crowded.noteCount).toBe(0);
+    expect(crowded.unreadable).toEqual([]);
+    expect(crowded.content).not.toContain("junk-");
+    expect(crowded.content).not.toContain("Unreadable");
+    expect(crowded.content).not.toContain("_No notes yet._");
+    expect(Buffer.byteLength(crowded.content)).toBeLessThan(2000);
+  });
+
+  test("the front matter keeps the fixed key order and there is no timestamp", () => {
+    const { folder, key } = tasksFolder("global");
+    const { content } = regenerateIndex(folder, { vaultRoot });
+    expect(
+      content.startsWith(
+        `---\ntype: index\ngenerated: claude-command-center\nfolder: ${key}\n---\n`,
+      ),
+    ).toBe(true);
+    expect(content).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+  });
+
+  test("a workspace tasks folder is recognised by its path", () => {
+    mkdirSync(join(vaultRoot, "workspaces", WORKSPACE_ID), { recursive: true });
+    const { folder } = tasksFolder("workspace");
+    writeFileSync(join(folder, "stray.md"), "no frontmatter\n", "utf8");
+    const { content } = regenerateIndex(folder, { vaultRoot });
+    expect(content).not.toContain("stray");
+    expect(content).not.toContain("_No notes yet._");
+  });
+
+  test("a folder called tasks anywhere else is an ordinary folder", () => {
+    for (const key of [
+      "global/wiki/tasks",
+      `workspaces/${WORKSPACE_ID}/wiki/tasks`,
+      "global/tasks/sub",
+    ]) {
+      const path = join(vaultRoot, ...key.split("/"));
+      mkdirSync(path, { recursive: true });
+      expect(regenerateIndex(path, { vaultRoot }).content, key).toContain("_No notes yet._");
+    }
+  });
+
+  test("counts appear only when supplied, one line per status, and re-running is byte-identical", () => {
+    const { folder } = tasksFolder("global");
+    const without = regenerateIndex(folder, { vaultRoot }).content;
+    const counts = {
+      inbox: 3,
+      proposed: 0,
+      ready: 12,
+      "in-progress": 1,
+      blocked: 0,
+      done: 40,
+      cancelled: 2,
+    };
+    const first = regenerateIndex(folder, { vaultRoot, taskCounts: counts });
+    const second = regenerateIndex(folder, { vaultRoot, taskCounts: counts });
+    expect(second.content).toBe(first.content);
+    expect(first.content).not.toBe(without);
+    for (const [status, count] of Object.entries(counts)) {
+      expect(first.content).toMatch(new RegExp(`${status}[^\\n]*${count}`));
+    }
+    expect(first.content.split("\n").length - without.split("\n").length).toBe(
+      Object.keys(counts).length + 3,
+    );
+    // The counts come from the caller: the files are never read for them.
+    expect(regenerateIndex(folder, { vaultRoot }).content).toBe(without);
+  });
+
+  test("counts that are not whole non-negative numbers are refused", () => {
+    const { folder } = tasksFolder("global");
+    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        regenerateIndex(folder, {
+          vaultRoot,
+          taskCounts: {
+            inbox: bad,
+            proposed: 0,
+            ready: 0,
+            "in-progress": 0,
+            blocked: 0,
+            done: 0,
+            cancelled: 0,
+          },
+        }),
+      ).toThrow(RangeError);
+    }
+  });
+
+  test("a regular folder's index is unchanged byte for byte", () => {
+    const wiki = join(vaultRoot, "global", "wiki");
+    expect(regenerateIndex(wiki, { vaultRoot }).content).toBe(
+      "---\ntype: index\ngenerated: claude-command-center\nfolder: global/wiki\n---\n# Index\n\n## Notes\n\n_No notes yet._\n",
+    );
+  });
+});

@@ -4,6 +4,7 @@ import { checkPathContainment } from "@ccc/domain";
 import matter from "gray-matter";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { parseNote, parseUntrustedFrontmatter } from "./frontmatter.js";
+import type { TaskStatusCounts } from "./managed-folders.js";
 
 /** The one generated file this module owns, in every managed folder. */
 const INDEX_FILENAME = "index.md";
@@ -66,6 +67,12 @@ export interface RegenerateIndexOptions {
   readonly vaultRoot: string;
   /** Supply at workspace-root creation; omitted, identity is preserved. */
   readonly identity?: IndexIdentity;
+  /**
+   * Per-status task counts for a tasks folder's summary index. Only the caller
+   * that has walked the tasks (setup, repair, rebuild) supplies it; a task
+   * write never does. Ignored for every other folder.
+   */
+  readonly taskCounts?: TaskStatusCounts;
 }
 
 /** What one regeneration produced, so callers never re-read the file. */

@@ -33,12 +33,18 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, sep } from "node:path";
-import { globalScope, type NoteFrontmatter, workspaceScope } from "@ccc/domain";
+import {
+  globalScope,
+  type NoteFrontmatter,
+  TaskFrontmatterSchema,
+  workspaceScope,
+} from "@ccc/domain";
 import matter from "gray-matter";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { stringifyNote } from "./frontmatter.js";
 import { repairVault } from "./repair.js";
 import { createWorkspace, initializeVault } from "./setup.js";
+import { stringifyTaskNote } from "./task-note.js";
 import { writeNote } from "./write-note.js";
 
 const TEST_BASE = join(homedir(), ".ccc-test");
@@ -313,7 +319,7 @@ describe("repairVault", () => {
     // The folders this package DOES own still get one -- otherwise the
     // assertions above would pass by simply never regenerating anything.
     expect(existsSync(join(workspace.path, "index.md"))).toBe(true);
-    for (const leaf of ["raw", "wiki", "output"]) {
+    for (const leaf of ["raw", "wiki", "output", "tasks"]) {
       expect(`${leaf}:${existsSync(join(workspace.path, leaf, "index.md"))}`).toBe(`${leaf}:true`);
     }
   });
@@ -514,5 +520,84 @@ describe("repairVault", () => {
       "duplicate-id",
       "invalid-frontmatter",
     ]);
+  });
+});
+
+describe("Test 9 (06-15): repair of tasks folders", () => {
+  function taskText(n: number, scope: string, status: string): string {
+    return stringifyTaskNote(
+      TaskFrontmatterSchema.parse({
+        id: n.toString(36).padStart(25, "0"),
+        scope,
+        stage: "capture",
+        created: "2026-10-05T12:00:00.000Z",
+        updated: "2026-10-05T12:00:00.000Z",
+        generatedBy: {},
+        aiGenerated: false,
+        sources: [],
+        confidence: "unverified",
+        lastReviewed: null,
+        type: "task",
+        title: `Task ${n}`,
+        status,
+      }),
+      `Body ${n}\n`,
+    );
+  }
+
+  test("regenerates a tasks index as the summary with counts and leaves the notes untouched", () => {
+    const workspace = createWorkspace(vaultRoot, "Repair tasks");
+    const scope = workspaceScope(workspace.workspaceId);
+    const folder = join(workspace.path, "tasks");
+    const files = [
+      [1, "inbox"],
+      [2, "inbox"],
+      [3, "done"],
+    ] as const;
+    for (const [n, status] of files) {
+      writeFileSync(join(folder, `task-${n}-12345678.md`), taskText(n, scope, status), "utf8");
+    }
+    writeFileSync(join(folder, "index.md"), "stale per-note listing\n", "utf8");
+    const before = files.map(([n]) => readFileSync(join(folder, `task-${n}-12345678.md`)));
+
+    const report = repairVault(vaultRoot);
+
+    expect(report.warnings).toEqual([]);
+    const index = readFileSync(join(folder, "index.md"), "utf8");
+    expect(index).not.toContain("stale per-note listing");
+    expect(index).toMatch(/inbox[^\n]*2/);
+    expect(index).toMatch(/done[^\n]*1/);
+    expect(index).not.toContain("task-1-12345678");
+    files.forEach(([n], i) => {
+      expect(readFileSync(join(folder, `task-${n}-12345678.md`)).equals(before[i] as Buffer)).toBe(
+        true,
+      );
+    });
+    expect(report.notes.filter((note) => note.path.includes("/tasks/"))).toHaveLength(3);
+    // Repairing twice is byte-stable.
+    const again = readFileSync(join(folder, "index.md"), "utf8");
+    repairVault(vaultRoot);
+    expect(readFileSync(join(folder, "index.md"), "utf8")).toBe(again);
+  });
+
+  test("a hand-edited task with an unquoted instant is not reported as invalid", () => {
+    writeFileSync(
+      join(vaultRoot, "global", "tasks", "hand-made-12345678.md"),
+      taskText(9, "global", "inbox").replace(
+        "created: '2026-10-05T12:00:00.000Z'",
+        "created: 2026-10-05T12:00:00.000Z",
+      ),
+      "utf8",
+    );
+    expect(repairVault(vaultRoot).warnings).toEqual([]);
+  });
+
+  test("a deleted tasks index is rebuilt, and a nested folder under tasks gets none", () => {
+    const workspace = createWorkspace(vaultRoot, "Rebuild");
+    rmSync(join(workspace.path, "tasks", "index.md"));
+    mkdirSync(join(workspace.path, "tasks", "archive"), { recursive: true });
+    repairVault(vaultRoot);
+    expect(existsSync(join(workspace.path, "tasks", "index.md"))).toBe(true);
+    expect(existsSync(join(workspace.path, "tasks", "archive", "index.md"))).toBe(false);
   });
 });

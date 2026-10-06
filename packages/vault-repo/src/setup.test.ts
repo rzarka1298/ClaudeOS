@@ -30,17 +30,23 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
-import { workspaceScope } from "@ccc/domain";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { TaskFrontmatterSchema, workspaceScope } from "@ccc/domain";
 import matter from "gray-matter";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { regenerateIndex } from "./index-generation.js";
+import {
+  MANAGED_FOLDERS as SHARED_MANAGED_FOLDERS,
+  WORKSPACE_LEAF_FOLDERS,
+} from "./managed-folders.js";
 import {
   createWorkspace,
   initializeVault,
   planVaultSetup,
   VaultRootMissingError,
 } from "./setup.js";
+import { stringifyTaskNote } from "./task-note.js";
 import { VAULT_CLAUDE_MD } from "./vault-claude-md.js";
 import { writeNote } from "./write-note.js";
 
@@ -53,6 +59,7 @@ const MANAGED_FOLDERS = [
   "global/raw",
   "global/wiki",
   "global/output",
+  "global/tasks",
   "workspaces",
   "inbox",
   "daily",
@@ -264,7 +271,7 @@ describe("createWorkspace", () => {
     expect(workspace.path).not.toContain("研究");
     expect(workspace.path).not.toContain("🚀");
 
-    for (const leaf of ["raw", "wiki", "output"]) {
+    for (const leaf of ["raw", "wiki", "output", "tasks"]) {
       expect(statSync(join(workspace.path, leaf)).isDirectory()).toBe(true);
       expect(existsSync(join(workspace.path, leaf, "index.md"))).toBe(true);
     }
@@ -322,5 +329,80 @@ describe("createWorkspace", () => {
     expect(Buffer.compare(readFileSync(note.path), noteBefore)).toBe(0);
     // 4. The wiki index still references the note by its original id.
     expect(readFileSync(wikiIndexPath, "utf8")).toContain(note.noteId);
+  });
+});
+
+describe("Test 1 (06-15): the managed folder constants are defined once", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  test("the shared list is the PRD tree with the tasks folder after output", () => {
+    expect([...SHARED_MANAGED_FOLDERS]).toEqual([...MANAGED_FOLDERS]);
+    expect([...WORKSPACE_LEAF_FOLDERS]).toEqual(["raw", "wiki", "output", "tasks"]);
+  });
+
+  test("setup and repair import the constants instead of defining their own", () => {
+    for (const name of ["setup.ts", "repair.ts"]) {
+      const source = readFileSync(join(here, name), "utf8");
+      expect(source, name).toContain('from "./managed-folders.js"');
+      expect(source, name).not.toMatch(/const MANAGED_FOLDERS\b/);
+      expect(source, name).not.toMatch(/const WORKSPACE_LEAF_FOLDERS\b/);
+    }
+  });
+});
+
+describe("Test 2 (06-15): the tasks folder in setup and createWorkspace", () => {
+  test("the plan lists global/tasks and its index, and apply creates both", () => {
+    const planned = planVaultSetup(vaultRoot).entries.map((entry) => entry.relativePath);
+    expect(planned).toContain("global/tasks");
+    expect(planned).toContain("global/tasks/index.md");
+    initializeVault(vaultRoot);
+    expect(statSync(join(vaultRoot, "global", "tasks")).isDirectory()).toBe(true);
+    expect(existsSync(join(vaultRoot, "global", "tasks", "index.md"))).toBe(true);
+  });
+
+  test("a second run creates nothing and rewrites nothing", () => {
+    initializeVault(vaultRoot);
+    const before = hashTree(vaultRoot);
+    const second = initializeVault(vaultRoot);
+    expect(second.created).toEqual([]);
+    expect(hashTree(vaultRoot)).toEqual(before);
+  });
+
+  test("with tasks present the index carries their counts and a re-run is byte-identical", () => {
+    initializeVault(vaultRoot);
+    const frontmatter = TaskFrontmatterSchema.parse({
+      id: "a0123456789abcdefghijklmn",
+      scope: "global",
+      stage: "capture",
+      created: "2026-10-05T12:00:00.000Z",
+      updated: "2026-10-05T12:00:00.000Z",
+      generatedBy: {},
+      aiGenerated: false,
+      sources: [],
+      confidence: "unverified",
+      lastReviewed: null,
+      type: "task",
+      title: "Counted",
+      status: "ready",
+    });
+    writeFileSync(
+      join(vaultRoot, "global", "tasks", "counted-12345678.md"),
+      stringifyTaskNote(frontmatter, ""),
+      "utf8",
+    );
+    initializeVault(vaultRoot);
+    const index = readFileSync(join(vaultRoot, "global", "tasks", "index.md"), "utf8");
+    expect(index).toMatch(/ready[^\n]*1/);
+    const before = hashTree(vaultRoot);
+    initializeVault(vaultRoot);
+    expect(hashTree(vaultRoot)).toEqual(before);
+  });
+
+  test("a new workspace gets a tasks folder with a summary index", () => {
+    initializeVault(vaultRoot);
+    const workspace = createWorkspace(vaultRoot, "Tasks");
+    const index = readFileSync(join(workspace.path, "tasks", "index.md"), "utf8");
+    expect(matter(index).data.folder).toBe(`workspaces/${workspace.workspaceId}/tasks`);
+    expect(index).not.toContain("_No notes yet._");
   });
 });
