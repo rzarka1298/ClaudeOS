@@ -1,17 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { approvalsSnapshot, summary } from "../test-support/approval-fixtures.js";
-import {
-  type ApprovalsApi,
-  approvalsApi,
-  configureApprovalsApi,
-  refreshApprovals,
-} from "./api.js";
-import {
-  approvalsById,
-  approvalsCounts,
-  approvalsReady,
-  resetApprovalsState,
-} from "./signals.js";
+import { type ApprovalsApi, approvalsApi, configureApprovalsApi, refreshApprovals } from "./api.js";
+import { approvalsById, approvalsCounts, approvalsReady, resetApprovalsState } from "./signals.js";
 
 /**
  * Plan 06-10, Task 1 (tracer), Test 8: the API holder. View code reaches the
@@ -53,10 +43,10 @@ describe("the approvals API holder", () => {
   });
 
   it("with a fake API returning a snapshot, adopts it and resolves true", async () => {
-    const api = fakeApi();
-    configureApprovalsApi(api);
+    const list = vi.fn(() => Promise.resolve(approvalsSnapshot({ pending: [summary(1)] })));
+    configureApprovalsApi(fakeApi({ list }));
     await expect(refreshApprovals()).resolves.toBe(true);
-    expect(api.list).toHaveBeenCalledTimes(1);
+    expect(list).toHaveBeenCalledTimes(1);
     expect(approvalsById.value.size).toBe(1);
     expect(approvalsCounts.value.pending).toBe(1);
     expect(approvalsReady.value).toBe(true);
@@ -74,9 +64,7 @@ describe("the approvals API holder", () => {
   it("a malformed list response changes nothing and resolves false", async () => {
     configureApprovalsApi(fakeApi());
     await refreshApprovals();
-    configureApprovalsApi(
-      fakeApi({ list: vi.fn(() => Promise.resolve({ ready: 1 } as never)) }),
-    );
+    configureApprovalsApi(fakeApi({ list: vi.fn(() => Promise.resolve({ ready: 1 } as never)) }));
     await expect(refreshApprovals()).resolves.toBe(false);
     expect(approvalsById.value.size).toBe(1);
   });

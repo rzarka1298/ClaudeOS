@@ -127,9 +127,9 @@ describe("memory only (D-21, T-06-13)", () => {
   it("the signals module imports no settings, storage or plugin data module", () => {
     const source = readFileSync(join(HERE, "signals.ts"), "utf8");
     const imports = source.split("\n").filter((line) => /^\s*import\b/.test(line));
-    expect(imports.filter((line) => /settings|data\.json|localStorage|obsidian/.test(line))).toEqual(
-      [],
-    );
+    expect(
+      imports.filter((line) => /settings|data\.json|localStorage|obsidian/.test(line)),
+    ).toEqual([]);
     expect(source).not.toMatch(/saveData|loadData|localStorage|sessionStorage/);
   });
 });

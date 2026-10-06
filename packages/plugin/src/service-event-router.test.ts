@@ -2,9 +2,8 @@ import type { ServiceEvent, SnapshotResponse } from "@ccc/domain";
 import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
 import type { EventClient, EventClientState } from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
-import { approvalsSnapshot, summary } from "./test-support/approval-fixtures.js";
 import { approvalsById, approvalsReady, resetApprovalsState } from "./approvals/signals.js";
+import { connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
 import { projectsSnapshot, resetProjectsState } from "./projects/projects-state.js";
 import { attachEventClient } from "./service-connection.js";
 import {
@@ -13,6 +12,7 @@ import {
   routeServiceEvent,
   SNAPSHOT_APPLIERS,
 } from "./service-event-router.js";
+import { approvalsSnapshot, summary } from "./test-support/approval-fixtures.js";
 
 /**
  * The appendable fan-out router (PR-09, D-50): `EVENT_HANDLERS` and

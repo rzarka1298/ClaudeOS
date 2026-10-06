@@ -36,7 +36,7 @@ function upserted(approval: unknown, id = 10): ServiceEvent {
     type: "approval.upserted",
     occurredAt: "2026-10-06T10:00:00.000Z",
     payload: { approval },
-  } as ServiceEvent;
+  };
 }
 
 beforeEach(resetApprovalsState);
@@ -121,7 +121,7 @@ describe("applying an approval.upserted event (Test 3)", () => {
       type: "approval.upserted",
       occurredAt: "2026-10-06T10:00:00.000Z",
       payload: { approval: summary(1), extra: true },
-    } as ServiceEvent);
+    });
     applyApprovalServiceEvent({
       id: 12,
       type: "service.heartbeat",
@@ -163,7 +163,10 @@ describe("bucket counting (Test 4)", () => {
   it("counts never go below zero", () => {
     adoptApprovalsFromSnapshot(
       snapshotWith(
-        approvalsSnapshot({ pending: [summary(1)], counts: { pending: 0, decided: 0, expired: 0 } }),
+        approvalsSnapshot({
+          pending: [summary(1)],
+          counts: { pending: 0, decided: 0, expired: 0 },
+        }),
       ),
     );
     applyApprovalServiceEvent(upserted(summary(1, "executed", 2)));
