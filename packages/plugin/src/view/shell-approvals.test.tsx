@@ -260,11 +260,11 @@ describe("the Agent runs count chip (Test 4)", () => {
     expect(el?.getAttribute("style")).toBeNull();
   });
 
-  it("updates when an upsert changes the pending count", () => {
+  it("updates when an upsert changes the pending count", async () => {
     adoptApprovalsSnapshot(approvalsSnapshot({ pending: [summary(1)] }));
     render(<Shell />);
     expect(chip()?.textContent).toBe("1");
-    act(() => {
+    await act(async () => {
       adoptApprovalsSnapshot(approvalsSnapshot({ pending: [summary(1), summary(2), summary(3)] }));
     });
     expect(chip()?.textContent).toBe("3");
@@ -272,11 +272,11 @@ describe("the Agent runs count chip (Test 4)", () => {
 });
 
 describe("the chip stays honest (Test 5, UI-SPEC E13)", () => {
-  it("keeps the last known count when the service disconnects", () => {
+  it("keeps the last known count when the service disconnects", async () => {
     connectionState.value = { kind: "live" };
     adoptApprovalsSnapshot(approvalsSnapshot({ pending: [summary(1), summary(2)] }));
     render(<Shell />);
-    act(() => {
+    await act(async () => {
       connectionState.value = { kind: "disconnected", reason: "service stopped" };
     });
     expect(document.querySelector(".ccc-nav-count")?.textContent).toBe("2");

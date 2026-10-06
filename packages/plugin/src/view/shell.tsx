@@ -3,6 +3,11 @@ import type { SessionUsage } from "@ccc/domain/usage.js";
 import type { ReadonlySignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  approvalDetailFocusRequested,
+  pendingApprovalCount,
+  selectedProposalId,
+} from "../approvals/signals.js";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
@@ -11,7 +16,11 @@ import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
 import { nowTick } from "../widgets/clock.js";
-import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
+import type {
+  NavigationSelection,
+  QuickActionDescriptor,
+  WidgetState,
+} from "../widgets/contract.js";
 import { resolvedLayout } from "../widgets/layout.js";
 import { dispatchQuickAction } from "../widgets/quick-actions.js";
 import type { WidgetId } from "../widgets/registry.js";
@@ -23,7 +32,7 @@ import { detailFocusRequested, selectedRunId } from "./agent-runs-state.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 import { launchersFocusRequested } from "./launchers-focus.js";
 import { createLaunchersSession, type LaunchersSession } from "./launchers-settings.js";
-import { navigationRequest } from "./navigation-request.js";
+import { navigationRequest, taskFormRequested } from "./navigation-request.js";
 import { Overview } from "./overview.js";
 import { ProjectsView } from "./projects-view.js";
 import {
@@ -173,7 +182,7 @@ export interface DestinationViewProps {
   readonly connection: ConnectionState;
   readonly now: number;
   readonly onQuickAction: (descriptor: QuickActionDescriptor) => void;
-  readonly onNavigate: (destination: DestinationId, selection?: { readonly runId: string }) => void;
+  readonly onNavigate: (destination: DestinationId, selection?: NavigationSelection) => void;
   readonly projectsActions: ProjectsActions;
   readonly scanActions?: ScanActions | undefined;
   readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
@@ -246,6 +255,31 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
   ),
 };
 
+const COUNT_CAP = 9;
+const COUNT_PLURALS = new Intl.PluralRules("en");
+
+/**
+ * The Agent runs tab's pending-approval chip (UI-SPEC S6, E13). A sibling of
+ * the tab label, so the label itself is unchanged (SC-6): the visible number
+ * is `aria-hidden` and capped at `9+`, and a visually hidden sentence carries
+ * the true count into the tab's accessible name. Never accent, never danger.
+ */
+function ApprovalCountChip({ count }: { readonly count: number }) {
+  const visible = count > COUNT_CAP ? `${COUNT_CAP}+` : String(count);
+  const spoken =
+    COUNT_PLURALS.select(count) === "one"
+      ? `, ${count} approval request needs your decision`
+      : `, ${count} approval requests need your decision`;
+  return (
+    <>
+      <span className="ccc-nav-count" aria-hidden="true">
+        {visible}
+      </span>
+      <span className="ccc-visually-hidden">{spoken}</span>
+    </>
+  );
+}
+
 function connectionStatusText(state: ConnectionState): string {
   switch (state.kind) {
     case "live":
@@ -306,17 +340,25 @@ export function Shell({
    * document body and a keyboard user would lose their place (A11Y-01).
    *
    * The optional `selection` is the S1 hero row's `{ runId }` channel
-   * (UI-SPEC S1 "Primary line", R-06): it sets `agent-runs-state.ts`'s
-   * `selectedRunId` signal before switching tabs, so Agent runs mounts with
-   * that Run already selected, and raises `detailFocusRequested`. The tab
+   * (UI-SPEC S1 "Primary line", R-06) or an approval request's
+   * `{ proposalId }` (D-23): it sets `agent-runs-state.ts`'s `selectedRunId`
+   * (or the approvals `selectedProposalId`) signal before switching tabs, so
+   * Agent runs mounts with that item already selected, and raises its focus
+   * request. The tab
    * itself still receives focus here; `AgentRuns`'s own mount effect then
    * moves it on to the detail heading only because that flag is set — a
    * plain tab switch never does.
    */
-  function focusDestination(id: DestinationId, selection?: { readonly runId: string }): void {
-    if (selection?.runId !== undefined) {
+  function focusDestination(id: DestinationId, selection?: NavigationSelection): void {
+    if (selection !== undefined && "runId" in selection) {
       selectedRunId.value = selection.runId;
       detailFocusRequested.value = true;
+    } else if (selection !== undefined && "proposalId" in selection) {
+      // D-23: a notification, link or button selects an approval request. The
+      // Approvals section consumes the focus request exactly once. A task
+      // selection falls through: it only navigates until Tasks handles it.
+      selectedProposalId.value = selection.proposalId;
+      approvalDetailFocusRequested.value = true;
     }
     select(id);
     tabRefs.current[id]?.focus();
@@ -334,6 +376,9 @@ export function Shell({
       notify,
       requestLaunch,
       openSwitcher,
+      requestTaskForm: () => {
+        taskFormRequested.value = true;
+      },
       runSessionAction:
         sessionActions === undefined
           ? undefined
@@ -362,6 +407,16 @@ export function Shell({
     // finding 4).
     if (navigationRequest.peek() !== request) return;
     navigationRequest.value = null;
+    if (request.focusProposalId !== undefined) {
+      focusDestination(request.destination, { proposalId: request.focusProposalId });
+      return;
+    }
+    if (request.focusApprovalsHeading === true || request.openTaskForm === true) {
+      // The section that owns the intent moves focus itself once it renders;
+      // focusing the tab here would be overwritten, or would overwrite it.
+      select(request.destination);
+      return;
+    }
     if (request.focusProjectId === undefined) {
       if (request.destination === "settings" && launchersFocusPending) select("settings");
       else focusDestination(request.destination);
@@ -389,6 +444,7 @@ export function Shell({
   );
 
   const active = DESTINATIONS.find((d) => d.id === activeId) ?? DESTINATIONS[0];
+  const pendingCount = pendingApprovalCount.value;
   const status = connectionState.value;
   const event = lastEvent.value;
 
@@ -445,6 +501,9 @@ export function Shell({
                 onClick={() => select(destination.id)}
               >
                 {destination.label}
+                {destination.id === "agent-runs" && pendingCount !== null && pendingCount > 0 ? (
+                  <ApprovalCountChip count={pendingCount} />
+                ) : null}
               </button>
             );
           })}
