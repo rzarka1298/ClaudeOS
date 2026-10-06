@@ -435,3 +435,85 @@ export class ItemView {
     this.contentEl = leaf.contentEl;
   }
 }
+
+/**
+ * A recording stand-in for the slice of `Plugin` that `createObsidianHost`
+ * calls for the protocol-handler, vault-event and timer kinds (plan 06-09).
+ * Like {@link Scope} it proves the REGISTRATION happened and models only the
+ * two Obsidian behaviours those kinds depend on: a protocol action registered
+ * twice THROWS (research spike S8), and `onLayoutReady` defers its callback
+ * until the layout is ready, running it at once when it already is. Tests
+ * pass it where a `Plugin` is wanted, through a cast at the call site.
+ */
+export class StubPlugin {
+  readonly protocolHandlers = new Map<string, (params: Record<string, string>) => unknown>();
+  /** Every `vault.on` subscription, in order, with whether `offref` has since removed it. */
+  readonly vaultSubscriptions: {
+    name: string;
+    handler: (payload?: unknown) => void;
+    off: boolean;
+  }[] = [];
+  /** The refs handed to `registerEvent`, which Obsidian would detach on unload. */
+  readonly registeredRefs: unknown[] = [];
+  /** The callbacks handed to `register`, which Obsidian runs on unload. */
+  readonly unloadCallbacks: (() => unknown)[] = [];
+  private layoutReady = false;
+  private readonly layoutQueue: (() => unknown)[] = [];
+
+  readonly app = {
+    workspace: {
+      onLayoutReady: (callback: () => unknown): void => {
+        if (this.layoutReady) callback();
+        else this.layoutQueue.push(callback);
+      },
+    },
+    vault: {
+      on: (name: string, handler: (payload?: unknown) => void): unknown => {
+        const subscription = { name, handler, off: false };
+        this.vaultSubscriptions.push(subscription);
+        return subscription;
+      },
+      offref: (ref: unknown): void => {
+        const found = this.vaultSubscriptions.find((s) => s === ref);
+        if (found !== undefined) found.off = true;
+      },
+    },
+  };
+
+  registerObsidianProtocolHandler(
+    action: string,
+    handler: (params: Record<string, string>) => unknown,
+  ): void {
+    if (this.protocolHandlers.has(action)) {
+      throw new Error(`Action "${action}" is already registered as a handler.`);
+    }
+    this.protocolHandlers.set(action, handler);
+    // Obsidian's own `registerObsidianProtocolHandler` registers its unregister
+    // callback on the plugin, so the unload sweep is what removes the action.
+    this.register(() => this.protocolHandlers.delete(action));
+  }
+
+  registerEvent(ref: unknown): void {
+    this.registeredRefs.push(ref);
+  }
+
+  register(callback: () => unknown): void {
+    this.unloadCallbacks.push(callback);
+  }
+
+  /** Runs the queued layout-ready callbacks, as Obsidian does once the workspace is up. */
+  fireLayoutReady(): void {
+    this.layoutReady = true;
+    for (const callback of this.layoutQueue.splice(0)) callback();
+  }
+
+  /** Emits to every subscription for `name` that is still on. */
+  emitVaultEvent(name: string, payload?: unknown): void {
+    for (const s of this.vaultSubscriptions) if (!s.off && s.name === name) s.handler(payload);
+  }
+
+  /** Runs Obsidian's own unload sweep: every callback given to `register`. */
+  unload(): void {
+    for (const callback of this.unloadCallbacks.splice(0)) callback();
+  }
+}

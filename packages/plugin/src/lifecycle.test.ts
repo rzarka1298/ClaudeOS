@@ -1,6 +1,7 @@
 import type { ProjectId } from "@ccc/domain";
 import type { EventClient, SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { registerApprovalProtocol } from "./approvals/protocol.js";
 import { connectionState } from "./connection-state.js";
 import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
@@ -105,6 +106,14 @@ function loadCycle(
     apply,
   });
   registry.settingTab({});
+  // The REAL approval deep-link registration (plan 06-09, D-26): a duplicate
+  // `ccc-approval` action THROWS in Obsidian, so a missing unregister is a red test.
+  registerApprovalProtocol(registry, { navigateToApproval: () => {}, log: () => {} });
+  // The three other new registry kinds (plan 06-09): a vault event deferred to
+  // layout-ready, a timer slot with one pending callback, and a cleanup hook.
+  registry.vaultEvent("create", () => {});
+  registry.timer().schedule(() => {}, 60_000);
+  registry.cleanup(() => {});
   // The REAL plugin-level switcher (wave-7 finding 2): its launch timers and
   // any open modal are released through the seam.
   createPluginSwitcher({
@@ -174,7 +183,35 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
       ribbon: 0,
       command: 0,
       settingTab: 0,
+      protocolHandler: 0,
+      vaultEvent: 0,
+      timer: 0,
     });
+  });
+
+  it("each cycle registers exactly one of each new kind and a second load without an unload does not abort", () => {
+    const registry = loadCycle(host, domTarget, () => {});
+    const perCycle = registry.liveCount();
+
+    expect(host.liveCounts().protocolHandler).toBe(1);
+    expect(host.liveCounts().vaultEvent).toBe(1);
+    expect(host.liveCounts().timer).toBe(1);
+
+    // A hot reload that loads before the previous unload finished: the
+    // duplicate-action throw is caught inside registerApprovalProtocol.
+    expect(() =>
+      registerApprovalProtocol(registry, { navigateToApproval: () => {}, log: () => {} }),
+    ).not.toThrow();
+    expect(host.liveCounts().protocolHandler).toBe(1);
+
+    registry.disposeAll();
+    for (let i = 0; i < 20; i++) {
+      const next = loadCycle(host, domTarget, () => {});
+      expect(next.liveCount()).toBe(perCycle);
+      next.disposeAll();
+      expect(next.liveCount()).toBe(0);
+    }
+    expect(host.liveCounts().protocolHandler).toBe(0);
   });
 
   it("after twenty loads without a following unload, firing one workspace event invokes its handler exactly once", () => {

@@ -174,6 +174,18 @@ export interface LiveCounts {
   ribbon: number;
   command: number;
   settingTab: number;
+  protocolHandler: number;
+  vaultEvent: number;
+  timer: number;
+}
+
+/** The protocol handler shape the fake records; params are a flat string map like Obsidian's. */
+export type FakeProtocolHandler = (params: Readonly<Record<string, string>>) => void;
+
+/** A manually-driven timer slot: nothing fires until the test calls {@link FakeObsidianHost.fireTimers}. */
+interface FakeTimerRegistration {
+  slot: { schedule(callback: () => void, ms: number): void; cancel(): void };
+  dispose: Disposer;
 }
 
 export interface CommandLike {
@@ -222,6 +234,15 @@ export class FakeObsidianHost {
   private ribbonCount = 0;
   private readonly commandIds = new Set<string>();
   private settingTabCount = 0;
+  private readonly protocolHandlers = new Map<string, FakeProtocolHandler>();
+  /** Every vault-event registration, live or not yet delivered; `active` flips at layout-ready. */
+  private readonly vaultEvents = new Set<{
+    name: string;
+    handler: (payload?: unknown) => void;
+    active: boolean;
+  }>();
+  private layoutReady = false;
+  private readonly timers = new Set<{ pending: (() => void) | null }>();
   private data: unknown = null;
   private readonly leaves: FakeWorkspaceLeaf[] = [];
 
@@ -290,6 +311,83 @@ export class FakeObsidianHost {
     };
   }
 
+  /**
+   * Mirrors `plugin.registerObsidianProtocolHandler`: Obsidian's own registry
+   * THROWS on a duplicate action (research spike S8), so a missing unregister
+   * is a red test here, not a silent no-op.
+   */
+  registerProtocolHandler(action: string, handler: FakeProtocolHandler): Disposer {
+    if (this.protocolHandlers.has(action)) {
+      throw new Error(`Action "${action}" is already registered as a handler.`);
+    }
+    this.protocolHandlers.set(action, handler);
+    return () => {
+      if (this.protocolHandlers.get(action) === handler) this.protocolHandlers.delete(action);
+    };
+  }
+
+  /**
+   * Mirrors the adapter's `onLayoutReady`-deferred `vault.on`: a registration
+   * made before the layout is ready receives nothing until {@link setLayoutReady};
+   * one disposed before then never activates at all (A-10, Pitfall 7).
+   */
+  registerVaultEvent(name: string, handler: (payload?: unknown) => void): Disposer {
+    const entry = { name, handler, active: this.layoutReady };
+    this.vaultEvents.add(entry);
+    return () => {
+      this.vaultEvents.delete(entry);
+    };
+  }
+
+  /** Mirrors `workspace.onLayoutReady` firing: queued vault events become live. */
+  setLayoutReady(): void {
+    this.layoutReady = true;
+    for (const entry of this.vaultEvents) entry.active = true;
+  }
+
+  /** Delivers a vault event to every ACTIVE handler for `name`. */
+  emitVaultEvent(name: string, payload?: unknown): void {
+    for (const entry of [...this.vaultEvents]) {
+      if (entry.active && entry.name === name) entry.handler(payload);
+    }
+  }
+
+  /** Mirrors a protocol URL arriving for `action`. Returns false when nothing is registered. */
+  fireProtocol(action: string, params: Readonly<Record<string, string>>): boolean {
+    const handler = this.protocolHandlers.get(action);
+    if (handler === undefined) return false;
+    handler(params);
+    return true;
+  }
+
+  registerTimer(): FakeTimerRegistration {
+    const entry: { pending: (() => void) | null } = { pending: null };
+    this.timers.add(entry);
+    return {
+      slot: {
+        schedule: (callback) => {
+          entry.pending = callback;
+        },
+        cancel: () => {
+          entry.pending = null;
+        },
+      },
+      dispose: () => {
+        entry.pending = null;
+        this.timers.delete(entry);
+      },
+    };
+  }
+
+  /** Runs every pending timer callback once (clearing it first), as a test's manual clock. */
+  fireTimers(): void {
+    for (const entry of [...this.timers]) {
+      const callback = entry.pending;
+      entry.pending = null;
+      callback?.();
+    }
+  }
+
   // ---- event bus (mirrors `workspace.on`/`fireWorkspaceEvent` for the leak test) ----
 
   fireWorkspaceEvent(name: string, payload?: unknown): void {
@@ -340,6 +438,9 @@ export class FakeObsidianHost {
       ribbon: this.ribbonCount,
       command: this.commandIds.size,
       settingTab: this.settingTabCount,
+      protocolHandler: this.protocolHandlers.size,
+      vaultEvent: this.vaultEvents.size,
+      timer: this.timers.size,
     };
   }
 }
