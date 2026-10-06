@@ -11,3 +11,8 @@ export {
   type DiagnosticTestDeps,
   type DiagnosticTestPayload,
 } from "./diagnostic-test-operation.js";
+export {
+  createForceTerminateOperation,
+  type ForceTerminateDeps,
+  type ForceTerminatePayload,
+} from "./force-terminate-operation.js";
