@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   checkPathContainment,
@@ -118,7 +118,9 @@ function applyOne(deps: ChangedDeps, root: string, path: string): Outcome {
   // Gate 3: the read.
   let bytes: Buffer;
   try {
-    const stat = statSync(target);
+    const stat = lstatSync(target);
+    // The scan ignores symbolic links, so a link is never a task note here either.
+    if (stat.isSymbolicLink()) return { changed: removeTaskByPath(deps.db, path) };
     if (!stat.isFile() || stat.size > TASK_FILE_MAX_BYTES) return unreadable(deps, path);
     bytes = readFileSync(target);
   } catch (error: unknown) {

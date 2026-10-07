@@ -307,6 +307,17 @@ describe("Test 3 (path containment)", () => {
     expect(Object.keys(after).filter((k) => after[k] !== before[k])).toEqual([]);
   });
 
+  it("ignores a symlink that stays inside the vault, as the scan does, so it never becomes a duplicate", () => {
+    const good = create();
+    symlinkSync(good.abs, join(fx.vault.root, "global", "tasks", "alias.md"));
+    const before = arm();
+    const result = services.changed({ paths: ["global/tasks/alias.md" as never] });
+    expect(result).toMatchObject({ ok: true, value: { accepted: 1 } });
+    expect(getTask(fx.store.db, good.id)?.path).toBe(good.path);
+    expect(timers.pending()).toBe(0);
+    expectNothingWritten(before);
+  });
+
   it("answers invalid-path when every named path is refused by the symlink check", () => {
     const good = create();
     const outside = join(fx.vault.root, "..", "outside-2.md");
