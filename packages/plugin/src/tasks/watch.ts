@@ -16,7 +16,7 @@ import { type CoalescedBatch, createPathCoalescer } from "./coalescer.js";
  *   task-note path shape and hands it to the coalescer. It performs no read,
  *   write, stat or network call and returns at once; the flush runs from the
  *   registry's timer slot.
- * - Events for a path the plugin itself just wrote are dropped for a short
+ * - A modify event for a path the plugin itself just wrote is dropped for a short
  *   window (the write already told the service), which keeps a note edit from
  *   echoing back as a second `changed` call.
  * - The service's `changed` route re-reads frontmatter and never writes the
@@ -119,20 +119,25 @@ export function registerTaskVaultWatch(
 
   // Obsidian's `rename` event passes the old path second; the registry types a
   // handler with one parameter, and a function with an extra optional one fits.
-  const handle = (payload?: unknown, previous?: unknown): void => {
-    const path = pathOf(payload);
-    if (path === null) return;
-    const old = typeof previous === "string" ? previous : null;
-    if (typeof payload === "object" && payload !== null && "children" in payload) {
-      if (TASKS_FOLDER_PATH.test(path) || (old !== null && TASKS_FOLDER_PATH.test(old))) {
-        coalescer.addRescan();
+  const handlerFor =
+    (name: (typeof VAULT_EVENTS)[number]) =>
+    (payload?: unknown, previous?: unknown): void => {
+      const path = pathOf(payload);
+      if (path === null) return;
+      const old = typeof previous === "string" ? previous : null;
+      if (typeof payload === "object" && payload !== null && "children" in payload) {
+        if (TASKS_FOLDER_PATH.test(path) || (old !== null && TASKS_FOLDER_PATH.test(old))) {
+          coalescer.addRescan();
+        }
+        return;
       }
-      return;
-    }
-    if (isTaskNotePath(path) && !ownWrites.isRecent(path)) coalescer.add(path);
-    if (old !== null && isTaskNotePath(old)) coalescer.add(old);
-  };
+      // Only the modify event that echoes our own write is dropped; a create,
+      // delete or rename inside the window is somebody else's change and always passes.
+      const echo = name === "modify" && ownWrites.isRecent(path);
+      if (isTaskNotePath(path) && !echo) coalescer.add(path);
+      if (old !== null && isTaskNotePath(old)) coalescer.add(old);
+    };
 
-  for (const name of VAULT_EVENTS) registry.vaultEvent(name, handle);
+  for (const name of VAULT_EVENTS) registry.vaultEvent(name, handlerFor(name));
   return { ownWrites };
 }

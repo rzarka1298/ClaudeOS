@@ -48,7 +48,8 @@ describe("Test 4: completing an open task", () => {
     );
     expect(result).toEqual({ kind: "conflict" });
     expect(vault.read(TASK_PATH)).toBe(external);
-    expect(changed).not.toHaveBeenCalled();
+    // the external edit's event may have been dropped as an echo: the index is told
+    expect(changed).toHaveBeenCalledWith(TASK_PATH);
   });
 
   it("still reports applied when the service notification fails, because the note is already written", async () => {

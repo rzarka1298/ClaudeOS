@@ -68,6 +68,23 @@ async function defaultChanged(path: string): Promise<unknown> {
   return tasksApi().changed({ paths: [path] });
 }
 
+const STALE_STATUS = "stale-status";
+
+/** The freshly read status is not one this transition may start from (the index may be stale). */
+const stale = (): EditPlan => ({ ok: false, fields: { status: STALE_STATUS } });
+
+const OPEN_STATUSES: readonly TaskStatus[] = ["inbox", "ready", "in-progress", "blocked"];
+
+async function notify(deps: TaskActionDeps, path: string): Promise<boolean> {
+  try {
+    await (deps.changed ?? defaultChanged)(path);
+    return true;
+  } catch {
+    // The vault watcher or the next rebuild catches the index up.
+    return false;
+  }
+}
+
 async function runEdit(
   deps: TaskActionDeps,
   target: TaskActionTarget,
@@ -84,7 +101,11 @@ async function runEdit(
   if (parsed.kind === "unreadable") return parsed;
 
   const plan = build(parsed.task.frontmatter);
-  if (!plan.ok) return { kind: "invalid", fields: plan.fields };
+  if (!plan.ok) {
+    // A stale-status refusal means the index disagrees with the note: tell the service.
+    if (plan.fields.status === STALE_STATUS) await notify(deps, target.file.path);
+    return { kind: "invalid", fields: plan.fields };
+  }
 
   const path = target.file.path;
   // Recorded BEFORE the write: the vault's modify event for it can arrive before
@@ -96,15 +117,15 @@ async function runEdit(
   });
   if (result.kind !== "applied") {
     deps.ownWrites?.forget(path);
+    // The note changed outside this action (or cannot be edited), and the watcher
+    // may have dropped that event as an echo: make sure the index hears about it.
+    if (result.kind === "conflict" || result.kind === "unreadable" || result.kind === "invalid") {
+      await notify(deps, path);
+    }
     return result;
   }
-  let notified = true;
-  try {
-    await (deps.changed ?? defaultChanged)(path);
-  } catch {
-    // The note is already written; the vault watcher or the next rebuild catches the index up.
-    notified = false;
-  }
+  // The note is already written; a failed notification is caught up by the watcher or a rebuild.
+  const notified = await notify(deps, path);
   return { ...result, notified };
 }
 
@@ -114,7 +135,9 @@ export function completeTask(
   target: TaskActionTarget,
   now: string,
 ): Promise<TaskActionResult> {
-  return runEdit(deps, target, now, () => plan({ status: "done", completed: now }));
+  return runEdit(deps, target, now, (current) =>
+    OPEN_STATUSES.includes(current.status) ? plan({ status: "done", completed: now }) : stale(),
+  );
 }
 
 /** Sets `ready` and clears `completed` (UI-SPEC R-17). */
@@ -123,7 +146,11 @@ export function reopenTask(
   target: TaskActionTarget,
   now: string,
 ): Promise<TaskActionResult> {
-  return runEdit(deps, target, now, () => plan({ status: "ready", completed: null }));
+  return runEdit(deps, target, now, (current) =>
+    current.status === "done" || current.status === "cancelled"
+      ? plan({ status: "ready", completed: null })
+      : stale(),
+  );
 }
 
 /** D-36: a proposed task becomes `ready` and the decision is recorded as accepted at `now`. */
@@ -132,8 +159,10 @@ export function acceptTask(
   target: TaskActionTarget,
   now: string,
 ): Promise<TaskActionResult> {
-  return runEdit(deps, target, now, () =>
-    plan({ status: "ready", decision: { outcome: "accepted", at: now } }),
+  return runEdit(deps, target, now, (current) =>
+    current.status === "proposed"
+      ? plan({ status: "ready", decision: { outcome: "accepted", at: now } })
+      : stale(),
   );
 }
 
@@ -143,8 +172,10 @@ export function dismissTask(
   target: TaskActionTarget,
   now: string,
 ): Promise<TaskActionResult> {
-  return runEdit(deps, target, now, () =>
-    plan({ status: "cancelled", decision: { outcome: "dismissed", at: now } }),
+  return runEdit(deps, target, now, (current) =>
+    current.status === "proposed"
+      ? plan({ status: "cancelled", decision: { outcome: "dismissed", at: now } })
+      : stale(),
   );
 }
 

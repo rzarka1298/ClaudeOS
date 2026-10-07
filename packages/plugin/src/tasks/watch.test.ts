@@ -171,6 +171,22 @@ describe("Test 5: the plugin's own writes", () => {
     expect(changed.mock.calls[1]?.[0]).toEqual({ paths: [NOTE] });
   });
 
+  it("M1: delete and create inside the window always pass; only modify echoes are dropped", async () => {
+    const { host, watch, changed, flush } = setup();
+    host.setLayoutReady();
+    watch.ownWrites.record(NOTE);
+    host.emitVaultEvent("modify", file(NOTE));
+    await flush();
+    expect(changed).not.toHaveBeenCalled();
+    host.emitVaultEvent("delete", file(NOTE));
+    await flush();
+    expect(changed.mock.calls[0]?.[0]).toEqual({ paths: [NOTE] });
+    watch.ownWrites.record(WS_NOTE);
+    host.emitVaultEvent("create", file(WS_NOTE));
+    await flush();
+    expect(changed.mock.calls[1]?.[0]).toEqual({ paths: [WS_NOTE] });
+  });
+
   it("forgets a recorded write when asked, so an external edit after a conflict is not dropped", () => {
     let now = 0;
     const ledger = createOwnWriteLedger(() => now, 2000);

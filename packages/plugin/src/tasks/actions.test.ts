@@ -11,7 +11,14 @@ import {
   TASK_PATH,
   taskEditVault,
 } from "../test-support/task-note-fixtures.js";
-import { acceptTask, dismissTask, reopenTask, saveTask, type TaskActionResult } from "./actions.js";
+import {
+  acceptTask,
+  completeTask,
+  dismissTask,
+  reopenTask,
+  saveTask,
+  type TaskActionResult,
+} from "./actions.js";
 import { parseTaskContent } from "./task-update.js";
 
 const PROPOSED_NOTE = OPEN_NOTE.replace("status: ready", "status: proposed");
@@ -69,17 +76,20 @@ describe("Test 1: accept, dismiss and reopen", () => {
     expect(task.body).toBe(OPEN_BODY);
   });
 
-  it("returns conflict or unreadable without notifying the service", async () => {
+  it("returns conflict (telling the service the path changed) or unreadable (no write, no notice)", async () => {
     for (const action of [acceptTask, dismissTask, reopenTask]) {
-      const conflicted = setup(PROPOSED_NOTE);
-      conflicted.vault.setExternally(TASK_PATH, `${PROPOSED_NOTE}typed\n`);
+      const base = action === reopenTask ? COMPLETED_NOTE : PROPOSED_NOTE;
+      const conflicted = setup(base);
+      conflicted.vault.setExternally(TASK_PATH, `${base}typed\n`);
       const conflict: TaskActionResult = await action(
         conflicted.deps,
-        { ...conflicted.target, expectedPriorContent: PROPOSED_NOTE },
+        { ...conflicted.target, expectedPriorContent: base },
         NOW,
       );
       expect(conflict).toEqual({ kind: "conflict" });
-      expect(conflicted.changed).not.toHaveBeenCalled();
+      // M1 case A: the external edit's event may have been dropped as an echo.
+      expect(conflicted.changed).toHaveBeenCalledTimes(1);
+      expect(conflicted.changed).toHaveBeenCalledWith(TASK_PATH);
 
       const broken = setup("not a task");
       const unreadable = await action(broken.deps, broken.target, NOW);
@@ -192,4 +202,53 @@ describe("Test 2: save applies only the edited fields", () => {
     });
     expect(time).toEqual({ kind: "invalid", fields: { due: "invalid-time" } });
   });
+});
+
+describe("M2: allowed-from status guards read the fresh note", () => {
+  const withStatus = (status: string) => OPEN_NOTE.replace("status: ready", `status: ${status}`);
+  const cases: ReadonlyArray<
+    readonly [string, typeof acceptTask, readonly string[], readonly string[]]
+  > = [
+    [
+      "accept",
+      acceptTask,
+      ["proposed"],
+      ["inbox", "ready", "in-progress", "blocked", "done", "cancelled"],
+    ],
+    [
+      "dismiss",
+      dismissTask,
+      ["proposed"],
+      ["inbox", "ready", "in-progress", "blocked", "done", "cancelled"],
+    ],
+    [
+      "reopen",
+      reopenTask,
+      ["done", "cancelled"],
+      ["inbox", "proposed", "ready", "in-progress", "blocked"],
+    ],
+    [
+      "complete",
+      completeTask,
+      ["inbox", "ready", "in-progress", "blocked"],
+      ["proposed", "done", "cancelled"],
+    ],
+  ];
+  for (const [name, action, allowed, refused] of cases) {
+    it(`${name} applies from ${allowed.join("/")} only`, async () => {
+      for (const status of allowed) {
+        const note = status === "done" ? COMPLETED_NOTE : withStatus(status);
+        const { deps, target } = setup(note);
+        expect((await action(deps, target, NOW)).kind).toBe("applied");
+      }
+      for (const status of refused) {
+        const note = status === "done" ? COMPLETED_NOTE : withStatus(status);
+        const { vault, deps, target, changed } = setup(note);
+        const result = await action(deps, target, NOW);
+        expect(result).toEqual({ kind: "invalid", fields: { status: "stale-status" } });
+        expect(vault.read(TASK_PATH)).toBe(note);
+        expect(changed).toHaveBeenCalledWith(TASK_PATH);
+      }
+    });
+  }
 });
