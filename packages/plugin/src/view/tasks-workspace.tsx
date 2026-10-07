@@ -145,7 +145,6 @@ export function TasksWorkspace(props: TasksWorkspaceProps): VNode {
     }
     void loadDetail(selectedId, false);
     // loadDetail reads only refs and stable holders.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by the selection alone
   }, [selectedId]);
 
   // Back to tasks: once the pane has gone, focus returns to the row's title button.

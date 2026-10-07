@@ -85,7 +85,6 @@ export function ProjectTasksPanel(props: ProjectTasksPanelProps): VNode {
   }, [props.connection.kind, context]);
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: Escape closes the panel; the keys are handled, not activated, here.
     <section
       className="ccc-project-tasks"
       aria-label={`Tasks · ${props.projectName}`}
