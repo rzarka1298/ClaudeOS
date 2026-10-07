@@ -19,6 +19,8 @@ export interface StartServiceForTestOptions {
   dbPath: string;
   /** Extra environment for the child, on top of the test process's own (append-only, 06-21). */
   env?: Record<string, string>;
+  /** How many 100 ms polls to wait for the socket (append-only, 06-25): a service that walks a large vault first needs longer than the default five seconds on a loaded machine. */
+  waitAttempts?: number;
 }
 
 export interface TestServiceHandle {
@@ -58,6 +60,7 @@ function waitForSocket(socketPath: string, attempts = 50, delayMs = 100): Promis
 export async function startServiceForTest({
   socketPath,
   env,
+  waitAttempts,
 }: StartServiceForTestOptions): Promise<TestServiceHandle> {
   // Belt and braces beside the service's own RealRuntimeDirUnderTestError:
   // never even spawn a service aimed at the real runtime directory.
@@ -76,7 +79,7 @@ export async function startServiceForTest({
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  await waitForSocket(socketPath);
+  await waitForSocket(socketPath, waitAttempts);
 
   return {
     pid: child.pid,

@@ -51,6 +51,8 @@ export interface TaskServiceOptions {
 
 const TEST_BASE = join(homedir(), ".ccc-test");
 const ZONE = "UTC";
+/** One connection per request: a pooled connection the service closed while the test waited would fail the next request with a hang up. */
+const CLOSE = { Connection: "close" };
 
 /** Starts the real service on a throwaway runtime directory with the vault registered. Call `close()` when done. */
 export async function startTaskService(
@@ -78,6 +80,8 @@ export async function startTaskService(
       socketPath,
       dbPath: join(dir, "operational.db"),
       env,
+      // A boot walk of ten thousand notes can take far longer than five seconds on a loaded machine.
+      waitAttempts: 600,
     });
     token = await handshake(socketPath);
   };
@@ -87,10 +91,10 @@ export async function startTaskService(
     if (running !== null) await running.stop();
   };
   const post = <T>(path: string, body: unknown): Promise<TaskServiceReply<T>> =>
-    authedRequest<T>(socketPath, token, { method: "POST", path, body });
+    authedRequest<T>(socketPath, token, { method: "POST", path, body, headers: CLOSE });
 
   const get = <T>(path: string): Promise<TaskServiceReply<T>> =>
-    authedRequest<T>(socketPath, token, { method: "GET", path });
+    authedRequest<T>(socketPath, token, { method: "GET", path, headers: CLOSE });
 
   try {
     await start();
