@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { CLASSIFICATION, type DecideResponse, type ProposalId } from "@ccc/domain";
 import * as approvalEntry from "@ccc/service/approval";
 import { buildOperationRegistry } from "@ccc/service/approval";
@@ -11,6 +12,7 @@ import {
   countAudit,
   createFakeConnector,
   createRigs,
+  delay,
   FAKE_CONNECTOR,
   type OpenedEngine,
   readExecutions,
@@ -121,6 +123,98 @@ describe("Test 3: ten approvals on each of two database connections", () => {
     expect(first.store.get(id)?.state).toBe("executed");
     expect(second.store.get(id)).toEqual(first.store.get(id));
   });
+});
+
+/** What each worker thread reports back about its own engine. */
+interface WorkerReport {
+  readonly error?: string;
+  readonly outcomes?: string[];
+  readonly executions?: number;
+  readonly applications?: number;
+}
+
+/**
+ * Runs inside a worker thread (CommonJS eval): opens its own engine on the
+ * shared database file through the BUILT fixtures, waits at a barrier so both
+ * threads start together, then fires its approvals. The threads really run in
+ * parallel, so the SQLite write lock is genuinely contended.
+ */
+const WORKER_SOURCE = `
+const { parentPort, workerData } = require("node:worker_threads");
+(async () => {
+  const fixtures = await import(workerData.fixtures);
+  const world = fixtures.createWorld();
+  const rig = fixtures.openEngine(workerData.dbPath, world);
+  const flags = new Int32Array(workerData.barrier);
+  Atomics.add(flags, 1, 1);
+  Atomics.wait(flags, 0, 0);
+  const results = await Promise.all(
+    Array.from({ length: workerData.calls }, () =>
+      rig.engine.decide({
+        proposalId: workerData.proposalId,
+        decision: "approve",
+        payloadHash: workerData.payloadHash,
+        via: "plugin",
+      }),
+    ),
+  );
+  await rig.engine.settled();
+  parentPort.postMessage({
+    outcomes: results.map((result) => result.outcome),
+    executions: world.diagnostic.executions,
+    applications: world.diagnostic.applications,
+  });
+  rig.close();
+})().catch((error) => parentPort.postMessage({ error: String((error && error.stack) || error) }));
+`;
+
+describe("Test 3b: two worker threads on one database file", () => {
+  it("really in parallel: twenty approvals yield one approval, one claim and one effect", async () => {
+    const parent = rigs.start();
+    const id = parent.propose();
+    const fixtures = new URL("../dist/approval-fixtures.js", import.meta.url).href;
+    const barrier = new SharedArrayBuffer(8);
+    const flags = new Int32Array(barrier);
+    const reports = [0, 1].map(
+      () =>
+        new Promise<WorkerReport>((resolve, reject) => {
+          const worker = new Worker(WORKER_SOURCE, {
+            eval: true,
+            workerData: {
+              fixtures,
+              dbPath: parent.dbPath,
+              barrier,
+              calls: 10,
+              proposalId: id,
+              payloadHash: parent.hashOf(id),
+            },
+          });
+          worker.once("message", (report: WorkerReport) => resolve(report));
+          worker.once("error", reject);
+        }),
+    );
+    // Release both threads together once each has opened its engine.
+    for (let waited = 0; Atomics.load(flags, 1) < 2; waited += 5) {
+      if (waited > 20_000) throw new Error("the worker threads never became ready");
+      await delay(5);
+    }
+    Atomics.store(flags, 0, 1);
+    Atomics.notify(flags, 0);
+    const [first, second] = await Promise.all(reports);
+
+    expect(first?.error).toBeUndefined();
+    expect(second?.error).toBeUndefined();
+    const outcomes = [...(first?.outcomes ?? []), ...(second?.outcomes ?? [])];
+    expect(outcomes).toHaveLength(20);
+    expect(outcomes.filter((outcome) => outcome === "decided")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome === "already-decided")).toHaveLength(19);
+    // The effect count is the operations' own counters, summed over both threads.
+    expect((first?.executions ?? 0) + (second?.executions ?? 0)).toBe(1);
+    expect((first?.applications ?? 0) + (second?.applications ?? 0)).toBe(1);
+    expect(auditEvents(parent.db, id)).toEqual(["requested", "approved", "claimed", "executed"]);
+    expect(parent.store.get(id)?.state).toBe("executed");
+    expect(parent.store.get(id)?.attempts).toBe(1);
+  }, 60_000);
 });
 
 describe("Test 4: a deny racing an approve", () => {
