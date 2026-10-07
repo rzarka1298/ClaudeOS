@@ -252,6 +252,11 @@ export interface ApprovalEngine {
   recover(): Promise<RecoverySummary>;
   /** Resolves when every execution the engine started has finished (tests, shutdown). */
   settled(): Promise<void>;
+  /**
+   * Shutdown: from this synchronous call on, no new attempt is claimed or started and `decide`
+   * answers without touching the request (it stays pending or approved for recovery on next boot).
+   */
+  beginShutdown(): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -540,7 +545,13 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     );
   }
 
+  let stopping = false;
+
   async function decide(input: EngineDecideInput): Promise<DecideResponse> {
+    // Shutting down: a late decision must not claim, start or even approve anything. The closed
+    // DecideResponse vocabulary has no "unavailable" outcome (adding one ripples through the domain,
+    // client and plugin); "operation-reserved" is the closest refusal that leaves the request untouched.
+    if (stopping) return { outcome: "operation-reserved" };
     const id = ProposalIdSchema.safeParse(input.proposalId);
     if (!id.success) return { outcome: "not-found" };
     const proposalId = id.data;
@@ -619,6 +630,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     approved: StoredProposal,
     definition: RegisteredDefinition,
   ): Promise<StoredProposal | null> {
+    // The request stays approved; startup recovery picks it up on the next boot.
+    if (stopping) return null;
     active.add(approved.proposalId);
     try {
       let facts: ClaimFacts = {};
@@ -635,6 +648,10 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
             log.warn({ proposalId: approved.proposalId, code: "claim-facts-failed" });
           }
         }
+      }
+      if (stopping) {
+        active.delete(approved.proposalId);
+        return null;
       }
       const claim = store.claim(approved.proposalId, facts, clock.now());
       if (claim.kind === "lost") {
@@ -862,5 +879,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     sweepExpired,
     recover: recovery.recover,
     settled,
+    beginShutdown: () => {
+      stopping = true;
+    },
   };
 }

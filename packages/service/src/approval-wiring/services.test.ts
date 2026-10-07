@@ -113,6 +113,61 @@ function flipOneCharacter(hash: string): string {
   return `${hash.startsWith("a") ? "b" : "a"}${hash.slice(1)}`;
 }
 
+describe("startApprovalServices: shutdown refuses late decisions (wave-5 review)", () => {
+  it("starts no execution after stop() has begun, and reports not ready", async () => {
+    const ops = fakeOperations();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = ops.definitions[0] as OperationDefinition<EnabledOperation, unknown>;
+    const holding = {
+      ...first,
+      async execute(_token: never, _payload: never, context: { idempotencyKey: string }) {
+        ops.executed.push(context.idempotencyKey);
+        await gate;
+        return { kind: "executed" };
+      },
+    } as unknown as OperationDefinition<EnabledOperation, unknown>;
+    const runtime = startApprovalServices({
+      ...baseDeps(ops),
+      definitions: [holding, ops.definitions[1] as never],
+    });
+    await runtime.recover();
+    const one = runtime.services.test({}) as { proposalId: string };
+    const oneFound = runtime.services.get(one.proposalId);
+    if (oneFound.kind !== "found") throw new Error("expected found");
+    await runtime.services.decide({
+      proposalId: one.proposalId,
+      decision: "approve",
+      payloadHash: oneFound.payloadHash,
+      via: "plugin",
+    });
+    expect(ops.executed).toHaveLength(1);
+
+    const two = runtime.services.test({}) as { proposalId: string };
+    const twoFound = runtime.services.get(two.proposalId);
+    if (twoFound.kind !== "found") throw new Error("expected found");
+
+    const stopped = runtime.stop();
+    expect(runtime.services.ready).toBe(false);
+    release();
+    await stopped;
+    const late = await runtime.services.decide({
+      proposalId: two.proposalId,
+      decision: "approve",
+      payloadHash: twoFound.payloadHash,
+      via: "plugin",
+    });
+    expect(late.outcome).not.toBe("decided");
+    await runtime.settled();
+    expect(ops.executed).toHaveLength(1);
+    const after = runtime.services.get(two.proposalId);
+    if (after.kind !== "found") throw new Error("expected found");
+    expect(after.summary.state).toBe("pending");
+  });
+});
+
 describe("startApprovalServices: the registry fails closed (Task 1, Test 4)", () => {
   it("throws when an enabled operation has no definition", () => {
     const ops = fakeOperations();

@@ -150,10 +150,11 @@ export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntim
   const testLifetimeMs = resolveTestLifetimeMs(deps.env, log);
 
   let ready = false;
+  let stopping = false;
 
   const services: ApprovalServices = {
     get ready() {
-      return ready;
+      return ready && !stopping;
     },
     snapshot: (budgetBytes) => engine.snapshot(budgetBytes),
     get(proposalId) {
@@ -208,6 +209,9 @@ export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntim
     start: () => sweeper.start(),
     settled: () => engine.settled(),
     async stop() {
+      // Synchronously first: a late decision must not start a new execution.
+      stopping = true;
+      engine.beginShutdown();
       await sweeper.stop();
       await engine.settled();
     },
