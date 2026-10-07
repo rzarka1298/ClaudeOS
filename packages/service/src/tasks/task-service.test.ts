@@ -517,6 +517,19 @@ describe("Task 2 Test 6 (due-today)", () => {
     expect(result.value.due[0]?.dueDate).toBe("2026-10-07");
   });
 
+  it("fits the response within the 64 KiB transport cap for 50 + 50 maximal CJK rows", () => {
+    const title = "漢".repeat(200);
+    seedTasks(fx.store, [
+      ...Array.from({ length: 50 }, (_, i) => taskRecord(100 + i, { title, due: "2026-10-07" })),
+      ...Array.from({ length: 50 }, (_, i) => taskRecord(300 + i, { title, due: "2026-10-01" })),
+    ]);
+    const result = services.dueToday({ zone: ZONE });
+    if (!result.ok) throw new Error("due-today refused");
+    expect(Buffer.byteLength(JSON.stringify(result.value), "utf8")).toBeLessThanOrEqual(60 * 1024);
+    expect(result.value.due.length).toBeGreaterThan(0);
+    expect(result.value.overdue.length).toBeGreaterThan(0);
+  });
+
   it("follows the scope and the zone", () => {
     seedTasks(fx.store, [
       taskRecord(1, { due: "2026-10-07T03:30:00Z" }),

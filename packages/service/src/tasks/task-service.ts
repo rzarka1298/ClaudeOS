@@ -160,6 +160,21 @@ function flattenAttention(list: readonly TaskAttention[]): TaskAttentionItem[] {
   return items;
 }
 
+/** The most UTF-8 bytes a due-today response may take: under the client's 64 KiB cap. */
+const DUE_TODAY_BUDGET_BYTES = 56 * 1024;
+
+/** Drops trailing rows, from the longer list first, until the response fits the byte budget. */
+function fitDueToday(feed: TaskDueTodayResponse): TaskDueTodayResponse {
+  const due = [...feed.due];
+  const overdue = [...feed.overdue];
+  const size = (): number => Buffer.byteLength(JSON.stringify({ due, overdue }), "utf8");
+  while (size() > DUE_TODAY_BUDGET_BYTES && (due.length > 0 || overdue.length > 0)) {
+    if (overdue.length >= due.length) overdue.pop();
+    else due.pop();
+  }
+  return { due, overdue };
+}
+
 export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
   const attentionList = deps.attention ?? createAttentionList();
   // A generation that only ever increases, even across a restart: seeded from the clock.
@@ -376,7 +391,7 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
         day,
         ...(request.scope === undefined ? {} : { scope: request.scope }),
       });
-      return { ok: true, value: TaskDueTodayResponseSchema.parse(feed) };
+      return { ok: true, value: TaskDueTodayResponseSchema.parse(fitDueToday(feed)) };
     } catch (error: unknown) {
       if (error instanceof InvalidTaskQueryError) return fail("invalid-body");
       throw error;
