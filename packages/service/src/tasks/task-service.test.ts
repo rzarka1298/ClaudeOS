@@ -5,17 +5,22 @@ import {
   ProjectIdSchema,
   TASK_FILE_SUFFIX_LENGTH,
   TASK_SLUG_MAX_LENGTH,
+  type TaskContext,
   type TaskCreateRequest,
   TaskCreateResponseSchema,
   VALID_HOSTILE_TASK_TITLES,
 } from "@ccc/domain";
-import { getTask } from "@ccc/operational-store";
-import { parseTaskNote } from "@ccc/vault-repo";
+import { countTasks, getTask, queryTasks } from "@ccc/operational-store";
+import { parseTaskNote, type TaskAttention } from "@ccc/vault-repo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   makeServiceFixture,
+  noteId,
+  projectIdOf,
   publishedGenerations,
   type ServiceFixture,
+  seedTasks,
+  taskRecord,
 } from "../test-support/task-fixtures.js";
 import { createTaskServices } from "./task-service.js";
 import type { TaskServices } from "./types.js";
@@ -217,5 +222,421 @@ describe("Test 6 (failure)", () => {
     expect(logged).not.toContain("A private title");
     expect(logged).not.toContain("/Users/");
     expect(logged).not.toContain(fx.vault.root);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: list, counts, get, due-today and attention
+
+const WS = "0abcdefghijklmnopqrstuvwx";
+const WS_SCOPE = `workspace:${WS}`;
+const P1 = ProjectIdSchema.parse(projectIdOf(1));
+
+function seedMixed(): void {
+  seedTasks(fx.store, [
+    taskRecord(1, { due: "2026-10-07" }),
+    taskRecord(2, { due: "2026-10-07T18:00:00Z", priority: "high" }),
+    taskRecord(3, { due: "2026-10-06" }),
+    taskRecord(4, { due: "2026-10-20" }),
+    taskRecord(5, { status: "proposed", assignee: "automation" }),
+    taskRecord(6, { status: "done", completed: "2026-10-05T10:00:00Z" }),
+    taskRecord(7, { status: "blocked" }),
+    taskRecord(8, { projectId: P1 }),
+    taskRecord(9, {
+      scope: WS_SCOPE,
+      path: `workspaces/${WS}/tasks/task-9.md`,
+      due: "2026-10-07",
+    }),
+    taskRecord(10, { status: "cancelled" }),
+  ]);
+}
+
+function listOk(
+  filter: Parameters<TaskServices["list"]>[0]["filter"],
+  context: Parameters<TaskServices["list"]>[0]["context"] = { scope: "all" },
+  extra: { cursor?: string; zone?: string | undefined } = {},
+) {
+  const result = services.list({
+    context,
+    filter,
+    zone: ZONE,
+    ...(extra.cursor === undefined ? {} : { cursor: extra.cursor }),
+    ...(extra.zone === undefined ? {} : { zone: extra.zone }),
+  });
+  if (!result.ok) throw new Error(`list refused: ${result.code}`);
+  return result.value;
+}
+
+describe("Task 2 Test 2 (list)", () => {
+  it("returns for each of the eight filters the rows the store returns for the same inputs", () => {
+    seedMixed();
+    const day = {
+      localDate: "2026-10-07",
+      startsAt: "2026-10-07T04:00:00.000Z",
+      endsAt: "2026-10-08T04:00:00.000Z",
+    };
+    for (const filter of [
+      "all",
+      "today",
+      "upcoming",
+      "overdue",
+      "project",
+      "proposed",
+      "blocked",
+      "completed",
+    ] as const) {
+      const context: TaskContext =
+        filter === "project" ? { scope: "all", projectId: P1 } : { scope: "all" };
+      const page = listOk(filter, context);
+      const expected = queryTasks(fx.store.db, {
+        context: {
+          scope: context.scope,
+          ...(context.projectId === undefined ? {} : { projectId: context.projectId }),
+        },
+        filter,
+        day,
+      });
+      expect(page.rows.map((row) => row.id)).toEqual(expected.rows.map((row) => row.id));
+      expect(page.total).toBe(expected.total);
+      expect(page.chooseProject).toBe(false);
+    }
+    expect(listOk("today").rows.map((row) => row.id)).toEqual(
+      expect.arrayContaining([noteId(1), noteId(2), noteId(9)]),
+    );
+    expect(listOk("proposed").rows.map((row) => row.id)).toEqual([noteId(5)]);
+  });
+
+  it("pages 25 at a time with a next cursor and the total", () => {
+    seedTasks(
+      fx.store,
+      Array.from({ length: 30 }, (_, i) => taskRecord(100 + i)),
+    );
+    const first = listOk("all");
+    expect(first.rows).toHaveLength(25);
+    expect(first.total).toBe(30);
+    expect(first.nextCursor).not.toBeNull();
+    const second = listOk("all", { scope: "all" }, { cursor: first.nextCursor as string });
+    expect(second.rows).toHaveLength(5);
+    expect(second.nextCursor).toBeNull();
+    const seen = new Set([...first.rows, ...second.rows].map((row) => row.id));
+    expect(seen.size).toBe(30);
+  });
+
+  it("narrows by scope and by project", () => {
+    seedMixed();
+    expect(listOk("all", { scope: WS_SCOPE }).rows.map((row) => row.id)).toEqual([noteId(9)]);
+    const global = listOk("all", { scope: "global" });
+    expect(global.rows.map((row) => row.id)).not.toContain(noteId(9));
+    expect(listOk("all", { scope: "all", projectId: P1 }).rows.map((row) => row.id)).toEqual([
+      noteId(8),
+    ]);
+  });
+
+  it("answers the choose-a-project flag with an empty page for Project with no project", () => {
+    seedMixed();
+    expect(listOk("project")).toEqual({
+      rows: [],
+      total: 0,
+      nextCursor: null,
+      chooseProject: true,
+    });
+  });
+
+  it("carries no body text and no absolute path", () => {
+    seedMixed();
+    const wire = JSON.stringify(listOk("all"));
+    expect(wire).not.toContain(fx.vault.root);
+    expect(wire).not.toContain("global/tasks");
+  });
+
+  it("refuses a bad cursor with invalid-cursor, including one from another filter", () => {
+    seedTasks(
+      fx.store,
+      Array.from({ length: 30 }, (_, i) => taskRecord(100 + i)),
+    );
+    const first = listOk("all");
+    const cursor = first.nextCursor as string;
+    expect(
+      services.list({ context: { scope: "all" }, filter: "upcoming", zone: ZONE, cursor }),
+    ).toEqual({ ok: false, code: "invalid-cursor" });
+    expect(
+      services.list({ context: { scope: "all" }, filter: "all", zone: ZONE, cursor: "bad!" }),
+    ).toEqual({ ok: false, code: "invalid-cursor" });
+  });
+});
+
+describe("Task 2 Test 3 (zone)", () => {
+  it("uses the request's zone: an instant late on the previous New York evening is today in UTC only", () => {
+    seedTasks(fx.store, [taskRecord(1, { due: "2026-10-07T03:30:00Z" })]);
+    expect(listOk("today", { scope: "all" }, { zone: "America/New_York" }).rows).toHaveLength(0);
+    expect(listOk("overdue", { scope: "all" }, { zone: "America/New_York" }).rows).toHaveLength(1);
+    expect(listOk("today", { scope: "all" }, { zone: "UTC" }).rows).toHaveLength(1);
+  });
+
+  it("refuses an invalid zone and falls back to the runtime zone when none is given", () => {
+    expect(services.list({ context: { scope: "all" }, filter: "all", zone: "Not/AZone" })).toEqual({
+      ok: false,
+      code: "invalid-body",
+    });
+    const absent = services.list({ context: { scope: "all" }, filter: "all" });
+    expect(absent.ok).toBe(true);
+  });
+
+  it("reads the clock exactly once per list, counts and due-today request", () => {
+    seedMixed();
+    let calls = 0;
+    const counted = createTaskServices({
+      ...fx.deps,
+      now: () => {
+        calls += 1;
+        return fx.clock.now();
+      },
+    });
+    const baseline = calls;
+    counted.list({ context: { scope: "all" }, filter: "today", zone: ZONE });
+    expect(calls - baseline).toBe(1);
+    counted.counts({ context: { scope: "all" }, zone: ZONE });
+    expect(calls - baseline).toBe(2);
+    counted.dueToday({ zone: ZONE });
+    expect(calls - baseline).toBe(3);
+  });
+});
+
+describe("Task 2 Test 4 (counts)", () => {
+  it("carries every chip count, the open total and equals the list totals for the same context", () => {
+    seedMixed();
+    const contexts: TaskContext[] = [
+      { scope: "all" },
+      { scope: "global" },
+      { scope: WS_SCOPE },
+      { scope: "all", projectId: P1 },
+    ];
+    for (const context of contexts) {
+      const result = services.counts({ context, zone: ZONE });
+      if (!result.ok) throw new Error("counts refused");
+      for (const filter of [
+        "all",
+        "today",
+        "upcoming",
+        "overdue",
+        "project",
+        "proposed",
+        "blocked",
+        "completed",
+      ] as const) {
+        const page = listOk(filter, context);
+        const expected =
+          filter === "project" && context.projectId === undefined ? undefined : page.total;
+        if (expected !== undefined) expect(result.value.counts[filter]).toBe(expected);
+      }
+    }
+    const all = services.counts({ context: { scope: "all" }, zone: ZONE });
+    if (!all.ok) throw new Error("counts refused");
+    expect(all.value.counts.proposed).toBe(1);
+    expect(all.value.open).toBe(
+      countTasks(fx.store.db, {
+        context: { scope: "all" },
+        day: {
+          localDate: "2026-10-07",
+          startsAt: "2026-10-07T04:00:00.000Z",
+          endsAt: "2026-10-08T04:00:00.000Z",
+        },
+      }).open,
+    );
+    expect(all.value.open).toBeLessThan(all.value.counts.all);
+  });
+
+  it("narrows to one project when the context fixes it", () => {
+    seedMixed();
+    const result = services.counts({ context: { scope: "all", projectId: P1 }, zone: ZONE });
+    if (!result.ok) throw new Error("counts refused");
+    expect(result.value.counts.all).toBe(1);
+    expect(result.value.open).toBe(1);
+  });
+});
+
+describe("Task 2 Test 5 (get)", () => {
+  it("returns the row, the unfinished dependencies (resolved or not) and the parent id and title", () => {
+    seedTasks(fx.store, [
+      taskRecord(1, { title: "Parent task" }),
+      taskRecord(2, { title: "Open dependency" }),
+      taskRecord(3, {
+        title: "Done dependency",
+        status: "done",
+        completed: "2026-10-05T10:00:00Z",
+      }),
+      taskRecord(4, {
+        title: "Child",
+        parentId: noteId(1),
+        dependencies: [noteId(2), noteId(3), noteId(77)],
+        assignee: "user",
+      }),
+    ]);
+    const result = services.get({ taskId: noteId(4) });
+    if (!result.ok) throw new Error("get refused");
+    const detail = result.value.task;
+    expect(detail.row.id).toBe(noteId(4));
+    expect(detail.path).toBe("global/tasks/task-4.md");
+    expect(detail.sourceType).toBe("manual");
+    expect(detail.parent).toEqual({ id: noteId(1), title: "Parent task" });
+    expect(detail.blockedBy).toEqual([
+      { resolved: true, id: noteId(2), title: "Open dependency", status: "ready" },
+      { resolved: false, id: noteId(77) },
+    ]);
+    expect(detail.assignee).toBe("user");
+    expect(JSON.stringify(detail)).not.toContain(fx.vault.root);
+  });
+
+  it("answers not-found for an unknown id", () => {
+    expect(services.get({ taskId: noteId(1) })).toEqual({ ok: false, code: "not-found" });
+  });
+
+  it("gives a missing parent a null title", () => {
+    seedTasks(fx.store, [taskRecord(4, { parentId: noteId(55) })]);
+    const result = services.get({ taskId: noteId(4) });
+    if (!result.ok) throw new Error("get refused");
+    expect(result.value.task.parent).toEqual({ id: noteId(55), title: null });
+  });
+});
+
+describe("Task 2 Test 6 (due-today)", () => {
+  it("returns due-today and overdue rows with task ids, at most 50 each, in the request zone", () => {
+    seedTasks(fx.store, [
+      ...Array.from({ length: 60 }, (_, i) => taskRecord(100 + i, { due: "2026-10-07" })),
+      ...Array.from({ length: 55 }, (_, i) => taskRecord(300 + i, { due: "2026-10-01" })),
+      taskRecord(500, { status: "proposed", due: "2026-10-07" }),
+      taskRecord(501, { status: "done", due: "2026-10-07", completed: "2026-10-06T10:00:00Z" }),
+    ]);
+    const result = services.dueToday({ zone: ZONE });
+    if (!result.ok) throw new Error("due-today refused");
+    expect(result.value.due).toHaveLength(50);
+    expect(result.value.overdue).toHaveLength(50);
+    const ids = [...result.value.due, ...result.value.overdue].map((row) => row.taskId);
+    expect(ids).not.toContain(noteId(500));
+    expect(ids).not.toContain(noteId(501));
+    expect(result.value.due[0]?.dueDate).toBe("2026-10-07");
+  });
+
+  it("follows the scope and the zone", () => {
+    seedTasks(fx.store, [
+      taskRecord(1, { due: "2026-10-07T03:30:00Z" }),
+      taskRecord(2, {
+        due: "2026-10-07",
+        scope: WS_SCOPE,
+        path: `workspaces/${WS}/tasks/task-2.md`,
+      }),
+    ]);
+    const ny = services.dueToday({ zone: "America/New_York" });
+    const utc = services.dueToday({ zone: "UTC" });
+    if (!ny.ok || !utc.ok) throw new Error("due-today refused");
+    expect(ny.value.overdue.map((row) => row.taskId)).toEqual([noteId(1)]);
+    expect(utc.value.due.map((row) => row.taskId)).toContain(noteId(1));
+    const scoped = services.dueToday({ zone: "UTC", scope: WS_SCOPE });
+    if (!scoped.ok) throw new Error("due-today refused");
+    expect(scoped.value.due.map((row) => row.taskId)).toEqual([noteId(2)]);
+  });
+});
+
+describe("Task 2 Test 7 (attention)", () => {
+  function attentionFixture(count: number) {
+    return Array.from({ length: count }, (_, i) => ({
+      reason: "unreadable" as const,
+      paths: [`global/tasks/broken-${String(i).padStart(3, "0")}.md`],
+      detail: "task note frontmatter is not valid YAML",
+    }));
+  }
+
+  it("pages the in-memory list 25 at a time with reasons and vault-relative paths", () => {
+    let list: readonly TaskAttention[] = attentionFixture(30);
+    const rootReads = vi.fn(() => fx.vault.root);
+    const withList = createTaskServices({
+      ...fx.deps,
+      getVaultRoot: rootReads,
+      attention: {
+        get: () => list,
+        set: (next) => {
+          list = [...next];
+        },
+      },
+    });
+    const first = withList.attention({});
+    if (!first.ok) throw new Error("attention refused");
+    expect(first.value.items).toHaveLength(25);
+    expect(first.value.total).toBe(30);
+    expect(first.value.items[0]).toEqual({
+      path: "global/tasks/broken-000.md",
+      title: "broken-000",
+      reason: "unreadable",
+      otherPaths: [],
+    });
+    const second = withList.attention({ cursor: first.value.nextCursor as string });
+    if (!second.ok) throw new Error("attention refused");
+    expect(second.value.items).toHaveLength(5);
+    expect(second.value.nextCursor).toBeNull();
+    expect(rootReads).not.toHaveBeenCalled();
+  });
+
+  it("names each copy of a duplicate with the other copies' paths", () => {
+    const withList = createTaskServices({
+      ...fx.deps,
+      attention: {
+        get: () => [
+          {
+            reason: "duplicate-id",
+            id: noteId(1),
+            paths: ["global/tasks/a-1.md", "global/tasks/b-1.md"],
+            detail: "x",
+          },
+        ],
+        set: () => undefined,
+      },
+    });
+    const result = withList.attention({});
+    if (!result.ok) throw new Error("attention refused");
+    expect(result.value.items.map((item) => [item.path, item.otherPaths])).toEqual([
+      ["global/tasks/a-1.md", ["global/tasks/b-1.md"]],
+      ["global/tasks/b-1.md", ["global/tasks/a-1.md"]],
+    ]);
+    expect(result.value.items.every((item) => item.reason === "duplicate-id")).toBe(true);
+  });
+
+  it("returns an empty page for an empty list", () => {
+    expect(services.attention({})).toEqual({
+      ok: true,
+      value: { items: [], total: 0, nextCursor: null },
+    });
+  });
+
+  it("refuses a bad cursor", () => {
+    expect(services.attention({ cursor: "garbage!" })).toEqual({
+      ok: false,
+      code: "invalid-cursor",
+    });
+  });
+
+  it("keeps a page under the client response cap even with very long duplicate paths", () => {
+    const longName = (n: number) =>
+      `global/tasks/${"d".repeat(200)}-${String(n).padStart(3, "0")}.md`;
+    const list = Array.from({ length: 25 }, (_, i) => ({
+      reason: "duplicate-id" as const,
+      id: noteId(i),
+      paths: Array.from({ length: 51 }, (_, j) => longName(i * 100 + j)),
+      detail: "x",
+    }));
+    const withList = createTaskServices({
+      ...fx.deps,
+      attention: { get: () => list, set: () => undefined },
+    });
+    let cursor: string | undefined;
+    let seen = 0;
+    for (let guard = 0; guard < 2000; guard++) {
+      const page = withList.attention(cursor === undefined ? {} : { cursor });
+      if (!page.ok) throw new Error("attention refused");
+      expect(Buffer.byteLength(JSON.stringify(page.value), "utf8")).toBeLessThan(60 * 1024);
+      seen += page.value.items.length;
+      if (page.value.nextCursor === null) break;
+      cursor = page.value.nextCursor;
+    }
+    expect(seen).toBe(25 * 51);
   });
 });

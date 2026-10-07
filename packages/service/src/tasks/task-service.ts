@@ -139,5 +139,13 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServices {
     }
   }
 
-  return { create };
+  const notYet = <T>(): TaskResult<T> => fail("not-found");
+  return {
+    create,
+    list: () => notYet(),
+    counts: () => notYet(),
+    get: () => notYet(),
+    dueToday: () => notYet(),
+    attention: () => notYet(),
+  };
 }

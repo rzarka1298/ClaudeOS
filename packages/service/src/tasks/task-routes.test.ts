@@ -2,9 +2,19 @@ import { readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   HANDSHAKE_PATH,
+  TASK_ATTENTION_PATH,
+  TASK_COUNTS_PATH,
   TASK_CREATE_PATH,
+  TASK_DUE_TODAY_PATH,
+  TASK_GET_PATH,
+  TASK_LIST_PATH,
+  TaskAttentionResponseSchema,
+  TaskCountsResponseSchema,
   TaskCreateResponseSchema,
+  TaskDueTodayResponseSchema,
   type TaskErrorBody,
+  TaskGetResponseSchema,
+  TaskListResponseSchema,
 } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -13,7 +23,13 @@ import {
   requestOverSocket,
   startRouteHarness,
 } from "../test-support/approval-fixtures.js";
-import { makeServiceFixture, type ServiceFixture } from "../test-support/task-fixtures.js";
+import {
+  makeServiceFixture,
+  noteId,
+  type ServiceFixture,
+  seedTasks,
+  taskRecord,
+} from "../test-support/task-fixtures.js";
 import { taskRoutes } from "./task-routes.js";
 import { createTaskServices } from "./task-service.js";
 
@@ -160,5 +176,113 @@ describe("create", () => {
     expect(reply.body).toEqual({ error: "write-failed" });
     expect(reply.raw).not.toContain("Secret title text");
     expect(reply.raw).not.toContain(fx.vault.root);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: list, counts, get, due-today and attention
+
+const ZONE_BODY = { zone: "America/New_York" };
+const READ_ROUTES: readonly { path: string; body: unknown }[] = [
+  { path: TASK_LIST_PATH, body: { context: { scope: "all" }, filter: "all", ...ZONE_BODY } },
+  { path: TASK_COUNTS_PATH, body: { context: { scope: "all" }, ...ZONE_BODY } },
+  { path: TASK_GET_PATH, body: { taskId: noteId(1) } },
+  { path: TASK_DUE_TODAY_PATH, body: ZONE_BODY },
+  { path: TASK_ATTENTION_PATH, body: {} },
+];
+
+describe("read routes: auth, absence and shape (Test 8)", () => {
+  it("answers every read route without a valid token with the shared 401 body", async () => {
+    for (const route of READ_ROUTES) {
+      const none = await call(route.path, { body: route.body, token: null });
+      expect(none.status).toBe(401);
+      expect(none.body).toEqual(UNAUTHENTICATED);
+    }
+  });
+
+  it("registers every read route", () => {
+    for (const route of READ_ROUTES) expect(Object.keys(taskRoutes)).toContain(route.path);
+  });
+
+  it("answers 503 with a constant body and drains a large body on every read route", async () => {
+    const bare = await startRouteHarness(fx.store, {});
+    try {
+      const big = JSON.stringify({ filler: "x".repeat(100 * 1024) });
+      for (const route of READ_ROUTES) {
+        const reply = await requestOverSocket(bare.socketPath, {
+          method: "POST",
+          path: route.path,
+          token: bare.token,
+          rawBody: big,
+        });
+        expect(reply.status).toBe(503);
+        expect(reply.body).toEqual(UNAVAILABLE);
+      }
+    } finally {
+      await bare.close();
+    }
+  });
+
+  it("rejects an extra key, bad JSON and a bad zone with the constant invalid-body body", async () => {
+    for (const route of READ_ROUTES) {
+      const extra = await call(route.path, { body: { ...(route.body as object), extra: 1 } });
+      expect(extra.status).toBe(400);
+      expect(extra.body).toEqual(INVALID_BODY);
+      const notJson = await call(route.path, { rawBody: "{nope" });
+      expect(notJson.status).toBe(400);
+      expect(notJson.body).toEqual(INVALID_BODY);
+    }
+    const badZone = await call(TASK_LIST_PATH, {
+      body: { context: { scope: "all" }, filter: "all", zone: "Not/AZone" },
+    });
+    expect(badZone.status).toBe(400);
+    expect(badZone.body).toEqual(INVALID_BODY);
+    const noZone = await call(TASK_COUNTS_PATH, { body: { context: { scope: "all" } } });
+    expect(noZone.status).toBe(400);
+  });
+});
+
+describe("read routes: answers", () => {
+  it("lists a page and pages on with the cursor", async () => {
+    seedTasks(
+      fx.store,
+      Array.from({ length: 30 }, (_, i) => taskRecord(100 + i)),
+    );
+    const ok = await call(TASK_LIST_PATH, { body: READ_ROUTES[0]?.body });
+    expect(ok.status).toBe(200);
+    const page = TaskListResponseSchema.parse(ok.body);
+    expect(page.rows).toHaveLength(25);
+    expect(page.total).toBe(30);
+    const next = await call(TASK_LIST_PATH, {
+      body: { ...(READ_ROUTES[0]?.body as object), cursor: page.nextCursor },
+    });
+    expect(TaskListResponseSchema.parse(next.body).rows).toHaveLength(5);
+    expect(ok.raw).not.toContain(fx.vault.root);
+  });
+
+  it("answers invalid-cursor with 400 and the closed code", async () => {
+    const reply = await call(TASK_LIST_PATH, {
+      body: { ...(READ_ROUTES[0]?.body as object), cursor: "bad" },
+    });
+    expect(reply.status).toBe(400);
+    expect(reply.body).toEqual({ error: "invalid-cursor" });
+    const attention = await call(TASK_ATTENTION_PATH, { body: { cursor: "bad" } });
+    expect(attention.status).toBe(400);
+    expect(attention.body).toEqual({ error: "invalid-cursor" });
+  });
+
+  it("answers counts, get, due-today and attention in their schemas; unknown get is 404 not-found", async () => {
+    seedTasks(fx.store, [taskRecord(1, { due: "2026-10-07" }), taskRecord(2)]);
+    const counts = await call(TASK_COUNTS_PATH, { body: READ_ROUTES[1]?.body });
+    expect(TaskCountsResponseSchema.parse(counts.body).counts.all).toBe(2);
+    const get = await call(TASK_GET_PATH, { body: { taskId: noteId(1) } });
+    expect(TaskGetResponseSchema.parse(get.body).task.row.id).toBe(noteId(1));
+    const missing = await call(TASK_GET_PATH, { body: { taskId: noteId(99) } });
+    expect(missing.status).toBe(404);
+    expect(missing.body).toEqual({ error: "not-found" });
+    const feed = await call(TASK_DUE_TODAY_PATH, { body: ZONE_BODY });
+    expect(TaskDueTodayResponseSchema.parse(feed.body)).toBeDefined();
+    const attention = await call(TASK_ATTENTION_PATH, { body: {} });
+    expect(TaskAttentionResponseSchema.parse(attention.body).total).toBe(0);
   });
 });

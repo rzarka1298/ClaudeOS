@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { TasksChangedPayloadSchema } from "@ccc/domain";
-import { applyMigrations, type OperationalStore, openStore } from "@ccc/operational-store";
+import {
+  applyMigrations,
+  type OperationalStore,
+  openStore,
+  type TaskIndexRecord,
+  upsertTask,
+} from "@ccc/operational-store";
 import { createWorkspace, initializeVault } from "@ccc/vault-repo";
 import { createEventBus, type EventBus } from "../events/event-bus.js";
 import type { TaskLog, TaskServicesDeps } from "../tasks/types.js";
@@ -136,4 +142,40 @@ export function makeServiceFixture(): ServiceFixture {
       vault.cleanup();
     },
   };
+}
+
+/** A valid note id, varied by `n`. */
+export function noteId(n: number): string {
+  return `0mfk1a2b3c4d5e6f7a8b9c${String(n).padStart(3, "0")}`;
+}
+
+/** A valid project id, varied by `n`. */
+export function projectIdOf(n: number): string {
+  return `abcdefghi${String(n).padStart(16, "0")}`;
+}
+
+/** A synthetic index record under global/tasks, varied by `n`. */
+export function taskRecord(n: number, overrides: Partial<TaskIndexRecord> = {}): TaskIndexRecord {
+  return {
+    noteId: noteId(n),
+    path: `global/tasks/task-${n}.md`,
+    scope: "global",
+    title: `Task ${n}`,
+    status: "ready",
+    createdAt: "2026-10-01T09:00:00.000Z",
+    updatedAt: `2026-10-0${1 + (n % 5)}T09:00:00.000Z`,
+    sourceType: "manual",
+    contentHash: "ab".repeat(32),
+    tags: [],
+    dependencies: [],
+    aiGenerated: false,
+    claimType: null,
+    confidence: "unverified",
+    ...overrides,
+  };
+}
+
+/** Inserts synthetic records straight into the index. */
+export function seedTasks(store: OperationalStore, records: readonly TaskIndexRecord[]): void {
+  for (const record of records) upsertTask(store.db, record);
 }

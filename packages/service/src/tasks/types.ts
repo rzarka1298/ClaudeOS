@@ -1,4 +1,19 @@
-import type { TaskCreateRequest, TaskCreateResponse, TaskErrorCode } from "@ccc/domain";
+import type {
+  TaskAttentionRequest,
+  TaskAttentionResponse,
+  TaskCountsRequest,
+  TaskCountsResponse,
+  TaskCreateRequest,
+  TaskCreateResponse,
+  TaskDueTodayRequest,
+  TaskDueTodayResponse,
+  TaskErrorCode,
+  TaskGetRequest,
+  TaskGetResponse,
+  TaskListRequest,
+  TaskListResponse,
+} from "@ccc/domain";
+import type { TaskAttention } from "@ccc/vault-repo";
 import type Database from "better-sqlite3";
 import type { EventBus } from "../events/event-bus.js";
 
@@ -37,9 +52,36 @@ export interface TaskServicesDeps {
   /** The clock. A function so a test can move it. */
   readonly now: () => Date;
   readonly log: TaskLog;
+  /** Where the attention list lives. Defaults to a fresh in-memory list; a test injects a fixture. */
+  readonly attention?: AttentionList | undefined;
 }
+
+/**
+ * The notes the last walk could not index (duplicate ids, no id, unreadable).
+ * Held in memory only: it is rebuilt by every walk, and the attention route
+ * reads it without touching the file system.
+ */
+export interface AttentionList {
+  get(): readonly TaskAttention[];
+  set(list: readonly TaskAttention[]): void;
+}
+
+/** A request whose zone may be absent for an internal caller; the routes' schemas always require it. */
+export type WithOptionalZone<T extends { readonly zone: string }> = Omit<T, "zone"> & {
+  readonly zone?: string | undefined;
+};
 
 export interface TaskServices {
   /** Writes a new manual task note, indexes it and announces the change (TASK-03, D-35). */
   create(request: TaskCreateRequest): TaskResult<TaskCreateResponse>;
+  /** One page of a filter in a context; the day bounds come from one computation (D-33). */
+  list(request: WithOptionalZone<TaskListRequest>): TaskResult<TaskListResponse>;
+  /** Every chip count for a context, from the same day bounds a list would use. */
+  counts(request: WithOptionalZone<TaskCountsRequest>): TaskResult<TaskCountsResponse>;
+  /** One task's indexed detail. */
+  get(request: TaskGetRequest): TaskResult<TaskGetResponse>;
+  /** The due-today and overdue feed (D-38). */
+  dueToday(request: WithOptionalZone<TaskDueTodayRequest>): TaskResult<TaskDueTodayResponse>;
+  /** One page of the attention list. Never reads the file system. */
+  attention(request: TaskAttentionRequest): TaskResult<TaskAttentionResponse>;
 }
