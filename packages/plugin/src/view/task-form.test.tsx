@@ -490,3 +490,44 @@ describe("Test 2.10: labels and order", () => {
     expect(focusable.some((element) => element.tabIndex > 0)).toBe(false);
   });
 });
+
+describe("wave-5 review: create form", () => {
+  it("ignores Escape while a create is in flight, so typed text is not discarded", async () => {
+    const pending = deferred<unknown>();
+    const onClose = vi.fn();
+    render(<TaskCreateForm {...props({ onClose, create: vi.fn(() => pending.promise) })} />);
+    type("Title", "Half typed");
+    fireEvent.click(button("Add as ready"));
+    fireEvent.keyDown(control("Title"), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    pending.resolve({});
+    await waitFor(() => expect(button("Add as ready").getAttribute("aria-busy")).toBeNull());
+  });
+
+  it("validates the description before sending, with a field message", async () => {
+    const create = vi.fn(() => Promise.resolve({}));
+    render(<TaskCreateForm {...props({ create })} />);
+    type("Title", "A task");
+    type("Description", "x".repeat(10_001));
+    fireEvent.click(button("Add as ready"));
+    await waitFor(() => screen.getByText("Use 10,000 characters or fewer."));
+    expect(control("Description").getAttribute("aria-invalid")).toBe("true");
+    type("Description", "a\u0000b");
+    await waitFor(() => screen.getByText("Remove null characters from the description."));
+    fireEvent.click(button("Add as ready"));
+    expect(create).not.toHaveBeenCalled();
+    type("Description", "fine");
+    await waitFor(() => expect(control("Description").getAttribute("aria-invalid")).toBeNull());
+  });
+
+  it("reports validateCreateValues description errors", () => {
+    expect(
+      validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", description: "x".repeat(10_001) })
+        .description,
+    ).toBe("Use 10,000 characters or fewer.");
+    expect(
+      validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", description: "a\u0000" })
+        .description,
+    ).toBe("Remove null characters from the description.");
+  });
+});

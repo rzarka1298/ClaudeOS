@@ -1,6 +1,7 @@
 import { ProjectIdSchema } from "@ccc/domain/projects.js";
 import { type TaskPriority, TaskTagSchema, TaskTitleSchema } from "@ccc/domain/task-schema.js";
 import {
+  TASK_DESCRIPTION_MAX_LENGTH,
   TASK_PRIORITY_DISPLAY,
   type TaskCreateIntent,
   type TaskCreateRequest,
@@ -14,6 +15,8 @@ import {
   addedMessage,
   CLOSE_FORM_LABEL,
   createFailedMessage,
+  DESCRIPTION_INVALID_MESSAGE,
+  DESCRIPTION_TOO_LONG_MESSAGE,
   DISCONNECTED_REASON,
   FIELD_LABELS,
   GLOBAL_SCOPE_LABEL,
@@ -163,7 +166,9 @@ function parseTags(raw: string): TagsResult {
   return tags.length > TAGS_MAX ? { error: TOO_MANY_TAGS_MESSAGE } : { tags };
 }
 
-export type TaskFormErrors = Partial<Record<"title" | "due" | "scheduled" | "tags", string>>;
+export type TaskFormErrors = Partial<
+  Record<"title" | "description" | "due" | "scheduled" | "tags", string>
+>;
 
 /** The fixed field messages for the values as they stand (UI-SPEC E9). Pure; an empty object means valid. */
 export function validateCreateValues(values: TaskFormValues): TaskFormErrors {
@@ -172,6 +177,11 @@ export function validateCreateValues(values: TaskFormValues): TaskFormErrors {
   if (title === "") errors.title = TITLE_REQUIRED_MESSAGE;
   else if (title.length > TITLE_MAX) errors.title = TITLE_TOO_LONG_MESSAGE;
   else if (!TaskTitleSchema.safeParse(title).success) errors.title = TITLE_REQUIRED_MESSAGE;
+  if (values.description.length > TASK_DESCRIPTION_MAX_LENGTH) {
+    errors.description = DESCRIPTION_TOO_LONG_MESSAGE;
+  } else if (values.description.includes("\0")) {
+    errors.description = DESCRIPTION_INVALID_MESSAGE;
+  }
   if (values.due !== "" ? !isCalendarDate(values.due) : values.dueTime !== "") {
     errors.due = INVALID_DATE_MESSAGE;
   }
@@ -186,7 +196,7 @@ export function validateCreateValues(values: TaskFormValues): TaskFormErrors {
 /** The form field an input belongs to for error purposes. */
 const ERROR_FIELD: Readonly<Record<keyof TaskFormValues, keyof TaskFormErrors | null>> = {
   title: "title",
-  description: null,
+  description: "description",
   priority: null,
   due: "due",
   dueTime: "due",
@@ -348,6 +358,8 @@ export function TaskCreateForm(props: TaskCreateFormProps): VNode {
         if (event.key !== "Escape") return;
         event.preventDefault();
         event.stopPropagation();
+        // A create in flight keeps the form open: closing now would discard the typed text.
+        if (busyRef.current) return;
         close();
       }}
     >
@@ -378,8 +390,11 @@ export function TaskCreateForm(props: TaskCreateFormProps): VNode {
             className="ccc-text-input"
             rows={4}
             value={values.description}
+            {...described("description")}
             onInput={(event) => set("description", event.currentTarget.value)}
+            onBlur={() => check("description", values)}
           />
+          {message("description")}
         </div>
         <div className="ccc-task-field">
           <label className="ccc-field-label" htmlFor={id("priority")}>

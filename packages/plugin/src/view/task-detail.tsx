@@ -26,6 +26,8 @@ import {
   CHANGED_OUTSIDE_LINE,
   CONFLICT_LINE,
   confidenceBadge,
+  DESCRIPTION_INVALID_MESSAGE,
+  DESCRIPTION_TOO_LONG_MESSAGE,
   DETAIL_EMPTY_PROMPT,
   DETAIL_HINT,
   type DetailActionKind,
@@ -44,8 +46,10 @@ import {
   PROJECT_NOT_REGISTERED_LABEL,
   parentMissing,
   providedBy,
+  RELOAD_REPLACE_PROMPT,
   RELOAD_TASK_LABEL,
   REOPEN_TASK_LABEL,
+  REPLACE_MY_EDITS_LABEL,
   REVERT_CHANGES_LABEL,
   SAVE_CHANGES_LABEL,
   SAVE_REASONS,
@@ -244,20 +248,38 @@ function buildEdit(values: DetailValues, base: DetailValues): TaskDetailEdit {
   return edit;
 }
 
-function validate(values: DetailValues): TaskFormErrors {
-  return validateCreateValues({
+/**
+ * The field messages for the values, limited to fields the owner changed: a value the note already
+ * held (an over-long title, say) never blocks saving some other field.
+ */
+function validate(values: DetailValues, base: DetailValues): TaskFormErrors {
+  const found = validateCreateValues({
     ...EMPTY_FORM_VALUES,
     title: values.title,
+    description: values.description,
     due: values.due,
     dueTime: values.dueTime,
     scheduled: values.scheduled,
     tags: values.tags,
   });
+  const changed: Readonly<Record<keyof TaskFormErrors, boolean>> = {
+    title: values.title !== base.title,
+    description: values.description !== base.description,
+    due: values.due !== base.due || values.dueTime !== base.dueTime,
+    scheduled: values.scheduled !== base.scheduled,
+    tags: splitTags(values.tags).join("\n") !== splitTags(base.tags).join("\n"),
+  };
+  const kept: { -readonly [K in keyof TaskFormErrors]: string } = {};
+  for (const key of Object.keys(found) as (keyof TaskFormErrors)[]) {
+    const message = found[key];
+    if (changed[key] && message !== undefined) kept[key] = message;
+  }
+  return kept;
 }
 
 const ERROR_FIELD: Readonly<Record<keyof DetailValues, keyof TaskFormErrors | null>> = {
   title: "title",
-  description: null,
+  description: "description",
   status: null,
   priority: null,
   due: "due",
@@ -273,6 +295,8 @@ function serviceErrors(fields: Readonly<Record<string, string>>): TaskFormErrors
   if (fields.title === "required") errors.title = TITLE_REQUIRED_MESSAGE;
   else if (fields.title === "too-long") errors.title = TITLE_TOO_LONG_MESSAGE;
   else if (fields.title !== undefined) errors.title = TITLE_REQUIRED_MESSAGE;
+  if (fields.description === "too-long") errors.description = DESCRIPTION_TOO_LONG_MESSAGE;
+  else if (fields.description !== undefined) errors.description = DESCRIPTION_INVALID_MESSAGE;
   if (fields.due !== undefined) errors.due = INVALID_DATE_MESSAGE;
   if (fields.scheduled !== undefined) errors.scheduled = INVALID_DATE_MESSAGE;
   if (fields.tags === "too-many-tags") errors.tags = TOO_MANY_TAGS_MESSAGE;
@@ -305,7 +329,9 @@ const PRIORITY_ORDER: readonly TaskPriority[] = ["low", "medium", "high", "urgen
 export function TaskDetail(props: TaskDetailProps): VNode {
   const { task } = props;
   if (task === null) return <p className="ccc-state-body">{DETAIL_EMPTY_PROMPT}</p>;
-  return <TaskDetailForm {...props} task={task} />;
+  // Keyed by the task: another selection is a fresh form, so an in-flight result of the old one
+  // can never land on it.
+  return <TaskDetailForm key={task.id} {...props} task={task} />;
 }
 
 type FormProps = TaskDetailProps & { readonly task: TaskDetailTask };
@@ -315,6 +341,7 @@ function TaskDetailForm(props: FormProps): VNode {
   const uid = useId();
   const formRef = useRef<HTMLFormElement>(null);
   const keepRef = useRef<HTMLButtonElement>(null);
+  const reloadKeepRef = useRef<HTMLButtonElement>(null);
   const initial = valuesOf(task);
   const [base, setBase] = useState(() => ({
     taskId: task.id,
@@ -327,6 +354,7 @@ function TaskDetailForm(props: FormProps): VNode {
   const [changedOutside, setChangedOutside] = useState(false);
   const [busy, setBusy] = useState<Busy>(null);
   const [reloadTick, setReloadTick] = useState(0);
+  const [reloadPrompt, setReloadPrompt] = useState(false);
 
   // Refs hold the latest values so an effect or an async continuation never reads a stale closure.
   const baseRef = useRef(base);
@@ -336,6 +364,10 @@ function TaskDetailForm(props: FormProps): VNode {
   const reloadRequested = useRef(false);
   const savedRef = useRef(false);
   const focusInvalidRef = useRef(false);
+  const mountedRef = useRef(true);
+  const dirtyCallbackRef = useRef(props.onDirtyChange);
+  const wasConfirmOpenRef = useRef(false);
+  dirtyCallbackRef.current = props.onDirtyChange;
   baseRef.current = base;
   valuesRef.current = values;
   taskRef.current = task;
@@ -352,6 +384,12 @@ function TaskDetailForm(props: FormProps): VNode {
     setErrors({});
     setOutcome(null);
     setChangedOutside(false);
+    setReloadPrompt(false);
+  };
+
+  /** Puts focus back on the first field, for when a confirmation that held it closes. */
+  const focusForm = (): void => {
+    formRef.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
   };
 
   const differsFromBase = (next: TaskDetailTask): boolean =>
@@ -385,13 +423,30 @@ function TaskDetailForm(props: FormProps): VNode {
     props.onDirtyChange?.(dirty);
   }, [dirty]);
 
+  // Leaving the pane (another task, no task) must not leave the container believing it is dirty.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      dirtyCallbackRef.current?.(false);
+    };
+  }, []);
+
   const confirmOpen = props.leaveRequest === true && dirty;
   useEffect(() => {
     if (props.leaveRequest === true && !dirty) props.onLeaveDecision?.("discard");
   }, [props.leaveRequest, dirty]);
   useEffect(() => {
     if (confirmOpen) keepRef.current?.focus();
+    else if (wasConfirmOpenRef.current) focusForm();
+    wasConfirmOpenRef.current = confirmOpen;
   }, [confirmOpen]);
+
+  // The reload confirmation is only meaningful while there is something to replace.
+  const reloadConfirmOpen = reloadPrompt && dirty && !confirmOpen;
+  useEffect(() => {
+    if (reloadConfirmOpen) reloadKeepRef.current?.focus();
+  }, [reloadConfirmOpen]);
 
   // After a failed save check, move focus to the first field that now carries an error.
   useEffect(() => {
@@ -401,7 +456,7 @@ function TaskDetailForm(props: FormProps): VNode {
   }, [errors]);
 
   const check = (field: keyof TaskFormErrors, next: DetailValues): void => {
-    const message = validate(next)[field];
+    const message = validate(next, baseRef.current.values)[field];
     setErrors((current) => {
       if (current[field] === message) return current;
       const copy = { ...current };
@@ -424,11 +479,12 @@ function TaskDetailForm(props: FormProps): VNode {
     valuesRef.current = baseRef.current.values;
     setValues(baseRef.current.values);
     setErrors({});
+    setReloadPrompt(false);
   };
 
   const save = async (): Promise<void> => {
     if (busyRef.current || !connected || !dirty) return;
-    const found = validate(valuesRef.current);
+    const found = validate(valuesRef.current, baseRef.current.values);
     if (Object.keys(found).length > 0) {
       focusInvalidRef.current = true;
       setErrors(found);
@@ -436,6 +492,7 @@ function TaskDetailForm(props: FormProps): VNode {
     }
     const edit = buildEdit(valuesRef.current, baseRef.current.values);
     const expected = baseRef.current.content;
+    const startedOn = baseRef.current.taskId;
     busyRef.current = true;
     setBusy("save");
     setOutcome(null);
@@ -445,6 +502,11 @@ function TaskDetailForm(props: FormProps): VNode {
       result = await props.onSave(edit, expected);
     } catch {
       result = { kind: "unreadable" };
+    }
+    if (!mountedRef.current || taskRef.current.id !== startedOn) {
+      // Another task is showing now; only the truthful "Saved." may still be announced.
+      if (result.kind === "applied") props.onStatus(SAVED_STATUS);
+      return;
     }
     busyRef.current = false;
     setBusy(null);
@@ -478,6 +540,7 @@ function TaskDetailForm(props: FormProps): VNode {
 
   const act = async (action: DetailActionKind): Promise<void> => {
     if (busyRef.current || !connected) return;
+    const title = taskRef.current.title;
     busyRef.current = true;
     setBusy(action);
     let result: TaskDetailResult;
@@ -487,8 +550,7 @@ function TaskDetailForm(props: FormProps): VNode {
       result = { kind: "unreadable" };
     }
     busyRef.current = false;
-    setBusy(null);
-    const title = taskRef.current.title;
+    if (mountedRef.current) setBusy(null);
     const line =
       result.kind === "applied"
         ? actionNotice(action, title)
@@ -501,16 +563,42 @@ function TaskDetailForm(props: FormProps): VNode {
     if (busyRef.current || !connected) return;
     busyRef.current = true;
     reloadRequested.current = true;
+    setReloadPrompt(false);
     setBusy("reload");
+    let reloaded = false;
     try {
       await props.onReload();
+      reloaded = true;
     } catch {
-      // The form keeps what it has; the conflict line stays so the owner can try again.
-    } finally {
-      busyRef.current = false;
-      setBusy(null);
-      setReloadTick((tick) => tick + 1);
+      // The form keeps its edits and the conflict line stays, so the owner can try again.
     }
+    busyRef.current = false;
+    if (!mountedRef.current) return;
+    setBusy(null);
+    if (reloaded) setReloadTick((tick) => tick + 1);
+    else reloadRequested.current = false;
+  };
+
+  /** Reload task: over unsaved edits it first asks before replacing them. */
+  const requestReload = (): void => {
+    if (busyRef.current || !connected) return;
+    if (!sameValues(valuesRef.current, baseRef.current.values)) {
+      setReloadPrompt(true);
+      return;
+    }
+    void reload();
+  };
+
+  const keepReloadOnEscape = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    keepEditingAfterReloadPrompt();
+  };
+
+  const keepEditingAfterReloadPrompt = (): void => {
+    setReloadPrompt(false);
+    focusForm();
   };
 
   /** Escape on either confirmation button equals Keep editing. */
@@ -561,8 +649,11 @@ function TaskDetailForm(props: FormProps): VNode {
         className="ccc-text-input"
         rows={4}
         value={values.description}
+        {...described("description")}
         onInput={(event) => set("description", event.currentTarget.value)}
+        onBlur={() => check("description", valuesRef.current)}
       />
+      {message("description")}
     </>
   );
 
@@ -769,20 +860,46 @@ function TaskDetailForm(props: FormProps): VNode {
       {outcome?.kind === "conflict" && <p className="ccc-task-note">{CONFLICT_LINE}</p>}
       {outcome?.kind === "failure" && <p className="ccc-task-note">{outcome.line}</p>}
       {changedOutside && <p className="ccc-task-dirty">{CHANGED_OUTSIDE_LINE}</p>}
-      {(outcome?.kind === "conflict" || changedOutside) && (
-        <div className="ccc-task-form-actions">
-          <button
-            type="button"
-            className="ccc-connect-button"
-            data-variant="secondary"
-            aria-busy={busy === "reload" ? "true" : undefined}
-            {...serviceAria()}
-            onClick={() => void reload()}
-          >
-            {RELOAD_TASK_LABEL}
-          </button>
-        </div>
-      )}
+      {(outcome?.kind === "conflict" || changedOutside) &&
+        (reloadConfirmOpen ? (
+          <div className="ccc-task-confirm">
+            <p className="ccc-task-note">{RELOAD_REPLACE_PROMPT}</p>
+            <div className="ccc-task-form-actions">
+              <button
+                type="button"
+                className="ccc-connect-button"
+                data-variant="secondary"
+                onKeyDown={keepReloadOnEscape}
+                onClick={() => void reload()}
+              >
+                {REPLACE_MY_EDITS_LABEL}
+              </button>
+              <button
+                ref={reloadKeepRef}
+                type="button"
+                className="ccc-connect-button"
+                data-variant="primary"
+                onKeyDown={keepReloadOnEscape}
+                onClick={keepEditingAfterReloadPrompt}
+              >
+                {KEEP_EDITING_LABEL}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="ccc-task-form-actions">
+            <button
+              type="button"
+              className="ccc-connect-button"
+              data-variant="secondary"
+              aria-busy={busy === "reload" ? "true" : undefined}
+              {...serviceAria()}
+              onClick={requestReload}
+            >
+              {RELOAD_TASK_LABEL}
+            </button>
+          </div>
+        ))}
       {!connected && (
         <p className="ccc-field-help" id={reasonId}>
           {DISCONNECTED_REASON}

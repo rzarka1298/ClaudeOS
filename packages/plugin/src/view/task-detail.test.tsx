@@ -363,6 +363,8 @@ describe("Test 7: the note changed outside the form", () => {
 
     await waitFor(() => button("Reload task"));
     fireEvent.click(button("Reload task"));
+    expect(onReload).not.toHaveBeenCalled();
+    fireEvent.click(button("Replace my edits"));
     await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1));
     view.rerender(<TaskDetail {...base} task={outside} />);
     await waitFor(() => expect(field("Title").value).toBe("Changed outside"));
@@ -554,4 +556,131 @@ describe("Prohibition (TASK-08, T-06-24): the forms and the pane call only injec
       expect(source).not.toMatch(/\bfetch\s*\(/);
     },
   );
+});
+
+const CONFLICT_TEXT =
+  "▲ This task changed in its note while you were editing. Reload it to see the latest, then make your change again.";
+
+async function conflictedForm(overrides: Partial<TaskDetailProps> = {}) {
+  const onSave = vi.fn(() => Promise.resolve<TaskDetailResult>({ kind: "conflict" }));
+  const base = props(detailTask(), { onSave, ...overrides });
+  const view = render(<TaskDetail {...base} />);
+  edit("Title", "My edit");
+  await waitFor(() => expect(button("Save changes").getAttribute("aria-disabled")).toBeNull());
+  fireEvent.click(button("Save changes"));
+  await waitFor(() => text(CONFLICT_TEXT));
+  return { view, base };
+}
+
+describe("wave-5 review: Reload task", () => {
+  it("keeps the typed text and the conflict line when Reload task rejects", async () => {
+    const onReload = vi.fn(() => Promise.reject(new Error("offline")));
+    await conflictedForm({ onReload });
+    fireEvent.click(button("Reload task"));
+    text("Replace your unsaved changes with the latest saved task?");
+    expect(document.activeElement).toBe(button("Keep editing"));
+    fireEvent.click(button("Replace my edits"));
+    await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(button("Reload task").getAttribute("aria-busy")).toBeNull());
+    expect(field("Title").value).toBe("My edit");
+    text(CONFLICT_TEXT);
+    text("Unsaved changes");
+  });
+
+  it("Keep editing closes the confirmation without reloading and returns focus to the form", async () => {
+    const onReload = vi.fn(() => Promise.resolve());
+    await conflictedForm({ onReload });
+    fireEvent.click(button("Reload task"));
+    fireEvent.click(button("Keep editing"));
+    expect(onReload).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText("Replace your unsaved changes with the latest saved task?"),
+    ).toBeNull();
+    expect(field("Title").value).toBe("My edit");
+    const form = document.querySelector("form") as HTMLFormElement;
+    expect(form.contains(document.activeElement)).toBe(true);
+    button("Reload task");
+  });
+});
+
+describe("wave-5 review: a save result belongs to the task it was started on", () => {
+  it("drops a conflict that lands after another task was selected", async () => {
+    const pending = deferred<TaskDetailResult>();
+    const onSave = vi.fn(() => pending.promise);
+    const first = detailTask();
+    const second = detailTask({ id: taskId(77), title: "Other task", content: "other" });
+    const base = props(first, { onSave });
+    const view = render(<TaskDetail {...base} />);
+    edit("Title", "My edit");
+    await waitFor(() => expect(button("Save changes").getAttribute("aria-disabled")).toBeNull());
+    fireEvent.click(button("Save changes"));
+    view.rerender(<TaskDetail {...base} task={second} />);
+    await waitFor(() => expect(field("Title").value).toBe("Other task"));
+    pending.resolve({ kind: "conflict" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.queryByText(CONFLICT_TEXT)).toBeNull();
+    expect(field("Title").value).toBe("Other task");
+    expect(button("Save changes").getAttribute("aria-busy")).toBeNull();
+    expect(base.onStatus).not.toHaveBeenCalledWith(CONFLICT_TEXT);
+  });
+});
+
+describe("wave-5 review: dirty flag, focus and validation", () => {
+  it("clears the dirty flag when the pane unmounts or the task is deselected", async () => {
+    const onDirtyChange = vi.fn();
+    const base = props(detailTask(), { onDirtyChange });
+    const view = render(<TaskDetail {...base} />);
+    edit("Title", "Changed");
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
+    view.rerender(<TaskDetail {...base} task={null} />);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("returns focus into the form after Keep editing on the leave prompt", async () => {
+    const onLeaveDecision = vi.fn();
+    const base = props(detailTask(), { onLeaveDecision });
+    const view = render(<TaskDetail {...base} />);
+    edit("Title", "Changed");
+    await waitFor(() => text("Unsaved changes"));
+    view.rerender(<TaskDetail {...base} leaveRequest />);
+    await waitFor(() => expect(document.activeElement).toBe(button("Keep editing")));
+    view.rerender(<TaskDetail {...base} leaveRequest={false} />);
+    const form = document.querySelector("form") as HTMLFormElement;
+    await waitFor(() => expect(form.contains(document.activeElement)).toBe(true));
+  });
+
+  it("validates the description: too long and a NUL character show a field message", async () => {
+    const onSave = vi.fn(() => Promise.resolve(APPLIED));
+    render(<TaskDetail {...props(detailTask(), { onSave })} />);
+    edit("Description", "x".repeat(10_001));
+    fireEvent.click(button("Save changes"));
+    await waitFor(() => text("Use 10,000 characters or fewer."));
+    expect(field("Description").getAttribute("aria-invalid")).toBe("true");
+    edit("Description", "a\u0000b");
+    await waitFor(() => text("Remove null characters from the description."));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("maps a service description rejection to the field message, not a vault failure", async () => {
+    const onSave = vi.fn(() =>
+      Promise.resolve<TaskDetailResult>({ kind: "invalid", fields: { description: "too-long" } }),
+    );
+    render(<TaskDetail {...props(detailTask(), { onSave })} />);
+    edit("Description", "fine");
+    fireEvent.click(button("Save changes"));
+    await waitFor(() => text("Use 10,000 characters or fewer."));
+    expect(screen.queryByText(/Couldn't save the task/)).toBeNull();
+  });
+
+  it("validates only changed fields: an over-long saved title does not block a priority change", async () => {
+    const onSave = vi.fn(() => Promise.resolve(APPLIED));
+    const long = detailTask({ title: "t".repeat(250) });
+    render(<TaskDetail {...props(long, { onSave })} />);
+    fireEvent.change(field("Priority"), { target: { value: "low" } });
+    await waitFor(() => expect(button("Save changes").getAttribute("aria-disabled")).toBeNull());
+    fireEvent.click(button("Save changes"));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith({ priority: "low" }, long.content);
+  });
 });

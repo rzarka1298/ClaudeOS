@@ -6,11 +6,15 @@ import {
   addedMessage,
   CLOSE_FORM_LABEL,
   createFailedMessage,
+  DESCRIPTION_INVALID_MESSAGE,
+  DESCRIPTION_TOO_LONG_MESSAGE,
   DISCONNECTED_REASON,
   FIELD_LABELS,
   GLOBAL_SCOPE_LABEL,
   INVALID_DATE_MESSAGE,
   NO_PROJECT_LABEL,
+  RELOAD_REPLACE_PROMPT,
+  REPLACE_MY_EDITS_LABEL,
   TAG_INVALID_MESSAGE,
   TAG_TOO_LONG_MESSAGE,
   TAGS_HELP,
@@ -78,5 +82,14 @@ describe("Test 2.5: validation and failure strings", () => {
     expect(createFailedMessage(new Error("/Users/USERNAME/secret"))).toBe(
       "Couldn't add the task: the vault couldn't be written to.",
     );
+  });
+});
+
+describe("wave-5 review strings", () => {
+  it("holds the description messages and the reload confirmation verbatim", () => {
+    expect(DESCRIPTION_TOO_LONG_MESSAGE).toBe("Use 10,000 characters or fewer.");
+    expect(DESCRIPTION_INVALID_MESSAGE).toBe("Remove null characters from the description.");
+    expect(RELOAD_REPLACE_PROMPT).toBe("Replace your unsaved changes with the latest saved task?");
+    expect(REPLACE_MY_EDITS_LABEL).toBe("Replace my edits");
   });
 });

@@ -44,6 +44,8 @@ export const TITLE_REQUIRED_MESSAGE = "Enter a title.";
 export const TITLE_TOO_LONG_MESSAGE = "Use 200 characters or fewer.";
 export const INVALID_DATE_MESSAGE = "Choose a valid date.";
 export const TOO_MANY_TAGS_MESSAGE = "Use 20 tags or fewer.";
+export const DESCRIPTION_TOO_LONG_MESSAGE = "Use 10,000 characters or fewer.";
+export const DESCRIPTION_INVALID_MESSAGE = "Remove null characters from the description.";
 /** Not fixed by the UI-SPEC (it states the 40-character bound without wording); flagged for the checker. */
 export const TAG_TOO_LONG_MESSAGE = "Use 40 characters or fewer for each tag.";
 /** Not fixed by the UI-SPEC (it says only that tags follow Obsidian's rules); flagged for the checker. */
@@ -94,6 +96,7 @@ export const ACCEPT_TASK_LABEL = "Accept task";
 export const DISMISS_TASK_LABEL = "Dismiss task";
 export const OPEN_NOTE_LABEL = "Open note";
 export const RELOAD_TASK_LABEL = "Reload task";
+export const REPLACE_MY_EDITS_LABEL = "Replace my edits";
 export const DISCARD_CHANGES_LABEL = "Discard changes";
 export const KEEP_EDITING_LABEL = "Keep editing";
 
@@ -117,6 +120,9 @@ export function saveFailedLine(reason: string): string {
 }
 
 /** The inline confirmation that replaces the actions while changes are unsaved. `title` is task text. */
+/** The inline confirmation before Reload task replaces unsaved edits. */
+export const RELOAD_REPLACE_PROMPT = "Replace your unsaved changes with the latest saved task?";
+
 export function discardPrompt(title: string): string {
   return `Discard changes to "${title}"?`;
 }
