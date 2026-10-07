@@ -23,10 +23,10 @@ import {
   taskRecord,
 } from "../test-support/task-fixtures.js";
 import { createTaskServices } from "./task-service.js";
-import type { TaskServices } from "./types.js";
+import type { TaskServiceHost, TaskServices } from "./types.js";
 
 let fx: ServiceFixture;
-let services: TaskServices;
+let services: TaskServiceHost;
 
 beforeEach(() => {
   fx = makeServiceFixture();
@@ -638,5 +638,87 @@ describe("Task 2 Test 7 (attention)", () => {
       cursor = page.value.nextCursor;
     }
     expect(seen).toBe(25 * 51);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: the internal proposed-task creator (D-36, TASK-04, APPR-02)
+
+describe("Task 3 Test 8 (proposed task)", () => {
+  function propose(overrides: Record<string, unknown> = {}) {
+    const result = services.createProposedTask({
+      title: "Review the weekly research digest",
+      sourceType: "research",
+      sourceLink: "https://example.test/digest",
+      generatedBy: { automation: "weekly-research" },
+      due: "2026-10-07",
+      projectId: P1,
+      priority: "high",
+      ...overrides,
+    });
+    if (!result.ok) throw new Error(`createProposedTask refused: ${result.code}`);
+    return result.value.task;
+  }
+
+  it("writes a note with status proposed, provenance and a plain-text source, indexes it and announces it", () => {
+    const task = propose({ description: "Why this was suggested." });
+    const path = getTask(fx.store.db, task.id)?.path as string;
+    const parsed = parseTaskNote(readFileSync(join(fx.vault.root, ...path.split("/")), "utf8"));
+    expect(parsed.frontmatter.status).toBe("proposed");
+    expect(parsed.frontmatter.aiGenerated).toBe(true);
+    expect(parsed.frontmatter.claimType).toBe("recommendation");
+    expect(parsed.frontmatter.confidence).toBe("unverified");
+    expect(parsed.frontmatter.generatedBy).toEqual({ automation: "weekly-research" });
+    expect(parsed.frontmatter.assignee).toBe("automation");
+    expect(parsed.frontmatter.sourceType).toBe("research");
+    expect(parsed.frontmatter.sourceLink).toBe("https://example.test/digest");
+    expect(parsed.body).toBe("Why this was suggested.");
+    expect(task.status).toBe("proposed");
+    expect(publishedGenerations(fx.bus)).toHaveLength(1);
+  });
+
+  it("appears under Proposed and All and under none of today, upcoming, overdue, project, blocked or completed", () => {
+    const task = propose();
+    const ids = (filter: Parameters<typeof listOk>[0], context = { scope: "all" } as TaskContext) =>
+      listOk(filter, context).rows.map((row) => row.id);
+    expect(ids("proposed")).toEqual([task.id]);
+    expect(ids("all")).toEqual([task.id]);
+    for (const filter of ["today", "upcoming", "overdue", "blocked", "completed"] as const) {
+      expect(ids(filter)).toEqual([]);
+    }
+    expect(ids("project", { scope: "all", projectId: P1 })).toEqual([]);
+    const counts = services.counts({ context: { scope: "all" }, zone: ZONE });
+    if (!counts.ok) throw new Error("counts refused");
+    expect(counts.value.counts.proposed).toBe(1);
+    expect(counts.value.open).toBe(0);
+    const feed = services.dueToday({ zone: ZONE });
+    if (!feed.ok) throw new Error("due-today refused");
+    expect(feed.value.due).toEqual([]);
+    expect(feed.value.overdue).toEqual([]);
+  });
+
+  it("refuses a missing vault and an invalid scope with closed codes and writes nothing", () => {
+    expect(
+      services.createProposedTask({
+        title: "x",
+        sourceType: "research",
+        generatedBy: { automation: "a" },
+        scope: "workspace:0000000000000000000000000",
+      }),
+    ).toEqual({ ok: false, code: "invalid-scope" });
+    fx.setVaultRoot(null);
+    expect(
+      services.createProposedTask({
+        title: "x",
+        sourceType: "research",
+        generatedBy: { automation: "a" },
+      }),
+    ).toEqual({ ok: false, code: "vault-not-set-up" });
+    expect(noteFiles()).toHaveLength(0);
+  });
+
+  it("is a no-approval write: the services module imports nothing from the approval engine", () => {
+    const source = readFileSync(join(import.meta.dirname, "task-service.ts"), "utf8");
+    expect(source).not.toMatch(/from\s+"[^"]*approval/i);
   });
 });

@@ -43,7 +43,13 @@ import {
   encodeTaskCursor,
 } from "./cursor.js";
 import { toIndexRecord } from "./record.js";
-import type { AttentionList, TaskResult, TaskServices, TaskServicesDeps } from "./types.js";
+import type {
+  AttentionList,
+  TaskResult,
+  TaskServiceHost,
+  TaskServices,
+  TaskServicesDeps,
+} from "./types.js";
 
 /**
  * The task services (plan 06-20; D-28, D-35, D-36, D-37).
@@ -144,7 +150,7 @@ function flattenAttention(list: readonly TaskAttention[]): TaskAttentionItem[] {
   return items;
 }
 
-export function createTaskServices(deps: TaskServicesDeps): TaskServices {
+export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
   const attentionList = deps.attention ?? createAttentionList();
   // A generation that only ever increases, even across a restart: seeded from the clock.
   let generation = deps.now().getTime();
@@ -354,5 +360,18 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServices {
     };
   }
 
-  return { create, list, counts, get, dueToday, attention };
+  const nothing = <T>(): TaskResult<T> => fail("write-failed");
+  return {
+    create,
+    list,
+    counts,
+    get,
+    dueToday,
+    attention,
+    changed: () => nothing(),
+    rebuild: () => nothing(),
+    createProposedTask: () => nothing(),
+    startupWalk: () => nothing(),
+    dispose: () => undefined,
+  };
 }

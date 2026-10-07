@@ -1,20 +1,24 @@
-import { readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   HANDSHAKE_PATH,
   TASK_ATTENTION_PATH,
+  TASK_CHANGED_PATH,
   TASK_COUNTS_PATH,
   TASK_CREATE_PATH,
   TASK_DUE_TODAY_PATH,
   TASK_GET_PATH,
   TASK_LIST_PATH,
+  TASK_REBUILD_PATH,
   TaskAttentionResponseSchema,
+  TaskChangedResponseSchema,
   TaskCountsResponseSchema,
   TaskCreateResponseSchema,
   TaskDueTodayResponseSchema,
   type TaskErrorBody,
   TaskGetResponseSchema,
   TaskListResponseSchema,
+  TaskRebuildResponseSchema,
 } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -284,5 +288,104 @@ describe("read routes: answers", () => {
     expect(TaskDueTodayResponseSchema.parse(feed.body)).toBeDefined();
     const attention = await call(TASK_ATTENTION_PATH, { body: {} });
     expect(TaskAttentionResponseSchema.parse(attention.body).total).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: changed and rebuild
+
+describe("changed and rebuild routes", () => {
+  it("registers exactly the eight task routes and none that could create a proposed task", () => {
+    expect(Object.keys(taskRoutes).sort()).toEqual(
+      [
+        TASK_CREATE_PATH,
+        TASK_LIST_PATH,
+        TASK_COUNTS_PATH,
+        TASK_GET_PATH,
+        TASK_DUE_TODAY_PATH,
+        TASK_ATTENTION_PATH,
+        TASK_CHANGED_PATH,
+        TASK_REBUILD_PATH,
+      ].sort(),
+    );
+    for (const path of Object.keys(taskRoutes)) expect(path).not.toMatch(/propos/i);
+    const source = readFileSync(join(import.meta.dirname, "task-routes.ts"), "utf8");
+    expect(source).not.toMatch(/createProposedTask|startupWalk/);
+  });
+
+  it("requires a token, drains the body on 503 and refuses bad bodies with the constant body", async () => {
+    for (const path of [TASK_CHANGED_PATH, TASK_REBUILD_PATH]) {
+      const none = await call(path, { body: {}, token: null });
+      expect(none.status).toBe(401);
+      expect(none.body).toEqual(UNAUTHENTICATED);
+    }
+    const bare = await startRouteHarness(fx.store, {});
+    try {
+      const big = JSON.stringify({ filler: "x".repeat(200 * 1024) });
+      for (const path of [TASK_CHANGED_PATH, TASK_REBUILD_PATH]) {
+        const reply = await requestOverSocket(bare.socketPath, {
+          method: "POST",
+          path,
+          token: bare.token,
+          rawBody: big,
+        });
+        expect(reply.status).toBe(503);
+        expect(reply.body).toEqual(UNAVAILABLE);
+      }
+    } finally {
+      await bare.close();
+    }
+    for (const body of [
+      {},
+      { paths: [] },
+      { rescan: false },
+      { paths: ["../x.md"] },
+      { paths: ["global/tasks/a.md"], extra: 1 },
+      { paths: Array.from({ length: 201 }, (_, i) => `global/tasks/n-${i}.md`) },
+    ]) {
+      const reply = await call(TASK_CHANGED_PATH, { body });
+      expect(reply.status).toBe(400);
+      expect(reply.body).toEqual(INVALID_BODY);
+    }
+    const extraRebuild = await call(TASK_REBUILD_PATH, { body: { force: true } });
+    expect(extraRebuild.status).toBe(400);
+    expect(extraRebuild.body).toEqual(INVALID_BODY);
+  });
+
+  it("applies a changed note, answers the accepted count and the generation, and writes nothing back", async () => {
+    const created = await call<{ task: { id: string } }>(TASK_CREATE_PATH, { body: VALID });
+    const dir = join(fx.vault.root, "global", "tasks");
+    const name = readdirSync(dir).find((n) => n !== "index.md") as string;
+    const abs = join(dir, name);
+    const text = readFileSync(abs, "utf8");
+    writeFileSync(abs, text.replace("status: inbox", "status: done"));
+    const edited = readFileSync(abs, "utf8");
+    const reply = await call(TASK_CHANGED_PATH, { body: { paths: [`global/tasks/${name}`] } });
+    expect(reply.status).toBe(200);
+    expect(TaskChangedResponseSchema.parse(reply.body).accepted).toBe(1);
+    expect(readFileSync(abs, "utf8")).toBe(edited);
+    const get = await call(TASK_GET_PATH, { body: { taskId: created.body.task.id } });
+    expect(TaskGetResponseSchema.parse(get.body).task.row.status).toBe("done");
+  });
+
+  it("answers invalid-path with the closed code when every named path is refused", async () => {
+    const outside = join(fx.vault.root, "..", "outside-route.md");
+    writeFileSync(outside, "not a task");
+    symlinkSync(outside, join(fx.vault.root, "global", "tasks", "evil.md"));
+    const reply = await call(TASK_CHANGED_PATH, { body: { paths: ["global/tasks/evil.md"] } });
+    expect(reply.status).toBe(400);
+    expect(reply.body).toEqual({ error: "invalid-path" });
+    expect(reply.raw).not.toContain(fx.vault.root);
+  });
+
+  it("rebuilds and answers the counts; with no vault it answers vault-not-set-up", async () => {
+    await call(TASK_CREATE_PATH, { body: VALID });
+    const reply = await call(TASK_REBUILD_PATH, { body: {} });
+    expect(reply.status).toBe(200);
+    expect(TaskRebuildResponseSchema.parse(reply.body)).toEqual({ tasks: 1, attention: 0 });
+    fx.setVaultRoot(null);
+    const none = await call(TASK_REBUILD_PATH, { body: {} });
+    expect(none.status).toBe(409);
+    expect(none.body).toEqual({ error: "vault-not-set-up" });
   });
 });

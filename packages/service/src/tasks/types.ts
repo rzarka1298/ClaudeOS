@@ -1,6 +1,9 @@
 import type {
+  GeneratedBy,
   TaskAttentionRequest,
   TaskAttentionResponse,
+  TaskChangedRequest,
+  TaskChangedResponse,
   TaskCountsRequest,
   TaskCountsResponse,
   TaskCreateRequest,
@@ -12,6 +15,8 @@ import type {
   TaskGetResponse,
   TaskListRequest,
   TaskListResponse,
+  TaskRebuildResponse,
+  TaskRow,
 } from "@ccc/domain";
 import type { TaskAttention } from "@ccc/vault-repo";
 import type Database from "better-sqlite3";
@@ -52,8 +57,18 @@ export interface TaskServicesDeps {
   /** The clock. A function so a test can move it. */
   readonly now: () => Date;
   readonly log: TaskLog;
+  /** Minimum time between two walks; rebuilds inside it return the last result. Default 5 s. */
+  readonly minWalkIntervalMs?: number | undefined;
+  /** Timer functions for the deferred rescan; a test injects fakes. */
+  readonly timers?: TaskTimers | undefined;
   /** Where the attention list lives. Defaults to a fresh in-memory list; a test injects a fixture. */
   readonly attention?: AttentionList | undefined;
+}
+
+/** The two timer functions the deferred rescan needs. */
+export interface TaskTimers {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
 }
 
 /**
@@ -84,4 +99,43 @@ export interface TaskServices {
   dueToday(request: WithOptionalZone<TaskDueTodayRequest>): TaskResult<TaskDueTodayResponse>;
   /** One page of the attention list. Never reads the file system. */
   attention(request: TaskAttentionRequest): TaskResult<TaskAttentionResponse>;
+  /**
+   * Task notes changed on disk: re-reads frontmatter only and NEVER writes a
+   * note, so a modify-changed-write loop is unreachable (D-35, T-06-22).
+   */
+  changed(request: TaskChangedRequest): TaskResult<TaskChangedResponse>;
+  /** Rebuilds the disposable index from the vault (coalesced and rate-limited, T-06-23). */
+  rebuild(): TaskResult<TaskRebuildResponse>;
+}
+
+/** What an automation supplies to suggest a task (D-36). There is no HTTP route for this. */
+export interface ProposedTaskInput {
+  readonly title: string;
+  readonly description?: string;
+  /** `global` or `workspace:<id>`; defaults to global. */
+  readonly scope?: string;
+  readonly projectId?: string;
+  readonly priority?: "urgent" | "high" | "medium" | "low";
+  /** A calendar date or an offset instant, as the note stores it. */
+  readonly due?: string;
+  readonly tags?: readonly string[];
+  /** Where the suggestion came from, as plain text (`research`, `email`, ...). */
+  readonly sourceType: string;
+  /** Plain text, never rendered as a link. */
+  readonly sourceLink?: string;
+  /** Who produced it: at least an automation name, a skill or a model. */
+  readonly generatedBy: GeneratedBy;
+}
+
+/**
+ * The whole service object the composition root holds. Only {@link TaskServices}
+ * goes into the route context, so no route can reach the internal members.
+ */
+export interface TaskServiceHost extends TaskServices {
+  /** Creates a note with status proposed, provenance and no approval (D-36, TASK-04, APPR-02). */
+  createProposedTask(input: ProposedTaskInput): TaskResult<{ readonly task: TaskRow }>;
+  /** The startup walk: same work as a rebuild, never rate-limited, safe to repeat. */
+  startupWalk(): TaskResult<TaskRebuildResponse>;
+  /** Cancels a pending deferred rescan (shutdown). */
+  dispose(): void;
 }

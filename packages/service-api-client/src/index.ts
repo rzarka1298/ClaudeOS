@@ -66,3 +66,5 @@ export {
   SocketUnreachableError,
   VaultSetupRequestError,
 } from "./socket-api-client.js";
+export type { TasksClient } from "./tasks-client.js";
+export { createTasksClient, TaskRequestError } from "./tasks-client.js";

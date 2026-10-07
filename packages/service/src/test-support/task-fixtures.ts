@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { TasksChangedPayloadSchema } from "@ccc/domain";
@@ -11,7 +12,7 @@ import {
 } from "@ccc/operational-store";
 import { createWorkspace, initializeVault } from "@ccc/vault-repo";
 import { createEventBus, type EventBus } from "../events/event-bus.js";
-import type { TaskLog, TaskServicesDeps } from "../tasks/types.js";
+import type { TaskLog, TaskServicesDeps, TaskTimers } from "../tasks/types.js";
 
 /**
  * Shared fixtures for the task service, route, changed and reindex tests (plan
@@ -178,4 +179,70 @@ export function taskRecord(n: number, overrides: Partial<TaskIndexRecord> = {}):
 /** Inserts synthetic records straight into the index. */
 export function seedTasks(store: OperationalStore, records: readonly TaskIndexRecord[]): void {
   for (const record of records) upsertTask(store.db, record);
+}
+
+/** Timers that run only when the test says so. */
+export interface FakeTimers extends TaskTimers {
+  /** The number of timers waiting. */
+  pending(): number;
+  /** Runs every waiting timer once, in order. */
+  flush(): void;
+  /** The delays the waiting timers were scheduled with. */
+  delays(): number[];
+}
+
+export function makeFakeTimers(): FakeTimers {
+  let next = 1;
+  const waiting = new Map<number, { fn: () => void; ms: number }>();
+  return {
+    setTimeout(fn, ms) {
+      const handle = next++;
+      waiting.set(handle, { fn, ms });
+      return handle;
+    },
+    clearTimeout(handle) {
+      waiting.delete(handle as number);
+    },
+    pending: () => waiting.size,
+    delays: () => [...waiting.values()].map((entry) => entry.ms),
+    flush() {
+      const due = [...waiting.entries()];
+      waiting.clear();
+      for (const [, entry] of due) entry.fn();
+    },
+  };
+}
+
+/**
+ * Every file and folder under `root` with its content hash, size and
+ * modification time: two snapshots are equal only when nothing was written,
+ * renamed, created or deleted in between.
+ */
+export function snapshotVault(root: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (dir: string, prefix: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      const abs = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        out[`${rel}/`] = "dir";
+        walk(abs, rel);
+      } else if (entry.isFile()) {
+        const stat = statSync(abs);
+        out[rel] =
+          `${createHash("sha256").update(readFileSync(abs)).digest("hex")}:${stat.size}:${stat.mtimeMs}`;
+      } else {
+        out[rel] = "other";
+      }
+    }
+  };
+  walk(root, "");
+  return out;
+}
+
+/** The same snapshot without the generated folder summary indexes. */
+export function withoutIndexFiles(snapshot: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(snapshot).filter(([path]) => !path.endsWith("/index.md") && path !== "index.md"),
+  );
 }
