@@ -143,7 +143,11 @@ describe("generateTaskVault (Task 1, Test 1)", () => {
       expect(vault.vaultRoot).toBe(fixture.vaultRoot);
       expect(existsSync(join(fixture.vaultRoot, "CLAUDE.md"))).toBe(true);
       expect(existsSync(join(fixture.vaultRoot, "global", "tasks"))).toBe(true);
-      expect(readdirSync(join(fixture.vaultRoot, "workspaces"))).toHaveLength(2);
+      expect(
+        readdirSync(join(fixture.vaultRoot, "workspaces"), { withFileTypes: true }).filter(
+          (entry) => entry.isDirectory(),
+        ),
+      ).toHaveLength(2);
     });
   });
 });

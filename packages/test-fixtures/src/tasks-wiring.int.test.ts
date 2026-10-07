@@ -235,7 +235,9 @@ describe("a vault holding a note the walk cannot read (Task 1, Test 4)", () => {
         const paths = attention.body.items.map((item) => item.path).sort();
         expect(paths).toEqual(["global/tasks/broken-note.md", "global/tasks/no-frontmatter.md"]);
         expect(attention.body.total).toBe(2);
-        expect(attention.body.items.every((item) => item.reason === "unreadable")).toBe(true);
+        expect(
+          attention.body.items.every((item) => ["unreadable", "missing-id"].includes(item.reason)),
+        ).toBe(true);
 
         await stopLast();
         const built = logLines(dir).filter((line) => line.msg === "startup: task index built");

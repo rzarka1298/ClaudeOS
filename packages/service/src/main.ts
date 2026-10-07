@@ -339,7 +339,22 @@ async function main(): Promise<void> {
     now: () => new Date(),
     log: logger,
   });
-  taskHost.startupWalk();
+  // A missing vault root or a failed walk never stops the service: the index
+  // stays a cache, the task routes answer their closed codes, and one fixed
+  // code is logged (D-35, SVC-11). No path, title or note text reaches the log.
+  try {
+    const walked = taskHost.startupWalk();
+    if (walked.ok) {
+      logger.info(
+        { tasks: walked.value.tasks, attention: walked.value.attention },
+        "startup: task index built",
+      );
+    } else {
+      logger.warn({ code: walked.code }, "startup: task index not built");
+    }
+  } catch {
+    logger.error({ code: "task-startup-walk-threw" }, "startup: task index not built");
+  }
 
   const requestListener = createRequestListener({
     store,
