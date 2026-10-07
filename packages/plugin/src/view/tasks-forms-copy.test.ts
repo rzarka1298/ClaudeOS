@@ -75,7 +75,7 @@ describe("Test 2.5: validation and failure strings", () => {
     expect(createFailedMessage({ code: "service-disconnected" })).toBe(
       "Couldn't add the task: the service isn't running.",
     );
-    expect(createFailedMessage(new Error("/Users/x/secret"))).toBe(
+    expect(createFailedMessage(new Error("/Users/USERNAME/secret"))).toBe(
       "Couldn't add the task: the vault couldn't be written to.",
     );
   });

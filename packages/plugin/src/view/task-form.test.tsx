@@ -340,17 +340,19 @@ describe("Test 2.4: Add as ready", () => {
 });
 
 describe("Test 2.5: failure", () => {
-  const reasons: readonly [unknown, string][] = [
-    [{ code: "timeout" }, "the companion service didn't respond within 5 seconds"],
-    [{ code: "service-disconnected" }, "the service isn't running"],
-    [{ code: "unrecognised-response" }, "the service isn't running"],
-    [{ code: "write-failed" }, "the vault couldn't be written to"],
-    [new Error("boom at /Users/someone/secret"), "the vault couldn't be written to"],
+  const coded = (code: string): Error => Object.assign(new Error("secret detail"), { code });
+  const reasons: readonly [string, Error, string][] = [
+    ["timeout", coded("timeout"), "the companion service didn't respond within 5 seconds"],
+    ["service-disconnected", coded("service-disconnected"), "the service isn't running"],
+    ["unrecognised-response", coded("unrecognised-response"), "the service isn't running"],
+    ["write-failed", coded("write-failed"), "the vault couldn't be written to"],
+    ["no code", new Error("boom at /Users/USERNAME/secret"), "the vault couldn't be written to"],
   ];
 
   it.each(reasons)(
-    "keeps the typed values and names a fixed reason for %j",
-    async (error, reason) => {
+    "keeps the typed values and names a fixed reason for %s",
+    async (_name, error, reason) => {
+      // The rejection carries the closed code the way the tasks API error does.
       const create = vi.fn(() => Promise.reject(error));
       const onStatus = vi.fn();
       const onNotice = vi.fn();
@@ -372,8 +374,12 @@ describe("Test 2.5: failure", () => {
 
 describe("Test 2.6: close and focus", () => {
   it("closes on Escape and on Close form, returns focus to the opener and keeps the typed text", async () => {
-    const opener = document.createElement("button");
-    document.body.append(opener);
+    render(
+      <button type="button" data-opener="true">
+        Create a task
+      </button>,
+    );
+    const opener = screen.getByRole("button", { name: "Create a task" });
     const onClose = vi.fn();
     render(<TaskCreateForm {...props({ onClose, getOpener: () => opener })} />);
     type("Title", "Half typed");
@@ -385,7 +391,6 @@ describe("Test 2.6: close and focus", () => {
     fireEvent.click(button("Close form"));
     expect(onClose).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(document.activeElement).toBe(opener));
-    opener.remove();
   });
 });
 
@@ -464,7 +469,7 @@ describe("Test 2.10: labels and order", () => {
       ...formElement().querySelectorAll<HTMLElement>("input, select, textarea, button"),
     ];
     const names = focusable.map((element) =>
-      element instanceof HTMLButtonElement
+      element.tagName === "BUTTON"
         ? (element.textContent ?? "")
         : ((element as HTMLInputElement).labels?.[0]?.textContent ?? "NO LABEL"),
     );

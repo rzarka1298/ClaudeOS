@@ -38,17 +38,45 @@ export function addedMessage(title: string, intent: "inbox" | "ready"): string {
 }
 
 // ---------------------------------------------------------------------------
-// Create form: validation and failure (skeleton until the validation pass)
+// Create form: validation and failure
 
-export const TITLE_REQUIRED_MESSAGE = "";
-export const TITLE_TOO_LONG_MESSAGE = "";
-export const INVALID_DATE_MESSAGE = "";
-export const TOO_MANY_TAGS_MESSAGE = "";
-export const TAG_TOO_LONG_MESSAGE = "";
-export const TAG_INVALID_MESSAGE = "";
-export const DISCONNECTED_REASON = "";
+export const TITLE_REQUIRED_MESSAGE = "Enter a title.";
+export const TITLE_TOO_LONG_MESSAGE = "Use 200 characters or fewer.";
+export const INVALID_DATE_MESSAGE = "Choose a valid date.";
+export const TOO_MANY_TAGS_MESSAGE = "Use 20 tags or fewer.";
+/** Not fixed by the UI-SPEC (it states the 40-character bound without wording); flagged for the checker. */
+export const TAG_TOO_LONG_MESSAGE = "Use 40 characters or fewer for each tag.";
+/** Not fixed by the UI-SPEC (it says only that tags follow Obsidian's rules); flagged for the checker. */
+export const TAG_INVALID_MESSAGE = "Use letters, numbers, _, - or / in tags, and not only digits.";
 
-/** `Couldn't add the task: {reason}.` for an error with an optional closed `code`. */
-export function createFailedMessage(_error: unknown): string {
-  return "";
+/** The one reason every service-backed control gives while the service is away (UI-SPEC E10). */
+export { DISCONNECTED_REASON } from "./tasks-copy.js";
+
+/** The three failure reasons the create form may name (UI-SPEC "Create form", Feedback). */
+export const CREATE_FAILURE_REASONS = {
+  timeout: "the companion service didn't respond within 5 seconds",
+  disconnected: "the service isn't running",
+  vault: "the vault couldn't be written to",
+} as const;
+
+function errorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("code" in error)) return null;
+  const code = error.code;
+  return typeof code === "string" ? code : null;
+}
+
+/**
+ * `Couldn't add the task: {reason}.` The reason is chosen from the error's
+ * closed `code` only; no other text of the error is ever shown (it could carry a
+ * path or a payload).
+ */
+export function createFailedMessage(error: unknown): string {
+  const code = errorCode(error);
+  const reason =
+    code === "timeout"
+      ? CREATE_FAILURE_REASONS.timeout
+      : code === "service-disconnected" || code === "unrecognised-response"
+        ? CREATE_FAILURE_REASONS.disconnected
+        : CREATE_FAILURE_REASONS.vault;
+  return `Couldn't add the task: ${reason}.`;
 }
