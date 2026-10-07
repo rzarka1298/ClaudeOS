@@ -161,8 +161,8 @@ describe("startApprovalServices: ready (Task 1, Test 5)", () => {
   });
 
   it("stays not ready when recovery throws", async () => {
-    store.db.exec("DROP TABLE proposals");
     const runtime = startApprovalServices(baseDeps(fakeOperations()));
+    store.db.exec("DROP TABLE proposals");
     await runtime.recover().catch(() => undefined);
     expect(runtime.services.ready).toBe(false);
     await runtime.stop();

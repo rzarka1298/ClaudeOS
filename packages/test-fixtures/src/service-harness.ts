@@ -17,11 +17,15 @@ export interface StartServiceForTestOptions {
    * open the same file directly once the service is listening.
    */
   dbPath: string;
+  /** Extra environment for the child, on top of the test process's own (append-only, 06-21). */
+  env?: Record<string, string>;
 }
 
 export interface TestServiceHandle {
   pid: number | undefined;
   stop(): Promise<void>;
+  /** Ends the service with an uncatchable signal, as a crash would; resolves once it has exited. */
+  kill(): Promise<void>;
 }
 
 function waitForSocket(socketPath: string, attempts = 50, delayMs = 100): Promise<void> {
@@ -53,6 +57,7 @@ function waitForSocket(socketPath: string, attempts = 50, delayMs = 100): Promis
  */
 export async function startServiceForTest({
   socketPath,
+  env,
 }: StartServiceForTestOptions): Promise<TestServiceHandle> {
   // Belt and braces beside the service's own RealRuntimeDirUnderTestError:
   // never even spawn a service aimed at the real runtime directory.
@@ -66,6 +71,7 @@ export async function startServiceForTest({
       ...process.env,
       CCC_SOCKET_PATH: socketPath,
       CCC_RUNTIME_DIR: path.dirname(socketPath),
+      ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -80,7 +86,57 @@ export async function startServiceForTest({
         child.kill("SIGTERM");
       });
     },
+    kill(): Promise<void> {
+      return new Promise((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          resolve();
+          return;
+        }
+        child.once("exit", () => resolve());
+        child.kill("SIGKILL");
+      });
+    },
   };
+}
+
+/**
+ * Like {@link requestOverSocket} with a JSON body (append-only, 06-21): the
+ * request helper the approval and task routes need. A non-JSON answer body
+ * comes back as `undefined`.
+ */
+export function requestJsonOverSocket<T>(
+  socketPath: string,
+  opts: { method: string; path: string; headers?: Record<string, string>; body?: unknown },
+): Promise<{ status: number; body: T }> {
+  return new Promise((resolve, reject) => {
+    const payload = opts.body === undefined ? undefined : JSON.stringify(opts.body);
+    const headers: Record<string, string> = { ...opts.headers };
+    if (payload !== undefined) {
+      headers["Content-Type"] = "application/json";
+      headers["Content-Length"] = String(Buffer.byteLength(payload));
+    }
+    const req = http.request(
+      { socketPath, path: opts.path, method: opts.method, headers },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          const raw = Buffer.concat(chunks).toString("utf8");
+          let body: T = undefined as T;
+          if (raw.length > 0) {
+            try {
+              body = JSON.parse(raw) as T;
+            } catch {
+              body = undefined as T;
+            }
+          }
+          resolve({ status: res.statusCode ?? 0, body });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end(payload);
+  });
 }
 
 /** Built on the same `node:http` + `socketPath` shape as the real client. */

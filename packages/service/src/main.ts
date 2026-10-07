@@ -1,16 +1,23 @@
 import { existsSync, unlinkSync } from "node:fs";
-import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "@ccc/domain";
+import { type Clock, DEFAULT_HEARTBEAT_INTERVAL_MS, type ProjectId } from "@ccc/domain";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
 import {
   applyMigrations,
+  createDiagnosticEffects,
+  getProject,
   listLauncherConfigs,
   listProjects,
   openStore,
 } from "@ccc/operational-store";
+import { createRunInspector } from "./approval-wiring/run-inspector.js";
+import { createServiceApprovalLog, startApprovalServices } from "./approval-wiring/services.js";
 import { getInstallSecret } from "./auth/install-secret.js";
 import { startClaudeServices } from "./claude/services.js";
 import { startUsageServices } from "./claude/usage-services.js";
 import { createEventBus } from "./events/event-bus.js";
+// The composition root is the ONLY importer of the executors folder (APPR-01,
+// T-06-02): effect code is reachable only through the engine's definitions.
+import { createDiagnosticTestOperation, createForceTerminateOperation } from "./executors/index.js";
 import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
 import { logger } from "./logging.js";
 import { ensureRuntimeDir, resolveDbPath, resolveRuntimeDir, resolveSocketPath } from "./paths.js";
@@ -33,6 +40,7 @@ import {
 import { createCommandSpawner } from "./projects/spawner.js";
 import { createRequestListener } from "./routes.js";
 import { claimSocketPath, logSocketClaimRefusal, startSocketServer } from "./socket-server.js";
+import { createTaskServices } from "./tasks/task-service.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
 
 /**
@@ -259,6 +267,58 @@ async function main(): Promise<void> {
     projects,
   });
 
+  // --- Phase 6 (approvals and tasks) startup block ------------------------
+  // After the Claude block above (its spool drain and revival sweep have
+  // settled every Run's state, so force-terminate reconcile reads true facts,
+  // A-3) and before the socket opens. The terminator is handed to the
+  // force-terminate operation here and nowhere else; the routes below get the
+  // narrow approval services and no executor (APPR-01, T-06-02).
+  const approvalClock: Clock = { now: () => new Date().toISOString() };
+  const approvalLog = createServiceApprovalLog(logger);
+  const readVaultRoot = (): string | null => {
+    const persisted = store.readServiceMeta(VAULT_ROOT_META_KEY);
+    return persisted !== null && persisted.length > 0 ? persisted : null;
+  };
+  const runInspector = createRunInspector({
+    db: store.db,
+    processFacts: claudeServices.processFacts,
+  });
+  const approvals = startApprovalServices({
+    db: store.db,
+    definitions: [
+      createDiagnosticTestOperation({
+        effects: createDiagnosticEffects(store.db, approvalClock.now),
+      }),
+      createForceTerminateOperation({
+        terminator: claudeServices.terminator,
+        inspector: runInspector,
+        log: approvalLog,
+      }),
+    ],
+    clock: approvalClock,
+    eventBus,
+    getVaultRoot: readVaultRoot,
+    log: approvalLog,
+    env: process.env,
+    projectName: (projectId) => getProject(store.db, projectId as ProjectId)?.displayName ?? null,
+  });
+  const recovered = await approvals.recover();
+  logger.info({ counts: recovered }, "startup: recovered approval requests");
+  // The expiry sweep starts right after recovery, before the socket opens (D-09).
+  approvals.start();
+
+  // Tasks: the task index is a disposable cache of the vault, so the startup
+  // walk rebuilds it after migrations and before the socket opens. Only the
+  // narrow TaskServices members go into the route context.
+  const taskHost = createTaskServices({
+    db: store.db,
+    getVaultRoot: readVaultRoot,
+    eventBus,
+    now: () => new Date(),
+    log: logger,
+  });
+  taskHost.startupWalk();
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
@@ -268,6 +328,17 @@ async function main(): Promise<void> {
     launch,
     launchers,
     scan,
+    approvals: approvals.services,
+    tasks: {
+      create: (request) => taskHost.create(request),
+      list: (request) => taskHost.list(request),
+      counts: (request) => taskHost.counts(request),
+      get: (request) => taskHost.get(request),
+      dueToday: (request) => taskHost.dueToday(request),
+      attention: (request) => taskHost.attention(request),
+      changed: (request) => taskHost.changed(request),
+      rebuild: () => taskHost.rebuild(),
+    },
   });
   const server = await startSocketServer({ socketPath, requestListener });
 

@@ -21,6 +21,11 @@ describe("main.ts startup order (D-22)", () => {
     "recomputeApprovedRoots(store)",
     "await startClaudeServices(",
     "startUsageServices({",
+    "startApprovalServices({",
+    "await approvals.recover()",
+    "approvals.start()",
+    "createTaskServices({",
+    "taskHost.startupWalk()",
     "createRequestListener({",
     "await startSocketServer({",
   ] as const;
