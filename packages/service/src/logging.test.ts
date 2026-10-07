@@ -114,7 +114,7 @@ function readAt(line: Record<string, unknown> | undefined, depth: number, key: s
 describe("approval payload redaction (06-12 Task 3)", () => {
   describe("Test 1: a canary at every depth never reaches the log file", () => {
     for (const key of PAYLOAD_KEYS) {
-      for (const depth of [0, 1, 2, 3]) {
+      for (const depth of [0, 1, 2, 3, 4, 5]) {
         it(`${key} at depth ${depth} is redacted`, () => {
           const canary = `CANARY-${key}-${depth}-ZZ`;
           const logger = createLogger(logPath);
@@ -193,9 +193,9 @@ describe("approval payload redaction (06-12 Task 3)", () => {
       expect(readFileSync(logPath, "utf8")).toContain("CANARY-IN-MESSAGE");
     });
 
-    it("a payload deeper than three levels is not covered by paths, which is why the engine never logs one", () => {
+    it("a payload deeper than five parent levels is not covered by paths, which is why the engine never logs one", () => {
       const logger = createLogger(logPath);
-      logger.info({ a: { b: { c: { d: { payload: "CANARY-TOO-DEEP" } } } } }, "documented limit");
+      logger.info({ a: { b: { c: { d: { e: { f: { payload: "CANARY-TOO-DEEP" } } } } } } }, "documented limit");
       expect(readFileSync(logPath, "utf8")).toContain("CANARY-TOO-DEEP");
     });
   });

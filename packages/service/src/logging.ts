@@ -12,7 +12,7 @@ const MAX_FIELD_LENGTH = 512;
  * The keys that can carry an approval's content: the payload, what it changes
  * (`before`, `after`) and the rendered `diff` (D-19, A-6, T-06-09). pino's
  * wildcard (`*.key`) reaches exactly ONE level, so each key is listed at depth
- * zero to three. Paths are a net, not the protection: the approval engine never
+ * zero to five (the key under up to five parents). Paths are a net, not the protection: the approval engine never
  * hands the logger an object containing a payload (it logs only ids, states,
  * hashes, attempt numbers and fixed reason codes, proved by the allow-list
  * recorder in its tests), and an error object whose message carries content
@@ -24,6 +24,8 @@ const APPROVAL_CONTENT_PATHS = APPROVAL_CONTENT_KEYS.flatMap((key) => [
   `*.${key}`,
   `*.*.${key}`,
   `*.*.*.${key}`,
+  `*.*.*.*.${key}`,
+  `*.*.*.*.*.${key}`,
 ]);
 
 /**
@@ -32,7 +34,7 @@ const APPROVAL_CONTENT_PATHS = APPROVAL_CONTENT_KEYS.flatMap((key) => [
  * authorization` is named explicitly because pino's own HTTP request
  * serializer shape nests it three levels deep, past the generic
  * `*.authorization` wildcard's one-level reach. The approval content
- * keys follow, at depth zero to three.
+ * keys follow, at depth zero to five.
  */
 const REDACT_PATHS = [
   "token",
