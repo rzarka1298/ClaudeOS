@@ -16,7 +16,7 @@ import {
   type SnapshotResponse,
   TASK_LIST_PATH,
 } from "@ccc/domain";
-import { openStore } from "@ccc/operational-store";
+import { createApprovalStore, openStore } from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   authedRequest,
@@ -262,6 +262,242 @@ describe("approval tracer over the real service (Task 1, Tests 1 to 3)", () => {
           body: { context: { scope: "all" }, filter: "all", zone: "UTC" },
         });
         expect(listed.status).toBe(200);
+      } finally {
+        await service.stop();
+      }
+    });
+  }, 40_000);
+});
+
+async function raiseAndDetail(
+  socketPath: string,
+  token: string,
+): Promise<{ proposalId: string; detail: ApprovalDetailResponse }> {
+  const raised = await authedRequest<TestResponse>(socketPath, token, {
+    method: "POST",
+    path: APPROVAL_TEST_PATH,
+    body: {},
+  });
+  const detail = await authedRequest<ApprovalDetailResponse>(socketPath, token, {
+    method: "POST",
+    path: APPROVAL_GET_PATH,
+    body: { proposalId: raised.body.proposalId },
+  });
+  return { proposalId: raised.body.proposalId, detail: detail.body };
+}
+
+async function stateOf(
+  socketPath: string,
+  token: string,
+  proposalId: string,
+): Promise<ApprovalDetailResponse> {
+  const res = await authedRequest<ApprovalDetailResponse>(socketPath, token, {
+    method: "POST",
+    path: APPROVAL_GET_PATH,
+    body: { proposalId },
+  });
+  return res.body;
+}
+
+async function waitForState(
+  socketPath: string,
+  token: string,
+  proposalId: string,
+  state: string,
+  timeoutMs: number,
+): Promise<ApprovalDetailResponse> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const current = await stateOf(socketPath, token, proposalId);
+    if (current.summary.state === state) return current;
+    if (Date.now() > deadline) {
+      throw new Error(`proposal did not reach ${state}; it is ${current.summary.state}`);
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+}
+
+describe("recovery on boot over the real service (Task 3, Test 3, APPR-07, T-06-04)", () => {
+  it("keeps a pending approval, with the same fingerprint, across a crash and restart", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
+      mkdirSync(join(dir, "claude", "projects"), { recursive: true });
+      const dbPath = join(dir, "operational.db");
+      const first = await startServiceForTest({ socketPath, dbPath });
+      let second: Awaited<ReturnType<typeof startServiceForTest>> | null = null;
+      try {
+        const token = await handshake(socketPath);
+        const { proposalId, detail } = await raiseAndDetail(socketPath, token);
+        await first.kill();
+
+        second = await startServiceForTest({ socketPath, dbPath });
+        const nextToken = await handshake(socketPath);
+        const after = await stateOf(socketPath, nextToken, proposalId);
+        expect(after.summary.state).toBe("pending");
+        expect(after.payloadHash).toBe(detail.payloadHash);
+        expect(after.view?.record.fingerprint).toBe(detail.view?.record.fingerprint);
+      } finally {
+        await first.kill();
+        await second?.stop();
+      }
+    });
+  }, 60_000);
+
+  it("claims an approved-but-unclaimed request that is still young, exactly once", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
+      mkdirSync(join(dir, "claude", "projects"), { recursive: true });
+      const dbPath = join(dir, "operational.db");
+      const first = await startServiceForTest({ socketPath, dbPath });
+      let second: Awaited<ReturnType<typeof startServiceForTest>> | null = null;
+      try {
+        const token = await handshake(socketPath);
+        const { proposalId, detail } = await raiseAndDetail(socketPath, token);
+        await first.kill();
+
+        // The service died between the approval and the claim: record the approval alone.
+        const seed = openStore(dbPath);
+        try {
+          const result = createApprovalStore(seed.db).decide({
+            proposalId: proposalId as never,
+            decision: "approve",
+            expectedHash: detail.payloadHash,
+            now: new Date().toISOString(),
+            via: "other",
+          });
+          expect(result.kind).toBe("approved");
+        } finally {
+          seed.close();
+        }
+
+        second = await startServiceForTest({ socketPath, dbPath });
+        const nextToken = await handshake(socketPath);
+        const done = await waitForState(socketPath, nextToken, proposalId, "executed", 15_000);
+        expect(done.view?.history.map((entry) => entry.event)).toContain("claimed");
+
+        const read = openStore(dbPath);
+        try {
+          const rows = read.db
+            .prepare("SELECT count(*) AS n FROM diagnostic_effects WHERE proposal_id = ?")
+            .get(proposalId) as { n: number };
+          expect(rows.n).toBe(1);
+        } finally {
+          read.close();
+        }
+      } finally {
+        await first.kill();
+        await second?.stop();
+      }
+    });
+  }, 60_000);
+
+  it("lapses an approved-but-unclaimed request that is older than its maximum approval age", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
+      mkdirSync(join(dir, "claude", "projects"), { recursive: true });
+      const dbPath = join(dir, "operational.db");
+      const first = await startServiceForTest({ socketPath, dbPath });
+      let second: Awaited<ReturnType<typeof startServiceForTest>> | null = null;
+      try {
+        const token = await handshake(socketPath);
+        const { proposalId, detail } = await raiseAndDetail(socketPath, token);
+        await first.kill();
+
+        const seed = openStore(dbPath);
+        try {
+          const result = createApprovalStore(seed.db).decide({
+            proposalId: proposalId as never,
+            decision: "approve",
+            expectedHash: detail.payloadHash,
+            now: new Date().toISOString(),
+            via: "other",
+          });
+          expect(result.kind).toBe("approved");
+          seed.db
+            .prepare("UPDATE proposals SET approved_at = ? WHERE proposal_id = ?")
+            .run(new Date(Date.now() - 60 * 60 * 1000).toISOString(), proposalId);
+        } finally {
+          seed.close();
+        }
+
+        second = await startServiceForTest({ socketPath, dbPath });
+        const nextToken = await handshake(socketPath);
+        const lapsed = await waitForState(socketPath, nextToken, proposalId, "lapsed", 15_000);
+        expect(lapsed.view?.history.map((entry) => entry.event)).not.toContain("claimed");
+
+        const read = openStore(dbPath);
+        try {
+          const rows = read.db
+            .prepare("SELECT count(*) AS n FROM diagnostic_effects WHERE proposal_id = ?")
+            .get(proposalId) as { n: number };
+          expect(rows.n).toBe(0);
+        } finally {
+          read.close();
+        }
+      } finally {
+        await first.kill();
+        await second?.stop();
+      }
+    });
+  }, 60_000);
+});
+
+describe("short-lived expiry over the real service (Task 3, Test 7, D-10, D-46)", () => {
+  it("expires a test approval with an audit entry and an upsert event, and refuses a late decision", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
+      mkdirSync(join(dir, "claude", "projects"), { recursive: true });
+      const service = await startServiceForTest({
+        socketPath,
+        dbPath: join(dir, "operational.db"),
+        env: {
+          CCC_ENABLE_TEST_OVERRIDES: "1",
+          CCC_APPROVAL_TEST_TTL_MS: "1500",
+          CCC_APPROVAL_SWEEP_MS: "200",
+        },
+      });
+      const token = await handshake(socketPath);
+      const stream = collectEvents(socketPath, token);
+      try {
+        const { proposalId, detail } = await raiseAndDetail(socketPath, token);
+        expect(Date.parse(detail.summary.expiresAt) - Date.parse(detail.summary.createdAt)).toBe(
+          1500,
+        );
+
+        await stream.waitFor(upserted(proposalId, "expired"), 15_000);
+        const after = await stateOf(socketPath, token, proposalId);
+        expect(after.summary.state).toBe("expired");
+        expect(after.view?.history.map((entry) => entry.event)).toContain("expired");
+
+        const late = await authedRequest<DecideResponse>(socketPath, token, {
+          method: "POST",
+          path: APPROVAL_DECIDE_PATH,
+          body: { proposalId, decision: "approve", payloadHash: detail.payloadHash },
+          headers: PLUGIN_HEADERS,
+        });
+        expect(late.body.outcome).toBe("expired");
+      } finally {
+        stream.close();
+        await service.stop();
+      }
+    });
+  }, 40_000);
+
+  it("gives the default lifetime when the enabling flag is not set, even with the value present", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
+      mkdirSync(join(dir, "claude", "projects"), { recursive: true });
+      const service = await startServiceForTest({
+        socketPath,
+        dbPath: join(dir, "operational.db"),
+        env: { CCC_APPROVAL_TEST_TTL_MS: "1500" },
+      });
+      const token = await handshake(socketPath);
+      try {
+        const { detail } = await raiseAndDetail(socketPath, token);
+        expect(Date.parse(detail.summary.expiresAt) - Date.parse(detail.summary.createdAt)).toBe(
+          24 * 60 * 60 * 1000,
+        );
       } finally {
         await service.stop();
       }

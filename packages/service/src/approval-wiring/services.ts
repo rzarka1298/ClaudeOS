@@ -12,7 +12,9 @@ import {
   buildOperationRegistry,
   createApprovalEngine,
   createExpirySweeper,
+  DEFAULT_SWEEP_INTERVAL_MS,
   type RecoverySummary,
+  type SweeperTimers,
 } from "../approval/index.js";
 import type { EventBus } from "../events/event-bus.js";
 import { createApprovalMirror } from "./mirror.js";
@@ -50,6 +52,8 @@ export interface ApprovalRuntimeDeps {
   readonly projectName?: (projectId: string) => string | null;
   /** Replaces the vault mirror (tests only). */
   readonly mirror?: MirrorPort;
+  /** Replaces the sweeper's timers (tests only). */
+  readonly timers?: SweeperTimers;
 }
 
 export interface ApprovalRuntime {
@@ -72,6 +76,21 @@ const TEST_OPERATION = "diagnostic.test";
 const TEST_SUBJECT = "diagnostic";
 const TEST_REQUESTER = { kind: "dashboard", label: "Settings" } as const;
 const TEST_REASON = "A test request raised from the settings page. It changes nothing.";
+
+/** Skeleton (RED): the environment handling follows in the GREEN commit. */
+export const SWEEP_INTERVAL_MIN_MS = 20;
+export const SWEEP_INTERVAL_MAX_MS = 60_000;
+
+export function resolveSweepIntervalMs(_env: NodeJS.ProcessEnv): number {
+  return DEFAULT_SWEEP_INTERVAL_MS;
+}
+
+export function resolveTestLifetimeMs(
+  _env: NodeJS.ProcessEnv,
+  _log: ApprovalLog,
+): number | undefined {
+  return undefined;
+}
 
 export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntime {
   const { db, clock, log } = deps;

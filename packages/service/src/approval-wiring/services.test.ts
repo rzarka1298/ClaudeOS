@@ -13,7 +13,12 @@ import type {
 import { applyMigrations, type OperationalStore, openStore } from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { type ApprovalRuntimeDeps, startApprovalServices } from "./services.js";
+import {
+  type ApprovalRuntimeDeps,
+  resolveSweepIntervalMs,
+  resolveTestLifetimeMs,
+  startApprovalServices,
+} from "./services.js";
 
 let base: string;
 let store: OperationalStore;
@@ -291,6 +296,153 @@ describe("startApprovalServices: the test approval round trip (Task 1, Tests 1 a
     const runtime = startApprovalServices(baseDeps(fakeOperations()));
     await runtime.recover();
     expect(runtime.services.get("0mfk1a2b3c4d5e6f7a8b9c999").kind).toBe("not-found");
+    await runtime.stop();
+  });
+});
+
+describe("the sweeper environment (Task 3, Test 4)", () => {
+  it("uses the default between thirty and sixty seconds when nothing is set", () => {
+    const value = resolveSweepIntervalMs({});
+    expect(value).toBeGreaterThanOrEqual(30_000);
+    expect(value).toBeLessThanOrEqual(60_000);
+  });
+
+  it("honours a positive integer within the bounds", () => {
+    expect(resolveSweepIntervalMs({ CCC_APPROVAL_SWEEP_MS: "200" })).toBe(200);
+    expect(resolveSweepIntervalMs({ CCC_APPROVAL_SWEEP_MS: "60000" })).toBe(60_000);
+  });
+
+  it.each(["", "abc", "0", "-5", "1.5", "1e3", "19", "60001", "99999999999", " 200"])(
+    "falls back to the default for %j",
+    (raw) => {
+      expect(resolveSweepIntervalMs({ CCC_APPROVAL_SWEEP_MS: raw })).toBe(
+        resolveSweepIntervalMs({}),
+      );
+    },
+  );
+
+  it("starts the sweeper with the resolved interval and an unref'd timer", async () => {
+    const unref: boolean[] = [];
+    const intervals: number[] = [];
+    const runtime = startApprovalServices({
+      ...baseDeps(fakeOperations()),
+      env: { CCC_APPROVAL_SWEEP_MS: "250" },
+      timers: {
+        setInterval(_fn, ms) {
+          intervals.push(ms);
+          return { unref: () => void unref.push(true) };
+        },
+        clearInterval() {},
+      },
+    });
+    runtime.start();
+    expect(intervals).toEqual([250]);
+    expect(unref).toEqual([true]);
+    await runtime.stop();
+  });
+});
+
+describe("the guarded test-lifetime override (Task 3, Test 5)", () => {
+  const ENABLED = { CCC_ENABLE_TEST_OVERRIDES: "1" };
+
+  function recordingLog(): ApprovalLog & { codes: string[] } {
+    const codes: string[] = [];
+    const record = (fields: Readonly<Record<string, unknown>>): void => {
+      if (typeof fields.code === "string") codes.push(fields.code);
+    };
+    return { codes, info: record, warn: record, error: record };
+  }
+
+  it("applies a valid value only when the enabling flag is exactly 1", () => {
+    const log = recordingLog();
+    expect(resolveTestLifetimeMs({ ...ENABLED, CCC_APPROVAL_TEST_TTL_MS: "5000" }, log)).toBe(5000);
+    expect(log.codes).toEqual([]);
+    for (const flag of [undefined, "", "0", "true", "yes", "01"]) {
+      const quiet = recordingLog();
+      const env: NodeJS.ProcessEnv = { CCC_APPROVAL_TEST_TTL_MS: "5000" };
+      if (flag !== undefined) env.CCC_ENABLE_TEST_OVERRIDES = flag;
+      expect(resolveTestLifetimeMs(env, quiet)).toBeUndefined();
+    }
+  });
+
+  it("ignores, with one fixed log code, a value that is not a positive integer or exceeds the default", () => {
+    for (const raw of ["abc", "0", "-1", "1.5", "", "90000000"]) {
+      const log = recordingLog();
+      expect(
+        resolveTestLifetimeMs({ ...ENABLED, CCC_APPROVAL_TEST_TTL_MS: raw }, log),
+      ).toBeUndefined();
+      expect(log.codes).toEqual(["test-ttl-override-ignored"]);
+    }
+  });
+
+  it("says nothing when the flag is on but no value is set", () => {
+    const log = recordingLog();
+    expect(resolveTestLifetimeMs(ENABLED, log)).toBeUndefined();
+    expect(log.codes).toEqual([]);
+  });
+
+  it("shortens only the test route's request: an enabled override gives the test approval that lifetime", async () => {
+    const runtime = startApprovalServices({
+      ...baseDeps(fakeOperations()),
+      env: { ...ENABLED, CCC_APPROVAL_TEST_TTL_MS: "5000" },
+    });
+    await runtime.recover();
+    const raised = runtime.services.test({}) as { proposalId: string };
+    const found = runtime.services.get(raised.proposalId);
+    if (found.kind !== "found") throw new Error("expected found");
+    expect(Date.parse(found.summary.expiresAt) - Date.parse(found.summary.createdAt)).toBe(5000);
+    await runtime.stop();
+  });
+
+  it("takes the shorter of the override and a requested lifetime", async () => {
+    const runtime = startApprovalServices({
+      ...baseDeps(fakeOperations()),
+      env: { ...ENABLED, CCC_APPROVAL_TEST_TTL_MS: "5000" },
+    });
+    await runtime.recover();
+    const raised = runtime.services.test({ ttlMs: 2000 }) as { proposalId: string };
+    const found = runtime.services.get(raised.proposalId);
+    if (found.kind !== "found") throw new Error("expected found");
+    expect(Date.parse(found.summary.expiresAt) - Date.parse(found.summary.createdAt)).toBe(2000);
+    await runtime.stop();
+  });
+
+  it("gives the default lifetime when the enabling flag is unset", async () => {
+    const runtime = startApprovalServices({
+      ...baseDeps(fakeOperations()),
+      env: { CCC_APPROVAL_TEST_TTL_MS: "5000" },
+    });
+    await runtime.recover();
+    const raised = runtime.services.test({}) as { proposalId: string };
+    const found = runtime.services.get(raised.proposalId);
+    if (found.kind !== "found") throw new Error("expected found");
+    const lifetime = Date.parse(found.summary.expiresAt) - Date.parse(found.summary.createdAt);
+    expect(lifetime).toBe(24 * 60 * 60 * 1000);
+    await runtime.stop();
+  });
+
+  it("never touches the force-terminate request: its lifetime is its own", async () => {
+    const ops = fakeOperations();
+    const runtime = startApprovalServices({
+      ...baseDeps(ops),
+      env: { ...ENABLED, CCC_APPROVAL_TEST_TTL_MS: "5000" },
+    });
+    await runtime.recover();
+    const outcome = runtime.engine.submit({
+      operation: "session.force-terminate",
+      subject: "run-1",
+      requester: { kind: "dashboard", label: "Agent runs" },
+      projectId: null,
+      runId: null,
+      reason: "r",
+      payload: { runId: "run-1" },
+    });
+    if (outcome.kind !== "proposed") throw new Error("expected proposed");
+    const found = runtime.services.get(outcome.proposalId);
+    if (found.kind !== "found") throw new Error("expected found");
+    expect(Date.parse(found.summary.expiresAt) - Date.parse(found.summary.createdAt)).toBe(
+      15 * 60 * 1000,
+    );
     await runtime.stop();
   });
 });
