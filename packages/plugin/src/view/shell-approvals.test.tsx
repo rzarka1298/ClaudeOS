@@ -165,14 +165,15 @@ describe("navigation intents (Test 3)", () => {
     expect(document.querySelector(".ccc-approval-detail")).not.toBeNull();
   });
 
-  it("a request asking for the create form navigates to Tasks and leaves the intent set", async () => {
+  it("a request asking for the create form navigates to Tasks, which opens the form and consumes the intent", async () => {
     connectionState.value = { kind: "live" };
     render(<Shell />);
     await act(async () => {
       requestDestination("tasks", { openTaskForm: true });
     });
     expect(tab("Tasks").getAttribute("aria-selected")).toBe("true");
-    expect(taskFormRequested.value).toBe(true);
+    expect(await screen.findByLabelText("Title")).toBeTruthy();
+    expect(taskFormRequested.value).toBe(false);
   });
 
   it("the existing project and plain destination requests still work", async () => {
@@ -187,12 +188,13 @@ describe("navigation intents (Test 3)", () => {
     expect(taskFormRequested.value).toBe(false);
   });
 
-  it("the task:create quick action navigates to Tasks and sets the create-form intent", () => {
+  it("the task:create quick action navigates to Tasks, which opens the create form", async () => {
     connectionState.value = { kind: "live" };
     render(<Shell />);
     fireEvent.click(screen.getByRole("button", { name: "create-task" }));
     expect(tab("Tasks").getAttribute("aria-selected")).toBe("true");
-    expect(taskFormRequested.value).toBe(true);
+    expect(await screen.findByLabelText("Title")).toBeTruthy();
+    expect(taskFormRequested.value).toBe(false);
   });
 });
 

@@ -626,24 +626,19 @@ describe("Quick actions is live (S8, D-38, PR-08, PR-12, RR-18)", () => {
     expect(order).toEqual([
       "Start a Claude Code session",
       "Open Claude Desktop",
+      "Create a task",
       "[status]",
       "Not available yet",
       "Run a skill",
-      "Create a task",
       "Capture an inbox note",
       "Refresh selected data",
     ]);
-    for (const label of [
-      "Run a skill",
-      "Create a task",
-      "Capture an inbox note",
-      "Refresh selected data",
-    ]) {
+    for (const label of ["Run a skill", "Capture an inbox note", "Refresh selected data"]) {
       expect(within(card).getByRole("button", { name: label }).getAttribute("aria-disabled")).toBe(
         "true",
       );
     }
-    for (const label of ["Start a Claude Code session", "Open Claude Desktop"]) {
+    for (const label of ["Start a Claude Code session", "Open Claude Desktop", "Create a task"]) {
       expect(
         within(card).getByRole("button", { name: label }).getAttribute("aria-disabled"),
       ).toBeNull();
@@ -651,7 +646,7 @@ describe("Quick actions is live (S8, D-38, PR-08, PR-12, RR-18)", () => {
     // actionsInBody: the frame's generic actions row is not rendered too.
     expect(
       card.querySelectorAll(".ccc-card-body > .ccc-card-actions:last-child button"),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
     expect(within(card).getAllByRole("button", { name: "Open Claude Desktop" })).toHaveLength(1);
   });
 

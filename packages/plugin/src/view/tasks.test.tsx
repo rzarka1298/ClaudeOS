@@ -23,6 +23,7 @@ import {
   configureTaskWorkspaces,
   createTasksViewState,
   type TasksViewState,
+  taskDetailFocusRequested,
 } from "./tasks-view-state.js";
 
 afterEach(() => {
@@ -214,6 +215,7 @@ function mountWith(options: {
   connected?: boolean;
   workspaces?: { id: string; name: string }[] | undefined;
   projects?: { id: string; name: string }[];
+  select?: string;
 }) {
   const api =
     options.api ??
@@ -222,6 +224,7 @@ function mountWith(options: {
   const port = options.port ?? fakePort();
   configureTaskActionsPort(port);
   const context = createTasksContext("global", { zone: () => TASK_ZONE });
+  if (options.select !== undefined) context.select(options.select);
   const result = render(
     <TasksDestination
       connection={
@@ -553,8 +556,18 @@ describe("Test 10 (task 2): layout hooks", () => {
     await waitFor(() => expect(layout.getAttribute("data-detail")).toBe("closed"));
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        document.querySelector('[data-task-id="' + taskRows(1)[0]?.id + '"] .ccc-task-title'),
+        document.querySelector(`[data-task-id="${taskRows(1)[0]?.id}"] .ccc-task-title`),
       ),
     );
+  });
+});
+
+describe("an external selection (an Overview row)", () => {
+  it("shows the chosen task and focuses the pane heading once", async () => {
+    taskDetailFocusRequested.value = true;
+    mountWith({ select: taskRows(1)[0]?.id as string });
+    const heading = await screen.findByRole("heading", { name: "Draft the weekly review" });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(taskDetailFocusRequested.value).toBe(false);
   });
 });

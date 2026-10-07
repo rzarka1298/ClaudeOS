@@ -398,3 +398,24 @@ describe("Test 2: states reach CSS through data attributes, and none relies on c
     expect(selected?.body).toContain("font-weight: var(--ccc-weight-strong)");
   });
 });
+
+describe("the 06-22 additions to the Tasks family", () => {
+  it("clamps the attention title to two lines", () => {
+    expect(declared("ccc-attention-title", "line-clamp")).toBe("2");
+    expect(declared("ccc-attention-title", "overflow")).toBe("hidden");
+  });
+
+  it("gives the three button variants distinct weights without colour or accent", () => {
+    const source = STYLESHEET;
+    expect(source).toMatch(/\.ccc-tasks \[data-variant="primary"\]/);
+    expect(source).toMatch(/\.ccc-tasks \[data-variant="secondary"\]/);
+    expect(source).toMatch(/\.ccc-tasks \[data-variant="tertiary"\]/);
+  });
+
+  it("hides the pane below 48rem unless a task is chosen", () => {
+    const source = STYLESHEET;
+    expect(source).toMatch(
+      /@container \(max-width: 48rem\)\s*\{\s*\.ccc-tasks-pane\[data-empty="true"\]\s*\{\s*display: none;/,
+    );
+  });
+});
