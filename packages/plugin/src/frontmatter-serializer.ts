@@ -4,7 +4,11 @@ import {
   NOTE_FRONTMATTER_KEY_ORDER,
   type NoteFrontmatter,
 } from "@ccc/domain/note-schema.js";
-import type { TaskFrontmatter } from "@ccc/domain/task-schema.js";
+import {
+  TASK_DECISION_KEY_ORDER,
+  TASK_FRONTMATTER_KEY_ORDER,
+  type TaskFrontmatter,
+} from "@ccc/domain/task-schema.js";
 import yaml from "js-yaml";
 
 /**
@@ -131,10 +135,41 @@ export function serializePassthroughFrontmatter(
  * `TASK_FRONTMATTER_KEY_ORDER`, `generatedBy` and `decision` in their own fixed
  * orders, then the passthrough keys in read order (plan 06-18, research
  * Pattern 11).
+ *
+ * It is the plugin twin of `@ccc/vault-repo`'s `stringifyTaskNote`: the same
+ * per-key dump of the same js-yaml, walking the same arrays, so a note written
+ * by either process has the same bytes (proved with a shared golden here and
+ * across packages in 06-25). The block always ends in a newline. A passthrough
+ * key can never override a schema-owned key.
  */
 export function serializeTaskFrontmatter(
-  _frontmatter: TaskFrontmatter,
-  _passthrough: readonly (readonly [string, unknown])[] = [],
+  frontmatter: TaskFrontmatter,
+  passthrough: readonly (readonly [string, unknown])[] = [],
 ): string {
-  return "";
+  const source = frontmatter as unknown as Record<string, unknown>;
+  let out = "";
+  for (const key of TASK_FRONTMATTER_KEY_ORDER) {
+    const value = source[key];
+    if (value === undefined) continue;
+    if (key === "generatedBy") {
+      out += dumpEntry(key, orderedGeneratedBy(value as GeneratedBy));
+    } else if (key === "decision") {
+      out += dumpEntry(key, orderedMap(value as object, TASK_DECISION_KEY_ORDER));
+    } else {
+      out += dumpEntry(key, value);
+    }
+  }
+  const owned: ReadonlySet<string> = new Set(TASK_FRONTMATTER_KEY_ORDER);
+  return out + serializePassthroughFrontmatter(passthrough.filter(([key]) => !owned.has(key)));
+}
+
+/** Rebuilds a nested map with its keys in a fixed order, dropping absent ones (YAML cannot dump `undefined`). */
+function orderedMap(value: object, order: readonly string[]): Record<string, unknown> {
+  const source = value as Record<string, unknown>;
+  const ordered: Record<string, unknown> = {};
+  for (const key of order) {
+    const sub = source[key];
+    if (sub !== undefined) ordered[key] = sub;
+  }
+  return ordered;
 }

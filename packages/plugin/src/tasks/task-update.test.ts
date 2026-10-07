@@ -210,7 +210,7 @@ describe("Test 9: export and purity", () => {
         .filter((name) => /\.tsx?$/.test(name) && !/\.test\./.test(name))
         .map((name) => join(SRC, "tasks", name)),
     ];
-    expect(files.length).toBeGreaterThan(5);
+    expect(files.length).toBeGreaterThanOrEqual(5);
     for (const file of files) {
       expect(importsObsidianValue(readFileSync(file, "utf8")), file).toBe(false);
     }

@@ -176,20 +176,18 @@ function passthroughKeys(parsed: unknown): [string, unknown][] {
 /** `"refused"` -- the note is a task note, which only the task update path may rewrite. */
 export type ProvenanceUpdateResult = ConflictSafeUpdateResult | "refused";
 
-/** True when the frontmatter parses to a map whose `type` is `task`. Never throws: an unreadable block is the update path's own error to raise. */
+/**
+ * A top-level `type: task` line. A text test rather than a second YAML parse, so
+ * this module keeps exactly one untrusted parse (below, validated by zod); a
+ * false positive refuses a note, which is the safe direction, and a nested key
+ * is indented so it never matches.
+ */
+const TASK_TYPE_LINE = /^["']?type["']?[ \t]*:[ \t]*["']?task["']?[ \t]*(?:#.*)?$/m;
+
+/** True when the note's frontmatter declares itself a task. Never throws. */
 function declaresTaskType(content: string): boolean {
   const note = splitNote(content);
-  if (!note) return false;
-  try {
-    const parsed: unknown = parseYaml(note.frontmatter);
-    return (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      (parsed as Record<string, unknown>).type === "task"
-    );
-  } catch {
-    return false;
-  }
+  return note !== null && TASK_TYPE_LINE.test(note.frontmatter);
 }
 
 /**
