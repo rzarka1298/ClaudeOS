@@ -514,14 +514,32 @@ export interface FileSystemTaskVault {
 }
 
 /** A file-system-backed vault for the plugin write path (no Obsidian runtime involved). */
-export function fileSystemTaskVault(_vaultRoot: string): FileSystemTaskVault {
-  throw new Error("task fixtures are not implemented yet (RED)");
+export function fileSystemTaskVault(vaultRoot: string): FileSystemTaskVault {
+  const absolute = (file: { readonly path: string }): string =>
+    join(vaultRoot, ...file.path.split("/"));
+  return {
+    async process(file, fn) {
+      const current = readFileSync(absolute(file), "utf8");
+      const next = fn(current);
+      if (next !== current) writeFileSync(absolute(file), next);
+      return next;
+    },
+    async read(file) {
+      return readFileSync(absolute(file), "utf8");
+    },
+  };
 }
 
 /** Polls `check` until it answers a value other than `undefined`, or fails after `timeoutMs`. */
 export async function eventually<T>(
-  _check: () => Promise<T | undefined> | T | undefined,
-  _timeoutMs: number,
+  check: () => Promise<T | undefined> | T | undefined,
+  timeoutMs: number,
 ): Promise<T> {
-  throw new Error("task fixtures are not implemented yet (RED)");
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await check();
+    if (value !== undefined) return value;
+    if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs} ms`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }

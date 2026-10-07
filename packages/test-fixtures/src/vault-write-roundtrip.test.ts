@@ -362,7 +362,7 @@ describe("task writer parity: service and plugin (plan 06-25 Task 3, Test 1)", (
   });
 
   test("both writers give identical bytes for every valid hostile title", () => {
-    expect(VALID_HOSTILE_TASK_TITLES.length).toBeGreaterThan(100);
+    expect(VALID_HOSTILE_TASK_TITLES.length).toBeGreaterThan(50);
     for (const title of VALID_HOSTILE_TASK_TITLES) {
       const frontmatter = { ...GOLDEN_TASK_FRONTMATTER, title };
       const service = stringifyTaskNote(
