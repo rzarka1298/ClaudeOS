@@ -2,8 +2,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLASSIFICATION, type DecideResponse, type ProposalId } from "@ccc/domain";
-import { buildOperationRegistry } from "@ccc/service/approval";
 import * as approvalEntry from "@ccc/service/approval";
+import { buildOperationRegistry } from "@ccc/service/approval";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   addProductionRow,
@@ -58,7 +58,12 @@ describe("Test 2: twenty simultaneous approvals on one connection", () => {
 
       const results = await Promise.all(
         Array.from({ length: 20 }, () =>
-          rig.engine.decide({ proposalId: id, decision: "approve", payloadHash: hash, via: "plugin" }),
+          rig.engine.decide({
+            proposalId: id,
+            decision: "approve",
+            payloadHash: hash,
+            via: "plugin",
+          }),
         ),
       );
       await rig.engine.settled();
@@ -89,7 +94,12 @@ describe("Test 3: ten approvals on each of two database connections", () => {
     for (let index = 0; index < 10; index += 1) {
       for (const rig of [first, second]) {
         calls.push(
-          rig.engine.decide({ proposalId: id, decision: "approve", payloadHash: hash, via: "plugin" }),
+          rig.engine.decide({
+            proposalId: id,
+            decision: "approve",
+            payloadHash: hash,
+            via: "plugin",
+          }),
         );
       }
     }
@@ -121,7 +131,10 @@ describe("Test 4: a deny racing an approve", () => {
     const call = (id: string, decision: "approve" | "deny") =>
       rig.engine.decide({ proposalId: id, decision, payloadHash: rig.hashOf(id), via: "plugin" });
 
-    const [won, lost] = await Promise.all([call(approveFirst, "approve"), call(approveFirst, "deny")]);
+    const [won, lost] = await Promise.all([
+      call(approveFirst, "approve"),
+      call(approveFirst, "deny"),
+    ]);
     expect(won.outcome).toBe("decided");
     expect(lost.outcome).toBe("already-decided");
     const [denied, late] = await Promise.all([call(denyFirst, "deny"), call(denyFirst, "approve")]);
@@ -156,7 +169,12 @@ describe("Test 4: a deny racing an approve", () => {
 
       const results = await Promise.all(
         plan.map((step) =>
-          step.rig.engine.decide({ proposalId: id, decision: step.decision, payloadHash: hash, via: "plugin" }),
+          step.rig.engine.decide({
+            proposalId: id,
+            decision: step.decision,
+            payloadHash: hash,
+            via: "plugin",
+          }),
         ),
       );
       await Promise.all([first.engine.settled(), second.engine.settled()]);
@@ -196,7 +214,9 @@ describe("Test 5: the idempotency key", () => {
     expect(token?.subject).toBe(row?.subject);
     // The token expires with the approval's age (five minutes), earlier than the request's own expiry.
     expect(token?.expiresAt).toBe(
-      new Date(Date.parse(row?.approvedAt ?? "") + CLASSIFICATION["diagnostic.test"].maxApprovalAgeMs).toISOString(),
+      new Date(
+        Date.parse(row?.approvedAt ?? "") + CLASSIFICATION["diagnostic.test"].maxApprovalAgeMs,
+      ).toISOString(),
     );
     expect(op.effects).toEqual(new Set([id]));
   });
@@ -245,16 +265,20 @@ describe("Test 7: the Phase 7 contract is the operation definition alone (D-43)"
     const requester = { kind: "connector" as const, label: "Fake connector" };
 
     // The registry built from the injected copy accepts the extra definition; the engine is unchanged.
-    expect(rig.engine.submit({
-      operation: FAKE_CONNECTOR,
-      subject: "message-1",
-      requester,
-      projectId: null,
-      runId: null,
-      reason: "Send the fixture message.",
-      payload: { note: "hello" },
-    }).kind).toBe("proposed");
-    const id = rig.store.list("pending", 10).find((row) => row.operation === FAKE_CONNECTOR)?.proposalId;
+    expect(
+      rig.engine.submit({
+        operation: FAKE_CONNECTOR,
+        subject: "message-1",
+        requester,
+        projectId: null,
+        runId: null,
+        reason: "Send the fixture message.",
+        payload: { note: "hello" },
+      }).kind,
+    ).toBe("proposed");
+    const id = rig.store
+      .list("pending", 10)
+      .find((row) => row.operation === FAKE_CONNECTOR)?.proposalId;
     expect(id).toBeDefined();
     if (id === undefined) return;
 
@@ -271,7 +295,12 @@ describe("Test 7: the Phase 7 contract is the operation definition alone (D-43)"
       const hash = rig.hashOf(id);
       const results = await Promise.all(
         Array.from({ length: 20 }, () =>
-          rig.engine.decide({ proposalId: id, decision: "approve", payloadHash: hash, via: "plugin" }),
+          rig.engine.decide({
+            proposalId: id,
+            decision: "approve",
+            payloadHash: hash,
+            via: "plugin",
+          }),
         ),
       );
       await rig.engine.settled();
