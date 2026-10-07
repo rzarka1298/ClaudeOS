@@ -113,7 +113,7 @@ describe("Test 3: the handler does no I/O", () => {
       {
         get(target, key) {
           reads.push(key);
-          return Reflect.get(target, key);
+          return Reflect.get(target, key) as unknown;
         },
         has(target, key) {
           reads.push(key);

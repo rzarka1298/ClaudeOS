@@ -351,7 +351,7 @@ export class FakeObsidianHost {
       // Obsidian's `rename` event also carries the old path; the registry types the handler
       // with one parameter, so the extras are passed through an untyped call.
       if (entry.active && entry.name === name) {
-        (entry.handler as (...args: unknown[]) => void)(payload, ...rest);
+        Reflect.apply(entry.handler, undefined, [payload, ...rest]);
       }
     }
   }
