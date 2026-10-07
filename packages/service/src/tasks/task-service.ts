@@ -19,7 +19,9 @@ import {
   TaskGetResponseSchema,
   type TaskListResponse,
   TaskListResponseSchema,
+  type TaskRow,
   TaskRowSchema,
+  TaskScopeSchema,
   zonedLocalToInstant,
 } from "@ccc/domain";
 import {
@@ -34,8 +36,14 @@ import {
   type TaskIndexRow,
   upsertTask,
 } from "@ccc/operational-store";
-import { type TaskAttention, WorkspaceScopeViolationError, writeTaskNote } from "@ccc/vault-repo";
+import {
+  type TaskAttention,
+  WorkspaceScopeViolationError,
+  type WriteTaskNoteOptions,
+  writeTaskNote,
+} from "@ccc/vault-repo";
 import { ZodError } from "zod";
+import { applyChanged, type ChangedDeps } from "./changed.js";
 import {
   decodeOffsetCursor,
   decodeTaskCursor,
@@ -43,8 +51,10 @@ import {
   encodeTaskCursor,
 } from "./cursor.js";
 import { toIndexRecord } from "./record.js";
+import { createReindexer } from "./reindex.js";
 import type {
   AttentionList,
+  ProposedTaskInput,
   TaskResult,
   TaskServiceHost,
   TaskServices,
@@ -184,9 +194,8 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
       }
     }
 
-    try {
-      const now = deps.now();
-      const written = writeTaskNote({
+    return persist(
+      {
         vaultRoot,
         scope: request.scope ?? "global",
         title: request.title,
@@ -198,12 +207,28 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
         ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
         ...(request.tags === undefined ? {} : { tags: request.tags }),
         sourceType: "manual",
-        now,
-      });
+      },
+      request.zone,
+      "create",
+    );
+  }
+
+  /**
+   * Writes one NEW note through the vault writer, indexes it and announces it.
+   * The only place this service writes a note, and it only ever adds a file.
+   */
+  function persist(
+    options: Omit<WriteTaskNoteOptions, "now">,
+    zone: string,
+    fn: string,
+  ): TaskResult<{ readonly task: TaskRow }> {
+    try {
+      const now = deps.now();
+      const written = writeTaskNote({ ...options, now });
       upsertTask(deps.db, toIndexRecord(written.path, written.frontmatter, written.contentHash));
-      const row = getTask(deps.db, written.id, localDayBounds(now, request.zone));
+      const row = getTask(deps.db, written.id, localDayBounds(now, zone));
       if (row === null) {
-        deps.log.error({ fn: "create", errorName: "MissingIndexRow" }, "task create failed");
+        deps.log.error({ fn, errorName: "MissingIndexRow" }, "task create failed");
         return fail("write-failed");
       }
       announce();
@@ -211,9 +236,39 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
     } catch (error: unknown) {
       if (error instanceof WorkspaceScopeViolationError) return fail("invalid-scope");
       if (error instanceof ZodError) return fail("invalid-body");
-      deps.log.error({ fn: "create", errorName: errorName(error) }, "task create failed");
+      deps.log.error({ fn, errorName: errorName(error) }, "task create failed");
       return fail("write-failed");
     }
+  }
+
+  /** An automation's suggestion: status proposed, provenance, no approval (D-36, TASK-04, APPR-02). */
+  function createProposedTask(input: ProposedTaskInput): TaskResult<{ readonly task: TaskRow }> {
+    const vaultRoot = deps.getVaultRoot();
+    if (vaultRoot === null || vaultRoot.length === 0) return fail("vault-not-set-up");
+    const scope = TaskScopeSchema.safeParse(input.scope ?? "global");
+    if (!scope.success) return fail("invalid-scope");
+    return persist(
+      {
+        vaultRoot,
+        scope: scope.data,
+        title: input.title,
+        ...(input.description === undefined ? {} : { body: input.description }),
+        intent: "proposed",
+        ...(input.priority === undefined ? {} : { priority: input.priority }),
+        ...(input.due === undefined ? {} : { due: input.due }),
+        ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+        ...(input.tags === undefined ? {} : { tags: input.tags }),
+        assignee: "automation",
+        sourceType: input.sourceType,
+        ...(input.sourceLink === undefined ? {} : { sourceLink: input.sourceLink }),
+        generatedBy: input.generatedBy,
+        aiGenerated: true,
+        claimType: "recommendation",
+        confidence: "unverified",
+      },
+      resolvedZone(),
+      "createProposedTask",
+    );
   }
 
   /**
@@ -360,7 +415,28 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
     };
   }
 
-  const nothing = <T>(): TaskResult<T> => fail("write-failed");
+  const reindexer = createReindexer({
+    db: deps.db,
+    getVaultRoot: deps.getVaultRoot,
+    attention: attentionList,
+    now: deps.now,
+    log: deps.log,
+    onChanged: () => {
+      announce();
+    },
+    minIntervalMs: deps.minWalkIntervalMs,
+    timers: deps.timers,
+  });
+
+  const changedDeps: ChangedDeps = {
+    db: deps.db,
+    getVaultRoot: deps.getVaultRoot,
+    log: deps.log,
+    requestRescan: reindexer.requestRescan,
+    announce,
+    generation: () => generation,
+  };
+
   return {
     create,
     list,
@@ -368,10 +444,17 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
     get,
     dueToday,
     attention,
-    changed: () => nothing(),
-    rebuild: () => nothing(),
-    createProposedTask: () => nothing(),
-    startupWalk: () => nothing(),
-    dispose: () => undefined,
+    changed: (request) => {
+      try {
+        return applyChanged(changedDeps, request);
+      } catch (error: unknown) {
+        deps.log.error({ fn: "changed", errorName: errorName(error) }, "task change failed");
+        return fail("write-failed");
+      }
+    },
+    rebuild: reindexer.rebuild,
+    createProposedTask,
+    startupWalk: reindexer.walk,
+    dispose: reindexer.dispose,
   };
 }

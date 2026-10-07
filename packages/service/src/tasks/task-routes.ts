@@ -1,12 +1,15 @@
 import type { ServerResponse } from "node:http";
 import {
   TASK_ATTENTION_PATH,
+  TASK_CHANGED_PATH,
   TASK_COUNTS_PATH,
   TASK_CREATE_PATH,
   TASK_DUE_TODAY_PATH,
   TASK_GET_PATH,
   TASK_LIST_PATH,
+  TASK_REBUILD_PATH,
   TaskAttentionRequestSchema,
+  TaskChangedRequestSchema,
   TaskCountsRequestSchema,
   TaskCreateRequestSchema,
   TaskDueTodayRequestSchema,
@@ -14,6 +17,7 @@ import {
   type TaskErrorCode,
   TaskGetRequestSchema,
   TaskListRequestSchema,
+  TaskRebuildRequestSchema,
 } from "@ccc/domain";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
@@ -163,6 +167,30 @@ const attentionHandler = postRoute(
   },
 );
 
+/**
+ * `POST /api/v1/tasks/changed`: task notes changed on disk, or a rescan. Re-reads
+ * frontmatter and never writes a note (D-35, T-06-22). A body can name up to 200
+ * paths of up to 400 characters, so it takes the larger limit.
+ */
+const changedHandler = postRoute(
+  TASK_CHANGED_PATH,
+  TaskChangedRequestSchema,
+  TASK_LARGE_BODY_LIMIT_BYTES,
+  (body, res, services) => {
+    sendResult(res, services.changed(body));
+  },
+);
+
+/** `POST /api/v1/tasks/rebuild`: rebuild the disposable index from the vault (rate-limited). */
+const rebuildHandler = postRoute(
+  TASK_REBUILD_PATH,
+  TaskRebuildRequestSchema,
+  TASK_SMALL_BODY_LIMIT_BYTES,
+  (_body, res, services) => {
+    sendResult(res, services.rebuild());
+  },
+);
+
 /** The task route table, spread into the one route table last (R-ROUTEKIT). */
 export const taskRoutes: Record<string, Record<string, Handler>> = {
   [TASK_CREATE_PATH]: { POST: createHandler },
@@ -171,4 +199,6 @@ export const taskRoutes: Record<string, Record<string, Handler>> = {
   [TASK_GET_PATH]: { POST: getHandler },
   [TASK_DUE_TODAY_PATH]: { POST: dueTodayHandler },
   [TASK_ATTENTION_PATH]: { POST: attentionHandler },
+  [TASK_CHANGED_PATH]: { POST: changedHandler },
+  [TASK_REBUILD_PATH]: { POST: rebuildHandler },
 };

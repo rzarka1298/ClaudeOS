@@ -112,11 +112,12 @@ function create(overrides: Partial<TaskCreateRequest> = {}) {
 
 /** Clears every instrument after seeding, so only the branch under test is measured. */
 function arm(): Record<string, string> {
+  const snapshot = snapshotVault(fx.vault.root);
   vi.clearAllMocks();
   probes.fsWrites.length = 0;
   probes.fsReads.length = 0;
   probes.scans = 0;
-  return snapshotVault(fx.vault.root);
+  return snapshot;
 }
 
 function expectNothingWritten(
@@ -163,8 +164,9 @@ describe("Test 1 (changed, update)", () => {
     const { id, path, abs } = create({ description: "Body stays exactly as it is.\n" });
     const bodyBefore = readFileSync(abs, "utf8").split("\n---\n").slice(-1)[0];
     const generations = publishedGenerations(fx.bus).length;
-    const before = arm();
+    const before = snapshotVault(fx.vault.root);
     edit(abs, "status: inbox", "status: done");
+    arm();
     const result = services.changed({ paths: [path] });
     expect(result).toMatchObject({ ok: true, value: { accepted: 1 } });
     expect(getTask(fx.store.db, id)?.status).toBe("done");
