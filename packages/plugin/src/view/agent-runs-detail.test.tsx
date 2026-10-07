@@ -586,7 +586,7 @@ describe("Test 5 (gate): Force-terminate is live exactly when the service says t
 });
 
 async function waitForRender(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
 }
 
 describe("Test 3 (explanation line): the two meanings of waiting for approval stay apart (D-41)", () => {

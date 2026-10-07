@@ -85,13 +85,15 @@ function tab(name: string | RegExp): HTMLElement {
 }
 
 describe("onNavigate accepts a run, a proposal or a task selection (Test 1)", () => {
-  it("a proposal selection selects the destination, the request and requests detail focus", () => {
+  it("a proposal selection selects the destination and the request, and the mounted section takes the detail-focus request once (plan 06-17)", () => {
     connectionState.value = { kind: "live" };
     render(<Shell />);
     fireEvent.click(screen.getByRole("button", { name: "go-proposal" }));
     expect(tab(/^Agent runs/).getAttribute("aria-selected")).toBe("true");
     expect(selectedProposalId.value).toBe("0mfk1a2b3c4d5e6f7a8b9c001");
-    expect(approvalDetailFocusRequested.value).toBe(true);
+    // Before 06-17 no section existed to consume it; the Approvals section now does, and shows the pane.
+    expect(approvalDetailFocusRequested.value).toBe(false);
+    expect(document.querySelector(".ccc-approval-detail")).not.toBeNull();
     expect(selectedRunId.value).toBeNull();
   });
 
@@ -139,18 +141,19 @@ describe("the selection type (Test 2)", () => {
 });
 
 describe("navigation intents (Test 3)", () => {
-  it("an approvals-heading request navigates to Agent runs and leaves the intent for the section", async () => {
+  it("an approvals-heading request navigates to Agent runs, and the section consumes the intent and lands on its heading (plan 06-17)", async () => {
     connectionState.value = { kind: "live" };
     render(<Shell />);
     await act(async () => {
       requestDestination("agent-runs", { focusApprovalsHeading: true });
     });
     expect(tab(/^Agent runs/).getAttribute("aria-selected")).toBe("true");
-    expect(approvalsHeadingRequested.value).toBe(true);
+    expect(approvalsHeadingRequested.value).toBe(false);
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Approvals" }));
     expect(navigationRequest.value).toBeNull();
   });
 
-  it("a request carrying a proposal id selects it and asks for detail focus", async () => {
+  it("a request carrying a proposal id selects it, and the section takes the detail-focus request once (plan 06-17)", async () => {
     connectionState.value = { kind: "live" };
     render(<Shell />);
     await act(async () => {
@@ -158,7 +161,8 @@ describe("navigation intents (Test 3)", () => {
     });
     expect(tab(/^Agent runs/).getAttribute("aria-selected")).toBe("true");
     expect(selectedProposalId.value).toBe(proposalId(7));
-    expect(approvalDetailFocusRequested.value).toBe(true);
+    expect(approvalDetailFocusRequested.value).toBe(false);
+    expect(document.querySelector(".ccc-approval-detail")).not.toBeNull();
   });
 
   it("a request asking for the create form navigates to Tasks and leaves the intent set", async () => {

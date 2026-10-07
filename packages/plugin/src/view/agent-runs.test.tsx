@@ -597,7 +597,7 @@ describe("Plan 06-17 Task 3: the Approvals section inside Agent runs", () => {
       children.indexOf(root.querySelector("footer") as HTMLElement),
     );
     // the sessions layout still renders its three groups unchanged
-    expect(screen.getByText("Active (4)")).toBeTruthy();
+    expect(screen.getByText("Active (5)")).toBeTruthy();
     expect(screen.getByText("Recent (0)")).toBeTruthy();
     expect(screen.getByText("Unclassified (0)")).toBeTruthy();
   });

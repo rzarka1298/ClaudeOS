@@ -12,6 +12,7 @@ import {
 import type { SessionUsage } from "@ccc/domain/usage.js";
 import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { pendingApprovalCount } from "../approvals/signals.js";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState } from "../connection-state.js";
 import { activeSessionsWidget } from "../widgets/active-sessions.js";
@@ -32,6 +33,8 @@ import {
   selectedRunId,
 } from "./agent-runs-state.js";
 import { AgentRunsUsage } from "./agent-runs-usage.js";
+import { needsDecisionText } from "./approvals-copy.js";
+import { ApprovalsSection } from "./approvals-section.js";
 
 /**
  * The Agent runs destination (UI-SPEC S3, D-52). Replaces the placeholder
@@ -471,6 +474,14 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
   const runningCount = allSessions.filter((s) => s.state === "running").length;
   const waitingCount = allSessions.filter((s) => s.state === "waiting-for-approval").length;
   const unknownCount = allSessions.filter((s) => s.state === "stale").length;
+  // Phase 5's three segments are untouched; the inbox adds its own distinct
+  // phrase, omitted until the first snapshot and at zero (D-41 rule 3).
+  const pendingRequests = pendingApprovalCount.value;
+  const summaryLine =
+    `${runningCount} active · ${waitingCount} waiting for approval · ${unknownCount} unknown` +
+    (pendingRequests !== null && pendingRequests > 0
+      ? ` · ${needsDecisionText(pendingRequests)}`
+      : "");
 
   // The setup gate stands alone (UI-SPEC "Destination states": "Tables render
   // stored history if any exists; otherwise the banner stands alone") —
@@ -480,11 +491,10 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
   if (presentation.kind === "permission-required") {
     return (
       <div className="ccc-agent-runs">
-        <p className="ccc-state-body">
-          {`${runningCount} active · ${waitingCount} waiting for approval · ${unknownCount} unknown`}
-        </p>
+        <p className="ccc-state-body">{summaryLine}</p>
         <WidgetFooter model={footerModel} panelTitle="agent runs" now={now} />
         <Banner presentation={presentation} onSetUpHooks={handleSetUpHooks} now={now} />
+        <ApprovalsSection now={now} />
       </div>
     );
   }
@@ -498,6 +508,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
       <div className="ccc-agent-runs">
         <WidgetFooter model={footerModel} panelTitle="agent runs" now={now} />
         <Banner presentation={presentation} onSetUpHooks={handleSetUpHooks} now={now} />
+        <ApprovalsSection now={now} />
         {/* Plan usage and token activity have their own sources (status line,
             transcripts), so a hook pause never hides them. */}
         {usageSummary.value !== null && (
@@ -509,11 +520,10 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
 
   return (
     <div className="ccc-agent-runs">
-      <p className="ccc-state-body">
-        {`${runningCount} active · ${waitingCount} waiting for approval · ${unknownCount} unknown`}
-      </p>
+      <p className="ccc-state-body">{summaryLine}</p>
       <WidgetFooter model={footerModel} panelTitle="agent runs" now={now} />
       <Banner presentation={presentation} onSetUpHooks={handleSetUpHooks} now={now} />
+      <ApprovalsSection now={now} />
       {totalSessions === 0 ? (
         <>
           <p className="ccc-state-heading">Nothing here yet</p>

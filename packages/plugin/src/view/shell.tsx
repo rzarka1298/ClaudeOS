@@ -29,6 +29,7 @@ import { widgetStateFor } from "../widgets/widget-data.js";
 import { type WidgetHost, WidgetHostContext } from "../widgets/widget-host.js";
 import { AgentRuns } from "./agent-runs.js";
 import { detailFocusRequested, selectedRunId } from "./agent-runs-state.js";
+import { DestinationTabs } from "./destination-tabs.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 import { launchersFocusRequested } from "./launchers-focus.js";
 import { createLaunchersSession, type LaunchersSession } from "./launchers-settings.js";
@@ -255,31 +256,6 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
   ),
 };
 
-const COUNT_CAP = 9;
-const COUNT_PLURALS = new Intl.PluralRules("en");
-
-/**
- * The Agent runs tab's pending-approval chip (UI-SPEC S6, E13). A sibling of
- * the tab label, so the label itself is unchanged (SC-6): the visible number
- * is `aria-hidden` and capped at `9+`, and a visually hidden sentence carries
- * the true count into the tab's accessible name. Never accent, never danger.
- */
-function ApprovalCountChip({ count }: { readonly count: number }) {
-  const visible = count > COUNT_CAP ? `${COUNT_CAP}+` : String(count);
-  const spoken =
-    COUNT_PLURALS.select(count) === "one"
-      ? `, ${count} approval request needs your decision`
-      : `, ${count} approval requests need your decision`;
-  return (
-    <>
-      <span className="ccc-nav-count" aria-hidden="true">
-        {visible}
-      </span>
-      <span className="ccc-visually-hidden">{spoken}</span>
-    </>
-  );
-}
-
 function connectionStatusText(state: ConnectionState): string {
   switch (state.kind) {
     case "live":
@@ -385,6 +361,18 @@ export function Shell({
           : (action) => {
               void runSessionAction(action, sessionActionDeps(sessionActions));
             },
+      // The host of an approval request (D-06): an enabled approval-required
+      // capability (today only `session:terminate`) reaches the runner's own
+      // confirm-then-request flow, which asks the service for a request and
+      // executes nothing. Absent a runner host the dispatcher answers
+      // unavailable. Without this member Force-terminate would never leave the
+      // dispatcher, whatever the service's ready signal says.
+      requestProposal:
+        sessionActions === undefined
+          ? undefined
+          : (action) => {
+              void runSessionAction(action, sessionActionDeps(sessionActions));
+            },
     });
   }
 
@@ -477,37 +465,13 @@ export function Shell({
             </span>
           )}
         </div>
-        <div
-          role="tablist"
-          aria-label="Command center destinations"
-          className="ccc-nav"
+        <DestinationTabs
+          activeId={activeId}
+          pendingCount={pendingCount}
+          tabRefs={tabRefs}
+          onSelect={select}
           onKeyDown={handleNavKeyDown}
-        >
-          {DESTINATIONS.map((destination) => {
-            const selected = destination.id === activeId;
-            return (
-              <button
-                key={destination.id}
-                type="button"
-                role="tab"
-                id={`ccc-tab-${destination.id}`}
-                aria-selected={selected}
-                aria-controls={`ccc-panel-${destination.id}`}
-                tabIndex={selected ? 0 : -1}
-                className="ccc-nav-item"
-                ref={(el) => {
-                  if (el) tabRefs.current[destination.id] = el;
-                }}
-                onClick={() => select(destination.id)}
-              >
-                {destination.label}
-                {destination.id === "agent-runs" && pendingCount !== null && pendingCount > 0 ? (
-                  <ApprovalCountChip count={pendingCount} />
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
+        />
         <div
           role="tabpanel"
           id={`ccc-panel-${active.id}`}

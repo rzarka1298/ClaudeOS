@@ -27,6 +27,10 @@
 import type {
   ActiveSessionsData,
   AnyWidgetDefinition,
+  ApprovalDetailResponse,
+  ApprovalSummary,
+  ApprovalsApi,
+  ApprovalsSnapshot,
   ClaudeUsageData,
   ConnectionState,
   GithubDiscoveriesData,
@@ -43,9 +47,19 @@ import type {
 } from "@ccc/plugin";
 import {
   AgentRuns,
+  adoptApprovalsSnapshot,
+  approvalChip,
+  approvalDetailFocusRequested,
+  approvalsMissedSync,
+  configureApprovalsApi,
   connectionState,
+  DestinationTabs,
   isWidgetId,
   motionMode,
+  pendingApprovalCount,
+  resetApprovalsState,
+  resetApprovalsView,
+  selectedProposalId,
   selectedRunId,
   serviceHealthStateFor,
   sessionsById,
@@ -57,6 +71,7 @@ import {
 import type { ComponentChildren } from "preact";
 import { render } from "preact";
 import fixtureFile from "../src/widget-fixtures.json";
+import approvalFixtureFile from "./approval-fixtures.json";
 
 // ---------------------------------------------------------------------------
 // The fixture file's shape (plan 03-02). Declared here rather than inferred so
@@ -743,6 +758,376 @@ function AgentRunsCell({ agentRunsCase }: { readonly agentRunsCase: AgentRunsCas
   return <Root motion={motionMode.value}>{body}</Root>;
 }
 
+// ---------------------------------------------------------------------------
+// The Approvals cells (UI-SPEC "Visual regression and fixtures", plan 06-17).
+//
+// `view=agent-runs&case=approvals-*&width=full|narrow&motion=full|reduced` and
+// `case=shell-nav-count`. They render the REAL Agent runs destination (the
+// Approvals section and the request pane) or the REAL shell from `@ccc/plugin`,
+// against the production stylesheet. Every value comes from
+// `approval-fixtures.json` (synthetic: projects example-project, sample-notes,
+// demo-api; session Refactor parser; PID 4242; hostile text on example.invalid)
+// or from a literal here. The service is a fake `ApprovalsApi` over that file:
+// nothing here can reach a client, a vault or the network.
+// ---------------------------------------------------------------------------
+
+type ApprovalFilterName = "pending" | "decided" | "expired";
+
+interface ApprovalFixtureFile {
+  readonly now: string;
+  readonly ids: Readonly<Record<string, string>>;
+  readonly inbox: Readonly<Record<ApprovalFilterName, readonly string[]>>;
+  readonly alternateHash: string;
+  readonly details: Readonly<Record<string, ApprovalDetailResponse>>;
+}
+
+const APPROVAL_FIXTURES = approvalFixtureFile as unknown as ApprovalFixtureFile;
+const APPROVAL_NOW = Date.parse(APPROVAL_FIXTURES.now);
+
+/** The inbox a case starts from. */
+type ApprovalInboxKind = "full" | "empty" | "loading" | "error";
+
+interface ApprovalCaseSpec {
+  readonly chip: ApprovalFilterName;
+  /** A key of the fixture `ids`, or `null` for no selection. */
+  readonly selected: string | null;
+  readonly inbox: ApprovalInboxKind;
+  readonly connection: ConnectionState;
+  /** The list may have missed a change (the stale state). */
+  readonly missedSync?: boolean;
+  /** Press Approve once on arrival; the fake service answers with a changed fingerprint. */
+  readonly mismatch?: boolean;
+  /** The element that must exist before the cell is ready to capture. */
+  readonly readyWhen: string;
+}
+
+const APPROVAL_LIVE: ConnectionState = { kind: "live" };
+
+/** The decision group of a pane that has finished loading (the loading form carries a Deny too). */
+const LOADED_DENY = '.ccc-approval-detail:not([aria-busy]) [data-decision="deny"]';
+
+const APPROVAL_CASES: Readonly<Record<string, ApprovalCaseSpec>> = {
+  "approvals-pending-destructive": {
+    chip: "pending",
+    selected: "forceTerminate",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: LOADED_DENY,
+  },
+  "approvals-pending-requester": {
+    chip: "pending",
+    selected: "requesterSkill",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: LOADED_DENY,
+  },
+  "approvals-pending-test": {
+    chip: "pending",
+    selected: "testApproval",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: LOADED_DENY,
+  },
+  "approvals-executing": {
+    chip: "decided",
+    selected: "executing",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: '.ccc-approval-detail[data-state="executing"]',
+  },
+  "approvals-executed": {
+    chip: "decided",
+    selected: "executed",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: '.ccc-approval-detail[data-state="executed"]',
+  },
+  "approvals-failed": {
+    chip: "decided",
+    selected: "failed",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: '.ccc-approval-detail[data-state="failed"]',
+  },
+  "approvals-unknown": {
+    chip: "decided",
+    selected: "unknown",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: '.ccc-approval-detail[data-state="unknown"]',
+  },
+  "approvals-expired": {
+    chip: "expired",
+    selected: "expired",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: '.ccc-approval-detail[data-state="expired"]',
+  },
+  "approvals-hash-mismatch": {
+    chip: "pending",
+    selected: "forceTerminate",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    mismatch: true,
+    readyWhen: ".ccc-approval-changed",
+  },
+  "approvals-too-large": {
+    chip: "pending",
+    selected: "tooLarge",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: ".ccc-approval-too-large",
+  },
+  "approvals-empty": {
+    chip: "pending",
+    selected: null,
+    inbox: "empty",
+    connection: APPROVAL_LIVE,
+    readyWhen: ".ccc-approvals-empty",
+  },
+  "approvals-loading": {
+    chip: "pending",
+    selected: null,
+    inbox: "loading",
+    connection: APPROVAL_LIVE,
+    readyWhen: ".ccc-approvals-loading",
+  },
+  "approvals-error": {
+    chip: "pending",
+    selected: null,
+    inbox: "error",
+    connection: APPROVAL_LIVE,
+    readyWhen: ".ccc-approvals-empty .ccc-error-glyph",
+  },
+  "approvals-stale": {
+    chip: "pending",
+    selected: "forceTerminate",
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    missedSync: true,
+    readyWhen:
+      '.ccc-approval-detail:not([aria-busy]) [data-decision="approve"][aria-disabled="true"]',
+  },
+  "approvals-disconnected": {
+    chip: "pending",
+    selected: "forceTerminate",
+    inbox: "full",
+    connection: { kind: "disconnected", reason: "connect ECONNREFUSED" },
+    readyWhen: '.ccc-approval-detail[data-dimmed="true"]:not([aria-busy]) [data-decision="deny"]',
+  },
+  "shell-nav-count": {
+    chip: "pending",
+    selected: null,
+    inbox: "full",
+    connection: APPROVAL_LIVE,
+    readyWhen: ".ccc-nav-count",
+  },
+};
+
+function isApprovalsCase(value: string): boolean {
+  return Object.hasOwn(APPROVAL_CASES, value);
+}
+
+const APPROVAL_WIDTHS = ["full", "narrow"] as const;
+type ApprovalWidth = (typeof APPROVAL_WIDTHS)[number];
+
+function isApprovalWidth(value: string): value is ApprovalWidth {
+  return (APPROVAL_WIDTHS as readonly string[]).includes(value);
+}
+
+function approvalDetailOf(id: string): ApprovalDetailResponse {
+  const detail = APPROVAL_FIXTURES.details[id];
+  if (detail === undefined) throw new Error(`No approval fixture for ${id}.`);
+  return detail;
+}
+
+function approvalSnapshot(kind: ApprovalInboxKind): ApprovalsSnapshot {
+  const summaries = (ids: readonly string[]): ApprovalSummary[] =>
+    kind === "empty" ? [] : ids.map((id) => approvalDetailOf(id).summary);
+  const pending = summaries(APPROVAL_FIXTURES.inbox.pending);
+  const decided = summaries(APPROVAL_FIXTURES.inbox.decided);
+  const expired = summaries(APPROVAL_FIXTURES.inbox.expired);
+  return {
+    ready: true,
+    pending,
+    decided,
+    expired,
+    counts: { pending: pending.length, decided: decided.length, expired: expired.length },
+    truncated: false,
+  };
+}
+
+/** The fake service: the fixture file behind the four functions the plugin's views reach. */
+function fakeApprovalsApi(spec: ApprovalCaseSpec): ApprovalsApi {
+  let gets = 0;
+  return {
+    list: () => {
+      if (spec.inbox === "loading") return new Promise<ApprovalsSnapshot>(() => {});
+      if (spec.inbox === "error") return Promise.reject(new Error("fixture: service unavailable"));
+      return Promise.resolve(approvalSnapshot(spec.inbox));
+    },
+    get: (proposalId) => {
+      gets += 1;
+      const detail = approvalDetailOf(proposalId);
+      if (spec.mismatch !== true || gets === 1 || detail.view === null) {
+        return Promise.resolve(detail);
+      }
+      // After a mismatch the service shows the changed request: a new fingerprint.
+      const hash = APPROVAL_FIXTURES.alternateHash;
+      return Promise.resolve({
+        ...detail,
+        payloadHash: hash,
+        view: {
+          ...detail.view,
+          record: { ...detail.view.record, payloadHash: hash, fingerprint: hash.slice(0, 12) },
+        },
+      });
+    },
+    decide: () =>
+      spec.mismatch === true
+        ? Promise.resolve({ outcome: "hash-mismatch" as const })
+        : Promise.reject(new Error("fixture: decide was not expected")),
+    test: () => Promise.reject(new Error("fixture: test was not expected")),
+  };
+}
+
+/** The sessions the destination shows beside the Approvals section; the first is the request's Run. */
+function seedApprovalSessions(): void {
+  const at = (minutes: number): string => new Date(APPROVAL_NOW + minutes * 60_000).toISOString();
+  const refactor = syntheticSession({
+    runId: "0mfk1a2b3c4d5e6f7a8b9c0d1" as SessionView["runId"],
+    name: "Refactor parser",
+    projectName: "example-project",
+    state: "running",
+    startedAt: at(-60),
+    lastActivityAt: at(-1),
+  });
+  const notes = syntheticSession({
+    runId: "0mfk1a2b3c4d5e6f7a8b9c0d3" as SessionView["runId"],
+    name: "Draft the release notes",
+    projectName: "sample-notes",
+    state: "running",
+    startedAt: at(-30),
+    lastActivityAt: at(-2),
+  });
+  sessionsById.value = new Map([
+    [refactor.runId, refactor],
+    [notes.runId, notes],
+  ]);
+  usageSummary.value = null;
+  selectedRunId.value = null;
+}
+
+let approvalsSeeded = false;
+
+/**
+ * Seeds the signals for one case, once per page load. Seeding writes signals a
+ * rendered child reads, so running it on every render would feed itself.
+ */
+function seedApprovalsCase(spec: ApprovalCaseSpec): void {
+  if (approvalsSeeded) return;
+  approvalsSeeded = true;
+  resetApprovalsState();
+  resetApprovalsView();
+  configureApprovalsApi(fakeApprovalsApi(spec));
+  seedApprovalSessions();
+  connectionState.value = spec.connection;
+  if (spec.inbox === "full" || spec.inbox === "empty") {
+    adoptApprovalsSnapshot(approvalSnapshot(spec.inbox));
+  }
+  approvalChip.value = spec.chip;
+  approvalsMissedSync.value = spec.missedSync === true;
+  if (spec.selected !== null) {
+    const id = APPROVAL_FIXTURES.ids[spec.selected];
+    if (id === undefined) throw new Error(`No approval fixture named ${spec.selected}.`);
+    selectedProposalId.value = id;
+    approvalDetailFocusRequested.value = true;
+  }
+}
+
+let readyMarkerStarted = false;
+
+/**
+ * Marks the document ready once the cell shows what its case exists to show,
+ * and, for the hash-mismatch case, presses Approve once as soon as it is
+ * available. Started once per page load: a harness page renders one cell.
+ */
+function startReadyMarker(selector: string, mismatch: boolean): void {
+  if (readyMarkerStarted) return;
+  readyMarkerStarted = true;
+  let tries = 0;
+  let pressed = false;
+  const timer = setInterval(() => {
+    tries += 1;
+    if (mismatch && !pressed) {
+      const approve = document.querySelector<HTMLButtonElement>(
+        '[data-decision="approve"]:not([aria-disabled="true"])',
+      );
+      if (approve !== null) {
+        pressed = true;
+        approve.click();
+      }
+    }
+    if (document.querySelector(selector) !== null || tries > 300) {
+      clearInterval(timer);
+      // One more beat: focus moves in an effect after the pane has painted.
+      setTimeout(() => document.documentElement.setAttribute("data-harness-ready", "true"), 60);
+    }
+  }, 10);
+}
+
+function ApprovalsCell({
+  caseName,
+  width,
+}: {
+  readonly caseName: string;
+  readonly width: ApprovalWidth;
+}) {
+  const spec = APPROVAL_CASES[caseName];
+  if (spec === undefined) return <HarnessError message={`Unknown approvals case "${caseName}".`} />;
+  seedApprovalsCase(spec);
+  startReadyMarker(spec.readyWhen, spec.mismatch === true);
+
+  const narrow = width === "narrow";
+  if (caseName === "shell-nav-count") {
+    // The real tab strip the shell renders, with the Agent runs count chip.
+    const tabs = (
+      <DestinationTabs activeId="agent-runs" pendingCount={pendingApprovalCount.value} />
+    );
+    // Harness-only: a fixed width stands in for the narrow side pane the
+    // container queries read. Test infrastructure, not plugin production code.
+    return (
+      <Root motion={motionMode.value}>
+        {narrow ? (
+          <div data-harness-width="narrow" style={{ width: "22rem" }}>
+            {tabs}
+          </div>
+        ) : (
+          <div data-harness-width="full">{tabs}</div>
+        )}
+      </Root>
+    );
+  }
+
+  const body = (
+    <div className="ccc-content">
+      <h2>Agent runs</h2>
+      <AgentRuns now={APPROVAL_NOW} onQuickAction={() => {}} />
+    </div>
+  );
+  return (
+    <Root motion={motionMode.value}>
+      {narrow ? (
+        <div data-harness-width="narrow" style={{ width: "22rem" }}>
+          {body}
+        </div>
+      ) : (
+        <div data-harness-width="full">{body}</div>
+      )}
+    </Root>
+  );
+}
+
 function HarnessCell() {
   const params = new URLSearchParams(location.search);
   const view = params.get("view") ?? "";
@@ -757,6 +1142,13 @@ function HarnessCell() {
 
   if (view === "agent-runs") {
     const agentRunsCase = params.get("case") ?? "";
+    if (isApprovalsCase(agentRunsCase)) {
+      const width = params.get("width") ?? "full";
+      if (!isApprovalWidth(width)) {
+        return <HarnessError message={`Unknown width "${width}" — expected full or narrow.`} />;
+      }
+      return <ApprovalsCell caseName={agentRunsCase} width={width} />;
+    }
     if (!isAgentRunsCase(agentRunsCase)) {
       return <HarnessError message={`Unknown agent-runs case "${agentRunsCase}".`} />;
     }

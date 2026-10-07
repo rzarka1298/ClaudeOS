@@ -529,8 +529,11 @@ export function ApprovalsSection({ now, onOpenRun, refreshOne }: ApprovalsSectio
           <p className="ccc-state-body">{NOT_READY_BODY}</p>
         </div>
       )}
-      {showList &&
-        (rows.length === 0 && selected === null ? (
+      {/* A selected request shows its pane even before the first snapshot: a link
+          can arrive ahead of the list, and the pane asks the service itself. */}
+      {!notReady &&
+        (showList || selected !== null) &&
+        (showList && rows.length === 0 && selected === null ? (
           counts !== null && counts[chip] === 0 ? (
             <EmptyCopy filter={chip} />
           ) : (

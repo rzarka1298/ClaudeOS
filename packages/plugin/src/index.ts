@@ -3,8 +3,18 @@
 // file exists so the package follows the same `src/index.ts` shape every
 // other workspace package does; it re-exports the side-effect-free pieces.
 
+export type { ApprovalSummary, ApprovalsSnapshot } from "@ccc/domain/approval.js";
 export type { SessionView } from "@ccc/domain/session.js";
 export type { UsageSummary } from "@ccc/domain/usage.js";
+export type { ApprovalDetailResponse, ApprovalsApi } from "./approvals/api.js";
+export { configureApprovalsApi } from "./approvals/api.js";
+export {
+  adoptApprovalsSnapshot,
+  approvalDetailFocusRequested,
+  pendingApprovalCount,
+  resetApprovalsState,
+  selectedProposalId,
+} from "./approvals/signals.js";
 export type { ConnectionState, LastEventInfo } from "./connection-state.js";
 export { connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
 export type { MotionMode } from "./motion.js";
@@ -13,6 +23,8 @@ export { projectShortcutsStateFor } from "./projects/projects-state.js";
 export { attachEventClient } from "./service-connection.js";
 export { AgentRuns } from "./view/agent-runs.js";
 export { RECENT_PAGE_SIZE, selectedRunId } from "./view/agent-runs-state.js";
+export { approvalChip, approvalsMissedSync, resetApprovalsView } from "./view/approvals-state.js";
+export { DestinationTabs } from "./view/destination-tabs.js";
 export type {
   DataDependencyKey,
   QuickActionDescriptor,

@@ -1,5 +1,6 @@
 import type { ApprovalSummary } from "@ccc/domain/approval.js";
 import { APPROVAL_STATE_DISPLAY, type ApprovalFilter } from "@ccc/domain/approval-view.js";
+import { CLASSIFICATION } from "@ccc/domain/classification.js";
 import { signal } from "@preact/signals";
 import { type ApprovalDetailResponse, approvalsApi } from "../approvals/api.js";
 import type { ApprovalCounts } from "../approvals/signals.js";
@@ -168,6 +169,32 @@ export function hasArrival(previous: ReadonlySet<string>, current: ReadonlySet<s
   return false;
 }
 
+const FORCE_TERMINATE_SUMMARY = CLASSIFICATION["session.force-terminate"].summary;
+
+/** The label the service gives a force-terminate request: the table's summary, capitalised. */
+const FORCE_TERMINATE_LABEL = `${FORCE_TERMINATE_SUMMARY.charAt(0).toUpperCase()}${FORCE_TERMINATE_SUMMARY.slice(1)}`;
+
+/**
+ * The pending force-terminate request for a Run, if there is one: what lets the
+ * Run's disabled Force-terminate control point at it instead of inviting a
+ * second request. `null` when there is none.
+ */
+export function pendingTerminateRequestFor(
+  byId: ReadonlyMap<string, ApprovalSummary>,
+  runId: string,
+): string | null {
+  for (const summary of byId.values()) {
+    if (
+      summary.state === "pending" &&
+      summary.runId === runId &&
+      summary.operationLabel === FORCE_TERMINATE_LABEL
+    ) {
+      return summary.proposalId;
+    }
+  }
+  return null;
+}
+
 /**
  * Set when the list may have missed a change: the stream dropped, or a refresh
  * failed. Cleared when a snapshot or an event arrives while the stream is live.
@@ -236,7 +263,7 @@ export interface DetailCache {
   /**
    * Asks for one request. Calls made while an answer is still on its way share
    * it; a later call always asks again, because a decision and a hash must
-   * never rest on a remembered answer.
+   * never rest on an answer kept from before.
    */
   get(proposalId: string): Promise<ApprovalDetailResponse>;
   /** What the cache holds for a request now, or `undefined` for one never asked about. */
@@ -244,7 +271,7 @@ export interface DetailCache {
   clear(): void;
 }
 
-/** Remembered forms per load; the oldest is forgotten past this many. */
+/** Forms kept per load; the oldest is dropped past this many. */
 const FORM_CAP = 50;
 
 export function createDetailCache(
@@ -253,7 +280,7 @@ export function createDetailCache(
   const inFlight = new Map<string, Promise<ApprovalDetailResponse>>();
   const forms = new Map<string, DetailForm>();
 
-  function remember(proposalId: string, form: DetailForm): void {
+  function keepForm(proposalId: string, form: DetailForm): void {
     forms.delete(proposalId);
     forms.set(proposalId, form);
     while (forms.size > FORM_CAP) {
@@ -267,16 +294,16 @@ export function createDetailCache(
     get(proposalId) {
       const shared = inFlight.get(proposalId);
       if (shared !== undefined) return shared;
-      remember(proposalId, { kind: "loading" });
+      keepForm(proposalId, { kind: "loading" });
       const request = Promise.resolve()
         .then(() => load(proposalId))
         .then(
           (detail) => {
-            remember(proposalId, { kind: "loaded", detail });
+            keepForm(proposalId, { kind: "loaded", detail });
             return detail;
           },
           (error: unknown) => {
-            remember(proposalId, { kind: "error" });
+            keepForm(proposalId, { kind: "error" });
             throw error;
           },
         )

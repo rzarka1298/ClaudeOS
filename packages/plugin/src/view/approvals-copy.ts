@@ -503,3 +503,18 @@ export const EMPTY_COPY: Readonly<Record<ApprovalFilter, readonly string[]>> = {
 /** The provenance strip's one data key and its slash-free source label (PRIV-04). */
 export const APPROVALS_DATA_KEY = "approvals.inbox";
 export const APPROVALS_SOURCE_LABEL = "Approval inbox";
+
+// ---------------------------------------------------------------------------
+// Agent runs integration (UI-SPEC "Disambiguating the Phase 5 Run state", D-41)
+
+/**
+ * The one line a Run in the state the owner answers in the terminal gains under
+ * its state, so that prompt is never mistaken for an inbox request.
+ */
+export const RUN_PROMPT_EXPLANATION =
+  "Claude Code is asking permission in its terminal. That prompt is separate from the approval inbox.";
+
+/** Phase 5's reason for a Force-terminate with a request already pending (UI-SPEC D-41 rule 5). */
+export const REQUEST_ALREADY_WAITING = "A request is already waiting in the approval inbox";
+
+export const VIEW_THE_REQUEST = "View the request";
