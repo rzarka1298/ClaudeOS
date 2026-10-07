@@ -203,7 +203,7 @@ describe("Test 7 (startup walk)", () => {
     const result = services.startupWalk();
     const elapsed = performance.now() - started;
     expect(result).toEqual({ ok: true, value: { tasks: 10_000, attention: 0 } });
-    expect(elapsed).toBeLessThan(3_000);
+    expect(elapsed, `walk took ${Math.round(elapsed)} ms`).toBeLessThan(3_000);
     expect(indexedIds()).toHaveLength(10_000);
   }, 60_000);
 });
