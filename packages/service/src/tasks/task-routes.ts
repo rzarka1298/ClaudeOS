@@ -1,9 +1,19 @@
 import type { ServerResponse } from "node:http";
 import {
+  TASK_ATTENTION_PATH,
+  TASK_COUNTS_PATH,
   TASK_CREATE_PATH,
+  TASK_DUE_TODAY_PATH,
+  TASK_GET_PATH,
+  TASK_LIST_PATH,
+  TaskAttentionRequestSchema,
+  TaskCountsRequestSchema,
   TaskCreateRequestSchema,
+  TaskDueTodayRequestSchema,
   type TaskErrorBody,
   type TaskErrorCode,
+  TaskGetRequestSchema,
+  TaskListRequestSchema,
 } from "@ccc/domain";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
@@ -21,6 +31,9 @@ import type { TaskResult, TaskServices } from "./types.js";
 
 /** A create body can carry a 10,000-character description, escaped; 128 KiB is generous and bounded. */
 export const TASK_LARGE_BODY_LIMIT_BYTES = 128 * 1024;
+
+/** List, counts, get, due-today and attention bodies are small: a context, a filter, a zone, a cursor. */
+export const TASK_SMALL_BODY_LIMIT_BYTES = 8 * 1024;
 
 /** The HTTP status each closed code answers with. */
 const STATUS_OF: Readonly<Record<TaskErrorCode, number>> = {
@@ -100,7 +113,62 @@ const createHandler = postRoute(
   },
 );
 
+/** `POST /api/v1/tasks/list`: one page of a filter in a context. */
+const listHandler = postRoute(
+  TASK_LIST_PATH,
+  TaskListRequestSchema,
+  TASK_SMALL_BODY_LIMIT_BYTES,
+  (body, res, services) => {
+    sendResult(res, services.list(body));
+  },
+);
+
+/** `POST /api/v1/tasks/counts`: every chip count for a context, from one day computation. */
+const countsHandler = postRoute(
+  TASK_COUNTS_PATH,
+  TaskCountsRequestSchema,
+  TASK_SMALL_BODY_LIMIT_BYTES,
+  (body, res, services) => {
+    sendResult(res, services.counts(body));
+  },
+);
+
+/** `POST /api/v1/tasks/get`: one task's detail, or the closed not-found body. */
+const getHandler = postRoute(
+  TASK_GET_PATH,
+  TaskGetRequestSchema,
+  TASK_SMALL_BODY_LIMIT_BYTES,
+  (body, res, services) => {
+    sendResult(res, services.get(body));
+  },
+);
+
+/** `POST /api/v1/tasks/due-today`: the due-today and overdue feed (D-38). */
+const dueTodayHandler = postRoute(
+  TASK_DUE_TODAY_PATH,
+  TaskDueTodayRequestSchema,
+  TASK_SMALL_BODY_LIMIT_BYTES,
+  (body, res, services) => {
+    sendResult(res, services.dueToday(body));
+  },
+);
+
+/** `POST /api/v1/tasks/attention`: notes the last walk could not index (D-37). */
+const attentionHandler = postRoute(
+  TASK_ATTENTION_PATH,
+  TaskAttentionRequestSchema,
+  TASK_SMALL_BODY_LIMIT_BYTES,
+  (body, res, services) => {
+    sendResult(res, services.attention(body));
+  },
+);
+
 /** The task route table, spread into the one route table last (R-ROUTEKIT). */
 export const taskRoutes: Record<string, Record<string, Handler>> = {
   [TASK_CREATE_PATH]: { POST: createHandler },
+  [TASK_LIST_PATH]: { POST: listHandler },
+  [TASK_COUNTS_PATH]: { POST: countsHandler },
+  [TASK_GET_PATH]: { POST: getHandler },
+  [TASK_DUE_TODAY_PATH]: { POST: dueTodayHandler },
+  [TASK_ATTENTION_PATH]: { POST: attentionHandler },
 };
