@@ -153,6 +153,13 @@ describe("Test 6 (rebuild)", () => {
     expect(timers.pending()).toBe(0);
   });
 
+  it("ignores rescan requests once disposed", () => {
+    seedVault();
+    services.dispose();
+    services.changed({ rescan: true });
+    expect(timers.pending()).toBe(0);
+  });
+
   it("shares one walk between a rescan request and its flush, and never starves later work", () => {
     seedVault();
     services.changed({ rescan: true });

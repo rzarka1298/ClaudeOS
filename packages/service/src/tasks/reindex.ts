@@ -80,6 +80,7 @@ export function createReindexer(deps: ReindexDeps): Reindexer {
   let lastRunAt: number | null = null;
   let lastResult: TaskResult<TaskRebuildResponse> | null = null;
   let timer: unknown = null;
+  let disposed = false;
 
   function cancelTimer(): void {
     if (timer === null) return;
@@ -176,7 +177,7 @@ export function createReindexer(deps: ReindexDeps): Reindexer {
       return walk();
     },
     requestRescan() {
-      if (timer !== null) return;
+      if (disposed || timer !== null) return;
       const since =
         lastRunAt === null ? Number.POSITIVE_INFINITY : deps.now().getTime() - lastRunAt;
       const wait = Math.max(RESCAN_DEBOUNCE_MS, minInterval - since);
@@ -185,6 +186,9 @@ export function createReindexer(deps: ReindexDeps): Reindexer {
         walk();
       }, wait);
     },
-    dispose: cancelTimer,
+    dispose() {
+      disposed = true;
+      cancelTimer();
+    },
   };
 }
