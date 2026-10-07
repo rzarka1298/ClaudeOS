@@ -84,6 +84,8 @@ export interface TodayEvent {
 export interface TodayTask {
   readonly title: string;
   readonly dueAt: string;
+  /** The task's note id, so a Today card can open the task (plan 06-18, D-38). Absent for a source with no ids. */
+  readonly taskId?: string | undefined;
 }
 
 /**

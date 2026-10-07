@@ -94,3 +94,50 @@ export function completeTask(
 ): Promise<TaskActionResult> {
   return runEdit(deps, target, now, () => ({ status: "done", completed: now }));
 }
+
+/** Skeleton (plan 06-18, Task 2): the implementations follow the RED commit. */
+const NOT_IMPLEMENTED: TaskActionResult = { kind: "unreadable", reason: "read-failed" };
+export function reopenTask(
+  _d: TaskActionDeps,
+  _t: TaskActionTarget,
+  _now: string,
+): Promise<TaskActionResult> {
+  return Promise.resolve(NOT_IMPLEMENTED);
+}
+export function acceptTask(
+  _d: TaskActionDeps,
+  _t: TaskActionTarget,
+  _now: string,
+): Promise<TaskActionResult> {
+  return Promise.resolve(NOT_IMPLEMENTED);
+}
+export function dismissTask(
+  _d: TaskActionDeps,
+  _t: TaskActionTarget,
+  _now: string,
+): Promise<TaskActionResult> {
+  return Promise.resolve(NOT_IMPLEMENTED);
+}
+export interface TaskDueInput {
+  readonly date: string;
+  readonly time?: string | null | undefined;
+}
+export interface TaskSaveInput {
+  readonly zone: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly status?: import("@ccc/domain/task-schema.js").TaskStatus;
+  readonly priority?: import("@ccc/domain/task-schema.js").TaskPriority | null;
+  readonly due?: TaskDueInput | null;
+  readonly scheduled?: TaskDueInput | null;
+  readonly projectId?: string | null;
+  readonly tags?: readonly string[];
+}
+export function saveTask(
+  _d: TaskActionDeps,
+  _t: TaskActionTarget,
+  _now: string,
+  _input: TaskSaveInput,
+): Promise<TaskActionResult> {
+  return Promise.resolve(NOT_IMPLEMENTED);
+}

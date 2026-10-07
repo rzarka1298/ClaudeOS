@@ -12,7 +12,12 @@ import { projectsSnapshot, resetProjectsState } from "../projects/projects-state
 import { Overview } from "../view/overview.js";
 import { Shell } from "../view/shell.js";
 import type { WidgetState } from "./contract.js";
-import { type ProjectRow, projectMetaSegments, quickActionsWidget } from "./panels.js";
+import {
+  type ProjectRow,
+  projectMetaSegments,
+  quickActionsWidget,
+  type TodayTask,
+} from "./panels.js";
 import type { WidgetId } from "./registry.js";
 
 /**
@@ -122,6 +127,21 @@ describe("Today: every count names its own unavailability", () => {
       dueTasks: [{ title: "Write", dueAt: "17:00" }],
     });
     expect(text).toMatch(/1 commitment left · 1 task due · 0 overdue tasks/);
+  });
+});
+
+describe("Today tasks carry an optional task id (plan 06-18, Test 9, D-38)", () => {
+  it("accepts a task with an id and one without, and renders both the same way", () => {
+    const withId: TodayTask = {
+      title: "Write",
+      dueAt: "17:00",
+      taskId: "0mfk1a2b30000000000000001",
+    };
+    const withoutId: TodayTask = { title: "Read", dueAt: "18:00" };
+    expect(withId.taskId).toBe("0mfk1a2b30000000000000001");
+    expect(withoutId.taskId).toBeUndefined();
+    const text = cardText("today", { ...TODAY_BASE, dueTasks: [withId, withoutId] });
+    expect(text).toMatch(/2 tasks due/);
   });
 });
 
