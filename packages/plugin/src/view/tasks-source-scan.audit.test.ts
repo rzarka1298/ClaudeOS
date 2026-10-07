@@ -17,7 +17,16 @@ import { describe, expect, it } from "vitest";
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FILES = ["tasks-copy.ts", "tasks-format.ts", "task-chips.tsx", "task-list.tsx"] as const;
+const FILES = [
+  "tasks-copy.ts",
+  "tasks-format.ts",
+  "task-chips.tsx",
+  "task-list.tsx",
+  "tasks-forms-copy.ts",
+  "task-form.tsx",
+  "task-detail.tsx",
+  "attention-list.tsx",
+] as const;
 const SOURCES = FILES.map((file) => [file, readFileSync(join(HERE, file), "utf8")] as const);
 
 /** The DOM HTML-injection sinks, assembled so this file names none of them (backstop rule 6). */
@@ -45,7 +54,7 @@ const STANDING_CHOICE: readonly RegExp[] = [
 
 /** The only modules a list or chip file may import: the domain, preact and its own siblings. */
 const ALLOWED_IMPORT =
-  /^(@ccc\/domain\/[\w./-]+|preact(\/hooks)?|\.\/tasks-copy\.js|\.\/tasks-format\.js|\.\/task-(chips|list)\.js|\.\.\/widgets\/toolbar-keys\.js)$/;
+  /^(@ccc\/domain\/[\w./-]+|preact(\/hooks)?|\.\/tasks-copy\.js|\.\/tasks-format\.js|\.\/task-(chips|list|form|detail)\.js|\.\/attention-list\.js|\.\/tasks-forms-copy\.js|\.\.\/widgets\/toolbar-keys\.js)$/;
 
 function importSpecifiers(source: string): string[] {
   return [...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+["']([^"']+)["']/gms)].map(

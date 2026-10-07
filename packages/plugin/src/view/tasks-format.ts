@@ -141,3 +141,16 @@ export function formatTaskDatePhrase(
   }
   return null;
 }
+
+/**
+ * `Oct 4, 6:00 AM` (the year is added when it is not the current one): an
+ * instant on the owner's wall clock, for the detail pane's Created, Updated and
+ * Completed facts. An instant that cannot be parsed is returned as given.
+ */
+export function formatTaskInstant(iso: string, nowMs: number, zone: string): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return iso;
+  const tz = usableZone(zone);
+  const currentYear = Number(localDate(nowMs, tz).slice(0, 4));
+  return fullLabel({ kind: "instant", ms }, tz, currentYear);
+}
