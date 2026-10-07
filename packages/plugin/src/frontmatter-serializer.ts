@@ -3,7 +3,8 @@ import {
   type GeneratedBy,
   NOTE_FRONTMATTER_KEY_ORDER,
   type NoteFrontmatter,
-} from "@ccc/domain";
+} from "@ccc/domain/note-schema.js";
+import type { TaskFrontmatter } from "@ccc/domain/task-schema.js";
 import yaml from "js-yaml";
 
 /**
@@ -123,4 +124,17 @@ export function serializePassthroughFrontmatter(
     out += dumpEntry(key, value);
   }
   return out;
+}
+
+/**
+ * Emits a task note's frontmatter block (no `---` delimiters): the keys in
+ * `TASK_FRONTMATTER_KEY_ORDER`, `generatedBy` and `decision` in their own fixed
+ * orders, then the passthrough keys in read order (plan 06-18, research
+ * Pattern 11).
+ */
+export function serializeTaskFrontmatter(
+  _frontmatter: TaskFrontmatter,
+  _passthrough: readonly (readonly [string, unknown])[] = [],
+): string {
+  return "";
 }

@@ -17,10 +17,13 @@ export {
 } from "./approvals/signals.js";
 export type { ConnectionState, LastEventInfo } from "./connection-state.js";
 export { connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
+export { serializeTaskFrontmatter } from "./frontmatter-serializer.js";
 export type { MotionMode } from "./motion.js";
 export { motionMode } from "./motion.js";
 export { projectShortcutsStateFor } from "./projects/projects-state.js";
 export { attachEventClient } from "./service-connection.js";
+export { completeTask } from "./tasks/actions.js";
+export { readTaskForEdit, updateTaskNote } from "./tasks/task-update.js";
 export { AgentRuns } from "./view/agent-runs.js";
 export { RECENT_PAGE_SIZE, selectedRunId } from "./view/agent-runs-state.js";
 export { approvalChip, approvalsMissedSync, resetApprovalsView } from "./view/approvals-state.js";
