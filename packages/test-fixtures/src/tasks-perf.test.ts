@@ -197,7 +197,7 @@ describe("10,000 tasks through the real routes (Task 2, Tests 1, 2, 5, 6)", () =
 
   it("gives different Today membership for instant-dated tasks in two zones, and each follows its own local day", async () => {
     const now = new Date();
-    const west = "Pacific/Pago_Pago";
+    const west = "UTC";
     const east = "Pacific/Kiritimati";
     const members = async (zone: string): Promise<Set<string>> => {
       const ids = new Set<string>();
@@ -223,7 +223,7 @@ describe("10,000 tasks through the real routes (Task 2, Tests 1, 2, 5, 6)", () =
     expect(inEast).toEqual(
       new Set(expectedIds(vault.tasks, "today", "all", localDayBounds(now, east))),
     );
-    // The two local calendar days are at least one day apart, so the sets differ.
+    // UTC and UTC+14 days are offset by fourteen hours, so their instant windows differ whenever the test runs.
     expect(inWest).not.toEqual(inEast);
     const byId = new Map(vault.tasks.map((task) => [task.id, task]));
     const instantKinds = new Set(["today-instant", "overdue-instant", "upcoming-instant"]);
