@@ -51,6 +51,50 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+describe("codex-3: load and loadMore are sequenced", () => {
+  function installSequence(second: Promise<TaskListResponse>, third: TaskListResponse) {
+    let call = 0;
+    const list = vi.fn((_request: TaskListRequest) => {
+      call += 1;
+      if (call === 1) return Promise.resolve(page(taskRows(2), "cursor-1", 5));
+      if (call === 2) return second;
+      return Promise.resolve(third);
+    });
+    const counts = vi.fn(() => Promise.resolve({ counts: { ...ZERO_COUNTS }, open: 0 }));
+    configureTasksApi({ list, counts } as unknown as TasksApi);
+    return list;
+  }
+
+  it("ignores loadMore while a refresh is in flight, so the refreshed first page is kept", async () => {
+    const fresh = deferred<TaskListResponse>();
+    const freshRows = taskRows(3);
+    const list = installSequence(fresh.promise, page(taskRows(1), null, 5));
+    const context = createTasksContext("global", { zone: () => "UTC" });
+    await context.load();
+    const refresh = context.load();
+    await context.loadMore();
+    fresh.resolve(page(freshRows, null, 3));
+    await refresh;
+    expect(context.rows.peek()).toEqual(freshRows);
+    expect(context.total.peek()).toBe(3);
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a stale loadMore page that resolves after a newer refresh", async () => {
+    const more = deferred<TaskListResponse>();
+    const freshRows = taskRows(3);
+    installSequence(more.promise, page(freshRows, null, 3));
+    const context = createTasksContext("global", { zone: () => "UTC" });
+    await context.load();
+    const pending = context.loadMore();
+    await context.load();
+    more.resolve(page([taskRow(50)], null, 5));
+    await pending;
+    expect(context.rows.peek()).toEqual(freshRows);
+    expect(context.busy.peek()).toBe(false);
+  });
+});
+
 describe("Test 4: the contexts are independent", () => {
   it("operating one never changes any signal of the other, compared as full snapshots", async () => {
     install();

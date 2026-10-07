@@ -115,6 +115,7 @@ export function createTasksContext(
   const chooseProject = signal(false);
   let sequence = 0;
   let loadingMore = false;
+  let refreshing = false;
 
   /** The context a LIST request names: the global one narrows by project only under the Project filter. */
   function listContext(): TaskContext {
@@ -138,6 +139,7 @@ export function createTasksContext(
   async function load(): Promise<void> {
     const mine = ++sequence;
     loadingMore = false;
+    refreshing = true;
     busy.value = true;
     const zone = readZone(options.zone);
     const currentFilter = filter.peek();
@@ -182,12 +184,15 @@ export function createTasksContext(
       else failure ??= "unrecognised-response";
     }
     error.value = failure;
+    refreshing = false;
     busy.value = false;
   }
 
   async function loadMore(): Promise<void> {
     const cursor = nextCursor.peek();
-    if (cursor === null || loadingMore) return;
+    // A refresh in flight owns the list: its cursor is about to be replaced, so a
+    // page appended with the old one would discard the refresh. The refresh wins.
+    if (cursor === null || loadingMore || refreshing) return;
     loadingMore = true;
     const mine = ++sequence;
     busy.value = true;
