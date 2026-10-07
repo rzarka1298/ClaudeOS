@@ -367,6 +367,8 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
   const lastRevision = useRef(props.revision);
   /** Monotonic: only the fetch started last may change the pane, whatever order answers arrive in. */
   const fetchSeq = useRef(0);
+  /** The sequence number of the follow-up fetch in flight, or null when none was made. */
+  const followUpSeq = useRef<number | null>(null);
   const headingId = useId();
 
   /** Fetches one request. The id is fixed at the call, so a late answer can never describe another request. */
@@ -443,6 +445,10 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
   /** Applies what a settled decision learned, unless the pane has moved on to another request. */
   function handleFollowUp(id: string, followUp: DecisionFollowUp): void {
     if (latest.current.proposalId !== id) return;
+    // A follow-up that read the request is only the latest word if no newer fetch started since.
+    const followSeq = followUpSeq.current;
+    followUpSeq.current = null;
+    if (followSeq !== null && followSeq !== fetchSeq.current) return;
     switch (followUp.kind) {
       case "refetched": {
         if (followUp.mismatch) {
@@ -504,7 +510,10 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
         approveHold={approveHold}
         omitOpenRun={omitOpenRun}
         decide={(input) => props.decide(input)}
-        refetch={() => fetchDetail(id)}
+        refetch={() => {
+          followUpSeq.current = ++fetchSeq.current;
+          return fetchDetail(id);
+        }}
         awaitHash={() =>
           loadRef.current.then((result) =>
             result.kind === "ok" && result.detail.view?.state === "pending"
