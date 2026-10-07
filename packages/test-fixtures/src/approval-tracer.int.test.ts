@@ -475,7 +475,9 @@ describe("short-lived expiry over the real service (Task 3, Test 7, D-10, D-46)"
           body: { proposalId, decision: "approve", payloadHash: detail.payloadHash },
           headers: PLUGIN_HEADERS,
         });
-        expect(late.body.outcome).toBe("expired");
+        // The sweep already settled it as expired, so the late decision reports
+        // that settled state (an unswept one would answer `expired` itself).
+        expect(late.body).toEqual({ outcome: "already-decided", state: "expired" });
       } finally {
         stream.close();
         await service.stop();

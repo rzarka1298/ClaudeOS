@@ -375,11 +375,19 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(heartbeatTimer);
-    // Usage first: its scans read the store and its listeners hang off the
-    // pipeline and the poller, which stop next.
+    taskHost.dispose();
     projectsCollector.stop();
-    const claudeStopped = usageServices
+    // The approvals first (D-09): the expiry sweeper stops, then every
+    // execution already running is awaited. An execution reaches the Claude
+    // services' terminator and the store, so both must outlive it. Then usage,
+    // whose scans read the store and hang off the pipeline and the poller, and
+    // last the Claude services, after which the store may close.
+    const claudeStopped = approvals
       .stop()
+      .catch((err: unknown) => {
+        logger.error({ err }, "shutdown: approval services did not stop cleanly");
+      })
+      .then(() => usageServices.stop())
       .then(() => claudeServices.stop())
       .catch((err: unknown) => {
         logger.error({ err }, "shutdown: claude services did not stop cleanly");

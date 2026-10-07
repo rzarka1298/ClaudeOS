@@ -59,14 +59,15 @@ describe("main.ts shutdown order (D-09)", () => {
 
   it("stops the approvals, then the usage services, then the Claude services, then closes the store", () => {
     expect(shutdownAt).toBeGreaterThan(-1);
-    const order = [
-      "approvals.stop()",
-      "usageServices",
-      "claudeServices.stop()",
-      "store.close()",
-    ].map((needle) => {
-      const at = body.indexOf(needle);
-      expect(at, `${needle} must appear in the shutdown chain`).toBeGreaterThan(-1);
+    const needles: [string, RegExp][] = [
+      ["approvals.stop()", /approvals\s*\.stop\(\)/],
+      ["usageServices.stop()", /usageServices\.stop\(\)/],
+      ["claudeServices.stop()", /claudeServices\.stop\(\)/],
+      ["store.close()", /store\.close\(\)/],
+    ];
+    const order = needles.map(([label, pattern]) => {
+      const at = body.search(pattern);
+      expect(at, `${label} must appear in the shutdown chain`).toBeGreaterThan(-1);
       return at;
     });
     for (let i = 1; i < order.length; i += 1) {

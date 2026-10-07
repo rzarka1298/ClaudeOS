@@ -1,5 +1,6 @@
 import {
   type ApprovalLog,
+  CLASSIFICATION,
   type Clock,
   type MirrorPort,
   type ProposalId,
@@ -77,19 +78,49 @@ const TEST_SUBJECT = "diagnostic";
 const TEST_REQUESTER = { kind: "dashboard", label: "Settings" } as const;
 const TEST_REASON = "A test request raised from the settings page. It changes nothing.";
 
-/** Skeleton (RED): the environment handling follows in the GREEN commit. */
+/** The sweep interval's bounds: short enough for an integration test, never beyond the documented band. */
 export const SWEEP_INTERVAL_MIN_MS = 20;
 export const SWEEP_INTERVAL_MAX_MS = 60_000;
 
-export function resolveSweepIntervalMs(_env: NodeJS.ProcessEnv): number {
-  return DEFAULT_SWEEP_INTERVAL_MS;
+const POSITIVE_INTEGER = /^[1-9][0-9]*$/;
+
+/**
+ * The expiry sweep interval (D-09). `CCC_APPROVAL_SWEEP_MS` is honoured only
+ * when it is a positive integer within the bounds; anything else gives the
+ * default, which lies between thirty and sixty seconds.
+ */
+export function resolveSweepIntervalMs(env: NodeJS.ProcessEnv): number {
+  const raw = env.CCC_APPROVAL_SWEEP_MS;
+  if (raw === undefined || !POSITIVE_INTEGER.test(raw)) return DEFAULT_SWEEP_INTERVAL_MS;
+  const value = Number(raw);
+  return value >= SWEEP_INTERVAL_MIN_MS && value <= SWEEP_INTERVAL_MAX_MS
+    ? value
+    : DEFAULT_SWEEP_INTERVAL_MS;
 }
 
+/**
+ * THE guarded test-only lifetime override (plan 06-21, D-10, D-46, T-06-34).
+ * This is the only function that reads the override variable, and it reads
+ * nothing at all unless the enabling flag is exactly `1`. The value must be a
+ * positive integer and no longer than the test approval's own default lifetime,
+ * so it can only shorten; otherwise it is ignored and one fixed code is logged
+ * (never the value). The result is applied only to the test route's submit, as
+ * a requested lifetime: the engine clamps any request to the row's default.
+ * The installed service's environment never sets either variable.
+ */
 export function resolveTestLifetimeMs(
-  _env: NodeJS.ProcessEnv,
-  _log: ApprovalLog,
+  env: NodeJS.ProcessEnv,
+  log: ApprovalLog,
 ): number | undefined {
-  return undefined;
+  if (env.CCC_ENABLE_TEST_OVERRIDES !== "1") return undefined;
+  const raw = env.CCC_APPROVAL_TEST_TTL_MS;
+  if (raw === undefined) return undefined;
+  const value = POSITIVE_INTEGER.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isSafeInteger(value) || value > CLASSIFICATION["diagnostic.test"].ttlMs) {
+    log.warn({ code: "test-ttl-override-ignored" });
+    return undefined;
+  }
+  return value;
 }
 
 export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntime {
@@ -110,7 +141,13 @@ export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntim
     log,
     ...(projectName === undefined ? {} : { projectName }),
   });
-  const sweeper = createExpirySweeper({ engine, log });
+  const sweeper = createExpirySweeper({
+    engine,
+    log,
+    intervalMs: resolveSweepIntervalMs(deps.env),
+    ...(deps.timers === undefined ? {} : { timers: deps.timers }),
+  });
+  const testLifetimeMs = resolveTestLifetimeMs(deps.env, log);
 
   let ready = false;
 
@@ -135,6 +172,13 @@ export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntim
     },
     decide: (input) => engine.decide(input),
     test(request) {
+      // The shorter of what the caller asked for and the guarded override.
+      const requested = [request.ttlMs, testLifetimeMs]
+        .filter((ms): ms is number => ms !== undefined)
+        .reduce<number | undefined>(
+          (least, ms) => (least === undefined ? ms : Math.min(least, ms)),
+          undefined,
+        );
       const outcome = engine.submit({
         operation: TEST_OPERATION,
         subject: TEST_SUBJECT,
@@ -143,7 +187,7 @@ export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntim
         runId: null,
         reason: TEST_REASON,
         payload: {},
-        ...(request.ttlMs === undefined ? {} : { requestedTtlMs: request.ttlMs }),
+        ...(requested === undefined ? {} : { requestedTtlMs: requested }),
       });
       if (outcome.kind === "rejected") return { kind: "rejected", reason: outcome.reason };
       return {
