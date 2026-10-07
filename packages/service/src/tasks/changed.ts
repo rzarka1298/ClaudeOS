@@ -48,6 +48,8 @@ export interface ChangedDeps {
   readonly announce: () => number;
   /** The current generation, for a call that changed nothing. */
   readonly generation: () => number;
+  /** The id the last scan found shared by this path's note and another, if it did. */
+  readonly knownDuplicateId?: (path: string) => string | undefined;
 }
 
 interface Outcome {
@@ -142,6 +144,12 @@ function applyOne(deps: ChangedDeps, root: string, path: string): Outcome {
   }
   const { frontmatter } = parsed;
   if (frontmatter.scope !== scopeOfPath(path)) return unreadable(deps, path);
+
+  // The last scan already excluded this id as ambiguous: no copy may be
+  // indexed until a walk reconciles them.
+  if (deps.knownDuplicateId?.(path) === frontmatter.id) {
+    return { changed: removeTaskByPath(deps.db, path), rescan: true };
+  }
 
   // A second note with the same id: neither copy is indexed (T-06-21). A holder
   // whose file is gone is a rename in flight, not a duplicate.

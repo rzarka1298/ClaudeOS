@@ -249,6 +249,18 @@ describe("Test 2 (changed, delete and invalid)", () => {
     expectNothingWritten(before);
   });
 
+  it("keeps a duplicate id that a full scan excluded out of the index on a later changed", () => {
+    const { id, path, abs } = create({ description: "original" });
+    const copyPath = path.replace("a-task-", "a-task-copy-");
+    writeFileSync(join(fx.vault.root, ...copyPath.split("/")), readFileSync(abs, "utf8"));
+    services.rebuild();
+    expect(getTask(fx.store.db, id)).toBeNull();
+    services.changed({ paths: [copyPath] });
+    expect(getTask(fx.store.db, id)).toBeNull();
+    services.changed({ paths: [path] });
+    expect(getTask(fx.store.db, id)).toBeNull();
+  });
+
   it("follows a rename: the old path is gone and the new one takes the row", () => {
     const { id, path, abs } = create();
     const newPath = path.replace("a-task-", "moved-");

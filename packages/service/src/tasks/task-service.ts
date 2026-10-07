@@ -435,6 +435,10 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
     requestRescan: reindexer.requestRescan,
     announce,
     generation: () => generation,
+    knownDuplicateId: (path) =>
+      attentionList
+        .get()
+        .find((entry) => entry.reason === "duplicate-id" && entry.paths.includes(path))?.id,
   };
 
   return {
