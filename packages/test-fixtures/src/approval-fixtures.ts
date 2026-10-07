@@ -896,3 +896,12 @@ export function auditPathProblems(
   }
   return problems;
 }
+
+// RED skeleton for plan 06-24 task 3: the audit-row inserter and the byte
+// counter follow, with the engine list, the closed flag, the project-name
+// option and the payload title.
+const notImplemented = (..._args: unknown[]): never => {
+  throw new Error("not implemented yet (RED)");
+};
+export const insertAuditRows = notImplemented;
+export const utf8Bytes = notImplemented;

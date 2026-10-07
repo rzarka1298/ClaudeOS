@@ -8,9 +8,16 @@ export type { SessionView } from "@ccc/domain/session.js";
 export type { UsageSummary } from "@ccc/domain/usage.js";
 export type { ApprovalDetailResponse, ApprovalsApi } from "./approvals/api.js";
 export { configureApprovalsApi } from "./approvals/api.js";
+export { adoptApprovalsFromSnapshot, applyApprovalServiceEvent } from "./approvals/events.js";
 export {
   adoptApprovalsSnapshot,
+  applyApprovalSummary,
   approvalDetailFocusRequested,
+  approvalsById,
+  approvalsCounts,
+  approvalsHydrated,
+  approvalsReady,
+  approvalsTruncated,
   pendingApprovalCount,
   resetApprovalsState,
   selectedProposalId,
