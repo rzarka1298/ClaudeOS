@@ -431,6 +431,9 @@ export function createCrashInjector(): CrashInjector {
   let fired = false;
   return {
     arm(point, operation) {
+      if (point !== "after-claim" && point !== "after-effect") {
+        throw new Error("not implemented yet (RED)");
+      }
       fired = false;
       if (point === "after-claim") {
         operation.hooks.beforeEffect = async () => {
@@ -730,3 +733,13 @@ export function diagnosticEffectRows(db: Db, proposalId: string): number {
     .get(proposalId) as { n: number };
   return row.n;
 }
+
+// RED skeleton for plan 06-24 task 2: the store-side crash points, the
+// recording failure, the restart helper and the audit-path checker follow.
+const notImplemented = (..._args: unknown[]): never => {
+  throw new Error("not implemented yet (RED)");
+};
+export class CrashSignal extends Error {}
+export const failRecording = notImplemented;
+export const restart = notImplemented;
+export const auditPathProblems = notImplemented;
