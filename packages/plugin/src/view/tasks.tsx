@@ -4,11 +4,18 @@ import type { VNode } from "preact";
 import { useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
+import { taskActionsPort } from "../tasks/actions-port.js";
 import { globalTasksContext, type TasksContext } from "../tasks/contexts.js";
 import { tasksGeneration } from "../tasks/events.js";
-import { tasksRebuilding } from "../tasks/rebuild.js";
+import {
+  loadAttention,
+  loadMoreAttention,
+  tasksAttention,
+  tasksRebuilding,
+} from "../tasks/rebuild.js";
 import { WidgetFooter } from "../widgets/footer.js";
 import type { FooterModel } from "../widgets/presentation.js";
+import { AttentionList } from "./attention-list.js";
 import type { TaskFormOption } from "./task-form.js";
 import { CREATE_TASK_LABEL, DISCONNECTED_REASON, formatCount } from "./tasks-copy.js";
 import {
@@ -73,6 +80,13 @@ function footerModel(
   };
 }
 
+/** `2 task notes need attention and are left out` (the Partial chip's accessible name tail, R-28). */
+function partialText(count: number): string {
+  return count === 1
+    ? "1 task note needs attention and is left out"
+    : `${formatCount(count)} task notes need attention and are left out`;
+}
+
 export function projectOptions(): readonly TaskFormOption[] {
   const snapshot = projectsSnapshot.value;
   return (snapshot?.projects ?? []).map((project) => ({
@@ -97,6 +111,7 @@ export function TasksDestination(props: TasksDestinationProps): VNode {
   nowRef.current = props.now;
 
   const counts = context.counts.value;
+  const attentionTotal = tasksAttention.total.value;
   useMemo(() => {
     if (counts !== null) receivedAt.current = new Date(nowRef.current).toISOString();
   }, [counts]);
@@ -104,6 +119,7 @@ export function TasksDestination(props: TasksDestinationProps): VNode {
   // First load, and a fresh view state on the way out (nothing here is persisted).
   useEffect(() => {
     void context.load();
+    void loadAttention();
     if (!hasWorkspacesProp) {
       void loadTaskWorkspaces().then(setLoadedWorkspaces);
     }
@@ -120,6 +136,7 @@ export function TasksDestination(props: TasksDestinationProps): VNode {
     if (generation === seenGeneration.current) return;
     seenGeneration.current = generation;
     void context.refresh();
+    void loadAttention();
   }, [generation, context]);
 
   // Coming back from a drop re-asks; the generation resets with the service.
@@ -127,6 +144,7 @@ export function TasksDestination(props: TasksDestinationProps): VNode {
   useEffect(() => {
     if (previousKind.current !== "live" && props.connection.kind === "live") {
       void context.refresh();
+      void loadAttention();
     }
     previousKind.current = props.connection.kind;
   }, [props.connection.kind, context]);
@@ -154,12 +172,23 @@ export function TasksDestination(props: TasksDestinationProps): VNode {
         )}
       </div>
       <p className="ccc-tasks-summary">{summaryLine(counts)}</p>
-      <WidgetFooter
-        model={footerModel(connected, receivedAt.current, counts !== null)}
-        panelTitle="tasks"
-        now={props.now}
-        dimmed={!connected}
-      />
+      <div className="ccc-tasks-strip">
+        <WidgetFooter
+          model={footerModel(connected, receivedAt.current, counts !== null)}
+          panelTitle="tasks"
+          now={props.now}
+          dimmed={!connected}
+        />
+        {attentionTotal > 0 ? (
+          <span className="ccc-badge" data-badge="partial">
+            <span className="ccc-badge-glyph" aria-hidden="true">
+              ◈
+            </span>
+            <span className="ccc-badge-label">Partial</span>
+            <span className="ccc-visually-hidden">{` — ${partialText(attentionTotal)}`}</span>
+          </span>
+        ) : null}
+      </div>
       <TasksWorkspace
         context={context}
         view={view}
@@ -170,8 +199,63 @@ export function TasksDestination(props: TasksDestinationProps): VNode {
         workspaces={workspaces}
         openerRef={opener}
         rebuilding={tasksRebuilding.value}
-        onRowAction={() => Promise.resolve()}
+        toolbarLead={
+          <>
+            <label className="ccc-tasks-select">
+              <span className="ccc-field-label">Scope</span>
+              <select
+                className="ccc-text-input"
+                value={context.scope.value}
+                onChange={(event) => {
+                  context.setScope(event.currentTarget.value);
+                  void context.load();
+                }}
+              >
+                <option value="all">All scopes</option>
+                <option value="global">Global</option>
+                {workspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {context.filter.value === "project" ? (
+              <label className="ccc-tasks-select">
+                <span className="ccc-field-label">Project</span>
+                <select
+                  className="ccc-text-input"
+                  value={context.projectId.value ?? ""}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    context.setProject(value === "" ? undefined : value);
+                    void context.load();
+                  }}
+                >
+                  <option value="">Choose a project</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </>
+        }
       />
+      {attentionTotal > 0 ? (
+        <AttentionList
+          items={tasksAttention.items.value}
+          total={attentionTotal}
+          hasMore={tasksAttention.nextCursor.value !== null}
+          connected={connected}
+          onShowMore={() => {
+            void loadMoreAttention();
+          }}
+          onOpenNote={(path) => taskActionsPort().openNote(path)}
+        />
+      ) : null}
     </section>
   );
 }

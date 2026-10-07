@@ -28,7 +28,12 @@ const FILES = [
   "attention-list.tsx",
 ] as const;
 /** The containers (06-22): they read signals and the API and port holders, so their import rule differs. */
-const CONTAINER_FILES = ["tasks.tsx", "tasks-workspace.tsx", "tasks-view-state.ts"] as const;
+const CONTAINER_FILES = [
+  "tasks.tsx",
+  "tasks-workspace.tsx",
+  "tasks-view-state.ts",
+  "tasks-detail-model.ts",
+] as const;
 const COMPONENT_SOURCES = FILES.map(
   (file) => [file, readFileSync(join(HERE, file), "utf8")] as const,
 );
@@ -39,7 +44,7 @@ const SOURCES = [...COMPONENT_SOURCES, ...CONTAINER_SOURCES];
 
 /** What a container may import: the domain, preact, signals, its siblings and the plugin's own holders. */
 const ALLOWED_CONTAINER_IMPORT =
-  /^(@ccc\/domain\/[\w./-]+|preact(\/hooks)?|@preact\/signals|\.\/[\w-]+\.js|\.\.\/connection-state\.js|\.\.\/projects\/projects-state\.js|\.\.\/tasks\/(api|contexts|events|rebuild|actions-port)\.js|\.\.\/widgets\/(footer|presentation)\.js)$/;
+  /^(@ccc\/domain\/[\w./-]+|preact(\/hooks)?|@preact\/signals|\.\/[\w-]+\.js|\.\.\/connection-state\.js|\.\.\/projects\/projects-state\.js|\.\.\/tasks\/(api|contexts|events|rebuild|actions-port|actions|task-update)\.js|\.\.\/widgets\/(footer|presentation)\.js)$/;
 
 /** The DOM HTML-injection sinks, assembled so this file names none of them (backstop rule 6). */
 const MARKUP = "HTML";
@@ -143,6 +148,18 @@ describe("the Tasks list view files stay props-driven and inert (TASK-08, T-06-2
       expect(source, file).not.toMatch(/\bhref\s*=/);
       expect(source, file).not.toMatch(/\bautoFocus\b|\bautofocus\b/);
       expect(source, file).not.toMatch(/(^|[^-\w])disabled\s*=/);
+    },
+  );
+
+  it.each(CONTAINER_SOURCES)(
+    "%s imports the note writer and updater as types only",
+    (file, source) => {
+      const value = [
+        ...source.matchAll(
+          /^\s*import\s+(?!type\b)[^;]*?\bfrom\s+["']\.\.\/tasks\/(actions|task-update)\.js["']/gms,
+        ),
+      ];
+      expect(value, file).toHaveLength(0);
     },
   );
 

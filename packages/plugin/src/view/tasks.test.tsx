@@ -190,7 +190,7 @@ function detailResponse(row = taskRows(1)[0] as TaskRow): TaskGetResponse {
       aiGenerated: false,
       confidence: "unverified",
     },
-  } as TaskGetResponse;
+  };
 }
 
 function fakePort(overrides: Partial<TaskActionsPort> = {}): TaskActionsPort {
@@ -244,8 +244,8 @@ describe("Test 1 (task 2): scope", () => {
   it("offers All scopes, Global and each workspace and reloads list and counts keeping the chip", async () => {
     const { api, context } = mountWith({ workspaces: WS });
     await screen.findByText("Task 1");
-    const select = screen.getByLabelText("Scope") as HTMLSelectElement;
-    expect([...select.options].map((option) => option.text)).toEqual([
+    const select = screen.getByLabelText("Scope");
+    expect(Array.from(select.querySelectorAll("option")).map((option) => option.text)).toEqual([
       "All scopes",
       "Global",
       "Studio",
@@ -268,8 +268,11 @@ describe("Test 1 (task 2): scope", () => {
     configureTaskWorkspaces(() => Promise.reject(new Error("down")));
     mountWith({});
     await screen.findByText("Task 1");
-    const select = screen.getByLabelText("Scope") as HTMLSelectElement;
-    expect([...select.options].map((option) => option.text)).toEqual(["All scopes", "Global"]);
+    const select = screen.getByLabelText("Scope");
+    expect(Array.from(select.querySelectorAll("option")).map((option) => option.text)).toEqual([
+      "All scopes",
+      "Global",
+    ]);
     configureTaskWorkspaces(null);
   });
 });
@@ -280,8 +283,8 @@ describe("Test 2 (task 2): project chip", () => {
     await screen.findByText("Task 1");
     expect(screen.queryByLabelText("Project")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Project, 40 tasks" }));
-    const select = (await screen.findByLabelText("Project")) as HTMLSelectElement;
-    expect([...select.options].map((option) => option.text)).toEqual([
+    const select = await screen.findByLabelText("Project");
+    expect(Array.from(select.querySelectorAll("option")).map((option) => option.text)).toEqual([
       "Choose a project",
       "Garden",
     ]);
@@ -413,10 +416,11 @@ describe("Test 5 (task 2): row actions", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /^Accept task/ })[0] as HTMLElement);
     await waitFor(() => expect(view.status.value).toBe('Accepted "Task 1". It\'s now ready.'));
     expect(port.accept).toHaveBeenCalledWith({ path: NOTE_PATH });
-    fireEvent.click(screen.getAllByRole("button", { name: /^Dismiss task/ })[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Dismiss task/ })[1] as HTMLElement);
     await waitFor(() =>
-      expect(view.status.value).toBe('Dismissed "Task 1". It\'s kept under All as cancelled.'),
+      expect(view.status.value).toBe('Dismissed "Task 2". It\'s kept under All as cancelled.'),
     );
+    expect(port.dismiss).toHaveBeenCalledWith({ path: NOTE_PATH });
   });
 });
 
@@ -446,6 +450,7 @@ describe("Test 6 (task 2): save", () => {
     const reload = await screen.findByRole("button", { name: "Reload task" });
     const before = (port.readForEdit as ReturnType<typeof vi.fn>).mock.calls.length;
     fireEvent.click(reload);
+    fireEvent.click(await screen.findByRole("button", { name: "Replace my edits" }));
     await waitFor(() =>
       expect((port.readForEdit as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(
         before,
