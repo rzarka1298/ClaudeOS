@@ -414,18 +414,20 @@ describe("approved and never claimed (Task 2, Test 6)", () => {
 });
 
 describe("reserved or unknown operation at recovery (Task 2, Test 7)", () => {
-  it("finishes an executing row failed with the reserved code and never executes or reconciles it", async () => {
+  it("finishes an executing row unknown (a claimed row may have run) with a fixed code and never executes or reconciles it", async () => {
     const h = createHarness();
     const base = h.propose();
     const reserved = rawRow(h, base, { operation: "vault.delete" });
     const absent = rawRow(h, base, { operation: "no.such.operation" });
-    await h.engine.recover();
+    const summary = await h.engine.recover();
     await h.engine.settled();
     for (const id of [reserved, absent]) {
-      expect(stateOf(h, id)).toBe("failed");
-      expect(h.store.get(id)?.outcomeCode).toBe("operation-reserved");
-      expect(lastAudit(h, id)).toBe("failed");
+      expect(stateOf(h, id)).toBe("unknown");
+      expect(h.store.get(id)?.outcomeCode).toBe("operation-unavailable");
+      expect(lastAudit(h, id)).toBe("outcome-unknown");
     }
+    expect(summary.unknown).toBe(2);
+    expect(summary.failed).toBe(0);
     for (const op of [h.diagnostic, h.terminate]) {
       expect(op.executeCalls).toHaveLength(0);
       expect(op.reconcileCalls).toHaveLength(0);

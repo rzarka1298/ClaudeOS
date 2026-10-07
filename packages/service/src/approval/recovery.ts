@@ -146,8 +146,11 @@ export function createRecovery(host: RecoveryHost): Recovery {
     const definition = registry.lookup(proposal.operation);
     const row = enabledApprovalRow(registry.table, proposal.operation);
     if (definition === undefined || row === undefined) {
-      // No executor can have run for a reserved or absent operation: failed is truthful.
-      if (host.finish(proposal, RESERVED_DECISION) !== null) counts.failed += 1;
+      // The row was claimed, so an executor may have run before the operation was
+      // reserved or unregistered: the only honest state is unknown, never failed.
+      if (host.finish(proposal, unknownDecision("operation-unavailable", null)) !== null) {
+        counts.unknown += 1;
+      }
       return;
     }
     const payload = host.verifiedPayload(definition, proposal);
