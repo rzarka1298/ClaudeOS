@@ -77,7 +77,11 @@ describe("main.ts shutdown order (D-09)", () => {
 
   it("disposes the task services and ignores a second signal", () => {
     expect(body).toContain("taskHost.dispose()");
-    expect(body).toMatch(/if \(shuttingDown\) return;/);
+    const shutdownSrc = readFileSync(
+      fileURLToPath(new URL("./shutdown.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(shutdownSrc).toMatch(/if \(shuttingDown\) return;/);
   });
 
   it("hands the route context no terminator, executor or process facts", () => {

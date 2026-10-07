@@ -41,6 +41,7 @@ import {
 } from "./projects/script-dir.js";
 import { createCommandSpawner } from "./projects/spawner.js";
 import { createRequestListener } from "./routes.js";
+import { createShutdown } from "./shutdown.js";
 import { claimSocketPath, logSocketClaimRefusal, startSocketServer } from "./socket-server.js";
 import { createTaskServices } from "./tasks/task-service.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
@@ -370,38 +371,34 @@ async function main(): Promise<void> {
   // pipeline's queue, its pending coalesced writes, the in-flight spool
   // tick) AND every open connection has ended, so no write ever runs
   // against a closed store (wave 3 review).
-  let shuttingDown = false;
-  const shutdown = (): void => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    clearInterval(heartbeatTimer);
-    taskHost.dispose();
-    projectsCollector.stop();
+  const shutdown = createShutdown({
+    stopIntake: () => {
+      clearInterval(heartbeatTimer);
+      taskHost.dispose();
+      projectsCollector.stop();
+    },
     // The approvals first (D-09): the expiry sweeper stops, then every
     // execution already running is awaited. An execution reaches the Claude
     // services' terminator and the store, so both must outlive it. Then usage,
     // whose scans read the store and hang off the pipeline and the poller, and
     // last the Claude services, after which the store may close.
-    const claudeStopped = approvals
-      .stop()
-      .catch((err: unknown) => {
-        logger.error({ err }, "shutdown: approval services did not stop cleanly");
-      })
-      .then(() => usageServices.stop())
-      .then(() => claudeServices.stop())
-      .catch((err: unknown) => {
-        logger.error({ err }, "shutdown: claude services did not stop cleanly");
-      });
-    server.close(() => {
-      void claudeStopped.then(() => {
-        store.close();
-        if (existsSync(socketPath)) {
-          unlinkSync(socketPath);
-        }
-        process.exit(0);
-      });
-    });
-  };
+    stopApprovals: () => approvals.stop(),
+    stopUsage: () => usageServices.stop(),
+    stopClaude: () => claudeServices.stop(),
+    closeServer: (done) => {
+      server.close(done);
+    },
+    closeResources: () => {
+      store.close();
+      if (existsSync(socketPath)) {
+        unlinkSync(socketPath);
+      }
+    },
+    exit: (code) => process.exit(code),
+    onError: (message, err) => {
+      logger.error({ err }, message);
+    },
+  });
 
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
