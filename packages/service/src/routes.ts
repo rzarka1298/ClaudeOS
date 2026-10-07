@@ -43,6 +43,7 @@ import {
   sendJson,
   withAuth,
 } from "./route-kit.js";
+import { taskRoutes } from "./tasks/task-routes.js";
 import { persistVaultRoot } from "./vault-root.js";
 import { assertUsableVaultRoot, VaultRootRefusedError } from "./vault-root-policy.js";
 
@@ -311,6 +312,8 @@ const routeTable: Record<string, Record<string, Handler>> = {
   ...claudeRouteTable,
   // Phase 6 (append-only, D-28): the approval inbox routes, spread last.
   ...approvalRoutes,
+  // Phase 6 (append-only, D-28): the task store routes, spread after the approval routes.
+  ...taskRoutes,
 };
 
 /**

@@ -9,6 +9,7 @@ import type { LaunchService } from "./projects/launch-service.js";
 import type { LauncherServices } from "./projects/launcher-routes.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 import type { ScanService } from "./projects/scan.js";
+import type { TaskServices } from "./tasks/types.js";
 
 /**
  * The shared route toolkit: the handler type, the request context, the JSON
@@ -47,6 +48,8 @@ export interface RouteContext {
   readonly claude?: ClaudeRouteDeps | undefined;
   /** The approval inbox services (Phase 6, D-28). Absent: its routes answer 503 and the snapshot omits the member. */
   readonly approvals?: ApprovalServices | undefined;
+  /** The task store services (Phase 6, D-28). Absent: its routes answer 503. */
+  readonly tasks?: TaskServices | undefined;
 }
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;
