@@ -1,13 +1,9 @@
-import type {
-  ApprovalAuditEvent,
-  ExecuteOutcome,
-  ProposalId,
-  ProposalState,
-} from "@ccc/domain";
+import type { ApprovalAuditEvent, ExecuteOutcome, ProposalId, ProposalState } from "@ccc/domain";
 import type { RecoverySummary } from "@ccc/service/approval";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   addProductionRow,
+  auditPathProblems,
   type CallRecord,
   type CountingOperation,
   CrashSignal,
@@ -22,7 +18,6 @@ import {
   readAudit,
   readExecutions,
   restart,
-  auditPathProblems,
 } from "./approval-fixtures.js";
 
 /**
@@ -287,7 +282,10 @@ const SCENARIOS: Scenario[] = [
     name: "late refusal on the retry, reconcile then proves the effect: executed (reconciled)",
     run: crashRecover("after-claim", {
       script(op) {
-        op.verdicts.push({ kind: "effect-absent" }, { kind: "effect-proven", evidence: "peer-wrote" });
+        op.verdicts.push(
+          { kind: "effect-absent" },
+          { kind: "effect-proven", evidence: "peer-wrote" },
+        );
         op.outcomes.push(REFUSED);
       },
     }),
@@ -530,7 +528,13 @@ describe("Tests 1 to 7: the crash matrix", () => {
   it("has at least eleven rows, covering the five injection points and the late-refusal, terminal and exhausted rows", () => {
     expect(SCENARIOS.length).toBeGreaterThanOrEqual(11);
     const names = SCENARIOS.map((scenario) => scenario.name).join("\n");
-    for (const point of ["after the decision", "after the claim", "after the effect", "before the outcome", "inside the recording"]) {
+    for (const point of [
+      "after the decision",
+      "after the claim",
+      "after the effect",
+      "before the outcome",
+      "inside the recording",
+    ]) {
       expect(names).toContain(point);
     }
     expect(names).toContain("late refusal");
@@ -617,7 +621,10 @@ describe("Test 8: a claim and a retry happen at most once", () => {
   it("holds across every scenario, and no effect is applied twice", () => {
     for (const scenario of SCENARIOS) {
       const got = resultOf(scenario.name);
-      expect(got.events.filter((event) => event === "claimed").length, scenario.name).toBeLessThanOrEqual(1);
+      expect(
+        got.events.filter((event) => event === "claimed").length,
+        scenario.name,
+      ).toBeLessThanOrEqual(1);
       expect(
         got.events.filter((event) => event === "retried-after-restart").length,
         scenario.name,
@@ -667,8 +674,12 @@ describe("Test 10: every audit trail is a legal path through the transition tabl
     expect(
       auditPathProblems(["requested", "approved", "claimed", "executed", "claimed"], "executing"),
     ).not.toEqual([]);
-    expect(auditPathProblems(["requested", "approved", "claimed", "executed"], "unknown")).not.toEqual([]);
-    expect(auditPathProblems(["requested", "approved", "retried-after-restart"], "approved")).not.toEqual([]);
+    expect(
+      auditPathProblems(["requested", "approved", "claimed", "executed"], "unknown"),
+    ).not.toEqual([]);
+    expect(
+      auditPathProblems(["requested", "approved", "retried-after-restart"], "approved"),
+    ).not.toEqual([]);
     expect(auditPathProblems(["requested", "denied"], "denied")).toEqual([]);
   });
 });

@@ -12,11 +12,13 @@ import {
   type ClassificationRow,
   type ClassificationTable,
   type Clock,
+  canTransition,
   type EnabledOperation,
   type ExecuteContext,
   type ExecuteOutcome,
   type OperationDefinition,
   type ProposalId,
+  type ProposalState,
   type ReconcileVerdict,
   type StoredProposal,
 } from "@ccc/domain";
@@ -405,45 +407,59 @@ export function logViolations(lines: readonly LoggedLine[]): string[] {
 // ---------------------------------------------------------------------------
 // Fault injection
 
+/** The crash signal a fenced store call throws. It is the process being gone, not a handled error. */
+export class CrashSignal extends Error {
+  constructor(point: string) {
+    super(`crash injected at ${point}`);
+    this.name = "CrashSignal";
+  }
+}
+
 /**
- * Where a crash is injected (the operation-side points; plan 06-24 task 2 adds
- * the store-side points):
+ * Where a crash is injected:
+ * - `after-decision`: the approval is committed, the claim never happens.
  * - `after-claim`: the claim is committed, the effect never starts.
  * - `after-effect`: the effect is applied, the operation never returns.
+ * - `before-record`: the operation returned, the recording call never reaches the database.
  */
-export type CrashPoint = "after-claim" | "after-effect";
+export type CrashPoint = "after-decision" | "after-claim" | "after-effect" | "before-record";
 
 export interface CrashInjector {
   /** Arms one crash. The next time execution reaches `point` it happens, once. */
   arm(point: CrashPoint, operation: CountingOperation): void;
   /** True once an armed crash has happened. */
   readonly fired: boolean;
-  /** Wraps a store so a store-side crash can happen. */
+  /** Wraps a store so the armed store-side crash can happen. The wrapper is fenced after it fires. */
   wrapStore(store: ApprovalStorePort): ApprovalStorePort;
 }
 
 /**
  * A crash is not an exception the engine can handle: the process is simply
- * gone. An operation-side crash never settles the call, and the test then
- * abandons that engine instance and never touches it again.
+ * gone. An operation-side crash never settles the call (the engine instance is
+ * then abandoned by the test and never touched again). The store is
+ * synchronous, so a store-side crash throws a {@link CrashSignal} from a
+ * fenced wrapper that touches the database no more, which leaves the database
+ * exactly as a kill at that instant would.
  */
 export function createCrashInjector(): CrashInjector {
+  let armed: CrashPoint | null = null;
   let fired = false;
+
   return {
     arm(point, operation) {
-      if (point !== "after-claim" && point !== "after-effect") {
-        throw new Error("not implemented yet (RED)");
-      }
+      armed = point;
       fired = false;
       if (point === "after-claim") {
         operation.hooks.beforeEffect = async () => {
           operation.hooks.beforeEffect = undefined;
+          armed = null;
           fired = true;
           await neverSettles();
         };
-      } else {
+      } else if (point === "after-effect") {
         operation.hooks.afterEffect = async () => {
           operation.hooks.afterEffect = undefined;
+          armed = null;
           fired = true;
           await neverSettles();
         };
@@ -452,8 +468,86 @@ export function createCrashInjector(): CrashInjector {
     get fired() {
       return fired;
     },
-    wrapStore: (store) => store,
+    wrapStore(store) {
+      let fenced = false;
+      const guard =
+        <A extends unknown[], R>(point: string, call: (...args: A) => R) =>
+        (...args: A): R => {
+          if (fenced) throw new CrashSignal(`${point} (after the crash)`);
+          return call(...args);
+        };
+      return {
+        submit: guard("submit", (...a: Parameters<ApprovalStorePort["submit"]>) =>
+          store.submit(...a),
+        ),
+        get: guard("get", (...a: Parameters<ApprovalStorePort["get"]>) => store.get(...a)),
+        list: guard("list", (...a: Parameters<ApprovalStorePort["list"]>) => store.list(...a)),
+        counts: guard("counts", () => store.counts()),
+        decide: guard("decide", (...a: Parameters<ApprovalStorePort["decide"]>) =>
+          store.decide(...a),
+        ),
+        claim(...a: Parameters<ApprovalStorePort["claim"]>) {
+          if (fenced) throw new CrashSignal("claim (after the crash)");
+          if (armed === "after-decision") {
+            armed = null;
+            fired = true;
+            fenced = true;
+            throw new CrashSignal("after-decision");
+          }
+          return store.claim(...a);
+        },
+        beginRetry: guard("beginRetry", (...a: Parameters<ApprovalStorePort["beginRetry"]>) =>
+          store.beginRetry(...a),
+        ),
+        finish(...a: Parameters<ApprovalStorePort["finish"]>) {
+          if (fenced) throw new CrashSignal("finish (after the crash)");
+          if (armed === "before-record") {
+            armed = null;
+            fired = true;
+            fenced = true;
+            throw new CrashSignal("before-record");
+          }
+          return store.finish(...a);
+        },
+        expireDue: guard("expireDue", (...a: Parameters<ApprovalStorePort["expireDue"]>) =>
+          store.expireDue(...a),
+        ),
+        lapseStaleApproved: guard(
+          "lapseStaleApproved",
+          (...a: Parameters<ApprovalStorePort["lapseStaleApproved"]>) =>
+            store.lapseStaleApproved(...a),
+        ),
+        listExecuting: guard("listExecuting", () => store.listExecuting()),
+        listApprovedUnclaimed: guard("listApprovedUnclaimed", () => store.listApprovedUnclaimed()),
+        withdraw: guard("withdraw", (...a: Parameters<ApprovalStorePort["withdraw"]>) =>
+          store.withdraw(...a),
+        ),
+        purgeDecidedPayloads: guard(
+          "purgeDecidedPayloads",
+          (...a: Parameters<ApprovalStorePort["purgeDecidedPayloads"]>) =>
+            store.purgeDecidedPayloads(...a),
+        ),
+        auditFor: guard("auditFor", (...a: Parameters<ApprovalStorePort["auditFor"]>) =>
+          store.auditFor(...a),
+        ),
+      };
+    },
   };
+}
+
+/**
+ * Makes the recording of an outcome fail inside its transaction: a temporary
+ * trigger (it lives on this connection only) aborts the audit insert of every
+ * outcome event, so the whole finish transaction rolls back and the row stays
+ * `executing`. Returns the function that removes it.
+ */
+export function failRecording(db: Db): () => void {
+  db.exec(
+    `CREATE TEMP TRIGGER fixture_fail_recording BEFORE INSERT ON approval_audit
+     WHEN NEW.event IN ('executed', 'reconciled-executed', 'failed', 'outcome-unknown')
+     BEGIN SELECT RAISE(ABORT, 'recording down'); END;`,
+  );
+  return () => db.exec("DROP TRIGGER IF EXISTS fixture_fail_recording");
 }
 
 // ---------------------------------------------------------------------------
@@ -653,6 +747,19 @@ export function createRigs(): Rigs {
   };
 }
 
+/**
+ * Closes the instance a crash left behind and opens a fresh one on the same
+ * database file, exactly as a restart would. The old engine is never called again.
+ */
+export function restart(
+  rigs: Rigs,
+  previous: OpenedEngine,
+  options: OpenEngineOptions = {},
+): OpenedEngine {
+  previous.close();
+  return rigs.connect(previous, options);
+}
+
 // ---------------------------------------------------------------------------
 // Reading what happened
 
@@ -734,12 +841,58 @@ export function diagnosticEffectRows(db: Db, proposalId: string): number {
   return row.n;
 }
 
-// RED skeleton for plan 06-24 task 2: the store-side crash points, the
-// recording failure, the restart helper and the audit-path checker follow.
-const notImplemented = (..._args: unknown[]): never => {
-  throw new Error("not implemented yet (RED)");
+/** The state each audit event leaves a request in. `retried-after-restart` keeps it `executing`. */
+const STATE_AFTER: Readonly<Record<ApprovalAuditEvent, ProposalState>> = {
+  requested: "pending",
+  approved: "approved",
+  denied: "denied",
+  expired: "expired",
+  withdrawn: "withdrawn",
+  claimed: "executing",
+  executed: "executed",
+  "reconciled-executed": "executed",
+  failed: "failed",
+  "outcome-unknown": "unknown",
+  "retried-after-restart": "executing",
+  lapsed: "lapsed",
 };
-export class CrashSignal extends Error {}
-export const failRecording = notImplemented;
-export const restart = notImplemented;
-export const auditPathProblems = notImplemented;
+
+/**
+ * Every way an audit trail breaks the rules, derived from the domain
+ * transition table and never from the implementation: it must begin with
+ * `requested`, every step must be a legal transition, the one non-transition
+ * event (`retried-after-restart`) is legal only while `executing` and at most
+ * once, nothing follows a terminal state, and the path must end where the row
+ * ended. Empty means the trail is a legal path.
+ */
+export function auditPathProblems(
+  events: readonly ApprovalAuditEvent[],
+  finalState: ProposalState,
+): string[] {
+  const problems: string[] = [];
+  if (events[0] !== "requested") problems.push("the trail does not begin with requested");
+  let current: ProposalState = "pending";
+  let retries = 0;
+  events.forEach((event, index) => {
+    if (index === 0) return;
+    if (event === "requested") {
+      problems.push(`step ${index + 1}: requested appears again`);
+      return;
+    }
+    const next = STATE_AFTER[event];
+    if (event === "retried-after-restart") {
+      retries += 1;
+      if (current !== "executing") problems.push(`step ${index + 1}: a retry outside executing`);
+      if (retries > 1) problems.push(`step ${index + 1}: a second retry`);
+      return;
+    }
+    if (!canTransition(current, next)) {
+      problems.push(`step ${index + 1}: ${event} is not legal from ${current}`);
+    }
+    current = next;
+  });
+  if (current !== finalState) {
+    problems.push(`the trail ends in ${current} but the row is ${finalState}`);
+  }
+  return problems;
+}
