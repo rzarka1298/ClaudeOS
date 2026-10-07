@@ -16,7 +16,7 @@ declare module "js-yaml" {
   const yaml: {
     readonly CORE_SCHEMA: Schema;
     safeLoad(input: string, options?: { readonly schema?: Schema }): unknown;
-    safeDump(value: unknown): string;
+    safeDump(value: unknown, options?: { readonly noRefs?: boolean }): string;
   };
   export default yaml;
 }

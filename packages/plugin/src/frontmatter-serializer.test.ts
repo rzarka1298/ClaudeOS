@@ -353,6 +353,15 @@ describe("serializeTaskFrontmatter (plan 06-18)", () => {
     expect(wrap(block, GOLDEN_BODY)).toBe(GOLDEN_TASK_NOTE);
   });
 
+  it("noRefs: a passthrough value that shares a node is written without anchors or aliases, like the service writer", () => {
+    const shared = ["x", "y"];
+    const block = serializeTaskFrontmatter(GOLDEN_TASK_FRONTMATTER, [
+      ["zz-shared", { first: shared, second: shared }],
+    ]);
+    expect(block).not.toMatch(/&|\*[a-z]/);
+    expect(block).toContain("second:");
+  });
+
   it("Test 1b: walks the provenance keys first and the task keys in the domain order", () => {
     const block = serializeTaskFrontmatter(GOLDEN_TASK_FRONTMATTER);
     const topLevel = block

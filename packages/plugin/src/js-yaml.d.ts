@@ -35,7 +35,7 @@ declare module "js-yaml" {
   }
   const yaml: {
     safeLoad(input: string, options?: LoadOptions): unknown;
-    safeDump(value: unknown): string;
+    safeDump(value: unknown, options?: { readonly noRefs?: boolean }): string;
     readonly CORE_SCHEMA: Schema;
   };
   export default yaml;

@@ -103,6 +103,16 @@ describe("Test 1: round trip over the shared hostile corpus", () => {
     expect(VALID_HOSTILE_TASK_TITLES.length).toBeGreaterThanOrEqual(60);
   });
 
+  test("passthrough values that share a node are written without anchors or aliases and round-trip", () => {
+    const shared = ["x", "y"];
+    const fm = frontmatterFor("Shared");
+    const text = stringifyTaskNote(fm, "B\n", { zz: { first: shared, second: shared } });
+    expect(text).not.toMatch(/&|\*[a-z]/);
+    const parsed = parseTaskNote(text);
+    expect(parsed.passthrough.zz).toEqual({ first: ["x", "y"], second: ["x", "y"] });
+    expect(stringifyTaskNote(parsed.frontmatter, parsed.body, parsed.passthrough)).toBe(text);
+  });
+
   test("every valid hostile title parses back to the identical task and serialises to the same bytes", () => {
     for (const title of VALID_HOSTILE_TASK_TITLES) {
       const fm = frontmatterFor(title);

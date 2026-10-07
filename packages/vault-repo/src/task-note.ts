@@ -104,7 +104,7 @@ const MAX_EXPANDED_NODES = 50_000;
 const TASK_YAML_ENGINE = {
   parse: (input: string): object =>
     (yaml.safeLoad(input, { schema: yaml.CORE_SCHEMA }) ?? {}) as object,
-  stringify: (data: object): string => yaml.safeDump(data),
+  stringify: (data: object): string => yaml.safeDump(data, { noRefs: true }),
 };
 
 const OWNED_KEYS: ReadonlySet<string> = new Set(TASK_FRONTMATTER_KEY_ORDER);
@@ -234,7 +234,7 @@ function orderedMap(value: object, order: readonly string[]): Record<string, unk
 
 /** One `key: value` entry dumped on its own, so key order belongs to the loops below and not to a YAML option. */
 function dumpEntry(key: string, value: unknown): string {
-  return yaml.safeDump({ [key]: value });
+  return yaml.safeDump({ [key]: value }, { noRefs: true });
 }
 
 /**
