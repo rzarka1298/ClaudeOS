@@ -1,8 +1,15 @@
+import { VALID_HOSTILE_TASK_TITLES } from "@ccc/domain/task-corpus.js";
 import type { TaskCreateRequest } from "@ccc/domain/tasks.js";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { projectIdFor, TASK_ZONE } from "../test-support/task-view-fixtures.js";
-import { TaskCreateForm, type TaskCreateFormProps } from "./task-form.js";
+import {
+  cleanTitle,
+  EMPTY_FORM_VALUES,
+  TaskCreateForm,
+  type TaskCreateFormProps,
+  validateCreateValues,
+} from "./task-form.js";
 
 afterEach(cleanup);
 
@@ -191,5 +198,290 @@ describe("Test 4: success", () => {
     expect((control("Description") as HTMLTextAreaElement).value).toBe("");
     await waitFor(() => expect(document.activeElement).toBe(control("Title")));
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+function firstRequest(create: { mock: { calls: unknown[][] } }): TaskCreateRequest {
+  return (create.mock.calls[0] as unknown as [TaskCreateRequest])[0];
+}
+
+function errorFor(label: string): string | null {
+  const input = control(label);
+  const id = input.getAttribute("aria-describedby");
+  if (id === null) return null;
+  for (const part of id.split(" ")) {
+    const element = document.getElementById(part);
+    if (element?.classList.contains("ccc-field-error")) return element.textContent;
+  }
+  return null;
+}
+
+describe("Test 2.1: title validation", () => {
+  it("cleans pasted whitespace and control characters", () => {
+    expect(cleanTitle("line one\nline two")).toBe("line one line two");
+    expect(cleanTitle("a\t\t b\r\n\r\nc")).toBe("a  b c");
+    expect(cleanTitle("  padded  ")).toBe("padded");
+    expect(cleanTitle("a\u0007b\u202Ec")).toBe("abc");
+  });
+
+  it("collapses a pasted newline into a space in the Title control", () => {
+    render(<TaskCreateForm {...props()} />);
+    const title = control("Title") as HTMLInputElement;
+    fireEvent.paste(title, { clipboardData: { getData: () => "line one\nline two" } });
+    expect(title.value).toBe("line one line two");
+  });
+
+  it("shows Enter a title. on submit, with aria-invalid and aria-describedby, and does not call create", () => {
+    const create = vi.fn(() => Promise.resolve({}));
+    render(<TaskCreateForm {...props({ create })} />);
+    type("Title", "   ");
+    fireEvent.submit(formElement());
+    expect(create).not.toHaveBeenCalled();
+    expect(errorFor("Title")).toBe("Enter a title.");
+    expect(control("Title").getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("shows Use 200 characters or fewer. on blur and clears it when fixed", async () => {
+    render(<TaskCreateForm {...props()} />);
+    type("Title", "x".repeat(201));
+    fireEvent.blur(control("Title"));
+    await waitFor(() => expect(errorFor("Title")).toBe("Use 200 characters or fewer."));
+    type("Title", "short");
+    await waitFor(() => expect(errorFor("Title")).toBeNull());
+    expect(control("Title").getAttribute("aria-invalid")).toBeNull();
+  });
+});
+
+describe("Test 2.2: dates and time", () => {
+  it("rejects a date that does not exist and a malformed one", () => {
+    expect(validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", due: "2026-02-31" }).due).toBe(
+      "Choose a valid date.",
+    );
+    expect(validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", due: "10/09/2026" }).due).toBe(
+      "Choose a valid date.",
+    );
+    expect(
+      validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", scheduled: "tomorrow" }).scheduled,
+    ).toBe("Choose a valid date.");
+    expect(
+      validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", due: "2026-10-09" }).due,
+    ).toBeUndefined();
+  });
+
+  it("shows Choose a valid date. for a time with no date", async () => {
+    const create = vi.fn(() => Promise.resolve({}));
+    render(<TaskCreateForm {...props({ create })} />);
+    type("Title", "Call back");
+    type("Due time", "10:00");
+    fireEvent.submit(formElement());
+    expect(create).not.toHaveBeenCalled();
+    await waitFor(() => expect(errorFor("Due")).toBe("Choose a valid date."));
+  });
+
+  it("sends a date-only due for an all-day task and nothing for an empty due", () => {
+    const create = vi.fn(() => Promise.resolve({}));
+    render(<TaskCreateForm {...props({ create })} />);
+    type("Title", "All day");
+    type("Due", "2026-10-09");
+    fireEvent.submit(formElement());
+    const request = firstRequest(create);
+    expect(request.dueDate).toBe("2026-10-09");
+    expect("dueTime" in request).toBe(false);
+  });
+});
+
+describe("Test 2.3: tags", () => {
+  it("splits on commas, trims, drops empty ones and removes duplicates", () => {
+    const create = vi.fn(() => Promise.resolve({}));
+    render(<TaskCreateForm {...props({ create })} />);
+    type("Title", "Tagged");
+    type("Tags", " a, b ,, a ,#c, ");
+    fireEvent.submit(formElement());
+    expect(firstRequest(create).tags).toEqual(["a", "b", "c"]);
+  });
+
+  it("rejects more than 20 tags", () => {
+    const tags = Array.from({ length: 21 }, (_, index) => `t${index}`).join(",");
+    expect(validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", tags }).tags).toBe(
+      "Use 20 tags or fewer.",
+    );
+    const twenty = Array.from({ length: 20 }, (_, index) => `t${index}`).join(",");
+    expect(validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", tags: twenty }).tags).toBe(
+      undefined,
+    );
+  });
+
+  it("rejects a tag over 40 characters and a tag that breaks the Obsidian tag rules", () => {
+    const tooLong = validateCreateValues({
+      ...EMPTY_FORM_VALUES,
+      title: "t",
+      tags: "x".repeat(41),
+    });
+    expect(tooLong.tags).toBe("Use 40 characters or fewer for each tag.");
+    const digits = validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", tags: "2026" });
+    expect(digits.tags).toBe("Use letters, numbers, _, - or / in tags, and not only digits.");
+    const spaced = validateCreateValues({ ...EMPTY_FORM_VALUES, title: "t", tags: "two words" });
+    expect(spaced.tags).toBe("Use letters, numbers, _, - or / in tags, and not only digits.");
+  });
+});
+
+describe("Test 2.4: Add as ready", () => {
+  it("sends the ready intent and announces it", async () => {
+    const create = vi.fn(() => Promise.resolve({}));
+    const onStatus = vi.fn();
+    render(<TaskCreateForm {...props({ create, onStatus })} />);
+    type("Title", "Ship it");
+    fireEvent.click(button("Add as ready"));
+    expect(firstRequest(create).intent).toBe("ready");
+    await waitFor(() =>
+      expect(onStatus).toHaveBeenLastCalledWith('Added "Ship it" as ready. Find it under All.'),
+    );
+  });
+});
+
+describe("Test 2.5: failure", () => {
+  const reasons: readonly [unknown, string][] = [
+    [{ code: "timeout" }, "the companion service didn't respond within 5 seconds"],
+    [{ code: "service-disconnected" }, "the service isn't running"],
+    [{ code: "unrecognised-response" }, "the service isn't running"],
+    [{ code: "write-failed" }, "the vault couldn't be written to"],
+    [new Error("boom at /Users/someone/secret"), "the vault couldn't be written to"],
+  ];
+
+  it.each(reasons)(
+    "keeps the typed values and names a fixed reason for %j",
+    async (error, reason) => {
+      const create = vi.fn(() => Promise.reject(error));
+      const onStatus = vi.fn();
+      const onNotice = vi.fn();
+      render(<TaskCreateForm {...props({ create, onStatus, onNotice })} />);
+      type("Title", "Keep me");
+      type("Description", "Typed text");
+      fireEvent.submit(formElement());
+      const expected = `Couldn't add the task: ${reason}.`;
+      await waitFor(() => expect(onStatus).toHaveBeenLastCalledWith(expected));
+      expect(onNotice).toHaveBeenCalledWith(expected);
+      expect((control("Title") as HTMLInputElement).value).toBe("Keep me");
+      expect((control("Description") as HTMLTextAreaElement).value).toBe("Typed text");
+      await waitFor(() => expect(button("Add to inbox").getAttribute("aria-busy")).toBeNull());
+      expect(button("Add to inbox").getAttribute("aria-disabled")).toBeNull();
+      expect(JSON.stringify(onStatus.mock.calls)).not.toContain("secret");
+    },
+  );
+});
+
+describe("Test 2.6: close and focus", () => {
+  it("closes on Escape and on Close form, returns focus to the opener and keeps the typed text", async () => {
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    const onClose = vi.fn();
+    render(<TaskCreateForm {...props({ onClose, getOpener: () => opener })} />);
+    type("Title", "Half typed");
+    fireEvent.keyDown(control("Title"), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+    expect((control("Title") as HTMLInputElement).value).toBe("Half typed");
+    control("Title").focus();
+    fireEvent.click(button("Close form"));
+    expect(onClose).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+    opener.remove();
+  });
+});
+
+describe("Test 2.7: preselection", () => {
+  it("starts Project on the supplied project and keeps Scope editable", () => {
+    render(
+      <TaskCreateForm {...props({ defaultProjectId: PROJECT.id, defaultScope: WORKSPACE.id })} />,
+    );
+    expect((control("Project") as HTMLSelectElement).value).toBe(PROJECT.id);
+    expect((control("Scope") as HTMLSelectElement).value).toBe(WORKSPACE.id);
+    fireEvent.change(control("Scope"), { target: { value: "global" } });
+    expect((control("Scope") as HTMLSelectElement).value).toBe("global");
+  });
+
+  it("cannot start on, or choose, an unregistered project", () => {
+    const create = vi.fn(() => Promise.resolve({}));
+    render(<TaskCreateForm {...props({ create, defaultProjectId: projectIdFor(9) })} />);
+    expect((control("Project") as HTMLSelectElement).value).toBe("");
+    type("Title", "No project");
+    fireEvent.change(control("Project"), { target: { value: projectIdFor(9) } });
+    fireEvent.submit(formElement());
+    expect("projectId" in firstRequest(create)).toBe(false);
+  });
+});
+
+describe("Test 2.8: disconnected", () => {
+  it("disables both submits with the standard reason, does nothing on submit and still accepts typing", () => {
+    const create = vi.fn(() => Promise.resolve({}));
+    const onStatus = vi.fn();
+    render(<TaskCreateForm {...props({ connected: false, create, onStatus })} />);
+    for (const name of ["Add to inbox", "Add as ready"]) {
+      const submit = button(name);
+      expect(submit.getAttribute("aria-disabled")).toBe("true");
+      expect(submit.hasAttribute("disabled")).toBe(false);
+      const reasonId = submit.getAttribute("aria-describedby");
+      expect(reasonId).not.toBeNull();
+      expect(document.getElementById(reasonId as string)?.textContent).toBe(
+        "The companion service isn't running.",
+      );
+    }
+    type("Title", "Typed anyway");
+    expect((control("Title") as HTMLInputElement).value).toBe("Typed anyway");
+    fireEvent.submit(formElement());
+    fireEvent.click(button("Add as ready"));
+    expect(create).not.toHaveBeenCalled();
+    expect(onStatus).not.toHaveBeenCalled();
+    expect(button("Close form").getAttribute("aria-disabled")).toBeNull();
+  });
+});
+
+describe("Test 2.9: hostile input", () => {
+  it("sends the cleaned title as a string and announces it as text, never as markup", async () => {
+    for (const title of VALID_HOSTILE_TASK_TITLES) {
+      const create = vi.fn(() => Promise.resolve({}));
+      const onStatus = vi.fn();
+      const view = render(<TaskCreateForm {...props({ create, onStatus })} />);
+      type("Title", title);
+      fireEvent.submit(formElement());
+      expect(create, title).toHaveBeenCalledTimes(1);
+      expect(firstRequest(create).title).toBe(cleanTitle(title));
+      await waitFor(() =>
+        expect(onStatus).toHaveBeenLastCalledWith(
+          `Added "${cleanTitle(title)}" to the inbox. Find it under All.`,
+        ),
+      );
+      expect(view.container.querySelector("script, img, style, a, iframe")).toBeNull();
+      view.unmount();
+    }
+  });
+});
+
+describe("Test 2.10: labels and order", () => {
+  it("gives every control a visible label and tabs in the specified order", () => {
+    render(<TaskCreateForm {...props()} />);
+    const focusable = [
+      ...formElement().querySelectorAll<HTMLElement>("input, select, textarea, button"),
+    ];
+    const names = focusable.map((element) =>
+      element instanceof HTMLButtonElement
+        ? (element.textContent ?? "")
+        : ((element as HTMLInputElement).labels?.[0]?.textContent ?? "NO LABEL"),
+    );
+    expect(names).toEqual([
+      "Title",
+      "Description",
+      "Priority",
+      "Due",
+      "Due time",
+      "Scheduled",
+      "Project",
+      "Scope",
+      "Tags",
+      "Add to inbox",
+      "Add as ready",
+      "Close form",
+    ]);
+    expect(focusable.some((element) => element.tabIndex > 0)).toBe(false);
   });
 });

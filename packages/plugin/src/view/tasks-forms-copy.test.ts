@@ -5,10 +5,18 @@ import {
   ADDING_STATUS,
   addedMessage,
   CLOSE_FORM_LABEL,
+  createFailedMessage,
+  DISCONNECTED_REASON,
   FIELD_LABELS,
   GLOBAL_SCOPE_LABEL,
+  INVALID_DATE_MESSAGE,
   NO_PROJECT_LABEL,
+  TAG_INVALID_MESSAGE,
+  TAG_TOO_LONG_MESSAGE,
   TAGS_HELP,
+  TITLE_REQUIRED_MESSAGE,
+  TITLE_TOO_LONG_MESSAGE,
+  TOO_MANY_TAGS_MESSAGE,
 } from "./tasks-forms-copy.js";
 
 describe("Test 5: the create-form strings are the locked ones (UI-SPEC S3 Create form)", () => {
@@ -41,5 +49,34 @@ describe("Test 5: the create-form strings are the locked ones (UI-SPEC S3 Create
       'Added "Pay rent" to the inbox. Find it under All.',
     );
     expect(addedMessage("Pay rent", "ready")).toBe('Added "Pay rent" as ready. Find it under All.');
+  });
+});
+
+describe("Test 2.5: validation and failure strings", () => {
+  it("holds the four locked validation messages verbatim", () => {
+    expect(TITLE_REQUIRED_MESSAGE).toBe("Enter a title.");
+    expect(TITLE_TOO_LONG_MESSAGE).toBe("Use 200 characters or fewer.");
+    expect(INVALID_DATE_MESSAGE).toBe("Choose a valid date.");
+    expect(TOO_MANY_TAGS_MESSAGE).toBe("Use 20 tags or fewer.");
+  });
+
+  it("holds the two tag messages the spec does not fix and the standard disconnected reason", () => {
+    expect(TAG_TOO_LONG_MESSAGE).toBe("Use 40 characters or fewer for each tag.");
+    expect(TAG_INVALID_MESSAGE).toBe(
+      "Use letters, numbers, _, - or / in tags, and not only digits.",
+    );
+    expect(DISCONNECTED_REASON).toBe("The companion service isn't running.");
+  });
+
+  it("names one of three fixed reasons by error code and never echoes the error", () => {
+    expect(createFailedMessage({ code: "timeout" })).toBe(
+      "Couldn't add the task: the companion service didn't respond within 5 seconds.",
+    );
+    expect(createFailedMessage({ code: "service-disconnected" })).toBe(
+      "Couldn't add the task: the service isn't running.",
+    );
+    expect(createFailedMessage(new Error("/Users/x/secret"))).toBe(
+      "Couldn't add the task: the vault couldn't be written to.",
+    );
   });
 });

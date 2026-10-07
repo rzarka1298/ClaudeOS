@@ -36,3 +36,19 @@ export function addedMessage(title: string, intent: "inbox" | "ready"): string {
   const where = intent === "inbox" ? "to the inbox" : "as ready";
   return `Added "${title}" ${where}. Find it under All.`;
 }
+
+// ---------------------------------------------------------------------------
+// Create form: validation and failure (skeleton until the validation pass)
+
+export const TITLE_REQUIRED_MESSAGE = "";
+export const TITLE_TOO_LONG_MESSAGE = "";
+export const INVALID_DATE_MESSAGE = "";
+export const TOO_MANY_TAGS_MESSAGE = "";
+export const TAG_TOO_LONG_MESSAGE = "";
+export const TAG_INVALID_MESSAGE = "";
+export const DISCONNECTED_REASON = "";
+
+/** `Couldn't add the task: {reason}.` for an error with an optional closed `code`. */
+export function createFailedMessage(_error: unknown): string {
+  return "";
+}

@@ -61,7 +61,7 @@ export interface TaskCreateFormProps {
 /** The select lists priorities from lowest to highest after `No priority` (UI-SPEC S3). */
 const PRIORITY_ORDER: readonly TaskPriority[] = ["low", "medium", "high", "urgent"];
 
-interface FormValues {
+export interface TaskFormValues {
   readonly title: string;
   readonly description: string;
   readonly priority: TaskPriority | "";
@@ -73,7 +73,7 @@ interface FormValues {
   readonly tags: string;
 }
 
-function initialValues(props: TaskCreateFormProps): FormValues {
+function initialValues(props: TaskCreateFormProps): TaskFormValues {
   const project =
     props.defaultProjectId !== undefined &&
     props.projects.some((option) => option.id === props.defaultProjectId)
@@ -94,7 +94,7 @@ function initialValues(props: TaskCreateFormProps): FormValues {
 
 /** Maps the form values to the domain request; an empty optional field sends nothing. */
 function buildRequest(
-  values: FormValues,
+  values: TaskFormValues,
   intent: TaskCreateIntent,
   zone: string,
 ): TaskCreateRequest {
@@ -122,14 +122,14 @@ export function TaskCreateForm(props: TaskCreateFormProps): VNode {
   const uid = useId();
   const titleRef = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false);
-  const [values, setValues] = useState<FormValues>(() => initialValues(props));
+  const [values, setValues] = useState<TaskFormValues>(() => initialValues(props));
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     titleRef.current?.focus();
   }, []);
 
-  const set = <K extends keyof FormValues>(key: K, value: FormValues[K]): void => {
+  const set = <K extends keyof TaskFormValues>(key: K, value: TaskFormValues[K]): void => {
     setValues((current) => ({ ...current, [key]: value }));
   };
 
@@ -332,4 +332,29 @@ export function TaskCreateForm(props: TaskCreateFormProps): VNode {
       </div>
     </form>
   );
+}
+
+/** The empty form (no defaults). */
+export const EMPTY_FORM_VALUES: TaskFormValues = {
+  title: "",
+  description: "",
+  priority: "",
+  due: "",
+  dueTime: "",
+  scheduled: "",
+  projectId: "",
+  scope: "global",
+  tags: "",
+};
+
+/** Skeleton: delivers nothing until the validation pass. */
+export function cleanTitle(raw: string): string {
+  return raw;
+}
+
+export type TaskFormErrors = Partial<Record<"title" | "due" | "scheduled" | "tags", string>>;
+
+/** Skeleton: delivers nothing until the validation pass. */
+export function validateCreateValues(_values: TaskFormValues): TaskFormErrors {
+  return {};
 }
