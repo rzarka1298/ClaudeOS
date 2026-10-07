@@ -12,6 +12,10 @@ import {
   CLASSIFICATION,
   PROPOSAL_STATES,
   PROPOSAL_TRANSITIONS,
+  TASK_FILTER_SORTS,
+  TASK_FILTERS,
+  TASK_PRIORITIES,
+  TASK_STATUSES,
 } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 
@@ -70,6 +74,18 @@ function approvalAdr(): Adr {
       (adr.frontMatter.satisfies ?? "").includes("completes"),
     "satisfies ADR-08 and completes another record",
   );
+}
+
+/** The ADR that records the canonical task store: it amends the index-generation record. */
+function tasksAdr(): Adr {
+  return adrWhere(
+    (adr) => Object.hasOwn(adr.frontMatter, "amends") && /task/i.test(adr.title),
+    "amends another record and is about tasks",
+  );
+}
+
+function adrByTitle(fragment: string): Adr {
+  return adrWhere((adr) => adr.title.includes(fragment), `has a title containing "${fragment}"`);
 }
 
 /** The rows of the markdown table between `<!-- name:begin -->` and `<!-- name:end -->`, header and rule removed. */
@@ -353,6 +369,154 @@ describe("Task 1 Test 6: the rejected options are recorded with reasons", () => 
     ],
     ["a persistent allow", /persistent allow\.\*\* Rejected/i],
     ["building a native presence check now", /native presence check now\.\*\* Rejected/i],
+  ] as const) {
+    it(`rejects ${label}`, () => {
+      expect(options()).toMatch(pattern);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: the canonical task store ADR and the ADR 0022 amendment
+
+describe("Task 2 Test 1: the tasks record's front matter", () => {
+  it("is accepted, satisfies the task requirements and amends the index-generation record", () => {
+    const adr = tasksAdr();
+    expect(adr.frontMatter.status).toBe("accepted");
+    expect(adr.frontMatter.satisfies).toMatch(/TASK-0\d/);
+    expect(adr.frontMatter.amends).toBeTruthy();
+    const indexAdr = adrByTitle("Indexes are recomputed wholesale");
+    expect(flat(adr.body)).toContain(indexAdr.title);
+  });
+});
+
+describe("Task 2 Test 2: the status and priority tables match the domain", () => {
+  it("lists exactly the seven statuses in order", () => {
+    const rows = markedTable(tasksAdr(), "statuses");
+    expect(rows.map((row) => row[0])).toEqual([...TASK_STATUSES]);
+  });
+
+  it("lists exactly the four priorities in order", () => {
+    const rows = markedTable(tasksAdr(), "priorities");
+    expect(rows.map((row) => row[0])).toEqual([...TASK_PRIORITIES]);
+  });
+
+  it("says every task is stage capture", () => {
+    expect(flat(tasksAdr().body)).toMatch(/every task (note )?is stage `?capture`?/i);
+  });
+});
+
+describe("Task 2 Test 3: the filter predicate table matches the domain", () => {
+  it("lists exactly the eight views of the domain filter list in order", () => {
+    const rows = markedTable(tasksAdr(), "filters");
+    expect(rows.map((row) => row[0])).toEqual([...TASK_FILTERS]);
+    for (const row of rows) {
+      expect(row.length).toBe(4);
+      for (const cell of row) expect(cell.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("states each view's sort fields as the domain declares them", () => {
+    const rows = markedTable(tasksAdr(), "filters");
+    for (const filter of TASK_FILTERS) {
+      const row = rows.find((cells) => cells[0] === filter) as string[];
+      const fields = TASK_FILTER_SORTS[filter].map((key) => key.field);
+      for (const field of fields) {
+        expect(row[3], `${filter} sort`).toContain(field);
+      }
+    }
+  });
+
+  it("states the open rule and the daylight-saving handling", () => {
+    const text = flat(tasksAdr().body);
+    expect(text).toMatch(/23-hour/);
+    expect(text).toMatch(/25-hour/);
+    expect(text).toMatch(/skips midnight/i);
+    expect(text).toMatch(/upcoming has no upper bound/i);
+    expect(text).toMatch(/cancelled appears only under all/i);
+    expect(text).toMatch(/dangling dependency[^.]*unmet|unmet[^.]*dangling dependency/i);
+  });
+});
+
+describe("Task 2 Test 4: the required content is present", () => {
+  const checks: ReadonlyArray<readonly [string, RegExp]> = [
+    [
+      "key order with the provenance prefix",
+      /provenance keys[^.]*prefix|prefix[^.]*provenance keys/i,
+    ],
+    ["top-level decision key", /top-level `decision` key/i],
+    ["decision two-key order", /`outcome`[^.]*`at`/],
+    ["date-only versus instant columns", /date-only[^.]*instant/i],
+    ["single-line title rule", /single line/i],
+    ["tag rules", /tag/i],
+    ["filename rule", /file name is fixed at creation/i],
+    ["id suffix", /id suffix|last eight characters/i],
+    ["size limits", /64 KiB[^.]*256 KiB/i],
+    ["narrow YAML schema", /core schema/i],
+    ["default schema is wrong for dates", /default schema[^.]*date/i],
+    ["service creates", /the service creates/i],
+    ["plugin edits conflict-safely", /conflict-safe/i],
+    ["changed route never writes", /changed route never writes/i],
+    ["only updateTaskNote edits", /updateTaskNote/],
+    [
+      "duplicate and missing ids are surfaced, never resolved",
+      /never resolved|never auto-resolved/i,
+    ],
+    ["Done sets completed when empty", /done sets `completed` when (it is )?empty/i],
+    ["leaving Done clears completed", /leaving done clears/i],
+    ["Reopen sets ready", /reopen sets `ready`/i],
+    ["proposed-task flow, accept", /accept[^.]*`ready`/i],
+    ["proposed-task flow, dismiss", /dismiss[^.]*`cancelled`/i],
+    ["structural containment of completion", /structurally contained/i],
+    ["whole-file content hash", /whole file/i],
+    ["TASK-08", /TASK-08/],
+  ];
+  for (const [label, pattern] of checks) {
+    it(label, () => {
+      expect(flat(tasksAdr().body)).toMatch(pattern);
+    });
+  }
+});
+
+describe("Task 2 Test 5: the index-generation record carries the summary-index amendment", () => {
+  const adr = (): Adr => adrByTitle("Indexes are recomputed wholesale");
+
+  it("has an amendment section stating the summary index and its measurements", () => {
+    const amendment = flat(section(adr(), "## Amendment: the tasks folder summary index"));
+    expect(amendment).toMatch(/constant size/i);
+    expect(amendment).toMatch(/only by setup, repair and rebuild/i);
+    expect(amendment).toMatch(/as of the last rebuild/i);
+    expect(amendment).toMatch(/212 ms/);
+    expect(amendment).toMatch(/1\.13 MB/);
+    expect(amendment).toMatch(/task writes never touch the index/i);
+  });
+
+  it("leaves the original text unchanged (additions only against the Phase 6 base)", () => {
+    const text = adr().text;
+    const at = text.indexOf("\n## Amendment: the tasks folder summary index");
+    expect(at).toBeGreaterThan(0);
+    // The original text is everything before the amendment; it must still end with the Consequences list.
+    expect(text.slice(0, at)).toContain("The cache can be deleted at any time.");
+    expect(text.slice(0, at)).toMatch(/\n## Consequences\n/);
+  });
+});
+
+describe("Task 2 Test 6: the rejected options are recorded with reasons", () => {
+  const options = (): string => flat(section(tasksAdr(), "## Considered Options"));
+
+  for (const [label, pattern] of [
+    ["tasks in the inbox folder", /tasks in the inbox folder\.\*\* Rejected/i],
+    ["one file for all tasks", /one file for all tasks\.\*\* Rejected/i],
+    ["per-note rows in the tasks index", /per-note rows in the tasks index\.\*\* Rejected/i],
+    [
+      "parsing with the default YAML schema",
+      /parsing with the default yaml schema\.\*\* Rejected/i,
+    ],
+    ["a service write for edits", /a service write for edits\.\*\* Rejected/i],
+    [
+      "auto-minting a new id for a copied note",
+      /auto-minting a new id for a copied note\.\*\* Rejected/i,
+    ],
   ] as const) {
     it(`rejects ${label}`, () => {
       expect(options()).toMatch(pattern);
