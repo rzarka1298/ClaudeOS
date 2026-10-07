@@ -170,18 +170,16 @@ export function createForceTerminateOperation(
       }
 
       // What you approve is what runs: the Run must still point at the process
-      // the owner approved. A missing Run or a failing read is left to the
-      // terminator, which re-checks identity itself and refuses run-not-found.
+      // the owner approved. Fail closed: a missing Run or a failing read means
+      // the identity cannot be verified, so the terminator is never called.
       let current: RunFacts | null = null;
       try {
         current = inspector.readRun(payload.runId);
       } catch {
-        current = null;
+        return { kind: "refused", reason: "identity-mismatch" };
       }
-      if (
-        current !== null &&
-        (current.pid !== payload.pid || current.processStartedAt !== payload.processStartedAt)
-      ) {
+      if (current === null) return { kind: "refused", reason: "run-not-found" };
+      if (current.pid !== payload.pid || current.processStartedAt !== payload.processStartedAt) {
         return { kind: "refused", reason: "identity-mismatch" };
       }
 

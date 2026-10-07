@@ -375,8 +375,9 @@ describe("session.force-terminate operation: execute and reconcile", () => {
     });
 
     it("calls the terminator with the token and the run id from the payload when the token covers it", async () => {
-      const { op, terminator } = build();
+      const { op, terminator, inspector } = build();
       const payload = parsed();
+      inspector.run = makeRunFacts({ runId: payload.runId });
       const token = tokenFor(payload.runId);
       await op.execute(token, payload, contextFor());
       expect(terminator.calls).toHaveLength(1);
@@ -416,6 +417,24 @@ describe("session.force-terminate operation: execute and reconcile", () => {
       const { op, terminator, inspector } = build();
       const payload = parsed();
       inspector.run = makeRunFacts({ runId: payload.runId, pid: null, processStartedAt: null });
+      const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
+      expect(outcome).toEqual({ kind: "refused", reason: "identity-mismatch" });
+      expect(terminator.calls).toHaveLength(0);
+    });
+
+    it("never calls the terminator, and refuses run-not-found, when the Run cannot be found", async () => {
+      const { op, terminator, inspector } = build();
+      const payload = parsed();
+      inspector.run = null;
+      const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
+      expect(outcome).toEqual({ kind: "refused", reason: "run-not-found" });
+      expect(terminator.calls).toHaveLength(0);
+    });
+
+    it("never calls the terminator, and refuses identity-mismatch, when reading the Run throws", async () => {
+      const { op, terminator, inspector } = build();
+      const payload = parsed();
+      inspector.readRunError = new Error("boom");
       const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
       expect(outcome).toEqual({ kind: "refused", reason: "identity-mismatch" });
       expect(terminator.calls).toHaveLength(0);
@@ -465,7 +484,15 @@ describe("session.force-terminate operation: execute and reconcile", () => {
     it("still reports executed when the Run cannot be read afterwards, because the terminator already succeeded", async () => {
       const { op, inspector } = build();
       const payload = parsed();
-      inspector.readRunError = new Error("boom");
+      inspector.run = makeRunFacts({ runId: payload.runId });
+      // The pre-terminate identity read succeeds; only the read after it throws.
+      const read = inspector.readRun.bind(inspector);
+      let reads = 0;
+      inspector.readRun = (runId) => {
+        reads += 1;
+        if (reads > 1) throw new Error("boom");
+        return read(runId);
+      };
       const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
       expect(outcome.kind).toBe("executed");
     });
@@ -474,18 +501,20 @@ describe("session.force-terminate operation: execute and reconcile", () => {
   describe("Test 3: refusals", () => {
     for (const reason of ["process-ended", "run-not-found", "identity-mismatch"] as const) {
       it(`returns a refusal, never a plain failure, for ${reason}`, async () => {
-        const { op, terminator } = build();
+        const { op, terminator, inspector } = build();
         terminator.script = { kind: "result", result: { ok: false, reason } };
         const payload = parsed();
+        inspector.run = makeRunFacts({ runId: payload.runId });
         const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
         expect(outcome).toEqual({ kind: "refused", reason });
       });
     }
 
     it("returns the same refusal on a retry, leaving the late-refusal rule to the engine", async () => {
-      const { op, terminator } = build();
+      const { op, terminator, inspector } = build();
       terminator.script = { kind: "result", result: { ok: false, reason: "process-ended" } };
       const payload = parsed();
+      inspector.run = makeRunFacts({ runId: payload.runId });
       const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor({}, 2));
       expect(outcome).toEqual({ kind: "refused", reason: "process-ended" });
     });
@@ -493,9 +522,10 @@ describe("session.force-terminate operation: execute and reconcile", () => {
 
   describe("Test 4: capability-refused", () => {
     it("is a failure with the capability code and one error log of proposal id and code only", async () => {
-      const { op, terminator, log } = build();
+      const { op, terminator, log, inspector } = build();
       terminator.script = { kind: "result", result: { ok: false, reason: "capability-refused" } };
       const payload = parsed();
+      inspector.run = makeRunFacts({ runId: payload.runId });
       const outcome = await op.execute(tokenFor(payload.runId), payload, contextFor());
       expect(outcome).toEqual({ kind: "failed", reason: "capability-refused" });
       const errors = log.ofLevel("error");
@@ -507,10 +537,11 @@ describe("session.force-terminate operation: execute and reconcile", () => {
 
   describe("Test 5: throw", () => {
     it("lets a terminator rejection propagate unchanged so the engine records unknown", async () => {
-      const { op, terminator, log } = build();
+      const { op, terminator, log, inspector } = build();
       const failure = new Error("kill failed at /Users/USERNAME/hidden");
       terminator.script = { kind: "reject", error: failure };
       const payload = parsed();
+      inspector.run = makeRunFacts({ runId: payload.runId });
       await expect(op.execute(tokenFor(payload.runId), payload, contextFor())).rejects.toBe(
         failure,
       );
