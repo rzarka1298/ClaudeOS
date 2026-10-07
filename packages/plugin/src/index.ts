@@ -22,7 +22,14 @@ export type { MotionMode } from "./motion.js";
 export { motionMode } from "./motion.js";
 export { projectShortcutsStateFor } from "./projects/projects-state.js";
 export { attachEventClient } from "./service-connection.js";
-export { completeTask } from "./tasks/actions.js";
+export type { TaskActionResult, TaskSaveInput } from "./tasks/actions.js";
+export {
+  acceptTask,
+  completeTask,
+  dismissTask,
+  reopenTask,
+  saveTask,
+} from "./tasks/actions.js";
 export { readTaskForEdit, updateTaskNote } from "./tasks/task-update.js";
 export { AgentRuns } from "./view/agent-runs.js";
 export { RECENT_PAGE_SIZE, selectedRunId } from "./view/agent-runs-state.js";
