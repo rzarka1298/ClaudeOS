@@ -18,7 +18,11 @@ import {
 } from "../paths.js";
 import type { Spawner } from "../projects/spawner.js";
 import { createAttribution } from "./attribution.js";
-import { approvalUnavailableProposer, unconfiguredTerminalLauncher } from "./default-ports.js";
+import {
+  createProposerSlot,
+  type ProposerSlot,
+  unconfiguredTerminalLauncher,
+} from "./default-ports.js";
 import { createFocusService, nodeFocusExecFile } from "./focus.js";
 import { runGit } from "./git-readonly.js";
 import { readInstallRecord } from "./integration-status.js";
@@ -82,6 +86,12 @@ export interface ClaudeServices {
    * approval composition builds its run inspector over it (06-21).
    */
   readonly processFacts: ProcessFacts;
+  /**
+   * The late-bound force-terminate proposer (R-WIRING). `main.ts` binds the
+   * engine-backed proposer once the approval services exist; until then the
+   * terminate-request route answers `approval-unavailable`.
+   */
+  readonly proposerSlot: ProposerSlot;
   /**
    * Stops the liveness sweeper (awaiting its in-flight sweep), the poller
    * (awaiting its in-flight tick), then the pipeline
@@ -184,6 +194,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
           mintRunId: newRunId,
           now: () => new Date(),
         });
+  const proposerSlot = createProposerSlot();
   const actions: SessionActionDeps = {
     db: store.db,
     launcher: bridge?.terminalLauncher ?? unconfiguredTerminalLauncher,
@@ -196,7 +207,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
       db: store.db,
       logger,
     }),
-    proposer: approvalUnavailableProposer,
+    proposer: proposerSlot.proposer,
     // Read per request: the owner's saved launcher first (Phase 4 D-21), then
     // the installer's record, so a change after startup is picked up.
     claudeBin: bridge?.claudeBin ?? installedClaudeBin,
@@ -235,6 +246,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     startGuard: bridge?.startGuard,
     terminator,
     processFacts,
+    proposerSlot,
     async stop() {
       // The sweeper first: its evidence goes through the pipeline, which
       // must still be accepting work, and nothing may sweep a closed store.

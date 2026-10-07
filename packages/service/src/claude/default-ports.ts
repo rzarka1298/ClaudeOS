@@ -27,3 +27,18 @@ export const approvalUnavailableProposer: ProposeForceTerminate = {
     return { ok: false, reason: "approval-unavailable" };
   },
 };
+
+/**
+ * The late-bound proposer slot (plan 06-21, 06-RECONCILE R-WIRING, D-42).
+ * Skeleton for the RED commit: never delegates yet.
+ */
+export interface ProposerSlot {
+  /** Stable object handed to SessionActionDeps.proposer. Answers `approval-unavailable` until bind(). */
+  readonly proposer: ProposeForceTerminate;
+  /** Called exactly once, by main.ts, after the approval services exist. A second call throws. */
+  bind(real: ProposeForceTerminate): void;
+}
+
+export function createProposerSlot(): ProposerSlot {
+  return { proposer: approvalUnavailableProposer, bind: () => {} };
+}
