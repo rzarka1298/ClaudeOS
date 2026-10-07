@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { HOSTILE_TASK_TITLES } from "@ccc/domain/task-corpus.js";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { createRef } from "preact";
@@ -528,4 +531,27 @@ describe("Test 12: hostile text", () => {
     render(<TaskDetail {...props(detailTask({ projectId: projectIdFor(1) }))} />);
     expect((field("Project") as HTMLSelectElement).value).toBe(projectIdFor(1));
   });
+});
+
+describe("Prohibition (TASK-08, T-06-24): the forms and the pane call only injected functions", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const FILES = ["task-form.tsx", "task-detail.tsx", "attention-list.tsx"] as const;
+
+  it.each(FILES)(
+    "%s imports no service client, connector, executor, signal or obsidian",
+    (file) => {
+      const source = readFileSync(join(here, file), "utf8");
+      const specifiers = [
+        ...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+["']([^"']+)["']/gms),
+      ].map((match) => match[1] as string);
+      expect(specifiers.length).toBeGreaterThan(0);
+      for (const specifier of specifiers) {
+        expect(specifier, `${file} imports ${specifier}`).not.toMatch(
+          /obsidian|service-api-client|connector|executor|signals|approvals\/|tasks\/|projects\//i,
+        );
+      }
+      expect(source).not.toMatch(/Date\.now\s*\(/);
+      expect(source).not.toMatch(/\bfetch\s*\(/);
+    },
+  );
 });
