@@ -187,6 +187,19 @@ describe("Test 5: the plugin's own writes", () => {
     expect(changed.mock.calls[1]?.[0]).toEqual({ paths: [WS_NOTE] });
   });
 
+  it("codex-2: an echo is matched once, so an external modify 500 ms later still reaches the index", async () => {
+    const { host, clock, watch, changed, flush } = setup();
+    host.setLayoutReady();
+    watch.ownWrites.record(NOTE);
+    host.emitVaultEvent("modify", file(NOTE));
+    await flush();
+    expect(changed).not.toHaveBeenCalled();
+    clock.now += 500;
+    host.emitVaultEvent("modify", file(NOTE));
+    await flush();
+    expect(changed.mock.calls[0]?.[0]).toEqual({ paths: [NOTE] });
+  });
+
   it("forgets a recorded write when asked, so an external edit after a conflict is not dropped", () => {
     let now = 0;
     const ledger = createOwnWriteLedger(() => now, 2000);

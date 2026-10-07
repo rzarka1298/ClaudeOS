@@ -31,6 +31,8 @@ export interface OwnWriteLedger {
   record(path: string): void;
   /** Un-marks a path (a write that did not happen, so a later external edit is not dropped). */
   forget(path: string): void;
+  /** Matches a modify event to a recorded write ONCE: true (and the mark is consumed) while one is younger than the window. */
+  consumeEcho(path: string): boolean;
   /** True while a recorded write is younger than the window. */
   isRecent(path: string): boolean;
 }
@@ -49,6 +51,12 @@ export function createOwnWriteLedger(
     },
     forget(path) {
       writes.delete(path);
+    },
+    consumeEcho(path) {
+      const when = writes.get(path);
+      if (when === undefined) return false;
+      writes.delete(path);
+      return now() - when <= windowMs;
     },
     isRecent(path) {
       const when = writes.get(path);
@@ -133,7 +141,7 @@ export function registerTaskVaultWatch(
       }
       // Only the modify event that echoes our own write is dropped; a create,
       // delete or rename inside the window is somebody else's change and always passes.
-      const echo = name === "modify" && ownWrites.isRecent(path);
+      const echo = name === "modify" && ownWrites.consumeEcho(path);
       if (isTaskNotePath(path) && !echo) coalescer.add(path);
       if (old !== null && isTaskNotePath(old)) coalescer.add(old);
     };
