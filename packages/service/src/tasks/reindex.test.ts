@@ -214,3 +214,13 @@ describe("Test 7 (startup walk)", () => {
     expect(indexedIds()).toHaveLength(10_000);
   }, 60_000);
 });
+
+describe("rate-limited rebuild keeps a queued rescan (wave-5 Codex)", () => {
+  it("does not drop a queued rescan when the cached result is returned", () => {
+    expect(services.rebuild().ok).toBe(true);
+    services.changed({ rescan: true });
+    expect(timers.pending()).toBe(1);
+    expect(services.rebuild().ok).toBe(true); // answered from the cache
+    expect(timers.pending()).toBe(1);
+  });
+});

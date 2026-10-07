@@ -166,14 +166,15 @@ export function createReindexer(deps: ReindexDeps): Reindexer {
     walk,
     rebuild() {
       if (usableRoot() === null) return { ok: false, code: "vault-not-set-up" };
-      cancelTimer();
       if (
         lastResult !== null &&
         lastRunAt !== null &&
         deps.now().getTime() - lastRunAt < minInterval
       ) {
+        // Answered from the cache: a queued rescan still has work to reconcile.
         return lastResult;
       }
+      cancelTimer();
       return walk();
     },
     requestRescan() {
