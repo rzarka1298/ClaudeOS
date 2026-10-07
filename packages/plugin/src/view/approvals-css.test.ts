@@ -93,6 +93,24 @@ function declaredValue(selector: string, property: string): string | undefined {
   return undefined;
 }
 
+describe("the approvals stylesheet family: 06-17 visual minors", () => {
+  it("insets the selected row's text so the inset bar never touches the title", () => {
+    expect(declaredValue('.ccc-approval-row[data-selected="true"]', "padding-left")).toBe(
+      "var(--ccc-space-sm)",
+    );
+  });
+
+  it("hides the Select a request prompt where the detail stacks (below 48rem), with no important override", () => {
+    const hiding = ALL_RULES.filter(
+      (rule) =>
+        rule.selectors.includes(".ccc-approvals-select") &&
+        rule.atStack.includes("@container (max-width: 48rem)"),
+    );
+    expect(hiding.length).toBe(1);
+    expect(declarations(hiding[0] as StyleRule)).toEqual([{ property: "display", value: "none" }]);
+  });
+});
+
 describe("the approvals stylesheet family (Test 10)", () => {
   it.each([
     ".ccc-approvals",
@@ -110,6 +128,10 @@ describe("the approvals stylesheet family (Test 10)", () => {
     ".ccc-filter-group",
     ".ccc-filter-chip",
     ".ccc-nav-count",
+    ".ccc-approvals-loading",
+    ".ccc-approvals-pane",
+    ".ccc-approvals-refresh",
+    ".ccc-approvals-select",
   ])("has a rule for %s", (selector) => {
     expect(
       NEW_RULES.some((rule) => rule.selectors.includes(selector)),

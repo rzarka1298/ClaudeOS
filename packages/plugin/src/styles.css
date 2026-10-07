@@ -1473,6 +1473,44 @@
   }
 }
 
+/* The loading skeleton wrapper, the stacked detail pane and the Refresh
+ * approvals button: minimal geometry, tokens only. */
+.ccc-approvals-loading {
+  padding: var(--ccc-space-sm) 0;
+}
+
+.ccc-approvals-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+  min-width: 0;
+}
+
+.ccc-approvals-refresh {
+  min-width: var(--ccc-space-lg);
+  min-height: var(--ccc-space-lg);
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-pill);
+  background: transparent;
+  color: var(--ccc-ink);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  cursor: pointer;
+}
+
+.ccc-approvals-refresh:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* The empty detail prompt only makes sense beside the list. */
+@container (max-width: 48rem) {
+  .ccc-approvals-select {
+    display: none;
+  }
+}
+
 /* "Back to requests" exists as a control only where the detail stacks. */
 .ccc-approvals-back {
   display: none;
@@ -1523,6 +1561,7 @@
 .ccc-approval-row[data-selected="true"] {
   background-color: var(--ccc-surface);
   box-shadow: inset var(--ccc-focus-ring) 0 0 0 var(--ccc-ink);
+  padding-left: var(--ccc-space-sm);
 }
 
 .ccc-approval-row-button {

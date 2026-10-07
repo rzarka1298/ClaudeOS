@@ -496,7 +496,7 @@ export function ApprovalsSection({ now, onOpenRun, refreshOne }: ApprovalsSectio
           {(stale || errored) && (
             <button
               type="button"
-              className="ccc-list-more"
+              className="ccc-list-more ccc-approvals-refresh"
               aria-disabled={refreshing ? "true" : undefined}
               aria-busy={refreshing ? "true" : undefined}
               onClick={() => {
@@ -574,7 +574,7 @@ export function ApprovalsSection({ now, onOpenRun, refreshOne }: ApprovalsSectio
               )}
             </div>
             {selected === null ? (
-              <div className="ccc-detail-pane">
+              <div className="ccc-detail-pane ccc-approvals-select">
                 <p className="ccc-state-body">{SELECT_PROMPT}</p>
               </div>
             ) : (
