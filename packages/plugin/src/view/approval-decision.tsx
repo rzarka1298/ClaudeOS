@@ -56,6 +56,12 @@ export interface DecisionSubject {
   readonly run: { readonly runId: string; readonly name: string } | null;
 }
 
+const FINISHED_AFTER_APPROVAL: ReadonlyMap<string, true> = new Map([
+  ["executed", true],
+  ["failed", true],
+  ["unknown", true],
+]);
+
 export function subjectOfView(view: ApprovalItemView): DecisionSubject {
   return {
     proposalId: view.proposalId,
@@ -299,8 +305,22 @@ export function ApprovalDecision(props: ApprovalDecisionProps): VNode {
     switch (response.outcome) {
       case "decided": {
         const approved = decision === "approve";
-        props.announce(approved ? APPROVAL_STATUS.approved : APPROVAL_STATUS.denied);
-        props.notify(approved ? approvedNotice(subject.title) : deniedNotice(subject.title));
+        const finished = approved
+          ? FINISHED_AFTER_APPROVAL.get(response.approval.state)
+          : undefined;
+        if (finished !== undefined) {
+          // The outcome already arrived (the event beat this response): report it, not "carrying out".
+          const settled = settledStatus(
+            response.approval.state,
+            subject.title,
+            response.approval.outcomeCode,
+          );
+          props.announce(settled.status);
+          if (settled.notice !== null) props.notify(settled.notice);
+        } else {
+          props.announce(approved ? APPROVAL_STATUS.approved : APPROVAL_STATUS.denied);
+          props.notify(approved ? approvedNotice(subject.title) : deniedNotice(subject.title));
+        }
         await followUp(false, true, response.approval.state);
         return;
       }

@@ -607,6 +607,36 @@ describe("Test 6 (arrival announcement)", () => {
   });
 });
 
+describe("M3 (finished state arrives before the decide response)", () => {
+  it("announces the settled outcome once when the SSE finished-state beat the HTTP answer", async () => {
+    const view = approvalView();
+    const decided = decidedView("approved");
+    const gate = deferred<DecideResponse>();
+    const { notice } = install({
+      detail: (_id, call) => approvalDetail(call === 1 ? view : decided),
+      decide: () => gate.promise,
+    });
+    hydrate([summaryOf(view)]);
+    const { container } = renderSection();
+    fireEvent.click(screen.getByRole("button", { name: view.title }));
+    const approve = await screen.findByRole("button", { name: /^Approve once/ });
+    await waitFor(() => expect(approve.getAttribute("aria-disabled")).toBeNull());
+    fireEvent.click(approve);
+    await update(() =>
+      applyApprovalSummary(
+        summary(1, "executed", 9, { title: view.title, expiresAt: view.expiresAt }),
+      ),
+    );
+    gate.resolve({ outcome: "decided", approval: summaryOf(decided) });
+    await waitFor(() => expect(statusText(container)).toBe("Carried out."));
+    expect(approvalsById.value.get(view.proposalId)?.state).toBe("executed");
+    expect(notice).toHaveBeenCalledWith(`${view.title}: Carried out.`);
+    expect(notice.mock.calls.filter(([text]) => String(text).includes("Carried out")).length).toBe(
+      1,
+    );
+  });
+});
+
 describe("Test 7 (section states)", () => {
   it("loading: three skeleton lines, aria-busy, hidden label, chips without counts", async () => {
     install({ list: () => new Promise<ApprovalsSnapshot>(() => {}) });

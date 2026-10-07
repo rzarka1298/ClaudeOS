@@ -440,6 +440,14 @@ export function ApprovalsSection({ now, onOpenRun, refreshOne }: ApprovalsSectio
         approvedHere.current.set(input.proposalId, response.approval.title);
       }
       applyApprovalSummary(response.approval);
+      // The finished-state event can beat this answer; the older summary is then
+      // rejected and the byId effect never fires. Hand back what is stored, so the
+      // decision form reports the settled outcome (once: the entry is spent here).
+      const stored = approvalsById.peek().get(input.proposalId);
+      if (stored !== undefined && FINISHED_STATES.has(stored.state)) {
+        approvedHere.current.delete(input.proposalId);
+        return { ...response, approval: stored };
+      }
     }
     return response;
   }
