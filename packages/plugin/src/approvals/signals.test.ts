@@ -150,3 +150,29 @@ describe("no approval state in the settings (D-21, T-06-13)", () => {
     for (const source of approvalSources) expect(source).not.toMatch(/\.subscribe\(/);
   });
 });
+
+describe("entries omitted from a truncated snapshot (06-w3 finding 3)", () => {
+  it("does not count the later update of an omitted request as a new one", () => {
+    adoptApprovalsSnapshot(
+      approvalsSnapshot({
+        decided: [summary(1, "executed", 2)],
+        truncated: true,
+        counts: { pending: 0, decided: 2, expired: 0 },
+      }),
+    );
+    // Request 2 is in the authoritative total of 2 but was omitted from the list.
+    applyApprovalSummary(summary(2, "executed", 3));
+    expect(approvalsCounts.value).toEqual({ pending: 0, decided: 2, expired: 0 });
+  });
+
+  it("still counts a genuinely new request (first revision) on a truncated inbox", () => {
+    adoptApprovalsSnapshot(
+      approvalsSnapshot({
+        truncated: true,
+        counts: { pending: 4, decided: 0, expired: 0 },
+      }),
+    );
+    applyApprovalSummary(summary(9, "pending", 1));
+    expect(approvalsCounts.value.pending).toBe(5);
+  });
+});

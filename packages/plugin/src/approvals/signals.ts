@@ -109,7 +109,10 @@ export function applyApprovalSummary(summary: ApprovalSummary): boolean {
 
   const to = bucketOf(summary);
   if (existing === undefined) {
-    approvalsCounts.value = withDelta(approvalsCounts.value, to, 1);
+    // On a truncated inbox an unknown id past its first revision is an update of
+    // an entry the snapshot omitted: the authoritative totals already count it.
+    const omittedEarlier = approvalsTruncated.value && summary.revision > 1;
+    if (!omittedEarlier) approvalsCounts.value = withDelta(approvalsCounts.value, to, 1);
   } else {
     const from = bucketOf(existing);
     if (from !== to) {
