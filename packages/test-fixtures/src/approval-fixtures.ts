@@ -96,9 +96,11 @@ export interface CountingPayload {
   readonly lines?: readonly string[];
   /** A requester-supplied target value. */
   readonly value?: string;
+  /** A requester-supplied title (the largest-summary fixtures use this). */
+  readonly title?: string;
 }
 
-const PAYLOAD_KEYS: ReadonlySet<string> = new Set(["note", "lines", "value"]);
+const PAYLOAD_KEYS: ReadonlySet<string> = new Set(["note", "lines", "value", "title"]);
 
 /** The operation definition's own payload-schema type, so no schema library is imported here. */
 type PayloadSchema = OperationDefinition<EnabledOperation, CountingPayload>["payload"];
@@ -114,8 +116,9 @@ const countingPayloadSchema = {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return failure;
     const record = raw as Record<string, unknown>;
     for (const key of Object.keys(record)) if (!PAYLOAD_KEYS.has(key)) return failure;
-    const { note, lines, value } = record;
+    const { note, lines, value, title } = record;
     if (note !== undefined && typeof note !== "string") return failure;
+    if (title !== undefined && typeof title !== "string") return failure;
     if (value !== undefined && typeof value !== "string") return failure;
     if (lines !== undefined) {
       if (!Array.isArray(lines) || lines.some((line) => typeof line !== "string")) return failure;
@@ -177,7 +180,7 @@ export interface CountingOperation {
 export function draftOf(payload: CountingPayload): ApprovalItemDraft {
   const fromRequester = payload.lines !== undefined;
   return {
-    title: "Run the fixture action",
+    title: payload.title ?? "Run the fixture action",
     destructive: false,
     effect: null,
     action: "The command center will run a fixture action.",
@@ -600,6 +603,8 @@ export function createWorld(options: WorldOptions = {}): World {
 export interface OpenEngineOptions {
   /** The longest claim facts may take; defaults to the engine's own. */
   readonly claimFactsTimeoutMs?: number;
+  /** The display name of a registered project, or null. */
+  readonly projectName?: (projectId: string) => string | null;
 }
 
 export interface OpenedEngine {
@@ -621,6 +626,8 @@ export interface OpenedEngine {
   decide(proposalId: string, decision?: "approve" | "deny"): ReturnType<ApprovalEngine["decide"]>;
   /** Closes the database handle. Nothing may be called on the engine afterwards. */
   close(): void;
+  /** True once `close` has run. */
+  readonly isClosed: boolean;
 }
 
 /** Opens (and migrates) the database at `dbPath` and builds the real engine over it. A second call on the same path is a restart. */
@@ -656,6 +663,7 @@ export function openEngine(
     ...(options.claimFactsTimeoutMs === undefined
       ? {}
       : { claimFactsTimeoutMs: options.claimFactsTimeoutMs }),
+    ...(options.projectName === undefined ? {} : { projectName: options.projectName }),
   });
 
   let closed = false;
@@ -699,6 +707,9 @@ export function openEngine(
         via: "plugin",
       });
     },
+    get isClosed() {
+      return closed;
+    },
     close() {
       if (closed) return;
       closed = true;
@@ -717,6 +728,8 @@ function createTempDatabase(): { readonly dbPath: string; cleanup(): void } {
 }
 
 export interface Rigs {
+  /** Every engine opened so far, closed ones included. */
+  readonly engines: readonly OpenedEngine[];
   /** A fresh database in a throwaway directory with a fresh world, all removed by `dispose`. */
   start(options?: WorldOptions & OpenEngineOptions): OpenedEngine;
   /** Another engine on the same database file and world: a second connection, or a restart after a crash. */
@@ -728,6 +741,7 @@ export function createRigs(): Rigs {
   const opened: OpenedEngine[] = [];
   const cleanups: (() => void)[] = [];
   return {
+    engines: opened,
     start(options = {}) {
       const temp = createTempDatabase();
       cleanups.push(temp.cleanup);
@@ -741,7 +755,8 @@ export function createRigs(): Rigs {
       return engine;
     },
     dispose() {
-      for (const engine of opened.splice(0)) engine.close();
+      for (const engine of opened) engine.close();
+      opened.length = 0;
       for (const cleanup of cleanups.splice(0)) cleanup();
     },
   };
@@ -897,11 +912,24 @@ export function auditPathProblems(
   return problems;
 }
 
-// RED skeleton for plan 06-24 task 3: the audit-row inserter and the byte
-// counter follow, with the engine list, the closed flag, the project-name
-// option and the payload title.
-const notImplemented = (..._args: unknown[]): never => {
-  throw new Error("not implemented yet (RED)");
-};
-export const insertAuditRows = notImplemented;
-export const utf8Bytes = notImplemented;
+/**
+ * Appends audit rows straight to the table, to build the longest history a
+ * detail view can show. The rows are fabricated: a request that has them is
+ * not a legal path and must be left out of the audit-completeness checks.
+ */
+export function insertAuditRows(
+  db: Db,
+  proposalId: string,
+  events: readonly ApprovalAuditEvent[],
+  at: string,
+): void {
+  const insert = db.prepare(
+    "INSERT INTO approval_audit (proposal_id, event, at, decided_via, payload_hash, detail) VALUES (?, ?, ?, NULL, NULL, NULL)",
+  );
+  for (const event of events) insert.run(proposalId, event, at);
+}
+
+/** The size of a value serialised as JSON, in UTF-8 bytes: what the client's response cap counts. */
+export function utf8Bytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}

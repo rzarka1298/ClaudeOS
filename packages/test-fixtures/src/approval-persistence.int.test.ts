@@ -2,10 +2,10 @@ import {
   APPROVAL_RESPONSE_BUDGET_BYTES,
   ApprovalDetailResponseSchema,
   ApprovalItemViewSchema,
-  ApprovalsSnapshotSchema,
-  ApprovalSummarySchema,
-  ApprovalUpsertedPayloadSchema,
   type ApprovalSummary,
+  ApprovalSummarySchema,
+  ApprovalsSnapshotSchema,
+  ApprovalUpsertedPayloadSchema,
   HOSTILE_CORPUS,
   type ProposalId,
   type ProposalState,
@@ -29,8 +29,8 @@ import {
   createRigs,
   FIXTURE_EPOCH,
   insertAuditRows,
-  logViolations,
   type LoggedLine,
+  logViolations,
   type OpenedEngine,
   readAudit,
   restart,
@@ -94,6 +94,16 @@ afterEach(() => {
   }
   rigs.dispose();
 });
+
+/** True when the text cannot be encoded as well-formed UTF-8 (a lone surrogate). */
+function hasLoneSurrogate(text: string): boolean {
+  try {
+    encodeURIComponent(text);
+    return false;
+  } catch {
+    return true;
+  }
+}
 
 function wrapped(approvals: unknown): SnapshotResponse {
   return {
@@ -311,7 +321,12 @@ describe("Test 5: expiry while the service was down", () => {
     const summary = await next.engine.recover();
     expect(summary.expired).toBe(2);
     expect(next.engine.list("pending").map((entry) => entry.proposalId)).toEqual([keeper]);
-    expect(next.engine.list("expired").map((entry) => entry.proposalId).sort()).toEqual([...ids].sort());
+    expect(
+      next.engine
+        .list("expired")
+        .map((entry) => entry.proposalId)
+        .sort(),
+    ).toEqual([...ids].sort());
     for (const id of ids) {
       expect(readAudit(next.db, id).map((entry) => entry.event)).toEqual(["requested", "expired"]);
     }
@@ -350,27 +365,34 @@ describe("Test 6: response size (T-06-30)", () => {
   it.each([
     ["multibyte (CJK)", (n: number) => CJK.repeat(n)],
     ["ASCII", (n: number) => "m".repeat(n)],
-  ])("keeps the largest snapshot (%s) under the budget and the client cap, never dropping a pending request", async (label, text) => {
-    const rig = rigs.start({ projectName: () => text(120) });
-    const pending = await fullInbox(rig, text);
-    expect(pending).toHaveLength(50);
+  ])(
+    "keeps the largest snapshot (%s) under the budget and the client cap, never dropping a pending request",
+    async (label, text) => {
+      const rig = rigs.start({ projectName: () => text(120) });
+      const pending = await fullInbox(rig, text);
+      expect(pending).toHaveLength(50);
 
-    const snapshot = rig.engine.snapshot();
-    const bytes = utf8Bytes(snapshot);
-    // Measured, printed for the record.
-    console.log(`approval snapshot size (${label}): ${bytes} bytes (budget ${APPROVAL_RESPONSE_BUDGET_BYTES}, client cap ${CLIENT_CAP_BYTES})`);
-    expect(bytes).toBeLessThanOrEqual(APPROVAL_RESPONSE_BUDGET_BYTES);
-    expect(bytes).toBeLessThan(CLIENT_CAP_BYTES);
-    ApprovalsSnapshotSchema.parse(snapshot);
-    expect(snapshot.pending.map((summary) => summary.proposalId).sort()).toEqual([...pending].sort());
-    expect(snapshot.counts).toEqual({ pending: 50, decided: 50, expired: 50 });
-    // The lists are bounded below the counts, and the snapshot says so.
-    expect(snapshot.truncated).toBe(true);
-    expect(snapshot.decided.length).toBeLessThanOrEqual(50);
-    // The whole resync response the plugin receives stays under the cap too.
-    expect(utf8Bytes(wrapped(snapshot))).toBeLessThan(CLIENT_CAP_BYTES);
-    expect(snapshot.pending.every((summary) => summary.title.length > 0)).toBe(true);
-  });
+      const snapshot = rig.engine.snapshot();
+      const bytes = utf8Bytes(snapshot);
+      // Measured, printed for the record.
+      console.log(
+        `approval snapshot size (${label}): ${bytes} bytes (budget ${APPROVAL_RESPONSE_BUDGET_BYTES}, client cap ${CLIENT_CAP_BYTES})`,
+      );
+      expect(bytes).toBeLessThanOrEqual(APPROVAL_RESPONSE_BUDGET_BYTES);
+      expect(bytes).toBeLessThan(CLIENT_CAP_BYTES);
+      ApprovalsSnapshotSchema.parse(snapshot);
+      expect(snapshot.pending.map((summary) => summary.proposalId).sort()).toEqual(
+        [...pending].sort(),
+      );
+      expect(snapshot.counts).toEqual({ pending: 50, decided: 50, expired: 50 });
+      // The lists are bounded below the counts, and the snapshot says so.
+      expect(snapshot.truncated).toBe(true);
+      expect(snapshot.decided.length).toBeLessThanOrEqual(50);
+      // The whole resync response the plugin receives stays under the cap too.
+      expect(utf8Bytes(wrapped(snapshot))).toBeLessThan(CLIENT_CAP_BYTES);
+      expect(snapshot.pending.every((summary) => summary.title.length > 0)).toBe(true);
+    },
+  );
 
   it("trims decided and expired first under a tighter budget, keeping true counts", async () => {
     const rig = rigs.start();
@@ -397,7 +419,12 @@ describe("Test 6: response size (T-06-30)", () => {
     });
     // Twenty-five fabricated events so the history shows its newest twenty.
     fabricated.add(id);
-    insertAuditRows(rig.db, id, Array.from({ length: 25 }, () => "outcome-unknown" as const), FIXTURE_EPOCH);
+    insertAuditRows(
+      rig.db,
+      id,
+      Array.from({ length: 25 }, () => "outcome-unknown" as const),
+      FIXTURE_EPOCH,
+    );
 
     const detail = rig.engine.get(id);
     expect(detail.kind).toBe("found");
@@ -410,7 +437,9 @@ describe("Test 6: response size (T-06-30)", () => {
       payloadHash: rig.hashOf(id),
     };
     const bytes = utf8Bytes(response);
-    console.log(`approval detail size (largest view): ${bytes} bytes (budget ${APPROVAL_RESPONSE_BUDGET_BYTES}, client cap ${CLIENT_CAP_BYTES})`);
+    console.log(
+      `approval detail size (largest view): ${bytes} bytes (budget ${APPROVAL_RESPONSE_BUDGET_BYTES}, client cap ${CLIENT_CAP_BYTES})`,
+    );
     expect(bytes).toBeLessThan(CLIENT_CAP_BYTES);
     ApprovalDetailResponseSchema.parse(response);
     expect(detail.view?.reviewable).toBe(false);
@@ -424,9 +453,24 @@ describe("Test 7: the audit is complete, legal and immutable (APPR-08, T-06-07)"
   it("records the decision channel on approvals and denials", async () => {
     const rig = rigs.start();
     const [a, b, c] = raise(rig, 3) as [ProposalId, ProposalId, ProposalId];
-    await rig.engine.decide({ proposalId: a, decision: "approve", payloadHash: rig.hashOf(a), via: "plugin" });
-    await rig.engine.decide({ proposalId: b, decision: "deny", payloadHash: rig.hashOf(b), via: "other" });
-    await rig.engine.decide({ proposalId: c, decision: "deny", payloadHash: rig.hashOf(c), via: "plugin" });
+    await rig.engine.decide({
+      proposalId: a,
+      decision: "approve",
+      payloadHash: rig.hashOf(a),
+      via: "plugin",
+    });
+    await rig.engine.decide({
+      proposalId: b,
+      decision: "deny",
+      payloadHash: rig.hashOf(b),
+      via: "other",
+    });
+    await rig.engine.decide({
+      proposalId: c,
+      decision: "deny",
+      payloadHash: rig.hashOf(c),
+      via: "plugin",
+    });
     await rig.engine.settled();
     const via = (id: ProposalId, event: string) =>
       readAudit(rig.db, id).find((entry) => entry.event === event)?.decidedVia;
@@ -488,7 +532,7 @@ describe("Test 8: a hostile requester end to end", () => {
         });
         if (clean.kind === "rejected") {
           // Text that cannot be written as well-formed JSON (a lone surrogate) is refused outright.
-          expect(entry.text.isWellFormed(), entry.name).toBe(false);
+          expect(hasLoneSurrogate(entry.text), entry.name).toBe(true);
           expect(clean.reason).toBe("invalid-payload");
           continue;
         }
@@ -503,7 +547,11 @@ describe("Test 8: a hostile requester end to end", () => {
     expect(accepted).toBeGreaterThan(0);
   });
 
-  function checkView(rig: OpenedEngine, id: ProposalId, entry: (typeof HOSTILE_CORPUS)[number]): void {
+  function checkView(
+    rig: OpenedEngine,
+    id: ProposalId,
+    entry: (typeof HOSTILE_CORPUS)[number],
+  ): void {
     const detail = rig.engine.get(id);
     expect(detail.kind, entry.name).toBe("found");
     if (detail.kind !== "found" || detail.view === null) return;
@@ -553,7 +601,11 @@ describe("Test 9: the log carried only allow-listed keys and short values", () =
     }
     expect(loggedLines.length).toBeGreaterThan(20);
     expect(logViolations(loggedLines)).toEqual([]);
-    const codes = new Set(loggedLines.flatMap((line) => (typeof line.fields.code === "string" ? [line.fields.code] : [])));
+    const codes = new Set(
+      loggedLines.flatMap((line) =>
+        typeof line.fields.code === "string" ? [line.fields.code] : [],
+      ),
+    );
     for (const code of ["submitted", "approved", "denied", "executed", "swept", "recovered"]) {
       expect(codes.has(code), `no ${code} log line was ever recorded`).toBe(true);
     }
