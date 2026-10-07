@@ -5,7 +5,7 @@ import type {
   TaskListResponse,
   TaskRow,
 } from "@ccc/domain/tasks.js";
-import { vi } from "vitest";
+import { type Mock, vi } from "vitest";
 import { type TasksApi, TasksApiError } from "../tasks/api.js";
 import { taskRow } from "./task-view-fixtures.js";
 
@@ -30,7 +30,7 @@ export function listOf(rows: readonly TaskRow[], total = rows.length): TaskListR
 
 export const NO_ATTENTION: TaskAttentionResponse = { items: [], total: 0, nextCursor: null };
 
-export type FakeTasksApi = { [K in keyof TasksApi]: ReturnType<typeof vi.fn> } & TasksApi;
+export type FakeTasksApi = { [K in keyof TasksApi]: Mock };
 
 /** A task API whose every function is a spy with a sensible default answer. */
 export function fakeTasksApi(

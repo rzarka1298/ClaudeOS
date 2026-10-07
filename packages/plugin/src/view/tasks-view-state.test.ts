@@ -38,7 +38,7 @@ describe("Test 6: the view state", () => {
 
   it("persists nothing", () => {
     createTasksViewState().status.value = "x";
-    expect(globalThis.localStorage?.length ?? 0).toBe(0);
+    expect(window.localStorage.length).toBe(0);
   });
 
   it("lists no workspaces unless a loader is configured, and none when it fails", async () => {

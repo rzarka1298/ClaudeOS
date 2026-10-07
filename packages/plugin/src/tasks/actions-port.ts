@@ -22,13 +22,13 @@ export interface TaskNoteTarget {
 }
 
 export interface TaskActionsPort {
-  complete(target: TaskNoteTarget): Promise<TaskActionResult>;
-  reopen(target: TaskNoteTarget): Promise<TaskActionResult>;
-  accept(target: TaskNoteTarget): Promise<TaskActionResult>;
-  dismiss(target: TaskNoteTarget): Promise<TaskActionResult>;
-  save(target: TaskNoteTarget, input: TaskSaveInput): Promise<TaskActionResult>;
-  readForEdit(path: string): Promise<ReadTaskResult>;
-  openNote(path: string): void;
+  readonly complete: (target: TaskNoteTarget) => Promise<TaskActionResult>;
+  readonly reopen: (target: TaskNoteTarget) => Promise<TaskActionResult>;
+  readonly accept: (target: TaskNoteTarget) => Promise<TaskActionResult>;
+  readonly dismiss: (target: TaskNoteTarget) => Promise<TaskActionResult>;
+  readonly save: (target: TaskNoteTarget, input: TaskSaveInput) => Promise<TaskActionResult>;
+  readonly readForEdit: (path: string) => Promise<ReadTaskResult>;
+  readonly openNote: (path: string) => void;
 }
 
 const UNAVAILABLE = { kind: "unreadable", reason: "read-failed" } as const;

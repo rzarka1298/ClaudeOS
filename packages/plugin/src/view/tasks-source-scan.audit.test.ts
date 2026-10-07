@@ -27,7 +27,19 @@ const FILES = [
   "task-detail.tsx",
   "attention-list.tsx",
 ] as const;
-const SOURCES = FILES.map((file) => [file, readFileSync(join(HERE, file), "utf8")] as const);
+/** The containers (06-22): they read signals and the API and port holders, so their import rule differs. */
+const CONTAINER_FILES = ["tasks.tsx", "tasks-workspace.tsx", "tasks-view-state.ts"] as const;
+const COMPONENT_SOURCES = FILES.map(
+  (file) => [file, readFileSync(join(HERE, file), "utf8")] as const,
+);
+const CONTAINER_SOURCES = CONTAINER_FILES.map(
+  (file) => [file, readFileSync(join(HERE, file), "utf8")] as const,
+);
+const SOURCES = [...COMPONENT_SOURCES, ...CONTAINER_SOURCES];
+
+/** What a container may import: the domain, preact, signals, its siblings and the plugin's own holders. */
+const ALLOWED_CONTAINER_IMPORT =
+  /^(@ccc\/domain\/[\w./-]+|preact(\/hooks)?|@preact\/signals|\.\/[\w-]+\.js|\.\.\/connection-state\.js|\.\.\/projects\/projects-state\.js|\.\.\/tasks\/(api|contexts|events|rebuild|actions-port)\.js|\.\.\/widgets\/(footer|presentation)\.js)$/;
 
 /** The DOM HTML-injection sinks, assembled so this file names none of them (backstop rule 6). */
 const MARKUP = "HTML";
@@ -84,18 +96,28 @@ describe("the Tasks list view files (UI-SPEC floor 12, T-06-13)", () => {
 
   it("states the closed set of files it checks is non-empty, so a rename cannot hollow the scan out", () => {
     expect(SOURCES.every(([, source]) => source.length > 200)).toBe(true);
+    expect(SOURCES).toHaveLength(FILES.length + CONTAINER_FILES.length);
   });
 });
 
 describe("the Tasks list view files stay props-driven and inert (TASK-08, T-06-24, T-06-25)", () => {
-  it.each(SOURCES)("%s imports only the domain, preact and its own siblings", (file, source) => {
-    const specifiers = importSpecifiers(source);
-    for (const specifier of specifiers) {
-      expect(specifier, `${file} imports ${specifier}`).toMatch(ALLOWED_IMPORT);
+  it.each(COMPONENT_SOURCES)(
+    "%s imports only the domain, preact and its own siblings",
+    (file, source) => {
+      const specifiers = importSpecifiers(source);
+      for (const specifier of specifiers) {
+        expect(specifier, `${file} imports ${specifier}`).toMatch(ALLOWED_IMPORT);
+      }
+    },
+  );
+
+  it.each(CONTAINER_SOURCES)("%s imports only the holders it is allowed", (file, source) => {
+    for (const specifier of importSpecifiers(source)) {
+      expect(specifier, `${file} imports ${specifier}`).toMatch(ALLOWED_CONTAINER_IMPORT);
     }
   });
 
-  it.each(SOURCES)(
+  it.each(COMPONENT_SOURCES)(
     "%s imports no service client, connector, executor, signal or obsidian",
     (file, source) => {
       for (const specifier of importSpecifiers(source)) {
@@ -125,7 +147,7 @@ describe("the Tasks list view files stay props-driven and inert (TASK-08, T-06-2
   );
 
   it("lets a row action call only the injected function for that row", () => {
-    const list = SOURCES.find(([file]) => file === "task-list.tsx")?.[1] ?? "";
+    const list = COMPONENT_SOURCES.find(([file]) => file === "task-list.tsx")?.[1] ?? "";
     const calls = [...list.matchAll(/props\.(on[A-Z]\w*)\??\.?\(/g)].map((match) => match[1]);
     expect(new Set(calls)).toEqual(new Set(["onAction", "onLoadMore", "onCreate", "onSelect"]));
     expect(list).toMatch(/props\.onAction\(action, row\)/);

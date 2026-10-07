@@ -84,7 +84,7 @@ describe("Test 2: create", () => {
     const { api } = mount();
     await screen.findByText("Task 1");
     fireEvent.click(screen.getByRole("button", { name: "Create a task" }));
-    const title = (await screen.findByLabelText("Title")) as HTMLInputElement;
+    const title = await screen.findByLabelText("Title");
     await waitFor(() => expect(document.activeElement).toBe(title));
     const status = document.querySelector('.ccc-tasks-status[role="status"]');
     expect(status).not.toBeNull();
@@ -122,7 +122,7 @@ describe("Test 3: intents", () => {
     mount();
     await screen.findByText("Task 1");
     expect(screen.queryByLabelText("Title")).toBeNull();
-    act(() => {
+    await act(() => {
       taskFormRequested.value = true;
     });
     expect(await screen.findByLabelText("Title")).toBeTruthy();
@@ -135,7 +135,7 @@ describe("Test 4: generation", () => {
     const { api, context } = mount();
     await screen.findByText("Task 1");
     context.select("0mfk1a2b300000000000000001");
-    act(() => {
+    await act(() => {
       tasksGeneration.value = 5;
     });
     await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
