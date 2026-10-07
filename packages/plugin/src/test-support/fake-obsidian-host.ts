@@ -346,9 +346,13 @@ export class FakeObsidianHost {
   }
 
   /** Delivers a vault event to every ACTIVE handler for `name`. */
-  emitVaultEvent(name: string, payload?: unknown): void {
+  emitVaultEvent(name: string, payload?: unknown, ...rest: unknown[]): void {
     for (const entry of [...this.vaultEvents]) {
-      if (entry.active && entry.name === name) entry.handler(payload);
+      // Obsidian's `rename` event also carries the old path; the registry types the handler
+      // with one parameter, so the extras are passed through an untyped call.
+      if (entry.active && entry.name === name) {
+        (entry.handler as (...args: unknown[]) => void)(payload, ...rest);
+      }
     }
   }
 
