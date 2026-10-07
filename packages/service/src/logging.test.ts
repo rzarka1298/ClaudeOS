@@ -195,7 +195,10 @@ describe("approval payload redaction (06-12 Task 3)", () => {
 
     it("a payload deeper than five parent levels is not covered by paths, which is why the engine never logs one", () => {
       const logger = createLogger(logPath);
-      logger.info({ a: { b: { c: { d: { e: { f: { payload: "CANARY-TOO-DEEP" } } } } } } }, "documented limit");
+      logger.info(
+        { a: { b: { c: { d: { e: { f: { payload: "CANARY-TOO-DEEP" } } } } } } },
+        "documented limit",
+      );
       expect(readFileSync(logPath, "utf8")).toContain("CANARY-TOO-DEEP");
     });
   });
