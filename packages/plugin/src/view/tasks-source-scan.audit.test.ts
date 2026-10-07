@@ -33,6 +33,7 @@ const CONTAINER_FILES = [
   "tasks-workspace.tsx",
   "tasks-view-state.ts",
   "tasks-detail-model.ts",
+  "project-tasks.tsx",
 ] as const;
 const COMPONENT_SOURCES = FILES.map(
   (file) => [file, readFileSync(join(HERE, file), "utf8")] as const,
