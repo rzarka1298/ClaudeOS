@@ -191,9 +191,9 @@ describe("Test 5: context behaviour", () => {
     const global = createTasksContext("global", { zone: () => "UTC" });
     global.setProject(PROJECT);
     await global.load();
-    expect(list.mock.calls[0]?.[0].context).toEqual({ scope: "all" });
+    expect(list.mock.calls[0]?.[0]?.context).toEqual({ scope: "all" });
     await global.setFilter("project");
-    expect(list.mock.calls[1]?.[0].context).toEqual({ scope: "all", projectId: PROJECT });
+    expect(list.mock.calls[1]?.[0]?.context).toEqual({ scope: "all", projectId: PROJECT });
     for (const call of counts.mock.calls)
       expect((call[0] as { context: object }).context).toEqual({ scope: "all" });
   });
@@ -216,13 +216,13 @@ describe("Test 6: the zone", () => {
     const zone = vi.fn(() => "Europe/Paris");
     await createTasksContext("global", { zone }).load();
     expect(zone).toHaveBeenCalledTimes(1);
-    expect(list.mock.calls[0]?.[0].zone).toBe("Europe/Paris");
-    expect((counts.mock.calls[0]?.[0] as { zone: string }).zone).toBe("Europe/Paris");
+    expect(list.mock.calls[0]?.[0]?.zone).toBe("Europe/Paris");
+    expect(counts.mock.calls[0]?.[0]).toMatchObject({ zone: "Europe/Paris" });
   });
 
   it("falls back to the runtime's resolved zone when the supplied one is invalid", async () => {
     const { list } = install();
     await createTasksContext("global", { zone: () => "Not/AZone" }).load();
-    expect(list.mock.calls[0]?.[0].zone).toBe(resolvedZone());
+    expect(list.mock.calls[0]?.[0]?.zone).toBe(resolvedZone());
   });
 });
