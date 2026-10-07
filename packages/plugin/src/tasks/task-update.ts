@@ -250,6 +250,13 @@ export async function updateTaskNote(
 
   const body = edit.changes.description ?? read.task.body;
   const next = `---\n${serializeTaskFrontmatter(validated.data, read.task.passthrough)}---\n${body}`;
+  // Never write what the readers (service parseTaskNote, this module's parse) would
+  // refuse: the whole-file and frontmatter limits, the alias-expansion bound and the
+  // schema are all re-checked on the exact bytes about to be written.
+  const reread = parseTaskContent(next);
+  if (reread.kind === "unreadable") {
+    return { kind: "invalid", fields: { note: reread.reason } };
+  }
   const outcome = await applyConflictSafeUpdate(vault, file, expectedPriorContent, () => next);
   return outcome === "conflict"
     ? { kind: "conflict" }

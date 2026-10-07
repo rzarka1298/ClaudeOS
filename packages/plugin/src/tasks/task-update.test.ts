@@ -216,3 +216,44 @@ describe("Test 9: export and purity", () => {
     }
   });
 });
+
+describe("codex-1: an edit never writes what the readers reject", () => {
+  it("refuses a completion that would push a valid note over the whole-file limit", async () => {
+    const base = OPEN_NOTE.slice(0, OPEN_NOTE.length - 1);
+    const full = `${base}${"x".repeat(TASK_FILE_MAX_BYTES - Buffer.byteLength(base) - 1)}\n`;
+    expect(Buffer.byteLength(full)).toBeLessThanOrEqual(TASK_FILE_MAX_BYTES);
+    expect(parseTaskContent(full).kind).toBe("ok");
+    const { vault, file } = setup(full);
+    const result = await updateTaskNote(vault, file, full, {
+      now: NOW,
+      changes: { status: "done", completed: NOW },
+    });
+    expect(result.kind).toBe("invalid");
+    expect(vault.read(TASK_PATH)).toBe(full);
+    expect(vault.processCallCount).toBe(0);
+  });
+
+  it("refuses an edit whose alias-expanded passthrough would exceed the frontmatter limit", async () => {
+    const refs = Array.from({ length: 150 }, () => "  - *a").join("\n");
+    const note = OPEN_NOTE.replace(
+      "zeta: 1\n",
+      `zeta: 1\nbase: &a "${"y".repeat(500)}"\nrefs:\n${refs}\n`,
+    );
+    expect(parseTaskContent(note).kind).toBe("ok");
+    const { vault, file } = setup(note);
+    const result = await updateTaskNote(vault, file, note, {
+      now: NOW,
+      changes: { status: "done" },
+    });
+    expect(result.kind).toBe("invalid");
+    expect(vault.read(TASK_PATH)).toBe(note);
+  });
+
+  it("every applied edit over the hostile corpus re-parses with the reader", async () => {
+    for (const title of VALID_HOSTILE_TASK_TITLES) {
+      const { vault, file } = setup();
+      const result = await updateTaskNote(vault, file, OPEN_NOTE, { now: NOW, changes: { title } });
+      if (result.kind === "applied") expect(parseTaskContent(result.content).kind).toBe("ok");
+    }
+  });
+});
