@@ -506,3 +506,22 @@ export function duplicateTaskNote(vaultRoot: string, relativePath: string, name:
   copyFileSync(join(vaultRoot, ...relativePath.split("/")), join(vaultRoot, ...target.split("/")));
   return target;
 }
+
+/** The structural vault the plugin's task update path needs: an atomic modify and an uncached read. */
+export interface FileSystemTaskVault {
+  process(file: { readonly path: string }, fn: (data: string) => string): Promise<string>;
+  read(file: { readonly path: string }): Promise<string>;
+}
+
+/** A file-system-backed vault for the plugin write path (no Obsidian runtime involved). */
+export function fileSystemTaskVault(_vaultRoot: string): FileSystemTaskVault {
+  throw new Error("task fixtures are not implemented yet (RED)");
+}
+
+/** Polls `check` until it answers a value other than `undefined`, or fails after `timeoutMs`. */
+export async function eventually<T>(
+  _check: () => Promise<T | undefined> | T | undefined,
+  _timeoutMs: number,
+): Promise<T> {
+  throw new Error("task fixtures are not implemented yet (RED)");
+}

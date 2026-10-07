@@ -30,6 +30,8 @@ export interface TaskServiceSession {
   readonly socketPath: string;
   /** An authenticated POST with a JSON body. */
   post<T>(path: string, body: unknown): Promise<TaskServiceReply<T>>;
+  /** An authenticated GET. */
+  get<T>(path: string): Promise<TaskServiceReply<T>>;
   /** Stops the service, starts it again on the same runtime directory and answers how long the first counts request took from the start. */
   restart(): Promise<{ readonly firstCountsMs: number }>;
   /** Resident set size of the running service in kilobytes. */
@@ -87,6 +89,9 @@ export async function startTaskService(
   const post = <T>(path: string, body: unknown): Promise<TaskServiceReply<T>> =>
     authedRequest<T>(socketPath, token, { method: "POST", path, body });
 
+  const get = <T>(path: string): Promise<TaskServiceReply<T>> =>
+    authedRequest<T>(socketPath, token, { method: "GET", path });
+
   try {
     await start();
     const setup = await post<unknown>(VAULT_SETUP_PATH, { vaultRoot: vault.vaultRoot });
@@ -106,6 +111,7 @@ export async function startTaskService(
     dir,
     socketPath,
     post,
+    get,
     async restart() {
       await stop();
       const started = performance.now();
