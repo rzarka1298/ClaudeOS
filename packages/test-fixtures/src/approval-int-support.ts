@@ -1,6 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import http from "node:http";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   AUTH_HEADER,
   EVENTS_PATH,
@@ -8,6 +10,8 @@ import {
   type HandshakeResponse,
   type ServiceEvent,
   ServiceEventSchema,
+  SessionUpsertedPayloadSchema,
+  type SessionView,
 } from "@ccc/domain";
 import { requestJsonOverSocket, requestOverSocket } from "./service-harness.js";
 
@@ -136,4 +140,87 @@ export function collectEvents(socketPath: string, token: string): EventCollector
       req.destroy();
     },
   };
+}
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const COMPILED_HOOK = resolve(HERE, "../../collectors/dist/hook/entry.js");
+
+/** Throwaway children this test run spawned; only these are ever signalled. */
+export const sacrificialChildren: ChildProcess[] = [];
+
+/** Kills (SIGKILL) every throwaway child that is still running. */
+export function reapSacrificialChildren(): void {
+  for (const child of sacrificialChildren.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }
+}
+
+/** A harmless idle `node` process standing in for a Claude process. */
+export async function spawnSacrificialChild(): Promise<ChildProcess & { pid: number }> {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  sacrificialChildren.push(child);
+  await new Promise<void>((resolveSpawn, reject) => {
+    child.once("spawn", () => resolveSpawn());
+    child.once("error", reject);
+  });
+  if (child.pid === undefined) throw new Error("child has no pid");
+  return child as ChildProcess & { pid: number };
+}
+
+/** True while the child has neither exited nor been signalled to death. */
+export function isRunning(child: ChildProcess): boolean {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+/** Resolves when the child exits, or rejects after `timeoutMs`. */
+export function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+  return new Promise((resolveExit, reject) => {
+    if (!isRunning(child)) {
+      resolveExit();
+      return;
+    }
+    const timer = setTimeout(() => reject(new Error("child did not exit in time")), timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolveExit();
+    });
+  });
+}
+
+/** Runs the compiled hook once, exactly as Claude Code spawns it, with CLAUDE_PID = `pid`. */
+export async function runHook(
+  runtimeDir: string,
+  pid: number,
+  record: Record<string, unknown>,
+): Promise<void> {
+  const child = spawn(process.execPath, [COMPILED_HOOK, "--runtime-dir", runtimeDir], {
+    env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      HOME: process.env.HOME ?? "/",
+      CLAUDE_PID: String(pid),
+    },
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+  const done = new Promise<void>((resolveDone) => child.once("close", () => resolveDone()));
+  child.stdin.end(JSON.stringify(record));
+  await done;
+}
+
+export function sessionStartRecord(sessionId: string, cwd: string): Record<string, unknown> {
+  return {
+    session_id: sessionId,
+    cwd,
+    permission_mode: "default",
+    model: "claude-test-model",
+    hook_event_name: "SessionStart",
+    source: "startup",
+  };
+}
+
+export function sessionOf(event: ServiceEvent): SessionView | null {
+  if (event.type !== "session.upserted") return null;
+  const parsed = SessionUpsertedPayloadSchema.safeParse(event.payload);
+  return parsed.success ? parsed.data.session : null;
 }

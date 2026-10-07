@@ -1,15 +1,17 @@
 import { existsSync, unlinkSync } from "node:fs";
-import { type Clock, DEFAULT_HEARTBEAT_INTERVAL_MS, type ProjectId } from "@ccc/domain";
+import { type Clock, DEFAULT_HEARTBEAT_INTERVAL_MS, type ProjectId, type RunId } from "@ccc/domain";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
 import {
   applyMigrations,
   createDiagnosticEffects,
   getProject,
+  getSessionRun,
   listLauncherConfigs,
   listProjects,
   openStore,
 } from "@ccc/operational-store";
-import { createRunInspector } from "./approval-wiring/run-inspector.js";
+import { createProposeForceTerminate } from "./approval-wiring/proposer.js";
+import { createProcessNamer, createRunInspector } from "./approval-wiring/run-inspector.js";
 import { createServiceApprovalLog, startApprovalServices } from "./approval-wiring/services.js";
 import { getInstallSecret } from "./auth/install-secret.js";
 import { startClaudeServices } from "./claude/services.js";
@@ -306,6 +308,25 @@ async function main(): Promise<void> {
   logger.info({ counts: recovered }, "startup: recovered approval requests");
   // The expiry sweep starts right after recovery, before the socket opens (D-09).
   approvals.start();
+  // Only now does force-terminate become a real request: the slot answered
+  // approval-unavailable until the engine, recovery and the sweeper existed (D-42).
+  claudeServices.proposerSlot.bind(
+    createProposeForceTerminate({
+      engine: approvals.engine,
+      inspector: runInspector,
+      runContext: (runId) => {
+        const run = getSessionRun(store.db, runId as RunId);
+        if (run === null) return null;
+        const project =
+          run.projectId === null ? null : getProject(store.db, run.projectId as ProjectId);
+        return { projectId: run.projectId, projectName: project?.displayName ?? null };
+      },
+      processName: createProcessNamer({
+        readAncestry: (pid) => claudeServices.processFacts.readAncestry(pid),
+      }),
+      log: approvalLog,
+    }),
+  );
 
   // Tasks: the task index is a disposable cache of the vault, so the startup
   // walk rebuilds it after migrations and before the socket opens. Only the

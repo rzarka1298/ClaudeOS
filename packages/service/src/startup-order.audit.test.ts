@@ -24,6 +24,7 @@ describe("main.ts startup order (D-22)", () => {
     "startApprovalServices({",
     "await approvals.recover()",
     "approvals.start()",
+    "claudeServices.proposerSlot.bind(",
     "createTaskServices({",
     "taskHost.startupWalk()",
     "createRequestListener({",
