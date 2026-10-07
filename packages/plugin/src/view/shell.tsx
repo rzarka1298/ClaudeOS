@@ -15,6 +15,7 @@ import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
+import { globalTasksContext } from "../tasks/contexts.js";
 import { nowTick } from "../widgets/clock.js";
 import type {
   NavigationSelection,
@@ -42,6 +43,8 @@ import {
   type SessionActionHost,
 } from "./session-action-runner.js";
 import { SettingsDestination } from "./settings-destination.js";
+import { TasksDestination } from "./tasks.js";
+import { taskDetailFocusRequested } from "./tasks-view-state.js";
 
 /**
  * The runner's signal-derived members, added to the host-supplied pieces
@@ -243,6 +246,7 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
       onProjectFocusMissing={onProjectFocusMissing}
     />
   ),
+  tasks: ({ connection, now }) => <TasksDestination connection={connection} now={now} />,
   "agent-runs": ({ now, onQuickAction, loadSessionUsage }) => (
     <AgentRuns now={now} onQuickAction={onQuickAction} loadSessionUsage={loadSessionUsage} />
   ),
@@ -332,9 +336,14 @@ export function Shell({
     } else if (selection !== undefined && "proposalId" in selection) {
       // D-23: a notification, link or button selects an approval request. The
       // Approvals section consumes the focus request exactly once. A task
-      // selection falls through: it only navigates until Tasks handles it.
+      // task selections are handled below.
       selectedProposalId.value = selection.proposalId;
       approvalDetailFocusRequested.value = true;
+    } else if (selection !== undefined && "taskId" in selection) {
+      // A task selection (the Overview's due-today rows): the Tasks destination
+      // selects it in the global context and its pane heading takes focus once.
+      globalTasksContext.select(selection.taskId);
+      taskDetailFocusRequested.value = true;
     }
     select(id);
     tabRefs.current[id]?.focus();

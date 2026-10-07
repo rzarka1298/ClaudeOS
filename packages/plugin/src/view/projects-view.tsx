@@ -13,6 +13,7 @@ import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
 import type { DestinationId } from "./destinations.js";
 import { ProjectCard } from "./project-card.js";
+import { ProjectTasksPanel } from "./project-tasks.js";
 import { RegisterFlow } from "./register-flow.js";
 import { AddScanFolderFlow, ScanFolders } from "./scan-folders.js";
 import { launchersNeedSetup, SetupCallout } from "./setup-callout.js";
@@ -65,6 +66,11 @@ const NO_SCAN_ACTIONS: ScanActions = {
   suggestionsPage: FAILED_SCAN,
 };
 
+/** A ref-map key for a project's Show tasks button. */
+function tasksKey(projectId: string): string {
+  return `${projectId}:tasks`;
+}
+
 export function ProjectsView({
   actions,
   scanActions = NO_SCAN_ACTIONS,
@@ -92,6 +98,13 @@ export function ProjectsView({
   const [announcement, setAnnouncement] = useState("");
   const registerOpenerRef = useRef<HTMLButtonElement | null>(null);
   const controlRefs = useRef(new Map<string, HTMLElement>());
+  // The one open project tasks panel (plan 06-22): only one at a time, in memory only.
+  const [tasksProjectId, setTasksProjectId] = useState<string | null>(null);
+
+  function closeTasksPanel(projectId: string): void {
+    setTasksProjectId(null);
+    controlRefs.current.get(tasksKey(projectId))?.focus();
+  }
 
   // The scan state is read once when the destination opens and again each
   // time the service comes back (a restart forgets every suggestion, D-07).
@@ -254,6 +267,12 @@ export function ProjectsView({
               terminalLabel={snapshot?.launchers["claude-code"].terminalLabel}
               onNavigate={onNavigate}
               openSystemSettings={openSystemSettings}
+              onShowTasks={() => setTasksProjectId(row.id)}
+              showTasksRef={(el) => {
+                const key = tasksKey(row.id);
+                if (el) controlRefs.current.set(key, el);
+                else controlRefs.current.delete(key);
+              }}
               headingRef={(el) => {
                 const key = headingKey(row.id);
                 if (el) controlRefs.current.set(key, el);
@@ -263,6 +282,20 @@ export function ProjectsView({
           ))}
         </div>
       )}
+      {(() => {
+        const open = rows.find((row) => row.id === tasksProjectId);
+        return open === undefined ? null : (
+          <ProjectTasksPanel
+            key={open.id}
+            projectId={open.id}
+            projectName={open.name}
+            connection={connection}
+            now={now}
+            projects={rows.map((row) => ({ id: row.id, name: row.name }))}
+            onClose={() => closeTasksPanel(open.id)}
+          />
+        );
+      })()}
       <ScanFolders state={scanState.value} actions={scanActions} now={now} />
     </div>
   );

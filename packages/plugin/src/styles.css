@@ -1975,6 +1975,46 @@
   outline-offset: calc(-1 * var(--ccc-focus-ring));
 }
 
+/* The provenance strip: the footer and the Partial chip sit on one wrapping row. */
+.ccc-tasks-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-tasks-strip .ccc-badge {
+  font-size: var(--ccc-text-label);
+}
+
+/* Below 48rem the pane exists only for a chosen task (UI-SPEC S3). */
+@container (max-width: 48rem) {
+  .ccc-tasks-pane[data-empty="true"] {
+    display: none;
+  }
+}
+
+/* The three button weights of the Tasks surfaces (UI-SPEC "Buttons"): primary
+ * is the stronger word and the ink border, secondary the plain pill, tertiary
+ * the quiet one. No colour carries the difference; the accent stays on focus. */
+.ccc-tasks [data-variant="primary"],
+.ccc-project-tasks [data-variant="primary"] {
+  border-color: var(--ccc-ink);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-tasks [data-variant="secondary"],
+.ccc-project-tasks [data-variant="secondary"] {
+  border-color: var(--ccc-border);
+}
+
+.ccc-tasks [data-variant="tertiary"],
+.ccc-project-tasks [data-variant="tertiary"],
+.ccc-project-show-tasks {
+  border-color: transparent;
+  color: var(--ccc-ink-muted);
+}
+
 /* Disconnected: the list dims through the one audited opacity token while the
  * last-good rows stay legible. The notice stating why is never dimmed. */
 .ccc-tasks [data-dimmed="true"] {
@@ -2422,6 +2462,19 @@
 
 .ccc-attention-row:last-child {
   border-bottom: none;
+}
+
+.ccc-attention-row .ccc-connect-button {
+  align-self: flex-start;
+}
+
+.ccc-attention-title {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .ccc-attention-path {

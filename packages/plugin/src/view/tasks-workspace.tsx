@@ -23,7 +23,7 @@ import {
   toDetailResult,
 } from "./tasks-detail-model.js";
 import { actionFailedLine, actionNotice } from "./tasks-forms-copy.js";
-import type { TasksViewState } from "./tasks-view-state.js";
+import { type TasksViewState, taskDetailFocusRequested } from "./tasks-view-state.js";
 
 /**
  * The part of a Tasks surface both containers share (plan 06-22; D-34, TASK-07):
@@ -162,8 +162,11 @@ export function TasksWorkspace(props: TasksWorkspaceProps): VNode {
   // The heading takes focus once, when a task the owner chose has loaded.
   const detail = view.detail.value;
   useEffect(() => {
-    if (detail.kind === "ready" && focusRequest.current === detail.task.id) {
+    if (detail.kind !== "ready") return;
+    const external = props.listensForFormIntent !== false && taskDetailFocusRequested.peek();
+    if (focusRequest.current === detail.task.id || external) {
       focusRequest.current = null;
+      if (external) taskDetailFocusRequested.value = false;
       headingRef.current?.focus();
     }
   }, [detail]);
@@ -254,7 +257,7 @@ export function TasksWorkspace(props: TasksWorkspaceProps): VNode {
   const status =
     counts === null && error === null
       ? "loading"
-      : error !== null && rows.length === 0 && counts === null
+      : error !== null && error !== "service-disconnected" && rows.length === 0
         ? "error"
         : "ready";
 

@@ -47,6 +47,12 @@ export function resetTasksViewState(state: TasksViewState): void {
   state.leaveRequest.value = false;
 }
 
+/**
+ * One-shot: the owner arrived with a task already chosen (an Overview row), so
+ * the global destination focuses the pane's heading once it has loaded.
+ */
+export const taskDetailFocusRequested = signal(false);
+
 /** The global destination's view state. */
 export const globalTasksViewState: TasksViewState = createTasksViewState();
 

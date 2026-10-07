@@ -515,11 +515,15 @@ const QUICK_ACTIONS: readonly QuickActionDescriptor[] = [
 ];
 
 function isLive(action: QuickActionDescriptor): boolean {
-  return action.capability.startsWith("launch:") || action.capability.startsWith("switcher:");
+  return (
+    action.capability.startsWith("launch:") ||
+    action.capability.startsWith("switcher:") ||
+    action.capability === "task:create"
+  );
 }
 
-/** The live pair in S8 order: the session first, then Claude Desktop (UI-SPEC S8). */
-const LIVE_QUICK_ACTIONS = ["start-session", "open-claude-desktop"].flatMap((id) =>
+/** The live buttons in order: the session, Claude Desktop, then Create a task (UI-SPEC S8, S6). */
+const LIVE_QUICK_ACTIONS = ["start-session", "open-claude-desktop", "create-task"].flatMap((id) =>
   QUICK_ACTIONS.filter((action) => action.id === id),
 );
 const UNAVAILABLE_QUICK_ACTIONS = QUICK_ACTIONS.filter((action) => !isLive(action));

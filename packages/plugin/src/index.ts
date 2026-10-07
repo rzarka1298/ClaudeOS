@@ -30,11 +30,20 @@ export {
   reopenTask,
   saveTask,
 } from "./tasks/actions.js";
-export { readTaskForEdit, updateTaskNote } from "./tasks/task-update.js";
+export type { TaskActionsPort } from "./tasks/actions-port.js";
+export { configureTaskActionsPort } from "./tasks/actions-port.js";
+export type { TasksApi } from "./tasks/api.js";
+export { configureTasksApi, TasksApiError } from "./tasks/api.js";
+export { createProjectTasksContext, createTasksContext } from "./tasks/contexts.js";
+export { tasksAttention, tasksRebuilding } from "./tasks/rebuild.js";
+export { parseTaskContent, readTaskForEdit, updateTaskNote } from "./tasks/task-update.js";
 export { AgentRuns } from "./view/agent-runs.js";
 export { RECENT_PAGE_SIZE, selectedRunId } from "./view/agent-runs-state.js";
 export { approvalChip, approvalsMissedSync, resetApprovalsView } from "./view/approvals-state.js";
 export { DestinationTabs } from "./view/destination-tabs.js";
+export { ProjectTasksPanel } from "./view/project-tasks.js";
+export { TasksDestination } from "./view/tasks.js";
+export { createTasksViewState } from "./view/tasks-view-state.js";
 export type {
   DataDependencyKey,
   QuickActionDescriptor,

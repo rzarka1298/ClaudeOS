@@ -1,0 +1,333 @@
+{
+  "now": "2026-10-05T14:00:00.000Z",
+  "zone": "America/New_York",
+  "projects": [
+    {
+      "id": "0mfk1a2b40000000000000001",
+      "name": "example-project"
+    },
+    {
+      "id": "0mfk1a2b40000000000000002",
+      "name": "sample-notes"
+    },
+    {
+      "id": "0mfk1a2b40000000000000003",
+      "name": "demo-api"
+    }
+  ],
+  "workspaces": [
+    {
+      "id": "workspace:0mfk1a2b5000000000000000a",
+      "name": "Example workspace"
+    }
+  ],
+  "rows": {
+    "1": {
+      "id": "0mfk1a2b30000000000000001",
+      "title": "Draft the weekly review",
+      "status": "ready",
+      "scope": "global",
+      "tags": [
+        "work",
+        "review"
+      ],
+      "tagCount": 2,
+      "unmetDependencies": 0,
+      "overdue": false,
+      "updatedAt": "2026-10-04T10:00:00.000Z",
+      "priority": "high",
+      "dueDate": "2026-10-05",
+      "projectId": "0mfk1a2b40000000000000001"
+    },
+    "2": {
+      "id": "0mfk1a2b30000000000000002",
+      "title": "Reply to the release checklist",
+      "status": "in-progress",
+      "scope": "global",
+      "tags": [],
+      "tagCount": 0,
+      "unmetDependencies": 0,
+      "overdue": false,
+      "updatedAt": "2026-10-04T10:00:00.000Z",
+      "priority": "medium",
+      "dueAt": "2026-10-05T15:00:00-04:00",
+      "projectId": "0mfk1a2b40000000000000002"
+    },
+    "3": {
+      "id": "0mfk1a2b30000000000000003",
+      "title": "Review the demo-api changelog",
+      "status": "ready",
+      "scope": "global",
+      "tags": [
+        "api"
+      ],
+      "tagCount": 1,
+      "unmetDependencies": 0,
+      "overdue": false,
+      "updatedAt": "2026-10-04T10:00:00.000Z",
+      "priority": "low",
+      "scheduledDate": "2026-10-05",
+      "projectId": "0mfk1a2b40000000000000003"
+    },
+    "4": {
+      "id": "0mfk1a2b30000000000000004",
+      "title": "Publish the release notes",
+      "status": "blocked",
+      "scope": "global",
+      "tags": [],
+      "tagCount": 0,
+      "unmetDependencies": 2,
+      "overdue": true,
+      "updatedAt": "2026-10-04T10:00:00.000Z",
+      "priority": "high",
+      "dueDate": "2026-10-02",
+      "projectId": "0mfk1a2b40000000000000002"
+    },
+    "5": {
+      "id": "0mfk1a2b30000000000000005",
+      "title": "Update the onboarding guide",
+      "status": "ready",
+      "scope": "global",
+      "tags": [],
+      "tagCount": 0,
+      "unmetDependencies": 0,
+      "overdue": true,
+      "updatedAt": "2026-10-04T10:00:00.000Z",
+      "priority": "urgent",
+      "dueDate": "2026-10-01"
+    },
+    "6": {
+      "id": "0mfk1a2b30000000000000006",
+      "title": "Summarise the research brief",
+      "status": "proposed",
+      "scope": "global",
+      "tags": [
+        "research"
+      ],
+      "tagCount": 1,
+      "unmetDependencies": 0,
+      "overdue": false,
+      "updatedAt": "2026-10-04T10:00:00.000Z",
+      "priority": "medium"
+    },
+    "7": {
+      "id": "0mfk1a2b30000000000000007",
+      "title": "Archive the old sample notes",
+      "status": "proposed",
+      "scope": "global",
+      "tags": [],
+      "tagCount": 0,
+      "unmetDependencies": 0,
+      "overdue": false,
+      "updatedAt": "2026-10-04T10:00:00.000Z",
+      "projectId": "0mfk1a2b40000000000000002"
+    },
+    "8": {
+      "id": "0mfk1a2b30000000000000008",
+      "title": "<script>alert(1)</script> **bold** [link](https://example.invalid)",
+      "status": "ready",
+      "scope": "global",
+      "tags": [],
+      "tagCount": 0,
+      "unmetDependencies": 0,
+      "overdue": false,
+      "updatedAt": "2026-10-04T10:00:00.000Z",
+      "priority": "medium",
+      "dueDate": "2026-10-05"
+    }
+  },
+  "lists": {
+    "today": [
+      "0mfk1a2b30000000000000001",
+      "0mfk1a2b30000000000000002",
+      "0mfk1a2b30000000000000003"
+    ],
+    "upcoming": [],
+    "overdue": [
+      "0mfk1a2b30000000000000004",
+      "0mfk1a2b30000000000000005"
+    ],
+    "project": [],
+    "proposed": [
+      "0mfk1a2b30000000000000006",
+      "0mfk1a2b30000000000000007"
+    ],
+    "blocked": [
+      "0mfk1a2b30000000000000004"
+    ],
+    "completed": [],
+    "all": [
+      "0mfk1a2b30000000000000001",
+      "0mfk1a2b30000000000000002",
+      "0mfk1a2b30000000000000003",
+      "0mfk1a2b30000000000000004",
+      "0mfk1a2b30000000000000005",
+      "0mfk1a2b30000000000000006",
+      "0mfk1a2b30000000000000007"
+    ]
+  },
+  "counts": {
+    "counts": {
+      "all": 7,
+      "today": 3,
+      "upcoming": 0,
+      "overdue": 2,
+      "project": 4,
+      "proposed": 2,
+      "blocked": 1,
+      "completed": 0
+    },
+    "open": 5
+  },
+  "zeroCounts": {
+    "counts": {
+      "all": 0,
+      "today": 0,
+      "upcoming": 0,
+      "overdue": 0,
+      "project": 0,
+      "proposed": 0,
+      "blocked": 0,
+      "completed": 0
+    },
+    "open": 0
+  },
+  "details": {
+    "0mfk1a2b30000000000000001": {
+      "row": {
+        "id": "0mfk1a2b30000000000000001",
+        "title": "Draft the weekly review",
+        "status": "ready",
+        "scope": "global",
+        "tags": [
+          "work",
+          "review"
+        ],
+        "tagCount": 2,
+        "unmetDependencies": 0,
+        "overdue": false,
+        "updatedAt": "2026-10-04T10:00:00.000Z",
+        "priority": "high",
+        "dueDate": "2026-10-05",
+        "projectId": "0mfk1a2b40000000000000001"
+      },
+      "path": "global/tasks/example-task-3f21.md",
+      "createdAt": "2026-10-01T10:00:00.000Z",
+      "sourceType": "manual",
+      "blockedBy": [],
+      "aiGenerated": false,
+      "confidence": "unverified"
+    },
+    "0mfk1a2b30000000000000004": {
+      "row": {
+        "id": "0mfk1a2b30000000000000004",
+        "title": "Publish the release notes",
+        "status": "blocked",
+        "scope": "global",
+        "tags": [],
+        "tagCount": 0,
+        "unmetDependencies": 2,
+        "overdue": true,
+        "updatedAt": "2026-10-04T10:00:00.000Z",
+        "priority": "high",
+        "dueDate": "2026-10-02",
+        "projectId": "0mfk1a2b40000000000000002"
+      },
+      "path": "global/tasks/example-task-3f24.md",
+      "createdAt": "2026-10-01T10:00:00.000Z",
+      "sourceType": "manual",
+      "blockedBy": [
+        {
+          "resolved": true,
+          "id": "0mfk1a2b30000000000000009",
+          "title": "Finish the changelog",
+          "status": "ready"
+        },
+        {
+          "resolved": false,
+          "id": "0mfk1a2b3000000000000000a"
+        }
+      ],
+      "aiGenerated": false,
+      "confidence": "unverified"
+    },
+    "0mfk1a2b30000000000000006": {
+      "row": {
+        "id": "0mfk1a2b30000000000000006",
+        "title": "Summarise the research brief",
+        "status": "proposed",
+        "scope": "global",
+        "tags": [
+          "research"
+        ],
+        "tagCount": 1,
+        "unmetDependencies": 0,
+        "overdue": false,
+        "updatedAt": "2026-10-04T10:00:00.000Z",
+        "priority": "medium"
+      },
+      "path": "global/tasks/example-task-3f26.md",
+      "createdAt": "2026-10-01T10:00:00.000Z",
+      "sourceType": "research-brief",
+      "blockedBy": [],
+      "aiGenerated": true,
+      "confidence": "unverified",
+      "assignee": "automation",
+      "generatedBy": {
+        "skill": "research-brief"
+      }
+    },
+    "0mfk1a2b30000000000000008": {
+      "row": {
+        "id": "0mfk1a2b30000000000000008",
+        "title": "<script>alert(1)</script> **bold** [link](https://example.invalid)",
+        "status": "ready",
+        "scope": "global",
+        "tags": [],
+        "tagCount": 0,
+        "unmetDependencies": 0,
+        "overdue": false,
+        "updatedAt": "2026-10-04T10:00:00.000Z",
+        "priority": "medium",
+        "dueDate": "2026-10-05"
+      },
+      "path": "global/tasks/example-task-3f28.md",
+      "createdAt": "2026-10-01T10:00:00.000Z",
+      "sourceType": "manual",
+      "blockedBy": [],
+      "aiGenerated": false,
+      "confidence": "unverified"
+    }
+  },
+  "notes": {
+    "global/tasks/example-task-3f21.md": "---\nid: 0mfk1a2b30000000000000001\nscope: global\nstage: capture\ncreated: '2026-10-01T09:00:00.000Z'\nupdated: '2026-10-04T10:00:00.000Z'\ngeneratedBy: {}\naiGenerated: false\nsources: []\nconfidence: unverified\nlastReviewed: null\ntype: task\ntitle: Draft the weekly review\nstatus: ready\npriority: high\ndue: 2026-10-05\nsourceType: manual\ndependencies: []\ntags: [work]\n---\nCover the open items and next steps.\n",
+    "global/tasks/example-task-3f24.md": "---\nid: 0mfk1a2b30000000000000004\nscope: global\nstage: capture\ncreated: '2026-10-01T09:00:00.000Z'\nupdated: '2026-10-04T10:00:00.000Z'\ngeneratedBy: {}\naiGenerated: false\nsources: []\nconfidence: unverified\nlastReviewed: null\ntype: task\ntitle: Publish the release notes\nstatus: blocked\npriority: high\ndue: 2026-10-02\nsourceType: manual\ndependencies: []\ntags: [work]\n---\nWaiting on the changelog.\n",
+    "global/tasks/example-task-3f26.md": "---\nid: 0mfk1a2b30000000000000006\nscope: global\nstage: capture\ncreated: '2026-10-01T09:00:00.000Z'\nupdated: '2026-10-04T10:00:00.000Z'\ngeneratedBy: {skill: research-brief}\naiGenerated: true\nsources: []\nconfidence: unverified\nlastReviewed: null\ntype: task\ntitle: Summarise the research brief\nstatus: proposed\npriority: medium\nassignee: automation\nsourceType: research-brief\ndependencies: []\ntags: [work]\n---\nCondense the brief into five bullets.\n",
+    "global/tasks/example-task-3f28.md": "---\nid: 0mfk1a2b30000000000000008\nscope: global\nstage: capture\ncreated: '2026-10-01T09:00:00.000Z'\nupdated: '2026-10-04T10:00:00.000Z'\ngeneratedBy: {}\naiGenerated: false\nsources: []\nconfidence: unverified\nlastReviewed: null\ntype: task\ntitle: '<script>alert(1)</script> **bold** [link](https://example.invalid)'\nstatus: ready\npriority: medium\ndue: 2026-10-05\nsourceType: manual\ndependencies: []\ntags: [work]\n---\n<script>alert(1)</script>\n**bold** [link](https://example.invalid) \u202e reversed\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
+  },
+  "attention": {
+    "items": [
+      {
+        "path": "global/tasks/example-missing-id.md",
+        "title": "Plan the offsite",
+        "reason": "missing-id",
+        "otherPaths": []
+      },
+      {
+        "path": "global/tasks/example-shared-a.md",
+        "title": "Book the venue",
+        "reason": "duplicate-id",
+        "otherPaths": [
+          "global/tasks/example-shared-b.md"
+        ]
+      },
+      {
+        "path": "global/tasks/example-broken.md",
+        "reason": "unreadable",
+        "otherPaths": []
+      }
+    ],
+    "total": 3,
+    "nextCursor": null
+  }
+}

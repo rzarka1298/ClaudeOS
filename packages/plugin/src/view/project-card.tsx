@@ -46,6 +46,10 @@ export interface ProjectCardProps {
   readonly terminalLabel?: string | undefined;
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
   readonly openSystemSettings?: ((pane: "automation" | "privacy-security") => void) | undefined;
+  /** Opens this project's tasks panel (plan 06-22); absent when no host mounts one. */
+  readonly onShowTasks?: (() => void) | undefined;
+  /** Attached to the Show tasks button so the panel can return focus to it on close. */
+  readonly showTasksRef?: Ref<HTMLButtonElement> | undefined;
 }
 
 /** How long a project's own git read stays `live` after `observedAt` (D-12) — the same window `projects-state.ts` uses for the S1 card. */
@@ -256,6 +260,8 @@ export function ProjectCard({
   terminalLabel = "Terminal",
   onNavigate,
   openSystemSettings,
+  onShowTasks,
+  showTasksRef,
 }: ProjectCardProps): VNode {
   const headingId = `ccc-project-card-${row.id}`;
   const [status, setStatus] = useState("");
@@ -314,6 +320,18 @@ export function ProjectCard({
           onRemoved={onRemoved}
           onStatus={setStatus}
         />
+      )}
+      {onShowTasks === undefined ? null : (
+        <button
+          type="button"
+          {...(showTasksRef === undefined ? {} : { ref: showTasksRef })}
+          className="ccc-list-more ccc-project-show-tasks"
+          data-variant="tertiary"
+          aria-label={`Show tasks for ${row.name}`}
+          onClick={onShowTasks}
+        >
+          Show tasks
+        </button>
       )}
       <WidgetFooter
         model={projectFooterModel(row, connection, now)}
