@@ -174,14 +174,17 @@ socket accepts a connection:
    only and has no effect. If it proves the effect (for force-terminate: the Run is already cancelled with the same recorded
    process identity, or the recorded process is gone or has a different start time), the request becomes `executed` with the
    audit event `reconciled-executed` and an evidence code. If it shows the effect is absent and the operation's retry policy is
-   `idempotent`, there is one retry with the same idempotency key, a freshly minted token and a recorded attempt. Anything else
-   becomes `unknown` and is never retried.
+   `idempotent`, and the original approval token has not yet expired (the token-expiry gate: a retry never outlives the
+   approval's maximum age), there is one retry with the same idempotency key, a freshly minted token and a recorded attempt.
+   Anything else becomes `unknown` and is never retried.
 3. **The late-refusal rule.** If the retry is refused or fails on attempt two or later (`process-ended`, `run-not-found`,
    `identity-mismatch`), reconcile is consulted again, and the request is `executed` only if proven, otherwise `unknown`. It
    is never recorded as a plain `failed`, because the first attempt may have had the effect. On the first attempt the same
    codes are definitive, nothing was done, and `failed` with the reason code is truthful.
 4. An approved request never claimed within its maximum approval age becomes `lapsed`; within it, it is claimed and run.
-5. A request whose operation is reserved or no longer registered is finished `failed` with a reserved code and never executed.
+5. An approved request, never claimed, whose operation is reserved or no longer registered is finished `failed` with a
+   reserved code and never executed. An `executing` request of such an operation was already claimed, so an executor may have
+   run before the operation was reserved or unregistered: it finishes `unknown`, never `failed`.
 6. The payload columns of requests decided more than thirty days ago are purged. Audit rows are never deleted.
 
 A force-terminate whose signal succeeds while the process still exists is `executed` with an awaiting-exit note, not a claim
