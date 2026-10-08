@@ -207,6 +207,14 @@ describe("Test 4 (refusals leave nothing behind)", () => {
 });
 
 describe("Test 6 (failure)", () => {
+  it("documents a failed index upsert after the note was written: the note stays, and a rescan is logged as requested", () => {
+    fx.store.db.exec("DROP TABLE task_index");
+    const result = services.create(request());
+    expect(result).toEqual({ ok: false, code: "write-failed" });
+    expect(noteFiles()).toHaveLength(1);
+    expect(JSON.stringify(fx.lines)).toContain("index-after-write");
+  });
+
   it("answers write-failed with no index change and logs the route name and error class only", () => {
     // A regular file where the tasks folder must be makes the folder impossible to create.
     rmSync(tasksFolder(), { recursive: true, force: true });
