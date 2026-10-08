@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { motionMode } from "../motion.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 import {
+  APPROVALS_GROUP_HEADING,
+  applyNotifyApprovalsChange,
   applyReducedMotionChange,
   applyTranscriptAnalysisChange,
   asMotionPreference,
@@ -25,20 +27,18 @@ import {
   CLAUDE_UNINSTALL_COPIED_NOTICE,
   CLAUDE_USAGE_DELETE_FAILED_NOTICE,
   CLAUDE_USAGE_DELETED_NOTICE,
-  APPROVALS_GROUP_HEADING,
-  applyNotifyApprovalsChange,
   CommandCenterSettingTab,
+  hookStatusText,
   NOTIFY_APPROVALS_DESC,
   NOTIFY_APPROVALS_KEY,
   NOTIFY_APPROVALS_NAME,
   NOTIFY_APPROVALS_SAVE_FAILED,
-  SEND_TEST_APPROVAL_DESC,
-  SEND_TEST_APPROVAL_NAME,
-  SEND_TEST_APPROVAL_NEEDS_SERVICE,
-  hookStatusText,
   REDUCED_MOTION_KEY,
   REDUCED_MOTION_OPTIONS,
   REDUCED_MOTION_SAVE_FAILED,
+  SEND_TEST_APPROVAL_DESC,
+  SEND_TEST_APPROVAL_NAME,
+  SEND_TEST_APPROVAL_NEEDS_SERVICE,
   type SettingsClaudeSeam,
   type SettingsTabHost,
   statusLineStatusText,
@@ -735,7 +735,9 @@ describe("Approvals group (plan 06-23, UI-SPEC S5)", () => {
     const row = group(tab).items[1];
 
     expect(row?.desc).toBe(`${SEND_TEST_APPROVAL_DESC}${SEND_TEST_APPROVAL_NEEDS_SERVICE}`);
-    expect(SEND_TEST_APPROVAL_NEEDS_SERVICE).toBe(" Needs the companion service, which isn't running.");
+    expect(SEND_TEST_APPROVAL_NEEDS_SERVICE).toBe(
+      " Needs the companion service, which isn't running.",
+    );
     const disabled = row && "disabled" in row ? row.disabled : undefined;
     expect(typeof disabled === "function" ? disabled() : disabled).toBe(true);
     row?.action?.({} as never, 1);
