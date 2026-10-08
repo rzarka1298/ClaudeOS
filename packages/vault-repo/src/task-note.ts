@@ -128,16 +128,16 @@ function frontmatterBlockBytes(raw: string): number {
 /** True when `value`, with every alias followed, has at most {@link MAX_EXPANDED_NODES} nodes. */
 function withinExpansionBound(value: unknown): boolean {
   const stack: unknown[] = [value];
-  let visited = 0;
+  // Counted when a node is QUEUED, so neither the queue nor the work can pass the budget.
+  let queued = 1;
   while (stack.length > 0) {
     const current = stack.pop();
-    visited += 1;
-    if (visited > MAX_EXPANDED_NODES) return false;
-    if (Array.isArray(current)) {
-      for (const item of current) stack.push(item);
-    } else if (typeof current === "object" && current !== null) {
-      for (const item of Object.values(current)) stack.push(item);
-    }
+    let children: readonly unknown[] = [];
+    if (Array.isArray(current)) children = current;
+    else if (typeof current === "object" && current !== null) children = Object.values(current);
+    queued += children.length;
+    if (queued > MAX_EXPANDED_NODES) return false;
+    for (const item of children) stack.push(item);
   }
   return true;
 }

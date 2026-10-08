@@ -394,6 +394,18 @@ describe("Test 5: refusals", () => {
     expect(reason).toBe("frontmatter-too-large");
   });
 
+  test("a wide alias bomb with huge fan-out is refused through the parse-error path", () => {
+    const leaves = Array.from({ length: 3000 }, () => "x").join(",");
+    const refs = (name: string) => Array.from({ length: 3000 }, () => `*${name}`).join(",");
+    const bomb = `a: &a [${leaves}]\nb: &b [${refs("a")}]\nc: &c [${refs("b")}]\nd: [${refs("c")}]\n`;
+    expect(Buffer.byteLength(bomb)).toBeLessThan(TASK_FRONTMATTER_MAX_BYTES);
+    const started = Date.now();
+    const { error, reason } = reasonOf(valid(bomb));
+    expect(error).toBeInstanceOf(TaskNoteTooLargeError);
+    expect(reason).toBe("frontmatter-too-large");
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   test("a harmless alias is still read", () => {
     const parsed = parseTaskNote(valid("a: &a [1, 2]\nb: *a\n"));
     expect(parsed.passthrough.b).toEqual([1, 2]);
