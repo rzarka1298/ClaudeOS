@@ -31,10 +31,37 @@ function filesUnder(dir: string): string[] {
   });
 }
 
+/** The 21 Phase 6 approvals and shell-chip cells (UI-SPEC "Approvals cells"). */
+const APPROVALS_CELLS = [
+  "approvals — approvals-pending-destructive — full",
+  "approvals — approvals-pending-destructive — narrow",
+  "approvals — approvals-pending-requester — full",
+  "approvals — approvals-pending-requester — narrow",
+  "approvals — approvals-pending-test — full",
+  "approvals — approvals-executing — full",
+  "approvals — approvals-executed — full",
+  "approvals — approvals-failed — full",
+  "approvals — approvals-unknown — full",
+  "approvals — approvals-expired — full",
+  "approvals — approvals-expired — narrow",
+  "approvals — approvals-hash-mismatch — full",
+  "approvals — approvals-too-large — full",
+  "approvals — approvals-empty — full",
+  "approvals — approvals-loading — full",
+  "approvals — approvals-error — full",
+  "approvals — approvals-stale — full",
+  "approvals — approvals-disconnected — full",
+  "approvals — approvals-pending-destructive — full — reduced",
+  "approvals — shell-nav-count — full",
+  "approvals — shell-nav-count — narrow",
+] as const;
+
 describe("visual matrix (audit)", () => {
-  it("lists exactly 74 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 1 approvals cell", () => {
+  it("lists exactly 94 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 21 approvals cells", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 74 tests in 3 files/);
+    expect(out).toMatch(/Total: 94 tests in 3 files/);
+    expect(APPROVALS_CELLS).toHaveLength(21);
+    for (const cell of APPROVALS_CELLS) expect(out).toContain(cell);
     for (const cell of [
       "background — full",
       "background — reduced",
@@ -45,7 +72,6 @@ describe("visual matrix (audit)", () => {
       "agent-runs — narrow-detail",
       "agent-runs — disconnected",
       "project-shortcuts — ready — reduced",
-      "approvals — approvals-pending-destructive — full",
     ]) {
       expect(out).toContain(cell);
     }

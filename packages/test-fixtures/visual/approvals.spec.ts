@@ -49,6 +49,26 @@ interface ApprovalsCell {
 /** One entry per committed baseline: `<case>-<width>[-reduced]`. */
 const CELLS: readonly ApprovalsCell[] = [
   { approvalsCase: "approvals-pending-destructive", width: "full", motion: "full" },
+  { approvalsCase: "approvals-pending-destructive", width: "narrow", motion: "full" },
+  { approvalsCase: "approvals-pending-requester", width: "full", motion: "full" },
+  { approvalsCase: "approvals-pending-requester", width: "narrow", motion: "full" },
+  { approvalsCase: "approvals-pending-test", width: "full", motion: "full" },
+  { approvalsCase: "approvals-executing", width: "full", motion: "full" },
+  { approvalsCase: "approvals-executed", width: "full", motion: "full" },
+  { approvalsCase: "approvals-failed", width: "full", motion: "full" },
+  { approvalsCase: "approvals-unknown", width: "full", motion: "full" },
+  { approvalsCase: "approvals-expired", width: "full", motion: "full" },
+  { approvalsCase: "approvals-expired", width: "narrow", motion: "full" },
+  { approvalsCase: "approvals-hash-mismatch", width: "full", motion: "full" },
+  { approvalsCase: "approvals-too-large", width: "full", motion: "full" },
+  { approvalsCase: "approvals-empty", width: "full", motion: "full" },
+  { approvalsCase: "approvals-loading", width: "full", motion: "full" },
+  { approvalsCase: "approvals-error", width: "full", motion: "full" },
+  { approvalsCase: "approvals-stale", width: "full", motion: "full" },
+  { approvalsCase: "approvals-disconnected", width: "full", motion: "full" },
+  { approvalsCase: "approvals-pending-destructive", width: "full", motion: "reduced" },
+  { approvalsCase: "shell-nav-count", width: "full", motion: "full" },
+  { approvalsCase: "shell-nav-count", width: "narrow", motion: "full" },
 ];
 
 /**
