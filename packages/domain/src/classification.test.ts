@@ -1,7 +1,16 @@
 // The static classification table (D-04, D-05, D-10, APPR-05) and its
 // exhaustiveness proofs. Every claim here is a property of the table itself or
 // of the product source that must stay tied to it; nothing is mocked.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -222,6 +231,39 @@ describe("exhaustiveness over descriptor capability strings (Test 3)", () => {
 const CAPABILITY_LITERAL =
   /"((?:launch|session|usage|skill|task|note|data|switcher|connect):[a-z][a-z-]*)"/g;
 
+describe("source scan exclusion of test-only directories", () => {
+  it("skips test-support/ but still scans product paths (a planted literal is caught)", () => {
+    const root = mkdtempSync(join(tmpdir(), "scan-guard-"));
+    try {
+      mkdirSync(join(root, "test-support"));
+      mkdirSync(join(root, "view"));
+      writeFileSync(join(root, "test-support", "fx.ts"), 'x("note:fixture-only");');
+      writeFileSync(join(root, "view", "product.ts"), 'x("note:planted");');
+      const files = listSourceFiles(root).map((f) => f.slice(root.length + 1));
+      expect(files).toEqual([join("view", "product.ts")]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("no product source imports from a test-only directory (the exclusion hides nothing shipped)", () => {
+    for (const pkg of readdirSync(PACKAGES_DIR)) {
+      const src = join(PACKAGES_DIR, pkg, "src");
+      try {
+        if (!statSync(src).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      for (const file of listSourceFiles(src)) {
+        const text = readFileSync(file, "utf8");
+        for (const dirName of TEST_ONLY_DIRS) {
+          expect(text, file).not.toMatch(new RegExp(`from\\s+"[^"]*/${dirName}/`));
+        }
+      }
+    }
+  });
+});
+
 describe("exhaustiveness over CapabilityToken literals (Test 4)", () => {
   it("finds the real literal, so the scan is not vacuous", () => {
     const found = collectTokenLiterals();
@@ -374,6 +416,9 @@ describe("the table type is usable for injection (D-43)", () => {
 
 // --- source scan helpers ----------------------------------------------------
 
+/** Directory names holding test-only helpers (fixtures), never shipped product source. */
+const TEST_ONLY_DIRS: readonly string[] = ["test-support"];
+
 function listSourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -381,6 +426,7 @@ function listSourceFiles(dir: string): string[] {
     const full = join(dir, entry);
     const stat = statSync(full);
     if (stat.isDirectory()) {
+      if (TEST_ONLY_DIRS.includes(entry)) continue;
       out.push(...listSourceFiles(full));
     } else if (/\.(ts|tsx)$/.test(entry) && !/\.test\./.test(entry)) {
       out.push(full);
