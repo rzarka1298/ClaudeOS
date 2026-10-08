@@ -68,9 +68,11 @@ Added in Phase 6; the earlier text is unchanged.
 The approval engine makes the same-user limitation recorded above material. Any process running as the owner can read
 the Keychain item, open the socket and obtain a token, and so a prompt-injected agent running as the owner could call
 the decide route for its own request. Phase 6 accepts this for milestone 1 because its only real operation is
-force-terminate, records the decision channel on every audit row as an accident detector and not as a trust signal,
+force-terminate, records the decision channel (only on approved and denied audit rows and in `proposals.decided_via`, not on every other row) as an accident detector and not as a trust signal,
 and documents an optional owner-applied deny rule. The full record, with the reasoning and the owner's decision, is in
 the record titled "Approvals are classified by a static table, enforced in three layers, expired by denial and recovered from evidence", section "Residual risk: same-user self-approval".
 
 A hardening decision (a native presence check or peer-process identification) is required before the Gmail and
 Calendar connectors land. This token layer is not that decision and must not be cited as closing it.
+
+The handshake is unauthenticated beyond the socket permission, so a same-user process needs only socket access to obtain a token. A same-user process able to write the SQLite file could also insert an approved row that recovery would run after a restart; this is the same accepted class, to be named at the milestone 2 hardening gate.

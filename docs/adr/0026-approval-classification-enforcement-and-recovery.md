@@ -144,8 +144,8 @@ ever retried after an outcome could not be confirmed.
 
 Every state change writes one audit row in the same transaction, using the fixed vocabulary `requested`, `approved`, `denied`,
 `expired`, `withdrawn`, `claimed`, `executed`, `failed`, `outcome-unknown`, `retried-after-restart`, `reconciled-executed` and
-`lapsed`. History renders only these, never free text. The decision channel is recorded on every audit row (see the residual
-risk below).
+`lapsed`. History renders only these, never free text. The decision channel (`decided_via`) is recorded only on the `approved` and `denied` audit rows and in
+`proposals.decided_via`, not on every audit row; a decide that loses to expiry records none (see the residual risk below).
 
 The table is append-only by triggers in the approvals migration, not by convention:
 
@@ -246,9 +246,15 @@ This risk is accepted for milestone 1. The reason is that the only real operatio
 worst effect is ending a session the owner can restart. The owner decided this on 2026-10-04 ("Accept for now", D-47, answer to
 open question OQ-1, threat T-06-12).
 
+Two further facts widen the risk and are stated plainly. First, the handshake is unauthenticated beyond the socket's `0600`
+permission, so a same-user process needs only access to the socket to obtain a token and call the decide route. Second, a
+same-user process able to write the SQLite file could insert an `approved` row that `recover()` would run after a restart.
+Both belong to the accepted same-user class; the second is to be named explicitly at the milestone 2 hardening gate.
+
 The mitigations that do exist are narrow and are not a boundary:
 
-- The decision channel is recorded on every audit row as `plugin` or `other`. The plugin sets the `X-Ccc-Decided-Via` header on
+- The decision channel is recorded as `plugin` or `other`, but only on the `approved` and `denied` audit rows and in
+  `proposals.decided_via`; it is not on every audit row, and a decide that loses to expiry records none. The plugin sets the `X-Ccc-Decided-Via` header on
   a decision, and anything else is recorded as `other`. The header is self-declared, so the field is an accident detector and
   not a trust signal: it shows that a decision came from outside the plugin by mistake, and it proves nothing against an
   adversary who sets the header.

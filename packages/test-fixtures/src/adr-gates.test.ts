@@ -213,8 +213,8 @@ describe("Task 1 Test 3: the required content is present", () => {
     ["ten states", /ten states/i],
     ["append-only audit", /append-only/i],
     [
-      "decision channel on every audit row",
-      /decision channel[^.]*every audit row|every audit row[^.]*decision channel/i,
+      "decision channel only on approved and denied rows",
+      /recorded only on the `approved` and `denied` audit rows/i,
     ],
     ["reconcile before retry", /reconcile[^.]*before[^.]*retr/i],
     ["late-refusal rule", /late-refusal rule/i],
