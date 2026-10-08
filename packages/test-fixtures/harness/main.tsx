@@ -1432,10 +1432,31 @@ function isTasksCase(name: string): boolean {
 
 const TASK_NOTE_UNREADABLE = { kind: "unreadable", reason: "read-failed" } as const;
 
-function rowsForFilter(filter: string): readonly Record<string, unknown>[] {
+function rowsForFilter(filter: string, projectId?: string): readonly Record<string, unknown>[] {
   return (TASK_FIXTURES.lists[filter] ?? [])
     .map((id) => TASK_ROWS_BY_ID.get(id))
-    .filter((row): row is Record<string, unknown> => row !== undefined);
+    .filter((row): row is Record<string, unknown> => row !== undefined)
+    .filter((row) => projectId === undefined || row.projectId === projectId);
+}
+
+/** Chip counts for one project, from the same fixture lists the rows come from. */
+function projectCounts(projectId: string): unknown {
+  const count = (filter: string): number => rowsForFilter(filter, projectId).length;
+  const closed = new Set(["done", "cancelled", "proposed"]);
+  const open = rowsForFilter("all", projectId).filter((row) => !closed.has(String(row.status)));
+  return {
+    counts: {
+      all: count("all"),
+      today: count("today"),
+      upcoming: count("upcoming"),
+      overdue: count("overdue"),
+      project: count("all"),
+      proposed: count("proposed"),
+      blocked: count("blocked"),
+      completed: count("completed"),
+    },
+    open: open.length,
+  };
 }
 
 function fakeTasksApi(spec: TasksCaseSpec): TasksApi {
@@ -1448,7 +1469,8 @@ function fakeTasksApi(spec: TasksCaseSpec): TasksApi {
     list: (request) => {
       if (spec.list === "loading") return new Promise<never>(() => {});
       if (spec.list === "error") return Promise.reject(new TasksApiError("timeout"));
-      const rows = spec.list === "empty" ? [] : rowsForFilter(request.filter);
+      const rows =
+        spec.list === "empty" ? [] : rowsForFilter(request.filter, request.context.projectId);
       return Promise.resolve({
         rows,
         total: rows.length,
@@ -1456,9 +1478,13 @@ function fakeTasksApi(spec: TasksCaseSpec): TasksApi {
         chooseProject: false,
       } as never);
     },
-    counts: () =>
+    counts: (request) =>
       Promise.resolve(
-        (spec.counts === "zero" ? TASK_FIXTURES.zeroCounts : TASK_FIXTURES.counts) as never,
+        (request.context.projectId !== undefined
+          ? projectCounts(request.context.projectId)
+          : spec.counts === "zero"
+            ? TASK_FIXTURES.zeroCounts
+            : TASK_FIXTURES.counts) as never,
       ),
     get: (request) => {
       const detail = TASK_FIXTURES.details[request.taskId];
