@@ -14,6 +14,7 @@ import {
   resetTasksViewState,
   type TasksViewState,
 } from "./tasks-view-state.js";
+import { useDateRollover } from "./use-date-rollover.js";
 import { type LeaveGuard, TasksWorkspace } from "./tasks-workspace.js";
 
 /**
@@ -85,6 +86,11 @@ export function ProjectTasksPanel(props: ProjectTasksPanelProps): VNode {
     seenGeneration.current = generation;
     void context.refresh();
   }, [generation, context]);
+
+  // Today, Upcoming and Overdue are date-based: ask again when the local day changes.
+  useDateRollover(props.now, zone, () => {
+    void context.refresh();
+  });
 
   const previousKind = useRef(props.connection.kind);
   useEffect(() => {

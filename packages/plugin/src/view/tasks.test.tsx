@@ -572,6 +572,29 @@ describe("an external selection (an Overview row)", () => {
   });
 });
 
+describe("Codex final (finding 4): date-based queries refresh across local midnight", () => {
+  it("re-queries when the clock crosses into a new local day, and not within a day", async () => {
+    const { rerender, context } = mountWith({});
+    await screen.findByText("Task 1");
+    const refresh = vi.spyOn(context, "refresh");
+    const again = (now: number) =>
+      rerender(
+        <TasksDestination
+          connection={{ kind: "live" }}
+          now={now}
+          zone={TASK_ZONE}
+          context={context}
+          view={view}
+          projects={[{ id: projectIdFor(1), name: "Garden" }]}
+        />,
+      );
+    again(TASK_NOW_MS + 60_000);
+    expect(refresh).not.toHaveBeenCalled();
+    again(TASK_NOW_MS + 25 * 60 * 60 * 1000);
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
+});
+
 describe("Audit w6 (06-22, D-15): a disconnect never rewrites last-good counts", () => {
   it("keeps the summary and chip counts when the connection drops after a load", async () => {
     const { rerender, context } = mountWith({});
