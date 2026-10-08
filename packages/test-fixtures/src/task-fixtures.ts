@@ -87,6 +87,8 @@ export interface GenerateTaskVaultOptions {
   readonly proposed?: boolean;
   /** How many of the notes are boundary-sized (a body near the file limit; one also has the longest title and most tags). Default 0. */
   readonly boundarySize?: number;
+  /** IANA zone the dates are relative to. Default UTC (the zone the suites query in). */
+  readonly zone?: string;
 }
 
 export interface GeneratedTaskVault {
@@ -229,7 +231,7 @@ export function generateTaskVault(
   const seed = options.seed ?? DEFAULT_TASK_SEED;
   const now = options.now ?? new Date();
   const rand = mulberry32(seed);
-  const day = utcDay(now);
+  const day = localDayBounds(now, options.zone ?? "UTC");
   const dayStartMs = Date.parse(day.startsAt);
   const dayEndMs = Date.parse(day.endsAt);
 
@@ -542,4 +544,105 @@ export async function eventually<T>(
     if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs} ms`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+}
+
+/** What the live-check helper wrote: the valid tasks (for an oracle) and the notes the index must refuse. */
+export interface LiveCheckNotes {
+  readonly tasks: readonly GeneratedTask[];
+  /** Vault-relative paths of the notes that must appear under Notes need attention. */
+  readonly unreadable: readonly string[];
+}
+
+/** The oversize note's padding: more than the frontmatter limit, less than the file limit. */
+const OVERSIZE_PAD_BYTES = 70 * 1024;
+
+/**
+ * Writes the opt-in set of live-check notes into the global tasks folder of an already
+ * generated vault (plan 06-28, U-6, U-7, T-06-21, T-06-25, T-06-26): one task written
+ * the way Obsidian's Properties editor writes a date, three proposed tasks (one with
+ * hostile display text, one with a source link), one note whose frontmatter exceeds
+ * the size limit and one whose frontmatter cannot be parsed. Deterministic from the
+ * seed, the clock and the zone. Everything is synthetic.
+ */
+export function writeLiveCheckNotes(
+  vaultRoot: string,
+  options: { readonly seed?: number; readonly now?: Date; readonly zone?: string } = {},
+): LiveCheckNotes {
+  const rand = mulberry32((options.seed ?? DEFAULT_TASK_SEED) ^ 0x5a5a5a5a);
+  const now = options.now ?? new Date();
+  const day = localDayBounds(now, options.zone ?? "UTC");
+  const folder = "global/tasks";
+  ensureTasksFolder(vaultRoot, "global");
+  const tasks: GeneratedTask[] = [];
+
+  const write = (
+    kind: TaskKind,
+    status: TaskStatus,
+    title: string,
+    extra: Record<string, unknown>,
+    transform?: (text: string) => string,
+  ): void => {
+    const id = noteId(rand);
+    const created = new Date(now.getTime() - 3_600_000).toISOString();
+    const proposed = status === "proposed";
+    const frontmatter = TaskFrontmatterSchema.parse({
+      id,
+      scope: "global",
+      stage: "capture",
+      created,
+      updated: created,
+      generatedBy: proposed ? { automation: "daily-brief" } : {},
+      aiGenerated: proposed,
+      ...(proposed ? { claimType: "recommendation" } : {}),
+      sources: [],
+      confidence: "unverified",
+      lastReviewed: null,
+      type: "task",
+      title,
+      status,
+      dependencies: [],
+      tags: [],
+      ...(proposed ? { assignee: "automation", sourceType: "automation" } : {}),
+      ...extra,
+    });
+    const path = `${folder}/${taskFileName(title, id)}`;
+    const text = stringifyTaskNote(frontmatter, "Synthetic live-check task.\n");
+    writeFileSync(
+      join(vaultRoot, ...path.split("/")),
+      transform === undefined ? text : transform(text),
+    );
+    tasks.push({
+      id,
+      path,
+      scope: "global",
+      kind,
+      status,
+      title,
+      ...(typeof extra.due === "string" ? { due: extra.due } : {}),
+      dependencies: [],
+    });
+  };
+
+  // U-6: a date as the Properties editor writes it, unquoted and with no time.
+  write("today-date", "ready", "Live check properties style date", { due: day.localDate }, (text) =>
+    text.replace(/^due: ['"]?(\d{4}-\d{2}-\d{2})['"]?$/m, "due: $1"),
+  );
+  write("proposed", "proposed", "Live check proposed plain", {});
+  write("proposed", "proposed", VALID_HOSTILE_TASK_TITLES[0] as string, {});
+  write("proposed", "proposed", "Live check proposed with source", {
+    sourceLink: "https://example.invalid/synthetic-source",
+  });
+
+  const unreadable: string[] = [];
+  const raw = (name: string, text: string): void => {
+    const path = `${folder}/${name}`;
+    writeFileSync(join(vaultRoot, ...path.split("/")), text);
+    unreadable.push(path);
+  };
+  raw(
+    "live-check-oversize-frontmatter.md",
+    `---\nid: ${noteId(rand)}\npad: ${"x".repeat(OVERSIZE_PAD_BYTES)}\n---\nbody\n`,
+  );
+  raw("live-check-unparseable.md", "---\nid: [unclosed\n---\nbody\n");
+  return { tasks, unreadable };
 }
