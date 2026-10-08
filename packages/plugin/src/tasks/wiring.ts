@@ -18,6 +18,8 @@ import { globalTasksContext } from "./contexts.js";
 import { resetTasksGeneration } from "./events.js";
 import { loadAttention, rebuildTaskIndex } from "./rebuild.js";
 import { type ReadTaskResult, readTaskForEdit, type TaskEditVault } from "./task-update.js";
+import { configureTaskWorkspaces } from "../view/tasks-view-state.js";
+import type { TaskFormOption } from "../view/task-form.js";
 import { registerTaskVaultWatch } from "./watch.js";
 
 /**
@@ -42,6 +44,8 @@ export interface WireTasksDeps {
   /** Reveals the command center view (the Create task command). */
   readonly reveal: () => void;
   readonly now: () => number;
+  /** Lists the workspaces for the Scope selector and the create form. */
+  readonly listWorkspaces: () => Promise<readonly TaskFormOption[]>;
   /** Receives the class name of a failed watcher flush, never the message. */
   readonly log: (className: string) => void;
 }
@@ -134,6 +138,9 @@ export function wireTasks(registry: HostRegistry, deps: WireTasksDeps): TasksWir
     openNote: (path) => deps.openNote(path),
   });
   registry.cleanup(() => configureTaskActionsPort(null));
+
+  configureTaskWorkspaces(deps.listWorkspaces);
+  registry.cleanup(() => configureTaskWorkspaces(null));
 
   registerCreateTaskCommand(registry, deps.reveal);
 

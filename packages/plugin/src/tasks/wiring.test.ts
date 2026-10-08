@@ -11,6 +11,7 @@ import {
 import { configureTaskActionsPort, taskActionsPort } from "./actions-port.js";
 import { configureTasksApi, TasksApiError, tasksApi } from "./api.js";
 import { resetTasksGeneration } from "./events.js";
+import { configureTaskWorkspaces, loadTaskWorkspaces } from "../view/tasks-view-state.js";
 import { wireTasks } from "./wiring.js";
 
 async function flush(times = 10): Promise<void> {
@@ -28,6 +29,7 @@ class CapturingHost extends FakeObsidianHost {
 afterEach(() => {
   configureTasksApi(null);
   configureTaskActionsPort(null);
+  configureTaskWorkspaces(null);
   resetTasksGeneration();
   vi.unstubAllGlobals();
 });
@@ -66,6 +68,7 @@ function setup(options: { missing?: boolean; client?: Record<string, unknown> } 
     reveal: () => reveals.push("reveal"),
     now: () => Date.parse(NOW),
     log: () => {},
+    listWorkspaces: () => Promise.resolve([{ id: "workspace:abc", name: "Research" }]),
   });
   return { host, registry, vault, client, opened, reveals, wiring };
 }
@@ -140,6 +143,15 @@ describe("Test 2: the actions port", () => {
       kind: "unreadable",
       reason: "read-failed",
     });
+  });
+});
+
+describe("workspace loader", () => {
+  it("is configured by the wiring (production path) and removed on unload", async () => {
+    const { registry } = setup();
+    expect(await loadTaskWorkspaces()).toEqual([{ id: "workspace:abc", name: "Research" }]);
+    registry.disposeAll();
+    expect(await loadTaskWorkspaces()).toEqual([]);
   });
 });
 

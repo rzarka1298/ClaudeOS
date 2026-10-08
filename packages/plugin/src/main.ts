@@ -11,7 +11,7 @@ import {
   refreshProjects,
   setTranscriptAnalysis,
 } from "@ccc/service-api-client";
-import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, TFolder, type WorkspaceLeaf } from "obsidian";
 import { wireApprovals } from "./approvals/wiring.js";
 import { connectionState } from "./connection-state.js";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
@@ -34,6 +34,7 @@ import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-c
 import { resolveSocketPath } from "./socket-path.js";
 import { taskEditVault } from "./tasks/task-update.js";
 import { wireTasks } from "./tasks/wiring.js";
+import { listVaultWorkspaces } from "./tasks/workspaces.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 import { openDeleteUsageModal as openDeleteUsageModalDialog } from "./view/delete-usage-modal.js";
 import { createLaunchConflictChooser } from "./view/launch-conflict-choice.js";
@@ -216,6 +217,20 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         void this.revealView();
       },
       now: () => Date.now(),
+      listWorkspaces: () =>
+        listVaultWorkspaces({
+          folderChildren: (path) =>
+            (this.app.vault.getFolderByPath(path)?.children ?? []).map((child) => ({
+              name: child.name,
+              isFolder: child instanceof TFolder,
+            })),
+          displayName: (indexPath) => {
+            const file = this.app.vault.getFileByPath(indexPath);
+            return file === null
+              ? undefined
+              : this.app.metadataCache.getFileCache(file)?.frontmatter?.displayName;
+          },
+        }),
       log: (className) => {
         console.warn(`[claude-command-center] task watcher flush failed: ${className}`);
       },

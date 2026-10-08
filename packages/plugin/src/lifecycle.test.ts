@@ -153,6 +153,7 @@ function loadCycle(
     openNote: () => {},
     reveal: () => {},
     now: () => 0,
+    listWorkspaces: () => Promise.resolve([]),
     log: () => {},
   });
   // The REAL plugin-level switcher (wave-7 finding 2): its launch timers and
