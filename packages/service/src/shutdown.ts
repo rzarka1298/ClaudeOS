@@ -20,6 +20,12 @@ export interface ShutdownDeps {
   readonly stopIntake: () => void;
   /** Closes the listener; the callback runs once every open connection has ended. */
   readonly closeServer: (done: () => void) => void;
+  /**
+   * Ends event streams and closes idle connections so the listener can finish
+   * closing. Called at shutdown start and again once the drain has finished; it
+   * never aborts a request or an approval execution that is in flight.
+   */
+  readonly closeConnections?: () => void;
   /** Closes the store and removes the socket file. */
   readonly closeResources: () => void;
   readonly exit: (code: number) => void;
@@ -50,10 +56,14 @@ export function createShutdown(deps: ShutdownDeps): () => void {
         deps.onError("shutdown: approval services did not stop cleanly", err);
       })
       .then(() => deps.stopUsage())
+      .catch((err: unknown) => {
+        deps.onError("shutdown: usage services did not stop cleanly", err);
+      })
       .then(() => deps.stopClaude())
       .catch((err: unknown) => {
         deps.onError("shutdown: claude services did not stop cleanly", err);
-      });
+      })
+      .then(() => deps.closeConnections?.());
     deps.closeServer(() => {
       void drained.then(() => {
         deps.closeResources();
@@ -61,5 +71,9 @@ export function createShutdown(deps: ShutdownDeps): () => void {
         deps.exit(0);
       });
     });
+    // After the listener stopped accepting: end the event streams now (they
+    // would otherwise hold it open forever) and drop idle connections. A
+    // request or execution in flight is untouched.
+    deps.closeConnections?.();
   };
 }

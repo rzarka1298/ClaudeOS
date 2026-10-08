@@ -403,6 +403,10 @@ async function main(): Promise<void> {
     closeServer: (done) => {
       server.close(done);
     },
+    closeConnections: () => {
+      eventBus.closeAll();
+      server.closeIdleConnections();
+    },
     closeResources: () => {
       store.close();
       if (existsSync(socketPath)) {
