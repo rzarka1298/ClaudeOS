@@ -240,6 +240,22 @@ describe("the whole snapshot stays under the client cap (task 2 test 5, T-06-30)
     }
   });
 
+  it("omits the approvals member when the rest of the snapshot leaves no room for it", async () => {
+    const fake = createFakeServices();
+    const harness = await startRouteHarness(store, {
+      approvals: fake as never,
+      projects: bigProjects(64 * 1024 - 420),
+    });
+    try {
+      const reply = await getSnapshot(harness);
+      expect(reply.status).toBe(200);
+      expect(Buffer.byteLength(reply.raw, "utf8")).toBeLessThan(CAP);
+      expect(reply.body.state.approvals).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("uses the default budget when the rest of the snapshot is small", async () => {
     const fake = createFakeServices();
     const harness = await startRouteHarness(store, { approvals: fake as never });
