@@ -24,8 +24,8 @@ import {
   resetTasksViewState,
   type TasksViewState,
 } from "./tasks-view-state.js";
-import { useDateRollover } from "./use-date-rollover.js";
 import { TasksWorkspace } from "./tasks-workspace.js";
+import { useDateRollover } from "./use-date-rollover.js";
 
 /**
  * The Tasks destination (plan 06-22; UI-SPEC S3): the global query context's
@@ -143,7 +143,7 @@ export function TasksDestination(props: TasksDestinationProps): VNode {
   // Today, Upcoming and Overdue are date-based: ask again when the local day changes.
   useDateRollover(props.now, zone, () => {
     void context.refresh();
-      void loadAttention();
+    void loadAttention();
   });
 
   // Coming back from a drop re-asks; the generation resets with the service.

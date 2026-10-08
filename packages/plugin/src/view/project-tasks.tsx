@@ -14,8 +14,8 @@ import {
   resetTasksViewState,
   type TasksViewState,
 } from "./tasks-view-state.js";
-import { useDateRollover } from "./use-date-rollover.js";
 import { type LeaveGuard, TasksWorkspace } from "./tasks-workspace.js";
+import { useDateRollover } from "./use-date-rollover.js";
 
 /**
  * The project tasks panel (plan 06-22; UI-SPEC S4, D-34, TASK-07). It owns a

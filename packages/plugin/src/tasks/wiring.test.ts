@@ -8,10 +8,10 @@ import {
   TASK_PATH,
   taskEditVault,
 } from "../test-support/task-note-fixtures.js";
+import { configureTaskWorkspaces, loadTaskWorkspaces } from "../view/tasks-view-state.js";
 import { configureTaskActionsPort, taskActionsPort } from "./actions-port.js";
 import { configureTasksApi, TasksApiError, tasksApi } from "./api.js";
 import { resetTasksGeneration } from "./events.js";
-import { configureTaskWorkspaces, loadTaskWorkspaces } from "../view/tasks-view-state.js";
 import { wireTasks } from "./wiring.js";
 
 async function flush(times = 10): Promise<void> {

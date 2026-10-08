@@ -2,6 +2,8 @@ import { TASK_ERROR_CODES, type TaskRebuildResponse } from "@ccc/domain/tasks.js
 import type { TasksClient } from "@ccc/service-api-client";
 import type { ManagedNoteFile } from "../conflict-safe.js";
 import type { HostRegistry } from "../host-registry.js";
+import type { TaskFormOption } from "../view/task-form.js";
+import { configureTaskWorkspaces } from "../view/tasks-view-state.js";
 import {
   acceptTask,
   completeTask,
@@ -18,8 +20,6 @@ import { globalTasksContext } from "./contexts.js";
 import { resetTasksGeneration } from "./events.js";
 import { loadAttention, rebuildTaskIndex } from "./rebuild.js";
 import { type ReadTaskResult, readTaskForEdit, type TaskEditVault } from "./task-update.js";
-import { configureTaskWorkspaces } from "../view/tasks-view-state.js";
-import type { TaskFormOption } from "../view/task-form.js";
 import { registerTaskVaultWatch } from "./watch.js";
 
 /**

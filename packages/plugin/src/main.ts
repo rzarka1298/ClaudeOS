@@ -226,9 +226,10 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
             })),
           displayName: (indexPath) => {
             const file = this.app.vault.getFileByPath(indexPath);
-            return file === null
-              ? undefined
-              : this.app.metadataCache.getFileCache(file)?.frontmatter?.displayName;
+            if (file === null) return undefined;
+            const name: unknown =
+              this.app.metadataCache.getFileCache(file)?.frontmatter?.displayName;
+            return name;
           },
         }),
       log: (className) => {
