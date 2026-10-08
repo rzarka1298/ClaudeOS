@@ -315,7 +315,7 @@
       },
       {
         "path": "global/tasks/example-shared-a.md",
-        "title": "Book the venue",
+        "title": "Book the venue for the quarterly planning offsite, confirm catering and seating, collect travel requests from every team, and send the revised agenda to all participants well before the booking dead",
         "reason": "duplicate-id",
         "otherPaths": [
           "global/tasks/example-shared-b.md"
