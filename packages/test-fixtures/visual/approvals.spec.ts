@@ -89,6 +89,19 @@ async function fitViewportToContent(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Focus moves (the request heading takes focus) can scroll the content pane
+ * before the capture; the baseline must show the page from its top.
+ */
+async function resetScroll(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    for (const node of document.querySelectorAll("*")) {
+      if (node.scrollTop !== 0) node.scrollTop = 0;
+    }
+    window.scrollTo(0, 0);
+  });
+}
+
 for (const { approvalsCase, width, motion } of CELLS) {
   const suffix = motion === "reduced" ? "-reduced" : "";
   const label = motion === "reduced" ? `${width} — reduced` : width;
@@ -99,6 +112,7 @@ for (const { approvalsCase, width, motion } of CELLS) {
       await page.goto(harnessUrl({ view: "agent-runs", case: approvalsCase, width, motion }));
       await page.locator("html[data-harness-ready=true]").waitFor({ state: "attached" });
       await fitViewportToContent(page);
+      await resetScroll(page);
       await expect(page.locator("[data-harness-width]")).toHaveScreenshot(snapshotName);
     },
   );
