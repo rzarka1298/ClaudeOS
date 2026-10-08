@@ -269,6 +269,7 @@ describe("Test 4: independence (TASK-07)", () => {
 });
 
 describe("wave-6: the dirty guard on the project panel", () => {
+  const fieldValue = (el: HTMLElement): string => ("value" in el ? String(el.value) : "");
   async function dirtyProjectPanel() {
     const api = fakeTasksApi(taskRows(3), {
       get: vi.fn(() =>
@@ -327,7 +328,7 @@ describe("wave-6: the dirty guard on the project panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close project tasks" }));
     fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
     expect(document.querySelector(".ccc-project-tasks")).not.toBeNull();
-    expect((within(panel).getByLabelText("Title") as HTMLInputElement).value).toBe("Changed title");
+    expect(fieldValue(within(panel).getByLabelText("Title"))).toBe("Changed title");
     fireEvent.click(screen.getByRole("button", { name: "Close project tasks" }));
     fireEvent.click(await screen.findByRole("button", { name: "Discard changes" }));
     await waitFor(() => expect(document.querySelector(".ccc-project-tasks")).toBeNull());
@@ -336,9 +337,9 @@ describe("wave-6: the dirty guard on the project panel", () => {
   it("does not close the panel from Escape inside the title field", async () => {
     const { title } = await dirtyProjectPanel();
     fireEvent.keyDown(title, { key: "Escape" });
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => window.setTimeout(r, 20));
     expect(document.querySelector(".ccc-project-tasks")).not.toBeNull();
-    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Changed title");
+    expect(fieldValue(screen.getByLabelText("Title"))).toBe("Changed title");
   });
 
   it("asks before switching to another project's panel", async () => {
@@ -346,7 +347,7 @@ describe("wave-6: the dirty guard on the project panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show tasks for sample-notes" }));
     fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
     expect(screen.queryByRole("heading", { name: "Tasks · sample-notes" })).toBeNull();
-    expect((within(panel).getByLabelText("Title") as HTMLInputElement).value).toBe("Changed title");
+    expect(fieldValue(within(panel).getByLabelText("Title"))).toBe("Changed title");
     fireEvent.click(screen.getByRole("button", { name: "Show tasks for sample-notes" }));
     fireEvent.click(await screen.findByRole("button", { name: "Discard changes" }));
     await screen.findByRole("heading", { name: "Tasks · sample-notes" });
