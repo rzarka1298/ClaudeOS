@@ -32,9 +32,9 @@ function filesUnder(dir: string): string[] {
 }
 
 describe("visual matrix (audit)", () => {
-  it("lists exactly 73 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells", () => {
+  it("lists exactly 74 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 1 approvals cell", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 73 tests in 2 files/);
+    expect(out).toMatch(/Total: 74 tests in 3 files/);
     for (const cell of [
       "background — full",
       "background — reduced",
@@ -45,6 +45,7 @@ describe("visual matrix (audit)", () => {
       "agent-runs — narrow-detail",
       "agent-runs — disconnected",
       "project-shortcuts — ready — reduced",
+      "approvals — approvals-pending-destructive — full",
     ]) {
       expect(out).toContain(cell);
     }
@@ -63,7 +64,7 @@ describe("visual matrix (audit)", () => {
     expect(config).toContain('updateSnapshots: "none"');
   });
 
-  it.each(["widgets.spec.ts", "agent-runs.spec.ts"])(
+  it.each(["widgets.spec.ts", "agent-runs.spec.ts", "approvals.spec.ts"])(
     "%s skips the whole file on a non-Linux host unless the local override is set",
     (fileName) => {
       const spec = readFileSync(
