@@ -36,6 +36,7 @@ import {
   REBUILD_DESC,
   REBUILD_FAILED_NOTICE,
   REBUILD_NAME,
+  REBUILD_NEEDS_SERVICE,
   REBUILD_STARTED_NOTICE,
   REDUCED_MOTION_KEY,
   REDUCED_MOTION_OPTIONS,
@@ -862,5 +863,34 @@ describe("Tasks group (plan 06-23, UI-SPEC S5)", () => {
     item?.action?.({} as never, 0);
     expect(rebuild).not.toHaveBeenCalled();
     expect(notices).toEqual([]);
+  });
+
+  it("with the service down the row says why, like the Approvals row", () => {
+    const { host } = tasksHost({ available: false });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    expect(row(tab).item?.desc).toBe(`${REBUILD_DESC}${REBUILD_NEEDS_SERVICE}`);
+    expect(REBUILD_NEEDS_SERVICE).toBe(" Needs the companion service, which isn't running.");
+  });
+
+  it("a second press while a rebuild is running is ignored; a later press works again", async () => {
+    let finish!: () => void;
+    const rebuild = vi.fn(
+      () =>
+        new Promise<{ tasks: number; attention: number }>((resolve) => {
+          finish = () => resolve({ tasks: 1, attention: 0 });
+        }),
+    );
+    const { host, notices } = tasksHost({ rebuild });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    row(tab).item?.action?.({} as never, 0);
+    row(tab).item?.action?.({} as never, 0);
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(notices).toEqual([REBUILD_STARTED_NOTICE]);
+    finish();
+    await flush();
+    row(tab).item?.action?.({} as never, 0);
+    expect(rebuild).toHaveBeenCalledTimes(2);
   });
 });

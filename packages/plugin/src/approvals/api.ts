@@ -66,6 +66,9 @@ const DISCONNECTED_API: ApprovalsApi = {
 
 let current: ApprovalsApi = DISCONNECTED_API;
 
+/** Counts refreshes so that only the most recently started one may adopt its snapshot. */
+let refreshSequence = 0;
+
 /** Installs the API the view code reaches (or, with `null`, restores the disconnected default). */
 export function configureApprovalsApi(api: ApprovalsApi | null): void {
   current = api ?? DISCONNECTED_API;
@@ -84,12 +87,17 @@ export function approvalsApi(): ApprovalsApi {
 /**
  * Fetches the inbox and adopts it. Resolves `false`, changing nothing, when no
  * API is configured, the call fails or the response does not parse; `true`
- * once a validated snapshot has been adopted.
+ * once a validated snapshot has been adopted. A refresh superseded by a later
+ * one resolves `false` without adopting.
  */
 export async function refreshApprovals(): Promise<boolean> {
+  refreshSequence += 1;
+  const mine = refreshSequence;
   try {
     const parsed = ApprovalsSnapshotSchema.safeParse(await current.list());
     if (!parsed.success) return false;
+    // A newer refresh started while this one was in flight: only the latest resolves.
+    if (mine !== refreshSequence) return false;
     adoptApprovalsSnapshot(parsed.data);
     return true;
   } catch {

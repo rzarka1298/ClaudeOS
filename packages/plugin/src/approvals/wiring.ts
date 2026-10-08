@@ -125,7 +125,10 @@ export interface ApprovalsWiring {
  * Wires the approval features to Obsidian (APPR-07, APPR-09, D-26): the API
  * holder over the client, the notifier on the upsert hook, the deep link, the
  * palette command and the test action. Everything that must be undone on unload
- * is registered through the registry. Nothing here can decide a request.
+ * is registered through the registry. The API holder passes `decide` through to
+ * the client for the inbox view, which is the only caller; nothing wired here
+ * (the notifier, deep link, command, test action, reconnect refresh) decides a
+ * request itself. The test action only creates a request that does nothing.
  */
 export function wireApprovals(registry: HostRegistry, deps: WireApprovalsDeps): ApprovalsWiring {
   const client = deps.client;

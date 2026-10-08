@@ -11,8 +11,12 @@ import { signal } from "@preact/signals";
  * ignored, so a replayed or hostile event can neither move the signal back nor
  * force a refetch loop.
  *
- * The generation resets when the service restarts; the wiring refreshes every
- * container on reconnect (06-23), so a restart never leaves a list stale.
+ * The service's generation may restart from a low value. This signal is only
+ * cleared on unload (not on reconnect), so after a restart `tasks.changed`
+ * events at or below the highest generation seen are ignored until the service
+ * passes it. The reconnect hook (06-23) re-requests a rescan and refreshes the
+ * containers once, which covers the changes made while disconnected, but not
+ * those low-generation events.
  */
 export const tasksGeneration = signal(0);
 

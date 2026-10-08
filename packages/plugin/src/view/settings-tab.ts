@@ -237,6 +237,7 @@ export const TASKS_GROUP_HEADING = "Tasks";
 export const REBUILD_NAME = "Rebuild task index";
 export const REBUILD_DESC =
   "Re-reads every task note in the vault and rebuilds the task lists. Your notes aren't changed.";
+export const REBUILD_NEEDS_SERVICE = " Needs the companion service, which isn't running.";
 export const REBUILD_STARTED_NOTICE = "Rebuilding the task index…";
 export const REBUILD_FAILED_NOTICE =
   "Couldn't rebuild the task index. Check the service in Settings → Diagnostics, then try again.";
@@ -358,6 +359,8 @@ export function asMotionPreference(value: unknown): MotionPreference {
 
 export class CommandCenterSettingTab extends PluginSettingTab {
   private readonly host: SettingsTabHost;
+  /** True while a task index rebuild is running, so a second press is ignored. */
+  private rebuilding = false;
   /** `"checking"` until the service answers; `"unavailable"` after a failed fetch (UI-SPEC S5). */
   private claudeStatus: ClaudeIntegrationStatus | "checking" | "unavailable" = "checking";
   /** True while a `getIntegration()` call is in flight; a display during it starts no second one. */
@@ -486,7 +489,7 @@ export class CommandCenterSettingTab extends PluginSettingTab {
     const tasksUp = (): boolean => this.host.tasks?.serviceAvailable() === true;
     const rebuildItem = {
       name: REBUILD_NAME,
-      desc: REBUILD_DESC,
+      desc: tasksUp() ? REBUILD_DESC : `${REBUILD_DESC}${REBUILD_NEEDS_SERVICE}`,
       disabled: () => !tasksUp(),
       action: (_el: HTMLElement, _index: number) => {
         void this.handleRebuild();
@@ -600,13 +603,16 @@ export class CommandCenterSettingTab extends PluginSettingTab {
   /** The Rebuild task index row: start Notice at once, then the counts or the fixed failure. */
   private async handleRebuild(): Promise<void> {
     const seam = this.host.tasks;
-    if (!seam?.serviceAvailable()) return;
+    if (!seam?.serviceAvailable() || this.rebuilding) return;
+    this.rebuilding = true;
     this.notify(REBUILD_STARTED_NOTICE);
     try {
       const result = await seam.rebuildTaskIndex();
       this.notify(rebuildSuccessNotice(result.tasks, result.attention));
     } catch {
       this.notify(REBUILD_FAILED_NOTICE);
+    } finally {
+      this.rebuilding = false;
     }
   }
 

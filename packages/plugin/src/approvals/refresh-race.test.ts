@@ -23,7 +23,7 @@ function deferred<T>() {
 
 function apiWith(list: ApprovalsApi["list"]): ApprovalsApi {
   const none = () => Promise.reject(new Error("unused"));
-  return { list, get: none, decide: none, test: none } as unknown as ApprovalsApi;
+  return { list, get: none, decide: none, test: none };
 }
 
 beforeEach(resetApprovalsState);

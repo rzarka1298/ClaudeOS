@@ -124,18 +124,32 @@ export function applyApprovalSummary(summary: ApprovalSummary): boolean {
 }
 
 /**
- * Replaces the whole inbox from a validated full-resync snapshot. The hook is
- * called once for each summary that was not already known, so a request that
- * arrived while the stream was down still reaches the notifier.
+ * Adopts a validated full-resync snapshot (ADR-0007 revision monotonicity).
+ * Entries absent from the snapshot are dropped, as before; but an entry whose
+ * held revision is newer than the snapshot's is kept, so a snapshot fetched
+ * before an event can never regress state. Counts are the snapshot's totals,
+ * corrected for each kept entry that sits in a different bucket. The hook is
+ * called once for each summary that was not already known.
  */
 export function adoptApprovalsSnapshot(snapshot: ApprovalsSnapshot): void {
   const known = approvalsById.value;
   const next = new Map<string, ApprovalSummary>();
+  let counts: ApprovalCounts = { ...snapshot.counts };
   for (const list of [snapshot.pending, snapshot.decided, snapshot.expired]) {
-    for (const summary of list) next.set(summary.proposalId, summary);
+    for (const incoming of list) {
+      const held = known.get(incoming.proposalId);
+      if (held !== undefined && held.revision > incoming.revision) {
+        next.set(held.proposalId, held);
+        const from = bucketOf(incoming);
+        const to = bucketOf(held);
+        if (from !== to) counts = withDelta(withDelta(counts, from, -1), to, 1);
+      } else {
+        next.set(incoming.proposalId, incoming);
+      }
+    }
   }
   approvalsById.value = next;
-  approvalsCounts.value = { ...snapshot.counts };
+  approvalsCounts.value = counts;
   approvalsReady.value = snapshot.ready;
   approvalsTruncated.value = snapshot.truncated;
   approvalsHydrated.value = true;
