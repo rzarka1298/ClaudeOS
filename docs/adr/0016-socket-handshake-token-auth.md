@@ -60,3 +60,17 @@ defense-in-depth layered on top of (never instead of) the socket permission.
 - Signing uses `node:crypto` exclusively (`createHmac`, `randomBytes`, `timingSafeEqual`) — no
   third-party JWT/signing library, keeping the token format and verification logic small enough
   to read in one sitting.
+
+## Note: the approval engine and the same-user limitation
+
+Added in Phase 6; the earlier text is unchanged.
+
+The approval engine makes the same-user limitation recorded above material. Any process running as the owner can read
+the Keychain item, open the socket and obtain a token, and so a prompt-injected agent running as the owner could call
+the decide route for its own request. Phase 6 accepts this for milestone 1 because its only real operation is
+force-terminate, records the decision channel on every audit row as an accident detector and not as a trust signal,
+and documents an optional owner-applied deny rule. The full record, with the reasoning and the owner's decision, is in
+the record titled "Approvals are classified by a static table, enforced in three layers, expired by denial and recovered from evidence", section "Residual risk: same-user self-approval".
+
+A hardening decision (a native presence check or peer-process identification) is required before the Gmail and
+Calendar connectors land. This token layer is not that decision and must not be cited as closing it.
