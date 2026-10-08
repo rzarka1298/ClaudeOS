@@ -36,7 +36,9 @@ describe("Test 4: the Open approval inbox command", () => {
     const registry = createHostRegistry(host);
     const order: string[] = [];
     const reveal = vi.fn(() => {
-      order.push(`reveal:${String(approvalsHeadingRequested.value)}:${navigationRequest.value?.destination}`);
+      order.push(
+        `reveal:${String(approvalsHeadingRequested.value)}:${navigationRequest.value?.destination}`,
+      );
     });
     registerOpenApprovalInboxCommand(registry, reveal);
     expect(reveal).not.toHaveBeenCalled();
@@ -45,6 +47,9 @@ describe("Test 4: the Open approval inbox command", () => {
     host.commands[0]?.callback();
 
     expect(order).toEqual(["reveal:true:agent-runs"]);
-    expect(navigationRequest.value).toEqual({ destination: "agent-runs", focusApprovalsHeading: true });
+    expect(navigationRequest.value).toEqual({
+      destination: "agent-runs",
+      focusApprovalsHeading: true,
+    });
   });
 });

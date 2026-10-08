@@ -55,6 +55,23 @@ export function refreshProjectsOnConnect(refresh: () => Promise<unknown>): () =>
 }
 
 /**
+ * Runs several connect hooks as one. Each runs in order and a throwing hook never
+ * stops the rest, so a failure in one feature's refresh cannot starve another's
+ * (plan 06-23: projects, approvals and tasks all refresh on every connect).
+ */
+export function combineOnLive(...hooks: ReadonlyArray<() => void>): () => void {
+  return () => {
+    for (const hook of hooks) {
+      try {
+        hook();
+      } catch {
+        // One feature's refresh must not stop the others.
+      }
+    }
+  };
+}
+
+/**
  * Wires an {@link EventClient}'s transitions onto the {@link connectionState}
  * and {@link lastEvent} signals the shell reads directly (never a client —
  * PERF-01), and every event and full-resync snapshot through the one

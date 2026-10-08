@@ -113,7 +113,7 @@ describe("combineOnLive (plan 06-23)", () => {
     events.setState({ kind: "live" });
     expect(calls).toEqual(["projects", "approvals", "tasks"]);
 
-    events.setState({ kind: "disconnected", reason: "closed" } as EventClientState);
+    events.setState({ kind: "disconnected", reason: "closed" });
     events.setState({ kind: "live" });
     expect(calls).toHaveLength(6);
   });

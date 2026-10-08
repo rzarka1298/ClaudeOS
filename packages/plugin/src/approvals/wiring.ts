@@ -1,5 +1,17 @@
+import type { ApprovalsClient } from "@ccc/service-api-client";
 import type { HostRegistry } from "../host-registry.js";
-import type { ApprovalsApi } from "./api.js";
+import { approvalsSectionVisible } from "../view/approvals-state.js";
+import { requestDestination } from "../view/navigation-request.js";
+import {
+  type ApprovalsApi,
+  ApprovalsApiError,
+  configureApprovalsApi,
+  refreshApprovals,
+} from "./api.js";
+import { registerOpenApprovalInboxCommand } from "./commands.js";
+import { createApprovalNotifier, createWebNotification, type NotifyDeps } from "./notify.js";
+import { registerApprovalProtocol } from "./protocol.js";
+import { setApprovalUpsertHook } from "./signals.js";
 
 /**
  * Connects the approval modules to Obsidian and the service (plan 06-23).
@@ -48,6 +60,118 @@ export function createTestApprovalAction(
           },
         );
       }, TEST_APPROVAL_DELAY_MS);
+    },
+  };
+}
+
+/** An id that is never minted, so selecting it shows the standard "not in the inbox" pane. */
+const NEVER_MINTED_ID = "0".repeat(25);
+
+/** The closed vocabulary a client failure is reduced to; anything else is unrecognised. */
+const CLOSED_CODES: ReadonlySet<string> = new Set([
+  "approval-unavailable",
+  "operation-reserved",
+  "too-many-pending",
+  "not-found",
+  "action-failed",
+  "timeout",
+  "service-disconnected",
+  "unrecognised-response",
+]);
+
+function toApiError(error: unknown): ApprovalsApiError {
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  return new ApprovalsApiError(
+    typeof code === "string" && CLOSED_CODES.has(code) ? code : "unrecognised-response",
+  );
+}
+
+async function closed<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    throw toApiError(error);
+  }
+}
+
+export interface WireApprovalsDeps {
+  /** The approvals client built from the authenticated connection (injected, never imported by value). */
+  readonly client: ApprovalsClient;
+  /** An Obsidian Notice. */
+  readonly notice: (message: string) => void;
+  /** `settings.notifyApprovals`, read live. */
+  readonly notifyEnabled: () => boolean;
+  /** Whether Obsidian has focus; in production `activeDocument.hasFocus()` so popout windows count. */
+  readonly appFocused: () => boolean;
+  /** Brings Obsidian forward. Defaults to `window.focus()` (research Pattern 8). */
+  readonly focusWindow?: (() => void) | undefined;
+  /** Reveals the command center view. */
+  readonly reveal: () => void;
+  readonly log: (message: string) => void;
+  readonly now: () => number;
+  /** Builds a web notification; defaults to the guarded constructor wrapper. */
+  readonly createNotification?: NotifyDeps["create"] | undefined;
+}
+
+export interface ApprovalsWiring {
+  /** The Send a test approval action for the settings tab. */
+  readonly testAction: TestApprovalAction;
+  /** The connect hook: refreshes the approvals snapshot; a failure changes nothing. */
+  readonly onLive: () => void;
+}
+
+/**
+ * Wires the approval features to Obsidian (APPR-07, APPR-09, D-26): the API
+ * holder over the client, the notifier on the upsert hook, the deep link, the
+ * palette command and the test action. Everything that must be undone on unload
+ * is registered through the registry. Nothing here can decide a request.
+ */
+export function wireApprovals(registry: HostRegistry, deps: WireApprovalsDeps): ApprovalsWiring {
+  const client = deps.client;
+  const api: ApprovalsApi = {
+    list: () => closed(() => client.list()),
+    get: (proposalId) => closed(() => client.get(proposalId)),
+    decide: (input) => closed(() => client.decide(input)),
+    test: (request) => closed(() => client.test(request)),
+  };
+  configureApprovalsApi(api);
+  registry.cleanup(() => configureApprovalsApi(null));
+
+  /** The one navigation a notification click and the deep link share. */
+  const select = (proposalId: string): void => {
+    requestDestination("agent-runs", { focusProposalId: proposalId });
+    deps.reveal();
+  };
+
+  setApprovalUpsertHook(
+    createApprovalNotifier({
+      enabled: deps.notifyEnabled,
+      appFocused: deps.appFocused,
+      approvalsVisible: () => approvalsSectionVisible.value,
+      notice: deps.notice,
+      create: deps.createNotification ?? createWebNotification,
+      focusWindow:
+        deps.focusWindow ??
+        (() => {
+          window.focus();
+        }),
+      select,
+      now: deps.now,
+    }),
+  );
+  registry.cleanup(() => setApprovalUpsertHook(null));
+
+  registerApprovalProtocol(registry, {
+    navigateToApproval: (id) => select(id ?? NEVER_MINTED_ID),
+    log: deps.log,
+  });
+  registerOpenApprovalInboxCommand(registry, deps.reveal);
+
+  return {
+    testAction: createTestApprovalAction(registry, api, deps.notice),
+    onLive: () => {
+      refreshApprovals().catch(() => undefined);
     },
   };
 }

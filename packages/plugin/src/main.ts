@@ -1,6 +1,7 @@
 import { HANDSHAKE_PATH, type HandshakeResponse } from "@ccc/domain";
 import type { AuthenticatedSocketApiClient, EventClient } from "@ccc/service-api-client";
 import {
+  createApprovalsClient,
   createAuthenticatedClient,
   createEventClient,
   createSocketApiClient,
@@ -10,11 +11,13 @@ import {
   setTranscriptAnalysis,
 } from "@ccc/service-api-client";
 import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
+import { wireApprovals } from "./approvals/wiring.js";
+import { connectionState } from "./connection-state.js";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference } from "./motion.js";
 import { registerSetUpLaunchersCommand } from "./projects/commands.js";
 import { createPluginLauncher, type RequestLaunch } from "./projects/plugin-launcher.js";
-import { refreshProjectsOnConnect } from "./service-connection.js";
+import { combineOnLive, refreshProjectsOnConnect } from "./service-connection.js";
 import {
   assertNoCredentialFields,
   assertNoPrivatePathValues,
@@ -27,6 +30,7 @@ import { resolveSocketPath } from "./socket-path.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 import { openDeleteUsageModal as openDeleteUsageModalDialog } from "./view/delete-usage-modal.js";
 import { createLaunchConflictChooser } from "./view/launch-conflict-choice.js";
+import { configureNotify } from "./view/notify-port.js";
 import { createPluginSwitcher } from "./view/plugin-switcher.js";
 import {
   createSwitcherOpener,
@@ -70,6 +74,12 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
    * registered; its timers are released on unload through the seam.
    */
   requestLaunch: RequestLaunch = () => {};
+  /**
+   * The one hook that runs each time the event stream goes live: projects,
+   * approvals (and tasks) refresh together (plan 06-23). Built in `onload`;
+   * the view and the switcher both attach the event client with it.
+   */
+  onServiceLive: () => void = () => {};
   private hostRegistry!: HostRegistry;
 
   async onload(): Promise<void> {
@@ -155,6 +165,36 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       },
     });
 
+    // Obsidian's notice function is the one transient-message sink the views
+    // reach (plan 06-10); removed again on unload through the registry.
+    configureNotify((message) => {
+      new Notice(message);
+    });
+    this.hostRegistry.cleanup(() => configureNotify(null));
+
+    // Approvals (plan 06-23): the client from the authenticated connection,
+    // the notifier, the ccc-approval link, the Open approval inbox command and
+    // the reconnect refresh, every registration through the registry.
+    const approvals = wireApprovals(this.hostRegistry, {
+      client: createApprovalsClient(this.client),
+      notice: (message) => {
+        new Notice(message);
+      },
+      notifyEnabled: () => this.settings.notifyApprovals,
+      appFocused: () => activeDocument.hasFocus(),
+      reveal: () => {
+        void this.revealView();
+      },
+      log: (message) => {
+        console.warn(`[claude-command-center] ${message}`);
+      },
+      now: () => Date.now(),
+    });
+    this.onServiceLive = combineOnLive(
+      refreshProjectsOnConnect(() => refreshProjects(this.client)),
+      approvals.onLive,
+    );
+
     // The Settings tab, through the same seam as everything else so its
     // release on unload is counted rather than assumed (threat T-03-07).
     this.hostRegistry.settingTab(
@@ -170,6 +210,11 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
           setTranscriptAnalysis: (enabled: boolean) => setTranscriptAnalysis(this.client, enabled),
           deleteUsageAnalytics: () => deleteUsageAnalytics(this.client),
           copyText: (text: string) => navigator.clipboard.writeText(text),
+        },
+        // The Approvals group: Send a test approval and its availability.
+        approvals: {
+          sendTestApproval: () => approvals.testAction.press(),
+          serviceAvailable: () => connectionState.value.kind !== "disconnected",
         },
         // Row 6's confirmation modal (UI-SPEC S4-d). Behind the same seam
         // pattern as every other modal opener in this plugin.
@@ -209,7 +254,7 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     });
     this.openSwitcher = createSwitcherOpener({
       eventClient: this.eventClient,
-      onLive: refreshProjectsOnConnect(() => refreshProjects(this.client)),
+      onLive: this.onServiceLive,
       show: switcher.show,
     });
     registerSwitcherCommand(this.hostRegistry, this.openSwitcher);

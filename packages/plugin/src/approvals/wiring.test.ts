@@ -167,7 +167,9 @@ describe("Test 1: client injection", () => {
 
   it("surfaces a thrown client error as a closed code only", async () => {
     const { client } = wired();
-    client.get.mockRejectedValueOnce(Object.assign(new Error("secret path /x"), { code: "not-found" }));
+    client.get.mockRejectedValueOnce(
+      Object.assign(new Error("secret path /x"), { code: "not-found" }),
+    );
     client.get.mockRejectedValueOnce(Object.assign(new Error("boom"), { code: "weird-code" }));
     client.get.mockRejectedValueOnce(new Error("plain"));
 
@@ -259,7 +261,7 @@ describe("Test 3: the ccc-approval link", () => {
 
     for (const params of [{ id: "not an id" }, { action: "ccc-approval" }, { id: "" }]) {
       navigationRequest.value = null;
-      host.fireProtocol("ccc-approval", params as never);
+      host.fireProtocol("ccc-approval", params);
       expect(navigationRequest.value).toMatchObject({ focusProposalId: NEVER_MINTED });
     }
   });
@@ -296,7 +298,7 @@ describe("Test 5: reconnect refresh", () => {
     approvalsCounts.value = { pending: 3, decided: 0, expired: 0 };
 
     wiring.onLive();
-    connectionState.value = { kind: "disconnected", reason: "closed" } as never;
+    connectionState.value = { kind: "disconnected", reason: "closed" };
     for (let i = 0; i < 6; i++) await Promise.resolve();
 
     expect(approvalsCounts.value.pending).toBe(3);

@@ -17,7 +17,9 @@ describe("main.ts wires the Phase 6 modules once, through the registry (plan 06-
   });
 
   it("registers nothing directly on the plugin", () => {
-    expect(source).not.toMatch(/this\.(registerView|addRibbonIcon|addCommand|registerEvent|registerInterval|registerObsidianProtocolHandler)\(/);
+    expect(source).not.toMatch(
+      /this\.(registerView|addRibbonIcon|addCommand|registerEvent|registerInterval|registerObsidianProtocolHandler)\(/,
+    );
   });
 
   it("hands the combined connect hook to the view and the switcher", () => {
