@@ -25,7 +25,16 @@ import {
   CLAUDE_UNINSTALL_COPIED_NOTICE,
   CLAUDE_USAGE_DELETE_FAILED_NOTICE,
   CLAUDE_USAGE_DELETED_NOTICE,
+  APPROVALS_GROUP_HEADING,
+  applyNotifyApprovalsChange,
   CommandCenterSettingTab,
+  NOTIFY_APPROVALS_DESC,
+  NOTIFY_APPROVALS_KEY,
+  NOTIFY_APPROVALS_NAME,
+  NOTIFY_APPROVALS_SAVE_FAILED,
+  SEND_TEST_APPROVAL_DESC,
+  SEND_TEST_APPROVAL_NAME,
+  SEND_TEST_APPROVAL_NEEDS_SERVICE,
   hookStatusText,
   REDUCED_MOTION_KEY,
   REDUCED_MOTION_OPTIONS,
@@ -665,5 +674,97 @@ describe("CommandCenterSettingTab -- status freshness and control safety (wave 2
 
     expect(copyText).toHaveBeenCalledWith(CLAUDE_INSTALL_COMMAND);
     expect(host.notices).toEqual([CLAUDE_COPY_FAILED_NOTICE]);
+  });
+});
+
+describe("Approvals group (plan 06-23, UI-SPEC S5)", () => {
+  function approvalsHost(options: { failSave?: boolean; available?: boolean } = {}) {
+    const notices: string[] = [];
+    const press = vi.fn();
+    const host: SettingsTabHost & { saveCalls: number } = {
+      settings: { reducedMotion: "auto", notifyApprovals: true },
+      mql: { matches: false },
+      saveCalls: 0,
+      saveSettings: async () => {
+        host.saveCalls++;
+        if (options.failSave) throw new Error("disk full");
+      },
+      notify: (m: string) => {
+        notices.push(m);
+      },
+      approvals: { sendTestApproval: press, serviceAvailable: () => options.available ?? true },
+    };
+    return { host, notices, press };
+  }
+
+  function group(tab: CommandCenterSettingTab) {
+    const g = tab.getSettingDefinitions()[2];
+    if (!g || !("items" in g) || !g.items) throw new Error("expected the Approvals group");
+    return g;
+  }
+
+  it("Test 1: ends with an Approvals group and keeps the earlier rows and Claude group first", () => {
+    const { host } = approvalsHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const defs = tab.getSettingDefinitions();
+
+    expect(defs[0].control.key).toBe(REDUCED_MOTION_KEY);
+    expect(defs[1]).toMatchObject({ type: "group", heading: CLAUDE_GROUP_HEADING });
+    const g = group(tab);
+    expect(g).toMatchObject({ type: "group", heading: APPROVALS_GROUP_HEADING });
+    expect(g.items.map((i) => i.name)).toEqual([NOTIFY_APPROVALS_NAME, SEND_TEST_APPROVAL_NAME]);
+    expect(g.items[0]?.desc).toBe(NOTIFY_APPROVALS_DESC);
+    expect(g.items[0]?.control).toMatchObject({ type: "toggle", key: NOTIFY_APPROVALS_KEY });
+    expect(g.items[1]?.desc).toBe(SEND_TEST_APPROVAL_DESC);
+    expect(NOTIFY_APPROVALS_NAME).toBe("Approval notifications");
+    expect(SEND_TEST_APPROVAL_NAME).toBe("Send a test approval");
+  });
+
+  it("Test 2: pressing the action asks the seam to send", () => {
+    const { host, press } = approvalsHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    group(tab).items[1]?.action?.({} as never, 1);
+
+    expect(press).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test 4: with the service down the action is disabled, says so, and does nothing", () => {
+    const { host, press } = approvalsHost({ available: false });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const row = group(tab).items[1];
+
+    expect(row?.desc).toBe(`${SEND_TEST_APPROVAL_DESC}${SEND_TEST_APPROVAL_NEEDS_SERVICE}`);
+    expect(SEND_TEST_APPROVAL_NEEDS_SERVICE).toBe(" Needs the companion service, which isn't running.");
+    const disabled = row && "disabled" in row ? row.disabled : undefined;
+    expect(typeof disabled === "function" ? disabled() : disabled).toBe(true);
+    row?.action?.({} as never, 1);
+    expect(press).not.toHaveBeenCalled();
+  });
+
+  it("Test 6: the toggle persists first and applies second", async () => {
+    const { host } = approvalsHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(true);
+    await tab.setControlValue(NOTIFY_APPROVALS_KEY, false);
+
+    expect(host.saveCalls).toBe(1);
+    expect(host.settings.notifyApprovals).toBe(false);
+    expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(false);
+  });
+
+  it("Test 6: a failed save restores the control and posts the fixed notice", async () => {
+    const { host, notices } = approvalsHost({ failSave: true });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    const outcome = await applyNotifyApprovalsChange(host, false);
+
+    expect(outcome).toBe("reverted");
+    expect(host.settings.notifyApprovals).toBe(true);
+    expect(notices).toEqual([NOTIFY_APPROVALS_SAVE_FAILED]);
+    expect(NOTIFY_APPROVALS_SAVE_FAILED).toBe("Couldn't save the approval notifications setting.");
+    await tab.setControlValue(NOTIFY_APPROVALS_KEY, false);
+    expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(true);
   });
 });
