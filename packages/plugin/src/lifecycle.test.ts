@@ -3,6 +3,7 @@ import type { EventClient, SocketApiClient, SocketRequestOptions } from "@ccc/se
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { registerApprovalProtocol } from "./approvals/protocol.js";
 import { wireApprovals } from "./approvals/wiring.js";
+import { wireTasks } from "./tasks/wiring.js";
 import { connectionState } from "./connection-state.js";
 import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
@@ -51,6 +52,17 @@ const NOOP_APPROVALS_CLIENT = {
   get: () => Promise.reject(new Error("not called")),
   decide: () => Promise.reject(new Error("not called")),
   test: () => Promise.reject(new Error("not called")),
+} as never;
+
+const NOOP_TASKS_CLIENT = {
+  create: () => Promise.reject(new Error("not called")),
+  list: () => Promise.reject(new Error("not called")),
+  counts: () => Promise.reject(new Error("not called")),
+  get: () => Promise.reject(new Error("not called")),
+  changed: () => Promise.reject(new Error("not called")),
+  rebuild: () => Promise.reject(new Error("not called")),
+  attention: () => Promise.reject(new Error("not called")),
+  dueToday: () => Promise.reject(new Error("not called")),
 } as never;
 
 /** An event client that records subscriptions and never connects. */
@@ -127,10 +139,17 @@ function loadCycle(
     log: () => {},
     now: () => 0,
   });
-  // A vault event deferred to layout-ready and a cleanup hook (plan 06-09);
-  // replaced by the real tasks wiring in plan 06-23 task 3.
-  registry.vaultEvent("create", () => {});
-  registry.cleanup(() => {});
+  // The REAL tasks wiring (plan 06-23): the four task vault events (deferred to
+  // layout-ready), the flush timer slot, the Create task command and the
+  // cleanups for the API holder, the actions port and the pending flush.
+  wireTasks(registry, {
+    client: NOOP_TASKS_CLIENT,
+    vault: { process: () => Promise.reject(new Error("not called")), read: () => Promise.reject(new Error("not called")), getFileByPath: () => null },
+    openNote: () => {},
+    reveal: () => {},
+    now: () => 0,
+    log: () => {},
+  });
   // The REAL plugin-level switcher (wave-7 finding 2): its launch timers and
   // any open modal are released through the seam.
   createPluginSwitcher({
@@ -211,8 +230,10 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     const perCycle = registry.liveCount();
 
     expect(host.liveCounts().protocolHandler).toBe(1);
-    expect(host.liveCounts().vaultEvent).toBe(1);
-    expect(host.liveCounts().timer).toBe(1);
+    // Four task vault events, and two timer slots: the test-approval delay
+    // (plan 06-23 task 2) and the task watcher's flush (task 3).
+    expect(host.liveCounts().vaultEvent).toBe(4);
+    expect(host.liveCounts().timer).toBe(2);
 
     // A hot reload that loads before the previous unload finished: the
     // duplicate-action throw is caught inside registerApprovalProtocol.
@@ -254,10 +275,10 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     }
 
     expect(host.liveCounts().view).toBe(1);
-    // Five commands now: "Open overview", "Set up managed vault",
+    // Six commands now: "Open overview", "Set up managed vault",
     // "Search projects and actions", "Set up launchers" and (plan 06-23)
-    // "Open approval inbox". Twenty loads leave exactly one of each.
-    expect(host.liveCounts().command).toBe(5);
+    // "Open approval inbox" and "Create task". Twenty loads leave exactly one of each.
+    expect(host.liveCounts().command).toBe(6);
     // One tab after twenty loads, not twenty tabs.
     expect(host.liveCounts().settingTab).toBe(1);
   });

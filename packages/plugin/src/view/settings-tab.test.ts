@@ -36,6 +36,12 @@ import {
   REDUCED_MOTION_KEY,
   REDUCED_MOTION_OPTIONS,
   REDUCED_MOTION_SAVE_FAILED,
+  REBUILD_FAILED_NOTICE,
+  REBUILD_NAME,
+  REBUILD_DESC,
+  REBUILD_STARTED_NOTICE,
+  rebuildSuccessNotice,
+  TASKS_GROUP_HEADING,
   SEND_TEST_APPROVAL_DESC,
   SEND_TEST_APPROVAL_NAME,
   SEND_TEST_APPROVAL_NEEDS_SERVICE,
@@ -768,5 +774,89 @@ describe("Approvals group (plan 06-23, UI-SPEC S5)", () => {
     expect(NOTIFY_APPROVALS_SAVE_FAILED).toBe("Couldn't save the approval notifications setting.");
     await tab.setControlValue(NOTIFY_APPROVALS_KEY, false);
     expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(true);
+  });
+});
+
+describe("Tasks group (plan 06-23, UI-SPEC S5)", () => {
+  function tasksHost(options: { available?: boolean; rebuild?: () => Promise<{ tasks: number; attention: number }> } = {}) {
+    const notices: string[] = [];
+    const rebuild =
+      options.rebuild ?? vi.fn().mockResolvedValue({ tasks: 212, attention: 0 });
+    const host: SettingsTabHost = {
+      settings: { reducedMotion: "auto", notifyApprovals: true },
+      mql: { matches: false },
+      saveSettings: async () => {},
+      notify: (m: string) => {
+        notices.push(m);
+      },
+      tasks: { rebuildTaskIndex: rebuild, serviceAvailable: () => options.available ?? true },
+    };
+    return { host, notices, rebuild };
+  }
+
+  function row(tab: CommandCenterSettingTab) {
+    const g = tab.getSettingDefinitions()[3];
+    if (!g || !("items" in g) || !g.items) throw new Error("expected the Tasks group");
+    return { group: g, item: g.items[0] };
+  }
+
+  it("Test 1: follows the Approvals group with one Rebuild task index action", () => {
+    const { host } = tasksHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const { group, item } = row(tab);
+
+    expect(group).toMatchObject({ type: "group", heading: TASKS_GROUP_HEADING });
+    expect(group.items).toHaveLength(1);
+    expect(item?.name).toBe(REBUILD_NAME);
+    expect(REBUILD_NAME).toBe("Rebuild task index");
+    expect(item?.desc).toBe(REBUILD_DESC);
+    expect(REBUILD_DESC).toBe(
+      "Re-reads every task note in the vault and rebuilds the task lists. Your notes aren't changed.",
+    );
+  });
+
+  it("Test 6: shows the start notice at once, then the success notice with plural rules", async () => {
+    const { host, notices, rebuild } = tasksHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    row(tab).item?.action?.({} as never, 0);
+    expect(notices).toEqual([REBUILD_STARTED_NOTICE]);
+    expect(REBUILD_STARTED_NOTICE).toBe("Rebuilding the task index…");
+    await flush();
+
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(notices[1]).toBe("Task index rebuilt. 212 tasks found.");
+    expect(rebuildSuccessNotice(1, 0)).toBe("Task index rebuilt. 1 task found.");
+    expect(rebuildSuccessNotice(0, 3)).toBe(
+      "Task index rebuilt. 0 tasks found. 3 notes need attention.",
+    );
+    expect(rebuildSuccessNotice(2, 1)).toBe(
+      "Task index rebuilt. 2 tasks found. 1 note needs attention.",
+    );
+  });
+
+  it("Test 6: a failure posts the fixed notice", async () => {
+    const { host, notices } = tasksHost({ rebuild: () => Promise.reject(new Error("down")) });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    row(tab).item?.action?.({} as never, 0);
+    await flush();
+
+    expect(notices).toEqual([REBUILD_STARTED_NOTICE, REBUILD_FAILED_NOTICE]);
+    expect(REBUILD_FAILED_NOTICE).toBe(
+      "Couldn't rebuild the task index. Check the service in Settings → Diagnostics, then try again.",
+    );
+  });
+
+  it("Test 6: with the service down the action is disabled and does nothing", () => {
+    const { host, notices, rebuild } = tasksHost({ available: false });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const { item } = row(tab);
+
+    const disabled = item && "disabled" in item ? item.disabled : undefined;
+    expect(typeof disabled === "function" ? disabled() : disabled).toBe(true);
+    item?.action?.({} as never, 0);
+    expect(rebuild).not.toHaveBeenCalled();
+    expect(notices).toEqual([]);
   });
 });
