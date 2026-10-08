@@ -12,6 +12,7 @@ import {
   attachEventClient,
   combineOnLive,
   refreshProjectsOnConnect,
+  startServiceEventsOnLayoutReady,
 } from "./service-connection.js";
 
 /**
@@ -116,5 +117,46 @@ describe("combineOnLive (plan 06-23)", () => {
     events.setState({ kind: "disconnected", reason: "closed" });
     events.setState({ kind: "live" });
     expect(calls).toHaveLength(6);
+  });
+});
+
+describe("startServiceEventsOnLayoutReady (wave-7 codex finding: SSE at plugin load)", () => {
+  function setup() {
+    const { client, setState } = fakeEventClient();
+    const subscribe = vi.spyOn(client, "subscribe");
+    let ready: (() => void) | undefined;
+    const onLive = vi.fn();
+    const stop = startServiceEventsOnLayoutReady({
+      client,
+      onLive,
+      whenReady: (cb) => {
+        ready = cb;
+      },
+    });
+    return { client, setState, subscribe, fire: () => ready?.(), onLive, stop };
+  }
+
+  it("does not touch the client before layout-ready, then attaches exactly once with onLive", () => {
+    const t = setup();
+    expect(t.subscribe).not.toHaveBeenCalled();
+    t.fire();
+    expect(t.subscribe).toHaveBeenCalledTimes(1);
+    t.setState({ kind: "live" });
+    expect(t.onLive).toHaveBeenCalledTimes(1);
+  });
+
+  it("a later view attach re-points the same client and keeps the shared onLive", () => {
+    const t = setup();
+    t.fire();
+    attachEventClient(t.client, { onLive: t.onLive });
+    t.setState({ kind: "live" });
+    expect(t.onLive).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unload before layout-ready never attaches", () => {
+    const t = setup();
+    t.stop();
+    t.fire();
+    expect(t.subscribe).not.toHaveBeenCalled();
   });
 });

@@ -18,7 +18,11 @@ import { createHostRegistry, createObsidianHost, type HostRegistry } from "./hos
 import { attachOsMotionPreference } from "./motion.js";
 import { registerSetUpLaunchersCommand } from "./projects/commands.js";
 import { createPluginLauncher, type RequestLaunch } from "./projects/plugin-launcher.js";
-import { combineOnLive, refreshProjectsOnConnect } from "./service-connection.js";
+import {
+  combineOnLive,
+  refreshProjectsOnConnect,
+  startServiceEventsOnLayoutReady,
+} from "./service-connection.js";
 import {
   assertNoCredentialFields,
   assertNoPrivatePathValues,
@@ -220,6 +224,19 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       refreshProjectsOnConnect(() => refreshProjects(this.client)),
       approvals.onLive,
       tasks.onLive,
+    );
+
+    // Subscribe to the service event stream at load (after layout-ready), not
+    // only when a view opens, so approval notifications are live on cold start.
+    // The stop function is released through the registry; the stream itself is
+    // disposed by the "eventStream" registration above.
+    this.hostRegistry.registerRaw(
+      "eventStream",
+      startServiceEventsOnLayoutReady({
+        client: this.eventClient,
+        onLive: this.onServiceLive,
+        whenReady: (cb) => this.app.workspace.onLayoutReady(cb),
+      }),
     );
 
     // The Settings tab, through the same seam as everything else so its

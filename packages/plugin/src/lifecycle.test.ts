@@ -8,6 +8,7 @@ import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
 import { registerSetUpLaunchersCommand, SET_UP_LAUNCHERS_COMMAND_ID } from "./projects/commands.js";
 import { resetLaunchStatus } from "./projects/launch-status.js";
+import { startServiceEventsOnLayoutReady } from "./service-connection.js";
 import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js";
 import { wireTasks } from "./tasks/wiring.js";
 import {
@@ -498,5 +499,33 @@ describe("the plugin-level switcher across twenty load/unload cycles (wave-7 fin
     expect(pending.size).toBe(0);
     expect(reveal).not.toHaveBeenCalled();
     expect(navigationRequest.value).toBeNull();
+  });
+});
+
+describe("the load-time event subscription across twenty load/unload cycles (wave-7 codex)", () => {
+  it("attaches once per load after layout-ready and leaves zero registrations after unload", () => {
+    for (let i = 0; i < 20; i++) {
+      const registry = createHostRegistry(new FakeObsidianHost());
+      const subscribe = vi.fn();
+      const dispose = vi.fn();
+      const client: EventClient = { subscribe, dispose };
+      let ready: (() => void) | undefined;
+      registry.registerRaw("eventStream", () => client.dispose());
+      registry.registerRaw(
+        "eventStream",
+        startServiceEventsOnLayoutReady({
+          client,
+          onLive: () => {},
+          whenReady: (cb) => {
+            ready = cb;
+          },
+        }),
+      );
+      ready?.();
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      registry.disposeAll();
+      expect(registry.liveCount()).toBe(0);
+      expect(dispose).toHaveBeenCalledTimes(1);
+    }
   });
 });

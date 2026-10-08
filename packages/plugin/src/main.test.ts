@@ -30,4 +30,10 @@ describe("main.ts wires the Phase 6 modules once, through the registry (plan 06-
   it("hands the combined connect hook to the view and the switcher", () => {
     expect(source).toMatch(/combineOnLive\(/);
   });
+
+  it("subscribes to the service events at load after layout-ready, with the combined hook", () => {
+    expect(source).toMatch(/startServiceEventsOnLayoutReady\(/);
+    expect(source).toMatch(/onLive: this\.onServiceLive/);
+    expect(source).toMatch(/onLayoutReady\(cb\)/);
+  });
 });

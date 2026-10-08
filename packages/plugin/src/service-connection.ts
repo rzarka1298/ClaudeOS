@@ -99,3 +99,26 @@ export function attachEventClient(
     applySnapshot,
   );
 }
+
+/**
+ * Starts the service event subscription at plugin load, once the workspace
+ * layout is ready, so approval notifications work after an Obsidian cold
+ * start without any view being opened (wave-7 codex finding). Deferring to
+ * layout-ready keeps the plugin shell fast (PERF-01). Returns a stop function
+ * (registered with the host registry) so an unload before layout-ready never
+ * attaches. Later view attaches are idempotent on the same client.
+ */
+export function startServiceEventsOnLayoutReady(options: {
+  client: EventClient;
+  onLive: () => void;
+  whenReady: (callback: () => void) => void;
+}): () => void {
+  let stopped = false;
+  options.whenReady(() => {
+    if (stopped) return;
+    attachEventClient(options.client, { onLive: options.onLive });
+  });
+  return () => {
+    stopped = true;
+  };
+}
