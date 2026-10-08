@@ -4,7 +4,7 @@
 // code, so a record cannot drift from what it describes. Records are found by
 // front matter and title, never by number (06-RECONCILE.md M-3).
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -522,4 +522,204 @@ describe("Task 2 Test 6: the rejected options are recorded with reasons", () => 
       expect(options()).toMatch(pattern);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: the ADR 0019 addendum, the ADR 0016 note, the glossary, deferred items
+
+const BOUNDARY_ADR_TITLE = "The import boundary is enforced by three independent layers, not one";
+const HANDSHAKE_LAST_LINE = "keeping the token format and verification logic small enough";
+const BOUNDARY_LAST_LINE = "Revisit this ADR when that happens.";
+
+function glossaryEntry(name: string): string {
+  const text = readFileSync(join(REPO_ROOT, "CONTEXT.md"), "utf8");
+  const start = text.indexOf(`**${name}**:`);
+  if (start < 0) throw new Error(`no glossary entry "${name}"`);
+  const rest = text.slice(start + 1);
+  const next = rest.search(/\n\*\*[^*]+\*\*:|\n#{2,3} /);
+  return flat(next < 0 ? rest : rest.slice(0, next));
+}
+
+describe("Task 3 Test 1: the import-boundary record carries the repair addendum", () => {
+  const adr = (): Adr => adrByTitle(BOUNDARY_ADR_TITLE);
+  const addendum = (): string => {
+    const text = adr().text;
+    const at = text.indexOf("\n## Addendum: the lint repair in Phase 6");
+    if (at < 0) throw new Error("no addendum section in the import-boundary record");
+    return flat(text.slice(at));
+  };
+
+  it("keeps the original text and only adds after it", () => {
+    const text = adr().text;
+    const at = text.indexOf("\n## Addendum: the lint repair in Phase 6");
+    expect(at).toBeGreaterThan(0);
+    expect(text.slice(0, at)).toContain(BOUNDARY_LAST_LINE);
+  });
+
+  for (const [label, pattern] of [
+    ["defect: descriptor order", /descriptor order[^.]*(enclosing package|classif)/i],
+    ["defect: .js suffix imports unresolved", /\.js suffix[^.]*unresolved/i],
+    [
+      "defect: intra-package edges were never evaluated",
+      /intra-package edges? (was|were) never evaluated/i,
+    ],
+    ["defect: no test exercised an intra-service edge", /no test exercised an intra-service edge/i],
+    [
+      "untrusted boundary was inert and is now proven",
+      /untrusted[^.]*inert[^.]*now proven|inert[^.]*untrusted[^.]*now proven/i,
+    ],
+    ["local resolver", /local resolver/i],
+    ["new elements", /approval-minter/],
+    ["root path pinned", /root-path/],
+    ["compiler layer for sub-folders", /sub-folders?[^.]*(approval|executors)/i],
+    ["relative import out of the folder fails with TS6307", /TS6307/],
+    ["an unreferenced package import fails only on a clean build", /fails only on a clean build/i],
+    ["new backstop rules are described", /backstop[^.]*rules?/i],
+    ["backstop: minter import confinement", /minter[^.]*(import|confin)/i],
+    ["backstop: process.kill confinement", /process\.kill/],
+    ["backstop: terminate confinement", /\.terminate\(/],
+    ["states earlier text is unchanged", /earlier text is unchanged|original text is unchanged/i],
+  ] as const) {
+    it(label, () => {
+      expect(addendum()).toMatch(pattern);
+    });
+  }
+});
+
+describe("Task 3 Test 2: the handshake record points at the residual-risk record", () => {
+  const adr = (): Adr => adrByTitle("Handshake mints");
+
+  it("keeps the original text and adds the note after it", () => {
+    const text = parseAdr(adrFileContaining(HANDSHAKE_LAST_LINE)).text;
+    const at = text.indexOf("\n## Note: the approval engine and the same-user limitation");
+    expect(at).toBeGreaterThan(0);
+    expect(text.slice(0, at)).toContain(HANDSHAKE_LAST_LINE);
+  });
+
+  it("names the completing approval record by title and states the milestone 2 gate", () => {
+    const text = flat(
+      parseAdr(adrFileContaining(HANDSHAKE_LAST_LINE)).text.split(
+        "## Note: the approval engine and the same-user limitation",
+      )[1] ?? "",
+    );
+    expect(text).toContain(approvalAdr().title);
+    expect(text).toMatch(/same-user[^.]*(material|limitation)/i);
+    expect(text).toMatch(
+      /hardening decision[^.]*required[^.]*before[^.]*Gmail and Calendar connectors/i,
+    );
+    expect(adr().title.length).toBeGreaterThan(0);
+  });
+});
+
+function adrFileContaining(fragment: string): string {
+  const found = allAdrs().filter((adr) => adr.text.includes(fragment));
+  if (found.length !== 1) throw new Error(`expected one ADR containing "${fragment}"`);
+  return (found[0] as Adr).file;
+}
+
+describe("Task 3 Test 3: the glossary follows the interface amendments", () => {
+  it("Proposal keeps its definition and takes the new avoid list and the interface-word note", () => {
+    const entry = glossaryEntry("Proposal");
+    expect(entry).toContain(
+      "A consequential action a Connector, Skill, or Automation Run has requested",
+    );
+    expect(entry).toContain("_Avoid_: approval item, pending action");
+    expect(entry).not.toContain("approval request,");
+    expect(entry).toMatch(
+      /In the UI a Proposal is called a request[^.]*because Proposed is a Task status/,
+    );
+  });
+
+  it("Approval Inbox notes its Agent runs section", () => {
+    expect(glossaryEntry("Approval Inbox")).toMatch(
+      /Shown as the Approvals section of the Agent runs destination/,
+    );
+  });
+
+  it("has a Proposed task entry with its definition and avoid list", () => {
+    const entry = glossaryEntry("Proposed task");
+    expect(entry).toMatch(/A Task an automation suggested/);
+    expect(entry).toMatch(/Not a Proposal and never subject to approval/);
+    expect(entry).toContain("_Avoid_: pending task, suggestion");
+  });
+
+  it("has a Waiting for approval entry that is not a Proposal", () => {
+    const entry = glossaryEntry("Waiting for approval");
+    expect(entry).toMatch(
+      /Run state in which Claude Code is asking permission in its own terminal/,
+    );
+    expect(entry).toMatch(/Not a Proposal awaiting decision/);
+  });
+
+  it("adds no implementation detail", () => {
+    for (const name of ["Proposed task", "Waiting for approval"]) {
+      expect(glossaryEntry(name)).not.toMatch(/\.ts\b|SQLite|table|route|socket|packages\//i);
+    }
+  });
+});
+
+describe("Task 3 Test 4: the deferred-items table records the hardening condition", () => {
+  const path = join(REPO_ROOT, ".planning", "deferred-items.md");
+  it.skipIf(!existsSync(path))("has a row for the same-user self-approval decision", () => {
+    const row = flat(
+      readFileSync(path, "utf8")
+        .split("\n")
+        .filter((line) => /self-approval/i.test(line) && line.startsWith("|"))
+        .join(" "),
+    );
+    expect(row).toMatch(/accepted for milestone 1/i);
+    expect(row).toMatch(
+      /hardening decision[^.|]*required[^.|]*before[^.|]*Gmail and Calendar connectors/i,
+    );
+    expect(row).toContain(approvalAdr().title);
+  });
+});
+
+describe("Task 3 Test 5: no edited document holds a real home directory", () => {
+  const files = [
+    "docs/adr/0016-socket-handshake-token-auth.md",
+    "docs/adr/0019-import-boundary-enforcement.md",
+    "docs/adr/0022-deterministic-index-generation-and-repair.md",
+    "CONTEXT.md",
+  ];
+  for (const file of files) {
+    it(`${file} uses placeholders only`, () => {
+      expect(readFileSync(join(REPO_ROOT, file), "utf8")).not.toMatch(HOME_PATH);
+    });
+  }
+  it("both new records use placeholders only", () => {
+    expect(approvalAdr().text).not.toMatch(HOME_PATH);
+    expect(tasksAdr().text).not.toMatch(HOME_PATH);
+  });
+});
+
+describe("Task 3 Test 6: ADR cross references resolve", () => {
+  it("every ADR number and file mentioned by the Phase 6 records exists", () => {
+    const existing = new Set(allAdrs().map((adr) => adr.file.slice(0, 4)));
+    const files = new Set(allAdrs().map((adr) => adr.file));
+    for (const adr of [
+      approvalAdr(),
+      tasksAdr(),
+      adrByTitle(BOUNDARY_ADR_TITLE),
+      adrByTitle("Handshake mints"),
+    ]) {
+      for (const match of adr.text.matchAll(/ADR[- ](\d{4})\b/g)) {
+        expect(existing.has(match[1] as string), `${adr.file} mentions ADR ${match[1]}`).toBe(true);
+      }
+      for (const match of adr.text.matchAll(/docs\/adr\/([\w.-]+\.md)/g)) {
+        expect(files.has(match[1] as string), `${adr.file} mentions ${match[1]}`).toBe(true);
+      }
+    }
+  });
+
+  it("every title quoted by a Phase 6 record names an existing record", () => {
+    const titles = allAdrs().map((adr) => adr.title);
+    const tasksText = flat(tasksAdr().text);
+    const quoted = /titled "([^"]+)"/.exec(tasksText);
+    expect(quoted).not.toBeNull();
+    expect(titles).toContain((quoted as RegExpExecArray)[1]);
+    const amendment = flat(adrByTitle("Indexes are recomputed wholesale").text);
+    const back = /titled "([^"]+)"/.exec(amendment);
+    expect(titles).toContain((back as RegExpExecArray)[1]);
+  });
 });
