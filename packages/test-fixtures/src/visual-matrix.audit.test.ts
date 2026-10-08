@@ -56,12 +56,37 @@ const APPROVALS_CELLS = [
   "approvals — shell-nav-count — narrow",
 ] as const;
 
+/** The 19 Phase 6 tasks and project-panel cells (UI-SPEC "Tasks cells"; the narrow attention cell proves the two-line title clamp). */
+const TASKS_CELLS = [
+  "tasks — tasks-today — full",
+  "tasks — tasks-today — narrow",
+  "tasks — tasks-overdue-blocked — full",
+  "tasks — tasks-proposed — full",
+  "tasks — tasks-proposed — narrow",
+  "tasks — tasks-create-form-error — full",
+  "tasks — tasks-create-form-error — narrow",
+  "tasks — tasks-detail-conflict — full",
+  "tasks — tasks-attention — full",
+  "tasks — tasks-attention — narrow",
+  "tasks — tasks-empty — full",
+  "tasks — tasks-none — full",
+  "tasks — tasks-loading — full",
+  "tasks — tasks-stale — full",
+  "tasks — tasks-error — full",
+  "tasks — tasks-disconnected — full",
+  "tasks — project-tasks — full",
+  "tasks — project-tasks — narrow",
+  "tasks — tasks-today — full — reduced",
+] as const;
+
 describe("visual matrix (audit)", () => {
-  it("lists exactly 94 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 21 approvals cells", () => {
+  it("lists exactly 113 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 21 approvals cells + 19 tasks cells", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 94 tests in 3 files/);
+    expect(out).toMatch(/Total: 113 tests in 4 files/);
     expect(APPROVALS_CELLS).toHaveLength(21);
     for (const cell of APPROVALS_CELLS) expect(out).toContain(cell);
+    expect(TASKS_CELLS).toHaveLength(19);
+    for (const cell of TASKS_CELLS) expect(out).toContain(cell);
     for (const cell of [
       "background — full",
       "background — reduced",
@@ -90,7 +115,7 @@ describe("visual matrix (audit)", () => {
     expect(config).toContain('updateSnapshots: "none"');
   });
 
-  it.each(["widgets.spec.ts", "agent-runs.spec.ts", "approvals.spec.ts"])(
+  it.each(["widgets.spec.ts", "agent-runs.spec.ts", "approvals.spec.ts", "tasks.spec.ts"])(
     "%s skips the whole file on a non-Linux host unless the local override is set",
     (fileName) => {
       const spec = readFileSync(
@@ -103,7 +128,7 @@ describe("visual matrix (audit)", () => {
     },
   );
 
-  it.each(["approvals.spec.ts"])(
+  it.each(["approvals.spec.ts", "tasks.spec.ts"])(
     "%s scrolls every scroller to the top before the capture (focus moves scroll a pane)",
     (fileName) => {
       const spec = readFileSync(
