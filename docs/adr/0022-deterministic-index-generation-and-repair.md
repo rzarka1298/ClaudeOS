@@ -180,3 +180,17 @@ therefore where this bound must be re-checked rather than assumed.
 - The cache can be deleted at any time. Repair reconstructs it, and nothing
   durable lives only there (ADR 0020's note schema is the ground truth, on
   disk, in readable Markdown).
+
+## Amendment: the tasks folder summary index
+
+Added in Phase 6. Everything above is unchanged and still governs every other managed folder.
+
+A tasks folder's `index.md` is a summary of constant size: counts by status, not one row per note. Per-note rows measured
+212 ms per incremental write and a 1.13 MB index at 10,000 task notes, so a per-write regeneration could not meet the
+responsiveness target. The summary's size does not grow with the number of tasks.
+
+The counts are computed only by setup, repair and rebuild, and are stated as of the last rebuild. Task writes never
+touch the index: creating, editing or completing a task leaves it byte-identical, and the per-task listing is served
+from the disposable index in the operational store. The summary is still a pure function of the notes beside it, so the
+determinism and repair rules of this record hold for it. The record for the task model is the one titled "A task is
+one note under a managed tasks folder, filtered by fixed predicates in the owner's time zone".
