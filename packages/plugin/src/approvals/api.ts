@@ -8,7 +8,7 @@ import type {
 } from "@ccc/domain/approval.js";
 import { ApprovalsSnapshotSchema } from "@ccc/domain/approval.js";
 import type { ApprovalItemView } from "@ccc/domain/approval-view.js";
-import { adoptApprovalsSnapshot } from "./signals.js";
+import { adoptApprovalsSnapshot, approvalEventSeq } from "./signals.js";
 
 /**
  * The seam between approval view code and the service (D-24's "components
@@ -93,12 +93,13 @@ export function approvalsApi(): ApprovalsApi {
 export async function refreshApprovals(): Promise<boolean> {
   refreshSequence += 1;
   const mine = refreshSequence;
+  const startedAtSeq = approvalEventSeq();
   try {
     const parsed = ApprovalsSnapshotSchema.safeParse(await current.list());
     if (!parsed.success) return false;
     // A newer refresh started while this one was in flight: only the latest resolves.
     if (mine !== refreshSequence) return false;
-    adoptApprovalsSnapshot(parsed.data);
+    adoptApprovalsSnapshot(parsed.data, startedAtSeq);
     return true;
   } catch {
     return false;

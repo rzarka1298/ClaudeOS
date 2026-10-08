@@ -86,6 +86,15 @@ function callHook(summary: ApprovalSummary): void {
   }
 }
 
+/** Monotonic count of event-applied upserts, and the sequence at which each id was last upserted. */
+let eventSeq = 0;
+const eventStamps = new Map<string, number>();
+
+/** The current event sequence; a refresh captures it before fetching (see `adoptApprovalsSnapshot`). */
+export function approvalEventSeq(): number {
+  return eventSeq;
+}
+
 function bucketOf(summary: ApprovalSummary): ApprovalFilter {
   return APPROVAL_STATE_DISPLAY[summary.state].filter;
 }
@@ -103,6 +112,8 @@ function withDelta(counts: ApprovalCounts, bucket: ApprovalFilter, delta: number
 export function applyApprovalSummary(summary: ApprovalSummary): boolean {
   const existing = approvalsById.value.get(summary.proposalId);
   if (existing !== undefined && summary.revision <= existing.revision) return false;
+  eventSeq += 1;
+  eventStamps.set(summary.proposalId, eventSeq);
   const next = new Map(approvalsById.value);
   next.set(summary.proposalId, summary);
   approvalsById.value = next;
@@ -131,7 +142,7 @@ export function applyApprovalSummary(summary: ApprovalSummary): boolean {
  * corrected for each kept entry that sits in a different bucket. The hook is
  * called once for each summary that was not already known.
  */
-export function adoptApprovalsSnapshot(snapshot: ApprovalsSnapshot): void {
+export function adoptApprovalsSnapshot(snapshot: ApprovalsSnapshot, sinceSeq?: number): void {
   const known = approvalsById.value;
   const next = new Map<string, ApprovalSummary>();
   let counts: ApprovalCounts = { ...snapshot.counts };
@@ -148,6 +159,15 @@ export function adoptApprovalsSnapshot(snapshot: ApprovalsSnapshot): void {
       }
     }
   }
+  if (sinceSeq !== undefined) {
+    // An entry an event upserted after the fetch began is newer than the
+    // response that lacks it: keep it, and count it (the totals omit it).
+    for (const [id, held] of known) {
+      if (next.has(id) || (eventStamps.get(id) ?? 0) <= sinceSeq) continue;
+      next.set(id, held);
+      counts = withDelta(counts, bucketOf(held), 1);
+    }
+  }
   approvalsById.value = next;
   approvalsCounts.value = counts;
   approvalsReady.value = snapshot.ready;
@@ -160,6 +180,7 @@ export function adoptApprovalsSnapshot(snapshot: ApprovalsSnapshot): void {
 
 /** Returns every approval signal to its initial value (tests, and a clean reload). The hook is left as set. */
 export function resetApprovalsState(): void {
+  eventStamps.clear();
   approvalsById.value = new Map();
   approvalsCounts.value = ZERO_COUNTS;
   approvalsReady.value = null;
