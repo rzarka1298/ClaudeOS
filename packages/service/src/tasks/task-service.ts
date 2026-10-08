@@ -240,8 +240,20 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
     try {
       const now = deps.now();
       const written = writeTaskNote({ ...options, now });
-      upsertTask(deps.db, toIndexRecord(written.path, written.frontmatter, written.contentHash));
-      const row = getTask(deps.db, written.id, localDayBounds(now, zone));
+      let row: ReturnType<typeof getTask>;
+      try {
+        upsertTask(deps.db, toIndexRecord(written.path, written.frontmatter, written.contentHash));
+        row = getTask(deps.db, written.id, localDayBounds(now, zone));
+      } catch (error: unknown) {
+        // The note is already on disk: a retry would write a duplicate. Ask for
+        // a rescan so the index picks the note up, and say so in the log.
+        deps.log.error(
+          { fn, errorName: errorName(error), phase: "index-after-write" },
+          "task note written but not indexed; rescan requested",
+        );
+        reindexer.requestRescan();
+        return fail("write-failed");
+      }
       if (row === null) {
         deps.log.error({ fn, errorName: "MissingIndexRow" }, "task create failed");
         return fail("write-failed");

@@ -24,6 +24,7 @@ import {
   approvalsBudgetFor,
   approvalsSnapshotFor,
 } from "./approval-wiring/routes.js";
+import { CLIENT_RESPONSE_CAP_BYTES } from "./approval-wiring/types.js";
 import { mintToken } from "./auth/token.js";
 import { claudeRouteTable } from "./claude/routes.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
@@ -51,6 +52,9 @@ import { assertUsableVaultRoot, VaultRootRefusedError } from "./vault-root-polic
 // bodies live in `route-kit.ts` (SC-1), so feature route files can use them
 // without importing this module. Re-exported for existing importers.
 export type { RouteContext } from "./route-kit.js";
+
+/** The bytes `,"approvals":` adds around the member (with a little rounding room). */
+const SNAPSHOT_MEMBER_KEY_BYTES = 16;
 
 const healthHandler: Handler = (_req, res, ctx) => {
   const startedAt = ctx.store.readServiceMeta("started_at");
@@ -155,7 +159,14 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
   if (ctx.approvals) {
     try {
       const restBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
-      body.state.approvals = approvalsSnapshotFor(ctx.approvals, approvalsBudgetFor(restBytes));
+      const member = approvalsSnapshotFor(ctx.approvals, approvalsBudgetFor(restBytes));
+      // Even a fully trimmed member has a fixed floor (counts, flags). When the
+      // rest leaves less than that, omit it: the cap outranks the member, and
+      // the client repairs the inbox from the list route.
+      const memberBytes = Buffer.byteLength(JSON.stringify(member), "utf8");
+      if (restBytes + memberBytes + SNAPSHOT_MEMBER_KEY_BYTES <= CLIENT_RESPONSE_CAP_BYTES) {
+        body.state.approvals = member;
+      }
     } catch (err: unknown) {
       logger.error(
         { route: SNAPSHOT_PATH, errorName: err instanceof Error ? err.name : typeof err },
