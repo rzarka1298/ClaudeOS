@@ -122,11 +122,11 @@ function applyOne(deps: ChangedDeps, root: string, path: string): Outcome {
   try {
     const stat = lstatSync(target);
     // The scan ignores symbolic links, so a link is never a task note here either.
-    if (stat.isSymbolicLink()) return { changed: removeTaskByPath(deps.db, path) };
+    if (stat.isSymbolicLink()) return removed(deps, path);
     if (!stat.isFile() || stat.size > TASK_FILE_MAX_BYTES) return unreadable(deps, path);
     bytes = readFileSync(target);
   } catch (error: unknown) {
-    if (isMissing(error)) return { changed: removeTaskByPath(deps.db, path) };
+    if (isMissing(error)) return removed(deps, path);
     return unreadable(deps, path);
   }
 
@@ -169,6 +169,16 @@ function applyOne(deps: ChangedDeps, root: string, path: string): Outcome {
     throw error;
   }
   return { changed: true };
+}
+
+/**
+ * A note that is gone. A copy the last walk excluded as a duplicate has no row,
+ * so deleting it changes nothing here, yet the surviving copy must become
+ * visible again: that needs a walk.
+ */
+function removed(deps: ChangedDeps, path: string): Outcome {
+  const changed = removeTaskByPath(deps.db, path);
+  return deps.knownDuplicateId?.(path) === undefined ? { changed } : { changed, rescan: true };
 }
 
 /** A note that cannot be indexed as it stands: drop any row for it and let a walk list it. */
