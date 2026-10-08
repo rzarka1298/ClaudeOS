@@ -111,7 +111,7 @@ afterEach(() => {
 function wired(
   options: {
     focused?: boolean;
-    enabled?: boolean;
+    enabled?: boolean | (() => boolean);
     client?: Partial<Record<"list" | "get" | "decide" | "test", ReturnType<typeof vi.fn>>>;
     host?: FakeObsidianHost;
   } = {},
@@ -134,7 +134,8 @@ function wired(
   const wiring = wireApprovals(registry, {
     client: client as never,
     notice: (m) => notices.push(m),
-    notifyEnabled: () => options.enabled ?? true,
+    notifyEnabled: () =>
+      typeof options.enabled === "function" ? options.enabled() : (options.enabled ?? true),
     appFocused: () => state.focused,
     focusWindow: () => calls.push("focus"),
     reveal: () => calls.push("reveal"),
@@ -316,5 +317,25 @@ describe("Test 7: no decide path", () => {
       expect(source).not.toMatch(/createApprovalsClient|\.submit\(|\.propose\(|propose[A-Z]/);
       expect(source).not.toMatch(/approve\(|deny\(/);
     }
+  });
+});
+
+describe("audit w7: the notifications toggle reaches the notifier live (D-21, D-26)", () => {
+  it("raises no native notification or Notice once the setting is off, and resumes when it is back on", () => {
+    let enabled = true;
+    const { created, notices } = wired({ focused: false, enabled: () => enabled });
+    const at = (n: number) => new Date(NOW + n * 1000).toISOString();
+
+    applyApprovalSummary(summary(1, "pending", 1, { createdAt: at(1) }));
+    expect(created).toHaveLength(1);
+
+    enabled = false;
+    applyApprovalSummary(summary(2, "pending", 2, { createdAt: at(2) }));
+    expect(created).toHaveLength(1);
+    expect(notices).toEqual([]);
+
+    enabled = true;
+    applyApprovalSummary(summary(3, "pending", 3, { createdAt: at(3) }));
+    expect(created).toHaveLength(2);
   });
 });
