@@ -103,6 +103,17 @@ describe("visual matrix (audit)", () => {
     },
   );
 
+  it.each(["approvals.spec.ts"])(
+    "%s scrolls every scroller to the top before the capture (focus moves scroll a pane)",
+    (fileName) => {
+      const spec = readFileSync(
+        join(REPO_ROOT, "packages", "test-fixtures", "visual", fileName),
+        "utf8",
+      );
+      expect(spec).toContain("resetScroll(page)");
+    },
+  );
+
   it("never lets the plugin source reach the synthetic fixtures", () => {
     const pluginSrc = join(REPO_ROOT, "packages", "plugin", "src");
     const leaks = filesUnder(pluginSrc)
