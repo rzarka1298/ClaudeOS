@@ -294,6 +294,10 @@ describe("every tasks case renders through the real components", () => {
         expect(panel?.querySelectorAll('[role="toolbar"] button')).toHaveLength(7);
         expect(panel?.querySelector("select")).toBeNull();
         expect(panel?.querySelector("h3")?.textContent).toBe("Tasks · example-project");
+        // The panel is narrowed to its own project: its rows and chip counts differ from the global view's.
+        expect(panel?.textContent).toContain("Draft the weekly review");
+        expect(panel?.textContent).not.toContain("Archive the old sample notes");
+        expect(panel?.textContent).toContain("All (1)");
       } finally {
         rendered.close();
       }
