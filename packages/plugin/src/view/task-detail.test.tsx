@@ -506,6 +506,24 @@ describe("Test 10: disconnected and Open note", () => {
   });
 });
 
+describe("Audit w6 (06-22, D-15): Reopen and Mark done are disabled while disconnected", () => {
+  it("blocks Reopen task on a done task and Mark done on an open task", () => {
+    const onAction = vi.fn(() => Promise.resolve(APPLIED));
+    const done = render(
+      <TaskDetail {...props(detailTask({ status: "done" }), { onAction, connected: false })} />,
+    );
+    expect(button("Reopen task").getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(button("Reopen task"));
+    done.unmount();
+    render(
+      <TaskDetail {...props(detailTask({ status: "ready" }), { onAction, connected: false })} />,
+    );
+    expect(button("Mark done").getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(button("Mark done"));
+    expect(onAction).not.toHaveBeenCalled();
+  });
+});
+
 describe("Test 12: hostile text", () => {
   it("renders every hostile string as a literal text node", () => {
     for (const hostile of HOSTILE_TASK_TITLES) {

@@ -571,3 +571,25 @@ describe("an external selection (an Overview row)", () => {
     expect(taskDetailFocusRequested.value).toBe(false);
   });
 });
+
+describe("Audit w6 (06-22, D-15): a disconnect never rewrites last-good counts", () => {
+  it("keeps the summary and chip counts when the connection drops after a load", async () => {
+    const { rerender, context } = mountWith({});
+    await screen.findByText("Task 1");
+    expect(screen.getByText("12 open · 1 overdue · 2 proposed")).toBeTruthy();
+    rerender(
+      <TasksDestination
+        connection={{ kind: "disconnected", reason: "down" }}
+        now={TASK_NOW_MS}
+        zone={TASK_ZONE}
+        context={context}
+        view={view}
+        projects={[{ id: projectIdFor(1), name: "Garden" }]}
+      />,
+    );
+    expect(await screen.findByText("Service disconnected")).toBeTruthy();
+    expect(screen.getByText("12 open · 1 overdue · 2 proposed")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Today, 3 tasks" })).toBeTruthy();
+    expect(screen.getByText("Task 1")).toBeTruthy();
+  });
+});
