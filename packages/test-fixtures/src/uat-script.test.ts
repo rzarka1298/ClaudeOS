@@ -139,14 +139,9 @@ run("coverage (Tests 3 and 4)", () => {
 
 run("setup and teardown (Test 5)", () => {
   it("states the stance in the first paragraph", () => {
-    const preamble = text.split(/^## /m)[1] ?? "";
-    const first = text
-      .replace(/^---[\s\S]*?\n---\n/, "")
-      .split("\n\n")
-      .slice(0, 3)
-      .join("\n\n");
-    expect(`${first}${preamble}`).toMatch(/Agents never mark/);
-    expect(first).toMatch(/real operational store/);
+    const intro = text.slice(text.indexOf("# Phase 6")).split("\n\n").slice(0, 3).join("\n\n");
+    expect(intro).toMatch(/Agents\s+never\s+mark/);
+    expect(intro).toMatch(/real\s+operational\s+store/);
   });
 
   it("sets up its own runtime directory, vaults and test-only variables", () => {
