@@ -147,10 +147,13 @@ export function parseTaskContent(content: string): ReadTaskResult {
       reason: content.startsWith("---") ? "refused-delimiter" : "no-frontmatter",
     };
   }
-  const terminator = content.indexOf(FRONTMATTER_TERMINATOR, FRONTMATTER_OPEN.length - 1);
+  let terminator = content.indexOf(FRONTMATTER_TERMINATOR, FRONTMATTER_OPEN.length - 1);
+  // The service reader accepts a closing delimiter at end of file with no newline.
+  const closesAtEof = terminator === -1 && content.length > 7 && content.endsWith("\n---");
+  if (closesAtEof) terminator = content.length - 4;
   if (terminator === -1) return { kind: "unreadable", reason: "no-frontmatter" };
   const block = content.slice(FRONTMATTER_OPEN.length, terminator + 1);
-  const body = content.slice(terminator + FRONTMATTER_TERMINATOR.length);
+  const body = closesAtEof ? "" : content.slice(terminator + FRONTMATTER_TERMINATOR.length);
   if (utf8Bytes(block) > TASK_FRONTMATTER_MAX_BYTES) {
     return { kind: "unreadable", reason: "frontmatter-too-large" };
   }

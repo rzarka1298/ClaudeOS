@@ -257,3 +257,16 @@ describe("codex-1: an edit never writes what the readers reject", () => {
     }
   });
 });
+
+describe("closing delimiter parity with the service reader", () => {
+  it("accepts a closing delimiter at end of file with no trailing newline", () => {
+    const eof = `${OPEN_NOTE.slice(0, OPEN_NOTE.indexOf("\n---\n"))}\n---`;
+    const parsed = parseTaskContent(eof);
+    expect(parsed.kind).toBe("ok");
+  });
+
+  it("leaves CRLF notes unreadable with the refused-delimiter code", () => {
+    const parsed = parseTaskContent(OPEN_NOTE.replace(/\n/g, "\r\n"));
+    expect(parsed).toMatchObject({ kind: "unreadable", reason: "refused-delimiter" });
+  });
+});
