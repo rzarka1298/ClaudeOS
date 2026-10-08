@@ -418,4 +418,15 @@ describe("the 06-22 additions to the Tasks family", () => {
       /@container \(max-width: 48rem\)\s*\{\s*\.ccc-tasks-pane\[data-empty="true"\]\s*\{\s*display: none;/,
     );
   });
+
+  it("keeps the selected row's bar clear of the title and the heading ring clear of its text", () => {
+    const selectedRow = NEW_RULES.find((rule) =>
+      rule.selectors.includes('.ccc-task-row[data-selected="true"]'),
+    );
+    expect(selectedRow?.body).toContain("padding-left: var(--ccc-space-sm)");
+    const heading = NEW_RULES.find((rule) =>
+      rule.selectors.includes(".ccc-project-tasks-header h3"),
+    );
+    expect(heading?.body).toContain("padding-inline: var(--ccc-space-xs)");
+  });
 });

@@ -1891,6 +1891,7 @@
 .ccc-tasks-header h2,
 .ccc-project-tasks-header h3 {
   margin: 0;
+  padding-inline: var(--ccc-space-xs);
   overflow-wrap: break-word;
   font-size: var(--ccc-text-heading);
   font-weight: var(--ccc-weight-strong);
@@ -2092,6 +2093,7 @@
 .ccc-task-row[data-selected="true"] {
   background-color: var(--ccc-surface);
   box-shadow: inset var(--ccc-focus-ring) 0 0 0 var(--ccc-ink);
+  padding-left: var(--ccc-space-sm);
 }
 
 .ccc-task-row[data-selected="true"] .ccc-task-title {
