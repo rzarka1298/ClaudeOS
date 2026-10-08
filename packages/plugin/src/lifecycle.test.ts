@@ -2,6 +2,7 @@ import type { ProjectId } from "@ccc/domain";
 import type { EventClient, SocketApiClient, SocketRequestOptions } from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { registerApprovalProtocol } from "./approvals/protocol.js";
+import { wireApprovals } from "./approvals/wiring.js";
 import { connectionState } from "./connection-state.js";
 import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
@@ -44,6 +45,13 @@ const NOOP_CLIENT: SocketApiClient = {
     return Promise.reject(new Error("not called"));
   },
 };
+
+const NOOP_APPROVALS_CLIENT = {
+  list: () => Promise.reject(new Error("not called")),
+  get: () => Promise.reject(new Error("not called")),
+  decide: () => Promise.reject(new Error("not called")),
+  test: () => Promise.reject(new Error("not called")),
+} as never;
 
 /** An event client that records subscriptions and never connects. */
 function recordingEventClient(
@@ -106,13 +114,22 @@ function loadCycle(
     apply,
   });
   registry.settingTab({});
-  // The REAL approval deep-link registration (plan 06-09, D-26): a duplicate
-  // `ccc-approval` action THROWS in Obsidian, so a missing unregister is a red test.
-  registerApprovalProtocol(registry, { navigateToApproval: () => {}, log: () => {} });
-  // The three other new registry kinds (plan 06-09): a vault event deferred to
-  // layout-ready, a timer slot with one pending callback, and a cleanup hook.
+  // The REAL approvals wiring (plan 06-23): the `ccc-approval` deep link (a
+  // duplicate action THROWS in Obsidian, so a missing unregister is a red
+  // test), the Open approval inbox command, the test-approval timer slot and
+  // the API / notifier cleanups, all through the registry.
+  wireApprovals(registry, {
+    client: NOOP_APPROVALS_CLIENT,
+    notice: () => {},
+    notifyEnabled: () => true,
+    appFocused: () => true,
+    reveal: () => {},
+    log: () => {},
+    now: () => 0,
+  });
+  // A vault event deferred to layout-ready and a cleanup hook (plan 06-09);
+  // replaced by the real tasks wiring in plan 06-23 task 3.
   registry.vaultEvent("create", () => {});
-  registry.timer().schedule(() => {}, 60_000);
   registry.cleanup(() => {});
   // The REAL plugin-level switcher (wave-7 finding 2): its launch timers and
   // any open modal are released through the seam.
@@ -237,10 +254,10 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     }
 
     expect(host.liveCounts().view).toBe(1);
-    // Four commands now: "Open overview", "Set up managed vault",
-    // "Search projects and actions" and "Set up launchers". Twenty loads
-    // leave exactly one of each, not twenty of each.
-    expect(host.liveCounts().command).toBe(4);
+    // Five commands now: "Open overview", "Set up managed vault",
+    // "Search projects and actions", "Set up launchers" and (plan 06-23)
+    // "Open approval inbox". Twenty loads leave exactly one of each.
+    expect(host.liveCounts().command).toBe(5);
     // One tab after twenty loads, not twenty tabs.
     expect(host.liveCounts().settingTab).toBe(1);
   });

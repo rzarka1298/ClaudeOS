@@ -8,7 +8,11 @@ import {
 } from "@ccc/service-api-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "./connection-state.js";
-import { attachEventClient, refreshProjectsOnConnect } from "./service-connection.js";
+import {
+  attachEventClient,
+  combineOnLive,
+  refreshProjectsOnConnect,
+} from "./service-connection.js";
 
 /**
  * The connect seam (wave-3 review, carried from 04-04/04-07): once the event
@@ -88,5 +92,29 @@ describe("refreshProjectsOnConnect", () => {
     // Let the rejection settle; an unhandled rejection would fail the run.
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     expect(socket.requests).toHaveLength(1);
+  });
+});
+
+describe("combineOnLive (plan 06-23)", () => {
+  it("runs every hook in order on each live transition and survives a throwing one", () => {
+    const calls: string[] = [];
+    const onLive = combineOnLive(
+      () => calls.push("projects"),
+      () => {
+        throw new Error("boom");
+      },
+      () => calls.push("approvals"),
+      () => calls.push("tasks"),
+    );
+    const events = fakeEventClient();
+    attachEventClient(events.client, { onLive });
+
+    events.setState({ kind: "live" });
+    events.setState({ kind: "live" });
+    expect(calls).toEqual(["projects", "approvals", "tasks"]);
+
+    events.setState({ kind: "disconnected", reason: "closed" } as EventClientState);
+    events.setState({ kind: "live" });
+    expect(calls).toHaveLength(6);
   });
 });
