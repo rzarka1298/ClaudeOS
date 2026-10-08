@@ -1222,7 +1222,8 @@ const TASKS_CASES: Readonly<Record<string, TasksCaseSpec>> = {
     list: "full",
     counts: "full",
     connection: TASK_LIVE,
-    readyWhen: ".ccc-task-row",
+    selected: FIRST_ID,
+    readyWhen: PANE_READY,
   },
   "tasks-overdue-blocked": {
     view: "tasks",

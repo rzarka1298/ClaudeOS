@@ -193,6 +193,10 @@ const EXPECTATIONS: Readonly<Record<string, (doc: Document) => void>> = {
     expect(doc.querySelector('[role="toolbar"] [aria-pressed="true"]')?.textContent).toMatch(
       /^Today/,
     );
+    // UI-SPEC "Tasks cells": Today shows a selected ready task in the pane.
+    expect(doc.querySelector(".ccc-tasks-pane .ccc-task-detail h3")?.textContent).toBe(
+      "Draft the weekly review",
+    );
   },
   "tasks-overdue-blocked": (doc) => {
     expect(text(doc)).toContain("Blocked — waiting on 2 unfinished tasks");
