@@ -52,7 +52,31 @@ describe("snapshot adoption never regresses a revision", () => {
     expect(hook).not.toHaveBeenCalled();
   });
 
-  it("entries absent from the snapshot are still dropped and newer snapshot entries win", () => {
+  it("a request that arrived by event while a refresh was in flight survives that refresh", async () => {
+    const d = deferred<ReturnType<typeof approvalsSnapshot>>();
+    configureApprovalsApi(apiWith(() => d.promise));
+    const refresh = refreshApprovals();
+    applyApprovalSummary(summary(2, "pending", 1));
+    d.resolve(approvalsSnapshot({ pending: [summary(1, "pending", 1)] }));
+    await refresh;
+    expect(approvalsById.value.has(proposalId(2))).toBe(true);
+    expect(approvalsById.value.has(proposalId(1))).toBe(true);
+    expect(pendingApprovalCount.value).toBe(2);
+    expect(approvalsCounts.value).toEqual({ pending: 2, decided: 0, expired: 0 });
+  });
+
+  it("an older entry absent from the refresh response is still dropped", async () => {
+    applyApprovalSummary(summary(2, "pending", 1));
+    const d = deferred<ReturnType<typeof approvalsSnapshot>>();
+    configureApprovalsApi(apiWith(() => d.promise));
+    const refresh = refreshApprovals();
+    d.resolve(approvalsSnapshot({ pending: [summary(1, "pending", 1)] }));
+    await refresh;
+    expect(approvalsById.value.has(proposalId(2))).toBe(false);
+    expect(approvalsCounts.value).toEqual({ pending: 1, decided: 0, expired: 0 });
+  });
+
+  it("entries absent from a bare snapshot are dropped and newer snapshot entries win", () => {
     applyApprovalSummary(summary(1, "pending", 1));
     applyApprovalSummary(summary(2, "pending", 1));
     adoptApprovalsSnapshot(approvalsSnapshot({ decided: [summary(1, "approved", 3)] }));
