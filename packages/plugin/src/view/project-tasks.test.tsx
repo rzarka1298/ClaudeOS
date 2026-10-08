@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectActionOutcome, ProjectsActions } from "../projects/projects-actions.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { resetScanState } from "../projects/scan-state.js";
-import { configureTaskActionsPort } from "../tasks/actions-port.js";
+import { configureTaskActionsPort, type TaskActionsPort } from "../tasks/actions-port.js";
+import { parseTaskContent } from "../tasks/task-update.js";
+import { OPEN_NOTE } from "../test-support/task-note-fixtures.js";
 import { configureTasksApi } from "../tasks/api.js";
 import {
   contextSnapshot,
@@ -263,5 +265,90 @@ describe("Test 4: independence (TASK-07)", () => {
       projectId: second,
     });
     vi.restoreAllMocks();
+  });
+});
+
+describe("wave-6: the dirty guard on the project panel", () => {
+  async function dirtyProjectPanel() {
+    const api = fakeTasksApi(taskRows(3), {
+      get: vi.fn(() =>
+        Promise.resolve({
+          task: {
+            row: taskRows(1)[0] as ReturnType<typeof taskRows>[number],
+            path: "global/tasks/example-task-3f2a.md",
+            createdAt: "2026-10-01T10:00:00.000Z",
+            sourceType: "manual" as const,
+            blockedBy: [],
+            aiGenerated: false,
+            confidence: "unverified" as const,
+          },
+        }),
+      ),
+    });
+    configureTasksApi(api);
+    const applied = () =>
+      Promise.resolve({
+        kind: "applied" as const,
+        content: OPEN_NOTE,
+        task: {} as never,
+        notified: true,
+      });
+    const port: TaskActionsPort = {
+      complete: vi.fn(applied),
+      reopen: vi.fn(applied),
+      accept: vi.fn(applied),
+      dismiss: vi.fn(applied),
+      save: vi.fn(applied),
+      readForEdit: vi.fn(() => Promise.resolve(parseTaskContent(OPEN_NOTE))),
+      openNote: vi.fn(),
+    };
+    configureTaskActionsPort(port);
+    render(
+      <ProjectsView
+        actions={noopActions()}
+        pickFolder={() => Promise.resolve({ kind: "unavailable" })}
+        connection={{ kind: "live" }}
+        now={TASK_NOW_MS}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show tasks for example-project" }));
+    const panel = (await screen.findByRole("heading", { name: "Tasks · example-project" })).closest(
+      ".ccc-project-tasks",
+    ) as HTMLElement;
+    fireEvent.click(await within(panel).findByText("Task 1"));
+    const title = await within(panel).findByLabelText("Title");
+    fireEvent.input(title, { target: { value: "Changed title" } });
+    await waitFor(() => expect(within(panel).getByText(/unsaved/i)).toBeTruthy());
+    return { panel, title };
+  }
+
+  it("asks before Close project tasks discards unsaved edits, and keeps them on Keep editing", async () => {
+    const { panel } = await dirtyProjectPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Close project tasks" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
+    expect(document.querySelector(".ccc-project-tasks")).not.toBeNull();
+    expect((within(panel).getByLabelText("Title") as HTMLInputElement).value).toBe("Changed title");
+    fireEvent.click(screen.getByRole("button", { name: "Close project tasks" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard changes" }));
+    await waitFor(() => expect(document.querySelector(".ccc-project-tasks")).toBeNull());
+  });
+
+  it("does not close the panel from Escape inside the title field", async () => {
+    const { title } = await dirtyProjectPanel();
+    fireEvent.keyDown(title, { key: "Escape" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.querySelector(".ccc-project-tasks")).not.toBeNull();
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Changed title");
+  });
+
+  it("asks before switching to another project's panel", async () => {
+    const { panel } = await dirtyProjectPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Show tasks for sample-notes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
+    expect(screen.queryByRole("heading", { name: "Tasks · sample-notes" })).toBeNull();
+    expect((within(panel).getByLabelText("Title") as HTMLInputElement).value).toBe("Changed title");
+    fireEvent.click(screen.getByRole("button", { name: "Show tasks for sample-notes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard changes" }));
+    await screen.findByRole("heading", { name: "Tasks · sample-notes" });
   });
 });
