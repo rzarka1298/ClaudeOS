@@ -62,6 +62,13 @@ const TASKS_CASES = [
 ] as const;
 
 describe("Test 9: the tasks fixture file is valid and synthetic", () => {
+  it("carries one attention title long enough to need the two-line clamp (schema maximum)", () => {
+    const items = (fixtures.attention as { items: { title?: string }[] }).items;
+    const longest = Math.max(...items.map((item) => item.title?.length ?? 0));
+    expect(longest).toBeGreaterThanOrEqual(190);
+    expect(longest).toBeLessThanOrEqual(200);
+  });
+
   it("holds rows, counts, details and attention entries valid against the schemas the service sends", () => {
     for (const [key, row] of Object.entries(fixtures.rows)) {
       const parsed = TaskRowSchema.safeParse(row);
