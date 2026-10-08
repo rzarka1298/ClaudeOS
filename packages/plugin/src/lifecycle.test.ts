@@ -3,13 +3,13 @@ import type { EventClient, SocketApiClient, SocketRequestOptions } from "@ccc/se
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { registerApprovalProtocol } from "./approvals/protocol.js";
 import { wireApprovals } from "./approvals/wiring.js";
-import { wireTasks } from "./tasks/wiring.js";
 import { connectionState } from "./connection-state.js";
 import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
 import { registerSetUpLaunchersCommand, SET_UP_LAUNCHERS_COMMAND_ID } from "./projects/commands.js";
 import { resetLaunchStatus } from "./projects/launch-status.js";
 import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js";
+import { wireTasks } from "./tasks/wiring.js";
 import {
   createFakeDomTarget,
   type EventTargetLike,
@@ -144,7 +144,11 @@ function loadCycle(
   // cleanups for the API holder, the actions port and the pending flush.
   wireTasks(registry, {
     client: NOOP_TASKS_CLIENT,
-    vault: { process: () => Promise.reject(new Error("not called")), read: () => Promise.reject(new Error("not called")), getFileByPath: () => null },
+    vault: {
+      process: () => Promise.reject(new Error("not called")),
+      read: () => Promise.reject(new Error("not called")),
+      getFileByPath: () => null,
+    },
     openNote: () => {},
     reveal: () => {},
     now: () => 0,

@@ -8,9 +8,8 @@ import {
   TASK_PATH,
   taskEditVault,
 } from "../test-support/task-note-fixtures.js";
-import { TasksApiError, tasksApi } from "./api.js";
-import { configureTasksApi } from "./api.js";
 import { configureTaskActionsPort, taskActionsPort } from "./actions-port.js";
+import { configureTasksApi, TasksApiError, tasksApi } from "./api.js";
 import { resetTasksGeneration } from "./events.js";
 import { wireTasks } from "./wiring.js";
 
@@ -51,7 +50,7 @@ function setup(options: { missing?: boolean; client?: Record<string, unknown> } 
   const opened: string[] = [];
   const reveals: string[] = [];
   const wiring = wireTasks(registry, {
-    client: client as never,
+    client: client,
     vault: {
       ...taskEditVault(vault),
       getFileByPath: (path: string) => {
@@ -77,7 +76,9 @@ describe("Test 1: client injection", () => {
     await tasksApi().list({} as never);
     expect(client.list).toHaveBeenCalledTimes(1);
 
-    client.get.mockRejectedValueOnce(Object.assign(new Error("/Users/x/secret"), { code: "not-found" }));
+    client.get.mockRejectedValueOnce(
+      Object.assign(new Error("secret path"), { code: "not-found" }),
+    );
     client.get.mockRejectedValueOnce(Object.assign(new Error("x"), { code: "bogus" }));
     const codes: string[] = [];
     for (let i = 0; i < 2; i++) {

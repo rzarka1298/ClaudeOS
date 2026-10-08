@@ -33,21 +33,21 @@ import {
   NOTIFY_APPROVALS_KEY,
   NOTIFY_APPROVALS_NAME,
   NOTIFY_APPROVALS_SAVE_FAILED,
+  REBUILD_DESC,
+  REBUILD_FAILED_NOTICE,
+  REBUILD_NAME,
+  REBUILD_STARTED_NOTICE,
   REDUCED_MOTION_KEY,
   REDUCED_MOTION_OPTIONS,
   REDUCED_MOTION_SAVE_FAILED,
-  REBUILD_FAILED_NOTICE,
-  REBUILD_NAME,
-  REBUILD_DESC,
-  REBUILD_STARTED_NOTICE,
   rebuildSuccessNotice,
-  TASKS_GROUP_HEADING,
   SEND_TEST_APPROVAL_DESC,
   SEND_TEST_APPROVAL_NAME,
   SEND_TEST_APPROVAL_NEEDS_SERVICE,
   type SettingsClaudeSeam,
   type SettingsTabHost,
   statusLineStatusText,
+  TASKS_GROUP_HEADING,
   TRANSCRIPT_ANALYSIS_KEY,
 } from "./settings-tab.js";
 
@@ -778,10 +778,14 @@ describe("Approvals group (plan 06-23, UI-SPEC S5)", () => {
 });
 
 describe("Tasks group (plan 06-23, UI-SPEC S5)", () => {
-  function tasksHost(options: { available?: boolean; rebuild?: () => Promise<{ tasks: number; attention: number }> } = {}) {
+  function tasksHost(
+    options: {
+      available?: boolean;
+      rebuild?: () => Promise<{ tasks: number; attention: number }>;
+    } = {},
+  ) {
     const notices: string[] = [];
-    const rebuild =
-      options.rebuild ?? vi.fn().mockResolvedValue({ tasks: 212, attention: 0 });
+    const rebuild = options.rebuild ?? vi.fn().mockResolvedValue({ tasks: 212, attention: 0 });
     const host: SettingsTabHost = {
       settings: { reducedMotion: "auto", notifyApprovals: true },
       mql: { matches: false },

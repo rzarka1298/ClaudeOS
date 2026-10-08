@@ -5,6 +5,7 @@ import {
   createAuthenticatedClient,
   createEventClient,
   createSocketApiClient,
+  createTasksClient,
   deleteUsageAnalytics,
   getClaudeIntegration,
   refreshProjects,
@@ -27,6 +28,8 @@ import {
 } from "./settings.js";
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
+import { taskEditVault } from "./tasks/task-update.js";
+import { wireTasks } from "./tasks/wiring.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 import { openDeleteUsageModal as openDeleteUsageModalDialog } from "./view/delete-usage-modal.js";
 import { createLaunchConflictChooser } from "./view/launch-conflict-choice.js";
@@ -190,9 +193,33 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       },
       now: () => Date.now(),
     });
+    // Tasks (plan 06-23): the client, the actions port over the Obsidian vault,
+    // the vault watcher (after layout-ready), the Create task command and the
+    // reconnect rescan, every registration through the registry.
+    const editVault = taskEditVault(this.app.vault);
+    const tasks = wireTasks(this.hostRegistry, {
+      client: createTasksClient(this.client),
+      // Explicit forwarding: a spread of the Vault instance would drop its prototype methods.
+      vault: {
+        process: (file, fn) => editVault.process(file, fn),
+        read: (file) => editVault.read(file),
+        getFileByPath: (path) => this.app.vault.getFileByPath(path),
+      },
+      openNote: (path) => {
+        void this.app.workspace.openLinkText(path, "", false);
+      },
+      reveal: () => {
+        void this.revealView();
+      },
+      now: () => Date.now(),
+      log: (className) => {
+        console.warn(`[claude-command-center] task watcher flush failed: ${className}`);
+      },
+    });
     this.onServiceLive = combineOnLive(
       refreshProjectsOnConnect(() => refreshProjects(this.client)),
       approvals.onLive,
+      tasks.onLive,
     );
 
     // The Settings tab, through the same seam as everything else so its
@@ -214,6 +241,11 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         // The Approvals group: Send a test approval and its availability.
         approvals: {
           sendTestApproval: () => approvals.testAction.press(),
+          serviceAvailable: () => connectionState.value.kind !== "disconnected",
+        },
+        // The Tasks group: Rebuild task index and its availability.
+        tasks: {
+          rebuildTaskIndex: () => tasks.rebuild(),
           serviceAvailable: () => connectionState.value.kind !== "disconnected",
         },
         // Row 6's confirmation modal (UI-SPEC S4-d). Behind the same seam

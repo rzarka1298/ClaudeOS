@@ -16,6 +16,11 @@ describe("main.ts wires the Phase 6 modules once, through the registry (plan 06-
     expect(source).toMatch(/configureNotify\(/);
   });
 
+  it("builds the tasks client from the authenticated connection and calls wireTasks once", () => {
+    expect(source).toMatch(/createTasksClient\(this\.client\)/);
+    expect(source.match(/wireTasks\(/g)).toHaveLength(1);
+  });
+
   it("registers nothing directly on the plugin", () => {
     expect(source).not.toMatch(
       /this\.(registerView|addRibbonIcon|addCommand|registerEvent|registerInterval|registerObsidianProtocolHandler)\(/,

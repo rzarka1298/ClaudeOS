@@ -232,6 +232,32 @@ export const SEND_TEST_APPROVAL_DESC =
 export const SEND_TEST_APPROVAL_NEEDS_SERVICE =
   " Needs the companion service, which isn't running.";
 
+// --- Tasks group (UI-SPEC S5, plan 06-23) ----------------------------------
+export const TASKS_GROUP_HEADING = "Tasks";
+export const REBUILD_NAME = "Rebuild task index";
+export const REBUILD_DESC =
+  "Re-reads every task note in the vault and rebuilds the task lists. Your notes aren't changed.";
+export const REBUILD_STARTED_NOTICE = "Rebuilding the task index…";
+export const REBUILD_FAILED_NOTICE =
+  "Couldn't rebuild the task index. Check the service in Settings → Diagnostics, then try again.";
+
+const REBUILD_PLURAL = new Intl.PluralRules("en");
+
+/** `Task index rebuilt. 212 tasks found.`, with ` {m} note(s) need attention.` only when any. */
+export function rebuildSuccessNotice(tasks: number, attention: number): string {
+  const found = `${tasks} ${REBUILD_PLURAL.select(tasks) === "one" ? "task" : "tasks"} found.`;
+  const base = `Task index rebuilt. ${found}`;
+  if (attention <= 0) return base;
+  const note = REBUILD_PLURAL.select(attention) === "one" ? "note needs" : "notes need";
+  return `${base} ${attention} ${note} attention.`;
+}
+
+/** What the Tasks row needs from the wiring: the rebuild, and whether the service is reachable. */
+export interface SettingsTasksSeam {
+  readonly rebuildTaskIndex: () => Promise<{ readonly tasks: number; readonly attention: number }>;
+  readonly serviceAvailable: () => boolean;
+}
+
 /** What the Approvals rows need from the wiring: start a test request, and whether the service is reachable. */
 export interface SettingsApprovalsSeam {
   readonly sendTestApproval: () => void;
@@ -256,6 +282,8 @@ export interface SettingsTabHost {
   readonly claude?: SettingsClaudeSeam | undefined;
   /** The Approvals group's seam (plan 06-23). Absent means the test action is unavailable. */
   readonly approvals?: SettingsApprovalsSeam | undefined;
+  /** The Tasks group's seam (plan 06-23). Absent means Rebuild task index is unavailable. */
+  readonly tasks?: SettingsTasksSeam | undefined;
   /**
    * Opens the delete-usage confirmation modal (UI-SPEC S4-d), resolving
    * `true` only on an explicit confirm. Behind a seam -- like every other
@@ -455,10 +483,25 @@ export class CommandCenterSettingTab extends PluginSettingTab {
     // distinct -- callers can index a specific position
     // (`definitions[0].control`, `definitions[1].items`) without a type
     // guard, exactly like the pre-existing reduced-motion test does.
-    return [reducedMotionItem, claudeGroup, approvalsGroup] as [
+    const tasksUp = (): boolean => this.host.tasks?.serviceAvailable() === true;
+    const rebuildItem = {
+      name: REBUILD_NAME,
+      desc: REBUILD_DESC,
+      disabled: () => !tasksUp(),
+      action: (_el: HTMLElement, _index: number) => {
+        void this.handleRebuild();
+      },
+    };
+    const tasksGroup = {
+      type: "group" as const,
+      heading: TASKS_GROUP_HEADING,
+      items: [rebuildItem] as [typeof rebuildItem],
+    };
+    return [reducedMotionItem, claudeGroup, approvalsGroup, tasksGroup] as [
       typeof reducedMotionItem,
       typeof claudeGroup,
       typeof approvalsGroup,
+      typeof tasksGroup,
     ];
   }
 
@@ -552,6 +595,19 @@ export class CommandCenterSettingTab extends PluginSettingTab {
     return this.transcriptJustDisabled
       ? `${CLAUDE_DELETE_USAGE_DESC} ${CLAUDE_DELETE_USAGE_RETAINED_NOTE}`
       : CLAUDE_DELETE_USAGE_DESC;
+  }
+
+  /** The Rebuild task index row: start Notice at once, then the counts or the fixed failure. */
+  private async handleRebuild(): Promise<void> {
+    const seam = this.host.tasks;
+    if (!seam?.serviceAvailable()) return;
+    this.notify(REBUILD_STARTED_NOTICE);
+    try {
+      const result = await seam.rebuildTaskIndex();
+      this.notify(rebuildSuccessNotice(result.tasks, result.attention));
+    } catch {
+      this.notify(REBUILD_FAILED_NOTICE);
+    }
   }
 
   /** Shows a transient message through the host's notifier, or Obsidian's own `Notice`. */
