@@ -44,6 +44,8 @@ export interface TasksWorkspaceProps {
   readonly workspaces: readonly TaskFormOption[];
   /** The chips to show; a project panel omits Project. */
   readonly filters?: readonly TaskFilter[] | undefined;
+  /** Filled with this surface's leave guard so a host can ask before it unmounts the pane. */
+  readonly leaveGuardRef?: { current: LeaveGuard | null } | undefined;
   /** The project panel's project, preselected in the create form. */
   readonly defaultProjectId?: string | undefined;
   /** The project panel's display name, for its empty line. */
@@ -84,6 +86,9 @@ const ROW_ACTION_KIND: Readonly<Record<TaskRowAction, TaskDetailAction>> = {
   accept: "accept",
   dismiss: "dismiss",
 };
+
+/** Runs the callback now, or after the pane's own confirmation when it has unsaved edits. */
+export type LeaveGuard = (proceed: () => void) => void;
 
 export function TasksWorkspace(props: TasksWorkspaceProps): VNode {
   const { context, view, connected } = props;
@@ -189,6 +194,8 @@ export function TasksWorkspace(props: TasksWorkspaceProps): VNode {
       proceed?.();
     }
   }
+
+  if (props.leaveGuardRef !== undefined) props.leaveGuardRef.current = requestLeave;
 
   function selectTask(id: string): void {
     requestLeave(() => {

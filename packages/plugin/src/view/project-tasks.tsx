@@ -14,7 +14,7 @@ import {
   resetTasksViewState,
   type TasksViewState,
 } from "./tasks-view-state.js";
-import { TasksWorkspace } from "./tasks-workspace.js";
+import { type LeaveGuard, TasksWorkspace } from "./tasks-workspace.js";
 
 /**
  * The project tasks panel (plan 06-22; UI-SPEC S4, D-34, TASK-07). It owns a
@@ -39,6 +39,8 @@ export interface ProjectTasksPanelProps {
   readonly context?: TasksContext | undefined;
   readonly view?: TasksViewState | undefined;
   readonly headingRef?: Ref<HTMLHeadingElement> | undefined;
+  /** Filled with the panel's leave guard so the host can ask before replacing the panel. */
+  readonly leaveGuardRef?: { current: LeaveGuard | null } | undefined;
 }
 
 export function ProjectTasksPanel(props: ProjectTasksPanelProps): VNode {
@@ -57,6 +59,14 @@ export function ProjectTasksPanel(props: ProjectTasksPanelProps): VNode {
   const opener = useRef<HTMLButtonElement | null>(null);
   const reasonId = useId();
   const swallow = useRef(false);
+  const ownGuard = useRef<LeaveGuard | null>(null);
+  const guardRef = props.leaveGuardRef ?? ownGuard;
+  /** Closes the panel, asking first when the detail pane has unsaved edits. */
+  const requestClose = (): void => {
+    const guard = guardRef.current;
+    if (guard === null) props.onClose();
+    else guard(props.onClose);
+  };
 
   useEffect(() => {
     void context.load();
@@ -95,8 +105,11 @@ export function ProjectTasksPanel(props: ProjectTasksPanelProps): VNode {
       }}
       onKeyDown={(event) => {
         if (event.key !== "Escape" || event.defaultPrevented || swallow.current) return;
+        // Escape inside a field belongs to the field, not to the panel.
+        const tag = (event.target as HTMLElement | null)?.tagName ?? "";
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
         event.preventDefault();
-        props.onClose();
+        requestClose();
       }}
     >
       <div className="ccc-project-tasks-header">
@@ -131,7 +144,7 @@ export function ProjectTasksPanel(props: ProjectTasksPanelProps): VNode {
           type="button"
           className="ccc-list-more"
           data-variant="tertiary"
-          onClick={props.onClose}
+          onClick={requestClose}
         >
           Close project tasks
         </button>
@@ -150,6 +163,7 @@ export function ProjectTasksPanel(props: ProjectTasksPanelProps): VNode {
         openerRef={opener}
         rebuilding={tasksRebuilding.value}
         listensForFormIntent={false}
+        leaveGuardRef={guardRef}
       />
     </section>
   );

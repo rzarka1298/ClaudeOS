@@ -10,14 +10,14 @@ import type { ProjectActionOutcome, ProjectsActions } from "../projects/projects
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { resetScanState } from "../projects/scan-state.js";
 import { configureTaskActionsPort, type TaskActionsPort } from "../tasks/actions-port.js";
-import { parseTaskContent } from "../tasks/task-update.js";
-import { OPEN_NOTE } from "../test-support/task-note-fixtures.js";
 import { configureTasksApi } from "../tasks/api.js";
 import {
   contextSnapshot,
   createProjectTasksContext,
   createTasksContext,
 } from "../tasks/contexts.js";
+import { parseTaskContent } from "../tasks/task-update.js";
+import { OPEN_NOTE } from "../test-support/task-note-fixtures.js";
 import { TASK_NOW_MS, TASK_ZONE, taskRows } from "../test-support/task-view-fixtures.js";
 import { fakeTasksApi } from "../test-support/tasks-api-fake.js";
 import { ProjectTasksPanel } from "./project-tasks.js";
