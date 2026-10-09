@@ -1565,30 +1565,37 @@ function resumeArgs(role, sessionId, lastMessage, schemaFile, extras = []) {
 // watchdog timeout instead of resuming.
 // The usage reserve is rechecked first (same guard as `resume`): if it is
 // reached the session is left for the owner to `codex-bridge resume` later.
-async function remainingBudget(startedMs, timeoutSec, sessionId, live) {
-  const remaining = timeoutSec - (Date.now() - startedMs) / 1000;
-  if (remaining > 0) {
-    const refused = await reserveRefusal(sessionId, live);
-    return refused ? { res: refused } : { remaining };
-  }
-  live.write([
-    `[watchdog] timeout after ${timeoutSec}s — nothing left to resume session ${sessionId}`,
-  ]);
-  return {
-    res: { sessionId, limitHit: false, timedOut: true, lastMessage: null, code: 1 },
+async function remainingBudget(startedMs, timeoutSec, sessionId, live, recovery) {
+  const left = () => timeoutSec - (Date.now() - startedMs) / 1000;
+  const spent = () => {
+    live.write([
+      `[watchdog] timeout after ${timeoutSec}s — nothing left to resume session ${sessionId}`,
+    ]);
+    return { res: { sessionId, limitHit: false, timedOut: true, lastMessage: null, code: 1 } };
   };
+  if (left() <= 0) return spent();
+  // The usage check is bounded by the same deadline, then the budget is
+  // recomputed: a slow check must not push the resume past it.
+  let timer;
+  const deadline = new Promise((r) => {
+    timer = setTimeout(() => r("deadline"), left() * 1000);
+  });
+  const refused = await Promise.race([reserveRefusal(sessionId, live, recovery), deadline]).finally(
+    () => clearTimeout(timer),
+  );
+  if (refused === "deadline") return spent();
+  if (refused) return { res: refused };
+  const remaining = left();
+  return remaining > 0 ? { remaining } : spent();
 }
 
-async function reserveRefusal(sessionId, live) {
+async function reserveRefusal(sessionId, live, recovery) {
   const usage = await currentUsage();
   const code = guardCode(usage);
   if (code === EXIT.OK) return null;
   const msg = guardMessage(usage, code);
-  live.write([
-    `[guard] ${msg}`,
-    `[guard] not resuming session ${sessionId}; later: codex-bridge resume ${sessionId}`,
-  ]);
-  say(`${msg}; interrupted session ${sessionId} kept, resume it later`);
+  live.write([`[guard] ${msg}`, `[guard] not resuming session ${sessionId}; ${recovery}`]);
+  say(`${msg}; interrupted session ${sessionId} kept (${recovery})`);
   return {
     sessionId,
     limitHit: false,
@@ -1667,7 +1674,13 @@ async function cmdReview({ positional, opts, extras }) {
       lastMessage,
       "review-output.schema.json",
     );
-    const budget = await remainingBudget(startedMs, timeoutSec, fallback.sessionId, live);
+    const budget = await remainingBudget(
+      startedMs,
+      timeoutSec,
+      fallback.sessionId,
+      live,
+      `later: re-run codex-bridge review ${rel(worktree)} ${base.slice(0, 12)}, or view the chat with: codex resume ${fallback.sessionId}`,
+    );
     res ??=
       budget.res ??
       (await runCodex({
@@ -1805,7 +1818,14 @@ async function runWorker({
   session.mode = res ? "tui" : "headless";
   if (fallback.reason) session.fallback = fallbackRecord(fallback);
   if (fallback.reason === "mid-run-inactivity" && resumeFor) {
-    const budget = await remainingBudget(startedMs, timeoutSec, fallback.sessionId, live);
+    const budget = await remainingBudget(
+      startedMs,
+      timeoutSec,
+      fallback.sessionId,
+      live,
+      `later: codex-bridge resume ${fallback.sessionId}`,
+    );
+    session.sessionId = fallback.sessionId ?? session.sessionId;
     res ??=
       budget.res ??
       (await runCodex({

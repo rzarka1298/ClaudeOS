@@ -72,6 +72,11 @@ if (argv[0] === "app-server") {
       if (msg.method === "initialize") { emit({ id: msg.id, result: { userAgent: "fake" } }); continue; }
       if (msg.method === "account/rateLimits/read") {
         if (mode === "hang") continue;
+        if (usageFile && fs.existsSync(usageFile) && process.env.FAKE_CODEX_USAGE_DELAY_MS) {
+          const out = { id: msg.id, result: JSON.parse(mode) };
+          setTimeout(() => emit(out), Number(process.env.FAKE_CODEX_USAGE_DELAY_MS));
+          continue;
+        }
         if (mode === "error") { emit({ id: msg.id, error: { code: -32000, message: "not logged in" } }); continue; }
         emit({ id: msg.id, result: JSON.parse(mode) });
         continue;
@@ -85,6 +90,7 @@ if (argv[0] === "app-server") {
   const run = (stdin) => {
     record({ stdin });
     const mode = process.env.FAKE_CODEX_EXEC || "ok";
+    if (mode === "early") process.exit(1);
     process.stderr.write("fake codex progress line\n");
     emit({ type: "thread.started", thread_id: "${SESSION_ID}" });
     emit({ type: "turn.started" });
@@ -1620,6 +1626,59 @@ describe("tui: trust, withdrawal and cleanup", () => {
     const out = lastJson(r.stdout);
     const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
     expect(report).toMatchObject({ status: "refused", sessionId: SESSION_ID });
+  });
+
+  it("bounds the usage recheck by the run deadline: a slow check cannot push the resume past it", () => {
+    const h = harness();
+    const t0 = Date.now();
+    const r = h.run(["review", h.root, "HEAD~1", "--timeout-sec", "4"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_USAGE_FILE: join(h.bin, "usage.json"),
+      FAKE_CODEX_USAGE_AFTER: usageResult(),
+      FAKE_CODEX_USAGE_DELAY_MS: "6000",
+    });
+    expect(r.status).toBe(21);
+    expect(h.execCalls()).toHaveLength(0);
+    expect((Date.now() - t0) / 1000).toBeLessThan(4 + 1.5);
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(`nothing left to resume session ${SESSION_ID}`);
+  });
+
+  it("keeps the saved session id when the resumed child dies before announcing a thread", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_EXEC: "early",
+    });
+    expect(r.status).toBe(22);
+    const out = lastJson(r.stdout);
+    expect(out.sessionId).toBe(SESSION_ID);
+    const rec = JSON.parse(
+      readFileSync(join(h.root, ".planning", "codex", "sessions", `${out.runId}.json`), "utf8"),
+    );
+    expect(rec).toMatchObject({ sessionId: SESSION_ID, status: "failed" });
+  });
+
+  it("a refused review tells the owner how to recover, not a task-only resume command", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_USAGE_FILE: join(h.bin, "usage.json"),
+      FAKE_CODEX_USAGE_AFTER: usageAt(85),
+    });
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain("codex-bridge review");
+    expect(log).toContain(`codex resume ${SESSION_ID}`);
+    expect(log).not.toContain(`codex-bridge resume ${SESSION_ID}`);
   });
 
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
