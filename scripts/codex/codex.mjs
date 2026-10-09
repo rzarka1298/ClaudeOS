@@ -1693,6 +1693,9 @@ async function cmdReview({ positional, opts, extras }) {
       }));
   }
   res ??= await runCodex({ args, cwd: worktree, stdinText: null, timeoutSec, live, onSession });
+  // A resumed child that died before announcing a thread still belongs to the interrupted session.
+  if (!res.sessionId && fallback.reason === "mid-run-inactivity")
+    res.sessionId = fallback.sessionId ?? null;
 
   let text = existsSync(lastMessage) ? readFileSync(lastMessage, "utf8").trim() : "";
   if (!text && res.lastMessage) text = res.lastMessage.trim();

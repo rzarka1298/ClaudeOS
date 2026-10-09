@@ -1681,6 +1681,22 @@ describe("tui: trust, withdrawal and cleanup", () => {
     expect(log).not.toContain(`codex-bridge resume ${SESSION_ID}`);
   });
 
+  it("keeps a stalled review's session id in the report when the resumed child dies early", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_EXEC: "early",
+    });
+    expect(r.status).toBe(22);
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report.sessionId).toBe(SESSION_ID);
+    const md = readFileSync(join(h.root, String(out.markdown)), "utf8");
+    expect(md).toContain(`codex resume ${SESSION_ID}`);
+  });
+
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
     const h = harness();
     const wrapper = spawn(process.execPath, [join(h.root, WRAPPER), "review", h.root, "HEAD~1"], {
