@@ -867,10 +867,20 @@ export function tuiIsolation({ cwd, env = process.env, trusted = [cwd] }) {
 // Everything that matters is pinned on the command line, which outranks the
 // owner's config: model, effort, sandbox, approvals, network, env inheritance,
 // and the verified isolation overrides.
-export function tuiArgs(role, cwd, prompt, trusted = [cwd], isolation = ISOLATION_PINS) {
+export function tuiArgs(
+  role,
+  cwd,
+  prompt,
+  trusted = [cwd],
+  isolation = ISOLATION_PINS,
+  runId = null,
+) {
   return [
     ...roleArgs(role, { withSandboxFlag: true }).filter((a) => a !== "--ignore-user-config"),
     ...isolation,
+    // `inherit="core"` strips the helper's env from shell tools, so the run marker is
+    // set explicitly for them: the wrapper finds every process of the run by it.
+    ...(runId ? ["-c", `shell_environment_policy.set.CODEX_BRIDGE_TUI_RUN="${runId}"`] : []),
     "--ask-for-approval",
     "never",
     "-c",
@@ -1012,11 +1022,17 @@ function helperState(id) {
 // Pids of every process carrying this run's TUI marker in its environment
 // (the helper's Codex child and everything it started, however orphaned).
 // Never includes this process. Only processes of the current user are visible.
+// Returns null when the scan itself failed: callers must treat that as
+// "unconfirmed", never as "no processes".
 function runProcesses(id) {
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
+  if (process.env.CODEX_BRIDGE_TEST_SCAN_FAIL === "1") return null;
   const r = spawnSync("ps", ["-Eww", "-A", "-o", "pid=,command="], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    timeout: 10_000,
   });
+  if (r.error || r.signal || r.status !== 0 || !r.stdout) return null;
   const needle = ` CODEX_BRIDGE_TUI_RUN=${id}`;
   const out = [];
   for (const line of (r.stdout ?? "").split("\n")) {
@@ -1043,7 +1059,7 @@ async function waitHelperExit(id) {
     if (st.codexPid && alive(st.codexPid)) return false;
     // A subprocess spawned during shutdown outlives the helper's tree snapshot,
     // so the run's processes are found by the env marker they all inherit.
-    return runProcesses(id).length === 0;
+    return runProcesses(id)?.length === 0;
   };
   if (settled()) return true;
   // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
@@ -1056,12 +1072,12 @@ async function waitHelperExit(id) {
     tree.add(root);
     for (const d of descendants(root)) tree.add(d);
   }
-  for (const p of runProcesses(id)) tree.add(p);
+  for (const p of runProcesses(id) ?? []) tree.add(p);
   signalAll(tree, "SIGKILL");
   const recheck = Date.now() + 3000;
   while (Date.now() < recheck) {
     // Anything started in the meantime is killed too; only marked pids are touched.
-    signalAll(runProcesses(id), "SIGKILL");
+    signalAll(runProcesses(id) ?? [], "SIGKILL");
     if ([...tree].every((p) => !alive(p)) && settled()) return true;
     await sleep(100);
   }
@@ -2224,7 +2240,7 @@ async function cmdTui({ positional }) {
     status({ status: "exited", code: 3, error: `isolation failed in the tab: ${iso.reason}` });
     fail(EXIT.REFUSED, `refused: TUI isolation failed (${iso.reason}); the run goes headless`);
   }
-  const args = tuiArgs(req.role, req.cwd, prompt, trusted, iso.args);
+  const args = tuiArgs(req.role, req.cwd, prompt, trusted, iso.args, req.runId);
   const flags = args.slice(0, -1).join(" ").toLowerCase();
   if (BANNED.some((b) => flags.includes(b))) fail(EXIT.REFUSED, "refused: bypass flag");
   const r = ROLES[req.role];

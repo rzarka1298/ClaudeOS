@@ -1831,6 +1831,42 @@ describe("tui: trust, withdrawal and cleanup", () => {
     expect(lastJson(r.stdout).sessionId).toBe(SESSION_ID);
   }, 60_000);
 
+  it("pins the run marker into the TUI's shell environment so tool processes carry it", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], { ...CLAIM, FAKE_CODEX_FINAL: REVIEW_JSON });
+    expect(r.status).toBe(0);
+    const out = lastJson(r.stdout);
+    const [call] = h.calls().filter((c) => c.argv.includes("--ask-for-approval"));
+    expect(call?.argv).toEqual(
+      expect.arrayContaining([
+        "-c",
+        `shell_environment_policy.set.CODEX_BRIDGE_TUI_RUN="${out.runId}"`,
+      ]),
+    );
+    // The existing core-only inheritance stays pinned.
+    expect(call?.argv).toEqual(
+      expect.arrayContaining(["-c", 'shell_environment_policy.inherit="core"']),
+    );
+  });
+
+  it("treats a failed process scan as unconfirmed: no resume, exit 22, session id kept", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    reapAfter(h);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      CODEX_BRIDGE_TEST_SCAN_FAIL: "1",
+    });
+    expect(r.status).toBe(22);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    expect(out.sessionId).toBe(SESSION_ID);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(`not resuming session ${SESSION_ID}`);
+  }, 60_000);
+
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
     const h = harness();
     const wrapper = spawn(process.execPath, [join(h.root, WRAPPER), "review", h.root, "HEAD~1"], {
