@@ -1560,6 +1560,20 @@ function resumeArgs(role, sessionId, lastMessage, schemaFile, extras = []) {
   ];
 }
 
+// Budget for an automatic continuation of an interrupted TUI run: one deadline
+// for the whole run, counted from its start. When it is spent, report the
+// watchdog timeout instead of resuming.
+function remainingBudget(startedMs, timeoutSec, sessionId, live) {
+  const remaining = timeoutSec - (Date.now() - startedMs) / 1000;
+  if (remaining > 0) return { remaining };
+  live.write([
+    `[watchdog] timeout after ${timeoutSec}s — nothing left to resume session ${sessionId}`,
+  ]);
+  return {
+    res: { sessionId, limitHit: false, timedOut: true, lastMessage: null, code: 1 },
+  };
+}
+
 const CONTINUE_TASK =
   "Continue the interrupted task from where you stopped. Re-run the relevant tests, " +
   "then give the final report in the required shape.\n";
@@ -1606,6 +1620,7 @@ async function cmdReview({ positional, opts, extras }) {
   const onSession = (sid) =>
     openBridgeTab({ id, kind: "review", cwd: worktree, sessionId: sid, liveLog: live.log });
   const fallback = {};
+  const startedMs = Date.now();
   let res = extras.length
     ? null
     : await runTui({
@@ -1627,14 +1642,17 @@ async function cmdReview({ positional, opts, extras }) {
       lastMessage,
       "review-output.schema.json",
     );
-    res ??= await runCodex({
-      args: resumed,
-      cwd: worktree,
-      stdinText: CONTINUE_REVIEW,
-      timeoutSec,
-      live,
-      onSession,
-    });
+    const budget = remainingBudget(startedMs, timeoutSec, fallback.sessionId, live);
+    res ??=
+      budget.res ??
+      (await runCodex({
+        args: resumed,
+        cwd: worktree,
+        stdinText: CONTINUE_REVIEW,
+        timeoutSec: budget.remaining,
+        live,
+        onSession,
+      }));
   }
   res ??= await runCodex({ args, cwd: worktree, stdinText: null, timeoutSec, live, onSession });
 
@@ -1744,6 +1762,7 @@ async function runWorker({
   };
   const tuiSession = (sid) => writeJson(sessionPath, { ...session, sessionId: sid, mode: "tui" });
   const fallback = {};
+  const startedMs = Date.now();
   let res = tuiPrompt
     ? await runTui({
         fallback,
@@ -1760,14 +1779,17 @@ async function runWorker({
   session.mode = res ? "tui" : "headless";
   if (fallback.reason) session.fallback = fallbackRecord(fallback);
   if (fallback.reason === "mid-run-inactivity" && resumeFor) {
-    res ??= await runCodex({
-      args: resumeFor(fallback.sessionId),
-      cwd: worktree,
-      stdinText: CONTINUE_TASK,
-      timeoutSec,
-      live,
-      onSession,
-    });
+    const budget = remainingBudget(startedMs, timeoutSec, fallback.sessionId, live);
+    res ??=
+      budget.res ??
+      (await runCodex({
+        args: resumeFor(fallback.sessionId),
+        cwd: worktree,
+        stdinText: CONTINUE_TASK,
+        timeoutSec: budget.remaining,
+        live,
+        onSession,
+      }));
   }
   res ??= await runCodex({ args, cwd: worktree, stdinText, timeoutSec, live, onSession });
   session.sessionId = res.sessionId ?? session.sessionId;

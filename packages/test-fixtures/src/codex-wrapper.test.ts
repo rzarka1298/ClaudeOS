@@ -54,7 +54,10 @@ function outFile() { const i = argv.indexOf("-o"); return i >= 0 ? argv[i + 1] :
 
 if (argv[0] === "app-server") {
   record({});
-  const mode = process.env.FAKE_CODEX_USAGE || "";
+  let mode = process.env.FAKE_CODEX_USAGE || "";
+  // Usage that changes while a run is in flight: the TUI fake writes this file.
+  const usageFile = process.env.FAKE_CODEX_USAGE_FILE;
+  if (usageFile && fs.existsSync(usageFile)) mode = fs.readFileSync(usageFile, "utf8");
   if (mode === "crash") process.exit(1);
   let buf = "";
   process.stdin.on("data", (d) => {
@@ -179,6 +182,7 @@ if (argv[0] === "app-server") {
   if (mode === "stall" || mode === "stall-nosid") {
     // A turn started and produced activity, then the machine slept / the network dropped.
     w({ type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: "{}" } });
+    if (process.env.FAKE_CODEX_USAGE_FILE) fs.writeFileSync(process.env.FAKE_CODEX_USAGE_FILE, process.env.FAKE_CODEX_USAGE_AFTER || "");
     setInterval(() => {}, 1000);
     return;
   }
@@ -1557,6 +1561,27 @@ describe("tui: trust, withdrawal and cleanup", () => {
     const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
     expect(log).toContain("no session id to resume");
     expect(out.status).toBe("failed");
+  });
+
+  it("keeps one run deadline: the resumed headless run only gets the remaining budget", () => {
+    const h = harness();
+    const t0 = Date.now();
+    const r = h.run(["review", h.root, "HEAD~1", "--timeout-sec", "5"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_EXEC: "hang",
+      FAKE_CODEX_PIDFILE: join(h.bin, "hang.pid"),
+    });
+    const elapsed = (Date.now() - t0) / 1000;
+    expect(r.status).toBe(21);
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    const m = log.match(/\[watchdog\] timeout after ([0-9.]+)s — killing the Codex process group/);
+    // 5 s budget minus the ~1.5 s already spent before the stall was detected.
+    expect(Number(m?.[1])).toBeLessThan(4);
+    expect(Number(m?.[1])).toBeGreaterThan(0);
+    expect(elapsed).toBeLessThan(5 + 1.5);
   });
 
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
