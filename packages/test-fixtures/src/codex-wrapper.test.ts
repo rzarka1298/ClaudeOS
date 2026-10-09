@@ -91,6 +91,11 @@ if (argv[0] === "app-server") {
     record({ stdin });
     const mode = process.env.FAKE_CODEX_EXEC || "ok";
     if (mode === "early") process.exit(1);
+    if (process.env.FAKE_CODEX_TUI_PIDFILE) {
+      let up = false;
+      try { process.kill(Number(fs.readFileSync(process.env.FAKE_CODEX_TUI_PIDFILE, "utf8")), 0); up = true; } catch {}
+      record({ tuiAliveAtResume: up });
+    }
     process.stderr.write("fake codex progress line\n");
     emit({ type: "thread.started", thread_id: "${SESSION_ID}" });
     emit({ type: "turn.started" });
@@ -189,6 +194,11 @@ if (argv[0] === "app-server") {
     // A turn started and produced activity, then the machine slept / the network dropped.
     w({ type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: "{}" } });
     if (process.env.FAKE_CODEX_USAGE_FILE) fs.writeFileSync(process.env.FAKE_CODEX_USAGE_FILE, process.env.FAKE_CODEX_USAGE_AFTER || "");
+    if (process.env.FAKE_CODEX_STUBBORN) {
+      // Ignores SIGTERM and freezes the tab helper, so the stop marker is never honoured.
+      process.on("SIGTERM", () => {});
+      process.kill(process.ppid, "SIGSTOP");
+    }
     setInterval(() => {}, 1000);
     return;
   }
@@ -1696,6 +1706,52 @@ describe("tui: trust, withdrawal and cleanup", () => {
     const md = readFileSync(join(h.root, String(out.markdown)), "utf8");
     expect(md).toContain(`codex resume ${SESSION_ID}`);
   });
+
+  it("never resumes while the old TUI tree is alive: it escalates, verifies, then resumes", async () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const pidfile = join(h.bin, "stubborn.pid");
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_STUBBORN: "1",
+      FAKE_CODEX_PIDFILE: pidfile,
+      FAKE_CODEX_TUI_PIDFILE: pidfile,
+    });
+    expect(r.status).toBe(0);
+    const calls = h.execCalls() as Array<{ argv: string[]; tuiAliveAtResume?: boolean }>;
+    const seen = calls.filter((c) => c.tuiAliveAtResume !== undefined);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.tuiAliveAtResume).toBe(false);
+    expect(calls[0]?.argv.slice(0, 2)).toEqual(["exec", "resume"]);
+    expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+  }, 60_000);
+
+  it("fails with exit 22 and no exec when the old TUI tree cannot be confirmed gone", async () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const pidfile = join(h.bin, "stubborn2.pid");
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_STUBBORN: "1",
+      FAKE_CODEX_PIDFILE: pidfile,
+      CODEX_BRIDGE_TEST_NO_ESCALATE: "1",
+    });
+    expect(r.status).toBe(22);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    expect(out.sessionId).toBe(SESSION_ID);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(`not resuming session ${SESSION_ID}`);
+    // Cleanup: the frozen helper and the stubborn fake are still running.
+    const pid = Number(readFileSync(pidfile, "utf8"));
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }, 60_000);
 
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
     const h = harness();

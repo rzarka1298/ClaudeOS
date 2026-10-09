@@ -1010,9 +1010,35 @@ function helperState(id) {
 }
 
 // After stopTui: wait until the helper reports its Codex tree is gone.
+// Returns true only when the helper has exited AND every process recorded for
+// this run (the helper, its Codex child and that child's descendants) is gone.
+// If not, the recorded tree is SIGKILLed and re-verified; false means it could
+// not be confirmed, and the caller must not start a second writer.
 async function waitHelperExit(id) {
+  const statusFile = join(bridge.dirs(BRIDGE_STATE).tui, `${id}.json`);
   const until = Date.now() + KILL_GRACE_MS + 5000;
   while (helperState(id) === "running" && Date.now() < until) await sleep(100);
+  const settled = () => {
+    const st = readJson(statusFile);
+    if (!st) return true;
+    if (helperState(id) === "running") return false;
+    return !(st.codexPid && alive(st.codexPid));
+  };
+  if (settled()) return true;
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
+  if (process.env.CODEX_BRIDGE_TEST_NO_ESCALATE === "1") return false;
+  // Only this run's recorded processes are ever signalled.
+  const st = readJson(statusFile);
+  const tree = new Set();
+  for (const root of [st?.codexPid, st?.pid]) {
+    if (!root || !alive(root)) continue;
+    tree.add(root);
+    for (const d of descendants(root)) tree.add(d);
+  }
+  signalAll(tree, "SIGKILL");
+  const recheck = Date.now() + 3000;
+  while (Date.now() < recheck && ([...tree].some(alive) || !settled())) await sleep(100);
+  return [...tree].every((p) => !alive(p)) && settled();
 }
 
 async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession, fallback }) {
@@ -1274,8 +1300,12 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
     if (rollout && active && Date.now() - lastActivityAt > MID_RUN_INACTIVITY_MS) {
       const win = MID_RUN_INACTIVITY_MS / 1000;
       stopTui(id);
-      await waitHelperExit(id);
-      if (state.sessionId) {
+      if (!(await waitHelperExit(id))) {
+        live.write([
+          `[tui] could not confirm the old Codex TUI tree is gone — not resuming session ${state.sessionId ?? "(unknown)"}; failing the run`,
+        ]);
+        say("the stalled Codex TUI could not be stopped; not starting a second writer");
+      } else if (state.sessionId) {
         live.write([
           `[tui] no activity for ${win}s mid-run — resuming session ${state.sessionId} headless`,
         ]);
@@ -2181,6 +2211,7 @@ async function cmdTui({ positional }) {
   // stderr is passed through and its tail kept: a TUI that refuses to start
   // (bad flag, config error) says why there, and the wrapper logs it.
   const child = spawn(CODEX, args, { stdio: ["inherit", "inherit", "pipe"], cwd: req.cwd, env });
+  status({ status: "running", codexPid: child.pid });
   let errTail = "";
   child.stderr.on("data", (b) => {
     process.stderr.write(b);
