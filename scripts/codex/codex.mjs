@@ -1009,6 +1009,24 @@ function helperState(id) {
   return st.status === "exited" || (st.pid && !alive(st.pid)) ? "exited" : "running";
 }
 
+// Pids of every process carrying this run's TUI marker in its environment
+// (the helper's Codex child and everything it started, however orphaned).
+// Never includes this process. Only processes of the current user are visible.
+function runProcesses(id) {
+  const r = spawnSync("ps", ["-Eww", "-A", "-o", "pid=,command="], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const needle = ` CODEX_BRIDGE_TUI_RUN=${id}`;
+  const out = [];
+  for (const line of (r.stdout ?? "").split("\n")) {
+    if (!line.includes(needle)) continue;
+    const pid = Number(line.trim().split(/\s+/)[0]);
+    if (pid > 1 && pid !== process.pid) out.push(pid);
+  }
+  return out;
+}
+
 // After stopTui: wait until the helper reports its Codex tree is gone.
 // Returns true only when the helper has exited AND every process recorded for
 // this run (the helper, its Codex child and that child's descendants) is gone.
@@ -1022,7 +1040,10 @@ async function waitHelperExit(id) {
     const st = readJson(statusFile);
     if (!st) return true;
     if (helperState(id) === "running") return false;
-    return !(st.codexPid && alive(st.codexPid));
+    if (st.codexPid && alive(st.codexPid)) return false;
+    // A subprocess spawned during shutdown outlives the helper's tree snapshot,
+    // so the run's processes are found by the env marker they all inherit.
+    return runProcesses(id).length === 0;
   };
   if (settled()) return true;
   // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
@@ -1035,9 +1056,15 @@ async function waitHelperExit(id) {
     tree.add(root);
     for (const d of descendants(root)) tree.add(d);
   }
+  for (const p of runProcesses(id)) tree.add(p);
   signalAll(tree, "SIGKILL");
   const recheck = Date.now() + 3000;
-  while (Date.now() < recheck && ([...tree].some(alive) || !settled())) await sleep(100);
+  while (Date.now() < recheck) {
+    // Anything started in the meantime is killed too; only marked pids are touched.
+    signalAll(runProcesses(id), "SIGKILL");
+    if ([...tree].every((p) => !alive(p)) && settled()) return true;
+    await sleep(100);
+  }
   return [...tree].every((p) => !alive(p)) && settled();
 }
 
@@ -2186,6 +2213,8 @@ async function cmdTui({ positional }) {
   };
   // The Codex home the wrapper checked usage against and watches for the session.
   if (req.codexHome) env.CODEX_HOME = req.codexHome;
+  // Inherited by everything Codex starts, so the wrapper can prove none survives.
+  env.CODEX_BRIDGE_TUI_RUN = req.runId;
   // Published before the (slow) preflight, so the wrapper counts the tab as started.
   status({ status: "starting" });
   // Re-verified here, in the environment Codex will actually run in.

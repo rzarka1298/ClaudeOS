@@ -96,6 +96,11 @@ if (argv[0] === "app-server") {
       try { process.kill(Number(fs.readFileSync(process.env.FAKE_CODEX_TUI_PIDFILE, "utf8")), 0); up = true; } catch {}
       record({ tuiAliveAtResume: up });
     }
+    if (process.env.FAKE_CODEX_ORPHAN_PIDFILE) {
+      let up = false;
+      try { process.kill(Number(fs.readFileSync(process.env.FAKE_CODEX_ORPHAN_PIDFILE, "utf8")), 0); up = true; } catch {}
+      record({ orphanAliveAtResume: up });
+    }
     process.stderr.write("fake codex progress line\n");
     emit({ type: "thread.started", thread_id: "${SESSION_ID}" });
     emit({ type: "turn.started" });
@@ -194,6 +199,15 @@ if (argv[0] === "app-server") {
     // A turn started and produced activity, then the machine slept / the network dropped.
     w({ type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: "{}" } });
     if (process.env.FAKE_CODEX_USAGE_FILE) fs.writeFileSync(process.env.FAKE_CODEX_USAGE_FILE, process.env.FAKE_CODEX_USAGE_AFTER || "");
+    if (process.env.FAKE_CODEX_ORPHAN_PIDFILE) {
+      // A subprocess spawned while handling SIGTERM: it outlives the TUI and any
+      // tree snapshot taken before the stop.
+      process.on("SIGTERM", () => {
+        const c = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"], { stdio: "ignore" });
+        fs.writeFileSync(process.env.FAKE_CODEX_ORPHAN_PIDFILE, String(c.pid));
+        process.exit(0);
+      });
+    }
     if (process.env.FAKE_CODEX_STUBBORN) {
       // Ignores SIGTERM and freezes the tab helper, so the stop marker is never honoured.
       process.on("SIGTERM", () => {});
@@ -450,6 +464,38 @@ function testEnv(over: Record<string, string>): NodeJS.ProcessEnv {
   env.FAKE_AG_CORE = join(REPO_ROOT, "scripts", "codex", "antigravity-extension", "bridge-core.js");
   if (over.HOME) env.CODEX_HOME = join(over.HOME, ".codex");
   return { ...env, ...over };
+}
+
+/**
+ * Registers a cleanup that SIGKILLs every process recorded for the harness's TUI
+ * runs (helper and Codex child, from the status records) and any pid files, even
+ * when assertions fail, so a frozen fake never outlives its test.
+ */
+function reapAfter(h: Harness, pidfiles: string[] = []): void {
+  // unshift: must run before the harness cleanup deletes the state files it reads.
+  cleanups.unshift(() => {
+    const pids: number[] = [];
+    const tuiDir = join(h.bridgeState, "tui");
+    if (existsSync(tuiDir)) {
+      for (const f of readdirSync(tuiDir).filter((n) => n.endsWith(".json"))) {
+        try {
+          const st = JSON.parse(readFileSync(join(tuiDir, f), "utf8"));
+          pids.push(Number(st.pid), Number(st.codexPid));
+        } catch {}
+      }
+    }
+    for (const f of pidfiles) {
+      try {
+        pids.push(Number(readFileSync(f, "utf8")));
+      } catch {}
+    }
+    for (const p of pids)
+      if (p > 1) {
+        try {
+          process.kill(p, "SIGKILL");
+        } catch {}
+      }
+  });
 }
 
 function linkedWorktree(h: Harness): string {
@@ -1711,6 +1757,7 @@ describe("tui: trust, withdrawal and cleanup", () => {
     const h = harness();
     const wt = linkedWorktree(h);
     const pidfile = join(h.bin, "stubborn.pid");
+    reapAfter(h, [pidfile]);
     const r = h.run(["task", wt, briefFile(h)], {
       ...CLAIM,
       CODEX_BRIDGE_INACTIVITY_MS: "1500",
@@ -1732,6 +1779,7 @@ describe("tui: trust, withdrawal and cleanup", () => {
     const h = harness();
     const wt = linkedWorktree(h);
     const pidfile = join(h.bin, "stubborn2.pid");
+    reapAfter(h, [pidfile]);
     const r = h.run(["task", wt, briefFile(h)], {
       ...CLAIM,
       CODEX_BRIDGE_INACTIVITY_MS: "1500",
@@ -1746,11 +1794,41 @@ describe("tui: trust, withdrawal and cleanup", () => {
     expect(out.sessionId).toBe(SESSION_ID);
     const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
     expect(log).toContain(`not resuming session ${SESSION_ID}`);
-    // Cleanup: the frozen helper and the stubborn fake are still running.
-    const pid = Number(readFileSync(pidfile, "utf8"));
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
+  }, 60_000);
+
+  it("kills a subprocess spawned during SIGTERM handling before resuming", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const orphan = join(h.bin, "orphan.pid");
+    reapAfter(h, [orphan]);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_ORPHAN_PIDFILE: orphan,
+    });
+    expect(r.status).toBe(0);
+    const calls = h.execCalls() as Array<{ orphanAliveAtResume?: boolean }>;
+    const seen = calls.filter((c) => c.orphanAliveAtResume !== undefined);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.orphanAliveAtResume).toBe(false);
+  }, 60_000);
+
+  it("exits 22 without resuming when a SIGTERM-spawned subprocess survives and escalation is off", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const orphan = join(h.bin, "orphan2.pid");
+    reapAfter(h, [orphan]);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_ORPHAN_PIDFILE: orphan,
+      CODEX_BRIDGE_TEST_NO_ESCALATE: "1",
+    });
+    expect(r.status).toBe(22);
+    expect(h.execCalls()).toHaveLength(0);
+    expect(lastJson(r.stdout).sessionId).toBe(SESSION_ID);
   }, 60_000);
 
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
