@@ -735,6 +735,12 @@ const SESSION_WAIT_MS = Number(process.env.CODEX_BRIDGE_SESSION_WAIT_MS) || 180_
 // stopped and the run goes headless.
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: tuning knob
 const FIRST_ACTIVITY_MS = Number(process.env.CODEX_BRIDGE_FIRST_ACTIVITY_MS) || 120_000;
+// Once a turn is running, how long the session file may stay completely quiet
+// (Mac sleep, network drop) before the TUI is stopped and the same session is
+// resumed headless. Far longer than the first-activity window: a long tool call
+// or a model thinking legitimately produces nothing for minutes.
+// biome-ignore lint/suspicious/noUndeclaredEnvVars: tuning knob
+const MID_RUN_INACTIVITY_MS = Number(process.env.CODEX_BRIDGE_INACTIVITY_MS) || 600_000;
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only tuning knob
 const HELPER_START_MS = Number(process.env.CODEX_BRIDGE_HELPER_START_MS) || 15_000;
 const ROLLOUT_SCAN_BYTES = 1024 * 1024;
@@ -1107,6 +1113,9 @@ async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession
   if (res === null && fallback?.reason === "no-first-activity") {
     withdraw();
     say("the TUI started no turn in time (stopped it); running headless");
+  } else if (res === null && fallback?.reason === "mid-run-inactivity") {
+    withdraw();
+    say("the TUI went silent mid-run (stopped it); resuming the session headless");
   } else if (res === null) {
     live.write(["[tui] no Codex session started in the tab; it was stopped; running headless"]);
     say("no Codex session started in the tab (stopped it); running headless");
@@ -1138,6 +1147,7 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
   let done = false;
   let fellBack = false;
   let sessionFoundAt = 0;
+  let lastActivityAt = 0;
   let active = false;
 
   const handle = (o) => {
@@ -1184,6 +1194,7 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
       rollout = findRollout(id, launchedAt);
       if (rollout) {
         sessionFoundAt = Date.now();
+        lastActivityAt = sessionFoundAt;
         live.write(["[tui] following the Codex session"]);
       }
     }
@@ -1195,6 +1206,7 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
           const buf = Buffer.alloc(size - pos);
           readSync(fd, buf, 0, buf.length, pos);
           pos = size;
+          lastActivityAt = Date.now();
           const lines = (partial + buf.toString("utf8")).split("\n");
           partial = lines.pop() ?? "";
           for (const line of lines) {
@@ -1254,6 +1266,31 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
         fallback.windowSec = FIRST_ACTIVITY_MS / 1000;
       }
       fellBack = true;
+      break;
+    }
+    // A turn ran, then the session file went quiet (sleep, network drop). Stop
+    // the whole tree; the same session is resumed headless by the caller. With
+    // no session id there is nothing to resume: fail instead of guessing.
+    if (rollout && active && Date.now() - lastActivityAt > MID_RUN_INACTIVITY_MS) {
+      const win = MID_RUN_INACTIVITY_MS / 1000;
+      stopTui(id);
+      await waitHelperExit(id);
+      if (state.sessionId) {
+        live.write([
+          `[tui] no activity for ${win}s mid-run — resuming session ${state.sessionId} headless`,
+        ]);
+        if (fallback) {
+          fallback.reason = "mid-run-inactivity";
+          fallback.sessionId = state.sessionId;
+          fallback.windowSec = win;
+        }
+        fellBack = true;
+      } else {
+        live.write([
+          `[tui] no activity for ${win}s mid-run and no session id to resume — stopped the TUI; failing the run`,
+        ]);
+        say(`the TUI went silent for ${win}s and has no session id to resume; failed`);
+      }
       break;
     }
     await sleep(250);
@@ -1504,6 +1541,32 @@ function reviewMarkdown(report) {
   return out.join("\n");
 }
 
+// Headless continuation of a known session (`exec resume` has no -s/-C: the
+// sandbox comes from -c, the root from cwd). Shared by `resume` and by the
+// mid-run inactivity fallback, so both keep the same pinned flags.
+function resumeArgs(role, sessionId, lastMessage, schemaFile, extras = []) {
+  return [
+    "exec",
+    "resume",
+    sessionId,
+    "--json",
+    "--output-schema",
+    join(SCHEMAS, schemaFile),
+    "-o",
+    lastMessage,
+    ...roleArgs(role, { withSandboxFlag: false }),
+    ...extras,
+    "-",
+  ];
+}
+
+const CONTINUE_TASK =
+  "Continue the interrupted task from where you stopped. Re-run the relevant tests, " +
+  "then give the final report in the required shape.\n";
+const CONTINUE_REVIEW =
+  "Continue the interrupted review from where you stopped, then give the final review " +
+  "in the required JSON shape.\n";
+
 async function cmdReview({ positional, opts, extras }) {
   if (positional.length !== 2) fail(EXIT.USAGE, USAGE_TEXT);
   const worktree = validateWorktree(positional[0]);
@@ -1557,6 +1620,22 @@ async function cmdReview({ positional, opts, extras }) {
       });
   const mode = res ? "tui" : "headless";
   const fallbackInfo = fallback.reason ? fallbackRecord(fallback) : null;
+  if (fallback.reason === "mid-run-inactivity") {
+    const resumed = resumeArgs(
+      "review",
+      fallback.sessionId,
+      lastMessage,
+      "review-output.schema.json",
+    );
+    res ??= await runCodex({
+      args: resumed,
+      cwd: worktree,
+      stdinText: CONTINUE_REVIEW,
+      timeoutSec,
+      live,
+      onSession,
+    });
+  }
   res ??= await runCodex({ args, cwd: worktree, stdinText: null, timeoutSec, live, onSession });
 
   let text = existsSync(lastMessage) ? readFileSync(lastMessage, "utf8").trim() : "";
@@ -1638,6 +1717,7 @@ async function runWorker({
   timeoutSec,
   sessionHint,
   tuiPrompt,
+  resumeFor,
 }) {
   const live = openLiveLog(id, kind);
   const r = ROLES[role];
@@ -1679,6 +1759,16 @@ async function runWorker({
     : null;
   session.mode = res ? "tui" : "headless";
   if (fallback.reason) session.fallback = fallbackRecord(fallback);
+  if (fallback.reason === "mid-run-inactivity" && resumeFor) {
+    res ??= await runCodex({
+      args: resumeFor(fallback.sessionId),
+      cwd: worktree,
+      stdinText: CONTINUE_TASK,
+      timeoutSec,
+      live,
+      onSession,
+    });
+  }
   res ??= await runCodex({ args, cwd: worktree, stdinText, timeoutSec, live, onSession });
   session.sessionId = res.sessionId ?? session.sessionId;
 
@@ -1756,6 +1846,7 @@ async function cmdTask({ positional, opts, extras }) {
     stdinText,
     timeoutSec,
     tuiPrompt,
+    resumeFor: (sid) => resumeArgs(role, sid, lastMessage, "worker-report.schema.json"),
   });
   finishWorker(out, lastMessage, tmp, role);
 }
@@ -1821,23 +1912,8 @@ async function cmdResume({ positional, opts, extras }) {
   const id = runId();
   const tmp = mkdtempSync(join(tmpdir(), "ccc-codex-resume-"));
   const lastMessage = join(tmp, "last-message.txt");
-  // `exec resume` has no -s/-C: sandbox comes from -c, the root from cwd.
-  const args = [
-    "exec",
-    "resume",
-    sessionId,
-    "--json",
-    "--output-schema",
-    join(SCHEMAS, "worker-report.schema.json"),
-    "-o",
-    lastMessage,
-    ...roleArgs(role, { withSandboxFlag: false }),
-    ...extras,
-    "-",
-  ];
-  const stdinText =
-    "Continue the interrupted task from where you stopped. Re-run the relevant tests, " +
-    "then give the final report in the required shape.\n";
+  const args = resumeArgs(role, sessionId, lastMessage, "worker-report.schema.json", extras);
+  const stdinText = CONTINUE_TASK;
   const out = await runWorker({
     kind: "resume",
     id,

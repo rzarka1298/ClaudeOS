@@ -163,7 +163,8 @@ if (argv[0] === "app-server") {
   fs.mkdirSync(dir, { recursive: true });
   const file = dir + "/rollout-" + d.toISOString().slice(0, 19).replace(/:/g, "-") + "-${SESSION_ID}.jsonl";
   const w = (o) => fs.appendFileSync(file, JSON.stringify(o) + "\n");
-  w({ type: "session_meta", payload: { id: "${SESSION_ID}", cwd: process.cwd(), originator: "codex-tui", source: "cli" } });
+  const metaId = mode === "stall-nosid" ? "not-a-uuid" : "${SESSION_ID}";
+  w({ type: "session_meta", payload: { id: metaId, cwd: process.cwd(), originator: "codex-tui", source: "cli" } });
   w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>x</environment_context>" }] } });
   w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] } });
   if (process.env.FAKE_CODEX_PIDFILE) fs.writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(process.pid));
@@ -175,6 +176,12 @@ if (argv[0] === "app-server") {
   const firstTurnDelay = Number(process.env.FAKE_CODEX_FIRST_TURN_DELAY_MS || 0);
   const startTurn = () => {
   w({ type: "event_msg", payload: { type: "task_started", turn_id: "t1" } });
+  if (mode === "stall" || mode === "stall-nosid") {
+    // A turn started and produced activity, then the machine slept / the network dropped.
+    w({ type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: "{}" } });
+    setInterval(() => {}, 1000);
+    return;
+  }
   if (mode === "hang") {
     if (process.env.FAKE_CODEX_CHILD_PIDFILE) {
       // A tool process Codex started that ignores SIGTERM.
@@ -195,7 +202,7 @@ if (argv[0] === "app-server") {
     }
     // The TUI stays open for the owner's chat; the fake lingers briefly.
     setTimeout(() => process.exit(0), Number(process.env.FAKE_CODEX_TUI_LINGER_MS || 300));
-  }, 200);
+  }, Number(process.env.FAKE_CODEX_MID_DELAY_MS || 200));
   };
   if (firstTurnDelay) setTimeout(startTurn, firstTurnDelay); else startTurn();
 } else {
@@ -1461,6 +1468,95 @@ describe("tui: trust, withdrawal and cleanup", () => {
     const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
     expect(report.mode).toBe("tui");
     expect(report.fallback).toBeUndefined();
+  });
+
+  it("resumes the TUI session headless when a running turn goes silent (task)", async () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const pidfile = join(h.bin, "stall.pid");
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_PIDFILE: pidfile,
+    });
+    expect(r.status).toBe(0);
+    expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+    // The known session is resumed, not restarted, still with pinned flags.
+    const [exec] = h.execCalls();
+    expect(h.execCalls()).toHaveLength(1);
+    expect(exec?.argv.slice(0, 3)).toEqual(["exec", "resume", SESSION_ID]);
+    expect(exec?.argv).toEqual(expect.arrayContaining(["-c", 'approval_policy="never"']));
+    const joined = exec?.argv.join(" ") ?? "";
+    for (const bad of FORBIDDEN_TOKENS) expect(joined).not.toContain(bad);
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(
+      `[tui] no activity for 1.5s mid-run — resuming session ${SESSION_ID} headless`,
+    );
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report).toMatchObject({ status: "ok", mode: "headless", sessionId: SESSION_ID });
+    expect(report.fallback).toMatchObject({
+      from: "tui",
+      to: "headless",
+      reason: "mid-run-inactivity",
+      tuiSessionId: SESSION_ID,
+      windowSec: 1.5,
+    });
+  });
+
+  it("resumes a stalled review read-only and still reports it", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    const [exec] = h.execCalls();
+    expect(exec?.argv.slice(0, 3)).toEqual(["exec", "resume", SESSION_ID]);
+    expect(exec?.argv).toEqual(expect.arrayContaining(["-c", 'sandbox_mode="read-only"']));
+    expect(exec?.argv.join(" ")).not.toContain("workspace-write");
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report).toMatchObject({ status: "ok", mode: "headless", verdict: "needs-attention" });
+    expect(report.fallback).toMatchObject({ reason: "mid-run-inactivity" });
+  });
+
+  it("does not fall back while a running turn keeps inside the inactivity window", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "6000",
+      FAKE_CODEX_MID_DELAY_MS: "1500",
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report.mode).toBe("tui");
+    expect(report.fallback).toBeUndefined();
+  });
+
+  it("fails with the failed exit code and a clear message when the stalled session cannot be resumed", async () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const pidfile = join(h.bin, "nosid.pid");
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall-nosid",
+      FAKE_CODEX_PIDFILE: pidfile,
+    });
+    expect(r.status).toBe(22);
+    expect(h.execCalls()).toHaveLength(0);
+    expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain("no session id to resume");
+    expect(out.status).toBe("failed");
   });
 
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
