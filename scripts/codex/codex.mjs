@@ -1563,14 +1563,39 @@ function resumeArgs(role, sessionId, lastMessage, schemaFile, extras = []) {
 // Budget for an automatic continuation of an interrupted TUI run: one deadline
 // for the whole run, counted from its start. When it is spent, report the
 // watchdog timeout instead of resuming.
-function remainingBudget(startedMs, timeoutSec, sessionId, live) {
+// The usage reserve is rechecked first (same guard as `resume`): if it is
+// reached the session is left for the owner to `codex-bridge resume` later.
+async function remainingBudget(startedMs, timeoutSec, sessionId, live) {
   const remaining = timeoutSec - (Date.now() - startedMs) / 1000;
-  if (remaining > 0) return { remaining };
+  if (remaining > 0) {
+    const refused = await reserveRefusal(sessionId, live);
+    return refused ? { res: refused } : { remaining };
+  }
   live.write([
     `[watchdog] timeout after ${timeoutSec}s — nothing left to resume session ${sessionId}`,
   ]);
   return {
     res: { sessionId, limitHit: false, timedOut: true, lastMessage: null, code: 1 },
+  };
+}
+
+async function reserveRefusal(sessionId, live) {
+  const usage = await currentUsage();
+  const code = guardCode(usage);
+  if (code === EXIT.OK) return null;
+  const msg = guardMessage(usage, code);
+  live.write([
+    `[guard] ${msg}`,
+    `[guard] not resuming session ${sessionId}; later: codex-bridge resume ${sessionId}`,
+  ]);
+  say(`${msg}; interrupted session ${sessionId} kept, resume it later`);
+  return {
+    sessionId,
+    limitHit: false,
+    timedOut: false,
+    lastMessage: null,
+    code: 1,
+    guardCode: code,
   };
 }
 
@@ -1642,7 +1667,7 @@ async function cmdReview({ positional, opts, extras }) {
       lastMessage,
       "review-output.schema.json",
     );
-    const budget = remainingBudget(startedMs, timeoutSec, fallback.sessionId, live);
+    const budget = await remainingBudget(startedMs, timeoutSec, fallback.sessionId, live);
     res ??=
       budget.res ??
       (await runCodex({
@@ -1664,7 +1689,8 @@ async function cmdReview({ positional, opts, extras }) {
   let status;
   let exit;
   let format = "schema";
-  if (res.timedOut) [status, exit] = ["timeout", EXIT.TIMEOUT];
+  if (res.guardCode) [status, exit] = ["refused", res.guardCode];
+  else if (res.timedOut) [status, exit] = ["timeout", EXIT.TIMEOUT];
   else if (res.limitHit) [status, exit] = ["limit", EXIT.LIMIT_HIT];
   else if (res.code !== 0 || !text) [status, exit] = ["unavailable", EXIT.CODEX_FAILED];
   else if (isReview(parsed)) [status, exit] = ["ok", EXIT.OK];
@@ -1779,7 +1805,7 @@ async function runWorker({
   session.mode = res ? "tui" : "headless";
   if (fallback.reason) session.fallback = fallbackRecord(fallback);
   if (fallback.reason === "mid-run-inactivity" && resumeFor) {
-    const budget = remainingBudget(startedMs, timeoutSec, fallback.sessionId, live);
+    const budget = await remainingBudget(startedMs, timeoutSec, fallback.sessionId, live);
     res ??=
       budget.res ??
       (await runCodex({
@@ -1796,7 +1822,8 @@ async function runWorker({
 
   let status;
   let exit;
-  if (res.timedOut) [status, exit] = ["timeout", EXIT.TIMEOUT];
+  if (res.guardCode) [status, exit] = ["refused", res.guardCode];
+  else if (res.timedOut) [status, exit] = ["timeout", EXIT.TIMEOUT];
   else if (res.limitHit) [status, exit] = ["limit", EXIT.LIMIT_HIT];
   else if (res.code !== 0) [status, exit] = ["failed", EXIT.CODEX_FAILED];
   else [status, exit] = ["ok", EXIT.OK];

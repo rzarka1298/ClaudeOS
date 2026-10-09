@@ -1584,6 +1584,44 @@ describe("tui: trust, withdrawal and cleanup", () => {
     expect(elapsed).toBeLessThan(5 + 1.5);
   });
 
+  it("rechecks the usage reserve before an automatic resume and keeps the session id", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const usageFile = join(h.bin, "usage.json");
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_USAGE_FILE: usageFile,
+      FAKE_CODEX_USAGE_AFTER: usageAt(85),
+    });
+    expect(r.status).toBe(10);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    expect(out.sessionId).toBe(SESSION_ID);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(`not resuming session ${SESSION_ID}`);
+    expect(log).toContain(`codex-bridge resume ${SESSION_ID}`);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report).toMatchObject({ status: "refused", sessionId: SESSION_ID });
+  });
+
+  it("rechecks the usage reserve before a review resume too", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_USAGE_FILE: join(h.bin, "usage.json"),
+      FAKE_CODEX_USAGE_AFTER: usageAt(85),
+    });
+    expect(r.status).toBe(10);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report).toMatchObject({ status: "refused", sessionId: SESSION_ID });
+  });
+
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
     const h = harness();
     const wrapper = spawn(process.execPath, [join(h.root, WRAPPER), "review", h.root, "HEAD~1"], {
