@@ -13,6 +13,7 @@ import {
   type ProjectLaunchActionId,
   retainLaunchStatus,
 } from "./launch-status.js";
+import { createPairRequester } from "./pair-launch-client.js";
 import { projectsSnapshot } from "./projects-state.js";
 
 export interface PluginLauncherOptions {
@@ -74,21 +75,18 @@ export function createPluginLauncher({
     for (const release of [...holds]) release();
   });
 
-  const launch = createLaunchRequester({
+  const sharedDeps = {
     client,
-    notify: (message) => {
+    notify: (message: string): void => {
       if (!unloaded) notify(message);
     },
     connection: () => connectionState.value,
-    projectName: (projectId) =>
-      projectsSnapshot.value?.projects.find((view) => view.projectId === projectId)?.displayName ??
-      null,
     terminalLabel: () =>
       projectsSnapshot.value?.launchers["claude-code"].terminalLabel ?? "Terminal",
     isDisposed: () => unloaded,
     holdStatus,
     chooseOnConflict,
-    setTimer: (callback, ms) => {
+    setTimer: (callback: () => void, ms: number): number => {
       const id = timers.setTimer(() => {
         pending.delete(id);
         callback();
@@ -96,15 +94,25 @@ export function createPluginLauncher({
       pending.add(id);
       return id;
     },
-    clearTimer: (id) => {
+    clearTimer: (id: number): void => {
       pending.delete(id);
       timers.clearTimer(id);
     },
-  });
+  };
+  const displayNameOf = (projectId: ProjectId | null): string | null =>
+    projectsSnapshot.value?.projects.find((view) => view.projectId === projectId)?.displayName ??
+    null;
+
+  const launch = createLaunchRequester({ ...sharedDeps, projectName: displayNameOf });
+  const launchPair = createPairRequester({ ...sharedDeps, projectName: displayNameOf });
 
   return (projectId, action) => {
     if (unloaded) return;
-    if (action === LAUNCH_PAIR_ACTION) return;
+    if (action === LAUNCH_PAIR_ACTION) {
+      // The pair always names a project; a caller without one is a defect.
+      if (projectId !== null) launchPair(projectId);
+      return;
+    }
     launch(projectId, action);
   };
 }

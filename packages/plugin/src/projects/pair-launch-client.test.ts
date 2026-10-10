@@ -392,9 +392,8 @@ describe("the auto-clear rule (RR-04, planner decision)", () => {
   it("clears the region after the 6 second injected timer when neither line is an error or setup", async () => {
     const { requester } = build(() => Promise.resolve(OPENED));
     requester(PROJECT_ID);
-    await vi.waitFor(() => {
-      expect(launchStatus.value.get(PAIR_KEY)).toMatchObject({ claude: { kind: "success" } });
-    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(launchStatus.value.get(PAIR_KEY)).toMatchObject({ claude: { kind: "success" } });
     await vi.advanceTimersByTimeAsync(SUCCESS_CLEAR_MS - 1);
     expect(launchStatus.value.has(PAIR_KEY)).toBe(true);
     await vi.advanceTimersByTimeAsync(1);
@@ -447,7 +446,7 @@ describe("clearLauncherErrors includes the pair (RR-04)", () => {
     );
     requester(PROJECT_ID);
     await vi.waitFor(() => {
-      expect(launchStatus.value.get(PAIR_KEY)).toMatchObject({ kind: "pair" });
+      expect(launchStatus.value.get(PAIR_KEY)).toMatchObject({ codex: { kind: "error" } });
     });
     clearLauncherErrors();
     expect(launchStatus.value.has(PAIR_KEY)).toBe(false);

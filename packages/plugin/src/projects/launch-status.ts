@@ -147,7 +147,8 @@ export function setLaunchResult(
  * in the same synchronous step as the click (CODEX-02).
  */
 export function setPairOpening(key: string): void {
-  void key;
+  cancelPendingClear(key);
+  writeStatus(key, { kind: "pair", claude: { kind: "opening" }, codex: { kind: "opening" } });
 }
 
 /**
@@ -162,10 +163,15 @@ export function setPairResult(
   codex: PairLineStatus,
   timers: LaunchTimerControls,
 ): void {
-  void key;
-  void claude;
-  void codex;
-  void timers;
+  cancelPendingClear(key);
+  writeStatus(key, { kind: "pair", claude, codex });
+  if (pairNeedsAttention({ kind: "pair", claude, codex })) return;
+  const id = timers.setTimer(() => {
+    if (pendingClearTimers.get(key)?.id !== id) return;
+    pendingClearTimers.delete(key);
+    clearStatus(key);
+  }, SUCCESS_CLEAR_MS);
+  pendingClearTimers.set(key, { timers, id });
 }
 
 /**
@@ -198,11 +204,16 @@ export function setLaunchError(key: string, error: LaunchErrorKind): void {
   writeStatus(key, { kind: "error", error });
 }
 
-/** The three launch actions a launcher-settings save configures (RR-04). */
-const LAUNCHER_ACTIONS: ReadonlySet<string> = new Set<LaunchAction>([
+/**
+ * The launch actions a launcher-settings save configures (RR-04). The pair
+ * runs both halves from the saved launcher rows, so a save changes what it
+ * runs too.
+ */
+const LAUNCHER_ACTIONS: ReadonlySet<string> = new Set<ProjectLaunchActionId>([
   "antigravity",
   "claude-code",
   "claude-desktop",
+  "claude-codex-pair",
 ]);
 
 /** The action a key ends in: `{projectId}:{action}` (a ProjectId never holds `:`). */
@@ -228,7 +239,18 @@ function clearWhere(matches: (key: string, status: LaunchStatus) => boolean): vo
  * Finder/GitHub errors, are untouched.
  */
 export function clearLauncherErrors(): void {
-  clearWhere((key, status) => status.kind === "error" && LAUNCHER_ACTIONS.has(actionOf(key)));
+  clearWhere(
+    (key, status) =>
+      LAUNCHER_ACTIONS.has(actionOf(key)) &&
+      (status.kind === "error" || (status.kind === "pair" && pairNeedsAttention(status))),
+  );
+}
+
+/** A pair region that keeps itself on screen: an error line on either side, or Codex's setup line. */
+function pairNeedsAttention(status: PairLaunchStatus): boolean {
+  return (
+    status.claude.kind === "error" || status.codex.kind === "error" || status.codex.kind === "setup"
+  );
 }
 
 /**
