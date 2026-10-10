@@ -3,7 +3,12 @@ import {
   type GeneratedBy,
   NOTE_FRONTMATTER_KEY_ORDER,
   type NoteFrontmatter,
-} from "@ccc/domain";
+} from "@ccc/domain/note-schema.js";
+import {
+  TASK_DECISION_KEY_ORDER,
+  TASK_FRONTMATTER_KEY_ORDER,
+  type TaskFrontmatter,
+} from "@ccc/domain/task-schema.js";
 import yaml from "js-yaml";
 
 /**
@@ -63,8 +68,8 @@ import yaml from "js-yaml";
  */
 
 /** One `key: value` entry, dumped on its own. See the module note above. */
-function dumpEntry(key: string, value: unknown): string {
-  return yaml.safeDump({ [key]: value });
+function dumpEntry(key: string, value: unknown, noRefs = false): string {
+  return yaml.safeDump({ [key]: value }, noRefs ? { noRefs: true } : undefined);
 }
 
 /**
@@ -113,6 +118,7 @@ export function serializeManagedFrontmatter(frontmatter: NoteFrontmatter): strin
  */
 export function serializePassthroughFrontmatter(
   entries: readonly (readonly [string, unknown])[],
+  noRefs = false,
 ): string {
   let out = "";
   for (const [key, value] of entries) {
@@ -120,7 +126,57 @@ export function serializePassthroughFrontmatter(
     // `undefined` carries no information to preserve, so dropping it loses
     // nothing a round-trip could have kept.
     if (value === undefined) continue;
-    out += dumpEntry(key, value);
+    out += dumpEntry(key, value, noRefs);
   }
   return out;
+}
+
+/**
+ * Emits a task note's frontmatter block (no `---` delimiters): the keys in
+ * `TASK_FRONTMATTER_KEY_ORDER`, `generatedBy` and `decision` in their own fixed
+ * orders, then the passthrough keys in read order (plan 06-18, research
+ * Pattern 11).
+ *
+ * It is the plugin twin of `@ccc/vault-repo`'s `stringifyTaskNote`: the same
+ * per-key dump of the same js-yaml, walking the same arrays, so a note written
+ * by either process has the same bytes (proved with a shared golden here and
+ * across packages in 06-25). The block always ends in a newline. A passthrough
+ * key can never override a schema-owned key.
+ */
+export function serializeTaskFrontmatter(
+  frontmatter: TaskFrontmatter,
+  passthrough: readonly (readonly [string, unknown])[] = [],
+): string {
+  const source = frontmatter as unknown as Record<string, unknown>;
+  let out = "";
+  for (const key of TASK_FRONTMATTER_KEY_ORDER) {
+    const value = source[key];
+    if (value === undefined) continue;
+    if (key === "generatedBy") {
+      out += dumpEntry(key, orderedGeneratedBy(value as GeneratedBy), true);
+    } else if (key === "decision") {
+      out += dumpEntry(key, orderedMap(value as object, TASK_DECISION_KEY_ORDER), true);
+    } else {
+      out += dumpEntry(key, value, true);
+    }
+  }
+  const owned: ReadonlySet<string> = new Set(TASK_FRONTMATTER_KEY_ORDER);
+  return (
+    out +
+    serializePassthroughFrontmatter(
+      passthrough.filter(([key]) => !owned.has(key)),
+      true,
+    )
+  );
+}
+
+/** Rebuilds a nested map with its keys in a fixed order, dropping absent ones (YAML cannot dump `undefined`). */
+function orderedMap(value: object, order: readonly string[]): Record<string, unknown> {
+  const source = value as Record<string, unknown>;
+  const ordered: Record<string, unknown> = {};
+  for (const key of order) {
+    const sub = source[key];
+    if (sub !== undefined) ordered[key] = sub;
+  }
+  return ordered;
 }

@@ -48,6 +48,12 @@ export interface CommandCenterViewHost {
    * finding 1); the plugin clears its timers on unload (PLUG-03).
    */
   requestLaunch(projectId: ProjectId | null, action: LaunchAction): void;
+  /**
+   * The plugin's combined connect hook (projects, approvals and tasks refresh,
+   * plan 06-23). Absent in hosts that predate it; the view then refreshes
+   * projects alone.
+   */
+  readonly onServiceLive?: (() => void) | undefined;
 }
 
 /**
@@ -152,7 +158,9 @@ export class CommandCenterView extends ItemView {
     // property, not a performance hope). Each time the stream goes live the
     // service re-reads every project's git state once (D-42).
     attachEventClient(this.host.eventClient, {
-      onLive: refreshProjectsOnConnect(() => refreshProjects(this.host.client)),
+      onLive:
+        this.host.onServiceLive ??
+        refreshProjectsOnConnect(() => refreshProjects(this.host.client)),
     });
   }
 

@@ -8,6 +8,8 @@
  * browser for years, so this is a like-for-like swap, not a weaker one.
  */
 
+import type { ProposalId } from "./approval.js";
+
 declare const brand: unique symbol;
 
 /** A nominal type helper: `T` branded with the literal string `B`. */
@@ -117,4 +119,16 @@ export function newScanRootId(): ScanRootId {
   const time = Date.now().toString(36).padStart(9, "0");
   const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return `${time}${random}` as ScanRootId;
+}
+
+/**
+ * Mints a ProposalId — the one minting home for approval requests, same shape
+ * as {@link newRunId}. It takes no arguments, so nothing about the requester,
+ * the operation or its target can reach the identifier, which doubles as the
+ * request's idempotency key and is never regenerated (D-12, D-15).
+ */
+export function newProposalId(): ProposalId {
+  const time = Date.now().toString(36).padStart(9, "0");
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  return `${time}${random}` as ProposalId;
 }

@@ -19,6 +19,8 @@ export interface EventBus {
   publish(type: ServiceEventType, payload: unknown): ServiceEvent;
   subscribe(res: ServerResponse): void;
   unsubscribe(res: ServerResponse): void;
+  /** Ends every open stream and forgets the subscribers (graceful shutdown). */
+  closeAll(): void;
   /** The number of currently open stream subscribers — a leak is observable through this. */
   subscriberCount(): number;
   /**
@@ -56,6 +58,11 @@ export function createEventBus(): EventBus {
     },
     unsubscribe(res) {
       subscribers.delete(res);
+    },
+    closeAll() {
+      const open = [...subscribers];
+      subscribers.clear();
+      for (const res of open) res.end();
     },
     subscriberCount() {
       return subscribers.size;

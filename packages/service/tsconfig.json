@@ -5,12 +5,15 @@
     "rootDir": "src"
   },
   "include": ["src"],
+  "exclude": ["src/approval", "src/executors"],
   "references": [
     { "path": "../collectors" },
     { "path": "../domain" },
     { "path": "../keychain" },
     { "path": "../launchers" },
     { "path": "../operational-store" },
-    { "path": "../vault-repo" }
+    { "path": "../vault-repo" },
+    { "path": "./src/approval" },
+    { "path": "./src/executors" }
   ]
 }

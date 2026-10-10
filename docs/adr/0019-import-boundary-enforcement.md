@@ -156,3 +156,49 @@ itself.
   `mode`/`match` handling are all flagged by `eslint-plugin-boundaries` as
   subject to change in a future major version (per its own migration-guide
   links). Revisit this ADR when that happens.
+
+## Addendum: the lint repair in Phase 6
+
+Added in Phase 6; the earlier text is unchanged.
+
+**Three defects found in the committed lint.** Phase 6 needed boundary elements nested inside the service package and
+found that the lint had never evaluated them.
+
+1. Descriptor order made exclusive sub-folder elements classify as the enclosing package. The tool takes the first
+   matching descriptor, so a file under `packages/service/src/untrusted/` matched the `service` package descriptor
+   before the more specific one. The earlier header comment claiming the opposite was wrong and is corrected.
+2. Relative imports with a .js suffix were unresolved. The tool's default resolver does not map `./x.js` to `x.ts`,
+   so intra-package edges were never evaluated: only cross-package edges were checked.
+3. No test exercised an intra-service edge, so neither defect was visible. Every existing fixture was a cross-package
+   edge.
+
+The consequence is that the `untrusted` boundary (ADR 0014) was inert before the repair and is now proven by a test that
+fires when a file in that folder imports the operational store; before the repair the same import produced zero messages.
+
+**The repair.** A local resolver (`eslint.boundary-resolver.cjs`, Node built-ins only) maps a `.js` specifier to its
+TypeScript source. The nested exclusive descriptors are listed before the package descriptors, most specific first.
+`boundaries/root-path` is pinned to the repository root, because element paths were otherwise computed from the working
+directory and a gate that depends on the launch directory is inert in the same way.
+
+**New elements and policies.** Sixteen element types now exist: the thirteen above plus `approval`, `approval-minter`
+(the `approval/mint` folder) and `executors`. The approval element may import `domain` and the minter. The minter
+imports `domain` only. Executors import `domain` only. The rest of the service may import the approval element only
+through its public entry file, may import executors only from the composition root, and may never import the minter.
+The test-fixtures element may import everything except the minter. Each policy has a case that fires and a paired case
+that stays quiet.
+
+**Compiler layer for sub-folders:** the approval and executors folders are nested composite TypeScript projects
+that reference only `domain`, and the service project excludes them and references them. Measured behaviour: a relative
+import out of either folder fails the build with TS6307 (and TS6059 for the root directory). An unreferenced package
+import, that is a package the nested project does not list as a reference, fails only on a clean build; an incremental
+build can pass it from stale output, so the clean build is the check of record. Both projects set `noEmitOnError` so a
+violating import does not leave generated files behind. The compiler layer does not see dynamic imports with a
+non-literal specifier; the lint and the backstop cover those.
+
+**New backstop rules.** The grep backstop gained rules that are independent of the lint configuration: a literal
+allow-list for the single minter file that may cast to the capability token type; confinement of any import of the minter
+to the approval folder; confinement of executor imports to the executors folder and the composition root; confinement of
+`process.kill(` to the Claude session folder; confinement of dotted `.terminate(` calls to the executors folder; and a
+rule that the approval public entry file never mentions the minter. They scan non-test source and skip comment lines.
+Known blind spots, left to the lint and the compiler: a bare `kill` taken by destructuring, a computed `process["kill"]`,
+and an executor reached through a re-export barrel that does not name the folder.

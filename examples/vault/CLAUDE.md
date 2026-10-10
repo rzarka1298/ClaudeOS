@@ -58,6 +58,24 @@ An index describes **only its own folder**, never subfolders. Walk down one
 level at a time. Indexes are regenerated, so a stale-looking index means
 regeneration has not run yet, not that a note was deleted.
 
+## Tasks
+
+Tasks live in a `tasks/` folder: `global/tasks/` for tasks that belong to
+no workspace, and one `tasks/` folder inside every workspace. Each task is
+**one note**, with a stable `id` in its frontmatter. As with every note,
+resolve a task by that ID: the file name is chosen once, when the task is
+created, and never changes when the title does.
+
+The `index.md` of a tasks folder is a summary, not a listing. It holds fixed
+text and per-status counts as of the last rebuild, and it names no individual
+task, so it stays the same size however many tasks there are. Find tasks
+through the task views, or by opening the folder.
+
+Tasks are created and edited through the plugin, or by hand in Obsidian's
+Properties view. Change any field you like, but leave the `id` alone: it is
+how the task is tracked. A task note with no `id`, or two notes that share
+one, is listed for attention and is never fixed automatically.
+
 ## Scope boundaries
 
 Knowledge is partitioned into exactly two kinds of scope, and the partition

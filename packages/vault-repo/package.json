@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@ccc/domain": "workspace:*",
-    "gray-matter": "4.0.3"
+    "gray-matter": "4.0.3",
+    "js-yaml": "3.15.2"
   },
   "devDependencies": {
     "@types/node": "24.13.4"

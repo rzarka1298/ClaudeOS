@@ -1,3 +1,9 @@
+export type {
+  ApprovalClientErrorCode,
+  ApprovalDecideInput,
+  ApprovalsClient,
+} from "./approvals-client.js";
+export { ApprovalRequestError, createApprovalsClient } from "./approvals-client.js";
 export type { ClaudeClientErrorCode, SessionActionName } from "./claude-client.js";
 export {
   ClaudeRequestError,
@@ -60,3 +66,5 @@ export {
   SocketUnreachableError,
   VaultSetupRequestError,
 } from "./socket-api-client.js";
+export type { TasksClient } from "./tasks-client.js";
+export { createTasksClient, TaskRequestError } from "./tasks-client.js";

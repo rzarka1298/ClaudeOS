@@ -19,6 +19,12 @@ import {
 } from "@ccc/domain";
 import { listAllRuns } from "@ccc/operational-store";
 import { initializeVault, planVaultSetup, VaultRootMissingError } from "@ccc/vault-repo";
+import {
+  approvalRoutes,
+  approvalsBudgetFor,
+  approvalsSnapshotFor,
+} from "./approval-wiring/routes.js";
+import { CLIENT_RESPONSE_CAP_BYTES } from "./approval-wiring/types.js";
 import { mintToken } from "./auth/token.js";
 import { claudeRouteTable } from "./claude/routes.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
@@ -38,6 +44,7 @@ import {
   sendJson,
   withAuth,
 } from "./route-kit.js";
+import { taskRoutes } from "./tasks/task-routes.js";
 import { persistVaultRoot } from "./vault-root.js";
 import { assertUsableVaultRoot, VaultRootRefusedError } from "./vault-root-policy.js";
 
@@ -45,6 +52,9 @@ import { assertUsableVaultRoot, VaultRootRefusedError } from "./vault-root-polic
 // bodies live in `route-kit.ts` (SC-1), so feature route files can use them
 // without importing this module. Re-exported for existing importers.
 export type { RouteContext } from "./route-kit.js";
+
+/** The bytes `,"approvals":` adds around the member (with a little rounding room). */
+const SNAPSHOT_MEMBER_KEY_BYTES = 16;
 
 const healthHandler: Handler = (_req, res, ctx) => {
   const startedAt = ctx.store.readServiceMeta("started_at");
@@ -141,6 +151,29 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
       ...(ctx.claude?.usage ? { claudeIntegration: ctx.claude.usage.integration() } : {}),
     },
   };
+  // Phase 6 (D-28): the approvals member, built in this same synchronous tick.
+  // The client rejects a response over 64 KiB, so the approvals part is given
+  // only the bytes the rest of the snapshot leaves (T-06-30). A failure leaves
+  // the member out: the inbox is repaired by the list route and the next event,
+  // and the rest of the snapshot must still resync.
+  if (ctx.approvals) {
+    try {
+      const restBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
+      const member = approvalsSnapshotFor(ctx.approvals, approvalsBudgetFor(restBytes));
+      // Even a fully trimmed member has a fixed floor (counts, flags). When the
+      // rest leaves less than that, omit it: the cap outranks the member, and
+      // the client repairs the inbox from the list route.
+      const memberBytes = Buffer.byteLength(JSON.stringify(member), "utf8");
+      if (restBytes + memberBytes + SNAPSHOT_MEMBER_KEY_BYTES <= CLIENT_RESPONSE_CAP_BYTES) {
+        body.state.approvals = member;
+      }
+    } catch (err: unknown) {
+      logger.error(
+        { route: SNAPSHOT_PATH, errorName: err instanceof Error ? err.name : typeof err },
+        "approvals snapshot failed",
+      );
+    }
+  }
   sendJson(res, 200, body);
 };
 
@@ -288,6 +321,10 @@ const routeTable: Record<string, Record<string, Handler>> = {
   ...launcherRoutes,
   ...scanRoutes,
   ...claudeRouteTable,
+  // Phase 6 (append-only, D-28): the approval inbox routes, spread last.
+  ...approvalRoutes,
+  // Phase 6 (append-only, D-28): the task store routes, spread after the approval routes.
+  ...taskRoutes,
 };
 
 /**

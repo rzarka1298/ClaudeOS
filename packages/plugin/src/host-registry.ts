@@ -19,6 +19,29 @@ export interface DomTargetLike {
   removeEventListener(type: string, handler: (ev: unknown) => void): void;
 }
 
+/**
+ * What an `obsidian://` URL carries for a registered action: a flat map of
+ * decoded query values (plus the action itself). The registry types it as
+ * strings, but a handler MUST NOT trust that -- the URL is attacker-controlled.
+ */
+export type ProtocolParams = Readonly<Record<string, string>>;
+
+/**
+ * A single reusable one-shot timer. Scheduling again REPLACES the pending
+ * callback, so a slot is one registration however often it is used, and a
+ * disposed slot is inert (a late `schedule` after unload does nothing).
+ */
+export interface TimerSlot {
+  schedule(callback: () => void, ms: number): void;
+  cancel(): void;
+}
+
+/** A {@link TimerSlot} plus the disposer the registry owns. */
+export interface TimerRegistration {
+  readonly slot: TimerSlot;
+  readonly dispose: Disposer;
+}
+
 export interface CommandLike {
   id: string;
   name: string;
@@ -40,6 +63,16 @@ export interface RegistrationHost {
   addRibbonIcon(icon: string, title: string, callback: () => void): Disposer;
   addCommand(command: CommandLike): Disposer;
   addSettingTab(tab: unknown): Disposer;
+  /** A `obsidian://<action>` handler (plan 06-09, D-26). Throws if the action is already registered. */
+  registerProtocolHandler(action: string, handler: (params: ProtocolParams) => void): Disposer;
+  /**
+   * A vault event (`create`, `modify`, `delete`, `rename`). The host defers the
+   * subscription until the workspace layout is ready, so existing files do not
+   * replay as `create` events at startup (A-10, Pitfall 7).
+   */
+  registerVaultEvent(name: string, handler: (payload?: unknown) => void): Disposer;
+  /** One reusable timer slot whose pending callback cannot outlive unload. */
+  registerTimer(): TimerRegistration;
 }
 
 export interface DisposalFailure {
@@ -68,6 +101,21 @@ export interface HostRegistry {
   launchTimers(dispose: Disposer): void;
   /** Closes a quick-switcher modal still open when the plugin unloads (wave-7 finding 2). */
   switcherModal(dispose: Disposer): void;
+  /**
+   * An `obsidian://` protocol handler (plan 06-09, D-26). Not wrapped: a
+   * duplicate-action throw from the host propagates to the caller, which
+   * decides what to do (see `registerApprovalProtocol`).
+   */
+  protocolHandler(action: string, handler: (params: ProtocolParams) => void): void;
+  /** A vault event, subscribed only once the layout is ready (A-10). */
+  vaultEvent(name: string, handler: (payload?: unknown) => void): void;
+  /** A timer slot; one registration however often it is scheduled. */
+  timer(): TimerSlot;
+  /**
+   * Teardown that is not an Obsidian registration: a signal effect, a
+   * module-level hook, an open modal. Counted so the 20-cycle test sees it.
+   */
+  cleanup(dispose: Disposer): void;
   /**
    * Removes every live registration, calling each underlying disposer
    * exactly once in total across however many times `disposeAll()` itself
@@ -108,6 +156,12 @@ const KNOWN_KINDS = [
   "launchTimers",
   // A quick-switcher modal still open at unload (wave-7 finding 2).
   "switcherModal",
+  // Plan 06-09: the approval deep link, vault events (deferred to layout-ready),
+  // a reusable timer slot, and teardown that is not an Obsidian registration.
+  "protocolHandler",
+  "vaultEvent",
+  "timer",
+  "cleanup",
 ] as const;
 type KnownKind = (typeof KNOWN_KINDS)[number];
 
@@ -157,6 +211,20 @@ export function createHostRegistry(host: RegistrationHost): HostRegistry {
     switcherModal(dispose) {
       registerRaw("switcherModal", dispose);
     },
+    protocolHandler(action, handler) {
+      registerRaw("protocolHandler", host.registerProtocolHandler(action, handler));
+    },
+    vaultEvent(name, handler) {
+      registerRaw("vaultEvent", host.registerVaultEvent(name, handler));
+    },
+    timer() {
+      const { slot, dispose } = host.registerTimer();
+      registerRaw("timer", dispose);
+      return slot;
+    },
+    cleanup(dispose) {
+      registerRaw("cleanup", dispose);
+    },
     registerRaw,
     disposeAll(): DisposalFailure[] {
       // splice (not a for-of over the live array) makes a second call see
@@ -175,6 +243,45 @@ export function createHostRegistry(host: RegistrationHost): HostRegistry {
     },
     liveCount(): number {
       return disposers.length;
+    },
+  };
+}
+
+/**
+ * A {@link TimerSlot} over an injected one-shot timer, with a `dispose` that
+ * cancels any pending callback and makes later scheduling inert. Shared by the
+ * Obsidian adapter (real `window.setTimeout`) and any host that supplies its
+ * own clock, so the replace-on-schedule and inert-after-dispose rules are
+ * written once.
+ */
+export function createTimerSlot<Handle>(timers: {
+  set: (callback: () => void, ms: number) => Handle;
+  clear: (handle: Handle) => void;
+}): TimerSlot & { dispose: Disposer } {
+  let pending: { handle: Handle } | null = null;
+  let disposed = false;
+  const cancel = (): void => {
+    if (pending !== null) {
+      timers.clear(pending.handle);
+      pending = null;
+    }
+  };
+  return {
+    schedule(callback, ms) {
+      if (disposed) return;
+      cancel();
+      const entry: { handle: Handle } = {
+        handle: timers.set(() => {
+          if (pending === entry) pending = null;
+          callback();
+        }, ms),
+      };
+      pending = entry;
+    },
+    cancel,
+    dispose() {
+      disposed = true;
+      cancel();
     },
   };
 }
@@ -237,6 +344,48 @@ export function createObsidianHost(plugin: Plugin): RegistrationHost {
     addSettingTab(tab) {
       plugin.addSettingTab(tab as PluginSettingTab);
       return () => {};
+    },
+    registerProtocolHandler(action, handler) {
+      // Obsidian registers its own unregister callback on the plugin, so the
+      // unload sweep removes the action; the disposer exists only for the
+      // registry's bookkeeping (research spike S8). A duplicate action THROWS
+      // from here, deliberately uncaught -- the caller owns that policy.
+      plugin.registerObsidianProtocolHandler(action, handler);
+      return () => {};
+    },
+    registerVaultEvent(name, handler) {
+      // The one place vault events are subscribed (A-10): inside
+      // `onLayoutReady`, so the existing files do not replay as `create`
+      // events at startup. A registration disposed before the layout is ready
+      // never subscribes; one disposed after unsubscribes through `offref`.
+      let disposed = false;
+      let ref: ReturnType<Events["on"]> | null = null;
+      plugin.app.workspace.onLayoutReady(() => {
+        if (disposed) return;
+        // `Vault` redeclares `on()` with named-event overloads; the `Events`
+        // base restores the generic string overload this adapter needs.
+        ref = (plugin.app.vault as Events).on(name, handler);
+        plugin.registerEvent(ref);
+      });
+      return () => {
+        disposed = true;
+        if (ref !== null) {
+          plugin.app.vault.offref(ref);
+          ref = null;
+        }
+      };
+    },
+    registerTimer() {
+      const slot = createTimerSlot<number>({
+        set: (callback, ms) => window.setTimeout(callback, ms),
+        clear: (handle) => {
+          window.clearTimeout(handle);
+        },
+      });
+      // Obsidian's own unload sweep also cancels it, so a pending timer cannot
+      // outlive the plugin even if the registry is never disposed.
+      plugin.register(() => slot.dispose());
+      return { slot, dispose: () => slot.dispose() };
     },
   };
 }

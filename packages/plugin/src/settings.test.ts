@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { assertNoPrivatePathValues, DEFAULT_SETTINGS, PATH_VALUED_KEYS } from "./settings.js";
+import {
+  assertNoCredentialFields,
+  assertNoPrivatePathValues,
+  DEFAULT_SETTINGS,
+  mergeSettings,
+  PATH_VALUED_KEYS,
+} from "./settings.js";
 
 /**
  * D-43 (PROJ-14): project data lives only in the service's operational store,
@@ -82,5 +88,51 @@ describe("assertNoPrivatePathValues (D-43)", () => {
   it("refuses a project-shaped key nested below the top level", () => {
     const err = refusal({ ...DEFAULT_SETTINGS, ui: { recentProjects: [] } });
     expect(err.message).toContain('"recentProjects"');
+  });
+});
+
+describe("the notifyApprovals setting (plan 06-09, D-26, PLUG-07)", () => {
+  it("defaults on in a fresh settings object and for a data file written before the key existed", () => {
+    expect(DEFAULT_SETTINGS.notifyApprovals).toBe(true);
+    expect(mergeSettings(null).notifyApprovals).toBe(true);
+    expect(mergeSettings({ lastOpenedDestination: "projects" }).notifyApprovals).toBe(true);
+  });
+
+  it("round-trips a saved false and a saved true", () => {
+    expect(mergeSettings({ notifyApprovals: false }).notifyApprovals).toBe(false);
+    expect(mergeSettings({ notifyApprovals: true }).notifyApprovals).toBe(true);
+  });
+
+  for (const bad of ["false", "no", 0, 1, null, {}, [], "true"]) {
+    it(`coerces the persisted non-boolean ${JSON.stringify(bad)} to the default`, () => {
+      expect(mergeSettings({ notifyApprovals: bad }).notifyApprovals).toBe(true);
+    });
+  }
+
+  it("is plugin-owned data that passes both save guards", () => {
+    const saved = mergeSettings({ notifyApprovals: false });
+    expect(() => assertNoCredentialFields(saved)).not.toThrow();
+    expect(() => assertNoPrivatePathValues(saved)).not.toThrow();
+  });
+
+  it("leaves the existing keys and defaults unchanged, and still rejects a credential-shaped key", () => {
+    expect(DEFAULT_SETTINGS).toEqual({
+      socketPathOverride: null,
+      lastOpenedDestination: "overview",
+      reducedMotion: "auto",
+      notifyApprovals: true,
+    });
+    expect(
+      mergeSettings({ socketPathOverride: "/run/x.sock", reducedMotion: "reduce" }),
+    ).toMatchObject({ socketPathOverride: "/run/x.sock", reducedMotion: "reduce" });
+    expect(() => assertNoCredentialFields({ approvalToken: "x" })).toThrow(/approvalToken/);
+  });
+
+  it("persists no key in the always-allow wording family (APPR-05)", () => {
+    const FAMILY = /always.?allow|don.?t.?ask|remember|auto.?approve|trust|never.?ask/i;
+    for (const key of Object.keys(DEFAULT_SETTINGS)) expect(key).not.toMatch(FAMILY);
+    for (const key of Object.keys(mergeSettings({ notifyApprovals: false }))) {
+      expect(key).not.toMatch(FAMILY);
+    }
   });
 });

@@ -1,4 +1,13 @@
-import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import {
+  check,
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 /**
  * Typed table declarations for the operational store (ADR-0009, ADR-0018).
@@ -364,4 +373,197 @@ export const transcriptRecognition = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.parserVersion, table.claudeVersion] })],
+);
+
+/**
+ * Approval requests (Phase 6, D-13). One row per proposal; the state machine
+ * is enforced twice: by the store's compare-and-set statements and by the
+ * hand-written triggers in the approvals migration (drizzle emits none, and a
+ * regeneration must re-apply them). `payload_json` is the canonical payload
+ * text the executor reads and may be nulled only after a decision (D-19).
+ * `title` and `project_name` are NOT stored: what the owner sees is rendered
+ * from the payload at read time, so it can never drift from what was hashed.
+ *
+ * No column names an always-allow, remember, persist, preference, allow-all
+ * or token concept, and none may be added: a permanent test scans
+ * `PRAGMA table_info` (APPR-05, D-18). Timestamps are ISO 8601 UTC strings
+ * from `toISOString()`, injected by the caller; this store never reads the
+ * clock.
+ */
+export const proposals = sqliteTable(
+  "proposals",
+  {
+    proposalId: text("proposal_id").primaryKey(),
+    operation: text("operation").notNull(),
+    subject: text("subject").notNull(),
+    state: text("state").notNull(),
+    requesterKind: text("requester_kind").notNull(),
+    requesterLabel: text("requester_label").notNull(),
+    projectId: text("project_id"),
+    runId: text("run_id"),
+    reason: text("reason").notNull(),
+    payloadJson: text("payload_json"),
+    payloadHash: text("payload_hash").notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    mirrorNoteId: text("mirror_note_id").notNull(),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    approvedAt: text("approved_at"),
+    decidedAt: text("decided_at"),
+    decidedVia: text("decided_via"),
+    claimedAt: text("claimed_at"),
+    claimFactsJson: text("claim_facts_json"),
+    finishedAt: text("finished_at"),
+    /** Arithmetic (compared and incremented in SQL): 0 before the claim, 1 after it, 2 after the one retry. */
+    attempts: integer("attempts").notNull().default(0),
+    outcomeCode: text("outcome_code"),
+    outcomeNote: text("outcome_note"),
+    supersedes: text("supersedes"),
+    /** Arithmetic: increments on every state change so a client can discard a stale event. */
+    revision: integer("revision").notNull().default(1),
+  },
+  (table) => [
+    check(
+      "proposals_state_check",
+      sql`${table.state} IN ('pending', 'approved', 'executing', 'executed', 'failed', 'unknown', 'denied', 'expired', 'withdrawn', 'lapsed')`,
+    ),
+    check("proposals_attempts_check", sql`${table.attempts} >= 0`),
+    uniqueIndex("proposals_pending_dedupe")
+      .on(table.dedupeKey)
+      .where(sql`${table.state} = 'pending'`),
+    index("proposals_state_expires_idx").on(table.state, table.expiresAt),
+  ],
+);
+
+/**
+ * The append-only decision trail (APPR-08, D-13). Three triggers refuse
+ * UPDATE, DELETE and any INSERT that would replace a row. `detail` is a short
+ * fixed code, never payload text, and no column holds a body or a token.
+ */
+export const approvalAudit = sqliteTable(
+  "approval_audit",
+  {
+    seq: integer("seq").primaryKey({ autoIncrement: true }),
+    proposalId: text("proposal_id").notNull(),
+    event: text("event").notNull(),
+    at: text("at").notNull(),
+    decidedVia: text("decided_via"),
+    payloadHash: text("payload_hash"),
+    detail: text("detail"),
+  },
+  (table) => [index("approval_audit_proposal_idx").on(table.proposalId, table.seq)],
+);
+
+/**
+ * The execution ledger (D-14, D-17): one row per attempt, so the single
+ * restart retry is visible and a duplicate attempt number is impossible.
+ */
+export const approvalExecutions = sqliteTable(
+  "approval_executions",
+  {
+    proposalId: text("proposal_id").notNull(),
+    /** Arithmetic: 1 or 2. */
+    attempt: integer("attempt").notNull(),
+    startedAt: text("started_at").notNull(),
+    finishedAt: text("finished_at"),
+    resultCode: text("result_code"),
+  },
+  (table) => [primaryKey({ columns: [table.proposalId, table.attempt] })],
+);
+
+/**
+ * The effect of the zero-impact test operation: one row per proposal id, so a
+ * test can count executions and effects apart (D-43). Insert-or-ignore.
+ */
+export const diagnosticEffects = sqliteTable("diagnostic_effects", {
+  proposalId: text("proposal_id").primaryKey(),
+  recordedAt: text("recorded_at").notNull(),
+});
+
+/**
+ * The disposable task index (D-32, ADR-0004, ADR-0022; plan 06-14): one row per
+ * valid task note, holding only the keys a filter, a sort or a list row needs.
+ * DELIBERATELY no body, description, content or excerpt column: the Markdown
+ * note is the sole holder of task content, and this table can be dropped and
+ * rebuilt from the vault at any time. A test asserts the absence.
+ *
+ * Date-only and instant values live in separate, mutually exclusive columns
+ * (`due_date` or `due_at`, `sched_date` or `sched_at`; a CHECK enforces it) so a
+ * later time-zone change can never move an all-day task. Instants are stored
+ * as normalised UTC ISO strings so text comparison orders them. `due_sort` is
+ * `COALESCE(due_at, due_date)`. Every column is text, per this file's rule.
+ */
+export const taskIndex = sqliteTable(
+  "task_index",
+  {
+    noteId: text("note_id").primaryKey(),
+    path: text("path").notNull().unique(),
+    scope: text("scope").notNull(),
+    projectId: text("project_id"),
+    title: text("title").notNull(),
+    status: text("status").notNull(),
+    priority: text("priority"),
+    dueDate: text("due_date"),
+    dueAt: text("due_at"),
+    schedDate: text("sched_date"),
+    schedAt: text("sched_at"),
+    dueSort: text("due_sort"),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    parentId: text("parent_id"),
+    sourceType: text("source_type"),
+    assignee: text("assignee"),
+    /** SHA-256 of the whole note file, for no-op detection (metadata-only edits change it). */
+    contentHash: text("content_hash"),
+    decisionOutcome: text("decision_outcome"),
+    decisionAt: text("decision_at"),
+    /** `"true"` / `"false"` per this file's all-text rule; feeds the generic `vault_notes` row. */
+    aiGenerated: text("ai_generated").notNull(),
+    claimType: text("claim_type"),
+    confidence: text("confidence").notNull(),
+  },
+  (table) => [
+    check(
+      "task_index_due_exclusive",
+      sql`NOT (${table.dueDate} IS NOT NULL AND ${table.dueAt} IS NOT NULL)`,
+    ),
+    check(
+      "task_index_sched_exclusive",
+      sql`NOT (${table.schedDate} IS NOT NULL AND ${table.schedAt} IS NOT NULL)`,
+    ),
+    index("task_scope_status_idx").on(table.scope, table.status),
+    index("task_project_status_idx").on(table.projectId, table.status),
+    index("task_due_date_idx").on(table.dueDate).where(sql`${table.dueDate} IS NOT NULL`),
+    index("task_due_at_idx").on(table.dueAt).where(sql`${table.dueAt} IS NOT NULL`),
+    index("task_sched_date_idx").on(table.schedDate).where(sql`${table.schedDate} IS NOT NULL`),
+    index("task_sched_at_idx").on(table.schedAt).where(sql`${table.schedAt} IS NOT NULL`),
+  ],
+);
+
+/** One row per tag of a task: the tag text only, never anything from the body. */
+export const taskTags = sqliteTable(
+  "task_tags",
+  {
+    noteId: text("note_id").notNull(),
+    tag: text("tag").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.noteId, table.tag] })],
+);
+
+/**
+ * One row per dependency edge: `note_id` depends on `dep_id`. `dep_id` is NOT a
+ * foreign key: a dependency that names no task row is a real state (the note
+ * was deleted, not yet indexed, or hand-edited) and counts as unmet (D-33, D-37).
+ */
+export const taskDeps = sqliteTable(
+  "task_deps",
+  {
+    noteId: text("note_id").notNull(),
+    depId: text("dep_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.noteId, table.depId] }),
+    index("task_deps_dep_idx").on(table.depId),
+  ],
 );

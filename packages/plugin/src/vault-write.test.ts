@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { NOTE_FRONTMATTER_KEY_ORDER, type NoteFrontmatter } from "@ccc/domain";
 import { beforeEach, describe, expect, it } from "vitest";
 import { FakeVault } from "./test-support/fake-obsidian-host.js";
+import { NOW, OPEN_NOTE, TASK_PATH } from "./test-support/task-note-fixtures.js";
 import { applyConflictSafeUpdate, updateNoteProvenance } from "./vault-write.js";
 
 const SRC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -354,5 +355,38 @@ describe("managed-frontmatter serialization discipline", () => {
     expect(code.filter((line) => /NoteFrontmatterSchema\.safeParse\s*\(/.test(line))).toHaveLength(
       1,
     );
+  });
+});
+
+describe("updateNoteProvenance refuses task notes (plan 06-18, Test 7)", () => {
+  it("returns refused and writes nothing for a note whose type is task, so a generic rewrite cannot reorder or strip task keys", async () => {
+    const vault = new FakeVault({ [TASK_PATH]: OPEN_NOTE });
+
+    const result = await updateNoteProvenance(
+      vault,
+      vault.file(TASK_PATH),
+      OPEN_NOTE,
+      (current) => ({
+        ...current,
+        updated: NOW,
+      }),
+    );
+
+    expect(result).toBe("refused");
+    expect(vault.read(TASK_PATH)).toBe(OPEN_NOTE);
+    expect(vault.processCallCount).toBe(0);
+    expect(vault.writtenPaths).toEqual([]);
+  });
+
+  it("still updates a managed note that is not a task", async () => {
+    const note = "---\nid: n1\ntype: wiki\n---\nbody\n";
+    expect(note).toContain("type: wiki");
+    // The refusal keys on the declared type only: the existing managed-note
+    // cases above prove the unchanged path, and this one proves the type test is exact.
+    const vault = new FakeVault({ [NOTE_PATH]: note });
+    const result = await updateNoteProvenance(vault, vault.file(NOTE_PATH), note, (c) => c).catch(
+      () => "threw",
+    );
+    expect(result).not.toBe("refused");
   });
 });

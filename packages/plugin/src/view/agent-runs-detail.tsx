@@ -17,6 +17,12 @@ import {
 import type { SessionUsage } from "@ccc/domain/usage.js";
 import type { VNode } from "preact";
 import { useEffect, useId, useState } from "preact/hooks";
+import {
+  approvalDetailFocusRequested,
+  approvalsById,
+  approvalsReady,
+  selectedProposalId,
+} from "../approvals/signals.js";
 import { connectionState } from "../connection-state.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatDuration } from "../widgets/duration.js";
@@ -30,6 +36,12 @@ import {
 } from "../widgets/usage-format.js";
 import { lastUsageEventAt, usageSummary } from "../widgets/usage-signals.js";
 import { selectedRunId } from "./agent-runs-state.js";
+import {
+  REQUEST_ALREADY_WAITING,
+  RUN_PROMPT_EXPLANATION,
+  VIEW_THE_REQUEST,
+} from "./approvals-copy.js";
+import { approvalChip, pendingTerminateRequestFor } from "./approvals-state.js";
 import { clearActionStatus, sessionActionStatus } from "./session-action-status.js";
 
 /**
@@ -43,16 +55,16 @@ import { clearActionStatus, sessionActionStatus } from "./session-action-status.
 // session controls", D-01, D-35 as overridden by this plan's own Test 2, PR-26/27)
 // ---------------------------------------------------------------------------
 
-/** D-01, PR-26: force-terminate is always disabled with this reason until
- * the approval inbox exists. The approval phase flips this constant — no
- * code path here dispatches while it is false. */
-export const APPROVAL_INBOX_READY = false;
-
 const DISCONNECTED_REASON = "The companion service isn't running.";
 /** The event stream has not reached `live` yet (first connect, or a
  * reconnect in progress): the service may well be running, so this never
  * claims it isn't (05 wave 4 review). */
 const CONNECTING_REASON = "Connecting to the companion service…";
+/** D-01, PR-26, D-42: while the service does not report an approval engine,
+ * Force-terminate is disabled with this reason (Phase 5's wording, kept). The
+ * gate itself is the service's ready signal, read where the controls are
+ * built — there is no constant to flip, and no code path here dispatches while
+ * the signal is not `true`. */
 const APPROVAL_REASON = "Needs approval — available once the approval inbox is ready";
 
 export interface SessionControl {
@@ -62,6 +74,8 @@ export interface SessionControl {
    * disabled control stays focusable and its reason stays reachable
    * (UI-SPEC "Availability matrix"). */
   readonly disabledReason: string | null;
+  /** The pending request this control's reason refers to, when it says one is already waiting. */
+  readonly requestId?: string | undefined;
 }
 
 export interface ControlsContext {
@@ -70,7 +84,10 @@ export interface ControlsContext {
    * still connecting rather than disconnected, which picks
    * {@link CONNECTING_REASON} over {@link DISCONNECTED_REASON}. */
   readonly connecting?: boolean | undefined;
+  /** The service reports the approval engine ready (`approvalsReady === true`). */
   readonly approvalInboxReady: boolean;
+  /** A pending force-terminate request for this Run, if there is one. */
+  readonly pendingRequestId?: string | null | undefined;
   /** `null` means unknown, which never disables (plan note). */
   readonly projectCount: number | null;
 }
@@ -152,12 +169,16 @@ function associateControl(view: SessionView, ctx: ControlsContext): SessionContr
 /** Destructive, always last (UI-SPEC "Primary control first … destructive last"). */
 function forceTerminateControl(view: SessionView, ctx: ControlsContext): SessionControl | null {
   if (!LIVE_STATES.has(view.state)) return null;
-  return control(
-    "session:terminate",
-    "Force-terminate",
-    ctx,
-    ctx.approvalInboxReady ? null : APPROVAL_REASON,
-  );
+  const waiting = ctx.approvalInboxReady && ctx.pendingRequestId != null;
+  const specific = !ctx.approvalInboxReady
+    ? APPROVAL_REASON
+    : waiting
+      ? REQUEST_ALREADY_WAITING
+      : null;
+  const built = control("session:terminate", "Force-terminate", ctx, specific);
+  return waiting && built.disabledReason === REQUEST_ALREADY_WAITING
+    ? { ...built, requestId: ctx.pendingRequestId ?? undefined }
+    : built;
 }
 
 /**
@@ -361,6 +382,28 @@ function DetailFields({
 // Controls row (UI-SPEC "Detail pane" #2/#3)
 // ---------------------------------------------------------------------------
 
+/**
+ * The tertiary `View the request` beside the reason a Force-terminate is
+ * disabled because its request is already waiting (D-41 rule 5): it selects that
+ * request in the Approvals section above and presses Pending. It navigates and
+ * decides nothing.
+ */
+function ViewRequestButton({ requestId }: { readonly requestId: string }): VNode {
+  return (
+    <button
+      type="button"
+      className="ccc-list-more"
+      onClick={() => {
+        approvalChip.value = "pending";
+        selectedProposalId.value = requestId;
+        approvalDetailFocusRequested.value = true;
+      }}
+    >
+      {VIEW_THE_REQUEST}
+    </button>
+  );
+}
+
 function ControlsRow({
   session,
   connected,
@@ -374,10 +417,12 @@ function ControlsRow({
   readonly projectCount: number | null;
   readonly onQuickAction: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }): VNode {
+  // Read in render, so a later snapshot or a decided request re-renders the row.
   const controls = controlsFor(session, {
     connected,
     connecting,
-    approvalInboxReady: APPROVAL_INBOX_READY,
+    approvalInboxReady: approvalsReady.value === true,
+    pendingRequestId: pendingTerminateRequestFor(approvalsById.value, session.runId),
     projectCount,
   });
   const reasonBaseId = useId();
@@ -417,6 +462,7 @@ function ControlsRow({
                   {c.disabledReason}
                 </p>
               )}
+              {c.requestId !== undefined && <ViewRequestButton requestId={c.requestId} />}
             </div>
           );
         })}
@@ -574,6 +620,9 @@ export function DetailPane({
         {display.glyph} {display.label}
       </p>
       {session.state === "stale" && <p className="ccc-list-meta">{STALE_RUN_EXPLANATION}</p>}
+      {session.state === "waiting-for-approval" && (
+        <p className="ccc-list-meta">{RUN_PROMPT_EXPLANATION}</p>
+      )}
       <ControlsRow
         session={session}
         connected={connected}

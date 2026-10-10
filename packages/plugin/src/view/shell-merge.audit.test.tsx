@@ -1,5 +1,5 @@
 import type { RunId, SessionView } from "@ccc/domain";
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
 import { resetProjectsState } from "../projects/projects-state.js";
@@ -67,7 +67,7 @@ function description(id: DestinationId): string {
 }
 
 describe("DESTINATION_VIEWS after the merge", () => {
-  it.each(["overview", "projects", "settings", "agent-runs"] as const)(
+  it.each(["overview", "projects", "settings", "agent-runs", "tasks"] as const)(
     "%s renders a real view, not the placeholder description",
     (id) => {
       connectionState.value = { kind: "live" };
@@ -76,10 +76,10 @@ describe("DESTINATION_VIEWS after the merge", () => {
     },
   );
 
-  it("a destination without a view (tasks) still renders its placeholder, so the check above can fail", () => {
+  it("a destination without a view (research) still renders its placeholder, so the check above can fail", () => {
     connectionState.value = { kind: "live" };
-    render(<Shell initialDestination="tasks" />);
-    expect(screen.getByText(description("tasks"))).toBeTruthy();
+    render(<Shell initialDestination="research" />);
+    expect(screen.getByText(description("research"))).toBeTruthy();
   });
 
   it("selecting a Run through the hero row opens Agent runs with that Run selected", () => {
@@ -151,5 +151,18 @@ describe("disconnected frame withholds onQuickAction (RR-05)", () => {
         (b) => b.getAttribute("aria-disabled") !== "true" && !(b as HTMLButtonElement).disabled,
       );
     expect(actions).toHaveLength(0);
+  });
+});
+
+describe("the Tasks destination in the shell (plan 06-22, Test 5)", () => {
+  it("renders the Tasks destination, not its description", () => {
+    connectionState.value = { kind: "live" };
+    render(<Shell initialDestination="tasks" />);
+    const panel = document.querySelector('[role="tabpanel"]') as HTMLElement;
+    expect(panel.querySelector(".ccc-tasks")).not.toBeNull();
+    expect(within(panel).getAllByRole("button", { name: "Create a task" }).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.queryByText(description("tasks"))).toBeNull();
   });
 });

@@ -1,16 +1,25 @@
 import { existsSync, unlinkSync } from "node:fs";
-import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "@ccc/domain";
+import { type Clock, DEFAULT_HEARTBEAT_INTERVAL_MS, type ProjectId, type RunId } from "@ccc/domain";
 import { createSecurityCliSecretStore } from "@ccc/keychain";
 import {
   applyMigrations,
+  createDiagnosticEffects,
+  getProject,
+  getSessionRun,
   listLauncherConfigs,
   listProjects,
   openStore,
 } from "@ccc/operational-store";
+import { createProposeForceTerminate } from "./approval-wiring/proposer.js";
+import { createProcessNamer, createRunInspector } from "./approval-wiring/run-inspector.js";
+import { createServiceApprovalLog, startApprovalServices } from "./approval-wiring/services.js";
 import { getInstallSecret } from "./auth/install-secret.js";
 import { startClaudeServices } from "./claude/services.js";
 import { startUsageServices } from "./claude/usage-services.js";
 import { createEventBus } from "./events/event-bus.js";
+// The composition root is the ONLY importer of the executors folder (APPR-01,
+// T-06-02): effect code is reachable only through the engine's definitions.
+import { createDiagnosticTestOperation, createForceTerminateOperation } from "./executors/index.js";
 import { recoverInterruptedRuns } from "./lifecycle/recover-runs.js";
 import { logger } from "./logging.js";
 import { ensureRuntimeDir, resolveDbPath, resolveRuntimeDir, resolveSocketPath } from "./paths.js";
@@ -32,7 +41,9 @@ import {
 } from "./projects/script-dir.js";
 import { createCommandSpawner } from "./projects/spawner.js";
 import { createRequestListener } from "./routes.js";
+import { createShutdown } from "./shutdown.js";
 import { claimSocketPath, logSocketClaimRefusal, startSocketServer } from "./socket-server.js";
+import { createTaskServices } from "./tasks/task-service.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
 
 /**
@@ -259,6 +270,92 @@ async function main(): Promise<void> {
     projects,
   });
 
+  // --- Phase 6 (approvals and tasks) startup block ------------------------
+  // After the Claude block above (its spool drain and revival sweep have
+  // settled every Run's state, so force-terminate reconcile reads true facts,
+  // A-3) and before the socket opens. The terminator is handed to the
+  // force-terminate operation here and nowhere else; the routes below get the
+  // narrow approval services and no executor (APPR-01, T-06-02).
+  const approvalClock: Clock = { now: () => new Date().toISOString() };
+  const approvalLog = createServiceApprovalLog(logger);
+  const readVaultRoot = (): string | null => {
+    const persisted = store.readServiceMeta(VAULT_ROOT_META_KEY);
+    return persisted !== null && persisted.length > 0 ? persisted : null;
+  };
+  const runInspector = createRunInspector({
+    db: store.db,
+    processFacts: claudeServices.processFacts,
+  });
+  const approvals = startApprovalServices({
+    db: store.db,
+    definitions: [
+      createDiagnosticTestOperation({
+        effects: createDiagnosticEffects(store.db, approvalClock.now),
+      }),
+      createForceTerminateOperation({
+        terminator: claudeServices.terminator,
+        inspector: runInspector,
+        log: approvalLog,
+      }),
+    ],
+    clock: approvalClock,
+    eventBus,
+    getVaultRoot: readVaultRoot,
+    log: approvalLog,
+    env: process.env,
+    projectName: (projectId) => getProject(store.db, projectId as ProjectId)?.displayName ?? null,
+  });
+  const recovered = await approvals.recover();
+  logger.info({ counts: recovered }, "startup: recovered approval requests");
+  // The expiry sweep starts right after recovery, before the socket opens (D-09).
+  approvals.start();
+  // Only now does force-terminate become a real request: the slot answered
+  // approval-unavailable until the engine, recovery and the sweeper existed (D-42).
+  claudeServices.proposerSlot.bind(
+    createProposeForceTerminate({
+      engine: approvals.engine,
+      inspector: runInspector,
+      runContext: (runId) => {
+        const run = getSessionRun(store.db, runId as RunId);
+        if (run === null) return null;
+        const project =
+          run.projectId === null ? null : getProject(store.db, run.projectId as ProjectId);
+        return { projectId: run.projectId, projectName: project?.displayName ?? null };
+      },
+      processName: createProcessNamer({
+        readAncestry: (pid) => claudeServices.processFacts.readAncestry(pid),
+      }),
+      log: approvalLog,
+    }),
+  );
+
+  // Tasks: the task index is a disposable cache of the vault, so the startup
+  // walk rebuilds it after migrations and before the socket opens. Only the
+  // narrow TaskServices members go into the route context.
+  const taskHost = createTaskServices({
+    db: store.db,
+    getVaultRoot: readVaultRoot,
+    eventBus,
+    now: () => new Date(),
+    log: logger,
+  });
+  // A missing vault root or a failed walk never stops the service: the index
+  // stays a cache, the task routes answer their closed codes, and one fixed
+  // code is logged (D-35, SVC-11). No path, title or note text reaches the log.
+  try {
+    const walked = taskHost.startupWalk();
+    if (walked.ok) {
+      logger.info(
+        { tasks: walked.value.tasks, attention: walked.value.attention },
+        "startup: task index built",
+      );
+    } else {
+      logger.warn({ code: walked.code }, "startup: task index not built");
+    }
+  } catch {
+    logger.error({ code: "task-startup-walk-threw" }, "startup: task index not built");
+  }
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
@@ -268,6 +365,17 @@ async function main(): Promise<void> {
     launch,
     launchers,
     scan,
+    approvals: approvals.services,
+    tasks: {
+      create: (request) => taskHost.create(request),
+      list: (request) => taskHost.list(request),
+      counts: (request) => taskHost.counts(request),
+      get: (request) => taskHost.get(request),
+      dueToday: (request) => taskHost.dueToday(request),
+      attention: (request) => taskHost.attention(request),
+      changed: (request) => taskHost.changed(request),
+      rebuild: () => taskHost.rebuild(),
+    },
   });
   const server = await startSocketServer({ socketPath, requestListener });
 
@@ -278,30 +386,38 @@ async function main(): Promise<void> {
   // pipeline's queue, its pending coalesced writes, the in-flight spool
   // tick) AND every open connection has ended, so no write ever runs
   // against a closed store (wave 3 review).
-  let shuttingDown = false;
-  const shutdown = (): void => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    clearInterval(heartbeatTimer);
-    // Usage first: its scans read the store and its listeners hang off the
-    // pipeline and the poller, which stop next.
-    projectsCollector.stop();
-    const claudeStopped = usageServices
-      .stop()
-      .then(() => claudeServices.stop())
-      .catch((err: unknown) => {
-        logger.error({ err }, "shutdown: claude services did not stop cleanly");
-      });
-    server.close(() => {
-      void claudeStopped.then(() => {
-        store.close();
-        if (existsSync(socketPath)) {
-          unlinkSync(socketPath);
-        }
-        process.exit(0);
-      });
-    });
-  };
+  const shutdown = createShutdown({
+    stopIntake: () => {
+      clearInterval(heartbeatTimer);
+      taskHost.dispose();
+      projectsCollector.stop();
+    },
+    // The approvals first (D-09): the expiry sweeper stops, then every
+    // execution already running is awaited. An execution reaches the Claude
+    // services' terminator and the store, so both must outlive it. Then usage,
+    // whose scans read the store and hang off the pipeline and the poller, and
+    // last the Claude services, after which the store may close.
+    stopApprovals: () => approvals.stop(),
+    stopUsage: () => usageServices.stop(),
+    stopClaude: () => claudeServices.stop(),
+    closeServer: (done) => {
+      server.close(done);
+    },
+    closeConnections: () => {
+      eventBus.closeAll();
+      server.closeIdleConnections();
+    },
+    closeResources: () => {
+      store.close();
+      if (existsSync(socketPath)) {
+        unlinkSync(socketPath);
+      }
+    },
+    exit: (code) => process.exit(code),
+    onError: (message, err) => {
+      logger.error({ err }, message);
+    },
+  });
 
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

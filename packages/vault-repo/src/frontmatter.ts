@@ -160,7 +160,7 @@ const REFUSED_ENGINE = {
  * BEFORE gray-matter sees the string, which is what makes every spelling
  * — BOM-prefixed, space- or tab-separated, capitalised, CRLF — moot.
  */
-function assertPlainYamlDelimiter(raw: string): void {
+export function assertPlainYamlDelimiter(raw: string): void {
   const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
   if (!text.startsWith("---")) return;
 
@@ -188,6 +188,46 @@ function assertPlainYamlDelimiter(raw: string): void {
 const HARDENED_MATTER_OPTIONS = {
   engines: { javascript: REFUSED_ENGINE, js: REFUSED_ENGINE, coffee: REFUSED_ENGINE },
 };
+
+/** The two functions gray-matter calls on a YAML engine. */
+export interface YamlEngine {
+  parse(input: string): object;
+  stringify(data: object): string;
+}
+
+/**
+ * Builds the hardened gray-matter options, optionally replacing the YAML
+ * engine. The three executable engines stay refused in every variant, and the
+ * options object is always passed so gray-matter's module-level cache stays
+ * off. A parser that needs a different YAML schema (the task reader uses the
+ * narrow core schema) builds its options here rather than copying the
+ * refusals, so the executable-engine defence has one definition.
+ */
+export function hardenedMatterOptions(yamlEngine?: YamlEngine): {
+  engines: Record<string, YamlEngine>;
+} {
+  return {
+    engines: {
+      ...HARDENED_MATTER_OPTIONS.engines,
+      ...(yamlEngine === undefined ? {} : { yaml: yamlEngine }),
+    },
+  };
+}
+
+/**
+ * Splits a raw file into its frontmatter data and its body with a caller-chosen
+ * YAML engine, under the same hardened options as every other parse here. This
+ * is the only way another module in this package reaches gray-matter, so the
+ * "never a bare `matter(raw)`" rule stays one definition. The caller must run
+ * {@link assertPlainYamlDelimiter} first; the refusing engines are the second layer.
+ */
+export function parseWithYamlEngine(
+  raw: string,
+  yamlEngine: YamlEngine,
+): { data: unknown; content: string } {
+  const parsed = matter(raw, hardenedMatterOptions(yamlEngine));
+  return { data: parsed.data, content: parsed.content };
+}
 
 /**
  * Parses UNTRUSTED front matter out of a raw file and returns the data

@@ -28,12 +28,24 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { NoteFrontmatter } from "@ccc/domain";
+import {
+  type NoteFrontmatter,
+  TASK_FRONTMATTER_KEY_ORDER,
+  VALID_HOSTILE_TASK_TITLES,
+} from "@ccc/domain";
+import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 import {
   serializeManagedFrontmatter,
   serializePassthroughFrontmatter,
+  serializeTaskFrontmatter,
 } from "./frontmatter-serializer.js";
+import {
+  GOLDEN_BODY,
+  GOLDEN_PASSTHROUGH,
+  GOLDEN_TASK_FRONTMATTER,
+  GOLDEN_TASK_NOTE,
+} from "./test-support/task-note-fixtures.js";
 
 const SRC_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -327,5 +339,76 @@ describe("serializer independence from the Obsidian API", () => {
     expect(externalBlock).not.toBe("");
     expect(externalBlock).toContain('"obsidian"');
     expect(externalBlock).not.toContain("js-yaml");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 06-18, Task 1: the task frontmatter serializer.
+
+describe("serializeTaskFrontmatter (plan 06-18)", () => {
+  const wrap = (block: string, body: string): string => `---\n${block}---\n${body}`;
+
+  it("Test 1a: matches the service writer's bytes for a fully populated task with passthrough keys", () => {
+    const block = serializeTaskFrontmatter(GOLDEN_TASK_FRONTMATTER, GOLDEN_PASSTHROUGH);
+    expect(wrap(block, GOLDEN_BODY)).toBe(GOLDEN_TASK_NOTE);
+  });
+
+  it("noRefs: a passthrough value that shares a node is written without anchors or aliases, like the service writer", () => {
+    const shared = ["x", "y"];
+    const block = serializeTaskFrontmatter(GOLDEN_TASK_FRONTMATTER, [
+      ["zz-shared", { first: shared, second: shared }],
+    ]);
+    expect(block).not.toMatch(/&|\*[a-z]/);
+    expect(block).toContain("second:");
+  });
+
+  it("Test 1b: walks the provenance keys first and the task keys in the domain order", () => {
+    const block = serializeTaskFrontmatter(GOLDEN_TASK_FRONTMATTER);
+    const topLevel = block
+      .split("\n")
+      .filter((line) => /^[A-Za-z]/.test(line))
+      .map((line) => line.split(":")[0]);
+    const expected = TASK_FRONTMATTER_KEY_ORDER.filter(
+      (key) => (GOLDEN_TASK_FRONTMATTER as Record<string, unknown>)[key] !== undefined,
+    );
+    expect(topLevel).toEqual(expected);
+    expect(topLevel.slice(0, 5)).toEqual(["id", "scope", "stage", "created", "updated"]);
+  });
+
+  it("Test 1c: omits absent optional keys and emits nested maps in their own fixed order", () => {
+    const {
+      priority: _priority,
+      due: _due,
+      decision: _decision,
+      ...rest
+    } = GOLDEN_TASK_FRONTMATTER;
+    const block = serializeTaskFrontmatter({
+      ...rest,
+      generatedBy: { runId: "run-7", automation: "daily-brief" },
+    });
+    expect(block).not.toMatch(/^priority:/m);
+    expect(block).not.toMatch(/^due:/m);
+    expect(block).not.toMatch(/^decision:/m);
+    expect(block).toContain("generatedBy:\n  automation: daily-brief\n  runId: run-7\n");
+  });
+
+  it("Test 1d: is deterministic, and passthrough keys can never override an owned key", () => {
+    const once = serializeTaskFrontmatter(GOLDEN_TASK_FRONTMATTER, GOLDEN_PASSTHROUGH);
+    expect(serializeTaskFrontmatter(GOLDEN_TASK_FRONTMATTER, GOLDEN_PASSTHROUGH)).toBe(once);
+    const hostile = serializeTaskFrontmatter(GOLDEN_TASK_FRONTMATTER, [
+      ["status", "cancelled"],
+      ["extra", "kept"],
+    ]);
+    expect(hostile).not.toContain("cancelled");
+    expect(hostile.endsWith("extra: kept\n")).toBe(true);
+  });
+
+  it("Test 1e: round-trips every valid hostile title through the CORE_SCHEMA load", () => {
+    for (const title of VALID_HOSTILE_TASK_TITLES) {
+      const block = serializeTaskFrontmatter({ ...GOLDEN_TASK_FRONTMATTER, title });
+      const loaded = yaml.safeLoad(block, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+      expect(loaded.title).toBe(title);
+      expect(loaded.status).toBe("done");
+    }
   });
 });

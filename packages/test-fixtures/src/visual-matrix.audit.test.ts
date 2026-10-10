@@ -31,10 +31,62 @@ function filesUnder(dir: string): string[] {
   });
 }
 
+/** The 21 Phase 6 approvals and shell-chip cells (UI-SPEC "Approvals cells"). */
+const APPROVALS_CELLS = [
+  "approvals — approvals-pending-destructive — full",
+  "approvals — approvals-pending-destructive — narrow",
+  "approvals — approvals-pending-requester — full",
+  "approvals — approvals-pending-requester — narrow",
+  "approvals — approvals-pending-test — full",
+  "approvals — approvals-executing — full",
+  "approvals — approvals-executed — full",
+  "approvals — approvals-failed — full",
+  "approvals — approvals-unknown — full",
+  "approvals — approvals-expired — full",
+  "approvals — approvals-expired — narrow",
+  "approvals — approvals-hash-mismatch — full",
+  "approvals — approvals-too-large — full",
+  "approvals — approvals-empty — full",
+  "approvals — approvals-loading — full",
+  "approvals — approvals-error — full",
+  "approvals — approvals-stale — full",
+  "approvals — approvals-disconnected — full",
+  "approvals — approvals-pending-destructive — full — reduced",
+  "approvals — shell-nav-count — full",
+  "approvals — shell-nav-count — narrow",
+] as const;
+
+/** The 19 Phase 6 tasks and project-panel cells (UI-SPEC "Tasks cells"; the narrow attention cell proves the two-line title clamp). */
+const TASKS_CELLS = [
+  "tasks — tasks-today — full",
+  "tasks — tasks-today — narrow",
+  "tasks — tasks-overdue-blocked — full",
+  "tasks — tasks-proposed — full",
+  "tasks — tasks-proposed — narrow",
+  "tasks — tasks-create-form-error — full",
+  "tasks — tasks-create-form-error — narrow",
+  "tasks — tasks-detail-conflict — full",
+  "tasks — tasks-attention — full",
+  "tasks — tasks-attention — narrow",
+  "tasks — tasks-empty — full",
+  "tasks — tasks-none — full",
+  "tasks — tasks-loading — full",
+  "tasks — tasks-stale — full",
+  "tasks — tasks-error — full",
+  "tasks — tasks-disconnected — full",
+  "tasks — project-tasks — full",
+  "tasks — project-tasks — narrow",
+  "tasks — tasks-today — full — reduced",
+] as const;
+
 describe("visual matrix (audit)", () => {
-  it("lists exactly 73 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells", () => {
+  it("lists exactly 113 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 21 approvals cells + 19 tasks cells", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 73 tests in 2 files/);
+    expect(out).toMatch(/Total: 113 tests in 4 files/);
+    expect(APPROVALS_CELLS).toHaveLength(21);
+    for (const cell of APPROVALS_CELLS) expect(out).toContain(cell);
+    expect(TASKS_CELLS).toHaveLength(19);
+    for (const cell of TASKS_CELLS) expect(out).toContain(cell);
     for (const cell of [
       "background — full",
       "background — reduced",
@@ -63,7 +115,7 @@ describe("visual matrix (audit)", () => {
     expect(config).toContain('updateSnapshots: "none"');
   });
 
-  it.each(["widgets.spec.ts", "agent-runs.spec.ts"])(
+  it.each(["widgets.spec.ts", "agent-runs.spec.ts", "approvals.spec.ts", "tasks.spec.ts"])(
     "%s skips the whole file on a non-Linux host unless the local override is set",
     (fileName) => {
       const spec = readFileSync(
@@ -73,6 +125,17 @@ describe("visual matrix (audit)", () => {
       expect(spec).toMatch(
         /test\.skip\(\s*process\.platform !== "linux" && !process\.env\.CCC_VISUAL_ALLOW_LOCAL/,
       );
+    },
+  );
+
+  it.each(["approvals.spec.ts", "tasks.spec.ts"])(
+    "%s scrolls every scroller to the top before the capture (focus moves scroll a pane)",
+    (fileName) => {
+      const spec = readFileSync(
+        join(REPO_ROOT, "packages", "test-fixtures", "visual", fileName),
+        "utf8",
+      );
+      expect(spec).toContain("resetScroll(page)");
     },
   );
 

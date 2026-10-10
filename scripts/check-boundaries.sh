@@ -37,7 +37,25 @@
 #      kill(1) flag via execFile; receiving it in a handler stays allowed
 #  10. no non-test file forges a CapabilityToken -- a cast, a typed
 #      initializer, JSON.parse or `any` fed to a capability-typed call --
-#      only the approval engine issues one (ADR-0012, PR-26)
+#      only the approval engine issues one (ADR-0012, PR-26); the one
+#      anchored carve-out is the engine's minter file,
+#      packages/service/src/approval/mint/mint-token.ts (D-02), and it is
+#      still subject to the `any` scan
+#  11. no file outside packages/service/src/approval/ imports the approval
+#      minter -- an import, export-from, side-effect or dynamic import whose
+#      specifier contains approval/mint (T-06-01, T-06-15)
+#  12. no file outside packages/service/src/executors/ and the composition
+#      root packages/service/src/main.ts imports an executor -- a specifier
+#      reaching the executors folder (T-06-02, T-06-15)
+#  13. no file outside packages/service/src/claude/ calls process.kill( --
+#      the Claude services own the only process-signal sites (T-06-02)
+#  14. no file outside packages/service/src/executors/ calls .terminate( with
+#      a leading dot; a method definition named terminate is not a call
+#      (T-06-02)
+#  15. the approval public door approval/index.ts never references the minter
+#      (MAJOR-2)
+#  Rules 11 to 14 scan non-test source files only and skip comment lines;
+#  every allow-list below is an anchored `^...` path match, never a substring.
 #
 # Rules 6 and 7 mirror DOM_SAFETY_RULES, and rule 2 mirrors
 # NETWORK_ISOLATION_RULES, in packages/plugin/eslint.config.mjs; rule 8
@@ -68,7 +86,7 @@ RULES=0
 # merely contained `lint-fixtures/` or `boundary-violations/`, so a file could
 # escape the backstop by the name of its directory.
 list_source_files() {
-  git ls-files -z -- 'packages/*.ts' 'packages/*.tsx' 2>/dev/null | \
+  git ls-files -z -- "$@" 2>/dev/null | \
     tr '\0' '\n' | \
     grep -v '/dist/' | \
     grep -v '/node_modules/' | \
@@ -119,7 +137,12 @@ report_rule() {
   fi
 }
 
-SRC_FILES=$(list_source_files)
+SRC_FILES=$(list_source_files 'packages/*.ts' 'packages/*.tsx')
+# Rules 10 to 15 (the approval and process-signal confinement) also scan the
+# other module extensions a service file could be written in (review MINOR-3);
+# the broad rules above stay on .ts/.tsx because the plugin's JS config files
+# legitimately name the very APIs those rules forbid.
+EXTRA_EXT_FILES=$(list_source_files 'packages/*.mts' 'packages/*.cts' 'packages/*.js' 'packages/*.mjs' 'packages/*.cjs' 'packages/*.jsx' || true)
 
 # --- Rule 1: no file outside packages/plugin imports the Obsidian API ---
 NON_PLUGIN_FILES=$(printf '%s\n' "$SRC_FILES" | grep -v '^packages/plugin/' || true)
@@ -246,12 +269,23 @@ report_rule \
 # CapabilityToken<...> = ...`); JSON.parse fed straight to terminate(); and,
 # in any file that names CapabilityToken or SessionTerminator, `any` in any
 # form (wave 5 review). Tests may cast locally to exercise a
-# capability-typed method, so files named *.test.* are exempt. ---
-NON_TEST_FILES=$(printf '%s\n' "$SRC_FILES" | grep -v '[.]test[.]' || true)
+# capability-typed method, so files named *.test.* are exempt.
+#
+# The approval engine has to produce a token somewhere, so the forgery scan
+# (and ONLY the forgery scan) skips exactly one path, MINTER_PATH: the
+# engine's minter file (D-02, T-06-01). The skip is a whole-line match
+# anchored at both ends (`^...$`, the dot as `[.]`), so a path that merely
+# contains the minter path, starts with it, or ends with it is still scanned
+# (judge-r1 finding 9). The `any` scan below keeps the minter file in its
+# list, so the carve-out removes the cast pattern for that one file and nothing
+# else. ---
+MINTER_PATH_PATTERN='^packages/service/src/approval/mint/mint-token[.]ts$'
+NON_TEST_FILES=$(printf '%s\n%s\n' "$SRC_FILES" "$EXTRA_EXT_FILES" | grep -v '[.]test[.]' | grep . || true)
+FORGERY_SCAN_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v "$MINTER_PATH_PATTERN" || true)
 # shellcheck disable=SC2086
 forge_hits=$(grep_noncomment \
   "(^|[^A-Za-z0-9_])as[[:space:]]+CapabilityToken|[=(,][[:space:]]*<CapabilityToken|:[[:space:]]*CapabilityToken[[:space:]]*<[^>]*>[[:space:]]*=[^=>]|terminate[[:space:]]*[(][[:space:]]*JSON[.]parse" \
-  $NON_TEST_FILES || true)
+  $FORGERY_SCAN_FILES || true)
 CAPABILITY_FILES=""
 for f in $NON_TEST_FILES; do
   [ -f "$f" ] || continue
@@ -267,8 +301,75 @@ if [ -n "$CAPABILITY_FILES" ]; then
     $CAPABILITY_FILES || true)
 fi
 report_rule \
-  "a non-test file forges a CapabilityToken (a cast, typed initializer, JSON.parse or any; only the approval engine issues one; tests may cast locally)" \
+  "a non-test file forges a CapabilityToken (a cast, typed initializer, JSON.parse or any; only the approval engine issues one, and its minter file packages/service/src/approval/mint/mint-token.ts is the single path allowed to cast; tests may cast locally)" \
   "$(printf '%s\n%s\n' "$forge_hits" "$any_hits" | grep -v '^$' | sort -u || true)"
+
+# --- Rule 11: nothing outside packages/service/src/approval/ imports the
+# approval minter (D-03, T-06-01, T-06-15). The minter is the one file that can
+# produce a capability token, so reaching it from anywhere but the engine's own
+# folder is a forgery path even though the cast itself is carved out of rule 10.
+# SPECIFIER_HEAD matches the start of any module specifier: `from "`, a
+# side-effect `import "`, or a dynamic `import("` / `require("`. The folder test
+# is on the specifier text (`approval/mint` followed by a slash or the closing
+# quote), because a file outside the folder has to name the folder to reach it.
+# Test files are not in NON_TEST_FILES. ---
+SPECIFIER_HEAD="(from|import|require)[[:space:]]*[(]?[[:space:]]*[\"'\`][^\"'\`]*"
+OUTSIDE_APPROVAL_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/service/src/approval/' || true)
+# shellcheck disable=SC2086
+check_rule \
+  "a file outside packages/service/src/approval/ imports the approval minter (a specifier containing approval/mint; only the engine's own folder may reach it, T-06-01)" \
+  "${SPECIFIER_HEAD}approval/mint(/|[\"'\`])" \
+  $OUTSIDE_APPROVAL_FILES
+
+# --- Rule 12: nothing outside packages/service/src/executors/ and the
+# composition root packages/service/src/main.ts imports an executor (D-03,
+# T-06-02, T-06-15). Executors are effect code; a route or the engine reaching
+# one directly skips the approval gate, so they are wired only at startup. The
+# specifier must have a slash directly before `executors`, so a look-alike such
+# as `not-executors/` or `executors-extra/` is not a hit. ---
+OUTSIDE_EXECUTORS_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/service/src/executors/' | grep -v '^packages/service/src/main[.]ts$' || true)
+# shellcheck disable=SC2086
+check_rule \
+  "a file outside packages/service/src/executors/ and packages/service/src/main.ts imports an executor (a specifier reaching the executors folder; effect code is wired only by the composition root, T-06-02)" \
+  "${SPECIFIER_HEAD}/executors(/|[\"'\`])" \
+  $OUTSIDE_EXECUTORS_FILES
+
+# --- Rule 13: no file outside packages/service/src/claude/ calls process.kill(
+# (D-03, T-06-02). The two existing sites (the process-existence probe and the
+# terminate executor's kill callback) live in claude/services.ts; anything else
+# that signals a process is a way around the approval engine. The boundary
+# character before `process` excludes a longer identifier such as `subprocess`
+# but still sees `globalThis.process.kill(`. ---
+OUTSIDE_CLAUDE_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/service/src/claude/' || true)
+# shellcheck disable=SC2086
+check_rule \
+  "a file outside packages/service/src/claude/ calls process.kill( (only the Claude services may signal a process, T-06-02)" \
+  "(^|[^A-Za-z0-9_])process[[:space:]]*([?][.]|[.])[[:space:]]*kill[[:space:]]*([?][.][[:space:]]*)?[(]|(^|[^A-Za-z0-9_])process[[:space:]]*([?][.])?[[:space:]]*[[][[:space:]]*[\"'\`]kill[\"'\`][[:space:]]*[]]|[{,][[:space:]]*kill[[:space:]]*([,}]|:[^,}]*[,}])[^=]*=[[:space:]]*(globalThis[.])?process([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])kill[^;]*from[[:space:]]*[\"'\`](node:)?process[\"'\`]" \
+  $OUTSIDE_CLAUDE_FILES
+
+# --- Rule 14: no file outside packages/service/src/executors/ calls
+# .terminate( (D-03, T-06-02). Only a call with a leading dot is a hit (also
+# `?.terminate(`), so the Phase 5 method definition and interface member named
+# terminate, which have no leading dot, are not. ---
+NON_EXECUTOR_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '^packages/service/src/executors/' || true)
+# shellcheck disable=SC2086
+check_rule \
+  "a file outside packages/service/src/executors/ calls .terminate( (only the executors may invoke the session terminator, T-06-02)" \
+  "[.]terminate[[:space:]]*([?][.][[:space:]]*)?[(]|[[][[:space:]]*[\"'\`]terminate[\"'\`][[:space:]]*[]]|[{,][[:space:]]*terminate[[:space:]]*([,}]|:[^,}]*[,}])[[:space:]]*=[^=>]" \
+  $NON_EXECUTOR_FILES
+
+# --- Rule 15: the approval engine's public door, packages/service/src/approval/
+# index.ts, never references the minter (review MAJOR-2, T-06-01). Every service
+# file may import the door, so a door that imports or re-exports the minter
+# (`export * from "./mint/mint-token.js"`) would hand it to all of them; rule
+# 11 cannot see this because the door lives inside the approval folder. Any
+# non-comment line mentioning `mint/` in that one file is a hit. ---
+DOOR_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -E '^packages/service/src/approval/index[.](ts|mts|cts)$' || true)
+# shellcheck disable=SC2086
+check_rule \
+  "the approval public door (packages/service/src/approval/index.ts) references the minter (the public door must never import or re-export approval/mint, T-06-01)" \
+  "mint/|mint-token" \
+  $DOOR_FILES
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: checked ${RULES} rules."

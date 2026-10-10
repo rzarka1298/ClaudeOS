@@ -5,6 +5,12 @@ import {
 } from "@ccc/domain";
 import { parseYaml, type TFile, type Vault } from "obsidian";
 import {
+  applyConflictSafeUpdate,
+  type ConflictSafeUpdateResult,
+  type ManagedNoteFile,
+  type ProcessableVault,
+} from "./conflict-safe.js";
+import {
   serializeManagedFrontmatter,
   serializePassthroughFrontmatter,
 } from "./frontmatter-serializer.js";
@@ -68,34 +74,11 @@ import {
  * in its own module rather than re-opening this one.
  */
 
-/**
- * The single property this module reads off a note handle. Narrowing to a
- * structural type (rather than taking Obsidian's `TFile` directly) keeps
- * the fake host in `test-support/` an ordinary object instead of a cast of
- * a class whose runtime the `obsidian` types-only package does not ship --
- * `TFile` satisfies this shape, which {@link processableFile} checks at
- * compile time.
- */
-export interface ManagedNoteFile {
-  readonly path: string;
-}
-
-/**
- * The one Obsidian `Vault` method this module uses, wrapped behind a typed
- * local surface exactly as `host-registry.ts` wraps the registration
- * methods: production passes the real vault through {@link processableVault},
- * tests pass `FakeVault`, and neither needs a cast.
- */
-export interface ProcessableVault {
-  /**
-   * Atomically read, modify and save a plaintext file. The callback is
-   * SYNCHRONOUS by contract -- Obsidian's own documentation calls it "a
-   * callback function which returns the new content of the note
-   * synchronously", and an async callback would return a `Promise` that
-   * Obsidian would stringify into the file.
-   */
-  process(file: ManagedNoteFile, fn: (data: string) => string): Promise<string>;
-}
+// The primitive moved to `conflict-safe.ts` (plan 06-18) so the task update path
+// can use it without this module's Obsidian runtime import; every name below
+// keeps working for existing importers.
+export type { ConflictSafeUpdateResult, ManagedNoteFile, ProcessableVault };
+export { applyConflictSafeUpdate };
 
 /**
  * Narrows a real Obsidian `Vault` to {@link ProcessableVault}. The body is
@@ -115,47 +98,6 @@ export function processableVault(vault: Vault): ProcessableVault {
  */
 export function processableFile(file: TFile): ManagedNoteFile {
   return file;
-}
-
-/**
- * `"applied"` -- the file matched `expectedPriorContent` and the transform's
- * output was written. `"conflict"` -- the file had changed since the caller
- * read it, and the current content was left exactly as it was found.
- */
-export type ConflictSafeUpdateResult = "applied" | "conflict";
-
-/**
- * Writes `transform(current)` to `file`, but only while the file still
- * holds exactly `expectedPriorContent`.
- *
- * Exactly one `process()` call happens per invocation. A conflict is
- * reported, never retried: see the module contract above.
- *
- * @param transform - synchronous by type, mirroring `Vault.process`'s own
- *   requirement. An async transform is a compile error, not a runtime
- *   surprise.
- */
-export async function applyConflictSafeUpdate(
-  vault: ProcessableVault,
-  file: ManagedNoteFile,
-  expectedPriorContent: string,
-  transform: (current: string) => string,
-): Promise<ConflictSafeUpdateResult> {
-  let conflict = false;
-  await vault.process(file, (current) => {
-    // Strict string equality, not a normalised or trimmed comparison: a
-    // trailing newline the user added IS an edit, and a comparison lenient
-    // enough to ignore it is lenient enough to overwrite it.
-    if (current !== expectedPriorContent) {
-      conflict = true;
-      // Returning `current` unchanged is what makes the user's edit win
-      // byte-for-byte. `process()` still writes -- it always does -- but it
-      // writes back exactly the bytes it just read.
-      return current;
-    }
-    return transform(current);
-  });
-  return conflict ? "conflict" : "applied";
 }
 
 /**
@@ -231,6 +173,23 @@ function passthroughKeys(parsed: unknown): [string, unknown][] {
   return Object.entries(parsed as Record<string, unknown>).filter(([key]) => !owned.has(key));
 }
 
+/** `"refused"` -- the note is a task note, which only the task update path may rewrite. */
+export type ProvenanceUpdateResult = ConflictSafeUpdateResult | "refused";
+
+/**
+ * A top-level `type: task` line. A text test rather than a second YAML parse, so
+ * this module keeps exactly one untrusted parse (below, validated by zod); a
+ * false positive refuses a note, which is the safe direction, and a nested key
+ * is indented so it never matches.
+ */
+const TASK_TYPE_LINE = /^["']?type["']?[ \t]*:[ \t]*["']?task["']?[ \t]*(?:#.*)?$/m;
+
+/** True when the note's frontmatter declares itself a task. Never throws. */
+function declaresTaskType(content: string): boolean {
+  const note = splitNote(content);
+  return note !== null && TASK_TYPE_LINE.test(note.frontmatter);
+}
+
 /**
  * A pure transformation of a note's validated provenance frontmatter --
  * bump `updated`, set `lastReviewed`, and so on. Receives a value that has
@@ -257,15 +216,22 @@ export type ProvenanceMutation = (current: NoteFrontmatter) => NoteFrontmatter;
  * Writes exactly one file -- the note itself. See the module's
  * eventual-consistency note above for what that means for folder indexes.
  *
+ * Returns `"refused"` for a task note (see above).
+ *
  * @throws {InvalidManagedNoteError} when the current content is not a
  *   well-formed managed note. Nothing is written in that case.
  */
-export function updateNoteProvenance(
+export async function updateNoteProvenance(
   vault: ProcessableVault,
   file: ManagedNoteFile,
   expectedPriorContent: string,
   mutate: ProvenanceMutation,
-): Promise<ConflictSafeUpdateResult> {
+): Promise<ProvenanceUpdateResult> {
+  // A task note carries keys this module does not own and a fixed order it
+  // does not know: rewriting it here could reorder or strip them (D-30,
+  // T-06-26). Refuse before any write; `tasks/task-update.ts` is the only
+  // writer of task notes.
+  if (declaresTaskType(expectedPriorContent)) return "refused";
   return applyConflictSafeUpdate(vault, file, expectedPriorContent, (current) => {
     const note = splitNote(current);
     if (!note) {

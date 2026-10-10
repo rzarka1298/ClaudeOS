@@ -3,6 +3,11 @@ import type { SessionUsage } from "@ccc/domain/usage.js";
 import type { ReadonlySignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  approvalDetailFocusRequested,
+  pendingApprovalCount,
+  selectedProposalId,
+} from "../approvals/signals.js";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
@@ -10,8 +15,13 @@ import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
+import { globalTasksContext } from "../tasks/contexts.js";
 import { nowTick } from "../widgets/clock.js";
-import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
+import type {
+  NavigationSelection,
+  QuickActionDescriptor,
+  WidgetState,
+} from "../widgets/contract.js";
 import { resolvedLayout } from "../widgets/layout.js";
 import { dispatchQuickAction } from "../widgets/quick-actions.js";
 import type { WidgetId } from "../widgets/registry.js";
@@ -20,10 +30,11 @@ import { widgetStateFor } from "../widgets/widget-data.js";
 import { type WidgetHost, WidgetHostContext } from "../widgets/widget-host.js";
 import { AgentRuns } from "./agent-runs.js";
 import { detailFocusRequested, selectedRunId } from "./agent-runs-state.js";
+import { DestinationTabs } from "./destination-tabs.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
 import { launchersFocusRequested } from "./launchers-focus.js";
 import { createLaunchersSession, type LaunchersSession } from "./launchers-settings.js";
-import { navigationRequest } from "./navigation-request.js";
+import { navigationRequest, taskFormRequested } from "./navigation-request.js";
 import { Overview } from "./overview.js";
 import { ProjectsView } from "./projects-view.js";
 import {
@@ -32,6 +43,8 @@ import {
   type SessionActionHost,
 } from "./session-action-runner.js";
 import { SettingsDestination } from "./settings-destination.js";
+import { TasksDestination } from "./tasks.js";
+import { taskDetailFocusRequested } from "./tasks-view-state.js";
 
 /**
  * The runner's signal-derived members, added to the host-supplied pieces
@@ -173,7 +186,7 @@ export interface DestinationViewProps {
   readonly connection: ConnectionState;
   readonly now: number;
   readonly onQuickAction: (descriptor: QuickActionDescriptor) => void;
-  readonly onNavigate: (destination: DestinationId, selection?: { readonly runId: string }) => void;
+  readonly onNavigate: (destination: DestinationId, selection?: NavigationSelection) => void;
   readonly projectsActions: ProjectsActions;
   readonly scanActions?: ScanActions | undefined;
   readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
@@ -233,6 +246,7 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
       onProjectFocusMissing={onProjectFocusMissing}
     />
   ),
+  tasks: ({ connection, now }) => <TasksDestination connection={connection} now={now} />,
   "agent-runs": ({ now, onQuickAction, loadSessionUsage }) => (
     <AgentRuns now={now} onQuickAction={onQuickAction} loadSessionUsage={loadSessionUsage} />
   ),
@@ -306,17 +320,30 @@ export function Shell({
    * document body and a keyboard user would lose their place (A11Y-01).
    *
    * The optional `selection` is the S1 hero row's `{ runId }` channel
-   * (UI-SPEC S1 "Primary line", R-06): it sets `agent-runs-state.ts`'s
-   * `selectedRunId` signal before switching tabs, so Agent runs mounts with
-   * that Run already selected, and raises `detailFocusRequested`. The tab
+   * (UI-SPEC S1 "Primary line", R-06) or an approval request's
+   * `{ proposalId }` (D-23): it sets `agent-runs-state.ts`'s `selectedRunId`
+   * (or the approvals `selectedProposalId`) signal before switching tabs, so
+   * Agent runs mounts with that item already selected, and raises its focus
+   * request. The tab
    * itself still receives focus here; `AgentRuns`'s own mount effect then
    * moves it on to the detail heading only because that flag is set — a
    * plain tab switch never does.
    */
-  function focusDestination(id: DestinationId, selection?: { readonly runId: string }): void {
-    if (selection?.runId !== undefined) {
+  function focusDestination(id: DestinationId, selection?: NavigationSelection): void {
+    if (selection !== undefined && "runId" in selection) {
       selectedRunId.value = selection.runId;
       detailFocusRequested.value = true;
+    } else if (selection !== undefined && "proposalId" in selection) {
+      // D-23: a notification, link or button selects an approval request. The
+      // Approvals section consumes the focus request exactly once. A task
+      // task selections are handled below.
+      selectedProposalId.value = selection.proposalId;
+      approvalDetailFocusRequested.value = true;
+    } else if (selection !== undefined && "taskId" in selection) {
+      // A task selection (the Overview's due-today rows): the Tasks destination
+      // selects it in the global context and its pane heading takes focus once.
+      globalTasksContext.select(selection.taskId);
+      taskDetailFocusRequested.value = true;
     }
     select(id);
     tabRefs.current[id]?.focus();
@@ -334,7 +361,22 @@ export function Shell({
       notify,
       requestLaunch,
       openSwitcher,
+      requestTaskForm: () => {
+        taskFormRequested.value = true;
+      },
       runSessionAction:
+        sessionActions === undefined
+          ? undefined
+          : (action) => {
+              void runSessionAction(action, sessionActionDeps(sessionActions));
+            },
+      // The host of an approval request (D-06): an enabled approval-required
+      // capability (today only `session:terminate`) reaches the runner's own
+      // confirm-then-request flow, which asks the service for a request and
+      // executes nothing. Absent a runner host the dispatcher answers
+      // unavailable. Without this member Force-terminate would never leave the
+      // dispatcher, whatever the service's ready signal says.
+      requestProposal:
         sessionActions === undefined
           ? undefined
           : (action) => {
@@ -362,6 +404,16 @@ export function Shell({
     // finding 4).
     if (navigationRequest.peek() !== request) return;
     navigationRequest.value = null;
+    if (request.focusProposalId !== undefined) {
+      focusDestination(request.destination, { proposalId: request.focusProposalId });
+      return;
+    }
+    if (request.focusApprovalsHeading === true || request.openTaskForm === true) {
+      // The section that owns the intent moves focus itself once it renders;
+      // focusing the tab here would be overwritten, or would overwrite it.
+      select(request.destination);
+      return;
+    }
     if (request.focusProjectId === undefined) {
       if (request.destination === "settings" && launchersFocusPending) select("settings");
       else focusDestination(request.destination);
@@ -389,6 +441,7 @@ export function Shell({
   );
 
   const active = DESTINATIONS.find((d) => d.id === activeId) ?? DESTINATIONS[0];
+  const pendingCount = pendingApprovalCount.value;
   const status = connectionState.value;
   const event = lastEvent.value;
 
@@ -421,34 +474,13 @@ export function Shell({
             </span>
           )}
         </div>
-        <div
-          role="tablist"
-          aria-label="Command center destinations"
-          className="ccc-nav"
+        <DestinationTabs
+          activeId={activeId}
+          pendingCount={pendingCount}
+          tabRefs={tabRefs}
+          onSelect={select}
           onKeyDown={handleNavKeyDown}
-        >
-          {DESTINATIONS.map((destination) => {
-            const selected = destination.id === activeId;
-            return (
-              <button
-                key={destination.id}
-                type="button"
-                role="tab"
-                id={`ccc-tab-${destination.id}`}
-                aria-selected={selected}
-                aria-controls={`ccc-panel-${destination.id}`}
-                tabIndex={selected ? 0 : -1}
-                className="ccc-nav-item"
-                ref={(el) => {
-                  if (el) tabRefs.current[destination.id] = el;
-                }}
-                onClick={() => select(destination.id)}
-              >
-                {destination.label}
-              </button>
-            );
-          })}
-        </div>
+        />
         <div
           role="tabpanel"
           id={`ccc-panel-${active.id}`}

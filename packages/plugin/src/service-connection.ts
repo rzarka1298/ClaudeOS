@@ -55,6 +55,23 @@ export function refreshProjectsOnConnect(refresh: () => Promise<unknown>): () =>
 }
 
 /**
+ * Runs several connect hooks as one. Each runs in order and a throwing hook never
+ * stops the rest, so a failure in one feature's refresh cannot starve another's
+ * (plan 06-23: projects, approvals and tasks all refresh on every connect).
+ */
+export function combineOnLive(...hooks: ReadonlyArray<() => void>): () => void {
+  return () => {
+    for (const hook of hooks) {
+      try {
+        hook();
+      } catch {
+        // One feature's refresh must not stop the others.
+      }
+    }
+  };
+}
+
+/**
  * Wires an {@link EventClient}'s transitions onto the {@link connectionState}
  * and {@link lastEvent} signals the shell reads directly (never a client —
  * PERF-01), and every event and full-resync snapshot through the one
@@ -81,4 +98,27 @@ export function attachEventClient(
     },
     applySnapshot,
   );
+}
+
+/**
+ * Starts the service event subscription at plugin load, once the workspace
+ * layout is ready, so approval notifications work after an Obsidian cold
+ * start without any view being opened (wave-7 codex finding). Deferring to
+ * layout-ready keeps the plugin shell fast (PERF-01). Returns a stop function
+ * (registered with the host registry) so an unload before layout-ready never
+ * attaches. Later view attaches are idempotent on the same client.
+ */
+export function startServiceEventsOnLayoutReady(options: {
+  client: EventClient;
+  onLive: () => void;
+  whenReady: (callback: () => void) => void;
+}): () => void {
+  let stopped = false;
+  options.whenReady(() => {
+    if (stopped) return;
+    attachEventClient(options.client, { onLive: options.onLive });
+  });
+  return () => {
+    stopped = true;
+  };
 }

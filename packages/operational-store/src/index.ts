@@ -1,3 +1,10 @@
+export type { ApprovalStore } from "./approval-store.js";
+export {
+  createApprovalStore,
+  createDiagnosticEffects,
+  InvalidApprovalInputError,
+  InvalidApprovalRowError,
+} from "./approval-store.js";
 export { applyMigrations, SchemaAheadOfCodeError } from "./migrate.js";
 export type { OperationalStore } from "./open-store.js";
 export { openStore } from "./open-store.js";
@@ -68,6 +75,32 @@ export {
   setSessionOverride,
   upsertSessionRun,
 } from "./session-store.js";
+export type {
+  TaskBlockedByItem,
+  TaskCounts,
+  TaskCursor,
+  TaskDueTodayRow,
+  TaskIndexDetail,
+  TaskIndexRecord,
+  TaskIndexRow,
+  TaskPage,
+  TaskQuery,
+  TaskQueryContext,
+} from "./task-index-store.js";
+export {
+  blockedBy,
+  countTasks,
+  getTask,
+  getTaskByPath,
+  InvalidTaskCursorError,
+  InvalidTaskIndexError,
+  InvalidTaskQueryError,
+  listDueToday,
+  queryTasks,
+  rebuildTaskIndex,
+  removeTaskByPath,
+  upsertTask,
+} from "./task-index-store.js";
 export type {
   AnalysisOffInterval,
   AnalysisToggle,

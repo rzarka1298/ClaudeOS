@@ -1,9 +1,10 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { checkPathContainment } from "@ccc/domain";
+import { checkPathContainment, TASK_STATUSES } from "@ccc/domain";
 import matter from "gray-matter";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { parseNote, parseUntrustedFrontmatter } from "./frontmatter.js";
+import { isTasksFolderPath, type TaskStatusCounts } from "./managed-folders.js";
 
 /** The one generated file this module owns, in every managed folder. */
 const INDEX_FILENAME = "index.md";
@@ -66,6 +67,12 @@ export interface RegenerateIndexOptions {
   readonly vaultRoot: string;
   /** Supply at workspace-root creation; omitted, identity is preserved. */
   readonly identity?: IndexIdentity;
+  /**
+   * Per-status task counts for a tasks folder's summary index. Only the caller
+   * that has walked the tasks (setup, repair, rebuild) supplies it; a task
+   * write never does. Ignored for every other folder.
+   */
+  readonly taskCounts?: TaskStatusCounts;
 }
 
 /** What one regeneration produced, so callers never re-read the file. */
@@ -279,6 +286,46 @@ function resolveFolder(folderPath: string, vaultRoot: string): [string, string] 
   throw new IndexOutsideVaultError(folderPath);
 }
 
+/**
+ * The fixed prose of a tasks folder's summary index. It is the same bytes for
+ * a folder of ten tasks and a folder of ten thousand: a per-task listing would
+ * cost 212 ms a write and a 1.1 MB file at 10,000 notes (research S9), so the
+ * index of a tasks folder describes the folder and lists nothing.
+ */
+const TASKS_SUMMARY_PROSE = [
+  "This folder holds one note per task. A task's stable id is in its",
+  "frontmatter; the id, not the file name, identifies it. This index is a",
+  "summary and does not list the tasks, so it stays the same size however",
+  "many there are. Browse and filter tasks in the Command Center.",
+];
+
+const TASKS_COUNTS_PROSE = [
+  "Counts as of the last rebuild (setup, repair or Rebuild task index).",
+  "Tasks with a duplicate id or unreadable frontmatter are not counted.",
+];
+
+/** Refuses counts that could not be real: a missing status, a negative, fractional or non-finite number. */
+function assertValidCounts(counts: TaskStatusCounts): void {
+  for (const status of TASK_STATUSES) {
+    const value = counts[status];
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new RangeError("task counts must be whole non-negative numbers");
+    }
+  }
+}
+
+/** The summary index body. Counts are written only when the caller walked the tasks and supplies them. */
+function buildTasksSummaryBody(counts: TaskStatusCounts | undefined): string {
+  const lines: string[] = ["# Index", "", "## Tasks", "", ...TASKS_SUMMARY_PROSE, ""];
+  if (counts !== undefined) {
+    assertValidCounts(counts);
+    lines.push("## Task counts", "", ...TASKS_COUNTS_PROSE, "");
+    for (const status of TASK_STATUSES) lines.push(`- ${status}: ${counts[status]}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
 /** Assembles the Markdown body. Split out so the ordering of sections is
  * readable in one place — it is part of the byte-level contract. */
 function buildBody(rows: readonly IndexRow[], unreadable: readonly string[]): string {
@@ -332,6 +379,16 @@ export function regenerateIndex(
   const [resolvedRoot, resolvedFolder] = resolveFolder(folderPath, options.vaultRoot);
   const indexPath = join(resolvedFolder, INDEX_FILENAME);
 
+  // A tasks folder gets the constant-size summary: its notes are never read.
+  const key = folderKey(resolvedRoot, resolvedFolder);
+  if (isTasksFolderPath(key)) {
+    const summaryBody = buildTasksSummaryBody(options.taskCounts);
+    const summaryFrontmatter = { type: "index", generated: "claude-command-center", folder: key };
+    const content = matter.stringify({ content: summaryBody }, summaryFrontmatter);
+    atomicWriteFileSync(indexPath, content);
+    return { path: indexPath, content, noteCount: 0, unreadable: [] };
+  }
+
   let identity: IndexIdentity | undefined = options.identity;
   if (identity === undefined) {
     const read = readIdentity(indexPath);
@@ -377,7 +434,7 @@ export function regenerateIndex(
   const values: Record<string, string> = {
     type: "index",
     generated: "claude-command-center",
-    folder: folderKey(resolvedRoot, resolvedFolder),
+    folder: key,
     ...(identity === undefined
       ? {}
       : { workspaceId: identity.workspaceId, displayName: identity.displayName }),

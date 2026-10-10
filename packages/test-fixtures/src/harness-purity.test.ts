@@ -55,8 +55,21 @@ const DETERMINISM_FIXTURE_PATH = join(
   "widget-fixtures.json",
 );
 
-/** The exact set of modules the harness entry may import (order irrelevant). */
-const ALLOWED_IMPORTS = ["../src/widget-fixtures.json", "@ccc/plugin", "preact"] as const;
+/** The exact set of modules the harness entry may import (order irrelevant).
+ * `./task-fixtures.json` was added deliberately by plan 06-22 for the Tasks and
+ * project tasks cells: a third synthetic-only fixture file, validated against
+ * the domain schemas and scanned for personal data by `tasks-harness.test.ts`.
+ * `./approval-fixtures.json` was added deliberately by plan 06-17 for the
+ * Approvals cells: a second synthetic-only fixture file next to the harness
+ * entry, validated against the domain schemas and scanned for personal data by
+ * `approvals-harness.test.ts`. Nothing else was added to the set. */
+const ALLOWED_IMPORTS = [
+  "../src/widget-fixtures.json",
+  "./approval-fixtures.json",
+  "./task-fixtures.json",
+  "@ccc/plugin",
+  "preact",
+] as const;
 
 /** Tolerated, never required: setting a signal through its own package. */
 const TOLERATED_IMPORTS = new Set(["@preact/signals"]);
@@ -96,7 +109,7 @@ function importSpecifiers(source: string): string[] {
 }
 
 describe("visual harness purity (PRIV-04 layer 1, T-03-03)", () => {
-  it("imports exactly preact, @ccc/plugin and the synthetic widget fixtures", () => {
+  it("imports exactly preact, @ccc/plugin and the three synthetic fixture files", () => {
     const specifiers = importSpecifiers(readIfPresent(MAIN_PATH)).filter(
       (specifier) => !TOLERATED_IMPORTS.has(specifier),
     );

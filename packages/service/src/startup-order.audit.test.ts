@@ -21,6 +21,12 @@ describe("main.ts startup order (D-22)", () => {
     "recomputeApprovedRoots(store)",
     "await startClaudeServices(",
     "startUsageServices({",
+    "startApprovalServices({",
+    "await approvals.recover()",
+    "approvals.start()",
+    "claudeServices.proposerSlot.bind(",
+    "createTaskServices({",
+    "taskHost.startupWalk()",
     "createRequestListener({",
     "await startSocketServer({",
   ] as const;
@@ -37,5 +43,52 @@ describe("main.ts startup order (D-22)", () => {
       const later = positions[i] as number;
       expect(later, `${STEPS[i - 1]} must precede ${STEPS[i]}`).toBeGreaterThan(earlier);
     }
+  });
+});
+
+/**
+ * Audit (plan 06-21 Task 3, Tests 2 and 8, D-09): the shutdown chain stops the
+ * expiry sweeper first and waits for in-flight executions, then the usage and
+ * Claude services, then closes the store; a second signal does nothing; and
+ * the object handed to the route context exposes no terminator or executor.
+ */
+describe("main.ts shutdown order (D-09)", () => {
+  const src = readFileSync(fileURLToPath(new URL("./main.ts", import.meta.url)), "utf8");
+  const shutdownAt = src.indexOf("const shutdown = ");
+  const body = src.slice(shutdownAt);
+
+  it("stops the approvals, then the usage services, then the Claude services, then closes the store", () => {
+    expect(shutdownAt).toBeGreaterThan(-1);
+    const needles: [string, RegExp][] = [
+      ["approvals.stop()", /approvals\s*\.stop\(\)/],
+      ["usageServices.stop()", /usageServices\.stop\(\)/],
+      ["claudeServices.stop()", /claudeServices\.stop\(\)/],
+      ["store.close()", /store\.close\(\)/],
+    ];
+    const order = needles.map(([label, pattern]) => {
+      const at = body.search(pattern);
+      expect(at, `${label} must appear in the shutdown chain`).toBeGreaterThan(-1);
+      return at;
+    });
+    for (let i = 1; i < order.length; i += 1) {
+      expect(order[i] as number).toBeGreaterThan(order[i - 1] as number);
+    }
+  });
+
+  it("disposes the task services and ignores a second signal", () => {
+    expect(body).toContain("taskHost.dispose()");
+    const shutdownSrc = readFileSync(
+      fileURLToPath(new URL("./shutdown.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(shutdownSrc).toMatch(/if \(shuttingDown\) return;/);
+  });
+
+  it("hands the route context no terminator, executor or process facts", () => {
+    const start = src.indexOf("createRequestListener({");
+    const end = src.indexOf("await startSocketServer({");
+    const literal = src.slice(start, end);
+    expect(literal).not.toMatch(/terminator|executor|processFacts|runInspector|proposerSlot/);
+    expect(literal).toContain("approvals: approvals.services");
   });
 });

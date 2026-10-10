@@ -171,11 +171,21 @@ export type WidgetState<T> =
  * service is unreachable. A body still emits a DESCRIPTOR only; it executes
  * nothing itself.
  */
+/**
+ * What a navigation can select once it arrives: a Run (Phase 5), an approval
+ * request (D-23) or a task (D-23). A task selection only navigates until the
+ * Tasks destination handles it.
+ */
+export type NavigationSelection =
+  | { readonly runId: string }
+  | { readonly proposalId: string }
+  | { readonly taskId: string };
+
 export interface WidgetBodyProps<T> {
   readonly data: T;
   readonly size: SizeHint;
   readonly onNavigate?:
-    | ((destination: DestinationId, selection?: { readonly runId: string }) => void)
+    | ((destination: DestinationId, selection?: NavigationSelection) => void)
     | undefined;
   readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }

@@ -18,7 +18,11 @@ import {
 } from "../paths.js";
 import type { Spawner } from "../projects/spawner.js";
 import { createAttribution } from "./attribution.js";
-import { approvalUnavailableProposer, unconfiguredTerminalLauncher } from "./default-ports.js";
+import {
+  createProposerSlot,
+  type ProposerSlot,
+  unconfiguredTerminalLauncher,
+} from "./default-ports.js";
 import { createFocusService, nodeFocusExecFile } from "./focus.js";
 import { runGit } from "./git-readonly.js";
 import { readInstallRecord } from "./integration-status.js";
@@ -27,7 +31,12 @@ import { classifyLaunchSource } from "./launch-source.js";
 import { createLivenessSweeper, type LivenessSweeper, livenessConfigFromEnv } from "./liveness.js";
 import { createPhase4Bridge } from "./phase4-bridge.js";
 import { type ClaudePipeline, createClaudePipeline } from "./pipeline.js";
-import { createProcessFacts, createSessionFactsProvider, nodeExecFile } from "./process-facts.js";
+import {
+  createProcessFacts,
+  createSessionFactsProvider,
+  nodeExecFile,
+  type ProcessFacts,
+} from "./process-facts.js";
 import { createStoreProjectLookup } from "./project-lookup.js";
 import type { ClaudeRouteDeps } from "./routes.js";
 import { nodeOpenFile, type SessionActionDeps } from "./session-action-routes.js";
@@ -71,6 +80,18 @@ export interface ClaudeServices {
    * engine, the only issuer of that token, to run after the owner approves.
    */
   readonly terminator: SessionTerminator;
+  /**
+   * The process facts the Claude services read with (existence probe, start
+   * times, ancestry). Read-only, and deliberately NOT in `routeDeps`: the
+   * approval composition builds its run inspector over it (06-21).
+   */
+  readonly processFacts: ProcessFacts;
+  /**
+   * The late-bound force-terminate proposer (R-WIRING). `main.ts` binds the
+   * engine-backed proposer once the approval services exist; until then the
+   * terminate-request route answers `approval-unavailable`.
+   */
+  readonly proposerSlot: ProposerSlot;
   /**
    * Stops the liveness sweeper (awaiting its in-flight sweep), the poller
    * (awaiting its in-flight tick), then the pipeline
@@ -173,6 +194,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
           mintRunId: newRunId,
           now: () => new Date(),
         });
+  const proposerSlot = createProposerSlot();
   const actions: SessionActionDeps = {
     db: store.db,
     launcher: bridge?.terminalLauncher ?? unconfiguredTerminalLauncher,
@@ -185,7 +207,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
       db: store.db,
       logger,
     }),
-    proposer: approvalUnavailableProposer,
+    proposer: proposerSlot.proposer,
     // Read per request: the owner's saved launcher first (Phase 4 D-21), then
     // the installer's record, so a change after startup is picked up.
     claudeBin: bridge?.claudeBin ?? installedClaudeBin,
@@ -223,6 +245,8 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     routeDeps: { pipeline, actions },
     startGuard: bridge?.startGuard,
     terminator,
+    processFacts,
+    proposerSlot,
     async stop() {
       // The sweeper first: its evidence goes through the pipeline, which
       // must still be accepting work, and nothing may sweep a closed store.

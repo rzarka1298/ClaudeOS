@@ -213,13 +213,65 @@ export async function applyTranscriptAnalysisChange(
 
 // --- end Claude section ----------------------------------------------------
 
+// --- Approvals group (UI-SPEC S5, plan 06-23) -------------------------------
+// Native settings rows, no custom styling. `notifyApprovals` is the only
+// approval value persisted in plugin settings (D-21, D-26); the test action's
+// timer and call live in `approvals/wiring.ts` behind {@link SettingsApprovalsSeam}.
+
+export const APPROVALS_GROUP_HEADING = "Approvals";
+export const NOTIFY_APPROVALS_KEY = "notifyApprovals";
+export const NOTIFY_APPROVALS_NAME = "Approval notifications";
+export const NOTIFY_APPROVALS_DESC =
+  "Show a macOS notification when a new approval request arrives while Obsidian isn't focused. " +
+  "It shows a generic message and can't approve anything.";
+export const NOTIFY_APPROVALS_SAVE_FAILED = "Couldn't save the approval notifications setting.";
+export const SEND_TEST_APPROVAL_NAME = "Send a test approval";
+export const SEND_TEST_APPROVAL_DESC =
+  "Creates a request that does nothing when approved. It arrives after 5 seconds, " +
+  "so you can switch to another app and see the notification.";
+export const SEND_TEST_APPROVAL_NEEDS_SERVICE =
+  " Needs the companion service, which isn't running.";
+
+// --- Tasks group (UI-SPEC S5, plan 06-23) ----------------------------------
+export const TASKS_GROUP_HEADING = "Tasks";
+export const REBUILD_NAME = "Rebuild task index";
+export const REBUILD_DESC =
+  "Re-reads every task note in the vault and rebuilds the task lists. Your notes aren't changed.";
+export const REBUILD_NEEDS_SERVICE = " Needs the companion service, which isn't running.";
+export const REBUILD_STARTED_NOTICE = "Rebuilding the task index…";
+export const REBUILD_FAILED_NOTICE =
+  "Couldn't rebuild the task index. Check the service in Settings → Diagnostics, then try again.";
+
+const REBUILD_PLURAL = new Intl.PluralRules("en");
+
+/** `Task index rebuilt. 212 tasks found.`, with ` {m} note(s) need attention.` only when any. */
+export function rebuildSuccessNotice(tasks: number, attention: number): string {
+  const found = `${tasks} ${REBUILD_PLURAL.select(tasks) === "one" ? "task" : "tasks"} found.`;
+  const base = `Task index rebuilt. ${found}`;
+  if (attention <= 0) return base;
+  const note = REBUILD_PLURAL.select(attention) === "one" ? "note needs" : "notes need";
+  return `${base} ${attention} ${note} attention.`;
+}
+
+/** What the Tasks row needs from the wiring: the rebuild, and whether the service is reachable. */
+export interface SettingsTasksSeam {
+  readonly rebuildTaskIndex: () => Promise<{ readonly tasks: number; readonly attention: number }>;
+  readonly serviceAvailable: () => boolean;
+}
+
+/** What the Approvals rows need from the wiring: start a test request, and whether the service is reachable. */
+export interface SettingsApprovalsSeam {
+  readonly sendTestApproval: () => void;
+  readonly serviceAvailable: () => boolean;
+}
+
 /**
  * Everything the tab needs from the plugin, behind one typed seam — the same
  * shape `setup-command.ts` uses. Production passes the plugin; tests pass a
  * plain object, and neither needs a cast.
  */
 export interface SettingsTabHost {
-  readonly settings: { reducedMotion: MotionPreference };
+  readonly settings: { reducedMotion: MotionPreference; notifyApprovals?: boolean };
   // Property-style (not method-shorthand) signatures: these are handed
   // around as standalone values, so `this` must never be implied by the
   // call site (`@typescript-eslint/unbound-method` at error).
@@ -229,6 +281,10 @@ export interface SettingsTabHost {
   readonly notify?: (message: string) => void;
   /** The Claude settings section's service seam (UI-SPEC S5). Absent means not wired yet. */
   readonly claude?: SettingsClaudeSeam | undefined;
+  /** The Approvals group's seam (plan 06-23). Absent means the test action is unavailable. */
+  readonly approvals?: SettingsApprovalsSeam | undefined;
+  /** The Tasks group's seam (plan 06-23). Absent means Rebuild task index is unavailable. */
+  readonly tasks?: SettingsTasksSeam | undefined;
   /**
    * Opens the delete-usage confirmation modal (UI-SPEC S4-d), resolving
    * `true` only on an explicit confirm. Behind a seam -- like every other
@@ -273,6 +329,29 @@ export async function applyReducedMotionChange(
   return "saved";
 }
 
+/**
+ * The approval notifications toggle's whole decision (persist first, apply
+ * second, revert on failure; the E8 precedent). The notifier reads the setting
+ * live, so "apply" is the in-memory value once the save has resolved; on
+ * failure the previous value is restored and a fixed Notice says so.
+ */
+export async function applyNotifyApprovalsChange(
+  host: SettingsTabHost,
+  value: boolean,
+): Promise<"saved" | "reverted"> {
+  const previous = host.settings.notifyApprovals ?? true;
+  host.settings.notifyApprovals = value;
+  try {
+    await host.saveSettings();
+  } catch {
+    host.settings.notifyApprovals = previous;
+    if (host.notify) host.notify(NOTIFY_APPROVALS_SAVE_FAILED);
+    else new Notice(NOTIFY_APPROVALS_SAVE_FAILED);
+    return "reverted";
+  }
+  return "saved";
+}
+
 /** Narrows an arbitrary persisted value; anything unrecognised is `auto` (T-03-12). */
 export function asMotionPreference(value: unknown): MotionPreference {
   return value === "reduced" ? "reduced" : "auto";
@@ -280,6 +359,8 @@ export function asMotionPreference(value: unknown): MotionPreference {
 
 export class CommandCenterSettingTab extends PluginSettingTab {
   private readonly host: SettingsTabHost;
+  /** True while a task index rebuild is running, so a second press is ignored. */
+  private rebuilding = false;
   /** `"checking"` until the service answers; `"unavailable"` after a failed fetch (UI-SPEC S5). */
   private claudeStatus: ClaudeIntegrationStatus | "checking" | "unavailable" = "checking";
   /** True while a `getIntegration()` call is in flight; a display during it starts no second one. */
@@ -374,17 +455,62 @@ export class CommandCenterSettingTab extends PluginSettingTab {
         typeof deleteUsageItem,
       ],
     };
+    const serviceUp = (): boolean => this.host.approvals?.serviceAvailable() === true;
+    const notifyItem = {
+      name: NOTIFY_APPROVALS_NAME,
+      desc: NOTIFY_APPROVALS_DESC,
+      control: {
+        type: "toggle" as const,
+        key: NOTIFY_APPROVALS_KEY,
+        defaultValue: true,
+      },
+    };
+    const testApprovalItem = {
+      name: SEND_TEST_APPROVAL_NAME,
+      desc: serviceUp()
+        ? SEND_TEST_APPROVAL_DESC
+        : `${SEND_TEST_APPROVAL_DESC}${SEND_TEST_APPROVAL_NEEDS_SERVICE}`,
+      disabled: () => !serviceUp(),
+      action: (_el: HTMLElement, _index: number) => {
+        if (serviceUp()) this.host.approvals?.sendTestApproval();
+      },
+    };
+    const approvalsGroup = {
+      type: "group" as const,
+      heading: APPROVALS_GROUP_HEADING,
+      items: [notifyItem, testApprovalItem] as [typeof notifyItem, typeof testApprovalItem],
+    };
     // A tuple cast (not `as const`, which would widen the array to
     // `readonly` and break assignability against the base class's mutable
     // `SettingDefinitionItem[]`) keeps each element's own literal shape
     // distinct -- callers can index a specific position
     // (`definitions[0].control`, `definitions[1].items`) without a type
     // guard, exactly like the pre-existing reduced-motion test does.
-    return [reducedMotionItem, claudeGroup] as [typeof reducedMotionItem, typeof claudeGroup];
+    const tasksUp = (): boolean => this.host.tasks?.serviceAvailable() === true;
+    const rebuildItem = {
+      name: REBUILD_NAME,
+      desc: tasksUp() ? REBUILD_DESC : `${REBUILD_DESC}${REBUILD_NEEDS_SERVICE}`,
+      disabled: () => !tasksUp(),
+      action: (_el: HTMLElement, _index: number) => {
+        void this.handleRebuild();
+      },
+    };
+    const tasksGroup = {
+      type: "group" as const,
+      heading: TASKS_GROUP_HEADING,
+      items: [rebuildItem] as [typeof rebuildItem],
+    };
+    return [reducedMotionItem, claudeGroup, approvalsGroup, tasksGroup] as [
+      typeof reducedMotionItem,
+      typeof claudeGroup,
+      typeof approvalsGroup,
+      typeof tasksGroup,
+    ];
   }
 
   getControlValue(key: string): unknown {
     if (key === REDUCED_MOTION_KEY) return this.host.settings.reducedMotion;
+    if (key === NOTIFY_APPROVALS_KEY) return this.host.settings.notifyApprovals ?? true;
     if (key === TRANSCRIPT_ANALYSIS_KEY) {
       return typeof this.claudeStatus === "object"
         ? this.claudeStatus.transcriptAnalysis.enabled
@@ -410,6 +536,11 @@ export class CommandCenterSettingTab extends PluginSettingTab {
         if (wasEnabled && !enabled) this.transcriptJustDisabled = true;
       }
       this.rerender();
+      return;
+    }
+    if (key === NOTIFY_APPROVALS_KEY) {
+      const outcome = await applyNotifyApprovalsChange(this.host, value === true);
+      if (outcome === "reverted") this.rerender();
       return;
     }
     if (key !== REDUCED_MOTION_KEY) {
@@ -467,6 +598,22 @@ export class CommandCenterSettingTab extends PluginSettingTab {
     return this.transcriptJustDisabled
       ? `${CLAUDE_DELETE_USAGE_DESC} ${CLAUDE_DELETE_USAGE_RETAINED_NOTE}`
       : CLAUDE_DELETE_USAGE_DESC;
+  }
+
+  /** The Rebuild task index row: start Notice at once, then the counts or the fixed failure. */
+  private async handleRebuild(): Promise<void> {
+    const seam = this.host.tasks;
+    if (!seam?.serviceAvailable() || this.rebuilding) return;
+    this.rebuilding = true;
+    this.notify(REBUILD_STARTED_NOTICE);
+    try {
+      const result = await seam.rebuildTaskIndex();
+      this.notify(rebuildSuccessNotice(result.tasks, result.attention));
+    } catch {
+      this.notify(REBUILD_FAILED_NOTICE);
+    } finally {
+      this.rebuilding = false;
+    }
   }
 
   /** Shows a transient message through the host's notifier, or Obsidian's own `Notice`. */

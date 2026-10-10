@@ -2,6 +2,7 @@ import type { ServiceEvent, SnapshotResponse } from "@ccc/domain";
 import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
 import type { EventClient, EventClientState } from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { approvalsById, approvalsReady, resetApprovalsState } from "./approvals/signals.js";
 import { connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
 import { projectsSnapshot, resetProjectsState } from "./projects/projects-state.js";
 import { attachEventClient } from "./service-connection.js";
@@ -11,6 +12,7 @@ import {
   routeServiceEvent,
   SNAPSHOT_APPLIERS,
 } from "./service-event-router.js";
+import { approvalsSnapshot, summary } from "./test-support/approval-fixtures.js";
 
 /**
  * The appendable fan-out router (PR-09, D-50): `EVENT_HANDLERS` and
@@ -112,5 +114,48 @@ describe("attachEventClient wiring the router and the snapshot applier", () => {
       occurredAt: heartbeatEvent().occurredAt,
     });
     expect(connectionChangedAt.value).toBeTruthy();
+  });
+});
+
+describe("the approval entries (plan 06-10, Test 7)", () => {
+  afterEach(resetApprovalsState);
+
+  it("routes an approval.upserted event to the approval handler", () => {
+    resetApprovalsState();
+    routeServiceEvent({
+      id: 9,
+      type: "approval.upserted",
+      occurredAt: "2026-10-06T10:00:00.000Z",
+      payload: { approval: summary(1) },
+    });
+    expect(approvalsById.value.get(summary(1).proposalId)?.state).toBe("pending");
+    expect(EVENT_HANDLERS["approval.upserted"]).toBeDefined();
+  });
+
+  it("runs the approvals applier from applySnapshot, beside every earlier applier", () => {
+    resetApprovalsState();
+    const withApprovals = {
+      lastEventId: 1,
+      state: {
+        serviceStartedAt: "2026-10-06T10:00:00.000Z",
+        projects: EMPTY_PROJECTS_SNAPSHOT,
+        approvals: approvalsSnapshot({ pending: [summary(1), summary(2)] }),
+      },
+    } as unknown as SnapshotResponse;
+    applySnapshot(withApprovals);
+    expect(approvalsById.value.size).toBe(2);
+    expect(approvalsReady.value).toBe(true);
+    expect(projectsSnapshot.value).toEqual(EMPTY_PROJECTS_SNAPSHOT);
+  });
+
+  it("keeps every earlier table entry", () => {
+    for (const type of [
+      "projects.updated",
+      "session.upserted",
+      "usage.updated",
+      "claude-integration.updated",
+    ] as const) {
+      expect(EVENT_HANDLERS[type]).toBeDefined();
+    }
   });
 });

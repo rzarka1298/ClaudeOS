@@ -42,3 +42,19 @@ describe("nextDestination", () => {
     expect(nextDestination("overview", "previous")).toBe("settings");
   });
 });
+
+describe("destination descriptions after Phase 6 (Test 6)", () => {
+  it("keeps eight destinations and no placeholder description on Tasks or Agent runs", () => {
+    expect(DESTINATIONS).toHaveLength(8);
+    for (const id of ["tasks", "agent-runs"] as const) {
+      const destination = DESTINATIONS.find((entry) => entry.id === id);
+      expect(destination?.description ?? "").not.toMatch(/Filled in a later phase/);
+    }
+  });
+
+  it("leaves the other placeholder descriptions as they were", () => {
+    expect(DESTINATIONS.find((entry) => entry.id === "research")?.description).toBe(
+      "Cited reports and the knowledge lifecycle. Filled in a later phase.",
+    );
+  });
+});

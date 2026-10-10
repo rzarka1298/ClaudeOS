@@ -3,16 +3,54 @@
 // file exists so the package follows the same `src/index.ts` shape every
 // other workspace package does; it re-exports the side-effect-free pieces.
 
+export type { ApprovalSummary, ApprovalsSnapshot } from "@ccc/domain/approval.js";
 export type { SessionView } from "@ccc/domain/session.js";
 export type { UsageSummary } from "@ccc/domain/usage.js";
+export type { ApprovalDetailResponse, ApprovalsApi } from "./approvals/api.js";
+export { configureApprovalsApi } from "./approvals/api.js";
+export { adoptApprovalsFromSnapshot, applyApprovalServiceEvent } from "./approvals/events.js";
+export {
+  adoptApprovalsSnapshot,
+  applyApprovalSummary,
+  approvalDetailFocusRequested,
+  approvalsById,
+  approvalsCounts,
+  approvalsHydrated,
+  approvalsReady,
+  approvalsTruncated,
+  pendingApprovalCount,
+  resetApprovalsState,
+  selectedProposalId,
+} from "./approvals/signals.js";
 export type { ConnectionState, LastEventInfo } from "./connection-state.js";
 export { connectionChangedAt, connectionState, lastEvent } from "./connection-state.js";
+export { serializeTaskFrontmatter } from "./frontmatter-serializer.js";
 export type { MotionMode } from "./motion.js";
 export { motionMode } from "./motion.js";
 export { projectShortcutsStateFor } from "./projects/projects-state.js";
 export { attachEventClient } from "./service-connection.js";
+export type { TaskActionResult, TaskSaveInput } from "./tasks/actions.js";
+export {
+  acceptTask,
+  completeTask,
+  dismissTask,
+  reopenTask,
+  saveTask,
+} from "./tasks/actions.js";
+export type { TaskActionsPort } from "./tasks/actions-port.js";
+export { configureTaskActionsPort } from "./tasks/actions-port.js";
+export type { TasksApi } from "./tasks/api.js";
+export { configureTasksApi, TasksApiError } from "./tasks/api.js";
+export { createProjectTasksContext, createTasksContext } from "./tasks/contexts.js";
+export { tasksAttention, tasksRebuilding } from "./tasks/rebuild.js";
+export { parseTaskContent, readTaskForEdit, updateTaskNote } from "./tasks/task-update.js";
 export { AgentRuns } from "./view/agent-runs.js";
 export { RECENT_PAGE_SIZE, selectedRunId } from "./view/agent-runs-state.js";
+export { approvalChip, approvalsMissedSync, resetApprovalsView } from "./view/approvals-state.js";
+export { DestinationTabs } from "./view/destination-tabs.js";
+export { ProjectTasksPanel } from "./view/project-tasks.js";
+export { TasksDestination } from "./view/tasks.js";
+export { createTasksViewState } from "./view/tasks-view-state.js";
 export type {
   DataDependencyKey,
   QuickActionDescriptor,

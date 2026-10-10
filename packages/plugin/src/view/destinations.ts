@@ -30,12 +30,12 @@ export const DESTINATIONS = [
   {
     id: "tasks",
     label: "Tasks",
-    description: "The canonical Obsidian task store. Filled in a later phase.",
+    description: "Canonical tasks in your vault: filters, details and editing.",
   },
   {
     id: "agent-runs",
     label: "Agent runs",
-    description: "Concurrent Claude sessions and automation runs. Filled in a later phase.",
+    description: "Concurrent Claude sessions, automation runs and approval requests.",
   },
   {
     id: "skills",

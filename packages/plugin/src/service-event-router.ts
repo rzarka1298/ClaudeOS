@@ -1,5 +1,7 @@
 import type { ServiceEvent, ServiceEventType, SnapshotResponse } from "@ccc/domain";
+import { adoptApprovalsFromSnapshot, applyApprovalServiceEvent } from "./approvals/events.js";
 import { applyProjectsDelta, applyProjectsSnapshot } from "./projects/projects-state.js";
+import { applyTasksChanged } from "./tasks/events.js";
 import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./widgets/claude-events.js";
 
 /**
@@ -17,11 +19,16 @@ export const EVENT_HANDLERS: Partial<Record<ServiceEventType, (event: ServiceEve
   "session.upserted": applyClaudeServiceEvent,
   "usage.updated": applyClaudeServiceEvent,
   "claude-integration.updated": applyClaudeServiceEvent,
+  // Phase 6 (D-28): an approval request's summary changed.
+  "approval.upserted": applyApprovalServiceEvent,
+  // Phase 6 (D-28): the task index changed; carries a generation.
+  "tasks.changed": applyTasksChanged,
 };
 
 export const SNAPSHOT_APPLIERS: ReadonlyArray<(snapshot: SnapshotResponse) => void> = [
   applyProjectsSnapshot,
   adoptClaudeSnapshot,
+  adoptApprovalsFromSnapshot,
 ];
 
 /** Routes one event through {@link EVENT_HANDLERS}; an event with no handler is a no-op. */

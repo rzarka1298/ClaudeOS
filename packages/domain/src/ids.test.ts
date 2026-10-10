@@ -4,7 +4,15 @@
 // takes no argument — the structural reason a workspace rename cannot move
 // its directory.
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { newNoteId, newProjectId, newRunId, newScanRootId, newWorkspaceId } from "./ids.js";
+import { PROPOSAL_ID_PATTERN } from "./approval.js";
+import {
+  newNoteId,
+  newProjectId,
+  newProposalId,
+  newRunId,
+  newScanRootId,
+  newWorkspaceId,
+} from "./ids.js";
 
 /** Nine base-36 timestamp characters followed by sixteen hex characters. */
 const ID_SHAPE = /^[0-9a-z]{9}[0-9a-f]{16}$/;
@@ -122,5 +130,40 @@ describe("newScanRootId", () => {
     expect(first).toMatch(ID_SHAPE);
     expect(first).not.toBe(newScanRootId());
     expect(newScanRootId.length).toBe(0);
+  });
+});
+
+describe("newProposalId", () => {
+  test("mints a 25-character id matching the pattern the approval module exports", () => {
+    for (let i = 0; i < 100; i += 1) {
+      const id = newProposalId();
+      expect(id).toHaveLength(ID_LENGTH);
+      expect(id).toMatch(ID_SHAPE);
+      expect(id).toMatch(PROPOSAL_ID_PATTERN);
+    }
+  });
+
+  test("is a different value on every call and takes no arguments", () => {
+    const minted = new Set<string>();
+    for (let i = 0; i < 1000; i += 1) {
+      minted.add(newProposalId());
+    }
+    expect(minted.size).toBe(1000);
+    expect(newProposalId.length).toBe(0);
+  });
+
+  test("sorts by mint time", () => {
+    vi.useFakeTimers();
+    const stamps = [
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:00:00.001Z",
+      "2030-07-15T12:00:00.000Z",
+      "2400-01-01T00:00:00.000Z",
+    ];
+    const minted = stamps.map((stamp) => {
+      vi.setSystemTime(new Date(stamp));
+      return newProposalId();
+    });
+    expect([...minted].sort()).toEqual(minted);
   });
 });

@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { motionMode } from "../motion.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 import {
+  APPROVALS_GROUP_HEADING,
+  applyNotifyApprovalsChange,
   applyReducedMotionChange,
   applyTranscriptAnalysisChange,
   asMotionPreference,
@@ -27,12 +29,26 @@ import {
   CLAUDE_USAGE_DELETED_NOTICE,
   CommandCenterSettingTab,
   hookStatusText,
+  NOTIFY_APPROVALS_DESC,
+  NOTIFY_APPROVALS_KEY,
+  NOTIFY_APPROVALS_NAME,
+  NOTIFY_APPROVALS_SAVE_FAILED,
+  REBUILD_DESC,
+  REBUILD_FAILED_NOTICE,
+  REBUILD_NAME,
+  REBUILD_NEEDS_SERVICE,
+  REBUILD_STARTED_NOTICE,
   REDUCED_MOTION_KEY,
   REDUCED_MOTION_OPTIONS,
   REDUCED_MOTION_SAVE_FAILED,
+  rebuildSuccessNotice,
+  SEND_TEST_APPROVAL_DESC,
+  SEND_TEST_APPROVAL_NAME,
+  SEND_TEST_APPROVAL_NEEDS_SERVICE,
   type SettingsClaudeSeam,
   type SettingsTabHost,
   statusLineStatusText,
+  TASKS_GROUP_HEADING,
   TRANSCRIPT_ANALYSIS_KEY,
 } from "./settings-tab.js";
 
@@ -665,5 +681,216 @@ describe("CommandCenterSettingTab -- status freshness and control safety (wave 2
 
     expect(copyText).toHaveBeenCalledWith(CLAUDE_INSTALL_COMMAND);
     expect(host.notices).toEqual([CLAUDE_COPY_FAILED_NOTICE]);
+  });
+});
+
+describe("Approvals group (plan 06-23, UI-SPEC S5)", () => {
+  function approvalsHost(options: { failSave?: boolean; available?: boolean } = {}) {
+    const notices: string[] = [];
+    const press = vi.fn();
+    const host: SettingsTabHost & { saveCalls: number } = {
+      settings: { reducedMotion: "auto", notifyApprovals: true },
+      mql: { matches: false },
+      saveCalls: 0,
+      saveSettings: async () => {
+        host.saveCalls++;
+        if (options.failSave) throw new Error("disk full");
+      },
+      notify: (m: string) => {
+        notices.push(m);
+      },
+      approvals: { sendTestApproval: press, serviceAvailable: () => options.available ?? true },
+    };
+    return { host, notices, press };
+  }
+
+  function group(tab: CommandCenterSettingTab) {
+    const g = tab.getSettingDefinitions()[2];
+    if (!g || !("items" in g) || !g.items) throw new Error("expected the Approvals group");
+    return g;
+  }
+
+  it("Test 1: ends with an Approvals group and keeps the earlier rows and Claude group first", () => {
+    const { host } = approvalsHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const defs = tab.getSettingDefinitions();
+
+    expect(defs[0].control.key).toBe(REDUCED_MOTION_KEY);
+    expect(defs[1]).toMatchObject({ type: "group", heading: CLAUDE_GROUP_HEADING });
+    const g = group(tab);
+    expect(g).toMatchObject({ type: "group", heading: APPROVALS_GROUP_HEADING });
+    expect(g.items.map((i) => i.name)).toEqual([NOTIFY_APPROVALS_NAME, SEND_TEST_APPROVAL_NAME]);
+    expect(g.items[0]?.desc).toBe(NOTIFY_APPROVALS_DESC);
+    expect(g.items[0]?.control).toMatchObject({ type: "toggle", key: NOTIFY_APPROVALS_KEY });
+    expect(g.items[1]?.desc).toBe(SEND_TEST_APPROVAL_DESC);
+    expect(NOTIFY_APPROVALS_NAME).toBe("Approval notifications");
+    expect(SEND_TEST_APPROVAL_NAME).toBe("Send a test approval");
+  });
+
+  it("Test 2: pressing the action asks the seam to send", () => {
+    const { host, press } = approvalsHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    group(tab).items[1]?.action?.({} as never, 1);
+
+    expect(press).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test 4: with the service down the action is disabled, says so, and does nothing", () => {
+    const { host, press } = approvalsHost({ available: false });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const row = group(tab).items[1];
+
+    expect(row?.desc).toBe(`${SEND_TEST_APPROVAL_DESC}${SEND_TEST_APPROVAL_NEEDS_SERVICE}`);
+    expect(SEND_TEST_APPROVAL_NEEDS_SERVICE).toBe(
+      " Needs the companion service, which isn't running.",
+    );
+    const disabled = row && "disabled" in row ? row.disabled : undefined;
+    expect(typeof disabled === "function" ? disabled() : disabled).toBe(true);
+    row?.action?.({} as never, 1);
+    expect(press).not.toHaveBeenCalled();
+  });
+
+  it("Test 6: the toggle persists first and applies second", async () => {
+    const { host } = approvalsHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(true);
+    await tab.setControlValue(NOTIFY_APPROVALS_KEY, false);
+
+    expect(host.saveCalls).toBe(1);
+    expect(host.settings.notifyApprovals).toBe(false);
+    expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(false);
+  });
+
+  it("Test 6: a failed save restores the control and posts the fixed notice", async () => {
+    const { host, notices } = approvalsHost({ failSave: true });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    const outcome = await applyNotifyApprovalsChange(host, false);
+
+    expect(outcome).toBe("reverted");
+    expect(host.settings.notifyApprovals).toBe(true);
+    expect(notices).toEqual([NOTIFY_APPROVALS_SAVE_FAILED]);
+    expect(NOTIFY_APPROVALS_SAVE_FAILED).toBe("Couldn't save the approval notifications setting.");
+    await tab.setControlValue(NOTIFY_APPROVALS_KEY, false);
+    expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(true);
+  });
+});
+
+describe("Tasks group (plan 06-23, UI-SPEC S5)", () => {
+  function tasksHost(
+    options: {
+      available?: boolean;
+      rebuild?: () => Promise<{ tasks: number; attention: number }>;
+    } = {},
+  ) {
+    const notices: string[] = [];
+    const rebuild = options.rebuild ?? vi.fn().mockResolvedValue({ tasks: 212, attention: 0 });
+    const host: SettingsTabHost = {
+      settings: { reducedMotion: "auto", notifyApprovals: true },
+      mql: { matches: false },
+      saveSettings: async () => {},
+      notify: (m: string) => {
+        notices.push(m);
+      },
+      tasks: { rebuildTaskIndex: rebuild, serviceAvailable: () => options.available ?? true },
+    };
+    return { host, notices, rebuild };
+  }
+
+  function row(tab: CommandCenterSettingTab) {
+    const g = tab.getSettingDefinitions()[3];
+    if (!g || !("items" in g) || !g.items) throw new Error("expected the Tasks group");
+    return { group: g, item: g.items[0] };
+  }
+
+  it("Test 1: follows the Approvals group with one Rebuild task index action", () => {
+    const { host } = tasksHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const { group, item } = row(tab);
+
+    expect(group).toMatchObject({ type: "group", heading: TASKS_GROUP_HEADING });
+    expect(group.items).toHaveLength(1);
+    expect(item?.name).toBe(REBUILD_NAME);
+    expect(REBUILD_NAME).toBe("Rebuild task index");
+    expect(item?.desc).toBe(REBUILD_DESC);
+    expect(REBUILD_DESC).toBe(
+      "Re-reads every task note in the vault and rebuilds the task lists. Your notes aren't changed.",
+    );
+  });
+
+  it("Test 6: shows the start notice at once, then the success notice with plural rules", async () => {
+    const { host, notices, rebuild } = tasksHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    row(tab).item?.action?.({} as never, 0);
+    expect(notices).toEqual([REBUILD_STARTED_NOTICE]);
+    expect(REBUILD_STARTED_NOTICE).toBe("Rebuilding the task index…");
+    await flush();
+
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(notices[1]).toBe("Task index rebuilt. 212 tasks found.");
+    expect(rebuildSuccessNotice(1, 0)).toBe("Task index rebuilt. 1 task found.");
+    expect(rebuildSuccessNotice(0, 3)).toBe(
+      "Task index rebuilt. 0 tasks found. 3 notes need attention.",
+    );
+    expect(rebuildSuccessNotice(2, 1)).toBe(
+      "Task index rebuilt. 2 tasks found. 1 note needs attention.",
+    );
+  });
+
+  it("Test 6: a failure posts the fixed notice", async () => {
+    const { host, notices } = tasksHost({ rebuild: () => Promise.reject(new Error("down")) });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    row(tab).item?.action?.({} as never, 0);
+    await flush();
+
+    expect(notices).toEqual([REBUILD_STARTED_NOTICE, REBUILD_FAILED_NOTICE]);
+    expect(REBUILD_FAILED_NOTICE).toBe(
+      "Couldn't rebuild the task index. Check the service in Settings → Diagnostics, then try again.",
+    );
+  });
+
+  it("Test 6: with the service down the action is disabled and does nothing", () => {
+    const { host, notices, rebuild } = tasksHost({ available: false });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const { item } = row(tab);
+
+    const disabled = item && "disabled" in item ? item.disabled : undefined;
+    expect(typeof disabled === "function" ? disabled() : disabled).toBe(true);
+    item?.action?.({} as never, 0);
+    expect(rebuild).not.toHaveBeenCalled();
+    expect(notices).toEqual([]);
+  });
+
+  it("with the service down the row says why, like the Approvals row", () => {
+    const { host } = tasksHost({ available: false });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    expect(row(tab).item?.desc).toBe(`${REBUILD_DESC}${REBUILD_NEEDS_SERVICE}`);
+    expect(REBUILD_NEEDS_SERVICE).toBe(" Needs the companion service, which isn't running.");
+  });
+
+  it("a second press while a rebuild is running is ignored; a later press works again", async () => {
+    let finish!: () => void;
+    const rebuild = vi.fn(
+      () =>
+        new Promise<{ tasks: number; attention: number }>((resolve) => {
+          finish = () => resolve({ tasks: 1, attention: 0 });
+        }),
+    );
+    const { host, notices } = tasksHost({ rebuild });
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    row(tab).item?.action?.({} as never, 0);
+    row(tab).item?.action?.({} as never, 0);
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(notices).toEqual([REBUILD_STARTED_NOTICE]);
+    finish();
+    await flush();
+    row(tab).item?.action?.({} as never, 0);
+    expect(rebuild).toHaveBeenCalledTimes(2);
   });
 });

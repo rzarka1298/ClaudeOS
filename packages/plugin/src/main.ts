@@ -1,31 +1,44 @@
 import { HANDSHAKE_PATH, type HandshakeResponse } from "@ccc/domain";
 import type { AuthenticatedSocketApiClient, EventClient } from "@ccc/service-api-client";
 import {
+  createApprovalsClient,
   createAuthenticatedClient,
   createEventClient,
   createSocketApiClient,
+  createTasksClient,
   deleteUsageAnalytics,
   getClaudeIntegration,
   refreshProjects,
   setTranscriptAnalysis,
 } from "@ccc/service-api-client";
-import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, TFolder, type WorkspaceLeaf } from "obsidian";
+import { wireApprovals } from "./approvals/wiring.js";
+import { connectionState } from "./connection-state.js";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference } from "./motion.js";
 import { registerSetUpLaunchersCommand } from "./projects/commands.js";
 import { createPluginLauncher, type RequestLaunch } from "./projects/plugin-launcher.js";
-import { refreshProjectsOnConnect } from "./service-connection.js";
+import {
+  combineOnLive,
+  refreshProjectsOnConnect,
+  startServiceEventsOnLayoutReady,
+} from "./service-connection.js";
 import {
   assertNoCredentialFields,
   assertNoPrivatePathValues,
   type CommandCenterSettings,
   DEFAULT_SETTINGS,
+  mergeSettings,
 } from "./settings.js";
 import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
+import { taskEditVault } from "./tasks/task-update.js";
+import { wireTasks } from "./tasks/wiring.js";
+import { listVaultWorkspaces } from "./tasks/workspaces.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 import { openDeleteUsageModal as openDeleteUsageModalDialog } from "./view/delete-usage-modal.js";
 import { createLaunchConflictChooser } from "./view/launch-conflict-choice.js";
+import { configureNotify } from "./view/notify-port.js";
 import { createPluginSwitcher } from "./view/plugin-switcher.js";
 import {
   createSwitcherOpener,
@@ -69,6 +82,12 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
    * registered; its timers are released on unload through the seam.
    */
   requestLaunch: RequestLaunch = () => {};
+  /**
+   * The one hook that runs each time the event stream goes live: projects,
+   * approvals (and tasks) refresh together (plan 06-23). Built in `onload`;
+   * the view and the switcher both attach the event client with it.
+   */
+  onServiceLive: () => void = () => {};
   private hostRegistry!: HostRegistry;
 
   async onload(): Promise<void> {
@@ -154,6 +173,88 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       },
     });
 
+    // Obsidian's notice function is the one transient-message sink the views
+    // reach (plan 06-10); removed again on unload through the registry.
+    configureNotify((message) => {
+      new Notice(message);
+    });
+    this.hostRegistry.cleanup(() => configureNotify(null));
+
+    // Approvals (plan 06-23): the client from the authenticated connection,
+    // the notifier, the ccc-approval link, the Open approval inbox command and
+    // the reconnect refresh, every registration through the registry.
+    const approvals = wireApprovals(this.hostRegistry, {
+      client: createApprovalsClient(this.client),
+      notice: (message) => {
+        new Notice(message);
+      },
+      notifyEnabled: () => this.settings.notifyApprovals,
+      appFocused: () => activeDocument.hasFocus(),
+      reveal: () => {
+        void this.revealView();
+      },
+      log: (message) => {
+        console.warn(`[claude-command-center] ${message}`);
+      },
+      now: () => Date.now(),
+    });
+    // Tasks (plan 06-23): the client, the actions port over the Obsidian vault,
+    // the vault watcher (after layout-ready), the Create task command and the
+    // reconnect rescan, every registration through the registry.
+    const editVault = taskEditVault(this.app.vault);
+    const tasks = wireTasks(this.hostRegistry, {
+      client: createTasksClient(this.client),
+      // Explicit forwarding: a spread of the Vault instance would drop its prototype methods.
+      vault: {
+        process: (file, fn) => editVault.process(file, fn),
+        read: (file) => editVault.read(file),
+        getFileByPath: (path) => this.app.vault.getFileByPath(path),
+      },
+      openNote: (path) => {
+        void this.app.workspace.openLinkText(path, "", false);
+      },
+      reveal: () => {
+        void this.revealView();
+      },
+      now: () => Date.now(),
+      listWorkspaces: () =>
+        listVaultWorkspaces({
+          folderChildren: (path) =>
+            (this.app.vault.getFolderByPath(path)?.children ?? []).map((child) => ({
+              name: child.name,
+              isFolder: child instanceof TFolder,
+            })),
+          displayName: (indexPath) => {
+            const file = this.app.vault.getFileByPath(indexPath);
+            if (file === null) return undefined;
+            const name: unknown =
+              this.app.metadataCache.getFileCache(file)?.frontmatter?.displayName;
+            return name;
+          },
+        }),
+      log: (className) => {
+        console.warn(`[claude-command-center] task watcher flush failed: ${className}`);
+      },
+    });
+    this.onServiceLive = combineOnLive(
+      refreshProjectsOnConnect(() => refreshProjects(this.client)),
+      approvals.onLive,
+      tasks.onLive,
+    );
+
+    // Subscribe to the service event stream at load (after layout-ready), not
+    // only when a view opens, so approval notifications are live on cold start.
+    // The stop function is released through the registry; the stream itself is
+    // disposed by the "eventStream" registration above.
+    this.hostRegistry.registerRaw(
+      "eventStream",
+      startServiceEventsOnLayoutReady({
+        client: this.eventClient,
+        onLive: this.onServiceLive,
+        whenReady: (cb) => this.app.workspace.onLayoutReady(cb),
+      }),
+    );
+
     // The Settings tab, through the same seam as everything else so its
     // release on unload is counted rather than assumed (threat T-03-07).
     this.hostRegistry.settingTab(
@@ -169,6 +270,16 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
           setTranscriptAnalysis: (enabled: boolean) => setTranscriptAnalysis(this.client, enabled),
           deleteUsageAnalytics: () => deleteUsageAnalytics(this.client),
           copyText: (text: string) => navigator.clipboard.writeText(text),
+        },
+        // The Approvals group: Send a test approval and its availability.
+        approvals: {
+          sendTestApproval: () => approvals.testAction.press(),
+          serviceAvailable: () => connectionState.value.kind !== "disconnected",
+        },
+        // The Tasks group: Rebuild task index and its availability.
+        tasks: {
+          rebuildTaskIndex: () => tasks.rebuild(),
+          serviceAvailable: () => connectionState.value.kind !== "disconnected",
         },
         // Row 6's confirmation modal (UI-SPEC S4-d). Behind the same seam
         // pattern as every other modal opener in this plugin.
@@ -208,7 +319,7 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     });
     this.openSwitcher = createSwitcherOpener({
       eventClient: this.eventClient,
-      onLive: refreshProjectsOnConnect(() => refreshProjects(this.client)),
+      onLive: this.onServiceLive,
       show: switcher.show,
     });
     registerSwitcherCommand(this.hostRegistry, this.openSwitcher);
@@ -235,8 +346,7 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
   }
 
   private async loadSettings(): Promise<void> {
-    const loaded = (await this.loadData()) as Partial<CommandCenterSettings> | null;
-    this.settings = { ...DEFAULT_SETTINGS, ...loaded };
+    this.settings = mergeSettings(await this.loadData());
   }
 
   /** The plugin's only write path to Obsidian's plugin-data storage — always guarded (PLUG-07, D-43). */

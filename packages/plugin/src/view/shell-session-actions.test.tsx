@@ -1,8 +1,10 @@
 import type { RunId, SessionView } from "@ccc/domain";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { adoptApprovalsSnapshot, resetApprovalsState } from "../approvals/signals.js";
 import { connectionState } from "../connection-state.js";
 import { resetProjectsState } from "../projects/projects-state.js";
+import { approvalsSnapshot } from "../test-support/approval-fixtures.js";
 import { claudeIntegration, sessionsById } from "../widgets/session-signals.js";
 import { selectedRunId } from "./agent-runs-state.js";
 import type { SessionActionHost } from "./session-action-runner.js";
@@ -66,6 +68,7 @@ function host(): SessionActionHost & {
 
 function reset(): void {
   cleanup();
+  resetApprovalsState();
   resetProjectsState();
   sessionsById.value = new Map();
   claudeIntegration.value = null;
@@ -109,5 +112,39 @@ describe("force-terminate stays disabled while the approval inbox is not ready (
 
     expect(sessionActions.requestSessionAction).not.toHaveBeenCalled();
     expect(sessionActions.ui.openTerminateRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe("force-terminate works end to end once the service reports the engine ready (plan 06-17, D-42)", () => {
+  it("a press reaches the runner's confirm-then-request flow, which asks the service for a request and executes nothing", async () => {
+    adoptApprovalsSnapshot(approvalsSnapshot({ ready: true }));
+    const sessionActions = host();
+    (sessionActions.ui.openTerminateRequest as ReturnType<typeof vi.fn>).mockResolvedValue("send");
+    sessionActions.requestSessionAction.mockResolvedValue({
+      outcome: "proposed",
+      proposalId: "0mfk1a2b3c4d5e6f7a8b9c001",
+    });
+    render(<Shell initialDestination="agent-runs" sessionActions={sessionActions} />);
+
+    const terminate = screen.getByRole("button", { name: "Force-terminate" });
+    expect(terminate.getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(terminate);
+
+    await waitFor(() =>
+      expect(sessionActions.requestSessionAction).toHaveBeenCalledWith("terminate-request", {
+        runId: RUN_ID,
+      }),
+    );
+    expect(sessionActions.ui.openTerminateRequest).toHaveBeenCalledTimes(1);
+    // Only the request was asked for: no other session action was sent.
+    expect(sessionActions.requestSessionAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("without a runner host the press answers unavailable and calls nothing", () => {
+    adoptApprovalsSnapshot(approvalsSnapshot({ ready: true }));
+    const notify = vi.fn();
+    render(<Shell initialDestination="agent-runs" notify={notify} />);
+    fireEvent.click(screen.getByRole("button", { name: "Force-terminate" }));
+    expect(notify).toHaveBeenCalledWith("Force-terminate isn't available yet.");
   });
 });

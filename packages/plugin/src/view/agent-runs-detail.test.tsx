@@ -5,11 +5,21 @@ import type { RunId, RunState, SessionView } from "@ccc/domain";
 import type { SessionUsage } from "@ccc/domain/usage.js";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  approvalDetailFocusRequested,
+  approvalsById,
+  approvalsReady,
+  resetApprovalsState,
+  selectedProposalId,
+} from "../approvals/signals.js";
 import { connectionState } from "../connection-state.js";
+import { summary } from "../test-support/approval-fixtures.js";
 import { sessionsById } from "../widgets/session-signals.js";
 import { lastUsageEventAt } from "../widgets/usage-signals.js";
-import { APPROVAL_INBOX_READY, controlsFor, DetailPane } from "./agent-runs-detail.js";
+import * as detailModule from "./agent-runs-detail.js";
+import { controlsFor, DetailPane } from "./agent-runs-detail.js";
 import { selectedRunId } from "./agent-runs-state.js";
+import { approvalChip, resetApprovalsView } from "./approvals-state.js";
 import { clearActionStatus, setActionStatus } from "./session-action-status.js";
 
 describe("agent-runs-detail.tsx imports nothing from @ccc/service-api-client (Task 2 acceptance criteria)", () => {
@@ -61,16 +71,20 @@ const NOW_MS = Date.parse("2026-09-25T12:00:00.000Z");
 
 beforeEach(() => {
   selectedRunId.value = null;
+  resetApprovalsState();
+  resetApprovalsView();
 });
 afterEach(() => {
   cleanup();
   selectedRunId.value = null;
+  resetApprovalsState();
+  resetApprovalsView();
   clearActionStatus(runId(1));
 });
 
 describe("controlsFor (Test 1: the availability matrix)", () => {
-  it("never renders Force-terminate live without APPROVAL_INBOX_READY", () => {
-    expect(APPROVAL_INBOX_READY).toBe(false);
+  it("no longer exports the hard-coded approval constant (D-42): the gate is derived from the service", () => {
+    expect("APPROVAL_INBOX_READY" in detailModule).toBe(false);
   });
 
   const CONNECTED = { connected: true, approvalInboxReady: false, projectCount: 5 };
@@ -494,5 +508,172 @@ describe("the linked-Run field (05 wave 4 review)", () => {
 
     fireEvent.click(button);
     expect(selectedRunId.value).toBe(runId(1));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 06-17 Task 3: the service-derived force-terminate gate (D-42, A-7)
+
+describe("Test 5 (gate): Force-terminate is live exactly when the service says the engine is ready", () => {
+  const TERMINATE = "Force-terminate";
+
+  function terminateButton(): HTMLElement {
+    return screen.getByRole("button", { name: TERMINATE });
+  }
+
+  it.each([
+    ["null (no approvals member yet, or an older service)", null],
+    ["false (the service has no engine)", false],
+  ] as const)(
+    "is aria-disabled with the approval-unavailable reason when the ready signal is %s",
+    (_name, ready) => {
+      approvalsReady.value = ready;
+      renderPane({ state: "running" });
+      expect(terminateButton().getAttribute("aria-disabled")).toBe("true");
+      expect(
+        screen.getByText("Needs approval — available once the approval inbox is ready"),
+      ).toBeTruthy();
+    },
+  );
+
+  it("never dispatches while the engine is absent or not ready", () => {
+    for (const ready of [null, false] as const) {
+      approvalsReady.value = ready;
+      const { onQuickAction } = renderPane({ state: "running" });
+      fireEvent.click(terminateButton());
+      expect(onQuickAction).not.toHaveBeenCalled();
+      cleanup();
+    }
+  });
+
+  it("is enabled only when the ready signal is true, and then dispatches the descriptor once", () => {
+    approvalsReady.value = true;
+    const { view, onQuickAction } = renderPane({ state: "running" });
+    expect(terminateButton().getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(terminateButton());
+    expect(onQuickAction).toHaveBeenCalledTimes(1);
+    expect(onQuickAction).toHaveBeenCalledWith(
+      expect.objectContaining({ capability: "session:terminate", target: { runId: view.runId } }),
+    );
+  });
+
+  it("still disables it with the standard reason while disconnected, even when ready", () => {
+    approvalsReady.value = true;
+    const view = session({ state: "running" });
+    render(
+      <DetailPane
+        session={view}
+        nowMs={NOW_MS}
+        connected={false}
+        projectCount={5}
+        onQuickAction={vi.fn()}
+        loadSessionUsage={undefined}
+        headingRef={{ current: null }}
+      />,
+    );
+    expect(terminateButton().getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("follows the signal: a later ready snapshot turns the control on", async () => {
+    approvalsReady.value = null;
+    renderPane({ state: "running" });
+    expect(terminateButton().getAttribute("aria-disabled")).toBe("true");
+    approvalsReady.value = true;
+    await Promise.resolve();
+    await waitForRender();
+    expect(terminateButton().getAttribute("aria-disabled")).toBeNull();
+  });
+});
+
+async function waitForRender(): Promise<void> {
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+describe("Test 3 (explanation line): the two meanings of waiting for approval stay apart (D-41)", () => {
+  const EXPLANATION =
+    "Claude Code is asking permission in its terminal. That prompt is separate from the approval inbox.";
+
+  it("shows the fixed line under a waiting-for-approval Run's state, and no other state shows it", () => {
+    renderPane({ state: "waiting-for-approval" });
+    expect(screen.getByText(EXPLANATION)).toBeTruthy();
+    cleanup();
+    for (const state of ["running", "starting", "stale", "completed", "failed"] as const) {
+      renderPane({ state });
+      expect(screen.queryByText(EXPLANATION), state).toBeNull();
+      cleanup();
+    }
+  });
+});
+
+describe("Test 4 (View the request): a pending force-terminate request is one press away", () => {
+  const FORCE_TERMINATE = "Force-terminate a Claude session";
+  const REASON = "A request is already waiting in the approval inbox";
+
+  function pendingFor(runIdValue: string, n = 1, label = FORCE_TERMINATE) {
+    return summary(n, "pending", 1, { runId: runIdValue, operationLabel: label });
+  }
+
+  function seedPending(...items: ReturnType<typeof summary>[]): void {
+    approvalsById.value = new Map(items.map((item) => [item.proposalId, item]));
+  }
+
+  it("follows the reason with a View the request button that selects the request and presses Pending", () => {
+    approvalsReady.value = true;
+    const target = pendingFor(runId(1));
+    seedPending(target);
+    approvalChip.value = "decided";
+    renderPane({ state: "running" });
+    expect(screen.getByText(REASON)).toBeTruthy();
+    expect(terminateAriaDisabled()).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "View the request" }));
+    expect(selectedProposalId.value).toBe(target.proposalId);
+    expect(approvalChip.value).toBe("pending");
+    expect(approvalDetailFocusRequested.value).toBe(true);
+  });
+
+  function terminateAriaDisabled(): string | null {
+    return screen.getByRole("button", { name: "Force-terminate" }).getAttribute("aria-disabled");
+  }
+
+  it("is absent without such a request: none, another Run's, another operation's, or a decided one", () => {
+    approvalsReady.value = true;
+    renderPane({ state: "running" });
+    expect(screen.queryByRole("button", { name: "View the request" })).toBeNull();
+    cleanup();
+    seedPending(pendingFor(runId(2)));
+    renderPane({ state: "running" });
+    expect(screen.queryByRole("button", { name: "View the request" })).toBeNull();
+    cleanup();
+    seedPending(pendingFor(runId(1), 3, "Test approval"));
+    renderPane({ state: "running" });
+    expect(screen.queryByRole("button", { name: "View the request" })).toBeNull();
+    cleanup();
+    seedPending(summary(4, "denied", 2, { runId: runId(1), operationLabel: FORCE_TERMINATE }));
+    renderPane({ state: "running" });
+    expect(screen.queryByRole("button", { name: "View the request" })).toBeNull();
+    expect(terminateAriaDisabled()).toBeNull();
+  });
+
+  it("never replaces the approval-unavailable reason when the engine is not ready", () => {
+    approvalsReady.value = false;
+    seedPending(pendingFor(runId(1)));
+    renderPane({ state: "running" });
+    expect(
+      screen.getByText("Needs approval — available once the approval inbox is ready"),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "View the request" })).toBeNull();
+  });
+
+  it("controlsFor names the pending request in its context and gives the reason", () => {
+    const view = session({ state: "running" });
+    const controls = controlsFor(view, {
+      connected: true,
+      approvalInboxReady: true,
+      projectCount: 5,
+      pendingRequestId: "abc",
+    });
+    const terminate = controls.find((c) => c.capability === "session:terminate");
+    expect(terminate?.disabledReason).toBe(REASON);
+    expect(terminate?.requestId).toBe("abc");
   });
 });

@@ -12,7 +12,12 @@ import { projectsSnapshot, resetProjectsState } from "../projects/projects-state
 import { Overview } from "../view/overview.js";
 import { Shell } from "../view/shell.js";
 import type { WidgetState } from "./contract.js";
-import { type ProjectRow, projectMetaSegments, quickActionsWidget } from "./panels.js";
+import {
+  type ProjectRow,
+  projectMetaSegments,
+  quickActionsWidget,
+  type TodayTask,
+} from "./panels.js";
 import type { WidgetId } from "./registry.js";
 
 /**
@@ -122,6 +127,21 @@ describe("Today: every count names its own unavailability", () => {
       dueTasks: [{ title: "Write", dueAt: "17:00" }],
     });
     expect(text).toMatch(/1 commitment left · 1 task due · 0 overdue tasks/);
+  });
+});
+
+describe("Today tasks carry an optional task id (plan 06-18, Test 9, D-38)", () => {
+  it("accepts a task with an id and one without, and renders both the same way", () => {
+    const withId: TodayTask = {
+      title: "Write",
+      dueAt: "17:00",
+      taskId: "0mfk1a2b30000000000000001",
+    };
+    const withoutId: TodayTask = { title: "Read", dueAt: "18:00" };
+    expect(withId.taskId).toBe("0mfk1a2b30000000000000001");
+    expect(withoutId.taskId).toBeUndefined();
+    const text = cardText("today", { ...TODAY_BASE, dueTasks: [withId, withoutId] });
+    expect(text).toMatch(/2 tasks due/);
   });
 });
 
@@ -606,24 +626,19 @@ describe("Quick actions is live (S8, D-38, PR-08, PR-12, RR-18)", () => {
     expect(order).toEqual([
       "Start a Claude Code session",
       "Open Claude Desktop",
+      "Create a task",
       "[status]",
       "Not available yet",
       "Run a skill",
-      "Create a task",
       "Capture an inbox note",
       "Refresh selected data",
     ]);
-    for (const label of [
-      "Run a skill",
-      "Create a task",
-      "Capture an inbox note",
-      "Refresh selected data",
-    ]) {
+    for (const label of ["Run a skill", "Capture an inbox note", "Refresh selected data"]) {
       expect(within(card).getByRole("button", { name: label }).getAttribute("aria-disabled")).toBe(
         "true",
       );
     }
-    for (const label of ["Start a Claude Code session", "Open Claude Desktop"]) {
+    for (const label of ["Start a Claude Code session", "Open Claude Desktop", "Create a task"]) {
       expect(
         within(card).getByRole("button", { name: label }).getAttribute("aria-disabled"),
       ).toBeNull();
@@ -631,7 +646,7 @@ describe("Quick actions is live (S8, D-38, PR-08, PR-12, RR-18)", () => {
     // actionsInBody: the frame's generic actions row is not rendered too.
     expect(
       card.querySelectorAll(".ccc-card-body > .ccc-card-actions:last-child button"),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
     expect(within(card).getAllByRole("button", { name: "Open Claude Desktop" })).toHaveLength(1);
   });
 
@@ -661,8 +676,10 @@ describe("Quick actions is live (S8, D-38, PR-08, PR-12, RR-18)", () => {
     connectionState.value = { kind: "live" };
     const notify = vi.fn();
     renderShell({ notify });
-    fireEvent.click(within(quickCard()).getByRole("button", { name: "Create a task" }));
-    expect(notify).toHaveBeenCalledWith("Create a task isn't available yet.");
+    // Amended in plan 06-10: `task:create` is now a live dispatcher branch
+    // (D-37), so this case uses `Run a skill`, a reserved capability.
+    fireEvent.click(within(quickCard()).getByRole("button", { name: "Run a skill" }));
+    expect(notify).toHaveBeenCalledWith("Run a skill isn't available yet.");
   });
 
   it("the Source panel lists Launcher settings, never Skill registry", () => {

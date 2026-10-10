@@ -50,6 +50,20 @@
       "when": 1791256029271,
       "tag": "0006_session_prompt_seen",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791265342590,
+      "tag": "0007_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791281003931,
+      "tag": "0008_task_index",
+      "breakpoints": true
     }
   ]
 }
