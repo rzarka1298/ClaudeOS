@@ -37,6 +37,8 @@ export interface HookApplyContext {
   readonly inactivityMs: number;
   /** True when the rollout shows a usage-limit hit after its last turn event. */
   readonly limitHitAfter: boolean;
+  /** The ISO time of the rollout's last lifecycle event, or null/absent when it has none. */
+  readonly lastLifecycleAt?: string | null;
 }
 
 /** Applies one retained fact to one built view; returns the same view when nothing applies. */
@@ -53,8 +55,13 @@ export function applyHookFact(
   const lastMs = Date.parse(view.lastActivityAt);
   const startedMs = Date.parse(view.startedAt);
   if (!Number.isFinite(lastMs) || !Number.isFinite(startedMs)) return view;
-  // An event older than what the store or rollout already shows is never applied.
-  if (fact.activityAt < lastMs || fact.activityAt < startedMs) return view;
+  // An event older than the NEWEST of what the store and the rollout already show is never applied.
+  const lifecycleMs =
+    context.lastLifecycleAt === undefined || context.lastLifecycleAt === null
+      ? Number.NEGATIVE_INFINITY
+      : Date.parse(context.lastLifecycleAt);
+  const newestMs = Math.max(lastMs, Number.isFinite(lifecycleMs) ? lifecycleMs : lastMs);
+  if (fact.activityAt < newestMs || fact.activityAt < startedMs) return view;
   const next = hookTransition(fact.event, view.state);
   // A running claim from a silent hook expires like any other running state.
   if (next === "running" && context.nowMs - fact.activityAt > context.inactivityMs) return view;
@@ -72,13 +79,14 @@ export interface HookOverlayDeps {
 }
 
 export function createHookOverlay(deps: HookOverlayDeps): SessionOverlay {
-  return (view, { limitHitAfter }) => {
+  return (view, { limitHitAfter, lastLifecycleAt }) => {
     const fact = deps.pipeline.latestFor(view.threadId);
     if (fact === undefined) return view;
     return applyHookFact(view, fact, {
       nowMs: deps.now(),
       inactivityMs: deps.inactivityMs,
       limitHitAfter,
+      lastLifecycleAt,
     });
   };
 }

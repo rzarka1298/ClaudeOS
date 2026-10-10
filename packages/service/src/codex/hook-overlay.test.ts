@@ -322,6 +322,29 @@ describe("Test 4: the rule table and precedence (table-driven)", () => {
     expect(applyHookFact(young, fact("Stop", { activityAt: min(-3) }), CONTEXT)).toEqual(young);
   });
 
+  it("rejects a hook older than the rollout's last lifecycle event, whatever the store says", () => {
+    // store 1000 (min -10), hook 2000 (min -5), rollout completion 3000 (min -2).
+    const completed = view({ state: "completed", lastActivityAt: iso(min(-10)) });
+    const ctx = { ...CONTEXT, lastLifecycleAt: iso(min(-2)) };
+    expect(
+      applyHookFact(completed, fact("UserPromptSubmit", { activityAt: min(-5) }), ctx),
+    ).toEqual(completed);
+    const cancelled = view({ state: "cancelled", lastActivityAt: iso(min(-10)) });
+    expect(applyHookFact(cancelled, fact("SessionStart", { activityAt: min(-5) }), ctx)).toEqual(
+      cancelled,
+    );
+    // A hook at or after the lifecycle event still applies; a null lifecycle changes nothing.
+    expect(
+      applyHookFact(completed, fact("UserPromptSubmit", { activityAt: min(-2) }), ctx).state,
+    ).toBe("running");
+    expect(
+      applyHookFact(completed, fact("UserPromptSubmit", { activityAt: min(-5) }), {
+        ...CONTEXT,
+        lastLifecycleAt: null,
+      }).state,
+    ).toBe("running");
+  });
+
   it("advances lastActivityAt to the fact and never moves it backwards", () => {
     const advanced = applyHookFact(view({ state: "running" }), fact("Stop"), CONTEXT);
     expect(advanced.lastActivityAt).toBe(iso(HOOK_NOW));
