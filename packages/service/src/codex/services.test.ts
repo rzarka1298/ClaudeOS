@@ -63,6 +63,15 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+/** A killed child takes a moment to be reaped; waits until every pid is gone (or the deadline). */
+async function expectGone(pids: readonly number[]): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (pids.some((pid) => pidAlive(pid)) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  for (const pid of pids) expect(pidAlive(pid)).toBe(false);
+}
+
 describe("Task 1 (tracer): GET headroom through the composed services", () => {
   it("Test 1: answers a strict signal with the Codex read and the Claude view", async () => {
     const c = await compose({
@@ -133,7 +142,7 @@ describe("Task 1 (tracer): GET headroom through the composed services", () => {
     await c.codex?.stop();
 
     expect(c.timers.armed()).toBe(0);
-    for (const pid of pids) expect(pidAlive(pid)).toBe(false);
+    await expectGone(pids);
   });
 
   it("Test 4b: stop() kills a read that is still in flight", async () => {
@@ -150,7 +159,7 @@ describe("Task 1 (tracer): GET headroom through the composed services", () => {
 
     await c.codex?.stop();
 
-    for (const pid of pids) expect(pidAlive(pid)).toBe(false);
+    await expectGone(pids);
     const reply = await pending;
     expect(reply.status).toBe(200);
     expect(HeadroomSignalSchema.parse(reply.body).codex.verdict).toBe("refuse");
