@@ -74,8 +74,12 @@ import { buildCodexTokenSummary } from "./token-summary.js";
  *   used; the parsed lines are dropped. Logs carry reason codes and counts.
  */
 
-/** The parser version the cursors, coverage and tallies were built by. */
-export const CODEX_TOKEN_PARSER_VERSION = 3;
+/**
+ * The parser version the cursors, coverage and tallies were built by. Bump it with ANY
+ * change to what token-count.ts counts (see token-count-version.guard.test.ts): stores
+ * written by an older version are rebuilt rollout by rollout on the next sweep.
+ */
+export const CODEX_TOKEN_PARSER_VERSION = 4;
 export const CODEX_TOKEN_PARSER_VERSION_SETTING = "codex_token_parser_version";
 export const CODEX_TOKEN_HORIZON_SETTING = "codex_token_horizon_day";
 export const CODEX_TOKEN_FIRST_SCAN_SETTING = "codex_token_first_scan_done";
