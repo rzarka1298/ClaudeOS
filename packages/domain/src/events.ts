@@ -2,6 +2,7 @@ import { z } from "zod";
 import { API_BASE } from "./api.js";
 import { ApprovalsSnapshotSchema } from "./approval.js";
 import { ClaudeIntegrationStatusSchema } from "./claude-integration.js";
+import { CodexSnapshotStateSchema } from "./codex-api.js";
 import { ProjectsSnapshotSchema } from "./projects.js";
 import { SessionViewSchema } from "./session.js";
 import { UsageSummarySchema } from "./usage.js";
@@ -68,6 +69,12 @@ export const SERVICE_EVENT_TYPES = [
   "approval.upserted",
   // Phase 6 (append-only, D-28): the task index changed; carries a generation.
   "tasks.changed",
+  // Phase 05.1 (append-only, D-25): the Codex session list, usage and
+  // headroom, token activity and integration status changed.
+  "codex.sessions.updated",
+  "codex.usage.updated",
+  "codex.tokens.updated",
+  "codex.integration.updated",
 ] as const;
 export type ServiceEventType = (typeof SERVICE_EVENT_TYPES)[number];
 
@@ -106,6 +113,9 @@ export const SnapshotResponseSchema = z.object({
     // Phase 6 (append-only, D-28). Optional so an older service's snapshot
     // still parses (Pitfall 17).
     approvals: ApprovalsSnapshotSchema.optional(),
+    // Phase 05.1 (append-only, D-25). One optional member whose parts are all
+    // optional, so an older service's snapshot still parses (Pitfall 17).
+    codex: CodexSnapshotStateSchema.optional(),
     projects: ProjectsSnapshotSchema,
   }),
 });

@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
-import { CodexHookRecordSchema, CodexSessionViewSchema } from "./codex-sessions.js";
+import { CodexIntegrationStatusSchema } from "./codex-integration.js";
+import {
+  CodexHookRecordSchema,
+  CodexSessionsSnapshotSchema,
+  CodexSessionViewSchema,
+  CodexTokenSummarySchema,
+} from "./codex-sessions.js";
+import { CodexUsageSnapshotSchema, HeadroomSignalSchema } from "./codex-usage.js";
 
 /**
  * The Codex API contract (plan 05.1-06, CODEX-05, CODEX-07, CODEX-08,
@@ -131,9 +138,41 @@ export const CODEX_PAIR_LAUNCH_CAP_MS = 4_000;
 /** The client's pair launch deadline: just above the service cap. */
 export const CODEX_PAIR_LAUNCH_CLIENT_TIMEOUT_MS = CODEX_PAIR_LAUNCH_CAP_MS + 500;
 
-// RED stub (plan 05.1-06 task 3): signatures only.
-export const CodexSessionsUpdatedPayloadSchema = z.never();
-export const CodexUsageUpdatedPayloadSchema = z.never();
-export const CodexTokensUpdatedPayloadSchema = z.never();
-export const CodexIntegrationUpdatedPayloadSchema = z.never();
-export const CodexSnapshotStateSchema = z.never();
+// ---------------------------------------------------------------------------
+// SSE payloads and the snapshot member (append-only, D-25). Each payload is a
+// strict domain schema, so no cwd, rollout path, account or prompt field can
+// reach a subscriber (T-05.1-30).
+
+/** `codex.sessions.updated` -- the sessions snapshot. */
+export const CodexSessionsUpdatedPayloadSchema = CodexSessionsSnapshotSchema;
+export type CodexSessionsUpdatedPayload = z.infer<typeof CodexSessionsUpdatedPayloadSchema>;
+
+/** `codex.usage.updated` -- the usage snapshot and the headroom signal computed from it. */
+export const CodexUsageUpdatedPayloadSchema = z.strictObject({
+  usage: CodexUsageSnapshotSchema,
+  headroom: HeadroomSignalSchema,
+});
+export type CodexUsageUpdatedPayload = z.infer<typeof CodexUsageUpdatedPayloadSchema>;
+
+/** `codex.tokens.updated` -- the three-range token summary. */
+export const CodexTokensUpdatedPayloadSchema = CodexTokenSummarySchema;
+export type CodexTokensUpdatedPayload = z.infer<typeof CodexTokensUpdatedPayloadSchema>;
+
+/** `codex.integration.updated` -- the integration status. */
+export const CodexIntegrationUpdatedPayloadSchema = CodexIntegrationStatusSchema;
+export type CodexIntegrationUpdatedPayload = z.infer<typeof CodexIntegrationUpdatedPayloadSchema>;
+
+/**
+ * The ONE optional `codex` member of the snapshot `state`. Every part is
+ * optional, so a service that has only some of them can publish the member
+ * and an older service's snapshot (no member at all) still parses (Phase 5
+ * Pitfall 17). Strict: an unknown key is refused rather than carried.
+ */
+export const CodexSnapshotStateSchema = z.strictObject({
+  sessions: CodexSessionsSnapshotSchema.optional(),
+  usage: CodexUsageSnapshotSchema.optional(),
+  headroom: HeadroomSignalSchema.optional(),
+  tokens: CodexTokenSummarySchema.optional(),
+  integration: CodexIntegrationStatusSchema.optional(),
+});
+export type CodexSnapshotState = z.infer<typeof CodexSnapshotStateSchema>;

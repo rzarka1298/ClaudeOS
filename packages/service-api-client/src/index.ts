@@ -1,3 +1,7 @@
+export {
+  CODEX_DOCTOR_CLIENT_TIMEOUT_MS,
+  CODEX_PAIR_LAUNCH_CLIENT_TIMEOUT_MS,
+} from "@ccc/domain";
 export type {
   ApprovalClientErrorCode,
   ApprovalDecideInput,
@@ -13,6 +17,20 @@ export {
   requestSessionAction,
   setTranscriptAnalysis,
 } from "./claude-client.js";
+// Phase 05.1: the Codex client (plan 05.1-06).
+export type { CodexClientErrorCode } from "./codex-client.js";
+export {
+  CodexRequestError,
+  followCodexLog,
+  getCodexHeadroom,
+  getCodexIntegration,
+  getCodexSessions,
+  getCodexTokenSummary,
+  getCodexUsage,
+  launchPair,
+  openCodexTranscript,
+  runCodexDoctor,
+} from "./codex-client.js";
 export type {
   CreateEventClientOptions,
   EventClient,
