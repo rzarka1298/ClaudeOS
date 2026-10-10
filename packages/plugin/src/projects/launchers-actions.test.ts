@@ -1,4 +1,5 @@
 import {
+  CODEX_DOCTOR_PATH,
   type DetectionResponse,
   LAUNCHER_TEST_AUTOMATION_CAP_MS,
   LAUNCHERS_DETECT_PATH,
@@ -234,6 +235,73 @@ describe("every action resolves and never rejects (SC-3)", () => {
     await expect(other.test("antigravity")).resolves.toEqual({
       kind: "error",
       error: "spawn-failed",
+    });
+  });
+});
+
+describe("the Codex launcher actions (plan 05.1-31 Task 1)", () => {
+  it("test resolves the same outcomes for the codex id as for claude-code and posts the codex id", async () => {
+    const sent = fakeClient(() => OK);
+    expect(
+      await createLaunchersActions(sent.client).test("codex", { kind: "terminal-app" }),
+    ).toEqual({ kind: "sent" });
+    expect(sent.requests[0]?.path).toBe(LAUNCHERS_TEST_PATH);
+    expect(sent.requests[0]?.body).toEqual({ launcherId: "codex" });
+
+    const refused = fakeClient(() => ({
+      status: 200,
+      body: { ok: false, error: "launcher-not-configured" },
+    }));
+    expect(await createLaunchersActions(refused.client).test("codex")).toEqual({
+      kind: "error",
+      error: "launcher-not-configured",
+    });
+
+    const conflict = fakeClient(() => ({ status: 409, body: { error: "launcher changed" } }));
+    expect(await createLaunchersActions(conflict.client).test("codex")).toEqual({
+      kind: "conflict",
+    });
+  });
+
+  it("a Codex Test that may meet the Automation prompt waits past the service's cap", async () => {
+    const { client, requests } = fakeClient(() => OK);
+    await createLaunchersActions(client).test("codex", {
+      kind: "custom",
+      preset: "iterm2",
+      argv: ["/usr/bin/osascript", "-e", "tell app", "{script}"],
+    });
+    expect(requests[0]?.timeoutMs).toBeGreaterThan(LAUNCHER_TEST_AUTOMATION_CAP_MS);
+  });
+
+  it("markTested accepts the codex id", async () => {
+    const { client, requests } = fakeClient(() => OK);
+    expect(await createLaunchersActions(client).markTested("codex")).toEqual({ kind: "marked" });
+    expect(requests[0]?.body).toEqual({ launcherId: "codex" });
+  });
+
+  const SUMMARY = (overall: string) => ({
+    status: 200,
+    body: { overall, codexVersion: null, checks: [] },
+  });
+
+  it("codexDoctor maps ok to healthy and every other verdict to problem, rendering none of it", async () => {
+    const ok = fakeClient(() => SUMMARY("ok"));
+    expect(await createLaunchersActions(ok.client).codexDoctor()).toEqual({ kind: "healthy" });
+    expect(ok.requests[0]?.path).toBe(CODEX_DOCTOR_PATH);
+    for (const overall of ["warning", "fail", "unrecognised"]) {
+      const { client } = fakeClient(() => SUMMARY(overall));
+      expect(await createLaunchersActions(client).codexDoctor()).toEqual({ kind: "problem" });
+    }
+  });
+
+  it("codexDoctor never rejects: an unreachable socket is service-disconnected, anything else failed", async () => {
+    const down = createLaunchersActions(throwingClient(unreadableSocketError("ECONNREFUSED")));
+    await expect(down.codexDoctor()).resolves.toEqual({ kind: "service-disconnected" });
+    const odd = createLaunchersActions(throwingClient(new TypeError("boom")));
+    await expect(odd.codexDoctor()).resolves.toEqual({ kind: "failed" });
+    const bad = fakeClient(() => ({ status: 200, body: { nonsense: true } }));
+    await expect(createLaunchersActions(bad.client).codexDoctor()).resolves.toEqual({
+      kind: "failed",
     });
   });
 });

@@ -422,3 +422,14 @@ describe("no helper runs a timer", () => {
     expect(source).not.toMatch(/setTimeout/);
   });
 });
+
+describe("testLauncher for the codex id (plan 05.1-31)", () => {
+  it("posts { launcherId: codex } to the test path and returns the LaunchResult", async () => {
+    const { client, requests } = fakeClient({ status: 200, body: OK });
+    const result = await testLauncher(client, "codex");
+    expect(requests).toEqual([
+      { method: "POST", path: LAUNCHERS_TEST_PATH, body: { launcherId: "codex" } },
+    ]);
+    expect(result).toEqual(OK);
+  });
+});

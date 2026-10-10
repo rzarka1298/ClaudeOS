@@ -9,6 +9,11 @@ import type {
   SaveOutcome,
 } from "../projects/launchers-actions.js";
 import {
+  CODEX_USER_INSTALL,
+  fakeLaunchersActions,
+  withCodexDetection,
+} from "../test-support/launchers-fixtures.js";
+import {
   createLaunchersSession,
   type LaunchersSession,
   LaunchersSettings,
@@ -701,5 +706,59 @@ describe("an uncertain save reconciles with the service (codex review 3, finding
       name: /Antigravity Preview/,
     });
     expect(preview.checked).toBe(true);
+  });
+});
+
+describe("the Codex panel in the section (plan 05.1-31)", () => {
+  it("sits directly after the Claude Code panel and leaves the launcher count at three", async () => {
+    const actions = fakeLaunchersActions({
+      detect: () =>
+        Promise.resolve({
+          kind: "detected" as const,
+          detection: withCodexDetection([CODEX_USER_INSTALL]),
+        }),
+    });
+    render(<LaunchersSettings actions={actions} connection={LIVE} now={NOW} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const names = screen
+      .getAllByRole("heading", { level: 4 })
+      .map((heading) => heading.textContent);
+    expect(names).toEqual([
+      "Antigravity",
+      "Claude Code",
+      "Codex",
+      "Claude Desktop",
+      "Finder",
+      "GitHub",
+    ]);
+    expect(screen.getByText("0 of 3 launchers set up")).toBeTruthy();
+    expect(
+      within(screen.getByRole("region", { name: "Codex" })).getByRole<HTMLInputElement>("radio", {
+        name: "Found Codex 0.159.2 at ~/.local/bin/codex.",
+      }).checked,
+    ).toBe(true);
+  });
+
+  it("a saved Codex row does not change the count of three app launchers", async () => {
+    const actions = fakeLaunchersActions({
+      getConfigs: () =>
+        Promise.resolve({
+          kind: "loaded" as const,
+          configs: {
+            ...NOTHING_SAVED,
+            codex: { executableDisplay: "~/.local/bin/codex", args: [], tested: false },
+          },
+        }),
+    });
+    render(<LaunchersSettings actions={actions} connection={LIVE} now={NOW} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("0 of 3 launchers set up")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Codex" })).getByText("Set up")).toBeTruthy();
   });
 });
