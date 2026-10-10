@@ -130,3 +130,10 @@ export const CODEX_DOCTOR_CLIENT_TIMEOUT_MS = CODEX_DOCTOR_CAP_MS + 10_000;
 export const CODEX_PAIR_LAUNCH_CAP_MS = 4_000;
 /** The client's pair launch deadline: just above the service cap. */
 export const CODEX_PAIR_LAUNCH_CLIENT_TIMEOUT_MS = CODEX_PAIR_LAUNCH_CAP_MS + 500;
+
+// RED stub (plan 05.1-06 task 3): signatures only.
+export const CodexSessionsUpdatedPayloadSchema = z.never();
+export const CodexUsageUpdatedPayloadSchema = z.never();
+export const CodexTokensUpdatedPayloadSchema = z.never();
+export const CodexIntegrationUpdatedPayloadSchema = z.never();
+export const CodexSnapshotStateSchema = z.never();

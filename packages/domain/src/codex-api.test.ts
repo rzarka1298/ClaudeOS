@@ -25,6 +25,8 @@ import {
   CodexHookEventsRequestSchema,
   CodexOpenTranscriptRequestSchema,
 } from "./codex-api.js";
+import * as browser from "./index.browser.js";
+import * as full from "./index.js";
 
 describe("the headroom route contract (CODEX-11, CODEX-12, D-25)", () => {
   it("Test 5: the headroom path sits under the Codex base under the API base", () => {
@@ -171,5 +173,16 @@ describe("Codex client deadlines sit above the service caps (CODEX-02, R4)", () 
     expect(CODEX_PAIR_LAUNCH_CLIENT_TIMEOUT_MS).toBe(4_500);
     expect(CODEX_DOCTOR_CLIENT_TIMEOUT_MS).toBeGreaterThan(CODEX_DOCTOR_CAP_MS);
     expect(CODEX_PAIR_LAUNCH_CLIENT_TIMEOUT_MS).toBeGreaterThan(CODEX_PAIR_LAUNCH_CAP_MS);
+  });
+});
+
+describe("barrel exports (R-EXPORTS, Test 4)", () => {
+  it("the Node barrel and the browser barrel both expose every runtime export of codex-api", () => {
+    const names = Object.keys(codexApi);
+    expect(names.length).toBeGreaterThan(20);
+    for (const name of names) {
+      expect(Object.keys(full), name).toContain(name);
+      expect(Object.keys(browser), name).toContain(name);
+    }
   });
 });

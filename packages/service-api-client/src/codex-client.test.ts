@@ -36,6 +36,7 @@ import {
   openCodexTranscript,
   runCodexDoctor,
 } from "./codex-client.js";
+import * as clientIndex from "./index.js";
 import type { SocketApiClient, SocketRequestOptions, SocketResponse } from "./socket-api-client.js";
 import { SocketUnreachableError } from "./socket-api-client.js";
 
@@ -432,5 +433,25 @@ describe("fixed codes and the absence of mutating functions (Test 6, CODEX-12, D
     expect(source).not.toMatch(/"POST"\s*,\s*CODEX_(HEADROOM|USAGE)_PATH/);
     expect(source).not.toMatch(/\b(dispatch|consume|reset-?credit|writeConfig|config\.toml)/i);
     expect(source).not.toContain("CODEX_HOOK_EVENTS_PATH");
+  });
+});
+
+describe("the service-api-client barrel (Task 3, Test 5)", () => {
+  it("exports the Codex client functions and CodexRequestError, and no Claude export went missing", () => {
+    for (const name of Object.keys(codexClient)) {
+      expect(Object.keys(clientIndex), name).toContain(name);
+    }
+    expect(Object.keys(clientIndex)).toEqual(
+      expect.arrayContaining([
+        "CODEX_DOCTOR_CLIENT_TIMEOUT_MS",
+        "CODEX_PAIR_LAUNCH_CLIENT_TIMEOUT_MS",
+        "ClaudeRequestError",
+        "deleteUsageAnalytics",
+        "getClaudeIntegration",
+        "getSessionUsage",
+        "requestSessionAction",
+        "setTranscriptAnalysis",
+      ]),
+    );
   });
 });
