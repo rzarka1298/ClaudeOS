@@ -130,10 +130,11 @@ export const CLASSIFICATION = {
     class: "direct-gesture",
     reason: "The owner clicks the control to bring Claude Desktop forward (D-05).",
   },
-  // Phase 05.1 (D-31, assumption A10 -- OPEN OWNER-CONFIRMATION ITEM, see
-  // 05.1-RECONCILE.md R-OPEN): CONTEXT D-31 words these as reserved; they are
-  // direct gestures because a reserved row has no executor and would make the
-  // pair button inert. Only codex.hooks.install is reserved.
+  // Phase 05.1 (D-31, assumption A10 -- owner-confirmed 2026-10-06, see
+  // 05.1-CONTEXT.md "Owner decision A10"): D-31's "reserved" wording means
+  // reserved for future connectors; Codex launches and transcript/log opens are
+  // direct gestures like other launches. Only codex.hooks.install is
+  // approval-required.
   "launch.codex": {
     class: "direct-gesture",
     reason:
