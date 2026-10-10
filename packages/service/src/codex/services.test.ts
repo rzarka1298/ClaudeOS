@@ -67,11 +67,11 @@ import {
   createFakeCodexHome,
   recordingFs,
 } from "../test-support/fake-codex-home.js";
+import { runBoundedStopStep } from "./bounded-stop.js";
 import type { BridgeStatus } from "./bridge-state.js";
 import { createCodexHomePort } from "./codex-home.js";
 import { CODEX_UNAVAILABLE_BODY } from "./route-support.js";
 import { CODEX_SNAPSHOT_BUDGET_BYTES } from "./routes.js";
-import { runBoundedStopStep } from "./services.js";
 
 /**
  * Plan 05.1-28 Task 1 (tracer): the composed Codex services answer GET headroom

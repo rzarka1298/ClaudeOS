@@ -28,6 +28,7 @@ import type { EventBus } from "../events/event-bus.js";
 import { mintSharedBridgeRunId } from "../projects/antigravity-terminal.js";
 import type { Spawner } from "../projects/spawner.js";
 import { isExecutableFile } from "../projects/terminal-launchers.js";
+import { CODEX_STOP_STEP_DEADLINE_MS, runBoundedStopStep } from "./bounded-stop.js";
 import {
   type BridgeStatus,
   coveringWindow,
@@ -109,43 +110,6 @@ export interface CodexServicesDeps {
   /** The wait bound on each `stop()` step (milliseconds); defaults to {@link CODEX_STOP_STEP_DEADLINE_MS}. */
   readonly stopStepDeadlineMs?: number | undefined;
 }
-
-/**
- * Runs one `stop()` step with a deadline and a try/catch of its own, so a hung or failing step never
- * prevents the later steps. Logs reason codes and the step name only (no raw errors).
- */
-export async function runBoundedStopStep(input: {
-  readonly name: string;
-  readonly run: () => void | Promise<void>;
-  readonly deadlineMs: number;
-  readonly logger: Pick<Logger, "warn">;
-}): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    const running = Promise.resolve().then(input.run);
-    const timedOut = new Promise<"timeout">((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), input.deadlineMs);
-    });
-    const outcome = await Promise.race([running.then(() => "done" as const), timedOut]);
-    if (outcome === "timeout") {
-      running.catch(() => undefined);
-      input.logger.warn(
-        { reason: "stop-step-timeout", step: input.name },
-        "codex service did not stop in time",
-      );
-    }
-  } catch (error: unknown) {
-    input.logger.warn(
-      { reason: "stop-step-failed", step: input.name, errorName: errorName(error) },
-      "codex service did not stop cleanly",
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** How long `stop()` waits for one step before it moves on to the next (milliseconds). */
-export const CODEX_STOP_STEP_DEADLINE_MS = 1_000;
 
 export interface CodexServices {
   /** What `createRequestListener` carries as `RouteContext.codex`. */
