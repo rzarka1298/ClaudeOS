@@ -7,14 +7,8 @@
 import { randomUUID } from "node:crypto";
 import { appendSpool, deliver } from "../hook/deliver.js";
 import { HOOK_DEADLINE_MS, HOOK_EXIT_DEADLINE_MS, STDIN_RETAIN_BYTES } from "../hook/limits.js";
-import {
-  CODEX_HOOK_EVENTS_PATH,
-  CODEX_SPOOL_DROP_FILE_NAME,
-  CODEX_SPOOL_FILE_NAME,
-} from "./limits.js";
+import { CODEX_HOOK_EVENTS_PATH, CODEX_SPOOL_FILES } from "./limits.js";
 import { minimizeCodexHookInput } from "./minimize.js";
-
-const CODEX_SPOOL = { file: CODEX_SPOOL_FILE_NAME, dropFile: CODEX_SPOOL_DROP_FILE_NAME };
 
 interface CappedStdin {
   readonly text: string;
@@ -75,11 +69,11 @@ async function main(): Promise<void> {
   // teardown the hook may not live to see the reply. Ingest is idempotent on
   // eventId, so a delivered-and-spooled SessionEnd is safe.
   const writeAhead = record.hook_event_name === "SessionEnd";
-  if (writeAhead) appendSpool(runtimeDir, line, CODEX_SPOOL);
+  if (writeAhead) appendSpool(runtimeDir, line, CODEX_SPOOL_FILES);
   const delivered = await deliver(runtimeDir, CODEX_HOOK_EVENTS_PATH, record, {
     deadlineMs: remainingBudgetMs(),
   });
-  if (!delivered && !writeAhead) appendSpool(runtimeDir, line, CODEX_SPOOL);
+  if (!delivered && !writeAhead) appendSpool(runtimeDir, line, CODEX_SPOOL_FILES);
 }
 
 // A stray error from a destroyed socket or a late callback must not surface
