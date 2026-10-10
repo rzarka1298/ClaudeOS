@@ -1108,3 +1108,87 @@ describe("onQuickAction threading into the body (PR-08, PR-12, RR-05)", () => {
     expect(emptySpy.mock.calls[0]?.[0]).toEqual({ onNavigate, data: READY_STATE.data });
   });
 });
+
+describe("Phase 05.1 Codex frame foundations", () => {
+  const panel: WidgetDefinition<string> = {
+    id: "codex-fixture",
+    title: "Codex sessions and usage",
+    dataKeys: [{ key: "test.key", transport: "service", sourceLabel: "Codex" }],
+    refresh: { kind: "manual" },
+    minSize: "small",
+    preferredSize: "tall",
+    featureFlag: "widget.codex-fixture",
+    quickActions: [],
+    renderBody: () => null,
+    renderEmpty: () => null,
+  };
+
+  it("shows setup copy and emits a connection descriptor without error cues", () => {
+    const onQuickAction = vi.fn();
+    const { container } = render(
+      <WidgetFrame
+        definition={panel}
+        state={{ kind: "permission-required", capability: "codex", sourceLabel: "Codex" }}
+        connection={{ kind: "live" }}
+        now={TWO_MINUTES_LATER}
+        onQuickAction={onQuickAction}
+      />,
+    );
+    expect(screen.getByText("Codex isn't set up")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Install Codex on this Mac and add it in Settings → Launchers. Codex sessions and weekly usage appear here once it has run.",
+      ),
+    ).toBeTruthy();
+    expect(container.textContent).not.toContain("▲");
+    expect(container.querySelector('[class*="danger"], .ccc-error-glyph')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Set up Codex" }));
+    expect(onQuickAction).toHaveBeenCalledExactlyOnceWith({
+      id: "connect-codex",
+      label: "Connect Codex",
+      capability: "connect:codex",
+    });
+  });
+
+  it("shows the locked data-change copy", () => {
+    render(
+      <WidgetFrame
+        definition={panel}
+        state={{ kind: "unavailable", reason: { code: "codex-data-changed" } }}
+        connection={{ kind: "live" }}
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    expect(screen.getByText("Codex tracking paused")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "The Codex data on this Mac is in a format this build doesn't recognise, so it's hidden rather than shown wrong.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("preserves Codex mid-sentence", () => {
+    render(
+      <WidgetFrame
+        definition={panel}
+        state={{ kind: "loading" }}
+        connection={{ kind: "live" }}
+        now={TWO_MINUTES_LATER}
+      />,
+    );
+    expect(screen.getByText("Loading Codex sessions and usage")).toBeTruthy();
+  });
+
+  it("accepts opaque action targets and excludes paths at the type boundary", () => {
+    const targets: NonNullable<QuickActionDescriptor["target"]>[] = [
+      { projectId: "project-1" as never },
+      { runId: "run-1" },
+      { threadId: "thread-1" },
+      { wrapperRunId: "wrapper-1" },
+    ];
+    // @ts-expect-error A path is never an action target.
+    const path: QuickActionDescriptor["target"] = { path: "/synthetic" };
+    expect(targets).toHaveLength(4);
+    expect(path).toBeDefined();
+  });
+});

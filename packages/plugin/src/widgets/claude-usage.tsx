@@ -65,7 +65,7 @@ const SECTION_HEADING = {
 } as const;
 
 /** `{Freshness}` -> the Source panel's exact display word. */
-const FRESHNESS_LABEL: Readonly<Record<Freshness, string>> = {
+export const FRESHNESS_LABEL: Readonly<Record<Freshness, string>> = {
   live: "Live",
   cached: "Cached",
   stale: "Stale",
@@ -102,7 +102,7 @@ function PartialBadge(): VNode {
 // Section 1: Plan usage (D-02, D-38, USAGE-06)
 // ---------------------------------------------------------------------------
 
-const WINDOW_LABEL: Readonly<Record<CapacityWindow, string>> = {
+export const WINDOW_LABEL: Readonly<Record<CapacityWindow, string>> = {
   "five-hour": "5-hour window",
   "seven-day": "7-day window",
 };
@@ -191,7 +191,7 @@ const USAGE_RANGE_ORDER: readonly UsageRangeKind[] = ["today", "last-7-days", "t
 /** The descriptor `dispatchQuickAction` resolves to its "isn't available
  * yet" outcome until 05-17 wires `usage:*` (plan note, this file is not
  * edited by 05-17). */
-const ENABLE_ANALYSIS_DESCRIPTOR: QuickActionDescriptor = {
+export const ENABLE_ANALYSIS_DESCRIPTOR: QuickActionDescriptor = {
   id: "usage-enable-transcript-analysis",
   label: "Turn on transcript analysis",
   capability: "usage:enable-transcript-analysis",
@@ -218,16 +218,18 @@ const ACTIVITY_UNAVAILABLE: Readonly<
   },
 };
 
-function RangeSelector({
+export function RangeSelector({
   value,
   onChange,
+  ariaLabel = "Token activity range",
 }: {
   readonly value: UsageRangeKind;
   readonly onChange: (range: UsageRangeKind) => void;
+  readonly ariaLabel?: string;
 }): VNode {
   return (
     // biome-ignore lint/a11y/useSemanticElements: UI-SPEC S2 "Range selector" is exactly `<div role="group" aria-label="...">` — a `<fieldset>` is a form-associated element with its own native styling and a `<legend>` requirement, neither of which fits three plain toggle pills outside a form.
-    <div className="ccc-range-group" role="group" aria-label="Token activity range">
+    <div className="ccc-range-group" role="group" aria-label={ariaLabel}>
       {USAGE_RANGE_ORDER.map((range) => (
         <button
           key={range}

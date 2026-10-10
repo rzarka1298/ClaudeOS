@@ -109,6 +109,8 @@ const SENTENCE_CASE_BRANDS = [
   "Privacy & Security",
   "Files & Folders",
   "Xcode",
+  // Phase 05.1: Codex keeps its product-name capitalisation.
+  "Codex",
 ];
 
 /**

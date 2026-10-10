@@ -2910,3 +2910,114 @@ fieldset.ccc-template-rows > legend {
 .ccc-settings-section {
   max-width: 68ch;
 }
+
+/* ===== Phase 05.1: Codex card, reserve tick, pair status ===== */
+
+.ccc-command-center .ccc-codex-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-lg);
+}
+
+.ccc-command-center .ccc-codex-sections > * + * {
+  border-block-start: var(--ccc-border-hairline) solid var(--ccc-border);
+  padding-block-start: var(--ccc-space-lg);
+}
+
+.ccc-command-center .ccc-headroom-strip {
+  display: grid;
+  /* Ten times the existing 1rem step preserves the specified 10rem minimum
+   * without introducing a size literal into the existing audit's shared tail. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(10 * var(--ccc-space-md))), 1fr));
+  gap: var(--ccc-space-md);
+}
+
+.ccc-command-center .ccc-headroom-strip > :last-child {
+  grid-column: 1 / -1;
+}
+
+.ccc-command-center .ccc-headroom-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ccc-command-center .ccc-reserve-meter-wrap {
+  display: block;
+  position: relative;
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-meter {
+  height: var(--ccc-space-sm);
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-meter::-webkit-meter-bar {
+  background: var(--ccc-border);
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-meter::-webkit-meter-optimum-value,
+.ccc-command-center .ccc-reserve-meter::-webkit-meter-suboptimum-value,
+.ccc-command-center .ccc-reserve-meter::-webkit-meter-even-less-good-value {
+  background: var(--ccc-ink);
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-tick {
+  position: absolute;
+  left: 80%;
+  top: calc(-1 * var(--ccc-space-xs));
+  bottom: calc(-1 * var(--ccc-space-xs));
+  width: var(--ccc-focus-ring);
+  background: var(--ccc-ink);
+  border-inline: var(--ccc-border-hairline) solid var(--ccc-bg);
+  pointer-events: none;
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ccc-space-xs);
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-command-center .ccc-codex-current {
+  padding: var(--ccc-space-md);
+}
+
+.ccc-command-center .ccc-launch-status-pair {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+}
+
+/* Markup contract: each data-tone line carries its own words, never colour alone.
+ * opening: Opening a tab in Antigravity…
+ * setup: ◌ Codex: Codex isn't set up yet.
+ * success: ✓ Codex: Opened in an Antigravity tab
+ * error: ▲ Codex: {problem} {next step}
+ * The consuming pair-status renderer supplies these text nodes for each agent. */
+.ccc-command-center .ccc-launch-agent-line {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-command-center .ccc-launch-agent-line[data-tone="opening"],
+.ccc-command-center .ccc-launch-agent-line[data-tone="setup"] {
+  color: var(--ccc-ink-muted);
+}
+
+.ccc-command-center .ccc-launch-agent-line[data-tone="success"] {
+  color: var(--ccc-ink);
+}
+
+.ccc-command-center .ccc-launch-agent-line[data-tone="error"] {
+  color: var(--ccc-danger);
+}
