@@ -572,8 +572,10 @@ export function writeCodexCursor(
      ON CONFLICT (cursor_key) DO UPDATE SET
        inode = excluded.inode, size = excluded.size, offset = excluded.offset, updated_at = excluded.updated_at`,
   ).run(key, cursor.inode, cursor.size, cursor.offset, at);
-  // A fresh cursor means the rollout was just computed: it is no longer stale.
+  // A fresh cursor means the rollout was just computed: it is no longer stale
+  // and no longer an incomplete source.
   db.prepare("DELETE FROM collector_settings WHERE key = ?").run(CURSOR_STALE_PREFIX + key);
+  db.prepare("DELETE FROM collector_settings WHERE key = ?").run(CURSOR_INCOMPLETE_PREFIX + key);
   if (cursor.mtimeMs === undefined || !Number.isFinite(cursor.mtimeMs)) {
     db.prepare("DELETE FROM collector_settings WHERE key = ?").run(CURSOR_MTIME_PREFIX + key);
   } else {
@@ -602,6 +604,37 @@ export function readCodexCursorMtime(db: Database.Database, key: string): number
 export function markCodexCursorStale(db: Database.Database, key: string, at: string): void {
   assertCursorKey(key);
   setCollectorSetting(db, CURSOR_STALE_PREFIX + key, "1", at);
+}
+
+/**
+ * Prefix of the per-rollout "latest rescan ended incomplete" marker. Set when a rollout
+ * that may already be counted could not be fully read again (truncated, over the size
+ * bound, refused); its counted rows stay. Cleared only by a full recompute
+ * ({@link writeCodexCursor}) or by {@link clearCodexRolloutIncomplete} once the
+ * rollout is verified unchanged. Named `codex_token_*` so "Delete cached usage
+ * analytics" removes it.
+ */
+const CURSOR_INCOMPLETE_PREFIX = "codex_token_incomplete:";
+
+/** Marks a rollout whose latest rescan could not complete; its counted rows stay. */
+export function markCodexRolloutIncomplete(db: Database.Database, key: string, at: string): void {
+  assertCursorKey(key);
+  setCollectorSetting(db, CURSOR_INCOMPLETE_PREFIX + key, "1", at);
+}
+
+/** Clears the incomplete mark of one rollout (a verified-unchanged read). */
+export function clearCodexRolloutIncomplete(db: Database.Database, key: string): void {
+  assertCursorKey(key);
+  db.prepare("DELETE FROM collector_settings WHERE key = ?").run(CURSOR_INCOMPLETE_PREFIX + key);
+}
+
+/** True while any rollout's latest rescan is outstanding-incomplete. */
+export function hasCodexIncompleteRollouts(db: Database.Database): boolean {
+  return (
+    db
+      .prepare("SELECT 1 FROM collector_settings WHERE key GLOB 'codex_token_incomplete:*' LIMIT 1")
+      .get() !== undefined
+  );
 }
 
 // --- Coverage ---------------------------------------------------------------
@@ -788,6 +821,7 @@ export function resetCodexScanState(db: Database.Database): void {
     db.prepare("DELETE FROM codex_rollout_cursors").run();
     db.prepare("DELETE FROM collector_settings WHERE key GLOB 'codex_token_stale:*'").run();
     db.prepare("DELETE FROM collector_settings WHERE key GLOB 'codex_token_mtime:*'").run();
+    db.prepare("DELETE FROM collector_settings WHERE key GLOB 'codex_token_incomplete:*'").run();
     db.prepare("DELETE FROM codex_coverage_days").run();
     db.prepare("DELETE FROM codex_recognition").run();
   })();

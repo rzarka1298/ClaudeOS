@@ -13,12 +13,15 @@ import { type CodexTokenSummary, CodexTokensUpdatedPayloadSchema } from "@ccc/do
 import {
   analysisOffIntervals,
   type CodexRecognitionTally,
+  clearCodexRolloutIncomplete,
   countLegacyUsageThreads,
   getCollectorSetting,
+  hasCodexIncompleteRollouts,
   isCodexCursorStale,
   listToggleLog,
   markCodexCursorStale,
   markCodexDayCovered,
+  markCodexRolloutIncomplete,
   prepareCodexParserUpgrade,
   readCodexCursor,
   readCodexCursorMtime,
@@ -302,6 +305,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       recognition: verdict(),
       horizonDay: horizonDay(),
       lastScanAt,
+      sourceIncomplete: hasCodexIncompleteRollouts(db),
     });
   }
 
@@ -443,6 +447,12 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     } catch (err: unknown) {
       if (err instanceof CodexHomeAccessError) {
         logger.warn({ reason: err.code }, "codex rollout refused");
+        // An already-counted rollout that can no longer be read keeps its rows but
+        // is an incomplete source: the summary must not claim full coverage.
+        const refusedKey = cursorKeyOf(ref.path);
+        if (readCodexCursor(db, refusedKey) !== null) {
+          markCodexRolloutIncomplete(db, refusedKey, nowIso());
+        }
         return { kind: "refused" };
       }
       throw err;
@@ -460,8 +470,12 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       cursor.size === size &&
       !isCodexCursorStale(db, key) &&
       readCodexCursorMtime(db, key) === mtimeMs
-    )
+    ) {
+      // Verified identical to the last complete read: an earlier refused/oversized
+      // rescan no longer leaves this source incomplete.
+      clearCodexRolloutIncomplete(db, key);
       return { kind: "unchanged" };
+    }
 
     // The file is now smaller than the extent last read in full (truncated or
     // recreated with fewer bytes): replacing the rows from it would erase usage
@@ -471,6 +485,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       // Stale: if it later regrows to exactly the saved size, the size alone must not
       // say unchanged. The saved size threshold is kept; a recompute clears the mark.
       markCodexCursorStale(db, key, nowIso());
+      markCodexRolloutIncomplete(db, key, nowIso());
       logger.warn({ reason: "rollout-source-truncated" }, "codex rollout shrank; rows kept");
       return { kind: "not-scanned", reason: "source-truncated" };
     }
@@ -478,6 +493,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     // Rows of a rollout that cannot be read in full stay as they are.
     if (size > maxRolloutBytes) {
       logger.warn({ reason: "rollout-too-large" }, "codex rollout too large; not scanned");
+      markCodexRolloutIncomplete(db, key, nowIso());
       return { kind: "not-scanned", reason: "too-large" };
     }
     if (budget !== undefined) {

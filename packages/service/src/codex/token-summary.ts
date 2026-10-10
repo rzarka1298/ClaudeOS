@@ -36,6 +36,12 @@ export interface CodexTokenSummaryInputs {
   readonly horizonDay?: string | null;
   /** When the last complete sweep finished, or null in a process that has not swept yet. */
   readonly lastScanAt?: string | null;
+  /**
+   * A counted rollout's latest rescan ended truncated, oversized or refused. Applied
+   * conservatively to every range (no per-day attribution): the kept counters are
+   * still shown, but the range is partial.
+   */
+  readonly sourceIncomplete?: boolean;
 }
 
 const SOURCE = "codex-session-logs" as const;
@@ -98,6 +104,7 @@ function rangeActivity(
     ...(analysisOffDays > 0 ? ["analysis-off"] : []),
     ...(beforeHorizon > 0 ? ["log-retention"] : []),
     ...(notScanned > 0 ? ["not-scanned"] : []),
+    ...(inputs.sourceIncomplete === true ? ["source-incomplete"] : []),
   ];
   return {
     kind: "available",
