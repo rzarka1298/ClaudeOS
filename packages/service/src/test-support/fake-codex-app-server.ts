@@ -99,8 +99,8 @@ export function weeklyReply(
 
 let counter = 0;
 
-/** The script body. The two `JSON` literals are the baked scenario and log path. */
-function scriptSource(scenario: FakeAppServerScenario, logPath: string): string {
+/** The script body (no shebang). The two `JSON` literals are the baked scenario and log path. */
+export function scriptSource(scenario: FakeAppServerScenario, logPath: string): string {
   return `
 "use strict";
 const fs = require("node:fs");

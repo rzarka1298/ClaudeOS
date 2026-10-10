@@ -31,6 +31,7 @@ import {
 } from "../codex/services.js";
 import { createEventBus, type EventBus } from "../events/event-bus.js";
 import { createLogger } from "../logging.js";
+import type { RouteContext } from "../route-kit.js";
 import { createRequestListener } from "../routes.js";
 import { startSocketServer } from "../socket-server.js";
 import { type FakeTimers, fakeTimers } from "./codex-token-fixtures.js";
@@ -101,6 +102,30 @@ export interface CodexCompositionOptions {
   }) => void | Promise<void>;
   /** Wires the Phase 5 hooks (`onAnalysisChanged`) of the real usage services to the Codex services. Default true with `usage: "real"`. */
   readonly wireUsageHooks?: boolean;
+  /**
+   * Plan 05.1-29: an already built fake Codex home (the canary builds its decoys first and keeps
+   * its own handle on them). The composition then does not build one, but still cleans it up.
+   */
+  readonly homeInstance?: FakeCodexHome;
+  /**
+   * Plan 05.1-29: put the socket at `<runtimeDir>/svc.sock`, where the compiled hook looks for it
+   * (`--runtime-dir <runtimeDir>`), instead of the private `t.sock` beside the store.
+   */
+  readonly socketInRuntimeDir?: boolean;
+  /**
+   * Plan 05.1-29: extra members for the request context (the launcher services and the launch
+   * service, which the Codex surface alone does not need). Built after the store, the bus and the
+   * Codex services exist; spread BEFORE the members this helper sets, so it cannot replace them.
+   */
+  readonly routeContext?: (parts: {
+    readonly store: OperationalStore;
+    readonly bus: EventBus;
+    readonly dir: string;
+    readonly homeDir: string;
+    readonly runtimeDir: string;
+    readonly spawner: FakeSpawner;
+    readonly codex: CodexServices | undefined;
+  }) => Partial<RouteContext>;
 }
 
 export interface CodexComposition {
@@ -109,6 +134,8 @@ export interface CodexComposition {
   readonly dir: string;
   readonly homeDir: string;
   readonly runtimeDir: string;
+  /** The Unix socket the real request listener serves. */
+  readonly socketPath: string;
   readonly home: FakeCodexHome;
   readonly port: CodexHomePort;
   readonly appServer: FakeAppServer | null;
@@ -205,9 +232,10 @@ export async function startCodexComposition(
 ): Promise<CodexComposition> {
   mkdirSync(TEST_BASE, { recursive: true });
   const dir = realpathSync.native(mkdtempSync(join(TEST_BASE, "cc-")));
-  const socketPath = join(dir, "t.sock");
   const homeDir = options.homeDir ?? join(dir, "home");
   const runtimeDir = join(dir, "rt");
+  const socketPath =
+    options.socketInRuntimeDir === true ? join(runtimeDir, "svc.sock") : join(dir, "t.sock");
   if (options.homeDir === undefined) mkdirSync(homeDir);
   mkdirSync(runtimeDir, { mode: 0o700 });
 
@@ -218,7 +246,9 @@ export async function startCodexComposition(
 
   await options.prepare?.({ store, dir, homeDir, runtimeDir });
 
-  const home = createFakeCodexHome(options.home ?? { database: { ddl: "current", threads: [] } });
+  const home =
+    options.homeInstance ??
+    createFakeCodexHome(options.home ?? { database: { ddl: "current", threads: [] } });
   const port = createCodexHomePort({ root: home.root });
   const spawner = createFakeSpawner();
   const timers = fakeTimers();
@@ -294,6 +324,7 @@ export async function startCodexComposition(
   const server: Server = await startSocketServer({
     socketPath,
     requestListener: createRequestListener({
+      ...options.routeContext?.({ store, bus, dir, homeDir, runtimeDir, spawner, codex }),
       store,
       getSecret: () => secret,
       eventBus: bus,
@@ -315,6 +346,7 @@ export async function startCodexComposition(
     dir,
     homeDir,
     runtimeDir,
+    socketPath,
     home,
     port,
     appServer,

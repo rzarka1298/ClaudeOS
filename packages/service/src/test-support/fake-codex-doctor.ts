@@ -83,10 +83,9 @@ export function doctorReport(options: FakeDoctorReportOptions = {}): string {
   });
 }
 
-export function writeFakeDoctor(dir: string, scenario: FakeDoctorScenario): FakeDoctor {
-  const path = join(dir, "codex");
-  const logPath = join(dir, "doctor.log.ndjson");
-  const script = `#!${process.execPath}
+/** The script body (no shebang). The scenario and log path are baked in as `JSON` literals. */
+export function doctorScriptSource(scenario: FakeDoctorScenario, logPath: string): string {
+  return `
 const fs = require("node:fs");
 const scenario = ${JSON.stringify(scenario)};
 const logPath = ${JSON.stringify(logPath)};
@@ -110,7 +109,12 @@ if (behavior.kind === "print") {
   write();
 }
 `;
-  writeFileSync(path, script);
+}
+
+export function writeFakeDoctor(dir: string, scenario: FakeDoctorScenario): FakeDoctor {
+  const path = join(dir, "codex");
+  const logPath = join(dir, "doctor.log.ndjson");
+  writeFileSync(path, `#!${process.execPath}${doctorScriptSource(scenario, logPath)}`);
   chmodSync(path, 0o755);
   return { path, logPath };
 }
