@@ -586,13 +586,12 @@ describe("heartbeat protocol advertisement", () => {
 
   it("windowCovers answers exactly as before for the same inputs", () => {
     const w = world();
-    const parent = realpathSync(join(w.project, ".."));
     const other = tmp("ccc-other-");
     writeFileSync(join(w.state, "windows", ".hidden.json"), "{}");
     writeFileSync(join(w.state, "windows", "junk.json"), "{not json");
     writeFileSync(join(w.state, "windows", "note.txt"), "x");
     writeFileSync(join(w.state, "windows", "nofolders.json"), JSON.stringify({ updatedAt: "x" }));
-    core.writeHeartbeat(w.state, "1", [parent], NOW);
+    core.writeHeartbeat(w.state, "1", [w.project], NOW);
     for (const root of [w.project, other]) {
       expect(core.windowCovers(w.state, root, NOW + 1000)).toBe(
         core.coveringHeartbeat(w.state, root, NOW + 1000) !== null,

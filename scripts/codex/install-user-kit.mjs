@@ -13,6 +13,7 @@
 //   .local/bin/codex-bridge                      launcher (pins this node binary)
 //   Antigravity extension local.codex-bridge     packed locally as a .vsix, no network
 //   <bridge state>/{requests,claimed,windows}/   $XDG_STATE_HOME or .local/state/codex-bridge
+//   <bridge state>/protocol.json                 { protocol, capabilities, kit }: what this kit speaks
 // With --claude-config, also merges into ~/.claude/settings.json
 // (allow Bash(codex-bridge:*), deny Bash(codex:*)) and writes
 // ~/.claude/rules/codex.md. Without it, Claude's config is never touched.
@@ -264,7 +265,23 @@ if (opts.extension) {
   }
 }
 
-// 6. Opt-in: user-level Claude Code config.
+// 6. Protocol marker: tells the product what the installed kit speaks before any IDE window
+// (and so any heartbeat) exists. An absent marker means no kit; an old one means re-run this.
+const markerFile = join(STATE, bridge.PROTOCOL_MARKER_FILE);
+const marker = bridge.readProtocolMarker(STATE);
+if (
+  marker &&
+  marker.protocol === bridge.PROTOCOL_VERSION &&
+  marker.kit === version &&
+  JSON.stringify(marker.capabilities) === JSON.stringify(bridge.CAPABILITIES)
+)
+  unchanged(`protocol marker ${markerFile}`);
+else {
+  if (!opts.dryRun) bridge.writeProtocolMarker(STATE, version);
+  changed(`protocol marker ${markerFile} (protocol ${bridge.PROTOCOL_VERSION}, kit ${version})`);
+}
+
+// 7. Opt-in: user-level Claude Code config.
 if (opts.claudeConfig) {
   const settingsPath = join(HOME, ".claude", "settings.json");
   const raw = existsSync(settingsPath) ? readFileSync(settingsPath, "utf8") : "{}\n";

@@ -15,6 +15,7 @@
 // (protocol 2) carries a validated argv and CCC_ environment, but only the helper reads them,
 // after re-validating with validateAgentShape; no request field reaches a shell or a URI.
 
+const { createHash } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -443,10 +444,17 @@ function writeRequest(stateDir, request) {
   return file;
 }
 
+/**
+ * One heartbeat per IDE window. `protocol` and `capabilities` advertise what this extension
+ * can claim: a heartbeat WITHOUT `protocol` comes from an extension that predates agent mode
+ * (0.1.0), which deletes any request mode it does not know. Readers treat that as "outdated".
+ */
 function writeHeartbeat(stateDir, key, folders, now = Date.now()) {
   writeJsonAtomic(path.join(dirs(stateDir).windows, `${key}.json`), {
     folders,
     updatedAt: new Date(now).toISOString(),
+    protocol: PROTOCOL_VERSION,
+    capabilities: [...CAPABILITIES],
   });
 }
 
@@ -456,22 +464,106 @@ function removeHeartbeat(stateDir, key) {
   } catch {}
 }
 
-/** True when a live IDE window (fresh heartbeat) has the project open. */
-function windowCovers(stateDir, projectRoot, now = Date.now()) {
+/**
+ * Every fresh heartbeat whose window has the project open, in file-name order. `protocol` and
+ * `capabilities` are null for a heartbeat of the old shape (folders and updatedAt only).
+ */
+function coveringHeartbeats(stateDir, projectRoot, now = Date.now()) {
   let names;
   try {
-    names = fs.readdirSync(dirs(stateDir).windows);
+    names = fs.readdirSync(dirs(stateDir).windows).sort();
   } catch {
-    return false;
+    return [];
   }
+  const found = [];
   for (const name of names) {
     if (!name.endsWith(".json") || name.startsWith(".")) continue;
     const hb = readJson(path.join(dirs(stateDir).windows, name));
     const at = hb && typeof hb.updatedAt === "string" ? Date.parse(hb.updatedAt) : Number.NaN;
     if (!Number.isFinite(at) || now - at > HEARTBEAT_FRESH_MS) continue;
-    if (Array.isArray(hb.folders) && matchScore(hb.folders, projectRoot) > 0) return true;
+    if (!Array.isArray(hb.folders) || matchScore(hb.folders, projectRoot) === 0) continue;
+    found.push({
+      folders: hb.folders,
+      updatedAt: hb.updatedAt,
+      protocol: Number.isInteger(hb.protocol) ? hb.protocol : null,
+      capabilities:
+        Array.isArray(hb.capabilities) && hb.capabilities.every((c) => typeof c === "string")
+          ? hb.capabilities
+          : null,
+    });
   }
-  return false;
+  return found;
+}
+
+/** The first fresh heartbeat covering the project, or null. */
+function coveringHeartbeat(stateDir, projectRoot, now = Date.now()) {
+  return coveringHeartbeats(stateDir, projectRoot, now)[0] ?? null;
+}
+
+/** True when a live IDE window (fresh heartbeat) has the project open. */
+function windowCovers(stateDir, projectRoot, now = Date.now()) {
+  return coveringHeartbeat(stateDir, projectRoot, now) !== null;
+}
+
+const PROTOCOL_MARKER_FILE = "protocol.json";
+
+/**
+ * install-user-kit writes this beside the bridge state: it tells the product what the
+ * installed kit speaks before any IDE window (and so any heartbeat) exists.
+ */
+function writeProtocolMarker(stateDir, kit) {
+  writeJsonAtomic(path.join(stateDir, PROTOCOL_MARKER_FILE), {
+    protocol: PROTOCOL_VERSION,
+    capabilities: [...CAPABILITIES],
+    kit,
+  });
+}
+
+/** The marker, or null when it is missing or malformed. */
+function readProtocolMarker(stateDir) {
+  const m = readJson(path.join(stateDir, PROTOCOL_MARKER_FILE));
+  if (!m || typeof m !== "object" || Array.isArray(m)) return null;
+  if (!Number.isInteger(m.protocol) || typeof m.kit !== "string") return null;
+  if (!Array.isArray(m.capabilities) || !m.capabilities.every((c) => typeof c === "string"))
+    return null;
+  return { protocol: m.protocol, capabilities: m.capabilities, kit: m.kit };
+}
+
+// Every kind of file a wrapper run writes under <main>/.planning/codex/. In-repo state is
+// used only where git ignores ALL of these (the `git check-ignore` call stays in the wrapper).
+const STATE_PROBES = [
+  "reports/x-review.json",
+  "reports/x-review.md",
+  "reports/x-task.json",
+  "sessions/x.json",
+  "live/x-task.log",
+  "live/x-task.jsonl",
+  "live/current.log",
+  "live/.current.1.tmp",
+  "pending-resume.json",
+  "x.json.1.tmp",
+].map((p) => `.planning/codex/${p}`);
+
+/** `<name>-<hash>`: the user-level per-project directory name for a main checkout path. */
+function projectDirName(main) {
+  const name =
+    path
+      .basename(main)
+      .replace(/[^A-Za-z0-9._-]/g, "_")
+      .slice(0, 40) || "project";
+  const hash = createHash("sha256").update(main).digest("hex").slice(0, 10);
+  return `${name}-${hash}`;
+}
+
+/**
+ * Both places the wrapper may keep a project's run records: in the repo when git ignores the
+ * probes, else under the user-level bridge state. A reader scans both and merges.
+ */
+function projectStateCandidates(main, stateDir) {
+  return [
+    path.join(main, ".planning", "codex"),
+    path.join(stateDir, "projects", projectDirName(main)),
+  ];
 }
 
 /** Removes claimed requests, TUI status files and stray prompts older than `keepMs`. */
@@ -521,26 +613,6 @@ function antigravityCli(env = process.env) {
   }
   const app = path.join(env.CODEX_BRIDGE_ANTIGRAVITY_APP || ANTIGRAVITY_APP, ANTIGRAVITY_BIN);
   return isExecutable(app) ? app : null;
-}
-
-// STUBS (RED) for the protocol advertisement; replaced in the GREEN commit.
-const PROTOCOL_MARKER_FILE = "protocol.json";
-const STATE_PROBES = [];
-function coveringHeartbeat() {
-  return null;
-}
-function coveringHeartbeats() {
-  return [];
-}
-function writeProtocolMarker() {}
-function readProtocolMarker() {
-  return null;
-}
-function projectDirName() {
-  return "";
-}
-function projectStateCandidates() {
-  return [];
 }
 
 module.exports = {
