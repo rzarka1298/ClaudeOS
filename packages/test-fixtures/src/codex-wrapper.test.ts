@@ -2446,11 +2446,7 @@ require(process.env.SNAP_REAL);
     expect(report.report).toMatch(/-review\.json$/);
   });
 
-  it.each([
-    ["review", ["review", "HEAD~1"]],
-    ["task", ["task"]],
-    ["resume", ["resume"]],
-  ] as const)(
+  it.each(["review", "task", "resume"] as const)(
     "%s: a limit hit with a known session writes a versioned pending record joined to the session record",
     (kind) => {
       const h = harness();

@@ -133,7 +133,10 @@ interface World {
   }>;
 }
 
-function helperEnv(w: { home: string; log: string }, over: Record<string, string> = {}) {
+function helperEnv(
+  w: { home: string; log: string },
+  over: Record<string, string> = {},
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("CODEX_BRIDGE_")) delete env[k];
   delete env.XDG_STATE_HOME;

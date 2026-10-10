@@ -757,23 +757,28 @@ describe("projectStateCandidates", () => {
     expect(core.projectDirName("/a/ünï.v1_2-3")).toBe(`_n_.v1_2-3-${sha10("/a/ünï.v1_2-3")}`);
   });
 
-  it("STATE_PROBES lists the ten probe paths the wrapper uses, verbatim", () => {
-    const source = readFileSync(join(REPO_ROOT, "scripts", "codex", "codex.mjs"), "utf8");
-    const block = /const STATE_PROBES = \[([^\]]*)\]\s*\.map\(\(p\) => `([^$`]*)\$\{p\}`\)/.exec(
-      source,
+  it("STATE_PROBES lists the ten probe paths every wrapper run may write", () => {
+    expect(core.STATE_PROBES).toEqual(
+      [
+        "reports/x-review.json",
+        "reports/x-review.md",
+        "reports/x-task.json",
+        "sessions/x.json",
+        "live/x-task.log",
+        "live/x-task.jsonl",
+        "live/current.log",
+        "live/.current.1.tmp",
+        "pending-resume.json",
+        "x.json.1.tmp",
+      ].map((p) => `.planning/codex/${p}`),
     );
-    expect(block).not.toBeNull();
-    const probes = [...(block?.[1] ?? "").matchAll(/"([^"]+)"/g)].map(
-      (m) => `${block?.[2]}${m[1]}`,
-    );
-    expect(probes).toHaveLength(10);
-    expect(core.STATE_PROBES).toEqual(probes);
   });
 
-  it("matches the wrapper's own name and hash expressions (read from its source)", () => {
+  it("is the wrapper's only definition: the wrapper keeps no copy of the probes or of the name and hash expressions (plan 05.1-10)", () => {
     const source = readFileSync(join(REPO_ROOT, "scripts", "codex", "codex.mjs"), "utf8");
-    expect(source).toContain('.replace(/[^A-Za-z0-9._-]/g, "_")');
-    expect(source).toContain('.slice(0, 40) || "project"');
-    expect(source).toContain('createHash("sha256").update(main).digest("hex").slice(0, 10)');
+    expect(source).not.toMatch(/const STATE_PROBES = \[/);
+    expect(source).not.toContain('.replace(/[^A-Za-z0-9._-]/g, "_")');
+    expect(source).not.toContain('createHash("sha256")');
+    expect(source).toContain("bridge.projectStateCandidates(main, BRIDGE_STATE)");
   });
 });

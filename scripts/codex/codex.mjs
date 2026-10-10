@@ -45,7 +45,6 @@
 // no-op, and it never fails a run.
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
@@ -304,33 +303,16 @@ function mainCheckoutOf(dir) {
 
 const BRIDGE_STATE = bridge.bridgeStateDir(process.env, homedir());
 
-// In-repo state only where git ignores it, so a run never dirties a checkout.
-// Every kind of file a run writes under <main>/.planning/codex/.
-const STATE_PROBES = [
-  "reports/x-review.json",
-  "reports/x-review.md",
-  "reports/x-task.json",
-  "sessions/x.json",
-  "live/x-task.log",
-  "live/x-task.jsonl",
-  "live/current.log",
-  "live/.current.1.tmp",
-  "pending-resume.json",
-  "x.json.1.tmp",
-].map((p) => `.planning/codex/${p}`);
-
+// In-repo state only where git ignores every kind of file a run writes (bridge.STATE_PROBES);
+// the two candidate directories come from bridge-core, the one place the service mirrors. Only
+// the `git check-ignore` call lives here.
 export function stateDirFor(main) {
-  const r = spawnSync("git", ["-C", main, "check-ignore", "--", ...STATE_PROBES], {
+  const [inRepo, userLevel] = bridge.projectStateCandidates(main, BRIDGE_STATE);
+  const r = spawnSync("git", ["-C", main, "check-ignore", "--", ...bridge.STATE_PROBES], {
     encoding: "utf8",
   });
   const ignored = new Set((r.stdout ?? "").split("\n").filter(Boolean));
-  if (STATE_PROBES.every((p) => ignored.has(p))) return join(main, ".planning", "codex");
-  const name =
-    basename(main)
-      .replace(/[^A-Za-z0-9._-]/g, "_")
-      .slice(0, 40) || "project";
-  const hash = createHash("sha256").update(main).digest("hex").slice(0, 10);
-  return join(BRIDGE_STATE, "projects", `${name}-${hash}`);
+  return bridge.STATE_PROBES.every((p) => ignored.has(p)) ? inRepo : userLevel;
 }
 
 let MAIN = null;
@@ -1494,18 +1476,28 @@ function roleArgs(role, { withSandboxFlag }) {
   ];
 }
 
+// Version of the content-free run records (sessions/<run>.json, pending-resume.json). A record
+// without the field is version 0; readers accept both.
+const RECORD_SCHEMA_VERSION = 1;
+
+// The content-free pending-resume record: ids, role, repository-relative worktree and times only.
+function writePending({ sessionId, id, kind, role, worktree, resetsAt }) {
+  writeJson(PENDING, {
+    schemaVersion: RECORD_SCHEMA_VERSION,
+    sessionId,
+    runId: id,
+    kind,
+    role,
+    worktree: rel(worktree),
+    resetsAt,
+    recordedAt: new Date().toISOString(),
+  });
+}
+
 async function recordLimit({ sessionId, id, kind, role, worktree }) {
   const usage = await currentUsage();
   if (sessionId) {
-    writeJson(PENDING, {
-      sessionId,
-      runId: id,
-      kind,
-      role,
-      worktree: rel(worktree),
-      resetsAt: usage.resetsAt,
-      recordedAt: new Date().toISOString(),
-    });
+    writePending({ sessionId, id, kind, role, worktree, resetsAt: usage.resetsAt });
   }
   say(
     `Codex hit its usage limit mid-run. Stop handing Codex work; resets ${usage.resetsAt ?? "unknown"}.` +
@@ -1724,8 +1716,32 @@ async function cmdReview({ positional, opts, extras }) {
     ...roleArgs("review", { withSandboxFlag: false }),
     ...extras,
   ];
-  const onSession = (sid) =>
+  // Content-free tracking record (D-20): ids, mode, status and times only, never report content.
+  // Written before Codex starts, updated when a session id is announced, finalised below.
+  const trackPath = join(SESSIONS, `${id}.json`);
+  const tracking = {
+    schemaVersion: RECORD_SCHEMA_VERSION,
+    runId: id,
+    kind: "review",
+    role: "review",
+    sessionId: null,
+    worktree: rel(worktree),
+    model: role.model,
+    effort: role.effort,
+    startedAt: new Date().toISOString(),
+    mode: extras.length ? "headless" : "tui",
+    status: "running",
+  };
+  const saveTracking = (patch) => {
+    Object.assign(tracking, patch);
+    writeJson(trackPath, tracking);
+  };
+  saveTracking({});
+  const tuiSession = (sid) => saveTracking({ sessionId: sid, mode: "tui" });
+  const onSession = (sid) => {
+    saveTracking({ sessionId: sid, mode: "headless" });
     openBridgeTab({ id, kind: "review", cwd: worktree, sessionId: sid, liveLog: live.log });
+  };
   const fallback = {};
   const startedMs = Date.now();
   let res = extras.length
@@ -1739,8 +1755,14 @@ async function cmdReview({ positional, opts, extras }) {
         prompt: reviewPrompt(base, head, id),
         timeoutSec,
         live,
+        onSession: tuiSession,
       });
   const mode = res ? "tui" : "headless";
+  // The TUI did not (or could not) finish the run: it continues headless. The id, if any, is the
+  // one the TUI announced; nothing is invented.
+  if (!res) {
+    saveTracking({ mode: "headless", sessionId: fallback.sessionId ?? tracking.sessionId });
+  }
   const fallbackInfo = fallback.reason ? fallbackRecord(fallback) : null;
   if (fallback.reason === "mid-run-inactivity") {
     const resumed = resumeArgs(
@@ -1816,6 +1838,30 @@ async function cmdReview({ positional, opts, extras }) {
     resetsAt = await recordLimit({ sessionId: null, id, kind: "review", role: "review", worktree });
     report.resetsAt = resetsAt;
   }
+  // Tracking: an unavailable or unstructured review is a failed run, never a clean one.
+  const sessionKnown = res.sessionId ?? tracking.sessionId;
+  saveTracking({
+    sessionId: sessionKnown,
+    status: status === "unavailable" || status === "unstructured" ? "failed" : status,
+    resetsAt,
+    finishedAt: report.finishedAt,
+  });
+  if (status === "limit" && sessionKnown) {
+    // A pending record already waiting for a task or resume is never replaced by a review's.
+    const waiting = existsSync(PENDING) ? readJson(PENDING) : null;
+    if (!existsSync(PENDING) || waiting?.kind === "review") {
+      writePending({
+        sessionId: sessionKnown,
+        id,
+        kind: "review",
+        role: "review",
+        worktree,
+        resetsAt,
+      });
+    }
+  } else if (status === "ok" && existsSync(PENDING) && readJson(PENDING)?.kind === "review") {
+    unlinkSync(PENDING);
+  }
   const jsonPath = join(REPORTS, `${id}-review.json`);
   writeJson(jsonPath, report);
   writeFileSync(join(REPORTS, `${id}-review.md`), reviewMarkdown(report));
@@ -1861,6 +1907,7 @@ async function runWorker({
   ]);
   const sessionPath = join(SESSIONS, `${id}.json`);
   const session = {
+    schemaVersion: RECORD_SCHEMA_VERSION,
     runId: id,
     kind,
     role,
@@ -1878,6 +1925,8 @@ async function runWorker({
     openBridgeTab({ id, kind, cwd: worktree, sessionId: sid, liveLog: live.log });
   };
   const tuiSession = (sid) => writeJson(sessionPath, { ...session, sessionId: sid, mode: "tui" });
+  // The first record exists before Codex starts, so a killed wrapper always leaves a trace.
+  writeJson(sessionPath, { ...session, mode: tuiPrompt ? "tui" : "headless" });
   const fallback = {};
   const startedMs = Date.now();
   let res = tuiPrompt
@@ -1895,6 +1944,9 @@ async function runWorker({
     : null;
   session.mode = res ? "tui" : "headless";
   if (fallback.reason) session.fallback = fallbackRecord(fallback);
+  if (tuiPrompt && !res) {
+    writeJson(sessionPath, { ...session, sessionId: fallback.sessionId ?? session.sessionId });
+  }
   if (fallback.reason === "mid-run-inactivity" && resumeFor) {
     const budget = await remainingBudget(
       startedMs,
@@ -1957,7 +2009,8 @@ async function cmdTask({ positional, opts, extras }) {
   const timeoutSec = positiveSeconds(opts.timeoutSec, DEFAULT_TIMEOUT_SEC.task, "--timeout-sec");
   enforceExtras(extras, "task");
   if (!opts.allowDirty) refuseIfDirty(worktree);
-  if (existsSync(PENDING)) {
+  // A review's pending record is advisory (a review is re-run, not resumed) and blocks nothing.
+  if (existsSync(PENDING) && readJson(PENDING)?.kind !== "review") {
     const p = readJson(PENDING);
     fail(
       EXIT.PENDING_RESUME,
@@ -2037,7 +2090,8 @@ function findSession(sessionId) {
     .filter((f) => f.endsWith(".json"))
     .sort()
     .map((f) => readJson(join(SESSIONS, f)))
-    .filter((s) => s?.sessionId === sessionId);
+    // A review's tracking record is not a resumable worker session.
+    .filter((s) => s?.sessionId === sessionId && s?.kind !== "review");
   return hits.at(-1) ?? null;
 }
 
