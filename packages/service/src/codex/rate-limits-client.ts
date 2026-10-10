@@ -40,6 +40,10 @@ export interface RateLimitsClientDeps {
   readonly homeDir?: () => string;
   readonly spawn?: SpawnFn;
   readonly now?: () => number;
+  readonly capMs?: number;
+  readonly killWaitMs?: number;
+  readonly lineCapBytes?: number;
+  readonly totalCapBytes?: number;
   readonly logger?: RateLimitsLogger;
 }
 
