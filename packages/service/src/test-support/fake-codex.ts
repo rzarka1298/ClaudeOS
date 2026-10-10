@@ -59,10 +59,6 @@ export const FAKE_CODEX_DEFAULT_VERSION = "0.159.2";
 
 /** The script text for `scenario` logging to `logPath` (exported so the generator test can read it). */
 export function fakeCodexScriptSource(scenario: FakeCodexScenario, logPath: string): string {
-  throw new Error(`not implemented ${scenario.version ?? ""} ${logPath}`);
-}
-
-function unusedRealSource(scenario: FakeCodexScenario, logPath: string): string {
   const version = scenario.version ?? FAKE_CODEX_DEFAULT_VERSION;
   return `#!${process.execPath}
 "use strict";
@@ -98,7 +94,6 @@ export function writeFakeCodex(dir: string, scenario: FakeCodexScenario): FakeCo
   writeFileSync(logPath, "", { mode: 0o600 });
   writeFileSync(path, fakeCodexScriptSource(scenario, logPath), { mode: 0o700 });
   chmodSync(path, 0o700);
-  void unusedRealSource;
   return { path, logPath };
 }
 

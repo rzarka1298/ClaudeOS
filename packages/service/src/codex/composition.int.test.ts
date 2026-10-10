@@ -143,10 +143,12 @@ function fakeCodexIn(c: CodexComposition, usedPercent = 41) {
 
 describe("Task 1 (tracer), Test 1: a saved fake launcher, then a headroom read through its app-server", () => {
   it("saves the Codex launcher by typed path, reads 41 percent as allow, and the fake saw exactly the documented process", async () => {
+    const clock = { ms: Date.now() };
     const c = await compose({
       saveRow: false,
-      home: codexHomeWithThreads([]),
+      home: codexHomeWithThreads([], clock.ms),
       routeContext: launchContext(),
+      now: () => clock.ms,
     });
     const fake = fakeCodexIn(c);
 
@@ -161,7 +163,8 @@ describe("Task 1 (tracer), Test 1: a saved fake launcher, then a headroom read t
     });
     expect(saved.status).toBe(200);
 
-    c.timers.tick();
+    // The refusal above was cached; the injected clock moves past the cache's freshness.
+    clock.ms += 30_000;
     const reply = await c.get(CODEX_HEADROOM_PATH);
     expect(reply.status).toBe(200);
     const signal = HeadroomSignalSchema.parse(reply.body);
