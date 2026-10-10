@@ -26,7 +26,14 @@ function brandList(): string[] {
 describe("sentence-case brand list", () => {
   it("still restates the rule's defaults and the Phase 4 product names", () => {
     const brands = brandList();
-    for (const kept of ["macOS", "GitHub", "Claude Code", "Claude Desktop", "Privacy & Security"]) {
+    for (const kept of [
+      "macOS",
+      "GitHub",
+      "Claude Code",
+      "Claude Desktop",
+      "Privacy & Security",
+      "Codex",
+    ]) {
       expect(brands).toContain(kept);
     }
   });

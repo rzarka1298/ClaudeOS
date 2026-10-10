@@ -58,7 +58,7 @@ export interface WidgetFrameProps<T> {
  * name like `Claude` is indistinguishable from an ordinary sentence-case word
  * by shape alone, so it has to be named.
  */
-const PROPER_NOUNS: ReadonlySet<string> = new Set(["Claude", "GitHub", "Gmail", "Google"]);
+const PROPER_NOUNS: ReadonlySet<string> = new Set(["Claude", "GitHub", "Gmail", "Google", "Codex"]);
 
 /**
  * A title used mid-sentence: `Service health` → `service health`, but
@@ -93,6 +93,12 @@ const PERMISSION_COPY: Partial<
     }
   >
 > = {
+  codex: {
+    heading: "Codex isn't set up",
+    body: "Install Codex on this Mac and add it in Settings → Launchers. Codex sessions and weekly usage appear here once it has run.",
+    button: "Set up Codex",
+    descriptorLabel: "Connect Codex",
+  },
   "claude-hooks": {
     heading: "Claude Code hooks aren't installed",
     body: "Install the optional hook package to see your Claude Code sessions here. Obsidian settings → Claude command center → Claude shows the command to run.",
@@ -142,6 +148,11 @@ const UNAVAILABLE_COPY: Record<
     heading: "Session tracking paused",
     body: () =>
       "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+  },
+  "codex-data-changed": {
+    heading: "Codex tracking paused",
+    body: () =>
+      "The Codex data on this Mac is in a format this build doesn't recognise, so it's hidden rather than shown wrong.",
   },
   "hooks-status-unknown": {
     heading: "Session tracking status unknown",
