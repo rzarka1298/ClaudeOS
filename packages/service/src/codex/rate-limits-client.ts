@@ -162,6 +162,7 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
       }
       let result: CodexUsageSnapshot | null = null;
       let exited = false;
+      let escalating = false;
       let phase: "initialize" | "read" = "initialize";
       let totalBytes = 0;
       let pending: Buffer[] = [];
@@ -198,21 +199,32 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
         } catch {
           // Already gone; the exit event follows.
         }
-        escalateTimer = setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Already gone.
-          }
-          backstopTimer = setTimeout(done, killWaitMs);
-        }, graceMs);
+        scheduleEscalation(graceMs);
+      };
+      const escalate = (): void => {
+        escalating = true;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Already gone.
+        }
+        backstopTimer = setTimeout(done, killWaitMs);
+      };
+      const scheduleEscalation = (graceMs: number): void => {
+        clearTimeout(escalateTimer);
+        escalateTimer = setTimeout(escalate, graceMs);
+      };
+      /** dispose(): end a pending read now, or shorten the SIGTERM wait of one that already settled. */
+      const abort = (): void => {
+        if (result === null) fail("disposed", disposeGraceMs);
+        else if (!exited && !escalating) scheduleEscalation(Math.min(disposeGraceMs, killWaitMs));
       };
       const fail = (code: string, graceMs?: number): void => {
         if (result === null) settle(failed(code), graceMs);
       };
 
       const capTimer = setTimeout(() => fail("timeout"), capMs);
-      abortCurrent = () => fail("disposed", disposeGraceMs);
+      abortCurrent = abort;
 
       child.on("error", () => {
         if (child.pid === undefined) {

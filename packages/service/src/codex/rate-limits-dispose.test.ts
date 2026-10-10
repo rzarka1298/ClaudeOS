@@ -80,6 +80,20 @@ describe("createRateLimitsClient dispose() awaits the child's exit", () => {
     await client.dispose();
   }, 8000);
 
+  it("a SIGTERM-ignoring child whose read already settled is gone within the stop deadline", async () => {
+    const { client, pending, pid } = await startRead({
+      read: { kind: "result", result: {} },
+      ignoreTermination: true,
+    });
+    // The reply is judged and the child is in its SIGTERM wait, but the read has not resolved yet.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const started = Date.now();
+    await client.dispose();
+    expect(alive(pid)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(CODEX_APP_SERVER_STOP_DEADLINE_MS);
+    expect(await pending).toMatchObject({ kind: expect.any(String) });
+  }, 8000);
+
   it("dispose() with no read in flight resolves at once", async () => {
     const client = createRateLimitsClient({ executablePath: () => null });
     await client.dispose();
