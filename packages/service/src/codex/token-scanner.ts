@@ -210,6 +210,10 @@ const ROLLOUT_THREAD =
 
 /** Settings key prefix of the per-turn analysis-off state. */
 const OFF_STATE_PREFIX = "codex_token_off:";
+/** Settings key prefix of the per-thread per-turn transition instant. */
+const CUT_STATE_PREFIX = "codex_token_cut:";
+/** Settings key prefix of the once-per-thread duplicate check at the cut. */
+const CUT_CHECK_PREFIX = "codex_token_cutchk:";
 
 const ZERO_COUNTERS: CodexTokenCounters = {
   input: 0,
@@ -316,12 +320,6 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
   let lastPublishedKey: string | null = null;
   /** The CLI version a rollout's session_meta named, by cursor key (memory only). */
   const versionByKey = new Map<string, string>();
-  /**
-   * The earliest bucket in which a file thread showed per-turn records (memory
-   * only; the store's own earliest turn row is the durable source). Cumulative
-   * usage at or after it is covered by those records and is not counted.
-   */
-  const turnCoverFrom = new Map<string, string>();
 
   function enqueue<T>(work: () => Promise<T>): Promise<T> {
     const next = chain.then(work, work);
@@ -489,6 +487,8 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     readonly next: CodexTokenCounters | null;
     readonly touched: boolean;
     readonly skipped: number;
+    /** The first event the cut covers (not off): its total and the mark before it. */
+    readonly firstCovered: { readonly before: number; readonly value: number } | null;
   }
 
   /**
@@ -501,8 +501,11 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     facts: readonly RolloutFact[],
     previous: CodexTokenCounters | null,
     wasOff: (ms: number) => boolean,
+    cutMs: number | null,
   ): CumulativeResult {
     let mark = previous;
+    let runMax = previous?.total ?? 0;
+    let firstCovered: { before: number; value: number } | null = null;
     let touched = false;
     let skipped = 0;
     const deltas = new Map<string, CodexTokenCounters>();
@@ -537,12 +540,19 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       if (fact.kind !== "tokens-cumulative" || fact.counters === null) continue;
       if (fact.time !== null) touched = true;
       const off = fact.time !== null && wasOff(Date.parse(fact.time));
+      if (fact.time !== null) {
+        const covered = cutMs !== null && Date.parse(fact.time) >= cutMs;
+        if (covered && firstCovered === null) {
+          firstCovered = { before: runMax, value: fact.counters.total };
+        }
+        runMax = Math.max(runMax, fact.counters.total);
+      }
       if (run.length > 0 && off !== runOff) flush();
       runOff = off;
       run.push(fact);
     }
     flush();
-    return { deltas, next: mark, touched, skipped };
+    return { deltas, next: mark, touched, skipped, firstCovered };
   }
 
   // --- Scanning one rollout ---------------------------------------------------
@@ -624,15 +634,13 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
 
       const offStates = new Map<string, OffState>();
       const turnFacts = countedTurnFacts(result.facts, fileThreadId, wasOff, offStates);
-      // The earliest bucket of any per-turn record in this chunk (off-period ones too:
-      // they still prove the turns exist).
-      let chunkCoverFrom: string | null = null;
+      // The earliest instant of any per-turn record in this chunk (off-period ones
+      // too: they still prove the turns exist).
+      let chunkCutMs: number | null = null;
       for (const fact of result.facts) {
         if (fact.kind !== "tokens-turn" || fact.time === null) continue;
-        const bucket = bucketOf(fact.time);
-        if (bucket !== "" && (chunkCoverFrom === null || bucket < chunkCoverFrom)) {
-          chunkCoverFrom = bucket;
-        }
+        const ms = Date.parse(fact.time);
+        if (!Number.isNaN(ms) && (chunkCutMs === null || ms < chunkCutMs)) chunkCutMs = ms;
       }
       const turnFold = foldTurnTokens(turnFacts, {
         dayOf: bucketOf,
@@ -647,6 +655,9 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       let skipped = turnFold.skipped;
       db.transaction(() => {
         counted = 0;
+        // Before this chunk's per-turn rows are stored: the legacy fallback reads them.
+        const cutMs =
+          cumulativeThread === null ? null : transitionCut(cumulativeThread, chunkCutMs, at);
         for (const entry of turnFold.entries.values()) {
           if (entry.day === "") {
             skipped += 1;
@@ -661,48 +672,57 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
           });
           counted += 1;
         }
-        // Durable check (the in-memory map is lost on restart, and a thread's first
-        // chunks may be cumulative-only): the cover starts at the earliest per-turn
-        // bucket, from the store and this chunk. Cumulative deltas from that bucket on
-        // are dropped and none are added; earlier history is kept.
-        let coverFrom: string | null = chunkCoverFrom;
+        // The cut is the instant of the thread's first per-turn record, kept durably
+        // (the in-memory map is lost on restart, and a thread's first chunks may be
+        // cumulative-only). Cumulative usage observed at or after it is covered by the
+        // per-turn records and is neither added nor kept; usage before it, even in the
+        // same quarter-hour bucket, stays.
         if (cumulativeThread !== null) {
-          for (const known of [
-            turnCoverFrom.get(cumulativeThread),
-            storedCoverFrom(cumulativeThread),
-          ]) {
-            if (
-              known !== undefined &&
-              known !== null &&
-              (coverFrom === null || known < coverFrom)
-            ) {
-              coverFrom = known;
+          if (cutMs !== null) {
+            deleteCumulativeDeltasAfter(
+              db,
+              cumulativeThread,
+              bucketOf(new Date(cutMs).toISOString()),
+            );
+          }
+          const previous = ops.readCumulativeBaseline(db, cumulativeThread);
+          const covered = cutMs;
+          const silent = (ms: number): boolean => wasOff(ms) || (covered !== null && ms >= covered);
+          const fold = foldCumulative(result.facts, previous, silent, covered);
+          skipped += fold.skipped;
+          // A covered event that adds nothing beyond the mark means the per-turn
+          // tokens were already in the cumulative counter: that history duplicates
+          // them, so the cut bucket's deltas go too. Checked once per thread.
+          const cutBucket = covered === null ? "" : bucketOf(new Date(covered).toISOString());
+          const checkKey = `${CUT_CHECK_PREFIX}${cumulativeThread}`;
+          let duplicate = false;
+          if (
+            covered !== null &&
+            fold.firstCovered !== null &&
+            getCollectorSetting(db, checkKey) === null
+          ) {
+            setCollectorSetting(db, checkKey, "1", at);
+            duplicate = fold.firstCovered.value <= fold.firstCovered.before;
+            if (duplicate) {
+              db.prepare(
+                "DELETE FROM codex_token_deltas WHERE thread_id = ? AND bucket_start >= ?",
+              ).run(cumulativeThread, cutBucket);
             }
           }
-          if (coverFrom !== null) {
-            if (turnCoverFrom.size >= MAX_REMEMBERED) turnCoverFrom.clear();
-            turnCoverFrom.set(cumulativeThread, coverFrom);
-            deleteCumulativeDeltasFrom(db, cumulativeThread, coverFrom);
-          }
-        }
-        if (cumulativeThread !== null) {
-          const previous = ops.readCumulativeBaseline(db, cumulativeThread);
-          const fold = foldCumulative(result.facts, previous, wasOff);
-          skipped += fold.skipped;
           let kept = 0;
           for (const [bucket, delta] of fold.deltas) {
             if (bucket === "") {
               skipped += 1;
               continue;
             }
-            if (coverFrom !== null && bucket >= coverFrom) continue;
+            if (duplicate && bucket >= cutBucket) continue;
             ops.addCumulativeDelta(db, { threadId: cumulativeThread, bucketStart: bucket, delta });
             counted += 1;
             kept += 1;
           }
           // The mark follows the deltas: a chunk whose usage the per-turn records cover
           // leaves it alone.
-          if (fold.touched && fold.next !== null && (coverFrom === null || kept > 0)) {
+          if (fold.touched && fold.next !== null && (covered === null || kept > 0)) {
             ops.writeCumulativeBaseline(db, cumulativeThread, fold.next, at);
           }
         }
@@ -723,23 +743,39 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     return { kind: "scanned", counted, bytes };
   }
 
-  /** The earliest bucket of a thread's stored per-turn rows, or null. */
-  function storedCoverFrom(threadId: string): string | null {
-    const row = db
-      .prepare("SELECT MIN(bucket_start) AS first FROM codex_token_turns WHERE thread_id = ?")
-      .get(threadId) as { first: string | null } | undefined;
-    return row?.first ?? null;
+  /**
+   * The thread's transition cut in ms, lowered by this chunk's earliest per-turn
+   * record and persisted under `codex_token_cut:<thread>`. Without a stored cut but
+   * with stored per-turn rows (written before the cut existed) the first row's bucket
+   * start stands in for it.
+   */
+  function transitionCut(threadId: string, chunkCutMs: number | null, at: string): number | null {
+    const key = `${CUT_STATE_PREFIX}${threadId}`;
+    const stored = Date.parse(getCollectorSetting(db, key) ?? "");
+    let cut: number | null = Number.isNaN(stored) ? null : stored;
+    if (cut === null) {
+      const row = db
+        .prepare("SELECT MIN(bucket_start) AS first FROM codex_token_turns WHERE thread_id = ?")
+        .get(threadId) as { first: string | null } | undefined;
+      const legacy = row?.first == null ? Number.NaN : Date.parse(row.first);
+      if (!Number.isNaN(legacy)) cut = legacy;
+    }
+    if (chunkCutMs !== null && (cut === null || chunkCutMs < cut)) cut = chunkCutMs;
+    if (cut !== null && cut !== stored) {
+      setCollectorSetting(db, key, new Date(cut).toISOString(), at);
+    }
+    return cut;
   }
 
-  /** Drops a thread's cumulative deltas in buckets at or after the per-turn cover. */
-  function deleteCumulativeDeltasFrom(
+  /** Drops a thread's cumulative deltas in buckets strictly after the cut's bucket. */
+  function deleteCumulativeDeltasAfter(
     database: Database.Database,
     threadId: string,
-    fromBucket: string,
+    cutBucket: string,
   ): void {
     database
-      .prepare("DELETE FROM codex_token_deltas WHERE thread_id = ? AND bucket_start >= ?")
-      .run(threadId, fromBucket);
+      .prepare("DELETE FROM codex_token_deltas WHERE thread_id = ? AND bucket_start > ?")
+      .run(threadId, cutBucket);
   }
 
   /**
@@ -1015,7 +1051,6 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       lastScanAt = null;
       lastSweepAtMs = null;
       versionByKey.clear();
-      turnCoverFrom.clear();
       const at = nowIso();
       setCollectorSetting(db, CODEX_TOKEN_FIRST_SCAN_SETTING, "", at);
       setCollectorSetting(db, CODEX_TOKEN_HORIZON_SETTING, "", at);
