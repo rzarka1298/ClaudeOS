@@ -497,3 +497,58 @@ export function exerciseCodexStoreReader(reader: CodexStoreReader, nowMs: number
   }
   return { outputs };
 }
+
+// ---------------------------------------------------------------------------
+// Rollout line builders for the session mirror (plan 05.1-22). Additive:
+// every line is synthetic and carries only the keys the allowlisted parser
+// reads, so a test can state a lifecycle in a few lines.
+
+/** One JSONL line (no trailing newline). */
+function jsonLine(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+/** A `session_meta` line. `source` is a plain spelling or a nested sub-agent object. */
+export function rolloutMetaLine(input: {
+  readonly id: string;
+  readonly atMs: number;
+  readonly cwd?: string;
+  readonly cliVersion?: string;
+  readonly source?: unknown;
+}): string {
+  return jsonLine({
+    type: "session_meta",
+    timestamp: new Date(input.atMs).toISOString(),
+    payload: {
+      id: input.id,
+      cwd: input.cwd ?? "/Users/USERNAME/repo",
+      cli_version: input.cliVersion ?? "0.159.2",
+      originator: "synthetic",
+      source: input.source ?? "cli",
+      timestamp: new Date(input.atMs).toISOString(),
+    },
+  });
+}
+
+/** A lifecycle `event_msg` line. */
+export function rolloutLifecycleLine(
+  event: "task_started" | "task_complete" | "turn_aborted",
+  atMs: number,
+  turnId = "turn-1",
+): string {
+  return jsonLine({
+    type: "event_msg",
+    timestamp: new Date(atMs).toISOString(),
+    payload: { type: event, turn_id: turnId },
+  });
+}
+
+/** A line the parser does not know (a drifted format). */
+export function rolloutUnknownLine(atMs: number): string {
+  return jsonLine({ type: "synthetic_unknown_kind", timestamp: new Date(atMs).toISOString() });
+}
+
+/** Joins lines into rollout file content with a trailing newline. */
+export function rolloutContent(...lines: readonly string[]): string {
+  return `${lines.join("\n")}\n`;
+}
