@@ -35,6 +35,7 @@ import {
   markLauncherTested,
   saveLauncherConfig,
 } from "@ccc/operational-store";
+import type Database from "better-sqlite3";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
 import {
@@ -461,7 +462,21 @@ async function handleSave(
       sendJson(res, 422, validation.refusal);
       return;
     }
+    const previousTerminal =
+      launcherId === "claude-code" ? terminalOf(getLauncherConfig(ctx.store.db, launcherId)) : null;
     saveLauncherConfig(ctx.store.db, launcherId, validation.config);
+    if (launcherId === "claude-code" && previousTerminal !== null) {
+      // Codex shares this row's terminal: a different terminal means the saved Codex
+      // row was never tested there, so its tested status goes (re-saving the same
+      // row also resets it and moves its saved-at, which ends any older pass).
+      const codex = getLauncherConfig(ctx.store.db, "codex");
+      if (
+        codex !== null &&
+        terminalOf(getLauncherConfig(ctx.store.db, launcherId)) !== previousTerminal
+      ) {
+        saveLauncherConfig(ctx.store.db, "codex", codex.config);
+      }
+    }
     launchers.onLaunchersChanged();
     logger.info({ route: LAUNCHERS_SAVE_PATH, launcherId }, "launcher config saved");
     sendJson(res, 200, MUTATION_OK);
@@ -496,6 +511,29 @@ function passedTestsOf(launchers: LauncherServices): Map<LauncherId, string> {
 /** Identifies one saved row: a later save changes it, so an older Test stops counting. */
 function fingerprint(record: LauncherConfigRecord): string {
   return `${record.updatedAt}\u0000${JSON.stringify(record.config)}`;
+}
+
+/**
+ * The saved row a Test (or its pass) is tied to. Codex has no terminal of its
+ * own (D-11): its Test opens in the claude-code row's terminal, so for Codex
+ * the row identity also carries that terminal. Changing the shared terminal
+ * then changes the identity: a running Test is no longer joined and an older
+ * pass is no longer accepted. Other launchers are their own row.
+ */
+function testedRow(
+  db: Database.Database,
+  launcherId: LauncherId,
+  record: LauncherConfigRecord | null,
+): LauncherConfigRecord | null {
+  if (record === null || launcherId !== "codex") return record;
+  const terminal = terminalOf(getLauncherConfig(db, "claude-code"));
+  return { ...record, updatedAt: `${record.updatedAt}\u0000terminal:${terminal}` };
+}
+
+/** The terminal choice a claude-code row carries, as comparable text ("" when none). */
+function terminalOf(record: LauncherConfigRecord | null): string {
+  const config = record?.config as { terminal?: unknown } | null | undefined;
+  return JSON.stringify(config?.terminal ?? null);
 }
 
 /** A second Test of a launcher whose running Test reads an older saved row (finding 2). */
@@ -568,7 +606,9 @@ async function handleTest(
   try {
     // The row the Test reads, captured first: a save racing the Test must
     // not let the new configuration inherit this Test's pass.
-    const before = isLauncherId(launcherId) ? getLauncherConfig(ctx.store.db, launcherId) : null;
+    const before = isLauncherId(launcherId)
+      ? testedRow(ctx.store.db, launcherId, getLauncherConfig(ctx.store.db, launcherId))
+      : null;
     const rowKey = before === null ? "" : fingerprint(before);
     const running = runningTestsOf(launchers);
     const inFlight = running.get(launcherId);
@@ -630,7 +670,7 @@ async function runTest(
       launcherId,
       result,
       before,
-      getLauncherConfig(ctx.store.db, launcherId),
+      testedRow(ctx.store.db, launcherId, getLauncherConfig(ctx.store.db, launcherId)),
     );
   }
   return result;
@@ -652,7 +692,7 @@ async function handleMarkTested(
   if (launchers === null) return;
   const launcherId = body.value.launcherId;
   try {
-    const record = getLauncherConfig(ctx.store.db, launcherId);
+    const record = testedRow(ctx.store.db, launcherId, getLauncherConfig(ctx.store.db, launcherId));
     const passed = passedTestsOf(launchers).get(launcherId);
     if (record === null || passed === undefined || passed !== fingerprint(record)) {
       logger.warn(
