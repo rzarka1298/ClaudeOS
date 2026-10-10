@@ -241,8 +241,6 @@ export function createCodexHookPipeline(deps: CodexHookPipelineDeps): CodexHookP
     attachDropCount(read) {
       readDropCount = read;
     },
-    sizes() {
-      throw new Error("not implemented");
-    },
+    sizes: () => ({ eventIds: seen.size, threads: facts.size }),
   };
 }
