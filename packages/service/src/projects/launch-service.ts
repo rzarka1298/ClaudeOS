@@ -164,6 +164,11 @@ type Prepared =
 /** The hand-off of a delegated launch (the Claude Code terminal). */
 type ClaudeDelegate = Extract<Prepared, { kind: "delegate" }>;
 
+/** A pair's attempt also runs hooks when the cap fires (to settle a Run whose terminal never answers). */
+interface PairAttempt extends Attempt {
+  readonly onCap: Array<() => void>;
+}
+
 /** Tracks one launch so a spawn that finishes after the cap cannot act as a success. */
 interface Attempt {
   cancelled: boolean;
@@ -452,39 +457,51 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
   const runClaudeHalf = async (
     delegate: ClaudeDelegate,
     decision: Extract<LaunchGuardDecision, { ok: true }>,
-    state: Attempt,
+    state: PairAttempt,
     slots: PairSlots,
     onOpened: () => void,
   ): Promise<void> => {
+    // The Run is settled exactly once. When the cap fires first it is settled `timeout` at once, so
+    // a terminal that never answers (or ignores the abort) still leaves a stale Run, never a
+    // queued one waiting for the start-timeout sweep (PR-17).
+    let settledOnce = false;
+    const settleOnce = async (outcome: "started" | "failed" | "timeout"): Promise<void> => {
+      if (settledOnce) return;
+      settledOnce = true;
+      await settle(decision, outcome);
+    };
+    state.onCap.push(() => {
+      void settleOnce("timeout");
+    });
     let delegated: LaunchResult;
     try {
       delegated = await delegate.run(state.signal, decision);
     } catch {
       // A throw inside this half is this half's spawn-failed, nothing else's.
-      await settle(decision, "failed");
+      await settleOnce("failed");
       if (!state.cancelled) slots.claude = { status: "error", error: "spawn-failed" };
       return;
     }
     if (state.cancelled) {
       // The terminal may still open late: the Run stays stale, never failed.
-      await settle(decision, "timeout");
+      await settleOnce("timeout");
       return;
     }
     slots.claude = pairResultOf(delegated);
     if (!delegated.ok) {
       // `spawn-failed` and `timeout` cannot say whether the terminal opened (PR-17).
       const uncertain = delegated.error === "timeout" || delegated.error === "spawn-failed";
-      await settle(decision, uncertain ? "timeout" : "failed");
+      await settleOnce(uncertain ? "timeout" : "failed");
       return;
     }
-    await settle(decision, "started");
+    await settleOnce("started");
     onOpened();
   };
 
   /** Starts the Codex half's hand-off. It settles nothing: Codex has no Run (D-15). */
   const runCodexHalf = async (
     start: () => Promise<LaunchResult>,
-    state: Attempt,
+    state: PairAttempt,
     slots: PairSlots,
     onOpened: () => void,
   ): Promise<void> => {
@@ -506,7 +523,7 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
    */
   const attemptPair = async (
     request: LaunchPairRequest,
-    state: Attempt,
+    state: PairAttempt,
     slots: PairSlots,
   ): Promise<LaunchPairResponse | undefined> => {
     const project = await deps.lookup.resolve(request.projectId);
@@ -582,7 +599,7 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
   /** One pair launch under ONE cap; a cap that fires first returns the halves that finished. */
   const runPair = async (request: LaunchPairRequest): Promise<LaunchPairResponse> => {
     const controller = new AbortController();
-    const state: Attempt = { cancelled: false, signal: controller.signal };
+    const state: PairAttempt = { cancelled: false, signal: controller.signal, onCap: [] };
     const slots: PairSlots = {};
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cap = new Promise<LaunchPairResponse>((resolve) => {
@@ -591,6 +608,7 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
         // Snapshot first: only halves that already finished keep their own result.
         resolve(pairEnvelope(slots, "timeout"));
         controller.abort();
+        for (const hook of state.onCap) hook();
       }, capMs);
     });
     let result: LaunchPairResponse;

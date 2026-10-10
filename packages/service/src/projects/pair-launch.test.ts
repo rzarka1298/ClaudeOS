@@ -2,12 +2,14 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type LaunchErrorKind,
   type LaunchGuard,
   type LaunchGuardDecision,
   type LaunchGuardInput,
   type LaunchResult,
   newRunId,
   type ProjectId,
+  type ProjectLookup,
   type RunId,
   type TerminalLauncher,
   type TerminalLaunchInput,
