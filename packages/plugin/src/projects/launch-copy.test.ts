@@ -1,10 +1,18 @@
 import { LAUNCH_ACTIONS, LAUNCH_ERROR_KINDS } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import {
+  LAUNCH_ERROR_ACTION_LABELS,
   LAUNCH_ERROR_COPY,
+  launchAcknowledgement,
+  launchAnnouncement,
   launchErrorNotice,
   launcherDisplayName,
   launchSuccessLine,
+  PAIR_AGENT_NAMES,
+  PAIR_CODEX_MISSING_NOTE,
+  PAIR_CODEX_SETUP_TEXT,
+  pairAnnouncement,
+  pairLineText,
   renderCopy,
 } from "./launch-copy.js";
 
@@ -80,7 +88,7 @@ describe("LAUNCH_ERROR_COPY (D-26)", () => {
     },
   );
 
-  it("each action button is one of the four fixed kinds, or none", () => {
+  it("each action button is one of the fixed kinds, or none", () => {
     for (const kind of LAUNCH_ERROR_KINDS) {
       const action = LAUNCH_ERROR_COPY[kind].action;
       expect([
@@ -89,6 +97,8 @@ describe("LAUNCH_ERROR_COPY (D-26)", () => {
         "go-to-projects",
         "open-automation",
         "open-privacy-security",
+        "open-codex-settings",
+        "try-again",
       ]).toContain(action);
     }
   });
@@ -139,8 +149,9 @@ describe("launchSuccessLine (D-40: claim only what was observed)", () => {
 });
 
 describe("the three bridge error rows (UI-SPEC Typed errors, D-09, OQ-1)", () => {
-  it("carry the UI-SPEC text verbatim, with no action field yet", () => {
+  it("carry the UI-SPEC text verbatim, with the action buttons of plan 05.1-17", () => {
     expect(LAUNCH_ERROR_COPY["bridge-not-installed"]).toEqual({
+      action: "open-codex-settings",
       problem: "The Antigravity terminal bridge isn't installed.",
       nextStep:
         "Install it from Settings → Codex, or switch to Terminal in Settings → Launchers, then try again.",
@@ -148,12 +159,14 @@ describe("the three bridge error rows (UI-SPEC Typed errors, D-09, OQ-1)", () =>
         "The Antigravity terminal bridge isn't installed. Install it from Settings → Codex, or switch to Terminal in Settings → Launchers.",
     });
     expect(LAUNCH_ERROR_COPY["bridge-outdated"]).toEqual({
+      action: "open-codex-settings",
       problem: "The Antigravity terminal bridge is out of date.",
       nextStep: "Run its install step again from Settings → Codex, then try again.",
       notice:
         "The Antigravity terminal bridge is out of date. Run its install step again from Settings → Codex.",
     });
     expect(LAUNCH_ERROR_COPY["window-not-ready"]).toEqual({
+      action: "try-again",
       problem: "Antigravity is still starting.",
       nextStep: "Its window is opening now. Try again in a few seconds.",
       notice: "Antigravity is still starting. Try again in a few seconds.",
@@ -165,6 +178,133 @@ describe("the three bridge error rows (UI-SPEC Typed errors, D-09, OQ-1)", () =>
       for (const line of linesOf(kind)) {
         expect(line.toLowerCase()).not.toContain("command");
       }
+    }
+  });
+});
+
+describe("the new action buttons and labels (plan 05.1-17)", () => {
+  it("labels the three new actions verbatim", () => {
+    expect(LAUNCH_ERROR_ACTION_LABELS["open-codex-settings"]).toBe("Open Codex settings");
+    expect(LAUNCH_ERROR_ACTION_LABELS["try-again"]).toBe("Try again");
+    expect(LAUNCH_ERROR_ACTION_LABELS["set-up-codex"]).toBe("Set up Codex");
+  });
+
+  it("no action label contains the word command", () => {
+    for (const label of Object.values(LAUNCH_ERROR_ACTION_LABELS)) {
+      expect(label.toLowerCase()).not.toContain("command");
+    }
+  });
+});
+
+describe("single Claude Code launches under the Antigravity terminal (UI-SPEC grammar fix)", () => {
+  it("reads 'a tab in Antigravity' for the acknowledgement, success line and announcement", () => {
+    expect(launchAcknowledgement("claude-code", "Antigravity")).toBe(
+      "Opening a tab in Antigravity…",
+    );
+    expect(launchSuccessLine("claude-code", "Antigravity")).toBe(
+      "Opened a tab in Antigravity for Claude Code",
+    );
+    expect(launchAnnouncement("claude-code", "Antigravity", "example-project")).toBe(
+      "Opening a tab in Antigravity for Claude Code in example-project…",
+    );
+  });
+
+  it("leaves the other terminal labels exactly as before", () => {
+    expect(launchAcknowledgement("claude-code", "Terminal")).toBe("Opening a Terminal window…");
+    expect(launchAcknowledgement("claude-code", "iTerm2")).toBe("Opening a iTerm2 window…");
+    expect(launchSuccessLine("claude-code", "Terminal")).toBe(
+      "Opened a Terminal window for Claude Code",
+    );
+    expect(launchAnnouncement("claude-code", "Terminal", "example-project")).toBe(
+      "Opening a Terminal window for Claude Code in example-project…",
+    );
+  });
+
+  it("does not change the other four launchers' strings for the Antigravity label", () => {
+    expect(launchAcknowledgement("antigravity", "Antigravity")).toBe("Opening in Antigravity…");
+    expect(launchSuccessLine("finder", "Antigravity")).toBe("Revealed in Finder");
+  });
+});
+
+describe("the pair's per-agent lines (UI-SPEC S2)", () => {
+  const opening = { kind: "opening" } as const;
+  const success = { kind: "success" } as const;
+
+  it("names the agents Claude Code and Codex", () => {
+    expect(PAIR_AGENT_NAMES).toEqual({ claude: "Claude Code", codex: "Codex" });
+    expect(launcherDisplayName("claude-codex-pair")).toBe("Claude + Codex");
+  });
+
+  it("opening lines read the Antigravity wording, or the Terminal wording for another label", () => {
+    expect(pairLineText("claude", opening, "Antigravity", "p")).toBe(
+      "Claude Code: Opening a tab in Antigravity…",
+    );
+    expect(pairLineText("codex", opening, "Antigravity", "p")).toBe(
+      "Codex: Opening a tab in Antigravity…",
+    );
+    expect(pairLineText("claude", opening, "Terminal", "p")).toBe(
+      "Claude Code: Opening a Terminal window…",
+    );
+  });
+
+  it("success lines read per terminal", () => {
+    expect(pairLineText("claude", success, "Antigravity", "p")).toBe(
+      "Claude Code: Opened in an Antigravity tab",
+    );
+    expect(pairLineText("codex", success, "Antigravity", "p")).toBe(
+      "Codex: Opened in an Antigravity tab",
+    );
+    expect(pairLineText("codex", success, "Terminal", "p")).toBe("Codex: Opened a Terminal window");
+  });
+
+  it("error lines carry the agent, the problem and the next step from the table", () => {
+    expect(
+      pairLineText("codex", { kind: "error", error: "window-not-ready" }, "Antigravity", "p"),
+    ).toBe(
+      "Codex: Antigravity is still starting. Its window is opening now. Try again in a few seconds.",
+    );
+    expect(
+      pairLineText("claude", { kind: "error", error: "launcher-not-configured" }, "Terminal", "p"),
+    ).toBe(
+      "Claude Code: Claude Code isn't set up yet. Set it up in Settings → Launchers, then try again.",
+    );
+  });
+
+  it("the Codex setup line is the locked text and never an error", () => {
+    expect(PAIR_CODEX_SETUP_TEXT).toBe(
+      "Codex isn't set up yet. Install it, then add it in Settings → Launchers.",
+    );
+    expect(pairLineText("codex", { kind: "setup" }, "Antigravity", "p")).toBe(
+      `Codex: ${PAIR_CODEX_SETUP_TEXT}`,
+    );
+  });
+
+  it("the hidden note for a missing Codex install is the locked sentence", () => {
+    expect(PAIR_CODEX_MISSING_NOTE).toBe("Codex isn't set up, so only Claude Code will open.");
+  });
+
+  it("announces the two statements, or the opening sentence naming the project", () => {
+    expect(pairAnnouncement(opening, opening, "Antigravity", "example-project")).toBe(
+      "Opening Claude Code and Codex in example-project…",
+    );
+    expect(pairAnnouncement(success, { kind: "setup" }, "Antigravity", "example-project")).toBe(
+      "Claude Code: Opened in an Antigravity tab. Codex: Codex isn't set up yet. Install it, then add it in Settings → Launchers.",
+    );
+  });
+
+  it("no pair line contains a path or the word command", () => {
+    const lines = [
+      pairLineText("claude", success, "Antigravity", "p"),
+      pairLineText("codex", { kind: "setup" }, "Antigravity", "p"),
+      ...LAUNCH_ERROR_KINDS.map((error) =>
+        pairLineText("codex", { kind: "error", error }, "Antigravity", "p"),
+      ),
+    ];
+    for (const line of lines) {
+      expect(line).not.toMatch(PATH_PATTERN);
+      // "command center" is the product name, the only allowed occurrence.
+      expect(line.toLowerCase().replaceAll("command center", "")).not.toContain("command");
+      expect(line).not.toContain("{");
     }
   });
 });

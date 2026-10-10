@@ -195,6 +195,8 @@ export interface LaunchStatusLineProps {
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
   /** Opens one of the two fixed System Settings panes through the service (RR-16). */
   readonly openSystemSettings?: ((pane: "automation" | "privacy-security") => void) | undefined;
+  /** Emits a descriptor for `Try again` and `Open Codex settings`: the one dispatcher, never a side effect. */
+  readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }
 
 /**

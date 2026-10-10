@@ -1,5 +1,5 @@
 import type { LaunchErrorKind } from "@ccc/domain";
-import type { ProjectLaunchActionId } from "./launch-status.js";
+import type { PairLineStatus, ProjectLaunchActionId } from "./launch-status.js";
 
 /**
  * The fixed S2 acknowledgement/success copy per launcher (UI-SPEC "Launch
@@ -87,7 +87,10 @@ export type LaunchErrorAction =
   | "set-up-launchers"
   | "go-to-projects"
   | "open-automation"
-  | "open-privacy-security";
+  | "open-privacy-security"
+  | "open-codex-settings"
+  | "try-again"
+  | "set-up-codex";
 
 export interface LaunchErrorCopy {
   /** The inline `▲` line. */
@@ -199,6 +202,9 @@ export const LAUNCH_ERROR_ACTION_LABELS: Readonly<Record<LaunchErrorAction, stri
   "go-to-projects": "Go to Projects",
   "open-automation": "Open Automation settings",
   "open-privacy-security": "Open Privacy & Security settings",
+  "open-codex-settings": "Open Codex settings",
+  "try-again": "Try again",
+  "set-up-codex": "Set up Codex",
 };
 
 /** The D-26 Notice for a failed launch (UI-SPEC "Launch error copy", PR-11 for `folder-access-denied`). */
@@ -229,4 +235,50 @@ export function launchAnnouncement(
   projectName: string,
 ): string {
   return ANNOUNCEMENTS[action](terminalLabel, projectName);
+}
+
+// ---------------------------------------------------------------------------
+// Pair launch (Phase 05.1, UI-SPEC S2 "Per-agent two-line status")
+
+/** The two agents of a pair, Claude Code first (D-10). */
+export type PairAgent = "claude" | "codex";
+
+/** The `{Launcher}` for a pair line: the agent's name. */
+export const PAIR_AGENT_NAMES: Readonly<Record<PairAgent, string>> = {
+  claude: "Claude Code",
+  codex: "Codex",
+};
+
+/** The Codex setup line body (C-09): a setup state, never an error. */
+export const PAIR_CODEX_SETUP_TEXT = "";
+
+/** The hidden description of the pair button when Codex is known to be missing (D-10). */
+export const PAIR_CODEX_MISSING_NOTE = "";
+
+/** The text of one agent's pair line, without its glyph. */
+export function pairLineText(
+  agent: PairAgent,
+  line: PairLineStatus,
+  terminalLabel: string,
+  projectName: string,
+): string {
+  void agent;
+  void line;
+  void terminalLabel;
+  void projectName;
+  return "";
+}
+
+/** What the hidden live announcement reads for a pair (UI-SPEC S2). */
+export function pairAnnouncement(
+  claude: PairLineStatus,
+  codex: PairLineStatus,
+  terminalLabel: string,
+  projectName: string,
+): string {
+  void claude;
+  void codex;
+  void terminalLabel;
+  void projectName;
+  return "";
 }
