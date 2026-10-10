@@ -55,7 +55,7 @@ import { createCodexHookPipeline, mirrorControlFor } from "./hook-pipeline.js";
 import { startCodexHookSpool } from "./hook-spool.js";
 import { createHookStatusProvider, type HookStatusFs } from "./hook-status.js";
 import { buildCodexIntegrationStatus, type CodexIntegrationService } from "./integration-routes.js";
-import { createRateLimitsClient } from "./rate-limits-client.js";
+import { CODEX_APP_SERVER_STOP_DEADLINE_MS, createRateLimitsClient } from "./rate-limits-client.js";
 import type { CodexRouteDeps } from "./routes.js";
 import { createRunOverlay } from "./run-overlay.js";
 import { createRunRecordReader, nodeRunRecordFs, summarizePausedRuns } from "./run-records.js";
@@ -678,15 +678,24 @@ async function composeCodexServices(
       stopPromise ??= (async () => {
         stopped = true;
         const deadlineMs = deps.stopStepDeadlineMs ?? CODEX_STOP_STEP_DEADLINE_MS;
-        const step = (name: string, run: () => void | Promise<void>): Promise<void> =>
-          runBoundedStopStep({ name, run, deadlineMs, logger });
+        const step = (
+          name: string,
+          run: () => void | Promise<void>,
+          stepDeadlineMs: number = deadlineMs,
+        ): Promise<void> => runBoundedStopStep({ name, run, deadlineMs: stepDeadlineMs, logger });
+        // Terminating the app-server child (SIGTERM, grace, SIGKILL, exit) needs longer than the
+        // default step bound; an injected short bound (tests) still wins.
+        const appServerMs =
+          deps.stopStepDeadlineMs === undefined
+            ? CODEX_APP_SERVER_STOP_DEADLINE_MS
+            : deps.stopStepDeadlineMs;
         // The spool first: no record is applied while the rest winds down.
         await step("spool", () => spool.stop());
-        await step("headroom", () => headroom.stop());
+        await step("headroom", () => headroom.stop(), appServerMs);
         await step("mirror", () => mirror.stop());
         await step("tokens", () => tokens.stop());
         await step("run-overlay", () => runOverlay.dispose());
-        await step("client", () => client.dispose());
+        await step("client", () => client.dispose(), appServerMs);
         // An in-flight scan chunk writes to the store: wait for it before the store may close.
         await step("tokens-idle", () => tokens.idle());
       })();

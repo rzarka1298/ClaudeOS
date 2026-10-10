@@ -29,6 +29,18 @@ export const RATE_LIMITS_READ_CAP_MS = 20_000;
 /** How long the child gets to exit after the default termination signal before it is forced. */
 export const RATE_LIMITS_KILL_WAIT_MS = 2_000;
 
+/**
+ * How long dispose() gives the child to exit after the default termination signal before the
+ * SIGKILL escalation (milliseconds). Shorter than the read-path wait so shutdown stays bounded.
+ */
+export const RATE_LIMITS_DISPOSE_GRACE_MS = 500;
+
+/**
+ * The deadline for the whole app-server termination during `stop()`: the dispose grace, the
+ * forced kill, and a margin for the exit event. Overrides the per-step default for that step.
+ */
+export const CODEX_APP_SERVER_STOP_DEADLINE_MS = 1_500;
+
 /** One line of a real reply is a few hundred bytes; anything past this is not one. */
 export const RATE_LIMITS_LINE_CAP_BYTES = 128 * 1024;
 
@@ -54,6 +66,7 @@ export interface RateLimitsClientDeps {
   readonly now?: () => number;
   readonly capMs?: number;
   readonly killWaitMs?: number;
+  readonly disposeGraceMs?: number;
   readonly lineCapBytes?: number;
   readonly totalCapBytes?: number;
   readonly logger?: RateLimitsLogger;
@@ -75,7 +88,8 @@ export type SpawnFn = (
 export interface RateLimitsClient {
   /** Never rejects. */
   read(): Promise<CodexUsageSnapshot>;
-  dispose(): void;
+  /** Resolves once the child (if any) has actually exited; SIGKILLs it after the grace. Never rejects. */
+  dispose(): Promise<void>;
 }
 
 function defaultSpawn(
@@ -104,12 +118,14 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
   const spawnChild = deps.spawn ?? defaultSpawn;
   const capMs = deps.capMs ?? RATE_LIMITS_READ_CAP_MS;
   const killWaitMs = deps.killWaitMs ?? RATE_LIMITS_KILL_WAIT_MS;
+  const disposeGraceMs = deps.disposeGraceMs ?? RATE_LIMITS_DISPOSE_GRACE_MS;
   const lineCap = deps.lineCapBytes ?? RATE_LIMITS_LINE_CAP_BYTES;
   const totalCap = deps.totalCapBytes ?? RATE_LIMITS_TOTAL_CAP_BYTES;
 
   let inFlight: Promise<CodexUsageSnapshot> | null = null;
   let abortCurrent: (() => void) | null = null;
   let disposed = false;
+  let disposing: Promise<void> | null = null;
 
   function childEnv(): Record<string, string> {
     const env: Record<string, string> = {
@@ -164,7 +180,7 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
         if (result !== null) resolve(result);
       };
       /** Records the outcome, then ends the child: default signal, wait, escalate. */
-      const settle = (snapshot: CodexUsageSnapshot): void => {
+      const settle = (snapshot: CodexUsageSnapshot, graceMs: number = killWaitMs): void => {
         if (result !== null) return;
         result = snapshot;
         clearTimeout(capTimer);
@@ -189,14 +205,14 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
             // Already gone.
           }
           backstopTimer = setTimeout(done, killWaitMs);
-        }, killWaitMs);
+        }, graceMs);
       };
-      const fail = (code: string): void => {
-        if (result === null) settle(failed(code));
+      const fail = (code: string, graceMs?: number): void => {
+        if (result === null) settle(failed(code), graceMs);
       };
 
       const capTimer = setTimeout(() => fail("timeout"), capMs);
-      abortCurrent = () => fail("disposed");
+      abortCurrent = () => fail("disposed", disposeGraceMs);
 
       child.on("error", () => {
         if (child.pid === undefined) {
@@ -296,8 +312,17 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
       return attempt;
     },
     dispose() {
-      disposed = true;
-      abortCurrent?.();
+      disposing ??= (async () => {
+        disposed = true;
+        const running = inFlight;
+        abortCurrent?.();
+        if (running !== null)
+          await running.then(
+            () => undefined,
+            () => undefined,
+          );
+      })();
+      return disposing;
     },
   };
 }

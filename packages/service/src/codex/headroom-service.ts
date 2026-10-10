@@ -58,7 +58,7 @@ export const defaultHeadroomTimers: HeadroomTimers = {
 
 export interface HeadroomServiceDeps {
   /** The RPC client; its `read()` never rejects. */
-  readonly client: { read(): Promise<CodexUsageSnapshot>; dispose(): void };
+  readonly client: { read(): Promise<CodexUsageSnapshot>; dispose(): void | Promise<void> };
   /** Persists the last live snapshot (plan 11 store). */
   readonly saveSnapshot: (snapshot: CodexUsageSnapshot) => void;
   /** The persisted snapshot, or null. */
@@ -91,7 +91,7 @@ export interface HeadroomService {
   /** Starts at most one background refresh when the cache is missing or old; returns at once. */
   refreshIfStale(): void;
   start(): void;
-  stop(): void;
+  stop(): void | Promise<void>;
 }
 
 type Available = Extract<CodexUsageSnapshot, { kind: "available" }>;
@@ -290,7 +290,7 @@ export function createHeadroomService(deps: HeadroomServiceDeps): HeadroomServic
         deps.timers.clearInterval(timerHandle);
         timerHandle = null;
       }
-      deps.client.dispose();
+      return deps.client.dispose();
     },
   };
 }
