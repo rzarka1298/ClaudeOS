@@ -94,4 +94,61 @@ describe("Codex token scanner: a shrinking or recreated rollout keeps counted hi
     expect(inputTotal(h)).toBe(200);
     expect(outcome.notScanned).toBe(0);
   });
+
+  it("recomputes when a truncated rollout regrows to EXACTLY the previous size with other content", async () => {
+    const h = setup();
+    const a = jsonl([metaLine(), first(), second()]);
+    // Same byte length, different counters: 150 -> 250.
+    const b = jsonl([
+      metaLine(),
+      first(),
+      tokenCountLine({ timestamp: at(2), total: raw(250, 0) }),
+    ]);
+    expect(Buffer.byteLength(b)).toBe(Buffer.byteLength(a));
+    h.rollouts.write(DAY, NAME, a);
+    await h.scanner.sweep();
+    expect(inputTotal(h)).toBe(150);
+
+    h.rollouts.write(DAY, NAME, jsonl([metaLine(), first()]));
+    const cut = await h.scanner.sweep();
+    expect(cut.notScanned).toBe(1);
+    expect(inputTotal(h)).toBe(150);
+
+    h.rollouts.write(DAY, NAME, b);
+    const after = await h.scanner.sweep();
+    expect(inputTotal(h)).toBe(250);
+    expect(after.notScanned).toBe(0);
+
+    h.spy.reset();
+    await h.scanner.sweep();
+    expect(h.spy.calls.readRolloutRange).toBe(0);
+  });
+
+  it("detects a same-size in-place rewrite with no truncation in between", async () => {
+    const h = setup();
+    const a = jsonl([metaLine(), first(), second()]);
+    const b = jsonl([
+      metaLine(),
+      first(),
+      tokenCountLine({ timestamp: at(2), total: raw(250, 0) }),
+    ]);
+    h.rollouts.write(DAY, NAME, a);
+    await h.scanner.sweep();
+    expect(inputTotal(h)).toBe(150);
+    await new Promise((r) => setTimeout(r, 15));
+    h.rollouts.write(DAY, NAME, b);
+    await h.scanner.sweep();
+    expect(inputTotal(h)).toBe(250);
+  });
+
+  it("keeps an unchanged rollout on the shortcut: no read on later sweeps", async () => {
+    const h = setup();
+    h.rollouts.write(DAY, NAME, jsonl([metaLine(), first(), second()]));
+    await h.scanner.sweep();
+    h.spy.reset();
+    await h.scanner.sweep();
+    await h.scanner.sweep();
+    expect(h.spy.calls.readRolloutRange).toBe(0);
+    expect(inputTotal(h)).toBe(150);
+  });
 });

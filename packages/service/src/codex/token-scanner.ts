@@ -17,9 +17,11 @@ import {
   getCollectorSetting,
   isCodexCursorStale,
   listToggleLog,
+  markCodexCursorStale,
   markCodexDayCovered,
   prepareCodexParserUpgrade,
   readCodexCursor,
+  readCodexCursorMtime,
   readCodexRecognition,
   readCodexRolloutTally,
   replaceCodexRolloutTally,
@@ -432,10 +434,12 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     if (verdict().kind === "unavailable") return { kind: "held" };
 
     let size: number;
+    let mtimeMs: number;
     try {
       const stat = port.statRollout(ref);
       if (stat === null) return { kind: "missing" };
       size = stat.size;
+      mtimeMs = stat.mtimeMs;
     } catch (err: unknown) {
       if (err instanceof CodexHomeAccessError) {
         logger.warn({ reason: err.code }, "codex rollout refused");
@@ -447,9 +451,16 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
 
     const key = cursorKeyOf(ref.path);
     const cursor = readCodexCursor(db, key);
-    // Same size as the last complete read and computed under this parser: nothing to
-    // read. A cursor kept across a parser upgrade is stale and is recomputed.
-    if (cursor !== null && cursor.size === size && !isCodexCursorStale(db, key))
+    // Same size AND same modification time as the last complete read, computed under
+    // this parser: nothing to read. A same-size rewrite changes the mtime; a cursor
+    // without a stored mtime (written before it existed) is recomputed once. A cursor
+    // kept across a parser upgrade or a truncation is stale and is recomputed.
+    if (
+      cursor !== null &&
+      cursor.size === size &&
+      !isCodexCursorStale(db, key) &&
+      readCodexCursorMtime(db, key) === mtimeMs
+    )
       return { kind: "unchanged" };
 
     // The file is now smaller than the extent last read in full (truncated or
@@ -457,6 +468,9 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     // that was already counted. The rows and the cursor (which holds that extent)
     // stay; the rollout is replaced again only once it reaches the extent again.
     if (cursor !== null && size < cursor.size) {
+      // Stale: if it later regrows to exactly the saved size, the size alone must not
+      // say unchanged. The saved size threshold is kept; a recompute clears the mark.
+      markCodexCursorStale(db, key, nowIso());
       logger.warn({ reason: "rollout-source-truncated" }, "codex rollout shrank; rows kept");
       return { kind: "not-scanned", reason: "source-truncated" };
     }
@@ -536,7 +550,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       ops.writeCodexCursor(
         db,
         key,
-        { inode: identityOf(head.subarray(0, headLength)), size, offset: consumed },
+        { inode: identityOf(head.subarray(0, headLength)), size, offset: consumed, mtimeMs },
         at,
       );
     })();

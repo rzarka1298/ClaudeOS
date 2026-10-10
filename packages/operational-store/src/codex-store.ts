@@ -520,6 +520,11 @@ export interface CodexRolloutCursor {
   readonly inode: string;
   readonly size: number;
   readonly offset: number;
+  /**
+   * The file's modification time when the cursor was written, kept beside it (not
+   * in the table, so no migration). A cursor without one is recomputed once.
+   */
+  readonly mtimeMs?: number;
 }
 
 const CURSOR_KEY_PATTERN = /^[0-9a-f]{64}$/;
@@ -569,6 +574,34 @@ export function writeCodexCursor(
   ).run(key, cursor.inode, cursor.size, cursor.offset, at);
   // A fresh cursor means the rollout was just computed: it is no longer stale.
   db.prepare("DELETE FROM collector_settings WHERE key = ?").run(CURSOR_STALE_PREFIX + key);
+  if (cursor.mtimeMs === undefined || !Number.isFinite(cursor.mtimeMs)) {
+    db.prepare("DELETE FROM collector_settings WHERE key = ?").run(CURSOR_MTIME_PREFIX + key);
+  } else {
+    setCollectorSetting(db, CURSOR_MTIME_PREFIX + key, String(cursor.mtimeMs), at);
+  }
+}
+
+/** Prefix of the per-cursor "file modification time at the last complete read" setting. */
+const CURSOR_MTIME_PREFIX = "codex_token_mtime:";
+
+/** The modification time stored with the cursor, or null when it has none (an older cursor). */
+export function readCodexCursorMtime(db: Database.Database, key: string): number | null {
+  assertCursorKey(key);
+  const row = db
+    .prepare("SELECT value FROM collector_settings WHERE key = ?")
+    .get(CURSOR_MTIME_PREFIX + key) as { value: string } | undefined;
+  if (row === undefined) return null;
+  const value = Number(row.value);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Marks a cursor stale: its rows and saved extent stay, but the rollout must be
+ * recomputed the next time it can be read in full. Cleared by {@link writeCodexCursor}.
+ */
+export function markCodexCursorStale(db: Database.Database, key: string, at: string): void {
+  assertCursorKey(key);
+  setCollectorSetting(db, CURSOR_STALE_PREFIX + key, "1", at);
 }
 
 // --- Coverage ---------------------------------------------------------------
@@ -754,6 +787,7 @@ export function resetCodexScanState(db: Database.Database): void {
   db.transaction(() => {
     db.prepare("DELETE FROM codex_rollout_cursors").run();
     db.prepare("DELETE FROM collector_settings WHERE key GLOB 'codex_token_stale:*'").run();
+    db.prepare("DELETE FROM collector_settings WHERE key GLOB 'codex_token_mtime:*'").run();
     db.prepare("DELETE FROM codex_coverage_days").run();
     db.prepare("DELETE FROM codex_recognition").run();
   })();
