@@ -20,15 +20,53 @@ const path = require("node:path");
 const RUN_ID_RE = /^[0-9]{8}T[0-9]{9}Z$/;
 const REQUEST_FILE_RE = /^[0-9]{8}T[0-9]{9}Z\.json$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const KINDS = ["review", "task", "resume"];
-// follow = tail a headless run's live log; tui = run the interactive Codex TUI as the worker.
-const MODES = ["follow", "tui"];
+const KINDS = ["review", "task", "resume", "agent"];
+// follow = tail a headless run's live log; tui = run the interactive Codex TUI as the worker;
+// agent = run `claude` or `codex` directly in a tab (protocol 2, validated argv, no shell).
+const MODES = ["follow", "tui", "agent"];
 const ROLES = ["review", "plan", "task", "chore"];
 const TTL_MS = 10 * 60 * 1000;
 const FUTURE_SKEW_MS = 60 * 1000;
 const HEARTBEAT_FRESH_MS = 90 * 1000;
 const CONTAIN_DELAY_MS = 2000;
 const CLAIMED_KEEP_MS = 24 * 60 * 60 * 1000;
+
+// Protocol 2 (agent mode). A heartbeat without `protocol` comes from an extension that
+// predates agent mode (0.1.0); the product reports that as "bridge outdated".
+const PROTOCOL_VERSION = 2;
+const CAPABILITIES = ["follow", "tui", "agent"];
+const AGENTS = ["claude", "codex"];
+const AGENT_ARGV_MAX = 32;
+const AGENT_ELEMENT_MAX = 4096;
+const AGENT_ENV_MAX = 16;
+const AGENT_ENV_VALUE_MAX = 1024;
+const AGENT_ENV_KEY_RE = /^CCC_[A-Z0-9_]+$/;
+// Compared after NFKC, lower-casing and removal of every non-alphanumeric: the Phase 4 pair
+// (@ccc/launchers FORBIDDEN_PERMISSION_TOKENS) plus the wrapper's own BANNED set, normalised.
+const BANNED_TOKENS = [
+  "dangerouslyskippermissions",
+  "bypasspermissions",
+  "dangerouslybypassapprovalsandsandbox",
+  "dangerouslybypasshooktrust",
+  "yolo",
+  "fullauto",
+  "approveforme",
+  "dangerfullaccess",
+];
+// The fixed reason vocabulary of validateAgentShape.
+const AGENT_REASONS = [
+  "bad-agent",
+  "bad-argv",
+  "argv-length",
+  "argv-element",
+  "argv-control",
+  "argv0-not-absolute",
+  "argv0-basename",
+  "banned-flag",
+  "bad-env",
+  "env-key",
+  "env-value",
+];
 
 /** The user-level bridge state dir: $XDG_STATE_HOME/codex-bridge or ~/.local/state/codex-bridge. */
 function bridgeStateDir(env = process.env, home = os.homedir()) {
@@ -95,6 +133,11 @@ function readJson(file) {
   } catch {
     return null;
   }
+}
+
+/** STUB (RED): replaced by the real shape validator in the GREEN commit. */
+function validateAgentShape() {
+  return { ok: false, reason: "bad-agent" };
 }
 
 /**
@@ -347,10 +390,27 @@ function antigravityCli(env = process.env) {
 module.exports = {
   antigravityCli,
   RUN_ID_RE,
+  REQUEST_FILE_RE,
   UUID_RE,
   KINDS,
+  MODES,
+  ROLES,
+  AGENTS,
+  PROTOCOL_VERSION,
+  CAPABILITIES,
+  AGENT_ARGV_MAX,
+  AGENT_ELEMENT_MAX,
+  AGENT_ENV_MAX,
+  AGENT_ENV_VALUE_MAX,
+  AGENT_ENV_KEY_RE,
+  AGENT_REASONS,
+  BANNED_TOKENS,
   TTL_MS,
+  FUTURE_SKEW_MS,
   HEARTBEAT_FRESH_MS,
+  CONTAIN_DELAY_MS,
+  CLAIMED_KEEP_MS,
+  validateAgentShape,
   bridgeStateDir,
   bridgeCommand,
   dirs,

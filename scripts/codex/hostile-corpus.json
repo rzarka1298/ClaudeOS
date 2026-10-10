@@ -1,0 +1,1905 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "control-nul-middle",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u0000b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-nul-leading",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u0000--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-nul-trailing",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u0000"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-nul-argv0",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude\u0000"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-nul-only",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u0000"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-cr-middle",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\rb"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-cr-leading",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\r--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-cr-trailing",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\r"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-cr-argv0",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude\r"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-cr-only",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\r"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-lf-middle",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\nb"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-lf-leading",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\n--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-lf-trailing",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\n"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-lf-argv0",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude\n"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-lf-only",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\n"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-esc-middle",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u001bb"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-esc-leading",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u001b--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-esc-trailing",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u001b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-esc-argv0",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude\u001b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-esc-only",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u001b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-del-middle",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u007fb"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-del-leading",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u007f--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-del-trailing",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u007f"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-del-argv0",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude\u007f"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-del-only",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u007f"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ls-middle",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u2028b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ls-leading",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u2028--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ls-trailing",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u2028"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ls-argv0",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude\u2028"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ls-only",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u2028"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ps-middle",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u2029b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ps-leading",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u2029--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ps-trailing",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u2029"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ps-argv0",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude\u2029"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-ps-only",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u2029"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-tab-middle",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\tb"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-tab-leading",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\t--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-tab-trailing",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\t"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-tab-argv0",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude\t"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-tab-only",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\t"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-c1-nel-middle",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u0085b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-c1-nel-leading",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u0085--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-c1-nel-trailing",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u0085"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-c1-nel-argv0",
+      "category": "control-char",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude\u0085"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "control-c1-nel-only",
+      "category": "control-char",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "\u0085"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-control"
+    },
+    {
+      "id": "empty-element-last",
+      "category": "empty-element",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", ""],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-element"
+    },
+    {
+      "id": "empty-element-middle",
+      "category": "empty-element",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--model", "", "x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-element"
+    },
+    {
+      "id": "non-string-element",
+      "category": "empty-element",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", 7],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-element"
+    },
+    {
+      "id": "null-element",
+      "category": "empty-element",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", null],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-element"
+    },
+    {
+      "id": "oversize-element-4097",
+      "category": "oversize-element",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-element"
+    },
+    {
+      "id": "oversize-element-argv0",
+      "category": "oversize-element",
+      "agent": "codex",
+      "argv": [
+        "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/codex"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-element"
+    },
+    {
+      "id": "accept-element-4096",
+      "category": "accept",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "oversize-argv-33",
+      "category": "oversize-argv",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "a0",
+        "a1",
+        "a2",
+        "a3",
+        "a4",
+        "a5",
+        "a6",
+        "a7",
+        "a8",
+        "a9",
+        "a10",
+        "a11",
+        "a12",
+        "a13",
+        "a14",
+        "a15",
+        "a16",
+        "a17",
+        "a18",
+        "a19",
+        "a20",
+        "a21",
+        "a22",
+        "a23",
+        "a24",
+        "a25",
+        "a26",
+        "a27",
+        "a28",
+        "a29",
+        "a30",
+        "a31"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-length"
+    },
+    {
+      "id": "empty-argv",
+      "category": "oversize-argv",
+      "agent": "codex",
+      "argv": [],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-length"
+    },
+    {
+      "id": "argv-not-array-string",
+      "category": "oversize-argv",
+      "agent": "claude",
+      "argv": "/Users/USERNAME/.local/bin/claude",
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "argv-not-array-null",
+      "category": "oversize-argv",
+      "agent": "claude",
+      "argv": null,
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "argv-not-array-object",
+      "category": "oversize-argv",
+      "agent": "codex",
+      "argv": {
+        "0": "/Users/USERNAME/.local/bin/codex",
+        "length": 1
+      },
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "accept-argv-32",
+      "category": "accept",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "a0",
+        "a1",
+        "a2",
+        "a3",
+        "a4",
+        "a5",
+        "a6",
+        "a7",
+        "a8",
+        "a9",
+        "a10",
+        "a11",
+        "a12",
+        "a13",
+        "a14",
+        "a15",
+        "a16",
+        "a17",
+        "a18",
+        "a19",
+        "a20",
+        "a21",
+        "a22",
+        "a23",
+        "a24",
+        "a25",
+        "a26",
+        "a27",
+        "a28",
+        "a29",
+        "a30"
+      ],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "argv0-empty",
+      "category": "empty-argv0",
+      "agent": "claude",
+      "argv": [""],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-element"
+    },
+    {
+      "id": "argv0-empty-with-args",
+      "category": "empty-argv0",
+      "agent": "codex",
+      "argv": ["", "--model", "x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv-element"
+    },
+    {
+      "id": "argv0-relative-bare",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": ["claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-relative-dot-slash",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": ["./claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-relative-relative-dir",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": ["bin/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-relative-tilde",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": ["~/.local/bin/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-relative-dot-dot",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": ["../claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-relative-space-prefixed",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": [" /Users/USERNAME/.local/bin/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-dot-segment",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/./bin/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-dotdot-segment",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/../bin/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-empty-segment",
+      "category": "relative-argv0",
+      "agent": "codex",
+      "argv": ["//Users/USERNAME/bin/codex"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-trailing-slash",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/bin/claude/"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "argv0-root-only",
+      "category": "relative-argv0",
+      "agent": "claude",
+      "argv": ["/"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "basename-trailing-space",
+      "category": "basename-mismatch",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude "],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "basename-capitalised",
+      "category": "basename-mismatch",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/Claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "basename-upper",
+      "category": "basename-mismatch",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/CODEX"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "basename-extension-sh",
+      "category": "basename-mismatch",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex.sh"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "basename-extension-exe",
+      "category": "basename-mismatch",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/bin/claude.exe"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "basename-prefix",
+      "category": "basename-mismatch",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/bin/myclaude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "basename-suffix-dash",
+      "category": "basename-mismatch",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/bin/claude-code"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "basename-shell",
+      "category": "basename-mismatch",
+      "agent": "claude",
+      "argv": ["/bin/sh"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "basename-traversal",
+      "category": "basename-mismatch",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/bin/claude/../sh"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-not-absolute"
+    },
+    {
+      "id": "basename-nbsp",
+      "category": "basename-mismatch",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/bin/codex\u00a0"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "agent-claude-runs-codex",
+      "category": "agent-basename-disagree",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/codex"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "agent-codex-runs-claude",
+      "category": "agent-basename-disagree",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "argv0-basename"
+    },
+    {
+      "id": "agent-unknown",
+      "category": "agent-basename-disagree",
+      "agent": "bash",
+      "argv": ["/bin/bash"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-agent"
+    },
+    {
+      "id": "agent-missing",
+      "category": "agent-basename-disagree",
+      "agent": null,
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-agent"
+    },
+    {
+      "id": "agent-capitalised",
+      "category": "agent-basename-disagree",
+      "agent": "Claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-agent"
+    },
+    {
+      "id": "agent-number",
+      "category": "agent-basename-disagree",
+      "agent": 1,
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-agent"
+    },
+    {
+      "id": "ban-skip-perms-flag",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--dangerously-skip-permissions"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-skip-perms-underscore",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--dangerously_skip_permissions"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-skip-perms-upper",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--DANGEROUSLY-SKIP-PERMISSIONS"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-skip-perms-value",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--dangerously-skip-permissions=true"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-skip-perms-allow",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--allow-dangerously-skip-permissions"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-skip-perms-codex-agent",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--dangerously-skip-permissions"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-skip-perms-spaced",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "dangerously skip permissions"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-bypass-mode-two-elements",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--permission-mode", "bypassPermissions"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-bypass-mode-equals",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--permission-mode=bypassPermissions"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-bypass-mode-lower",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--permission-mode", "bypasspermissions"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-bypass-mode-snake",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--permission-mode", "bypass_permissions"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-bypass-settings-json",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--settings",
+        "{\"permissions\":{\"defaultMode\":\"bypassPermissions\"}}"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-bypass-fullwidth",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--permission-mode",
+        "\uff42\uff59\uff50\uff41\uff53\uff53\uff30\uff45\uff52\uff4d\uff49\uff53\uff53\uff49\uff4f\uff4e\uff53"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-approvals-sandbox-flag",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--dangerously-bypass-approvals-and-sandbox"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-approvals-sandbox-upper",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--Dangerously-Bypass-Approvals-And-Sandbox"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-approvals-sandbox-underscore",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--dangerously_bypass_approvals_and_sandbox"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-approvals-sandbox-claude-agent",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--dangerously-bypass-approvals-and-sandbox"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-hook-trust-flag",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--dangerously-bypass-hook-trust"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-hook-trust-value",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--dangerously-bypass-hook-trust=1"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-hook-trust-spaced",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--dangerously bypass hook trust"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-yolo-flag",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--yolo"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-yolo-value",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--yolo=true"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-yolo-fullwidth",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--\uff59\uff4f\uff4c\uff4f"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-yolo-zero-width",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--yo\u200blo"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-yolo-soft-hyphen",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--yo\u00adlo"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-yolo-upper",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--YOLO"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-yolo-claude-agent",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--yolo"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-full-auto-flag",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--full-auto"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-full-auto-underscore",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--full_auto"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-full-auto-upper",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--FULL-AUTO"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-full-auto-camel",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "fullAuto"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-approve-for-me-flag",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--approve-for-me"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-approve-for-me-underscore",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--approve_for_me"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-approve-for-me-camel",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--approveForMe"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-danger-full-access-bare",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "danger-full-access"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-danger-full-access-short-flag",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "-sdanger-full-access"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-danger-full-access-sandbox-equals",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--sandbox=danger-full-access"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-danger-full-access-sandbox-two",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--sandbox", "danger-full-access"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-danger-full-access-config",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "-c", "sandbox_mode=\"danger-full-access\""],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-danger-full-access-underscore",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--sandbox", "danger_full_access"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-danger-full-access-camel",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--sandbox", "dangerFullAccess"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-in-argv0-path",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/yolo/claude"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "ban-last-of-many",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": [
+        "/Users/USERNAME/.local/bin/codex",
+        "--model",
+        "x",
+        "-C",
+        "/Users/USERNAME/p",
+        "--full-auto"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "env-key-lowercase",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "ccc_x": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-mixed-case",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_x": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-trailing-newline",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X\n": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-leading-newline",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "\nCCC_X": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-dash",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC-X": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-no-underscore",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCCX": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-empty-suffix",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-path",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "PATH": "/usr/bin"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-ld-preload",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "LD_PRELOAD": "/tmp/x.so"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-dyld",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "DYLD_INSERT_LIBRARIES": "/tmp/x.dylib"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-node-options",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "NODE_OPTIONS": "--require /tmp/x.js"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-home",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "HOME": "/tmp"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-space",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X Y": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-dot",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X.Y": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-empty-key",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-proto",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "__proto__": "1"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-case-duplicate",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "1",
+        "ccc_x": "2"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-key-one-bad-among-good",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_A": "1",
+        "CCC_B": "2",
+        "bad": "3"
+      },
+      "expect": "reject",
+      "reason": "env-key"
+    },
+    {
+      "id": "env-too-many",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_K0": "1",
+        "CCC_K1": "1",
+        "CCC_K2": "1",
+        "CCC_K3": "1",
+        "CCC_K4": "1",
+        "CCC_K5": "1",
+        "CCC_K6": "1",
+        "CCC_K7": "1",
+        "CCC_K8": "1",
+        "CCC_K9": "1",
+        "CCC_K10": "1",
+        "CCC_K11": "1",
+        "CCC_K12": "1",
+        "CCC_K13": "1",
+        "CCC_K14": "1",
+        "CCC_K15": "1",
+        "CCC_K16": "1"
+      },
+      "expect": "reject",
+      "reason": "bad-env"
+    },
+    {
+      "id": "accept-env-16",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_K0": "1",
+        "CCC_K1": "1",
+        "CCC_K2": "1",
+        "CCC_K3": "1",
+        "CCC_K4": "1",
+        "CCC_K5": "1",
+        "CCC_K6": "1",
+        "CCC_K7": "1",
+        "CCC_K8": "1",
+        "CCC_K9": "1",
+        "CCC_K10": "1",
+        "CCC_K11": "1",
+        "CCC_K12": "1",
+        "CCC_K13": "1",
+        "CCC_K14": "1",
+        "CCC_K15": "1"
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "env-null",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": null,
+      "expect": "reject",
+      "reason": "bad-env"
+    },
+    {
+      "id": "env-array",
+      "category": "env-key",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": ["CCC_X=1"],
+      "expect": "reject",
+      "reason": "bad-env"
+    },
+    {
+      "id": "env-string",
+      "category": "env-key",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex"],
+      "env": "CCC_X=1",
+      "expect": "reject",
+      "reason": "bad-env"
+    },
+    {
+      "id": "env-missing",
+      "category": "env-key",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex"],
+      "expect": "reject",
+      "reason": "bad-env"
+    },
+    {
+      "id": "env-value-control-nul",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "a\u0000b"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-control-cr",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "a\rb"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-control-lf",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "a\nb"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-control-esc",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "a\u001bb"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-control-del",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "a\u007fb"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-control-ls",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "a\u2028b"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-control-ps",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "a\u2029b"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-control-tab",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "a\tb"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-control-c1-nel",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "a\u0085b"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-oversize-1025",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-number",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": 1
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-null",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": null
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-boolean",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": true
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-object",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": {
+          "a": 1
+        }
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "env-value-array",
+      "category": "env-value",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": ["a"]
+      },
+      "expect": "reject",
+      "reason": "env-value"
+    },
+    {
+      "id": "accept-env-value-1024",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "accept-env-value-empty",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_X": ""
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "accept-claude-empty-args",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-codex-empty-args",
+      "category": "accept",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-claude-plan-mode",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--permission-mode", "plan"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-claude-model",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "claude-sonnet-4-5"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-codex-model",
+      "category": "accept",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--model", "gpt-5.4"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-codex-working-dir",
+      "category": "accept",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "-C", "/Users/USERNAME/projects/p"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-claude-add-dir",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--add-dir", "/Users/USERNAME/projects/p"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-path-spaces-quotes",
+      "category": "accept",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--add-dir",
+        "/Users/USERNAME/My Projects/it's \"quoted\" dir"
+      ],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-resume-uuid",
+      "category": "accept",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--resume",
+        "11111111-2222-3333-4444-555555555555"
+      ],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-launch-env",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {
+        "CCC_RUN_ID": "20261006T120000123Z",
+        "CCC_LAUNCH_SOURCE": "pair"
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "accept-codex-pair-env",
+      "category": "accept",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex"],
+      "env": {
+        "CCC_LAUNCH_SOURCE": "pair",
+        "CCC_PAIR_ID": "x_1"
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "accept-non-ascii-arg",
+      "category": "accept",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--append-system-prompt",
+        "Antwort auf Deutsch: fuer Maenner"
+      ],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-unicode-path",
+      "category": "accept",
+      "agent": "codex",
+      "argv": [
+        "/Users/USERNAME/.local/bin/codex",
+        "-C",
+        "/Users/USERNAME/projekte/uber-\u00fcn\u00ef"
+      ],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-sandbox-workspace-write",
+      "category": "accept",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--sandbox", "workspace-write"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-read-only-sandbox",
+      "category": "accept",
+      "agent": "codex",
+      "argv": [
+        "/Users/USERNAME/.local/bin/codex",
+        "--sandbox",
+        "read-only",
+        "--ask-for-approval",
+        "on-request"
+      ],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-symlink-style-path",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-versioned-dir-path",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/share/claude/versions/2.1.0/claude"],
+      "env": {},
+      "expect": "accept"
+    }
+  ]
+}

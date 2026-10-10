@@ -345,3 +345,197 @@ describe("codexHome", () => {
     }
   });
 });
+
+describe("agent mode requests (protocol 2)", () => {
+  const AGENT_RUN = "20261006T120000123Z";
+  const AGENT_NOW = Date.parse("2026-10-06T12:00:05.000Z");
+
+  function agentWorld(agent: "claude" | "codex" = "claude") {
+    const state = tmp("ccc-bridge-state-");
+    const project = tmp("ccc-bridge-project-");
+    const bin = tmp("ccc-bridge-bin-");
+    core.ensureDirs(state);
+    const exe = join(bin, agent);
+    writeFileSync(exe, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const request = (over: Record<string, unknown> = {}) => ({
+      runId: AGENT_RUN,
+      kind: "agent",
+      mode: "agent",
+      agent,
+      projectRoot: project,
+      cwd: project,
+      argv: [exe, "--permission-mode", "plan"],
+      env: { CCC_RUN_ID: "x" },
+      sessionId: null,
+      liveLog: null,
+      pid: null,
+      createdAt: "2026-10-06T12:00:00.000Z",
+      protocol: 2,
+      ...over,
+    });
+    return { state, project, bin, exe, request };
+  }
+
+  it("tracer: writeRequest, a window claim, readClaimed and a shell-free terminal", () => {
+    const w = agentWorld();
+    const file = core.writeRequest(w.state, w.request());
+    expect(file).toBe(join(w.state, "requests", `${AGENT_RUN}.json`));
+
+    const claimed = core.scanRequests({
+      stateDir: w.state,
+      folders: [w.project],
+      now: AGENT_NOW,
+    });
+    expect(claimed.map((r) => r.runId)).toEqual([AGENT_RUN]);
+    expect(readdirSync(join(w.state, "requests"))).toEqual([]);
+
+    const read = core.readClaimed(w.state, AGENT_RUN);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.request).toMatchObject({
+      runId: AGENT_RUN,
+      kind: "agent",
+      mode: "agent",
+      agent: "claude",
+      projectRoot: w.project,
+      cwd: w.project,
+      argv: [w.exe, "--permission-mode", "plan"],
+      env: { CCC_RUN_ID: "x" },
+      protocol: 2,
+    });
+    expect(core.terminalOptions(read.request, "/h/.local/bin/codex-bridge")).toEqual({
+      name: "Claude Code",
+      shellPath: "/h/.local/bin/codex-bridge",
+      shellArgs: ["agent", AGENT_RUN],
+      cwd: w.project,
+      isTransient: true,
+    });
+  });
+
+  it("names a codex tab Codex and still passes only the two fixed arguments", () => {
+    const w = agentWorld("codex");
+    const v = core.validateRequest(w.request({ argv: [w.exe] }), {
+      stateDir: w.state,
+      now: AGENT_NOW,
+    });
+    if (!v.ok) throw new Error(v.reason);
+    const t = core.terminalOptions(v.request, "/h/.local/bin/codex-bridge");
+    expect(t.name).toBe("Codex");
+    expect(t.shellArgs).toEqual(["agent", AGENT_RUN]);
+    expect(Object.keys(t).sort()).toEqual(["cwd", "isTransient", "name", "shellArgs", "shellPath"]);
+  });
+
+  it("accepts an absent cwd (defaults to the project root) and an absent liveLog, sessionId and pid", () => {
+    const w = agentWorld();
+    const r = w.request();
+    const { cwd: _c, liveLog: _l, sessionId: _s, pid: _p, ...bare } = r;
+    const v = core.validateRequest(bare, { stateDir: w.state, now: AGENT_NOW });
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.request.cwd).toBe(w.project);
+  });
+
+  it.each([
+    ["an unknown extra top-level key", { extra: 1 }],
+    ["a role key", { role: "review" }],
+    ["a promptFile key", { promptFile: null }],
+    ["a codexHome key", { codexHome: null }],
+    ["a liveLog", { liveLog: "/tmp/x.log" }],
+    ["a non-null sessionId", { sessionId: SESSION }],
+    ["a non-null pid", { pid: 5 }],
+    ["protocol 1", { protocol: 1 }],
+    ["protocol 3", { protocol: 3 }],
+    ["a string protocol", { protocol: "2" }],
+    ["a missing protocol", { protocol: undefined }],
+    ["kind agent with mode follow", { mode: "follow" }],
+    ["kind agent with mode tui", { mode: "tui" }],
+    ["kind agent with a missing mode", { mode: undefined }],
+    ["mode agent with kind review", { kind: "review" }],
+    ["mode agent with kind task", { kind: "task" }],
+    ["a bad run id", { runId: "../../x" }],
+    ["an unknown agent", { agent: "bash" }],
+    ["a relative project root", { projectRoot: "relative" }],
+    ["a missing cwd directory", { cwd: "/nonexistent/cwd" }],
+    ["a createdAt in the future", { createdAt: "2026-10-06T13:00:00.000Z" }],
+    ["a bad createdAt", { createdAt: "yesterday" }],
+    ["a bypass flag", { argv: ["__EXE__", "--dangerously-skip-permissions"] }],
+    ["a bad env key", { env: { PATH: "/usr/bin" } }],
+    ["a control character in argv", { argv: ["__EXE__", "a\nb"] }],
+    ["a relative argv0", { argv: ["claude"] }],
+    ["an argv0 that does not exist", { argv: ["/nonexistent/dir/claude"] }],
+  ])("refuses %s", (_label, over) => {
+    const w = agentWorld();
+    const patched = JSON.parse(JSON.stringify(over).replaceAll("__EXE__", w.exe));
+    const request = { ...w.request(), ...patched };
+    for (const k of Object.keys(over)) {
+      if ((over as Record<string, unknown>)[k] === undefined) delete (request as never)[k];
+    }
+    const v = core.validateRequest(request, { stateDir: w.state, now: AGENT_NOW });
+    expect(v.ok).toBe(false);
+  });
+
+  it("refuses an argv0 that is a directory or not executable", () => {
+    const w = agentWorld();
+    const plain = join(w.bin, "claude-plain");
+    mkdirSync(join(w.bin, "d"));
+    const dir = join(w.bin, "d", "claude");
+    mkdirSync(dir);
+    writeFileSync(plain, "x", { mode: 0o644 });
+    for (const argv of [[dir], [plain]]) {
+      expect(
+        core.validateRequest(w.request({ argv }), { stateDir: w.state, now: AGENT_NOW }).ok,
+      ).toBe(false);
+    }
+  });
+
+  it("scanRequests discards a hostile agent request with a reason and leaves a good one", () => {
+    const w = agentWorld();
+    core.writeRequest(w.state, w.request({ argv: [w.exe, "--yolo"] }));
+    const log: string[] = [];
+    const got = core.scanRequests({
+      stateDir: w.state,
+      folders: [w.project],
+      now: AGENT_NOW,
+      log: (m) => log.push(m),
+    });
+    expect(got).toEqual([]);
+    expect(readdirSync(join(w.state, "requests"))).toEqual([]);
+    expect(log).toHaveLength(1);
+    expect(log[0]).toContain("banned-flag");
+    expect(log[0]).not.toContain("yolo");
+  });
+
+  it("leaves follow and tui behaviour alone: a follow request may still carry unknown keys", () => {
+    const w = world();
+    const v = core.validateRequest(w.request({ extra: "kept-ignored", protocol: 1 }), {
+      stateDir: w.state,
+      now: NOW,
+    });
+    expect(v.ok).toBe(true);
+    expect(core.MODES).toEqual(["follow", "tui", "agent"]);
+    expect(core.KINDS).toEqual(["review", "task", "resume", "agent"]);
+  });
+});
+
+describe("protocol constants", () => {
+  it("exports the values the TypeScript mirror is parity-tested against", () => {
+    expect(core.PROTOCOL_VERSION).toBe(2);
+    expect(core.CAPABILITIES).toEqual(["follow", "tui", "agent"]);
+    expect(core.AGENTS).toEqual(["claude", "codex"]);
+    expect(core.ROLES).toEqual(["review", "plan", "task", "chore"]);
+    expect(core.FUTURE_SKEW_MS).toBe(60_000);
+    expect(core.CONTAIN_DELAY_MS).toBe(2000);
+    expect(core.CLAIMED_KEEP_MS).toBe(24 * 60 * 60 * 1000);
+    expect(core.TTL_MS).toBe(10 * 60 * 1000);
+    expect(core.HEARTBEAT_FRESH_MS).toBe(90 * 1000);
+    expect(core.REQUEST_FILE_RE.test(`${RUN}.json`)).toBe(true);
+    expect(core.REQUEST_FILE_RE.test(`.${RUN}.json`)).toBe(false);
+    expect([
+      core.AGENT_ARGV_MAX,
+      core.AGENT_ELEMENT_MAX,
+      core.AGENT_ENV_MAX,
+      core.AGENT_ENV_VALUE_MAX,
+    ]).toEqual([32, 4096, 16, 1024]);
+    expect(core.AGENT_ENV_KEY_RE.test("CCC_RUN_ID")).toBe(true);
+    expect(core.AGENT_ENV_KEY_RE.test("CCC_run")).toBe(false);
+  });
+});
