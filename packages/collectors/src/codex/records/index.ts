@@ -29,6 +29,12 @@ export {
   type RolloutStats,
 } from "./rollout.js";
 export {
+  type NewestRolloutRateLimits,
+  newestRolloutRateLimits,
+  ROLLOUT_FALLBACK_WINDOW_MS,
+  rolloutFallbackSnapshot,
+} from "./rollout-fallback.js";
+export {
   buildThreadsSelect,
   type CanaryRow,
   type CanaryVerdict,
