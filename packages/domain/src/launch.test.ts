@@ -690,4 +690,29 @@ describe("additive configuration and detection views (D-11, D-12, CODEX-03)", ()
       }).success,
     ).toBe(false);
   });
+
+  it("DetectionResponseSchema accepts the versions CODEX_VERSION_PATTERN accepts (prerelease) and keeps the length bound", () => {
+    const withVersion = (version: string | null) => ({
+      ...olderDetection,
+      codex: {
+        executables: [
+          {
+            candidateId: "c1",
+            displayPath: "~/.local/bin/codex",
+            version,
+            location: "user-install",
+          },
+        ],
+        doctor: "unknown",
+      },
+    });
+    for (const version of ["0.159.2", "0.155.0-alpha.9.2", "1.0-rc1", null]) {
+      expect(DetectionResponseSchema.safeParse(withVersion(version)).success, String(version)).toBe(
+        true,
+      );
+    }
+    for (const version of ["", "abc", "0.1.2-", "0.1.2-a b", "1.2.3.4.5", `1.${"2".repeat(70)}`]) {
+      expect(DetectionResponseSchema.safeParse(withVersion(version)).success, version).toBe(false);
+    }
+  });
 });

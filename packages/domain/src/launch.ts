@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
+import { CODEX_VERSION_PATTERN } from "./codex-usage.js";
 import type { ProjectId, RunId } from "./ids.js";
 import { AbsolutePathSchema, hasControlCharacter, ProjectIdSchema } from "./projects.js";
 import { GuardConflictSchema, type LaunchChoice, LaunchChoiceSchema } from "./session-actions.js";
@@ -522,11 +523,7 @@ export const DetectedCodexExecutableSchema = z
   .object({
     candidateId: z.string().min(1).max(64),
     displayPath: z.string().min(1).max(4096),
-    version: z
-      .string()
-      .max(32)
-      .regex(/^[0-9]+(?:\.[0-9]+){1,3}$/)
-      .nullable(),
+    version: z.string().max(64).regex(CODEX_VERSION_PATTERN).nullable(),
     location: z.enum(CODEX_LOCATIONS),
   })
   .strict();
