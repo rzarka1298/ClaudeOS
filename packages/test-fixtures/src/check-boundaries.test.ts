@@ -4,8 +4,9 @@
 // match their REAL paths only. A substring match let any other path that
 // merely contained `lint-fixtures/` escape the scan (judge-r1 finding 9).
 
+import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { type GateRepo, gateRepo } from "./gate-repo.js";
+import { type GateRepo, gateRepo, REPO_ROOT } from "./gate-repo.js";
 
 const SCRIPT = "scripts/check-boundaries.sh";
 
@@ -616,6 +617,33 @@ const CODEX_DESCRIPTION = "names a Codex credential or config file";
 const CODEX_REQUIREMENT = "CODEX-09";
 const CRED_FILE = `${"auth"}${"."}${"json"}`;
 const CREDENTIAL_LITERAL = `export const credentialPath = "~/.codex/${CRED_FILE}";\n`;
+const CONFIG_FILE = `${"config"}${"."}${"toml"}`;
+const CONFIG_LITERAL = `export const cfgPath = "~/.codex/${CONFIG_FILE}";\n`;
+const RESET_CREDIT_PREFIX = `${"rateLimit"}${"ResetCredit"}`;
+const CONSUME_METHOD_LITERAL = `export const method = "account/${RESET_CREDIT_PREFIX}/consume";\n`;
+const SLASH_CONSUME_LITERAL = `export const method = "wallet/${"consume"}";\n`;
+const USAGE_REQUEST_LITERAL = `export const request = { method: "account/rateLimits/read", params: { exclude${"ResetCredit"}Details: true, supportsLunaReserve: false } };\n`;
+// A TOML-style assignment (bare and inside a string) and the command-line override form.
+const NOTIFY_WRITES = [
+  `notify ${"="} ["/bin/hook"]\n`,
+  `notify${"="}"/bin/hook"\n`,
+  `export const args = ["-c", 'notify${"="}["/bin/hook"]'];\n`,
+  `export const toml = 'notify ${"="} ["/bin/hook"]';\n`,
+];
+
+/** The same literal where every exemption of the rule applies: each map is one tracked tree. */
+const commented = (literal: string): string =>
+  `${literal
+    .trim()
+    .split("\n")
+    .map((line) => `// ${line}`)
+    .join("\n")}\nexport const x = 1;\n`;
+const EXEMPT_PLACEMENTS = (literal: string): Record<string, string>[] => [
+  { "packages/service/src/codex/doc.ts": commented(literal) },
+  { "packages/service/src/codex/reader.test.ts": literal },
+  { "packages/service/src/test-support/decoy.ts": literal },
+  { "packages/test-fixtures/src/codex-decoy.ts": literal },
+];
 
 describe("check-boundaries.sh Codex credential literal (D-26, CODEX-09)", () => {
   it("fires on the credential file name in a service source file and names its own description", () => {
@@ -680,4 +708,120 @@ describe("check-boundaries.sh Codex credential literal (D-26, CODEX-09)", () => 
     expect(result.out).not.toContain(CODEX_DESCRIPTION);
     expect(result.status).toBe(0);
   });
+
+  // --- config file, reset-credit consume RPC and notify write (Task 2) ---
+
+  it("fires on the Codex config file name and is quiet where the credential literal is exempt", () => {
+    const fired = backstop({ "packages/service/src/codex/cfg.ts": CONFIG_LITERAL });
+    expect(fired.status).toBe(1);
+    expect(fired.out).toContain(CODEX_DESCRIPTION);
+    expect(fired.out).toContain("packages/service/src/codex/cfg.ts");
+    for (const files of EXEMPT_PLACEMENTS(CONFIG_LITERAL)) {
+      const quiet = backstop(files);
+      expect(quiet.out).not.toContain(CODEX_DESCRIPTION);
+      expect(quiet.status).toBe(0);
+    }
+  });
+
+  it("fires on the reset-credit consume method by its prefix and by a slash-consume string", () => {
+    for (const [name, literal] of [
+      ["method", CONSUME_METHOD_LITERAL],
+      ["slash", SLASH_CONSUME_LITERAL],
+    ] as const) {
+      const path = `packages/service/src/codex/${name}.ts`;
+      const result = backstop({ [path]: literal });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain(CODEX_DESCRIPTION);
+      expect(result.out).toContain(path);
+    }
+    for (const files of EXEMPT_PLACEMENTS(CONSUME_METHOD_LITERAL)) {
+      const quiet = backstop(files);
+      expect(quiet.out).not.toContain(CODEX_DESCRIPTION);
+      expect(quiet.status).toBe(0);
+    }
+  });
+
+  it("is quiet on the usage request parameter and on the read method", () => {
+    const result = backstop({
+      "packages/service/src/codex/read.ts": USAGE_REQUEST_LITERAL,
+    });
+    expect(result.out).not.toContain(CODEX_DESCRIPTION);
+    expect(result.status).toBe(0);
+  });
+
+  it("is quiet on a slash segment that merely starts with consume", () => {
+    const result = backstop({
+      "packages/service/src/codex/ok.ts": `export const m = "account/consumed";\nexport const n = "consume/all";\n`,
+    });
+    expect(result.out).not.toContain(CODEX_DESCRIPTION);
+    expect(result.status).toBe(0);
+  });
+
+  it("fires on a TOML-style notify assignment and the command-line override in non-plugin packages", () => {
+    for (const pkg of ["service", "collectors", "launchers", "operational-store"]) {
+      for (const [i, literal] of NOTIFY_WRITES.entries()) {
+        const path = `packages/${pkg}/src/notify-${i}.ts`;
+        const result = backstop({ [path]: literal });
+        expect(result.status).toBe(1);
+        expect(result.out).toContain(CODEX_DESCRIPTION);
+        expect(result.out).toContain(path);
+      }
+    }
+  });
+
+  it("is quiet for notify written as a callback, a call or a comparison, and for a plugin assignment", () => {
+    const quietFiles = {
+      "packages/plugin/src/widgets/card.ts": `export function show(notify: (m: string) => void): void {\n  notify("hi");\n}\nconst props = { notify: () => undefined };\nvoid props;\n`,
+      "packages/plugin/src/widgets/assign.ts": NOTIFY_WRITES[0] ?? "",
+      "packages/service/src/alerts.ts": `export function raise(deps: Deps): void {\n  deps.notify("hi");\n  notify(\`x\`);\n  if (mode === notify) return;\n  const handler = notify => notify;\n  void handler;\n}\n`,
+      "packages/service/src/names.ts": `const denotify = [1];\nconst notifyAll = "x";\nconst notified = 'y';\nvoid denotify;\nvoid notifyAll;\nvoid notified;\n`,
+    };
+    for (const [path, contents] of Object.entries(quietFiles)) {
+      const result = backstop({ [path]: contents });
+      expect(result.out).not.toContain(CODEX_DESCRIPTION);
+      expect(result.status).toBe(0);
+    }
+  });
+
+  it("is quiet for a notify write in a comment, a test file, a test-support folder and the test-fixtures package", () => {
+    const literal = NOTIFY_WRITES[0] ?? "";
+    for (const files of EXEMPT_PLACEMENTS(literal)) {
+      const quiet = backstop(files);
+      expect(quiet.out).not.toContain(CODEX_DESCRIPTION);
+      expect(quiet.status).toBe(0);
+    }
+  });
+
+  it("fires each family alone and reports only the one rule", () => {
+    for (const literal of [
+      CREDENTIAL_LITERAL,
+      CONFIG_LITERAL,
+      CONSUME_METHOD_LITERAL,
+      NOTIFY_WRITES[0] ?? "",
+    ]) {
+      const result = backstop({ "packages/service/src/codex/one.ts": literal });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain(CODEX_DESCRIPTION);
+      expect(firedDescriptions(result.out)).toEqual([]);
+      expect(result.out.match(/BOUNDARY VIOLATION/g)).toHaveLength(1);
+    }
+  });
+
+  it("reports each offending line of a file naming all four families exactly once", () => {
+    const path = "packages/service/src/codex/all.ts";
+    const result = backstop({
+      [path]: `${CREDENTIAL_LITERAL}${CONFIG_LITERAL}${CONSUME_METHOD_LITERAL}${NOTIFY_WRITES[0] ?? ""}`,
+    });
+    expect(result.status).toBe(1);
+    expect(result.out.match(/BOUNDARY VIOLATION/g)).toHaveLength(1);
+    const hitLines = result.out.split("\n").filter((line) => line.startsWith(`${path}:`));
+    expect(hitLines.map((line) => line.split(":")[1])).toEqual(["1", "2", "3", "4"]);
+  });
+
+  it("stays green over the real repository tree", () => {
+    const run = spawnSync("sh", [SCRIPT], { cwd: REPO_ROOT, encoding: "utf8" });
+    const out = `${run.stdout}${run.stderr}`;
+    expect(out).not.toContain(CODEX_DESCRIPTION);
+    expect(run.status).toBe(0);
+  }, 240_000);
 });
