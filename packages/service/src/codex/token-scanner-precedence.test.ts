@@ -118,6 +118,47 @@ const SCENARIOS: readonly Scenario[] = [
     expected: 200,
   },
   {
+    name: "off cumulative record defines the cut: per-turn 100 (on), cum 200 (off), cum 300 (on) => 200",
+    lines: [pt(1, t(10, 0, 50), 100), cum(t(10, 2, 30), 200), cum(t(10, 4, 10), 300)],
+    off: [[t(10, 2), t(10, 3)]],
+    expected: 200,
+  },
+  {
+    name: "off per-turn increment under an on cumulative: per-turn 100 (on), 200 (off), cum 300 (on) => 200",
+    lines: [pt(1, t(10, 0, 50), 100), pt(1, t(10, 2, 30), 200), cum(t(10, 4, 10), 300)],
+    off: [[t(10, 2), t(10, 3)]],
+    expected: 200,
+  },
+  {
+    name: "off per-turn growth inside a cumulative-only thread: cum 100 (on), per-turn 150 (off), cum 250 (on) => 100",
+    lines: [cum(t(10, 0, 50), 100), pt(1, t(10, 2, 30), 150), cum(t(10, 4, 10), 250)],
+    off: [[t(10, 2), t(10, 3)]],
+    expected: 100,
+  },
+  {
+    name: "off cumulative then a new on turn: cum 100 (on), cum 200 (off), new per-turn 50 (on) => 150",
+    lines: [cum(t(10, 0, 50), 100), cum(t(10, 2, 30), 200), pt(1, t(10, 4, 0), 50)],
+    off: [[t(10, 2), t(10, 3)]],
+    expected: 150,
+  },
+  {
+    name: "off spanning the transition: per-turn 100 (on), 200 (off), cum 200 (off), per-turn 250 (on) => 150",
+    lines: [
+      pt(1, t(10, 0, 50), 100),
+      pt(1, t(10, 2, 30), 200),
+      cum(t(10, 2, 45), 200),
+      pt(1, t(10, 4, 10), 250),
+    ],
+    off: [[t(10, 2), t(10, 3)]],
+    expected: 150,
+  },
+  {
+    name: "partly off turn under an on cumulative: per-turn 100 (on), 160 (off), cum 200 (on) => 140",
+    lines: [pt(1, t(10, 0, 50), 100), pt(1, t(10, 2, 30), 160), cum(t(10, 4, 10), 200)],
+    off: [[t(10, 2), t(10, 3)]],
+    expected: 140,
+  },
+  {
     name: "a historical cumulative-only thread that later gets per-turn records: 100 + 10 => 110",
     lines: [cum(t(8, 0), 100), pt(1, t(10, 0, 30), 10)],
     expected: 110,

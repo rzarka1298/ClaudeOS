@@ -247,6 +247,12 @@ interface TurnState {
   off: CodexTokenCounters;
   /** The part of `off` that arrived at or before the cut. */
   offCut: CodexTokenCounters;
+  /**
+   * The enabled (on-period) usage of windows an analysis-off cumulative record
+   * superseded: the cumulative record's own increment is not counted, so the
+   * turn keeps what it saw while analysis was on.
+   */
+  kept: CodexTokenCounters;
   /** The bucket of the turn's earliest record. */
   first: string | null;
   /** The bucket of the earliest record after the cut, or null. */
@@ -262,6 +268,7 @@ function freshTurn(): TurnState {
     cut: ZERO_COUNTERS,
     off: ZERO_COUNTERS,
     offCut: ZERO_COUNTERS,
+    kept: ZERO_COUNTERS,
     first: null,
     anchor: null,
     latestMs: null,
@@ -272,12 +279,18 @@ function turnStateKey(threadId: string, turnId: string): string {
   return `${TURN_STATE_PREFIX}${threadId}:${turnId}`;
 }
 
-/** A turn's counted usage: growth beyond the cut, less the off-period growth after it. */
+/**
+ * A turn's counted usage: growth beyond the cut, less the off-period growth after
+ * it, plus the enabled usage an analysis-off cumulative record superseded.
+ */
 function contributionOf(state: TurnState): CodexTokenCounters {
   return combine(state.hw, state.cut, (hw, cut, index) =>
     Math.max(
       0,
-      hw - cut - Math.max(0, counterAt(state.off, index) - counterAt(state.offCut, index)),
+      hw -
+        cut -
+        Math.max(0, counterAt(state.off, index) - counterAt(state.offCut, index)) +
+        counterAt(state.kept, index),
     ),
   );
 }
@@ -314,6 +327,7 @@ function parseTurnState(text: string | null): TurnState | null {
       counters(value.cut) &&
       counters(value.off) &&
       counters(value.offCut) &&
+      counters(value.kept) &&
       optionalText(value.first) &&
       optionalText(value.anchor) &&
       (value.latestMs === null || Number.isFinite(value.latestMs))
@@ -324,6 +338,7 @@ function parseTurnState(text: string | null): TurnState | null {
         cut: value.cut,
         off: value.off,
         offCut: value.offCut,
+        kept: value.kept,
         first: value.first,
         anchor: value.anchor,
         latestMs: value.latestMs as number | null,
@@ -695,11 +710,16 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
           const previous = ops.readCumulativeBaseline(db, fileThreadId);
           const fold = foldCumulative(result.facts, previous, wasOff);
           skipped += fold.skipped;
-          for (const [bucket, delta] of fold.deltas) {
+          for (const [bucket, raw] of fold.deltas) {
             if (bucket === "") {
               skipped += 1;
               continue;
             }
+            const cover = turns.offCover.get(bucket);
+            const delta =
+              cover === undefined
+                ? raw
+                : combine(raw, cover, (value, off) => Math.max(0, value - off));
             ops.addCumulativeDelta(db, { threadId: fileThreadId, bucketStart: bucket, delta });
             counted += 1;
           }
@@ -753,7 +773,12 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     fileThreadId: string | null,
     wasOff: (ms: number) => boolean,
     at: string,
-  ): { readonly counted: number; readonly skipped: number } {
+  ): {
+    readonly counted: number;
+    readonly skipped: number;
+    /** Off-period turn usage a counted cumulative record must not also count, by its bucket. */
+    readonly offCover: ReadonlyMap<string, CodexTokenCounters>;
+  } {
     interface ThreadCtx {
       cumAtMs: number | null;
       cumAtDirty: boolean;
@@ -762,6 +787,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       allLoaded: boolean;
     }
     const threads = new Map<string, ThreadCtx>();
+    const offCover = new Map<string, CodexTokenCounters>();
     let skipped = 0;
 
     const ctxOf = (threadId: string): ThreadCtx => {
@@ -812,8 +838,30 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
         const ctx = ctxOf(fileThreadId);
         if (ctx.cumAtMs !== null && tcMs <= ctx.cumAtMs) continue;
         loadAll(fileThreadId, ctx);
+        const cumOff = wasOff(tcMs);
+        const cumBucket = bucketOf(fact.time);
         for (const [turnId, state] of ctx.turns) {
           if (state.latestMs === null || state.latestMs > tcMs) continue;
+          // The window this cumulative record supersedes, split by period.
+          const offWindow = combine(state.off, state.offCut, (total, atCut) =>
+            Math.max(0, total - atCut),
+          );
+          if (cumOff) {
+            // Its own increment is not counted, so the turn keeps its enabled usage.
+            const onWindow = combine(
+              combine(state.hw, state.cut, (a, b) => Math.max(0, a - b)),
+              offWindow,
+              (all, off) => Math.max(0, all - off),
+            );
+            state.kept = combine(state.kept, onWindow, (known, add) => known + add);
+          } else if (cumBucket !== "") {
+            // Its increment includes the turn's off-period usage, which is never counted.
+            const known = offCover.get(cumBucket) ?? ZERO_COUNTERS;
+            offCover.set(
+              cumBucket,
+              combine(known, offWindow, (a, b) => a + b),
+            );
+          }
           state.cut = state.hw;
           state.offCut = state.off;
           state.anchor = null;
@@ -878,7 +926,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
         counted += 1;
       }
     }
-    return { counted, skipped };
+    return { counted, skipped, offCover };
   }
 
   // --- Sweeping ----------------------------------------------------------------
