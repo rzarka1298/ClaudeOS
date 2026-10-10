@@ -240,7 +240,6 @@ interface World {
   readonly portRecord: ReturnType<typeof recordingFs>;
   readonly responses: string[];
   readonly exerciseOutputs: string[];
-  readonly refusedStatuses: Map<string, number[]>;
   readonly decoyFiles: ReadonlyMap<string, { content: string }>;
   readonly reportDecoy: string;
   readonly threadIds: { completed: string; running: string };
@@ -446,7 +445,6 @@ async function buildWorld(violating: boolean): Promise<World> {
     portRecord,
     responses,
     exerciseOutputs: [],
-    refusedStatuses: new Map(),
     decoyFiles: files,
     reportDecoy: reportDecoy.path,
     threadIds,
