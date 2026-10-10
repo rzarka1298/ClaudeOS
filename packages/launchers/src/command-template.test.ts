@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { OPEN } from "./app-actions.js";
 import {
   FORBIDDEN_CLAUDE_FLAGS,
+  FORBIDDEN_CODEX_TOKENS,
   FORBIDDEN_PERMISSION_TOKENS,
   MAX_TEMPLATE_ARGS,
   PLACEHOLDERS,
@@ -381,5 +382,126 @@ describe("TERMINAL_PRESETS (D-23)", () => {
     expect(iterm?.argv.at(-1)).toBe("{script}");
     const sources = (iterm?.argv ?? []).slice(0, -1);
     for (const element of sources) expect(element).not.toContain("{");
+  });
+});
+
+// The codex kind (D-11, CODEX-03): a saved Codex template can never carry a sandbox or approval
+// bypass. Ban tokens are compared after NFKC, lower-casing and removal of every non-alphanumeric.
+describe("validateCommandTemplate, codex kind (D-11)", () => {
+  const CODEX = "/Users/USERNAME/.local/bin/codex";
+  const codexRefusal = (argv: readonly string[]) => refusal(argv, "codex");
+  const codexOk = (argv: readonly string[]) =>
+    validateCommandTemplate(argv, { kind: "codex", isExecutable: always });
+
+  it("accepts an absolute executable with no arguments and with the project-path placeholder", () => {
+    expect(codexOk([CODEX])).toEqual({ ok: true, argv: [CODEX] });
+    const argv = [CODEX, "--model", "gpt-5", "--sandbox", "read-only", "{projectPath}"];
+    expect(codexOk(argv)).toEqual({ ok: true, argv });
+  });
+
+  it("allows only the project-path placeholder and refuses what the claude-code kind refuses", () => {
+    expect(codexRefusal([CODEX, "{script}"])).toEqual({ reason: "unknown-placeholder", index: 1 });
+    expect(codexRefusal([CODEX, "--cd={projectPath}"])).toEqual({
+      reason: "embedded-placeholder",
+      index: 1,
+    });
+    expect(codexRefusal([CODEX, ""])).toEqual({ reason: "empty-argument", index: 1 });
+    expect(codexRefusal([CODEX, "a\nb"])).toEqual({ reason: "line-break", index: 1 });
+    expect(codexRefusal(["codex"])).toEqual({ reason: "executable-not-absolute", index: 0 });
+    expect(codexRefusal([CODEX, ...Array.from({ length: 32 }, () => "x")]).reason).toBe(
+      "too-many-arguments",
+    );
+    expect(refusal([CODEX], "codex", () => false)).toEqual({
+      reason: "executable-not-executable",
+      index: 0,
+    });
+  });
+
+  it("declares the six normalised Codex tokens", () => {
+    expect([...FORBIDDEN_CODEX_TOKENS]).toEqual([
+      "dangerouslybypassapprovalsandsandbox",
+      "dangerouslybypasshooktrust",
+      "yolo",
+      "fullauto",
+      "approveforme",
+      "dangerfullaccess",
+    ]);
+  });
+
+  it("refuses the whole ban set in every spelling, reporting the offending index", () => {
+    const refused: ReadonlyArray<readonly [string, readonly string[], number]> = [
+      ["bypass flag", [CODEX, "--dangerously-bypass-approvals-and-sandbox"], 1],
+      ["bypass flag, underscores", [CODEX, "--dangerously_bypass_approvals_and_sandbox"], 1],
+      ["bypass flag, upper case", [CODEX, "--DANGEROUSLY-BYPASS-APPROVALS-AND-SANDBOX"], 1],
+      ["hook trust bypass", [CODEX, "--dangerously-bypass-hook-trust"], 1],
+      ["yolo", [CODEX, "--yolo"], 1],
+      ["yolo, equals form", [CODEX, "--yolo=true"], 1],
+      ["yolo, fullwidth", [CODEX, "－－ｙｏｌｏ"], 1],
+      ["full-auto", [CODEX, "--full-auto"], 1],
+      ["full auto, spaced", [CODEX, "--full auto"], 1],
+      ["approve-for-me", [CODEX, "--approve-for-me"], 1],
+      ["sandbox two elements", [CODEX, "--sandbox", "danger-full-access"], 2],
+      ["sandbox equals", [CODEX, "--sandbox=danger-full-access"], 1],
+      ["sandbox short attached", [CODEX, "-sdanger-full-access"], 1],
+      ["sandbox short equals", [CODEX, "-s=danger-full-access"], 1],
+      ["config override value", [CODEX, "-c", 'sandbox_mode="danger-full-access"'], 2],
+      ["config override equals", [CODEX, "--config=sandbox_mode=danger_full_access"], 1],
+      ["Phase 4 flag", [CODEX, "--dangerously-skip-permissions"], 1],
+      ["Phase 4 mode", [CODEX, "--permission-mode", "bypassPermissions"], 2],
+      ["in the executable path", ["/Users/USERNAME/--yolo/codex"], 0],
+      ["after a placeholder", [CODEX, "{projectPath}", "--full-auto"], 2],
+    ];
+    for (const [name, argv, index] of refused) {
+      expect(codexRefusal(argv), name).toEqual({ reason: "forbidden-flag", index });
+    }
+  });
+
+  it("refuses config-carrying flags whose TOML value a text match would miss", () => {
+    for (const argv of [
+      [CODEX, "-c", 'sandbox_mode="danger\\u002dfull\\u002daccess"'],
+      [CODEX, "-cmodel=x"],
+      [CODEX, "-c=model=x"],
+      [CODEX, "-p", "profile"],
+      [CODEX, "--config", "model=x"],
+      [CODEX, "--CONFIG=model=x"],
+      [CODEX, "--profile=work"],
+    ]) {
+      expect(codexRefusal(argv), argv.join(" ")).toEqual({ reason: "forbidden-flag", index: 1 });
+    }
+    // -C is --cd, not a config flag
+    expect(codexOk([CODEX, "-C", "{projectPath}"]).ok).toBe(true);
+  });
+
+  it("an ordinary model and read-only sandbox argument list is accepted (the check discriminates)", () => {
+    for (const argv of [
+      [CODEX, "--model", "gpt-5", "--sandbox", "read-only"],
+      [CODEX, "-m", "gpt-5", "-s", "workspace-write", "-a", "on-request"],
+      [CODEX, "--ask-for-approval", "untrusted"],
+    ]) {
+      expect(codexOk(argv).ok, argv.join(" ")).toBe(true);
+    }
+  });
+
+  it("leaves the claude-code and terminal kinds exactly as before", () => {
+    // the Codex set applies only to the codex kind
+    for (const kind of ["claude-code", "terminal"] as const) {
+      const argv = kind === "terminal" ? [WEZTERM, "--yolo", "{script}"] : [CLAUDE, "--full-auto"];
+      expect(validateCommandTemplate(argv, { kind, isExecutable: always }).ok, kind).toBe(true);
+    }
+    expect(
+      validateCommandTemplate([CLAUDE, "-c", "-p", "--config", "x"], {
+        kind: "claude-code",
+        isExecutable: always,
+      }).ok,
+    ).toBe(true);
+    expect(refusal([CLAUDE, "--dangerously-skip-permissions"], "claude-code").reason).toBe(
+      "forbidden-flag",
+    );
+  });
+
+  it("is total for the codex kind", () => {
+    for (const argv of [[], [""], ["/"], ["/x", "{"], ["/x", "--yolo\u0000"]]) {
+      expect(() => codexOk(argv)).not.toThrow();
+    }
   });
 });

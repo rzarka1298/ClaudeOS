@@ -81,7 +81,7 @@ export const MAX_TEMPLATE_ARGS = MAX_TEMPLATE_ARGUMENTS;
  * `terminal`: a custom terminal command; must contain `{script}` and may use `{projectPath}`.
  * `claude-code`: the `claude` command line; may use `{projectPath}` only. In both, `argv[0]` is the executable.
  */
-export type TemplateKind = "terminal" | "claude-code";
+export type TemplateKind = "terminal" | "claude-code" | "codex";
 
 /** The refusals this pure validator can decide; the bundle and executable lookups are service-side. */
 export type TemplateRefusal = Exclude<
@@ -116,6 +116,7 @@ export interface TerminalPreset {
 const ALLOWED_PLACEHOLDERS: Readonly<Record<TemplateKind, readonly Placeholder[]>> = {
   terminal: ["{projectPath}", "{script}"],
   "claude-code": ["{projectPath}"],
+  codex: ["{projectPath}"],
 };
 
 /** An element that is entirely one brace-wrapped name, e.g. `{script}` or a typo like `{scrpt}`. */
