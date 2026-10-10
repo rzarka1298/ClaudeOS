@@ -500,10 +500,17 @@ const abs = (p) => {
   if (Buffer.isBuffer(p)) return resolve(p.toString());
   return undefined;
 };
+let busy = false;
 const log = (kind, op, ...paths) => {
-  for (const p of paths) {
-    const path = abs(p);
-    if (path !== undefined) append(logPath, JSON.stringify({ kind, op, path }) + "\\n");
+  if (busy) return;
+  busy = true;
+  try {
+    for (const p of paths) {
+      const path = abs(p);
+      if (path !== undefined) append(logPath, JSON.stringify({ kind, op, path }) + "\\n");
+    }
+  } finally {
+    busy = false;
   }
 };
 const C = fs.constants;
@@ -677,7 +684,7 @@ describe("uninstall.mjs, status.mjs, the shims and the README (Task 2, CODEX-06,
     const absent = runRecorded(STATUS, fx, baseArgs(fx));
     expect(absent.result.status, absent.result.stderr).toBe(0);
     expect(absent.result.stdout).toContain("hooks: not installed");
-    expect(absent.result.stdout).not.toContain("/hooks");
+    expect(absent.result.stdout).not.toMatch(/trust/i);
 
     expect(install(fx).status).toBe(0);
     const codexBefore = snapshot(fx.codexHome);
