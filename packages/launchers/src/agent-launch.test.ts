@@ -169,7 +169,7 @@ describe("ban tokens (NFKC, lower-case, non-alphanumerics removed)", () => {
   });
 
   it("a token split across two elements is not a token", () => {
-    expect(reasonOf(claude("--full", "auto"))).toBeNull();
+    expect(reasonOf(claude("--full", "--auto"))).toBeNull();
   });
 });
 
@@ -341,7 +341,26 @@ describe("deny-by-default flag rules on the final argv (carry-forward F-01/F-02)
     ]) {
       expect(reasonOf(codex(sub)), sub).toBe("banned-flag");
     }
-    expect(reasonOf(claude("--model", "opus", "-n", "a name"))).toBeNull();
+    expect(reasonOf(claude("--model", "opus", "--verbose"))).toBeNull();
+  });
+
+  it("allowlists subcommands: no bare operand, alias, prompt or -- is accepted; only codex resume <uuid>", () => {
+    for (const operand of ["e", "a", "review", "fork", "prompt", "do the thing", "--", "-"]) {
+      expect(reasonOf(codex(operand)), operand).toBe("banned-flag");
+      expect(reasonOf(claude(operand)), operand).toBe("banned-flag");
+      expect(reasonOf(codex("--model", "m", operand)), operand).toBe("banned-flag");
+    }
+    expect(reasonOf(claude("resume", UUID))).toBe("banned-flag");
+    expect(reasonOf(codex("resume", UUID))).toBeNull();
+    expect(reasonOf(codex("resume", UUID, "extra"))).toBe("banned-flag");
+    expect(reasonOf(codex("resume", UUID, "e"))).toBe("banned-flag");
+    expect(reasonOf(codex("resume", "resume"))).toBe("bad-argv");
+    expect(reasonOf(codex("resume", UUID, "resume"))).toBe("banned-flag");
+    // a value flag's value is not an operand
+    expect(reasonOf(claude("--model", "opus"))).toBeNull();
+    expect(reasonOf(codex("-m", "gpt-5", "--sandbox", "read-only"))).toBeNull();
+    expect(reasonOf(claude("--add-dir", "a", "b", "c"))).toBeNull();
+    expect(reasonOf(claude("--add-dir", "a", "--model", "opus", "stray"))).toBe("banned-flag");
   });
 });
 
@@ -352,15 +371,15 @@ describe("limits", () => {
     expect(
       reasonOf({
         agent: "claude",
-        argv: [CLAUDE, ...Array(AGENT_ARGV_MAX - 1).fill("a")],
+        argv: [CLAUDE, ...Array(AGENT_ARGV_MAX - 1).fill("-v")],
         env: {},
       }),
     ).toBeNull();
     expect(
-      reasonOf({ agent: "claude", argv: [CLAUDE, ...Array(AGENT_ARGV_MAX).fill("a")], env: {} }),
+      reasonOf({ agent: "claude", argv: [CLAUDE, ...Array(AGENT_ARGV_MAX).fill("-v")], env: {} }),
     ).toBe("argv-length");
     expect(reasonOf({ agent: "claude", argv: [], env: {} })).toBe("argv-length");
-    expect(reasonOf(claude("x".repeat(AGENT_ELEMENT_MAX)))).toBeNull();
+    expect(reasonOf(claude("--append-system-prompt", "x".repeat(AGENT_ELEMENT_MAX)))).toBeNull();
     expect(reasonOf(claude("x".repeat(AGENT_ELEMENT_MAX + 1)))).toBe("argv-element");
   });
 
@@ -584,6 +603,44 @@ describe("validateAgentLaunchChecked (the injected filesystem checks)", () => {
       (await verdictOf(launch("claude", ["--add-dir", "../b"], { cwd: `${ROOT}/packages/a` }))).ok,
     ).toBe(true);
     expect((await verdictOf(launch("claude", ["--add-dir", "inside-link"]))).ok).toBe(true);
+  });
+
+  it("resolves codex --add-dir against the effective --cd directory, the last --cd winning", async () => {
+    // inside the project either way, but only valid relative to the --cd directory
+    expect((await verdictOf(launch("codex", ["--cd", "packages/a", "--add-dir", "../b"]))).ok).toBe(
+      true,
+    );
+    // without --cd, ../b is outside the project (relative to the root)
+    expect(await verdictOf(launch("codex", ["--add-dir", "../b"]))).toEqual({
+      ok: false,
+      reason: "dir-argument-outside",
+    });
+    // relative to --cd packages/a, ../../../elsewhere escapes the project
+    expect(
+      await verdictOf(launch("codex", ["--cd", "packages/a", "--add-dir", "../../../elsewhere"])),
+    ).toEqual({ ok: false, reason: "dir-argument-outside" });
+    // the add-dir may come before --cd; the order of flags does not change the base
+    expect((await verdictOf(launch("codex", ["--add-dir", "../b", "-C", "packages/a"]))).ok).toBe(
+      true,
+    );
+    // the last --cd wins
+    expect(
+      (
+        await verdictOf(
+          launch("codex", ["-C", "packages/b", "--cd=packages/a", "--add-dir", "../b"]),
+        )
+      ).ok,
+    ).toBe(true);
+    // a --cd that escapes is refused whatever follows
+    expect(await verdictOf(launch("codex", ["--cd", "escape", "--add-dir", "."]))).toEqual({
+      ok: false,
+      reason: "dir-argument-outside",
+    });
+    // claude has no --cd: its --add-dir resolves against the cwd
+    expect(await verdictOf(launch("claude", ["--add-dir", "../b"]))).toEqual({
+      ok: false,
+      reason: "dir-argument-outside",
+    });
   });
 
   it("never throws when an injected check throws: it refuses", async () => {

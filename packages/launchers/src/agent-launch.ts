@@ -18,7 +18,8 @@
  *      agent;
  *   4. every element, argv[0] included, normalised by NFKC, lower-casing and removal of every
  *      non-alphanumeric, contains none of the ban tokens;
- *   5. deny-by-default rules for the flags the real CLIs will parse: config-carrying flags
+ *   5. deny-by-default rules for the flags the real CLIs will parse: subcommands are an allowlist
+ *      (codex `resume <uuid>` only; no bare operand or prompt, aliases included); config-carrying flags
  *      (`--config`, `--profile`, `--settings`, `-c` and `-p` for codex ...) are refused in every
  *      spelling because their values are TOML or JSON that the CLI decodes AFTER a text match
  *      would have passed; `--permission-mode`, `--sandbox` and `--ask-for-approval` accept only
@@ -105,33 +106,35 @@ const DENIED_LONG_FLAGS: readonly string[] = [
 ];
 /** codex `-c key=value` overrides and `-p` profile (claude's `-c` is `--continue`). */
 const DENIED_CODEX_SHORT: readonly string[] = ["c", "p"];
-const DENIED_SUBCOMMANDS: Readonly<Record<AgentName, readonly string[]>> = {
+// Subcommands are ALLOWLISTED, never denylisted: the CLIs have aliases (codex `e` is exec, `a` is
+// apply) and a bare positional prompt is dispatched as a subcommand when it matches one. The
+// product launches `claude` with no subcommand and `codex` with no subcommand or `resume <uuid>`;
+// every other bare operand is refused.
+const ALLOWED_SUBCOMMANDS: Readonly<Record<AgentName, readonly string[]>> = {
+  claude: [],
+  codex: ["resume"],
+};
+// Flags known to take one value (that value is not an operand). --add-dir is variadic for claude.
+const VALUE_FLAGS: Readonly<Record<AgentName, readonly string[]>> = {
   claude: [
-    "mcp",
-    "config",
-    "plugin",
-    "plugins",
-    "update",
-    "upgrade",
-    "install",
-    "setup-token",
-    "doctor",
-    "migrate-installer",
+    "--model",
+    "--permission-mode",
+    "--resume",
+    "-r",
+    "--session-id",
+    "--append-system-prompt",
+    "--add-dir",
   ],
   codex: [
-    "mcp",
-    "mcp-server",
-    "login",
-    "logout",
-    "exec",
-    "apply",
-    "cloud",
-    "proto",
-    "completion",
-    "sandbox",
-    "debug",
-    "features",
-    "app-server",
+    "--model",
+    "-m",
+    "--cd",
+    "-C",
+    "--add-dir",
+    "--ask-for-approval",
+    "-a",
+    "--sandbox",
+    "-s",
   ],
 };
 const PERMISSION_MODES: readonly string[] = ["default", "plan", "acceptEdits"];
@@ -178,13 +181,35 @@ function parseFlag(element: string): ParsedFlag | null {
 
 /** The reason argv[1..] breaks the flag rules, or null. argv is already shape-checked. */
 function flagRuleViolation(agent: AgentName, argv: readonly string[]): AgentReason | null {
-  const denied = DENIED_SUBCOMMANDS[agent];
+  const valueFlags = VALUE_FLAGS[agent];
+  const variadic = DIR_FLAGS[agent].variadic;
+  let consumedUpTo = 0; // argv indexes <= this are values of an earlier flag, not operands
+  let operands = 0;
   for (let i = 1; i < argv.length; i++) {
     const element = argv[i] as string;
-    if (denied.includes(element)) return "banned-flag";
     const parsed = parseFlag(element);
-    if (!parsed) continue;
+    if (!parsed) {
+      if (i <= consumedUpTo) continue;
+      // A bare operand (or `--`): only codex's `resume` as the first operand is allowed.
+      if (element === "--" || operands > 0 || !ALLOWED_SUBCOMMANDS[agent].includes(element)) {
+        return "banned-flag";
+      }
+      operands++;
+      consumedUpTo = i + 1; // the session id, validated below
+      continue;
+    }
     const { flag, inline } = parsed;
+    if (inline === undefined && valueFlags.includes(flag)) {
+      consumedUpTo = i + 1;
+      if (variadic.includes(flag)) {
+        while (
+          consumedUpTo + 1 < argv.length &&
+          !(argv[consumedUpTo + 1] as string).startsWith("-")
+        ) {
+          consumedUpTo++;
+        }
+      }
+    }
     const value = inline !== undefined ? inline : argv[i + 1];
     if (DENIED_LONG_FLAGS.includes(flag)) return "banned-flag";
     if (agent === "codex" && flag.length === 2 && DENIED_CODEX_SHORT.includes(flag.slice(1))) {
@@ -224,16 +249,20 @@ function flagRuleViolation(agent: AgentName, argv: readonly string[]): AgentReas
   return null;
 }
 
-/**
- * Every directory argument of argv[1..] as the raw string (the caller resolves it against the
- * cwd); `null` stands for a directory flag with no value.
- */
-export function agentDirectoryArguments(
+export interface AgentDirectoryEntry {
+  /** The normalised flag name (`--add-dir`, `--cd`, `-C`). */
+  readonly flag: string;
+  /** The raw value (the caller resolves it); null = the flag has no value. */
+  readonly value: string | null;
+}
+
+/** Every directory argument of argv[1..] in order, one entry per value. */
+export function agentDirectoryEntries(
   agent: AgentName,
   argv: readonly string[],
-): ReadonlyArray<string | null> {
+): readonly AgentDirectoryEntry[] {
   const rules = DIR_FLAGS[agent];
-  const found: Array<string | null> = [];
+  const found: AgentDirectoryEntry[] = [];
   for (let i = 1; i < argv.length; i++) {
     const parsed = parseFlag(argv[i] as string);
     if (!parsed) continue;
@@ -242,7 +271,7 @@ export function agentDirectoryArguments(
       rules.long.includes(flag) || (flag.length === 2 && rules.short.includes(flag.slice(1)));
     if (!isDir) continue;
     if (inline !== undefined) {
-      found.push(inline);
+      found.push({ flag, value: inline });
       continue;
     }
     const values: string[] = [];
@@ -255,10 +284,15 @@ export function agentDirectoryArguments(
       if (candidate.startsWith("-")) break;
       values.push(candidate);
     }
-    if (values.length === 0) found.push(null);
-    else found.push(...values);
+    if (values.length === 0) found.push({ flag, value: null });
+    else for (const value of values) found.push({ flag, value });
   }
   return found;
+}
+
+/** True for the codex working-directory flags (`--cd`, `-C`): the base every other path resolves against. */
+function isWorkingDirFlag(agent: AgentName, flag: string): boolean {
+  return agent === "codex" && (flag === "--cd" || flag === "-C");
 }
 
 function shapeVerdict(input: AgentLaunchInput): AgentLaunchVerdict {
@@ -393,8 +427,20 @@ export async function validateAgentLaunchChecked(
     if (!isInside(cwd, projectRoot)) return no("cwd-outside");
     const agent = input.agent as AgentName;
     const argv = input.argv as readonly string[];
-    for (const dir of agentDirectoryArguments(agent, argv)) {
-      const resolved = dir === null ? null : await safeDir(dir, cwd);
+    // Codex resolves --add-dir (and every other path) against its --cd/-C directory, so that
+    // effective directory is computed first (relative to the request cwd; the last --cd wins, as
+    // in the CLI) and every other directory argument is realpath-checked against it.
+    const entries = agentDirectoryEntries(agent, argv);
+    let effectiveCwd = cwd;
+    for (const entry of entries) {
+      if (!isWorkingDirFlag(agent, entry.flag)) continue;
+      const resolved = entry.value === null ? null : await safeDir(entry.value, cwd);
+      if (resolved === null || !isInside(resolved, projectRoot)) return no("dir-argument-outside");
+      effectiveCwd = resolved;
+    }
+    for (const entry of entries) {
+      if (isWorkingDirFlag(agent, entry.flag)) continue;
+      const resolved = entry.value === null ? null : await safeDir(entry.value, effectiveCwd);
       if (resolved === null || !isInside(resolved, projectRoot)) return no("dir-argument-outside");
     }
     let executable = false;
