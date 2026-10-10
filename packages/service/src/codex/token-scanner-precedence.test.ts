@@ -24,7 +24,11 @@ import { CODEX_TOKEN_PARSER_VERSION } from "./token-scanner.js";
 /**
  * The reconciliation of the two token sources of one thread (plan 05.1-23):
  * ONE precedence rule, so the totals depend only on the records, never on the
- * chunk size, a cursor reset or a scanner restart.
+ * chunk size, a cursor reset or a scanner restart. The rule itself is tabled
+ * against the pure counting core in token-count.test.ts; these are the same
+ * scenarios through the scanner, over the routes that still differ at that
+ * level (growth by appends, restart, cursor reset, replay): the stored rows
+ * must be identical on every one.
  *
  *   A thread-cumulative record is authoritative up to and including its
  *   timestamp. Per-turn records count only for usage after the thread's LAST
@@ -191,17 +195,12 @@ type Route =
 
 const ROUTES: ReadonlyArray<readonly [string, Route]> = [
   ["all in one", { kind: "groups", size: "all" }],
-  ["1 record per chunk", { kind: "groups", size: 1 }],
-  ["2 records per chunk", { kind: "groups", size: 2 }],
-  ["1 per chunk + restart between chunks", { kind: "groups", size: 1, restart: true }],
-  ["2 per chunk + restart between chunks", { kind: "groups", size: 2, restart: true }],
+  ["grown file: one record appended per sweep", { kind: "groups", size: 1 }],
+  ["grown file: two records per sweep", { kind: "groups", size: 2 }],
+  ["grown file + restart between sweeps", { kind: "groups", size: 1, restart: true }],
   ["all in one, then cursor reset + rescan", { kind: "groups", size: "all", reset: "end" }],
-  ["1 per chunk, then cursor reset + rescan", { kind: "groups", size: 1, reset: "end" }],
-  ["2 per chunk, then cursor reset + rescan", { kind: "groups", size: 2, reset: "end" }],
-  ["cursor reset (full replay) after every chunk of 1", { kind: "groups", size: 1, reset: "each" }],
-  ["cursor reset (full replay) after every chunk of 2", { kind: "groups", size: 2, reset: "each" }],
+  ["cursor reset (full replay) after every append", { kind: "groups", size: 1, reset: "each" }],
   ["tiny byte chunks", { kind: "bytes", chunkBytes: 90 }],
-  ["tiny byte chunks, then cursor reset + rescan", { kind: "bytes", chunkBytes: 90, reset: "end" }],
 ];
 
 let harness: TokenHarness | null = null;

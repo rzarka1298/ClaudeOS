@@ -54,14 +54,15 @@ function setup(options: Parameters<typeof createTokenHarness>[0] = {}): TokenHar
   return harness;
 }
 
-function turnRows(db: Database.Database) {
+/** The counted rows a rebuild wrote: one per (rollout, quarter hour). */
+function usageRows(db: Database.Database) {
   return db
     .prepare(
-      "SELECT thread_id AS threadId, turn_id AS turnId, bucket_start AS bucketStart, input, output, total FROM codex_token_turns ORDER BY turn_id",
+      `SELECT thread_id AS owner, bucket_start AS bucketStart, input, output, total
+         FROM codex_token_deltas ORDER BY bucket_start, thread_id`,
     )
     .all() as Array<{
-    threadId: string;
-    turnId: string;
+    owner: string;
     bucketStart: string;
     input: number;
     output: number;
@@ -87,19 +88,25 @@ describe("Task 1 (tracer): one rollout with per-turn records is scanned once, co
     const outcome = await h.scanner.sweep();
 
     expect(outcome.completed).toBe(true);
-    const rows = turnRows(h.temp.db);
+    // Usage is attributed to the quarter hour of the record that grew it: turn 1's three
+    // records (100, +150, +150 in input) fall in 10:00, turn 2's record in 10:15.
+    const rows = usageRows(h.temp.db);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
-      threadId: THREAD_A,
-      turnId: turn(1),
+      bucketStart: "2026-10-10T10:00:00.000Z",
       input: 400,
       output: 90,
       total: 490,
     });
-    expect(rows[1]).toMatchObject({ turnId: turn(2), input: 50, output: 10, total: 60 });
-    // The bucket is the UTC quarter hour of each turn's first record.
-    expect(rows[0]?.bucketStart).toBe("2026-10-10T10:00:00.000Z");
-    expect(rows[1]?.bucketStart).toBe("2026-10-10T10:15:00.000Z");
+    expect(rows[1]).toMatchObject({
+      bucketStart: "2026-10-10T10:15:00.000Z",
+      input: 50,
+      output: 10,
+      total: 60,
+    });
+    // Every row is owned by the rollout's SHA-256 key, never by a path.
+    expect(new Set(rows.map((r) => r.owner)).size).toBe(1);
+    expect(rows[0]?.owner).toMatch(/^[0-9a-f]{64}$/);
 
     const cursors = cursorRows(h.temp.db);
     expect(cursors).toHaveLength(1);
@@ -147,11 +154,12 @@ describe("Task 1 (tracer): one rollout with per-turn records is scanned once, co
     h.spy.reset();
     await h.scanner.sweep();
     expect(h.spy.bytesRead()).toBeGreaterThan(0);
-    const rows = turnRows(h.temp.db);
-    expect(rows.map((r) => [r.turnId, r.total])).toEqual([
-      [turn(1), 490],
-      [turn(2), 100],
-      [turn(3), 35],
+    // The whole file is read again and the rollout's rows replaced: turn 2 grew to 80/20 in
+    // 10:15, turn 3 is new in 10:30.
+    expect(usageRows(h.temp.db).map((r) => [r.bucketStart, r.total])).toEqual([
+      ["2026-10-10T10:00:00.000Z", 490],
+      ["2026-10-10T10:15:00.000Z", 100],
+      ["2026-10-10T10:30:00.000Z", 35],
     ]);
   });
 
@@ -167,7 +175,7 @@ describe("Task 1 (tracer): one rollout with per-turn records is scanned once, co
 
     expect(h.spy.bytesRead()).toBeGreaterThan(0);
     expect(queryCodexTokenTotals(h.temp.db, WIDE)).toEqual(before);
-    expect(turnRows(h.temp.db)).toHaveLength(2);
+    expect(usageRows(h.temp.db)).toHaveLength(2);
   });
 
   it("with analysis off a sweep lists no file, opens no file, counts nothing and every range reads analysis-off", async () => {
@@ -179,7 +187,7 @@ describe("Task 1 (tracer): one rollout with per-turn records is scanned once, co
 
     expect(outcome.completed).toBe(false);
     expect(h.spy.calls).toEqual({ listRolloutFiles: 0, statRollout: 0, readRolloutRange: 0 });
-    expect(turnRows(h.temp.db)).toHaveLength(0);
+    expect(usageRows(h.temp.db)).toHaveLength(0);
     expect(cursorRows(h.temp.db)).toHaveLength(0);
     const { ranges } = h.scanner.summary();
     for (const range of [ranges.today, ranges["last-7-days"], ranges["this-month"]]) {
@@ -208,11 +216,18 @@ describe("Task 1 (tracer): one rollout with per-turn records is scanned once, co
     await h.scanner.sweep();
     const split = queryCodexTokenTotals(h.temp.db, WIDE);
     expect(split?.counters.total).toBe(550);
-    expect(turnRows(h.temp.db)).toHaveLength(2);
+    expect(usageRows(h.temp.db)).toHaveLength(2);
   });
 
-  it("keeps the thread id of the record when it differs from the file name", async () => {
+  it("a record naming another thread than the file retires that thread's previous-scanner rows, once", async () => {
     const h = setup();
+    // Rows the previous scanner left for the thread the record names.
+    h.temp.db
+      .prepare(
+        `INSERT INTO codex_token_turns (thread_id, turn_id, bucket_start, input, cached_input, cache_write, output, reasoning_output, total, observed_at)
+         VALUES ('thread-cccc3333', ?, '2026-10-10T10:00:00.000Z', 10, 0, 0, 0, 0, 10, '2026-10-10T10:00:10.000Z')`,
+      )
+      .run(turn(7));
     h.rollouts.write(
       DAY,
       NAME,
@@ -228,7 +243,11 @@ describe("Task 1 (tracer): one rollout with per-turn records is scanned once, co
       ]),
     );
     await h.scanner.sweep();
-    expect(turnRows(h.temp.db).map((r) => r.threadId)).toEqual(["thread-cccc3333"]);
+    // The file thread's cumulative record counts 10; the record naming the other thread counts
+    // its own 10 (the cumulative record is authoritative only for the file's thread). The old
+    // row (10) is retired, not added: 20, never 30.
+    expect(count(h.temp.db, "codex_token_turns")).toBe(0);
+    expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(20);
   });
 });
 
@@ -275,28 +294,17 @@ function deltaRows(db: Database.Database) {
     .all();
 }
 
-function markRows(db: Database.Database) {
-  return db
-    .prepare(
-      `SELECT thread_id AS threadId, input, cached_input AS cachedInput, cache_write AS cacheWrite,
-              output, reasoning_output AS reasoningOutput, total
-         FROM codex_token_cumulative ORDER BY thread_id`,
-    )
-    .all();
-}
-
 function count(db: Database.Database, table: string): number {
   return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 }
 
-/** Totals per range, the per-bucket rows and the high-water marks: what every route must agree on. */
+/** Totals per range and the per-bucket rows: what every route must agree on. */
 function signature(h: TokenHarness) {
   const { ranges } = h.scanner.summary();
   const totals = (activity: (typeof ranges)["today"]) =>
     activity.kind === "available" ? activity.totals : activity;
   return {
     deltas: deltaRows(h.temp.db),
-    marks: markRows(h.temp.db),
     today: totals(ranges.today),
     week: totals(ranges["last-7-days"]),
     month: totals(ranges["this-month"]),
@@ -305,7 +313,6 @@ function signature(h: TokenHarness) {
 
 const EXPECTED_SIGNATURE = {
   deltas: CUMULATIVE_ROWS,
-  marks: [{ threadId: THREAD_A, ...CUMULATIVE_TOTALS }],
   today: CUMULATIVE_TODAY_TOTALS,
   week: CUMULATIVE_TOTALS,
   month: CUMULATIVE_TOTALS,
@@ -356,17 +363,12 @@ describe("Task 2: the cumulative fallback against a durable high-water mark", ()
     );
     await h.scanner.sweep();
     expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.input).toBe(200);
-    expect(markRows(h.temp.db)).toEqual([
-      expect.objectContaining({ threadId: THREAD_A, input: 200 }),
-    ]);
   });
 
   it("counts a cumulative event beside each per-turn record once: the cumulative record is authoritative", async () => {
     const h = setup();
     h.rollouts.write("2026-10-10", NAME, perTurnWithCumulativeRollout());
     await h.scanner.sweep();
-    expect(count(h.temp.db, "codex_token_cumulative")).toBe(1);
-    expect(turnRows(h.temp.db)).toHaveLength(0);
     expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(550);
   });
 
@@ -393,10 +395,9 @@ describe("Task 2: the cumulative fallback against a durable high-water mark", ()
     );
     await h.scanner.sweep();
     expect(count(h.temp.db, "codex_token_deltas")).toBe(0);
-    expect(count(h.temp.db, "codex_token_cumulative")).toBe(0);
   });
 
-  it("does not count tokens timestamped inside an analysis-off period but still raises the mark", async () => {
+  it("does not count tokens timestamped inside an analysis-off period", async () => {
     const h = setup();
     appendToggleLog(h.temp.db, "2026-10-10T09:30:00.000Z", false);
     appendToggleLog(h.temp.db, "2026-10-10T10:30:00.000Z", true);
@@ -413,7 +414,6 @@ describe("Task 2: the cumulative fallback against a durable high-water mark", ()
     await h.scanner.sweep();
     // 100 before, 200 inside the off period (dropped), 50 after.
     expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.input).toBe(150);
-    expect(markRows(h.temp.db)).toEqual([expect.objectContaining({ input: 350 })]);
   });
 });
 
@@ -474,19 +474,19 @@ describe("Task 2: chunk and restart safety (identical totals on every route)", (
     expect(signature(h)).toEqual(EXPECTED_SIGNATURE);
   });
 
-  it("(e) a parser version bump rebuilds the counted tokens and the marks from scratch, to the same totals", async () => {
-    const h = setup();
+  it("(e) a parser version bump rebuilds every readable rollout to the same totals", async () => {
+    const h = setup({ over: { parserVersion: CODEX_TOKEN_PARSER_VERSION - 1 } });
     writeCumulative(h);
     await h.scanner.sweep();
-    h.restart({ parserVersion: 3 });
+    h.restart({ parserVersion: CODEX_TOKEN_PARSER_VERSION });
     await h.scanner.sweep();
     expect(signature(h)).toEqual(EXPECTED_SIGNATURE);
     expect(
       h.temp.db.prepare("SELECT DISTINCT parser_version AS v FROM codex_recognition").all(),
-    ).toEqual([{ v: 3 }]);
+    ).toEqual([{ v: CODEX_TOKEN_PARSER_VERSION }]);
   });
 
-  it("rolls the deltas, the high-water mark, the tallies and the cursor back together on a failed write", async () => {
+  it("rolls the rollout's rows, its tally and its cursor back together on a failed write", async () => {
     let failures = 1;
     const h = setup({
       over: {
@@ -508,9 +508,9 @@ describe("Task 2: chunk and restart safety (identical totals on every route)", (
     expect(first.completed).toBe(false);
     expect(first.failedFiles).toBe(1);
     expect(count(h.temp.db, "codex_token_deltas")).toBe(0);
-    expect(count(h.temp.db, "codex_token_cumulative")).toBe(0);
     expect(count(h.temp.db, "codex_rollout_cursors")).toBe(0);
     expect(count(h.temp.db, "codex_recognition")).toBe(0);
+    expect(dumpCodexTables(h.temp.db)).not.toContain("codex_token_rtally");
     expect(count(h.temp.db, "codex_coverage_days")).toBe(0);
 
     const retry = await h.scanner.sweep();
@@ -526,8 +526,8 @@ describe("Task 2: chunk and restart safety (identical totals on every route)", (
     h.spy.port.readRolloutRange = (ref, offset, max) => {
       reads += 1;
       const result = original(ref, offset, max);
-      // The first call is the identity head; the second is the first body chunk.
-      if (reads === 2) h.state.on = false;
+      // The first call is the first body chunk of the rollout.
+      if (reads === 1) h.state.on = false;
       return result;
     };
     const outcome = await h.scanner.sweep();
@@ -567,7 +567,7 @@ describe("Task 2: recognition, the held verdict and the parser reset", () => {
     expect(readCodexRecognition(h.temp.db, CODEX_TOKEN_PARSER_VERSION)).toEqual({
       "0.150.0": { sessions: 30, recognized: 0 },
     });
-    expect(count(h.temp.db, "codex_token_turns")).toBe(0);
+    expect(count(h.temp.db, "codex_token_deltas")).toBe(0);
     expect(count(h.temp.db, "codex_rollout_cursors")).toBe(0);
     expect(count(h.temp.db, "codex_coverage_days")).toBe(0);
     expect(h.scanner.recognition()).toEqual({ kind: "unavailable", version: "0.150.0" });
@@ -617,13 +617,14 @@ describe("Task 2: recognition, the held verdict and the parser reset", () => {
     expect(h.scanner.recognition()).toEqual({ kind: "ok" });
   });
 
-  it("a parser version bump drops cursors, coverage, tallies and counted state, and rebuilds the same tokens", async () => {
-    const h = setup();
+  it("a parser version bump drops cursors and derived state but no counted row or coverage, and rebuilds the same tokens", async () => {
+    const h = setup({ over: { parserVersion: CODEX_TOKEN_PARSER_VERSION - 1 } });
     h.rollouts.write("2026-10-10", NAME, perTurnRollout());
     await h.scanner.sweep();
     const before = queryCodexTokenTotals(h.temp.db, WIDE);
+    const rowsBefore = usageRows(h.temp.db);
 
-    h.restart({ parserVersion: 3 });
+    h.restart({ parserVersion: CODEX_TOKEN_PARSER_VERSION });
     h.state.on = false;
     // Off: nothing runs, so nothing is reset yet.
     await h.scanner.sweep();
@@ -632,11 +633,12 @@ describe("Task 2: recognition, the held verdict and the parser reset", () => {
     await h.scanner.sweep();
 
     expect(queryCodexTokenTotals(h.temp.db, WIDE)).toEqual(before);
+    expect(usageRows(h.temp.db)).toEqual(rowsBefore);
     expect(
       h.temp.db
         .prepare("SELECT value FROM collector_settings WHERE key = ?")
         .get("codex_token_parser_version"),
-    ).toEqual({ value: "3" });
+    ).toEqual({ value: String(CODEX_TOKEN_PARSER_VERSION) });
   });
 });
 
@@ -648,7 +650,7 @@ describe("Task 2: coverage and partiality", () => {
     expect(queryCodexCoverage(h.temp.db, "2026-10-10", "2026-10-10").map((d) => d.status)).toEqual([
       "not-scanned",
     ]);
-    expect(count(h.temp.db, "codex_token_turns")).toBe(2);
+    expect(count(h.temp.db, "codex_token_deltas")).toBe(2);
 
     await h.scanner.sweep();
     expect(queryCodexCoverage(h.temp.db, "2026-10-10", "2026-10-10").map((d) => d.status)).toEqual([
@@ -679,27 +681,47 @@ describe("Task 2: coverage and partiality", () => {
 
     const first = await h.scanner.sweep();
     expect(first).toMatchObject({ completed: false, capped: true });
-    expect(count(h.temp.db, "codex_token_turns")).toBe(1);
+    expect(count(h.temp.db, "codex_token_deltas")).toBe(1);
     expect(count(h.temp.db, "codex_coverage_days")).toBe(0);
 
     const second = await h.scanner.sweep();
     expect(second.completed).toBe(true);
-    expect(count(h.temp.db, "codex_token_turns")).toBe(2);
+    expect(count(h.temp.db, "codex_token_deltas")).toBe(2);
     expect(count(h.temp.db, "codex_coverage_days")).toBeGreaterThan(0);
     expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(20);
   });
 
-  it("carries a large file across sweeps under the byte cap and ends with the uninterrupted totals", async () => {
-    const h = setup({ over: { chunkBytes: 400, maxBytesPerSweep: 400 } });
-    h.rollouts.write("2026-10-10", NAME, perTurnRollout());
+  it("carries rollouts across sweeps under the byte cap, at least one per sweep, and ends with the uninterrupted totals", async () => {
+    const h = setup({ over: { maxBytesPerSweep: 1 } });
+    for (const [day, thread] of [
+      ["2026-10-10", THREAD_A],
+      ["2026-10-09", THREAD_B],
+      ["2026-10-08", "thread-cccc3333"],
+    ] as const) {
+      h.rollouts.write(
+        day,
+        rolloutName(`${day}T08:00:00.000Z`, thread),
+        jsonl([
+          metaLine({ id: thread }),
+          turnRecordLine({
+            turnId: turn(1),
+            timestamp: `${day}T08:01:00.000Z`,
+            usage: raw(10, 5),
+            threadId: thread,
+          }),
+        ]),
+      );
+    }
     let sweeps = 0;
-    for (; sweeps < 40; sweeps += 1) {
+    for (; sweeps < 10; sweeps += 1) {
       const outcome = await h.scanner.sweep();
       if (outcome.completed) break;
       expect(outcome.capped).toBe(true);
+      // A capped sweep still finished at least one rollout.
+      expect(count(h.temp.db, "codex_rollout_cursors")).toBeGreaterThan(sweeps);
     }
     expect(sweeps).toBeGreaterThan(1);
-    expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(550);
+    expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(45);
   });
 
   it("states the horizon, the uncovered days and the analysis-off days, and marks those ranges partial", async () => {
@@ -787,7 +809,7 @@ describe("Task 2: scheduling, subscriber gating and publication", () => {
     h.timers.tick();
     await h.scanner.idle();
     expect(h.spy.calls.listRolloutFiles).toBe(1);
-    expect(count(h.temp.db, "codex_token_turns")).toBe(2);
+    expect(count(h.temp.db, "codex_token_deltas")).toBe(2);
 
     h.scanner.stop();
     expect(h.timers.armed()).toBe(0);
@@ -834,7 +856,7 @@ describe("Task 2: scheduling, subscriber gating and publication", () => {
     h.state.on = true;
     h.scanner.onAnalysisChanged(true);
     await h.scanner.idle();
-    expect(count(h.temp.db, "codex_token_turns")).toBe(2);
+    expect(count(h.temp.db, "codex_token_deltas")).toBe(2);
     const publishedBefore = h.published.length;
     expect(publishedBefore).toBeGreaterThan(0);
 
@@ -848,7 +870,7 @@ describe("Task 2: scheduling, subscriber gating and publication", () => {
       version: null,
     });
     // Counted tokens are kept while analysis is off.
-    expect(count(h.temp.db, "codex_token_turns")).toBe(2);
+    expect(count(h.temp.db, "codex_token_deltas")).toBe(2);
   });
 
   it("publishes codex.tokens.updated only when the serialised summary changed, and the payload parses", async () => {
@@ -876,7 +898,7 @@ describe("Task 2: scheduling, subscriber gating and publication", () => {
     h.rollouts.write("2026-10-10", NAME, perTurnRollout());
     await h.scanner.sweep();
     expect(h.scanner.summary().firstScanPending).toBe(false);
-    h.temp.db.exec("DELETE FROM codex_token_turns");
+    h.temp.db.exec("DELETE FROM codex_token_deltas");
     h.scanner.reset();
     expect(h.scanner.summary().firstScanPending).toBe(true);
   });
