@@ -40,6 +40,9 @@ export interface CodexTokenSummaryInputs {
 
 const SOURCE = "codex-session-logs" as const;
 
+/** A toggle log that reads "on" for every day: what a scan covered, whatever the toggle said. */
+const ALWAYS_ON: readonly AnalysisToggle[] = [{ at: "1970-01-01T00:00:00.000Z", enabled: true }];
+
 const ZERO: CodexTokenCounters = {
   input: 0,
   cachedInput: 0,
@@ -49,19 +52,53 @@ const ZERO: CodexTokenCounters = {
   total: 0,
 };
 
+/** Why a range is unavailable before coverage is looked at, or null. Order: off, format, pending. */
+function blocked(inputs: CodexTokenSummaryInputs): CodexTokenActivity | null {
+  if (!inputs.analysisOn) return { kind: "unavailable", reason: "analysis-off", version: null };
+  if (inputs.recognition.kind === "unavailable") {
+    return { kind: "unavailable", reason: "format-changed", version: inputs.recognition.version };
+  }
+  if (inputs.firstScanPending) {
+    return { kind: "unavailable", reason: "first-scan-pending", version: null };
+  }
+  return null;
+}
+
 function rangeActivity(
   inputs: CodexTokenSummaryInputs,
   kind: UsageRangeKind,
   bounds: RangeBounds,
   toggles: readonly AnalysisToggle[],
 ): CodexTokenActivity {
+  const stopped = blocked(inputs);
+  if (stopped !== null) return stopped;
   const { db, now, timeZone } = inputs;
-  if (!inputs.analysisOn) return { kind: "unavailable", reason: "analysis-off", version: null };
   const horizon = inputs.horizonDay ?? null;
   const dayOf = (iso: string) => localDayOf(iso, timeZone);
   const days = queryCodexCoverage(db, bounds.firstDay, bounds.lastDay, horizon, toggles, dayOf);
+  const scanned = queryCodexCoverage(
+    db,
+    bounds.firstDay,
+    bounds.lastDay,
+    horizon,
+    ALWAYS_ON,
+    dayOf,
+  );
   const totals = queryCodexTokenTotals(db, { start: bounds.start, end: bounds.queryEnd });
+  // Not one covered day and not one counted row: nothing says what this range held (no zero).
+  if (scanned.every((d) => d.status !== "covered") && totals === null) {
+    return { kind: "unavailable", reason: "no-coverage", version: null };
+  }
   const lastScanAt = inputs.lastScanAt ?? null;
+  const countOf = (status: string) => days.filter((d) => d.status === status).length;
+  const analysisOffDays = countOf("analysis-off");
+  const beforeHorizon = countOf("before-horizon");
+  const notScanned = countOf("not-scanned");
+  const missingSources = [
+    ...(analysisOffDays > 0 ? ["analysis-off"] : []),
+    ...(beforeHorizon > 0 ? ["log-retention"] : []),
+    ...(notScanned > 0 ? ["not-scanned"] : []),
+  ];
   return {
     kind: "available",
     range: kind,
@@ -71,12 +108,11 @@ function rangeActivity(
     source: SOURCE,
     // Before this process's first scan the counters are what an earlier one left.
     freshness: lastScanAt === null ? "cached" : freshnessAt(lastScanAt, now),
-    partiality: { partial: days.some((d) => d.status !== "covered") },
+    partiality: missingSources.length > 0 ? { partial: true, missingSources } : { partial: false },
     coverage: {
       horizonDate: horizon !== null && bounds.firstDay < horizon ? horizon : null,
-      uncoveredDays: days.filter((d) => d.status === "before-horizon" || d.status === "not-scanned")
-        .length,
-      analysisOffDays: days.filter((d) => d.status === "analysis-off").length,
+      uncoveredDays: beforeHorizon + notScanned,
+      analysisOffDays,
     },
   };
 }

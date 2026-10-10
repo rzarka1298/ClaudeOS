@@ -3,25 +3,45 @@ import { basename } from "node:path";
 import {
   type CodexRecognitionVerdict,
   EMPTY_CARRY,
+  evaluateCliRecognition,
+  foldCumulativeDeltas,
   foldTurnTokens,
   parseRolloutChunk,
+  type RolloutFact,
   type TranscriptCarry,
+  UNVERSIONED,
 } from "@ccc/collectors";
-import type { CodexTokenSummary } from "@ccc/domain";
 import {
-  type addCodexRecognition,
-  type addCumulativeDelta,
+  type CodexTokenCounters,
+  type CodexTokenSummary,
+  CodexTokensUpdatedPayloadSchema,
+} from "@ccc/domain";
+import {
+  addCodexRecognition,
+  addCumulativeDelta,
+  analysisOffIntervals,
+  type CodexRecognitionTally,
   codexBucketStart,
+  getCollectorSetting,
+  listToggleLog,
   markCodexDayCovered,
   readCodexCursor,
-  type readCumulativeBaseline,
+  readCodexRecognition,
+  readCumulativeBaseline,
+  resetCodexScanState,
+  setCollectorSetting,
   upsertTurnTokens,
   writeCodexCursor,
-  type writeCumulativeBaseline,
+  writeCumulativeBaseline,
 } from "@ccc/operational-store";
 import type Database from "better-sqlite3";
 import { addDays, localDayOf } from "../claude/usage-summary.js";
-import { CodexHomeAccessError, type CodexHomePort, type RolloutRef } from "./codex-home.js";
+import {
+  CodexHomeAccessError,
+  type CodexHomePort,
+  MAX_ROLLOUT_LIST,
+  type RolloutRef,
+} from "./codex-home.js";
 import { buildCodexTokenSummary } from "./token-summary.js";
 
 /**
@@ -43,8 +63,20 @@ import { buildCodexTokenSummary } from "./token-summary.js";
  *   inode (the port offers none). A changed fingerprint or a shrunk file
  *   restarts at zero; the store's primary key keeps the rescan from double
  *   counting.
- * - Transaction: a chunk's counters, cursor advance and (later) high-water
- *   marks and recognition tallies are written in ONE transaction.
+ * - Cumulative fallback: where only the cumulative `token_count` exists the
+ *   scanner adds non-negative per-counter deltas against a durable per-thread
+ *   high-water mark (D-24). A lower value never lowers the mark and is never
+ *   read as a new counting epoch, so a replayed prefix changes nothing.
+ * - Transaction: a chunk's counters, high-water marks, cursor advance and
+ *   recognition tallies are written in ONE transaction.
+ * - Format: per-CLI-version recognition tallies persist per parser version; a
+ *   chunk that would make the verdict unavailable records its tallies but no
+ *   usage and no cursor, and from then on nothing is read (held).
+ * - Coverage: a day is marked covered only by a complete, uncapped, uncancelled
+ *   sweep; single-file scans count tokens but never coverage.
+ * - Bounds: a sweep reads at most a fixed number of files and bytes and carries
+ *   the rest to the next sweep; the timer reads only while the event stream has
+ *   subscribers.
  * - Privacy: only the pure parser's token facts (six counters, ids, times) are
  *   used; the parsed lines are dropped. Logs carry reason codes and counts.
  */
@@ -64,6 +96,10 @@ export const CODEX_LISTING_DAYS = 31;
 const DAY_MS = 86_400_000;
 /** Bytes of a file's head that make up its identity. */
 const IDENTITY_BYTES = 256;
+/** The days one sweep may mark covered, whatever the listing says. */
+const MAX_COVERED_DAYS = 400;
+/** Bounds on the in-memory maps (a scanner restart simply rebuilds them). */
+const MAX_REMEMBERED = 10_000;
 
 export interface TokenScannerTimers {
   setInterval(fn: () => void, ms: number): unknown;
@@ -192,14 +228,36 @@ function errorCode(err: unknown): unknown {
 
 export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
   const { db, logger, port } = deps;
+  const parserVersion = deps.parserVersion ?? CODEX_TOKEN_PARSER_VERSION;
+  const ops: TokenStoreOps = {
+    upsertTurnTokens,
+    addCumulativeDelta,
+    readCumulativeBaseline,
+    writeCumulativeBaseline,
+    writeCodexCursor,
+    addCodexRecognition,
+    ...deps.ops,
+  };
   const chunkBytes = Math.max(
     1,
     Math.min(deps.chunkBytes ?? CODEX_TOKEN_CHUNK_BYTES, CODEX_TOKEN_CHUNK_BYTES),
   );
+  const sweepIntervalMs = deps.sweepIntervalMs ?? DEFAULT_CODEX_SWEEP_MS;
+  const maxFilesPerSweep = deps.maxFilesPerSweep ?? DEFAULT_MAX_FILES_PER_SWEEP;
+  const maxBytesPerSweep = deps.maxBytesPerSweep ?? DEFAULT_MAX_BYTES_PER_SWEEP;
   const yieldNow = deps.yieldNow ?? defaultYield;
+
   let generation = 0;
   let chain: Promise<unknown> = Promise.resolve();
+  let inflight: Promise<void> | null = null;
+  let timerHandle: unknown = null;
   let lastScanAt: string | null = null;
+  let lastSweepAtMs: number | null = null;
+  let lastPublishedKey: string | null = null;
+  /** The CLI version a rollout's session_meta named, by cursor key (memory only). */
+  const versionByKey = new Map<string, string>();
+  /** Threads that have per-turn records: their cumulative events must not be counted too. */
+  const turnThreads = new Set<string>();
 
   function enqueue<T>(work: () => Promise<T>): Promise<T> {
     const next = chain.then(work, work);
@@ -207,22 +265,234 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     return next;
   }
 
+  function nowIso(): string {
+    return deps.now().toISOString();
+  }
+
+  // --- State shared with the summary ----------------------------------------
+
+  function verdict(): CodexRecognitionVerdict {
+    return evaluateCliRecognition(readCodexRecognition(db, parserVersion));
+  }
+
+  function firstScanDone(): boolean {
+    return getCollectorSetting(db, CODEX_TOKEN_FIRST_SCAN_SETTING) === String(parserVersion);
+  }
+
+  function horizonDay(): string | null {
+    const value = getCollectorSetting(db, CODEX_TOKEN_HORIZON_SETTING);
+    return value === null || value === "" ? null : value;
+  }
+
   function summary(): CodexTokenSummary {
+    const analysisOn = deps.isAnalysisOn();
     return buildCodexTokenSummary({
       db,
       now: deps.now(),
       timeZone: deps.timeZone,
-      analysisOn: deps.isAnalysisOn(),
-      firstScanPending: false,
-      recognition: { kind: "ok" },
-      horizonDay: null,
+      analysisOn,
+      firstScanPending: analysisOn && !firstScanDone(),
+      recognition: verdict(),
+      horizonDay: horizonDay(),
       lastScanAt,
     });
   }
 
-  async function scanOne(ref: RolloutRef, gen: number): Promise<ScanOutcome> {
+  /** The summary without the times that move on every observation: what a viewer would see change. */
+  function changeKey(current: CodexTokenSummary): string {
+    const mask = (range: CodexTokenSummary["ranges"]["today"]) =>
+      range.kind === "available"
+        ? { ...range, observedAt: "", bounds: { start: range.bounds.start, end: "" } }
+        : range;
+    return JSON.stringify({
+      ranges: {
+        today: mask(current.ranges.today),
+        "last-7-days": mask(current.ranges["last-7-days"]),
+        "this-month": mask(current.ranges["this-month"]),
+      },
+      firstScanPending: current.firstScanPending,
+    });
+  }
+
+  function publishIfChanged(): void {
+    let current: CodexTokenSummary;
+    try {
+      current = summary();
+    } catch (err: unknown) {
+      logger.warn({ reason: "summary-failed", code: errorCode(err) }, "codex token summary failed");
+      return;
+    }
+    const key = changeKey(current);
+    if (key === lastPublishedKey) return;
+    const payload = CodexTokensUpdatedPayloadSchema.safeParse(current);
+    if (!payload.success) {
+      logger.warn({ reason: "payload-invalid" }, "codex token event not published");
+      return;
+    }
+    lastPublishedKey = key;
+    deps.publish("codex.tokens.updated", payload.data);
+  }
+
+  // --- Parser version and recognition ----------------------------------------
+
+  /**
+   * Cursors built by another parser version are dropped with the coverage
+   * ledger and every tally, so the next sweep rereads from zero. The counted
+   * rows and the cumulative high-water marks are kept: they are what stops the
+   * reread from counting anything twice.
+   */
+  function ensureParserVersion(): void {
+    const current = String(parserVersion);
+    if (getCollectorSetting(db, CODEX_TOKEN_PARSER_VERSION_SETTING) === current) return;
+    db.transaction(() => {
+      resetCodexScanState(db);
+      setCollectorSetting(db, CODEX_TOKEN_PARSER_VERSION_SETTING, current, nowIso());
+      setCollectorSetting(db, CODEX_TOKEN_HORIZON_SETTING, "", nowIso());
+    })();
+    versionByKey.clear();
+    logger.info({ parserVersion }, "codex token parser changed; rescanning");
+  }
+
+  /** The stored tallies plus one chunk's, as the verdict would see them once committed. */
+  function withChunk(
+    chunk: Readonly<Record<string, CodexRecognitionTally>>,
+  ): Record<string, CodexRecognitionTally> {
+    const merged: Record<string, CodexRecognitionTally> = {
+      ...readCodexRecognition(db, parserVersion),
+    };
+    for (const [version, tally] of Object.entries(chunk)) {
+      const total = merged[version] ?? { sessions: 0, recognized: 0 };
+      merged[version] = {
+        sessions: total.sessions + tally.sessions,
+        recognized: total.recognized + tally.recognized,
+      };
+    }
+    return merged;
+  }
+
+  /**
+   * The recognition tally of one chunk's token lines. A per-turn record whose
+   * counters cannot be read is an unrecognised token line. A cumulative event
+   * with no counters is `info: null` (older Codex versions write it) and is
+   * not evidence either way; the parser cannot tell it from a malformed one.
+   */
+  function tallyOf(
+    facts: readonly RolloutFact[],
+    version: string,
+  ): Record<string, CodexRecognitionTally> {
+    let sessions = 0;
+    let recognized = 0;
+    for (const fact of facts) {
+      if (fact.kind === "tokens-turn") {
+        sessions += 1;
+        if (fact.counters !== null) recognized += 1;
+      } else if (fact.kind === "tokens-cumulative" && fact.counters !== null) {
+        sessions += 1;
+        recognized += 1;
+      }
+    }
+    return sessions === 0 ? {} : { [version]: { sessions, recognized } };
+  }
+
+  function chunkVersion(facts: readonly RolloutFact[], key: string): string {
+    let named: string | null = null;
+    for (const fact of facts) {
+      if (fact.kind === "meta" && fact.cliVersion !== null) named = fact.cliVersion;
+    }
+    if (named !== null) {
+      if (versionByKey.size >= MAX_REMEMBERED) versionByKey.clear();
+      versionByKey.set(key, named);
+      return named;
+    }
+    return versionByKey.get(key) ?? UNVERSIONED;
+  }
+
+  // --- Analysis-off periods ---------------------------------------------------
+
+  /** Whether an instant fell inside a period analysis was switched off (D-47). */
+  function offPeriodTest(): (ms: number) => boolean {
+    const intervals = analysisOffIntervals(listToggleLog(db)).map((interval) => ({
+      start: Date.parse(interval.start),
+      end: interval.end === null ? Number.POSITIVE_INFINITY : Date.parse(interval.end),
+    }));
+    return (ms) => intervals.some((interval) => ms >= interval.start && ms < interval.end);
+  }
+
+  const bucketOf = (iso: string): string => codexBucketStart(iso) ?? "";
+
+  interface CumulativeResult {
+    readonly deltas: ReadonlyMap<string, CodexTokenCounters>;
+    readonly next: CodexTokenCounters | null;
+    readonly touched: boolean;
+    readonly skipped: number;
+  }
+
+  /**
+   * Folds a thread's cumulative events against its durable mark. Events
+   * timestamped inside an analysis-off period raise the mark WITHOUT adding a
+   * delta, so the tokens used while analysis was off are never attributed to
+   * the first record after it came back on.
+   */
+  function foldCumulative(
+    facts: readonly RolloutFact[],
+    previous: CodexTokenCounters | null,
+    wasOff: (ms: number) => boolean,
+  ): CumulativeResult {
+    let mark = previous;
+    let touched = false;
+    let skipped = 0;
+    const deltas = new Map<string, CodexTokenCounters>();
+    let run: RolloutFact[] = [];
+    let runOff = false;
+    const flush = (): void => {
+      if (run.length === 0) return;
+      const fold = foldCumulativeDeltas(run, mark, { dayOf: bucketOf });
+      mark = fold.next;
+      skipped += fold.skipped;
+      if (!runOff) {
+        for (const [bucket, delta] of fold.deltas) {
+          const known = deltas.get(bucket);
+          deltas.set(
+            bucket,
+            known === undefined
+              ? delta
+              : {
+                  input: known.input + delta.input,
+                  cachedInput: known.cachedInput + delta.cachedInput,
+                  cacheWrite: known.cacheWrite + delta.cacheWrite,
+                  output: known.output + delta.output,
+                  reasoningOutput: known.reasoningOutput + delta.reasoningOutput,
+                  total: known.total + delta.total,
+                },
+          );
+        }
+      }
+      run = [];
+    };
+    for (const fact of facts) {
+      if (fact.kind !== "tokens-cumulative" || fact.counters === null) continue;
+      if (fact.time !== null) touched = true;
+      const off = fact.time !== null && wasOff(Date.parse(fact.time));
+      if (run.length > 0 && off !== runOff) flush();
+      runOff = off;
+      run.push(fact);
+    }
+    flush();
+    return { deltas, next: mark, touched, skipped };
+  }
+
+  // --- Scanning one rollout ---------------------------------------------------
+
+  interface Budget {
+    filesLeft: number;
+    bytesLeft: number;
+  }
+
+  async function scanOne(ref: RolloutRef, gen: number, budget?: Budget): Promise<ScanOutcome> {
     const alive = () => gen === generation && deps.isAnalysisOn();
     if (!alive()) return { kind: "skipped" };
+    ensureParserVersion();
+    if (verdict().kind === "unavailable") return { kind: "held" };
 
     let size: number;
     try {
@@ -244,35 +514,80 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     if (cursor !== null && cursor.offset === size && cursor.size === size) {
       return { kind: "unchanged" };
     }
-    const head = port.readRolloutRange(ref, 0, IDENTITY_BYTES).bytes;
-    const identity = identityOf(head);
+    const identity = identityOf(port.readRolloutRange(ref, 0, IDENTITY_BYTES).bytes);
     const resume = cursor !== null && cursor.inode === identity && cursor.offset <= size;
     let position = resume ? cursor.offset : 0;
+    const startPosition = position;
     if (resume && position === size) return { kind: "unchanged" };
 
-    const fallbackThreadId = threadIdFromName(ref.path) ?? undefined;
+    if (budget !== undefined) {
+      if (budget.filesLeft <= 0) return { kind: "capped" };
+      budget.filesLeft -= 1;
+    }
+
+    const fileThreadId = threadIdFromName(ref.path);
+    const wasOff = offPeriodTest();
     let carry: TranscriptCarry = EMPTY_CARRY;
     let counted = 0;
     let bytes = 0;
     while (position + carry.bytes.length < size) {
       if (!alive()) return { kind: "cancelled" };
+      // The cursor only moves past whole lines and the carry lives in memory, so a sweep
+      // that has not yet consumed a line keeps reading: stopping would reread the same
+      // bytes next sweep and never advance.
+      if (budget !== undefined && budget.bytesLeft <= 0 && position > startPosition) {
+        return { kind: "capped" };
+      }
       const readAt = position + carry.bytes.length;
       const length = Math.min(chunkBytes, size - readAt);
       const chunk = port.readRolloutRange(ref, readAt, length).bytes;
       // Re-checked after the read: a switch-off during it writes nothing.
       if (!alive()) return { kind: "cancelled" };
       if (chunk.length === 0) break;
+      if (budget !== undefined) budget.bytesLeft -= chunk.length;
+
       const result = parseRolloutChunk(chunk, carry);
-      const fold = foldTurnTokens(result.facts, {
-        dayOf: (iso) => codexBucketStart(iso) ?? "",
-        ...(fallbackThreadId === undefined ? {} : { fallbackThreadId }),
+      const at = nowIso();
+      const tallies = tallyOf(result.facts, chunkVersion(result.facts, key));
+      if (evaluateCliRecognition(withChunk(tallies)).kind === "unavailable") {
+        // This chunk changes the verdict: keep its tallies (so the verdict survives
+        // a restart) but count nothing and leave the cursor, so the period is reread
+        // once a new parser recognises it.
+        ops.addCodexRecognition(db, parserVersion, tallies, at);
+        logger.warn({ reason: "format-not-recognised" }, "codex token format not recognised; held");
+        return { kind: "held" };
+      }
+
+      const turnFacts = result.facts.filter(
+        (fact) => fact.kind === "tokens-turn" && !offAt(fact.time, wasOff),
+      );
+      const hasTurnRecords = result.facts.some((fact) => fact.kind === "tokens-turn");
+      if (hasTurnRecords) {
+        if (turnThreads.size >= MAX_REMEMBERED) turnThreads.clear();
+        if (fileThreadId !== null) turnThreads.add(fileThreadId);
+        for (const fact of result.facts) {
+          if (fact.kind === "tokens-turn" && fact.threadId !== null) turnThreads.add(fact.threadId);
+        }
+      }
+      const turnFold = foldTurnTokens(turnFacts, {
+        dayOf: bucketOf,
+        ...(fileThreadId === null ? {} : { fallbackThreadId: fileThreadId }),
       });
+      // A thread with per-turn records is counted from them alone; its cumulative
+      // events describe the same tokens (R-OPEN 2).
+      const cumulativeThread =
+        fileThreadId !== null && !turnThreads.has(fileThreadId) ? fileThreadId : null;
+
       const nextPosition = position + result.bytesConsumed;
-      const at = deps.now().toISOString();
+      let skipped = turnFold.skipped;
       db.transaction(() => {
-        for (const entry of fold.entries.values()) {
-          if (entry.day === "") continue;
-          upsertTurnTokens(db, {
+        counted = 0;
+        for (const entry of turnFold.entries.values()) {
+          if (entry.day === "") {
+            skipped += 1;
+            continue;
+          }
+          ops.upsertTurnTokens(db, {
             threadId: entry.threadId,
             turnId: entry.turnId,
             bucketStart: entry.day,
@@ -281,8 +596,28 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
           });
           counted += 1;
         }
-        writeCodexCursor(db, key, { inode: identity, size, offset: nextPosition }, at);
+        if (cumulativeThread !== null) {
+          const previous = ops.readCumulativeBaseline(db, cumulativeThread);
+          const fold = foldCumulative(result.facts, previous, wasOff);
+          skipped += fold.skipped;
+          for (const [bucket, delta] of fold.deltas) {
+            if (bucket === "") {
+              skipped += 1;
+              continue;
+            }
+            ops.addCumulativeDelta(db, { threadId: cumulativeThread, bucketStart: bucket, delta });
+            counted += 1;
+          }
+          if (fold.touched && fold.next !== null) {
+            ops.writeCumulativeBaseline(db, cumulativeThread, fold.next, at);
+          }
+        }
+        ops.writeCodexCursor(db, key, { inode: identity, size, offset: nextPosition }, at);
+        ops.addCodexRecognition(db, parserVersion, tallies, at);
       })();
+      if (result.stats.oversized > 0 || skipped > 0) {
+        logger.info({ oversized: result.stats.oversized, skipped }, "codex token lines skipped");
+      }
       bytes += chunk.length;
       position = nextPosition;
       carry = result.carry;
@@ -291,17 +626,27 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     return { kind: "scanned", counted, bytes };
   }
 
-  /** Every day from the oldest rollout day to today is covered once a full sweep completes. */
+  function offAt(time: string | null, wasOff: (ms: number) => boolean): boolean {
+    return time !== null && wasOff(Date.parse(time));
+  }
+
+  // --- Sweeping ----------------------------------------------------------------
+
+  /** Marks the days a complete sweep covered and records that the first scan is done. */
   function markCoveredDays(oldestDay: string | null): void {
     const nowMs = deps.now().getTime();
     const at = new Date(nowMs).toISOString();
     const today = localDayOf(nowMs, deps.timeZone);
+    const windowStart = localDayOf(nowMs - CODEX_LISTING_DAYS * DAY_MS, deps.timeZone);
+    const horizon = oldestDay === null ? today : oldestDay < windowStart ? windowStart : oldestDay;
     db.transaction(() => {
-      let day = oldestDay ?? today;
-      for (let i = 0; day <= today && i < CODEX_LISTING_DAYS + 2; i += 1) {
+      let day = horizon;
+      for (let i = 0; day <= today && i < MAX_COVERED_DAYS; i += 1) {
         markCodexDayCovered(db, day, at);
         day = addDays(day, 1);
       }
+      setCollectorSetting(db, CODEX_TOKEN_HORIZON_SETTING, horizon, at);
+      setCollectorSetting(db, CODEX_TOKEN_FIRST_SCAN_SETTING, String(parserVersion), at);
     })();
   }
 
@@ -315,59 +660,159 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       capped: false,
     };
     if (!alive()) return none;
+    ensureParserVersion();
+    if (verdict().kind === "unavailable") {
+      publishIfChanged();
+      return { ...none, held: true };
+    }
+
     const nowMs = deps.now().getTime();
-    const refs = port.listRolloutFiles({ from: nowMs - CODEX_LISTING_DAYS * DAY_MS, to: nowMs });
+    let refs: readonly RolloutRef[];
+    try {
+      refs = port.listRolloutFiles({ from: nowMs - CODEX_LISTING_DAYS * DAY_MS, to: nowMs });
+    } catch (err: unknown) {
+      logger.warn(
+        { reason: err instanceof CodexHomeAccessError ? err.code : "list-failed" },
+        "codex rollouts could not be listed; coverage held",
+      );
+      return none;
+    }
+    const truncated = refs.length >= MAX_ROLLOUT_LIST;
+    if (truncated)
+      logger.warn({ cap: refs.length }, "codex rollout listing truncated; coverage held");
+
+    const budget: Budget = { filesLeft: maxFilesPerSweep, bytesLeft: maxBytesPerSweep };
     let scanned = 0;
     let failedFiles = 0;
     let oldest: string | null = null;
+    let held = false;
+    let capped = false;
+    let stopped = false;
     for (const ref of refs) {
-      if (!alive()) return { ...none, files: scanned, failedFiles };
+      if (!alive()) {
+        stopped = true;
+        break;
+      }
       const day = dayOfPath(ref.path);
       if (day !== null && (oldest === null || day < oldest)) oldest = day;
+      let outcome: ScanOutcome;
       try {
-        const outcome = await scanOne(ref, gen);
-        if (outcome.kind === "cancelled" || outcome.kind === "skipped") {
-          return { ...none, files: scanned, failedFiles };
-        }
+        outcome = await scanOne(ref, gen, budget);
       } catch (err: unknown) {
-        logger.warn({ code: errorCode(err) }, "codex token scan failed; skipped");
+        // One unreadable file never aborts the sweep. The error class and errno code
+        // only: its message can carry the rollout path.
+        logger.warn(
+          { errorName: err instanceof Error ? err.name : "non-error", code: errorCode(err) },
+          "codex token scan failed; skipped",
+        );
         failedFiles += 1;
         await yieldNow();
         continue;
       }
+      if (outcome.kind === "cancelled" || outcome.kind === "skipped") {
+        stopped = true;
+        break;
+      }
+      if (outcome.kind === "held") {
+        held = true;
+        break;
+      }
+      if (outcome.kind === "capped") {
+        capped = true;
+        break;
+      }
       scanned += 1;
       await yieldNow();
     }
-    if (!alive()) return { ...none, files: scanned, failedFiles };
-    if (failedFiles === 0) markCoveredDays(oldest);
-    lastScanAt = deps.now().toISOString();
-    return { ...none, completed: failedFiles === 0, files: scanned, failedFiles };
+    lastSweepAtMs = deps.now().getTime();
+    const complete = !stopped && !held && !capped && !truncated && failedFiles === 0 && alive();
+    // Coverage comes only from a full sweep that read every file: a capped, held,
+    // cancelled or partly failed one leaves the days honestly not-scanned.
+    if (complete) {
+      markCoveredDays(oldest);
+      lastScanAt = nowIso();
+    }
+    if (!stopped) publishIfChanged();
+    return { completed: complete, files: scanned, failedFiles, held, capped };
+  }
+
+  function startSweep(): void {
+    if (inflight !== null) return;
+    const gen = generation;
+    const run = enqueue(() => sweepAll(gen)).then(
+      () => undefined,
+      (err: unknown) => {
+        logger.warn(
+          { errorName: err instanceof Error ? err.name : "non-error" },
+          "codex sweep failed",
+        );
+      },
+    );
+    const tracked: Promise<void> = run.finally(() => {
+      if (inflight === tracked) inflight = null;
+    });
+    inflight = tracked;
   }
 
   return {
     scanFile(ref) {
       const gen = generation;
-      return enqueue(() => scanOne(ref, gen));
+      return enqueue(async () => {
+        const outcome = await scanOne(ref, gen);
+        if (outcome.kind === "scanned") publishIfChanged();
+        return outcome;
+      });
     },
     sweep() {
       const gen = generation;
       return enqueue(() => sweepAll(gen));
     },
     summary,
-    refreshIfStale: () => undefined,
-    start: () => undefined,
-    stop: () => undefined,
-    onAnalysisChanged: () => undefined,
+    refreshIfStale() {
+      if (!deps.isAnalysisOn() || inflight !== null) return;
+      if (lastSweepAtMs !== null && deps.now().getTime() - lastSweepAtMs <= sweepIntervalMs) return;
+      startSweep();
+    },
+    start() {
+      if (timerHandle !== null) return;
+      timerHandle = deps.timers.setInterval(() => {
+        if (deps.subscribers() > 0 && deps.isAnalysisOn()) startSweep();
+      }, sweepIntervalMs);
+    },
+    stop() {
+      if (timerHandle !== null) {
+        deps.timers.clearInterval(timerHandle);
+        timerHandle = null;
+      }
+      generation += 1;
+    },
+    onAnalysisChanged(enabled) {
+      if (enabled) {
+        // Counted tokens already exist; the pending state shows until the first pass ends.
+        publishIfChanged();
+        startSweep();
+        return;
+      }
+      generation += 1;
+      publishIfChanged();
+    },
     cancel() {
       generation += 1;
     },
     reset() {
       generation += 1;
       lastScanAt = null;
+      lastSweepAtMs = null;
+      versionByKey.clear();
+      turnThreads.clear();
+      const at = nowIso();
+      setCollectorSetting(db, CODEX_TOKEN_FIRST_SCAN_SETTING, "", at);
+      setCollectorSetting(db, CODEX_TOKEN_HORIZON_SETTING, "", at);
+      publishIfChanged();
     },
     async idle() {
       await chain;
     },
-    recognition: () => ({ kind: "ok" }),
+    recognition: verdict,
   };
 }
