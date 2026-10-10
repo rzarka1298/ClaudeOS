@@ -214,7 +214,48 @@ function executableNow(path: string): boolean {
   }
 }
 
+/** What a composition that failed to build answers: no routes (503), no timers, no work. */
+function inertCodexServices(): CodexServices {
+  return {
+    routeDeps: {},
+    start: () => undefined,
+    onAnalysisChanged: () => undefined,
+    onLaunchersChanged: () => undefined,
+    onIntegrationRefresh: () => undefined,
+    stop: () => Promise.resolve(),
+  };
+}
+
+/**
+ * Builds the Codex services. A Codex failure must never stop the service or the Phase 5 services
+ * (D-14): if the composition throws, whatever it had already started is stopped and inert
+ * services answer in its place (every Codex route is then the constant 503). Logged by reason
+ * code and error class only.
+ */
 export async function startCodexServices(deps: CodexServicesDeps): Promise<CodexServices> {
+  const cleanups: Array<() => unknown> = [];
+  try {
+    return await composeCodexServices(deps, cleanups);
+  } catch (error: unknown) {
+    deps.logger.error(
+      { reason: "codex-startup-failed", errorName: errorName(error) },
+      "codex services not started",
+    );
+    for (const cleanup of cleanups.reverse()) {
+      try {
+        await cleanup();
+      } catch {
+        // Best effort: nothing else is running.
+      }
+    }
+    return inertCodexServices();
+  }
+}
+
+async function composeCodexServices(
+  deps: CodexServicesDeps,
+  cleanups: Array<() => unknown>,
+): Promise<CodexServices> {
   const { db, logger } = deps;
   const now = deps.now ?? Date.now;
   const timers = deps.timers ?? defaultHeadroomTimers;
@@ -396,6 +437,7 @@ export async function startCodexServices(deps: CodexServicesDeps): Promise<Codex
     intervalMs: deps.spoolPollMs ?? spoolPollMsFrom(deps.env),
     ...(deps.settle === undefined ? {} : { settle: deps.settle }),
   });
+  cleanups.push(() => spool.stop());
   // Before the socket opens: a record left by an earlier process must be applied first.
   const drained = await spool.drainNow();
   logger.info({ count: drained, dropped: spool.dropCount() }, "startup: drained codex hook spool");
@@ -583,12 +625,19 @@ export async function startCodexServices(deps: CodexServicesDeps): Promise<Codex
     start() {
       if (stopped || started) return;
       started = true;
-      headroom.start();
-      mirror.start();
-      tokens.start();
-      // With a saved launcher row the install result is verified now; with none, detection waits
-      // for the first read of the integration status or a launcher change (never a timer).
-      if (savedCodexExecutable(db) !== null) startInstallRefresh();
+      try {
+        headroom.start();
+        mirror.start();
+        tokens.start();
+        // With a saved launcher row the install result is verified now; with none, detection waits
+        // for the first read of the integration status or a launcher change (never a timer).
+        if (savedCodexExecutable(db) !== null) startInstallRefresh();
+      } catch (error: unknown) {
+        logger.warn(
+          { reason: "codex-start-failed", errorName: errorName(error) },
+          "codex services not fully started",
+        );
+      }
     },
     onAnalysisChanged(change: AnalysisChange) {
       if (stopped) return;

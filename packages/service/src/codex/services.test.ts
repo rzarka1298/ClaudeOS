@@ -623,6 +623,17 @@ describe("follow-log queues to the bridge directory that holds the run's log", (
 // Task 3: boot, shutdown order and the missing or unrecognised Codex home
 
 describe("boot and shutdown of the composed service (Task 3)", () => {
+  it("a composition that cannot be built never fails the service: inert services, 503 routes, start and stop do nothing", async () => {
+    // A runtime directory that is not a path makes the hook spool and status provider throw.
+    const c = await compose({ deps: { runtimeDir: undefined as unknown as string } });
+    expect(c.codex).toBeDefined();
+    expect(() => c.codex?.start()).not.toThrow();
+    expect((await c.get(CODEX_HEADROOM_PATH)).status).toBe(503);
+    expect((await c.get(CODEX_SESSIONS_PATH)).status).toBe(503);
+    expect(() => c.codex?.onAnalysisChanged({ enabled: true, cause: "delete" })).not.toThrow();
+    await expect(c.codex?.stop()).resolves.toBeUndefined();
+  });
+
   it("Test 3: answers the four read routes with the right shapes, then shuts down Codex first and the store last", async () => {
     const c = await compose({
       appServer: { read: { kind: "result", result: weeklyReply(41) } },
