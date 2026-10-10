@@ -54,11 +54,17 @@
 #      (T-06-02)
 #  15. the approval public door approval/index.ts never references the minter
 #      (MAJOR-2)
-#  16. no non-test source file names a Codex credential file (the literal
-#      auth, a dot, json) -- the literal-scan leg of the CODEX-09 three-way
+#  16. no non-test source file names a Codex credential or config file (the
+#      literal auth, a dot, json; the literal config, a dot, toml), the
+#      reset-credit consume RPC (the rateLimitResetCredit method prefix, or a
+#      quoted string ending in a slash-consume segment), or writes Codex's
+#      notify setting (a TOML-style `notify =` assignment or the `notify=`
+#      command-line override, outside packages/plugin) -- four literal families
+#      in ONE rule, the literal-scan leg of the CODEX-09 and CODEX-06
 #      enforcement, independent of the CODEX_HOME port and the canary test
 #      (D-26); test files, /test-support/ folders and packages/test-fixtures/
-#      are exempt
+#      are exempt, and the usage request parameter excludeResetCreditDetails
+#      is not a hit
 #  Rules 11 to 14 scan non-test source files only and skip comment lines;
 #  every allow-list below is an anchored `^...` path match, never a substring.
 #
@@ -388,14 +394,39 @@ check_rule \
 # report like rule 10 merges its scans, so the rule count moves by exactly one.
 # Family (a), the credential file: `auth`, a dot, `json`, preceded by a
 # non-identifier character or the line start, so `~/.codex/auth.json` and
-# "auth.json" are hits but an `oauth.json`-style name is not. ---
+# "auth.json" are hits but an `oauth.json`-style name is not.
+# Family (b), the Codex config file: `config`, a dot, `toml`, same boundary. The
+# product never reads or writes it (it can hold server environment values and
+# trust hashes).
+# Family (c), the reset-credit consume RPC: the method-name prefix
+# `rateLimitResetCredit`, or any quoted string ending in a slash-consume segment.
+# The legitimate usage request parameter `excludeResetCreditDetails` has no such
+# prefix (its text is `exclude...ResetCreditDetails`, never `rateLimitResetCredit`),
+# and `account/rateLimits/read` has neither the prefix nor the segment.
+# Family (d), a notify write, applied only outside packages/plugin (the plugin
+# has legitimate notify callbacks): the word `notify` (identifier boundary
+# before it), optional spaces, `=`, optional spaces, then `[`, a double or
+# single quote or a backtick -- the TOML-style assignment -- and also `notify=`
+# followed by anything but `=` or `>` (the `-c notify=...` command-line override
+# form). A `notify(` call, a `notify:` property or parameter, a `===`
+# comparison and an arrow function are not hits. ---
 CODEX_SCAN_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '/test-support/' | grep -v '^packages/test-fixtures/' || true)
+CODEX_NOTIFY_FILES=$(printf '%s\n' "$CODEX_SCAN_FILES" | grep -v '^packages/plugin/' || true)
 CODEX_CREDENTIAL_PATTERN="(^|[^A-Za-z0-9_])auth[.]json"
+CODEX_CONFIG_PATTERN="(^|[^A-Za-z0-9_])config[.]toml"
+CODEX_CONSUME_PATTERN="rateLimitResetCredit|[\"'\`][^\"'\`]*/consume[\"'\`]"
+CODEX_NOTIFY_PATTERN="(^|[^A-Za-z0-9_])notify[[:space:]]*=[[:space:]]*([[]|[\"'\`])|(^|[^A-Za-z0-9_])notify=([^=>]|$)"
 # shellcheck disable=SC2086
 codex_credential_hits=$(grep_noncomment "$CODEX_CREDENTIAL_PATTERN" $CODEX_SCAN_FILES || true)
+# shellcheck disable=SC2086
+codex_config_hits=$(grep_noncomment "$CODEX_CONFIG_PATTERN" $CODEX_SCAN_FILES || true)
+# shellcheck disable=SC2086
+codex_consume_hits=$(grep_noncomment "$CODEX_CONSUME_PATTERN" $CODEX_SCAN_FILES || true)
+# shellcheck disable=SC2086
+codex_notify_hits=$(grep_noncomment "$CODEX_NOTIFY_PATTERN" $CODEX_NOTIFY_FILES || true)
 report_rule \
   "a non-test source file names a Codex credential or config file, the reset-credit consume RPC, or writes Codex's notify setting (CODEX-09, CODEX-06; usage comes only from the app-server rate-limit read)" \
-  "$(printf '%s\n' "$codex_credential_hits" | grep -v '^$' | sort -u || true)"
+  "$(printf '%s\n%s\n%s\n%s\n' "$codex_credential_hits" "$codex_config_hits" "$codex_consume_hits" "$codex_notify_hits" | grep -v '^$' | sort -u || true)"
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: checked ${RULES} rules."
