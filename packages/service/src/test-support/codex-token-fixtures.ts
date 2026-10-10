@@ -199,6 +199,76 @@ export function perTurnRollout(): string {
   ]);
 }
 
+// --- The cumulative-only rollout (no per-turn records) ---------------------------
+
+/** The folder day and name of the cumulative-only rollout of the dedup tests. */
+export const CUMULATIVE_DAY = "2026-10-09";
+export const CUMULATIVE_NAME = rolloutName("2026-10-09T23:45:00.000Z", THREAD_A);
+
+/** Cumulative totals as (input, cached, cache write, output, reasoning, total). */
+function six(
+  input: number,
+  cached: number,
+  write: number,
+  output: number,
+  reasoning: number,
+  total: number,
+): RawCounters {
+  return {
+    input_tokens: input,
+    cached_input_tokens: cached,
+    cache_write_input_tokens: write,
+    output_tokens: output,
+    reasoning_output_tokens: reasoning,
+    total_tokens: total,
+  };
+}
+
+/**
+ * Six token_count steps across a quarter-hour and a day boundary: a growing
+ * total, an identical repeat, `info: null`, then independent decreases of
+ * four counters while two others still grow.
+ */
+export const CUMULATIVE_STEPS: ReadonlyArray<{ at: string; total: RawCounters | null }> = [
+  { at: "2026-10-09T23:50:00.000Z", total: six(100, 10, 5, 20, 4, 120) },
+  { at: "2026-10-09T23:55:00.000Z", total: six(150, 12, 5, 50, 4, 200) },
+  { at: "2026-10-09T23:58:00.000Z", total: six(150, 12, 5, 50, 4, 200) },
+  { at: "2026-10-10T00:01:00.000Z", total: null },
+  { at: "2026-10-10T00:05:00.000Z", total: six(120, 20, 3, 40, 6, 160) },
+  { at: "2026-10-10T00:20:00.000Z", total: six(180, 20, 5, 60, 6, 240) },
+];
+
+/** What every route to the cumulative-only rollout must total. */
+export const CUMULATIVE_TOTALS = {
+  input: 180,
+  cachedInput: 20,
+  cacheWrite: 5,
+  output: 60,
+  reasoningOutput: 6,
+  total: 240,
+} as const;
+
+/** The part of the day-10-10 buckets: 00:00 and 00:15. */
+export const CUMULATIVE_TODAY_TOTALS = {
+  input: 30,
+  cachedInput: 8,
+  cacheWrite: 0,
+  output: 10,
+  reasoningOutput: 2,
+  total: 40,
+} as const;
+
+/** The rollout's lines: meta, content decoys, then `steps` token_count lines. */
+export function cumulativeLines(steps = CUMULATIVE_STEPS.length): string[] {
+  return [
+    metaLine({ cliVersion: OLD_CLI_VERSION, timestamp: "2026-10-09T23:45:00.000Z" }),
+    ...contentLines("2026-10-09T23:46:00.000Z"),
+    ...CUMULATIVE_STEPS.slice(0, steps).map((step) =>
+      tokenCountLine({ timestamp: step.at, total: step.total }),
+    ),
+  ];
+}
+
 // --- Temporary operational store -----------------------------------------------
 
 export interface TempStore {

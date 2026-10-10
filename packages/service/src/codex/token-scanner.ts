@@ -9,11 +9,15 @@ import {
 } from "@ccc/collectors";
 import type { CodexTokenSummary } from "@ccc/domain";
 import {
+  type addCodexRecognition,
+  type addCumulativeDelta,
   codexBucketStart,
   markCodexDayCovered,
   readCodexCursor,
+  type readCumulativeBaseline,
   upsertTurnTokens,
   writeCodexCursor,
+  type writeCumulativeBaseline,
 } from "@ccc/operational-store";
 import type Database from "better-sqlite3";
 import { addDays, localDayOf } from "../claude/usage-summary.js";
@@ -71,6 +75,19 @@ export interface TokenScannerLogger {
   warn(fields: Record<string, unknown>, message: string): void;
 }
 
+/**
+ * The store functions the chunk transaction calls. Injectable so a test can
+ * make one of them fail between the delta, high-water-mark and cursor writes.
+ */
+export interface TokenStoreOps {
+  readonly upsertTurnTokens: typeof upsertTurnTokens;
+  readonly addCumulativeDelta: typeof addCumulativeDelta;
+  readonly readCumulativeBaseline: typeof readCumulativeBaseline;
+  readonly writeCumulativeBaseline: typeof writeCumulativeBaseline;
+  readonly writeCodexCursor: typeof writeCodexCursor;
+  readonly addCodexRecognition: typeof addCodexRecognition;
+}
+
 export interface TokenScannerDeps {
   readonly db: Database.Database;
   readonly port: Pick<CodexHomePort, "listRolloutFiles" | "statRollout" | "readRolloutRange">;
@@ -88,6 +105,10 @@ export interface TokenScannerDeps {
   readonly maxFilesPerSweep?: number;
   readonly maxBytesPerSweep?: number;
   readonly yieldNow?: () => Promise<void>;
+  /** Overrides the parser version (tests simulate a parser upgrade). */
+  readonly parserVersion?: number;
+  /** Overrides store functions in the chunk transaction (tests inject a failure). */
+  readonly ops?: Partial<TokenStoreOps>;
 }
 
 export type ScanOutcome =

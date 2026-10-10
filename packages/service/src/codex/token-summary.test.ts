@@ -1,5 +1,5 @@
 import { CodexTokenSummarySchema } from "@ccc/domain";
-import { markCodexDayCovered, upsertTurnTokens } from "@ccc/operational-store";
+import { appendToggleLog, markCodexDayCovered, upsertTurnTokens } from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openTempStore, type TempStore } from "../test-support/codex-token-fixtures.js";
 import { buildCodexTokenSummary } from "./token-summary.js";
@@ -101,5 +101,112 @@ describe("Task 1: buildCodexTokenSummary, the available path and analysis-off", 
     coverAll();
     const text = JSON.stringify([summarise(), summarise({ analysisOn: false })]);
     expect(text).not.toMatch(/cost|price|bill|usd|path|title/i);
+  });
+});
+
+describe("Task 2: the unavailable reasons, coverage and partiality", () => {
+  it("names the newest failing version when the format changed", () => {
+    const summary = summarise({ recognition: { kind: "unavailable", version: "0.151.0" } });
+    for (const range of Object.values(summary.ranges)) {
+      expect(range).toEqual({ kind: "unavailable", reason: "format-changed", version: "0.151.0" });
+    }
+  });
+
+  it("keeps the version null when no failing key is a dotted version", () => {
+    const summary = summarise({ recognition: { kind: "unavailable", version: null } });
+    expect(summary.ranges.today).toEqual({
+      kind: "unavailable",
+      reason: "format-changed",
+      version: null,
+    });
+  });
+
+  it("reads first-scan-pending in every range and carries the flag", () => {
+    const summary = summarise({ firstScanPending: true });
+    expect(summary.firstScanPending).toBe(true);
+    for (const range of Object.values(summary.ranges)) {
+      expect(range).toEqual({ kind: "unavailable", reason: "first-scan-pending", version: null });
+    }
+  });
+
+  it("orders the reasons: analysis-off, then format-changed, then first-scan-pending", () => {
+    const off = summarise({
+      analysisOn: false,
+      firstScanPending: true,
+      recognition: { kind: "unavailable", version: "0.151.0" },
+    });
+    expect(off.ranges.today).toMatchObject({ reason: "analysis-off" });
+    const changed = summarise({
+      firstScanPending: true,
+      recognition: { kind: "unavailable", version: "0.151.0" },
+    });
+    expect(changed.ranges.today).toMatchObject({ reason: "format-changed" });
+  });
+
+  it("reads no-coverage, with no counter, when no day is covered and no row exists", () => {
+    const summary = summarise();
+    for (const range of Object.values(summary.ranges)) {
+      expect(range).toEqual({ kind: "unavailable", reason: "no-coverage", version: null });
+    }
+  });
+
+  it("is available and partial when rows exist for days no scan covered", () => {
+    seedTurn("turn-0001", "2026-10-10T09:00:00.000Z", 100);
+    const today = summarise().ranges.today;
+    expect(today.kind).toBe("available");
+    if (today.kind !== "available") return;
+    expect(today.partiality.partial).toBe(true);
+    expect(today.coverage.uncoveredDays).toBe(1);
+  });
+
+  it("is available with zero counters for a covered range holding no tokens", () => {
+    coverAll();
+    const today = summarise().ranges.today;
+    expect(today.kind).toBe("available");
+    if (today.kind !== "available") return;
+    expect(today.totals.total).toBe(0);
+    expect(today.partiality).toEqual({ partial: false });
+  });
+
+  it("counts days before the horizon and analysis-off days from the shared toggle log", () => {
+    coverAll();
+    appendToggleLog(temp.db, "2026-10-08T08:00:00.000Z", false);
+    appendToggleLog(temp.db, "2026-10-08T20:00:00.000Z", true);
+    const week = summarise({ horizonDay: "2026-10-06" }).ranges["last-7-days"];
+    expect(week.kind).toBe("available");
+    if (week.kind !== "available") return;
+    expect(week.coverage).toEqual({
+      horizonDate: "2026-10-06",
+      uncoveredDays: 2,
+      analysisOffDays: 1,
+    });
+    expect(week.partiality).toEqual({
+      partial: true,
+      missingSources: ["analysis-off", "log-retention"],
+    });
+  });
+
+  it("states freshness from the last scan and treats a missing scan time as cached", () => {
+    coverAll();
+    expect(summarise({ lastScanAt: "2026-10-10T11:58:00.000Z" }).ranges.today).toMatchObject({
+      freshness: "live",
+    });
+    expect(summarise({ lastScanAt: "2026-10-10T08:00:00.000Z" }).ranges.today).toMatchObject({
+      freshness: "cached",
+    });
+    expect(summarise({ lastScanAt: null }).ranges.today).toMatchObject({ freshness: "cached" });
+  });
+
+  it("computes the ranges in the injected time zone", () => {
+    // 2026-10-10T03:00Z is still Oct 9 in New York: its "today" starts at 04:00Z on Oct 9.
+    const now = new Date("2026-10-10T03:00:00.000Z");
+    markCodexDayCovered(temp.db, "2026-10-09", now.toISOString());
+    markCodexDayCovered(temp.db, "2026-10-10", now.toISOString());
+    seedTurn("turn-0001", "2026-10-09T05:00:00.000Z", 40);
+    const today = summarise({ now, timeZone: "America/New_York" }).ranges.today;
+    expect(today.kind).toBe("available");
+    if (today.kind !== "available") return;
+    expect(today.totals.total).toBe(40);
+    expect(today.bounds.start).toBe("2026-10-09T04:00:00.000Z");
   });
 });
