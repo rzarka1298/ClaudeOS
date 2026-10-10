@@ -41,6 +41,7 @@ const FIXED_TITLES: ReadonlySet<string> = new Set([
   "Active Claude sessions",
   "Project shortcuts",
   "Claude usage",
+  "Codex sessions and usage",
   "Technology and market intelligence",
   "GitHub discoveries",
   "Quick actions",
@@ -134,9 +135,9 @@ describe("every registered widget satisfies the full UI-04 contract", () => {
 });
 
 describe("the registry's shape", () => {
-  it("registers exactly eight widgets", () => {
-    expect(WIDGET_IDS).toHaveLength(8);
-    expect(new Set(WIDGET_IDS).size).toBe(8);
+  it("registers exactly nine widgets", () => {
+    expect(WIDGET_IDS).toHaveLength(9);
+    expect(new Set(WIDGET_IDS).size).toBe(9);
   });
 
   it("lists the seven PRD §7.1 panels in the PRD's own order", () => {
@@ -145,6 +146,7 @@ describe("the registry's shape", () => {
       "active-sessions",
       "project-shortcuts",
       "claude-usage",
+      "codex",
       "tech-intel",
       "github-discoveries",
       "quick-actions",
@@ -159,7 +161,7 @@ describe("the registry's shape", () => {
 
   it("flags every registered widget on, in code, with no persisted state (ADR-0023)", () => {
     const flags = Object.entries(FEATURE_FLAGS);
-    expect(flags).toHaveLength(8);
+    expect(flags).toHaveLength(9);
     expect(flags.every(([, enabled]) => enabled)).toBe(true);
   });
 });

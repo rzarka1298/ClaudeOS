@@ -18,6 +18,7 @@ export const FEATURE_FLAGS = {
   "widget.active-sessions": true,
   "widget.project-shortcuts": true,
   "widget.claude-usage": true,
+  "widget.codex": true,
   "widget.tech-intel": true,
   "widget.github-discoveries": true,
   "widget.quick-actions": true,
