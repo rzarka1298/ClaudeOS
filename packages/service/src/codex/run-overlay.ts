@@ -35,7 +35,12 @@ export interface RunStateInput {
   readonly limitHitAfter: boolean;
   readonly lastLifecycleAt: string | null;
   /** The newest record naming this thread's session. */
-  readonly record: Pick<RunFact, "runId" | "status" | "startedAt" | "resetsAt"> | null;
+  readonly record:
+    | (Pick<RunFact, "runId" | "status" | "startedAt" | "resetsAt"> & {
+        /** When the wrapper wrote the end; an absent or null value is "unknown". */
+        readonly finishedAt?: string | null;
+      })
+    | null;
   /** The pending-resume record naming this thread's session. */
   readonly pending: PendingFact | null;
   /** The record of the run the pending record names (it may name no session). */
@@ -78,9 +83,30 @@ function pauseOf(input: RunStateInput): { readonly resumesAfter: string | null }
 }
 
 /**
+ * True when the session shows activity (store or rollout lifecycle) after the wrapper wrote the end
+ * report: the report describes an earlier turn and says nothing about the current one (a resumed
+ * turn is not failed by an old failure; a later unfinished turn is not completed by an old success).
+ * An absent finish time is "unknown" and supersedes nothing.
+ */
+function supersededByActivity(
+  record: NonNullable<RunStateInput["record"]>,
+  input: RunStateInput,
+): boolean {
+  if (record.finishedAt === undefined || record.finishedAt === null) return false;
+  const finishedMs = Date.parse(record.finishedAt);
+  if (!Number.isFinite(finishedMs)) return false;
+  const newest = Math.max(
+    timeOf(input.lastActivityAt),
+    input.lastLifecycleAt === null ? 0 : timeOf(input.lastLifecycleAt),
+  );
+  return newest > finishedMs;
+}
+
+/**
  * The one rule table for what a wrapper record may change about a session's state (D-18, D-20).
  *
- * 1. End reports, from the newest record naming the session. They resolve what a rollout cannot
+ * 1. End reports, from the newest record naming the session, unless later session activity
+ *    supersedes them ({@link supersededByActivity}). They resolve what a rollout cannot
  *    and never the reverse: `ok` turns a STALE view into completed; `failed` and `timeout` turn a
  *    running or stale view into failed; a `running`, `limit` or `refused` record changes nothing,
  *    and no state is ever moved to completed without an explicit ok report.
@@ -89,7 +115,7 @@ function pauseOf(input: RunStateInput): { readonly resumesAfter: string | null }
 export function decideRunState(input: RunStateInput): RunStateDecision {
   let state = input.state;
   const record = input.record;
-  if (record !== null) {
+  if (record !== null && !supersededByActivity(record, input)) {
     if (record.status === "ok" && state === "stale") state = "completed";
     else if (
       (record.status === "failed" || record.status === "timeout") &&

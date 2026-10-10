@@ -570,6 +570,51 @@ describe("decideRunState: the one reviewable rule table", () => {
     }
   });
 
+  it("an end report superseded by later session activity is disregarded (R2)", () => {
+    const finished = iso(T0 - 8 * MINUTE);
+    const later = { lastActivityAt: iso(T0 - 5 * MINUTE), lastLifecycleAt: iso(T0 - 6 * MINUTE) };
+    // An old failed or timeout report must not fail a turn resumed afterwards.
+    for (const status of ["failed", "timeout"]) {
+      const out = decideRunState({
+        ...base,
+        ...later,
+        state: "running",
+        record: recordOf(status, { finishedAt: finished }),
+      });
+      expect(out.state, status).toBe("running");
+    }
+    // An old success must not complete a later unfinished (stale) turn.
+    const ok = decideRunState({
+      ...base,
+      ...later,
+      state: "stale",
+      record: recordOf("ok", { finishedAt: finished }),
+    });
+    expect(ok.state).toBe("stale");
+    // Lifecycle activity alone also supersedes.
+    const viaLifecycle = decideRunState({
+      ...base,
+      state: "running",
+      lastActivityAt: iso(T0 - 20 * MINUTE),
+      lastLifecycleAt: iso(T0 - 2 * MINUTE),
+      record: recordOf("failed", { finishedAt: finished }),
+    });
+    expect(viaLifecycle.state).toBe("running");
+    // A report finished at or after the newest activity still applies, and so does a missing one.
+    const fresh = decideRunState({
+      ...base,
+      state: "running",
+      record: recordOf("failed", { finishedAt: iso(T0 - 4 * MINUTE) }),
+    });
+    expect(fresh.state).toBe("failed");
+    const unknown = decideRunState({
+      ...base,
+      state: "stale",
+      record: recordOf("ok", { finishedAt: null }),
+    });
+    expect(unknown.state).toBe("completed");
+  });
+
   it("no combination reaches completed without an explicit ok report (T-05.1-27)", () => {
     const states = ["running", "limit-paused", "stale", "failed", "cancelled"] as const;
     const statuses = [null, "running", "limit", "timeout", "failed", "refused"] as const;
