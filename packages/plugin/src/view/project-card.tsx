@@ -286,6 +286,7 @@ export function ProjectCard({
           inProjects
           onNavigate={onNavigate}
           openSystemSettings={openSystemSettings}
+          onQuickAction={onQuickAction}
         />
       </>
     );

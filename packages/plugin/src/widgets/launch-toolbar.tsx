@@ -1,4 +1,5 @@
 import type { GithubTarget, LaunchAction, ProjectId } from "@ccc/domain";
+import { LAUNCH_PAIR_ACTION } from "@ccc/domain/launch.js";
 import type { VNode } from "preact";
 import { useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
@@ -9,17 +10,25 @@ import {
   launchAnnouncement,
   launcherDisplayName,
   launchSuccessLine,
+  PAIR_CODEX_MISSING_NOTE,
+  type PairAgent,
+  pairAnnouncement,
+  pairLineText,
   renderCopy,
 } from "../projects/launch-copy.js";
 import {
+  type LaunchStatus,
   latestLaunchStatus,
   launchStatus,
   launchStatusKey,
+  type PairLaunchStatus,
+  type PairLineStatus,
   type ProjectLaunchActionId,
   setLaunchError,
 } from "../projects/launch-status.js";
 import type { DestinationId } from "../view/destinations.js";
 import { requestLaunchersFocus } from "../view/launchers-focus.js";
+import { codexInstalled } from "./codex-install-state.js";
 import type { QuickActionDescriptor } from "./contract.js";
 import { nextToolbarIndex } from "./toolbar-keys.js";
 
@@ -36,15 +45,25 @@ import { nextToolbarIndex } from "./toolbar-keys.js";
  */
 
 interface LaunchButtonSpec {
-  readonly action: Exclude<LaunchAction, "claude-desktop">;
+  readonly action: Exclude<LaunchAction, "claude-desktop"> | typeof LAUNCH_PAIR_ACTION;
   readonly label: string;
   readonly ariaLabel: (project: string) => string;
 }
 
-/** D-35's four labels, in order, and their accessible names (UI-SPEC "Launch button labels"). */
+/**
+ * D-35's four labels plus the pair's fifth (UI-SPEC S2: Antigravity, Claude
+ * Code, Claude + Codex, Finder, GitHub), in order, and their accessible names
+ * (UI-SPEC "Launch button labels"). The pair's visible label is contained in
+ * its accessible name (WCAG 2.5.3).
+ */
 const LAUNCH_BUTTONS: readonly LaunchButtonSpec[] = [
   { action: "antigravity", label: "Antigravity", ariaLabel: (p) => `Open ${p} in Antigravity` },
   { action: "claude-code", label: "Claude Code", ariaLabel: (p) => `Start Claude Code in ${p}` },
+  {
+    action: LAUNCH_PAIR_ACTION,
+    label: "Claude + Codex",
+    ariaLabel: (p) => `Open ${p} with Claude + Codex`,
+  },
   { action: "finder", label: "Finder", ariaLabel: (p) => `Reveal ${p} in Finder` },
   { action: "github", label: "GitHub", ariaLabel: (p) => `Open ${p} on GitHub` },
 ];
@@ -64,10 +83,43 @@ export function launchPhrase(action: ProjectLaunchActionId, projectName: string)
 /** S8's and S9's text for the one launch with no project. */
 export const CLAUDE_DESKTOP_PHRASE = "Open Claude Desktop";
 
-/** The four project actions a row's single status line reports on. */
+/** The five project actions a row's single status line reports on. */
 export const PROJECT_LAUNCH_ACTIONS: readonly ProjectLaunchActionId[] = LAUNCH_BUTTONS.map(
   (spec) => spec.action,
 );
+
+/**
+ * The descriptor a launch button, the quick switcher and `Try again` all emit
+ * for one project action: the one dispatcher's input, never a callback with a
+ * side effect (D-24).
+ */
+export function launchDescriptor(
+  action: Exclude<LaunchAction, "claude-desktop"> | typeof LAUNCH_PAIR_ACTION,
+  projectId: ProjectId,
+  projectName: string,
+): QuickActionDescriptor {
+  return {
+    id: `launch-${action}`,
+    label: launchPhrase(action, projectName),
+    capability: `launch:${action}`,
+    target: { projectId },
+  };
+}
+
+/** The descriptor `Open Codex settings` emits; the dispatcher resolves it to Settings plus a Notice. */
+export const OPEN_CODEX_SETTINGS_DESCRIPTOR: QuickActionDescriptor = {
+  id: "connect-codex-settings",
+  label: "Open Codex settings",
+  capability: "connect:codex-settings",
+};
+
+/** `true` while a single launch, or either half of a pair, is still opening. */
+function isOpening(status: LaunchStatus | undefined): boolean {
+  if (status === undefined) return false;
+  if (status.kind === "pair")
+    return status.claude.kind === "opening" || status.codex.kind === "opening";
+  return status.kind === "opening";
+}
 
 export interface LaunchToolbarProps {
   readonly projectId: ProjectId;
@@ -84,6 +136,9 @@ export function LaunchToolbar({
 }: LaunchToolbarProps): VNode {
   const statuses = launchStatus.value;
   const noRemoteNoteId = useId();
+  const codexMissingNoteId = useId();
+  // Only an explicit `false` shows the note; unknown shows nothing (R-10).
+  const codexMissing = codexInstalled.value === false;
   // Enabled when the remote's host is github.com or an override link is set
   // (D-13) — both arrive as `kind: "github"`.
   const hasGithub = github.kind === "github";
@@ -117,18 +172,13 @@ export function LaunchToolbar({
 
   function activate(spec: LaunchButtonSpec): void {
     const key = launchStatusKey(projectId, spec.action);
-    if (statuses.get(key)?.kind === "opening") return;
+    if (isOpening(statuses.get(key))) return;
     // GitHub with nowhere to go: say why, inline, and send nothing (UI-SPEC S2).
     if (spec.action === "github" && !hasGithub) {
       setLaunchError(key, "no-github-remote");
       return;
     }
-    onQuickAction?.({
-      id: `launch-${spec.action}`,
-      label: spec.ariaLabel(projectName),
-      capability: `launch:${spec.action}`,
-      target: { projectId },
-    });
+    onQuickAction?.(launchDescriptor(spec.action, projectId, projectName));
   }
 
   return (
@@ -139,8 +189,9 @@ export function LaunchToolbar({
       onKeyDown={handleKeyDown}
     >
       {LAUNCH_BUTTONS.map((spec, index) => {
-        const opening = statuses.get(launchStatusKey(projectId, spec.action))?.kind === "opening";
+        const opening = isOpening(statuses.get(launchStatusKey(projectId, spec.action)));
         const noRemote = spec.action === "github" && !hasGithub;
+        const pairNote = spec.action === LAUNCH_PAIR_ACTION && codexMissing;
         return (
           <button
             key={spec.action}
@@ -148,7 +199,7 @@ export function LaunchToolbar({
             className="ccc-quick-action"
             aria-label={spec.ariaLabel(projectName)}
             aria-disabled={opening || noRemote ? "true" : undefined}
-            aria-describedby={noRemote ? noRemoteNoteId : undefined}
+            aria-describedby={noRemote ? noRemoteNoteId : pairNote ? codexMissingNoteId : undefined}
             data-launch-state={opening ? "opening" : undefined}
             tabIndex={index === focusedIndex ? 0 : -1}
             ref={(el) => {
@@ -178,6 +229,11 @@ export function LaunchToolbar({
           No GitHub remote
         </span>
       )}
+      {codexMissing && (
+        <span id={codexMissingNoteId} className="ccc-visually-hidden">
+          {PAIR_CODEX_MISSING_NOTE}
+        </span>
+      )}
     </div>
   );
 }
@@ -199,6 +255,26 @@ export interface LaunchStatusLineProps {
   readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
 }
 
+/** What a pair line's glyph and tone are, per state. Opening carries no glyph. */
+const PAIR_LINE_GLYPHS: Readonly<
+  Record<PairLineStatus["kind"], { readonly glyph: string | null; readonly className: string }>
+> = {
+  opening: { glyph: null, className: "" },
+  success: { glyph: "✓", className: "ccc-meta-glyph" },
+  error: { glyph: "▲", className: "ccc-error-glyph" },
+  setup: { glyph: "◌", className: "ccc-meta-glyph" },
+};
+
+/** The inline action an error or setup line offers, before availability is applied. */
+function lineAction(agent: PairAgent, line: PairLineStatus): LaunchErrorAction | null {
+  if (line.kind === "setup") return "set-up-codex";
+  if (line.kind !== "error") return null;
+  const action = LAUNCH_ERROR_COPY[line.error].action ?? null;
+  // A Codex line never offers `Set up launchers`: Codex's missing install is
+  // the setup line, never launcher-not-configured (UI-SPEC S2).
+  return agent === "codex" && action === "set-up-launchers" ? null : action;
+}
+
 /**
  * The persistent `role="status"` line under a toolbar (Accessibility Floor
  * 2: the region exists, empty, before its text ever changes). It shows the
@@ -206,6 +282,10 @@ export interface LaunchStatusLineProps {
  * project, while a visually hidden announcement does (UI-SPEC S2 table). An
  * error's optional action button follows the region rather than sitting
  * inside it, so the announcement is the two lines and nothing else.
+ *
+ * When the latest status is the pair's, the SAME region element holds exactly
+ * two agent lines, Claude Code first, each with its own tone, glyph and words
+ * (UI-SPEC S2, R-11). One agent's line never depends on the other's.
  */
 export function LaunchStatusLine({
   projectId,
@@ -215,19 +295,23 @@ export function LaunchStatusLine({
   inProjects = false,
   onNavigate,
   openSystemSettings,
+  onQuickAction,
 }: LaunchStatusLineProps): VNode {
   const latest = latestLaunchStatus(launchStatus.value, projectId, actions);
+  const status = latest?.status;
+  const pair: PairLaunchStatus | null = status?.kind === "pair" ? status : null;
+  const single = pair === null ? status : undefined;
   const tone =
-    latest === null || latest.status.kind === "opening"
+    single === undefined || single.kind === "opening"
       ? undefined
-      : latest.status.kind === "success"
+      : single.kind === "success"
         ? "success"
         : "error";
 
   let errorLines: { problem: string; nextStep: string } | null = null;
-  let errorAction: LaunchErrorAction | null = null;
-  if (latest?.status.kind === "error") {
-    const copy = LAUNCH_ERROR_COPY[latest.status.error];
+  let errorActions: LaunchErrorAction[] = [];
+  if (single?.kind === "error" && latest !== null) {
+    const copy = LAUNCH_ERROR_COPY[single.error];
     const values = {
       launcher: launcherDisplayName(latest.action),
       terminal: terminalLabel,
@@ -237,23 +321,40 @@ export function LaunchStatusLine({
       problem: renderCopy(copy.problem, values),
       nextStep: renderCopy(copy.nextStep, values),
     };
-    errorAction = copy.action ?? null;
-    // A button renders only when it can act: `Go to Projects` is pointless
-    // in Projects, and a surface with no System Settings route omits those
-    // two buttons — the next-step line already names the path (RR-16).
-    if (errorAction === "go-to-projects" && (inProjects || onNavigate === undefined))
-      errorAction = null;
-    if (errorAction === "set-up-launchers" && onNavigate === undefined) errorAction = null;
-    if (
-      (errorAction === "open-automation" || errorAction === "open-privacy-security") &&
-      openSystemSettings === undefined
-    )
-      errorAction = null;
+    errorActions = copy.action === undefined ? [] : [copy.action];
+  } else if (pair !== null) {
+    // One button per distinct action, in line order (Claude Code first).
+    const wanted = [lineAction("claude", pair.claude), lineAction("codex", pair.codex)];
+    errorActions = wanted.filter(
+      (action, index): action is LaunchErrorAction =>
+        action !== null && wanted.indexOf(action) === index,
+    );
   }
+  // A button renders only when it can act: `Go to Projects` is pointless in
+  // Projects, a surface with no System Settings route omits those two
+  // buttons (the next-step line already names the path, RR-16), and the two
+  // descriptor buttons need the dispatcher.
+  const canAct = (action: LaunchErrorAction): boolean => {
+    switch (action) {
+      case "go-to-projects":
+        return !inProjects && onNavigate !== undefined;
+      case "set-up-launchers":
+      case "set-up-codex":
+        return onNavigate !== undefined;
+      case "open-automation":
+      case "open-privacy-security":
+        return openSystemSettings !== undefined;
+      case "open-codex-settings":
+      case "try-again":
+        return onQuickAction !== undefined && projectId !== null && latest !== null;
+    }
+  };
+  errorActions = errorActions.filter(canAct);
 
   function runErrorAction(action: LaunchErrorAction): void {
     switch (action) {
       case "set-up-launchers":
+      case "set-up-codex":
         requestLaunchersFocus();
         onNavigate?.("settings");
         return;
@@ -266,13 +367,28 @@ export function LaunchStatusLine({
       case "open-privacy-security":
         openSystemSettings?.("privacy-security");
         return;
+      case "open-codex-settings":
+        onQuickAction?.(OPEN_CODEX_SETTINGS_DESCRIPTOR);
+        return;
+      case "try-again": {
+        // Re-emits the same descriptor the failed launch came from. `claude-desktop`
+        // has no project, and a retry for it is never offered (window-not-ready
+        // cannot occur there).
+        if (latest === null || projectId === null || latest.action === "claude-desktop") return;
+        onQuickAction?.(launchDescriptor(latest.action, projectId, projectName));
+        return;
+      }
     }
   }
 
   return (
     <>
-      <p role="status" className="ccc-launch-status" data-tone={tone}>
-        {latest?.status.kind === "opening" && (
+      <p
+        role="status"
+        className={pair === null ? "ccc-launch-status" : "ccc-launch-status ccc-launch-status-pair"}
+        data-tone={tone}
+      >
+        {single?.kind === "opening" && latest !== null && (
           <>
             <span aria-hidden="true">{launchAcknowledgement(latest.action, terminalLabel)}</span>
             <span className="ccc-visually-hidden">
@@ -280,7 +396,7 @@ export function LaunchStatusLine({
             </span>
           </>
         )}
-        {latest?.status.kind === "success" && (
+        {single?.kind === "success" && latest !== null && (
           <>
             <span className="ccc-meta-glyph" aria-hidden="true">
               ✓
@@ -298,12 +414,60 @@ export function LaunchStatusLine({
             {errorLines.nextStep}
           </>
         )}
+        {pair !== null && (
+          <>
+            <PairLine agent="claude" line={pair.claude} terminalLabel={terminalLabel} />
+            <PairLine agent="codex" line={pair.codex} terminalLabel={terminalLabel} />
+            <span className="ccc-visually-hidden">
+              {pairAnnouncement(pair.claude, pair.codex, terminalLabel, projectName)}
+            </span>
+          </>
+        )}
       </p>
-      {errorAction !== null && (
-        <button type="button" className="ccc-list-more" onClick={() => runErrorAction(errorAction)}>
-          {LAUNCH_ERROR_ACTION_LABELS[errorAction]}
+      {errorActions.map((action) => (
+        <button
+          key={action}
+          type="button"
+          className="ccc-list-more"
+          onClick={() => runErrorAction(action)}
+        >
+          {LAUNCH_ERROR_ACTION_LABELS[action]}
         </button>
-      )}
+      ))}
     </>
+  );
+}
+
+/**
+ * One agent's line. It is hidden from assistive technology on purpose: the
+ * region's hidden announcement says the two statements once, so a screen
+ * reader never hears each line twice. The project name is never rendered here.
+ */
+function PairLine({
+  agent,
+  line,
+  terminalLabel,
+}: {
+  readonly agent: PairAgent;
+  readonly line: PairLineStatus;
+  readonly terminalLabel: string;
+}): VNode {
+  const { glyph, className } = PAIR_LINE_GLYPHS[line.kind];
+  return (
+    <span
+      className="ccc-launch-agent-line"
+      data-agent={agent}
+      data-tone={line.kind}
+      aria-hidden="true"
+    >
+      {glyph !== null && (
+        <>
+          <span className={className} aria-hidden="true">
+            {glyph}
+          </span>{" "}
+        </>
+      )}
+      {pairLineText(agent, line, terminalLabel, "")}
+    </span>
   );
 }
