@@ -8,11 +8,12 @@ import type {
 import type { App } from "obsidian";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import { createLaunchRequester } from "../projects/launch-client.js";
-import { resetLaunchStatus } from "../projects/launch-status.js";
+import { launchStatus, launchStatusKey, resetLaunchStatus } from "../projects/launch-status.js";
 import {
   Scope as StubScope,
   type SuggestModal as StubSuggestModal,
 } from "../test-support/obsidian-stub.js";
+import { launchDescriptor } from "../widgets/launch-toolbar.js";
 import { dispatchQuickAction } from "../widgets/quick-actions.js";
 import { DESTINATIONS } from "./destinations.js";
 import {
@@ -124,13 +125,14 @@ afterEach(() => {
 });
 
 describe("buildSwitcherItems: one flat list in the D-32 empty-query order", () => {
-  it("lists the pinned project's five items, Open Claude Desktop, the eight destinations, then the unpinned project's five", () => {
+  it("lists the pinned project's six items, Open Claude Desktop, the eight destinations, then the unpinned project's six", () => {
     const items = buildSwitcherItems(TWO_PROJECTS);
 
     expect(items.map((item) => item.text)).toEqual([
       "Go to example-project",
       "Open example-project in Antigravity",
       "Start Claude Code in example-project",
+      "Open example-project with Claude + Codex",
       "Reveal example-project in Finder",
       "Open example-project on GitHub",
       "Open Claude Desktop",
@@ -138,10 +140,11 @@ describe("buildSwitcherItems: one flat list in the D-32 empty-query order", () =
       "Go to demo-api",
       "Open demo-api in Antigravity",
       "Start Claude Code in demo-api",
+      "Open demo-api with Claude + Codex",
       "Reveal demo-api in Finder",
       "Open demo-api on GitHub — no GitHub remote",
     ]);
-    expect(items).toHaveLength(19);
+    expect(items).toHaveLength(21);
   });
 
   it("uses the eight DESTINATIONS labels verbatim, in order", () => {
@@ -245,7 +248,7 @@ describe("projects that share a display name (judge ruling)", () => {
     const secondLaunches = items.filter(
       (item) => item.kind === "launch" && item.projectId === SECOND,
     );
-    expect(secondLaunches.length).toBe(4);
+    expect(secondLaunches.length).toBe(5);
     for (const item of secondLaunches) {
       if (item.kind !== "launch") throw new Error("unreachable");
       expect(item.projectName).toBe("demo-api (2)");
@@ -318,7 +321,7 @@ describe("ProjectSwitcherModal (S9 copy)", () => {
   it("lists the host's current items as plain text", () => {
     const modal = new ProjectSwitcherModal({} as App, host());
     const items = modal.getItems();
-    expect(items).toHaveLength(19);
+    expect(items).toHaveLength(21);
     expect(modal.getItemText(itemNamed(items, "Open Claude Desktop"))).toBe("Open Claude Desktop");
   });
 
@@ -364,6 +367,61 @@ describe("choosing an item (tracer: search, choose Reveal {project} in Finder, i
     expect(dispatchQuickAction).toHaveBeenCalledTimes(1);
     expect(h.requestLaunch).toHaveBeenCalledWith(null, "claude-desktop");
     expect(h.notify).toHaveBeenCalledWith("Opening Claude Desktop…");
+  });
+});
+
+describe("the pair item (plan 05.1-17, D-13)", () => {
+  it("sits after Claude Code with the toolbar's own descriptor and a stable id", () => {
+    const items = buildSwitcherItems(TWO_PROJECTS);
+    const texts = items.map((item) => item.text);
+    expect(texts.indexOf("Open example-project with Claude + Codex")).toBe(
+      texts.indexOf("Start Claude Code in example-project") + 1,
+    );
+    const pair = itemNamed(items, "Open example-project with Claude + Codex");
+    expect(pair.kind === "launch" && pair.descriptor).toEqual(
+      launchDescriptor("claude-codex-pair", PINNED_ID, "example-project"),
+    );
+    expect(pair.kind === "launch" && pair.descriptor.id).toBe("launch-claude-codex-pair");
+    expect(pair.kind === "launch" && pair.noGithubRemote).toBe(false);
+    // Existing ids are unchanged.
+    const ids = items.flatMap((item) => (item.kind === "launch" ? [item.descriptor.id] : []));
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "launch-antigravity",
+        "launch-claude-code",
+        "launch-finder",
+        "launch-github",
+      ]),
+    );
+  });
+
+  it("choosing it dispatches through the one dispatcher and acknowledges both agents", () => {
+    const h = spies();
+    const modal = new ProjectSwitcherModal({} as App, host({}, h));
+    modal.onChooseItem(
+      itemNamed(modal.getItems(), "Open example-project with Claude + Codex"),
+      new KeyboardEvent("keydown", { key: "Enter" }),
+    );
+    expect(dispatchQuickAction).toHaveBeenCalledTimes(1);
+    expect(h.requestLaunch).toHaveBeenCalledTimes(1);
+    expect(h.requestLaunch).toHaveBeenCalledWith(PINNED_ID, "claude-codex-pair");
+    expect(h.notify).toHaveBeenCalledWith("Opening Claude Code and Codex in example-project…");
+  });
+
+  it("a pair already opening gets no second acknowledgement", () => {
+    const h = spies();
+    const modal = new ProjectSwitcherModal({} as App, host({}, h));
+    launchStatus.value = new Map([
+      [
+        launchStatusKey(PINNED_ID, "claude-codex-pair"),
+        { kind: "pair", claude: { kind: "opening" }, codex: { kind: "opening" } },
+      ],
+    ]);
+    modal.onChooseItem(
+      itemNamed(modal.getItems(), "Open example-project with Claude + Codex"),
+      new KeyboardEvent("keydown"),
+    );
+    expect(h.notify).not.toHaveBeenCalled();
   });
 });
 

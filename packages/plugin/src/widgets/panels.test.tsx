@@ -650,6 +650,15 @@ describe("Quick actions is live (S8, D-38, PR-08, PR-12, RR-18)", () => {
     expect(within(card).getAllByRole("button", { name: "Open Claude Desktop" })).toHaveLength(1);
   });
 
+  it("adds no pair control to the Quick actions card (plan 05.1-17)", () => {
+    connectionState.value = { kind: "live" };
+    renderShell();
+    const card = quickCard();
+    expect(within(card).queryByRole("button", { name: /Claude \+ Codex/ })).toBeNull();
+    expect(card.textContent).not.toContain("Claude + Codex");
+    expect(card.querySelectorAll("[role=status]")).toHaveLength(1);
+  });
+
   it("Start a Claude Code session opens the switcher prefilled", () => {
     connectionState.value = { kind: "live" };
     const openSwitcher = vi.fn();

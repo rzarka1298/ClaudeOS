@@ -4,6 +4,11 @@ import { fileURLToPath } from "node:url";
 import type { ProjectId } from "@ccc/domain";
 import { CAPABILITY_OPERATION, classifyCapability } from "@ccc/domain/classification.js";
 import { describe, expect, it, vi } from "vitest";
+import { connectionState } from "../connection-state.js";
+import type { HostRegistry } from "../host-registry.js";
+import { launchStatus, launchStatusKey, resetLaunchStatus } from "../projects/launch-status.js";
+import { createPluginLauncher } from "../projects/plugin-launcher.js";
+import { launchersFocusRequested } from "../view/launchers-focus.js";
 import type { QuickActionDescriptor } from "./contract.js";
 import { dispatchQuickAction } from "./quick-actions.js";
 import { WIDGETS } from "./registry.js";
@@ -419,12 +424,13 @@ describe("table-driven over every R-CAPS descriptor string (plan 06-10, Test 3)"
     "task:create": { kind: "navigated", destination: "tasks" },
     "note:capture": { kind: "unavailable" },
     "data:refresh": { kind: "unavailable" },
-    // Phase 05.1 wave 2 rows (plan 02). The dispatcher arms for these land in
-    // plans 17 and 18, which replace these placeholders with real outcomes.
+    // Phase 05.1 wave 2 rows (plan 02). Plan 17 resolves the pair and hands the
+    // two codex: row actions to the session runner; `launch:codex` has no Codex-alone
+    // launch this phase (UI-SPEC R-12: it exists only for the pair's second half).
     "launch:codex": { kind: "unavailable" },
-    "launch:claude-codex-pair": { kind: "unavailable" },
-    "codex:open-transcript": { kind: "unavailable" },
-    "codex:follow-log": { kind: "unavailable" },
+    "launch:claude-codex-pair": { kind: "launch-requested", action: "claude-codex-pair" },
+    "codex:open-transcript": { kind: "session-action-requested" },
+    "codex:follow-log": { kind: "session-action-requested" },
   };
 
   /** The connect family is matched by prefix; every R-CAPS example resolves the same way. */
@@ -556,5 +562,203 @@ describe("the amended dispatcher stays free of side-effect channels (plan 06-10,
     expect(header).toMatch(/five outcomes/i);
     expect(header).toMatch(/proposal-requested/);
     expect(header).toMatch(/executes nothing/i);
+  });
+});
+
+describe("the pair launch and the Codex branches (plan 05.1-17)", () => {
+  const PAIR: QuickActionDescriptor = {
+    id: "launch-claude-codex-pair",
+    label: "Open example-project with Claude + Codex",
+    capability: "launch:claude-codex-pair",
+    target: { projectId: PROJECT_ID },
+  };
+
+  it("requests the pair for a project target and reports launch-requested", () => {
+    const ctx = context();
+    const result = dispatchQuickAction(PAIR, ctx);
+    expect(result).toEqual({ kind: "launch-requested", action: "claude-codex-pair" });
+    expect(ctx.requestLaunch).toHaveBeenCalledTimes(1);
+    expect(ctx.requestLaunch).toHaveBeenCalledWith(PROJECT_ID, "claude-codex-pair");
+    expect(ctx.notify).not.toHaveBeenCalled();
+  });
+
+  it("without a project target answers unavailable and notifies", () => {
+    const ctx = context();
+    const { target: _target, ...noTarget } = PAIR;
+    expect(dispatchQuickAction(noTarget, ctx)).toEqual({ kind: "unavailable" });
+    expect(ctx.requestLaunch).not.toHaveBeenCalled();
+    expect(ctx.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("launch:codex has no dispatcher arm: Codex alone is never launched (UI-SPEC R-12)", () => {
+    const ctx = context();
+    const result = dispatchQuickAction(
+      { id: "launch-codex", label: "Codex", capability: "launch:codex", target: PAIR.target },
+      ctx,
+    );
+    expect(result).toEqual({ kind: "unavailable" });
+    expect(ctx.requestLaunch).not.toHaveBeenCalled();
+  });
+
+  it("the other launch descriptors behave as before", () => {
+    const ctx = context();
+    expect(
+      dispatchQuickAction(
+        { id: "x", label: "x", capability: "launch:finder", target: { projectId: PROJECT_ID } },
+        ctx,
+      ),
+    ).toEqual({ kind: "launch-requested", action: "finder" });
+    expect(ctx.requestLaunch).toHaveBeenCalledWith(PROJECT_ID, "finder");
+  });
+
+  it.each(["codex:open-transcript", "codex:follow-log"])(
+    "%s is handed to the session runner exactly like session: and usage:",
+    (capability) => {
+      const runSessionAction = vi.fn();
+      const ctx = { ...context(), runSessionAction };
+      const descriptor: QuickActionDescriptor = {
+        id: "x",
+        label: "An action",
+        capability,
+        target: { threadId: "thread-1" } as never,
+      };
+      expect(dispatchQuickAction(descriptor, ctx)).toEqual({
+        kind: "session-action-requested",
+        capability,
+      });
+      expect(runSessionAction).toHaveBeenCalledTimes(1);
+      expect(runSessionAction).toHaveBeenCalledWith(descriptor);
+      expect(ctx.requestLaunch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["codex:open-transcript", "codex:follow-log"])(
+    "%s without a runner answers unavailable and notifies",
+    (capability) => {
+      const ctx = context();
+      expect(dispatchQuickAction({ id: "x", label: "Open it", capability }, ctx)).toEqual({
+        kind: "unavailable",
+      });
+      expect(ctx.notify).toHaveBeenCalledWith("Open it isn't available yet.");
+    },
+  );
+
+  it("an unknown codex: capability still fails closed at the classification step", () => {
+    const runSessionAction = vi.fn();
+    const ctx = { ...context(), runSessionAction };
+    expect(
+      dispatchQuickAction({ id: "x", label: "x", capability: "codex:run-anything" }, ctx),
+    ).toEqual({ kind: "unavailable" });
+    expect(runSessionAction).not.toHaveBeenCalled();
+  });
+
+  it("connect:codex requests the launchers focus, then navigates to settings, with no misleading Notice", () => {
+    launchersFocusRequested.value = false;
+    const ctx = context();
+    const result = dispatchQuickAction(
+      { id: "connect-codex", label: "Connect Codex", capability: "connect:codex" },
+      ctx,
+    );
+    expect(result).toEqual({ kind: "navigated", destination: "settings" });
+    expect(launchersFocusRequested.value).toBe(true);
+    expect(ctx.navigate).toHaveBeenCalledWith("settings");
+    expect(ctx.notify).not.toHaveBeenCalled();
+    launchersFocusRequested.value = false;
+  });
+
+  it("connect:codex-settings navigates to settings and names the product-name path", () => {
+    const ctx = context();
+    const result = dispatchQuickAction(
+      {
+        id: "connect-codex-settings",
+        label: "Open Codex settings",
+        capability: "connect:codex-settings",
+      },
+      ctx,
+    );
+    expect(result).toEqual({ kind: "navigated", destination: "settings" });
+    expect(ctx.navigate).toHaveBeenCalledTimes(1);
+    expect(ctx.notify).toHaveBeenCalledTimes(1);
+    expect(String(ctx.notify.mock.calls[0]?.[0])).toContain(
+      "Obsidian settings → Claude command center → Codex",
+    );
+  });
+
+  it("the existing connect branches are unchanged", () => {
+    const ctx = context();
+    dispatchQuickAction(CONNECT_GOOGLE, ctx);
+    expect(String(ctx.notify.mock.calls[0]?.[0])).toContain("Google Calendar and Gmail");
+    const hooks = context();
+    dispatchQuickAction({ id: "h", label: "Hooks", capability: "connect:claude-hooks" }, hooks);
+    expect(String(hooks.notify.mock.calls[0]?.[0])).toContain("Claude Code hooks");
+  });
+});
+
+describe("the dispatcher still has exactly its documented outcomes (plan 05.1-17, T-05.1-18)", () => {
+  const CODE_ONLY = DISPATCHER_SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  it("returns only the six documented kinds and adds no seventh", () => {
+    const kinds = new Set([...CODE_ONLY.matchAll(/kind:\s*"([a-z-]+)"/g)].map((m) => m[1]));
+    expect([...kinds].sort()).toEqual(
+      [
+        "launch-requested",
+        "navigated",
+        "proposal-requested",
+        "session-action-requested",
+        "switcher-opened",
+        "unavailable",
+      ].sort(),
+    );
+  });
+
+  it("gains no write, network, shell or process import for the pair", () => {
+    const imports = CODE_ONLY.split("\n").filter((line) => /^\s*import\b/.test(line));
+    for (const forbidden of ["service-api-client", "child_process", "obsidian", "node:", "fs"]) {
+      expect(imports.filter((line) => line.includes(`"${forbidden}`))).toEqual([]);
+    }
+    expect(imports.some((line) => line.includes("service-api-client"))).toBe(false);
+    for (const name of ["launchPair", "postLaunch", "execFile", "spawn", "writeFile"]) {
+      expect(new RegExp(`\\b${name}\\b`).test(CODE_ONLY), name).toBe(false);
+    }
+  });
+});
+
+describe("a pair descriptor while the service is disconnected (UI-SPEC floor 12, T-05.1-18)", () => {
+  it("is refused by the launcher with the existing Notice, one error line and no per-agent lines", () => {
+    resetLaunchStatus();
+    connectionState.value = { kind: "disconnected", reason: "socket closed" };
+    const client = { request: vi.fn(() => new Promise<never>(() => {})) };
+    const notify = vi.fn();
+    const registry = { launchTimers: vi.fn() } as unknown as HostRegistry;
+    const launch = createPluginLauncher({
+      registry,
+      client,
+      notify,
+      timers: { setTimer: () => 0, clearTimer: () => {} },
+    });
+    const ctx = { ...context(), requestLaunch: launch };
+
+    const result = dispatchQuickAction(
+      {
+        id: "launch-claude-codex-pair",
+        label: "Open example-project with Claude + Codex",
+        capability: "launch:claude-codex-pair",
+        target: { projectId: PROJECT_ID },
+      },
+      ctx,
+    );
+
+    expect(result).toEqual({ kind: "launch-requested", action: "claude-codex-pair" });
+    expect(client.request).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(String(notify.mock.calls[0]?.[0])).toContain(
+      "Couldn't reach the command center service",
+    );
+    expect(launchStatus.value.get(launchStatusKey(PROJECT_ID, "claude-codex-pair"))).toEqual({
+      kind: "error",
+      error: "service-disconnected",
+    });
+    connectionState.value = { kind: "connecting" };
+    resetLaunchStatus();
   });
 });
