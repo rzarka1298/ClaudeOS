@@ -46,7 +46,17 @@ export function withCodexDeps<D>(getDeps: DepsGetter<D>, handler: CodexRouteHand
       try {
         await handler(req, res, ctx, deps);
       } catch (error: unknown) {
-        logger.error({ err: error }, "codex route failed");
+        // The error's message and stack can carry a rollout path or a cwd (an ENOENT
+        // names the file), so only its class and a short code are logged (T-05.1-23).
+        const code = (error as { code?: unknown } | null)?.code;
+        logger.error(
+          {
+            reason: "handler-threw",
+            errorName: error instanceof Error ? error.name : "non-error",
+            ...(typeof code === "string" && /^[A-Z0-9_-]{1,40}$/.test(code) ? { code } : {}),
+          },
+          "codex route failed",
+        );
         if (!res.headersSent) sendJson(res, 500, INTERNAL_ERROR_BODY);
       }
     })();
