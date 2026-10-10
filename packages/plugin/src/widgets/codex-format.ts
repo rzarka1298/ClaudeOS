@@ -183,3 +183,37 @@ export function moreSessionsLine(count: number): string {
 export function formatTokenBreakdown(counters: CodexTokenCounters): string {
   return `Input ${formatCompactTokens(counters.input)} · cached input ${formatCompactTokens(counters.cachedInput)} · cache write ${formatCompactTokens(counters.cacheWrite)} · output ${formatCompactTokens(counters.output)} · reasoning output ${formatCompactTokens(counters.reasoningOutput)}`;
 }
+
+/** Additive row vocabulary; the plan 12 table remains unchanged. */
+export const CODEX_ROW_COPY = Object.freeze({
+  openTranscript: "Open transcript",
+  followLog: "Follow live log",
+  transcriptMissing: "Transcript not found",
+  unclassified: "Unclassified",
+  sessionFallback: "Session {id}",
+  openTranscriptName: "Open transcript for {name}",
+  followLogName: "Follow live log for {name}",
+  effort: "{effort} effort",
+  started: "started {relative}",
+  active: "active {relative}",
+  elapsed: "elapsed {duration}",
+  staleElapsed: "At least {duration}",
+  resumesAfter: "resumes after {time}",
+  resetUnreported: "reset time not reported",
+  sessionsSourceSuffix: "for recent sessions",
+  tokenSourceSuffix: "for token activity",
+  sessionsCount: "{count} sessions",
+  sessionsRange: "Last seven days",
+  partial: "Partial",
+});
+export const CODEX_COUNTER_LABELS = Object.freeze({
+  input: "Input",
+  cachedInput: "Cached input",
+  cacheWrite: "Cache write",
+  output: "Output",
+  reasoningOutput: "Reasoning output",
+  total: "Total",
+});
+export function codexChangedBody(template: string, version: string | null): string {
+  return template.replace("{version}", codexVersion(version));
+}
