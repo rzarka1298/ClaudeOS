@@ -51,8 +51,9 @@ function sourceFiles(): { name: string; source: string }[] {
 
 function specifiersOf(source: string): string[] {
   const found: string[] = [];
+  const code = stripComments(source);
   for (const pattern of SPECIFIER_PATTERNS) {
-    for (const match of source.matchAll(pattern)) {
+    for (const match of code.matchAll(pattern)) {
       if (match[1] !== undefined) found.push(match[1]);
     }
   }
