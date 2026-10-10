@@ -310,7 +310,7 @@ describe("Test 4: ordering, the cap and the seven day window", () => {
 });
 
 describe("Test 5: snapshot freshness follows the age of the last successful poll", () => {
-  it("is live right after a poll, cached within three intervals and stale after", async () => {
+  it("is live right after a poll, cached up to three intervals and stale after", async () => {
     const built = build([{ id: "thread-a", agoMs: MINUTE, lines: [completed(MINUTE)] }]);
     expect(built.mirror.snapshot()).toBeNull();
     await built.mirror.pollNow();
@@ -318,6 +318,8 @@ describe("Test 5: snapshot freshness follows the age of the last successful poll
     built.clock.now = NOW + INTERVAL;
     expect(available(built.mirror).freshness).toBe("live");
     built.clock.now = NOW + 2 * INTERVAL;
+    expect(available(built.mirror).freshness).toBe("live");
+    built.clock.now = NOW + 2 * INTERVAL + 1;
     expect(available(built.mirror).freshness).toBe("cached");
     built.clock.now = NOW + 3 * INTERVAL;
     expect(available(built.mirror).freshness).toBe("cached");
