@@ -152,6 +152,8 @@ const quiet = <T>(fn: () => T): T => recorder.whilePaused(fn);
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const HOUR = 3_600_000;
+/** The repository-wide privacy scan walks every tracked file; under load it takes tens of seconds. */
+const PRIVACY_SCAN_TIMEOUT_MS = 180_000;
 const LONG_AGO_S = 1_000_000;
 
 // --- sentinels: invented, assembled at runtime so no tracked line is secret-shaped --------------
@@ -1031,26 +1033,31 @@ describe("Test 6: no secret-shaped or email-shaped literal, and the privacy and 
     }
   });
 
-  it("passes the repository privacy scan and the secret scanner configuration", () => {
-    const privacy = spawnSync("sh", ["scripts/check-privacy.sh"], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-    });
-    expect(privacy.status, privacy.stdout).toBe(0);
-    const which = spawnSync("which", ["gitleaks"], { encoding: "utf8" });
-    if (which.status !== 0) return; // CI runs the scanner as its own job over the full history
-    const scan = spawnSync(
-      "gitleaks",
-      [
-        "dir",
-        "--no-banner",
-        "--redact",
-        "--config",
-        join(REPO_ROOT, ".gitleaks.toml"),
-        ...FILES.map((relative) => join(REPO_ROOT, relative)),
-      ],
-      { encoding: "utf8" },
-    );
-    expect(scan.status, scan.stdout + scan.stderr).toBe(0);
-  });
+  it(
+    "passes the repository privacy scan and the secret scanner configuration",
+    () => {
+      const privacy = spawnSync("sh", ["scripts/check-privacy.sh"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+      });
+      expect(privacy.status, privacy.stdout).toBe(0);
+      const which = spawnSync("which", ["gitleaks"], { encoding: "utf8" });
+      if (which.status !== 0) return; // CI runs the scanner as its own job over the full history
+      const scan = spawnSync(
+        "gitleaks",
+        [
+          "dir",
+          "--no-banner",
+          "--redact",
+          "--config",
+          join(REPO_ROOT, ".gitleaks.toml"),
+          ...FILES.map((relative) => join(REPO_ROOT, relative)),
+        ],
+        { encoding: "utf8" },
+      );
+      expect(scan.status, scan.stdout + scan.stderr).toBe(0);
+      // The repository scan reads every tracked file: slow on a loaded machine, so the ceiling is generous.
+    },
+    PRIVACY_SCAN_TIMEOUT_MS,
+  );
 });
