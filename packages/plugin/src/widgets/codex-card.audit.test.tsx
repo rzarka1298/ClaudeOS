@@ -250,7 +250,7 @@ describe("plan usage: glyphs, one reason line, meter and number (CODEX-08, D-28)
   );
 
   it("shape-changed never prints a version, hostile or dotted: the numeric-free floor wins", () => {
-    for (const version of ["0.12.3", "<b>1</b> /Users/x"]) {
+    for (const version of ["0.12.3", "<b>1</b> /Users/USERNAME/p"]) {
       const view = render(
         <CodexPlanUsageSection
           usage={{ kind: "unavailable", reason: "shape-changed", version, observedAt }}

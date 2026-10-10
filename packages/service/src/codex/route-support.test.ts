@@ -18,7 +18,7 @@ vi.mock("../route-kit.js", async () => {
 import type { RouteContext } from "../route-kit.js";
 import { withCodexDeps } from "./route-support.js";
 
-const SECRET_PATH = "/Users/someone/.codex/sessions/2026/10/10/rollout-abc.jsonl";
+const SECRET_PATH = "/Users/USERNAME/.codex/sessions/2026/10/10/rollout-abc.jsonl";
 
 describe("withCodexDeps catch-all logging (T-05.1-23: no path, cwd or process text in logs)", () => {
   beforeEach(() => {
