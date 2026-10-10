@@ -175,3 +175,78 @@ describe("wave-6: shutdown with an open event stream", () => {
     expect(h.events.at(-1)).toBe("exit-0");
   });
 });
+
+describe("graceful shutdown with the Codex services (plan 05.1-28)", () => {
+  it("stops Codex after the approvals and before usage and Claude, and closes the store last", async () => {
+    const events: string[] = [];
+    let serverDone: () => void = () => undefined;
+    const shutdown = createShutdown({
+      stopApprovals: async () => {
+        events.push("approvals");
+      },
+      stopCodex: async () => {
+        events.push("codex");
+      },
+      stopUsage: async () => {
+        events.push("usage");
+      },
+      stopClaude: async () => {
+        events.push("claude");
+      },
+      stopIntake: () => events.push("intake"),
+      closeServer: (done) => {
+        serverDone = done;
+      },
+      closeResources: () => events.push("store-closed"),
+      exit: (code) => events.push(`exit-${code}`),
+      onError: () => events.push("error"),
+      keepAlive: { start: () => 1, stop: () => undefined },
+    });
+    shutdown();
+    serverDone();
+    await tick();
+    expect(events).toEqual([
+      "intake",
+      "approvals",
+      "codex",
+      "usage",
+      "claude",
+      "store-closed",
+      "exit-0",
+    ]);
+  });
+
+  it("still stops usage and Claude when the Codex stop rejects", async () => {
+    const events: string[] = [];
+    let serverDone: () => void = () => undefined;
+    const shutdown = createShutdown({
+      stopApprovals: async () => undefined,
+      stopCodex: async () => {
+        throw new Error("codex did not stop");
+      },
+      stopUsage: async () => {
+        events.push("usage");
+      },
+      stopClaude: async () => {
+        events.push("claude");
+      },
+      stopIntake: () => undefined,
+      closeServer: (done) => {
+        serverDone = done;
+      },
+      closeResources: () => events.push("store-closed"),
+      exit: () => undefined,
+      onError: (message) => events.push(`error:${message}`),
+      keepAlive: { start: () => 1, stop: () => undefined },
+    });
+    shutdown();
+    serverDone();
+    await tick();
+    expect(events).toEqual([
+      "error:shutdown: codex services did not stop cleanly",
+      "usage",
+      "claude",
+      "store-closed",
+    ]);
+  });
+});

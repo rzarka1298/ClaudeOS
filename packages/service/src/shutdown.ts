@@ -14,6 +14,11 @@
  */
 export interface ShutdownDeps {
   readonly stopApprovals: () => Promise<void>;
+  /**
+   * Stops the Codex services (Phase 05.1): after the approvals, before the usage and Claude services,
+   * so its scans and reads finish before the store closes. Optional: absent in an older composition.
+   */
+  readonly stopCodex?: () => Promise<void>;
   readonly stopUsage: () => Promise<void>;
   readonly stopClaude: () => Promise<void>;
   /** Stops intake: timers and collectors that must not run during the drain. */

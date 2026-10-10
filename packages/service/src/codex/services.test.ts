@@ -7,6 +7,7 @@ import {
   realpathSync,
   writeFileSync,
 } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -15,9 +16,11 @@ import {
   CODEX_FOLLOW_LOG_PATH,
   CODEX_HEADROOM_PATH,
   CODEX_HOOK_EVENTS_PATH,
+  CODEX_INTEGRATION_PATH,
   CODEX_SESSIONS_PATH,
   CODEX_TOKEN_ACTIVITY_PATH,
   CODEX_USAGE_PATH,
+  CodexIntegrationStatusSchema,
   CodexSessionsSnapshotSchema,
   CodexSessionsUpdatedPayloadSchema,
   CodexSnapshotStateSchema,
@@ -41,6 +44,7 @@ import {
   setCollectorSetting,
 } from "@ccc/operational-store";
 import { afterEach, describe, expect, it } from "vitest";
+import { createShutdown } from "../shutdown.js";
 import { createBridgeFixture } from "../test-support/bridge-fixtures.js";
 import {
   type CodexComposition,
@@ -57,6 +61,14 @@ import {
   writeRunRecord,
 } from "../test-support/codex-run-fixtures.js";
 import { readFakeLog, weeklyReply } from "../test-support/fake-codex-app-server.js";
+import {
+  assertNoForbiddenAccess,
+  assertNoMarkerLeak,
+  createFakeCodexHome,
+  recordingFs,
+} from "../test-support/fake-codex-home.js";
+import type { BridgeStatus } from "./bridge-state.js";
+import { createCodexHomePort } from "./codex-home.js";
 import { CODEX_UNAVAILABLE_BODY } from "./route-support.js";
 import { CODEX_SNAPSHOT_BUDGET_BYTES } from "./routes.js";
 
@@ -606,3 +618,127 @@ describe("follow-log queues to the bridge directory that holds the run's log", (
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 3: boot, shutdown order and the missing or unrecognised Codex home
+
+describe("boot and shutdown of the composed service (Task 3)", () => {
+  it("Test 3: answers the four read routes with the right shapes, then shuts down Codex first and the store last", async () => {
+    const c = await compose({
+      appServer: { read: { kind: "result", result: weeklyReply(41) } },
+      home: codexHomeWithThreads([thread(THREAD, 2 * 3_600_000)]),
+    });
+    c.codex?.start();
+    expect(HeadroomSignalSchema.parse((await c.get(CODEX_HEADROOM_PATH)).body).codex.verdict).toBe(
+      "allow",
+    );
+    expect(CodexSessionsSnapshotSchema.parse((await c.get(CODEX_SESSIONS_PATH)).body).kind).toBe(
+      "available",
+    );
+    CodexTokenSummarySchema.parse((await c.get(CODEX_TOKEN_ACTIVITY_PATH)).body);
+    CodexIntegrationStatusSchema.parse((await c.get(CODEX_INTEGRATION_PATH)).body);
+    const pids = (c.appServer === null ? [] : readFakeLog(c.appServer.logPath)).flatMap((entry) =>
+      entry.t === "start" ? [entry.pid] : [],
+    );
+
+    const events: string[] = [];
+    let serverDone: () => void = () => undefined;
+    const shutdown = createShutdown({
+      stopApprovals: async () => {
+        events.push("approvals");
+      },
+      stopCodex: async () => {
+        await c.codex?.stop();
+        events.push("codex");
+      },
+      stopUsage: async () => {
+        events.push("usage");
+      },
+      stopClaude: async () => {
+        events.push("claude");
+      },
+      stopIntake: () => undefined,
+      closeServer: (done) => {
+        serverDone = done;
+      },
+      closeResources: () => {
+        events.push("store-closed");
+      },
+      exit: (code) => events.push(`exit-${code}`),
+      onError: () => events.push("error"),
+      keepAlive: { start: () => 1, stop: () => undefined },
+    });
+    shutdown();
+    serverDone();
+    expect(await waitFor(() => events.includes("exit-0"))).toBe(true);
+    expect(events).toEqual(["approvals", "codex", "usage", "claude", "store-closed", "exit-0"]);
+    expect(c.timers.armed()).toBe(0);
+    await expectGone(pids);
+  });
+
+  it("Test 4: with the Codex services not composed every Codex path is the constant 503 and the rest behaves as before", async () => {
+    const c = await compose({ codex: false });
+    expect((await c.get(CODEX_SESSIONS_PATH)).status).toBe(503);
+    expect((await c.post(CODEX_HOOK_EVENTS_PATH, {})).status).toBe(503);
+    expect((await c.get(HEALTH_PATH)).status).toBe(200);
+  });
+
+  it("Test 5: an unrecognised store shape starts fine, answers unavailable, and no credential or configuration file is touched", async () => {
+    const home = createFakeCodexHome({
+      withDecoys: true,
+      database: {
+        ddl: "changed",
+        threads: [{ id: THREAD, updatedAtMs: Date.now() - 60_000 }],
+      },
+    });
+    try {
+      const recorder = recordingFs();
+      const port = createCodexHomePort({ root: home.root, fs: recorder.fs });
+      const c = await compose({ deps: { port } });
+      const reply = await c.get(CODEX_SESSIONS_PATH);
+      expect(reply.status).toBe(200);
+      const body = CodexSessionsSnapshotSchema.parse(reply.body);
+      expect(body.kind).toBe("unavailable");
+      if (body.kind === "unavailable") expect(body.reason).toBe("format-changed");
+      await c.get(CODEX_INTEGRATION_PATH);
+      assertNoForbiddenAccess(recorder.calls, home);
+      assertNoMarkerLeak([JSON.stringify(reply.body)], home);
+    } finally {
+      home.cleanup();
+    }
+  });
+
+  it("Test 5: a CODEX_HOME that does not exist starts fine and answers unavailable", async () => {
+    const missing = join(tmpdir(), `ccc-no-codex-home-${randomUUID()}`);
+    const recorder = recordingFs();
+    const port = createCodexHomePort({ root: missing, fs: recorder.fs });
+    const c = await compose({ deps: { port } });
+    const reply = await c.get(CODEX_SESSIONS_PATH);
+    expect(reply.status).toBe(200);
+    expect(CodexSessionsSnapshotSchema.parse(reply.body).kind).toBe("unavailable");
+    expect(recorder.calls.every((call) => call.path.startsWith(missing))).toBe(true);
+  });
+
+  it("Test 5: under a test runner the real default Codex home is refused and the services run against an absent home", async () => {
+    const c = await compose({
+      deps: { port: undefined, home: homedir(), readBridgeStatus: () => NOT_INSTALLED_BRIDGE },
+    });
+    const reply = await c.get(CODEX_SESSIONS_PATH);
+    expect(reply.status).toBe(200);
+    expect(CodexSessionsSnapshotSchema.parse(reply.body).kind).toBe("unavailable");
+    expect(
+      CodexTokenSummarySchema.safeParse((await c.get(CODEX_TOKEN_ACTIVITY_PATH)).body).success,
+    ).toBe(true);
+  });
+});
+
+const NOT_INSTALLED_BRIDGE: BridgeStatus = {
+  state: "not-installed",
+  protocol: null,
+  capabilities: null,
+  launcherPresent: false,
+  dir: "/Users/USERNAME/state/codex-bridge",
+  dirSource: "primary",
+  launchable: true,
+  windows: [],
+};

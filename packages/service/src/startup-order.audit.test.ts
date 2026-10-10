@@ -21,14 +21,21 @@ describe("main.ts startup order (D-22)", () => {
     "recomputeApprovedRoots(store)",
     "await startClaudeServices(",
     "startUsageServices({",
+    // Phase 05.1: the Codex detection is built for the detector in the launcher block.
+    "createCodexDetection({",
     "startApprovalServices({",
     "await approvals.recover()",
     "approvals.start()",
     "claudeServices.proposerSlot.bind(",
     "createTaskServices({",
     "taskHost.startupWalk()",
+    // Phase 05.1: after the usage services and the task block, before the listener (D-14).
+    "await startCodexServices(",
     "createRequestListener({",
     "await startSocketServer({",
+    // The timers of both start only once the socket is open.
+    "usageServices.start()",
+    "codexServices.start()",
   ] as const;
 
   it("calls each startup step exactly once in the documented order", () => {
@@ -57,10 +64,11 @@ describe("main.ts shutdown order (D-09)", () => {
   const shutdownAt = src.indexOf("const shutdown = ");
   const body = src.slice(shutdownAt);
 
-  it("stops the approvals, then the usage services, then the Claude services, then closes the store", () => {
+  it("stops the approvals, then Codex, then the usage services, then the Claude services, then closes the store", () => {
     expect(shutdownAt).toBeGreaterThan(-1);
     const needles: [string, RegExp][] = [
       ["approvals.stop()", /approvals\s*\.stop\(\)/],
+      ["codexServices.stop()", /codexServices\.stop\(\)/],
       ["usageServices.stop()", /usageServices\.stop\(\)/],
       ["claudeServices.stop()", /claudeServices\.stop\(\)/],
       ["store.close()", /store\.close\(\)/],
@@ -90,5 +98,51 @@ describe("main.ts shutdown order (D-09)", () => {
     const literal = src.slice(start, end);
     expect(literal).not.toMatch(/terminator|executor|processFacts|runInspector|proposerSlot/);
     expect(literal).toContain("approvals: approvals.services");
+    // Phase 05.1: the Codex route deps only, never the services object's other members.
+    expect(literal).toContain("codex: codexServices.routeDeps");
+  });
+});
+
+/**
+ * Audit (plan 05.1-28, Task 3): the Phase 05.1 blocks of `main.ts` add no timer of their own, name
+ * the Codex detection for the detector, and carry the launcher-change and usage hooks.
+ */
+describe("main.ts Phase 05.1 blocks", () => {
+  const src = readFileSync(fileURLToPath(new URL("./main.ts", import.meta.url)), "utf8");
+
+  function block(start: string, end: string): string {
+    const from = src.indexOf(start);
+    const to = src.indexOf(end, from);
+    expect(from, `${start} must be in main.ts`).toBeGreaterThan(-1);
+    expect(to, `${end} must follow ${start}`).toBeGreaterThan(from);
+    return src.slice(from, to);
+  }
+
+  it("adds no top-level timer in the Codex start block or the Codex detection", () => {
+    const startBlock = block(
+      ">>> Phase 05.1 (Codex services) start",
+      "<<< Phase 05.1 (Codex services) end",
+    );
+    expect(startBlock).toContain("await startCodexServices(");
+    expect(startBlock).not.toMatch(/setInterval|setTimeout|setImmediate/);
+    const detectionBlock = block(
+      ">>> Phase 05.1 (Codex detection) start",
+      "<<< Phase 05.1 (Codex detection) end",
+    );
+    expect(detectionBlock).not.toMatch(/setInterval|setTimeout|setImmediate/);
+  });
+
+  it("hands the detector the Codex detection and the same detection to the services", () => {
+    expect(src).toMatch(/createDetector\(\{[^}]*codex: codexDetection/s);
+    expect(src).toMatch(/startCodexServices\(\{[^}]*detection: codexDetection/s);
+  });
+
+  it("binds the Phase 5 hooks and the launcher-change hook to the Codex services", () => {
+    expect(src).toContain("deleteAnalytics: deleteAllUsageAnalytics");
+    expect(src).toMatch(
+      /onAnalysisChanged: \(change\) => codexServices\?\.onAnalysisChanged\(change\)/,
+    );
+    expect(src).toMatch(/onIntegrationRefresh: \(\) => codexServices\?\.onIntegrationRefresh\(\)/);
+    expect(src).toMatch(/codexServices\?\.onLaunchersChanged\(\)/);
   });
 });
