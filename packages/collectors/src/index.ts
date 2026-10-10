@@ -14,6 +14,11 @@ export interface Collector {
   readonly collectorId: string;
 }
 
+// Phase 05.1 (Codex co-work and usage): empty sub-barrels that plans 05.1-07
+// and 05.1-08 fill, so neither edits this file. Nothing from `hook/` or
+// `statusline/` is re-exported here (the barrel source-scan test).
+export * from "./codex/records/index.js";
+export * from "./codex/usage/index.js";
 export {
   CAPABILITY_TABLE,
   type CapabilityRow,
