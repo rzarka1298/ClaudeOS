@@ -42,34 +42,233 @@ export interface CodexTokenTotals {
   readonly rows: number;
 }
 
-void USAGE_BUCKET_MS;
+const COUNTER_KEYS = [
+  "input",
+  "cachedInput",
+  "cacheWrite",
+  "output",
+  "reasoningOutput",
+  "total",
+] as const satisfies readonly (keyof CodexTokenCounters)[];
 
-export function codexBucketStart(_timestamp: string): string | null {
-  throw new Error("not implemented");
+function assertCounters(counters: CodexTokenCounters): void {
+  for (const key of COUNTER_KEYS) {
+    const value = counters[key];
+    if (!(Number.isSafeInteger(value) && value >= 0)) {
+      throw new InvalidCodexRecordError(`${key} is not a non-negative integer`);
+    }
+  }
 }
-export function upsertTurnTokens(_db: Database.Database, _input: TurnTokensInput): void {
-  throw new Error("not implemented");
+
+function assertIdentifier(name: string, value: string): void {
+  if (value.length === 0) throw new InvalidCodexRecordError(`${name} is empty`);
 }
-export function addCumulativeDelta(_db: Database.Database, _input: CumulativeDeltaInput): void {
-  throw new Error("not implemented");
+
+/** True when `value` is a canonical `toISOString()` instant: the form text range comparison needs. */
+function isCanonicalInstant(value: string): boolean {
+  const ms = Date.parse(value);
+  return !Number.isNaN(ms) && new Date(ms).toISOString() === value;
 }
+
+function assertBucket(bucketStart: string): void {
+  if (!isCanonicalInstant(bucketStart) || Date.parse(bucketStart) % USAGE_BUCKET_MS !== 0) {
+    throw new InvalidCodexRecordError("bucket start is not a canonical UTC quarter hour");
+  }
+}
+
+function assertInstant(name: string, value: string): void {
+  if (!isCanonicalInstant(value)) {
+    throw new InvalidCodexRecordError(`${name} is not a canonical ISO 8601 instant`);
+  }
+}
+
+/**
+ * The UTC quarter hour an instant falls in, as the canonical ISO text the
+ * tables store, or null when the text does not parse. Uses the Phase 5 bucket
+ * width so both agents bucket identically.
+ */
+export function codexBucketStart(timestamp: string): string | null {
+  const ms = Date.parse(timestamp);
+  if (Number.isNaN(ms)) return null;
+  return new Date(Math.floor(ms / USAGE_BUCKET_MS) * USAGE_BUCKET_MS).toISOString();
+}
+
+/**
+ * Records one turn's cumulative counters (CODEX-10: latest cumulative value per
+ * thread and turn, never summed). One row per turn: the bucket start is written
+ * by the FIRST call only, and each counter becomes the maximum of the stored and
+ * the incoming value, so an out-of-order replay can never lower a counter.
+ * Everything is validated before the write.
+ */
+export function upsertTurnTokens(db: Database.Database, input: TurnTokensInput): void {
+  assertIdentifier("thread id", input.threadId);
+  assertIdentifier("turn id", input.turnId);
+  assertBucket(input.bucketStart);
+  assertInstant("observed time", input.observedAt);
+  assertCounters(input.counters);
+  const c = input.counters;
+  db.prepare(
+    `INSERT INTO codex_token_turns
+       (thread_id, turn_id, bucket_start, input, cached_input, cache_write, output, reasoning_output, total, observed_at)
+     VALUES (@threadId, @turnId, @bucketStart, @input, @cachedInput, @cacheWrite, @output, @reasoningOutput, @total, @observedAt)
+     ON CONFLICT (thread_id, turn_id) DO UPDATE SET
+       input = MAX(input, excluded.input),
+       cached_input = MAX(cached_input, excluded.cached_input),
+       cache_write = MAX(cache_write, excluded.cache_write),
+       output = MAX(output, excluded.output),
+       reasoning_output = MAX(reasoning_output, excluded.reasoning_output),
+       total = MAX(total, excluded.total),
+       observed_at = MAX(observed_at, excluded.observed_at)`,
+  ).run({
+    threadId: input.threadId,
+    turnId: input.turnId,
+    bucketStart: input.bucketStart,
+    observedAt: input.observedAt,
+    input: c.input,
+    cachedInput: c.cachedInput,
+    cacheWrite: c.cacheWrite,
+    output: c.output,
+    reasoningOutput: c.reasoningOutput,
+    total: c.total,
+  });
+}
+
+/**
+ * Adds a per-bucket delta for a Codex version whose rollouts carry no per-turn
+ * record. Additive: the caller (the scanner) is responsible for handing over a
+ * delta only once, in the same transaction that advances its cursor and
+ * high-water mark.
+ */
+export function addCumulativeDelta(db: Database.Database, input: CumulativeDeltaInput): void {
+  assertIdentifier("thread id", input.threadId);
+  assertBucket(input.bucketStart);
+  assertCounters(input.delta);
+  const d = input.delta;
+  db.prepare(
+    `INSERT INTO codex_token_deltas
+       (thread_id, bucket_start, input, cached_input, cache_write, output, reasoning_output, total)
+     VALUES (@threadId, @bucketStart, @input, @cachedInput, @cacheWrite, @output, @reasoningOutput, @total)
+     ON CONFLICT (thread_id, bucket_start) DO UPDATE SET
+       input = input + excluded.input,
+       cached_input = cached_input + excluded.cached_input,
+       cache_write = cache_write + excluded.cache_write,
+       output = output + excluded.output,
+       reasoning_output = reasoning_output + excluded.reasoning_output,
+       total = total + excluded.total`,
+  ).run({
+    threadId: input.threadId,
+    bucketStart: input.bucketStart,
+    input: d.input,
+    cachedInput: d.cachedInput,
+    cacheWrite: d.cacheWrite,
+    output: d.output,
+    reasoningOutput: d.reasoningOutput,
+    total: d.total,
+  });
+}
+
+interface CounterRow {
+  readonly input: number;
+  readonly cached_input: number;
+  readonly cache_write: number;
+  readonly output: number;
+  readonly reasoning_output: number;
+  readonly total: number;
+}
+
+function toCounters(row: CounterRow): CodexTokenCounters {
+  return {
+    input: row.input,
+    cachedInput: row.cached_input,
+    cacheWrite: row.cache_write,
+    output: row.output,
+    reasoningOutput: row.reasoning_output,
+    total: row.total,
+  };
+}
+
+/** The durable cumulative high-water marks for a thread, or null when it was never recorded. */
 export function readCumulativeBaseline(
-  _db: Database.Database,
-  _threadId: string,
+  db: Database.Database,
+  threadId: string,
 ): CodexTokenCounters | null {
-  throw new Error("not implemented");
+  const row = db
+    .prepare(
+      `SELECT input, cached_input, cache_write, output, reasoning_output, total
+       FROM codex_token_cumulative WHERE thread_id = ?`,
+    )
+    .get(threadId) as CounterRow | undefined;
+  return row ? toCounters(row) : null;
 }
+
+/**
+ * Raises a thread's cumulative high-water marks: each of the six counters becomes
+ * the maximum of the stored and the incoming value and is never replaced by a
+ * lower one. These are dedup state independent of file identity and cursor
+ * position, so a rescan or parser reset cannot count previous usage again.
+ */
 export function writeCumulativeBaseline(
-  _db: Database.Database,
-  _threadId: string,
-  _counters: CodexTokenCounters,
-  _at: string,
+  db: Database.Database,
+  threadId: string,
+  counters: CodexTokenCounters,
+  at: string,
 ): void {
-  throw new Error("not implemented");
+  assertIdentifier("thread id", threadId);
+  assertInstant("update time", at);
+  assertCounters(counters);
+  db.prepare(
+    `INSERT INTO codex_token_cumulative
+       (thread_id, input, cached_input, cache_write, output, reasoning_output, total, updated_at)
+     VALUES (@threadId, @input, @cachedInput, @cacheWrite, @output, @reasoningOutput, @total, @at)
+     ON CONFLICT (thread_id) DO UPDATE SET
+       input = MAX(input, excluded.input),
+       cached_input = MAX(cached_input, excluded.cached_input),
+       cache_write = MAX(cache_write, excluded.cache_write),
+       output = MAX(output, excluded.output),
+       reasoning_output = MAX(reasoning_output, excluded.reasoning_output),
+       total = MAX(total, excluded.total),
+       updated_at = MAX(updated_at, excluded.updated_at)`,
+  ).run({
+    threadId,
+    at,
+    input: counters.input,
+    cachedInput: counters.cachedInput,
+    cacheWrite: counters.cacheWrite,
+    output: counters.output,
+    reasoningOutput: counters.reasoningOutput,
+    total: counters.total,
+  });
 }
+
+/**
+ * Totals over buckets in the half-open UTC range [start, end): turn rows and
+ * delta rows are summed together. Returns null, never zeros, when no row lies
+ * inside (an uncovered range is not the same as no tokens).
+ */
 export function queryCodexTokenTotals(
-  _db: Database.Database,
-  _query: CodexTokenRangeQuery,
+  db: Database.Database,
+  query: CodexTokenRangeQuery,
 ): CodexTokenTotals | null {
-  throw new Error("not implemented");
+  assertInstant("range start", query.start);
+  assertInstant("range end", query.end);
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS rows,
+              COALESCE(SUM(input), 0) AS input,
+              COALESCE(SUM(cached_input), 0) AS cached_input,
+              COALESCE(SUM(cache_write), 0) AS cache_write,
+              COALESCE(SUM(output), 0) AS output,
+              COALESCE(SUM(reasoning_output), 0) AS reasoning_output,
+              COALESCE(SUM(total), 0) AS total
+       FROM (
+         SELECT bucket_start, input, cached_input, cache_write, output, reasoning_output, total
+           FROM codex_token_turns
+         UNION ALL
+         SELECT bucket_start, input, cached_input, cache_write, output, reasoning_output, total
+           FROM codex_token_deltas
+       )
+       WHERE bucket_start >= @start AND bucket_start < @end`,
+    )
+    .get({ start: query.start, end: query.end }) as CounterRow & { rows: number };
+  return row.rows === 0 ? null : { counters: toCounters(row), rows: row.rows };
 }
