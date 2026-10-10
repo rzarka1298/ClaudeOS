@@ -1,4 +1,4 @@
-import type { LaunchAction, ProjectId, ProjectsSnapshot, ProjectView } from "@ccc/domain";
+import type { ProjectId, ProjectsSnapshot, ProjectView } from "@ccc/domain";
 import { compareProjectViews, nextFreeDisplayName } from "@ccc/domain/browser";
 import type { EventClient } from "@ccc/service-api-client";
 import { type App, FuzzySuggestModal, type Instruction, type Modifier } from "obsidian";
@@ -9,7 +9,12 @@ import {
   launchErrorNotice,
   launcherDisplayName,
 } from "../projects/launch-copy.js";
-import { launchStatus, launchStatusKey, setLaunchError } from "../projects/launch-status.js";
+import {
+  launchStatus,
+  launchStatusKey,
+  type ProjectLaunchActionId,
+  setLaunchError,
+} from "../projects/launch-status.js";
 import { attachEventClient } from "../service-connection.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import {
@@ -58,7 +63,7 @@ export type SwitcherItem =
   | {
       readonly kind: "launch";
       readonly text: string;
-      readonly action: LaunchAction;
+      readonly action: ProjectLaunchActionId;
       /** `null` only for `claude-desktop` (D-06). */
       readonly projectId: ProjectId | null;
       readonly projectName: string | null;
@@ -79,7 +84,7 @@ export interface SwitcherHost {
   connection(): ConnectionState;
   notify(message: string): void;
   goTo(destination: DestinationId, focusProjectId?: ProjectId): void;
-  requestLaunch(projectId: ProjectId | null, action: LaunchAction): void;
+  requestLaunch(projectId: ProjectId | null, action: ProjectLaunchActionId): void;
   openSwitcher(prefill: string): void;
 }
 

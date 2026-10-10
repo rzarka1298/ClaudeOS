@@ -1,4 +1,5 @@
-import type { LaunchAction, ProjectId } from "@ccc/domain";
+import type { ProjectId } from "@ccc/domain";
+import { LAUNCH_PAIR_ACTION } from "@ccc/domain/launch.js";
 import type { SocketApiClient } from "@ccc/service-api-client";
 import { connectionState } from "../connection-state.js";
 import type { HostRegistry } from "../host-registry.js";
@@ -7,7 +8,11 @@ import {
   createLaunchRequester,
   windowLaunchTimers,
 } from "./launch-client.js";
-import { type LaunchTimerControls, retainLaunchStatus } from "./launch-status.js";
+import {
+  type LaunchTimerControls,
+  type ProjectLaunchActionId,
+  retainLaunchStatus,
+} from "./launch-status.js";
 import { projectsSnapshot } from "./projects-state.js";
 
 export interface PluginLauncherOptions {
@@ -21,7 +26,7 @@ export interface PluginLauncherOptions {
   readonly chooseOnConflict?: ConflictChooser | undefined;
 }
 
-export type RequestLaunch = (projectId: ProjectId | null, action: LaunchAction) => void;
+export type RequestLaunch = (projectId: ProjectId | null, action: ProjectLaunchActionId) => void;
 
 /**
  * The plugin's ONE launch requester, built once per load and shared by
@@ -99,6 +104,7 @@ export function createPluginLauncher({
 
   return (projectId, action) => {
     if (unloaded) return;
+    if (action === LAUNCH_PAIR_ACTION) return;
     launch(projectId, action);
   };
 }

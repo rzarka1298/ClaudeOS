@@ -1,6 +1,7 @@
 import type { LaunchAction, ProjectId } from "@ccc/domain";
 import { launchActionSchema } from "@ccc/domain";
 import { classifyCapability } from "@ccc/domain/classification.js";
+import type { ProjectLaunchActionId } from "../projects/launch-status.js";
 import type { DestinationId } from "../view/destinations.js";
 import type { QuickActionDescriptor } from "./contract.js";
 
@@ -43,7 +44,7 @@ export interface QuickActionContext {
   navigate(id: DestinationId): void;
   notify(message: string): void;
   /** `projectId` is `null` for the one action with no project target (`claude-desktop`). */
-  requestLaunch(projectId: ProjectId | null, action: LaunchAction): void;
+  requestLaunch(projectId: ProjectId | null, action: ProjectLaunchActionId): void;
   /**
    * Absent until the host wires a quick switcher (plan 04-14): the
    * `switcher:*` capability then answers like any unavailable action.
@@ -73,7 +74,7 @@ export interface QuickActionContext {
 export type QuickActionResult =
   | { readonly kind: "navigated"; readonly destination: DestinationId }
   | { readonly kind: "unavailable" }
-  | { readonly kind: "launch-requested"; readonly action: LaunchAction }
+  | { readonly kind: "launch-requested"; readonly action: ProjectLaunchActionId }
   | { readonly kind: "switcher-opened" }
   | { readonly kind: "session-action-requested"; readonly capability: string }
   /** Executes nothing: the descriptor was handed to `ctx.requestProposal` (D-06). */

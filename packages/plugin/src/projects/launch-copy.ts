@@ -1,4 +1,5 @@
-import type { LaunchAction, LaunchErrorKind } from "@ccc/domain";
+import type { LaunchErrorKind } from "@ccc/domain";
+import type { ProjectLaunchActionId } from "./launch-status.js";
 
 /**
  * The fixed S2 acknowledgement/success copy per launcher (UI-SPEC "Launch
@@ -11,42 +12,50 @@ import type { LaunchAction, LaunchErrorKind } from "@ccc/domain";
  * only substitution path.
  */
 
-const LAUNCHER_DISPLAY_NAMES: Readonly<Record<LaunchAction, string>> = {
+const LAUNCHER_DISPLAY_NAMES: Readonly<Record<ProjectLaunchActionId, string>> = {
   antigravity: "Antigravity",
   "claude-code": "Claude Code",
   finder: "Finder",
   github: "Your browser",
   "claude-desktop": "Claude Desktop",
+  // A single-line error under the pair's key (no per-agent result exists).
+  "claude-codex-pair": "Claude + Codex",
 };
 
 /** The `{Launcher}` substitution for a D-26 line (UI-SPEC "Launch error copy"). */
-export function launcherDisplayName(action: LaunchAction): string {
+export function launcherDisplayName(action: ProjectLaunchActionId): string {
   return LAUNCHER_DISPLAY_NAMES[action];
 }
 
-const ACKNOWLEDGEMENTS: Readonly<Record<LaunchAction, (terminalLabel: string) => string>> = {
-  antigravity: () => "Opening in Antigravity…",
-  "claude-code": (terminalLabel) => `Opening a ${terminalLabel} window…`,
-  finder: () => "Revealing in Finder…",
-  github: () => "Opening GitHub…",
-  "claude-desktop": () => "Opening Claude Desktop…",
-};
+const ACKNOWLEDGEMENTS: Readonly<Record<ProjectLaunchActionId, (terminalLabel: string) => string>> =
+  {
+    antigravity: () => "Opening in Antigravity…",
+    "claude-code": (terminalLabel) => `Opening a ${terminalLabel} window…`,
+    finder: () => "Revealing in Finder…",
+    github: () => "Opening GitHub…",
+    "claude-desktop": () => "Opening Claude Desktop…",
+    "claude-codex-pair": () => "Opening Claude Code and Codex…",
+  };
 
 /** The while-in-flight status line, written into `launchStatus` in the same render as the click (D-40). */
-export function launchAcknowledgement(action: LaunchAction, terminalLabel: string): string {
+export function launchAcknowledgement(
+  action: ProjectLaunchActionId,
+  terminalLabel: string,
+): string {
   return ACKNOWLEDGEMENTS[action](terminalLabel);
 }
 
-const SUCCESS_LINES: Readonly<Record<LaunchAction, (terminalLabel: string) => string>> = {
+const SUCCESS_LINES: Readonly<Record<ProjectLaunchActionId, (terminalLabel: string) => string>> = {
   antigravity: () => "Opened in Antigravity",
   "claude-code": (terminalLabel) => `Opened a ${terminalLabel} window for Claude Code`,
   finder: () => "Revealed in Finder",
   github: () => "Opened GitHub in your browser",
   "claude-desktop": () => "Brought Claude Desktop to the front",
+  "claude-codex-pair": () => "Opened Claude Code and Codex",
 };
 
 /** The `✓` success line, auto-cleared six seconds after it is written (RR-04). */
-export function launchSuccessLine(action: LaunchAction, terminalLabel: string): string {
+export function launchSuccessLine(action: ProjectLaunchActionId, terminalLabel: string): string {
   return SUCCESS_LINES[action](terminalLabel);
 }
 
@@ -197,15 +206,17 @@ export function launchErrorNotice(kind: LaunchErrorKind, values: LaunchCopyValue
   return renderCopy(LAUNCH_ERROR_COPY[kind].notice, values);
 }
 
-const ANNOUNCEMENTS: Readonly<Record<LaunchAction, (terminal: string, project: string) => string>> =
-  {
-    antigravity: (_terminal, project) => `Opening ${project} in Antigravity…`,
-    "claude-code": (terminal, project) =>
-      `Opening a ${terminal} window for Claude Code in ${project}…`,
-    finder: (_terminal, project) => `Revealing ${project} in Finder…`,
-    github: (_terminal, project) => `Opening ${project} on GitHub…`,
-    "claude-desktop": () => "Opening Claude Desktop…",
-  };
+const ANNOUNCEMENTS: Readonly<
+  Record<ProjectLaunchActionId, (terminal: string, project: string) => string>
+> = {
+  antigravity: (_terminal, project) => `Opening ${project} in Antigravity…`,
+  "claude-code": (terminal, project) =>
+    `Opening a ${terminal} window for Claude Code in ${project}…`,
+  finder: (_terminal, project) => `Revealing ${project} in Finder…`,
+  github: (_terminal, project) => `Opening ${project} on GitHub…`,
+  "claude-desktop": () => "Opening Claude Desktop…",
+  "claude-codex-pair": (_terminal, project) => `Opening Claude Code and Codex in ${project}…`,
+};
 
 /**
  * The live-region announcement while a launch is in flight (UI-SPEC S2
@@ -213,7 +224,7 @@ const ANNOUNCEMENTS: Readonly<Record<LaunchAction, (terminal: string, project: s
  * quick-switcher posts the same text as its acknowledgement Notice.
  */
 export function launchAnnouncement(
-  action: LaunchAction,
+  action: ProjectLaunchActionId,
   terminalLabel: string,
   projectName: string,
 ): string {

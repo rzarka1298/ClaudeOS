@@ -1,4 +1,5 @@
 import type { LaunchAction, LaunchErrorKind, ProjectId } from "@ccc/domain";
+import type { LAUNCH_PAIR_ACTION } from "@ccc/domain/launch.js";
 import { signal } from "@preact/signals";
 
 /**
@@ -11,7 +12,38 @@ import { signal } from "@preact/signals";
 export type LaunchStatus =
   | { readonly kind: "opening" }
   | { readonly kind: "success"; readonly at: string }
-  | { readonly kind: "error"; readonly error: LaunchErrorKind };
+  | { readonly kind: "error"; readonly error: LaunchErrorKind }
+  | PairLaunchStatus;
+
+/**
+ * Every project action a status can be keyed by: the five {@link LaunchAction}
+ * values plus the Claude Code and Codex pair (Phase 05.1, D-10). The pair is
+ * NOT a `LaunchAction` (the domain kept that list at five), so the status
+ * store, the requesters, the toolbar and the dispatcher share this one
+ * plugin-side union.
+ */
+export type ProjectLaunchActionId = LaunchAction | typeof LAUNCH_PAIR_ACTION;
+
+/** One agent's line in a pair status (UI-SPEC S2). `setup` exists for Codex only. */
+export type PairLineStatus =
+  | { readonly kind: "opening" }
+  | { readonly kind: "success" }
+  | { readonly kind: "error"; readonly error: LaunchErrorKind }
+  | { readonly kind: "setup" };
+
+/** Claude Code's line: a missing Claude launcher is an error, never a setup state. */
+export type PairClaudeLineStatus = Exclude<PairLineStatus, { readonly kind: "setup" }>;
+
+/**
+ * The pair variant of the one status store: two independent lines, Claude
+ * first. A single-line `error` under the pair's key means no per-agent result
+ * exists (the service was unreachable or the deadline passed).
+ */
+export interface PairLaunchStatus {
+  readonly kind: "pair";
+  readonly claude: PairClaudeLineStatus;
+  readonly codex: PairLineStatus;
+}
 
 /**
  * The timer functions a caller injects so a view host can track and clear
@@ -36,7 +68,10 @@ const pendingClearTimers = new Map<
 >();
 
 /** `${projectId}:${action}` — `claude-desktop` (no project) keys as `claude-desktop:claude-desktop`. */
-export function launchStatusKey(projectId: ProjectId | null, action: LaunchAction): string {
+export function launchStatusKey(
+  projectId: ProjectId | null,
+  action: ProjectLaunchActionId,
+): string {
   return `${projectId ?? action}:${action}`;
 }
 
@@ -108,6 +143,32 @@ export function setLaunchResult(
 }
 
 /**
+ * Writes the pair's `opening` state: both agent lines at once, Claude first,
+ * in the same synchronous step as the click (CODEX-02).
+ */
+export function setPairOpening(key: string): void {
+  void key;
+}
+
+/**
+ * Writes the pair's per-agent result. The region clears itself after
+ * {@link SUCCESS_CLEAR_MS} only when NEITHER line is an error or a setup
+ * line: while any line needs the owner's attention, the whole two-line region
+ * stays (RR-04, PLANNER DECISION).
+ */
+export function setPairResult(
+  key: string,
+  claude: PairClaudeLineStatus,
+  codex: PairLineStatus,
+  timers: LaunchTimerControls,
+): void {
+  void key;
+  void claude;
+  void codex;
+  void timers;
+}
+
+/**
  * The most recently changed status among `actions` for one project (or for
  * `claude-desktop` with `projectId === null`) — what a row's single status
  * line shows (UI-SPEC S2: one status line per row, four buttons).
@@ -115,10 +176,11 @@ export function setLaunchResult(
 export function latestLaunchStatus(
   statuses: ReadonlyMap<string, LaunchStatus>,
   projectId: ProjectId | null,
-  actions: readonly LaunchAction[],
-): { readonly action: LaunchAction; readonly status: LaunchStatus } | null {
+  actions: readonly ProjectLaunchActionId[],
+): { readonly action: ProjectLaunchActionId; readonly status: LaunchStatus } | null {
   const byKey = new Map(actions.map((action) => [launchStatusKey(projectId, action), action]));
-  let latest: { readonly action: LaunchAction; readonly status: LaunchStatus } | null = null;
+  let latest: { readonly action: ProjectLaunchActionId; readonly status: LaunchStatus } | null =
+    null;
   for (const [key, status] of statuses) {
     const action = byKey.get(key);
     if (action !== undefined) latest = { action, status };

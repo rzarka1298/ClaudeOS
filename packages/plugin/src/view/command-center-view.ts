@@ -1,4 +1,4 @@
-import type { LaunchAction, ProjectId } from "@ccc/domain";
+import type { ProjectId } from "@ccc/domain";
 import {
   type AuthenticatedSocketApiClient,
   type EventClient,
@@ -11,7 +11,7 @@ import {
 import { ItemView, Notice, Scope, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
 import { pickFolder } from "../projects/folder-picker.js";
-import { retainLaunchStatus } from "../projects/launch-status.js";
+import { type ProjectLaunchActionId, retainLaunchStatus } from "../projects/launch-status.js";
 import { createLaunchersActions } from "../projects/launchers-actions.js";
 import type { RequestLaunch } from "../projects/plugin-launcher.js";
 import { createProjectsActions, createScanActions } from "../projects/projects-actions.js";
@@ -47,7 +47,7 @@ export interface CommandCenterViewHost {
    * `opening` status in a store another view still shows (codex review 3,
    * finding 1); the plugin clears its timers on unload (PLUG-03).
    */
-  requestLaunch(projectId: ProjectId | null, action: LaunchAction): void;
+  requestLaunch(projectId: ProjectId | null, action: ProjectLaunchActionId): void;
   /**
    * The plugin's combined connect hook (projects, approvals and tasks refresh,
    * plan 06-23). Absent in hosts that predate it; the view then refreshes

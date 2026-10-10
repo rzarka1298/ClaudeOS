@@ -15,6 +15,7 @@ import {
   latestLaunchStatus,
   launchStatus,
   launchStatusKey,
+  type ProjectLaunchActionId,
   setLaunchError,
 } from "../projects/launch-status.js";
 import type { DestinationId } from "../view/destinations.js";
@@ -54,7 +55,7 @@ const LAUNCH_BUTTONS: readonly LaunchButtonSpec[] = [
  * switcher user all meet one vocabulary (UI-SPEC "Launch button labels",
  * RR-02).
  */
-export function launchPhrase(action: LaunchAction, projectName: string): string {
+export function launchPhrase(action: ProjectLaunchActionId, projectName: string): string {
   const spec = LAUNCH_BUTTONS.find((candidate) => candidate.action === action);
   // `claude-desktop` has no project: its visible label is the full phrase (S8).
   return spec === undefined ? CLAUDE_DESKTOP_PHRASE : spec.ariaLabel(projectName);
@@ -64,7 +65,7 @@ export function launchPhrase(action: LaunchAction, projectName: string): string 
 export const CLAUDE_DESKTOP_PHRASE = "Open Claude Desktop";
 
 /** The four project actions a row's single status line reports on. */
-export const PROJECT_LAUNCH_ACTIONS: readonly LaunchAction[] = LAUNCH_BUTTONS.map(
+export const PROJECT_LAUNCH_ACTIONS: readonly ProjectLaunchActionId[] = LAUNCH_BUTTONS.map(
   (spec) => spec.action,
 );
 
@@ -188,7 +189,7 @@ export interface LaunchStatusLineProps {
   readonly projectName: string;
   /** The Claude Code terminal's display label (UI-SPEC `{Terminal}`). */
   readonly terminalLabel: string;
-  readonly actions: readonly LaunchAction[];
+  readonly actions: readonly ProjectLaunchActionId[];
   /** `true` on the Projects destination, where `Go to Projects` would go nowhere. */
   readonly inProjects?: boolean | undefined;
   readonly onNavigate?: ((destination: DestinationId) => void) | undefined;

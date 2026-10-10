@@ -1,4 +1,4 @@
-import type { LaunchAction, ProjectId } from "@ccc/domain";
+import type { ProjectId } from "@ccc/domain";
 import type { SessionUsage } from "@ccc/domain/usage.js";
 import type { ReadonlySignal } from "@preact/signals";
 import type { VNode } from "preact";
@@ -12,6 +12,7 @@ import type { ConnectionState } from "../connection-state.js";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
+import type { ProjectLaunchActionId } from "../projects/launch-status.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
@@ -91,7 +92,9 @@ export interface ShellProps {
    * default is a no-op so this component never imports
    * `@ccc/service-api-client` itself (D-24).
    */
-  requestLaunch?: (projectId: ProjectId | null, action: LaunchAction) => void;
+  // Method syntax on purpose: a host or test double that only ever launches the
+  // five single actions stays assignable (parameter bivariance).
+  requestLaunch?(projectId: ProjectId | null, action: ProjectLaunchActionId): void;
   /**
    * Opens the Claude Code quick switcher, prefilled. Absent (until plan
    * 04-14 wires one), S8's `Start a Claude Code session` renders unavailable
@@ -151,7 +154,7 @@ export interface ShellProps {
 }
 
 function noNotify(_message: string): void {}
-function noRequestLaunch(_projectId: ProjectId | null, _action: LaunchAction): void {}
+function noRequestLaunch(_projectId: ProjectId | null, _action: ProjectLaunchActionId): void {}
 
 const FAILED_OUTCOME = Promise.resolve({ kind: "failed" as const });
 const noProjectsActions: ProjectsActions = {
