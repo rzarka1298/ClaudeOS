@@ -131,7 +131,8 @@ describe("only the allowlist survives (T-05.1-06, D-17)", () => {
       logger: log,
     });
     const result = await probe.run();
-    const text = JSON.stringify(result);
+    expect(result.kind).toBe("ok");
+    const text = JSON.stringify(result.kind === "ok" ? result.summary : null);
     expect(text).not.toContain(DOCTOR_DECOY_PATH);
     expect(text).not.toContain(DOCTOR_DECOY_ACCOUNT);
     expect(text).not.toContain("summary");

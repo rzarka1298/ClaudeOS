@@ -16,7 +16,7 @@ import { type BridgeStatus, toBridgeStatusView } from "./bridge-state.js";
  *
  * Everything here is a PROPOSAL. Detection never saves a launcher, never
  * rewrites a saved Terminal.app or custom row (OQ-2) and never runs
- * `codex doctor` (that is owner-triggered, `doctor-probe.ts`). The plugin sees
+ * `codex doctor` (that is an owner-triggered action of its own). The plugin sees
  * each candidate as an opaque id and a home-abbreviated display string; the
  * absolute path stays in this process, for the save route only (the Phase 4
  * Claude candidate pattern, T-04-23).
