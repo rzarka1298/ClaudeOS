@@ -58,6 +58,10 @@ import {
 } from "../test-support/fake-codex.js";
 import { FAKE_ACCOUNT_ID, weeklyReply } from "../test-support/fake-codex-app-server.js";
 import { doctorReport } from "../test-support/fake-codex-doctor.js";
+import { createFakeCodexHome, recordingFs } from "../test-support/fake-codex-home.js";
+import { createCodexHomePort } from "./codex-home.js";
+import { HEADROOM_REFRESH_INTERVAL_MS, type HeadroomTimers } from "./headroom-service.js";
+import { DEFAULT_POLL_INTERVAL_MS } from "./session-mirror.js";
 
 /**
  * Plan 05.1-29 Task 1 (tracer): the whole composed Codex service, end to end against fakes only.
@@ -530,5 +534,104 @@ describe("Test 6: writeFakeCodex is what it claims to be", () => {
       expect(entry.cwd).toBe(c.dir);
     }
     expect(readdirSync(dirname(fake.path)).sort()).toEqual(["codex", "codex.log.ndjson"]);
+  });
+});
+
+describe("Test 7: the usage cadence and the subscriber rule, on injected timers", () => {
+  interface Armed {
+    readonly fn: () => void;
+    readonly ms: number;
+    cleared: boolean;
+  }
+
+  function recordingTimers(): { armed: Armed[]; timers: HeadroomTimers } {
+    const armed: Armed[] = [];
+    return {
+      armed,
+      timers: {
+        setInterval(fn, ms) {
+          const entry: Armed = { fn, ms, cleared: false };
+          armed.push(entry);
+          return entry;
+        },
+        clearInterval(handle) {
+          (handle as Armed).cleared = true;
+        },
+      },
+    };
+  }
+
+  const settleMs = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
+
+  it("reads once per 60 second interval while subscribed, reads through when the cache is stale, and stops when nobody watches", async () => {
+    const clock = { ms: Date.now() };
+    const rec = recordingTimers();
+    const c = await compose({
+      appServer: { read: { kind: "result", result: weeklyReply(41) } },
+      home: codexHomeWithThreads([], clock.ms),
+      now: () => clock.ms,
+      deps: { timers: rec.timers },
+    });
+    c.control.subscribers = 1;
+    c.codex?.start();
+    const usageTimer = rec.armed.find((entry) => entry.ms === HEADROOM_REFRESH_INTERVAL_MS);
+    expect(HEADROOM_REFRESH_INTERVAL_MS).toBe(60_000);
+    expect(usageTimer).toBeDefined();
+    // Arming reads nothing.
+    expect(c.appServerStarts()).toBe(0);
+
+    usageTimer?.fn();
+    expect(await waitFor(() => c.appServerStarts() === 1)).toBe(true);
+    // Between intervals nothing reads, whatever else ticks.
+    clock.ms += 30_000;
+    for (const other of rec.armed.filter((entry) => entry !== usageTimer)) other.fn();
+    await settleMs(150);
+    expect(c.appServerStarts()).toBe(1);
+
+    clock.ms += 30_000;
+    usageTimer?.fn();
+    expect(await waitFor(() => c.appServerStarts() === 2)).toBe(true);
+    await settleMs(100);
+    expect(c.appServerStarts()).toBe(2);
+
+    // A read-through at request time: the cache is older than the live window and no timer fired.
+    clock.ms += 130_000;
+    await c.get(CODEX_HEADROOM_PATH);
+    expect(c.appServerStarts()).toBe(3);
+
+    // Nobody watching: the interval fires and reads nothing.
+    c.control.subscribers = 0;
+    clock.ms += 60_000;
+    usageTimer?.fn();
+    await settleMs(200);
+    expect(c.appServerStarts()).toBe(3);
+
+    // Stopping clears every timer it armed.
+    await c.codex?.stop();
+    expect(rec.armed.every((entry) => entry.cleared)).toBe(true);
+  });
+
+  it("polls the Codex home only while someone is subscribed", async () => {
+    const home = createFakeCodexHome(
+      codexHomeWithThreads([{ id: "thread-cadence", agoMs: 2 * HOUR }], Date.now()),
+    );
+    const recorder = recordingFs();
+    const rec = recordingTimers();
+    const c = await compose({
+      homeInstance: home,
+      deps: { port: createCodexHomePort({ root: home.root, fs: recorder.fs }), timers: rec.timers },
+    });
+    c.codex?.start();
+    expect(rec.armed.some((entry) => entry.ms === DEFAULT_POLL_INTERVAL_MS)).toBe(true);
+    const baseline = recorder.calls.length;
+
+    c.control.subscribers = 0;
+    for (const entry of rec.armed) entry.fn();
+    await settleMs(250);
+    expect(recorder.calls.length).toBe(baseline);
+
+    c.control.subscribers = 1;
+    for (const entry of rec.armed) entry.fn();
+    expect(await waitFor(() => recorder.calls.length > baseline)).toBe(true);
   });
 });
