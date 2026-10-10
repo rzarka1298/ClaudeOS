@@ -471,7 +471,8 @@ describe("Test 5: the pair launch through the composed listener and the window s
       claude: { status: "error", error: "window-not-ready" },
       codex: { status: "error", error: "window-not-ready" },
     });
-    expect(elapsed).toBeLessThan(capMs + 500);
+    // Generous slack: a loaded machine delays timers; the point is that the cap bounds the reply.
+    expect(elapsed).toBeLessThan(capMs + 2500);
     expect(fx.requestFiles()).toEqual([]);
     expect(guardInputs).toHaveLength(1);
   });

@@ -36,8 +36,8 @@ events or widgets.
 
 Rollout lifecycle tails use cursors and partial-line carry. Their read path
 must not leak a file head when resuming a tail. Token scans have different
-semantics after the v3 redesign: a changed rollout is read in full through
-bounded chunks, then its counters are replaced atomically. A Codex session
+semantics after the v3 redesign (now parser version 4): a changed rollout is
+read in full through bounded chunks, then its counters are replaced atomically. A Codex session
 is an in-memory read-only mirror of a thread, never a product Run row. Only
 counter aggregates, cursors and the last rate-limit snapshot persist, using
 migration 0009. Polling follows subscribers rather than running permanently.
@@ -131,8 +131,11 @@ unavailable has no meter or numeric zero.
 ### 7. Count token activity separately from plan capacity
 
 The counting unit is the latest cumulative value per thread and turn,
-never a sum of cumulative snapshots (D-24). Parser v3 supersedes the earlier
-incremental reconciliation described in plan 23's original summary. A pure
+never a sum of cumulative snapshots (D-24). Parser v3 superseded the earlier
+incremental reconciliation described in plan 23's original summary; the parser
+version is now 4, bumped when off-period cumulative deltas began consuming
+pending cover so that stale cover cannot suppress enabled usage. Any change to
+what the counter counts bumps the version, and a guard test enforces it. A pure
 whole-rollout function computes per-counter positive growth and applies
 analysis-off intervals at each record's own timestamp. Thread-cumulative
 records cover per-turn records up to their timestamp; later turn increments
@@ -143,8 +146,11 @@ the owner must confirm this token counting unit against CODEX-10's wording.
 
 Stored rows belong to a rollout and are replaced with its recognition tally
 and cursor in one transaction. Parser upgrades clear derived state while
-retaining counted rows until each readable rollout can rebuild them. Missing,
-refused or oversized rollouts keep their rows and report incomplete coverage;
+retaining counted rows and each rollout's cursor, which is marked stale so the
+rollout is recomputed even at an unchanged size. A rollout that shrinks below
+the extent last read in full keeps its rows and reports incomplete coverage
+until it regrows past that extent. Missing, refused or oversized rollouts keep
+their rows and report incomplete coverage;
 partial reads never claim complete coverage. Five labelled counters and the
 Codex-reported total are independent of plan capacity and carry no billing
 claim. Rescanning, restarting and changing chunk sizes must preserve totals.
@@ -199,9 +205,9 @@ CODEX-09 has three enforcement layers (D-26): the allowlisted port, a
 credential canary with a negative control, and backstop rule 16. The rule
 scans non-test package source, including JavaScript, for forbidden credential
 access, reset-credit/consume RPC and notify writes. The composed-service
-canary and realtime budget belong to plan 29, executing separately; this ADR
-does not claim their final result. The lower-level port tests and rule are
-already delivered. Logs keep fixed reasons and counts, never raw error text
+canary (with negative controls) and the realtime-budget test were delivered by
+plan 29; their measured numbers live in its summary and live behavior stays an
+Owner UAT item. The lower-level port tests and rule were delivered earlier. Logs keep fixed reasons and counts, never raw error text
 that could expose paths or content.
 
 ## Alternatives rejected
@@ -216,7 +222,7 @@ that could expose paths or content.
   existing owner and trust is the owner's decision.
 - Sum cumulative token events or persist chunk-dependent reconciliation:
   rejected because repeated reads, source mixing and restarts double count.
-  Parser v3 rebuilds one rollout deterministically instead.
+  Parser v3 and v4 rebuild one rollout deterministically instead.
 - Allow dispatch from a rollout fallback or rank an agent: rejected because
   a cached bar is not live permission and D-04 keeps the signal read-only.
 - Rewrite saved Terminal.app choices: rejected because detection is only a
@@ -269,7 +275,8 @@ also remain unverified. Four owner confirmations remain explicit:
 1. A10: direct gestures for launches and opens; only hook install reserved
    (plan 02, default retained).
 2. Token counting unit: thread/turn latest cumulative plus thread-cumulative
-   precedence versus CODEX-10 wording (plans 11/23, parser v3).
+   precedence versus CODEX-10 wording (plans 11/23, parser v4; this unit is
+   still an open owner item).
 3. Default Codex arguments: empty, product adds no flags (plan 21, A14).
 4. Saved Antigravity bundle: IDE app on the actual test install, no saved
    choice rewritten (plan 13, A13, U16).
