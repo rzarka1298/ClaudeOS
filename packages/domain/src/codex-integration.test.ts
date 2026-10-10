@@ -42,7 +42,7 @@ describe("CodexBridgeStatusSchema (Settings status line)", () => {
       CodexBridgeStatusSchema.safeParse({
         state: "installed",
         lastWindowAt: null,
-        stateDir: "/Users/x/.local/state",
+        stateDir: "/Users/USERNAME/.local/state",
       }).success,
     ).toBe(false);
   });
@@ -75,8 +75,8 @@ describe("CodexHookStatusSchema", () => {
         .success,
     ).toBe(false);
     for (const extra of [
-      { hooksPath: "/Users/x/.codex/hooks.json" },
-      { configFile: "/Users/x/.codex/config.toml" },
+      { hooksPath: "/Users/USERNAME/.codex/hooks.json" },
+      { configFile: "/Users/USERNAME/.codex/config.toml" },
     ]) {
       expect(
         CodexHookStatusSchema.safeParse({
@@ -110,7 +110,7 @@ describe("CodexDoctorSummarySchema (RESEARCH R4 allowlist, CODEX-09)", () => {
     }
     expect(CodexDoctorSummarySchema.safeParse(doctor({ codexVersion: null })).success).toBe(true);
     expect(
-      CodexDoctorSummarySchema.safeParse(doctor({ codexVersion: "/Users/x/codex" })).success,
+      CodexDoctorSummarySchema.safeParse(doctor({ codexVersion: "/Users/USERNAME/codex" })).success,
     ).toBe(false);
     const many = (count: number) =>
       Array.from({ length: count }, (_, i) => check({ id: `check.${i}` }));
@@ -127,7 +127,7 @@ describe("CodexDoctorSummarySchema (RESEARCH R4 allowlist, CODEX-09)", () => {
 
   it("refuses a check carrying details, summary, remediation or notes", () => {
     for (const extra of [
-      { details: { path: "/Users/x/.codex" } },
+      { details: { path: "/Users/USERNAME/.codex" } },
       { summary: "Signed in as someone@example.com" },
       { remediation: "run codex login" },
       { notes: ["a note"] },
@@ -169,8 +169,8 @@ describe("CodexIntegrationStatusSchema", () => {
 
   it("carries no path, config file or account member", () => {
     for (const extra of [
-      { codexHome: "/Users/x/.codex" },
-      { configFile: "/Users/x/.codex/config.toml" },
+      { codexHome: "/Users/USERNAME/.codex" },
+      { configFile: "/Users/USERNAME/.codex/config.toml" },
       { accountId: "acct-1" },
     ]) {
       expect(

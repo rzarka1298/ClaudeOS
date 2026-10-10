@@ -139,8 +139,8 @@ describe("CodexSessionViewSchema (D-15, D-17)", () => {
 
   it("refuses cwd, rollout path, git origin, account and prompt members", () => {
     for (const extra of [
-      { cwd: "/Users/someone/project" },
-      { rolloutPath: "/Users/someone/.codex/sessions/rollout.jsonl" },
+      { cwd: "/Users/USERNAME/project" },
+      { rolloutPath: "/Users/USERNAME/.codex/sessions/rollout.jsonl" },
       { gitOrigin: "git@example.com:o/r.git" },
       { accountId: "acct-1" },
       { prompt: "hello" },
@@ -321,7 +321,7 @@ function hookRecord(overrides: Record<string, unknown> = {}) {
     session_id: "thread-aaaa1111",
     turn_id: "turn-bbbb2222",
     model: "gpt-5.4",
-    cwd: "/Users/example/project",
+    cwd: "/Users/USERNAME/project",
     ...overrides,
   };
 }
@@ -363,7 +363,7 @@ describe("CodexHookRecordSchema (CODEX-06, D-19)", () => {
     for (const extra of [
       { prompt: "secret request" },
       { last_assistant_message: "secret reply" },
-      { transcript_path: "/Users/example/.codex/sessions/rollout.jsonl" },
+      { transcript_path: "/Users/USERNAME/.codex/sessions/rollout.jsonl" },
       { permission_mode: "default" },
     ]) {
       expect(
