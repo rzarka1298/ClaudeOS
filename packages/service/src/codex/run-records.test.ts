@@ -1,5 +1,6 @@
 import { mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type CodexSessionsSnapshot, CodexSessionsSnapshotSchema } from "@ccc/domain";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createRunWorld,
@@ -27,6 +28,7 @@ import {
   parsePendingResume,
   parseRunRecord,
   SKIP_REASONS,
+  summarizePausedRuns,
 } from "./run-records.js";
 
 let world: RunWorld | undefined;
@@ -512,5 +514,80 @@ describe("Test 7 (reader half): the signature changes only when a record changes
     utimesSync(log, when, when);
     const after = await reader.scan();
     expect(after.signature).toBe(before.signature);
+  });
+});
+
+describe("Test 6 (task 2): summarizePausedRuns is a pure function of the sessions snapshot", () => {
+  const view = (
+    threadId: string,
+    state: string,
+    resumesAfter: string | null,
+  ): Record<string, unknown> => ({
+    threadId,
+    projectId: null,
+    projectName: null,
+    origin: "headless",
+    state,
+    model: null,
+    effort: null,
+    startedAt: "2026-10-10T10:00:00.000Z",
+    lastActivityAt: "2026-10-10T11:00:00.000Z",
+    resumesAfter,
+    title: null,
+    hasTranscript: true,
+    liveLogRunId: null,
+  });
+  const snapshot = (sessions: Array<Record<string, unknown>>): CodexSessionsSnapshot =>
+    CodexSessionsSnapshotSchema.parse({
+      kind: "available",
+      sessions,
+      hiddenCount: 0,
+      analysisOn: false,
+      observedAt: "2026-10-10T12:00:00.000Z",
+      freshness: "live",
+      partiality: { partial: false },
+    });
+
+  it("is zero and null for no snapshot, an unavailable snapshot or no paused session", () => {
+    const none = { count: 0, earliestResetAt: null, withoutResetAt: 0 };
+    expect(summarizePausedRuns(null)).toEqual(none);
+    expect(
+      summarizePausedRuns(
+        CodexSessionsSnapshotSchema.parse({
+          kind: "unavailable",
+          reason: "no-data",
+          version: null,
+        }),
+      ),
+    ).toEqual(none);
+    expect(
+      summarizePausedRuns(
+        snapshot([view("a", "running", null), view("b", "completed", "2026-10-14T00:00:00.000Z")]),
+      ),
+    ).toEqual(none);
+  });
+
+  it("counts only limit-paused sessions, returns the earliest resume time and counts the ones without", () => {
+    const result = summarizePausedRuns(
+      snapshot([
+        view("a", "limit-paused", "2026-10-15T00:00:00.000Z"),
+        view("b", "limit-paused", "2026-10-14T06:00:00.000Z"),
+        view("c", "limit-paused", null),
+        view("d", "running", "2026-10-12T00:00:00.000Z"),
+      ]),
+    );
+    expect(result).toEqual({
+      count: 3,
+      earliestResetAt: "2026-10-14T06:00:00.000Z",
+      withoutResetAt: 1,
+    });
+  });
+
+  it("reports a paused session with no reset time as count 1, null and 1 without", () => {
+    expect(summarizePausedRuns(snapshot([view("a", "limit-paused", null)]))).toEqual({
+      count: 1,
+      earliestResetAt: null,
+      withoutResetAt: 1,
+    });
   });
 });
