@@ -743,6 +743,29 @@ describe("Test 5 (task 2): busy, failed, absent and not-installed reads", () => 
     await mirror.pollNow();
     expect(mirror.snapshot()?.kind).toBe("available");
   });
+
+  it("a machine that never had Codex publishes nothing, yet a Codex that disappears is published once", async () => {
+    const installed = { on: false };
+    const built = build(RUNNING_SPECS);
+    const mirror = createCodexSessionMirror({
+      ...built.deps,
+      installed: () => installed.on,
+    });
+    await mirror.pollNow();
+    await mirror.pollNow();
+    expect(mirror.snapshot()).toEqual({
+      kind: "unavailable",
+      reason: "not-installed",
+      version: null,
+    });
+    expect(built.publish).not.toHaveBeenCalled();
+    installed.on = true;
+    await mirror.pollNow();
+    expect(built.publish).toHaveBeenCalledTimes(1);
+    installed.on = false;
+    await mirror.pollNow();
+    expect(built.publish).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("Test 6 (task 2): overlays and invalidate", () => {

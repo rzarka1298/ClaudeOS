@@ -348,6 +348,15 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
   function publishIfChanged(): void {
     const value = snapshot();
     if (value === null) return;
+    // A machine that never showed any sign of Codex hears nothing about it: the first
+    // not-installed answer is the absence of a feature, not a change (the snapshot and the
+    // list route still carry it). A Codex that disappears later is a change and is published.
+    if (
+      value.kind === "unavailable" &&
+      value.reason === "not-installed" &&
+      lastPublishedKey === null
+    )
+      return;
     const key = changeKey(value);
     if (key === lastPublishedKey) return;
     const payload = CodexSessionsUpdatedPayloadSchema.safeParse(value);
