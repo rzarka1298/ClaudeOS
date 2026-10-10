@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -17,6 +18,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import http from "node:http";
@@ -30,6 +32,11 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "
 const SCRIPTS_DIR = join(REPO_ROOT, "scripts", "codex-hooks");
 const INSTALL = join(SCRIPTS_DIR, "install.mjs");
 const INSTALL_SH = join(SCRIPTS_DIR, "install.sh");
+const UNINSTALL = join(SCRIPTS_DIR, "uninstall.mjs");
+const UNINSTALL_SH = join(SCRIPTS_DIR, "uninstall.sh");
+const STATUS = join(SCRIPTS_DIR, "status.mjs");
+const STATUS_SH = join(SCRIPTS_DIR, "status.sh");
+const README = join(SCRIPTS_DIR, "README.md");
 const LIB = join(SCRIPTS_DIR, "lib.mjs");
 const DIST = join(REPO_ROOT, "packages", "collectors", "dist");
 const TMP_REAL = realpathSync(tmpdir());
@@ -466,5 +473,278 @@ describe("install.mjs merges the Codex hook package (Task 1, CODEX-06, D-19)", (
   it("subscribes exactly the domain's CODEX_HOOK_EVENTS", async () => {
     const lib = (await import(pathToFileURL(LIB).href)) as { SUBSCRIBED_EVENTS: readonly string[] };
     expect([...lib.SUBSCRIBED_EVENTS]).toEqual([...CODEX_HOOK_EVENTS]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: uninstall, status, shims and README
+
+function uninstall(fx: Fixture, extra: string[] = []): RunResult {
+  return runScript(UNINSTALL, fx, [...baseArgs(fx), ...extra]);
+}
+
+function status(fx: Fixture): RunResult {
+  return runScript(STATUS, fx, baseArgs(fx));
+}
+
+/** A preload that records the paths the scripts open for writing and reading (public fs calls only). */
+const RECORDER_SOURCE = `
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { resolve } from "node:path";
+const logPath = process.env.CCC_FS_LOG;
+const append = fs.appendFileSync.bind(fs);
+const abs = (p) => {
+  if (typeof p === "string") return resolve(p);
+  if (p instanceof URL) return p.pathname;
+  if (Buffer.isBuffer(p)) return resolve(p.toString());
+  return undefined;
+};
+const log = (kind, op, ...paths) => {
+  for (const p of paths) {
+    const path = abs(p);
+    if (path !== undefined) append(logPath, JSON.stringify({ kind, op, path }) + "\\n");
+  }
+};
+const C = fs.constants;
+const isWriteFlag = (flags) => {
+  if (flags === undefined) return false;
+  if (typeof flags === "string") return !/^rs?$/.test(flags);
+  return (flags & (C.O_WRONLY | C.O_RDWR | C.O_CREAT | C.O_TRUNC | C.O_APPEND)) !== 0;
+};
+const wrap = (name, pick) => {
+  const original = fs[name];
+  if (typeof original !== "function") return;
+  fs[name] = function (...args) {
+    for (const [kind, ...paths] of pick(args)) log(kind, name, ...paths);
+    return original.apply(this, args);
+  };
+};
+wrap("writeFileSync", (a) => [["write", a[0]]]);
+wrap("appendFileSync", (a) => [["write", a[0]]]);
+wrap("copyFileSync", (a) => [["read", a[0]], ["write", a[1]]]);
+wrap("renameSync", (a) => [["write", a[0]], ["write", a[1]]]);
+wrap("rmSync", (a) => [["write", a[0]]]);
+wrap("rmdirSync", (a) => [["write", a[0]]]);
+wrap("unlinkSync", (a) => [["write", a[0]]]);
+wrap("mkdirSync", (a) => [["write", a[0]]]);
+wrap("chmodSync", (a) => [["write", a[0]]]);
+wrap("chownSync", (a) => [["write", a[0]]]);
+wrap("truncateSync", (a) => [["write", a[0]]]);
+wrap("utimesSync", (a) => [["write", a[0]]]);
+wrap("symlinkSync", (a) => [["write", a[1]]]);
+wrap("linkSync", (a) => [["write", a[1]]]);
+wrap("mkdtempSync", (a) => [["write", a[0]]]);
+wrap("openSync", (a) => [[isWriteFlag(a[1]) ? "write" : "read", a[0]]]);
+wrap("readFileSync", (a) => [["read", a[0]]]);
+wrap("readdirSync", (a) => [["read", a[0]]]);
+wrap("statSync", (a) => [["read", a[0]]]);
+wrap("lstatSync", (a) => [["read", a[0]]]);
+wrap("existsSync", (a) => [["read", a[0]]]);
+wrap("accessSync", (a) => [["read", a[0]]]);
+wrap("realpathSync", (a) => [["read", a[0]]]);
+wrap("readlinkSync", (a) => [["read", a[0]]]);
+wrap("opendirSync", (a) => [["read", a[0]]]);
+syncBuiltinESMExports();
+`;
+
+interface Recorded {
+  result: RunResult;
+  writes: string[];
+  reads: string[];
+}
+
+/** Runs a script under the recorder; paths inside the repository, the Node install or the recorder itself are noise. */
+function runRecorded(script: string, fx: Fixture, args: string[]): Recorded {
+  const dir = mkdtempSync(join(TMP_REAL, "cchr-"));
+  fixtures.push(dir);
+  const recorder = join(dir, "recorder.mjs");
+  const logPath = join(dir, "fs.log");
+  writeFileSync(recorder, RECORDER_SOURCE);
+  writeFileSync(logPath, "");
+  const spawned = spawnSync(
+    process.execPath,
+    ["--import", pathToFileURL(recorder).href, script, ...args],
+    { cwd: REPO_ROOT, env: { ...childEnv(fx), CCC_FS_LOG: logPath }, encoding: "utf8" },
+  );
+  const nodeRoot = dirname(dirname(realpathSync(process.execPath)));
+  const noise = (path: string) =>
+    path.startsWith(`${REPO_ROOT}/`) ||
+    path.startsWith(`${nodeRoot}/`) ||
+    path === logPath ||
+    path === recorder;
+  const entries = readFileSync(logPath, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { kind: string; op: string; path: string })
+    .filter((entry) => !noise(entry.path));
+  const unique = (kind: string) => [
+    ...new Set(entries.filter((entry) => entry.kind === kind).map((entry) => entry.path)),
+  ];
+  return {
+    result: { status: spawned.status, stdout: spawned.stdout, stderr: spawned.stderr },
+    writes: unique("write"),
+    reads: unique("read"),
+  };
+}
+
+describe("uninstall.mjs, status.mjs, the shims and the README (Task 2, CODEX-06, D-19)", () => {
+  it("install then uninstall returns the owner's file byte for byte, removes the copies and leaves the decoys (Test 1)", () => {
+    const fx = makeFixture(ownerHooks());
+    const configHash = sha256(fx.configPath);
+    expect(install(fx).status).toBe(0);
+    expect(install(fx).status).toBe(0);
+    const result = uninstall(fx);
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(fx.originalBytes);
+    expect(existsSync(join(fx.runtimeDir, "codex-hooks"))).toBe(false);
+    expect(sha256(fx.configPath)).toBe(configHash);
+    expect(readFileSync(fx.credentialPath, "utf8")).toBe(DECOY_CREDENTIAL);
+  });
+
+  it("deletes a hooks file that held nothing but this package's entries, keeping a backup of it (Test 1b)", () => {
+    const fx = makeFixture();
+    expect(install(fx).status).toBe(0);
+    const installedBytes = readFileSync(fx.hooksPath, "utf8");
+    const result = uninstall(fx);
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(fx.hooksPath)).toBe(false);
+    expect(existsSync(join(fx.runtimeDir, "codex-hooks"))).toBe(false);
+    const names = backups(fx);
+    expect(names).toHaveLength(1);
+    expect(readFileSync(join(fx.codexHome, names[0] as string), "utf8")).toBe(installedBytes);
+  });
+
+  it("keeps an owner edit made after install; with nothing of ours the file's bytes are untouched (Test 2)", () => {
+    const fx = makeFixture(ownerHooks());
+    expect(install(fx).status).toBe(0);
+    const edited = readHooks(fx);
+    const ownerLater = { hooks: [{ type: "command", command: "echo owner-later" }] };
+    (edited.hooks as Record<string, Group[]>).Stop?.push(ownerLater);
+    writeFileSync(fx.hooksPath, `${JSON.stringify(edited, null, 2)}\n`);
+
+    const result = uninstall(fx);
+    expect(result.status, result.stderr).toBe(0);
+    const expected = {
+      description: "owner hooks",
+      hooks: {
+        PreToolUse: [OWNER_PRE_TOOL_USE],
+        SessionStart: [OWNER_SESSION_START],
+        Stop: [OWNER_STOP, ownerLater],
+      },
+      "owner-extra": { keep: true },
+    };
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(`${JSON.stringify(expected, null, 2)}\n`);
+
+    // Nothing of ours any more: the bytes stay exactly as they are, and no backup is added.
+    const before = readFileSync(fx.hooksPath, "utf8");
+    const backupCount = backups(fx).length;
+    const again = uninstall(fx);
+    expect(again.status, again.stderr).toBe(0);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(before);
+    expect(backups(fx)).toHaveLength(backupCount);
+  });
+
+  it("--dry-run prints the diff and the removal line and changes nothing; a symlinked hooks file survives (Test 3)", () => {
+    const fx = makeFixture(ownerHooks());
+    expect(install(fx).status).toBe(0);
+    const before = snapshot(fx.root);
+    const dry = uninstall(fx, ["--dry-run"]);
+    expect(dry.status, dry.stderr).toBe(0);
+    expect(dry.stdout).toContain("Dry run: nothing was written.");
+    expect(dry.stdout).toMatch(/^-.*entry\.js/m);
+    expect(dry.stdout).toContain(`Would remove ${join(fx.runtimeDir, "codex-hooks")}`);
+    expect(snapshot(fx.root)).toEqual(before);
+
+    // Symlinked hooks file: followed on write, so the link survives and its target changes.
+    const linked = makeFixture();
+    const target = join(linked.root, "real-hooks.json");
+    const targetBytes = `${JSON.stringify(ownerHooks(), null, 4)}\n`;
+    writeFileSync(target, targetBytes);
+    symlinkSync(target, linked.hooksPath);
+    expect(install(linked).status).toBe(0);
+    expect(lstatSync(linked.hooksPath).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, "utf8")).not.toBe(targetBytes);
+    expect(ourGroups(linked, JSON.parse(readFileSync(target, "utf8")), "Stop")).toHaveLength(1);
+    expect(uninstall(linked).status).toBe(0);
+    expect(lstatSync(linked.hooksPath).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, "utf8")).toBe(targetBytes);
+  });
+
+  it("status reports the file, the events and the trust step; not-installed says so; it reads only the hooks file and the runtime dir and writes nothing (Test 4)", () => {
+    const fx = makeFixture(ownerHooks());
+
+    const absent = runRecorded(STATUS, fx, baseArgs(fx));
+    expect(absent.result.status, absent.result.stderr).toBe(0);
+    expect(absent.result.stdout).toContain("hooks: not installed");
+    expect(absent.result.stdout).not.toContain("/hooks");
+
+    expect(install(fx).status).toBe(0);
+    const codexBefore = snapshot(fx.codexHome);
+    const runtimeBefore = snapshot(fx.runtimeDir);
+    const recorded = runRecorded(STATUS, fx, baseArgs(fx));
+    expect(recorded.result.status, recorded.result.stderr).toBe(0);
+    const out = recorded.result.stdout;
+    expect(out).toContain(fx.hooksPath);
+    expect(out).toContain(`hooks: installed (${CODEX_HOOK_EVENTS.length} events`);
+    for (const event of CODEX_HOOK_EVENTS) expect(out).toContain(event);
+    expect(out).toContain("installed files: complete");
+    expect(out).toContain("/hooks");
+    expect(out).toMatch(/trust/i);
+
+    // Reads: the hooks file and the runtime directory, never the config or credential file.
+    for (const path of recorded.reads) {
+      const allowed =
+        path === fx.hooksPath || path === fx.runtimeDir || path.startsWith(`${fx.runtimeDir}/`);
+      expect(allowed, `status read ${path}`).toBe(true);
+    }
+    expect(recorded.reads).toContain(fx.hooksPath);
+    expect(
+      recorded.reads.some((path) => path === fx.configPath || path === fx.credentialPath),
+    ).toBe(false);
+    expect(recorded.writes).toEqual([]);
+    expect(snapshot(fx.codexHome)).toEqual(codexBefore);
+    expect(snapshot(fx.runtimeDir)).toEqual(runtimeBefore);
+
+    // A missing installed file is reported, not hidden.
+    rmSync(join(fx.runtimeDir, "codex-hooks", "hook", "deliver.js"));
+    const broken = status(fx);
+    expect(broken.status, broken.stderr).toBe(0);
+    expect(broken.stdout).toContain("installed files: incomplete");
+    expect(broken.stdout).toContain("hook/deliver.js");
+  });
+
+  it("the shims run the mjs files with the arguments forwarded (Test 5)", () => {
+    const fx = makeFixture(ownerHooks());
+    expect(install(fx).status).toBe(0);
+    const viaSh = spawnSync("sh", [STATUS_SH, ...baseArgs(fx)], {
+      cwd: REPO_ROOT,
+      env: childEnv(fx),
+      encoding: "utf8",
+    });
+    expect(viaSh.status, viaSh.stderr).toBe(0);
+    expect(viaSh.stdout).toBe(status(fx).stdout);
+    expect(viaSh.stdout).toContain("hooks: installed");
+
+    const removed = spawnSync("sh", [UNINSTALL_SH, ...baseArgs(fx)], {
+      cwd: REPO_ROOT,
+      env: childEnv(fx),
+      encoding: "utf8",
+    });
+    expect(removed.status, removed.stderr).toBe(0);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(fx.originalBytes);
+  });
+
+  it("the README states the three commands, the files touched, the untouched config and notify, and the trust step (Test 5b)", () => {
+    const readme = readFileSync(README, "utf8");
+    for (const name of ["install.sh", "uninstall.sh", "status.sh"]) {
+      expect(readme, name).toContain(`./scripts/codex-hooks/${name}`);
+    }
+    expect(readme).toContain("hooks.json");
+    expect(readme).toMatch(/never touch(es)?[^.]*config file/i);
+    expect(readme).toMatch(/notify/);
+    expect(readme).toContain("/hooks");
+    expect(readme).toMatch(/trust/i);
+    expect(readme).toContain("--dry-run");
   });
 });
