@@ -1,4 +1,5 @@
 import { symlinkSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -293,16 +294,14 @@ describe("Test 5: the port has no write-capable member", () => {
   it("exposes no member named like a mutation", () => {
     const fake = makeHome();
     const port = createCodexHomePort({ root: fake.root });
-    const names = [
-      ...Object.getOwnPropertyNames(port),
-      ...Object.getOwnPropertyNames(Object.getPrototypeOf(port) ?? {}),
-    ];
+    // A plain object: no class prototype can hide a member.
+    expect(Object.getPrototypeOf(port)).toBe(Object.prototype);
+    const names = Object.getOwnPropertyNames(port);
     expect(names.length).toBeGreaterThan(0);
     const mutation =
       /write|create|delete|remove|rename|unlink|chmod|mkdir|append|truncate|copy|link|move|rm$/i;
     for (const name of names) {
       // "resolveSessionsFile" and the read members are the whole surface.
-      if (name === "constructor") continue;
       expect(name, name).not.toMatch(mutation);
     }
     expect(names.sort()).toEqual(
@@ -345,5 +344,14 @@ describe("Test 5: the port has no write-capable member", () => {
     for (const name of writers) {
       expect(spies[name], name).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("the real default home is refused under a test runner", () => {
+  it("throws before any file call when the root is the owner's real Codex home", () => {
+    const rec = recordingFs();
+    const real = join(homedir(), ".codex");
+    expect(() => createCodexHomePort({ root: real, fs: rec.fs })).toThrow(CodexHomeAccessError);
+    expect(rec.calls).toEqual([]);
   });
 });
