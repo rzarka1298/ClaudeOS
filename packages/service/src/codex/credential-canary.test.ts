@@ -215,6 +215,8 @@ describe("Test 2 (task 3): only SQLite sidecars may appear in the directory", ()
     }
     expect(diff.removed).toEqual([]);
     expect(diff.changed).toEqual([]);
+    // The documented residual (research R3): a read-only open of a closed WAL store makes both.
+    expect(diff.added).toEqual([...SQLITE_SIDECARS].sort());
     expect(diff.added.every((name) => SQLITE_SIDECARS.includes(name))).toBe(true);
   });
 });

@@ -427,17 +427,45 @@ export interface SnapshotDiff {
   readonly changed: readonly string[];
 }
 
-// RED stubs (plan 05.1-14, task 3): neutral behaviour; real versions land in GREEN.
+/** Entries that appeared, vanished or changed (size or mtime) between two snapshots. */
 export function diffSnapshots(
-  _before: Map<string, string>,
-  _after: Map<string, string>,
+  before: Map<string, string>,
+  after: Map<string, string>,
 ): SnapshotDiff {
-  return { added: [], removed: [], changed: [] };
+  const added: string[] = [];
+  const removed: string[] = [];
+  const changed: string[] = [];
+  for (const [name, value] of after) {
+    const previous = before.get(name);
+    if (previous === undefined) added.push(name);
+    else if (previous !== value) changed.push(name);
+  }
+  for (const name of before.keys()) if (!after.has(name)) removed.push(name);
+  return { added: added.sort(), removed: removed.sort(), changed: changed.sort() };
 }
 
-export function assertOnlySidecarChanges(_diff: SnapshotDiff): void {}
+/**
+ * Passes only when nothing was removed or changed and every added entry is a
+ * SQLite sidecar of the state database. Throws (so a negative control can
+ * show the check is able to fail) on anything else.
+ */
+export function assertOnlySidecarChanges(diff: SnapshotDiff): void {
+  if (diff.removed.length > 0) throw new Error("canary: an entry was removed from the home");
+  if (diff.changed.length > 0) throw new Error("canary: an entry in the home was changed");
+  for (const name of diff.added) {
+    if (!SQLITE_SIDECARS.includes(name)) throw new Error("canary: an unexpected entry was created");
+  }
+}
 
-export function assertNoMarkerLeak(_texts: readonly string[], _home: FakeCodexHome): void {}
+/** Throws when the decoy marker (or a decoy file name) shows in any output text. */
+export function assertNoMarkerLeak(texts: readonly string[], home: FakeCodexHome): void {
+  for (const text of texts) {
+    if (text.includes(home.decoys.marker)) throw new Error("canary: the decoy marker leaked");
+    if (text.includes(home.decoys.credentialName) || text.includes(home.decoys.configName)) {
+      throw new Error("canary: a decoy file name leaked");
+    }
+  }
+}
 
 /**
  * A database opener that records the path it is asked to open (as an
