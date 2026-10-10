@@ -14,7 +14,8 @@ import { join } from "node:path";
  *
  * The fake speaks newline-delimited JSON-RPC on stdin and stdout and appends to
  * its log file: one `start` entry (argv, environment key NAMES only, working
- * directory, pid) and one `line` entry per received line. Tests assert on the
+ * directory, pid; macOS adds `__CF_USER_TEXT_ENCODING` to every exec'd process
+ * itself, so that one name is left out of the record) and one `line` entry per received line. Tests assert on the
  * log, so a stray message is caught from the receiving side.
  *
  * Nothing here ever starts the real `codex`.
@@ -106,7 +107,7 @@ const fs = require("node:fs");
 const S = ${JSON.stringify(scenario)};
 const LOG = ${JSON.stringify(logPath)};
 function log(entry) { fs.appendFileSync(LOG, JSON.stringify(entry) + "\\n"); }
-log({ t: "start", argv: process.argv.slice(2), envKeys: Object.keys(process.env).sort(), cwd: process.cwd(), pid: process.pid });
+log({ t: "start", argv: process.argv.slice(2), envKeys: Object.keys(process.env).filter((k) => k !== "__CF_USER_TEXT_ENCODING").sort(), cwd: process.cwd(), pid: process.pid });
 if (S.crashOnStart) process.exit(3);
 if (S.ignoreTermination) {
   process.on("SIGTERM", () => {});
