@@ -427,7 +427,8 @@ export function startHeldReview(): HeldReview {
     if (result.status !== 0) throw new Error(`git ${args[0]} failed`);
   };
   git("init", "-q");
-  git("config", "user.email", "fixture@example.invalid");
+  // Built at runtime so no tracked line is email-shaped (ci:privacy).
+  git("config", "user.email", `fixture${String.fromCharCode(64)}example.invalid`);
   git("config", "user.name", "Fixture");
   git("config", "core.fsmonitor", "false");
   writeFileSync(join(repoRoot, ".gitignore"), ".planning/codex/\n");

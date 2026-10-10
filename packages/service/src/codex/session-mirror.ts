@@ -280,7 +280,7 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
           overlay(view, {
             limitHitAfter: entry.limitHitAfter,
             threadId: view.threadId,
-            lastLifecycleAt: null,
+            lastLifecycleAt: entry.lastLifecycleAt,
           }),
         );
         if (parsed.success && parsed.data.threadId === view.threadId) view = parsed.data;
@@ -519,7 +519,7 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
       views.push({
         view: parsed.data,
         limitHitAfter: lifecycle.limitHitAfter,
-        lastLifecycleAt: null,
+        lastLifecycleAt: lifecycle.lastEventAt,
       });
     }
 
@@ -542,6 +542,20 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     return attempt;
   }
 
+  /**
+   * Runs the registered tick hooks (plan 05.1-26). A hook that throws or rejects is contained and
+   * never reaches a log line (its message can carry a path); the poll starts regardless.
+   */
+  function runTickHooks(): void {
+    for (const hook of [...tickHooks]) {
+      try {
+        void Promise.resolve(hook()).catch(() => undefined);
+      } catch {
+        // Contained: a failing hook never breaks the tick.
+      }
+    }
+  }
+
   /** Rebuilds the assembled snapshot from the cached base (no store read). */
   function rebuild(): void {
     if (current === null || current.kind !== "available") return;
@@ -559,7 +573,9 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     start() {
       if (timerHandle !== null) return;
       timerHandle = deps.timers.setInterval(() => {
-        if (deps.subscribers() > 0) void pollNow();
+        if (deps.subscribers() <= 0) return;
+        runTickHooks();
+        void pollNow();
       }, intervalMs);
     },
     stop() {
