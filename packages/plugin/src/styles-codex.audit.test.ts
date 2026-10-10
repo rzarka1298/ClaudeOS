@@ -90,7 +90,7 @@ describe("Phase 05.1 Codex CSS contract", () => {
   it("stacks headroom through auto-fit at a token-derived ten rem minimum", () => {
     expect(SOURCE).toMatch(/--ccc-space-md:\s*1rem/);
     expect(bodyFor(`${ROOT} .ccc-headroom-strip`)).toMatch(
-      /repeat\(auto-fit, minmax\(min\(100%, calc\(10 \* var\(--ccc-space-md\)\)\), 1fr\)\)/,
+      /repeat\(\s*auto-fit,\s*minmax\(min\(100%, max\(calc\(10 \* var\(--ccc-space-md\)\), calc\(\(100% - var\(--ccc-space-md\)\) \/ 2\)\)\), 1fr\)\s*\)/,
     );
     expect(bodyFor(`${ROOT} .ccc-headroom-strip`)).toMatch(/gap:\s*var\(--ccc-space-md\)/);
     const cell = bodyFor(`${ROOT} .ccc-headroom-cell`);
@@ -170,6 +170,7 @@ describe("wave 4 spacing and legend alignment", () => {
 describe("Phase 05.1 wave-5 visual fixes", () => {
   const FIX_START = SOURCE.indexOf("/* Phase 05.1 wave-5 visual fixes");
   const FIX = SOURCE.slice(FIX_START, START).replace(/\/\*[\s\S]*?\*\//g, "");
+  const FIX_ALL = FIX;
   it("returns a Codex row that carries a card-actions wrapper to block flow", () => {
     expect(FIX_START).toBeGreaterThan(0);
     expect(FIX).toMatch(
@@ -183,5 +184,24 @@ describe("Phase 05.1 wave-5 visual fixes", () => {
   });
   it("uses tokens only", () => {
     expect(FIX).not.toMatch(/!important|#[0-9a-f]{3,8}\b|\b\d+(?:\.\d+)?px\b|--ccc-[\w-]+\s*:/i);
+  });
+  it("caps the headroom strip at two equal tracks so the spanning footer cannot widen empty ones", () => {
+    expect(bodyFor(`${ROOT} .ccc-headroom-strip > :last-child`)).toMatch(/grid-column:\s*1 \/ -1/);
+    expect(bodyFor(`${ROOT} .ccc-headroom-strip`)).toMatch(
+      /calc\(\(100% - var\(--ccc-space-md\)\) \/ 2\)/,
+    );
+  });
+  it("keeps the pair status action clear of the next separator", () => {
+    expect(FIX_ALL).toMatch(
+      /\.ccc-command-center \.ccc-launch-status-pair ~ \.ccc-list-more \{\s*margin-block-end: var\(--ccc-space-sm\);/,
+    );
+  });
+  it("keeps a disabled Source button at full opacity with a non-colour dashed border", () => {
+    expect(FIX_ALL).toMatch(
+      /\.ccc-command-center \.ccc-source-button\[aria-disabled="true"\] \{\s*opacity: 1;\s*border-style: dashed;/,
+    );
+    expect(FIX_ALL).not.toMatch(
+      /!important|#[0-9a-f]{3,8}\b|\b\d+(?:\.\d+)?px\b|--ccc-[\w-]+\s*:/i,
+    );
   });
 });

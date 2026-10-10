@@ -2974,6 +2974,19 @@ fieldset.ccc-template-rows > legend {
   text-indent: calc(-1 * (var(--ccc-space-lg) + var(--ccc-space-sm) + var(--ccc-space-xs)));
 }
 
+/* The pair status action ('Open Codex settings') is the status line's sibling
+ * button; it keeps clear of the next project's separator hairline. */
+.ccc-command-center .ccc-launch-status-pair ~ .ccc-list-more {
+  margin-block-end: var(--ccc-space-sm);
+}
+
+/* A disabled Source button stays visibly disabled by its default cursor and
+ * dashed border, not by dimming below the contrast floor. */
+.ccc-command-center .ccc-source-button[aria-disabled="true"] {
+  opacity: 1;
+  border-style: dashed;
+}
+
 /* ===== Phase 05.1: Codex card, reserve tick, pair status ===== */
 
 .ccc-command-center .ccc-codex-sections {
@@ -2991,7 +3004,10 @@ fieldset.ccc-template-rows > legend {
   display: grid;
   /* Ten times the existing 1rem step preserves the specified 10rem minimum
    * without introducing a size literal into the existing audit's shared tail. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(10 * var(--ccc-space-md))), 1fr));
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, max(calc(10 * var(--ccc-space-md)), calc((100% - var(--ccc-space-md)) / 2))), 1fr)
+  );
   gap: var(--ccc-space-md);
 }
 
