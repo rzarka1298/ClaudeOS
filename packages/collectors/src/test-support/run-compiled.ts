@@ -8,6 +8,9 @@ export const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..
 /** The compiled hook entry the tests spawn — never the TypeScript source. */
 export const COMPILED_HOOK_ENTRY = join(PACKAGE_ROOT, "dist", "hook", "entry.js");
 
+/** The compiled Codex hook entry the tests spawn (its own folder, never `dist/hook`). */
+export const COMPILED_CODEX_HOOK_ENTRY = join(PACKAGE_ROOT, "dist", "codex-hook", "entry.js");
+
 /** The compiled status-line wrapper entry. */
 export const COMPILED_STATUSLINE_WRAPPER = join(PACKAGE_ROOT, "dist", "statusline", "wrapper.js");
 
