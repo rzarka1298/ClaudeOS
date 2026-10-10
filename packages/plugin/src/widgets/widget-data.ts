@@ -1,5 +1,6 @@
 import { type ReadonlySignal, signal } from "@preact/signals";
 import { projectShortcutsState, quickActionsState } from "../projects/projects-state.js";
+import { codexState } from "./codex-signals.js";
 import type { WidgetState } from "./contract.js";
 import type { WidgetId } from "./registry.js";
 import { serviceHealthState } from "./service-health.js";
@@ -52,6 +53,7 @@ const WIDGET_STATES: Readonly<Record<WidgetId, ReadonlySignal<WidgetState<unknow
   // docblock).
   "active-sessions": activeSessionsState,
   "claude-usage": claudeUsageState,
+  codex: codexState,
   // The three with no connector to click: `unavailable`, not a plausible lie
   // that reads as "one click away" (ADR-0023 rejected alternative).
   // Plan 04-07: a service-fed signal (D-35), replacing the constant above.

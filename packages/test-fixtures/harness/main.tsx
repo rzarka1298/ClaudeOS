@@ -32,6 +32,7 @@ import type {
   ApprovalsApi,
   ApprovalsSnapshot,
   ClaudeUsageData,
+  CodexCardData,
   ConnectionState,
   GithubDiscoveriesData,
   MotionMode,
@@ -420,6 +421,19 @@ function adaptClaudeUsage(data: Fields): ClaudeUsageData {
   return { summary: summary ?? EMPTY_USAGE_SUMMARY, nowMs: NOW };
 }
 
+function adaptCodex(data: Fields): CodexCardData {
+  const sessions = (data.sessions as CodexCardData["sessions"] | undefined) ?? null;
+  return {
+    sessions,
+    usage: (data.usage as CodexCardData["usage"] | undefined) ?? null,
+    headroom: (data.headroom as CodexCardData["headroom"] | undefined) ?? null,
+    tokens: (data.tokens as CodexCardData["tokens"] | undefined) ?? null,
+    integration: (data.integration as CodexCardData["integration"] | undefined) ?? null,
+    nowMs: NOW,
+    analysisOn: sessions?.kind === "available" && sessions.analysisOn,
+  };
+}
+
 function adaptTechIntel(data: Fields): TechIntelData {
   return {
     stories: list(data.rows).map((row) => ({
@@ -468,6 +482,7 @@ const ADAPTERS: { readonly [K in WidgetId]: Adapter } = {
   "active-sessions": adaptActiveSessions,
   "project-shortcuts": adaptProjectShortcuts,
   "claude-usage": adaptClaudeUsage,
+  codex: adaptCodex,
   "tech-intel": adaptTechIntel,
   "github-discoveries": adaptGithubDiscoveries,
   "quick-actions": adaptQuickActions,

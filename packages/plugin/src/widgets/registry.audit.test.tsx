@@ -37,7 +37,11 @@ describe("widgetStateFor is one signal per widget", () => {
   // checked below by source scan and by its honest pre-connection state.
   // `project-shortcuts` and `quick-actions` are real too (Phase 4).
   const CONSTANT_PANEL_ORDER = PRD_PANEL_ORDER.filter(
-    (id) => id !== "active-sessions" && id !== "project-shortcuts" && id !== "quick-actions",
+    (id) =>
+      id !== "active-sessions" &&
+      id !== "project-shortcuts" &&
+      id !== "quick-actions" &&
+      id !== "codex",
   );
 
   it.each(CONSTANT_PANEL_ORDER)("%s: never holds a ready payload (D-17)", (id) => {

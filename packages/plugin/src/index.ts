@@ -51,6 +51,8 @@ export { DestinationTabs } from "./view/destination-tabs.js";
 export { ProjectTasksPanel } from "./view/project-tasks.js";
 export { TasksDestination } from "./view/tasks.js";
 export { createTasksViewState } from "./view/tasks-view-state.js";
+// ===== Phase 05.1: Codex visual harness contract =====
+export type { CodexCardData } from "./widgets/codex.js";
 export type {
   DataDependencyKey,
   QuickActionDescriptor,

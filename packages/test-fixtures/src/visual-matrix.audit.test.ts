@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CodexSnapshotStateSchema } from "@ccc/domain/codex-api.js";
 import { describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -80,14 +81,22 @@ const TASKS_CELLS = [
 ] as const;
 
 describe("visual matrix (audit)", () => {
-  it("lists exactly 113 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 21 approvals cells + 19 tasks cells", () => {
+  it("lists exactly 121 cells: 9 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 21 approvals cells + 19 tasks cells", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 113 tests in 4 files/);
+    expect(out).toMatch(/Total: 121 tests in 4 files/);
     expect(APPROVALS_CELLS).toHaveLength(21);
     for (const cell of APPROVALS_CELLS) expect(out).toContain(cell);
     expect(TASKS_CELLS).toHaveLength(19);
     for (const cell of TASKS_CELLS) expect(out).toContain(cell);
     for (const cell of [
+      "codex — loading",
+      "codex — empty",
+      "codex — ready",
+      "codex — stale",
+      "codex — disconnected",
+      "codex — error",
+      "codex — permission-required",
+      "codex — unavailable",
       "background — full",
       "background — reduced",
       "service-health — ready — motion full",
@@ -146,4 +155,14 @@ describe("visual matrix (audit)", () => {
       .filter((path) => /test-fixtures|widget-fixtures/.test(readFileSync(path, "utf8")));
     expect(leaks).toEqual([]);
   });
+});
+
+it("Codex fixture parts satisfy the strict service snapshot contract", () => {
+  const fixtures = JSON.parse(readFileSync(join(HERE, "widget-fixtures.json"), "utf8")) as {
+    panels: { id: string; states: Record<string, { data: unknown }> }[];
+  };
+  const panel = fixtures.panels.find((panel) => panel.id === "codex");
+  expect(panel).toBeDefined();
+  for (const state of Object.values(panel?.states ?? {}))
+    expect(CodexSnapshotStateSchema.safeParse(state.data).success).toBe(true);
 });

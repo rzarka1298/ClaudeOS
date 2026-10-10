@@ -1330,6 +1330,461 @@ globalThis.CCC_FIXTURES = {
       }
     },
     {
+      "id": "codex",
+      "title": "Codex sessions and usage",
+      "sourceLabel": "Codex app-server",
+      "capability": "codex",
+      "bodyKind": "usage",
+      "sizeHint": "tall",
+      "states": {
+        "live": {
+          "observedAt": "2026-09-22T11:58:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": true,
+            "missingSources": [
+              "Local transcript analysis",
+              "Claude Code estimates and list prices"
+            ]
+          },
+          "sources": [
+            {
+              "label": "Codex",
+              "status": "Connected"
+            }
+          ],
+          "data": {
+            "sessions": {
+              "kind": "available",
+              "sessions": [
+                {
+                  "threadId": "synthetic-codex-session",
+                  "projectId": "synthetic-project",
+                  "projectName": "Example garden",
+                  "origin": "interactive",
+                  "state": "running",
+                  "model": "example-model",
+                  "effort": "medium",
+                  "startedAt": "2026-09-22T11:30:00.000Z",
+                  "lastActivityAt": "2026-09-22T12:00:00.000Z",
+                  "resumesAfter": null,
+                  "title": "Plan the garden",
+                  "hasTranscript": false,
+                  "liveLogRunId": null
+                }
+              ],
+              "hiddenCount": 0,
+              "analysisOn": true,
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              }
+            },
+            "usage": {
+              "kind": "available",
+              "windows": [
+                {
+                  "windowMinutes": 10080,
+                  "usedPercent": 41,
+                  "resetsAt": "2026-09-29T16:40:00.000Z",
+                  "limitLabel": null
+                }
+              ],
+              "ordinaryUsageAllowed": true,
+              "rateLimitReached": false,
+              "rateLimitReachedType": null,
+              "source": "app-server",
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "freshness": "live"
+            },
+            "headroom": {
+              "generatedAt": "2026-09-22T12:00:00.000Z",
+              "claude": {
+                "kind": "available",
+                "window": "five-hour",
+                "usedPercent": 62,
+                "resetsAt": "2026-09-22T16:40:00.000Z",
+                "source": "claude-code-status-line",
+                "observedAt": "2026-09-22T12:00:00.000Z",
+                "freshness": "live"
+              },
+              "codex": {
+                "verdict": "allow",
+                "reason": null,
+                "worstWindow": {
+                  "windowMinutes": 10080,
+                  "usedPercent": 41,
+                  "resetsAt": "2026-09-29T16:40:00.000Z"
+                },
+                "source": "app-server",
+                "observedAt": "2026-09-22T12:00:00.000Z",
+                "freshness": "live",
+                "pausedRuns": {
+                  "count": 0,
+                  "earliestResetAt": null
+                }
+              }
+            },
+            "tokens": {
+              "ranges": {
+                "today": {
+                  "kind": "available",
+                  "range": "today",
+                  "bounds": {
+                    "start": "2026-09-22T00:00:00.000Z",
+                    "end": "2026-09-23T00:00:00.000Z"
+                  },
+                  "totals": {
+                    "input": 100,
+                    "cachedInput": 20,
+                    "cacheWrite": 0,
+                    "output": 40,
+                    "reasoningOutput": 10,
+                    "total": 170
+                  },
+                  "observedAt": "2026-09-22T12:00:00.000Z",
+                  "source": "codex-session-logs",
+                  "freshness": "live",
+                  "partiality": {
+                    "partial": false
+                  },
+                  "coverage": {
+                    "horizonDate": null,
+                    "uncoveredDays": 0,
+                    "analysisOffDays": 0
+                  }
+                },
+                "last-7-days": {
+                  "kind": "available",
+                  "range": "last-7-days",
+                  "bounds": {
+                    "start": "2026-09-22T00:00:00.000Z",
+                    "end": "2026-09-23T00:00:00.000Z"
+                  },
+                  "totals": {
+                    "input": 100,
+                    "cachedInput": 20,
+                    "cacheWrite": 0,
+                    "output": 40,
+                    "reasoningOutput": 10,
+                    "total": 170
+                  },
+                  "observedAt": "2026-09-22T12:00:00.000Z",
+                  "source": "codex-session-logs",
+                  "freshness": "live",
+                  "partiality": {
+                    "partial": false
+                  },
+                  "coverage": {
+                    "horizonDate": null,
+                    "uncoveredDays": 0,
+                    "analysisOffDays": 0
+                  }
+                },
+                "this-month": {
+                  "kind": "available",
+                  "range": "this-month",
+                  "bounds": {
+                    "start": "2026-09-22T00:00:00.000Z",
+                    "end": "2026-09-23T00:00:00.000Z"
+                  },
+                  "totals": {
+                    "input": 100,
+                    "cachedInput": 20,
+                    "cacheWrite": 0,
+                    "output": 40,
+                    "reasoningOutput": 10,
+                    "total": 170
+                  },
+                  "observedAt": "2026-09-22T12:00:00.000Z",
+                  "source": "codex-session-logs",
+                  "freshness": "live",
+                  "partiality": {
+                    "partial": false
+                  },
+                  "coverage": {
+                    "horizonDate": null,
+                    "uncoveredDays": 0,
+                    "analysisOffDays": 0
+                  }
+                }
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "firstScanPending": false
+            },
+            "integration": {
+              "codex": {
+                "installed": true,
+                "version": null
+              },
+              "hooks": {
+                "state": "not-installed",
+                "lastEventAt": null,
+                "installedSince": null
+              },
+              "bridge": {
+                "state": "not-installed",
+                "lastWindowAt": null
+              },
+              "doctor": null
+            }
+          }
+        },
+        "stale": {
+          "observedAt": "2026-09-22T09:00:00.000Z",
+          "freshness": "stale",
+          "partiality": {
+            "partial": true,
+            "missingSources": [
+              "Local transcript analysis",
+              "Claude Code estimates and list prices"
+            ]
+          },
+          "sources": [
+            {
+              "label": "Codex",
+              "status": "Connected"
+            }
+          ],
+          "data": {
+            "sessions": {
+              "kind": "available",
+              "sessions": [
+                {
+                  "threadId": "synthetic-codex-session",
+                  "projectId": "synthetic-project",
+                  "projectName": "Example garden",
+                  "origin": "interactive",
+                  "state": "running",
+                  "model": "example-model",
+                  "effort": "medium",
+                  "startedAt": "2026-09-22T11:30:00.000Z",
+                  "lastActivityAt": "2026-09-22T12:00:00.000Z",
+                  "resumesAfter": null,
+                  "title": "Plan the garden",
+                  "hasTranscript": false,
+                  "liveLogRunId": null
+                }
+              ],
+              "hiddenCount": 0,
+              "analysisOn": true,
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              }
+            },
+            "usage": {
+              "kind": "available",
+              "windows": [
+                {
+                  "windowMinutes": 10080,
+                  "usedPercent": 41,
+                  "resetsAt": "2026-09-29T16:40:00.000Z",
+                  "limitLabel": null
+                }
+              ],
+              "ordinaryUsageAllowed": true,
+              "rateLimitReached": false,
+              "rateLimitReachedType": null,
+              "source": "app-server",
+              "observedAt": "2026-09-22T09:00:00.000Z",
+              "freshness": "stale"
+            },
+            "headroom": {
+              "generatedAt": "2026-09-22T12:00:00.000Z",
+              "claude": {
+                "kind": "available",
+                "window": "five-hour",
+                "usedPercent": 62,
+                "resetsAt": "2026-09-22T16:40:00.000Z",
+                "source": "claude-code-status-line",
+                "observedAt": "2026-09-22T12:00:00.000Z",
+                "freshness": "live"
+              },
+              "codex": {
+                "verdict": "refuse",
+                "reason": "usage-unavailable",
+                "worstWindow": null,
+                "source": "app-server",
+                "observedAt": "2026-09-22T09:00:00.000Z",
+                "freshness": "stale",
+                "pausedRuns": {
+                  "count": 0,
+                  "earliestResetAt": null
+                }
+              }
+            },
+            "tokens": {
+              "ranges": {
+                "today": {
+                  "kind": "available",
+                  "range": "today",
+                  "bounds": {
+                    "start": "2026-09-22T00:00:00.000Z",
+                    "end": "2026-09-23T00:00:00.000Z"
+                  },
+                  "totals": {
+                    "input": 100,
+                    "cachedInput": 20,
+                    "cacheWrite": 0,
+                    "output": 40,
+                    "reasoningOutput": 10,
+                    "total": 170
+                  },
+                  "observedAt": "2026-09-22T12:00:00.000Z",
+                  "source": "codex-session-logs",
+                  "freshness": "live",
+                  "partiality": {
+                    "partial": false
+                  },
+                  "coverage": {
+                    "horizonDate": null,
+                    "uncoveredDays": 0,
+                    "analysisOffDays": 0
+                  }
+                },
+                "last-7-days": {
+                  "kind": "available",
+                  "range": "last-7-days",
+                  "bounds": {
+                    "start": "2026-09-22T00:00:00.000Z",
+                    "end": "2026-09-23T00:00:00.000Z"
+                  },
+                  "totals": {
+                    "input": 100,
+                    "cachedInput": 20,
+                    "cacheWrite": 0,
+                    "output": 40,
+                    "reasoningOutput": 10,
+                    "total": 170
+                  },
+                  "observedAt": "2026-09-22T12:00:00.000Z",
+                  "source": "codex-session-logs",
+                  "freshness": "live",
+                  "partiality": {
+                    "partial": false
+                  },
+                  "coverage": {
+                    "horizonDate": null,
+                    "uncoveredDays": 0,
+                    "analysisOffDays": 0
+                  }
+                },
+                "this-month": {
+                  "kind": "available",
+                  "range": "this-month",
+                  "bounds": {
+                    "start": "2026-09-22T00:00:00.000Z",
+                    "end": "2026-09-23T00:00:00.000Z"
+                  },
+                  "totals": {
+                    "input": 100,
+                    "cachedInput": 20,
+                    "cacheWrite": 0,
+                    "output": 40,
+                    "reasoningOutput": 10,
+                    "total": 170
+                  },
+                  "observedAt": "2026-09-22T12:00:00.000Z",
+                  "source": "codex-session-logs",
+                  "freshness": "live",
+                  "partiality": {
+                    "partial": false
+                  },
+                  "coverage": {
+                    "horizonDate": null,
+                    "uncoveredDays": 0,
+                    "analysisOffDays": 0
+                  }
+                }
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "firstScanPending": false
+            },
+            "integration": {
+              "codex": {
+                "installed": true,
+                "version": null
+              },
+              "hooks": {
+                "state": "not-installed",
+                "lastEventAt": null,
+                "installedSince": null
+              },
+              "bridge": {
+                "state": "not-installed",
+                "lastWindowAt": null
+              },
+              "doctor": null
+            }
+          }
+        },
+        "empty": {
+          "observedAt": "2026-09-22T11:58:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Codex",
+              "status": "Connected"
+            }
+          ],
+          "data": {}
+        },
+        "permission-required": {
+          "observedAt": "2026-09-22T11:58:00.000Z",
+          "freshness": "unavailable",
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Codex",
+              "status": "Connected"
+            }
+          ],
+          "capability": "codex",
+          "data": {
+            "integration": {
+              "codex": {
+                "installed": false,
+                "version": null
+              },
+              "hooks": {
+                "state": "not-installed",
+                "lastEventAt": null,
+                "installedSince": null
+              },
+              "bridge": {
+                "state": "not-installed",
+                "lastWindowAt": null
+              },
+              "doctor": null
+            }
+          }
+        },
+        "failure": {
+          "observedAt": "2026-09-22T11:30:00.000Z",
+          "freshness": "unavailable",
+          "partiality": {
+            "partial": false
+          },
+          "sources": [
+            {
+              "label": "Codex",
+              "status": "Connected"
+            }
+          ],
+          "message": "The usage adapter could not read any supported telemetry source.",
+          "data": {}
+        }
+      }
+    },
+    {
       "id": "tech-intel",
       "title": "Technology and market intelligence",
       "sourceLabel": "Research automations",
