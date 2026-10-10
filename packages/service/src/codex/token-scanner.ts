@@ -744,7 +744,11 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     start() {
       if (timerHandle !== null) return;
       timerHandle = deps.timers.setInterval(() => {
-        if (deps.subscribers() > 0 && deps.isAnalysisOn()) startSweep();
+        try {
+          if (deps.subscribers() > 0 && deps.isAnalysisOn()) startSweep();
+        } catch {
+          logger.warn({ reason: "tick-failed" }, "codex token scan tick failed");
+        }
       }, sweepIntervalMs);
     },
     stop() {

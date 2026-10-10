@@ -941,3 +941,28 @@ describe("Task 2: the database-wide decoy scan", () => {
     expect(everything).not.toContain("/Users/");
   });
 });
+
+describe("timer tick containment", () => {
+  it("an isAnalysisOn that throws inside a tick does not throw out of it, logs a reason code, and the next tick still runs", async () => {
+    let throwing = true;
+    const h = setup({
+      over: {
+        isAnalysisOn: () => {
+          if (throwing) throw new Error("db read failed /Users/USERNAME/secret");
+          return true;
+        },
+      },
+    });
+    h.rollouts.write("2026-10-10", NAME, perTurnRollout());
+    h.scanner.start();
+    expect(() => h.timers.tick()).not.toThrow();
+    await h.scanner.idle();
+    expect(JSON.stringify(h.logs)).toContain("tick-failed");
+    expect(JSON.stringify(h.logs)).not.toContain("secret");
+    throwing = false;
+    h.timers.tick();
+    await h.scanner.idle();
+    expect(h.spy.calls.listRolloutFiles).toBe(1);
+    h.scanner.stop();
+  });
+});
