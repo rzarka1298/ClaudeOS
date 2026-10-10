@@ -171,7 +171,7 @@ function world(): World {
         agent: "claude",
         projectRoot: project,
         cwd: project,
-        argv: [join(bin, "claude"), "--permission-mode", "plan", AWKWARD],
+        argv: [join(bin, "claude"), "--permission-mode", "plan", "--append-system-prompt", AWKWARD],
         env: { CCC_AGENT_MARK: "from-the-request" },
         sessionId: null,
         liveLog: null,
@@ -234,7 +234,7 @@ describe("codex-bridge agent: a valid claimed request", () => {
     expect(r.status).toBe(0);
     const [call, ...rest] = w.calls();
     expect(rest).toEqual([]);
-    expect(call?.argv).toEqual(["--permission-mode", "plan", AWKWARD]);
+    expect(call?.argv).toEqual(["--permission-mode", "plan", "--append-system-prompt", AWKWARD]);
     expect(call?.cwd).toBe(w.project);
     expect(call?.ccc.CCC_AGENT_MARK).toBe("from-the-request");
     // The tab's own environment survives for the child.
@@ -247,11 +247,16 @@ describe("codex-bridge agent: a valid claimed request", () => {
     w.claim(
       w.request({
         agent: "codex",
-        argv: [w.codex, "--ask-for-approval", "on-request", "do $THING"],
+        argv: [w.codex, "--ask-for-approval", "on-request", "--model", "do $THING"],
       }),
     );
     expect(w.run(["agent", RUN_ID]).status).toBe(0);
-    expect(w.calls()[0]?.argv).toEqual(["--ask-for-approval", "on-request", "do $THING"]);
+    expect(w.calls()[0]?.argv).toEqual([
+      "--ask-for-approval",
+      "on-request",
+      "--model",
+      "do $THING",
+    ]);
   });
 
   it("uses the symlink path the owner chose without resolving it", () => {
@@ -259,9 +264,9 @@ describe("codex-bridge agent: a valid claimed request", () => {
     const linkDir = tmp("ccc-agent-link-");
     const link = join(linkDir, "claude");
     symlinkSync(w.claude, link);
-    w.claim(w.request({ argv: [link, "hello"] }));
+    w.claim(w.request({ argv: [link, "--model", "hello"] }));
     expect(w.run(["agent", RUN_ID]).status).toBe(0);
-    expect(w.calls()[0]?.argv).toEqual(["hello"]);
+    expect(w.calls()[0]?.argv).toEqual(["--model", "hello"]);
   });
 
   it("exits with the child's exit code", () => {
@@ -491,7 +496,7 @@ describe("codex-bridge agent: other refusals", () => {
     const exe = join(own, "claude");
     copyFileSync(w.claude, exe);
     chmodSync(exe, 0o755);
-    w.claim(w.request({ argv: [exe, AWKWARD] }));
+    w.claim(w.request({ argv: [exe, "--append-system-prompt", AWKWARD] }));
     chmodSync(exe, 0o644);
     const first = w.run(["agent", RUN_ID]);
     expectRefused(first);
@@ -546,7 +551,7 @@ describe("codex-bridge agent: the pinned executable", () => {
     copyFileSync(w.claude, exe);
     chmodSync(exe, 0o755);
     pins(w, { schemaVersion: 1, claude: w.claude, codex: w.codex });
-    w.claim(w.request({ argv: [exe, "x"] }));
+    w.claim(w.request({ argv: [exe, "--model", "x"] }));
     const r = w.run(["agent", RUN_ID]);
     expectRefused(r);
     expect(r.out).toMatch(/launcher settings/);
@@ -601,9 +606,11 @@ describe("codex-bridge agent: source", () => {
     expect(fn).not.toMatch(/shell:\s*true/);
     expect(fn).not.toMatch(/\bexecSync\b|\bexec\(|\bexecFileSync\b|\bspawn\(/);
     expect(fn).not.toMatch(/["'`]-c["'`]/);
-    expect(fn).not.toMatch(/\/bin\/(ba|z)?sh/);
+    // The only other process it starts is the owner's login shell, with a fixed ["-l"].
+    for (const m of fn.matchAll(/spawnSync\([^)]*\)/gs)) expect(m[0]).not.toMatch(/\bcommand\b/);
     // Only argument arrays reach spawnSync: its first argument is a variable, never a template.
-    for (const m of fn.matchAll(/spawnSync\(\s*([^,]+),/g)) expect(m[1]).not.toMatch(/[`"']/);
+    const firsts = [...fn.matchAll(/spawnSync\(\s*([^,]+),/g)].map((m) => m[1]?.trim());
+    expect(firsts).toEqual(["run.argv[0]", 'process.env.SHELL || "/bin/zsh"']);
   });
 
   it("cmdAgent never prints request content", () => {

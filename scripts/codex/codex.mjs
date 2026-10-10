@@ -51,6 +51,7 @@ import {
   closeSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -67,7 +68,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { homedir, tmpdir } from "node:os";
+import { homedir, constants as osConstants, tmpdir } from "node:os";
 import {
   basename,
   delimiter,
@@ -156,7 +157,8 @@ const USAGE_TEXT = `usage:
   codex.mjs resume <session-id> [--timeout-sec N] [-- <extra>]
   codex.mjs watch [--once] [--idle-exit-sec N]
   codex.mjs follow <run-id>
-  codex.mjs tui <run-id>`;
+  codex.mjs tui <run-id>
+  codex.mjs agent <run-id>`;
 
 // ---------------------------------------------------------------------------
 // argument parsing
@@ -2141,6 +2143,8 @@ async function cmdFollow({ positional }) {
   const v = bridge.readClaimed(BRIDGE_STATE, positional[0]);
   if (!v.ok) fail(EXIT.USAGE, `cannot follow run ${positional[0]}: ${v.reason}`);
   const req = v.request;
+  // An agent request has no live log: `agent <run-id>` is its only command.
+  if (req.mode === "agent") fail(EXIT.USAGE, `run ${req.runId} is an agent run; nothing to follow`);
   // An extension from before TUI mode runs `follow` for every request; a tui
   // request still gets the interactive Codex, never a log tail.
   if (req.mode === "tui") return cmdTui({ positional });
@@ -2194,6 +2198,103 @@ async function cmdFollow({ positional }) {
     spawnSync(process.env.SHELL || "/bin/zsh", ["-l"], { stdio: "inherit", cwd: req.cwd, env });
   }
   process.exit(EXIT.OK);
+}
+
+// ---------------------------------------------------------------------------
+// agent (run inside the Antigravity tab): Claude Code or Codex, exactly as validated (D-02, D-08)
+
+// The executable the saved launcher row names for each agent. The service writes this file (0600,
+// next to the request queue) before it queues a request; the helper enforces it when it exists and
+// refuses when it exists but cannot be trusted. Absent file: only the shared validation applies.
+//   { "schemaVersion": 1, "claude": "/absolute/path/claude", "codex": "/absolute/path/codex" }
+const AGENT_PINS_FILE = "agent-pins.json";
+
+function readAgentPin(agent) {
+  const file = join(BRIDGE_STATE, AGENT_PINS_FILE);
+  let st;
+  try {
+    st = lstatSync(file);
+  } catch (err) {
+    return err?.code === "ENOENT" ? { ok: true, pin: null } : { ok: false };
+  }
+  const mine = typeof process.getuid !== "function" || st.uid === process.getuid();
+  if (!st.isFile() || st.size > 4096 || !mine || (st.mode & 0o022) !== 0) return { ok: false };
+  const raw = readJson(file);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false };
+  const pin = raw[agent];
+  if (typeof pin !== "string" || !isAbsolute(pin)) return { ok: false };
+  return { ok: true, pin };
+}
+
+async function cmdAgent({ positional }) {
+  if (positional.length !== 1) fail(EXIT.USAGE, USAGE_TEXT);
+  // Every message is fixed text plus, at most, the run id when it has the run id shape.
+  const shown = bridge.RUN_ID_RE.test(positional[0]) ? ` ${positional[0]}` : "";
+  const refuse = (why) => fail(EXIT.USAGE, `agent${shown}: refused, nothing was started (${why})`);
+  const v = bridge.readClaimed(BRIDGE_STATE, positional[0]);
+  const missingExecutable = !v.ok && v.reason === "argv[0] is not an executable file";
+  if (!v.ok) {
+    refuse(
+      missingExecutable
+        ? "the agent executable is missing or not executable"
+        : "the request is missing or failed validation",
+    );
+  }
+  const req = v.request;
+  if (req.mode !== "agent" || req.kind !== "agent") refuse("not an agent run");
+  const pin = readAgentPin(req.agent);
+  if (!pin.ok) refuse("the executable pin file cannot be trusted");
+  if (pin.pin !== null && req.argv[0] !== pin.pin) {
+    refuse("the executable is not the one the launcher settings name");
+  }
+  // The exact argv and environment that will be exec'd go through the shared validator once more,
+  // as a request of their own; what it returns, not what was read, is what runs.
+  const final = bridge.validateRequest(
+    {
+      runId: req.runId,
+      kind: "agent",
+      mode: "agent",
+      agent: req.agent,
+      projectRoot: req.projectRoot,
+      cwd: req.cwd,
+      argv: [...req.argv],
+      env: { ...req.env },
+      sessionId: null,
+      liveLog: null,
+      pid: null,
+      createdAt: req.createdAt,
+      protocol: bridge.PROTOCOL_VERSION,
+    },
+    { stateDir: BRIDGE_STATE, checkAge: false },
+  );
+  if (!final.ok || final.request.argv.join("\0") !== req.argv.join("\0")) {
+    refuse("the final argument list failed validation");
+  }
+  const run = final.request;
+  const env = { ...process.env, ...run.env };
+  // Ctrl-C belongs to the agent: the helper must outlive it to hand the tab on.
+  process.on("SIGINT", () => {});
+  const child = spawnSync(run.argv[0], run.argv.slice(1), {
+    stdio: "inherit",
+    cwd: run.cwd,
+    env,
+    shell: false,
+  });
+  let code = child.status ?? 1;
+  if (child.error) {
+    say(`agent${shown}: the agent could not be started`);
+    code = 127;
+  } else if (child.signal) {
+    say(`agent${shown}: the agent was ended by a signal`);
+    code = 128 + (osConstants.signals[child.signal] ?? 1);
+  }
+  // Keep the tab usable, exactly like follow: hand it to a login shell in the run's directory.
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
+  if (process.env.CODEX_BRIDGE_FOLLOW_SHELL !== "0" && process.stdin.isTTY) {
+    spawnSync(process.env.SHELL || "/bin/zsh", ["-l"], { stdio: "inherit", cwd: run.cwd, env });
+    process.exit(EXIT.OK);
+  }
+  process.exit(code);
 }
 
 // ---------------------------------------------------------------------------
@@ -2350,6 +2451,8 @@ async function main() {
       return cmdFollow(parsed);
     case "tui":
       return cmdTui(parsed);
+    case "agent":
+      return cmdAgent(parsed);
     case "tui-check": {
       // Diagnostics: what the TUI isolation check sees (names + enabled only).
       const env = { ...process.env };
