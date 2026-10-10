@@ -24,6 +24,7 @@ export {
   deleteCodexAnalytics,
   deleteCumulativeDeltas,
   InvalidCodexRecordError,
+  isCodexCursorStale,
   loadRateLimitSnapshot,
   markCodexDayCovered,
   prepareCodexParserUpgrade,

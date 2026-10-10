@@ -567,6 +567,8 @@ export function writeCodexCursor(
      ON CONFLICT (cursor_key) DO UPDATE SET
        inode = excluded.inode, size = excluded.size, offset = excluded.offset, updated_at = excluded.updated_at`,
   ).run(key, cursor.inode, cursor.size, cursor.offset, at);
+  // A fresh cursor means the rollout was just computed: it is no longer stale.
+  db.prepare("DELETE FROM collector_settings WHERE key = ?").run(CURSOR_STALE_PREFIX + key);
 }
 
 // --- Coverage ---------------------------------------------------------------
@@ -751,15 +753,34 @@ export function readCodexRecognition(
 export function resetCodexScanState(db: Database.Database): void {
   db.transaction(() => {
     db.prepare("DELETE FROM codex_rollout_cursors").run();
+    db.prepare("DELETE FROM collector_settings WHERE key GLOB 'codex_token_stale:*'").run();
     db.prepare("DELETE FROM codex_coverage_days").run();
     db.prepare("DELETE FROM codex_recognition").run();
   })();
 }
 
+/** Prefix of the per-cursor "computed under an older parser" marker (collector_settings). */
+const CURSOR_STALE_PREFIX = "codex_token_stale:";
+
 /**
- * Prepares a parser-version change WITHOUT touching a single counted row. Drops
- * the scan state (cursors, so every rollout is read again; recognition tallies,
- * which belong to a parser version) and the derived state the previous counting
+ * True when the rollout's counted rows were computed under an older parser
+ * version: its cursor (and the read extent in it) is kept, but the scanner must
+ * recompute it even when the file size matches. Cleared by {@link writeCodexCursor}.
+ */
+export function isCodexCursorStale(db: Database.Database, key: string): boolean {
+  assertCursorKey(key);
+  return (
+    db.prepare("SELECT 1 FROM collector_settings WHERE key = ?").get(CURSOR_STALE_PREFIX + key) !==
+    undefined
+  );
+}
+
+/**
+ * Prepares a parser-version change WITHOUT touching a single counted row. KEEPS
+ * the cursors (each holds the extent last read in full, which the shrink and
+ * recreation guard compares against, so a rollout already truncated before the
+ * upgrade keeps its rows) and marks each one stale so the sweep recomputes every
+ * rollout. Drops recognition tallies (they belong to a parser version) and the derived state the previous counting
  * rule kept (per-turn precedence settings, per-thread cumulative marks, per-rollout
  * tallies). Counted rows, the coverage ledger and the horizon stay: they are
  * replaced rollout by rollout ({@link replaceRolloutUsage}) only when a rollout
@@ -768,7 +789,11 @@ export function resetCodexScanState(db: Database.Database): void {
  */
 export function prepareCodexParserUpgrade(db: Database.Database): void {
   db.transaction(() => {
-    db.prepare("DELETE FROM codex_rollout_cursors").run();
+    db.prepare(
+      `INSERT INTO collector_settings (key, value, updated_at)
+       SELECT ? || cursor_key, '1', updated_at FROM codex_rollout_cursors WHERE true
+       ON CONFLICT(key) DO NOTHING`,
+    ).run(CURSOR_STALE_PREFIX);
     db.prepare("DELETE FROM codex_recognition").run();
     db.prepare("DELETE FROM codex_token_cumulative").run();
     db.prepare(

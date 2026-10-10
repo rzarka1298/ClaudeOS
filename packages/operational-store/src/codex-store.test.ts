@@ -13,6 +13,7 @@ import {
   deleteAllUsageAnalytics,
   deleteCodexAnalytics,
   InvalidCodexRecordError,
+  isCodexCursorStale,
   loadRateLimitSnapshot,
   markCodexDayCovered,
   prepareCodexParserUpgrade,
@@ -932,7 +933,7 @@ describe("rollout-owned usage (plan 05.1-23 redesign)", () => {
     expect(total()).toBeNull();
   });
 
-  it("an upgrade preparation drops scan and derived state but not one counted row, coverage or horizon", () => {
+  it("an upgrade preparation keeps cursors (marked stale) and drops derived state but not one counted row, coverage or horizon", () => {
     replaceRolloutUsage(db, {
       rolloutKey: KEY_A,
       buckets: bucketsOf([B0, 10]),
@@ -957,7 +958,10 @@ describe("rollout-owned usage (plan 05.1-23 redesign)", () => {
     prepareCodexParserUpgrade(db);
 
     expect(total()).toBe(20);
-    expect(readCodexCursor(db, KEY_A)).toBeNull();
+    expect(readCodexCursor(db, KEY_A)).toEqual({ inode: "1", size: 1, offset: 1 });
+    expect(isCodexCursorStale(db, KEY_A)).toBe(true);
+    writeCodexCursor(db, KEY_A, { inode: "1", size: 1, offset: 1 }, NOW);
+    expect(isCodexCursorStale(db, KEY_A)).toBe(false);
     expect(readCodexRecognition(db, 2)).toEqual({});
     expect(readCumulativeBaseline(db, "t1")).toBeNull();
     expect(queryCodexCoverage(db, "2026-10-10", "2026-10-10").map((d) => d.status)).toEqual([

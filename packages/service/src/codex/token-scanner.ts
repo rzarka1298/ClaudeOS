@@ -15,6 +15,7 @@ import {
   type CodexRecognitionTally,
   countLegacyUsageThreads,
   getCollectorSetting,
+  isCodexCursorStale,
   listToggleLog,
   markCodexDayCovered,
   prepareCodexParserUpgrade,
@@ -340,8 +341,9 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
   // --- Parser version and recognition ----------------------------------------
 
   /**
-   * A parser-version change drops what the previous parser derived (cursors, so
-   * every rollout is read again; the tallies of that version; its per-turn
+   * A parser-version change keeps every cursor (the stored read extent still guards
+   * against a rollout truncated before the upgrade) and marks it stale so the rollout
+   * is read again; it drops what the previous parser derived (the tallies of that version; its per-turn
    * precedence settings and cumulative marks) and NOTHING that was counted. The
    * counted rows, the coverage ledger and the horizon stay, and each rollout's
    * rows are replaced only when that rollout is successfully read again. Usage
@@ -445,8 +447,10 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
 
     const key = cursorKeyOf(ref.path);
     const cursor = readCodexCursor(db, key);
-    // Same size as the last complete read: nothing to read, not even the identity head.
-    if (cursor !== null && cursor.size === size) return { kind: "unchanged" };
+    // Same size as the last complete read and computed under this parser: nothing to
+    // read. A cursor kept across a parser upgrade is stale and is recomputed.
+    if (cursor !== null && cursor.size === size && !isCodexCursorStale(db, key))
+      return { kind: "unchanged" };
 
     // The file is now smaller than the extent last read in full (truncated or
     // recreated with fewer bytes): replacing the rows from it would erase usage
