@@ -254,8 +254,11 @@ function flagRuleViolation(agent, argv) {
   return null;
 }
 
-/** Every directory argument of argv (raw strings; the caller resolves them); null = missing value. */
-function directoryArguments(agent, argv) {
+/**
+ * Every directory argument of argv as { flag, value }: flag is the normalised flag name and
+ * value the raw string (the caller resolves it); null = the flag has no value.
+ */
+function directoryEntries(agent, argv) {
   const rules = DIR_FLAGS[agent];
   const found = [];
   for (let i = 1; i < argv.length; i++) {
@@ -265,7 +268,7 @@ function directoryArguments(agent, argv) {
     const isDir = rules.long.includes(flag) || (flag.length === 2 && rules.short.includes(flag[1]));
     if (!isDir) continue;
     if (inline !== undefined) {
-      found.push(inline);
+      found.push({ flag, value: inline });
       continue;
     }
     const values = [];
@@ -277,10 +280,15 @@ function directoryArguments(agent, argv) {
       if (argv[j].startsWith("-")) break;
       values.push(argv[j]);
     }
-    if (values.length === 0) found.push(null);
-    else found.push(...values);
+    if (values.length === 0) found.push({ flag, value: null });
+    else for (const value of values) found.push({ flag, value });
   }
   return found;
+}
+
+/** True for the codex working-directory flags (--cd, -C): the base every other path resolves against. */
+function isWorkingDirFlag(agent, flag) {
+  return agent === "codex" && (flag === "--cd" || flag === "-C");
 }
 
 /**
@@ -368,8 +376,21 @@ function validateAgentRequest(raw, { now, ttlMs, checkAge }) {
   if (!isInside(cwd, projectRoot)) return no("cwd is outside the project root");
   const shape = validateAgentShape({ agent: raw.agent, argv: raw.argv, env: raw.env });
   if (!shape.ok) return no(`agent shape: ${shape.reason}`);
-  for (const dir of directoryArguments(raw.agent, raw.argv)) {
-    const resolved = dir === null ? null : realDir(path.resolve(cwd, dir));
+  // Codex resolves --add-dir (and every other path) against its --cd/-C directory, so that
+  // effective directory is computed first (relative to the request cwd; the last --cd wins,
+  // as in the CLI) and everything else is realpath-checked against it.
+  const entries = directoryEntries(raw.agent, raw.argv);
+  let effectiveCwd = cwd;
+  for (const entry of entries) {
+    if (!isWorkingDirFlag(raw.agent, entry.flag)) continue;
+    const resolved = entry.value === null ? null : realDir(path.resolve(cwd, entry.value));
+    if (!resolved || !isInside(resolved, projectRoot))
+      return no("a directory argument is missing or outside the project root");
+    effectiveCwd = resolved;
+  }
+  for (const entry of entries) {
+    if (isWorkingDirFlag(raw.agent, entry.flag)) continue;
+    const resolved = entry.value === null ? null : realDir(path.resolve(effectiveCwd, entry.value));
     if (!resolved || !isInside(resolved, projectRoot))
       return no("a directory argument is missing or outside the project root");
   }

@@ -522,6 +522,45 @@ describe("agent mode requests (protocol 2)", () => {
       }
       if (flag === "-C") expect(verdict(w, { argv: argv(`-C${outside}`) }).ok).toBe(false);
     });
+
+    // Review finding: Codex resolves --add-dir against the --cd/-C directory, not the request cwd.
+    describe("codex --add-dir resolves against the effective --cd directory", () => {
+      it.each(["--cd", "-C"])("%s sub --add-dir shared checks <project>/sub/shared", (cdFlag) => {
+        const w = agentWorld("codex");
+        const outside = tmp("ccc-bridge-outside-");
+        const sub = join(w.project, "sub");
+        mkdirSync(sub);
+        const argv = (...rest: string[]) => [w.exe, ...rest];
+        // legitimate: <project>/sub/src exists, <project>/src does not
+        mkdirSync(join(sub, "src"));
+        expect(verdict(w, { argv: argv(cdFlag, "sub", "--add-dir", "src") }).ok).toBe(true);
+        // --add-dir before --cd resolves the same way (Codex parses all flags first)
+        expect(verdict(w, { argv: argv("--add-dir", "src", cdFlag, "sub") }).ok).toBe(true);
+        // a sibling that exists only at the request cwd is NOT what Codex will use
+        mkdirSync(join(w.project, "rootonly"));
+        expect(verdict(w, { argv: argv(cdFlag, "sub", "--add-dir", "rootonly") }).ok).toBe(false);
+        // symlink under the --cd directory escaping the project root
+        symlinkSync(outside, join(sub, "shared"));
+        expect(verdict(w, { argv: argv(cdFlag, "sub", "--add-dir", "shared") }).ok).toBe(false);
+        expect(verdict(w, { argv: argv("--add-dir", "shared", cdFlag, "sub") }).ok).toBe(false);
+        // dot-dot out of the --cd directory but still inside the root is fine, out of root is not
+        expect(verdict(w, { argv: argv(cdFlag, "sub", "--add-dir", "..") }).ok).toBe(true);
+        expect(verdict(w, { argv: argv(cdFlag, "sub", "--add-dir", "../..") }).ok).toBe(false);
+      });
+
+      it("the last --cd wins and a relative --cd is relative to the request cwd", () => {
+        const w = agentWorld("codex");
+        mkdirSync(join(w.project, "a", "x"), { recursive: true });
+        mkdirSync(join(w.project, "b", "y"), { recursive: true });
+        const argv = (...rest: string[]) => [w.exe, ...rest];
+        expect(verdict(w, { argv: argv("--cd", "a", "--cd", "b", "--add-dir", "y") }).ok).toBe(
+          true,
+        );
+        expect(verdict(w, { argv: argv("--cd", "a", "--cd", "b", "--add-dir", "x") }).ok).toBe(
+          false,
+        );
+      });
+    });
   });
 
   it("refuses an argv0 that is a directory or not executable", () => {
