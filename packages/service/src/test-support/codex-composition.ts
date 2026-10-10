@@ -44,6 +44,9 @@ import {
   createFakeCodexHome,
   type FakeCodexHome,
   type FakeCodexHomeOptions,
+  rolloutContent,
+  rolloutLifecycleLine,
+  rolloutMetaLine,
 } from "./fake-codex-home.js";
 import { createFakeSpawner, type FakeSpawner } from "./fake-spawner.js";
 
@@ -84,6 +87,16 @@ export interface CodexCompositionOptions {
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Open event-stream subscribers the services see. Default 0. */
   readonly subscribers?: number;
+  /**
+   * Runs after the store is open and migrated and before the Codex services are built: register
+   * a project, write run records, plant files the services scan at start.
+   */
+  readonly prepare?: (context: {
+    readonly store: OperationalStore;
+    readonly dir: string;
+    readonly homeDir: string;
+    readonly runtimeDir: string;
+  }) => void | Promise<void>;
   /** Wires the Phase 5 hooks (`onAnalysisChanged`) of the real usage services to the Codex services. Default true with `usage: "real"`. */
   readonly wireUsageHooks?: boolean;
 }
@@ -200,6 +213,8 @@ export async function startCodexComposition(
   applyMigrations(store.db);
   const bus = createEventBus();
   const logger = createLogger(join(dir, "logs", "service.log"));
+
+  await options.prepare?.({ store, dir, homeDir, runtimeDir });
 
   const home = createFakeCodexHome(options.home ?? { database: { ddl: "current", threads: [] } });
   const port = createCodexHomePort({ root: home.root });
@@ -328,4 +343,64 @@ export async function startCodexComposition(
       rmSync(dir, { recursive: true, force: true });
     },
   };
+}
+
+/** One thread of a fake Codex home built relative to a clock (see {@link codexHomeWithThreads}). */
+export interface CompositionThread {
+  readonly id: string;
+  /** Milliseconds before `nowMs` that the store says the thread was last updated. */
+  readonly agoMs: number;
+  /** Lifecycle lines as [event, agoMs]. Default: none. */
+  readonly lifecycle?: ReadonlyArray<
+    readonly ["task_started" | "task_complete" | "turn_aborted", number]
+  >;
+  readonly cwd?: string;
+  /** A prompt-derived title the mirror may show only while transcript analysis is on. */
+  readonly title?: string;
+}
+
+/**
+ * Options for a fake Codex home holding `threads`: a current-shape thread store and one rollout
+ * per thread (meta line plus the lifecycle lines), all stamped relative to `nowMs`.
+ */
+export function codexHomeWithThreads(
+  threads: readonly CompositionThread[],
+  nowMs: number = Date.now(),
+): FakeCodexHomeOptions {
+  const minute = 60_000;
+  return {
+    rollouts: threads.map((thread) => ({
+      day: "2026-10-06",
+      name: `rollout-${thread.id}.jsonl`,
+      content: rolloutContent(
+        rolloutMetaLine({
+          id: thread.id,
+          atMs: nowMs - thread.agoMs - minute,
+          ...(thread.cwd === undefined ? {} : { cwd: thread.cwd }),
+        }),
+        ...(thread.lifecycle ?? []).map(([event, ago]) =>
+          rolloutLifecycleLine(event, nowMs - ago, "turn-1"),
+        ),
+      ),
+      mtimeMs: nowMs - thread.agoMs,
+    })),
+    database: {
+      ddl: "current",
+      threads: threads.map((thread) => ({
+        id: thread.id,
+        updatedAtMs: nowMs - thread.agoMs,
+        ...(thread.cwd === undefined ? {} : { cwd: thread.cwd }),
+        ...(thread.title === undefined ? {} : { title: thread.title }),
+      })),
+    },
+  };
+}
+
+/** Polls `check` until it is true or `timeoutMs` passes; returns the final answer. */
+export async function waitFor(check: () => boolean, timeoutMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return check();
 }

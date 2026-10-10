@@ -1,22 +1,53 @@
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
+  CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
+  CLAUDE_USAGE_DELETE_PATH,
   CODEX_HEADROOM_PATH,
+  CODEX_HOOK_EVENTS_PATH,
+  CODEX_SESSIONS_PATH,
+  CODEX_TOKEN_ACTIVITY_PATH,
   CODEX_USAGE_PATH,
+  CodexSessionsSnapshotSchema,
+  CodexSessionsUpdatedPayloadSchema,
+  CodexSnapshotStateSchema,
+  CodexTokenSummarySchema,
+  CodexTokensUpdatedPayloadSchema,
   CodexUsageSnapshotSchema,
+  CodexUsageUpdatedPayloadSchema,
   HEALTH_PATH,
   HeadroomSignalSchema,
   SNAPSHOT_PATH,
   SnapshotResponseSchema,
 } from "@ccc/domain";
-import { saveLauncherConfig } from "@ccc/operational-store";
+import {
+  getCollectorSetting,
+  insertProject,
+  markCodexDayCovered,
+  markDayCovered,
+  saveLauncherConfig,
+  saveRateLimitSnapshot,
+  setCollectorSetting,
+} from "@ccc/operational-store";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type CodexComposition,
   type CodexCompositionOptions,
+  type CompositionThread,
+  codexHomeWithThreads,
   startCodexComposition,
+  waitFor,
 } from "../test-support/codex-composition.js";
+import {
+  nextRunId,
+  writePendingResume,
+  writeRunRecord,
+} from "../test-support/codex-run-fixtures.js";
 import { readFakeLog, weeklyReply } from "../test-support/fake-codex-app-server.js";
 import { CODEX_UNAVAILABLE_BODY } from "./route-support.js";
+import { CODEX_SNAPSHOT_BUDGET_BYTES } from "./routes.js";
 
 /**
  * Plan 05.1-28 Task 1 (tracer): the composed Codex services answer GET headroom
@@ -191,5 +222,309 @@ describe("Task 1 (tracer): GET headroom through the composed services", () => {
     const after = await c.get(CODEX_HEADROOM_PATH);
     expect(HeadroomSignalSchema.parse(after.body).codex.verdict).toBe("allow");
     expect(c.appServerStarts()).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: the snapshot member, the events, the shared toggle, the combined delete
+
+const THREAD = "thread-services-aaaa1111";
+
+function thread(id: string, agoMs: number): CompositionThread {
+  return {
+    id,
+    agoMs,
+    lifecycle: [
+      ["task_started", agoMs + 5000],
+      ["task_complete", agoMs],
+    ],
+  };
+}
+
+describe("the snapshot's optional codex member", () => {
+  it("Test 2: carries every part, each read from the services' caches, and parses strictly", async () => {
+    const c = await compose({
+      appServer: { read: { kind: "result", result: weeklyReply(41) } },
+      home: codexHomeWithThreads([thread(THREAD, 2 * 3_600_000)]),
+    });
+    // Warm the caches the way the dashboard does.
+    await c.get(CODEX_SESSIONS_PATH);
+    await c.get(CODEX_HEADROOM_PATH);
+
+    const reply = await c.get(SNAPSHOT_PATH);
+    expect(reply.status).toBe(200);
+    const snapshot = SnapshotResponseSchema.parse(reply.body);
+    const codex = CodexSnapshotStateSchema.parse(snapshot.state.codex);
+    expect(codex.sessions?.kind).toBe("available");
+    expect(codex.usage?.kind).toBe("available");
+    expect(codex.headroom?.codex.verdict).toBe("allow");
+    expect(codex.tokens).toBeDefined();
+    expect(codex.integration?.codex.installed).toBe(true);
+    expect(snapshot.lastEventId).toBe(c.bus.buffer.latestId());
+  });
+
+  it("Test 2: omits only the parts nothing has observed yet, and never waits for a refresh", async () => {
+    const c = await compose({
+      appServer: { read: { kind: "hang" } },
+      home: codexHomeWithThreads([thread(THREAD, 2 * 3_600_000)]),
+    });
+    const started = Date.now();
+    const reply = await c.get(SNAPSHOT_PATH);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(reply.status).toBe(200);
+    const snapshot = SnapshotResponseSchema.parse(reply.body);
+    const codex = CodexSnapshotStateSchema.parse(snapshot.state.codex);
+    expect(codex.usage).toBeUndefined();
+    expect(codex.headroom).toBeUndefined();
+    expect(codex.sessions).toBeUndefined();
+    expect(codex.tokens).toBeDefined();
+    expect(codex.integration).toBeDefined();
+    // The snapshot asked each service for a fire-and-forget refresh.
+    expect(await waitFor(() => c.appServerStarts() === 1)).toBe(true);
+  });
+
+  it("Test 2: a session list of 250 threads is trimmed to the byte budget and the rest counted as hidden", async () => {
+    const hour = 3_600_000;
+    const threads = Array.from({ length: 250 }, (_, index) =>
+      thread(`thread-size-${String(index).padStart(4, "0")}`, 2 * hour + index * 1000),
+    );
+    const c = await compose({
+      appServer: { read: { kind: "result", result: weeklyReply(41) } },
+      home: codexHomeWithThreads(threads),
+    });
+    const full = CodexSessionsSnapshotSchema.parse((await c.get(CODEX_SESSIONS_PATH)).body);
+    if (full.kind !== "available") throw new Error("unreachable");
+    expect(full.sessions.length).toBe(200);
+
+    const reply = await c.get(SNAPSHOT_PATH);
+    const bytes = Buffer.byteLength(JSON.stringify(reply.body), "utf8");
+    expect(bytes).toBeLessThanOrEqual(64 * 1024);
+    const snapshot = SnapshotResponseSchema.parse(reply.body);
+    const member = snapshot.state.codex;
+    expect(Buffer.byteLength(JSON.stringify(member), "utf8")).toBeLessThanOrEqual(
+      CODEX_SNAPSHOT_BUDGET_BYTES,
+    );
+    const trimmed = member?.sessions;
+    if (trimmed?.kind !== "available") throw new Error("unreachable");
+    expect(trimmed.sessions.length).toBeLessThan(full.sessions.length);
+    expect(trimmed.sessions.length).toBeGreaterThan(0);
+    expect(trimmed.sessions).toEqual(full.sessions.slice(0, trimmed.sessions.length));
+    expect(trimmed.sessions.length + trimmed.hiddenCount).toBe(
+      full.sessions.length + full.hiddenCount,
+    );
+  });
+});
+
+describe("the four Codex events", () => {
+  it("Test 3: a session change and a usage change each publish once with a strict payload; unchanged re-reads publish nothing", async () => {
+    const c = await compose({
+      appServer: { read: { kind: "result", result: weeklyReply(41) } },
+      home: codexHomeWithThreads([thread(THREAD, 2 * 3_600_000)]),
+      subscribers: 1,
+    });
+    c.codex?.start();
+    c.timers.tick();
+    expect(await waitFor(() => c.events("codex.sessions.updated").length === 1)).toBe(true);
+    expect(await waitFor(() => c.events("codex.usage.updated").length === 1)).toBe(true);
+    CodexSessionsUpdatedPayloadSchema.parse(c.events("codex.sessions.updated")[0]?.payload);
+    CodexUsageUpdatedPayloadSchema.parse(c.events("codex.usage.updated")[0]?.payload);
+
+    c.timers.tick();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(c.events("codex.sessions.updated")).toHaveLength(1);
+    expect(c.events("codex.usage.updated")).toHaveLength(1);
+  });
+
+  it("Test 3: without subscribers the timers read nothing", async () => {
+    const c = await compose({
+      appServer: { read: { kind: "result", result: weeklyReply(41) } },
+      home: codexHomeWithThreads([thread(THREAD, 2 * 3_600_000)]),
+      subscribers: 0,
+    });
+    c.codex?.start();
+    c.timers.tick();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(c.appServerStarts()).toBe(0);
+    expect(c.events("codex.sessions.updated")).toHaveLength(0);
+  });
+});
+
+describe("the shared transcript-analysis toggle", () => {
+  it("Test 5: titles appear and the token scan starts when analysis goes on, and both go away when it goes off", async () => {
+    const c = await compose({
+      usage: "real",
+      home: codexHomeWithThreads([
+        { ...thread(THREAD, 2 * 3_600_000), title: "Refactor the parser" },
+      ]),
+    });
+    const titles = async (): Promise<(string | null)[]> => {
+      const body = CodexSessionsSnapshotSchema.parse((await c.get(CODEX_SESSIONS_PATH)).body);
+      if (body.kind !== "available") throw new Error("unreachable");
+      return body.sessions.map((s) => s.title);
+    };
+    expect(await titles()).toEqual([null]);
+    const offSummary = CodexTokenSummarySchema.parse((await c.get(CODEX_TOKEN_ACTIVITY_PATH)).body);
+    expect(
+      Object.values(offSummary.ranges).every(
+        (r) => r.kind === "unavailable" && r.reason === "analysis-off",
+      ),
+    ).toBe(true);
+
+    const on = await c.post(CLAUDE_TRANSCRIPT_ANALYSIS_PATH, { enabled: true });
+    expect(on.status).toBe(200);
+    expect(await waitFor(() => c.events("codex.tokens.updated").length >= 1)).toBe(true);
+    let seen: (string | null)[] = [];
+    expect(
+      await waitFor(() => {
+        void titles().then((value) => {
+          seen = value;
+        });
+        return seen[0] === "Refactor the parser";
+      }),
+    ).toBe(true);
+    const onSummary = CodexTokenSummarySchema.parse((await c.get(CODEX_TOKEN_ACTIVITY_PATH)).body);
+    expect(
+      Object.values(onSummary.ranges).some(
+        (r) => !(r.kind === "unavailable" && r.reason === "analysis-off"),
+      ),
+    ).toBe(true);
+
+    const off = await c.post(CLAUDE_TRANSCRIPT_ANALYSIS_PATH, { enabled: false });
+    expect(off.status).toBe(200);
+    expect(
+      await waitFor(() => {
+        void titles().then((value) => {
+          seen = value;
+        });
+        return seen[0] === null;
+      }),
+    ).toBe(true);
+    const afterOff = CodexTokenSummarySchema.parse((await c.get(CODEX_TOKEN_ACTIVITY_PATH)).body);
+    expect(
+      Object.values(afterOff.ranges).every(
+        (r) => r.kind === "unavailable" && r.reason === "analysis-off",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("the combined 'Delete cached usage analytics'", () => {
+  it("Test 6: empties the Claude and the Codex analytics together, keeps settings, resets the scan and republishes", async () => {
+    const c = await compose({ usage: "real", home: codexHomeWithThreads([]) });
+    const at = new Date().toISOString();
+    await c.post(CLAUDE_TRANSCRIPT_ANALYSIS_PATH, { enabled: true });
+    await waitFor(() => c.events("codex.tokens.updated").length >= 1);
+    markDayCovered(c.store.db, "2026-10-01", at);
+    markCodexDayCovered(c.store.db, "2026-10-01", at);
+    saveRateLimitSnapshot(
+      c.store.db,
+      CodexUsageSnapshotSchema.parse({
+        kind: "available",
+        windows: [{ windowMinutes: 10_080, usedPercent: 41, resetsAt: null, limitLabel: null }],
+        ordinaryUsageAllowed: true,
+        rateLimitReached: false,
+        rateLimitReachedType: null,
+        source: "app-server",
+        observedAt: at,
+        freshness: "live",
+      }),
+      at,
+    );
+    setCollectorSetting(c.store.db, "codex_token_first_scan_done", "1", at);
+    const count = (table: string): number =>
+      (c.store.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    expect(count("coverage_days")).toBeGreaterThan(0);
+    expect(count("codex_coverage_days")).toBeGreaterThan(0);
+    const usageEvents = c.events("usage.updated").length;
+    const tokenEvents = c.events("codex.tokens.updated").length;
+
+    const reply = await c.post(CLAUDE_USAGE_DELETE_PATH, {});
+    expect(reply.status).toBeLessThan(300);
+
+    expect(count("coverage_days")).toBe(0);
+    expect(count("codex_coverage_days")).toBe(0);
+    expect(count("codex_rate_limit_snapshot")).toBe(0);
+    expect(getCollectorSetting(c.store.db, "transcript_analysis_enabled")).toBe("true");
+    expect(c.events("usage.updated").length).toBeGreaterThan(usageEvents);
+    expect(c.events("codex.tokens.updated").length).toBeGreaterThan(tokenEvents);
+    const last = CodexTokensUpdatedPayloadSchema.parse(
+      c.events("codex.tokens.updated").at(-1)?.payload,
+    );
+    expect(last.firstScanPending).toBeDefined();
+  });
+});
+
+describe("the overlay order and the shared inactivity window", () => {
+  const SESSION = "11111111-2222-3333-4444-555555555555";
+
+  it("Test 7: a wrapper-only limit pause survives a later hook Stop because the run overlay is registered first", async () => {
+    const now = Date.now();
+    let root = "";
+    const c = await compose({
+      home: codexHomeWithThreads(
+        [
+          {
+            id: SESSION,
+            agoMs: 5 * 60_000,
+            lifecycle: [["task_started", 20 * 60_000]],
+          },
+        ],
+        now,
+      ),
+      prepare: ({ store, dir }) => {
+        root = realpathSync(mkdtempSync(join(dir, "proj-")));
+        insertProject(store.db, { path: root, displayName: "pause-project" });
+        const state = join(root, ".planning", "codex");
+        const pendingRun = nextRunId();
+        writeRunRecord(state, {
+          runId: pendingRun,
+          sessionId: SESSION,
+          status: "limit",
+          resetsAt: new Date(now + 3_600_000).toISOString(),
+        });
+        writePendingResume(state, {
+          sessionId: SESSION,
+          runId: pendingRun,
+          resetsAt: new Date(now + 3_600_000).toISOString(),
+          recordedAt: new Date(now - 10 * 60_000).toISOString(),
+        });
+      },
+    });
+    const stateOf = async (): Promise<string | undefined> => {
+      const body = CodexSessionsSnapshotSchema.parse((await c.get(CODEX_SESSIONS_PATH)).body);
+      if (body.kind !== "available") throw new Error("unreachable");
+      return body.sessions.find((s) => s.threadId === SESSION)?.state;
+    };
+    expect(await stateOf()).toBe("limit-paused");
+
+    const accepted = await c.post(CODEX_HOOK_EVENTS_PATH, {
+      eventId: randomUUID(),
+      observedAt: new Date().toISOString(),
+      hook_event_name: "Stop",
+      session_id: SESSION,
+      turn_id: "turn-1",
+    });
+    expect(accepted.status).toBe(202);
+    expect(await stateOf()).toBe("limit-paused");
+  });
+
+  it("Test 7: the source registers the run overlay before the hook overlay and resolves the inactivity window once", () => {
+    const source = readFileSync(fileURLToPath(new URL("./services.ts", import.meta.url)), "utf8");
+    const run = source.indexOf("createRunOverlay(");
+    const hook = source.indexOf("createHookOverlay(");
+    expect(run).toBeGreaterThan(-1);
+    expect(hook).toBeGreaterThan(run);
+    expect(source).toMatch(/run overlay[\s\S]*BEFORE[\s\S]*hook overlay/i);
+    expect(source.split("resolveCodexInactivityMs(").length - 1).toBe(1);
+    for (const consumer of [
+      "createCodexSessionMirror(",
+      "createRunOverlay(",
+      "createHookOverlay(",
+      "createFollowLogService(",
+    ]) {
+      const at = source.indexOf(consumer);
+      expect(at, consumer).toBeGreaterThan(-1);
+      expect(source.slice(at, at + 900), consumer).toContain("inactivityMs");
+    }
   });
 });

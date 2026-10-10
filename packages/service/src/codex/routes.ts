@@ -1,3 +1,4 @@
+import type { CodexSnapshotState } from "@ccc/domain";
 import type { Handler } from "../route-kit.js";
 import { type DoctorRouteDeps, doctorRoutes } from "./doctor-routes.js";
 import { type FollowRouteDeps, followRoutes } from "./follow-routes.js";
@@ -43,3 +44,24 @@ export const codexRouteTable: Record<string, Record<string, Handler>> = {
   ...followRoutes((ctx) => ctx.codex?.follow),
   ...hookRoutes((ctx) => ctx.codex?.hooks),
 };
+
+/**
+ * The most bytes the Codex snapshot member may take (plan 05.1-28): the client rejects any
+ * response over 64 KiB, and the approvals member is sized from what the rest leaves, so the
+ * Codex member is bounded here and counted BEFORE the approvals are sized. A session list of up
+ * to 200 entries is trimmed to fit; the trimmed entries are counted in `hiddenCount`.
+ */
+export const CODEX_SNAPSHOT_BUDGET_BYTES = 20 * 1024;
+
+/**
+ * The optional Codex member of the snapshot: every part read synchronously from its service's
+ * cache (so the caller can read it in the same tick as the last event id), then each service's
+ * fire-and-forget refresh asked for, never awaited. A part with nothing cached is omitted.
+ * SIGNATURE STUB in the RED commit.
+ */
+export function codexSnapshotFor(
+  _codex: CodexRouteDeps,
+  _budgetBytes: number = CODEX_SNAPSHOT_BUDGET_BYTES,
+): CodexSnapshotState | null {
+  return null;
+}
