@@ -10,9 +10,16 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { TerminalLaunchInput } from "@ccc/domain";
-import { TERMINAL_PRESETS } from "@ccc/launchers";
+import { createRunIdMinter, TERMINAL_PRESETS } from "@ccc/launchers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { coveringWindows, readBridgeStatus } from "../codex/bridge-state.js";
+import { createBridgeFixture } from "../test-support/bridge-fixtures.js";
 import { createFakeSpawner } from "../test-support/fake-spawner.js";
+import {
+  ANTIGRAVITY_IDE_BUNDLE_ID,
+  type AntigravityTerminalDeps,
+  defaultAgentChecks,
+} from "./antigravity-terminal.js";
 import { ensureScriptDir } from "./script-dir.js";
 import {
   createCustomTemplateLauncher,
@@ -515,5 +522,110 @@ describe("an abort between the script write and the spawn removes the script", (
     expect(spawner.calls).toHaveLength(0);
     expect(spawner.detached).toHaveLength(0);
     expect(readdirSync(scriptDir)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 05.1-13: the third case of the exhaustive switch, the Antigravity terminal
+// ---------------------------------------------------------------------------
+
+describe("selectTerminalLauncher and the Antigravity terminal (plan 05.1-13, D-07)", () => {
+  const antigravityDeps = (
+    extra: Partial<AntigravityTerminalDeps> = {},
+  ): AntigravityTerminalDeps => ({
+    readStatus: () => {
+      throw new Error("not used");
+    },
+    windowsCovering: () => [],
+    savedBundleId: () => null,
+    savedExecutables: () => ({}),
+    spawner: createFakeSpawner(),
+    now: () => 0,
+    sleep: () => Promise.resolve(),
+    mintRunId: () => "20261010T120000000Z",
+    isExecutable: () => false,
+    realDir: () => null,
+    ...extra,
+  });
+
+  it("returns an adapter for { kind: antigravity-terminal } when the Antigravity deps are present", () => {
+    const spawner = createFakeSpawner();
+    const launcher = selectTerminalLauncher(
+      { kind: "antigravity-terminal" },
+      { spawner, scriptDir, antigravity: antigravityDeps() },
+    );
+    expect(launcher).not.toBeNull();
+    expect(typeof launcher?.launch).toBe("function");
+  });
+
+  it("still answers null when the Antigravity deps are absent", () => {
+    const spawner = createFakeSpawner();
+    expect(
+      selectTerminalLauncher({ kind: "antigravity-terminal" }, { spawner, scriptDir }),
+    ).toBeNull();
+  });
+
+  it("the Terminal.app and custom cases ignore the Antigravity deps", async () => {
+    const spawner = createFakeSpawner();
+    const antigravity = antigravityDeps();
+    const app = selectTerminalLauncher(
+      { kind: "terminal-app" },
+      { spawner, scriptDir, antigravity },
+    );
+    await expect(app?.launch(input())).resolves.toEqual({ ok: true });
+    expect(spawner.calls[0]?.argv.slice(0, 3)).toEqual([
+      "/usr/bin/open",
+      "-b",
+      "com.apple.Terminal",
+    ]);
+    const custom = selectTerminalLauncher(
+      { kind: "custom", preset: "wezterm", argv: [...WEZTERM] },
+      { spawner, scriptDir, antigravity, isExecutable: () => Promise.resolve(true) },
+    );
+    expect(custom).not.toBeNull();
+  });
+
+  it("the pipeline cap reaches the adapter so its deadline stays below it", async () => {
+    const fx = createBridgeFixture();
+    try {
+      fx.installLauncher();
+      fx.installMarker();
+      const clock = { t: Date.now() };
+      const started = clock.t;
+      fx.simulator("current", { now: () => clock.t }).heartbeat();
+      const spawner = createFakeSpawner();
+      const launcher = selectTerminalLauncher(
+        { kind: "antigravity-terminal" },
+        {
+          spawner,
+          scriptDir,
+          capMs: 1500,
+          antigravity: antigravityDeps({
+            readStatus: () => readBridgeStatus({ env: {}, home: fx.home, now: clock.t }),
+            windowsCovering: (status, root) => coveringWindows(status, root),
+            savedBundleId: () => ANTIGRAVITY_IDE_BUNDLE_ID,
+            savedExecutables: () => ({ claude: fx.claudePath }),
+            spawner,
+            now: () => clock.t,
+            sleep: (ms) => {
+              clock.t += ms;
+              return Promise.resolve();
+            },
+            mintRunId: createRunIdMinter(() => clock.t),
+            ...defaultAgentChecks,
+          }),
+        },
+      );
+      const result = await launcher?.launch({
+        cwd: fx.projectDir,
+        argv: [fx.claudePath],
+        signal: new AbortController().signal,
+      });
+      expect(result).toEqual({ ok: false, error: "window-not-ready" });
+      expect(clock.t - started).toBe(1000);
+      expect(fx.requestFiles()).toEqual([]);
+    } finally {
+      fx.cleanup();
+    }
   });
 });

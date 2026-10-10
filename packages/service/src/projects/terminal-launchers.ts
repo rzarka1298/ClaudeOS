@@ -15,6 +15,7 @@ import {
   renderLaunchScript,
   validateCommandTemplate,
 } from "@ccc/launchers";
+import type { AntigravityTerminalDeps } from "./antigravity-terminal.js";
 import { SCRIPT_MAX_AGE_MS, sweepStaleScripts, writeLaunchScript } from "./script-dir.js";
 import type { Spawner, SpawnOutcome } from "./spawner.js";
 
@@ -62,6 +63,12 @@ export interface TerminalAdapterDeps {
    * {@link DEFAULT_DETACH_GRACE_MS}; never more than the cap.
    */
   readonly detachGraceMs?: number;
+  /**
+   * What the Antigravity terminal adapter needs (plan 05.1-13): the bridge reader, the queue, the
+   * saved launcher rows and the cold-start spawner. Absent, no adapter handles
+   * `{ kind: "antigravity-terminal" }` and the caller answers `launcher-not-configured`.
+   */
+  readonly antigravity?: AntigravityTerminalDeps;
 }
 
 const DEFAULT_CAP_MS = 4000;
