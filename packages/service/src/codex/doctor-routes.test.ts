@@ -279,12 +279,13 @@ describe("nothing schedules a doctor run (Test 5, R4: owner-triggered only)", ()
     /doctor-probe\.js|createDoctorProbe/.test(readFileSync(path, "utf8")),
   );
 
-  it("only the probe, the route file and the composition root name the probe", () => {
+  it("only the probe, the route file and the composition name the probe", () => {
     expect(
       importsProbe
         .map(rel)
         .sort()
-        .filter((name) => name !== "main.ts"),
+        // The composition (plan 05.1-28) builds the probe once; main.ts only starts that composition.
+        .filter((name) => name !== "main.ts" && name !== "codex/services.ts"),
     ).toEqual(["codex/doctor-probe.ts", "codex/doctor-routes.ts"]);
   });
 

@@ -179,6 +179,19 @@ function processTimeZone(): string {
 }
 
 /**
+ * Runs one Phase 05.1 listener. A listener is an optional extra: a fault in it (logged by reason
+ * code only) never fails the Phase 5 call that notified it.
+ */
+function notifyListener(logger: Logger, listener: (() => void) | undefined): void {
+  if (listener === undefined) return;
+  try {
+    listener();
+  } catch {
+    logger.warn({ reason: "listener-failed" }, "usage listener failed");
+  }
+}
+
+/**
  * The usage composition (05-12): the status-line ingest into capacity and
  * cost, and the one summary builder behind `usage.updated` and
  * `snapshot.state.usage`. It hooks the pipeline and the poller only through
@@ -463,6 +476,7 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
     installRecord = readInstallRecord(runtimeDir);
     detectedClaudeVersion = await probeClaudeVersion(installRecord?.claudeBin ?? null, probeDeps);
     publishIntegrationIfChanged();
+    notifyListener(logger, deps.onIntegrationRefresh);
     return integration();
   }
 
@@ -497,18 +511,22 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
       publishUsage();
       publishIntegrationIfChanged();
       if (enabled && !stopped) track(runSweep().then(() => undefined));
+      notifyListener(logger, () => deps.onAnalysisChanged?.({ enabled, cause: "toggle" }));
       return { enabled };
     },
     deleteUsage() {
       // Cancel first, so a scan mid-file writes nothing after the delete.
       job.reset();
-      deleteUsageAnalytics(db);
+      (deps.deleteAnalytics ?? deleteUsageAnalytics)(db);
       observation = EMPTY_STATUS_LINE_OBSERVATION;
       const rebuild = analysisEnabled() && !stopped;
       firstScanPending = rebuild;
       publishUsage();
       publishIntegrationIfChanged();
       if (rebuild) track(runSweep().then(() => undefined));
+      notifyListener(logger, () =>
+        deps.onAnalysisChanged?.({ enabled: analysisEnabled(), cause: "delete" }),
+      );
     },
     sessionUsage(runId) {
       const run = getSessionRun(db, runId);

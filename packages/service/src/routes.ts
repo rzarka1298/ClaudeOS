@@ -27,7 +27,7 @@ import {
 import { CLIENT_RESPONSE_CAP_BYTES } from "./approval-wiring/types.js";
 import { mintToken } from "./auth/token.js";
 import { claudeRouteTable } from "./claude/routes.js";
-import { codexRouteTable } from "./codex/routes.js";
+import { CODEX_SNAPSHOT_BUDGET_BYTES, codexRouteTable, codexSnapshotFor } from "./codex/routes.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
@@ -152,6 +152,26 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
       ...(ctx.claude?.usage ? { claudeIntegration: ctx.claude.usage.integration() } : {}),
     },
   };
+  // Phase 05.1 (D-25): the optional Codex member, built in this same synchronous tick from the
+  // services' caches (their refreshes are fire-and-forget, never awaited). It is counted BEFORE
+  // the approvals are sized, so the approvals take what the rest leaves under the 64 KiB cap. A
+  // failure leaves the member out: the Codex list routes and the next event repair it.
+  if (ctx.codex) {
+    try {
+      const restBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
+      const room = Math.min(
+        CODEX_SNAPSHOT_BUDGET_BYTES,
+        CLIENT_RESPONSE_CAP_BYTES - restBytes - SNAPSHOT_MEMBER_KEY_BYTES,
+      );
+      const member = room > 0 ? codexSnapshotFor(ctx.codex, room) : null;
+      if (member !== null) body.state.codex = member;
+    } catch (err: unknown) {
+      logger.error(
+        { route: SNAPSHOT_PATH, errorName: err instanceof Error ? err.name : typeof err },
+        "codex snapshot failed",
+      );
+    }
+  }
   // Phase 6 (D-28): the approvals member, built in this same synchronous tick.
   // The client rejects a response over 64 KiB, so the approvals part is given
   // only the bytes the rest of the snapshot leaves (T-06-30). A failure leaves

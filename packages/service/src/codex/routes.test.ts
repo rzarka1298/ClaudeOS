@@ -436,7 +436,11 @@ describe("codexSnapshotFor", () => {
   });
 
   it("drops the session part entirely when even an empty list would not fit, keeping the rest", () => {
-    const member = codexSnapshotFor(fakeDeps([], { sessions: sessionList(5) }), 700);
+    const integrationOnly = Buffer.byteLength(JSON.stringify({ integration: INTEGRATION }), "utf8");
+    const member = codexSnapshotFor(
+      fakeDeps([], { sessions: sessionList(5) }),
+      integrationOnly + 40,
+    );
     expect(member?.sessions).toBeUndefined();
     expect(member?.integration).toEqual(INTEGRATION);
   });

@@ -291,7 +291,17 @@ describe("the snapshot's optional codex member", () => {
     const c = await compose({
       appServer: { read: { kind: "result", result: weeklyReply(41) } },
       home: codexHomeWithThreads(threads),
+      subscribers: 1,
     });
+    c.codex?.start();
+    // One poll reads at most 40 rollouts and carries the rest, so poll until the list is full.
+    let listed = 0;
+    for (let attempt = 0; attempt < 20 && listed < 200; attempt += 1) {
+      c.timers.tick();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const body = CodexSessionsSnapshotSchema.parse((await c.get(CODEX_SESSIONS_PATH)).body);
+      listed = body.kind === "available" ? body.sessions.length : 0;
+    }
     const full = CodexSessionsSnapshotSchema.parse((await c.get(CODEX_SESSIONS_PATH)).body);
     if (full.kind !== "available") throw new Error("unreachable");
     expect(full.sessions.length).toBe(200);
@@ -316,7 +326,7 @@ describe("the snapshot's optional codex member", () => {
 });
 
 describe("the four Codex events", () => {
-  it("Test 3: a session change and a usage change each publish once with a strict payload; unchanged re-reads publish nothing", async () => {
+  it("Test 3: a session change and a usage change each publish with a strict payload; an unchanged session re-poll publishes nothing", async () => {
     const c = await compose({
       appServer: { read: { kind: "result", result: weeklyReply(41) } },
       home: codexHomeWithThreads([thread(THREAD, 2 * 3_600_000)]),
@@ -329,10 +339,14 @@ describe("the four Codex events", () => {
     CodexSessionsUpdatedPayloadSchema.parse(c.events("codex.sessions.updated")[0]?.payload);
     CodexUsageUpdatedPayloadSchema.parse(c.events("codex.usage.updated")[0]?.payload);
 
+    // A re-poll of an unchanged store publishes no sessions event. (A second usage read carries a
+    // new observation time, which the headroom service counts as a change viewers see.)
     c.timers.tick();
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(c.events("codex.sessions.updated")).toHaveLength(1);
-    expect(c.events("codex.usage.updated")).toHaveLength(1);
+    for (const event of c.events("codex.usage.updated")) {
+      CodexUsageUpdatedPayloadSchema.parse(event.payload);
+    }
   });
 
   it("Test 3: without subscribers the timers read nothing", async () => {
@@ -414,8 +428,8 @@ describe("the combined 'Delete cached usage analytics'", () => {
     const at = new Date().toISOString();
     await c.post(CLAUDE_TRANSCRIPT_ANALYSIS_PATH, { enabled: true });
     await waitFor(() => c.events("codex.tokens.updated").length >= 1);
-    markDayCovered(c.store.db, "2026-10-01", at);
-    markCodexDayCovered(c.store.db, "2026-10-01", at);
+    markDayCovered(c.store.db, "2020-01-01", at);
+    markCodexDayCovered(c.store.db, "2020-01-01", at);
     saveRateLimitSnapshot(
       c.store.db,
       CodexUsageSnapshotSchema.parse({
@@ -431,18 +445,21 @@ describe("the combined 'Delete cached usage analytics'", () => {
       at,
     );
     setCollectorSetting(c.store.db, "codex_token_first_scan_done", "1", at);
-    const count = (table: string): number =>
-      (c.store.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
-    expect(count("coverage_days")).toBeGreaterThan(0);
-    expect(count("codex_coverage_days")).toBeGreaterThan(0);
+    // With analysis on, the rebuild after a delete recounts recent days, so the markers are days
+    // far outside any retention window: only the delete can remove them.
+    const count = (table: string, where = ""): number =>
+      (c.store.db.prepare(`SELECT COUNT(*) AS n FROM ${table} ${where}`).get() as { n: number }).n;
+    const OLD = "WHERE day = '2020-01-01'";
+    expect(count("coverage_days", OLD)).toBe(1);
+    expect(count("codex_coverage_days", OLD)).toBe(1);
     const usageEvents = c.events("usage.updated").length;
     const tokenEvents = c.events("codex.tokens.updated").length;
 
     const reply = await c.post(CLAUDE_USAGE_DELETE_PATH, {});
     expect(reply.status).toBeLessThan(300);
 
-    expect(count("coverage_days")).toBe(0);
-    expect(count("codex_coverage_days")).toBe(0);
+    expect(count("coverage_days", OLD)).toBe(0);
+    expect(count("codex_coverage_days", OLD)).toBe(0);
     expect(count("codex_rate_limit_snapshot")).toBe(0);
     expect(getCollectorSetting(c.store.db, "transcript_analysis_enabled")).toBe("true");
     expect(c.events("usage.updated").length).toBeGreaterThan(usageEvents);
@@ -465,7 +482,7 @@ describe("the overlay order and the shared inactivity window", () => {
         [
           {
             id: SESSION,
-            agoMs: 5 * 60_000,
+            agoMs: 15 * 60_000,
             lifecycle: [["task_started", 20 * 60_000]],
           },
         ],

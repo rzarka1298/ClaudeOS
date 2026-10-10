@@ -1,4 +1,12 @@
-import type { CodexSnapshotState } from "@ccc/domain";
+import {
+  type CodexIntegrationStatus,
+  type CodexSessionsSnapshot,
+  type CodexSnapshotState,
+  CodexSnapshotStateSchema,
+  type CodexTokenSummary,
+  type CodexUsageSnapshot,
+  type HeadroomSignal,
+} from "@ccc/domain";
 import type { Handler } from "../route-kit.js";
 import { type DoctorRouteDeps, doctorRoutes } from "./doctor-routes.js";
 import { type FollowRouteDeps, followRoutes } from "./follow-routes.js";
@@ -53,15 +61,102 @@ export const codexRouteTable: Record<string, Record<string, Handler>> = {
  */
 export const CODEX_SNAPSHOT_BUDGET_BYTES = 20 * 1024;
 
+type Parts = {
+  sessions?: CodexSessionsSnapshot;
+  usage?: CodexUsageSnapshot;
+  headroom?: HeadroomSignal;
+  tokens?: CodexTokenSummary;
+  integration?: CodexIntegrationStatus;
+};
+
+function sizeOf(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+/** The order parts are given up in when even the trimmed member does not fit: biggest first. */
+const DROP_ORDER = ["sessions", "tokens", "headroom", "usage", "integration"] as const;
+
+/** Trims the session list to the most sessions that fit `budgetBytes`, or drops the part. */
+function fitSessions(parts: Parts, budgetBytes: number): Parts {
+  const sessions = parts.sessions;
+  if (sessions === undefined) return parts;
+  if (sessions.kind === "available") {
+    const total = sessions.sessions.length;
+    const trimmed = (keep: number): CodexSessionsSnapshot => ({
+      ...sessions,
+      sessions: sessions.sessions.slice(0, keep),
+      hiddenCount: sessions.hiddenCount + (total - keep),
+    });
+    let low = 1;
+    let high = total - 1;
+    let best = 0;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (sizeOf({ ...parts, sessions: trimmed(middle) }) <= budgetBytes) {
+        best = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    if (best > 0) return { ...parts, sessions: trimmed(best) };
+  }
+  const { sessions: _dropped, ...rest } = parts;
+  return rest;
+}
+
 /**
  * The optional Codex member of the snapshot: every part read synchronously from its service's
  * cache (so the caller can read it in the same tick as the last event id), then each service's
- * fire-and-forget refresh asked for, never awaited. A part with nothing cached is omitted.
- * SIGNATURE STUB in the RED commit.
+ * fire-and-forget refresh asked for, never awaited. A part with nothing cached is omitted, and a
+ * service that throws loses only its own part. The member is bounded by `budgetBytes`: the session
+ * list is trimmed first (the trimmed entries become `hiddenCount`), then parts are given up.
+ * Returns null when no part exists.
  */
 export function codexSnapshotFor(
-  _codex: CodexRouteDeps,
-  _budgetBytes: number = CODEX_SNAPSHOT_BUDGET_BYTES,
+  codex: CodexRouteDeps,
+  budgetBytes: number = CODEX_SNAPSHOT_BUDGET_BYTES,
 ): CodexSnapshotState | null {
-  return null;
+  let parts: Parts = {};
+  const read = (take: () => void): void => {
+    try {
+      take();
+    } catch {
+      // This part stays out of the member; the list routes repair it.
+    }
+  };
+  read(() => {
+    const value = codex.sessions?.mirror.snapshot();
+    if (value !== undefined && value !== null) parts.sessions = value;
+  });
+  read(() => {
+    const value = codex.headroom?.peekUsage();
+    if (value !== undefined && value !== null) parts.usage = value;
+  });
+  read(() => {
+    const value = codex.headroom?.peekHeadroom();
+    if (value !== undefined && value !== null) parts.headroom = value;
+  });
+  read(() => {
+    const value = codex.tokens?.summary();
+    if (value !== undefined) parts.tokens = value;
+  });
+  read(() => {
+    const value = codex.integration?.status();
+    if (value !== undefined) parts.integration = value;
+  });
+
+  // The refreshes only start background work; none is awaited and none can fail the snapshot.
+  read(() => codex.sessions?.mirror.refreshIfStale());
+  read(() => codex.headroom?.refreshIfStale());
+  read(() => codex.tokens?.refreshIfStale());
+
+  if (sizeOf(parts) > budgetBytes) parts = fitSessions(parts, budgetBytes);
+  for (const key of DROP_ORDER) {
+    if (sizeOf(parts) <= budgetBytes) break;
+    const { [key]: _given, ...rest } = parts;
+    parts = rest;
+  }
+  if (Object.keys(parts).length === 0 || sizeOf(parts) > budgetBytes) return null;
+  return CodexSnapshotStateSchema.parse(parts);
 }

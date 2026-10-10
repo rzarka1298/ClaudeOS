@@ -135,6 +135,14 @@ export const defaultAgentChecks: Pick<AntigravityTerminalDeps, "isExecutable" | 
 /** One minter for the whole process, so two call sites cannot mint colliding ids. */
 const sharedMinter = createRunIdMinter(Date.now);
 
+/**
+ * The process-wide minter of strictly increasing bridge run ids, for the one other writer of bridge
+ * requests (the follow-log service, plan 05.1-28): two writers must never mint colliding ids.
+ */
+export function mintSharedBridgeRunId(): string {
+  return sharedMinter();
+}
+
 type OpenOutcome = { readonly ok: true } | { readonly ok: false; readonly error: LaunchErrorKind };
 
 /** An open of the IDE on a directory that has been issued and whose initiator is still waiting. */
