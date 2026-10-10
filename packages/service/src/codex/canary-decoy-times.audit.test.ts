@@ -37,10 +37,9 @@ describe("canary decoy timestamps can detect an outside read", () => {
     expect(readFromChildMovesAtime(PAST_S, PAST_S + 100_000)).toBe(true);
   });
 
-  // FINDING (wave 8 audit, WARNING): credential-canary.int.test.ts stamps atime == mtime, so its
-  // access-time check cannot see a read from outside the recorded layer. Un-skip once the canary
-  // stamps atime strictly older than mtime (the control above shows that pairing works).
-  it.skip("the canary's own stamping (access time equal to modification time) is moved by a child-process read", () => {
-    expect(readFromChildMovesAtime(PAST_S, PAST_S)).toBe(true);
+  // The canary stamps atime a few days older than mtime (credential-canary.int.test.ts), so an
+  // outside read moves the access time and Test 1b sees it.
+  it("the canary's own stamping (access time a few days older than modification time) is moved by a child-process read", () => {
+    expect(readFromChildMovesAtime(PAST_S, PAST_S + 3 * 86_400)).toBe(true);
   });
 });

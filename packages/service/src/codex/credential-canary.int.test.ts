@@ -155,6 +155,8 @@ const HOUR = 3_600_000;
 /** The repository-wide privacy scan walks every tracked file; under load it takes tens of seconds. */
 const PRIVACY_SCAN_TIMEOUT_MS = 180_000;
 const LONG_AGO_S = 1_000_000;
+/** The decoys' modification time is a few days NEWER than their access time: APFS only moves an access time that is not newer than the modification time, so an equal pair would never show a read from a child process or native binding. */
+const DECOY_MTIME_S = LONG_AGO_S + 3 * 86_400;
 
 // --- sentinels: invented, assembled at runtime so no tracked line is secret-shaped --------------
 
@@ -373,8 +375,8 @@ function buildHome(
     for (const name of home.decoys.lookalikeNames) {
       files.set(join(home.root, name), { content: `${DECOY_MARKER}\n` });
     }
-    // Fixed times far in the past: any read or write would move the access or modification time.
-    for (const path of files.keys()) utimesSync(path, LONG_AGO_S, LONG_AGO_S);
+    // Fixed times far in the past, atime strictly older than mtime: any read or write moves one.
+    for (const path of files.keys()) utimesSync(path, LONG_AGO_S, DECOY_MTIME_S);
     return { home, files };
   });
 }
@@ -672,7 +674,7 @@ describe("the service-wide credential canary", () => {
       for (const [path, { content }] of world.decoyFiles) {
         const stat = statSync(path);
         expect(stat.atimeMs / 1000, path).toBeCloseTo(LONG_AGO_S, 0);
-        expect(stat.mtimeMs / 1000, path).toBeCloseTo(LONG_AGO_S, 0);
+        expect(stat.mtimeMs / 1000, path).toBeCloseTo(DECOY_MTIME_S, 0);
         expect(readFileSync(path, "utf8")).toBe(content);
       }
     });
