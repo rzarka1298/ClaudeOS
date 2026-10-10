@@ -143,3 +143,48 @@ export function loadBridgeCore(): BridgeCore {
     join(REPO_ROOT, "scripts", "codex", "antigravity-extension", "bridge-core.js"),
   ) as BridgeCore;
 }
+
+export type WindowMode = "current" | "outdated" | "closed";
+
+export interface SimulatedClaim {
+  request: BridgeRequest;
+  terminal: TerminalOptions;
+}
+
+export interface WindowSimulator {
+  readonly mode: WindowMode;
+  readonly key: string;
+  /** Messages the simulated extension would write to its output channel. */
+  readonly log: string[];
+  setNow(ms: number): void;
+  heartbeat(): void;
+  tick(): SimulatedClaim[];
+  close(): void;
+}
+
+export interface WindowSimulatorOptions {
+  stateDir: string;
+  folders: string[];
+  mode: WindowMode;
+  now?: number | (() => number);
+  key?: string;
+  /** The fixed launcher path the simulated terminal would run. */
+  command?: string;
+  /** False models a missing launcher: the real extension then leaves requests queued. */
+  launcherInstalled?: boolean;
+  containDelayMs?: number;
+}
+
+export interface WindowSimulatorModule {
+  createWindowSimulator(options: WindowSimulatorOptions): WindowSimulator;
+}
+
+/**
+ * Loads the test-only window simulator (scripts/codex/test-support): the current
+ * extension, an outdated 0.1.0 one that discards agent requests, and a closed window.
+ */
+export function loadWindowSimulator(): WindowSimulatorModule {
+  return createRequire(import.meta.url)(
+    join(REPO_ROOT, "scripts", "codex", "test-support", "bridge-window-simulator.cjs"),
+  ) as WindowSimulatorModule;
+}
