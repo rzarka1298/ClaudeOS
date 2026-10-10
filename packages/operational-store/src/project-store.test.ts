@@ -406,5 +406,6 @@ describe("launcher config (D-22, D-46)", () => {
 describe("STORED_LAUNCHER_IDS", () => {
   it("equals the domain LAUNCHER_IDS", () => {
     expect([...STORED_LAUNCHER_IDS]).toEqual([...LAUNCHER_IDS]);
+    expect([...STORED_LAUNCHER_IDS]).toContain("codex");
   });
 });

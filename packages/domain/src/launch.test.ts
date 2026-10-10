@@ -4,6 +4,7 @@ import {
   DetectionResponseSchema,
   LAUNCH_ACTIONS,
   LAUNCH_ERROR_KINDS,
+  launchErrorKindSchema,
   LAUNCH_PATH,
   LAUNCHER_IDS,
   LAUNCHER_TEST_AUTOMATION_CAP_MS,
@@ -26,7 +27,7 @@ const LINE_FEED = String.fromCharCode(10);
 const CARRIAGE_RETURN = String.fromCharCode(13);
 
 describe("launch vocabulary (D-26, D-06)", () => {
-  it("LAUNCH_ERROR_KINDS is exactly the ten D-26 members in D-26 order", () => {
+  it("LAUNCH_ERROR_KINDS is the ten D-26 members in D-26 order, then the three bridge kinds (D-09)", () => {
     expect(LAUNCH_ERROR_KINDS).toEqual([
       "service-disconnected",
       "launcher-not-configured",
@@ -38,8 +39,18 @@ describe("launch vocabulary (D-26, D-06)", () => {
       "folder-access-denied",
       "timeout",
       "spawn-failed",
+      "bridge-not-installed",
+      "bridge-outdated",
+      "window-not-ready",
     ]);
-    expect(LAUNCH_ERROR_KINDS.length).toBe(10);
+    expect(LAUNCH_ERROR_KINDS.length).toBe(13);
+  });
+
+  it("launchErrorKindSchema accepts the three bridge kinds and refuses an unknown one", () => {
+    for (const kind of ["bridge-not-installed", "bridge-outdated", "window-not-ready"]) {
+      expect(launchErrorKindSchema.safeParse(kind).success).toBe(true);
+    }
+    expect(launchErrorKindSchema.safeParse("bridge-exploded").success).toBe(false);
   });
 
   it("LAUNCH_ACTIONS and LAUNCHER_IDS are exact", () => {
@@ -50,7 +61,7 @@ describe("launch vocabulary (D-26, D-06)", () => {
       "github",
       "claude-desktop",
     ]);
-    expect(LAUNCHER_IDS).toEqual(["antigravity", "claude-code", "claude-desktop"]);
+    expect(LAUNCHER_IDS).toEqual(["antigravity", "claude-code", "claude-desktop", "codex"]);
   });
 
   it("places the launch route under the versioned API base", () => {
@@ -290,6 +301,55 @@ describe("parseStoredLauncherConfig", () => {
     ).toBeNull();
     expect(parseStoredLauncherConfig("finder", { bundleId: "com.apple.finder" })).toBeNull();
     expect(parseStoredLauncherConfig("claude-desktop", {})).toBeNull();
+  });
+});
+
+describe("Antigravity terminal choice (D-07)", () => {
+  const CLAUDE_PATH = "/Users/USERNAME/.local/bin/claude";
+
+  it("round-trips a stored Claude Code config whose terminal is the strict antigravity-terminal object", () => {
+    const stored = {
+      executablePath: CLAUDE_PATH,
+      args: [],
+      terminal: { kind: "antigravity-terminal" },
+    };
+    expect(parseStoredLauncherConfig("claude-code", stored)).toEqual(stored);
+  });
+
+  it("refuses an extra key on the antigravity-terminal object", () => {
+    expect(
+      parseStoredLauncherConfig("claude-code", {
+        executablePath: CLAUDE_PATH,
+        args: [],
+        terminal: { kind: "antigravity-terminal", preset: "iterm2" },
+      }),
+    ).toBeNull();
+  });
+
+  it("is accepted by the save request and refused with a preset or argv key", () => {
+    const base = {
+      launcherId: "claude-code",
+      executable: { kind: "path", path: CLAUDE_PATH },
+      args: [],
+    };
+    expect(
+      SaveLauncherConfigRequestSchema.safeParse({
+        ...base,
+        terminal: { kind: "antigravity-terminal" },
+      }).success,
+    ).toBe(true);
+    for (const extra of [{ preset: "iterm2" }, { argv: ["x"] }]) {
+      expect(
+        SaveLauncherConfigRequestSchema.safeParse({
+          ...base,
+          terminal: { kind: "antigravity-terminal", ...extra },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("never prompts for macOS Automation", () => {
+    expect(terminalMayPromptForAutomation({ kind: "antigravity-terminal" })).toBe(false);
   });
 });
 
