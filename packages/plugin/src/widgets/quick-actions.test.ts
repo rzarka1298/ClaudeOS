@@ -419,6 +419,12 @@ describe("table-driven over every R-CAPS descriptor string (plan 06-10, Test 3)"
     "task:create": { kind: "navigated", destination: "tasks" },
     "note:capture": { kind: "unavailable" },
     "data:refresh": { kind: "unavailable" },
+    // Phase 05.1 wave 2 rows (plan 02). The dispatcher arms for these land in
+    // plans 17 and 18, which replace these placeholders with real outcomes.
+    "launch:codex": { kind: "unavailable" },
+    "launch:claude-codex-pair": { kind: "unavailable" },
+    "codex:open-transcript": { kind: "unavailable" },
+    "codex:follow-log": { kind: "unavailable" },
   };
 
   /** The connect family is matched by prefix; every R-CAPS example resolves the same way. */
