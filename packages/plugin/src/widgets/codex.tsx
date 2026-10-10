@@ -1,17 +1,41 @@
 import type { VNode } from "preact";
+import { CodexCurrentRunSection } from "./codex-current-run.js";
 import { CODEX_COPY } from "./codex-format.js";
 import { CodexHeadroomSection } from "./codex-headroom.js";
 import { CodexPlanUsageSection } from "./codex-plan-usage.js";
+import { buildCodexSessionRows } from "./codex-session-rows.js";
+import { CodexSessionsSection } from "./codex-sessions.js";
 import type { CodexCardData } from "./codex-signals.js";
+import { CodexTokenActivitySection } from "./codex-token-activity.js";
 import type { WidgetBodyProps, WidgetDefinition } from "./contract.js";
 
 export type { CodexCardData } from "./codex-signals.js";
 
-function CodexBody({ data }: WidgetBodyProps<CodexCardData>): VNode {
+function CodexBody({ data, size, onQuickAction }: WidgetBodyProps<CodexCardData>): VNode {
+  const rows =
+    data.sessions === null
+      ? { kind: "unavailable" as const, reason: "no-data" as const, version: null }
+      : buildCodexSessionRows(data.sessions, {
+          nowMs: data.nowMs,
+          analysisOn: data.analysisOn,
+          size,
+          hookInstalled:
+            data.integration === null || data.integration.hooks.state === "unknown"
+              ? null
+              : data.integration.hooks.state !== "not-installed",
+        });
   return (
     <div className="ccc-codex-sections">
       <CodexHeadroomSection data={data} />
       <CodexPlanUsageSection usage={data.usage} nowMs={data.nowMs} />
+      <CodexCurrentRunSection rows={rows} size={size} onQuickAction={onQuickAction} />
+      <CodexSessionsSection rows={rows} size={size} onQuickAction={onQuickAction} />
+      <CodexTokenActivitySection
+        summary={data.tokens}
+        analysisOn={data.analysisOn}
+        nowMs={data.nowMs}
+        onQuickAction={onQuickAction}
+      />
     </div>
   );
 }

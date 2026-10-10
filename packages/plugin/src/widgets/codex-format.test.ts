@@ -255,3 +255,22 @@ describe("Codex pure copy and formatting", () => {
     }
   });
 });
+
+describe("Plan 25 additive vocabulary", () => {
+  it("locks action and missing-transcript copy", () => {
+    expect(format.CODEX_ROW_COPY.openTranscript).toBe("Open transcript");
+    expect(format.CODEX_ROW_COPY.followLog).toBe("Follow live log");
+    expect(format.CODEX_ROW_COPY.transcriptMissing).toBe("Transcript not found");
+    expect(format.CODEX_ROW_COPY.resetUnreported).toBe("reset time not reported");
+    expect(Object.isFrozen(format.CODEX_ROW_COPY)).toBe(true);
+    for (const line of [
+      ...Object.values(format.CODEX_ROW_COPY),
+      ...Object.values(format.CODEX_COUNTER_LABELS),
+    ]) {
+      expect(line).not.toMatch(
+        /\b(cost|price[sd]?|pricing|bill(ed|ing|s)?|charge[sd]?|spend|spent|credits?|dollars?|usd|invoice|paid|pay)\b|\$/i,
+      );
+      expect(line).not.toMatch(/[/\\]/);
+    }
+  });
+});
