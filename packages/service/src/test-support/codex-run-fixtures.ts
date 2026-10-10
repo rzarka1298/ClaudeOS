@@ -30,6 +30,22 @@ import type { RunRecordFs } from "../codex/run-records.js";
  * markers that must never appear in any view, event, log line or response.
  */
 
+interface BridgeCoreModule {
+  validateRequest(
+    raw: unknown,
+    options: { stateDir: string; now?: number; checkAge?: boolean },
+  ): { ok: boolean; reason?: string; request?: Record<string, unknown> };
+}
+
+// The bridge core is a CommonJS file outside this package; a plain string-literal dynamic import
+// keeps the module edge visible to the boundary lint (the service lint forbids createRequire).
+const bridgeCoreImport = await import(
+  // @ts-expect-error TS7016: a CommonJS module without declarations
+  "../../../../scripts/codex/antigravity-extension/bridge-core.js"
+);
+/** The real `validateRequest` the Antigravity extension and the helper run. */
+export const bridgeCore = (bridgeCoreImport.default ?? bridgeCoreImport) as BridgeCoreModule;
+
 export const SESSION_A = "11111111-2222-3333-4444-555555555555";
 export const SESSION_B = "66666666-7777-8888-9999-aaaaaaaaaaaa";
 
