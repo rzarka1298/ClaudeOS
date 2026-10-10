@@ -1,4 +1,4 @@
-import { queryCodexTokenTotals } from "@ccc/operational-store";
+import { deleteAllUsageAnalytics, queryCodexTokenTotals } from "@ccc/operational-store";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   at,
@@ -125,6 +125,49 @@ describe("Codex token scanner: same-bucket transition cut", () => {
     await h.scanner.sweep();
     h.restart();
     h.temp.db.prepare("DELETE FROM codex_rollout_cursors").run();
+    await h.scanner.sweep();
+    expect(inputTotal(h)).toBe(110);
+  });
+});
+
+describe("Codex token scanner: analytics deletion leaves no usage-derived state", () => {
+  it("clears off marks, cuts and cursors, and a rescan from scratch rebuilds the totals", async () => {
+    const h = setup();
+    const T1 = "2026-10-10T10:01:00.000Z";
+    const T2 = "2026-10-10T10:02:00.000Z";
+    h.rollouts.write(
+      DAY,
+      NAME,
+      jsonl([
+        metaLine(),
+        tokenCountLine({ timestamp: T1, total: raw(100, 0) }),
+        turnRecordLine({ turnId: turn(1), timestamp: T2, usage: raw(10, 0) }),
+        tokenCountLine({ timestamp: T2, total: raw(110, 0) }),
+      ]),
+    );
+    await h.scanner.sweep();
+    expect(inputTotal(h)).toBe(110);
+    h.temp.db
+      .prepare("INSERT INTO collector_settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(`codex_token_off:${THREAD_A}:${turn(1)}`, '{"last":{},"off":{}}', T2);
+
+    deleteAllUsageAnalytics(h.temp.db);
+    h.scanner.reset();
+
+    const settings = JSON.stringify(h.temp.db.prepare("SELECT * FROM collector_settings").all());
+    expect(settings).not.toContain(THREAD_A);
+    expect(settings).not.toContain(turn(1));
+    expect(settings).not.toContain("codex_token_cut");
+    expect(settings).not.toContain("codex_token_off");
+    for (const table of [
+      "codex_token_turns",
+      "codex_token_deltas",
+      "codex_token_cumulative",
+      "codex_rollout_cursors",
+    ]) {
+      expect(h.temp.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+    }
+
     await h.scanner.sweep();
     expect(inputTotal(h)).toBe(110);
   });

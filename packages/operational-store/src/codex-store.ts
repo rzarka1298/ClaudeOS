@@ -570,6 +570,14 @@ export function deleteCodexAnalytics(db: Database.Database): void {
     for (const table of CODEX_ANALYTICS_TABLES) {
       db.prepare(`DELETE FROM ${table}`).run();
     }
+    // The scanner also keeps usage-derived state in collector_settings (per-turn
+    // analysis-off marks and thread/turn ids, per-thread transition cuts, the
+    // coverage horizon and first-scan flag). All of it goes with the counted rows;
+    // settings outside the `codex_token_` family are the owner's and stay, and so
+    // does the parser-version marker (pure configuration, no usage in it).
+    db.prepare(
+      "DELETE FROM collector_settings WHERE key GLOB 'codex_token_*' AND key <> 'codex_token_parser_version'",
+    ).run();
   })();
 }
 

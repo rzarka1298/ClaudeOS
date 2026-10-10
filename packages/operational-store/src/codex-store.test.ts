@@ -31,6 +31,7 @@ import { setSessionOverride } from "./session-store.js";
 import { openMigratedFileDb } from "./test-support/migration-helper.js";
 import {
   appendToggleLog,
+  getCollectorSetting,
   recordUsage,
   setCollectorSetting,
   USAGE_BUCKET_MS,
@@ -734,5 +735,30 @@ describe("the barrel", () => {
     ]) {
       expect(typeof (barrel as Record<string, unknown>)[name], name).toBe("function");
     }
+  });
+
+  it("deletes usage-derived scanner state in collector_settings but keeps unrelated settings", () => {
+    fillEverything();
+    setCollectorSetting(db, "codex_token_off:thread-aaaa1111:turn-0001", '{"last":{}}', NOW);
+    setCollectorSetting(db, "codex_token_cut:thread-aaaa1111", NOW, NOW);
+    setCollectorSetting(db, "codex_token_cutchk:thread-aaaa1111", "1", NOW);
+    setCollectorSetting(db, "codex_token_horizon_day", "2026-10-01", NOW);
+    setCollectorSetting(db, "codex_token_first_scan_done", "1", NOW);
+    setCollectorSetting(db, "unrelated_setting", "keep", NOW);
+    setCollectorSetting(db, "codex_token_parser_version", "1", NOW);
+    deleteCodexAnalytics(db);
+    const keys = (db.prepare("SELECT key FROM collector_settings").all() as { key: string }[]).map(
+      (row) => row.key,
+    );
+    expect(keys.filter((key) => key.startsWith("codex_token_"))).toEqual([
+      "codex_token_parser_version",
+    ]);
+    expect(keys).toContain("unrelated_setting");
+  });
+
+  it("deleteAllUsageAnalytics removes them too", () => {
+    setCollectorSetting(db, "codex_token_off:thread-aaaa1111:turn-0001", "{}", NOW);
+    deleteAllUsageAnalytics(db);
+    expect(getCollectorSetting(db, "codex_token_off:thread-aaaa1111:turn-0001")).toBeNull();
   });
 });
