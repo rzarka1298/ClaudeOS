@@ -2,7 +2,9 @@ import { readdirSync } from "node:fs";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  assertOnlySidecarChanges,
   createFakeCodexHome,
+  diffSnapshots,
   type FakeCodexHome,
   type FakeDdl,
   type FakeThread,
@@ -481,5 +483,26 @@ describe("Test 7: newest cli version and hidden sources", () => {
     expect(ids).toContain("t-review");
     expect(result.threads.find((row) => row.id === "t-review")?.origin).toBe("review");
     expect(JSON.stringify(result)).not.toContain("DECOY-PARENT-ID");
+  });
+});
+
+describe("Test 8 (task 3): what a read leaves behind in the directory", () => {
+  it("creates at most the sidecars SQLite makes for a read-only open of a closed WAL store", () => {
+    const fake = makeHome("current");
+    const before = fake.snapshot();
+    const reader = readerFor(fake);
+    reader.readThreads(BASE);
+    reader.readThreads({ ...BASE, includePromptDerived: true });
+    const diff = diffSnapshots(before, fake.snapshot());
+    expect(() => assertOnlySidecarChanges(diff)).not.toThrow();
+    expect(diff.changed).toEqual([]);
+    expect(diff.removed).toEqual([]);
+  });
+
+  it("changes nothing at all when there is no database", () => {
+    home = createFakeCodexHome({ sessionIndex: "{}\n" });
+    const before = home.snapshot();
+    readerFor(home).readThreads(BASE);
+    expect(diffSnapshots(before, home.snapshot())).toEqual({ added: [], removed: [], changed: [] });
   });
 });

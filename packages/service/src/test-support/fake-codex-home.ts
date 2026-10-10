@@ -19,6 +19,7 @@ import {
   defaultCodexFs,
   type RolloutRef,
 } from "../codex/codex-home.js";
+import type { CodexStoreReader, OpenDatabase } from "../codex/store-reader.js";
 
 /**
  * A temporary CODEX_HOME for tests (plan 05.1-14). Everything lives under one
@@ -413,6 +414,58 @@ export function exerciseCodexHomePort(port: CodexHomePort, home: FakeCodexHome):
     attempt(() => port.statRollout(ref));
     attempt(() => port.readRolloutRange(ref, 0, 4096));
     attempt(() => port.resolveSessionsFile(ref.path));
+  }
+  return { outputs };
+}
+
+/** The only files SQLite itself may create next to the database for a read-only open of a closed WAL store. */
+export const SQLITE_SIDECARS: readonly string[] = ["state_5.sqlite-wal", "state_5.sqlite-shm"];
+
+export interface SnapshotDiff {
+  readonly added: readonly string[];
+  readonly removed: readonly string[];
+  readonly changed: readonly string[];
+}
+
+// RED stubs (plan 05.1-14, task 3): neutral behaviour; real versions land in GREEN.
+export function diffSnapshots(
+  _before: Map<string, string>,
+  _after: Map<string, string>,
+): SnapshotDiff {
+  return { added: [], removed: [], changed: [] };
+}
+
+export function assertOnlySidecarChanges(_diff: SnapshotDiff): void {}
+
+export function assertNoMarkerLeak(_texts: readonly string[], _home: FakeCodexHome): void {}
+
+/**
+ * A database opener that records the path it is asked to open (as an
+ * `openDatabase` call, so the canary sees it) and then opens it for real.
+ */
+export function recordingOpener(calls: RecordedCall[]): OpenDatabase {
+  return (path, options) => {
+    calls.push({ op: "openDatabase", path });
+    return new Database(path, options);
+  };
+}
+
+/** Drives the store reader with benign and odd arguments; returns the strings a leak would show in. */
+export function exerciseCodexStoreReader(reader: CodexStoreReader, nowMs: number): PortExercise {
+  const outputs: string[] = [];
+  const inputs = [
+    { sinceMs: nowMs - 86_400_000, limit: 50, includePromptDerived: false },
+    { sinceMs: nowMs - 86_400_000, limit: 50, includePromptDerived: true },
+    { sinceMs: 0, limit: 1, includePromptDerived: false },
+    { sinceMs: Number.NaN, limit: 0, includePromptDerived: true },
+    { sinceMs: nowMs + 86_400_000, limit: 10_000, includePromptDerived: false },
+  ];
+  for (const input of inputs) {
+    try {
+      outputs.push(JSON.stringify(reader.readThreads(input)));
+    } catch (error) {
+      outputs.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+    }
   }
   return { outputs };
 }

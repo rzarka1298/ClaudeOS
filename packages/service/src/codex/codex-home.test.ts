@@ -3,7 +3,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  assertNoForbiddenAccess,
   createFakeCodexHome,
+  diffSnapshots,
   exerciseCodexHomePort,
   type FakeCodexHome,
   isAllowedCodexAccess,
@@ -353,5 +355,44 @@ describe("the real default home is refused under a test runner", () => {
     const real = join(homedir(), ".codex");
     expect(() => createCodexHomePort({ root: real, fs: rec.fs })).toThrow(CodexHomeAccessError);
     expect(rec.calls).toEqual([]);
+  });
+});
+
+describe("Test 4 (task 3): the override home is used exclusively", () => {
+  it("never touches a second home standing in for the default location", () => {
+    const override = makeHome();
+    const userHome = createFakeCodexHome({
+      sessionIndex: '{"id":"other-home"}\n',
+      withDecoys: true,
+      rollouts: [{ day: DAY, name: ROLLOUT_NAME, content: "other\n" }],
+    });
+    try {
+      // userHome.root plays the owner's home; its default Codex folder is the decoy.
+      const defaultFolder = userHome.root;
+      const resolved = resolveCodexHome(
+        { CCC_CODEX_HOME: override.root, CODEX_HOME: defaultFolder },
+        defaultFolder,
+      );
+      expect(resolved).toBe(override.root);
+
+      const beforeOther = userHome.snapshot();
+      const rec = recordingFs();
+      const port = createCodexHomePort({ root: resolved, fs: rec.fs });
+      exerciseCodexHomePort(port, override);
+
+      expect(rec.calls.length).toBeGreaterThan(0);
+      for (const call of rec.calls) {
+        expect(call.path === override.root || call.path.startsWith(`${override.root}/`)).toBe(true);
+        expect(call.path.startsWith(userHome.root)).toBe(false);
+      }
+      expect(() => assertNoForbiddenAccess(rec.calls, override)).not.toThrow();
+      expect(diffSnapshots(beforeOther, userHome.snapshot())).toEqual({
+        added: [],
+        removed: [],
+        changed: [],
+      });
+    } finally {
+      userHome.cleanup();
+    }
   });
 });
