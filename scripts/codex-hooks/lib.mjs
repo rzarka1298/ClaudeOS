@@ -588,15 +588,16 @@ export function writeHooksAtomic(hooksPath, text, read) {
   );
   const fd = openSync(temp, "wx", 0o600);
   try {
-    writeSync(fd, text);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  try {
+    try {
+      writeSync(fd, text);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     chmodSync(temp, keepMode);
     renameSync(temp, target);
   } catch (error) {
+    // A failed write never leaves its temp file in the owner's Codex home.
     rmSync(temp, { force: true });
     throw error;
   }
@@ -668,36 +669,49 @@ export function installHookFiles(runtimeDir) {
   rmSync(retired, { recursive: true, force: true });
   ensurePrivateDir(staging);
 
-  const codexHookDir = join(COLLECTORS_DIST, "codex-hook");
-  /** @type {Array<[string, string[]]>} */
-  const plan = [
-    [
-      "codex-hook",
-      readdirSync(codexHookDir)
-        .filter((name) => name.endsWith(".js") && !name.endsWith(".test.js"))
-        .sort(),
-    ],
-    ["hook", [...SHARED_HOOK_FILES]],
-  ];
   /** @type {string[]} */
   const installed = [];
-  for (const [sub, names] of plan) {
-    ensurePrivateDir(join(staging, sub));
-    for (const name of names) {
-      const target = join(staging, sub, name);
-      copyFileSync(join(COLLECTORS_DIST, sub, name), target);
-      chmodSync(target, 0o600);
-      installed.push(`${sub}/${name}`);
+  try {
+    const codexHookDir = join(COLLECTORS_DIST, "codex-hook");
+    /** @type {Array<[string, string[]]>} */
+    const plan = [
+      [
+        "codex-hook",
+        readdirSync(codexHookDir)
+          .filter((name) => name.endsWith(".js") && !name.endsWith(".test.js"))
+          .sort(),
+      ],
+      ["hook", [...SHARED_HOOK_FILES]],
+    ];
+    for (const [sub, names] of plan) {
+      ensurePrivateDir(join(staging, sub));
+      for (const name of names) {
+        const target = join(staging, sub, name);
+        copyFileSync(join(COLLECTORS_DIST, sub, name), target);
+        chmodSync(target, 0o600);
+        installed.push(`${sub}/${name}`);
+      }
     }
-  }
-  writePrivateFile(
-    join(staging, "package.json"),
-    `${JSON.stringify({ type: "module" }, null, 2)}\n`,
-  );
-  installed.push("package.json");
+    writePrivateFile(
+      join(staging, "package.json"),
+      `${JSON.stringify({ type: "module" }, null, 2)}\n`,
+    );
+    installed.push("package.json");
 
-  if (existsSync(root)) renameSync(root, retired);
-  renameSync(staging, root);
+    // Swap the finished tree in. If the final rename fails, the previous copy
+    // goes back, so the hooks file never points at a missing install.
+    const hadPrevious = existsSync(root);
+    if (hadPrevious) renameSync(root, retired);
+    try {
+      renameSync(staging, root);
+    } catch (error) {
+      if (hadPrevious) renameSync(retired, root);
+      throw error;
+    }
+  } catch (error) {
+    rmSync(staging, { recursive: true, force: true });
+    throw error;
+  }
   rmSync(retired, { recursive: true, force: true });
   return installed;
 }
