@@ -1,6 +1,16 @@
-import type { CodexTokenCounters, CodexUsageSnapshot } from "@ccc/domain";
+import {
+  type CodexTokenCounters,
+  type CodexUsageSnapshot,
+  CodexUsageSnapshotSchema,
+} from "@ccc/domain";
 import type Database from "better-sqlite3";
-import { type AnalysisToggle, type CoverageDay, USAGE_BUCKET_MS } from "./usage-store.js";
+import {
+  type AnalysisToggle,
+  type CoverageDay,
+  type CoverageStatus,
+  deleteUsageAnalytics,
+  USAGE_BUCKET_MS,
+} from "./usage-store.js";
 
 /**
  * Codex persistence (Phase 05.1, D-15, D-24, CODEX-08, CODEX-10): per-turn
@@ -273,7 +283,7 @@ export function queryCodexTokenTotals(
   return row.rows === 0 ? null : { counters: toCounters(row), rows: row.rows };
 }
 
-// --- Task 3 signature stubs (RED) -------------------------------------------
+// --- Rollout cursors --------------------------------------------------------
 
 /** A rollout scanner cursor. `inode` is text so a 64-bit inode survives. */
 export interface CodexRolloutCursor {
@@ -282,68 +292,277 @@ export interface CodexRolloutCursor {
   readonly offset: number;
 }
 
+const CURSOR_KEY_PATTERN = /^[0-9a-f]{64}$/;
+
+/** A cursor key is a lowercase SHA-256 hex digest. Anything else (a path above all) is refused. */
+function assertCursorKey(key: string): void {
+  if (!CURSOR_KEY_PATTERN.test(key)) {
+    throw new InvalidCodexRecordError("cursor key is not a 64-character lowercase hex digest");
+  }
+}
+
+function assertCount(name: string, value: number): void {
+  if (!(Number.isSafeInteger(value) && value >= 0)) {
+    throw new InvalidCodexRecordError(`${name} is not a non-negative integer`);
+  }
+}
+
+/**
+ * The scanner cursor for a rollout, or null when it was never scanned. The key
+ * is the SHA-256 hex of the rollout path, computed by the CALLER: this store
+ * never receives or stores a path.
+ */
+export function readCodexCursor(db: Database.Database, key: string): CodexRolloutCursor | null {
+  assertCursorKey(key);
+  const row = db
+    .prepare("SELECT inode, size, offset FROM codex_rollout_cursors WHERE cursor_key = ?")
+    .get(key) as CodexRolloutCursor | undefined;
+  return row ? { inode: row.inode, size: row.size, offset: row.offset } : null;
+}
+
+/** Stores the scanner cursor for a hashed rollout key, replacing the previous one. */
+export function writeCodexCursor(
+  db: Database.Database,
+  key: string,
+  cursor: CodexRolloutCursor,
+  at: string,
+): void {
+  assertCursorKey(key);
+  assertIdentifier("inode", cursor.inode);
+  assertCount("size", cursor.size);
+  assertCount("offset", cursor.offset);
+  db.prepare(
+    `INSERT INTO codex_rollout_cursors (cursor_key, inode, size, offset, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (cursor_key) DO UPDATE SET
+       inode = excluded.inode, size = excluded.size, offset = excluded.offset, updated_at = excluded.updated_at`,
+  ).run(key, cursor.inode, cursor.size, cursor.offset, at);
+}
+
+// --- Coverage ---------------------------------------------------------------
+
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_MS = 86_400_000;
+
+function dayToMs(day: string): number {
+  const ms = Date.parse(`${day}T00:00:00.000Z`);
+  if (!DAY_PATTERN.test(day) || Number.isNaN(ms)) return Number.NaN;
+  return ms;
+}
+
+/** The UTC calendar date of an ISO instant: the default day function. */
+function utcDayOf(iso: string): string {
+  return new Date(Date.parse(iso)).toISOString().slice(0, 10);
+}
+
+/** Records that a Codex scan covered `day` (a calendar date). The first record's time is kept. */
+export function markCodexDayCovered(db: Database.Database, day: string, at: string): void {
+  if (Number.isNaN(dayToMs(day))) {
+    throw new InvalidCodexRecordError("day is not a YYYY-MM-DD calendar date");
+  }
+  db.prepare(
+    "INSERT INTO codex_coverage_days (day, recorded_at) VALUES (?, ?) ON CONFLICT (day) DO NOTHING",
+  ).run(day, at);
+}
+
+/**
+ * Classifies every day from `fromDay` to `toDay` inclusive with the same
+ * precedence as the Claude ledger: before the horizon, then analysis off (the
+ * shared toggle log: one toggle governs both agents, D-17), then covered by a
+ * Codex scan, otherwise not-scanned. Only the covered days live in this store.
+ */
+export function queryCodexCoverage(
+  db: Database.Database,
+  fromDay: string,
+  toDay: string,
+  horizonDate: string | null = null,
+  toggleLog: readonly AnalysisToggle[] = [],
+  dayOf: (iso: string) => string = utcDayOf,
+): CoverageDay[] {
+  const fromMs = dayToMs(fromDay);
+  const toMs = dayToMs(toDay);
+  if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
+    throw new RangeError(`"${fromDay}" to "${toDay}" is not a YYYY-MM-DD calendar date range`);
+  }
+  const covered = new Set(
+    (
+      db
+        .prepare("SELECT day FROM codex_coverage_days WHERE day >= ? AND day <= ?")
+        .all(fromDay, toDay) as Array<{ day: string }>
+    ).map((row) => row.day),
+  );
+  const toggles = [...toggleLog]
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+    .map((toggle) => ({ day: dayOf(toggle.at), enabled: toggle.enabled }));
+
+  const days: CoverageDay[] = [];
+  for (let ms = fromMs; ms <= toMs; ms += DAY_MS) {
+    const day = new Date(ms).toISOString().slice(0, 10);
+    const enabledAtStart = toggles.filter((toggle) => toggle.day < day).at(-1)?.enabled ?? true;
+    const disabledDuring = toggles.some((toggle) => toggle.day === day && !toggle.enabled);
+    let status: CoverageStatus;
+    if (horizonDate !== null && day < horizonDate) status = "before-horizon";
+    else if (!enabledAtStart || disabledDuring) status = "analysis-off";
+    else if (covered.has(day)) status = "covered";
+    else status = "not-scanned";
+    days.push({ day, status });
+  }
+  return days;
+}
+
+// --- The last rate-limit snapshot ------------------------------------------
+
+/**
+ * Stores the last normalised rate-limit snapshot in the single row, replacing the
+ * previous one. The snapshot is validated against the domain schema first, which
+ * has no account member and a strict unavailable variant, so an account id or a
+ * numeric member on the unavailable variant can never be written.
+ */
+export function saveRateLimitSnapshot(
+  db: Database.Database,
+  snapshot: CodexUsageSnapshot,
+  observedAt: string,
+): void {
+  const parsed = CodexUsageSnapshotSchema.safeParse(snapshot);
+  if (!parsed.success) {
+    throw new InvalidCodexRecordError("rate-limit snapshot does not match the domain schema");
+  }
+  db.prepare(
+    `INSERT INTO codex_rate_limit_snapshot (id, snapshot_json, observed_at) VALUES (1, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       snapshot_json = excluded.snapshot_json, observed_at = excluded.observed_at`,
+  ).run(JSON.stringify(parsed.data), observedAt);
+}
+
+/**
+ * The last stored snapshot, re-validated against the domain schema, or null when
+ * there is none, the stored text is not JSON, or it no longer matches the schema.
+ * The headroom service treats null as "no snapshot".
+ */
+export function loadRateLimitSnapshot(db: Database.Database): CodexUsageSnapshot | null {
+  const row = db
+    .prepare("SELECT snapshot_json FROM codex_rate_limit_snapshot WHERE id = 1")
+    .get() as { snapshot_json: string } | undefined;
+  if (!row) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(row.snapshot_json);
+  } catch {
+    return null;
+  }
+  const parsed = CodexUsageSnapshotSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+// --- Recognition tallies ----------------------------------------------------
+
 /** One Codex CLI version's recognition tally. */
 export interface CodexRecognitionTally {
   readonly sessions: number;
   readonly recognized: number;
 }
 
-export const CODEX_ANALYTICS_TABLES = [] as const;
-
-export function readCodexCursor(_db: Database.Database, _key: string): CodexRolloutCursor | null {
-  throw new Error("not implemented");
-}
-export function writeCodexCursor(
-  _db: Database.Database,
-  _key: string,
-  _cursor: CodexRolloutCursor,
-  _at: string,
-): void {
-  throw new Error("not implemented");
-}
-export function markCodexDayCovered(_db: Database.Database, _day: string, _at: string): void {
-  throw new Error("not implemented");
-}
-export function queryCodexCoverage(
-  _db: Database.Database,
-  _fromDay: string,
-  _toDay: string,
-  _horizonDate?: string | null,
-  _toggleLog?: readonly AnalysisToggle[],
-  _dayOf?: (iso: string) => string,
-): CoverageDay[] {
-  throw new Error("not implemented");
-}
-export function saveRateLimitSnapshot(
-  _db: Database.Database,
-  _snapshot: CodexUsageSnapshot,
-  _observedAt: string,
-): void {
-  throw new Error("not implemented");
-}
-export function loadRateLimitSnapshot(_db: Database.Database): CodexUsageSnapshot | null {
-  throw new Error("not implemented");
-}
+/**
+ * Adds per-CLI-version recognition tallies for one parser version. The scanner
+ * calls it in the same transaction that advances the cursor over the chunk those
+ * tallies came from, so a chunk is tallied once. All-zero tallies write nothing.
+ */
 export function addCodexRecognition(
-  _db: Database.Database,
-  _parserVersion: number,
-  _byVersion: Readonly<Record<string, CodexRecognitionTally>>,
-  _at: string,
+  db: Database.Database,
+  parserVersion: number,
+  byVersion: Readonly<Record<string, CodexRecognitionTally>>,
+  at: string,
 ): void {
-  throw new Error("not implemented");
+  assertCount("parser version", parserVersion);
+  for (const [cliVersion, tally] of Object.entries(byVersion)) {
+    assertIdentifier("CLI version", cliVersion);
+    assertCount("sessions", tally.sessions);
+    assertCount("recognized", tally.recognized);
+  }
+  const add = db.prepare(
+    `INSERT INTO codex_recognition (parser_version, cli_version, sessions, recognized, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (parser_version, cli_version) DO UPDATE SET
+       sessions = sessions + excluded.sessions,
+       recognized = recognized + excluded.recognized,
+       updated_at = excluded.updated_at`,
+  );
+  db.transaction(() => {
+    for (const [cliVersion, tally] of Object.entries(byVersion)) {
+      if (tally.sessions === 0 && tally.recognized === 0) continue;
+      add.run(parserVersion, cliVersion, tally.sessions, tally.recognized, at);
+    }
+  })();
 }
+
+/** Every CLI version's tally for one parser version. */
 export function readCodexRecognition(
-  _db: Database.Database,
-  _parserVersion: number,
+  db: Database.Database,
+  parserVersion: number,
 ): Record<string, CodexRecognitionTally> {
-  throw new Error("not implemented");
+  const rows = db
+    .prepare(
+      "SELECT cli_version, sessions, recognized FROM codex_recognition WHERE parser_version = ? ORDER BY cli_version",
+    )
+    .all(parserVersion) as Array<{ cli_version: string; sessions: number; recognized: number }>;
+  return Object.fromEntries(
+    rows.map((row) => [row.cli_version, { sessions: row.sessions, recognized: row.recognized }]),
+  );
 }
-export function resetCodexScanState(_db: Database.Database): void {
-  throw new Error("not implemented");
+
+// --- Reset and delete -------------------------------------------------------
+
+/**
+ * Starts Codex scanning over for a new parser version: drops every cursor, the
+ * coverage ledger and every recognition tally in one transaction. It never
+ * clears the counted rows or `codex_token_cumulative`: the high-water marks are
+ * what stop the rescan from counting previous usage again.
+ */
+export function resetCodexScanState(db: Database.Database): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM codex_rollout_cursors").run();
+    db.prepare("DELETE FROM codex_coverage_days").run();
+    db.prepare("DELETE FROM codex_recognition").run();
+  })();
 }
-export function deleteCodexAnalytics(_db: Database.Database): void {
-  throw new Error("not implemented");
+
+/**
+ * The tables "Delete cached usage analytics" empties for Codex (D-17): the
+ * counted rows, the high-water marks, cursors, coverage, recognition and the
+ * last rate-limit snapshot. The Phase 5 private list in `usage-store.ts` is not
+ * edited; {@link deleteAllUsageAnalytics} runs both in one transaction.
+ */
+export const CODEX_ANALYTICS_TABLES = [
+  "codex_token_turns",
+  "codex_token_deltas",
+  "codex_token_cumulative",
+  "codex_rollout_cursors",
+  "codex_coverage_days",
+  "codex_recognition",
+  "codex_rate_limit_snapshot",
+] as const;
+
+/**
+ * Empties the Codex analytics tables in one transaction. Clearing the
+ * high-water marks together with the counted rows is what lets a later rescan
+ * from zero rebuild identical aggregates.
+ */
+export function deleteCodexAnalytics(db: Database.Database): void {
+  db.transaction(() => {
+    for (const table of CODEX_ANALYTICS_TABLES) {
+      db.prepare(`DELETE FROM ${table}`).run();
+    }
+  })();
 }
-export function deleteAllUsageAnalytics(_db: Database.Database): void {
-  throw new Error("not implemented");
+
+/**
+ * Empties the Claude usage tables and the Codex tables in ONE transaction
+ * (D-17, Pitfall 13): if any delete fails everything is as it was. Runs,
+ * session overrides, collector settings and the toggle log are untouched.
+ */
+export function deleteAllUsageAnalytics(db: Database.Database): void {
+  db.transaction(() => {
+    deleteUsageAnalytics(db);
+    deleteCodexAnalytics(db);
+  })();
 }
