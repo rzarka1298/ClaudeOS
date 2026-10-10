@@ -71,10 +71,15 @@ async function main(): Promise<void> {
   );
   if (record === null) return;
   const line = JSON.stringify(record);
+  // Write-ahead: a SessionEnd is spooled BEFORE the socket attempt, because at
+  // teardown the hook may not live to see the reply. Ingest is idempotent on
+  // eventId, so a delivered-and-spooled SessionEnd is safe.
+  const writeAhead = record.hook_event_name === "SessionEnd";
+  if (writeAhead) appendSpool(runtimeDir, line, CODEX_SPOOL);
   const delivered = await deliver(runtimeDir, CODEX_HOOK_EVENTS_PATH, record, {
     deadlineMs: remainingBudgetMs(),
   });
-  if (!delivered) appendSpool(runtimeDir, line, CODEX_SPOOL);
+  if (!delivered && !writeAhead) appendSpool(runtimeDir, line, CODEX_SPOOL);
 }
 
 // A stray error from a destroyed socket or a late callback must not surface
