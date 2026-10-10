@@ -20,6 +20,7 @@ import {
   CODEX_TOKEN_ACTIVITY_PATH,
   CODEX_USAGE_PATH,
   LAUNCH_PAIR_PATH,
+  ProjectIdSchema,
 } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import * as codexClient from "./codex-client.js";
@@ -218,6 +219,7 @@ const PAIR_ENVELOPE: LaunchPairResponse = {
 };
 
 const RUN_ID = "20261006T120000123Z";
+const PROJECT_ID = ProjectIdSchema.parse("a1b2c3d4e0123456789abcdef");
 
 function recording(status: number, body: unknown) {
   const calls: SocketRequestOptions[] = [];
@@ -337,43 +339,45 @@ describe("runCodexDoctor (Test 4)", () => {
 describe("launchPair (Test 5, CODEX-02)", () => {
   it("posts the strict pair request to the pair path with a 4500 ms deadline and parses the envelope", async () => {
     const { calls, client } = recording(200, PAIR_ENVELOPE);
-    await expect(launchPair(client, { projectId: "project-1" })).resolves.toEqual(PAIR_ENVELOPE);
+    await expect(launchPair(client, { projectId: PROJECT_ID })).resolves.toEqual(PAIR_ENVELOPE);
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.path).toBe(LAUNCH_PAIR_PATH);
-    expect(calls[0]?.body).toEqual({ projectId: "project-1" });
+    expect(calls[0]?.body).toEqual({ projectId: PROJECT_ID });
     expect(calls[0]?.timeoutMs).toBe(CODEX_PAIR_LAUNCH_CLIENT_TIMEOUT_MS);
     expect(CODEX_PAIR_LAUNCH_CLIENT_TIMEOUT_MS).toBe(4_500);
   });
 
   it("parses the guard-conflict answer too", async () => {
     const conflict = {
-      outcome: "conflict",
-      projectName: "demo",
-      conflicts: [
-        {
-          runId: "r".repeat(25),
-          sessionName: "demo run",
-          state: "running",
-          lastActivityAt: NOW,
-        },
-      ],
+      ok: false,
+      conflict: {
+        projectName: "demo",
+        conflicts: [
+          {
+            runId: "r".repeat(25),
+            sessionName: "demo run",
+            state: "running",
+            lastActivityAt: NOW,
+          },
+        ],
+      },
     };
     const { client } = recording(200, conflict);
-    const result = await launchPair(client, { projectId: "project-1" });
+    const result = await launchPair(client, { projectId: PROJECT_ID });
     expect(result).toEqual(conflict);
   });
 
   it("an extra key such as argv throws before the request is made", async () => {
     const { calls, client } = recording(200, PAIR_ENVELOPE);
     await expect(
-      launchPair(client, { projectId: "project-1", argv: ["codex"] } as never),
+      launchPair(client, { projectId: PROJECT_ID, argv: ["codex"] } as never),
     ).rejects.toThrow();
     expect(calls).toHaveLength(0);
   });
 
   it("a pair answer carrying an extra agent key is unrecognised-response", async () => {
     const { client } = recording(200, { ...PAIR_ENVELOPE, gemini: { status: "opened" } });
-    expect((await failureOf(launchPair(client, { projectId: "project-1" }))).code).toBe(
+    expect((await failureOf(launchPair(client, { projectId: PROJECT_ID }))).code).toBe(
       "unrecognised-response",
     );
   });
