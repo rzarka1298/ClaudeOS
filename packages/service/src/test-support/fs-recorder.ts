@@ -288,7 +288,6 @@ export function createFsRecorder(): FsRecorder {
   return {
     mockFs(actual) {
       realFs = actual;
-      if (realFs !== null) return actual; // RED stub: nothing is wrapped yet
       const wrapped = wrapAll(actual, "", PATH_FIRST, PATH_PAIR);
       const promises = wrapAll(actual.promises, "promises.", PATH_FIRST, PATH_PAIR);
       const withPromises = { ...wrapped, promises };
@@ -297,7 +296,6 @@ export function createFsRecorder(): FsRecorder {
     },
     mockFsPromises(actual, actualFs) {
       realFs ??= actualFs;
-      if (realFs !== null) return actual; // RED stub: nothing is wrapped yet
       const wrapped = wrapAll(actual, "promises.", PATH_FIRST, PATH_PAIR);
       return { ...wrapped, default: wrapped } as typeof FsPromisesModule;
     },
