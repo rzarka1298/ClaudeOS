@@ -5,6 +5,35 @@ export {
   InvalidApprovalInputError,
   InvalidApprovalRowError,
 } from "./approval-store.js";
+export type {
+  CodexRecognitionTally,
+  CodexRolloutCursor,
+  CodexTokenRangeQuery,
+  CodexTokenTotals,
+  CumulativeDeltaInput,
+  TurnTokensInput,
+} from "./codex-store.js";
+export {
+  addCodexRecognition,
+  addCumulativeDelta,
+  CODEX_ANALYTICS_TABLES,
+  codexBucketStart,
+  deleteAllUsageAnalytics,
+  deleteCodexAnalytics,
+  InvalidCodexRecordError,
+  loadRateLimitSnapshot,
+  markCodexDayCovered,
+  queryCodexCoverage,
+  queryCodexTokenTotals,
+  readCodexCursor,
+  readCodexRecognition,
+  readCumulativeBaseline,
+  resetCodexScanState,
+  saveRateLimitSnapshot,
+  upsertTurnTokens,
+  writeCodexCursor,
+  writeCumulativeBaseline,
+} from "./codex-store.js";
 export { applyMigrations, SchemaAheadOfCodeError } from "./migrate.js";
 export type { OperationalStore } from "./open-store.js";
 export { openStore } from "./open-store.js";

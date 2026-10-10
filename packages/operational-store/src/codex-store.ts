@@ -1,6 +1,6 @@
-import type { CodexTokenCounters } from "@ccc/domain";
+import type { CodexTokenCounters, CodexUsageSnapshot } from "@ccc/domain";
 import type Database from "better-sqlite3";
-import { USAGE_BUCKET_MS } from "./usage-store.js";
+import { type AnalysisToggle, type CoverageDay, USAGE_BUCKET_MS } from "./usage-store.js";
 
 /**
  * Codex persistence (Phase 05.1, D-15, D-24, CODEX-08, CODEX-10): per-turn
@@ -271,4 +271,79 @@ export function queryCodexTokenTotals(
     )
     .get({ start: query.start, end: query.end }) as CounterRow & { rows: number };
   return row.rows === 0 ? null : { counters: toCounters(row), rows: row.rows };
+}
+
+// --- Task 3 signature stubs (RED) -------------------------------------------
+
+/** A rollout scanner cursor. `inode` is text so a 64-bit inode survives. */
+export interface CodexRolloutCursor {
+  readonly inode: string;
+  readonly size: number;
+  readonly offset: number;
+}
+
+/** One Codex CLI version's recognition tally. */
+export interface CodexRecognitionTally {
+  readonly sessions: number;
+  readonly recognized: number;
+}
+
+export const CODEX_ANALYTICS_TABLES = [] as const;
+
+export function readCodexCursor(_db: Database.Database, _key: string): CodexRolloutCursor | null {
+  throw new Error("not implemented");
+}
+export function writeCodexCursor(
+  _db: Database.Database,
+  _key: string,
+  _cursor: CodexRolloutCursor,
+  _at: string,
+): void {
+  throw new Error("not implemented");
+}
+export function markCodexDayCovered(_db: Database.Database, _day: string, _at: string): void {
+  throw new Error("not implemented");
+}
+export function queryCodexCoverage(
+  _db: Database.Database,
+  _fromDay: string,
+  _toDay: string,
+  _horizonDate?: string | null,
+  _toggleLog?: readonly AnalysisToggle[],
+  _dayOf?: (iso: string) => string,
+): CoverageDay[] {
+  throw new Error("not implemented");
+}
+export function saveRateLimitSnapshot(
+  _db: Database.Database,
+  _snapshot: CodexUsageSnapshot,
+  _observedAt: string,
+): void {
+  throw new Error("not implemented");
+}
+export function loadRateLimitSnapshot(_db: Database.Database): CodexUsageSnapshot | null {
+  throw new Error("not implemented");
+}
+export function addCodexRecognition(
+  _db: Database.Database,
+  _parserVersion: number,
+  _byVersion: Readonly<Record<string, CodexRecognitionTally>>,
+  _at: string,
+): void {
+  throw new Error("not implemented");
+}
+export function readCodexRecognition(
+  _db: Database.Database,
+  _parserVersion: number,
+): Record<string, CodexRecognitionTally> {
+  throw new Error("not implemented");
+}
+export function resetCodexScanState(_db: Database.Database): void {
+  throw new Error("not implemented");
+}
+export function deleteCodexAnalytics(_db: Database.Database): void {
+  throw new Error("not implemented");
+}
+export function deleteAllUsageAnalytics(_db: Database.Database): void {
+  throw new Error("not implemented");
 }
