@@ -261,7 +261,10 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       expect(frontmatter(read(`${phase}/${entry[1]}`))).toContain(`wave: ${entry[2]}`);
       expect(entry[3]?.trim().length).toBeGreaterThan(10);
     }
-    expect(block).toContain(`**Plans**: ${plans.length} plans, 8 waves`);
+    const waves = Math.max(
+      ...entries.map((entry) => Number(entry[2])),
+    );
+    expect(block).toContain(`**Plans**: ${plans.length} plans, ${waves} waves`);
     expect(block).not.toContain("**Plans**: TBD");
     expect(roadmap).toContain(
       `| 05.1. Codex Co-Work & Usage (INSERTED) | 0/${plans.length} | Not started | - |`,
