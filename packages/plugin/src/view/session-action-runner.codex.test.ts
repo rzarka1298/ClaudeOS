@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LaunchTimerControls } from "../projects/launch-status.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { clearCodexActionStatus, codexActionStatus } from "./codex-action-status.js";
+import type { CodexFollowChoice } from "./codex-modals.js";
 import { CODEX_REASONS, codexReasonFor } from "./codex-modals.js";
 import {
   type CodexActionDeps,
@@ -279,5 +280,159 @@ describe("Task 1 (tracer): Codex open transcript", () => {
     expect(codexActionStatus.value).toEqual({ kind: "pending", text: "Opening transcript…" });
     await done;
     expect(codexActionStatus.value?.kind).toBe("success");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: Follow live log
+// ---------------------------------------------------------------------------
+
+function followDescriptor(wrapperRunId: string | null = WRAPPER_RUN_ID): QuickActionDescriptor {
+  return {
+    id: "codex-follow-log",
+    label: "Follow live log",
+    capability: "codex:follow-log",
+    ...(wrapperRunId === null ? {} : { target: { wrapperRunId } }),
+  };
+}
+
+interface FollowHarness {
+  readonly deps: SessionActionDeps;
+  readonly notify: ReturnType<typeof vi.fn>;
+  readonly followLog: ReturnType<typeof vi.fn>;
+  readonly openTranscript: ReturnType<typeof vi.fn>;
+  readonly openFollowWarning: ReturnType<typeof vi.fn>;
+  readonly fake: FakeTimers;
+}
+
+function followHarness(
+  options: {
+    answer?: CodexFollowChoice;
+    followLog?: CodexActionDeps["followLog"];
+    omitCodex?: boolean;
+    omitOpener?: boolean;
+  } = {},
+): FollowHarness {
+  const base = harness({ omitCodex: true });
+  const fake = fakeTimers();
+  const followLog = vi.fn(options.followLog ?? (async () => ({ ok: true })));
+  const openTranscript = vi.fn(async () => ({ ok: true }));
+  const openFollowWarning = vi.fn().mockResolvedValue(options.answer ?? "follow");
+  const deps: SessionActionDeps = {
+    ...base.deps,
+    ui: {
+      ...base.deps.ui,
+      ...(options.omitOpener === true ? {} : { openCodexFollowWarning: openFollowWarning }),
+    },
+    ...(options.omitCodex === true
+      ? {}
+      : { codex: { openTranscript, followLog, timers: fake.timers } }),
+  };
+  return { deps, notify: base.notify, followLog, openTranscript, openFollowWarning, fake };
+}
+
+describe("Task 2: Codex follow live log", () => {
+  it("Test 1: acknowledges synchronously, warns once, calls followLog with the run id, reports success", async () => {
+    const h = followHarness({ answer: "follow" });
+
+    const done = runSessionAction(followDescriptor(), h.deps);
+    expect(codexActionStatus.value).toEqual({ kind: "pending", text: "Opening live log…" });
+    await done;
+
+    expect(h.openFollowWarning).toHaveBeenCalledTimes(1);
+    expect(h.followLog).toHaveBeenCalledExactlyOnceWith({ runId: WRAPPER_RUN_ID });
+    expect(codexActionStatus.value).toEqual({
+      kind: "success",
+      text: "✓ Live log opened in Antigravity",
+    });
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it("Test 1: cancel calls nothing and clears the status", async () => {
+    const h = followHarness({ answer: "cancel" });
+    await runSessionAction(followDescriptor(), h.deps);
+    expect(h.followLog).not.toHaveBeenCalled();
+    expect(codexActionStatus.value).toBeNull();
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it("Test 1: the follow warning shows on every press", async () => {
+    const h = followHarness();
+    await runSessionAction(followDescriptor(), h.deps);
+    await runSessionAction(followDescriptor(), h.deps);
+    expect(h.openFollowWarning).toHaveBeenCalledTimes(2);
+    const vm = h.openFollowWarning.mock.calls[0]?.[0] as { title: string };
+    expect(vm.title).toBe("Follow this live log?");
+  });
+
+  it("Test 3: failure writes the follow failure line and a Notice with the same text", async () => {
+    const h = followHarness({
+      followLog: async () => {
+        throw new CodexRequestError(409, "run-ended");
+      },
+    });
+    await runSessionAction(followDescriptor(), h.deps);
+    const text = "▲ Couldn't follow the live log: the run has ended.";
+    expect(codexActionStatus.value).toEqual({ kind: "failure", text });
+    expect(h.notify).toHaveBeenCalledExactlyOnceWith(text);
+  });
+
+  it("Test 3: run-ended, bridge-not-installed, bridge-outdated and window-not-ready each map to their fixed reason", async () => {
+    const expected: Record<string, string> = {
+      "run-ended": "the run has ended",
+      "bridge-not-installed": "the bridge isn't installed",
+      "bridge-outdated": "the bridge is out of date",
+      "window-not-ready": "Antigravity is still starting",
+    };
+    for (const [code, reason] of Object.entries(expected)) {
+      const h = followHarness({
+        followLog: async () => {
+          throw new CodexRequestError(409, code as never);
+        },
+      });
+      await runSessionAction(followDescriptor(), h.deps);
+      expect(codexActionStatus.value?.text).toBe(`▲ Couldn't follow the live log: ${reason}.`);
+    }
+  });
+
+  it("Test 3: an unknown failure maps to the service-didn't-respond reason and leaks nothing", async () => {
+    const h = followHarness({
+      followLog: () => Promise.reject(new Error(`ENOENT ${RAW_PATH} ${WRAPPER_RUN_ID}`)),
+    });
+    await runSessionAction(followDescriptor(), h.deps);
+    const seen = [codexActionStatus.value?.text ?? "", ...h.notify.mock.calls.map(String)].join();
+    expect(seen).toContain("the service didn't respond");
+    expect(seen).not.toContain(WRAPPER_RUN_ID);
+    expect(seen).not.toContain("/Users/");
+    expect(seen).not.toContain("ENOENT");
+  });
+
+  it("a descriptor without a wrapper run id, or deps without the codex member, say unavailable and call nothing", async () => {
+    const noTarget = followHarness();
+    await runSessionAction(followDescriptor(null), noTarget.deps);
+    const noCodex = followHarness({ omitCodex: true });
+    await runSessionAction(followDescriptor(), noCodex.deps);
+    const noOpener = followHarness({ omitOpener: true });
+    await runSessionAction(followDescriptor(), noOpener.deps);
+    for (const h of [noTarget, noCodex, noOpener]) {
+      expect(h.followLog).not.toHaveBeenCalled();
+      expect(h.notify).toHaveBeenCalledExactlyOnceWith("Follow live log isn't available yet.");
+    }
+    expect(codexActionStatus.value).toBeNull();
+  });
+
+  it("a thread-id target is not a wrapper run id and is refused", async () => {
+    const h = followHarness();
+    await runSessionAction({ ...followDescriptor(), target: { threadId: THREAD_ID } }, h.deps);
+    expect(h.followLog).not.toHaveBeenCalled();
+    expect(h.notify).toHaveBeenCalledExactlyOnceWith("Follow live log isn't available yet.");
+  });
+
+  it("the success line clears after the injected 6 second timer", async () => {
+    const h = followHarness();
+    await runSessionAction(followDescriptor(), h.deps);
+    expect(codexActionStatus.value?.kind).toBe("success");
+    h.fake.fire();
+    expect(codexActionStatus.value).toBeNull();
   });
 });

@@ -1,4 +1,9 @@
-import type { ModalButtonView, TranscriptWarningViewModel } from "./session-modals.js";
+import { type App, Modal } from "obsidian";
+import type {
+  ModalButtonView,
+  TranscriptChoice,
+  TranscriptWarningViewModel,
+} from "./session-modals.js";
 
 /**
  * The Codex warnings and the fixed outcome copy behind `Open transcript` and
@@ -7,7 +12,7 @@ import type { ModalButtonView, TranscriptWarningViewModel } from "./session-moda
  * Both warnings show on EVERY open. No view model here has a remember,
  * don't-ask-again or persisted field -- there is nothing for a caller to
  * store (the Phase 5 SESS-15 rule, carried over). The modals are Obsidian
- * chrome: native styling, no `--ccc-*` token (UI-SPEC non-negotiable 11).
+ * chrome: native styling, no design token (UI-SPEC non-negotiable 11).
  */
 
 const TRANSCRIPT_TITLE = "Open this transcript?";
@@ -95,6 +100,51 @@ export const CODEX_FOLLOW_COPY: CodexActionCopy = {
 
 export interface CodexFollowWarningViewModel {
   readonly title: string;
+  readonly bodies: readonly [string, string];
+  readonly buttons: readonly [ModalButtonView, ModalButtonView];
+  readonly initialFocus: "cancel";
 }
 
 export type CodexFollowChoice = "follow" | "cancel";
+
+/** RED stub (plan 05.1-19 task 2): signature only. */
+export function codexFollowWarningViewModel(): CodexFollowWarningViewModel {
+  return {
+    title: "",
+    bodies: ["", ""],
+    buttons: [
+      { label: "", cta: false, destructive: false },
+      { label: "", cta: false, destructive: false },
+    ],
+    initialFocus: "cancel",
+  };
+}
+
+/** RED stub (plan 05.1-19 task 2): signature only. */
+export class CodexFollowWarningModal extends Modal {
+  constructor(
+    app: App,
+    _vm: CodexFollowWarningViewModel,
+    _decide: (choice: CodexFollowChoice) => void,
+  ) {
+    super(app);
+  }
+}
+
+/** The two production openers, both always present (the runner's `ui` members are optional). */
+export interface CodexUi {
+  readonly openCodexTranscriptWarning: (
+    vm: TranscriptWarningViewModel,
+  ) => Promise<TranscriptChoice>;
+  readonly openCodexFollowWarning: (vm: CodexFollowWarningViewModel) => Promise<CodexFollowChoice>;
+}
+
+/** RED stub (plan 05.1-19 task 2): signature only. */
+export function createObsidianCodexUi(_app: App): CodexUi {
+  return {
+    openCodexTranscriptWarning: (_vm: TranscriptWarningViewModel): Promise<TranscriptChoice> =>
+      Promise.resolve("cancel"),
+    openCodexFollowWarning: (_vm: CodexFollowWarningViewModel): Promise<CodexFollowChoice> =>
+      Promise.resolve("cancel"),
+  };
+}
