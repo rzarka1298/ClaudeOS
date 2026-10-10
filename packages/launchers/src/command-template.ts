@@ -58,6 +58,22 @@ export const FORBIDDEN_PERMISSION_TOKENS = [
   "bypasspermissions",
 ] as const;
 
+/**
+ * The Codex ban set, written normalised (lower-case alphanumerics only): the
+ * approval-and-sandbox bypass flag, the hook-trust bypass, the three
+ * "skip every prompt" spellings and the unrestricted sandbox value. The codex
+ * template kind and the agent-launch validator both read this one list; the
+ * flag spellings are never written out in source (D-11, T-05.1-15).
+ */
+export const FORBIDDEN_CODEX_TOKENS = [
+  "dangerouslybypassapprovalsandsandbox",
+  "dangerouslybypasshooktrust",
+  "yolo",
+  "fullauto",
+  "approveforme",
+  "dangerfullaccess",
+] as const;
+
 /** Executable plus arguments never exceed this many elements (UI-SPEC S7). */
 export const MAX_TEMPLATE_ARGS = MAX_TEMPLATE_ARGUMENTS;
 
@@ -110,7 +126,12 @@ function hasLineBreak(element: string): boolean {
   return element.includes("\n") || element.includes("\r") || element.includes(NUL);
 }
 
-function normaliseForFlagMatch(element: string): string {
+/**
+ * The one normalisation every flag and ban-token match uses: NFKC, lower-case,
+ * every non-alphanumeric removed. Shared with the agent-launch validator so the
+ * two never drift (D-08, D-11).
+ */
+export function normaliseForFlagMatch(element: string): string {
   return element
     .normalize("NFKC")
     .toLowerCase()
