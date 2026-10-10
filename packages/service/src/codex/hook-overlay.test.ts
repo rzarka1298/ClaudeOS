@@ -354,7 +354,8 @@ describe("Test 4: the rule table and precedence (table-driven)", () => {
       inactivityMs: INACTIVITY,
     });
     const input = view();
-    expect(overlay(input, { limitHitAfter: false })).toEqual(input);
+    const context = { limitHitAfter: false, threadId: "thread-a", lastLifecycleAt: null };
+    expect(overlay(input, context)).toEqual(input);
     expect(latestFor).toHaveBeenCalledWith("thread-a");
   });
 });
