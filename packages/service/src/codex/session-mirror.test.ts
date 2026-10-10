@@ -593,6 +593,10 @@ describe("Test 3 (task 2): titles exist only with transcript analysis on", () =>
     );
     expect(CodexSessionsSnapshotSchema.safeParse(snapshot).success).toBe(true);
     flag.on = false;
+    // Off takes effect for the cached snapshot at once, before any new poll.
+    const immediately = available(built.mirror);
+    expect(immediately.analysisOn).toBe(false);
+    for (const session of immediately.sessions) expect(session.title).toBeNull();
     built.clock.now = NOW + INTERVAL;
     await built.mirror.pollNow();
     const off = available(built.mirror);

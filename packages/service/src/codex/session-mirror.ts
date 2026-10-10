@@ -1,10 +1,17 @@
-import { CODEX_INACTIVITY_MS, deriveLifecycle } from "@ccc/collectors";
+import {
+  CODEX_INACTIVITY_MS,
+  deriveLifecycle,
+  evaluateCliRecognition,
+  UNVERSIONED,
+} from "@ccc/collectors";
 import {
   CODEX_SESSION_STATES,
   CODEX_SESSIONS_CAP,
   type CodexSessionOrigin,
   type CodexSessionsSnapshot,
+  CodexSessionsSnapshotSchema,
   type CodexSessionsUpdatedPayload,
+  CodexSessionsUpdatedPayloadSchema,
   type CodexSessionView,
   CodexSessionViewSchema,
 } from "@ccc/domain";
@@ -17,7 +24,12 @@ import {
   type RolloutTailEntry,
   readRolloutTail,
 } from "./rollout-tail.js";
-import { type CodexStoreReader, MAX_THREAD_LIMIT, type ThreadRow } from "./store-reader.js";
+import {
+  type CodexStoreReader,
+  MAX_THREAD_LIMIT,
+  type ThreadRow,
+  type ThreadsRead,
+} from "./store-reader.js";
 
 /**
  * The Codex session mirror (plan 05.1-22, CODEX-04, CODEX-05, CODEX-07, D-14
@@ -85,7 +97,9 @@ export interface CodexSessionMirrorDeps {
   /** False when Codex is not installed: no read is attempted and the snapshot is not-installed. */
   readonly installed?: () => boolean;
   /** Reason codes only. */
-  readonly logger?: { warn(fields: { readonly reason: string }, message: string): void };
+  readonly logger?: {
+    warn(fields: { readonly reason: string; readonly errorName?: string }, message: string): void;
+  };
 }
 
 /** Applied in order to each built view; may only return a valid view for the same thread. */
@@ -110,11 +124,18 @@ export interface CodexSessionMirror {
   invalidate(): void;
 }
 
-/** RED stub: the `CCC_CODEX_INACTIVITY_MS` override resolver (plan 05.1-22 task 2). */
+/**
+ * The inactivity window: `CCC_CODEX_INACTIVITY_MS` when it is a whole number of
+ * milliseconds between one second and thirty days, else the thirty minute
+ * default (Assumption A5). An off-shape value is ignored, never guessed at.
+ */
 export function resolveCodexInactivityMs(
-  _env: Readonly<Record<string, string | undefined>>,
+  env: Readonly<Record<string, string | undefined>>,
 ): number {
-  throw new Error("not implemented");
+  const raw = env.CCC_CODEX_INACTIVITY_MS;
+  if (typeof raw !== "string" || !/^\d{1,12}$/.test(raw)) return CODEX_INACTIVITY_MS;
+  const value = Number(raw);
+  return value >= 1000 && value <= 30 * DAY_MS ? value : CODEX_INACTIVITY_MS;
 }
 
 /** What the mirror keeps privately per thread. Never placed on any output. */
@@ -127,6 +148,7 @@ interface PrivateEntry {
 /** A built view plus the facts the overlay seam may want. */
 interface BaseView {
   readonly view: CodexSessionView;
+  readonly limitHitAfter: boolean;
 }
 
 interface BaseState {
@@ -139,6 +161,18 @@ interface BaseState {
 }
 
 type AvailableSnapshot = Extract<CodexSessionsSnapshot, { kind: "available" }>;
+type UnavailableSnapshot = Extract<CodexSessionsSnapshot, { kind: "unavailable" }>;
+
+type Current =
+  | { readonly kind: "available"; readonly base: BaseState; readonly assembled: AvailableSnapshot }
+  | { readonly kind: "unavailable"; readonly snapshot: UnavailableSnapshot };
+
+/** The change key: everything a viewer sees except the two clock-derived members. */
+function changeKey(snapshot: CodexSessionsSnapshot): string {
+  return snapshot.kind === "unavailable"
+    ? JSON.stringify(snapshot)
+    : JSON.stringify({ ...snapshot, observedAt: null, freshness: null });
+}
 
 const STATE_RANK: Readonly<Record<string, number>> = Object.fromEntries(
   CODEX_SESSION_STATES.map((state, index) => [state, index]),
@@ -200,8 +234,12 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     string,
     { readonly projectId: string | null; readonly atMs: number }
   >();
-  let base: BaseState | null = null;
+  let current: Current | null = null;
   let inFlight: Promise<void> | null = null;
+  let lastAttemptMs: number | null = null;
+  let timerHandle: unknown = null;
+  let lastPublishedKey: string | null = null;
+  const overlays: SessionOverlay[] = [];
 
   async function projectFor(cwd: string, nowMs: number): Promise<string | null> {
     const known = attributions.get(cwd);
@@ -217,21 +255,44 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     return projectId;
   }
 
+  /** Runs the overlays over one base view; a failing or invalid overlay is skipped for it. */
+  function overlaid(entry: BaseView, analysisOn: boolean, failures: { count: number }) {
+    let view = entry.view;
+    for (const overlay of overlays) {
+      try {
+        const parsed = CodexSessionViewSchema.safeParse(
+          overlay(view, { limitHitAfter: entry.limitHitAfter }),
+        );
+        if (parsed.success && parsed.data.threadId === view.threadId) view = parsed.data;
+        else failures.count += 1;
+      } catch {
+        failures.count += 1;
+      }
+    }
+    // Whatever an overlay did, a prompt-derived title needs analysis to be on (D-17).
+    return analysisOn || view.title === null ? view : { ...view, title: null };
+  }
+
   function assemble(state: BaseState): AvailableSnapshot {
-    const ordered = [...state.views]
-      .map((entry) => entry.view)
+    const analysisOn = state.analysisOn && deps.analysisOn();
+    const failures = { count: 0 };
+    const ordered = state.views
+      .map((entry) => overlaid(entry, analysisOn, failures))
       .sort((a, b) => {
         const rank = (STATE_RANK[a.state] ?? 99) - (STATE_RANK[b.state] ?? 99);
         if (rank !== 0) return rank;
         return Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt);
       });
+    if (failures.count > 0) {
+      deps.logger?.warn({ reason: "overlay-skipped" }, "codex session overlay skipped");
+    }
     const sessions = ordered.slice(0, CODEX_SESSIONS_CAP);
     const overflow = ordered.length - sessions.length;
     return {
       kind: "available",
       sessions,
       hiddenCount: state.hiddenBase + overflow,
-      analysisOn: state.analysisOn,
+      analysisOn,
       observedAt: new Date(state.observedAtMs).toISOString(),
       freshness: "live",
       partiality: state.partial
@@ -246,16 +307,91 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     return age <= 3 * intervalMs ? "cached" : "stale";
   }
 
+  function snapshot(): CodexSessionsSnapshot | null {
+    if (current === null) return null;
+    if (current.kind === "unavailable") return current.snapshot;
+    const freshness = ageOf(current.base.observedAtMs);
+    const assembled = current.assembled;
+    // Turning analysis off takes effect at once, not at the next poll (D-17).
+    if (assembled.analysisOn && !deps.analysisOn()) {
+      return {
+        ...assembled,
+        freshness,
+        analysisOn: false,
+        sessions: assembled.sessions.map((session) => ({ ...session, title: null })),
+      };
+    }
+    return { ...assembled, freshness };
+  }
+
+  /** The one gate before the wire: the strict domain schema, then a change check. */
+  function publishIfChanged(): void {
+    const value = snapshot();
+    if (value === null) return;
+    const key = changeKey(value);
+    if (key === lastPublishedKey) return;
+    const payload = CodexSessionsUpdatedPayloadSchema.safeParse(value);
+    if (!payload.success) {
+      deps.logger?.warn({ reason: "payload-invalid" }, "codex sessions event not published");
+      return;
+    }
+    lastPublishedKey = key;
+    deps.publish("codex.sessions.updated", payload.data);
+  }
+
+  function setUnavailable(reason: UnavailableSnapshot["reason"], version: string | null): void {
+    const candidate = { kind: "unavailable" as const, reason, version };
+    const parsed = CodexSessionsSnapshotSchema.safeParse(candidate);
+    // A version that is off-shape is dropped, never shown.
+    const safe = parsed.success
+      ? candidate
+      : { kind: "unavailable" as const, reason, version: null };
+    current = { kind: "unavailable", snapshot: safe };
+  }
+
   async function poll(): Promise<void> {
     const nowMs = deps.now();
-    const analysis = deps.analysisOn();
-    const read = deps.reader.readThreads({
-      sinceMs: nowMs - SESSION_WINDOW_MS,
-      limit: maxThreads,
-      includePromptDerived: analysis,
-    });
-    if (read.kind !== "ok") return;
+    try {
+      if (deps.installed?.() === false) {
+        cache = new Map();
+        attributions = new Map();
+        setUnavailable("not-installed", null);
+        return;
+      }
+      const analysis = deps.analysisOn();
+      const read = deps.reader.readThreads({
+        sinceMs: nowMs - SESSION_WINDOW_MS,
+        limit: maxThreads,
+        includePromptDerived: analysis,
+      });
+      if (read.kind !== "ok") {
+        if (read.reason === "format-changed")
+          setUnavailable("format-changed", read.newestCliVersion);
+        else if (read.reason === "no-store") {
+          cache = new Map();
+          attributions = new Map();
+          setUnavailable("no-data", null);
+        }
+        // Busy and read-failed keep whatever is there; it ages by the clock.
+        return;
+      }
+      await build(read, nowMs, analysis);
+    } catch (error: unknown) {
+      deps.logger?.warn(
+        { reason: "poll-threw", errorName: error instanceof Error ? error.name : "non-error" },
+        "codex sessions poll failed",
+      );
+    } finally {
+      lastAttemptMs = deps.now();
+      publishIfChanged();
+    }
+  }
 
+  async function build(
+    read: Extract<ThreadsRead, { kind: "ok" }>,
+    nowMs: number,
+    analysis: boolean,
+  ): Promise<void> {
     const next = new Map<string, PrivateEntry>();
     const staged: Array<{ row: ThreadRow; tail: RolloutTailEntry | undefined; has: boolean }> = [];
     let reads = 0;
@@ -296,6 +432,27 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
       }
       next.set(row.id, { rolloutPath: row.rolloutPath, cwd: row.cwd, tail });
       staged.push({ row, tail, has });
+    }
+
+    // Eviction: only the threads this poll returned stay reachable.
+    cache = next;
+    const seenCwds = new Set([...next.values()].map((entry) => entry.cwd));
+    attributions = new Map([...attributions].filter(([cwd]) => seenCwds.has(cwd)));
+
+    // Per-version recognition (D-16): a version whose rollouts stopped parsing reads unavailable.
+    const byVersion: Record<string, { sessions: number; recognized: number }> = {};
+    for (const { row, tail } of staged) {
+      if (tail === undefined || tail.lines === 0) continue;
+      const key = row.cliVersion ?? UNVERSIONED;
+      const tally = byVersion[key] ?? { sessions: 0, recognized: 0 };
+      tally.sessions += 1;
+      if (tail.recognized > 0) tally.recognized += 1;
+      byVersion[key] = tally;
+    }
+    const verdict = evaluateCliRecognition(byVersion);
+    if (verdict.kind === "unavailable") {
+      setUnavailable("format-changed", verdict.version);
+      return;
     }
 
     const views: BaseView[] = [];
@@ -339,21 +496,17 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
         notListed += 1;
         continue;
       }
-      views.push({ view: parsed.data });
+      views.push({ view: parsed.data, limitHitAfter: lifecycle.limitHitAfter });
     }
 
-    // Eviction: only the threads this poll returned stay reachable.
-    cache = next;
-    const seenCwds = new Set([...next.values()].map((entry) => entry.cwd));
-    attributions = new Map([...attributions].filter(([cwd]) => seenCwds.has(cwd)));
-
-    base = {
+    const state: BaseState = {
       views,
       hiddenBase: read.hiddenCount + notListed,
       partial,
       analysisOn: analysis,
       observedAtMs: nowMs,
     };
+    current = { kind: "available", base: state, assembled: assemble(state) };
   }
 
   function pollNow(): Promise<void> {
@@ -365,11 +518,14 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     return attempt;
   }
 
+  /** Rebuilds the assembled snapshot from the cached base (no store read). */
+  function rebuild(): void {
+    if (current === null || current.kind !== "available") return;
+    current = { ...current, assembled: assemble(current.base) };
+  }
+
   return {
-    snapshot() {
-      if (base === null) return null;
-      return { ...assemble(base), freshness: ageOf(base.observedAtMs) };
-    },
+    snapshot,
     pollNow,
     resolveThread(threadId) {
       const entry = cache.get(threadId);
@@ -377,19 +533,31 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     },
     cacheSize: () => cache.size,
     start() {
-      throw new Error("not implemented");
+      if (timerHandle !== null) return;
+      timerHandle = deps.timers.setInterval(() => {
+        if (deps.subscribers() > 0) void pollNow();
+      }, intervalMs);
     },
     stop() {
-      throw new Error("not implemented");
+      if (timerHandle === null) return;
+      deps.timers.clearInterval(timerHandle);
+      timerHandle = null;
     },
     refreshIfStale() {
-      throw new Error("not implemented");
+      const stale =
+        current === null || lastAttemptMs === null || deps.now() - lastAttemptMs > 3 * intervalMs;
+      if (stale) void pollNow();
     },
-    addOverlay() {
-      throw new Error("not implemented");
+    addOverlay(overlay) {
+      overlays.push(overlay);
+      return () => {
+        const index = overlays.indexOf(overlay);
+        if (index >= 0) overlays.splice(index, 1);
+      };
     },
     invalidate() {
-      throw new Error("not implemented");
+      rebuild();
+      publishIfChanged();
     },
   };
 }
