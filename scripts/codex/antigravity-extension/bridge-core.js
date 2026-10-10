@@ -10,8 +10,10 @@
 //   windows/<key>.json      heartbeat per IDE window: its workspace folders
 //
 // Nothing in a request is ever executed or interpolated into a shell. The
-// terminal runs the fixed `codex-bridge` launcher with argv ["follow", runId],
-// where runId has been checked against a strict digits-only pattern.
+// terminal runs the fixed `codex-bridge` launcher with argv ["follow" | "tui" | "agent", runId],
+// where runId has been checked against a strict digits-only pattern. An agent request
+// (protocol 2) carries a validated argv and CCC_ environment, but only the helper reads them,
+// after re-validating with validateAgentShape; no request field reaches a shell or a URI.
 
 const fs = require("node:fs");
 const os = require("node:os");
@@ -135,9 +137,127 @@ function readJson(file) {
   }
 }
 
-/** STUB (RED): replaced by the real shape validator in the GREEN commit. */
-function validateAgentShape() {
-  return { ok: false, reason: "bad-agent" };
+// C0 (including TAB), DEL, C1, U+2028 and U+2029.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: this IS the control-character refusal.
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+function normaliseForBanMatch(element) {
+  return element
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * The pure shape rules for an agent request's { agent, argv, env }. No filesystem
+ * access; the reason is one of AGENT_REASONS. This is the function the hostile corpus
+ * (scripts/codex/hostile-corpus.json) is run through, here and, in plan 05.1-09, in
+ * the TypeScript validator. Check order (reasons are order-sensitive for a case with
+ * more than one defect): agent, argv shape, per element (type/size, then control
+ * characters), argv[0] absolute, argv[0] basename, ban tokens, env.
+ */
+function validateAgentShape(input) {
+  const no = (reason) => ({ ok: false, reason });
+  if (!input || typeof input !== "object") return no("bad-agent");
+  const { agent, argv, env } = input;
+  if (typeof agent !== "string" || !AGENTS.includes(agent)) return no("bad-agent");
+  if (!Array.isArray(argv)) return no("bad-argv");
+  if (argv.length < 1 || argv.length > AGENT_ARGV_MAX) return no("argv-length");
+  for (const element of argv) {
+    if (typeof element !== "string" || element.length < 1 || element.length > AGENT_ELEMENT_MAX)
+      return no("argv-element");
+    if (CONTROL_RE.test(element)) return no("argv-control");
+  }
+  const exe = argv[0];
+  if (!exe.startsWith("/")) return no("argv0-not-absolute");
+  const segments = exe.split("/").slice(1);
+  if (segments.some((seg) => seg === "" || seg === "." || seg === ".."))
+    return no("argv0-not-absolute");
+  if (segments[segments.length - 1] !== agent) return no("argv0-basename");
+  for (const element of argv) {
+    const normalised = normaliseForBanMatch(element);
+    if (BANNED_TOKENS.some((token) => normalised.includes(token))) return no("banned-flag");
+  }
+  if (
+    !env ||
+    typeof env !== "object" ||
+    Array.isArray(env) ||
+    (Object.getPrototypeOf(env) !== Object.prototype && Object.getPrototypeOf(env) !== null)
+  )
+    return no("bad-env");
+  const keys = Object.keys(env);
+  if (keys.length > AGENT_ENV_MAX) return no("bad-env");
+  for (const key of keys) if (!AGENT_ENV_KEY_RE.test(key)) return no("env-key");
+  for (const key of keys) {
+    const value = env[key];
+    if (typeof value !== "string" || value.length > AGENT_ENV_VALUE_MAX || CONTROL_RE.test(value))
+      return no("env-value");
+  }
+  return { ok: true };
+}
+
+// The only top-level keys an agent request may carry; the product generates exactly these.
+const AGENT_REQUEST_KEYS = [
+  "runId",
+  "kind",
+  "mode",
+  "agent",
+  "projectRoot",
+  "cwd",
+  "argv",
+  "env",
+  "sessionId",
+  "liveLog",
+  "pid",
+  "createdAt",
+  "protocol",
+];
+
+/** The agent branch of validateRequest: fixed shape, protocol 2, no log, session or pid. */
+function validateAgentRequest(raw, { now, ttlMs, checkAge }) {
+  const no = (reason, expired = false) => ({ ok: false, reason, expired });
+  for (const key of Object.keys(raw)) {
+    if (!AGENT_REQUEST_KEYS.includes(key)) return no("agent request has an unknown key");
+  }
+  if (raw.kind !== "agent" || raw.mode !== "agent") return no("kind and mode must both be agent");
+  if (raw.protocol !== PROTOCOL_VERSION) return no("agent request needs protocol 2");
+  for (const key of ["sessionId", "liveLog", "pid"]) {
+    if (raw[key] !== undefined && raw[key] !== null) return no(`agent request has a ${key}`);
+  }
+  const projectRoot = realDir(raw.projectRoot);
+  if (!projectRoot) return no("projectRoot is not an absolute existing directory");
+  const cwd = raw.cwd === undefined || raw.cwd === null ? projectRoot : realDir(raw.cwd);
+  if (!cwd) return no("cwd is not an absolute existing directory");
+  const shape = validateAgentShape({ agent: raw.agent, argv: raw.argv, env: raw.env });
+  if (!shape.ok) return no(`agent shape: ${shape.reason}`);
+  if (!isExecutable(raw.argv[0])) return no("argv[0] is not an executable file");
+  const created = typeof raw.createdAt === "string" ? Date.parse(raw.createdAt) : Number.NaN;
+  if (!Number.isFinite(created)) return no("bad createdAt");
+  if (checkAge) {
+    if (now - created > ttlMs) return no("expired", true);
+    if (created - now > FUTURE_SKEW_MS) return no("createdAt is in the future");
+  }
+  return {
+    ok: true,
+    request: {
+      runId: raw.runId,
+      kind: "agent",
+      mode: "agent",
+      agent: raw.agent,
+      projectRoot,
+      cwd,
+      argv: [...raw.argv],
+      env: { ...raw.env },
+      sessionId: null,
+      liveLog: null,
+      pid: null,
+      createdAt: raw.createdAt,
+      protocol: PROTOCOL_VERSION,
+      role: null,
+      promptFile: null,
+      codexHome: null,
+    },
+  };
 }
 
 /**
@@ -149,6 +269,9 @@ function validateRequest(raw, { stateDir, now = Date.now(), ttlMs = TTL_MS, chec
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return no("not an object");
   if (typeof raw.runId !== "string" || !RUN_ID_RE.test(raw.runId)) return no("bad runId");
   if (!KINDS.includes(raw.kind)) return no("bad kind");
+  // Agent mode is a separate, fixed-shape branch; follow and tui validation below is unchanged.
+  if (raw.kind === "agent" || raw.mode === "agent")
+    return validateAgentRequest(raw, { now, ttlMs, checkAge });
   const projectRoot = realDir(raw.projectRoot);
   if (!projectRoot) return no("projectRoot is not an absolute existing directory");
   const cwd = raw.cwd === undefined || raw.cwd === null ? projectRoot : realDir(raw.cwd);
@@ -289,8 +412,21 @@ function readClaimed(stateDir, runId) {
   return v;
 }
 
+const AGENT_TAB_NAMES = { claude: "Claude Code", codex: "Codex" };
+
 /** The terminal a claimed request opens: fixed helper, argv only, no shell. */
 function terminalOptions(request, command) {
+  if (request.mode === "agent") {
+    // Nothing from the request reaches the terminal but the run id: the helper re-reads the
+    // claimed request and re-validates it before it starts anything.
+    return {
+      name: AGENT_TAB_NAMES[request.agent] ?? "Agent",
+      shellPath: command,
+      shellArgs: ["agent", request.runId],
+      cwd: request.cwd,
+      isTransient: true,
+    };
+  }
   return {
     name: `Codex · ${request.kind} · ${request.runId.slice(9, 15)}`,
     shellPath: command,
