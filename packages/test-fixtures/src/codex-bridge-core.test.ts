@@ -617,7 +617,7 @@ describe("agent mode requests (protocol 2)", () => {
       const full = core.validateRequest(w.request({ argv }), { stateDir: w.state, now: AGENT_NOW });
       expect(shape.ok, `${c.id} shape`).toBe(c.expect === "accept");
       expect(full.ok, `${c.id} request`).toBe(c.expect === "accept");
-      if (c.expect === "reject") expect(shape.reason, `${c.id} reason`).toBe(c.reason);
+      if (c.expect === "reject" && !shape.ok) expect(shape.reason, `${c.id} reason`).toBe(c.reason);
     }
   });
 
