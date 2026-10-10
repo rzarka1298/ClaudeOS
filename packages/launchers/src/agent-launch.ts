@@ -115,6 +115,7 @@ const VALUE_FLAGS: Readonly<Record<AgentName, readonly string[]>> = {
     "--session-id",
     "--append-system-prompt",
     "--add-dir",
+    "--worktree",
   ],
   codex: [
     "--model",
@@ -128,11 +129,16 @@ const VALUE_FLAGS: Readonly<Record<AgentName, readonly string[]>> = {
     "-s",
   ],
 };
-/** Flags that take no value. */
+/**
+ * Flags that take no value. --version is only valid as the sole argument (the launcher Test step);
+ * --fork-session is the Phase 5 fork launch (`--resume <uuid> --fork-session --session-id <uuid>`).
+ */
 const BOOLEAN_FLAGS: Readonly<Record<AgentName, readonly string[]>> = {
-  claude: ["-c", "--continue"],
-  codex: [],
+  claude: ["-c", "--continue", "--version", "--fork-session"],
+  codex: ["--version"],
 };
+/** `claude --worktree <name>` (the "new worktree" Start choice): a strict name, never a path or a flag. */
+const WORKTREE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const ALLOWED_FLAGS: Readonly<Record<AgentName, readonly string[]>> = {
   claude: [...VALUE_FLAGS.claude, ...BOOLEAN_FLAGS.claude],
   codex: [...VALUE_FLAGS.codex, ...BOOLEAN_FLAGS.codex],
@@ -206,6 +212,7 @@ function flagRuleViolation(agent: AgentName, argv: readonly string[]): AgentReas
       : element.slice(0, 2);
     if (!ALLOWED_FLAGS[agent].includes(spelled)) return "banned-flag";
     if (BOOLEAN_FLAGS[agent].includes(spelled) && inline !== undefined) return "banned-flag";
+    if (spelled === "--version" && argv.length !== 2) return "banned-flag";
     if (inline === undefined && valueFlags.includes(flag)) {
       consumedUpTo = i + 1;
       if (variadic.includes(flag)) {
@@ -236,6 +243,11 @@ function flagRuleViolation(agent: AgentName, argv: readonly string[]): AgentReas
         !(value !== undefined && CODEX_SANDBOXES.includes(value))
       ) {
         return "banned-flag";
+      }
+    }
+    if (agent === "claude" && flag === "--worktree") {
+      if (value === undefined || !WORKTREE_NAME_RE.test(value) || value.includes("..")) {
+        return "bad-argv";
       }
     }
     if (agent === "claude" && ["--resume", "-r", "--session-id"].includes(flag)) {

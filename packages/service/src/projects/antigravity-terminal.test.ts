@@ -156,10 +156,8 @@ describe("what is refused before anything is written", () => {
     ["a relative executable", { argv: ["claude"] }],
     ["the permission bypass flag", { argv: ["CLAUDE", "--dangerously-skip-permissions"] }],
     ["an unknown flag", { argv: ["CLAUDE", "--exec=rm"] }],
-    [
-      "the version flag, which the agent flag allowlist does not carry",
-      { argv: ["CLAUDE", "--version"] },
-    ],
+    ["the version flag with another argument", { argv: ["CLAUDE", "--version", "--model", "x"] }],
+    ["a worktree name that is a path", { argv: ["CLAUDE", "--worktree", "../x"] }],
     ["a shell metacharacter in an argument", { argv: ["CLAUDE", "--model", "a\nb"] }],
     ["a non-CCC environment key", { env: { PATH: "/tmp" } }],
     ["a working directory that is not a directory", { cwd: "/Users/USERNAME/missing" }],

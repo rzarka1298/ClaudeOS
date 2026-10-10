@@ -2837,6 +2837,331 @@
       "env": {},
       "expect": "reject",
       "reason": "banned-flag"
+    },
+    {
+      "id": "accept-claude-version-only",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--version"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-codex-version-only",
+      "category": "accept",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--version"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-claude-worktree-name",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", "feature-1.x_y"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-claude-worktree-equals",
+      "category": "accept",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree=Fix.2"],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-claude-worktree-max-64",
+      "category": "accept",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--worktree",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "accept-claude-fork-session",
+      "category": "accept",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--resume",
+        "11111111-2222-3333-4444-555555555555",
+        "--fork-session",
+        "--session-id",
+        "22222222-3333-4444-5555-666666666666"
+      ],
+      "env": {},
+      "expect": "accept"
+    },
+    {
+      "id": "version-claude-with-model",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--version", "--model", "x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "version-claude-after-flag",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "x", "--version"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "version-claude-as-flag-value",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "--version"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "version-claude-twice",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--version", "--version"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "version-codex-with-resume",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": [
+        "/Users/USERNAME/.local/bin/codex",
+        "--version",
+        "resume",
+        "11111111-2222-3333-4444-555555555555"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "version-codex-after-resume",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": [
+        "/Users/USERNAME/.local/bin/codex",
+        "resume",
+        "11111111-2222-3333-4444-555555555555",
+        "--version"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "version-claude-inline-value",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--version=1"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "version-claude-upper-case",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--VERSION"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "version-codex-underscore-variant",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--version="],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "worktree-codex-not-allowed",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--worktree", "x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "worktree-claude-missing-value",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-empty-inline",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree="],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-flag-as-value",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", "--model"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-dash-leading",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", "-x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-dash-leading-inline",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree=-x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-dot-leading",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", ".hidden"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-dotdot",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", ".."],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-dotdot-inside",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", "a..b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-slash",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", "a/b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-traversal",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", "../x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-absolute",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", "/Users/USERNAME/x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-space",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree", "a b"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-too-long",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--worktree",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-double-equals",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--worktree==x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "bad-argv"
+    },
+    {
+      "id": "worktree-claude-case-variant",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--WORKTREE", "x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "worktree-claude-underscore-variant",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--work_tree", "x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "fork-session-claude-inline-value",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--fork-session=x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "fork-session-codex-not-allowed",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--fork-session"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
     }
   ]
 }

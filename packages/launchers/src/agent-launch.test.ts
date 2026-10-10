@@ -684,3 +684,53 @@ describe("flag allowlists (review: unknown flags such as --exec= must be refused
     expect(reasonOf(claude("-c", "--continue"))).toBeNull();
   });
 });
+
+describe("flags the existing launch paths emit (--version, --worktree, --fork-session)", () => {
+  it("--version is accepted for both agents only as the sole argument", () => {
+    expect(reasonOf(claude("--version"))).toBeNull();
+    expect(reasonOf(codex("--version"))).toBeNull();
+    for (const argv of [
+      ["--version", "--model", "x"],
+      ["--model", "x", "--version"],
+      ["--model", "--version"],
+      ["--version", "--version"],
+      ["--version=1"],
+      ["--VERSION"],
+    ]) {
+      expect(reasonOf(claude(...argv)), argv.join(" ")).toBe("banned-flag");
+    }
+    expect(reasonOf(codex("--version", "resume", UUID))).toBe("banned-flag");
+    expect(reasonOf(codex("resume", UUID, "--version"))).toBe("banned-flag");
+  });
+
+  it("--worktree takes one strictly named value for claude only", () => {
+    expect(reasonOf(claude("--worktree", "feature-1.x_y"))).toBeNull();
+    expect(reasonOf(claude("--worktree=Fix.2"))).toBeNull();
+    expect(reasonOf(claude("--worktree", "a".repeat(64)))).toBeNull();
+    for (const bad of [
+      ["--worktree"],
+      ["--worktree="],
+      ["--worktree", "--model"],
+      ["--worktree", "-x"],
+      ["--worktree=-x"],
+      ["--worktree", ".hidden"],
+      ["--worktree", ".."],
+      ["--worktree", "a..b"],
+      ["--worktree", "a/b"],
+      ["--worktree", "../x"],
+      ["--worktree", "a b"],
+      ["--worktree", "a".repeat(65)],
+      ["--worktree==x"],
+    ]) {
+      expect(reasonOf(claude(...bad)), bad.join(" ")).toBe("bad-argv");
+    }
+    expect(reasonOf(claude("--WORKTREE", "x"))).toBe("banned-flag");
+    expect(reasonOf(codex("--worktree", "x"))).toBe("banned-flag");
+  });
+
+  it("--fork-session is a claude boolean flag", () => {
+    expect(reasonOf(claude("--resume", UUID, "--fork-session", "--session-id", UUID))).toBeNull();
+    expect(reasonOf(claude("--fork-session=x"))).toBe("banned-flag");
+    expect(reasonOf(codex("--fork-session"))).toBe("banned-flag");
+  });
+});

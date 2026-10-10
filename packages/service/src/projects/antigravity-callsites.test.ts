@@ -228,6 +228,33 @@ describe("Phase 5 resume and branch through the Phase 4 bridge", () => {
     });
   });
 
+  it("queues the new-worktree Start choice's claude --worktree <name> and the fork launch", async () => {
+    saveClaudeCode({ kind: "antigravity-terminal" });
+    openWindow(true);
+    const worktree = {
+      ...resumeRequest(),
+      argv: [fx.claudePath, "--worktree", "feature-x.1"],
+      env: { CCC_RUN_ID: "run-worktree-1", CCC_LAUNCH_SOURCE: "dashboard" },
+    };
+    await expect(bridge().terminalLauncher.launch(worktree)).resolves.toEqual({ ok: true });
+    const fork = {
+      ...resumeRequest(),
+      argv: [
+        fx.claudePath,
+        "--resume",
+        RESUME_SESSION,
+        "--fork-session",
+        "--session-id",
+        RESUME_SESSION,
+      ],
+      env: { CCC_RUN_ID: "run-fork-1", CCC_LAUNCH_SOURCE: "dashboard" },
+    };
+    await expect(bridge().terminalLauncher.launch(fork)).resolves.toEqual({ ok: true });
+    const argvs = claimedRequests().map((r) => r.argv);
+    expect(argvs).toContainEqual([fx.claudePath, "--worktree", "feature-x.1"]);
+    expect(argvs).toContainEqual(fork.argv);
+  });
+
   it("maps the bridge's typed errors to spawn-failed, the Phase 5 launch-port vocabulary (it cannot carry them)", async () => {
     saveClaudeCode({ kind: "antigravity-terminal" });
     // bridge-outdated: the installed 0.1.0 extension covers the project.
@@ -270,14 +297,18 @@ describe("the launcher Test step", () => {
   const run = (): Promise<LaunchResult> =>
     testLaunch("claude-code", { store, spawner, scriptDir, homeDir: fx.projectDir, capMs: 700 });
 
-  it("reaches the adapter with the saved claude and the version flag at the managed folder; the agent flag allowlist does not carry the version flag, so the adapter refuses and writes nothing", async () => {
+  it("reaches the adapter with the saved claude and the version flag at the managed folder and queues one agent request", async () => {
     saveClaudeCode({ kind: "antigravity-terminal" });
     openWindow(true);
-    // Not launcher-not-configured (which an absent adapter would give): the adapter itself ran and
-    // its validator refused the argv. Carried forward to plan 05.1-21 (Test step for Codex).
-    await expect(run()).resolves.toEqual({ ok: false, error: "spawn-failed" });
-    expect(fx.requestFiles()).toEqual([]);
-    expect(fx.claimedFiles()).toEqual([]);
+    await expect(run()).resolves.toEqual({ ok: true });
+    const requests = claimedRequests();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      kind: "agent",
+      agent: "claude",
+      argv: [fx.claudePath, "--version"],
+      cwd: fx.projectDir,
+    });
     expect(spawner.calls).toHaveLength(0);
   });
 

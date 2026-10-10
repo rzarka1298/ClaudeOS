@@ -595,6 +595,32 @@ describe("agent mode requests (protocol 2)", () => {
     }
   });
 
+  it("existing-launch-path flags: the --version, --worktree and --fork-session corpus cases get their verdict and reason from BOTH validateAgentShape and validateRequest", () => {
+    const corpus = JSON.parse(
+      readFileSync(join(REPO_ROOT, "scripts", "codex", "hostile-corpus.json"), "utf8"),
+    ) as {
+      cases: Array<{
+        id: string;
+        agent: "claude" | "codex";
+        argv: string[];
+        expect: "accept" | "reject";
+        reason?: string;
+      }>;
+    };
+    const cases = corpus.cases.filter((c) => /version|worktree|fork-session/.test(c.id));
+    expect(cases.filter((c) => c.expect === "accept").length).toBeGreaterThanOrEqual(6);
+    expect(cases.filter((c) => c.expect === "reject").length).toBeGreaterThanOrEqual(25);
+    for (const c of cases) {
+      const w = agentWorld(c.agent);
+      const argv = [w.exe, ...c.argv.slice(1)];
+      const shape = core.validateAgentShape({ agent: c.agent, argv, env: {} });
+      const full = core.validateRequest(w.request({ argv }), { stateDir: w.state, now: AGENT_NOW });
+      expect(shape.ok, `${c.id} shape`).toBe(c.expect === "accept");
+      expect(full.ok, `${c.id} request`).toBe(c.expect === "accept");
+      if (c.expect === "reject") expect(shape.reason, `${c.id} reason`).toBe(c.reason);
+    }
+  });
+
   it("scanRequests discards a hostile agent request with a reason and leaves a good one", () => {
     const w = agentWorld();
     core.writeRequest(w.state, w.request({ argv: [w.exe, "--yolo"] }));
