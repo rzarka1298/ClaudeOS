@@ -19,17 +19,21 @@
     "harness:build": "node harness/build.mjs && tsc -p harness/tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@ccc/collectors": "workspace:*",
     "@ccc/domain": "workspace:*",
+    "@ccc/launchers": "workspace:*",
     "@ccc/operational-store": "workspace:*",
     "@ccc/service": "workspace:*",
     "@ccc/service-api-client": "workspace:*",
     "@ccc/vault-repo": "workspace:*"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.13.4",
     "@ccc/adapters": "workspace:*",
     "@ccc/plugin": "workspace:*",
     "@preact/signals": "2.11.2",
+    "better-sqlite3": "13.0.3",
     "esbuild": "0.28.2",
     "preact": "10.29.8"
   }

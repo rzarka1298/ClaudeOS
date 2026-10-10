@@ -200,9 +200,15 @@ importers:
 
   packages/test-fixtures:
     dependencies:
+      '@ccc/collectors':
+        specifier: workspace:*
+        version: link:../collectors
       '@ccc/domain':
         specifier: workspace:*
         version: link:../domain
+      '@ccc/launchers':
+        specifier: workspace:*
+        version: link:../launchers
       '@ccc/operational-store':
         specifier: workspace:*
         version: link:../operational-store
@@ -225,9 +231,15 @@ importers:
       '@preact/signals':
         specifier: 2.11.2
         version: 2.11.2(preact@10.29.8)
+      '@types/better-sqlite3':
+        specifier: 9.6.0
+        version: 9.6.0
       '@types/node':
         specifier: 24.13.4
         version: 24.13.4
+      better-sqlite3:
+        specifier: 13.0.3
+        version: 13.0.3
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
