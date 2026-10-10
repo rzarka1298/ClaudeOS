@@ -9,6 +9,8 @@ import {
   type CoverageDay,
   type CoverageStatus,
   deleteUsageAnalytics,
+  getCollectorSetting,
+  setCollectorSetting,
   USAGE_BUCKET_MS,
 } from "./usage-store.js";
 
@@ -352,6 +354,165 @@ export function queryCodexTokenTotals(
   return row.rows === 0 ? null : { counters: toCounters(row), rows: row.rows };
 }
 
+// --- Rollout-owned usage ------------------------------------------------------
+
+/**
+ * One rollout's counted usage, replaced as a whole (plan 05.1-23 redesign). The
+ * scanner re-reads a changed rollout in full and hands over the usage per UTC
+ * quarter hour. The rows live in `codex_token_deltas` with the rollout's cursor
+ * key (the SHA-256 hex of its path, never the path) in the `thread_id` column:
+ * that column is an owner key. A 64-character lowercase hex owner is a rollout
+ * key; any other value is a thread id written by the previous (parser version 2)
+ * scanner, whose rows could not be attributed to a rollout.
+ *
+ * In ONE transaction the rollout's previous rows are deleted and the new ones
+ * written, and the previous scanner's rows of the threads this rollout carried
+ * (turn rows, deltas, cumulative marks) are retired because the rebuild now
+ * counts them. Rows of any other owner are untouched.
+ */
+export interface RolloutUsageInput {
+  readonly rolloutKey: string;
+  readonly buckets: ReadonlyMap<string, CodexTokenCounters>;
+  /** Thread ids whose previous-scanner rows this rebuild replaces. */
+  readonly supersededThreads: readonly string[];
+}
+
+export function replaceRolloutUsage(db: Database.Database, input: RolloutUsageInput): void {
+  assertCursorKey(input.rolloutKey);
+  for (const [bucket, counters] of input.buckets) {
+    assertBucket(bucket);
+    assertCounters(counters);
+  }
+  for (const threadId of input.supersededThreads) assertIdentifier("thread id", threadId);
+  const insert = db.prepare(
+    `INSERT INTO codex_token_deltas
+       (thread_id, bucket_start, input, cached_input, cache_write, output, reasoning_output, total)
+     VALUES (@owner, @bucketStart, @input, @cachedInput, @cacheWrite, @output, @reasoningOutput, @total)`,
+  );
+  db.transaction(() => {
+    db.prepare("DELETE FROM codex_token_deltas WHERE thread_id = ?").run(input.rolloutKey);
+    for (const [bucketStart, c] of input.buckets) {
+      if (COUNTER_KEYS.every((key) => c[key] === 0)) continue;
+      insert.run({
+        owner: input.rolloutKey,
+        bucketStart,
+        input: c.input,
+        cachedInput: c.cachedInput,
+        cacheWrite: c.cacheWrite,
+        output: c.output,
+        reasoningOutput: c.reasoningOutput,
+        total: c.total,
+      });
+    }
+    for (const threadId of new Set(input.supersededThreads)) {
+      // A rollout key can never retire another rollout's rows.
+      if (CURSOR_KEY_PATTERN.test(threadId)) continue;
+      db.prepare("DELETE FROM codex_token_turns WHERE thread_id = ?").run(threadId);
+      db.prepare("DELETE FROM codex_token_deltas WHERE thread_id = ?").run(threadId);
+      db.prepare("DELETE FROM codex_token_cumulative WHERE thread_id = ?").run(threadId);
+    }
+  })();
+}
+
+/**
+ * How many thread ids still own rows written by the previous scanner (turn rows
+ * or non-rollout delta rows): usage no rebuild has replaced yet, either because
+ * its rollout could not be read again or has not been reached.
+ */
+export function countLegacyUsageThreads(db: Database.Database): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM (
+         SELECT thread_id FROM codex_token_turns
+         UNION
+         SELECT thread_id FROM codex_token_deltas
+          WHERE length(thread_id) <> 64 OR thread_id GLOB '*[^0-9a-f]*'
+       )`,
+    )
+    .get() as { n: number };
+  return row.n;
+}
+
+const ROLLOUT_TALLY_PREFIX = "codex_token_rtally:";
+
+function parseTallies(text: string | null): Record<string, CodexRecognitionTally> {
+  if (text === null) return {};
+  try {
+    const value = JSON.parse(text) as Record<string, { sessions?: unknown; recognized?: unknown }>;
+    const out: Record<string, CodexRecognitionTally> = {};
+    for (const [version, tally] of Object.entries(value)) {
+      if (
+        Number.isSafeInteger(tally.sessions) &&
+        Number.isSafeInteger(tally.recognized) &&
+        (tally.sessions as number) >= 0 &&
+        (tally.recognized as number) >= 0
+      ) {
+        out[version] = {
+          sessions: tally.sessions as number,
+          recognized: tally.recognized as number,
+        };
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** The recognition tally one rollout last contributed (per CLI version), or {} when none. */
+export function readCodexRolloutTally(
+  db: Database.Database,
+  rolloutKey: string,
+): Record<string, CodexRecognitionTally> {
+  assertCursorKey(rolloutKey);
+  return parseTallies(getCollectorSetting(db, `${ROLLOUT_TALLY_PREFIX}${rolloutKey}`));
+}
+
+/**
+ * Replaces a rollout's contribution to the recognition tallies: the previous
+ * contribution is subtracted and the new one added, in one transaction, so a
+ * rollout that is re-read in full is never tallied twice.
+ */
+export function replaceCodexRolloutTally(
+  db: Database.Database,
+  parserVersion: number,
+  rolloutKey: string,
+  next: Readonly<Record<string, CodexRecognitionTally>>,
+  at: string,
+): void {
+  assertCursorKey(rolloutKey);
+  assertCount("parser version", parserVersion);
+  for (const [cliVersion, tally] of Object.entries(next)) {
+    assertIdentifier("CLI version", cliVersion);
+    assertCount("sessions", tally.sessions);
+    assertCount("recognized", tally.recognized);
+  }
+  db.transaction(() => {
+    const previous = readCodexRolloutTally(db, rolloutKey);
+    const stored = readCodexRecognition(db, parserVersion);
+    const merged: Record<string, CodexRecognitionTally> = {};
+    for (const version of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+      const before = previous[version] ?? { sessions: 0, recognized: 0 };
+      const after = next[version] ?? { sessions: 0, recognized: 0 };
+      const known = stored[version] ?? { sessions: 0, recognized: 0 };
+      merged[version] = {
+        sessions: Math.max(0, known.sessions - before.sessions + after.sessions),
+        recognized: Math.max(0, known.recognized - before.recognized + after.recognized),
+      };
+    }
+    const write = db.prepare(
+      `INSERT INTO codex_recognition (parser_version, cli_version, sessions, recognized, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (parser_version, cli_version) DO UPDATE SET
+         sessions = excluded.sessions, recognized = excluded.recognized, updated_at = excluded.updated_at`,
+    );
+    for (const [version, tally] of Object.entries(merged)) {
+      write.run(parserVersion, version, tally.sessions, tally.recognized, at);
+    }
+    setCollectorSetting(db, `${ROLLOUT_TALLY_PREFIX}${rolloutKey}`, JSON.stringify(next), at);
+  })();
+}
+
 // --- Rollout cursors --------------------------------------------------------
 
 /** A rollout scanner cursor. `inode` is text so a 64-bit inode survives. */
@@ -592,6 +753,29 @@ export function resetCodexScanState(db: Database.Database): void {
     db.prepare("DELETE FROM codex_rollout_cursors").run();
     db.prepare("DELETE FROM codex_coverage_days").run();
     db.prepare("DELETE FROM codex_recognition").run();
+  })();
+}
+
+/**
+ * Prepares a parser-version change WITHOUT touching a single counted row. Drops
+ * the scan state (cursors, so every rollout is read again; recognition tallies,
+ * which belong to a parser version) and the derived state the previous counting
+ * rule kept (per-turn precedence settings, per-thread cumulative marks, per-rollout
+ * tallies). Counted rows, the coverage ledger and the horizon stay: they are
+ * replaced rollout by rollout ({@link replaceRolloutUsage}) only when a rollout
+ * is read again, so usage whose rollout was deleted or aged out of the listing
+ * survives the upgrade.
+ */
+export function prepareCodexParserUpgrade(db: Database.Database): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM codex_rollout_cursors").run();
+    db.prepare("DELETE FROM codex_recognition").run();
+    db.prepare("DELETE FROM codex_token_cumulative").run();
+    db.prepare(
+      `DELETE FROM collector_settings
+        WHERE key GLOB 'codex_token_turn:*' OR key GLOB 'codex_token_cumat:*'
+           OR key GLOB 'codex_token_rtally:*'`,
+    ).run();
   })();
 }
 

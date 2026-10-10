@@ -9,16 +9,21 @@ import {
   addCumulativeDelta,
   CODEX_ANALYTICS_TABLES,
   codexBucketStart,
+  countLegacyUsageThreads,
   deleteAllUsageAnalytics,
   deleteCodexAnalytics,
   InvalidCodexRecordError,
   loadRateLimitSnapshot,
   markCodexDayCovered,
+  prepareCodexParserUpgrade,
   queryCodexCoverage,
   queryCodexTokenTotals,
   readCodexCursor,
   readCodexRecognition,
+  readCodexRolloutTally,
   readCumulativeBaseline,
+  replaceCodexRolloutTally,
+  replaceRolloutUsage,
   resetCodexCountingState,
   resetCodexScanState,
   saveRateLimitSnapshot,
@@ -841,5 +846,146 @@ describe("the barrel", () => {
     setCollectorSetting(db, "codex_token_off:thread-aaaa1111:turn-0001", "{}", NOW);
     deleteAllUsageAnalytics(db);
     expect(getCollectorSetting(db, "codex_token_off:thread-aaaa1111:turn-0001")).toBeNull();
+  });
+});
+
+describe("rollout-owned usage (plan 05.1-23 redesign)", () => {
+  const KEY_B = "b".repeat(64);
+  const bucketsOf = (...entries: Array<[string, number]>) =>
+    new Map(entries.map(([bucket, n]) => [bucket, counters(n)]));
+  const total = (start = B0, end = "2026-10-11T00:00:00.000Z") =>
+    queryCodexTokenTotals(db, { start, end })?.counters.input ?? null;
+
+  it("replaces one rollout's rows as a whole and leaves another rollout's rows alone", () => {
+    replaceRolloutUsage(db, {
+      rolloutKey: KEY_A,
+      buckets: bucketsOf([B0, 10], [B1, 20]),
+      supersededThreads: [],
+    });
+    replaceRolloutUsage(db, {
+      rolloutKey: KEY_B,
+      buckets: bucketsOf([B1, 5]),
+      supersededThreads: [],
+    });
+    expect(total()).toBe(35);
+    replaceRolloutUsage(db, {
+      rolloutKey: KEY_A,
+      buckets: bucketsOf([B2, 7]),
+      supersededThreads: [],
+    });
+    expect(total()).toBe(12);
+    expect(total(B0, B1)).toBeNull();
+    // Replacing with the same input again changes nothing.
+    replaceRolloutUsage(db, {
+      rolloutKey: KEY_A,
+      buckets: bucketsOf([B2, 7]),
+      supersededThreads: [],
+    });
+    expect(total()).toBe(12);
+  });
+
+  it("retires the previous scanner's rows of the threads a rebuild carried, and only those", () => {
+    upsertTurnTokens(db, {
+      threadId: "t1",
+      turnId: "u1",
+      bucketStart: B0,
+      counters: counters(10),
+      observedAt: NOW,
+    });
+    addCumulativeDelta(db, { threadId: "t1", bucketStart: B1, delta: counters(20) });
+    writeCumulativeBaseline(db, "t1", counters(30), NOW);
+    upsertTurnTokens(db, {
+      threadId: "t2",
+      turnId: "u2",
+      bucketStart: B0,
+      counters: counters(40),
+      observedAt: NOW,
+    });
+    expect(countLegacyUsageThreads(db)).toBe(2);
+
+    replaceRolloutUsage(db, {
+      rolloutKey: KEY_A,
+      buckets: bucketsOf([B0, 30]),
+      supersededThreads: ["t1"],
+    });
+
+    expect(countLegacyUsageThreads(db)).toBe(1);
+    expect(readCumulativeBaseline(db, "t1")).toBeNull();
+    expect(total()).toBe(70);
+  });
+
+  it("refuses a malformed key, bucket or counter before any write", () => {
+    expect(() =>
+      replaceRolloutUsage(db, {
+        rolloutKey: "/some/path",
+        buckets: new Map(),
+        supersededThreads: [],
+      }),
+    ).toThrow(InvalidCodexRecordError);
+    expect(() =>
+      replaceRolloutUsage(db, {
+        rolloutKey: KEY_A,
+        buckets: bucketsOf(["2026-10-10T08:07:00.000Z", 1]),
+        supersededThreads: [],
+      }),
+    ).toThrow(InvalidCodexRecordError);
+    expect(total()).toBeNull();
+  });
+
+  it("an upgrade preparation drops scan and derived state but not one counted row, coverage or horizon", () => {
+    replaceRolloutUsage(db, {
+      rolloutKey: KEY_A,
+      buckets: bucketsOf([B0, 10]),
+      supersededThreads: [],
+    });
+    upsertTurnTokens(db, {
+      threadId: "t1",
+      turnId: "u1",
+      bucketStart: B0,
+      counters: counters(10),
+      observedAt: NOW,
+    });
+    writeCumulativeBaseline(db, "t1", counters(10), NOW);
+    writeCodexCursor(db, KEY_A, { inode: "1", size: 1, offset: 1 }, NOW);
+    markCodexDayCovered(db, "2026-10-10", NOW);
+    addCodexRecognition(db, 2, { "0.1": { sessions: 3, recognized: 3 } }, NOW);
+    setCollectorSetting(db, "codex_token_horizon_day", "2026-10-01", NOW);
+    setCollectorSetting(db, "codex_token_turn:t1:u1", "{}", NOW);
+    setCollectorSetting(db, "codex_token_cumat:t1", "x", NOW);
+    setCollectorSetting(db, `codex_token_rtally:${KEY_A}`, "{}", NOW);
+
+    prepareCodexParserUpgrade(db);
+
+    expect(total()).toBe(20);
+    expect(readCodexCursor(db, KEY_A)).toBeNull();
+    expect(readCodexRecognition(db, 2)).toEqual({});
+    expect(readCumulativeBaseline(db, "t1")).toBeNull();
+    expect(queryCodexCoverage(db, "2026-10-10", "2026-10-10").map((d) => d.status)).toEqual([
+      "covered",
+    ]);
+    expect(getCollectorSetting(db, "codex_token_horizon_day")).toBe("2026-10-01");
+    expect(getCollectorSetting(db, "codex_token_turn:t1:u1")).toBeNull();
+    expect(getCollectorSetting(db, `codex_token_rtally:${KEY_A}`)).toBeNull();
+  });
+
+  it("a rollout's recognition tally is replaced, never added twice, and cleared with the analytics", () => {
+    replaceCodexRolloutTally(db, 3, KEY_A, { "0.1": { sessions: 4, recognized: 3 } }, NOW);
+    replaceCodexRolloutTally(db, 3, KEY_B, { "0.1": { sessions: 2, recognized: 2 } }, NOW);
+    replaceCodexRolloutTally(db, 3, KEY_A, { "0.1": { sessions: 6, recognized: 5 } }, NOW);
+    expect(readCodexRecognition(db, 3)).toEqual({ "0.1": { sessions: 8, recognized: 7 } });
+    expect(readCodexRolloutTally(db, KEY_A)).toEqual({ "0.1": { sessions: 6, recognized: 5 } });
+    deleteCodexAnalytics(db);
+    expect(readCodexRolloutTally(db, KEY_A)).toEqual({});
+    expect(total()).toBeNull();
+  });
+
+  it("deleteCodexAnalytics removes rollout-owned rows", () => {
+    replaceRolloutUsage(db, {
+      rolloutKey: KEY_A,
+      buckets: bucketsOf([B0, 10]),
+      supersededThreads: [],
+    });
+    deleteAllUsageAnalytics(db);
+    expect(total()).toBeNull();
   });
 });
