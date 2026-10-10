@@ -144,8 +144,22 @@ function ensureSpoolDir(runtimeDir: string): string {
   return spoolDir;
 }
 
+/** The two files one hook's spool is made of: the NDJSON queue and its drop counter. */
+export interface SpoolFileNames {
+  readonly file: string;
+  readonly dropFile: string;
+}
+
+/** The Claude hook's spool files; the default, so every Phase 5 caller is unchanged. */
+const CLAUDE_SPOOL_FILES: SpoolFileNames = {
+  file: SPOOL_FILE_NAME,
+  dropFile: SPOOL_DROP_FILE_NAME,
+};
+
 /**
- * Appends one line to `<runtimeDir>/spool/hooks.ndjson` (D-08): the spool dir
+ * Appends one line to `<runtimeDir>/spool/hooks.ndjson` (D-08), or to the
+ * file named by `names` (the Codex hook passes its own, so its cap and drop
+ * counter never touch Claude's): the spool dir
  * is created `0700` (and repaired to it), the file `0600`, one
  * `appendFileSync` per record, which is one `O_APPEND` write. When the line
  * would take the file past {@link SPOOL_MAX_BYTES}, the line is dropped and
@@ -153,13 +167,17 @@ function ensureSpoolDir(runtimeDir: string): string {
  * drop count (T-05-10). Every filesystem error is swallowed: fail open means
  * the hook never surfaces one. Returns whether the line was written.
  */
-export function appendSpool(runtimeDir: string, line: string): boolean {
+export function appendSpool(
+  runtimeDir: string,
+  line: string,
+  names: SpoolFileNames = CLAUDE_SPOOL_FILES,
+): boolean {
   try {
     const spoolDir = ensureSpoolDir(runtimeDir);
     const text = line.endsWith("\n") ? line : `${line}\n`;
-    const spoolFile = join(spoolDir, SPOOL_FILE_NAME);
+    const spoolFile = join(spoolDir, names.file);
     if (sizeOrZero(spoolFile) + Buffer.byteLength(text) > SPOOL_MAX_BYTES) {
-      appendFileSync(join(spoolDir, SPOOL_DROP_FILE_NAME), "x", { flag: "a", mode: 0o600 });
+      appendFileSync(join(spoolDir, names.dropFile), "x", { flag: "a", mode: 0o600 });
       return false;
     }
     appendFileSync(spoolFile, text, { flag: "a", mode: 0o600 });
