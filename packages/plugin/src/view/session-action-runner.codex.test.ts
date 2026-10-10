@@ -23,12 +23,12 @@ const THREAD_ID = "thread-0123abcd";
 const WRAPPER_RUN_ID = "20261006T120000123Z";
 const RAW_PATH = "/Users/USERNAME/.codex/sessions/rollout-secret.jsonl";
 
-function transcriptDescriptor(threadId: string | undefined = THREAD_ID): QuickActionDescriptor {
+function transcriptDescriptor(threadId: string | null = THREAD_ID): QuickActionDescriptor {
   return {
     id: "codex-open-transcript",
     label: "Open transcript",
     capability: "codex:open-transcript",
-    ...(threadId === undefined ? {} : { target: { threadId } }),
+    ...(threadId === null ? {} : { target: { threadId } }),
   };
 }
 
@@ -184,11 +184,10 @@ describe("Task 1 (tracer): Codex open transcript", () => {
     }
   });
 
-  it("Test 4: a non-error throw maps to the service-didn't-respond reason", async () => {
+  it("Test 4: an unrecognised error type maps to the service-didn't-respond reason", async () => {
     const h = harness({
-      openTranscript: async () => {
-        throw "boom";
-      },
+      // An error that is not a CodexRequestError (a buggy dependency).
+      openTranscript: () => Promise.reject(new TypeError("boom")),
     });
     await runSessionAction(transcriptDescriptor(), h.deps);
     expect(codexActionStatus.value?.text).toBe(
@@ -224,7 +223,7 @@ describe("Task 1 (tracer): Codex open transcript", () => {
 
   it("Test 5: a descriptor with no thread id writes nothing, calls nothing and says it isn't available", async () => {
     const h = harness();
-    await runSessionAction(transcriptDescriptor(undefined), h.deps);
+    await runSessionAction(transcriptDescriptor(null), h.deps);
     expect(codexActionStatus.value).toBeNull();
     expect(h.openTranscriptWarning).not.toHaveBeenCalled();
     expect(h.openTranscript).not.toHaveBeenCalled();

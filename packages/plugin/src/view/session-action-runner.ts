@@ -8,10 +8,20 @@ import type {
   TerminateRequestResponse,
   WorktreeListResponse,
 } from "@ccc/domain/session-actions.js";
-import { ClaudeRequestError } from "@ccc/service-api-client";
+import { ClaudeRequestError, CodexRequestError } from "@ccc/service-api-client";
+import { windowLaunchTimers } from "../projects/launch-client.js";
 import type { LaunchTimerControls } from "../projects/launch-status.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
-import type { CodexFollowChoice, CodexFollowWarningViewModel } from "./codex-modals.js";
+import { clearCodexActionStatus, setCodexActionStatus } from "./codex-action-status.js";
+import {
+  CODEX_TRANSCRIPT_COPY,
+  type CodexActionCopy,
+  type CodexFollowChoice,
+  type CodexFollowWarningViewModel,
+  type CodexReason,
+  codexReasonFor,
+  codexTranscriptWarningViewModel,
+} from "./codex-modals.js";
 import { clearActionStatus, setActionStatus } from "./session-action-status.js";
 import {
   type ConcurrentChoiceResolution,
@@ -543,6 +553,69 @@ async function runTerminateRequest(
   }
 }
 
+/** `descriptor.target`, narrowed to the `{ threadId }` shape the Codex transcript action uses. */
+function getThreadId(descriptor: QuickActionDescriptor): string | null {
+  const target = descriptor.target;
+  return target !== undefined && "threadId" in target ? target.threadId : null;
+}
+
+/**
+ * The reason for a failed Codex action: the client's fixed code, or the
+ * service-didn't-respond fallback for anything else. Never the error's own
+ * message, which can carry a path or process text (T-05.1-23).
+ */
+function codexReasonOf(error: unknown): CodexReason {
+  return codexReasonFor(error instanceof CodexRequestError ? error.code : "unrecognised-response");
+}
+
+/** Writes a Codex failure line and its Notice, both the same text (UI-SPEC S3 "Action feedback"). */
+function reportCodexFailure(deps: SessionActionDeps, copy: CodexActionCopy, reason: CodexReason) {
+  const text = copy.failure(reason);
+  setCodexActionStatus({ kind: "failure", text });
+  deps.ui.notify(text);
+}
+
+/**
+ * Codex `Open transcript` (D-29, CODEX-07): the acknowledgement is written in
+ * the click's own tick, BEFORE the warning, then the warning shows on EVERY
+ * press -- there is no cache and no "seen it already" branch here. Cancel
+ * (Escape, a click outside, the button) clears the line and calls nothing.
+ * Never throws: every branch ends in a status write plus, for a failure, a
+ * Notice.
+ */
+async function runCodexOpenTranscript(
+  descriptor: QuickActionDescriptor,
+  deps: SessionActionDeps,
+): Promise<void> {
+  const threadId = getThreadId(descriptor);
+  const codex = deps.codex;
+  const openWarning = deps.ui.openCodexTranscriptWarning;
+  if (threadId === null || codex === undefined || openWarning === undefined) {
+    deps.ui.notify(unavailableMessage(descriptor.label));
+    return;
+  }
+  const copy = CODEX_TRANSCRIPT_COPY;
+  setCodexActionStatus({ kind: "pending", text: copy.pending });
+  const choice = await openSafely(() => openWarning(codexTranscriptWarningViewModel()));
+  if (choice === MODAL_FAILED) {
+    reportCodexFailure(deps, copy, codexReasonFor("unrecognised-response"));
+    return;
+  }
+  if (choice === "cancel") {
+    clearCodexActionStatus();
+    return;
+  }
+  try {
+    await codex.openTranscript({ threadId, via: choice });
+    setCodexActionStatus(
+      { kind: "success", text: copy.success },
+      codex.timers ?? windowLaunchTimers(),
+    );
+  } catch (error) {
+    reportCodexFailure(deps, copy, codexReasonOf(error));
+  }
+}
+
 const ENABLE_ANALYSIS_PENDING_TEXT = "Turning on transcript analysis…";
 const ENABLE_ANALYSIS_FAILURE_MESSAGE =
   "Couldn't turn on transcript analysis. Check the service in Settings → Diagnostics, then try again.";
@@ -598,6 +671,9 @@ export async function runSessionAction(
       return;
     case "usage:enable-transcript-analysis":
       await runEnableTranscriptAnalysis(deps);
+      return;
+    case "codex:open-transcript":
+      await runCodexOpenTranscript(descriptor, deps);
       return;
     default:
       deps.ui.notify(unavailableMessage(descriptor.label));
