@@ -41,13 +41,25 @@ function partialText(
     );
   return lines.join(" ");
 }
+/**
+ * Token activity is independent of the sessions snapshot (UI-SPEC): when the token summary
+ * exists it is the source of truth, and analysis counts as off only when every range says so.
+ * Without a summary, fall back to the sessions-derived flag.
+ */
+function tokenAnalysisOn(summary: CodexTokenSummary | null, fallback: boolean): boolean {
+  if (summary === null) return fallback;
+  return !Object.values(summary.ranges).every(
+    (range) => range.kind === "unavailable" && range.reason === "analysis-off",
+  );
+}
 export function CodexTokenActivitySection({
   summary,
-  analysisOn,
+  analysisOn: sessionsAnalysisOn,
   nowMs,
   onQuickAction,
 }: CodexTokenActivityProps): VNode {
   const [range, setRange] = useState<UsageRangeKind>("today");
+  const analysisOn = tokenAnalysisOn(summary, sessionsAnalysisOn);
   const activity: CodexTokenActivity = !analysisOn
     ? { kind: "unavailable", reason: "analysis-off", version: null }
     : summary?.firstScanPending

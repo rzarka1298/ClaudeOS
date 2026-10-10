@@ -324,13 +324,28 @@ describe("Plan 25 full-card fixture audits", () => {
       "Open transcript for Alpha · Session thread05",
       "Turn on transcript analysis for Codex session titles",
       "Source for recent sessions",
-      "Turn on transcript analysis for token activity",
+      "Today",
+      "Last 7 days",
+      "This month",
       "Source for token activity",
       "Source",
     ]);
     expect(new Set(names).size).toBe(names.length);
     expect(v.container.querySelectorAll(".ccc-list-row")).toHaveLength(6);
     v.getByText("1 more session isn't shown.");
+  });
+  it("keeps token activity rendering when sessions are format-changed", () => {
+    const v = frame({
+      ...ready,
+      data: {
+        ...fullData,
+        sessions: { kind: "unavailable", reason: "format-changed", version: null },
+      },
+    });
+    v.getByText("99 tokens");
+    expect(
+      v.queryByRole("button", { name: "Turn on transcript analysis for token activity" }),
+    ).toBeNull();
   });
   it("places the local range controls after session Source and before token Source", () => {
     const v = frame({ ...ready, data: { ...fullData, analysisOn: true } });

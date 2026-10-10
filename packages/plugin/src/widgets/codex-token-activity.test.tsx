@@ -57,6 +57,20 @@ function view(tokens: CodexTokenSummary | null = summary(), analysisOn = true, e
 }
 afterEach(cleanup);
 describe("Codex token activity", () => {
+  it("renders available tokens even when the sessions-derived analysisOn flag is false", () => {
+    const v = view(summary(), false);
+    v.getByText("1.2M tokens");
+    expect(v.queryByText(CODEX_COPY.analysisHeading)).toBeNull();
+    v.getByRole("group", { name: CODEX_COPY.tokenRangeAriaLabel });
+  });
+  it("shows the analysis-off block when every range reports analysis-off", () => {
+    const off: CodexTokenActivity = { kind: "unavailable", reason: "analysis-off", version: null };
+    const v = view(
+      { ...summary(off), ranges: { today: off, "last-7-days": off, "this-month": off } },
+      true,
+    );
+    v.getByText(CODEX_COPY.analysisHeading);
+  });
   it("uses the reported total and all five counters with a separate source", () => {
     const v = view();
     v.getByText(CODEX_COPY.tokenExplanation);
