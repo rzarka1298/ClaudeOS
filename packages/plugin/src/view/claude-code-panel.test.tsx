@@ -444,11 +444,9 @@ describe("the Antigravity terminal choice (plan 05.1-31)", () => {
     const actions = fakeLaunchersActions();
     mount(actions, sessionWith(SUGGESTS_ANTIGRAVITY, NOTHING_SAVED));
     const radios = within(terminalGroup()).getAllByRole("radio");
-    expect(radios.map((radio) => radio.closest("label")?.textContent?.split(" ")[0])).toEqual([
-      "Terminal",
-      "Antigravity",
-      "Custom",
-    ]);
+    expect(
+      radios.map((radio) => radio.closest("label")?.textContent?.trim().split(" ")[0]),
+    ).toEqual(["Terminal", "Antigravity", "Custom"]);
     expect(checkedTerminalLabel()).toMatch(/^Antigravity terminal/);
     // A proposal is not a draft.
     expect(screen.queryByText("Unsaved changes")).toBeNull();
@@ -583,10 +581,11 @@ describe("the Antigravity terminal choice (plan 05.1-31)", () => {
 
   it("disconnected: all three radios are aria-disabled and cannot change", () => {
     const actions = fakeLaunchersActions();
+    const session = sessionWith(DETECTION, saved({ kind: "terminal-app" }));
     render(
       <ClaudeCodePanel
         actions={actions}
-        session={sessionWith(DETECTION, saved({ kind: "terminal-app" }))}
+        session={session}
         connection={{ kind: "disconnected", reason: "service-unreachable" }}
         now={Date.parse("2026-09-30T10:05:00.000Z")}
         sampleDisplayPath="~/code/example-project"
@@ -595,8 +594,12 @@ describe("the Antigravity terminal choice (plan 05.1-31)", () => {
     const radios = within(terminalGroup()).getAllByRole<HTMLInputElement>("radio");
     expect(radios).toHaveLength(3);
     for (const radio of radios) expect(radio.getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(radios[1] as HTMLInputElement);
     expect(checkedTerminalLabel()).toMatch(/^Terminal/);
+    fireEvent.click(radios[1] as HTMLInputElement);
+    fireEvent.click(radios[2] as HTMLInputElement);
+    // The change never reached the draft, and nothing was sent.
+    expect(session.claudeDraft.value).toBeNull();
+    expect(actions.save).not.toHaveBeenCalled();
   });
 
   it("the Codex panel's mount changes nothing about a saved Claude Code choice", async () => {
@@ -620,7 +623,8 @@ describe("the Antigravity terminal choice (plan 05.1-31)", () => {
       within(claude)
         .getAllByRole<HTMLInputElement>("radio", { name: /terminal/i })
         .find((radio) => radio.checked)
-        ?.closest("label")?.textContent,
+        ?.closest("label")
+        ?.textContent?.trim(),
     ).toMatch(/^Terminal/);
     expect(session.claudeDraft.value).toBeNull();
     expect(session.codexDraft.value).toBeNull();

@@ -33,6 +33,7 @@ import {
   TestLauncherButton,
   TestLines,
   terminalInSentence,
+  terminalTestSentences,
 } from "./launcher-panel-kit.js";
 import { checkTemplate, refusalCopy, TemplateEditor } from "./template-editor.js";
 
@@ -64,10 +65,14 @@ export function terminalLabelOf(terminal: TerminalDraft | TerminalChoice): strin
 }
 
 /**
- * The terminal a never-saved panel proposes. A proposal only: it is never
- * saved and never changes a saved choice (OQ-2).
+ * The terminal a never-saved panel proposes: the detection's suggestion when
+ * it is one of the two plain choices, Terminal otherwise. A proposal only: it
+ * is never saved and never changes a saved choice (OQ-2, T-05.1-18). This and
+ * `proposal()` are the only readers of the suggestion in the plugin.
  */
-export function proposedTerminal(_detection: DetectionResponse | null): TerminalChoice {
+export function proposedTerminal(detection: DetectionResponse | null): TerminalChoice {
+  const suggested = detection?.suggestedTerminal;
+  if (suggested?.kind === "antigravity-terminal") return { kind: "antigravity-terminal" };
   return { kind: "terminal-app" };
 }
 
@@ -128,7 +133,7 @@ function proposal(detection: DetectionResponse | null): ClaudeCodeDraft {
           ? { kind: "path", text: "" }
           : null,
     args: [],
-    terminal: { kind: "terminal-app" },
+    terminal: proposedTerminal(detection),
   };
 }
 
@@ -257,7 +262,10 @@ export function ClaudeCodePanel({
   const executableChosen =
     current.executable !== null &&
     (current.executable.kind === "candidate" || current.executable.text !== "");
-  const dirty = baseline === null ? executableChosen : !sameDraft(current, baseline);
+  // A proposal is not a draft: a never-saved panel is dirty once an executable
+  // is chosen, or once the owner has changed something themselves.
+  const dirty =
+    baseline === null ? executableChosen || draft !== null : !sameDraft(current, baseline);
   const status = session.status.value["claude-code"] ?? { kind: "idle" };
   const saving = status.kind === "saving";
   const canSave = current.executable !== null && !saving && !disabled;
@@ -269,9 +277,8 @@ export function ClaudeCodePanel({
   // A Test exercises the SAVED configuration (PR-13), so it is the saved
   // terminal whose Automation prompt the Test may meet (wave 5).
   const savedTerminal = saved?.terminal ?? null;
-  const savedTerminalLabel = terminalInSentence(
-    terminalLabelOf(savedTerminal ?? { kind: "terminal-app" }),
-  );
+  const savedTerminalRaw = terminalLabelOf(savedTerminal ?? { kind: "terminal-app" });
+  const savedTerminalLabel = terminalInSentence(savedTerminalRaw);
   const testBlock: TestBlock = disabled
     ? "disconnected"
     : saved === null || dirty
@@ -293,10 +300,10 @@ export function ClaudeCodePanel({
     setDraft({ ...current, ...change });
   }
 
-  function chooseTerminal(kind: "terminal-app" | "custom"): void {
+  function chooseTerminal(kind: "terminal-app" | "antigravity-terminal" | "custom"): void {
     if (kind === current.terminal.kind) return;
-    if (kind === "terminal-app") {
-      update({ terminal: { kind: "terminal-app" } });
+    if (kind === "terminal-app" || kind === "antigravity-terminal") {
+      update({ terminal: { kind } });
       return;
     }
     const savedCustom = saved?.terminal.kind === "custom" ? saved.terminal : null;
@@ -486,6 +493,21 @@ export function ClaudeCodePanel({
             name={terminalGroup}
             aria-disabled={ariaDisabled}
             onClick={blockClickWhen(disabled)}
+            checked={current.terminal.kind === "antigravity-terminal"}
+            onChange={() => chooseTerminal("antigravity-terminal")}
+          />{" "}
+          Antigravity terminal{" "}
+          <span className="ccc-list-meta">
+            Opens a tab in the project's Antigravity window. Needs the terminal bridge — see
+            Settings → Codex.
+          </span>
+        </label>
+        <label>
+          <input
+            type="radio"
+            name={terminalGroup}
+            aria-disabled={ariaDisabled}
+            onClick={blockClickWhen(disabled)}
             checked={current.terminal.kind === "custom"}
             onChange={() => chooseTerminal("custom")}
           />{" "}
@@ -558,7 +580,7 @@ export function ClaudeCodePanel({
 
       <TestLines
         automation={current.terminal.kind === "custom"}
-        explanation={`Test opens a new ${terminalInSentence(terminalLabel)} window at the managed vault folder that shows the Claude Code version.`}
+        explanation={terminalTestSentences(terminalLabel, "Claude Code").explanation}
       />
 
       <div className="ccc-manage-toolbar">
@@ -600,7 +622,7 @@ export function ClaudeCodePanel({
         now={now}
         copy={{
           appName: LAUNCHER_PANEL_NAMES["claude-code"],
-          question: `Test sent. Did a ${savedTerminalLabel} window open and show the Claude Code version?`,
+          question: terminalTestSentences(savedTerminalRaw, "Claude Code").question,
           terminal: savedTerminalLabel,
           mayPrompt: savedTerminal !== null && terminalMayPromptForAutomation(savedTerminal),
         }}

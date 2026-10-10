@@ -8,6 +8,7 @@ import {
   runLauncherTest,
   setPanelStatus,
   setSaveError,
+  terminalTestSentences,
 } from "./launcher-panel-kit.js";
 
 /**
@@ -65,5 +66,20 @@ describe("the shared Test flow for the codex id", () => {
     answerLauncherTest(session, actions, "codex", true);
     expect(session.status.value.codex).toEqual({ kind: "confirming" });
     expect(actions.markTested).toHaveBeenCalledWith("codex");
+  });
+});
+
+describe("terminalTestSentences", () => {
+  it("names a tab in Antigravity for the Antigravity terminal and a window for every other terminal", () => {
+    expect(terminalTestSentences("Antigravity", "Codex")).toEqual({
+      explanation:
+        "Test opens a new tab in Antigravity at the managed vault folder that shows the Codex version.",
+      question: "Test sent. Did a tab open in Antigravity and show the Codex version?",
+    });
+    expect(terminalTestSentences("Terminal", "Claude Code")).toEqual({
+      explanation:
+        "Test opens a new Terminal window at the managed vault folder that shows the Claude Code version.",
+      question: "Test sent. Did a Terminal window open and show the Claude Code version?",
+    });
   });
 });
