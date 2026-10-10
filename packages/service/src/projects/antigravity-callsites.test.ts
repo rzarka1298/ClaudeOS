@@ -324,7 +324,7 @@ describe("the launcher Test step", () => {
 });
 
 describe("createAntigravityDeps", () => {
-  it("builds the deps from the saved launcher rows on each call, the given environment and home", () => {
+  it("builds the deps from the saved launcher rows on each call, the given environment and home", async () => {
     const deps = createAntigravityDeps({ store, spawner, env: {}, home: fx.home });
     expect(deps.savedBundleId()).toBe(ANTIGRAVITY_IDE_BUNDLE_ID);
     expect(deps.savedExecutables()).toEqual({});
@@ -334,11 +334,11 @@ describe("createAntigravityDeps", () => {
     // A later save takes effect without rebuilding the deps.
     saveLauncherConfig(store.db, "antigravity", { bundleId: "com.google.antigravity" });
     expect(deps.savedBundleId()).toBe("com.google.antigravity");
-    expect(deps.readStatus().dir).toBe(fx.stateDir);
+    expect((await deps.readStatus()).dir).toBe(fx.stateDir);
     expect(deps.spawner).toBe(spawner);
   });
 
-  it("reads no bundle when the row is missing or does not parse", () => {
+  it("reads no bundle when the row is missing or does not parse", async () => {
     const empty = openStore(join(fx.base, "empty.db"));
     try {
       applyMigrations(empty.db);
@@ -351,7 +351,7 @@ describe("createAntigravityDeps", () => {
     }
   });
 
-  it("every call site gets the same strictly increasing minter, so two call sites cannot collide", () => {
+  it("every call site gets the same strictly increasing minter, so two call sites cannot collide", async () => {
     const a = createAntigravityDeps({ store, spawner });
     const b = createAntigravityDeps({ store, spawner });
     expect(a.mintRunId).toBe(b.mintRunId);
@@ -360,8 +360,8 @@ describe("createAntigravityDeps", () => {
     expect(new Set(ids).size).toBe(4);
   });
 
-  it("falls back to the process environment and home directory", () => {
+  it("falls back to the process environment and home directory", async () => {
     const deps = createAntigravityDeps({ store, spawner });
-    expect(deps.readStatus().dir).toBe(fx.stateDir);
+    expect((await deps.readStatus()).dir).toBe(fx.stateDir);
   });
 });

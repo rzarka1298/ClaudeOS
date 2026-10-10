@@ -1,4 +1,4 @@
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { access, constants, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import {
@@ -79,9 +79,12 @@ export function adapterDeadlineMs(capMs: number): number {
 
 export interface AntigravityTerminalDeps {
   /** The bridge state as the service sees it (see `readBridgeStatus`). */
-  readonly readStatus: () => BridgeStatus;
+  readonly readStatus: () => BridgeStatus | Promise<BridgeStatus>;
   /** The fresh windows that have `projectRoot` open. */
-  readonly windowsCovering: (status: BridgeStatus, projectRoot: string) => readonly BridgeWindow[];
+  readonly windowsCovering: (
+    status: BridgeStatus,
+    projectRoot: string,
+  ) => readonly BridgeWindow[] | Promise<readonly BridgeWindow[]>;
   /** The saved Antigravity launcher's bundle id, read on each call so a later save takes effect. */
   readonly savedBundleId: () => string | null;
   /** The executables the saved Claude Code and Codex launcher rows name (an absent row is absent). */
@@ -105,24 +108,24 @@ export interface AntigravityTerminalDeps {
   /** Reason codes only: never a path, an argument or an environment value. */
   readonly log?: (reason: string) => void;
   /** Test seam for the withdraw race; defaults to {@link withdrawRequest}. */
-  readonly withdraw?: (stateDir: string, runId: string) => WithdrawResult;
+  readonly withdraw?: (stateDir: string, runId: string) => WithdrawResult | Promise<WithdrawResult>;
 }
 
 /** The real-filesystem checks the launch validator asks for. */
 export const defaultAgentChecks: Pick<AntigravityTerminalDeps, "isExecutable" | "realDir"> = {
-  isExecutable(path) {
+  async isExecutable(path) {
     try {
-      if (!statSync(path).isFile()) return false;
-      accessSync(path, constants.X_OK);
+      if (!(await stat(path)).isFile()) return false;
+      await access(path, constants.X_OK);
       return true;
     } catch {
       return false;
     }
   },
-  realDir(path, base) {
+  async realDir(path, base) {
     try {
-      const real = realpathSync(resolve(base, path));
-      return statSync(real).isDirectory() ? real : null;
+      const real = await realpath(resolve(base, path));
+      return (await stat(real)).isDirectory() ? real : null;
     } catch {
       return null;
     }
@@ -178,6 +181,13 @@ function agentOf(argv: readonly string[]): "claude" | "codex" | null {
   return name === "claude" || name === "codex" ? name : null;
 }
 
+interface LaunchState {
+  cancelled: boolean;
+  phase: "prep" | "wait";
+  bridge: { dir: string; runId: string } | null;
+  firstRunId: string | null;
+}
+
 export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps): TerminalLauncher {
   const now = deps.now ?? Date.now;
   const capMs = deps.capMs ?? DEFAULT_CAP_MS;
@@ -200,16 +210,24 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
     }
   }
 
-  /** Writes the request, retrying with the next id when a name is already taken. */
-  function queue(
+  /**
+   * Writes the request, retrying with the next id when a name is already taken. A write that
+   * completes after the launch gave up (`state.cancelled`) is taken straight back.
+   */
+  async function queue(
     stateDir: string,
     base: Omit<AgentBridgeRequest, "runId" | "createdAt">,
-  ): string | null {
+    state: { cancelled: boolean; firstRunId: string | null },
+  ): Promise<string | null> {
     for (let attempt = 0; attempt < MAX_MINT_ATTEMPTS; attempt += 1) {
-      const runId = deps.mintRunId();
+      if (state.cancelled) return null;
+      // The first id was minted when the launch was called, so request order is call order (the
+      // pair's Claude half stays first) however the async checks of two launches interleave.
+      const runId = state.firstRunId ?? deps.mintRunId();
+      state.firstRunId = null;
       let written: string | null;
       try {
-        written = writeBridgeRequest(stateDir, {
+        written = await writeBridgeRequest(stateDir, {
           ...base,
           runId,
           createdAt: new Date(now()).toISOString(),
@@ -218,83 +236,107 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
         log("request-write-failed");
         return null;
       }
+      if (written !== null && state.cancelled) {
+        try {
+          await withdraw(stateDir, runId);
+        } catch {
+          // Best effort: the request carries a validated, pinned argv either way.
+        }
+        return null;
+      }
       if (written !== null) return runId;
       log("run-id-collision");
     }
     return null;
   }
 
-  return {
-    async launch(input: TerminalLaunchInput): Promise<LaunchResult> {
-      const startedAt = now();
-      const deadlineAt = startedAt + adapterDeadlineMs(capMs);
-      if (input.signal.aborted) return fail("timeout");
+  /**
+   * Every filesystem call here is asynchronous, but an async call on a stalled volume (or behind a
+   * macOS permission prompt) may simply never settle. The launch therefore races the whole body
+   * against the adapter deadline: before a request exists the typed answer is `timeout` and nothing
+   * is written; once it is queued the body's own claim wait owns the deadline, and this timer only
+   * backstops a poll or a withdraw that stalls (a short grace after the deadline).
+   */
+  const WAIT_GRACE_MS = DEADLINE_MARGIN_MS / 2;
 
-      // 1. The agent and the validator, before anything is read or written.
-      const agent = agentOf(input.argv);
-      if (agent === null) {
-        log("refused:agent-name");
-        return fail("spawn-failed");
-      }
-      const env = input.env ?? {};
-      const verdict = await validateAgentLaunchChecked(
-        { agent, argv: input.argv, env, projectRoot: input.cwd, cwd: input.cwd },
-        { isExecutable: deps.isExecutable, realDir: deps.realDir },
-      );
-      if (!verdict.ok) {
-        log(`refused:${verdict.reason}`);
-        return fail("spawn-failed");
-      }
-      if (input.signal.aborted) return fail("timeout");
+  async function launchBody(
+    input: TerminalLaunchInput,
+    deadlineAt: number,
+    state: LaunchState,
+  ): Promise<LaunchResult> {
+    if (input.signal.aborted) return fail("timeout");
 
-      // 2. The executable must be the one the saved launcher row names.
-      const saved = deps.savedExecutables();
-      const pinned = saved[agent];
-      if (pinned === undefined) {
-        log("refused:no-saved-launcher");
-        return fail("launcher-not-configured");
-      }
-      if (input.argv[0] !== pinned) {
-        log("refused:pin-mismatch");
-        return fail("spawn-failed");
-      }
+    // 1. The agent and the validator, before anything is read or written.
+    const agent = agentOf(input.argv);
+    if (agent === null) {
+      log("refused:agent-name");
+      return fail("spawn-failed");
+    }
+    const env = input.env ?? {};
+    const verdict = await validateAgentLaunchChecked(
+      { agent, argv: input.argv, env, projectRoot: input.cwd, cwd: input.cwd },
+      { isExecutable: deps.isExecutable, realDir: deps.realDir },
+    );
+    if (!verdict.ok) {
+      log(`refused:${verdict.reason}`);
+      return fail("spawn-failed");
+    }
+    if (input.signal.aborted) return fail("timeout");
 
-      // 3. The bridge, classified before a request exists.
-      const status = deps.readStatus();
-      if (!status.launcherPresent || !status.launchable) {
-        log("bridge-not-installed");
-        return fail("bridge-not-installed");
-      }
-      const covering = deps.windowsCovering(status, verdict.projectRoot);
-      // Every fresh window shares the one queue, and an old extension deletes agent requests it
-      // cannot claim, so a window on ANOTHER project that lacks the capability is just as fatal.
-      if (status.windows.some((window) => !hasAgentCapability(window))) {
-        log("bridge-outdated:window");
+    // 2. The executable must be the one the saved launcher row names.
+    const saved = deps.savedExecutables();
+    if (state.cancelled) return fail("timeout");
+    const pinned = saved[agent];
+    if (pinned === undefined) {
+      log("refused:no-saved-launcher");
+      return fail("launcher-not-configured");
+    }
+    if (input.argv[0] !== pinned) {
+      log("refused:pin-mismatch");
+      return fail("spawn-failed");
+    }
+
+    // 3. The bridge, classified before a request exists.
+    const status = await deps.readStatus();
+    if (state.cancelled) return fail("timeout");
+    if (!status.launcherPresent || !status.launchable) {
+      log("bridge-not-installed");
+      return fail("bridge-not-installed");
+    }
+    const covering = await deps.windowsCovering(status, verdict.projectRoot);
+    if (state.cancelled) return fail("timeout");
+    // Every fresh window shares the one queue, and an old extension deletes agent requests it
+    // cannot claim, so a window on ANOTHER project that lacks the capability is just as fatal.
+    if (status.windows.some((window) => !hasAgentCapability(window))) {
+      log("bridge-outdated:window");
+      return fail("bridge-outdated");
+    }
+    const cold = covering.length === 0;
+    if (cold) {
+      const kitCapable =
+        status.protocol !== null || status.capabilities !== null
+          ? hasAgentCapability(status)
+          : status.windows.some((window) => hasAgentCapability(window));
+      if (!kitCapable) {
+        log("bridge-outdated:kit");
         return fail("bridge-outdated");
       }
-      const cold = covering.length === 0;
-      if (cold) {
-        const kitCapable =
-          status.protocol !== null || status.capabilities !== null
-            ? hasAgentCapability(status)
-            : status.windows.some((window) => hasAgentCapability(window));
-        if (!kitCapable) {
-          log("bridge-outdated:kit");
-          return fail("bridge-outdated");
-        }
-        // 4. Cold start needs the IDE app saved as the Antigravity launcher.
-        if (deps.savedBundleId() !== ANTIGRAVITY_IDE_BUNDLE_ID) {
-          log("launcher-not-configured:bundle");
-          return fail("launcher-not-configured");
-        }
+      // 4. Cold start needs the IDE app saved as the Antigravity launcher.
+      if (deps.savedBundleId() !== ANTIGRAVITY_IDE_BUNDLE_ID) {
+        log("launcher-not-configured:bundle");
+        return fail("launcher-not-configured");
       }
+    }
 
-      // 5. Queue the request.
-      if (!writeAgentPins(status.dir, saved)) {
-        log("pins-write-failed");
-        return fail("spawn-failed");
-      }
-      const runId = queue(status.dir, {
+    // 5. Queue the request.
+    if (state.cancelled) return fail("timeout");
+    if (!(await writeAgentPins(status.dir, saved))) {
+      log("pins-write-failed");
+      return fail("spawn-failed");
+    }
+    const runId = await queue(
+      status.dir,
+      {
         kind: "agent",
         mode: "agent",
         agent,
@@ -306,55 +348,105 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
         liveLog: null,
         pid: null,
         protocol: 2,
+      },
+      state,
+    );
+    if (runId === null) return fail(state.cancelled ? "timeout" : "spawn-failed");
+    state.phase = "wait";
+    state.bridge = { dir: status.dir, runId };
+    const productRunId = env.CCC_RUN_ID;
+    if (productRunId !== undefined) rememberBridgeRun(productRunId, runId);
+
+    let ownedKey: string | null = null;
+    let ownedOpen: Promise<OpenOutcome> | undefined;
+    try {
+      if (cold) {
+        const key = verdict.cwd;
+        let open = openInFlight.get(key);
+        if (open === undefined) {
+          open = openIde(ANTIGRAVITY_IDE_BUNDLE_ID, key, deadlineAt - now());
+          openInFlight.set(key, open);
+          ownedKey = key;
+          ownedOpen = open;
+        } else {
+          log("cold-start:joined");
+        }
+        const opened = await open;
+        if (!opened.ok) {
+          await withdraw(status.dir, runId);
+          log(`cold-start:${opened.error}`);
+          return fail(opened.error);
+        }
+      }
+
+      // The wait: the claimed file is the hand-off.
+      const waited = await waitForClaim(status.dir, runId, {
+        deadlineMs: Math.max(0, deadlineAt - now()),
+        signal: input.signal,
+        now,
+        ...(deps.pollMs === undefined ? {} : { pollMs: deps.pollMs }),
+        ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
       });
-      if (runId === null) return fail("spawn-failed");
-      const productRunId = env.CCC_RUN_ID;
-      if (productRunId !== undefined) rememberBridgeRun(productRunId, runId);
+      if (waited === "claimed") return { ok: true };
+      if (waited === "aborted") {
+        await withdraw(status.dir, runId);
+        log("aborted");
+        return fail("timeout");
+      }
+      // Deadline: take the request back; a claim that landed first is a hand-off after all.
+      if ((await withdraw(status.dir, runId)) === "claimed") return { ok: true };
+      log("window-not-ready");
+      return fail("window-not-ready");
+    } finally {
+      if (ownedKey !== null && openInFlight.get(ownedKey) === ownedOpen) {
+        openInFlight.delete(ownedKey);
+      }
+    }
+  }
 
-      let ownedKey: string | null = null;
-      let ownedOpen: Promise<OpenOutcome> | undefined;
+  return {
+    async launch(input: TerminalLaunchInput): Promise<LaunchResult> {
+      const deadlineAt = now() + adapterDeadlineMs(capMs);
+      const state: LaunchState = {
+        cancelled: false,
+        phase: "prep",
+        bridge: null,
+        firstRunId: deps.mintRunId(),
+      };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      const backstop = new Promise<LaunchResult>((resolveBackstop) => {
+        const giveUp = (): void => {
+          state.cancelled = true;
+          if (state.bridge !== null) {
+            const { dir, runId } = state.bridge;
+            void Promise.resolve()
+              .then(() => withdraw(dir, runId))
+              .catch(() => undefined);
+          }
+          log(state.phase === "prep" ? "stalled:prepare" : "stalled:wait");
+          resolveBackstop(fail(state.phase === "prep" ? "timeout" : "window-not-ready"));
+        };
+        const arm = (delay: number, graceOnly: boolean): void => {
+          timer = setTimeout(
+            () => {
+              if (state.phase === "prep" || graceOnly) giveUp();
+              else arm(WAIT_GRACE_MS, true);
+            },
+            Math.max(0, delay),
+          );
+        };
+        arm(deadlineAt - now(), false);
+        onAbort = () => {
+          if (state.phase === "prep") giveUp();
+        };
+        input.signal.addEventListener("abort", onAbort, { once: true });
+      });
       try {
-        if (cold) {
-          const key = verdict.cwd;
-          let open = openInFlight.get(key);
-          if (open === undefined) {
-            open = openIde(ANTIGRAVITY_IDE_BUNDLE_ID, key, deadlineAt - now());
-            openInFlight.set(key, open);
-            ownedKey = key;
-            ownedOpen = open;
-          } else {
-            log("cold-start:joined");
-          }
-          const opened = await open;
-          if (!opened.ok) {
-            withdraw(status.dir, runId);
-            log(`cold-start:${opened.error}`);
-            return fail(opened.error);
-          }
-        }
-
-        // The wait: the claimed file is the hand-off.
-        const waited = await waitForClaim(status.dir, runId, {
-          deadlineMs: Math.max(0, deadlineAt - now()),
-          signal: input.signal,
-          now,
-          ...(deps.pollMs === undefined ? {} : { pollMs: deps.pollMs }),
-          ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
-        });
-        if (waited === "claimed") return { ok: true };
-        if (waited === "aborted") {
-          withdraw(status.dir, runId);
-          log("aborted");
-          return fail("timeout");
-        }
-        // Deadline: take the request back; a claim that landed first is a hand-off after all.
-        if (withdraw(status.dir, runId) === "claimed") return { ok: true };
-        log("window-not-ready");
-        return fail("window-not-ready");
+        return await Promise.race([launchBody(input, deadlineAt, state), backstop]);
       } finally {
-        if (ownedKey !== null && openInFlight.get(ownedKey) === ownedOpen) {
-          openInFlight.delete(ownedKey);
-        }
+        if (timer !== undefined) clearTimeout(timer);
+        if (onAbort !== undefined) input.signal.removeEventListener("abort", onAbort);
       }
     },
   };

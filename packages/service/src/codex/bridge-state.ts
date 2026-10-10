@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { CodexBridgeStatus } from "@ccc/domain";
 import {
@@ -22,7 +22,8 @@ import {
  * able to point the service at an arbitrary directory), and a bridge found only in the second place
  * is reported as `different-folder`, never as a bare timeout.
  *
- * The filesystem is injected; the default reads small local files synchronously.
+ * The filesystem is injected; the default reads small local files with async fs/promises calls so a
+ * stalled volume or a permission prompt cannot block the event loop (and with it the launch cap).
  */
 
 export interface BridgeWindow {
@@ -59,47 +60,49 @@ export interface BridgeStatus {
 
 export interface BridgeStateFs {
   /** Entry names, or `null` when the directory cannot be read. */
-  readdir(path: string): string[] | null;
+  readdir(path: string): Promise<string[] | null>;
   /** UTF-8 text of a small file, or `null` when it cannot be read. */
-  readFile(path: string): string | null;
+  readFile(path: string): Promise<string | null>;
   /** `stat` (following symlinks), or `null` when nothing is there. */
-  stat(
-    path: string,
-  ): { readonly isFile: boolean; readonly isDirectory: boolean; readonly mode: number } | null;
+  stat(path: string): Promise<{
+    readonly isFile: boolean;
+    readonly isDirectory: boolean;
+    readonly mode: number;
+  } | null>;
   /** The real path, or `null` when nothing is there. */
-  realpath(path: string): string | null;
+  realpath(path: string): Promise<string | null>;
 }
 
 /** Heartbeats and the marker are tiny; anything larger is not one. */
 const MAX_FILE_BYTES = 64 * 1024;
 
 export const nodeBridgeStateFs: BridgeStateFs = {
-  readdir(path) {
+  async readdir(path) {
     try {
-      return readdirSync(path);
+      return await readdir(path);
     } catch {
       return null;
     }
   },
-  readFile(path) {
+  async readFile(path) {
     try {
-      if (statSync(path).size > MAX_FILE_BYTES) return null;
-      return readFileSync(path, "utf8");
+      if ((await stat(path)).size > MAX_FILE_BYTES) return null;
+      return await readFile(path, "utf8");
     } catch {
       return null;
     }
   },
-  stat(path) {
+  async stat(path) {
     try {
-      const info = statSync(path);
+      const info = await stat(path);
       return { isFile: info.isFile(), isDirectory: info.isDirectory(), mode: info.mode };
     } catch {
       return null;
     }
   },
-  realpath(path) {
+  async realpath(path) {
     try {
-      return realpathSync(path);
+      return await realpath(path);
     } catch {
       return null;
     }
@@ -156,8 +159,8 @@ interface Marker {
 }
 
 /** The same acceptance as the bridge's own marker reader. */
-function readMarker(fs: BridgeStateFs, dir: string): Marker | null {
-  const raw = parseJson(fs.readFile(join(dir, BRIDGE_PROTOCOL_MARKER_FILE)));
+async function readMarker(fs: BridgeStateFs, dir: string): Promise<Marker | null> {
+  const raw = parseJson(await fs.readFile(join(dir, BRIDGE_PROTOCOL_MARKER_FILE)));
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const marker = raw as Record<string, unknown>;
   if (!Number.isInteger(marker.protocol) || typeof marker.kit !== "string") return null;
@@ -165,14 +168,14 @@ function readMarker(fs: BridgeStateFs, dir: string): Marker | null {
   return { protocol: marker.protocol as number, capabilities: marker.capabilities };
 }
 
-function readWindows(fs: BridgeStateFs, dir: string, nowMs: number): BridgeWindow[] {
+async function readWindows(fs: BridgeStateFs, dir: string, nowMs: number): Promise<BridgeWindow[]> {
   const windowsDir = join(dir, BRIDGE_DIRECTORY_NAMES.windows);
-  const names = fs.readdir(windowsDir);
+  const names = await fs.readdir(windowsDir);
   if (names === null) return [];
   const found: BridgeWindow[] = [];
   for (const name of [...names].sort()) {
     if (!name.endsWith(".json") || name.startsWith(".")) continue;
-    const raw = parseJson(fs.readFile(join(windowsDir, name)));
+    const raw = parseJson(await fs.readFile(join(windowsDir, name)));
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) continue;
     const heartbeat = raw as Record<string, unknown>;
     const at =
@@ -190,9 +193,9 @@ function readWindows(fs: BridgeStateFs, dir: string, nowMs: number): BridgeWindo
   return found;
 }
 
-function hasBridge(fs: BridgeStateFs, dir: string): boolean {
-  if (readMarker(fs, dir) !== null) return true;
-  const names = fs.readdir(join(dir, BRIDGE_DIRECTORY_NAMES.windows));
+async function hasBridge(fs: BridgeStateFs, dir: string): Promise<boolean> {
+  if ((await readMarker(fs, dir)) !== null) return true;
+  const names = await fs.readdir(join(dir, BRIDGE_DIRECTORY_NAMES.windows));
   return names?.some((name) => name.endsWith(".json") && !name.startsWith(".")) === true;
 }
 
@@ -201,44 +204,50 @@ function hasBridge(fs: BridgeStateFs, dir: string): boolean {
  * classification is global (any fresh window that cannot claim agent requests makes the whole
  * bridge `outdated`); {@link coveringWindows} narrows it to one project.
  */
-export function readBridgeStatus(options: ReadBridgeStatusOptions): BridgeStatus {
+export async function readBridgeStatus(options: ReadBridgeStatusOptions): Promise<BridgeStatus> {
   const fs = options.fs ?? nodeBridgeStateFs;
   const nowMs = typeof options.now === "function" ? options.now() : (options.now ?? Date.now());
   const { home } = options;
-  const homeReal = fs.realpath(home) ?? home;
+  const homeReal = (await fs.realpath(home)) ?? home;
 
   /** Under the owner's home, lexically and (when it exists) after following symlinks. */
-  const acceptable = (dir: string): boolean => {
+  const acceptable = async (dir: string): Promise<boolean> => {
     if (!isInside(dir, home) && !isInside(dir, homeReal)) return false;
-    const real = fs.realpath(dir);
+    const real = await fs.realpath(dir);
     return real === null || isInside(real, homeReal);
   };
 
   const primary = bridgeStateDir(options.env, home);
   const fallback = bridgeStateDir({}, home);
   const candidates: string[] = [];
-  if (acceptable(primary)) candidates.push(primary);
-  if (fallback !== primary && acceptable(fallback)) candidates.push(fallback);
+  if (await acceptable(primary)) candidates.push(primary);
+  if (fallback !== primary && (await acceptable(fallback))) candidates.push(fallback);
 
   if (options.containing !== undefined) {
     const wanted = options.containing;
     for (let i = candidates.length - 1; i >= 0; i -= 1) {
       const candidate = candidates[i] as string;
-      if (!isInside(wanted, fs.realpath(candidate) ?? candidate)) candidates.splice(i, 1);
+      if (!isInside(wanted, (await fs.realpath(candidate)) ?? candidate)) candidates.splice(i, 1);
     }
   }
 
-  const chosen = candidates.find((dir) => hasBridge(fs, dir));
+  let chosen: string | undefined;
+  for (const candidate of candidates) {
+    if (await hasBridge(fs, candidate)) {
+      chosen = candidate;
+      break;
+    }
+  }
   const launchable = candidates.length > 0;
   const dir = chosen ?? candidates[0] ?? fallback;
   const dirSource: BridgeDirSource =
     chosen !== undefined && chosen !== primary ? "default-fallback" : "primary";
 
-  const launcher = fs.stat(bridgeCommandPath(home));
+  const launcher = await fs.stat(bridgeCommandPath(home));
   const launcherPresent = launcher?.isFile === true && (launcher.mode & 0o111) !== 0;
   // A rejected directory is never read: no marker, no heartbeats.
-  const marker = launchable ? readMarker(fs, dir) : null;
-  const windows = launchable ? readWindows(fs, dir, nowMs) : [];
+  const marker = launchable ? await readMarker(fs, dir) : null;
+  const windows = launchable ? await readWindows(fs, dir, nowMs) : [];
 
   let state: BridgeInstallState;
   if (!launcherPresent || !launchable) state = "not-installed";
@@ -260,39 +269,47 @@ export function readBridgeStatus(options: ReadBridgeStatusOptions): BridgeStatus
 }
 
 /** An absolute path that is an existing directory, as its real path. */
-function realDir(fs: Pick<BridgeStateFs, "realpath" | "stat">, path: string): string | null {
+async function realDir(
+  fs: Pick<BridgeStateFs, "realpath" | "stat">,
+  path: string,
+): Promise<string | null> {
   if (!path.startsWith("/")) return null;
-  const real = fs.realpath(path);
+  const real = await fs.realpath(path);
   if (real === null) return null;
-  return fs.stat(real)?.isDirectory === true ? real : null;
+  return (await fs.stat(real))?.isDirectory === true ? real : null;
 }
 
 /**
  * Every fresh window that has the project open, in file-name order: a window whose folder is the
  * project, or contains it, by real path (the bridge's own folder match).
  */
-export function coveringWindows(
+export async function coveringWindows(
   status: BridgeStatus,
   projectRoot: string,
   fs: Pick<BridgeStateFs, "realpath" | "stat"> = nodeBridgeStateFs,
-): BridgeWindow[] {
-  const root = realDir(fs, projectRoot);
+): Promise<BridgeWindow[]> {
+  const root = await realDir(fs, projectRoot);
   if (root === null) return [];
-  return status.windows.filter((window) =>
-    window.folders.some((folder) => {
-      const real = realDir(fs, folder);
-      return real !== null && isInside(root, real);
-    }),
-  );
+  const covering: BridgeWindow[] = [];
+  for (const window of status.windows) {
+    for (const folder of window.folders) {
+      const real = await realDir(fs, folder);
+      if (real !== null && isInside(root, real)) {
+        covering.push(window);
+        break;
+      }
+    }
+  }
+  return covering;
 }
 
 /** The first window that has the project open, or `null`. */
-export function coveringWindow(
+export async function coveringWindow(
   status: BridgeStatus,
   projectRoot: string,
   fs: Pick<BridgeStateFs, "realpath" | "stat"> = nodeBridgeStateFs,
-): BridgeWindow | null {
-  return coveringWindows(status, projectRoot, fs)[0] ?? null;
+): Promise<BridgeWindow | null> {
+  return (await coveringWindows(status, projectRoot, fs))[0] ?? null;
 }
 
 /** The Settings status line's view: a bridge found only in the default folder is `different-folder`. */

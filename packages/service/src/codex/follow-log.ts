@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { link, mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   CODEX_PAIR_LAUNCH_CAP_MS,
@@ -60,14 +60,19 @@ export interface FollowLogDeps {
   readonly runs: Pick<RunRecordReader, "scan" | "inspectLiveLog">;
   /** Only `lstat` and `realpath`: the service has no way to read the log through this seam. */
   readonly fs: Pick<RunRecordFs, "lstat" | "realpath">;
-  readonly readBridgeStatus: () => BridgeStatus;
+  readonly readBridgeStatus: () => BridgeStatus | Promise<BridgeStatus>;
   /**
    * The bridge status restricted to the candidate directory that contains `containing` (a run
    * record's state directory). Absent: a run whose log is outside the primary directory is
    * reported as unsupported (window-not-ready) instead of being queued where it would be rejected.
    */
-  readonly readBridgeStatusContaining?: (containing: string) => BridgeStatus;
-  readonly coveringWindow: (status: BridgeStatus, projectRoot: string) => BridgeWindow | null;
+  readonly readBridgeStatusContaining?: (
+    containing: string,
+  ) => BridgeStatus | Promise<BridgeStatus>;
+  readonly coveringWindow: (
+    status: BridgeStatus,
+    projectRoot: string,
+  ) => BridgeWindow | null | Promise<BridgeWindow | null>;
   /** The shared minter of strictly increasing bridge run ids. */
   readonly mintRunId: () => string;
   readonly now: () => number;
@@ -142,9 +147,18 @@ function assertFollowShape(request: unknown): asserts request is FollowBridgeReq
   if (typeof raw.createdAt !== "string" || !Number.isFinite(Date.parse(raw.createdAt))) bad();
 }
 
-function unlinkQuietly(path: string): void {
+async function exists(path: string): Promise<boolean> {
   try {
-    unlinkSync(path);
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function unlinkQuietly(path: string): Promise<void> {
+  try {
+    await unlink(path);
   } catch {
     // Already gone.
   }
@@ -156,40 +170,46 @@ function unlinkQuietly(path: string): void {
  * exists (the caller mints the next id). A run id is a claim on a file name: nothing is replaced.
  * Throws only for a request that is not the fixed follow shape or an unrecoverable I/O fault.
  */
-export function writeFollowRequest(stateDir: string, request: FollowBridgeRequest): string | null {
+export async function writeFollowRequest(
+  stateDir: string,
+  request: FollowBridgeRequest,
+): Promise<string | null> {
   assertFollowShape(request);
   const dir = join(stateDir, BRIDGE_DIRECTORY_NAMES.requests);
   const name = `${request.runId}.json`;
   const final = join(dir, name);
-  if (existsSync(final) || existsSync(join(stateDir, BRIDGE_DIRECTORY_NAMES.claimed, name))) {
+  if (
+    (await exists(final)) ||
+    (await exists(join(stateDir, BRIDGE_DIRECTORY_NAMES.claimed, name)))
+  ) {
     return null;
   }
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   const tmp = join(dir, `.${request.runId}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
-  writeFileSync(tmp, `${JSON.stringify(request, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  await writeFile(tmp, `${JSON.stringify(request, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   try {
     // link() fails with EEXIST instead of replacing a file, which rename() would do silently.
-    linkSync(tmp, final);
+    await link(tmp, final);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST") {
-      unlinkQuietly(tmp);
+      await unlinkQuietly(tmp);
       return null;
     }
     if (code === "EPERM" || code === "ENOTSUP" || code === "EXDEV" || code === "ENOSYS") {
       // A filesystem without hard links: the rename is still atomic.
       try {
-        renameSync(tmp, final);
+        await rename(tmp, final);
         return final;
       } catch (renameError) {
-        unlinkQuietly(tmp);
+        await unlinkQuietly(tmp);
         throw renameError;
       }
     }
-    unlinkQuietly(tmp);
+    await unlinkQuietly(tmp);
     throw error;
   }
-  unlinkQuietly(tmp);
+  await unlinkQuietly(tmp);
   return final;
 }
 
@@ -251,16 +271,17 @@ export function createFollowLogService(deps: FollowLogDeps): FollowLogService {
     if (log.kind === "missing") return refuse("run-ended");
     if (deps.now() - log.mtimeMs > deps.inactivityMs) return refuse("run-ended");
 
-    let status = deps.readBridgeStatus();
+    let status = await deps.readBridgeStatus();
     if (!(await acceptsLog(status, record))) {
       // The log is under another candidate directory (default vs custom state home).
       if (deps.readBridgeStatusContaining === undefined) return refuse("window-not-ready");
-      status = deps.readBridgeStatusContaining(record.stateDir);
+      status = await deps.readBridgeStatusContaining(record.stateDir);
       if (!(await acceptsLog(status, record))) return refuse("window-not-ready");
     }
     if (!status.launcherPresent || !status.launchable) return refuse("bridge-not-installed");
     // A window that has the project open must exist already: follow never cold-starts the IDE.
-    if (deps.coveringWindow(status, record.projectRoot) === null) return refuse("window-not-ready");
+    if ((await deps.coveringWindow(status, record.projectRoot)) === null)
+      return refuse("window-not-ready");
 
     const cwd = await workingDirectory(record.projectRoot, record.worktree);
     for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt += 1) {
@@ -277,7 +298,7 @@ export function createFollowLogService(deps: FollowLogDeps): FollowLogService {
         mode: "follow",
         codexHome: null,
       };
-      if (writeFollowRequest(status.dir, request) === null) continue;
+      if ((await writeFollowRequest(status.dir, request)) === null) continue;
 
       const waited = await waitForClaim(status.dir, bridgeRunId, {
         deadlineMs,
@@ -288,7 +309,7 @@ export function createFollowLogService(deps: FollowLogDeps): FollowLogService {
       });
       if (waited === "claimed") return { ok: true };
       // Take the request back; a claim that landed first is a hand-off after all (T-05.1-14).
-      const withdrawn = withdrawRequest(status.dir, bridgeRunId);
+      const withdrawn = await withdrawRequest(status.dir, bridgeRunId);
       if (withdrawn === "claimed") return { ok: true };
       return refuse(waited === "aborted" ? "failed" : "window-not-ready");
     }

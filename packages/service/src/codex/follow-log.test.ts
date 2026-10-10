@@ -327,7 +327,7 @@ describe("Test 3: every failure is one fixed code and nothing is written", () =>
 
   it("a bridge directory the service must not use is bridge-not-installed and nothing is written", async () => {
     const { runId } = runningRun({});
-    const base = readBridgeStatus({ env: {}, home: fx.home, now: () => Date.now() });
+    const base = await readBridgeStatus({ env: {}, home: fx.home, now: () => Date.now() });
     const r = rig({
       over: { readBridgeStatus: () => ({ ...base, launchable: false }) },
     });
@@ -389,7 +389,7 @@ describe("a run found under a different bridge directory than the primary one", 
   it("is a clear window-not-ready, never queued where the extension would reject the log", async () => {
     const { sim, customDir, runId, primary } = setup();
     const r = rig({ sim, over: { readBridgeStatus: primary } });
-    expect(primary().dir).toBe(customDir);
+    expect((await primary()).dir).toBe(customDir);
     expect(await r.service.follow({ runId })).toEqual({ ok: false, error: "window-not-ready" });
     expect(readdirSync(join(customDir, "requests"))).toEqual([]);
     expect(requestsNow()).toEqual([]);
@@ -434,9 +434,9 @@ describe("Test 4: the claim wait, the withdrawal and the claim race", () => {
     const r = rig({
       over: {
         queue: {
-          withdrawRequest: (dir, id) => {
+          withdrawRequest: async (dir, id) => {
             sim.tick();
-            return withdrawRequest(dir, id);
+            return await withdrawRequest(dir, id);
           },
         },
       },
@@ -545,19 +545,21 @@ describe("writeFollowRequest: the local atomic writer", () => {
       ...over,
     }) as FollowBridgeRequest;
 
-  it("writes the request 0600 with no temp file and never replaces an existing request or claimed file", () => {
-    const first = writeFollowRequest(fx.stateDir, request());
+  it("writes the request 0600 with no temp file and never replaces an existing request or claimed file", async () => {
+    const first = await writeFollowRequest(fx.stateDir, request());
     expect(first).toBe(join(fx.requestsDir, "20261010T120000000Z.json"));
     expect(statSync(first as string).mode & 0o777).toBe(0o600);
     expect(readdirSync(fx.requestsDir)).toEqual(["20261010T120000000Z.json"]);
-    expect(writeFollowRequest(fx.stateDir, request())).toBeNull();
+    expect(await writeFollowRequest(fx.stateDir, request())).toBeNull();
     mkdirSync(fx.claimedDir, { recursive: true });
     writeFileSync(join(fx.claimedDir, "20261010T120000001Z.json"), "{}");
-    expect(writeFollowRequest(fx.stateDir, request({ runId: "20261010T120000001Z" }))).toBeNull();
+    expect(
+      await writeFollowRequest(fx.stateDir, request({ runId: "20261010T120000001Z" })),
+    ).toBeNull();
     expect(existsSync(join(fx.requestsDir, "20261010T120000001Z.json"))).toBe(false);
   });
 
-  it("refuses anything that is not exactly the fixed follow shape", () => {
+  it("refuses anything that is not exactly the fixed follow shape", async () => {
     for (const bad of [
       { extra: "x" },
       { mode: "tui" },
@@ -573,17 +575,20 @@ describe("writeFollowRequest: the local atomic writer", () => {
       { sessionId: "not-a-uuid" },
       { createdAt: "yesterday" },
     ]) {
-      expect(() => writeFollowRequest(fx.stateDir, request(bad)), JSON.stringify(bad)).toThrow();
+      await expect(
+        writeFollowRequest(fx.stateDir, request(bad)),
+        JSON.stringify(bad),
+      ).rejects.toThrow();
     }
     expect(requestsNow()).toEqual([]);
     // A missing key is refused too.
     const { codexHome: _omit, ...partial } = request();
-    expect(() => writeFollowRequest(fx.stateDir, partial as never)).toThrow();
+    await expect(writeFollowRequest(fx.stateDir, partial as never)).rejects.toThrow();
   });
 });
 
 describe("the service", () => {
-  it("does not import a process starter, a signal or a content reader", () => {
+  it("does not import a process starter, a signal or a content reader", async () => {
     const source = readFileSync(join(import.meta.dirname, "follow-log.ts"), "utf8")
       .split("\n")
       .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))

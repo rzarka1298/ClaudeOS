@@ -422,7 +422,7 @@ describe("the withdraw race (D-09, T-05.1-14)", () => {
     const sim = warmWindow();
     const launcher = createAntigravityTerminalLauncher(
       deps({
-        withdraw: (dir, runId) => {
+        withdraw: async (dir, runId) => {
           sim.tick();
           return withdrawRequest(dir, runId);
         },
@@ -437,8 +437,8 @@ describe("the withdraw race (D-09, T-05.1-14)", () => {
     const sim = warmWindow();
     const launcher = createAntigravityTerminalLauncher(
       deps({
-        withdraw: (dir, runId) => {
-          const outcome = withdrawRequest(dir, runId);
+        withdraw: async (dir, runId) => {
+          const outcome = await withdrawRequest(dir, runId);
           expect(sim.tick()).toEqual([]);
           return outcome;
         },

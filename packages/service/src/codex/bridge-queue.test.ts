@@ -48,7 +48,7 @@ describe("writeBridgeRequest and waitForClaim (tracer)", () => {
   it("writes the request atomically with mode 0600, a simulated window claims it, and the wait sees the claim after one poll", async () => {
     const sim = fx.simulator("current");
     sim.heartbeat();
-    const path = writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
+    const path = await writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
     expect(path).toBe(join(fx.requestsDir, `${RUN_A}.json`));
     expect(statSync(path as string).mode & 0o777).toBe(0o600);
     // No temp file is left behind: only the final name is in the directory.
@@ -80,10 +80,10 @@ describe("writeBridgeRequest and waitForClaim (tracer)", () => {
     expect(fx.claimedFiles()).toEqual([`${RUN_A}.json`]);
   });
 
-  it("creates the queue directories when they are missing", () => {
+  it("creates the queue directories when they are missing", async () => {
     const fresh = join(fx.base, "fresh-state");
     expect(existsSync(fresh)).toBe(false);
-    expect(writeBridgeRequest(fresh, agentRequest(RUN_A))).toBe(
+    expect(await writeBridgeRequest(fresh, agentRequest(RUN_A))).toBe(
       join(fresh, "requests", `${RUN_A}.json`),
     );
     expect(statSync(join(fresh, "requests")).mode & 0o777).toBe(0o700);
@@ -91,12 +91,12 @@ describe("writeBridgeRequest and waitForClaim (tracer)", () => {
 });
 
 describe("writeBridgeRequest refusals", () => {
-  it("returns null and writes nothing when a request of the same run id already exists", () => {
-    const first = writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
+  it("returns null and writes nothing when a request of the same run id already exists", async () => {
+    const first = await writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
     expect(first).not.toBeNull();
     const before = readFileSync(first as string, "utf8");
     expect(
-      writeBridgeRequest(
+      await writeBridgeRequest(
         fx.stateDir,
         agentRequest(RUN_A, { agent: "codex", argv: [fx.codexPath] }),
       ),
@@ -105,12 +105,12 @@ describe("writeBridgeRequest refusals", () => {
     expect(readdirSync(fx.requestsDir)).toEqual([`${RUN_A}.json`]);
   });
 
-  it("returns null when the run id was already claimed (a claimed file is never overwritten)", () => {
+  it("returns null when the run id was already claimed (a claimed file is never overwritten)", async () => {
     const sim = fx.simulator("current");
     sim.heartbeat();
-    writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
+    await writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
     expect(sim.tick()).toHaveLength(1);
-    expect(writeBridgeRequest(fx.stateDir, agentRequest(RUN_A))).toBeNull();
+    expect(await writeBridgeRequest(fx.stateDir, agentRequest(RUN_A))).toBeNull();
     expect(fx.requestFiles()).toEqual([]);
   });
 
@@ -127,19 +127,19 @@ describe("writeBridgeRequest refusals", () => {
     ["an argv that is not an array", { argv: "claude" }],
     ["a relative project root", { projectRoot: "project" }],
     ["a non-string env value", { env: { CCC_RUN_ID: 1 } }],
-  ])("refuses a request with %s and writes nothing", (_name, overrides) => {
-    expect(() => writeBridgeRequest(fx.stateDir, agentRequest(RUN_A, overrides))).toThrow(
+  ])("refuses a request with %s and writes nothing", async (_name, overrides) => {
+    await expect(writeBridgeRequest(fx.stateDir, agentRequest(RUN_A, overrides))).rejects.toThrow(
       /request shape/,
     );
     expect(fx.requestFiles()).toEqual([]);
   });
 
-  it("refuses a request that is missing one of the fixed keys", () => {
+  it("refuses a request that is missing one of the fixed keys", async () => {
     const request = { ...agentRequest(RUN_A) } as Record<string, unknown>;
     delete request.createdAt;
-    expect(() => writeBridgeRequest(fx.stateDir, request as unknown as AgentBridgeRequest)).toThrow(
-      /request shape/,
-    );
+    await expect(
+      writeBridgeRequest(fx.stateDir, request as unknown as AgentBridgeRequest),
+    ).rejects.toThrow(/request shape/);
   });
 });
 
@@ -183,7 +183,7 @@ describe("waitForClaim", () => {
   it("returns claimed at once, without sleeping, when the claimed file already exists", async () => {
     const sim = fx.simulator("current");
     sim.heartbeat();
-    writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
+    await writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
     sim.tick();
     let sleeps = 0;
     const result = await waitForClaim(fx.stateDir, RUN_A, {
@@ -254,35 +254,37 @@ describe("waitForClaim", () => {
 });
 
 describe("withdrawRequest", () => {
-  it("removes an unclaimed request", () => {
-    writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
-    expect(withdrawRequest(fx.stateDir, RUN_A)).toBe("withdrawn");
+  it("removes an unclaimed request", async () => {
+    await writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
+    expect(await withdrawRequest(fx.stateDir, RUN_A)).toBe("withdrawn");
     expect(fx.requestFiles()).toEqual([]);
     expect(fx.claimedFiles()).toEqual([]);
   });
 
-  it("reports claimed, and keeps the claimed file, when a window claimed it meanwhile", () => {
+  it("reports claimed, and keeps the claimed file, when a window claimed it meanwhile", async () => {
     const sim = fx.simulator("current");
     sim.heartbeat();
-    writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
+    await writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
     sim.tick();
-    expect(withdrawRequest(fx.stateDir, RUN_A)).toBe("claimed");
+    expect(await withdrawRequest(fx.stateDir, RUN_A)).toBe("claimed");
     expect(fx.claimedFiles()).toEqual([`${RUN_A}.json`]);
   });
 
-  it("reports gone for a request that never existed, and never throws on a missing directory", () => {
-    expect(withdrawRequest(fx.stateDir, RUN_B)).toBe("gone");
-    expect(withdrawRequest(join(fx.base, "nowhere"), RUN_B)).toBe("gone");
+  it("reports gone for a request that never existed, and never throws on a missing directory", async () => {
+    expect(await withdrawRequest(fx.stateDir, RUN_B)).toBe("gone");
+    expect(await withdrawRequest(join(fx.base, "nowhere"), RUN_B)).toBe("gone");
   });
 
-  it("refuses a run id that is not the run id shape (no path can be built from it)", () => {
-    expect(withdrawRequest(fx.stateDir, "../claimed/x")).toBe("gone");
+  it("refuses a run id that is not the run id shape (no path can be built from it)", async () => {
+    expect(await withdrawRequest(fx.stateDir, "../claimed/x")).toBe("gone");
   });
 });
 
 describe("writeAgentPins", () => {
-  it("writes agent-pins.json atomically with mode 0600 and the helper's exact shape", () => {
-    expect(writeAgentPins(fx.stateDir, { claude: fx.claudePath, codex: fx.codexPath })).toBe(true);
+  it("writes agent-pins.json atomically with mode 0600 and the helper's exact shape", async () => {
+    expect(await writeAgentPins(fx.stateDir, { claude: fx.claudePath, codex: fx.codexPath })).toBe(
+      true,
+    );
     const file = join(fx.stateDir, "agent-pins.json");
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
@@ -293,23 +295,23 @@ describe("writeAgentPins", () => {
     expect(readdirSync(fx.stateDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
-  it("omits an agent that has no saved launcher and rewrites on change only", () => {
-    writeAgentPins(fx.stateDir, { claude: fx.claudePath });
+  it("omits an agent that has no saved launcher and rewrites on change only", async () => {
+    await writeAgentPins(fx.stateDir, { claude: fx.claudePath });
     const file = join(fx.stateDir, "agent-pins.json");
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
       schemaVersion: 1,
       claude: fx.claudePath,
     });
     const before = statSync(file).ino;
-    expect(writeAgentPins(fx.stateDir, { claude: fx.claudePath })).toBe(true);
+    expect(await writeAgentPins(fx.stateDir, { claude: fx.claudePath })).toBe(true);
     // An identical file is not rewritten (the inode is unchanged), yet the pin is in place.
     expect(statSync(file).ino).toBe(before);
-    writeAgentPins(fx.stateDir, { claude: fx.claudePath, codex: fx.codexPath });
+    await writeAgentPins(fx.stateDir, { claude: fx.claudePath, codex: fx.codexPath });
     expect(JSON.parse(readFileSync(file, "utf8")).codex).toBe(fx.codexPath);
   });
 
-  it("refuses a pin that is not an absolute path and writes nothing", () => {
-    expect(writeAgentPins(fx.stateDir, { claude: "claude" })).toBe(false);
+  it("refuses a pin that is not an absolute path and writes nothing", async () => {
+    expect(await writeAgentPins(fx.stateDir, { claude: "claude" })).toBe(false);
     expect(existsSync(join(fx.stateDir, "agent-pins.json"))).toBe(false);
   });
 });

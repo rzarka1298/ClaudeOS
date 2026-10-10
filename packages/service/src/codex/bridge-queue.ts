@@ -1,14 +1,5 @@
 import { randomBytes } from "node:crypto";
-import {
-  existsSync,
-  linkSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { link, lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   BRIDGE_DIRECTORY_NAMES,
@@ -128,9 +119,18 @@ function assertAgentRequestShape(request: unknown): asserts request is AgentBrid
   if (!verdict.ok) bad();
 }
 
-function unlinkQuietly(path: string): void {
+async function exists(path: string): Promise<boolean> {
   try {
-    unlinkSync(path);
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function unlinkQuietly(path: string): Promise<void> {
+  try {
+    await unlink(path);
   } catch {
     // Already gone.
   }
@@ -147,38 +147,41 @@ function tempName(base: string): string {
  * mints the next id and tries again). Throws only for a request that is not the fixed agent shape
  * or an I/O fault the caller cannot recover from.
  */
-export function writeBridgeRequest(stateDir: string, request: AgentBridgeRequest): string | null {
+export async function writeBridgeRequest(
+  stateDir: string,
+  request: AgentBridgeRequest,
+): Promise<string | null> {
   assertAgentRequestShape(request);
   const dir = requestsDir(stateDir);
   const name = `${request.runId}.json`;
   const final = join(dir, name);
-  if (existsSync(final) || existsSync(join(claimedDir(stateDir), name))) return null;
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if ((await exists(final)) || (await exists(join(claimedDir(stateDir), name)))) return null;
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   const tmp = join(dir, tempName(request.runId));
-  writeFileSync(tmp, `${JSON.stringify(request, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  await writeFile(tmp, `${JSON.stringify(request, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   try {
     // link() fails with EEXIST instead of replacing a file, which rename() would do silently.
-    linkSync(tmp, final);
+    await link(tmp, final);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST") {
-      unlinkQuietly(tmp);
+      await unlinkQuietly(tmp);
       return null;
     }
     if (code === "EPERM" || code === "ENOTSUP" || code === "EXDEV" || code === "ENOSYS") {
       // A filesystem without hard links: the rename is still atomic.
       try {
-        renameSync(tmp, final);
+        await rename(tmp, final);
         return final;
       } catch (renameError) {
-        unlinkQuietly(tmp);
+        await unlinkQuietly(tmp);
         throw renameError;
       }
     }
-    unlinkQuietly(tmp);
+    await unlinkQuietly(tmp);
     throw error;
   }
-  unlinkQuietly(tmp);
+  await unlinkQuietly(tmp);
   return final;
 }
 
@@ -214,7 +217,7 @@ export async function waitForClaim(
   const claimed = isRunId(runId) ? join(claimedDir(stateDir), `${runId}.json`) : null;
   const started = now();
   for (;;) {
-    if (claimed !== null && existsSync(claimed)) return "claimed";
+    if (claimed !== null && (await exists(claimed))) return "claimed";
     if (options.signal?.aborted === true) return "aborted";
     const remaining = options.deadlineMs - (now() - started);
     if (remaining <= 0) return "timeout";
@@ -227,14 +230,14 @@ export async function waitForClaim(
  * moment earlier, the claimed file is re-checked and reported (a hand-off that did happen); the
  * claimed file is never deleted. A request that is neither queued nor claimed is `gone`.
  */
-export function withdrawRequest(stateDir: string, runId: string): WithdrawResult {
+export async function withdrawRequest(stateDir: string, runId: string): Promise<WithdrawResult> {
   if (!isRunId(runId)) return "gone";
   const name = `${runId}.json`;
   try {
-    unlinkSync(join(requestsDir(stateDir), name));
+    await unlink(join(requestsDir(stateDir), name));
     return "withdrawn";
   } catch {
-    return existsSync(join(claimedDir(stateDir), name)) ? "claimed" : "gone";
+    return (await exists(join(claimedDir(stateDir), name))) ? "claimed" : "gone";
   }
 }
 
@@ -245,7 +248,7 @@ export function withdrawRequest(stateDir: string, runId: string): WithdrawResult
  * replaced. Returns false (and writes nothing) for a pin that is not an absolute path, when there
  * is nothing to pin, or when the write fails.
  */
-export function writeAgentPins(stateDir: string, pins: AgentPins): boolean {
+export async function writeAgentPins(stateDir: string, pins: AgentPins): Promise<boolean> {
   const body: Record<string, unknown> = { schemaVersion: 1 };
   for (const agent of ["claude", "codex"] as const) {
     const pin = pins[agent];
@@ -257,8 +260,12 @@ export function writeAgentPins(stateDir: string, pins: AgentPins): boolean {
   const content = `${JSON.stringify(body, null, 2)}\n`;
   const file = join(stateDir, PINS_FILE);
   try {
-    const info = lstatSync(file);
-    if (info.isFile() && (info.mode & 0o777) === 0o600 && readFileSync(file, "utf8") === content) {
+    const info = await lstat(file);
+    if (
+      info.isFile() &&
+      (info.mode & 0o777) === 0o600 &&
+      (await readFile(file, "utf8")) === content
+    ) {
       return true;
     }
   } catch {
@@ -266,12 +273,12 @@ export function writeAgentPins(stateDir: string, pins: AgentPins): boolean {
   }
   const tmp = join(stateDir, tempName(PINS_FILE));
   try {
-    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-    writeFileSync(tmp, content, { mode: 0o600, flag: "wx" });
-    renameSync(tmp, file);
+    await mkdir(stateDir, { recursive: true, mode: 0o700 });
+    await writeFile(tmp, content, { mode: 0o600, flag: "wx" });
+    await rename(tmp, file);
     return true;
   } catch {
-    unlinkQuietly(tmp);
+    await unlinkQuietly(tmp);
     return false;
   }
 }

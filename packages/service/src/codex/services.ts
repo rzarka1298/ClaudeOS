@@ -3,6 +3,7 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type ClaudeHeadroomView,
+  type CodexBridgeStatus,
   type CodexDoctorSummary,
   type CodexInstall,
   type CodexIntegrationStatus,
@@ -56,6 +57,7 @@ import { startCodexHookSpool } from "./hook-spool.js";
 import { createHookStatusProvider, type HookStatusFs } from "./hook-status.js";
 import { buildCodexIntegrationStatus, type CodexIntegrationService } from "./integration-routes.js";
 import { CODEX_APP_SERVER_STOP_DEADLINE_MS, createRateLimitsClient } from "./rate-limits-client.js";
+import { createRolloutRateLimitsReader } from "./rollout-rate-limits.js";
 import type { CodexRouteDeps } from "./routes.js";
 import { createRunOverlay } from "./run-overlay.js";
 import { createRunRecordReader, nodeRunRecordFs, summarizePausedRuns } from "./run-records.js";
@@ -92,7 +94,7 @@ export interface CodexServicesDeps {
   readonly usageSummary: () => UsageSummary | null;
   /** Codex detection for the install cache; absent means the saved launcher row alone decides. */
   readonly detection?: Pick<CodexDetection, "detectCodex" | "candidatePath"> | undefined;
-  readonly readBridgeStatus?: (() => BridgeStatus) | undefined;
+  readonly readBridgeStatus?: (() => BridgeStatus | Promise<BridgeStatus>) | undefined;
   /** The CODEX_HOME port; defaults to the allowlisted port over the resolved home. */
   readonly port?: CodexHomePort | undefined;
   readonly attribute?: AttributeFn | undefined;
@@ -313,7 +315,7 @@ async function composeCodexServices(
     }
   }
 
-  const readBridge: () => BridgeStatus =
+  const readBridge: () => BridgeStatus | Promise<BridgeStatus> =
     deps.readBridgeStatus ?? (() => readBridgeStatus({ env: deps.env, home: deps.home, now }));
 
   let stopped = false;
@@ -453,6 +455,7 @@ async function composeCodexServices(
     now,
     logger: reasonLog,
   });
+  const rolloutRateLimits = createRolloutRateLimitsReader({ port, now, logger: reasonLog });
   const headroom = createHeadroomService({
     client,
     saveSnapshot: (snapshot) => {
@@ -466,8 +469,9 @@ async function composeCodexServices(
       }
     },
     loadSnapshot: () => loadRateLimitSnapshot(db),
-    // No rollout rate-limit reader exists in this phase's parts; the bar-only fallback is absent.
-    fallback: () => null,
+    // Display only (plan 05.1-33, OQ-3): the newest rollout rate_limits figure for the bar. The gate
+    // and the 80 percent reserve still require a live read.
+    fallback: () => rolloutRateLimits.read(),
     pausedRuns: () => summarizePausedRuns(mirror.snapshot()),
     claudeView: () => claudeHeadroomViewOf(deps.usageSummary()),
     subscribers,
@@ -535,15 +539,33 @@ async function composeCodexServices(
   });
 
   // --- the integration status: the bridge view, the hooks, the install cache and the doctor --------
+  // The bridge is read with async fs calls (a stalled volume must never block the event loop), so
+  // the synchronous status snapshot serves the last view and a refresh re-reads it in the background.
+  const readBridgeView = async (): Promise<CodexBridgeStatus> => {
+    try {
+      return toBridgeStatusView(await readBridge());
+    } catch {
+      return { state: "not-installed", lastWindowAt: null };
+    }
+  };
+  let bridgeView: CodexBridgeStatus = { state: "not-installed", lastWindowAt: null };
+  let bridgeReading = false;
+  function refreshBridgeView(): void {
+    if (bridgeReading || stopped) return;
+    bridgeReading = true;
+    void readBridgeView().then((next) => {
+      bridgeReading = false;
+      if (stopped || JSON.stringify(next) === JSON.stringify(bridgeView)) return;
+      bridgeView = next;
+      lateIntegration.refresh();
+    });
+  }
+
+  refreshBridgeView();
+
   function statusNow(): CodexIntegrationStatus {
     return buildCodexIntegrationStatus({
-      bridge: () => {
-        try {
-          return toBridgeStatusView(readBridge());
-        } catch {
-          return { state: "not-installed", lastWindowAt: null };
-        }
-      },
+      bridge: () => bridgeView,
       hooks: () => hookStatus.status(),
       install: () => install,
       doctor: () => lastDoctor,
@@ -559,6 +581,7 @@ async function composeCodexServices(
       refreshing = true;
       try {
         hookStatus.rescan();
+        refreshBridgeView();
         const next = statusNow();
         const key = JSON.stringify(next);
         current = next;

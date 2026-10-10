@@ -145,7 +145,11 @@ describe("GET integration through the composed services", () => {
     await c.get(CODEX_INTEGRATION_PATH);
     expect(c.events("codex.integration.updated")).toHaveLength(0);
 
+    // The bridge is read with async fs calls: a request re-reads it in the background and the
+    // change is published when that read lands; the next read serves it.
     bridge.current = bridgeStatus("installed");
+    await c.get(CODEX_INTEGRATION_PATH);
+    expect(await waitFor(() => c.events("codex.integration.updated").length === 1)).toBe(true);
     const changed = CodexIntegrationStatusSchema.parse((await c.get(CODEX_INTEGRATION_PATH)).body);
     expect(changed.bridge.state).toBe("installed");
     const events = c.events("codex.integration.updated");
