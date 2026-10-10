@@ -234,6 +234,36 @@ describe("state directory candidates (R6, T-05.1-28)", () => {
     expect(s.state).toBe("outdated");
   });
 
+  it("a default bridge dir that is a symlink outside HOME is non-launchable and never read", () => {
+    fx.installLauncher();
+    const outside = join(fx.base, "outside-bridge");
+    mkdirSync(join(outside, "windows"), { recursive: true });
+    writeFileSync(
+      join(outside, "protocol.json"),
+      JSON.stringify({ protocol: 2, capabilities: ["follow", "tui", "agent"], kit: "k" }),
+    );
+    mkdirSync(join(fx.home, ".local", "state"), { recursive: true });
+    symlinkSync(outside, fx.stateDir);
+    const reads: string[] = [];
+    const fs: BridgeStateFs = {
+      ...nodeBridgeStateFs,
+      readFile(path) {
+        reads.push(path);
+        return nodeBridgeStateFs.readFile(path);
+      },
+      readdir(path) {
+        reads.push(path);
+        return nodeBridgeStateFs.readdir(path);
+      },
+    };
+    const s = readBridgeStatus({ env: {}, home: fx.home, fs });
+    expect(s.launchable).toBe(false);
+    expect(s.state).toBe("not-installed");
+    expect(s.protocol).toBeNull();
+    expect(s.windows).toEqual([]);
+    expect(reads.some((p) => p.startsWith(fx.stateDir) || p.startsWith(outside))).toBe(false);
+  });
+
   it("a relative XDG_STATE_HOME is ignored, as the bridge ignores it", () => {
     fx.installLauncher();
     fx.installMarker();

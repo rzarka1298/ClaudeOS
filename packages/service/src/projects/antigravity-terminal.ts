@@ -253,7 +253,7 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
 
       // 3. The bridge, classified before a request exists.
       const status = deps.readStatus();
-      if (!status.launcherPresent) {
+      if (!status.launcherPresent || !status.launchable) {
         log("bridge-not-installed");
         return fail("bridge-not-installed");
       }

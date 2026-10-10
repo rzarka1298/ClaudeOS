@@ -236,6 +236,19 @@ describe("typed errors for a missing or outdated bridge", () => {
     expectNothingWritten();
   });
 
+  it("a non-launchable bridge dir is bridge-not-installed and writes nothing", async () => {
+    const result = await createAntigravityTerminalLauncher(
+      deps({
+        readStatus: () => ({
+          ...readBridgeStatus({ env: {}, home: fx.home, now: clock.t }),
+          launchable: false,
+        }),
+      }),
+    ).launch(input());
+    expect(result).toEqual({ ok: false, error: "bridge-not-installed" });
+    expectNothingWritten();
+  });
+
   it("a marker without the agent capability is bridge-outdated, with no window and the app not opened", async () => {
     fx.installMarker({ protocol: 1, capabilities: ["follow", "tui"] });
     const result = await createAntigravityTerminalLauncher(deps()).launch(input());

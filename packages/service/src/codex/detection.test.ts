@@ -38,6 +38,7 @@ function bridgeStatus(
     launcherPresent: state !== "not-installed",
     dir: `${HOME}/.local/state/codex-bridge`,
     dirSource,
+    launchable: true,
     windows: [],
   };
 }

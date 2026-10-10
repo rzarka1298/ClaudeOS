@@ -48,6 +48,11 @@ export interface BridgeStatus {
   /** The state directory the queue is written to. */
   readonly dir: string;
   readonly dirSource: BridgeDirSource;
+  /**
+   * False when no candidate directory passed the containment check (an environment or a symlink
+   * pointed outside the owner's home). Nothing was read, and nothing may be written to `dir`.
+   */
+  readonly launchable: boolean;
   /** Fresh heartbeats only (updated within the freshness window), in file-name order. */
   readonly windows: readonly BridgeWindow[];
 }
@@ -211,17 +216,19 @@ export function readBridgeStatus(options: ReadBridgeStatusOptions): BridgeStatus
   if (fallback !== primary && acceptable(fallback)) candidates.push(fallback);
 
   const chosen = candidates.find((dir) => hasBridge(fs, dir));
+  const launchable = candidates.length > 0;
   const dir = chosen ?? candidates[0] ?? fallback;
   const dirSource: BridgeDirSource =
     chosen !== undefined && chosen !== primary ? "default-fallback" : "primary";
 
   const launcher = fs.stat(bridgeCommandPath(home));
   const launcherPresent = launcher?.isFile === true && (launcher.mode & 0o111) !== 0;
-  const marker = readMarker(fs, dir);
-  const windows = readWindows(fs, dir, nowMs);
+  // A rejected directory is never read: no marker, no heartbeats.
+  const marker = launchable ? readMarker(fs, dir) : null;
+  const windows = launchable ? readWindows(fs, dir, nowMs) : [];
 
   let state: BridgeInstallState;
-  if (!launcherPresent) state = "not-installed";
+  if (!launcherPresent || !launchable) state = "not-installed";
   else if (windows.some((window) => !hasAgentCapability(window))) state = "outdated";
   else if (marker !== null && !hasAgentCapability(marker)) state = "outdated";
   else if (windows.length > 0) state = "installed";
@@ -234,6 +241,7 @@ export function readBridgeStatus(options: ReadBridgeStatusOptions): BridgeStatus
     launcherPresent,
     dir,
     dirSource,
+    launchable,
     windows,
   };
 }
