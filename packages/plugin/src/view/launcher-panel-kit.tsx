@@ -48,6 +48,7 @@ export type ExecutableDraft =
 
 export type TerminalDraft =
   | { readonly kind: "terminal-app" }
+  | { readonly kind: "antigravity-terminal" }
   | {
       readonly kind: "custom";
       readonly preset: TerminalPresetId;
@@ -286,7 +287,7 @@ export function runLauncherTest(
   });
 }
 
-function isLauncherId(id: LaunchAction): id is LauncherId {
+function isLauncherId(id: LaunchAction): id is Exclude<LauncherId, "codex"> {
   return id === "antigravity" || id === "claude-code" || id === "claude-desktop";
 }
 

@@ -26,9 +26,9 @@ function linesOf(kind: (typeof LAUNCH_ERROR_KINDS)[number]): string[] {
 }
 
 describe("LAUNCH_ERROR_COPY (D-26)", () => {
-  it("has exactly the ten LaunchErrorKind keys", () => {
+  it("has exactly the thirteen LaunchErrorKind keys", () => {
     expect(Object.keys(LAUNCH_ERROR_COPY).sort()).toEqual([...LAUNCH_ERROR_KINDS].sort());
-    expect(LAUNCH_ERROR_KINDS).toHaveLength(10);
+    expect(LAUNCH_ERROR_KINDS).toHaveLength(13);
   });
 
   it.each([...LAUNCH_ERROR_KINDS])(

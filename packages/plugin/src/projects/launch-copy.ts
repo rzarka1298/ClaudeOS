@@ -163,6 +163,25 @@ export const LAUNCH_ERROR_COPY: Readonly<Record<LaunchErrorKind, LaunchErrorCopy
     action: "set-up-launchers",
     notice: "{Launcher} couldn't be started. Check it in Settings → Launchers.",
   },
+  // Phase 05.1 (UI-SPEC "Typed errors"). Action ids and labels arrive with plan 05.1-17.
+  "bridge-not-installed": {
+    problem: "The Antigravity terminal bridge isn't installed.",
+    nextStep:
+      "Install it from Settings → Codex, or switch to Terminal in Settings → Launchers, then try again.",
+    notice:
+      "The Antigravity terminal bridge isn't installed. Install it from Settings → Codex, or switch to Terminal in Settings → Launchers.",
+  },
+  "bridge-outdated": {
+    problem: "The Antigravity terminal bridge is out of date.",
+    nextStep: "Run its install step again from Settings → Codex, then try again.",
+    notice:
+      "The Antigravity terminal bridge is out of date. Run its install step again from Settings → Codex.",
+  },
+  "window-not-ready": {
+    problem: "Antigravity is still starting.",
+    nextStep: "Its window is opening now. Try again in a few seconds.",
+    notice: "Antigravity is still starting. Try again in a few seconds.",
+  },
 };
 
 /** The visible label of each inline action button (UI-SPEC table; PR-11 for Privacy & Security). */

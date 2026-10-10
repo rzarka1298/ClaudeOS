@@ -53,7 +53,14 @@ const PRESET_TERMINAL_LABELS: Readonly<Record<TerminalPresetId, string>> = {
 };
 
 export function terminalLabelOf(terminal: TerminalDraft | TerminalChoice): string {
-  return terminal.kind === "terminal-app" ? "Terminal" : PRESET_TERMINAL_LABELS[terminal.preset];
+  switch (terminal.kind) {
+    case "terminal-app":
+      return "Terminal";
+    case "antigravity-terminal":
+      return "Antigravity";
+    case "custom":
+      return PRESET_TERMINAL_LABELS[terminal.preset];
+  }
 }
 
 /**
@@ -327,9 +334,9 @@ export function ClaudeCodePanel({
           : { kind: "path", path: current.executable.text },
       args: [...current.args],
       terminal:
-        current.terminal.kind === "terminal-app"
-          ? { kind: "terminal-app" }
-          : { kind: "custom", preset: current.terminal.preset, argv: [...current.terminal.argv] },
+        current.terminal.kind === "custom"
+          ? { kind: "custom", preset: current.terminal.preset, argv: [...current.terminal.argv] }
+          : { kind: current.terminal.kind },
     };
     setSaveError(session, "claude-code", null);
     setPanelStatus(session, "claude-code", { kind: "saving" });

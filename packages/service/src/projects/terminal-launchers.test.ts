@@ -138,6 +138,13 @@ describe("the Terminal.app adapter (D-20, D-28)", () => {
 });
 
 describe("selectTerminalLauncher (PROJ-10, D-21)", () => {
+  it("answers null for { kind: antigravity-terminal } until its adapter is registered (D-07)", () => {
+    const spawner = createFakeSpawner();
+    expect(
+      selectTerminalLauncher({ kind: "antigravity-terminal" }, { spawner, scriptDir }),
+    ).toBeNull();
+  });
+
   it("returns the Terminal.app adapter for { kind: terminal-app }", async () => {
     const spawner = createFakeSpawner();
     const launcher = selectTerminalLauncher({ kind: "terminal-app" }, { spawner, scriptDir });

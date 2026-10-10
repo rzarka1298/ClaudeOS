@@ -310,6 +310,9 @@ export function selectTerminalLauncher(
   switch (choice.kind) {
     case "terminal-app":
       return createTerminalAppLauncher(deps);
+    case "antigravity-terminal":
+      // Plan 05.1-13 registers the bridge adapter; until then no adapter handles it.
+      return null;
     case "custom":
       return createCustomTemplateLauncher({
         ...deps,

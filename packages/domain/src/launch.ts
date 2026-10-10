@@ -65,12 +65,21 @@ export const LAUNCH_ERROR_KINDS = [
   "folder-access-denied",
   "timeout",
   "spawn-failed",
+  // Phase 05.1 (D-09, OQ-1): the Antigravity terminal bridge hand-off. Appended,
+  // never reordered, so persisted and wire values keep their meaning.
+  "bridge-not-installed",
+  "bridge-outdated",
+  "window-not-ready",
 ] as const;
 export type LaunchErrorKind = (typeof LAUNCH_ERROR_KINDS)[number];
 export const launchErrorKindSchema = z.enum(LAUNCH_ERROR_KINDS);
 
-/** The launchers that need setup. Finder and GitHub need none (RR-26). */
-export const LAUNCHER_IDS = ["antigravity", "claude-code", "claude-desktop"] as const;
+/**
+ * The launchers that need setup. Finder and GitHub need none (RR-26).
+ * `codex` (Phase 05.1, D-11) is the Codex executable; it has no terminal of
+ * its own and opens in the terminal the `claude-code` row chose.
+ */
+export const LAUNCHER_IDS = ["antigravity", "claude-code", "claude-desktop", "codex"] as const;
 export type LauncherId = (typeof LAUNCHER_IDS)[number];
 export const launcherIdSchema = z.enum(LAUNCHER_IDS);
 
@@ -193,11 +202,15 @@ export type TerminalPresetId = (typeof TERMINAL_PRESET_IDS)[number];
 export const terminalPresetIdSchema = z.enum(TERMINAL_PRESET_IDS);
 
 /**
- * Terminal choice (D-23, PROJ-10): the first-class Terminal.app adapter, or
- * a custom terminal driven by an argv template containing `{script}`.
+ * Terminal choice (D-23, PROJ-10): the first-class Terminal.app adapter, a
+ * custom terminal driven by an argv template containing `{script}`, or (Phase
+ * 05.1, D-07) the Antigravity terminal -- a tab in the project's Antigravity
+ * window, opened through the user-level bridge. The Antigravity choice carries
+ * nothing else: the bundle to start cold is the saved Antigravity launcher row.
  */
 export const TerminalChoiceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("terminal-app") }).strict(),
+  z.object({ kind: z.literal("antigravity-terminal") }).strict(),
   z
     .object({
       kind: z.literal("custom"),
