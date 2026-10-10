@@ -15,7 +15,10 @@ import {
   renderLaunchScript,
   validateCommandTemplate,
 } from "@ccc/launchers";
-import type { AntigravityTerminalDeps } from "./antigravity-terminal.js";
+import {
+  type AntigravityTerminalDeps,
+  createAntigravityTerminalLauncher,
+} from "./antigravity-terminal.js";
 import { SCRIPT_MAX_AGE_MS, sweepStaleScripts, writeLaunchScript } from "./script-dir.js";
 import type { Spawner, SpawnOutcome } from "./spawner.js";
 
@@ -317,9 +320,16 @@ export function selectTerminalLauncher(
   switch (choice.kind) {
     case "terminal-app":
       return createTerminalAppLauncher(deps);
-    case "antigravity-terminal":
-      // Plan 05.1-13 registers the bridge adapter; until then no adapter handles it.
-      return null;
+    case "antigravity-terminal": {
+      // The bridge adapter (plan 05.1-13, D-07). Without its deps no adapter handles the choice.
+      if (deps.antigravity === undefined) return null;
+      // The pipeline cap reaches the adapter so its own deadline stays below it.
+      const antigravity =
+        deps.capMs === undefined || deps.antigravity.capMs !== undefined
+          ? deps.antigravity
+          : { ...deps.antigravity, capMs: deps.capMs };
+      return createAntigravityTerminalLauncher(antigravity);
+    }
     case "custom":
       return createCustomTemplateLauncher({
         ...deps,

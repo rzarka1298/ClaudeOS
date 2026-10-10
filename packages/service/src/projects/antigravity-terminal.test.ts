@@ -501,7 +501,8 @@ describe("run ids", () => {
         input(),
       ),
     ).resolves.toEqual({ ok: true });
-    expect(fx.claimedFiles()).toEqual(["20261010T120000001Z.json"]);
+    // The pre-created request is claimed by the same window; the retried one is claimed too.
+    expect(fx.claimedFiles()).toEqual(["20261010T120000000Z.json", "20261010T120000001Z.json"]);
 
     const stuck = await createAntigravityTerminalLauncher(deps({ mintRunId: () => taken })).launch(
       input(),
