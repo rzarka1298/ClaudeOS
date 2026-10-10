@@ -3,6 +3,8 @@ import {
   type LaunchErrorKind,
   type LaunchGuard,
   type LaunchGuardDecision,
+  type LaunchPairRequest,
+  type LaunchPairResponse,
   type LaunchRequest,
   type LaunchResponse,
   type LaunchResult,
@@ -104,8 +106,8 @@ export interface LaunchCollector {
 /** The only fields a launch log line may carry (D-46). */
 export interface LaunchLogFields {
   readonly projectId: ProjectId | null;
-  readonly action: LaunchAction;
-  readonly kind: LaunchErrorKind | "ok" | "conflict";
+  readonly action: LaunchAction | "codex" | "claude-codex-pair";
+  readonly kind: LaunchErrorKind | "ok" | "conflict" | "setup";
 }
 
 export interface LaunchLogger {
@@ -139,6 +141,8 @@ export interface LaunchServiceDeps {
 
 export interface LaunchService {
   launch(request: LaunchRequest): Promise<LaunchResponse>;
+  /** Claude Code and Codex together, one guard decision, one envelope (plan 05.1-20). */
+  launchPair(request: LaunchPairRequest): Promise<LaunchPairResponse>;
 }
 
 /** What a resolved action hands to the spawn step. */
@@ -404,6 +408,9 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
   };
 
   return {
+    launchPair() {
+      return Promise.reject(new Error("not implemented"));
+    },
     launch(request) {
       // A retry with a different choice is a different launch, not a join.
       const choice = request.action === "claude-code" ? JSON.stringify(request.choice ?? null) : "";
