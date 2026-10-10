@@ -189,14 +189,16 @@ describe("a hung, crashing or noisy child never lingers (T-05.1-11, Pitfall 11)"
     const log = logger();
     const probe = createDoctorProbe({
       executablePath: () => doctor.path,
-      capMs: 300,
+      // The cap must outlast a loaded machine's Node start-up, or the fake is
+      // terminated before it logs its pid.
+      capMs: 1500,
       killWaitMs: 500,
       logger: log,
     });
     const started = Date.now();
     const result = await probe.run();
     expect(result).toEqual({ kind: "failed" });
-    expect(Date.now() - started).toBeLessThan(2500);
+    expect(Date.now() - started).toBeLessThan(4500);
     expect(alive(await pidOf(doctor.logPath))).toBe(false);
     expect(log.reasons).toEqual(["timeout"]);
   });
@@ -205,7 +207,7 @@ describe("a hung, crashing or noisy child never lingers (T-05.1-11, Pitfall 11)"
     const doctor = fake({ behavior: { kind: "hang" }, ignoreTermination: true });
     const probe = createDoctorProbe({
       executablePath: () => doctor.path,
-      capMs: 200,
+      capMs: 1500,
       killWaitMs: 300,
     });
     expect(await probe.run()).toEqual({ kind: "failed" });
