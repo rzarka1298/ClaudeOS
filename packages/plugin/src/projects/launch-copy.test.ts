@@ -137,3 +137,34 @@ describe("launchSuccessLine (D-40: claim only what was observed)", () => {
     expect(line.toLowerCase()).not.toContain("session");
   });
 });
+
+describe("the three bridge error rows (UI-SPEC Typed errors, D-09, OQ-1)", () => {
+  it("carry the UI-SPEC text verbatim, with no action field yet", () => {
+    expect(LAUNCH_ERROR_COPY["bridge-not-installed"]).toEqual({
+      problem: "The Antigravity terminal bridge isn't installed.",
+      nextStep:
+        "Install it from Settings → Codex, or switch to Terminal in Settings → Launchers, then try again.",
+      notice:
+        "The Antigravity terminal bridge isn't installed. Install it from Settings → Codex, or switch to Terminal in Settings → Launchers.",
+    });
+    expect(LAUNCH_ERROR_COPY["bridge-outdated"]).toEqual({
+      problem: "The Antigravity terminal bridge is out of date.",
+      nextStep: "Run its install step again from Settings → Codex, then try again.",
+      notice:
+        "The Antigravity terminal bridge is out of date. Run its install step again from Settings → Codex.",
+    });
+    expect(LAUNCH_ERROR_COPY["window-not-ready"]).toEqual({
+      problem: "Antigravity is still starting.",
+      nextStep: "Its window is opening now. Try again in a few seconds.",
+      notice: "Antigravity is still starting. Try again in a few seconds.",
+    });
+  });
+
+  it("never uses the word command", () => {
+    for (const kind of ["bridge-not-installed", "bridge-outdated", "window-not-ready"] as const) {
+      for (const line of linesOf(kind)) {
+        expect(line.toLowerCase()).not.toContain("command");
+      }
+    }
+  });
+});

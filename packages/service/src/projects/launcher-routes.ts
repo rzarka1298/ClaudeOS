@@ -165,7 +165,7 @@ function isExecutableOf(launchers: LauncherServices): (path: string) => Promise<
 /** Runs the pure validator over `argv` after checking `argv[0]` asynchronously. */
 async function validateTemplate(
   argv: readonly string[],
-  kind: RefusedTemplate,
+  kind: Exclude<RefusedTemplate, "codex">,
   isExecutable: (path: string) => Promise<boolean>,
 ): Promise<{ readonly reason: TemplateRefusalReason; readonly index: number | null } | null> {
   const executable = argv[0];
@@ -218,6 +218,10 @@ async function validateSave(
   body: SaveLauncherConfigRequest,
   launchers: LauncherServices,
 ): Promise<Validation> {
+  if (body.launcherId === "codex") {
+    // Plan 05.1-21 adds the Codex validator; until then a Codex save fails closed.
+    return refused("executable-not-found", 0, "codex");
+  }
   if (body.launcherId !== "claude-code") {
     const installed = await launchers.detector.findBundle(body.bundleId);
     if (!installed) return refused("bundle-not-found", null);
@@ -509,6 +513,11 @@ async function handleTest(
   const launchers = launchersOf(ctx, res, LAUNCHERS_TEST_PATH);
   if (launchers === null) return;
   const launcherId = body.value.launcherId;
+  if (launcherId === "codex") {
+    // Plan 05.1-21 adds the Codex Test; until then nothing is saved to test.
+    sendJson(res, 200, { ok: false, error: "launcher-not-configured" } satisfies LaunchResult);
+    return;
+  }
   try {
     // The row the Test reads, captured first: a save racing the Test must
     // not let the new configuration inherit this Test's pass.

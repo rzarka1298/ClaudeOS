@@ -148,6 +148,70 @@ export const LaunchResponseSchema = z.union([LaunchResultSchema, LaunchConflictR
 export type LaunchResponse = z.infer<typeof LaunchResponseSchema>;
 
 // ---------------------------------------------------------------------------
+// Pair launch (Phase 05.1, D-10, CODEX-02)
+
+/**
+ * The Claude Code and Codex pair is its own action with its own path:
+ * {@link LAUNCH_ACTIONS} is deliberately NOT widened, so no exhaustive switch
+ * over the five project actions changes. This literal names the pair in
+ * descriptors and copy.
+ */
+export const LAUNCH_PAIR_ACTION = "claude-codex-pair" as const;
+
+/** `POST /api/v1/projects/launch-pair` -- both halves, each answered on its own. */
+export const LAUNCH_PAIR_PATH = `${API_BASE}/projects/launch-pair`;
+
+/**
+ * The pair body: a project id and the concurrent-write guard's choice, and
+ * nothing else. No path, argv, executable or shell string can travel: the
+ * service builds both launches from saved, validated rows (T-05.1-33).
+ */
+export const LaunchPairRequestSchema = z
+  .object({ projectId: ProjectIdSchema, choice: LaunchChoiceSchema.optional() })
+  .strict();
+export type LaunchPairRequest = z.infer<typeof LaunchPairRequestSchema>;
+
+const PairOpenedSchema = z.object({ status: z.literal("opened") }).strict();
+const PairErrorSchema = z
+  .object({ status: z.literal("error"), error: launchErrorKindSchema })
+  .strict();
+
+/**
+ * One agent's outcome: opened, exactly one {@link LaunchErrorKind}, or (Codex
+ * only) the calm `setup` state when Codex has not been configured yet. One
+ * agent failing never alters the other's result (CODEX-02).
+ */
+export const PairAgentResultSchema = z.discriminatedUnion("status", [
+  PairOpenedSchema,
+  PairErrorSchema,
+  z.object({ status: z.literal("setup") }).strict(),
+]);
+export type PairAgentResult = z.infer<typeof PairAgentResultSchema>;
+
+/** The Claude Code half never has a `setup` state: its missing config is `launcher-not-configured`. */
+export const PairClaudeResultSchema = z.discriminatedUnion("status", [
+  PairOpenedSchema,
+  PairErrorSchema,
+]);
+export type PairClaudeResult = z.infer<typeof PairClaudeResultSchema>;
+
+/** The per-agent envelope: exactly `claude` and `codex`. */
+export const LaunchPairResultSchema = z
+  .object({ claude: PairClaudeResultSchema, codex: PairAgentResultSchema })
+  .strict();
+export type LaunchPairResult = z.infer<typeof LaunchPairResultSchema>;
+
+/**
+ * What the pair route answers: the envelope, or the existing guard conflict
+ * (nothing launched; the Claude half's concurrent-write guard answers first).
+ */
+export const LaunchPairResponseSchema = z.union([
+  LaunchPairResultSchema,
+  LaunchConflictResultSchema,
+]);
+export type LaunchPairResponse = z.infer<typeof LaunchPairResponseSchema>;
+
+// ---------------------------------------------------------------------------
 // Launcher configuration (wire and stored shapes)
 
 /** A macOS bundle identifier (D-19): letters, digits, dots and hyphens, at most 255. */
@@ -196,6 +260,13 @@ export const ClaudeExecutableChoiceSchema = z.discriminatedUnion("kind", [
 ]);
 export type ClaudeExecutableChoice = z.infer<typeof ClaudeExecutableChoiceSchema>;
 
+/**
+ * The same choice under a neutral name: Codex (Phase 05.1, D-11) is picked
+ * the same way, by a detected candidate's opaque id or a typed absolute path.
+ */
+export const ExecutableChoiceSchema = ClaudeExecutableChoiceSchema;
+export type ExecutableChoice = ClaudeExecutableChoice;
+
 /** Custom-terminal presets (D-23); all start "Unverified" until the owner tests one. */
 export const TERMINAL_PRESET_IDS = ["iterm2", "ghostty", "wezterm", "blank"] as const;
 export type TerminalPresetId = (typeof TERMINAL_PRESET_IDS)[number];
@@ -239,6 +310,14 @@ export const SaveLauncherConfigRequestSchema = z.discriminatedUnion("launcherId"
       terminal: TerminalChoiceSchema,
     })
     .strict(),
+  // Codex has no terminal of its own (D-11): it opens in the claude-code row's terminal.
+  z
+    .object({
+      launcherId: z.literal("codex"),
+      executable: ExecutableChoiceSchema,
+      args: ClaudeArgsSchema,
+    })
+    .strict(),
 ]);
 export type SaveLauncherConfigRequest = z.infer<typeof SaveLauncherConfigRequestSchema>;
 
@@ -260,7 +339,24 @@ export const StoredClaudeCodeConfigSchema = z
   .strict();
 export type StoredClaudeCodeConfig = z.infer<typeof StoredClaudeCodeConfigSchema>;
 
-export type StoredLauncherConfig = StoredAppLauncherConfig | StoredClaudeCodeConfig;
+/**
+ * What `launcher_config.config_json` holds for Codex (Phase 05.1, D-11): the
+ * resolved absolute executable and its arguments, and NO terminal -- the Codex
+ * half opens in the terminal chosen by the `claude-code` row, so it can never
+ * select a different, unvalidated one.
+ */
+export const StoredCodexConfigSchema = z
+  .object({
+    executablePath: AbsolutePathSchema,
+    args: ClaudeArgsSchema,
+  })
+  .strict();
+export type StoredCodexConfig = z.infer<typeof StoredCodexConfigSchema>;
+
+export type StoredLauncherConfig =
+  | StoredAppLauncherConfig
+  | StoredClaudeCodeConfig
+  | StoredCodexConfig;
 
 /**
  * Parses a stored config row for `launcherId`, or returns `null` when the
@@ -276,6 +372,10 @@ export function parseStoredLauncherConfig(
   json: unknown,
 ): StoredClaudeCodeConfig | null;
 export function parseStoredLauncherConfig(
+  launcherId: "codex",
+  json: unknown,
+): StoredCodexConfig | null;
+export function parseStoredLauncherConfig(
   launcherId: string,
   json: unknown,
 ): StoredLauncherConfig | null;
@@ -286,9 +386,11 @@ export function parseStoredLauncherConfig(
   const schema =
     launcherId === "claude-code"
       ? StoredClaudeCodeConfigSchema
-      : launcherId === "antigravity" || launcherId === "claude-desktop"
-        ? StoredAppLauncherConfigSchema
-        : null;
+      : launcherId === "codex"
+        ? StoredCodexConfigSchema
+        : launcherId === "antigravity" || launcherId === "claude-desktop"
+          ? StoredAppLauncherConfigSchema
+          : null;
   if (!schema) {
     return null;
   }
@@ -317,8 +419,11 @@ export const TEMPLATE_REFUSAL_REASONS = [
 ] as const;
 export type TemplateRefusalReason = (typeof TEMPLATE_REFUSAL_REASONS)[number];
 
-/** Which argv template a Claude Code refusal is about: `[claude, ...args]` or the custom terminal's. */
-export const REFUSED_TEMPLATES = ["claude-code", "terminal"] as const;
+/**
+ * Which argv template a refusal is about: Claude Code's `[claude, ...args]`,
+ * the custom terminal's, or (Phase 05.1) Codex's `[codex, ...args]`.
+ */
+export const REFUSED_TEMPLATES = ["claude-code", "terminal", "codex"] as const;
 export type RefusedTemplate = (typeof REFUSED_TEMPLATES)[number];
 
 /**
@@ -358,6 +463,20 @@ export const LauncherConfigViewSchema = z.object({
     })
     .nullable(),
   "claude-desktop": AppLauncherViewSchema.nullable(),
+  /**
+   * Phase 05.1 (D-11), optional so an older service's answer still parses.
+   * Display-safe executable text only, never a path the plugin could send
+   * back; there is no terminal member.
+   */
+  codex: z
+    .object({
+      executableDisplay: z.string().min(1).max(4096),
+      args: ClaudeArgsSchema,
+      tested: z.boolean(),
+    })
+    .strict()
+    .nullable()
+    .optional(),
 });
 export type LauncherConfigView = z.infer<typeof LauncherConfigViewSchema>;
 
@@ -382,6 +501,37 @@ const DetectedAppsSchema = z.array(DetectedAppSchema).max(32);
  * the plugin may not import the launcher package; nothing is saved until
  * the owner confirms (D-27).
  */
+/** Where a detected Codex executable lives, as a category and never a path (D-12). */
+export const CODEX_LOCATIONS = ["user-install", "app-bundle", "package-manager", "other"] as const;
+
+/** `codex doctor` health as detection may report it; detection itself never runs doctor, so it says `unknown`. */
+export const CODEX_DOCTOR_WORDS = ["unknown", "ok", "warning", "fail", "unrecognised"] as const;
+
+/** Whether the Antigravity terminal bridge is ready to take a launch (D-08, D-12). */
+export const BRIDGE_READINESS_WORDS = [
+  "installed",
+  "installed-idle",
+  "not-installed",
+  "outdated",
+  "different-folder",
+] as const;
+export type BridgeReadiness = (typeof BRIDGE_READINESS_WORDS)[number];
+
+/** A Codex executable the service found: opaque id, display text, bounded version or null, category. */
+export const DetectedCodexExecutableSchema = z
+  .object({
+    candidateId: z.string().min(1).max(64),
+    displayPath: z.string().min(1).max(4096),
+    version: z
+      .string()
+      .max(32)
+      .regex(/^[0-9]+(?:\.[0-9]+){1,3}$/)
+      .nullable(),
+    location: z.enum(CODEX_LOCATIONS),
+  })
+  .strict();
+export type DetectedCodexExecutable = z.infer<typeof DetectedCodexExecutableSchema>;
+
 export const DetectionResponseSchema = z.object({
   detectedAt: z.string(),
   apps: z.object({
@@ -411,6 +561,21 @@ export const DetectionResponseSchema = z.object({
     )
     .max(TERMINAL_PRESET_IDS.length),
   git: z.enum(["available", "unavailable"]),
+  /**
+   * Phase 05.1 (D-11, D-12, CODEX-03); every member below is optional so an
+   * older service's answer still parses. None carries a path the plugin may
+   * send back: candidates are addressed by their opaque id.
+   */
+  codex: z
+    .object({
+      executables: z.array(DetectedCodexExecutableSchema).max(16),
+      doctor: z.enum(CODEX_DOCTOR_WORDS),
+    })
+    .strict()
+    .optional(),
+  bridge: z.enum(BRIDGE_READINESS_WORDS).optional(),
+  /** A proposal only: detection never saves, and a saved choice is never rewritten (OQ-2). */
+  suggestedTerminal: TerminalChoiceSchema.optional(),
 });
 export type DetectionResponse = z.infer<typeof DetectionResponseSchema>;
 
@@ -468,11 +633,21 @@ export function terminalMayPromptForAutomation(terminal: TerminalChoice): boolea
 }
 
 /**
+ * The ids a Test may name: the five launch actions plus `codex` (Phase 05.1),
+ * which is a launcher but not a launch action.
+ */
+export const TEST_LAUNCHER_IDS = [...LAUNCH_ACTIONS, "codex"] as const;
+export type TestLauncherId = (typeof TEST_LAUNCHER_IDS)[number];
+
+/**
  * A Test names one of the five launch actions (D-28, RR-15): the three
  * launchers that need setup, plus Finder and GitHub, which need none but
- * still have a Test step. It never carries a path, bundle ID or URL.
+ * still have a Test step -- or Codex (Phase 05.1). It never carries a path,
+ * bundle ID or URL.
  */
-export const TestLauncherRequestSchema = z.object({ launcherId: launchActionSchema }).strict();
+export const TestLauncherRequestSchema = z
+  .object({ launcherId: z.enum(TEST_LAUNCHER_IDS) })
+  .strict();
 export type TestLauncherRequest = z.infer<typeof TestLauncherRequestSchema>;
 
 /** `POST /api/v1/launchers/mark-tested` — the owner answered "It opened" (RR-14). */
