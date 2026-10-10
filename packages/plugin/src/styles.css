@@ -2923,6 +2923,57 @@ fieldset.ccc-template-rows > legend {
   max-width: 68ch;
 }
 
+/* Phase 05.1 wave-5 visual fixes, scoped to the Codex sections and launcher
+ * so no other list, card or committed baseline changes. */
+
+/* A Codex session row wraps its actions in `.ccc-card-actions`, so the
+ * two-column row-action grid no longer applies: the row goes back to block
+ * flow and the actions wrap on their own line under the text (UI-SPEC row
+ * anatomy), leaving the text column the full row width. */
+.ccc-command-center [data-codex-section] .ccc-list-row:has(.ccc-card-actions) {
+  display: block;
+}
+
+.ccc-command-center [data-codex-section] .ccc-list-row .ccc-card-actions {
+  align-items: center;
+  margin-block-start: var(--ccc-space-xs);
+}
+
+.ccc-command-center [data-codex-section] .ccc-card-actions > .ccc-list-meta {
+  margin: 0;
+}
+
+/* The state glyph and its word stay inline with the meta text instead of
+ * becoming separate flex items. */
+.ccc-command-center [data-codex-section] .ccc-meta-segments {
+  display: block;
+}
+
+/* The analysis pill is a pill, not a full-width bar. */
+.ccc-command-center [data-codex-section] > .ccc-quick-action {
+  align-self: flex-start;
+}
+
+/* Argument labels and their remove buttons stay on one line; the input takes
+ * the free width. */
+.ccc-template-row > .ccc-field-label,
+.ccc-template-row > .ccc-list-more {
+  flex: none;
+  white-space: nowrap;
+}
+
+.ccc-template-row > .ccc-text-input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+/* A wrapped radio hint hangs under its label text, not under the radio. */
+.ccc-radio-group > label {
+  display: block;
+  padding-inline-start: calc(var(--ccc-space-lg) + var(--ccc-space-sm) + var(--ccc-space-xs));
+  text-indent: calc(-1 * (var(--ccc-space-lg) + var(--ccc-space-sm) + var(--ccc-space-xs)));
+}
+
 /* ===== Phase 05.1: Codex card, reserve tick, pair status ===== */
 
 .ccc-command-center .ccc-codex-sections {
@@ -3010,7 +3061,7 @@ fieldset.ccc-template-rows > legend {
 }
 
 .ccc-command-center .ccc-codex-current {
-  padding: var(--ccc-space-md);
+  padding: 0;
 }
 
 .ccc-command-center .ccc-launch-status-pair {

@@ -129,7 +129,7 @@ describe("Phase 05.1 Codex CSS contract", () => {
     expect(legend).toMatch(/justify-content:\s*flex-end/);
     expect(legend).toMatch(/color:\s*var\(--ccc-ink-muted\)/);
     expect(legend).toMatch(/font-size:\s*var\(--ccc-text-label\)/);
-    expect(bodyFor(`${ROOT} .ccc-codex-current`)).toMatch(/padding:\s*var\(--ccc-space-md\)/);
+    expect(bodyFor(`${ROOT} .ccc-codex-current`)).toMatch(/padding:\s*0\s*(;|$)/);
   });
   it("pairs every tone with its own text in the consuming markup contract", () => {
     const tones = {
@@ -164,5 +164,24 @@ describe("wave 4 spacing and legend alignment", () => {
     expect(SOURCE).toMatch(
       /\.ccc-card\[data-presentation="disconnected"\] \.ccc-state-body \+ \.ccc-codex-sections \{\s*margin-top: var\(--ccc-space-md\);/,
     );
+  });
+});
+
+describe("Phase 05.1 wave-5 visual fixes", () => {
+  const FIX_START = SOURCE.indexOf("/* Phase 05.1 wave-5 visual fixes");
+  const FIX = SOURCE.slice(FIX_START, START).replace(/\/\*[\s\S]*?\*\//g, "");
+  it("returns a Codex row that carries a card-actions wrapper to block flow", () => {
+    expect(FIX_START).toBeGreaterThan(0);
+    expect(FIX).toMatch(
+      /\.ccc-command-center \[data-codex-section\] \.ccc-list-row:has\(\.ccc-card-actions\) \{\s*display: block;/,
+    );
+  });
+  it("keeps the glyph and its text inline in Codex meta lines", () => {
+    expect(FIX).toMatch(
+      /\.ccc-command-center \[data-codex-section\] \.ccc-meta-segments \{\s*display: block;/,
+    );
+  });
+  it("uses tokens only", () => {
+    expect(FIX).not.toMatch(/!important|#[0-9a-f]{3,8}\b|\b\d+(?:\.\d+)?px\b|--ccc-[\w-]+\s*:/i);
   });
 });
