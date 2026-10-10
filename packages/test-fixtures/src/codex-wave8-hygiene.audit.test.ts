@@ -52,7 +52,7 @@ describe("the plan 05.1-29 tests name no owner machine state and run no raw code
   it("the patterns can fail (they flag crafted violations)", () => {
     expect(HOME_PATH.test(`${part("/Us", "ers/")}someone/repo`)).toBe(true);
     expect(HOME_PATH.test(`${part("/Us", "ers/")}USERNAME/repo`)).toBe(false);
-    expect(EMAIL.test("a@b.example")).toBe(true);
+    expect(EMAIL.test(`a${part("@", "b.exam")}ple`)).toBe(true);
     expect(REAL_CODEX_DIR.test(`"~/${part(".co", "dex")}/x"`)).toBe(true);
     expect(CREDENTIAL_LITERAL.test(part("auth", ".", "json"))).toBe(true);
     expect(RAW_CODEX_SPAWN.test(`spawn("${part("cod", "ex")}", [])`)).toBe(true);
