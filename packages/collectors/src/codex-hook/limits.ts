@@ -18,3 +18,6 @@ export const CODEX_SPOOL_FILE_NAME = "codex-hooks.ndjson";
 
 /** One byte is appended here per Codex record dropped at the spool cap. */
 export const CODEX_SPOOL_DROP_FILE_NAME = "codex-hooks.dropped";
+
+/** The two Codex spool files as `appendSpool`'s file-names argument. RED stub: values arrive in GREEN. */
+export const CODEX_SPOOL_FILES = { file: "", dropFile: "" } as const;
