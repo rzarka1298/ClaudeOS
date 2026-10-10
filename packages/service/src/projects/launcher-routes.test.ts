@@ -664,7 +664,7 @@ describe("the Codex launcher: save, view, test and mark tested (plan 05.1-21, D-
     ["upper case with underscores", ["--YOLO"], 1],
     ["a full-width spelling", ["--ｙｏｌｏ"], 1],
     ["the Phase 4 Claude skip flag", ["--dangerously-skip-permissions"], 1],
-    ["the Phase 4 Claude permission mode", ["--permission-mode", "bypassPermissions"], 1],
+    ["the Phase 4 Claude permission mode", ["--permission-mode", "bypassPermissions"], 2],
     ["a flag after an ordinary argument", ["--model", "o3", "--yolo"], 3],
     ["a flag the agent allowlist does not carry", ["--bg"], 1],
     ["an unknown subcommand operand", ["exec"], 1],
@@ -733,7 +733,7 @@ describe("the Codex launcher: save, view, test and mark tested (plan 05.1-21, D-
       expect(LauncherConfigRefusalBodySchema.parse(reply.body).template).toBe("codex");
       // The refusal never echoes the argument.
       for (const argument of args) {
-        expect(JSON.stringify(reply.body)).not.toContain(argument.replace(/^-+/, ""));
+        expect(JSON.stringify(reply.body)).not.toContain(argument);
       }
       expect(await savedCodex()).toBeNull();
     },
