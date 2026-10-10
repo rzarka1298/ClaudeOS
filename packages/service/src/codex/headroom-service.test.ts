@@ -4,8 +4,16 @@ import {
   CodexUsageUpdatedPayloadSchema,
   HeadroomSignalSchema,
 } from "@ccc/domain";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createFakeCodexHome,
+  type FakeCodexHome,
+  rolloutContent,
+  rolloutMetaLine,
+} from "../test-support/fake-codex-home.js";
+import { createCodexHomePort } from "./codex-home.js";
 import { createHeadroomService, type HeadroomServiceDeps } from "./headroom-service.js";
+import { createRolloutRateLimitsReader } from "./rollout-rate-limits.js";
 
 const T0 = Date.UTC(2026, 9, 10, 12, 0, 0);
 const RESETS_AT = new Date(T0 + 3 * 24 * 3600 * 1000).toISOString();
@@ -170,6 +178,90 @@ describe("headroom verdicts (D-22)", () => {
       verdict: "refuse",
       reason: "no-live-read",
       source: "rollout-fallback",
+    });
+  });
+});
+
+describe("the rollout rate-limit fallback feeds the bar only (plan 05.1-33, OQ-3, CODEX-12)", () => {
+  const homes: FakeCodexHome[] = [];
+  afterEach(() => {
+    for (const home of homes.splice(0)) home.cleanup();
+  });
+
+  /** A real reader over a temporary Codex home whose newest rollout figure is `ageMs` old at T0. */
+  function withRollout(ageMs: number, weekly: number) {
+    const stamp = T0 - ageMs;
+    const line = JSON.stringify({
+      timestamp: new Date(stamp).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        rate_limits: {
+          limit_id: "codex",
+          primary: { used_percent: weekly, window_minutes: 10_080, resets_at: 1_791_500_000 },
+          secondary: null,
+          plan_type: "DECOY-PLAN-TYPE",
+          credits: { balance: "DECOY-CREDITS-BALANCE" },
+        },
+      },
+    });
+    const home = createFakeCodexHome({
+      rollouts: [
+        {
+          day: "2026-10-10",
+          name: "rollout-2026-10-10T11-00-00-synthetic.jsonl",
+          content: rolloutContent(rolloutMetaLine({ id: "t-1", atMs: stamp }), line),
+          mtimeMs: stamp,
+        },
+      ],
+    });
+    homes.push(home);
+    const port = createCodexHomePort({ root: home.root });
+    let clock: () => number = () => T0;
+    const reader = createRolloutRateLimitsReader({ port, now: () => clock() });
+    const h = harness({ fallback: () => reader.read() });
+    clock = () => h.clock.now;
+    h.reads.next = () => failedRead(h.clock.now);
+    return h;
+  }
+
+  it("shows a 3 minute old rollout figure on the bar while the gate refuses without a live read", async () => {
+    const h = withRollout(3 * 60 * SECOND, 41);
+    const usage = await h.service.getUsage();
+    expect(usage).toMatchObject({ kind: "available", source: "rollout-fallback" });
+    if (usage.kind !== "available") throw new Error("expected available");
+    expect(usage.windows[0]?.usedPercent).toBe(41);
+    expect(usage.observedAt).toBe(new Date(T0 - 3 * 60 * SECOND).toISOString());
+    expect(JSON.stringify(usage)).not.toMatch(/DECOY/);
+    const signal = await h.service.getHeadroom();
+    expect(signal.codex).toMatchObject({
+      verdict: "refuse",
+      reason: "no-live-read",
+      source: "rollout-fallback",
+    });
+    expect(HeadroomSignalSchema.safeParse(signal).success).toBe(true);
+  });
+
+  it("never lets a low rollout figure allow, and a high one still refuses on the reserve line", async () => {
+    const low = withRollout(30 * SECOND, 2);
+    expect((await low.service.getHeadroom()).codex.verdict).toBe("refuse");
+    const high = withRollout(30 * SECOND, 95);
+    expect((await high.service.getHeadroom()).codex).toMatchObject({
+      verdict: "refuse",
+      reason: "reserve-line",
+    });
+  });
+
+  it("shows no number for a rollout figure older than the stale max age and refuses as unavailable", async () => {
+    const h = withRollout(12 * 60 * SECOND, 41);
+    const usage = await h.service.getUsage();
+    expect(usage).toMatchObject({ kind: "unavailable" });
+    expect(usage).not.toHaveProperty("windows");
+    const signal = await h.service.getHeadroom();
+    expect(signal.codex).toMatchObject({
+      verdict: "refuse",
+      reason: "usage-unavailable",
+      worstWindow: null,
     });
   });
 });

@@ -305,6 +305,50 @@ describe("Task 1 (tracer): GET headroom through the composed services", () => {
     expect(HeadroomSignalSchema.parse(after.body).codex.verdict).toBe("allow");
     expect(c.appServerStarts()).toBe(1);
   });
+
+  it("Test 5c: with no live read the composed usage route shows the newest rollout figure and the gate still refuses (plan 05.1-33)", async () => {
+    const nowMs = Date.UTC(2026, 9, 10, 12, 0, 0);
+    const stamp = nowMs - 4 * 60_000;
+    const line = JSON.stringify({
+      timestamp: new Date(stamp).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        rate_limits: {
+          limit_id: "codex",
+          primary: { used_percent: 37, window_minutes: 10_080, resets_at: 1_791_500_000 },
+          secondary: null,
+          plan_type: "DECOY-PLAN-TYPE",
+        },
+      },
+    });
+    const c = await compose({
+      appServer: { read: { kind: "result", result: weeklyReply(41) } },
+      saveRow: false,
+      now: () => nowMs,
+      home: {
+        ...codexHomeWithThreads([]),
+        rollouts: [
+          {
+            day: "2026-10-10",
+            name: "rollout-2026-10-10T11-56-00-composed.jsonl",
+            content: `${line}\n`,
+            mtimeMs: stamp,
+          },
+        ],
+      },
+    });
+
+    const usage = CodexUsageSnapshotSchema.parse((await c.get(CODEX_USAGE_PATH)).body);
+    expect(usage).toMatchObject({ kind: "available", source: "rollout-fallback" });
+    expect(usage.kind === "available" && usage.windows[0]?.usedPercent).toBe(37);
+    expect(usage.kind === "available" && usage.observedAt).toBe(new Date(stamp).toISOString());
+
+    const headroom = HeadroomSignalSchema.parse((await c.get(CODEX_HEADROOM_PATH)).body);
+    expect(headroom.codex).toMatchObject({ verdict: "refuse", source: "rollout-fallback" });
+    expect(c.appServerStarts()).toBe(0);
+    expect(JSON.stringify([usage, headroom])).not.toContain("DECOY");
+  });
 });
 
 // ---------------------------------------------------------------------------
