@@ -37,7 +37,7 @@ import {
   LaunchPairResponseSchema,
 } from "@ccc/domain";
 import type { SocketApiClient } from "./socket-api-client.js";
-import { SocketUnreachableError } from "./socket-api-client.js";
+import { SocketUnreachableError, VaultSetupRequestError } from "./socket-api-client.js";
 
 /**
  * Every Codex route through one typed, validated client (plan 05.1-06, D-25).
@@ -112,6 +112,12 @@ async function requestCodex<T>(
         0,
         error.errno === "ETIMEDOUT" ? "timeout" : "service-disconnected",
       );
+    }
+    // The transport rejects a malformed-JSON body and an over-cap body with a
+    // VaultSetupRequestError carrying the HTTP status; neither may escape the
+    // Codex client uncoded.
+    if (error instanceof VaultSetupRequestError) {
+      throw new CodexRequestError(error.status, "unrecognised-response");
     }
     throw error;
   }

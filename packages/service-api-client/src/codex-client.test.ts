@@ -38,7 +38,7 @@ import {
 } from "./codex-client.js";
 import * as clientIndex from "./index.js";
 import type { SocketApiClient, SocketRequestOptions, SocketResponse } from "./socket-api-client.js";
-import { SocketUnreachableError } from "./socket-api-client.js";
+import { SocketUnreachableError, VaultSetupRequestError } from "./socket-api-client.js";
 
 /**
  * Plan 05.1-06: the Codex client maps a response (or a transport failure) to
@@ -95,6 +95,25 @@ async function failureOf(promise: Promise<unknown>): Promise<CodexRequestError> 
   expect(failure).toBeInstanceOf(CodexRequestError);
   return failure as CodexRequestError;
 }
+
+describe("transport rejections that are not unreachable (Codex review wave 3 MINOR)", () => {
+  it("a malformed-JSON or oversized response (VaultSetupRequestError) becomes CodexRequestError unrecognised-response with the transport status", async () => {
+    const failure = await failureOf(
+      getCodexHeadroom(
+        fakeErrorClient(
+          new VaultSetupRequestError(
+            200,
+            "The service returned a response this client does not recognise.",
+          ),
+        ),
+      ),
+    );
+    expect(failure).toBeInstanceOf(CodexRequestError);
+    expect(failure.code).toBe("unrecognised-response");
+    expect(failure.status).toBe(200);
+    expect(failure.message).toBe("unrecognised-response");
+  });
+});
 
 describe("getCodexHeadroom (tracer, CODEX-11, CODEX-12)", () => {
   it("Test 1: sends GET to the headroom path with no body and returns the parsed signal", async () => {
