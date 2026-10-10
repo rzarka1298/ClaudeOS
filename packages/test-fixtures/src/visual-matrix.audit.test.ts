@@ -80,10 +80,31 @@ const TASKS_CELLS = [
   "tasks — tasks-today — full — reduced",
 ] as const;
 
+/** The cells `codex.spec.ts` adds (plan 05.1-27), as `codex — {case} — {pane}`. Grown per task. */
+const CODEX_CARD_CASES = ["ready-mixed"] as const;
+const CODEX_PANES = ["narrow", "full"] as const;
+const CODEX_CELLS: readonly string[] = CODEX_CARD_CASES.flatMap((id) =>
+  CODEX_PANES.map((pane) => `codex — ${id} — ${pane}`),
+);
+
+/** The 121 cells the merged tree already had, and the Codex spec's final count (UI-SPEC "Visual regression"). */
+const MERGED_TREE_CELLS = 121;
+const CODEX_SPEC_CELLS = 2;
+
+/** The titles `playwright test --list` prints for one spec file. */
+function titlesOf(listing: string, specFile: string): string[] {
+  return listing
+    .split("\n")
+    .filter((line) => line.includes(`${specFile}:`))
+    .map((line) => line.split(" › ").slice(2).join(" › ").trim());
+}
+
 describe("visual matrix (audit)", () => {
-  it("lists exactly 121 cells: 9 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 21 approvals cells + 19 tasks cells", () => {
+  it("lists the merged-tree 121 cells (9 widgets x 8 presentations + 5 motion + 4 Agent runs + 21 approvals + 19 tasks) plus the Codex spec's own", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 121 tests in 4 files/);
+    expect(out).toContain(`Total: ${MERGED_TREE_CELLS + CODEX_SPEC_CELLS} tests in 5 files`);
+    expect(CODEX_CELLS).toHaveLength(CODEX_SPEC_CELLS);
+    expect(titlesOf(out, "codex.spec.ts").sort()).toEqual([...CODEX_CELLS].sort());
     expect(APPROVALS_CELLS).toHaveLength(21);
     for (const cell of APPROVALS_CELLS) expect(out).toContain(cell);
     expect(TASKS_CELLS).toHaveLength(19);
@@ -124,18 +145,21 @@ describe("visual matrix (audit)", () => {
     expect(config).toContain('updateSnapshots: "none"');
   });
 
-  it.each(["widgets.spec.ts", "agent-runs.spec.ts", "approvals.spec.ts", "tasks.spec.ts"])(
-    "%s skips the whole file on a non-Linux host unless the local override is set",
-    (fileName) => {
-      const spec = readFileSync(
-        join(REPO_ROOT, "packages", "test-fixtures", "visual", fileName),
-        "utf8",
-      );
-      expect(spec).toMatch(
-        /test\.skip\(\s*process\.platform !== "linux" && !process\.env\.CCC_VISUAL_ALLOW_LOCAL/,
-      );
-    },
-  );
+  it.each([
+    "widgets.spec.ts",
+    "agent-runs.spec.ts",
+    "approvals.spec.ts",
+    "tasks.spec.ts",
+    "codex.spec.ts",
+  ])("%s skips the whole file on a non-Linux host unless the local override is set", (fileName) => {
+    const spec = readFileSync(
+      join(REPO_ROOT, "packages", "test-fixtures", "visual", fileName),
+      "utf8",
+    );
+    expect(spec).toMatch(
+      /test\.skip\(\s*process\.platform !== "linux" && !process\.env\.CCC_VISUAL_ALLOW_LOCAL/,
+    );
+  });
 
   it.each(["approvals.spec.ts", "tasks.spec.ts"])(
     "%s scrolls every scroller to the top before the capture (focus moves scroll a pane)",
