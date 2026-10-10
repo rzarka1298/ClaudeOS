@@ -92,20 +92,11 @@ export type AgentLaunchVerdict =
 // biome-ignore lint/suspicious/noControlCharactersInRegex: this IS the control-character refusal.
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
-// Deny-by-default flag rules for the final argv (wave 2 review F-01/F-02). The ban-token match
-// compares text; these rules compare what the CLI parsers will decide.
-const DENIED_LONG_FLAGS: readonly string[] = [
-  "--config",
-  "--profile",
-  "--settings",
-  "--mcp-config",
-  "--plugin-dir",
-  "--agents",
-  "--allowedtools",
-  "--allowed-tools",
-];
-/** codex `-c key=value` overrides and `-p` profile (claude's `-c` is `--continue`). */
-const DENIED_CODEX_SHORT: readonly string[] = ["c", "p"];
+// FLAG ALLOWLISTS (review: unknown flags such as `--exec=...`, `--bg`, `--plugin-url` must never
+// pass). Per agent, a flag is accepted only if its EXACT spelling (case-sensitive, no `_`
+// variant) is listed in ALLOWED_FLAGS below; everything else, including every config-carrying
+// flag (`--config`, codex `-c`, `--settings`, ...), is refused as banned-flag. Boolean flags take
+// no value, so `--continue=x` and bundled shorts such as `-cz` are refused too.
 // Subcommands are ALLOWLISTED, never denylisted: the CLIs have aliases (codex `e` is exec, `a` is
 // apply) and a bare positional prompt is dispatched as a subcommand when it matches one. The
 // product launches `claude` with no subcommand and `codex` with no subcommand or `resume <uuid>`;
@@ -136,6 +127,15 @@ const VALUE_FLAGS: Readonly<Record<AgentName, readonly string[]>> = {
     "--sandbox",
     "-s",
   ],
+};
+/** Flags that take no value. */
+const BOOLEAN_FLAGS: Readonly<Record<AgentName, readonly string[]>> = {
+  claude: ["-c", "--continue"],
+  codex: [],
+};
+const ALLOWED_FLAGS: Readonly<Record<AgentName, readonly string[]>> = {
+  claude: [...VALUE_FLAGS.claude, ...BOOLEAN_FLAGS.claude],
+  codex: [...VALUE_FLAGS.codex, ...BOOLEAN_FLAGS.codex],
 };
 const PERMISSION_MODES: readonly string[] = ["default", "plan", "acceptEdits"];
 const CODEX_APPROVALS: readonly string[] = ["untrusted", "on-failure", "on-request"];
@@ -199,6 +199,13 @@ function flagRuleViolation(agent: AgentName, argv: readonly string[]): AgentReas
       continue;
     }
     const { flag, inline } = parsed;
+    // The spelling must be allowlisted exactly as written (parseFlag normalises case and `_`,
+    // the real CLIs do not, so a normalised match is not enough).
+    const spelled = element.startsWith("--")
+      ? (element.split("=")[0] as string)
+      : element.slice(0, 2);
+    if (!ALLOWED_FLAGS[agent].includes(spelled)) return "banned-flag";
+    if (BOOLEAN_FLAGS[agent].includes(spelled) && inline !== undefined) return "banned-flag";
     if (inline === undefined && valueFlags.includes(flag)) {
       consumedUpTo = i + 1;
       if (variadic.includes(flag)) {
@@ -211,10 +218,6 @@ function flagRuleViolation(agent: AgentName, argv: readonly string[]): AgentReas
       }
     }
     const value = inline !== undefined ? inline : argv[i + 1];
-    if (DENIED_LONG_FLAGS.includes(flag)) return "banned-flag";
-    if (agent === "codex" && flag.length === 2 && DENIED_CODEX_SHORT.includes(flag.slice(1))) {
-      return "banned-flag";
-    }
     if (
       flag === "--permission-mode" &&
       !(value !== undefined && PERMISSION_MODES.includes(value))

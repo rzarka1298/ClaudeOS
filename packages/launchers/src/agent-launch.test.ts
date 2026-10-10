@@ -169,7 +169,7 @@ describe("ban tokens (NFKC, lower-case, non-alphanumerics removed)", () => {
   });
 
   it("a token split across two elements is not a token", () => {
-    expect(reasonOf(claude("--full", "--auto"))).toBeNull();
+    expect(reasonOf(claude("--append-system-prompt", "full", "--model", "auto"))).toBeNull();
   });
 });
 
@@ -311,7 +311,7 @@ describe("deny-by-default flag rules on the final argv (carry-forward F-01/F-02)
     }
     expect(reasonOf(codex("resume", UUID))).toBeNull();
     expect(reasonOf(codex("resume"))).toBe("bad-argv");
-    expect(reasonOf(codex("resume", "--last"))).toBe("bad-argv");
+    expect(reasonOf(codex("resume", "--last"))).toBe("banned-flag");
     expect(reasonOf(codex("resume", "latest"))).toBe("bad-argv");
   });
 
@@ -341,7 +341,7 @@ describe("deny-by-default flag rules on the final argv (carry-forward F-01/F-02)
     ]) {
       expect(reasonOf(codex(sub)), sub).toBe("banned-flag");
     }
-    expect(reasonOf(claude("--model", "opus", "--verbose"))).toBeNull();
+    expect(reasonOf(claude("--model", "opus", "--continue"))).toBeNull();
   });
 
   it("allowlists subcommands: no bare operand, alias, prompt or -- is accepted; only codex resume <uuid>", () => {
@@ -371,12 +371,12 @@ describe("limits", () => {
     expect(
       reasonOf({
         agent: "claude",
-        argv: [CLAUDE, ...Array(AGENT_ARGV_MAX - 1).fill("-v")],
+        argv: [CLAUDE, ...Array(AGENT_ARGV_MAX - 1).fill("-c")],
         env: {},
       }),
     ).toBeNull();
     expect(
-      reasonOf({ agent: "claude", argv: [CLAUDE, ...Array(AGENT_ARGV_MAX).fill("-v")], env: {} }),
+      reasonOf({ agent: "claude", argv: [CLAUDE, ...Array(AGENT_ARGV_MAX).fill("-c")], env: {} }),
     ).toBe("argv-length");
     expect(reasonOf({ agent: "claude", argv: [], env: {} })).toBe("argv-length");
     expect(reasonOf(claude("--append-system-prompt", "x".repeat(AGENT_ELEMENT_MAX)))).toBeNull();
@@ -651,5 +651,36 @@ describe("validateAgentLaunchChecked (the injected filesystem checks)", () => {
     expect(verdict.ok).toBe(false);
     const verdict2 = await verdictOf(launch("claude", []), checks({ realDir: boom }));
     expect(verdict2.ok).toBe(false);
+  });
+});
+
+describe("flag allowlists (review: unknown flags such as --exec= must be refused)", () => {
+  it("refuses every unlisted spelling and accepts the listed ones", () => {
+    for (const argv of [
+      ["--bg", "--exec=printf pwned"],
+      ["--exec", "x"],
+      ["--bg"],
+      ["--plugin-url", "https://example.invalid/p.zip"],
+      ["--plugin-url=https://example.invalid/p.zip"],
+      ["--MODEL", "x"],
+      ["--permission_mode", "plan"],
+      ["-cz"],
+      ["--continue=x"],
+      ["-C"],
+      ["--verbose"],
+    ]) {
+      expect(reasonOf(claude(...argv)), argv.join(" ")).toBe("banned-flag");
+    }
+    for (const argv of [
+      ["--exec=x"],
+      ["--bg"],
+      ["-c", "k=v"],
+      ["--continue"],
+      ["--oss"],
+      ["-M", "x"],
+    ]) {
+      expect(reasonOf(codex(...argv)), argv.join(" ")).toBe("banned-flag");
+    }
+    expect(reasonOf(claude("-c", "--continue"))).toBeNull();
   });
 });

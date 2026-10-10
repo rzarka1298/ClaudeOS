@@ -2277,7 +2277,7 @@
       "argv": ["/Users/USERNAME/.local/bin/codex", "resume", "--last"],
       "env": {},
       "expect": "reject",
-      "reason": "bad-argv"
+      "reason": "banned-flag"
     },
     {
       "id": "session-codex-resume-name",
@@ -2487,6 +2487,353 @@
       "category": "ban-token",
       "agent": "claude",
       "argv": ["/Users/USERNAME/.local/bin/claude", "--", "mcp", "add"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-exec-inline",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--bg", "--exec=printf pwned"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-exec-bare",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--exec", "printf pwned"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-exec-alone",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--exec=printf pwned"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-bg",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--bg"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-plugin-url",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--plugin-url",
+        "https://example.invalid/p.zip"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-plugin-url-inline",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--plugin-url=https://example.invalid/p.zip"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-unknown-long",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--some-new-flag"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-unknown-long-value",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--some-new-flag=1"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-unknown-short",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "-z"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-bundle-cz",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "-cz"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-bundle-cc",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "-cc"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-bundle-short-exec",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "-xeval"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-continue-with-value",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--continue=x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-upper-model",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--MODEL", "x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-upper-continue",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--Continue"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-upper-short-c",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "-C"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-underscore-variant",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--permission_mode", "plan"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-fullwidth-exec",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--ｅｘｅ｣=x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-cyrillic-exec",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--ехес=x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-exec-after-add-dir",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": [
+        "/Users/USERNAME/.local/bin/claude",
+        "--add-dir",
+        "/Users/USERNAME/projects/p",
+        "--exec=x"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-exec-as-model-value-then-flag",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "--exec=x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-verbose-not-allowed",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--verbose"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-print-not-allowed",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "-p", "hi"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-flag-allowlist-dangerous-prefix",
+      "category": "flag-allowlist",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--dangerously-load-development-channels"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-exec-inline",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--exec=printf pwned"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-bg",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--bg"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-plugin-url-inline",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--plugin-url=https://example.invalid/p.zip"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-unknown-long",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--some-new-flag"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-unknown-short",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "-z"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-attached-bad-sandbox-value",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "-sdanger-full-access"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-upper-model",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--MODEL", "x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-upper-short-m",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "-M", "x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-continue-not-allowed",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--continue"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-oss-not-allowed",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--oss"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-search-not-allowed",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--search"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-image-not-allowed",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "-i", "/etc/passwd"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-flag-allowlist-exec-after-resume",
+      "category": "flag-allowlist",
+      "agent": "codex",
+      "argv": [
+        "/Users/USERNAME/.local/bin/codex",
+        "resume",
+        "11111111-2222-3333-4444-555555555555",
+        "--exec=x"
+      ],
       "env": {},
       "expect": "reject",
       "reason": "banned-flag"
