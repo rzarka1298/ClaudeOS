@@ -4,7 +4,7 @@ import * as records from "./index.js";
 
 const DECOYS = {
   details: "DECOY-DETAILS /Users/USERNAME/.codex/auth.json",
-  summary: "DECOY-SUMMARY account foo@example.invalid",
+  summary: "DECOY-SUMMARY account name text",
   remediation: "DECOY-REMEDIATION run something",
   notes: "DECOY-NOTES a note",
 };
@@ -64,7 +64,7 @@ describe("Test 5: parseDoctorJson keeps only the allowlist", () => {
     const serialized = JSON.stringify(parseDoctorJson(report()));
     expect(serialized).not.toContain("DECOY");
     expect(serialized).not.toContain("auth.json");
-    expect(serialized).not.toContain("example.invalid");
+    expect(serialized).not.toContain("account name text");
   });
 
   it("accepts a JSON string as well as a parsed value", () => {
