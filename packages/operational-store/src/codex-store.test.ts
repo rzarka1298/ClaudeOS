@@ -19,6 +19,7 @@ import {
   readCodexCursor,
   readCodexRecognition,
   readCumulativeBaseline,
+  resetCodexCountingState,
   resetCodexScanState,
   saveRateLimitSnapshot,
   setTurnContribution,
@@ -601,6 +602,43 @@ describe("recognition tallies", () => {
   });
 });
 
+describe("resetCodexCountingState", () => {
+  it("clears counted rows, marks and the derived scanner settings, keeping the parser-version marker and other settings", () => {
+    upsertTurnTokens(db, {
+      threadId: "t1",
+      turnId: "u1",
+      bucketStart: B0,
+      counters: counters(10),
+      observedAt: NOW,
+    });
+    addCumulativeDelta(db, { threadId: "t2", bucketStart: B1, delta: counters(20) });
+    writeCumulativeBaseline(db, "t2", counters(20), NOW);
+    writeCodexCursor(db, KEY_A, { inode: "1", size: 1, offset: 1 }, NOW);
+    for (const key of [
+      "codex_token_turn:t1:u1",
+      "codex_token_cumat:t1",
+      "codex_token_parser_version",
+      "other_setting",
+    ]) {
+      db.prepare("INSERT INTO collector_settings (key, value, updated_at) VALUES (?, ?, ?)").run(
+        key,
+        "x",
+        NOW,
+      );
+    }
+
+    resetCodexCountingState(db);
+
+    expect(queryCodexTokenTotals(db, { start: B0, end: B2 })).toBeNull();
+    expect(readCumulativeBaseline(db, "t2")).toBeNull();
+    expect(readCodexCursor(db, KEY_A)).toBeNull();
+    expect(db.prepare("SELECT key FROM collector_settings ORDER BY key").all()).toEqual([
+      { key: "codex_token_parser_version" },
+      { key: "other_setting" },
+    ]);
+  });
+});
+
 describe("resetCodexScanState", () => {
   it("Test 4: clears cursors, coverage and recognition and leaves token counters and high-water marks exact", () => {
     upsertTurnTokens(db, {
@@ -757,6 +795,7 @@ describe("the barrel", () => {
       "readCodexCursor",
       "readCodexRecognition",
       "readCumulativeBaseline",
+      "resetCodexCountingState",
       "resetCodexScanState",
       "saveRateLimitSnapshot",
       "upsertTurnTokens",

@@ -29,6 +29,7 @@ export {
   readCodexCursor,
   readCodexRecognition,
   readCumulativeBaseline,
+  resetCodexCountingState,
   resetCodexScanState,
   saveRateLimitSnapshot,
   setTurnContribution,

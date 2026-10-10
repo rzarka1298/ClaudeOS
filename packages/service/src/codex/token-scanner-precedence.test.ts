@@ -19,6 +19,7 @@ import {
   turnRecordLine,
 } from "../test-support/codex-token-fixtures.js";
 import { CodexHomeAccessError } from "./codex-home.js";
+import { CODEX_TOKEN_PARSER_VERSION } from "./token-scanner.js";
 
 /**
  * The reconciliation of the two token sources of one thread (plan 05.1-23):
@@ -305,5 +306,41 @@ describe("Codex token scanner: precedence edge cases", () => {
       offset: number;
     };
     expect(row.offset).toBe(statSync(h.rollouts.home.rolloutPath(DAY, NAME)).size);
+  });
+});
+
+describe("Codex token scanner: upgrade from the previous scanner", () => {
+  it("rebuilds counting state from scratch under the new parser version", async () => {
+    // A store as the PREVIOUS scanner left it: parser version 1, valid cursors, turn rows
+    // but none of the per-turn precedence settings.
+    expect(CODEX_TOKEN_PARSER_VERSION).toBeGreaterThan(1);
+    const old = createTokenHarness({ over: { parserVersion: 1 } });
+    harness = old;
+    old.rollouts.write(DAY, NAME, jsonl([metaLine(), pt(1, t(10, 2), 100)]));
+    await old.scanner.sweep();
+    old.temp.db
+      .prepare(
+        "DELETE FROM collector_settings WHERE key GLOB 'codex_token_turn:*' OR key GLOB 'codex_token_cumat:*'",
+      )
+      .run();
+    const marker = old.temp.db
+      .prepare("SELECT value FROM collector_settings WHERE key = 'codex_token_parser_version'")
+      .get();
+    expect(marker).toEqual({ value: "1" });
+    expect(queryCodexTokenTotals(old.temp.db, WIDE)?.counters.input).toBe(100);
+
+    old.rollouts.append(DAY, NAME, jsonl([cum(t(10, 3), 150)]));
+    old.restart({ parserVersion: CODEX_TOKEN_PARSER_VERSION });
+    await old.scanner.sweep();
+    const upgraded = queryCodexTokenTotals(old.temp.db, WIDE);
+
+    const fresh = createTokenHarness();
+    fresh.rollouts.write(DAY, NAME, jsonl([metaLine(), pt(1, t(10, 2), 100), cum(t(10, 3), 150)]));
+    await fresh.scanner.sweep();
+    const scratch = queryCodexTokenTotals(fresh.temp.db, WIDE);
+    fresh.cleanup();
+
+    expect(scratch?.counters.input).toBe(150);
+    expect(upgraded).toEqual(scratch);
   });
 });

@@ -27,7 +27,7 @@ import {
   readCodexCursor,
   readCodexRecognition,
   readCumulativeBaseline,
-  resetCodexScanState,
+  resetCodexCountingState,
   setCollectorSetting,
   setTurnContribution,
   writeCodexCursor,
@@ -82,7 +82,7 @@ import { buildCodexTokenSummary } from "./token-summary.js";
  */
 
 /** The parser version the cursors, coverage and tallies were built by. */
-export const CODEX_TOKEN_PARSER_VERSION = 1;
+export const CODEX_TOKEN_PARSER_VERSION = 2;
 export const CODEX_TOKEN_PARSER_VERSION_SETTING = "codex_token_parser_version";
 export const CODEX_TOKEN_HORIZON_SETTING = "codex_token_horizon_day";
 export const CODEX_TOKEN_FIRST_SCAN_SETTING = "codex_token_first_scan_done";
@@ -476,16 +476,18 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
   // --- Parser version and recognition ----------------------------------------
 
   /**
-   * Cursors built by another parser version are dropped with the coverage
-   * ledger and every tally, so the next sweep rereads from zero. The counted
-   * rows and the cumulative high-water marks are kept: they are what stops the
-   * reread from counting anything twice.
+   * Everything built by another parser version is dropped: cursors, the coverage
+   * ledger, every tally AND the counted state (turn rows, deltas, high-water
+   * marks, the per-turn precedence settings). The counting rule is part of the
+   * version (2 introduced the deterministic precedence rule), so the next sweep
+   * rebuilds the totals from zero instead of mixing two rules. The marker itself
+   * is configuration and survives "Delete cached usage analytics".
    */
   function ensureParserVersion(): void {
     const current = String(parserVersion);
     if (getCollectorSetting(db, CODEX_TOKEN_PARSER_VERSION_SETTING) === current) return;
     db.transaction(() => {
-      resetCodexScanState(db);
+      resetCodexCountingState(db);
       setCollectorSetting(db, CODEX_TOKEN_PARSER_VERSION_SETTING, current, nowIso());
       setCollectorSetting(db, CODEX_TOKEN_HORIZON_SETTING, "", nowIso());
     })();

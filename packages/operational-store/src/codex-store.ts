@@ -596,6 +596,26 @@ export function resetCodexScanState(db: Database.Database): void {
 }
 
 /**
+ * Empties everything the Codex token scanner COUNTED, plus the scan state
+ * ({@link resetCodexScanState}): counted rows, deltas, cumulative high-water
+ * marks and the scanner's derived per-turn / per-thread settings. Used when the
+ * parser version changes, so totals are rebuilt from scratch under the new
+ * counting rule. The parser-version marker, the rate-limit snapshot and every
+ * setting outside the derived families are untouched.
+ */
+export function resetCodexCountingState(db: Database.Database): void {
+  db.transaction(() => {
+    resetCodexScanState(db);
+    db.prepare("DELETE FROM codex_token_turns").run();
+    db.prepare("DELETE FROM codex_token_deltas").run();
+    db.prepare("DELETE FROM codex_token_cumulative").run();
+    db.prepare(
+      "DELETE FROM collector_settings WHERE key GLOB 'codex_token_turn:*' OR key GLOB 'codex_token_cumat:*'",
+    ).run();
+  })();
+}
+
+/**
  * The tables "Delete cached usage analytics" empties for Codex (D-17): the
  * counted rows, the high-water marks, cursors, coverage, recognition and the
  * last rate-limit snapshot. The Phase 5 private list in `usage-store.ts` is not

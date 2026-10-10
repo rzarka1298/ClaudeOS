@@ -36,6 +36,7 @@ import {
   turn,
   turnRecordLine,
 } from "../test-support/codex-token-fixtures.js";
+import { CODEX_TOKEN_PARSER_VERSION } from "./token-scanner.js";
 
 const DAY = "2026-10-10";
 const NAME = rolloutName(at(0), THREAD_A);
@@ -473,16 +474,16 @@ describe("Task 2: chunk and restart safety (identical totals on every route)", (
     expect(signature(h)).toEqual(EXPECTED_SIGNATURE);
   });
 
-  it("(e) a parser version bump resets cursors but not the counted tokens or the marks", async () => {
+  it("(e) a parser version bump rebuilds the counted tokens and the marks from scratch, to the same totals", async () => {
     const h = setup();
     writeCumulative(h);
     await h.scanner.sweep();
-    h.restart({ parserVersion: 2 });
+    h.restart({ parserVersion: 3 });
     await h.scanner.sweep();
     expect(signature(h)).toEqual(EXPECTED_SIGNATURE);
     expect(
       h.temp.db.prepare("SELECT DISTINCT parser_version AS v FROM codex_recognition").all(),
-    ).toEqual([{ v: 2 }]);
+    ).toEqual([{ v: 3 }]);
   });
 
   it("rolls the deltas, the high-water mark, the tallies and the cursor back together on a failed write", async () => {
@@ -563,7 +564,7 @@ describe("Task 2: recognition, the held verdict and the parser reset", () => {
 
     expect(outcome.held).toBe(true);
     expect(outcome.completed).toBe(false);
-    expect(readCodexRecognition(h.temp.db, 1)).toEqual({
+    expect(readCodexRecognition(h.temp.db, CODEX_TOKEN_PARSER_VERSION)).toEqual({
       "0.150.0": { sessions: 30, recognized: 0 },
     });
     expect(count(h.temp.db, "codex_token_turns")).toBe(0);
@@ -594,7 +595,7 @@ describe("Task 2: recognition, the held verdict and the parser reset", () => {
     const h = setup();
     h.rollouts.write("2026-10-10", NAME, perTurnWithCumulativeRollout());
     await h.scanner.sweep();
-    expect(readCodexRecognition(h.temp.db, 1)).toEqual({
+    expect(readCodexRecognition(h.temp.db, CODEX_TOKEN_PARSER_VERSION)).toEqual({
       "0.159.2": { sessions: 8, recognized: 8 },
     });
     expect(h.scanner.recognition()).toEqual({ kind: "ok" });
@@ -616,13 +617,13 @@ describe("Task 2: recognition, the held verdict and the parser reset", () => {
     expect(h.scanner.recognition()).toEqual({ kind: "ok" });
   });
 
-  it("a parser version bump drops cursors, coverage and tallies and keeps counted tokens", async () => {
+  it("a parser version bump drops cursors, coverage, tallies and counted state, and rebuilds the same tokens", async () => {
     const h = setup();
     h.rollouts.write("2026-10-10", NAME, perTurnRollout());
     await h.scanner.sweep();
     const before = queryCodexTokenTotals(h.temp.db, WIDE);
 
-    h.restart({ parserVersion: 2 });
+    h.restart({ parserVersion: 3 });
     h.state.on = false;
     // Off: nothing runs, so nothing is reset yet.
     await h.scanner.sweep();
@@ -635,7 +636,7 @@ describe("Task 2: recognition, the held verdict and the parser reset", () => {
       h.temp.db
         .prepare("SELECT value FROM collector_settings WHERE key = ?")
         .get("codex_token_parser_version"),
-    ).toEqual({ value: "2" });
+    ).toEqual({ value: "3" });
   });
 });
 
