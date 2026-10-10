@@ -735,6 +735,12 @@ const SESSION_WAIT_MS = Number(process.env.CODEX_BRIDGE_SESSION_WAIT_MS) || 180_
 // stopped and the run goes headless.
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: tuning knob
 const FIRST_ACTIVITY_MS = Number(process.env.CODEX_BRIDGE_FIRST_ACTIVITY_MS) || 120_000;
+// Once a turn is running, how long the session file may stay completely quiet
+// (Mac sleep, network drop) before the TUI is stopped and the same session is
+// resumed headless. Far longer than the first-activity window: a long tool call
+// or a model thinking legitimately produces nothing for minutes.
+// biome-ignore lint/suspicious/noUndeclaredEnvVars: tuning knob
+const MID_RUN_INACTIVITY_MS = Number(process.env.CODEX_BRIDGE_INACTIVITY_MS) || 600_000;
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only tuning knob
 const HELPER_START_MS = Number(process.env.CODEX_BRIDGE_HELPER_START_MS) || 15_000;
 const ROLLOUT_SCAN_BYTES = 1024 * 1024;
@@ -861,10 +867,20 @@ export function tuiIsolation({ cwd, env = process.env, trusted = [cwd] }) {
 // Everything that matters is pinned on the command line, which outranks the
 // owner's config: model, effort, sandbox, approvals, network, env inheritance,
 // and the verified isolation overrides.
-export function tuiArgs(role, cwd, prompt, trusted = [cwd], isolation = ISOLATION_PINS) {
+export function tuiArgs(
+  role,
+  cwd,
+  prompt,
+  trusted = [cwd],
+  isolation = ISOLATION_PINS,
+  runId = null,
+) {
   return [
     ...roleArgs(role, { withSandboxFlag: true }).filter((a) => a !== "--ignore-user-config"),
     ...isolation,
+    // `inherit="core"` strips the helper's env from shell tools, so the run marker is
+    // set explicitly for them: the wrapper finds every process of the run by it.
+    ...(runId ? ["-c", `shell_environment_policy.set.CODEX_BRIDGE_TUI_RUN="${runId}"`] : []),
     "--ask-for-approval",
     "never",
     "-c",
@@ -1003,10 +1019,69 @@ function helperState(id) {
   return st.status === "exited" || (st.pid && !alive(st.pid)) ? "exited" : "running";
 }
 
+// Pids of every process carrying this run's TUI marker in its environment
+// (the helper's Codex child and everything it started, however orphaned).
+// Never includes this process. Only processes of the current user are visible.
+// Returns null when the scan itself failed: callers must treat that as
+// "unconfirmed", never as "no processes".
+function runProcesses(id) {
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
+  if (process.env.CODEX_BRIDGE_TEST_SCAN_FAIL === "1") return null;
+  const r = spawnSync("ps", ["-Eww", "-A", "-o", "pid=,command="], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: 10_000,
+  });
+  if (r.error || r.signal || r.status !== 0 || !r.stdout) return null;
+  const needle = ` CODEX_BRIDGE_TUI_RUN=${id}`;
+  const out = [];
+  for (const line of (r.stdout ?? "").split("\n")) {
+    if (!line.includes(needle)) continue;
+    const pid = Number(line.trim().split(/\s+/)[0]);
+    if (pid > 1 && pid !== process.pid) out.push(pid);
+  }
+  return out;
+}
+
 // After stopTui: wait until the helper reports its Codex tree is gone.
+// Returns true only when the helper has exited AND every process recorded for
+// this run (the helper, its Codex child and that child's descendants) is gone.
+// If not, the recorded tree is SIGKILLed and re-verified; false means it could
+// not be confirmed, and the caller must not start a second writer.
 async function waitHelperExit(id) {
+  const statusFile = join(bridge.dirs(BRIDGE_STATE).tui, `${id}.json`);
   const until = Date.now() + KILL_GRACE_MS + 5000;
   while (helperState(id) === "running" && Date.now() < until) await sleep(100);
+  const settled = () => {
+    const st = readJson(statusFile);
+    if (!st) return true;
+    if (helperState(id) === "running") return false;
+    if (st.codexPid && alive(st.codexPid)) return false;
+    // A subprocess spawned during shutdown outlives the helper's tree snapshot,
+    // so the run's processes are found by the env marker they all inherit.
+    return runProcesses(id)?.length === 0;
+  };
+  if (settled()) return true;
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
+  if (process.env.CODEX_BRIDGE_TEST_NO_ESCALATE === "1") return false;
+  // Only this run's recorded processes are ever signalled.
+  const st = readJson(statusFile);
+  const tree = new Set();
+  for (const root of [st?.codexPid, st?.pid]) {
+    if (!root || !alive(root)) continue;
+    tree.add(root);
+    for (const d of descendants(root)) tree.add(d);
+  }
+  for (const p of runProcesses(id) ?? []) tree.add(p);
+  signalAll(tree, "SIGKILL");
+  const recheck = Date.now() + 3000;
+  while (Date.now() < recheck) {
+    // Anything started in the meantime is killed too; only marked pids are touched.
+    signalAll(runProcesses(id) ?? [], "SIGKILL");
+    if ([...tree].every((p) => !alive(p)) && settled()) return true;
+    await sleep(100);
+  }
+  return [...tree].every((p) => !alive(p)) && settled();
 }
 
 async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession, fallback }) {
@@ -1107,6 +1182,9 @@ async function runTui({ kind, id, role, cwd, prompt, timeoutSec, live, onSession
   if (res === null && fallback?.reason === "no-first-activity") {
     withdraw();
     say("the TUI started no turn in time (stopped it); running headless");
+  } else if (res === null && fallback?.reason === "mid-run-inactivity") {
+    withdraw();
+    say("the TUI went silent mid-run (stopped it); resuming the session headless");
   } else if (res === null) {
     live.write(["[tui] no Codex session started in the tab; it was stopped; running headless"]);
     say("no Codex session started in the tab (stopped it); running headless");
@@ -1138,6 +1216,7 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
   let done = false;
   let fellBack = false;
   let sessionFoundAt = 0;
+  let lastActivityAt = 0;
   let active = false;
 
   const handle = (o) => {
@@ -1184,6 +1263,7 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
       rollout = findRollout(id, launchedAt);
       if (rollout) {
         sessionFoundAt = Date.now();
+        lastActivityAt = sessionFoundAt;
         live.write(["[tui] following the Codex session"]);
       }
     }
@@ -1195,6 +1275,7 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
           const buf = Buffer.alloc(size - pos);
           readSync(fd, buf, 0, buf.length, pos);
           pos = size;
+          lastActivityAt = Date.now();
           const lines = (partial + buf.toString("utf8")).split("\n");
           partial = lines.pop() ?? "";
           for (const line of lines) {
@@ -1254,6 +1335,35 @@ async function watchTui({ id, claimedAt, launchedAt, timeoutSec, live, onSession
         fallback.windowSec = FIRST_ACTIVITY_MS / 1000;
       }
       fellBack = true;
+      break;
+    }
+    // A turn ran, then the session file went quiet (sleep, network drop). Stop
+    // the whole tree; the same session is resumed headless by the caller. With
+    // no session id there is nothing to resume: fail instead of guessing.
+    if (rollout && active && Date.now() - lastActivityAt > MID_RUN_INACTIVITY_MS) {
+      const win = MID_RUN_INACTIVITY_MS / 1000;
+      stopTui(id);
+      if (!(await waitHelperExit(id))) {
+        live.write([
+          `[tui] could not confirm the old Codex TUI tree is gone — not resuming session ${state.sessionId ?? "(unknown)"}; failing the run`,
+        ]);
+        say("the stalled Codex TUI could not be stopped; not starting a second writer");
+      } else if (state.sessionId) {
+        live.write([
+          `[tui] no activity for ${win}s mid-run — resuming session ${state.sessionId} headless`,
+        ]);
+        if (fallback) {
+          fallback.reason = "mid-run-inactivity";
+          fallback.sessionId = state.sessionId;
+          fallback.windowSec = win;
+        }
+        fellBack = true;
+      } else {
+        live.write([
+          `[tui] no activity for ${win}s mid-run and no session id to resume — stopped the TUI; failing the run`,
+        ]);
+        say(`the TUI went silent for ${win}s and has no session id to resume; failed`);
+      }
       break;
     }
     await sleep(250);
@@ -1504,6 +1614,78 @@ function reviewMarkdown(report) {
   return out.join("\n");
 }
 
+// Headless continuation of a known session (`exec resume` has no -s/-C: the
+// sandbox comes from -c, the root from cwd). Shared by `resume` and by the
+// mid-run inactivity fallback, so both keep the same pinned flags.
+function resumeArgs(role, sessionId, lastMessage, schemaFile, extras = []) {
+  return [
+    "exec",
+    "resume",
+    sessionId,
+    "--json",
+    "--output-schema",
+    join(SCHEMAS, schemaFile),
+    "-o",
+    lastMessage,
+    ...roleArgs(role, { withSandboxFlag: false }),
+    ...extras,
+    "-",
+  ];
+}
+
+// Budget for an automatic continuation of an interrupted TUI run: one deadline
+// for the whole run, counted from its start. When it is spent, report the
+// watchdog timeout instead of resuming.
+// The usage reserve is rechecked first (same guard as `resume`): if it is
+// reached the session is left for the owner to `codex-bridge resume` later.
+async function remainingBudget(startedMs, timeoutSec, sessionId, live, recovery) {
+  const left = () => timeoutSec - (Date.now() - startedMs) / 1000;
+  const spent = () => {
+    live.write([
+      `[watchdog] timeout after ${timeoutSec}s — nothing left to resume session ${sessionId}`,
+    ]);
+    return { res: { sessionId, limitHit: false, timedOut: true, lastMessage: null, code: 1 } };
+  };
+  if (left() <= 0) return spent();
+  // The usage check is bounded by the same deadline, then the budget is
+  // recomputed: a slow check must not push the resume past it.
+  let timer;
+  const deadline = new Promise((r) => {
+    timer = setTimeout(() => r("deadline"), left() * 1000);
+  });
+  const refused = await Promise.race([reserveRefusal(sessionId, live, recovery), deadline]).finally(
+    () => clearTimeout(timer),
+  );
+  if (refused === "deadline") return spent();
+  if (refused) return { res: refused };
+  const remaining = left();
+  return remaining > 0 ? { remaining } : spent();
+}
+
+async function reserveRefusal(sessionId, live, recovery) {
+  const usage = await currentUsage();
+  const code = guardCode(usage);
+  if (code === EXIT.OK) return null;
+  const msg = guardMessage(usage, code);
+  live.write([`[guard] ${msg}`, `[guard] not resuming session ${sessionId}; ${recovery}`]);
+  say(`${msg}; interrupted session ${sessionId} kept (${recovery})`);
+  return {
+    sessionId,
+    limitHit: false,
+    timedOut: false,
+    lastMessage: null,
+    code: 1,
+    guardCode: code,
+  };
+}
+
+const CONTINUE_TASK =
+  "Continue the interrupted task from where you stopped. Re-run the relevant tests, " +
+  "then give the final report in the required shape.\n";
+const CONTINUE_REVIEW =
+  "Continue the interrupted review from where you stopped, then give the final review " +
+  "in the required JSON shape.\n";
+
 async function cmdReview({ positional, opts, extras }) {
   if (positional.length !== 2) fail(EXIT.USAGE, USAGE_TEXT);
   const worktree = validateWorktree(positional[0]);
@@ -1543,6 +1725,7 @@ async function cmdReview({ positional, opts, extras }) {
   const onSession = (sid) =>
     openBridgeTab({ id, kind: "review", cwd: worktree, sessionId: sid, liveLog: live.log });
   const fallback = {};
+  const startedMs = Date.now();
   let res = extras.length
     ? null
     : await runTui({
@@ -1557,7 +1740,35 @@ async function cmdReview({ positional, opts, extras }) {
       });
   const mode = res ? "tui" : "headless";
   const fallbackInfo = fallback.reason ? fallbackRecord(fallback) : null;
+  if (fallback.reason === "mid-run-inactivity") {
+    const resumed = resumeArgs(
+      "review",
+      fallback.sessionId,
+      lastMessage,
+      "review-output.schema.json",
+    );
+    const budget = await remainingBudget(
+      startedMs,
+      timeoutSec,
+      fallback.sessionId,
+      live,
+      `later: re-run codex-bridge review ${rel(worktree)} ${base.slice(0, 12)}, or view the chat with: codex resume ${fallback.sessionId}`,
+    );
+    res ??=
+      budget.res ??
+      (await runCodex({
+        args: resumed,
+        cwd: worktree,
+        stdinText: CONTINUE_REVIEW,
+        timeoutSec: budget.remaining,
+        live,
+        onSession,
+      }));
+  }
   res ??= await runCodex({ args, cwd: worktree, stdinText: null, timeoutSec, live, onSession });
+  // A resumed child that died before announcing a thread still belongs to the interrupted session.
+  if (!res.sessionId && fallback.reason === "mid-run-inactivity")
+    res.sessionId = fallback.sessionId ?? null;
 
   let text = existsSync(lastMessage) ? readFileSync(lastMessage, "utf8").trim() : "";
   if (!text && res.lastMessage) text = res.lastMessage.trim();
@@ -1567,7 +1778,8 @@ async function cmdReview({ positional, opts, extras }) {
   let status;
   let exit;
   let format = "schema";
-  if (res.timedOut) [status, exit] = ["timeout", EXIT.TIMEOUT];
+  if (res.guardCode) [status, exit] = ["refused", res.guardCode];
+  else if (res.timedOut) [status, exit] = ["timeout", EXIT.TIMEOUT];
   else if (res.limitHit) [status, exit] = ["limit", EXIT.LIMIT_HIT];
   else if (res.code !== 0 || !text) [status, exit] = ["unavailable", EXIT.CODEX_FAILED];
   else if (isReview(parsed)) [status, exit] = ["ok", EXIT.OK];
@@ -1638,6 +1850,7 @@ async function runWorker({
   timeoutSec,
   sessionHint,
   tuiPrompt,
+  resumeFor,
 }) {
   const live = openLiveLog(id, kind);
   const r = ROLES[role];
@@ -1664,6 +1877,7 @@ async function runWorker({
   };
   const tuiSession = (sid) => writeJson(sessionPath, { ...session, sessionId: sid, mode: "tui" });
   const fallback = {};
+  const startedMs = Date.now();
   let res = tuiPrompt
     ? await runTui({
         fallback,
@@ -1679,12 +1893,33 @@ async function runWorker({
     : null;
   session.mode = res ? "tui" : "headless";
   if (fallback.reason) session.fallback = fallbackRecord(fallback);
+  if (fallback.reason === "mid-run-inactivity" && resumeFor) {
+    const budget = await remainingBudget(
+      startedMs,
+      timeoutSec,
+      fallback.sessionId,
+      live,
+      `later: codex-bridge resume ${fallback.sessionId}`,
+    );
+    session.sessionId = fallback.sessionId ?? session.sessionId;
+    res ??=
+      budget.res ??
+      (await runCodex({
+        args: resumeFor(fallback.sessionId),
+        cwd: worktree,
+        stdinText: CONTINUE_TASK,
+        timeoutSec: budget.remaining,
+        live,
+        onSession,
+      }));
+  }
   res ??= await runCodex({ args, cwd: worktree, stdinText, timeoutSec, live, onSession });
   session.sessionId = res.sessionId ?? session.sessionId;
 
   let status;
   let exit;
-  if (res.timedOut) [status, exit] = ["timeout", EXIT.TIMEOUT];
+  if (res.guardCode) [status, exit] = ["refused", res.guardCode];
+  else if (res.timedOut) [status, exit] = ["timeout", EXIT.TIMEOUT];
   else if (res.limitHit) [status, exit] = ["limit", EXIT.LIMIT_HIT];
   else if (res.code !== 0) [status, exit] = ["failed", EXIT.CODEX_FAILED];
   else [status, exit] = ["ok", EXIT.OK];
@@ -1756,6 +1991,7 @@ async function cmdTask({ positional, opts, extras }) {
     stdinText,
     timeoutSec,
     tuiPrompt,
+    resumeFor: (sid) => resumeArgs(role, sid, lastMessage, "worker-report.schema.json"),
   });
   finishWorker(out, lastMessage, tmp, role);
 }
@@ -1821,23 +2057,8 @@ async function cmdResume({ positional, opts, extras }) {
   const id = runId();
   const tmp = mkdtempSync(join(tmpdir(), "ccc-codex-resume-"));
   const lastMessage = join(tmp, "last-message.txt");
-  // `exec resume` has no -s/-C: sandbox comes from -c, the root from cwd.
-  const args = [
-    "exec",
-    "resume",
-    sessionId,
-    "--json",
-    "--output-schema",
-    join(SCHEMAS, "worker-report.schema.json"),
-    "-o",
-    lastMessage,
-    ...roleArgs(role, { withSandboxFlag: false }),
-    ...extras,
-    "-",
-  ];
-  const stdinText =
-    "Continue the interrupted task from where you stopped. Re-run the relevant tests, " +
-    "then give the final report in the required shape.\n";
+  const args = resumeArgs(role, sessionId, lastMessage, "worker-report.schema.json", extras);
+  const stdinText = CONTINUE_TASK;
   const out = await runWorker({
     kind: "resume",
     id,
@@ -2008,6 +2229,8 @@ async function cmdTui({ positional }) {
   };
   // The Codex home the wrapper checked usage against and watches for the session.
   if (req.codexHome) env.CODEX_HOME = req.codexHome;
+  // Inherited by everything Codex starts, so the wrapper can prove none survives.
+  env.CODEX_BRIDGE_TUI_RUN = req.runId;
   // Published before the (slow) preflight, so the wrapper counts the tab as started.
   status({ status: "starting" });
   // Re-verified here, in the environment Codex will actually run in.
@@ -2017,7 +2240,7 @@ async function cmdTui({ positional }) {
     status({ status: "exited", code: 3, error: `isolation failed in the tab: ${iso.reason}` });
     fail(EXIT.REFUSED, `refused: TUI isolation failed (${iso.reason}); the run goes headless`);
   }
-  const args = tuiArgs(req.role, req.cwd, prompt, trusted, iso.args);
+  const args = tuiArgs(req.role, req.cwd, prompt, trusted, iso.args, req.runId);
   const flags = args.slice(0, -1).join(" ").toLowerCase();
   if (BANNED.some((b) => flags.includes(b))) fail(EXIT.REFUSED, "refused: bypass flag");
   const r = ROLES[req.role];
@@ -2033,6 +2256,7 @@ async function cmdTui({ positional }) {
   // stderr is passed through and its tail kept: a TUI that refuses to start
   // (bad flag, config error) says why there, and the wrapper logs it.
   const child = spawn(CODEX, args, { stdio: ["inherit", "inherit", "pipe"], cwd: req.cwd, env });
+  status({ status: "running", codexPid: child.pid });
   let errTail = "";
   child.stderr.on("data", (b) => {
     process.stderr.write(b);

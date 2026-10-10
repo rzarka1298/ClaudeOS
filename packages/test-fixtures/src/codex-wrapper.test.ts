@@ -54,7 +54,10 @@ function outFile() { const i = argv.indexOf("-o"); return i >= 0 ? argv[i + 1] :
 
 if (argv[0] === "app-server") {
   record({});
-  const mode = process.env.FAKE_CODEX_USAGE || "";
+  let mode = process.env.FAKE_CODEX_USAGE || "";
+  // Usage that changes while a run is in flight: the TUI fake writes this file.
+  const usageFile = process.env.FAKE_CODEX_USAGE_FILE;
+  if (usageFile && fs.existsSync(usageFile)) mode = fs.readFileSync(usageFile, "utf8");
   if (mode === "crash") process.exit(1);
   let buf = "";
   process.stdin.on("data", (d) => {
@@ -69,6 +72,11 @@ if (argv[0] === "app-server") {
       if (msg.method === "initialize") { emit({ id: msg.id, result: { userAgent: "fake" } }); continue; }
       if (msg.method === "account/rateLimits/read") {
         if (mode === "hang") continue;
+        if (usageFile && fs.existsSync(usageFile) && process.env.FAKE_CODEX_USAGE_DELAY_MS) {
+          const out = { id: msg.id, result: JSON.parse(mode) };
+          setTimeout(() => emit(out), Number(process.env.FAKE_CODEX_USAGE_DELAY_MS));
+          continue;
+        }
         if (mode === "error") { emit({ id: msg.id, error: { code: -32000, message: "not logged in" } }); continue; }
         emit({ id: msg.id, result: JSON.parse(mode) });
         continue;
@@ -82,6 +90,17 @@ if (argv[0] === "app-server") {
   const run = (stdin) => {
     record({ stdin });
     const mode = process.env.FAKE_CODEX_EXEC || "ok";
+    if (mode === "early") process.exit(1);
+    if (process.env.FAKE_CODEX_TUI_PIDFILE) {
+      let up = false;
+      try { process.kill(Number(fs.readFileSync(process.env.FAKE_CODEX_TUI_PIDFILE, "utf8")), 0); up = true; } catch {}
+      record({ tuiAliveAtResume: up });
+    }
+    if (process.env.FAKE_CODEX_ORPHAN_PIDFILE) {
+      let up = false;
+      try { process.kill(Number(fs.readFileSync(process.env.FAKE_CODEX_ORPHAN_PIDFILE, "utf8")), 0); up = true; } catch {}
+      record({ orphanAliveAtResume: up });
+    }
     process.stderr.write("fake codex progress line\n");
     emit({ type: "thread.started", thread_id: "${SESSION_ID}" });
     emit({ type: "turn.started" });
@@ -163,7 +182,8 @@ if (argv[0] === "app-server") {
   fs.mkdirSync(dir, { recursive: true });
   const file = dir + "/rollout-" + d.toISOString().slice(0, 19).replace(/:/g, "-") + "-${SESSION_ID}.jsonl";
   const w = (o) => fs.appendFileSync(file, JSON.stringify(o) + "\n");
-  w({ type: "session_meta", payload: { id: "${SESSION_ID}", cwd: process.cwd(), originator: "codex-tui", source: "cli" } });
+  const metaId = mode === "stall-nosid" ? "not-a-uuid" : "${SESSION_ID}";
+  w({ type: "session_meta", payload: { id: metaId, cwd: process.cwd(), originator: "codex-tui", source: "cli" } });
   w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>x</environment_context>" }] } });
   w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] } });
   if (process.env.FAKE_CODEX_PIDFILE) fs.writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(process.pid));
@@ -175,6 +195,27 @@ if (argv[0] === "app-server") {
   const firstTurnDelay = Number(process.env.FAKE_CODEX_FIRST_TURN_DELAY_MS || 0);
   const startTurn = () => {
   w({ type: "event_msg", payload: { type: "task_started", turn_id: "t1" } });
+  if (mode === "stall" || mode === "stall-nosid") {
+    // A turn started and produced activity, then the machine slept / the network dropped.
+    w({ type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: "{}" } });
+    if (process.env.FAKE_CODEX_USAGE_FILE) fs.writeFileSync(process.env.FAKE_CODEX_USAGE_FILE, process.env.FAKE_CODEX_USAGE_AFTER || "");
+    if (process.env.FAKE_CODEX_ORPHAN_PIDFILE) {
+      // A subprocess spawned while handling SIGTERM: it outlives the TUI and any
+      // tree snapshot taken before the stop.
+      process.on("SIGTERM", () => {
+        const c = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"], { stdio: "ignore" });
+        fs.writeFileSync(process.env.FAKE_CODEX_ORPHAN_PIDFILE, String(c.pid));
+        process.exit(0);
+      });
+    }
+    if (process.env.FAKE_CODEX_STUBBORN) {
+      // Ignores SIGTERM and freezes the tab helper, so the stop marker is never honoured.
+      process.on("SIGTERM", () => {});
+      process.kill(process.ppid, "SIGSTOP");
+    }
+    setInterval(() => {}, 1000);
+    return;
+  }
   if (mode === "hang") {
     if (process.env.FAKE_CODEX_CHILD_PIDFILE) {
       // A tool process Codex started that ignores SIGTERM.
@@ -195,7 +236,7 @@ if (argv[0] === "app-server") {
     }
     // The TUI stays open for the owner's chat; the fake lingers briefly.
     setTimeout(() => process.exit(0), Number(process.env.FAKE_CODEX_TUI_LINGER_MS || 300));
-  }, 200);
+  }, Number(process.env.FAKE_CODEX_MID_DELAY_MS || 200));
   };
   if (firstTurnDelay) setTimeout(startTurn, firstTurnDelay); else startTurn();
 } else {
@@ -423,6 +464,38 @@ function testEnv(over: Record<string, string>): NodeJS.ProcessEnv {
   env.FAKE_AG_CORE = join(REPO_ROOT, "scripts", "codex", "antigravity-extension", "bridge-core.js");
   if (over.HOME) env.CODEX_HOME = join(over.HOME, ".codex");
   return { ...env, ...over };
+}
+
+/**
+ * Registers a cleanup that SIGKILLs every process recorded for the harness's TUI
+ * runs (helper and Codex child, from the status records) and any pid files, even
+ * when assertions fail, so a frozen fake never outlives its test.
+ */
+function reapAfter(h: Harness, pidfiles: string[] = []): void {
+  // unshift: must run before the harness cleanup deletes the state files it reads.
+  cleanups.unshift(() => {
+    const pids: number[] = [];
+    const tuiDir = join(h.bridgeState, "tui");
+    if (existsSync(tuiDir)) {
+      for (const f of readdirSync(tuiDir).filter((n) => n.endsWith(".json"))) {
+        try {
+          const st = JSON.parse(readFileSync(join(tuiDir, f), "utf8"));
+          pids.push(Number(st.pid), Number(st.codexPid));
+        } catch {}
+      }
+    }
+    for (const f of pidfiles) {
+      try {
+        pids.push(Number(readFileSync(f, "utf8")));
+      } catch {}
+    }
+    for (const p of pids)
+      if (p > 1) {
+        try {
+          process.kill(p, "SIGKILL");
+        } catch {}
+      }
+  });
 }
 
 function linkedWorktree(h: Harness): string {
@@ -1462,6 +1535,337 @@ describe("tui: trust, withdrawal and cleanup", () => {
     expect(report.mode).toBe("tui");
     expect(report.fallback).toBeUndefined();
   });
+
+  it("resumes the TUI session headless when a running turn goes silent (task)", async () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const pidfile = join(h.bin, "stall.pid");
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_PIDFILE: pidfile,
+    });
+    expect(r.status).toBe(0);
+    expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+    // The known session is resumed, not restarted, still with pinned flags.
+    const [exec] = h.execCalls();
+    expect(h.execCalls()).toHaveLength(1);
+    expect(exec?.argv.slice(0, 3)).toEqual(["exec", "resume", SESSION_ID]);
+    expect(exec?.argv).toEqual(expect.arrayContaining(["-c", 'approval_policy="never"']));
+    const joined = exec?.argv.join(" ") ?? "";
+    for (const bad of FORBIDDEN_TOKENS) expect(joined).not.toContain(bad);
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(
+      `[tui] no activity for 1.5s mid-run — resuming session ${SESSION_ID} headless`,
+    );
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report).toMatchObject({ status: "ok", mode: "headless", sessionId: SESSION_ID });
+    expect(report.fallback).toMatchObject({
+      from: "tui",
+      to: "headless",
+      reason: "mid-run-inactivity",
+      tuiSessionId: SESSION_ID,
+      windowSec: 1.5,
+    });
+  });
+
+  it("resumes a stalled review read-only and still reports it", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    const [exec] = h.execCalls();
+    expect(exec?.argv.slice(0, 3)).toEqual(["exec", "resume", SESSION_ID]);
+    expect(exec?.argv).toEqual(expect.arrayContaining(["-c", 'sandbox_mode="read-only"']));
+    expect(exec?.argv.join(" ")).not.toContain("workspace-write");
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report).toMatchObject({ status: "ok", mode: "headless", verdict: "needs-attention" });
+    expect(report.fallback).toMatchObject({ reason: "mid-run-inactivity" });
+  });
+
+  it("does not fall back while a running turn keeps inside the inactivity window", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "6000",
+      FAKE_CODEX_MID_DELAY_MS: "1500",
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report.mode).toBe("tui");
+    expect(report.fallback).toBeUndefined();
+  });
+
+  it("fails with the failed exit code and a clear message when the stalled session cannot be resumed", async () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const pidfile = join(h.bin, "nosid.pid");
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall-nosid",
+      FAKE_CODEX_PIDFILE: pidfile,
+    });
+    expect(r.status).toBe(22);
+    expect(h.execCalls()).toHaveLength(0);
+    expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain("no session id to resume");
+    expect(out.status).toBe("failed");
+  });
+
+  it("keeps one run deadline: the resumed headless run only gets the remaining budget", () => {
+    const h = harness();
+    const t0 = Date.now();
+    const r = h.run(["review", h.root, "HEAD~1", "--timeout-sec", "5"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_EXEC: "hang",
+      FAKE_CODEX_PIDFILE: join(h.bin, "hang.pid"),
+    });
+    const elapsed = (Date.now() - t0) / 1000;
+    expect(r.status).toBe(21);
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    const m = log.match(/\[watchdog\] timeout after ([0-9.]+)s — killing the Codex process group/);
+    // 5 s budget minus the ~1.5 s already spent before the stall was detected.
+    expect(Number(m?.[1])).toBeLessThan(4);
+    expect(Number(m?.[1])).toBeGreaterThan(0);
+    expect(elapsed).toBeLessThan(5 + 1.5);
+  });
+
+  it("rechecks the usage reserve before an automatic resume and keeps the session id", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const usageFile = join(h.bin, "usage.json");
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_USAGE_FILE: usageFile,
+      FAKE_CODEX_USAGE_AFTER: usageAt(85),
+    });
+    expect(r.status).toBe(10);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    expect(out.sessionId).toBe(SESSION_ID);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(`not resuming session ${SESSION_ID}`);
+    expect(log).toContain(`codex-bridge resume ${SESSION_ID}`);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report).toMatchObject({ status: "refused", sessionId: SESSION_ID });
+  });
+
+  it("rechecks the usage reserve before a review resume too", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_USAGE_FILE: join(h.bin, "usage.json"),
+      FAKE_CODEX_USAGE_AFTER: usageAt(85),
+    });
+    expect(r.status).toBe(10);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report).toMatchObject({ status: "refused", sessionId: SESSION_ID });
+  });
+
+  it("bounds the usage recheck by the run deadline: a slow check cannot push the resume past it", () => {
+    const h = harness();
+    const t0 = Date.now();
+    const r = h.run(["review", h.root, "HEAD~1", "--timeout-sec", "4"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_USAGE_FILE: join(h.bin, "usage.json"),
+      FAKE_CODEX_USAGE_AFTER: usageResult(),
+      FAKE_CODEX_USAGE_DELAY_MS: "6000",
+    });
+    expect(r.status).toBe(21);
+    expect(h.execCalls()).toHaveLength(0);
+    expect((Date.now() - t0) / 1000).toBeLessThan(4 + 1.5);
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(`nothing left to resume session ${SESSION_ID}`);
+  });
+
+  it("keeps the saved session id when the resumed child dies before announcing a thread", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_EXEC: "early",
+    });
+    expect(r.status).toBe(22);
+    const out = lastJson(r.stdout);
+    expect(out.sessionId).toBe(SESSION_ID);
+    const rec = JSON.parse(
+      readFileSync(join(h.root, ".planning", "codex", "sessions", `${out.runId}.json`), "utf8"),
+    );
+    expect(rec).toMatchObject({ sessionId: SESSION_ID, status: "failed" });
+  });
+
+  it("a refused review tells the owner how to recover, not a task-only resume command", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_USAGE_FILE: join(h.bin, "usage.json"),
+      FAKE_CODEX_USAGE_AFTER: usageAt(85),
+    });
+    const out = lastJson(r.stdout);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain("codex-bridge review");
+    expect(log).toContain(`codex resume ${SESSION_ID}`);
+    expect(log).not.toContain(`codex-bridge resume ${SESSION_ID}`);
+  });
+
+  it("keeps a stalled review's session id in the report when the resumed child dies early", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_EXEC: "early",
+    });
+    expect(r.status).toBe(22);
+    const out = lastJson(r.stdout);
+    const report = JSON.parse(readFileSync(join(h.root, String(out.report)), "utf8"));
+    expect(report.sessionId).toBe(SESSION_ID);
+    const md = readFileSync(join(h.root, String(out.markdown)), "utf8");
+    expect(md).toContain(`codex resume ${SESSION_ID}`);
+  });
+
+  it("never resumes while the old TUI tree is alive: it escalates, verifies, then resumes", async () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const pidfile = join(h.bin, "stubborn.pid");
+    reapAfter(h, [pidfile]);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_STUBBORN: "1",
+      FAKE_CODEX_PIDFILE: pidfile,
+      FAKE_CODEX_TUI_PIDFILE: pidfile,
+    });
+    expect(r.status).toBe(0);
+    const calls = h.execCalls() as Array<{ argv: string[]; tuiAliveAtResume?: boolean }>;
+    const seen = calls.filter((c) => c.tuiAliveAtResume !== undefined);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.tuiAliveAtResume).toBe(false);
+    expect(calls[0]?.argv.slice(0, 2)).toEqual(["exec", "resume"]);
+    expect(await gone(Number(readFileSync(pidfile, "utf8")))).toBe(true);
+  }, 60_000);
+
+  it("fails with exit 22 and no exec when the old TUI tree cannot be confirmed gone", async () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const pidfile = join(h.bin, "stubborn2.pid");
+    reapAfter(h, [pidfile]);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_STUBBORN: "1",
+      FAKE_CODEX_PIDFILE: pidfile,
+      CODEX_BRIDGE_TEST_NO_ESCALATE: "1",
+    });
+    expect(r.status).toBe(22);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    expect(out.sessionId).toBe(SESSION_ID);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(`not resuming session ${SESSION_ID}`);
+  }, 60_000);
+
+  it("kills a subprocess spawned during SIGTERM handling before resuming", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const orphan = join(h.bin, "orphan.pid");
+    reapAfter(h, [orphan]);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_ORPHAN_PIDFILE: orphan,
+    });
+    expect(r.status).toBe(0);
+    const calls = h.execCalls() as Array<{ orphanAliveAtResume?: boolean }>;
+    const seen = calls.filter((c) => c.orphanAliveAtResume !== undefined);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.orphanAliveAtResume).toBe(false);
+  }, 60_000);
+
+  it("exits 22 without resuming when a SIGTERM-spawned subprocess survives and escalation is off", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    const orphan = join(h.bin, "orphan2.pid");
+    reapAfter(h, [orphan]);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_ORPHAN_PIDFILE: orphan,
+      CODEX_BRIDGE_TEST_NO_ESCALATE: "1",
+    });
+    expect(r.status).toBe(22);
+    expect(h.execCalls()).toHaveLength(0);
+    expect(lastJson(r.stdout).sessionId).toBe(SESSION_ID);
+  }, 60_000);
+
+  it("pins the run marker into the TUI's shell environment so tool processes carry it", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], { ...CLAIM, FAKE_CODEX_FINAL: REVIEW_JSON });
+    expect(r.status).toBe(0);
+    const out = lastJson(r.stdout);
+    const [call] = h.calls().filter((c) => c.argv.includes("--ask-for-approval"));
+    expect(call?.argv).toEqual(
+      expect.arrayContaining([
+        "-c",
+        `shell_environment_policy.set.CODEX_BRIDGE_TUI_RUN="${out.runId}"`,
+      ]),
+    );
+    // The existing core-only inheritance stays pinned.
+    expect(call?.argv).toEqual(
+      expect.arrayContaining(["-c", 'shell_environment_policy.inherit="core"']),
+    );
+  });
+
+  it("treats a failed process scan as unconfirmed: no resume, exit 22, session id kept", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    reapAfter(h);
+    const r = h.run(["task", wt, briefFile(h)], {
+      ...CLAIM,
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      CODEX_BRIDGE_TEST_SCAN_FAIL: "1",
+    });
+    expect(r.status).toBe(22);
+    expect(h.execCalls()).toHaveLength(0);
+    const out = lastJson(r.stdout);
+    expect(out.sessionId).toBe(SESSION_ID);
+    const log = readFileSync(join(h.root, String(out.liveLog)), "utf8");
+    expect(log).toContain(`not resuming session ${SESSION_ID}`);
+  }, 60_000);
 
   it("withdraws the queued request when interrupted during the claim wait (finding 1)", async () => {
     const h = harness();
