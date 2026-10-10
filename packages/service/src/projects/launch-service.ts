@@ -79,6 +79,15 @@ import { isExecutableFile, selectTerminalLauncher } from "./terminal-launchers.j
  * An identical request (`{ projectId, action }`) arriving while one is still
  * in flight joins it: same promise, one spawn.
  *
+ * The pair (`launchPair`, plan 05.1-20, D-10, OQ-6) is the same pipeline for Claude Code and
+ * Codex together, not a second launch path: it resolves the project, builds the Claude half from
+ * the same prepared pieces a single launch uses, asks the guard ONCE (Claude only; a second call
+ * would pre-register a second Run), and starts both halves through the terminal the claude-code
+ * row chose, Claude's call first, before either is awaited. One cap covers the whole action and
+ * per-half slots keep a finished half's real result when it fires; one agent's failure, setup
+ * state or timeout never changes the other's. Codex has no Run and no guard (D-15). A conflict
+ * launches nothing. Pairs dedupe on `{ projectId, choice }` in their own key family.
+ *
  * A launch never waits on git (D-42): after a successful spawn it touches
  * `last_opened_at`, tells the collector the registry changed, and queues a
  * refresh without awaiting it.

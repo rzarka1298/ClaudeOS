@@ -1,5 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { LAUNCH_PATH, LaunchRequestSchema } from "@ccc/domain";
+import {
+  LAUNCH_PAIR_PATH,
+  LAUNCH_PATH,
+  LaunchPairRequestSchema,
+  LaunchRequestSchema,
+} from "@ccc/domain";
 import { logger } from "../logging.js";
 import { readJsonBody } from "../request-body.js";
 import {
@@ -57,6 +62,46 @@ async function handleLaunch(
   }
 }
 
+/**
+ * `POST /api/v1/projects/launch-pair` (plan 05.1-20, D-10, CODEX-02): Claude Code and Codex
+ * together. The body is `{ projectId, choice? }` and nothing else -- the strict schema refuses a
+ * path, argv, agent, executable or shell string with the constant 400, so a caller can never name
+ * what runs. Every well-formed request answers 200 with the typed envelope (`{ claude, codex }`)
+ * or the guard's existing conflict answer; one agent failing is a result, not an HTTP error.
+ */
+async function handleLaunchPair(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: RouteContext,
+): Promise<void> {
+  const parsed = await readJsonBody(req, LaunchPairRequestSchema);
+  if (!parsed.ok) {
+    logger.warn({ route: LAUNCH_PAIR_PATH, reason: parsed.reason }, "rejected request body");
+    sendJson(res, 400, INVALID_BODY_BODY);
+    return;
+  }
+  if (ctx.launch === undefined) {
+    logger.error({ route: LAUNCH_PAIR_PATH }, "launch service not wired");
+    sendJson(res, 500, INTERNAL_ERROR_BODY);
+    return;
+  }
+  try {
+    const result = await ctx.launch.launchPair(parsed.value);
+    sendJson(res, 200, result);
+  } catch (err: unknown) {
+    // The service never rejects by contract; a message could carry a path, so only the class is logged.
+    logger.error(
+      { route: LAUNCH_PAIR_PATH, errorName: err instanceof Error ? err.name : typeof err },
+      "launch pair route failed",
+    );
+    sendJson(res, 500, INTERNAL_ERROR_BODY);
+  }
+}
+
+const launchPairHandler: Handler = (req, res, ctx) => {
+  void handleLaunchPair(req, res, ctx);
+};
+
 const launchHandler: Handler = (req, res, ctx) => {
   // `Handler` is synchronous by contract; every path inside resolves to a
   // written response.
@@ -65,4 +110,5 @@ const launchHandler: Handler = (req, res, ctx) => {
 
 export const launchRoutes: Record<string, Record<string, Handler>> = {
   [LAUNCH_PATH]: { POST: withAuth(launchHandler) },
+  [LAUNCH_PAIR_PATH]: { POST: withAuth(launchPairHandler) },
 };
