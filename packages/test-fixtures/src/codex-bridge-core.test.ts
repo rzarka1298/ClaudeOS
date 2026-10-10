@@ -2,13 +2,16 @@
 // protocol the Antigravity extension runs on. Pure functions over a temp state
 // dir; the vscode glue (extension.js) stays a thin shell around these.
 
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -16,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadBridgeCore } from "./codex-bridge-core.js";
+import { REPO_ROOT } from "./gate-repo.js";
 
 const core = loadBridgeCore();
 const SESSION = "11111111-2222-3333-4444-555555555555";
@@ -537,5 +541,154 @@ describe("protocol constants", () => {
     ]).toEqual([32, 4096, 16, 1024]);
     expect(core.AGENT_ENV_KEY_RE.test("CCC_RUN_ID")).toBe(true);
     expect(core.AGENT_ENV_KEY_RE.test("CCC_run")).toBe(false);
+  });
+});
+
+describe("heartbeat protocol advertisement", () => {
+  it("writes protocol 2 and the capabilities beside folders and updatedAt", () => {
+    const w = world();
+    core.writeHeartbeat(w.state, "7", [w.project], NOW);
+    const hb = JSON.parse(readFileSync(join(w.state, "windows", "7.json"), "utf8"));
+    expect(hb).toEqual({
+      folders: [w.project],
+      updatedAt: new Date(NOW).toISOString(),
+      protocol: 2,
+      capabilities: ["follow", "tui", "agent"],
+    });
+  });
+
+  it("reads a heartbeat of the old shape as protocol null and capabilities null", () => {
+    const w = world();
+    writeFileSync(
+      join(w.state, "windows", "old.json"),
+      JSON.stringify({ folders: [w.project], updatedAt: new Date(NOW).toISOString() }),
+    );
+    expect(core.coveringHeartbeat(w.state, w.project, NOW + 1000)).toEqual({
+      folders: [w.project],
+      updatedAt: new Date(NOW).toISOString(),
+      protocol: null,
+      capabilities: null,
+    });
+    expect(core.windowCovers(w.state, w.project, NOW + 1000)).toBe(true);
+  });
+
+  it("returns the fresh covering heartbeat with protocol and capabilities, or null", () => {
+    const w = world();
+    expect(core.coveringHeartbeat(w.state, w.project, NOW)).toBeNull();
+    core.writeHeartbeat(w.state, "1", [w.project], NOW);
+    const hb = core.coveringHeartbeat(w.state, w.project, NOW + 1000);
+    expect(hb).toMatchObject({ protocol: 2, capabilities: ["follow", "tui", "agent"] });
+    expect(
+      core.coveringHeartbeat(w.state, w.project, NOW + core.HEARTBEAT_FRESH_MS + 1),
+    ).toBeNull();
+    expect(core.coveringHeartbeat(w.state, tmp("ccc-other-"), NOW + 1000)).toBeNull();
+  });
+
+  it("windowCovers answers exactly as before for the same inputs", () => {
+    const w = world();
+    const parent = realpathSync(join(w.project, ".."));
+    const other = tmp("ccc-other-");
+    writeFileSync(join(w.state, "windows", ".hidden.json"), "{}");
+    writeFileSync(join(w.state, "windows", "junk.json"), "{not json");
+    writeFileSync(join(w.state, "windows", "note.txt"), "x");
+    writeFileSync(join(w.state, "windows", "nofolders.json"), JSON.stringify({ updatedAt: "x" }));
+    core.writeHeartbeat(w.state, "1", [parent], NOW);
+    for (const root of [w.project, other]) {
+      expect(core.windowCovers(w.state, root, NOW + 1000)).toBe(
+        core.coveringHeartbeat(w.state, root, NOW + 1000) !== null,
+      );
+    }
+    expect(core.windowCovers(w.state, w.project, NOW + 1000)).toBe(true);
+    expect(core.windowCovers(w.state, other, NOW + 1000)).toBe(false);
+  });
+
+  it("coveringHeartbeats lists every fresh covering window so an outdated one is not hidden", () => {
+    const w = world();
+    writeFileSync(
+      join(w.state, "windows", "a-old.json"),
+      JSON.stringify({ folders: [w.project], updatedAt: new Date(NOW).toISOString() }),
+    );
+    core.writeHeartbeat(w.state, "b-new", [w.project], NOW);
+    const all = core.coveringHeartbeats(w.state, w.project, NOW + 1000);
+    expect(all.map((h) => h.protocol)).toEqual([null, 2]);
+  });
+});
+
+describe("protocol marker", () => {
+  it("writes protocol.json atomically with mode 0600 and reads it back", () => {
+    const w = world();
+    core.writeProtocolMarker(w.state, "abc123def456");
+    const file = join(w.state, "protocol.json");
+    expect(core.PROTOCOL_MARKER_FILE).toBe("protocol.json");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      protocol: 2,
+      capabilities: ["follow", "tui", "agent"],
+      kit: "abc123def456",
+    });
+    expect(core.readProtocolMarker(w.state)).toEqual({
+      protocol: 2,
+      capabilities: ["follow", "tui", "agent"],
+      kit: "abc123def456",
+    });
+    expect(readdirSync(w.state).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("reads null for a missing or malformed marker", () => {
+    const w = world();
+    expect(core.readProtocolMarker(w.state)).toBeNull();
+    const file = join(w.state, "protocol.json");
+    for (const bad of [
+      "{not json",
+      "[]",
+      JSON.stringify({ protocol: "2", capabilities: [], kit: "x" }),
+      JSON.stringify({ protocol: 2, capabilities: "agent", kit: "x" }),
+      JSON.stringify({ protocol: 2, capabilities: [1], kit: "x" }),
+      JSON.stringify({ protocol: 2, capabilities: [], kit: 5 }),
+      JSON.stringify({ protocol: 2, capabilities: [] }),
+    ]) {
+      writeFileSync(file, bad);
+      expect(core.readProtocolMarker(w.state), bad).toBeNull();
+    }
+  });
+});
+
+describe("projectStateCandidates", () => {
+  const sha10 = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 10);
+
+  it("lists the in-repo directory and the user-level project directory, in that order", () => {
+    const main = "/Users/USERNAME/code/my-app";
+    expect(core.projectStateCandidates(main, "/s/codex-bridge")).toEqual([
+      "/Users/USERNAME/code/my-app/.planning/codex",
+      `/s/codex-bridge/projects/my-app-${sha10(main)}`,
+    ]);
+  });
+
+  it("replaces unsafe characters with an underscore, cuts to 40 characters, and falls back to project", () => {
+    expect(core.projectDirName("/a/My Project!")).toBe(`My_Project_-${sha10("/a/My Project!")}`);
+    const long = `/a/${"x".repeat(60)}`;
+    expect(core.projectDirName(long)).toBe(`${"x".repeat(40)}-${sha10(long)}`);
+    expect(core.projectDirName("/")).toBe(`project-${sha10("/")}`);
+    expect(core.projectDirName("/a/ünï.v1_2-3")).toBe(`_n_.v1_2-3-${sha10("/a/ünï.v1_2-3")}`);
+  });
+
+  it("STATE_PROBES lists the ten probe paths the wrapper uses, verbatim", () => {
+    const source = readFileSync(join(REPO_ROOT, "scripts", "codex", "codex.mjs"), "utf8");
+    const block = /const STATE_PROBES = \[([^\]]*)\]\s*\.map\(\(p\) => `([^$`]*)\$\{p\}`\)/.exec(
+      source,
+    );
+    expect(block).not.toBeNull();
+    const probes = [...(block?.[1] ?? "").matchAll(/"([^"]+)"/g)].map(
+      (m) => `${block?.[2]}${m[1]}`,
+    );
+    expect(probes).toHaveLength(10);
+    expect(core.STATE_PROBES).toEqual(probes);
+  });
+
+  it("matches the wrapper's own name and hash expressions (read from its source)", () => {
+    const source = readFileSync(join(REPO_ROOT, "scripts", "codex", "codex.mjs"), "utf8");
+    expect(source).toContain('.replace(/[^A-Za-z0-9._-]/g, "_")');
+    expect(source).toContain('.slice(0, 40) || "project"');
+    expect(source).toContain('createHash("sha256").update(main).digest("hex").slice(0, 10)');
   });
 });

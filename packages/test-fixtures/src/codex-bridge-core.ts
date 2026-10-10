@@ -102,7 +102,15 @@ export interface BridgeCore {
   HEARTBEAT_FRESH_MS: number;
   CONTAIN_DELAY_MS: number;
   CLAIMED_KEEP_MS: number;
+  PROTOCOL_MARKER_FILE: string;
+  STATE_PROBES: string[];
   validateAgentShape(input: AgentShapeInput): AgentShapeVerdict;
+  coveringHeartbeat(stateDir: string, projectRoot: string, now?: number): CoveringHeartbeat | null;
+  coveringHeartbeats(stateDir: string, projectRoot: string, now?: number): CoveringHeartbeat[];
+  writeProtocolMarker(stateDir: string, kit: string): void;
+  readProtocolMarker(stateDir: string): ProtocolMarker | null;
+  projectDirName(main: string): string;
+  projectStateCandidates(main: string, stateDir: string): string[];
   bridgeStateDir(env: Record<string, string | undefined>, home: string): string;
   bridgeCommand(home: string): string;
   dirs(stateDir: string): { requests: string; claimed: string; windows: string };

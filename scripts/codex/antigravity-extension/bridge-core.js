@@ -523,7 +523,35 @@ function antigravityCli(env = process.env) {
   return isExecutable(app) ? app : null;
 }
 
+// STUBS (RED) for the protocol advertisement; replaced in the GREEN commit.
+const PROTOCOL_MARKER_FILE = "protocol.json";
+const STATE_PROBES = [];
+function coveringHeartbeat() {
+  return null;
+}
+function coveringHeartbeats() {
+  return [];
+}
+function writeProtocolMarker() {}
+function readProtocolMarker() {
+  return null;
+}
+function projectDirName() {
+  return "";
+}
+function projectStateCandidates() {
+  return [];
+}
+
 module.exports = {
+  PROTOCOL_MARKER_FILE,
+  STATE_PROBES,
+  coveringHeartbeat,
+  coveringHeartbeats,
+  writeProtocolMarker,
+  readProtocolMarker,
+  projectDirName,
+  projectStateCandidates,
   antigravityCli,
   RUN_ID_RE,
   REQUEST_FILE_RE,
