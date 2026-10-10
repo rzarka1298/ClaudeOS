@@ -82,7 +82,17 @@ export interface CodexSessionMirrorDeps {
   /** The inactivity window; default 30 minutes (Assumption A5). */
   readonly inactivityMs?: number;
   readonly limits?: CodexSessionMirrorLimits;
+  /** False when Codex is not installed: no read is attempted and the snapshot is not-installed. */
+  readonly installed?: () => boolean;
+  /** Reason codes only. */
+  readonly logger?: { warn(fields: { readonly reason: string }, message: string): void };
 }
+
+/** Applied in order to each built view; may only return a valid view for the same thread. */
+export type SessionOverlay = (
+  view: CodexSessionView,
+  context: { readonly limitHitAfter: boolean },
+) => CodexSessionView;
 
 export interface CodexSessionMirror {
   /** The cached snapshot, read synchronously; null before the first successful poll. */
@@ -93,6 +103,18 @@ export interface CodexSessionMirror {
   resolveThread(threadId: string): { readonly rolloutPath: string } | null;
   /** The number of private cache entries (a bound, never their content). */
   cacheSize(): number;
+  start(): void;
+  stop(): void;
+  refreshIfStale(): void;
+  addOverlay(overlay: SessionOverlay): () => void;
+  invalidate(): void;
+}
+
+/** RED stub: the `CCC_CODEX_INACTIVITY_MS` override resolver (plan 05.1-22 task 2). */
+export function resolveCodexInactivityMs(
+  _env: Readonly<Record<string, string | undefined>>,
+): number {
+  throw new Error("not implemented");
 }
 
 /** What the mirror keeps privately per thread. Never placed on any output. */
@@ -354,5 +376,20 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
       return entry === undefined ? null : { rolloutPath: entry.rolloutPath };
     },
     cacheSize: () => cache.size,
+    start() {
+      throw new Error("not implemented");
+    },
+    stop() {
+      throw new Error("not implemented");
+    },
+    refreshIfStale() {
+      throw new Error("not implemented");
+    },
+    addOverlay() {
+      throw new Error("not implemented");
+    },
+    invalidate() {
+      throw new Error("not implemented");
+    },
   };
 }
