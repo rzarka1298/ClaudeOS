@@ -149,6 +149,140 @@ function normaliseForBanMatch(element) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+// Deny-by-default flag rules for the FINAL argv (review F-01/F-02). The ban-token match above
+// compares text; these rules compare what the real CLI parsers will decide. Config-carrying
+// flags are refused outright because their values are TOML (`-c`) or JSON (`--settings`) that
+// the CLI decodes (`\u002d` escapes) after the text check would have passed.
+const DENIED_LONG_FLAGS = [
+  "--config",
+  "--profile",
+  "--settings",
+  "--mcp-config",
+  "--plugin-dir",
+  "--agents",
+  "--allowedtools",
+  "--allowed-tools",
+];
+const DENIED_CODEX_SHORT = ["c", "p"]; // -c key=value overrides, -p profile (claude's -c is --continue)
+const DENIED_SUBCOMMANDS = {
+  claude: [
+    "mcp",
+    "config",
+    "plugin",
+    "plugins",
+    "update",
+    "upgrade",
+    "install",
+    "setup-token",
+    "doctor",
+    "migrate-installer",
+  ],
+  codex: [
+    "mcp",
+    "mcp-server",
+    "login",
+    "logout",
+    "exec",
+    "apply",
+    "cloud",
+    "proto",
+    "completion",
+    "sandbox",
+    "debug",
+    "features",
+    "app-server",
+  ],
+};
+const PERMISSION_MODES = ["default", "plan", "acceptEdits"];
+const CODEX_APPROVALS = ["untrusted", "on-failure", "on-request"];
+const CODEX_SANDBOXES = ["read-only", "workspace-write"];
+// Flags whose value is a directory: containment is checked against the project root by
+// validateAgentRequest (needs the filesystem). claude's --add-dir is variadic.
+const DIR_FLAGS = {
+  claude: { long: ["--add-dir"], short: [], variadic: ["--add-dir"] },
+  codex: { long: ["--cd", "--add-dir"], short: ["C"], variadic: [] },
+};
+
+/**
+ * Splits one argv element into { flag, inline } where flag is the normalised flag name
+ * ("--long" lower-cased with _ as -, or "-x") and inline the attached value (--flag=value,
+ * -xvalue) or undefined. Not a flag: null.
+ */
+function parseFlag(element) {
+  if (element.startsWith("--")) {
+    if (element === "--") return null;
+    const eq = element.indexOf("=");
+    const name = (eq === -1 ? element : element.slice(0, eq)).toLowerCase().replace(/_/g, "-");
+    return { flag: name, inline: eq === -1 ? undefined : element.slice(eq + 1) };
+  }
+  if (/^-[A-Za-z]/.test(element)) {
+    const rest = element.slice(2);
+    return { flag: element.slice(0, 2), inline: rest === "" ? undefined : rest.replace(/^=/, "") };
+  }
+  return null;
+}
+
+/** The reason an argv[1..] breaks the flag rules, or null. */
+function flagRuleViolation(agent, argv) {
+  const denied = DENIED_SUBCOMMANDS[agent];
+  for (let i = 1; i < argv.length; i++) {
+    const element = argv[i];
+    if (denied.includes(element)) return "banned-flag";
+    const parsed = parseFlag(element);
+    if (!parsed) continue;
+    const { flag, inline } = parsed;
+    const value = inline !== undefined ? inline : argv[i + 1];
+    if (DENIED_LONG_FLAGS.includes(flag)) return "banned-flag";
+    if (agent === "codex" && flag.length === 2 && DENIED_CODEX_SHORT.includes(flag[1]))
+      return "banned-flag";
+    if (flag === "--permission-mode" && !PERMISSION_MODES.includes(value)) return "banned-flag";
+    if (agent === "codex") {
+      if ((flag === "-a" || flag === "--ask-for-approval") && !CODEX_APPROVALS.includes(value))
+        return "banned-flag";
+      if ((flag === "-s" || flag === "--sandbox") && !CODEX_SANDBOXES.includes(value))
+        return "banned-flag";
+    }
+    if (agent === "claude" && ["--resume", "-r", "--session-id"].includes(flag)) {
+      if (typeof value !== "string" || !UUID_RE.test(value)) return "bad-argv";
+    }
+  }
+  if (agent === "codex") {
+    const at = argv.indexOf("resume", 1);
+    if (at !== -1 && !(typeof argv[at + 1] === "string" && UUID_RE.test(argv[at + 1])))
+      return "bad-argv";
+  }
+  return null;
+}
+
+/** Every directory argument of argv (raw strings; the caller resolves them); null = missing value. */
+function directoryArguments(agent, argv) {
+  const rules = DIR_FLAGS[agent];
+  const found = [];
+  for (let i = 1; i < argv.length; i++) {
+    const parsed = parseFlag(argv[i]);
+    if (!parsed) continue;
+    const { flag, inline } = parsed;
+    const isDir = rules.long.includes(flag) || (flag.length === 2 && rules.short.includes(flag[1]));
+    if (!isDir) continue;
+    if (inline !== undefined) {
+      found.push(inline);
+      continue;
+    }
+    const values = [];
+    for (
+      let j = i + 1;
+      j < argv.length && (values.length === 0 || rules.variadic.includes(flag));
+      j++
+    ) {
+      if (argv[j].startsWith("-")) break;
+      values.push(argv[j]);
+    }
+    if (values.length === 0) found.push(null);
+    else found.push(...values);
+  }
+  return found;
+}
+
 /**
  * The pure shape rules for an agent request's { agent, argv, env }. No filesystem
  * access; the reason is one of AGENT_REASONS. This is the function the hostile corpus
@@ -179,6 +313,8 @@ function validateAgentShape(input) {
     const normalised = normaliseForBanMatch(element);
     if (BANNED_TOKENS.some((token) => normalised.includes(token))) return no("banned-flag");
   }
+  const violation = flagRuleViolation(agent, argv);
+  if (violation) return no(violation);
   if (
     !env ||
     typeof env !== "object" ||
@@ -229,8 +365,14 @@ function validateAgentRequest(raw, { now, ttlMs, checkAge }) {
   if (!projectRoot) return no("projectRoot is not an absolute existing directory");
   const cwd = raw.cwd === undefined || raw.cwd === null ? projectRoot : realDir(raw.cwd);
   if (!cwd) return no("cwd is not an absolute existing directory");
+  if (!isInside(cwd, projectRoot)) return no("cwd is outside the project root");
   const shape = validateAgentShape({ agent: raw.agent, argv: raw.argv, env: raw.env });
   if (!shape.ok) return no(`agent shape: ${shape.reason}`);
+  for (const dir of directoryArguments(raw.agent, raw.argv)) {
+    const resolved = dir === null ? null : realDir(path.resolve(cwd, dir));
+    if (!resolved || !isInside(resolved, projectRoot))
+      return no("a directory argument is missing or outside the project root");
+  }
   if (!isExecutable(raw.argv[0])) return no("argv[0] is not an executable file");
   const created = typeof raw.createdAt === "string" ? Date.parse(raw.createdAt) : Number.NaN;
   if (!Number.isFinite(created)) return no("bad createdAt");

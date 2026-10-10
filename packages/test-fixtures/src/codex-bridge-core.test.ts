@@ -477,6 +477,53 @@ describe("agent mode requests (protocol 2)", () => {
     expect(v.ok).toBe(false);
   });
 
+  describe("path containment (bridge review F-03)", () => {
+    const verdict = (w: ReturnType<typeof agentWorld>, over: Record<string, unknown>) =>
+      core.validateRequest(w.request(over), { stateDir: w.state, now: AGENT_NOW });
+
+    it("refuses a cwd outside the project root and accepts one inside it", () => {
+      const w = agentWorld();
+      const outside = tmp("ccc-bridge-outside-");
+      expect(verdict(w, { cwd: outside }).ok).toBe(false);
+      expect(verdict(w, { cwd: "/" }).ok).toBe(false);
+      const inner = join(w.project, "sub");
+      mkdirSync(inner);
+      expect(verdict(w, { cwd: inner }).ok).toBe(true);
+      const link = join(w.project, "escape");
+      symlinkSync(outside, link);
+      expect(verdict(w, { cwd: link }).ok).toBe(false);
+    });
+
+    it.each([
+      ["codex", "-C"],
+      ["codex", "--cd"],
+      ["codex", "--add-dir"],
+      ["claude", "--add-dir"],
+    ] as const)("%s %s must stay inside the project root", (agent, flag) => {
+      const w = agentWorld(agent);
+      const outside = tmp("ccc-bridge-outside-");
+      const inner = join(w.project, "sub");
+      mkdirSync(inner);
+      const link = join(w.project, "escape");
+      symlinkSync(outside, link);
+      const argv = (...rest: string[]) => [w.exe, ...rest];
+      expect(verdict(w, { argv: argv(flag, inner) }).ok).toBe(true);
+      expect(verdict(w, { argv: argv(flag, "sub") }).ok).toBe(true);
+      expect(verdict(w, { argv: argv(flag, outside) }).ok).toBe(false);
+      expect(verdict(w, { argv: argv(flag, "/") }).ok).toBe(false);
+      expect(verdict(w, { argv: argv(flag, "..") }).ok).toBe(false);
+      expect(verdict(w, { argv: argv(flag, "../..") }).ok).toBe(false);
+      expect(verdict(w, { argv: argv(flag, link) }).ok).toBe(false);
+      expect(verdict(w, { argv: argv(`${flag}=${outside}`) }).ok).toBe(false);
+      expect(verdict(w, { argv: argv(flag) }).ok).toBe(false);
+      if (agent === "claude") {
+        expect(verdict(w, { argv: argv(flag, inner, outside) }).ok).toBe(false);
+        expect(verdict(w, { argv: argv(flag, inner, "sub") }).ok).toBe(true);
+      }
+      if (flag === "-C") expect(verdict(w, { argv: argv(`-C${outside}`) }).ok).toBe(false);
+    });
+  });
+
   it("refuses an argv0 that is a directory or not executable", () => {
     const w = agentWorld();
     const plain = join(w.bin, "claude-plain");
