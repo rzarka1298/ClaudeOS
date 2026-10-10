@@ -195,9 +195,18 @@ describe("Codex card presentations", () => {
     const view = frame(ready);
     view.getByRole("button", { name: "Source for headroom" });
     view.getByRole("button", { name: "Source for plan usage" });
-    const names = view.getAllByRole("button").map((button) => button.textContent?.trim());
+    // Accessible name = aria-label when present, else the text. Every name
+    // must be unique and contain the button's visible label (WCAG 2.5.3);
+    // the two "Turn on transcript analysis" buttons share visible text and
+    // are told apart by their aria-label suffix.
+    const buttons = view.getAllByRole("button");
+    const names = buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
     expect(new Set(names).size).toBe(names.length);
-    expect(names.every((name) => name?.includes("Source"))).toBe(true);
+    for (const [i, b] of buttons.entries()) {
+      const visible = (b.textContent ?? "").replace(/\s+/g, " ").trim().split(" ")[0] ?? "";
+      expect(names[i]).toContain(visible);
+    }
+    expect(buttons.filter((b) => b.textContent?.startsWith("Source")).length).toBe(5);
   });
   it("renders the paused-tracking reason through the frame", () => {
     frame({ kind: "unavailable", reason: { code: "codex-data-changed" } }).getByText(
