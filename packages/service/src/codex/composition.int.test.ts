@@ -34,11 +34,6 @@ import {
 } from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ANTIGRAVITY_IDE_BUNDLE_ID } from "../projects/antigravity-terminal.js";
-import { createDetector } from "../projects/detection.js";
-import { createLaunchService } from "../projects/launch-service.js";
-import type { LauncherServices } from "../projects/launcher-routes.js";
-import { createStoreProjectLookup } from "../projects/project-lookup.js";
-import { ensureScriptDir } from "../projects/script-dir.js";
 import { type BridgeFixture, createBridgeFixture } from "../test-support/bridge-fixtures.js";
 import {
   type CodexComposition,
@@ -47,6 +42,7 @@ import {
   startCodexComposition,
   waitFor,
 } from "../test-support/codex-composition.js";
+import { launchContext } from "../test-support/codex-launch-context.js";
 import {
   jsonl,
   metaLine,
@@ -62,7 +58,6 @@ import {
 } from "../test-support/fake-codex.js";
 import { FAKE_ACCOUNT_ID, weeklyReply } from "../test-support/fake-codex-app-server.js";
 import { doctorReport } from "../test-support/fake-codex-doctor.js";
-import { createFakeCommandRunner } from "../test-support/fake-command-runner.js";
 
 /**
  * Plan 05.1-29 Task 1 (tracer): the whole composed Codex service, end to end against fakes only.
@@ -99,39 +94,6 @@ async function compose(options: CodexCompositionOptions): Promise<CodexCompositi
   const composition = await startCodexComposition(options);
   open.push(composition);
   return composition;
-}
-
-/** The launcher services and the launch service the pair and the save need (not part of the Codex table). */
-function launchContext(
-  extras: { guard?: LaunchGuard; capMs?: number } = {},
-): NonNullable<CodexCompositionOptions["routeContext"]> {
-  return (parts) => {
-    const scriptDir = ensureScriptDir(parts.runtimeDir);
-    const detector = createDetector({
-      runner: createFakeCommandRunner({ script: [] }),
-      homeDir: parts.homeDir,
-      readdir: () => Promise.resolve([]),
-      resolveGit: () => Promise.resolve({ kind: "unavailable" }),
-    });
-    const launchers: LauncherServices = {
-      detector,
-      homeDir: parts.homeDir,
-      onLaunchersChanged: () => parts.codex?.onLaunchersChanged(),
-      spawner: parts.spawner,
-      scriptDir,
-    };
-    const launch = createLaunchService({
-      store: parts.store,
-      spawner: parts.spawner,
-      lookup: createStoreProjectLookup(parts.store),
-      collector: { refresh() {}, onRegistryChanged() {}, gitState: () => null },
-      logger: { info() {}, warn() {} },
-      scriptDir,
-      ...(extras.guard === undefined ? {} : { guard: extras.guard }),
-      ...(extras.capMs === undefined ? {} : { capMs: extras.capMs }),
-    });
-    return { launch, launchers };
-  };
 }
 
 function fakeCodexIn(c: CodexComposition, usedPercent = 41) {
