@@ -81,15 +81,35 @@ const TASKS_CELLS = [
 ] as const;
 
 /** The cells `codex.spec.ts` adds (plan 05.1-27), as `codex — {case} — {pane}`. Grown per task. */
-const CODEX_CARD_CASES = ["ready-mixed"] as const;
+const CODEX_CARD_CASES = [
+  "ready-mixed",
+  "ready-over-reserve",
+  "ready-fallback-source",
+  "ready-analysis-off",
+  "ready-partial-sessions",
+  "ready-partial-tokens",
+  "usage-unavailable",
+  "usage-outdated",
+  "empty",
+  "loading",
+  "stale",
+  "error",
+  "disconnected",
+  "setup-not-installed",
+  "unavailable-format-changed",
+  "long-text",
+] as const;
 const CODEX_PANES = ["narrow", "full"] as const;
-const CODEX_CELLS: readonly string[] = CODEX_CARD_CASES.flatMap((id) =>
-  CODEX_PANES.map((pane) => `codex — ${id} — ${pane}`),
-);
+const CODEX_CELLS: readonly string[] = [
+  ...CODEX_CARD_CASES.flatMap((id) => CODEX_PANES.map((pane) => `codex — ${id} — ${pane}`)),
+  // ready-mixed again at data-motion reduced (UI-SPEC accessibility floor 13), and at 200 percent font size.
+  ...CODEX_PANES.map((pane) => `codex — ready-mixed — ${pane} — reduced`),
+  "codex — zoom-200 — narrow",
+];
 
 /** The 121 cells the merged tree already had, and the Codex spec's final count (UI-SPEC "Visual regression"). */
 const MERGED_TREE_CELLS = 121;
-const CODEX_SPEC_CELLS = 2;
+const CODEX_SPEC_CELLS = 35;
 
 /** The titles `playwright test --list` prints for one spec file. */
 function titlesOf(listing: string, specFile: string): string[] {

@@ -19,7 +19,11 @@ import {
   CodexSessionsSnapshotSchema,
   CodexTokenSummarySchema,
 } from "@ccc/domain/codex-sessions.js";
-import { CodexUsageSnapshotSchema, HeadroomSignalSchema } from "@ccc/domain/codex-usage.js";
+import {
+  CODEX_USAGE_STALE_MAX_AGE_MS,
+  CodexUsageSnapshotSchema,
+  HeadroomSignalSchema,
+} from "@ccc/domain/codex-usage.js";
 import { describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -50,7 +54,24 @@ const INVENTED_WORDS = new Set([
 ]);
 
 /** The cases the UI-SPEC "Visual regression" table lists, in order. Grown per task. */
-const REQUIRED_CASES = ["ready-mixed"] as const;
+const REQUIRED_CASES = [
+  "ready-mixed",
+  "ready-over-reserve",
+  "ready-fallback-source",
+  "ready-analysis-off",
+  "ready-partial-sessions",
+  "ready-partial-tokens",
+  "usage-unavailable",
+  "usage-outdated",
+  "empty",
+  "loading",
+  "stale",
+  "error",
+  "disconnected",
+  "setup-not-installed",
+  "unavailable-format-changed",
+  "long-text",
+] as const;
 
 interface Parts {
   readonly sessions: unknown;
@@ -150,6 +171,155 @@ describe("codex-visual-fixtures.json shape", () => {
 
     expect(tokens.ranges.today.kind).toBe("available");
     expect(tokens.firstScanPending).toBe(false);
+  });
+});
+
+/** One case's parts, parsed with the strict schemas (the shape tests below read typed values). */
+function parsed(id: string) {
+  const fixture = fixtures.cases[id];
+  expect(fixture, `case ${id}`).toBeDefined();
+  const parts = (fixture as Case).parts;
+  return {
+    fixture: fixture as Case,
+    sessions: parts.sessions === null ? null : CodexSessionsSnapshotSchema.parse(parts.sessions),
+    usage: parts.usage === null ? null : CodexUsageSnapshotSchema.parse(parts.usage),
+    headroom: parts.headroom === null ? null : HeadroomSignalSchema.parse(parts.headroom),
+    tokens: parts.tokens === null ? null : CodexTokenSummarySchema.parse(parts.tokens),
+    integration:
+      parts.integration === null ? null : CodexIntegrationStatusSchema.parse(parts.integration),
+  };
+}
+
+function sessionStates(id: string): string[] {
+  const { sessions } = parsed(id);
+  return sessions?.kind === "available" ? sessions.sessions.map((session) => session.state) : [];
+}
+
+describe("every case holds the shape the UI-SPEC row says it exists to show", () => {
+  it("ready-over-reserve: a window at 83 percent, refusal by the reserve line, two paused runs", () => {
+    const { usage, headroom } = parsed("ready-over-reserve");
+    expect(usage?.kind === "available" && usage.windows[0]?.usedPercent).toBe(83);
+    expect(headroom?.codex.verdict).toBe("refuse");
+    expect(headroom?.codex.reason).toBe("reserve-line");
+    expect(headroom?.codex.pausedRuns.count).toBe(2);
+    expect(sessionStates("ready-over-reserve").filter((s) => s === "limit-paused")).toHaveLength(2);
+  });
+
+  it("ready-fallback-source: the usage came from the rollout fallback and headroom refuses with no live read", () => {
+    const { usage, headroom } = parsed("ready-fallback-source");
+    expect(usage?.kind === "available" && usage.source).toBe("rollout-fallback");
+    expect(headroom?.codex.reason).toBe("no-live-read");
+  });
+
+  it("ready-analysis-off: no titles, analysis off, token activity unavailable for analysis-off", () => {
+    const { sessions, tokens } = parsed("ready-analysis-off");
+    expect(sessions?.kind === "available" && sessions.analysisOn).toBe(false);
+    expect(
+      sessions?.kind === "available" && sessions.sessions.every((row) => row.title === null),
+    ).toBe(true);
+    for (const range of Object.values(tokens?.ranges ?? {})) {
+      expect(range.kind === "unavailable" && range.reason).toBe("analysis-off");
+    }
+  });
+
+  it("ready-partial-sessions: sessions unavailable for a changed format with a dotted version, usage and tokens available", () => {
+    const { sessions, usage, tokens } = parsed("ready-partial-sessions");
+    expect(sessions?.kind === "unavailable" && sessions.reason).toBe("format-changed");
+    expect(sessions?.kind === "unavailable" && sessions.version).toMatch(/^\d+(?:\.\d+)+$/);
+    expect(usage?.kind).toBe("available");
+    expect(tokens?.ranges.today.kind).toBe("available");
+  });
+
+  it("ready-partial-tokens: at least one range is partial with a retention horizon", () => {
+    const { tokens } = parsed("ready-partial-tokens");
+    const partial = Object.values(tokens?.ranges ?? {}).filter(
+      (range) => range.kind === "available" && range.partiality.partial,
+    );
+    expect(partial.length).toBeGreaterThanOrEqual(1);
+    expect(
+      partial.some((range) => range.kind === "available" && range.coverage.horizonDate !== null),
+    ).toBe(true);
+  });
+
+  it("usage-unavailable: an unavailable variant with a reason and no numeric member", () => {
+    const { usage, headroom, fixture } = parsed("usage-unavailable");
+    expect(usage?.kind).toBe("unavailable");
+    const numbers: number[] = [];
+    walk(fixture.parts.usage, (_key, value) => {
+      if (typeof value === "number") numbers.push(value);
+    });
+    expect(numbers).toEqual([]);
+    expect(headroom?.codex.reason).toBe("usage-unavailable");
+    expect(headroom?.codex.worstWindow).toBeNull();
+  });
+
+  it("usage-outdated: a window whose reset precedes the frozen now", () => {
+    const { usage } = parsed("usage-outdated");
+    expect(usage?.kind).toBe("available");
+    if (usage?.kind !== "available") return;
+    const reset = usage.windows[0]?.resetsAt;
+    expect(reset).toBeTruthy();
+    expect(Date.parse(reset ?? "")).toBeLessThan(NOW);
+  });
+
+  it("empty: everything null but the integration, with Codex installed", () => {
+    const { fixture, integration } = parsed("empty");
+    const { integration: _integration, ...rest } = fixture.parts;
+    expect(Object.values(rest).every((part) => part === null)).toBe(true);
+    expect(integration?.codex.installed).toBe(true);
+  });
+
+  it("loading and error carry the override and no data", () => {
+    expect(fixtures.cases.loading?.override).toBe("loading");
+    expect(fixtures.cases.error?.override).toBe("error");
+    for (const id of ["loading", "error"]) {
+      expect(Object.values((fixtures.cases[id] as Case).parts).every((part) => part === null)).toBe(
+        true,
+      );
+    }
+  });
+
+  it("stale: every observation is older than the stale threshold", () => {
+    const { sessions, usage, headroom, tokens } = parsed("stale");
+    const observed = [
+      sessions?.kind === "available" ? sessions.observedAt : null,
+      usage?.observedAt ?? null,
+      headroom?.generatedAt ?? null,
+      tokens?.observedAt ?? null,
+    ];
+    for (const time of observed) {
+      expect(time).not.toBeNull();
+      expect(NOW - Date.parse(time ?? "")).toBeGreaterThan(CODEX_USAGE_STALE_MAX_AGE_MS);
+    }
+  });
+
+  it("disconnected: the ready-mixed parts with a dropped connection", () => {
+    expect(fixtures.cases.disconnected?.connection).toBe("disconnected");
+    expect(fixtures.cases.disconnected?.parts).toEqual(fixtures.cases["ready-mixed"]?.parts);
+  });
+
+  it("setup-not-installed: Codex is not installed", () => {
+    expect(parsed("setup-not-installed").integration?.codex.installed).toBe(false);
+  });
+
+  it("unavailable-format-changed: every data section is format-changed", () => {
+    const { sessions, usage, tokens } = parsed("unavailable-format-changed");
+    expect(sessions?.kind === "unavailable" && sessions.reason).toBe("format-changed");
+    expect(usage?.kind === "unavailable" && usage.reason).toBe("shape-changed");
+    for (const range of Object.values(tokens?.ranges ?? {})) {
+      expect(range.kind === "unavailable" && range.reason).toBe("format-changed");
+    }
+  });
+
+  it("long-text: a 90-character project name, a 60-character model, a 24-character effort and a 40-character limit label", () => {
+    const { sessions, usage } = parsed("long-text");
+    const rows = sessions?.kind === "available" ? sessions.sessions : [];
+    expect(rows.some((row) => row.projectName?.length === 90)).toBe(true);
+    expect(rows.some((row) => row.model?.length === 60)).toBe(true);
+    expect(rows.some((row) => row.effort?.length === 24)).toBe(true);
+    expect(
+      usage?.kind === "available" && usage.windows.some((w) => w.limitLabel?.length === 40),
+    ).toBe(true);
   });
 });
 
