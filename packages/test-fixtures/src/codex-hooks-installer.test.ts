@@ -27,6 +27,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { CODEX_HOOK_EVENTS } from "@ccc/domain";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { cleanupRecorderDirs, type RecordedRun, runRecorded } from "./codex-hooks-fs-recorder.js";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SCRIPTS_DIR = join(REPO_ROOT, "scripts", "codex-hooks");
@@ -304,6 +305,7 @@ beforeAll(() => {
 
 afterEach(() => {
   for (const root of fixtures.splice(0)) rmSync(root, { recursive: true, force: true });
+  cleanupRecorderDirs();
 });
 
 describe("install.mjs merges the Codex hook package (Task 1, CODEX-06, D-19)", () => {
@@ -487,112 +489,21 @@ function status(fx: Fixture): RunResult {
   return runScript(STATUS, fx, baseArgs(fx));
 }
 
-/** A preload that records the paths the scripts open for writing and reading (public fs calls only). */
-const RECORDER_SOURCE = `
-import fs from "node:fs";
-import { syncBuiltinESMExports } from "node:module";
-import { resolve } from "node:path";
-const logPath = process.env.CCC_FS_LOG;
-const append = fs.appendFileSync.bind(fs);
-const abs = (p) => {
-  if (typeof p === "string") return resolve(p);
-  if (p instanceof URL) return p.pathname;
-  if (Buffer.isBuffer(p)) return resolve(p.toString());
-  return undefined;
-};
-let busy = false;
-const log = (kind, op, ...paths) => {
-  if (busy) return;
-  busy = true;
-  try {
-    for (const p of paths) {
-      const path = abs(p);
-      if (path !== undefined) append(logPath, JSON.stringify({ kind, op, path }) + "\\n");
-    }
-  } finally {
-    busy = false;
-  }
-};
-const C = fs.constants;
-const isWriteFlag = (flags) => {
-  if (flags === undefined) return false;
-  if (typeof flags === "string") return !/^rs?$/.test(flags);
-  return (flags & (C.O_WRONLY | C.O_RDWR | C.O_CREAT | C.O_TRUNC | C.O_APPEND)) !== 0;
-};
-const wrap = (name, pick) => {
-  const original = fs[name];
-  if (typeof original !== "function") return;
-  fs[name] = function (...args) {
-    for (const [kind, ...paths] of pick(args)) log(kind, name, ...paths);
-    return original.apply(this, args);
-  };
-};
-wrap("writeFileSync", (a) => [["write", a[0]]]);
-wrap("appendFileSync", (a) => [["write", a[0]]]);
-wrap("copyFileSync", (a) => [["read", a[0]], ["write", a[1]]]);
-wrap("renameSync", (a) => [["write", a[0]], ["write", a[1]]]);
-wrap("rmSync", (a) => [["write", a[0]]]);
-wrap("rmdirSync", (a) => [["write", a[0]]]);
-wrap("unlinkSync", (a) => [["write", a[0]]]);
-wrap("mkdirSync", (a) => [["write", a[0]]]);
-wrap("chmodSync", (a) => [["write", a[0]]]);
-wrap("chownSync", (a) => [["write", a[0]]]);
-wrap("truncateSync", (a) => [["write", a[0]]]);
-wrap("utimesSync", (a) => [["write", a[0]]]);
-wrap("symlinkSync", (a) => [["write", a[1]]]);
-wrap("linkSync", (a) => [["write", a[1]]]);
-wrap("mkdtempSync", (a) => [["write", a[0]]]);
-wrap("openSync", (a) => [[isWriteFlag(a[1]) ? "write" : "read", a[0]]]);
-wrap("readFileSync", (a) => [["read", a[0]]]);
-wrap("readdirSync", (a) => [["read", a[0]]]);
-wrap("statSync", (a) => [["read", a[0]]]);
-wrap("lstatSync", (a) => [["read", a[0]]]);
-wrap("existsSync", (a) => [["read", a[0]]]);
-wrap("accessSync", (a) => [["read", a[0]]]);
-wrap("realpathSync", (a) => [["read", a[0]]]);
-wrap("readlinkSync", (a) => [["read", a[0]]]);
-wrap("opendirSync", (a) => [["read", a[0]]]);
-syncBuiltinESMExports();
-`;
-
-interface Recorded {
-  result: RunResult;
-  writes: string[];
-  reads: string[];
-}
-
-/** Runs a script under the recorder; paths inside the repository, the Node install or the recorder itself are noise. */
-function runRecorded(script: string, fx: Fixture, args: string[]): Recorded {
-  const dir = mkdtempSync(join(TMP_REAL, "cchr-"));
-  fixtures.push(dir);
-  const recorder = join(dir, "recorder.mjs");
-  const logPath = join(dir, "fs.log");
-  writeFileSync(recorder, RECORDER_SOURCE);
-  writeFileSync(logPath, "");
-  const spawned = spawnSync(
-    process.execPath,
-    ["--import", pathToFileURL(recorder).href, script, ...args],
-    { cwd: REPO_ROOT, env: { ...childEnv(fx), CCC_FS_LOG: logPath }, encoding: "utf8" },
-  );
-  const nodeRoot = dirname(dirname(realpathSync(process.execPath)));
-  const noise = (path: string) =>
-    path.startsWith(`${REPO_ROOT}/`) ||
-    path.startsWith(`${nodeRoot}/`) ||
-    path === logPath ||
-    path === recorder;
-  const entries = readFileSync(logPath, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { kind: string; op: string; path: string })
-    .filter((entry) => !noise(entry.path));
-  const unique = (kind: string) => [
-    ...new Set(entries.filter((entry) => entry.kind === kind).map((entry) => entry.path)),
-  ];
-  return {
-    result: { status: spawned.status, stdout: spawned.stdout, stderr: spawned.stderr },
-    writes: unique("write"),
-    reads: unique("read"),
-  };
+function runRecordedScript(
+  script: string,
+  fx: Fixture,
+  args: string[],
+  extra: {
+    race?: { target: string; text: string };
+    fail?: { op: string; match?: string };
+  } = {},
+): RecordedRun {
+  return runRecorded(script, args, {
+    env: childEnv(fx),
+    repoRoot: REPO_ROOT,
+    ...(extra.race === undefined ? {} : { race: extra.race }),
+    ...(extra.fail === undefined ? {} : { fail: extra.fail }),
+  });
 }
 
 describe("uninstall.mjs, status.mjs, the shims and the README (Task 2, CODEX-06, D-19)", () => {
@@ -681,17 +592,17 @@ describe("uninstall.mjs, status.mjs, the shims and the README (Task 2, CODEX-06,
   it("status reports the file, the events and the trust step; not-installed says so; it reads only the hooks file and the runtime dir and writes nothing (Test 4)", () => {
     const fx = makeFixture(ownerHooks());
 
-    const absent = runRecorded(STATUS, fx, baseArgs(fx));
-    expect(absent.result.status, absent.result.stderr).toBe(0);
-    expect(absent.result.stdout).toContain("hooks: not installed");
-    expect(absent.result.stdout).not.toMatch(/trust/i);
+    const absent = runRecordedScript(STATUS, fx, baseArgs(fx));
+    expect(absent.status, absent.stderr).toBe(0);
+    expect(absent.stdout).toContain("hooks: not installed");
+    expect(absent.stdout).not.toMatch(/trust/i);
 
     expect(install(fx).status).toBe(0);
     const codexBefore = snapshot(fx.codexHome);
     const runtimeBefore = snapshot(fx.runtimeDir);
-    const recorded = runRecorded(STATUS, fx, baseArgs(fx));
-    expect(recorded.result.status, recorded.result.stderr).toBe(0);
-    const out = recorded.result.stdout;
+    const recorded = runRecordedScript(STATUS, fx, baseArgs(fx));
+    expect(recorded.status, recorded.stderr).toBe(0);
+    const out = recorded.stdout;
     expect(out).toContain(fx.hooksPath);
     expect(out).toContain(`hooks: installed (${CODEX_HOOK_EVENTS.length} events`);
     for (const event of CODEX_HOOK_EVENTS) expect(out).toContain(event);
@@ -753,5 +664,250 @@ describe("uninstall.mjs, status.mjs, the shims and the README (Task 2, CODEX-06,
     expect(readme).toContain("/hooks");
     expect(readme).toMatch(/trust/i);
     expect(readme).toContain("--dry-run");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: hardening
+
+/** The tests below that rely on file permissions cannot run as root. */
+const NOT_ROOT = typeof process.getuid === "function" && process.getuid() !== 0;
+
+describe("hardening: refusals leave no trace (Task 3, T-05.1-22)", () => {
+  it("invalid JSON is refused with nothing written: no backup, no copies (Test 1a)", () => {
+    const broken = '{ "hooks": { "Stop": [ ';
+    const fx = makeFixture(broken);
+    const result = install(fx);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/not valid JSON/);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(broken);
+    expect(backups(fx)).toEqual([]);
+    expect(existsSync(fx.runtimeDir)).toBe(false);
+  });
+
+  it("a hooks file that changes between the read and the write is refused without overwriting the edit (Test 1b)", () => {
+    const fx = makeFixture(ownerHooks());
+    const concurrent = `${JSON.stringify({ description: "edited meanwhile", hooks: {} }, null, 2)}\n`;
+    const run = runRecordedScript(INSTALL, fx, baseArgs(fx), {
+      race: { target: fx.hooksPath, text: concurrent },
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toMatch(/changed while the installer was running/);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(concurrent);
+    expect(backups(fx)).toEqual([]);
+  });
+
+  it.skipIf(!NOT_ROOT)(
+    "a read-only hooks file is refused before anything is written (Test 1c)",
+    () => {
+      const fx = makeFixture(ownerHooks());
+      chmodSync(fx.hooksPath, 0o400);
+      const result = install(fx);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/not writable/);
+      expect(readFileSync(fx.hooksPath, "utf8")).toBe(fx.originalBytes);
+      expect(backups(fx)).toEqual([]);
+      expect(existsSync(fx.runtimeDir)).toBe(false);
+    },
+  );
+
+  it("a directory or a dangling link in place of the hooks file is refused with a clear message (Test 1d)", () => {
+    const dirFx = makeFixture();
+    mkdirSync(dirFx.hooksPath);
+    const asDir = install(dirFx);
+    expect(asDir.status).not.toBe(0);
+    expect(asDir.stderr).toMatch(/is a directory/);
+    expect(existsSync(dirFx.runtimeDir)).toBe(false);
+
+    const linkFx = makeFixture();
+    symlinkSync(join(linkFx.root, "missing-target.json"), linkFx.hooksPath);
+    const dangling = install(linkFx);
+    expect(dangling.status).not.toBe(0);
+    expect(dangling.stderr).toMatch(/link to a missing file/);
+    expect(existsSync(join(linkFx.root, "missing-target.json"))).toBe(false);
+    expect(existsSync(linkFx.runtimeDir)).toBe(false);
+  });
+
+  it("a missing Codex home is refused rather than created (Test 1e)", () => {
+    const fx = makeFixture();
+    rmSync(fx.codexHome, { recursive: true });
+    const result = install(fx);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/no Codex home directory/);
+    expect(existsSync(fx.codexHome)).toBe(false);
+  });
+});
+
+describe("hardening: a failed write leaves no litter and no half-installed copy (Task 3, T-05.1-22)", () => {
+  it("a write that fails halfway removes its temp file and leaves the hooks file as it was (Test 1f)", () => {
+    const fx = makeFixture(ownerHooks());
+    const run = runRecordedScript(INSTALL, fx, baseArgs(fx), { fail: { op: "fsyncSync" } });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toMatch(/injected fault/);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(fx.originalBytes);
+    expect(
+      readdirSync(fx.codexHome).filter((name) => name.startsWith(".hooks.json.ccc-tmp-")),
+    ).toEqual([]);
+  });
+
+  it("a re-install whose final swap fails puts the previous installed copy back (Test 1g)", () => {
+    const fx = makeFixture(ownerHooks());
+    expect(install(fx).status).toBe(0);
+    const hooksBefore = readFileSync(fx.hooksPath, "utf8");
+    const installedBefore = snapshot(join(fx.runtimeDir, "codex-hooks"));
+    const run = runRecordedScript(INSTALL, fx, baseArgs(fx), {
+      fail: { op: "renameSync", match: "codex-hooks.new" },
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toMatch(/injected fault/);
+    expect(snapshot(join(fx.runtimeDir, "codex-hooks"))).toEqual(installedBefore);
+    expect(existsSync(join(fx.runtimeDir, "codex-hooks.old"))).toBe(false);
+    expect(existsSync(join(fx.runtimeDir, "codex-hooks.new"))).toBe(false);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(hooksBefore);
+  });
+});
+
+describe("hardening: identification is by the exact quoted path (Task 3, T-05.1-22, T-05.1-01)", () => {
+  it("never removes or rewrites an owner entry that merely mentions our path or another runtime dir (Test 2a)", () => {
+    const fx = makeFixture();
+    const other = join(fx.root, "other-rt");
+    const lookalikes = [
+      { type: "command", command: `echo ${shellQuote(entryPath(fx))}` },
+      {
+        type: "command",
+        command: `${shellQuote(process.execPath)} ${shellQuote(entryPath(fx))} --runtime-dir ${shellQuote(other)}`,
+      },
+      {
+        type: "command",
+        command: `${shellQuote(process.execPath)} ${shellQuote(entryPath(fx))} --runtime-dir ${shellQuote(fx.runtimeDir)}; echo extra`,
+      },
+      { type: "prompt", command: expectedCommand(fx) },
+      {
+        type: "command",
+        command: `${shellQuote(process.execPath)} ${entryPath(fx)}x --runtime-dir ${shellQuote(fx.runtimeDir)}`,
+      },
+    ];
+    const group = { hooks: lookalikes };
+    const owner = { hooks: { Stop: [group], SessionEnd: [{ hooks: [lookalikes[0]] }] } };
+    writeFileSync(fx.hooksPath, `${JSON.stringify(owner, null, 4)}\n`);
+    const original = readFileSync(fx.hooksPath, "utf8");
+
+    expect(install(fx).status).toBe(0);
+    const installed = readHooks(fx);
+    expect(groupsOf(installed, "Stop")[0]).toEqual(group);
+    expect(groupsOf(installed, "Stop")).toHaveLength(2);
+    expect(groupsOf(installed, "SessionEnd")[0]).toEqual({ hooks: [lookalikes[0]] });
+    expect(install(fx).status).toBe(0);
+    expect(groupsOf(readHooks(fx), "Stop")).toHaveLength(2);
+
+    expect(uninstall(fx).status).toBe(0);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(original);
+  });
+
+  it("two installs with different runtime directories never remove each other's entries (Test 2b)", () => {
+    const fx = makeFixture(ownerHooks());
+    const second = join(fx.root, "rt2");
+    const secondArgs = ["--codex-home", fx.codexHome, "--runtime-dir", second];
+    expect(install(fx).status).toBe(0);
+    expect(runScript(INSTALL, fx, secondArgs).status).toBe(0);
+    for (const event of CODEX_HOOK_EVENTS) {
+      const commands = groupsOf(readHooks(fx), event).flatMap((group) =>
+        (group.hooks ?? []).map((handler) => String(handler.command)),
+      );
+      expect(
+        commands.filter((command) => command.includes("codex-hooks/codex-hook/entry.js")),
+      ).toHaveLength(2);
+    }
+
+    expect(runScript(UNINSTALL, fx, secondArgs).status).toBe(0);
+    for (const event of CODEX_HOOK_EVENTS)
+      expect(ourGroups(fx, readHooks(fx), event)).toHaveLength(1);
+    expect(existsSync(join(fx.runtimeDir, "codex-hooks"))).toBe(true);
+    expect(existsSync(join(second, "codex-hooks"))).toBe(false);
+
+    expect(uninstall(fx).status).toBe(0);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(fx.originalBytes);
+  });
+
+  it("a runtime directory with spaces and a quote is quoted for the login shell and the command runs (Test 2c)", () => {
+    const fx = makeFixture();
+    const odd = join(fx.root, "r t'q");
+    const oddArgs = ["--codex-home", fx.codexHome, "--runtime-dir", odd];
+    expect(runScript(INSTALL, fx, oddArgs).status).toBe(0);
+    const stop = groupsOf(readHooks(fx), "Stop")[0]?.hooks?.[0] ?? {};
+    const command = String(stop.command);
+    expect(command).toContain("r t'\\''q'");
+    const run = spawnSync("/bin/sh", ["-c", command], {
+      input: JSON.stringify({
+        hook_event_name: "Stop",
+        session_id: "0196a7c2-5b3d-7e41-9a08-3c6f1d2e4b57",
+        turn_id: "0196a7c2-8e10-7a55-b3c9-6d02f4a81e90",
+        cwd: "/Users/USERNAME/code/demo",
+        model: "gpt-5.5-codex",
+      }),
+      env: childEnv(fx),
+      encoding: "utf8",
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toBe("");
+    expect(existsSync(join(odd, "spool", "codex-hooks.ndjson"))).toBe(true);
+    expect(runScript(UNINSTALL, fx, oddArgs).status).toBe(0);
+    expect(existsSync(fx.hooksPath)).toBe(false);
+    expect(existsSync(join(odd, "codex-hooks"))).toBe(false);
+  });
+});
+
+describe("hardening: modes and shared directories (Task 3, T-05.1-01)", () => {
+  it("an existing runtime directory open to other users is refused without a chmod (Test 3)", () => {
+    const fx = makeFixture(ownerHooks());
+    const shared = join(fx.root, "shared");
+    mkdirSync(shared);
+    chmodSync(shared, 0o755);
+    const result = runScript(INSTALL, fx, ["--codex-home", fx.codexHome, "--runtime-dir", shared]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/only tightens directories it creates/);
+    expect(mode(shared)).toBe(0o755);
+    expect(readdirSync(shared)).toEqual([]);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(fx.originalBytes);
+    expect(backups(fx)).toEqual([]);
+
+    // An open installed-copies folder inside a private runtime directory is refused too.
+    mkdirSync(fx.runtimeDir, { mode: 0o700 });
+    chmodSync(fx.runtimeDir, 0o700);
+    mkdirSync(join(fx.runtimeDir, "codex-hooks"));
+    chmodSync(join(fx.runtimeDir, "codex-hooks"), 0o755);
+    const inner = install(fx);
+    expect(inner.status).not.toBe(0);
+    expect(mode(join(fx.runtimeDir, "codex-hooks"))).toBe(0o755);
+    expect(readFileSync(fx.hooksPath, "utf8")).toBe(fx.originalBytes);
+  });
+
+  it("an existing private runtime directory is used as it is; leftover staging trees are replaced (Test 3b)", () => {
+    const fx = makeFixture();
+    mkdirSync(fx.runtimeDir, { mode: 0o700 });
+    chmodSync(fx.runtimeDir, 0o700);
+    mkdirSync(join(fx.runtimeDir, "codex-hooks.new"));
+    writeFileSync(join(fx.runtimeDir, "codex-hooks.new", "stale.js"), "// stale\n");
+    const result = install(fx);
+    expect(result.status, result.stderr).toBe(0);
+    expect(mode(fx.runtimeDir)).toBe(0o700);
+    expect(existsSync(join(fx.runtimeDir, "codex-hooks.new"))).toBe(false);
+    expect(existsSync(join(fx.runtimeDir, "codex-hooks.old"))).toBe(false);
+  });
+
+  it("subscribes the domain tuple and gives SessionEnd an integer timeout within 1 to 3 seconds (Test 6)", () => {
+    const fx = makeFixture();
+    expect(install(fx).status).toBe(0);
+    const hooks = readHooks(fx).hooks as Record<string, Group[]>;
+    expect(Object.keys(hooks)).toEqual([...CODEX_HOOK_EVENTS]);
+    for (const event of CODEX_HOOK_EVENTS) {
+      const handler = hooks[event]?.[0]?.hooks?.[0] ?? {};
+      expect(Number.isInteger(handler.timeout), `${event} timeout`).toBe(true);
+      expect(handler.timeout as number, `${event} timeout`).toBeGreaterThan(0);
+    }
+    const sessionEnd = hooks.SessionEnd?.[0]?.hooks?.[0] ?? {};
+    expect(sessionEnd.timeout as number).toBeGreaterThanOrEqual(1);
+    expect(sessionEnd.timeout as number).toBeLessThanOrEqual(3);
+    expect("async" in sessionEnd && sessionEnd.async === true).toBe(false);
   });
 });
