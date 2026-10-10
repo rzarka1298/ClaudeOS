@@ -1,4 +1,4 @@
-import { SENTINEL } from "./hook-stdin.js";
+import { SENTINEL, sentinelText } from "./hook-stdin.js";
 
 /**
  * A builder for Codex hook stdin payloads in the shape the upstream input
@@ -88,6 +88,12 @@ export interface BuildCodexStdinOptions {
   readonly omit?: readonly string[];
   /** Add decoy values in every dropped field (default true). */
   readonly decoys?: boolean;
+  /**
+   * Content fields of this many bytes each, placed LAST in the payload (after
+   * every documented key), so an oversized stdin still carries the
+   * identifiers inside the retain cap.
+   */
+  readonly tail?: Readonly<Record<string, number>>;
 }
 
 /** One event's stdin payload as an object. */
@@ -101,6 +107,10 @@ export function buildCodexPayload(
     ...options.overrides,
   };
   for (const key of options.omit ?? []) delete payload[key];
+  for (const [key, bytes] of Object.entries(options.tail ?? {})) {
+    delete payload[key];
+    payload[key] = sentinelText(bytes);
+  }
   return payload;
 }
 
