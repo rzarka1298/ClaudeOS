@@ -12,7 +12,7 @@ import { FRESHNESS_GLYPH } from "../widgets/footer.js";
  * every glyph is a text-presentation code point, the three outcome glyphs may
  * repeat across vocabularies because their meaning is identical, and every other
  * glyph the Phase 6 maps introduce is unique across all vocabularies. Overlaps
- * that already exist between earlier phases (Phase 4's `◆` and `◔`) are out of
+ * that already exist between earlier phases (Phase 4's `◆`) are out of
  * scope and untouched.
  */
 
@@ -66,7 +66,7 @@ describe("Test 4: the glyph maps are disjoint", () => {
   });
 
   it("sees the freshness and Run state maps it is checking against", () => {
-    expect(FRESHNESS).toEqual(["●", "◐", "◔", "○"]);
+    expect(FRESHNESS).toEqual(["●", "◐", "◷", "○"]);
     expect(RUN_STATES).toEqual(expect.arrayContaining(["◦", "▹", "▸", "◆", "?"]));
   });
 
