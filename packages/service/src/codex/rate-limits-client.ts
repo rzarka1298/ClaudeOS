@@ -23,6 +23,18 @@ import type { CodexUsageSnapshot, CodexUsageUnavailableReason } from "@ccc/domai
 /** The client name sent in `initialize`. */
 const CLIENT_NAME = "ccc_codex_collector";
 
+/** The production read cap (D-21). Tests inject a short one. */
+export const RATE_LIMITS_READ_CAP_MS = 20_000;
+
+/** How long the child gets to exit after the default termination signal before it is forced. */
+export const RATE_LIMITS_KILL_WAIT_MS = 2_000;
+
+/** One line of a real reply is a few hundred bytes; anything past this is not one. */
+export const RATE_LIMITS_LINE_CAP_BYTES = 128 * 1024;
+
+/** Everything the child may write before the reply is judged hostile. */
+export const RATE_LIMITS_TOTAL_CAP_BYTES = 512 * 1024;
+
 /** Fixed child PATH; it holds no Node, so tests use an absolute interpreter. */
 const CHILD_PATH = "/usr/bin:/bin";
 
@@ -90,6 +102,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsClient {
   const now = deps.now ?? Date.now;
   const spawnChild = deps.spawn ?? defaultSpawn;
+  const capMs = deps.capMs ?? RATE_LIMITS_READ_CAP_MS;
+  const killWaitMs = deps.killWaitMs ?? RATE_LIMITS_KILL_WAIT_MS;
+  const lineCap = deps.lineCapBytes ?? RATE_LIMITS_LINE_CAP_BYTES;
+  const totalCap = deps.totalCapBytes ?? RATE_LIMITS_TOTAL_CAP_BYTES;
+
+  let inFlight: Promise<CodexUsageSnapshot> | null = null;
+  let abortCurrent: (() => void) | null = null;
+  let disposed = false;
 
   function childEnv(): Record<string, string> {
     const env: Record<string, string> = {
@@ -102,12 +122,15 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
     return env;
   }
 
+  function failed(code: string): CodexUsageSnapshot {
+    deps.logger?.warn({ reason: code }, "codex usage read failed");
+    return unavailable("read-failed", now());
+  }
+
   function runOnce(): Promise<CodexUsageSnapshot> {
+    if (disposed) return Promise.resolve(failed("disposed"));
     const path = deps.executablePath();
-    if (path === null) {
-      deps.logger?.warn({ reason: "no-executable" }, "codex usage read skipped");
-      return Promise.resolve(unavailable("read-failed", now()));
-    }
+    if (path === null) return Promise.resolve(failed("no-executable"));
     return new Promise((resolve) => {
       let child: ChildProcess;
       try {
@@ -118,52 +141,86 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
           windowsHide: true,
         });
       } catch {
-        deps.logger?.warn({ reason: "spawn-failed" }, "codex usage read failed");
-        resolve(unavailable("read-failed", now()));
+        resolve(failed("spawn-failed"));
         return;
       }
       let result: CodexUsageSnapshot | null = null;
       let exited = false;
       let phase: "initialize" | "read" = "initialize";
-      let pending = "";
+      let totalBytes = 0;
+      let pending: Buffer[] = [];
+      let pendingBytes = 0;
+      let escalateTimer: ReturnType<typeof setTimeout> | undefined;
+      let backstopTimer: ReturnType<typeof setTimeout> | undefined;
 
-      const send = (message: unknown): void => {
-        try {
-          child.stdin?.write(`${JSON.stringify(message)}\n`);
-        } catch {
-          settle(unavailable("read-failed", now()));
-        }
+      const clearTeardownTimers = (): void => {
+        clearTimeout(escalateTimer);
+        clearTimeout(backstopTimer);
       };
-      const finishWhenGone = (): void => {
-        if (exited && result !== null) resolve(result);
+      const done = (): void => {
+        clearTimeout(capTimer);
+        clearTeardownTimers();
+        abortCurrent = null;
+        if (result !== null) resolve(result);
       };
+      /** Records the outcome, then ends the child: default signal, wait, escalate. */
       const settle = (snapshot: CodexUsageSnapshot): void => {
         if (result !== null) return;
         result = snapshot;
+        clearTimeout(capTimer);
         try {
           child.stdin?.end();
         } catch {
           // The child may already be gone.
         }
+        if (exited) {
+          done();
+          return;
+        }
         try {
           child.kill();
         } catch {
-          // Already gone.
+          // Already gone; the exit event follows.
         }
-        finishWhenGone();
+        escalateTimer = setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // Already gone.
+          }
+          backstopTimer = setTimeout(done, killWaitMs);
+        }, killWaitMs);
+      };
+      const fail = (code: string): void => {
+        if (result === null) settle(failed(code));
       };
 
+      const capTimer = setTimeout(() => fail("timeout"), capMs);
+      abortCurrent = () => fail("disposed");
+
       child.on("error", () => {
-        exited = true;
-        settle(unavailable("read-failed", now()));
-        finishWhenGone();
+        if (child.pid === undefined) {
+          exited = true;
+          fail("spawn-error");
+          done();
+        } else {
+          fail("child-error");
+        }
       });
       child.on("exit", () => {
         exited = true;
-        settle(unavailable("read-failed", now()));
-        finishWhenGone();
+        fail("exited-early");
+        done();
       });
-      child.stdin?.on("error", () => settle(unavailable("read-failed", now())));
+      child.stdin?.on("error", () => fail("stdin-error"));
+
+      const send = (message: unknown): void => {
+        try {
+          child.stdin?.write(`${JSON.stringify(message)}\n`);
+        } catch {
+          fail("write-failed");
+        }
+      };
 
       const handleLine = (line: string): void => {
         let message: unknown;
@@ -175,7 +232,7 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
         if (!isRecord(message)) return;
         if (message.id === 1 && phase === "initialize") {
           if (message.error) {
-            settle(unavailable("read-failed", now()));
+            fail("initialize-error");
             return;
           }
           phase = "read";
@@ -187,7 +244,7 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
           });
         } else if (message.id === 2 && phase === "read") {
           if (message.error) {
-            settle(unavailable("read-failed", now()));
+            fail("read-error");
             return;
           }
           settle(normalizeRateLimitsReply(message.result, { observedAtMs: now() }));
@@ -196,12 +253,28 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
 
       child.stdout?.on("data", (chunk: Buffer) => {
         if (result !== null) return;
-        pending += chunk.toString("utf8");
-        for (let nl = pending.indexOf("\n"); nl >= 0; nl = pending.indexOf("\n")) {
-          const line = pending.slice(0, nl).trim();
-          pending = pending.slice(nl + 1);
+        totalBytes += chunk.length;
+        if (totalBytes > totalCap) {
+          fail("total-cap");
+          return;
+        }
+        let start = 0;
+        for (;;) {
+          const nl = chunk.indexOf(0x0a, start);
+          const end = nl === -1 ? chunk.length : nl;
+          pending.push(chunk.subarray(start, end));
+          pendingBytes += end - start;
+          if (pendingBytes > lineCap) {
+            fail("line-cap");
+            return;
+          }
+          if (nl === -1) return;
+          const line = Buffer.concat(pending).toString("utf8").trim();
+          pending = [];
+          pendingBytes = 0;
           if (line.length > 0) handleLine(line);
           if (result !== null) return;
+          start = nl + 1;
         }
       });
 
@@ -214,7 +287,17 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
   }
 
   return {
-    read: () => runOnce(),
-    dispose() {},
+    read() {
+      if (inFlight !== null) return inFlight;
+      const attempt = runOnce().finally(() => {
+        if (inFlight === attempt) inFlight = null;
+      });
+      inFlight = attempt;
+      return attempt;
+    },
+    dispose() {
+      disposed = true;
+      abortCurrent?.();
+    },
   };
 }

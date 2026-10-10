@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -162,6 +163,30 @@ function reasonOf(r: Run): string {
 
 const SHORT = { capMs: 400, killWaitMs: 150 } as const;
 const TIMEOUT = 8000;
+
+describe("createRateLimitsClient spawn options (T-05.1-08, rule 8)", () => {
+  it("starts the child with an argument array, no shell and piped stdin and stdout", async () => {
+    const server = fake({ read: { kind: "result", result: weeklyReply(41) } });
+    const seen: Array<{ file: string; args: readonly string[]; options: unknown }> = [];
+    const client = createRateLimitsClient({
+      executablePath: () => server.path,
+      now: () => NOW_MS,
+      spawn: (file, args, options) => {
+        seen.push({ file, args, options });
+        return spawn(file, [...args], { ...options, env: { ...options.env } });
+      },
+    });
+    await client.read();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.file).toBe(server.path);
+    expect(seen[0]?.args).toEqual(["app-server"]);
+    expect(seen[0]?.options).toMatchObject({
+      shell: false,
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
+    });
+  });
+});
 
 describe("createRateLimitsClient scenario matrix (T-05.1-06, T-05.1-11, T-05.1-12)", () => {
   it("Test 1a: two windows are both kept", async () => {
