@@ -732,6 +732,13 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
         capped = true;
         break;
       }
+      if (outcome.kind === "refused") {
+        // A rollout the port refused was never read: it is a scan failure, so this
+        // sweep claims neither coverage nor first-scan completion.
+        failedFiles += 1;
+        await yieldNow();
+        continue;
+      }
       scanned += 1;
       await yieldNow();
     }
