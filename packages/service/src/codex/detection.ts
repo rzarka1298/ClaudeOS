@@ -8,6 +8,7 @@ import type { CommandRunner } from "../projects/command-runner.js";
 import { toDisplayPath } from "../projects/project-views.js";
 import { isExecutableFile } from "../projects/terminal-launchers.js";
 import { type BridgeStatus, toBridgeStatusView } from "./bridge-state.js";
+import { codexChildEnv } from "./child-env.js";
 
 /**
  * Codex detection (plan 05.1-21, D-11, D-12, CODEX-03): which `codex`
@@ -63,7 +64,7 @@ export interface CodexDetectionDeps {
   /** Regular file + `X_OK`; defaults to {@link isExecutableFile}. */
   readonly isExecutable?: (path: string) => Promise<boolean>;
   /** The bridge state as the service sees it (plan 05.1-13); never throws. */
-  readonly readBridgeStatus: () => BridgeStatus;
+  readonly readBridgeStatus: () => BridgeStatus | Promise<BridgeStatus>;
 }
 
 export interface CodexDetectionResult {
@@ -88,9 +89,9 @@ export interface CodexDetection {
   candidatePath(candidateId: string): string | null;
 }
 
-/** The fixed child environment: nothing is inherited from the service. */
-function childEnv(homeDir: string): Readonly<Record<string, string>> {
-  return { HOME: homeDir, PATH: "/usr/bin:/bin", LC_ALL: "C" };
+/** The fixed child environment (shared policy): nothing is inherited from the service. */
+function childEnv(homeDir: string, executablePath: string): Readonly<Record<string, string>> {
+  return codexChildEnv({ executablePath, codexHome: null, home: homeDir });
 }
 
 /** A version probe that outlasts this is a hang. */
@@ -116,9 +117,11 @@ function parseVersion(stdout: string): string | null {
 }
 
 /** The bridge state the plugin shows, as the domain readiness word. */
-function readinessOf(read: () => BridgeStatus): BridgeReadiness {
+async function readinessOf(
+  read: () => BridgeStatus | Promise<BridgeStatus>,
+): Promise<BridgeReadiness> {
   try {
-    return toBridgeStatusView(read()).state;
+    return toBridgeStatusView(await read()).state;
   } catch {
     // The reader is documented as total; a fault still must not fail detection.
     return "not-installed";
@@ -143,7 +146,7 @@ export function createCodexDetection(deps: CodexDetectionDeps): CodexDetection {
     try {
       const outcome = await deps.runner.run(path, ["--version"], {
         timeoutMs: VERSION_TIMEOUT_MS,
-        env: childEnv(deps.homeDir),
+        env: childEnv(deps.homeDir, path),
         maxBufferBytes: VERSION_MAX_OUTPUT_BYTES,
       });
       if (outcome.exitCode !== 0 || outcome.truncated || outcome.timedOut) return null;
@@ -169,7 +172,7 @@ export function createCodexDetection(deps: CodexDetectionDeps): CodexDetection {
       const executables = probed.filter(
         (found): found is DetectedCodexExecutable => found !== null,
       );
-      const bridge = readinessOf(deps.readBridgeStatus);
+      const bridge = await readinessOf(deps.readBridgeStatus);
       return {
         executables,
         doctor: "unknown",

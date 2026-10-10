@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { normalizeRateLimitsReply } from "@ccc/collectors";
 import type { CodexUsageSnapshot, CodexUsageUnavailableReason } from "@ccc/domain";
+import { codexChildEnv } from "./child-env.js";
 
 /**
  * The Codex usage read (plan 05.1-15, D-21, CODEX-08, CODEX-09).
@@ -46,9 +47,6 @@ export const RATE_LIMITS_LINE_CAP_BYTES = 128 * 1024;
 
 /** Everything the child may write before the reply is judged hostile. */
 export const RATE_LIMITS_TOTAL_CAP_BYTES = 512 * 1024;
-
-/** Fixed child PATH; it holds no Node, so tests use an absolute interpreter. */
-const CHILD_PATH = "/usr/bin:/bin";
 
 export interface RateLimitsLogger {
   /** Reason codes only. Nothing from the reply is ever passed. */
@@ -127,15 +125,12 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
   let disposed = false;
   let disposing: Promise<void> | null = null;
 
-  function childEnv(): Record<string, string> {
-    const env: Record<string, string> = {
-      HOME: (deps.homeDir ?? homedir)(),
-      PATH: CHILD_PATH,
-      LC_ALL: "C",
-    };
-    const codexHome = deps.codexHome?.() ?? null;
-    if (codexHome !== null && codexHome.length > 0) env.CODEX_HOME = codexHome;
-    return env;
+  function childEnv(path: string): Record<string, string> {
+    return codexChildEnv({
+      executablePath: path,
+      codexHome: deps.codexHome?.() ?? null,
+      home: (deps.homeDir ?? homedir)(),
+    });
   }
 
   function failed(code: string): CodexUsageSnapshot {
@@ -153,7 +148,7 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
         child = spawnChild(path, ["app-server"], {
           shell: false,
           stdio: ["pipe", "pipe", "ignore"],
-          env: childEnv(),
+          env: childEnv(path),
           windowsHide: true,
         });
       } catch {

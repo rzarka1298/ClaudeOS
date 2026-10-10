@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { parseDoctorJson } from "@ccc/collectors";
 import { CODEX_DOCTOR_CAP_MS, type CodexDoctorSummary } from "@ccc/domain";
+import { codexChildEnv } from "./child-env.js";
 import type { SpawnFn, SpawnOptionsLite } from "./rate-limits-client.js";
 
 /**
@@ -73,9 +74,6 @@ export const DOCTOR_KILL_WAIT_MS = 2_000;
 /** A real report is a few kilobytes; this is generous and still bounded. */
 export const DOCTOR_MAX_OUTPUT_BYTES = 1024 * 1024;
 
-/** Fixed child PATH; it holds no Node, so tests use an absolute interpreter. */
-const CHILD_PATH = "/usr/bin:/bin";
-
 function defaultSpawn(
   file: string,
   args: readonly string[],
@@ -93,15 +91,12 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
 
   let inFlight: Promise<DoctorRunResult> | null = null;
 
-  function childEnv(): Record<string, string> {
-    const env: Record<string, string> = {
-      HOME: (deps.homeDir ?? homedir)(),
-      PATH: CHILD_PATH,
-      LC_ALL: "C",
-    };
-    const codexHome = deps.codexHome?.() ?? null;
-    if (codexHome !== null && codexHome.length > 0) env.CODEX_HOME = codexHome;
-    return env;
+  function childEnv(path: string): Record<string, string> {
+    return codexChildEnv({
+      executablePath: path,
+      codexHome: deps.codexHome?.() ?? null,
+      home: (deps.homeDir ?? homedir)(),
+    });
   }
 
   function failed(code: string): DoctorRunResult {
@@ -118,7 +113,7 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
         child = spawnChild(path, ["doctor", "--json"], {
           shell: false,
           stdio: ["pipe", "pipe", "ignore"],
-          env: childEnv(),
+          env: childEnv(path),
           windowsHide: true,
         });
       } catch {
