@@ -177,6 +177,24 @@ export function addCumulativeDelta(db: Database.Database, input: CumulativeDelta
   });
 }
 
+/** Whether any per-turn row exists for a thread (durable, so it survives a restart). */
+export function threadHasTurnRows(db: Database.Database, threadId: string): boolean {
+  assertIdentifier("thread id", threadId);
+  return (
+    db.prepare("SELECT 1 FROM codex_token_turns WHERE thread_id = ? LIMIT 1").get(threadId) !==
+    undefined
+  );
+}
+
+/**
+ * Drops a thread's cumulative-fallback delta rows. Called when per-turn records
+ * for the same thread appear, so the same tokens are never counted from both.
+ */
+export function deleteCumulativeDeltas(db: Database.Database, threadId: string): void {
+  assertIdentifier("thread id", threadId);
+  db.prepare("DELETE FROM codex_token_deltas WHERE thread_id = ?").run(threadId);
+}
+
 interface CounterRow {
   readonly input: number;
   readonly cached_input: number;

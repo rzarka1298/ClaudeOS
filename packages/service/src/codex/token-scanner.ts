@@ -22,6 +22,7 @@ import {
   analysisOffIntervals,
   type CodexRecognitionTally,
   codexBucketStart,
+  deleteCumulativeDeltas,
   getCollectorSetting,
   listToggleLog,
   markCodexDayCovered,
@@ -30,6 +31,7 @@ import {
   readCumulativeBaseline,
   resetCodexScanState,
   setCollectorSetting,
+  threadHasTurnRows,
   upsertTurnTokens,
   writeCodexCursor,
   writeCumulativeBaseline,
@@ -596,7 +598,16 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
           });
           counted += 1;
         }
-        if (cumulativeThread !== null) {
+        // Durable check (the in-memory set is lost on restart, and a thread's first
+        // chunks may be cumulative-only): once per-turn rows exist for the thread, any
+        // earlier cumulative deltas are dropped and none are added.
+        let cumulativeAllowed = cumulativeThread !== null;
+        if (fileThreadId !== null && threadHasTurnRows(db, fileThreadId)) {
+          deleteCumulativeDeltas(db, fileThreadId);
+          turnThreads.add(fileThreadId);
+          cumulativeAllowed = false;
+        }
+        if (cumulativeThread !== null && cumulativeAllowed) {
           const previous = ops.readCumulativeBaseline(db, cumulativeThread);
           const fold = foldCumulative(result.facts, previous, wasOff);
           skipped += fold.skipped;

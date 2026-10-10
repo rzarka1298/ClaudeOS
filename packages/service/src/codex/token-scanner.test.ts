@@ -368,6 +368,45 @@ describe("Task 2: the cumulative fallback against a durable high-water mark", ()
     expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(550);
   });
 
+  it("does not keep cumulative deltas once the same thread later shows per-turn records", async () => {
+    const h = setup();
+    h.rollouts.write(
+      DAY,
+      NAME,
+      jsonl([metaLine(), tokenCountLine({ timestamp: at(21), total: raw(100, 20) })]),
+    );
+    await h.scanner.sweep();
+    h.rollouts.append(
+      DAY,
+      NAME,
+      jsonl([
+        turnRecordLine({ turnId: turn(1), timestamp: at(30), usage: raw(100, 20) }),
+        tokenCountLine({ timestamp: at(30), total: raw(100, 20) }),
+      ]),
+    );
+    await h.scanner.sweep();
+    expect(count(h.temp.db, "codex_token_deltas")).toBe(0);
+    expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters).toMatchObject({
+      input: 100,
+      output: 20,
+    });
+  });
+
+  it("keeps cumulative events out of the totals for a per-turn thread after a restart", async () => {
+    const h = setup();
+    h.rollouts.write(DAY, NAME, perTurnRollout());
+    await h.scanner.sweep();
+    h.restart();
+    h.rollouts.append(
+      DAY,
+      NAME,
+      jsonl([tokenCountLine({ timestamp: at(1300), total: raw(500, 110) })]),
+    );
+    await h.scanner.sweep();
+    expect(count(h.temp.db, "codex_token_deltas")).toBe(0);
+    expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(550);
+  });
+
   it("counts nothing from cumulative lines when the file name carries no thread id", async () => {
     const h = setup();
     h.rollouts.write(

@@ -16,6 +16,8 @@ export type {
 export {
   addCodexRecognition,
   addCumulativeDelta,
+  deleteCumulativeDeltas,
+  threadHasTurnRows,
   CODEX_ANALYTICS_TABLES,
   codexBucketStart,
   deleteAllUsageAnalytics,
