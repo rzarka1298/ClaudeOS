@@ -102,3 +102,14 @@ async function requestCodex<T>(
 export function getCodexHeadroom(client: SocketApiClient): Promise<HeadroomSignal> {
   return requestCodex(client, "GET", CODEX_HEADROOM_PATH, undefined, HeadroomSignalSchema);
 }
+
+// RED stub (plan 05.1-06 task 2): signatures only.
+const stub = (): Promise<never> => Promise.resolve(undefined as never);
+export const getCodexSessions = (_client: SocketApiClient) => stub();
+export const getCodexUsage = (_client: SocketApiClient) => stub();
+export const getCodexIntegration = (_client: SocketApiClient) => stub();
+export const getCodexTokenSummary = (_client: SocketApiClient) => stub();
+export const runCodexDoctor = (_client: SocketApiClient) => stub();
+export const openCodexTranscript = (_client: SocketApiClient, _request: unknown) => stub();
+export const followCodexLog = (_client: SocketApiClient, _request: unknown) => stub();
+export const launchPair = (_client: SocketApiClient, _request: unknown) => stub();

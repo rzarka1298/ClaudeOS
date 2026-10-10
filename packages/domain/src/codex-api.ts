@@ -45,3 +45,24 @@ export const CodexActionErrorBodySchema = z.strictObject({
   error: z.enum(CODEX_ACTION_ERROR_CODES),
 }) satisfies z.ZodType<{ readonly error: CodexActionErrorCode }, unknown>;
 export type CodexActionErrorBody = z.infer<typeof CodexActionErrorBodySchema>;
+
+// RED stub (plan 05.1-06 task 2): signatures only.
+export const CODEX_SESSIONS_PATH = "";
+export const CODEX_USAGE_PATH = "";
+export const CODEX_TOKEN_ACTIVITY_PATH = "";
+export const CODEX_INTEGRATION_PATH = "";
+export const CODEX_DOCTOR_PATH = "";
+export const CODEX_OPEN_TRANSCRIPT_PATH = "";
+export const CODEX_FOLLOW_LOG_PATH = "";
+export const CODEX_HOOK_EVENTS_PATH = "";
+export const CODEX_WRAPPER_RUN_ID_PATTERN = /$^/;
+export const CODEX_OPEN_TRANSCRIPT_VIAS = [] as const;
+export const CodexOpenTranscriptRequestSchema = z.never();
+export const CodexFollowLogRequestSchema = z.never();
+export const CodexDoctorRequestSchema = z.never();
+export const CodexHookEventsRequestSchema = z.never();
+export const CodexActionOkSchema = z.never();
+export const CODEX_DOCTOR_CAP_MS = 0;
+export const CODEX_DOCTOR_CLIENT_TIMEOUT_MS = 0;
+export const CODEX_PAIR_LAUNCH_CAP_MS = 0;
+export const CODEX_PAIR_LAUNCH_CLIENT_TIMEOUT_MS = 0;
