@@ -4,6 +4,7 @@ import { createSecurityCliSecretStore } from "@ccc/keychain";
 import {
   applyMigrations,
   createDiagnosticEffects,
+  deleteAllUsageAnalytics,
   getProject,
   getSessionRun,
   listLauncherConfigs,
@@ -16,6 +17,9 @@ import { createServiceApprovalLog, startApprovalServices } from "./approval-wiri
 import { getInstallSecret } from "./auth/install-secret.js";
 import { startClaudeServices } from "./claude/services.js";
 import { startUsageServices } from "./claude/usage-services.js";
+import { readBridgeStatus } from "./codex/bridge-state.js";
+import { createCodexDetection } from "./codex/detection.js";
+import { type CodexServices, startCodexServices } from "./codex/services.js";
 import { createEventBus } from "./events/event-bus.js";
 // The composition root is the ONLY importer of the executors folder (APPR-01,
 // T-06-02): effect code is reachable only through the engine's definitions.
@@ -159,6 +163,10 @@ async function main(): Promise<void> {
   // only through their listener APIs, and its background work (the startup
   // transcript sweep) begins only once the socket is open, never blocking
   // startup (D-55).
+  // Phase 05.1: the Codex services start after the usage services (their Claude view reads the
+  // usage summary), yet the usage services' toggle, delete and integration-refresh hooks must
+  // reach them. The slot is filled once the Codex services exist; until then the hooks do nothing.
+  const codexSlot: { current: CodexServices | null } = { current: null };
   const usageServices = startUsageServices({
     db: store.db,
     bus: eventBus,
@@ -167,6 +175,11 @@ async function main(): Promise<void> {
     logger,
     env: process.env,
     now: () => new Date(),
+    // Phase 05.1 (D-17, Pitfall 13): "Delete cached usage analytics" empties the Claude AND Codex
+    // analytics in one transaction; the shared toggle and the delete reach the Codex services.
+    deleteAnalytics: deleteAllUsageAnalytics,
+    onAnalysisChanged: (change) => codexSlot.current?.onAnalysisChanged(change),
+    onIntegrationRefresh: () => codexSlot.current?.onIntegrationRefresh(),
   });
 
   const secretStore = createSecurityCliSecretStore();
@@ -244,10 +257,22 @@ async function main(): Promise<void> {
   // runner and only proposes (D-27); saves, Test launches and the System
   // Settings panes go through the launcher routes. Test launches use the
   // same spawner and script directory as real launches.
-  const launchers: LauncherServices = {
-    detector: createDetector({ runner: commandRunner, homeDir }),
+  // >>> Phase 05.1 (Codex detection) start
+  // Proposes the installed Codex binaries and the bridge readiness; the same instance feeds the
+  // Codex services' install cache. It reads no Codex file (CODEX-09).
+  const codexDetection = createCodexDetection({
+    runner: commandRunner,
     homeDir,
-    onLaunchersChanged: () => projectsCollector.onLaunchersChanged(),
+    readBridgeStatus: () => readBridgeStatus({ env: process.env, home: homeDir }),
+  });
+  // <<< Phase 05.1 (Codex detection) end
+  const launchers: LauncherServices = {
+    detector: createDetector({ runner: commandRunner, homeDir, codex: codexDetection }),
+    homeDir,
+    onLaunchersChanged: () => {
+      projectsCollector.onLaunchersChanged();
+      codexSlot.current?.onLaunchersChanged();
+    },
     spawner,
     scriptDir,
   };
@@ -356,11 +381,30 @@ async function main(): Promise<void> {
     logger.error({ code: "task-startup-walk-threw" }, "startup: task index not built");
   }
 
+  // >>> Phase 05.1 (Codex services) start
+  // After the usage services and the task block, before the listener: the mirror, overlays, hook
+  // pipeline and spool are built and the spool is drained, so no Codex record from an earlier
+  // process is observable late. Their timers start only after the socket opens (below).
+  const codexServices = await startCodexServices({
+    db: store.db,
+    bus: eventBus,
+    logger,
+    env: process.env,
+    home: homeDir,
+    runtimeDir,
+    spawner,
+    usageSummary: () => usageServices.summary(),
+    detection: codexDetection,
+  });
+  codexSlot.current = codexServices;
+  // <<< Phase 05.1 (Codex services) end
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
     eventBus,
     claude: { ...claudeServices.routeDeps, usage: usageServices },
+    codex: codexServices.routeDeps,
     projects,
     launch,
     launchers,
@@ -381,6 +425,7 @@ async function main(): Promise<void> {
 
   logger.info({ socketPath }, "listening");
   usageServices.start();
+  codexServices.start();
 
   // The store closes only after the Claude services have drained (the
   // pipeline's queue, its pending coalesced writes, the in-flight spool
@@ -398,6 +443,8 @@ async function main(): Promise<void> {
     // whose scans read the store and hang off the pipeline and the poller, and
     // last the Claude services, after which the store may close.
     stopApprovals: () => approvals.stop(),
+    // Phase 05.1: the Codex services next, so their scans and reads finish before the store closes.
+    stopCodex: () => codexServices.stop(),
     stopUsage: () => usageServices.stop(),
     stopClaude: () => claudeServices.stop(),
     closeServer: (done) => {

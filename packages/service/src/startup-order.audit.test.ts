@@ -140,9 +140,11 @@ describe("main.ts Phase 05.1 blocks", () => {
   it("binds the Phase 5 hooks and the launcher-change hook to the Codex services", () => {
     expect(src).toContain("deleteAnalytics: deleteAllUsageAnalytics");
     expect(src).toMatch(
-      /onAnalysisChanged: \(change\) => codexServices\?\.onAnalysisChanged\(change\)/,
+      /onAnalysisChanged: \(change\) => codexSlot\.current\?\.onAnalysisChanged\(change\)/,
     );
-    expect(src).toMatch(/onIntegrationRefresh: \(\) => codexServices\?\.onIntegrationRefresh\(\)/);
-    expect(src).toMatch(/codexServices\?\.onLaunchersChanged\(\)/);
+    expect(src).toMatch(
+      /onIntegrationRefresh: \(\) => codexSlot\.current\?\.onIntegrationRefresh\(\)/,
+    );
+    expect(src).toMatch(/codexSlot\.current\?\.onLaunchersChanged\(\)/);
   });
 });

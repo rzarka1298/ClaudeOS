@@ -310,7 +310,11 @@ export async function startCodexServices(deps: CodexServicesDeps): Promise<Codex
     }
   }
 
+  /** True once a detection has been started: it spawns version probes, so it is never repeated by a timer. */
+  let detectionStarted = false;
+
   function startInstallRefresh(): void {
+    detectionStarted = true;
     void refreshInstall().catch((error: unknown) => {
       logger.warn(
         { reason: "install-refresh-failed", errorName: errorName(error) },
@@ -318,6 +322,10 @@ export async function startCodexServices(deps: CodexServicesDeps): Promise<Codex
       );
     });
   }
+
+  /** Any evidence of Codex counts: a saved launcher row, a detected install or a thread store. */
+  const codexPresent = (): boolean =>
+    savedCodexExecutable(db) !== null || install.installed || port.stateDbPath() !== null;
 
   // --- the session mirror and its overlays ---------------------------------------------------------
   const mirror = createCodexSessionMirror({
@@ -337,9 +345,7 @@ export async function startCodexServices(deps: CodexServicesDeps): Promise<Codex
     now,
     timers,
     inactivityMs,
-    // Any evidence of Codex counts: a saved launcher row, a detected install or a thread store.
-    installed: () =>
-      savedCodexExecutable(db) !== null || install.installed || port.stateDbPath() !== null,
+    installed: codexPresent,
     logger: reasonLog,
   });
 
@@ -533,13 +539,42 @@ export async function startCodexServices(deps: CodexServicesDeps): Promise<Codex
   };
 
   const routeDeps: CodexRouteDeps = {
-    headroom,
-    sessions: { mirror, opener },
+    headroom: {
+      getUsage: () => headroom.getUsage(),
+      getHeadroom: () => headroom.getHeadroom(),
+      peekUsage: () => headroom.peekUsage(),
+      peekHeadroom: () => headroom.peekHeadroom(),
+      // A read-through refresh is asked for only when a Codex executable is saved: a machine
+      // without Codex is never probed by a snapshot, and publishes nothing about it.
+      refreshIfStale: () => {
+        if (savedCodexExecutable(db) !== null) headroom.refreshIfStale();
+      },
+    },
+    sessions: {
+      mirror: {
+        snapshot: () => mirror.snapshot(),
+        pollNow: () => mirror.pollNow(),
+        // Same rule: no background poll of a Codex home that shows no sign of Codex.
+        refreshIfStale: () => {
+          if (codexPresent()) mirror.refreshIfStale();
+        },
+      },
+      opener,
+    },
     tokens,
     doctor,
     hooks: pipeline,
     follow: { follow },
-    integration,
+    integration: {
+      status: () => integration.status(),
+      // The first read of the status by the Settings group or the card also runs the install
+      // detection once (it spawns version probes, so the start only does it for an owner who
+      // already saved a Codex launcher); later reads are cheap.
+      refresh() {
+        if (!detectionStarted && !stopped) startInstallRefresh();
+        return integration.refresh();
+      },
+    },
   };
 
   let stopPromise: Promise<void> | null = null;
@@ -551,7 +586,9 @@ export async function startCodexServices(deps: CodexServicesDeps): Promise<Codex
       headroom.start();
       mirror.start();
       tokens.start();
-      startInstallRefresh();
+      // With a saved launcher row the install result is verified now; with none, detection waits
+      // for the first read of the integration status or a launcher change (never a timer).
+      if (savedCodexExecutable(db) !== null) startInstallRefresh();
     },
     onAnalysisChanged(change: AnalysisChange) {
       if (stopped) return;

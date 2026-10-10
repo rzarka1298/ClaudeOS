@@ -2,7 +2,7 @@
  * The service's graceful shutdown (D-09, wave-5 Codex review).
  *
  * Order: approvals first (the sweeper stops, every execution already running
- * is awaited), then usage, then the Claude services, and only then the store
+ * is awaited), then the Codex services (Phase 05.1), then usage, then the Claude services, and only then the store
  * closes and the process exits. `exit` is therefore never called while an
  * approval execution is in flight.
  *
@@ -59,6 +59,10 @@ export function createShutdown(deps: ShutdownDeps): () => void {
       .stopApprovals()
       .catch((err: unknown) => {
         deps.onError("shutdown: approval services did not stop cleanly", err);
+      })
+      .then(() => deps.stopCodex?.())
+      .catch((err: unknown) => {
+        deps.onError("shutdown: codex services did not stop cleanly", err);
       })
       .then(() => deps.stopUsage())
       .catch((err: unknown) => {
