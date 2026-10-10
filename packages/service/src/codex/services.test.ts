@@ -1,10 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
   CLAUDE_USAGE_DELETE_PATH,
+  CODEX_FOLLOW_LOG_PATH,
   CODEX_HEADROOM_PATH,
   CODEX_HOOK_EVENTS_PATH,
   CODEX_SESSIONS_PATH,
@@ -22,6 +30,7 @@ import {
   SNAPSHOT_PATH,
   SnapshotResponseSchema,
 } from "@ccc/domain";
+import { projectDirName } from "@ccc/launchers";
 import {
   getCollectorSetting,
   insertProject,
@@ -32,6 +41,7 @@ import {
   setCollectorSetting,
 } from "@ccc/operational-store";
 import { afterEach, describe, expect, it } from "vitest";
+import { createBridgeFixture } from "../test-support/bridge-fixtures.js";
 import {
   type CodexComposition,
   type CodexCompositionOptions,
@@ -42,6 +52,7 @@ import {
 } from "../test-support/codex-composition.js";
 import {
   nextRunId,
+  writeLiveLog,
   writePendingResume,
   writeRunRecord,
 } from "../test-support/codex-run-fixtures.js";
@@ -542,6 +553,56 @@ describe("the overlay order and the shared inactivity window", () => {
       const at = source.indexOf(consumer);
       expect(at, consumer).toBeGreaterThan(-1);
       expect(source.slice(at, at + 900), consumer).toContain("inactivityMs");
+    }
+  });
+});
+
+describe("follow-log queues to the bridge directory that holds the run's log", () => {
+  it("Test 8: a run under the default state directory is queued there, never to the custom primary one", async () => {
+    const fx = createBridgeFixture();
+    try {
+      fx.installLauncher();
+      fx.installMarker();
+      const sim = fx.simulator("current");
+      sim.heartbeat();
+      const custom = join(fx.home, "custom-state");
+      const customDir = join(custom, "codex-bridge");
+      for (const name of ["windows", "requests", "claimed"]) {
+        mkdirSync(join(customDir, name), { recursive: true });
+      }
+      writeFileSync(
+        join(customDir, "protocol.json"),
+        JSON.stringify({ protocol: 2, capabilities: ["follow", "tui", "agent"], kit: "test-kit" }),
+      );
+      const userState = join(fx.stateDir, "projects", projectDirName(fx.projectDir));
+      let runId = "";
+      const c = await compose({
+        homeDir: fx.home,
+        env: { XDG_STATE_HOME: custom },
+        prepare: ({ store }) => {
+          insertProject(store.db, { path: fx.projectDir, displayName: "follow-project" });
+          const record = writeRunRecord(userState, {
+            kind: "task",
+            mode: "headless",
+            status: "running",
+          });
+          runId = record.runId;
+          writeLiveLog(userState, record.runId, "task", { mtimeMs: Date.now() - 2000 });
+        },
+      });
+      // The simulated window answers while the service waits for its claim.
+      const ticker = setInterval(() => sim.tick(), 40);
+      try {
+        const reply = await c.post(CODEX_FOLLOW_LOG_PATH, { runId });
+        expect(reply).toEqual({ status: 200, body: { ok: true } });
+      } finally {
+        clearInterval(ticker);
+      }
+      expect(fx.claimedFiles()).toHaveLength(1);
+      expect(readdirSync(join(customDir, "requests"))).toEqual([]);
+      expect(readdirSync(join(customDir, "claimed"))).toEqual([]);
+    } finally {
+      fx.cleanup();
     }
   });
 });

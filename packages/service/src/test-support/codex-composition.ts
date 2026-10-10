@@ -75,6 +75,8 @@ export interface CodexCompositionOptions {
   readonly appServer?: FakeAppServerScenario;
   /** Saves the fake as the Codex launcher row (default true). `false` leaves it written but unsaved. */
   readonly saveRow?: boolean;
+  /** Use this directory as the service home (it must exist) instead of a fresh empty one. */
+  readonly homeDir?: string;
   /** The clock the services read. Default: the real one. */
   readonly now?: () => number;
   /** The fake Codex home. Default: an empty current-shape thread store. */
@@ -204,9 +206,9 @@ export async function startCodexComposition(
   mkdirSync(TEST_BASE, { recursive: true });
   const dir = realpathSync.native(mkdtempSync(join(TEST_BASE, "cc-")));
   const socketPath = join(dir, "t.sock");
-  const homeDir = join(dir, "home");
+  const homeDir = options.homeDir ?? join(dir, "home");
   const runtimeDir = join(dir, "rt");
-  mkdirSync(homeDir);
+  if (options.homeDir === undefined) mkdirSync(homeDir);
   mkdirSync(runtimeDir, { mode: 0o700 });
 
   const store = openStore(join(dir, "operational.db"));

@@ -472,6 +472,10 @@ export async function startCodexServices(deps: CodexServicesDeps): Promise<Codex
     runs: runReader,
     fs: nodeRunRecordFs,
     readBridgeStatus: readBridge,
+    // A run whose log sits under another candidate state directory (default versus custom state
+    // home) is queued to the directory that holds it, never to one that would reject the log.
+    readBridgeStatusContaining: (containing) =>
+      readBridgeStatus({ env: deps.env, home: deps.home, now, containing }),
     coveringWindow,
     mintRunId: deps.mintRunId ?? mintSharedBridgeRunId,
     now,
