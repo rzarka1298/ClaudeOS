@@ -8,10 +8,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 /**
  * Test-only builder for the codex-bridge world (plan 05.1-13): a temporary HOME, a launcher file
@@ -20,9 +18,6 @@ import { fileURLToPath } from "node:url";
  * owner's real bridge directory, launcher or Antigravity: everything lives in a fresh temporary
  * directory that `cleanup` removes.
  */
-
-const require = createRequire(import.meta.url);
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 
 /** A claimed request as the simulator reports it. */
 export interface SimulatedClaim {
@@ -59,12 +54,18 @@ interface BridgeCoreModule {
   ensureDirs(stateDir: string): void;
 }
 
-const simulatorModule = require(
-  join(REPO_ROOT, "scripts", "codex", "test-support", "bridge-window-simulator.cjs"),
-) as SimulatorModule;
-const bridgeCore = require(
-  join(REPO_ROOT, "scripts", "codex", "antigravity-extension", "bridge-core.js"),
-) as BridgeCoreModule;
+// The window simulator and the bridge core are CommonJS files outside this package; a plain
+// string-literal dynamic import keeps the module edge visible to the boundary lint.
+const simulatorImport = await import(
+  // @ts-expect-error TS7016: a CommonJS test helper without declarations
+  "../../../../scripts/codex/test-support/bridge-window-simulator.cjs"
+);
+const bridgeCoreImport = await import(
+  // @ts-expect-error TS7016: a CommonJS module without declarations
+  "../../../../scripts/codex/antigravity-extension/bridge-core.js"
+);
+const simulatorModule = (simulatorImport.default ?? simulatorImport) as SimulatorModule;
+const bridgeCore = (bridgeCoreImport.default ?? bridgeCoreImport) as BridgeCoreModule;
 
 export interface BridgeFixture {
   /** The realpath of the throwaway directory everything below lives in. */
