@@ -55,6 +55,26 @@
       "note": "the worst window sits in rateLimitsByLimitId, not in rateLimits"
     },
     {
+      "id": "exactly-79-9",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 79.9,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "a float just under the line"
+    },
+    {
       "id": "exactly-80",
       "reply": {
         "accountId": "FAKE-ACCOUNT-MARKER-1",
@@ -75,6 +95,97 @@
       "note": "exactly at the reserve line refuses"
     },
     {
+      "id": "exactly-100",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 100,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "exhausted"
+    },
+    {
+      "id": "over-100",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 101,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "over 100: the wrapper keeps 101, the domain clamps to 100; status and exit code agree"
+    },
+    {
+      "id": "reached-type-set",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 30,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": "rate_limit_reached"
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "a reached type forces not allowed even at 30 percent"
+    },
+    {
+      "id": "reached-type-on-by-id-limit",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 10,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": {
+          "other": {
+            "limitId": "other",
+            "primary": {
+              "usedPercent": 5,
+              "windowDurationMins": 300,
+              "resetsAt": 1790000000
+            },
+            "secondary": null,
+            "rateLimitReachedType": "workspace_member_usage_limit_reached"
+          }
+        }
+      },
+      "note": "a reached type on a non-primary limit snapshot still counts"
+    },
+    {
       "id": "allowed-false",
       "reply": {
         "accountId": "FAKE-ACCOUNT-MARKER-1",
@@ -93,6 +204,92 @@
         "rateLimitsByLimitId": null
       },
       "note": "ordinary usage not allowed"
+    },
+    {
+      "id": "allowed-false-and-reached",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": false,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 95,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": "rate_limit_reached"
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "not allowed outranks the reserve line in the exit code"
+    },
+    {
+      "id": "allowed-null",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": null,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 41,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "a null allowance is unavailable, numbers kept"
+    },
+    {
+      "id": "allowed-absent",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 41,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "an absent allowance is unavailable, numbers kept"
+    },
+    {
+      "id": "rate-limits-absent",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimitsByLimitId": null
+      },
+      "note": "no rateLimits member",
+      "offShape": "required rateLimits member is missing"
+    },
+    {
+      "id": "rate-limits-null",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimitsByLimitId": null,
+        "rateLimits": null
+      },
+      "note": "a null rateLimits member",
+      "offShape": "required rateLimits member is null"
+    },
+    {
+      "id": "reply-null",
+      "reply": null,
+      "note": "the RPC result is null",
+      "offShape": "the result is not an object"
     },
     {
       "id": "plan-and-decoy-present",
@@ -120,6 +317,171 @@
         }
       },
       "note": "plan type, decoy account id and reset-credit data are all present and must all vanish"
+    },
+    {
+      "id": "unknown-extra-keys",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 41,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000,
+            "futureWindowKey": {
+              "n": [
+                1,
+                2
+              ]
+            }
+          },
+          "secondary": null,
+          "rateLimitReachedType": null,
+          "individualLimit": 3,
+          "spendControlReached": false,
+          "limitName": "Some Name",
+          "brandNew": "x"
+        },
+        "rateLimitsByLimitId": null,
+        "anotherNewMember": 1
+      },
+      "note": "unknown keys at every level are ignored"
+    },
+    {
+      "id": "null-duration-window",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 91,
+            "windowDurationMins": null,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "a window whose duration is null still counts for the guard"
+    },
+    {
+      "id": "null-resets-at",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 33,
+            "windowDurationMins": 10080,
+            "resetsAt": null
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "a window with no reset time"
+    },
+    {
+      "id": "string-percent-sole-window",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": "41",
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "a string percent is not numeric: unavailable",
+      "offShape": "usedPercent is a string"
+    },
+    {
+      "id": "string-percent-with-valid-secondary",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": "90",
+            "windowDurationMins": 300,
+            "resetsAt": 1790000000
+          },
+          "secondary": {
+            "usedPercent": 12,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "the string-percent window is skipped, the valid one decides",
+      "offShape": "one usedPercent is a string"
+    },
+    {
+      "id": "empty-window-set",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": null,
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "both windows null: nothing to read, unavailable"
+    },
+    {
+      "id": "non-object-by-id-entry",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 14,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": {
+          "junk": "not a snapshot",
+          "real": {
+            "limitId": "real",
+            "primary": {
+              "usedPercent": 66,
+              "windowDurationMins": 300,
+              "resetsAt": 1790000000
+            },
+            "secondary": null
+          }
+        }
+      },
+      "note": "a non-object limit entry is skipped, a real one counts",
+      "offShape": "a rateLimitsByLimitId value is not a limit snapshot"
     }
   ],
   "tsOnly": [
@@ -194,6 +556,218 @@
       },
       "wrapperExit": 10,
       "why": "the wrapper reads an array's elements as limit snapshots; the TS refuses a limits-by-id member that is not an object instead of guessing"
+    },
+    {
+      "id": "limits-by-id-is-a-string",
+      "input": {
+        "kind": "reply",
+        "payload": {
+          "accountId": "FAKE-ACCOUNT-MARKER-1",
+          "ordinaryUsageAllowed": true,
+          "rateLimits": {
+            "limitId": "codex",
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 10,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790000000
+            },
+            "secondary": null,
+            "rateLimitReachedType": null
+          },
+          "rateLimitsByLimitId": "oops"
+        }
+      },
+      "expect": {
+        "allowed": false,
+        "exitCode": 12,
+        "status": "unavailable",
+        "reason": "usage-unavailable",
+        "usedPercent": null
+      },
+      "wrapperExit": 0,
+      "why": "the wrapper silently ignores it; the TS refuses a limit it cannot read"
+    },
+    {
+      "id": "rollout-fallback-never-allows",
+      "input": {
+        "kind": "rollout",
+        "payload": {
+          "limit_id": "codex",
+          "primary": {
+            "used_percent": 5,
+            "window_minutes": 10080,
+            "resets_at": 1790000000
+          },
+          "secondary": null,
+          "plan_type": "prolite",
+          "rate_limit_reached_type": null
+        },
+        "ageMs": 1000
+      },
+      "expect": {
+        "allowed": false,
+        "exitCode": 12,
+        "status": "unavailable",
+        "reason": "no-live-read",
+        "usedPercent": 5
+      },
+      "why": "the wrapper has no rollout fallback; the TS draws the bar from it but never allows from it (OQ-3)"
+    },
+    {
+      "id": "stale-121-seconds",
+      "input": {
+        "kind": "reply",
+        "payload": {
+          "accountId": "FAKE-ACCOUNT-MARKER-1",
+          "ordinaryUsageAllowed": true,
+          "rateLimits": {
+            "limitId": "codex",
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 41,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790000000
+            },
+            "secondary": null,
+            "rateLimitReachedType": null
+          },
+          "rateLimitsByLimitId": null
+        },
+        "ageMs": 121000
+      },
+      "expect": {
+        "allowed": false,
+        "exitCode": 12,
+        "status": "unavailable",
+        "reason": "usage-unavailable",
+        "usedPercent": 41
+      },
+      "why": "the wrapper reads live on every call so it has no age; the TS keeps numbers for display but refuses past 2 minutes"
+    },
+    {
+      "id": "too-old-601-seconds",
+      "input": {
+        "kind": "reply",
+        "payload": {
+          "accountId": "FAKE-ACCOUNT-MARKER-1",
+          "ordinaryUsageAllowed": true,
+          "rateLimits": {
+            "limitId": "codex",
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 41,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790000000
+            },
+            "secondary": null,
+            "rateLimitReachedType": null
+          },
+          "rateLimitsByLimitId": null
+        },
+        "ageMs": 601000
+      },
+      "expect": {
+        "allowed": false,
+        "exitCode": 12,
+        "status": "unavailable",
+        "reason": "usage-unavailable",
+        "usedPercent": null
+      },
+      "why": "past 10 minutes the TS drops the numbers and treats the read as unavailable too-old"
+    },
+    {
+      "id": "live-119-seconds",
+      "input": {
+        "kind": "reply",
+        "payload": {
+          "accountId": "FAKE-ACCOUNT-MARKER-1",
+          "ordinaryUsageAllowed": true,
+          "rateLimits": {
+            "limitId": "codex",
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 41,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790000000
+            },
+            "secondary": null,
+            "rateLimitReachedType": null
+          },
+          "rateLimitsByLimitId": null
+        },
+        "ageMs": 119000
+      },
+      "expect": {
+        "allowed": true,
+        "exitCode": 0,
+        "status": "ok",
+        "reason": null,
+        "usedPercent": 41
+      },
+      "why": "an age the wrapper cannot express, here still live"
+    },
+    {
+      "id": "paused-run-healthy",
+      "input": {
+        "kind": "reply",
+        "payload": {
+          "accountId": "FAKE-ACCOUNT-MARKER-1",
+          "ordinaryUsageAllowed": true,
+          "rateLimits": {
+            "limitId": "codex",
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 20,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790000000
+            },
+            "secondary": null,
+            "rateLimitReachedType": null
+          },
+          "rateLimitsByLimitId": null
+        },
+        "pausedRunCount": 1
+      },
+      "expect": {
+        "allowed": false,
+        "exitCode": 13,
+        "status": "ok",
+        "reason": "paused-run",
+        "usedPercent": 20
+      },
+      "why": "the wrapper reads pending resumes from its own run records in the task path; the TS takes a count as input"
+    },
+    {
+      "id": "paused-run-over-reserve",
+      "input": {
+        "kind": "reply",
+        "payload": {
+          "accountId": "FAKE-ACCOUNT-MARKER-1",
+          "ordinaryUsageAllowed": true,
+          "rateLimits": {
+            "limitId": "codex",
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 90,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790000000
+            },
+            "secondary": null,
+            "rateLimitReachedType": null
+          },
+          "rateLimitsByLimitId": null
+        },
+        "pausedRunCount": 2
+      },
+      "expect": {
+        "allowed": false,
+        "exitCode": 10,
+        "status": "low",
+        "reason": "reserve-line",
+        "usedPercent": 90
+      },
+      "why": "exit 13 never hides exit 10"
     }
   ]
 }
