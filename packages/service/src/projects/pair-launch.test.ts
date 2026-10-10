@@ -289,3 +289,335 @@ describe("after a successful pair launch", () => {
     expect(refreshCalls).toEqual([projectId]);
   });
 });
+
+const LAUNCH_OK: LaunchResult = { ok: true };
+const opened = { status: "opened" } as const;
+const errorOf = (error: LaunchErrorKind) => ({ status: "error", error }) as const;
+
+describe("one agent's failure never hides or changes the other's result (CODEX-02, R-10)", () => {
+  it("Claude fails with its own kind while Codex opens", async () => {
+    saveClaude();
+    saveCodex();
+    const { terminal } = recordingTerminal((call) =>
+      call.agent === "claude" ? { ok: false, error: "automation-denied" } : LAUNCH_OK,
+    );
+    const g = recordingGuard(() => ({ ok: true, runId: newRunId() }));
+    const result = await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({
+      projectId,
+    });
+    expect(result).toEqual({ claude: errorOf("automation-denied"), codex: opened });
+    expect(g.settled.map((s) => s.outcome)).toEqual(["failed"]);
+    // Codex opened, so the project counts as opened.
+    expect(registryChanges).toBe(1);
+  });
+
+  it("Codex fails with its own kind while Claude opens", async () => {
+    saveClaude();
+    saveCodex();
+    const { terminal } = recordingTerminal((call) =>
+      call.agent === "codex" ? { ok: false, error: "bridge-outdated" } : LAUNCH_OK,
+    );
+    const g = recordingGuard(() => ({ ok: true, runId: newRunId() }));
+    const result = await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({
+      projectId,
+    });
+    expect(result).toEqual({ claude: opened, codex: errorOf("bridge-outdated") });
+    expect(g.settled.map((s) => s.outcome)).toEqual(["started"]);
+  });
+
+  it("both failing gives two independent errors and touches nothing", async () => {
+    saveClaude();
+    saveCodex();
+    const { terminal } = recordingTerminal((call) =>
+      call.agent === "claude"
+        ? { ok: false, error: "window-not-ready" }
+        : { ok: false, error: "bridge-not-installed" },
+    );
+    const result = await service({ terminalLauncher: terminal }).launchPair({ projectId });
+    expect(result).toEqual({
+      claude: errorOf("window-not-ready"),
+      codex: errorOf("bridge-not-installed"),
+    });
+    expect(getProject(store.db, projectId)?.lastOpenedAt).toBeNull();
+    expect(registryChanges).toBe(0);
+  });
+
+  it.each([
+    ["spawn-failed" as const, "timeout"],
+    ["timeout" as const, "timeout"],
+    ["window-not-ready" as const, "failed"],
+  ])(
+    "settles the Claude Run for a hand-off that ended %s as %s (stale, never an invented failure)",
+    async (error, outcome) => {
+      saveClaude();
+      saveCodex();
+      const { terminal } = recordingTerminal((call) =>
+        call.agent === "claude" ? { ok: false, error } : LAUNCH_OK,
+      );
+      const g = recordingGuard(() => ({ ok: true, runId: newRunId() }));
+      await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({ projectId });
+      expect(g.settled.map((s) => s.outcome)).toEqual([outcome]);
+    },
+  );
+});
+
+describe("the Codex setup state never touches the Claude half (R-09)", () => {
+  async function pairWithCodexRow(setup: () => void) {
+    saveClaude();
+    setup();
+    const { terminal, calls } = recordingTerminal();
+    const g = recordingGuard();
+    const result = await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({
+      projectId,
+    });
+    return { result, calls, g };
+  }
+
+  const cases: Array<[string, () => void]> = [
+    ["no saved codex row", () => {}],
+    [
+      "a row that no longer parses",
+      () => saveLauncherConfig(store.db, "codex", { executablePath: "relative/codex", args: [] }),
+    ],
+    ["a banned flag", () => saveCodex(["--yolo"])],
+    ["a second banned flag", () => saveCodex(["--full-auto"])],
+    ["a config override flag", () => saveCodex(["-c", "model=x"])],
+    ["a bare operand outside the allowlist", () => saveCodex(["exec"])],
+    ["an unknown placeholder", () => saveCodex(["{script}"])],
+    [
+      "a non-executable path",
+      () => {
+        writeFileSync(codexPath, "#!/bin/sh\n", { mode: 0o644 });
+        chmodSync(codexPath, 0o644);
+        saveCodex();
+      },
+    ],
+    [
+      "a path whose name is not codex",
+      () => {
+        const other = join(base, "bin", "other");
+        makeExecutable(other);
+        saveLauncherConfig(store.db, "codex", { executablePath: other, args: [] });
+      },
+    ],
+    [
+      "a directory argument outside the project",
+      () => saveCodex(["--add-dir", join(base, "outside")]),
+    ],
+  ];
+
+  it.each(cases)(
+    "%s: Codex is setup, Claude opens normally, one terminal call",
+    async (_name, setup) => {
+      mkdirSync(join(base, "outside"), { recursive: true });
+      const { result, calls, g } = await pairWithCodexRow(setup);
+      expect(result).toEqual({ claude: opened, codex: { status: "setup" } });
+      expect(calls.map((c) => c.agent)).toEqual(["claude"]);
+      expect(g.inputs).toHaveLength(1);
+    },
+  );
+});
+
+describe("a missing Claude Code row (no terminal can be chosen)", () => {
+  it("fails Claude with launcher-not-configured without asking the guard; Codex errors the same way when its row exists", async () => {
+    saveCodex();
+    const { terminal, calls } = recordingTerminal();
+    const g = recordingGuard();
+    const result = await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({
+      projectId,
+    });
+    expect(result).toEqual({
+      claude: errorOf("launcher-not-configured"),
+      codex: errorOf("launcher-not-configured"),
+    });
+    expect(g.inputs).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("is setup for Codex when its row is absent too", async () => {
+    const { terminal, calls } = recordingTerminal();
+    const g = recordingGuard();
+    const result = await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({
+      projectId,
+    });
+    expect(result).toEqual({
+      claude: errorOf("launcher-not-configured"),
+      codex: { status: "setup" },
+    });
+    expect(g.inputs).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("a stored Claude template that no longer validates fails only Claude; the guard is not asked and Codex opens", async () => {
+    saveLauncherConfig(store.db, "claude-code", {
+      executablePath: claudePath,
+      args: ["--dangerously-skip-permissions"],
+      terminal: { kind: "terminal-app" },
+    });
+    saveCodex();
+    const { terminal, calls } = recordingTerminal();
+    const g = recordingGuard();
+    const result = await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({
+      projectId,
+    });
+    expect(result).toEqual({ claude: errorOf("launcher-not-configured"), codex: opened });
+    expect(g.inputs).toEqual([]);
+    expect(calls.map((c) => c.agent)).toEqual(["codex"]);
+  });
+});
+
+describe("the guard speaks for Claude only (OQ-6)", () => {
+  it("a conflict is the answer, and nothing is launched, not even Codex", async () => {
+    saveClaude();
+    saveCodex();
+    const conflict = { projectName: "Example", conflicts: [] };
+    const { terminal, calls } = recordingTerminal();
+    const g = recordingGuard(() => ({ ok: false, conflict }));
+    const result = await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({
+      projectId,
+    });
+    expect(result).toEqual({ ok: false, conflict });
+    expect(calls).toEqual([]);
+    expect(g.inputs).toHaveLength(1);
+    expect(logged).toEqual([{ projectId, action: "claude-codex-pair", kind: "conflict" }]);
+  });
+
+  it("a guard error kind fails only the Claude half; Codex still launches and the guard is never asked about Codex", async () => {
+    saveClaude();
+    saveCodex();
+    const { terminal, calls } = recordingTerminal();
+    const g = recordingGuard(() => ({ ok: false, error: "spawn-failed" }));
+    const result = await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({
+      projectId,
+    });
+    expect(result).toEqual({ claude: errorOf("spawn-failed"), codex: opened });
+    expect(calls.map((c) => c.agent)).toEqual(["codex"]);
+    expect(g.inputs.map((i) => i.action)).toEqual(["claude-code"]);
+  });
+});
+
+describe("two simultaneous pair requests (dedupe)", () => {
+  it("share one execution: one guard call and one launch per agent", async () => {
+    saveClaude();
+    saveCodex();
+    const { terminal, calls } = recordingTerminal();
+    const g = recordingGuard();
+    const launcher = service({ guard: g.guard, terminalLauncher: terminal });
+    const first = launcher.launchPair({ projectId });
+    const second = launcher.launchPair({ projectId });
+    expect(second).toBe(first);
+    await first;
+    expect(g.inputs).toHaveLength(1);
+    expect(calls.map((c) => c.agent)).toEqual(["claude", "codex"]);
+  });
+
+  it("a different choice is a different launch", async () => {
+    saveClaude();
+    saveCodex();
+    const { terminal, calls } = recordingTerminal();
+    const g = recordingGuard();
+    const launcher = service({ guard: g.guard, terminalLauncher: terminal });
+    const first = launcher.launchPair({ projectId });
+    const second = launcher.launchPair({ projectId, choice: { kind: "plan" } });
+    expect(second).not.toBe(first);
+    await Promise.all([first, second]);
+    expect(g.inputs).toHaveLength(2);
+    expect(calls).toHaveLength(4);
+  });
+
+  it("never joins a single Claude Code launch of the same project", async () => {
+    saveClaude();
+    saveCodex();
+    const { terminal } = recordingTerminal();
+    const launcher = service({ terminalLauncher: terminal });
+    const single = launcher.launch({ projectId, action: "claude-code" });
+    const pair = launcher.launchPair({ projectId });
+    expect(pair).not.toBe(single);
+    await expect(pair).resolves.toEqual({ claude: opened, codex: opened });
+    await expect(single).resolves.toEqual({ ok: true });
+  });
+});
+
+describe("a project that cannot be resolved", () => {
+  it("answers both halves with that kind: no guard call, no launch", async () => {
+    saveClaude();
+    saveCodex();
+    const { terminal, calls } = recordingTerminal();
+    const g = recordingGuard();
+    const lookup: ProjectLookup = { resolve: () => Promise.resolve({ error: "project-moved" }) };
+    const result = await service({ guard: g.guard, terminalLauncher: terminal, lookup }).launchPair(
+      {
+        projectId,
+      },
+    );
+    expect(result).toEqual({ claude: errorOf("project-moved"), codex: errorOf("project-moved") });
+    expect(g.inputs).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("a throw inside one half, and what is logged", () => {
+  it("a terminal that throws for Codex is spawn-failed for Codex only, and never rejects the pair", async () => {
+    saveClaude();
+    saveCodex();
+    const terminal: TerminalLauncher = {
+      launch(input) {
+        if (input.argv[0] === codexPath) return Promise.reject(new Error(`boom at ${projectDir}`));
+        return Promise.resolve(LAUNCH_OK);
+      },
+    };
+    const result = await service({ terminalLauncher: terminal }).launchPair({ projectId });
+    expect(result).toEqual({ claude: opened, codex: errorOf("spawn-failed") });
+  });
+
+  it("a terminal that throws for Claude is spawn-failed for Claude only and the Run is settled failed", async () => {
+    saveClaude();
+    saveCodex();
+    const terminal: TerminalLauncher = {
+      launch(input) {
+        if (input.argv[0] === claudePath) throw new Error(`boom at ${projectDir}`);
+        return Promise.resolve(LAUNCH_OK);
+      },
+    };
+    const g = recordingGuard(() => ({ ok: true, runId: newRunId() }));
+    const result = await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({
+      projectId,
+    });
+    expect(result).toEqual({ claude: errorOf("spawn-failed"), codex: opened });
+    expect(g.settled.map((s) => s.outcome)).toEqual(["failed"]);
+  });
+
+  it("log lines carry the action, a kind and the project id only: no path, argv or environment value", async () => {
+    saveClaude(["--model", "sonnet"]);
+    saveCodex(["-C", "{projectPath}"]);
+    const { terminal } = recordingTerminal((call) =>
+      call.agent === "codex" ? { ok: false, error: "bridge-outdated" } : LAUNCH_OK,
+    );
+    const g = recordingGuard(() => ({
+      ok: true,
+      env: { CCC_RUN_ID: "run-secret-value" },
+      runId: newRunId(),
+    }));
+    await service({ guard: g.guard, terminalLauncher: terminal }).launchPair({ projectId });
+    expect(logged).toEqual([
+      { projectId, action: "claude-code", kind: "ok" },
+      { projectId, action: "codex", kind: "bridge-outdated" },
+    ]);
+    for (const line of logged)
+      expect(Object.keys(line).sort()).toEqual(["action", "kind", "projectId"]);
+    const text = JSON.stringify(logged);
+    expect(text).not.toContain(base);
+    expect(text).not.toContain("sonnet");
+    expect(text).not.toContain("run-secret-value");
+  });
+
+  it("logs a setup Codex half as info with kind setup", async () => {
+    saveClaude();
+    const { terminal } = recordingTerminal();
+    await service({ terminalLauncher: terminal }).launchPair({ projectId });
+    expect(logged).toEqual([
+      { projectId, action: "claude-code", kind: "ok" },
+      { projectId, action: "codex", kind: "setup" },
+    ]);
+  });
+});
