@@ -571,6 +571,13 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     current = { ...current, assembled: assemble(current.base) };
   }
 
+  /** Fire-and-forget poll: a throwing publish (poll's finally) must not become an unhandled rejection. */
+  function pollContained(): void {
+    pollNow().catch(() => {
+      deps.logger?.warn({ reason: "poll-publish-failed" }, "codex sessions poll publish failed");
+    });
+  }
+
   return {
     snapshot,
     pollNow,
@@ -584,7 +591,7 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
       timerHandle = deps.timers.setInterval(() => {
         if (deps.subscribers() <= 0) return;
         runTickHooks();
-        void pollNow();
+        pollContained();
       }, intervalMs);
     },
     stop() {
@@ -595,7 +602,7 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     refreshIfStale() {
       const stale =
         current === null || lastAttemptMs === null || deps.now() - lastAttemptMs > 3 * intervalMs;
-      if (stale) void pollNow();
+      if (stale) pollContained();
     },
     addTickHook(hook) {
       tickHooks.push(hook);

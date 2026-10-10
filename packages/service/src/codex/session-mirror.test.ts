@@ -1015,3 +1015,33 @@ describe("plan 05.1-26: the overlay context and tick hooks", () => {
     mirror.stop();
   });
 });
+
+describe("timer-driven polls never leave an unhandled rejection", () => {
+  it("a publish that throws inside the tick poll is contained and logged by reason code only", async () => {
+    const t = fakeTimers();
+    const warn = vi.fn();
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      const built = build([{ id: "thread-p", agoMs: 2 * MINUTE }], {
+        timers: t.timers,
+        publish: () => {
+          throw new Error("publish failed /Users/USERNAME/secret");
+        },
+        logger: { warn },
+      });
+      built.mirror.start();
+      t.fire();
+      built.mirror.refreshIfStale();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(rejections).toEqual([]);
+      const logged = JSON.stringify(warn.mock.calls);
+      expect(logged).toContain("poll-publish-failed");
+      expect(logged).not.toContain("secret");
+      built.mirror.stop();
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+});
