@@ -92,9 +92,30 @@ export interface UsageServicesDeps {
   readonly pathExists?: (path: string) => boolean;
   /** Overrides the settings facts (tests). */
   readonly settingsFacts?: () => UsageSettingsFacts;
+  /**
+   * Empties the analytics tables on "Delete cached usage analytics" (Phase 05.1, D-17,
+   * Pitfall 13). Default: the Phase 5 function, so Phase 5 behaves exactly as before; the
+   * composition passes the combined Claude-and-Codex function (one transaction).
+   */
+  readonly deleteAnalytics?: (db: Database.Database) => void;
+  /** Told after the toggle moves and after a delete (Phase 05.1). Default: nothing. */
+  readonly onAnalysisChanged?: (change: AnalysisChange) => void;
+  /** Called after each integration refresh (Phase 05.1): the Codex hook copy is rescanned there. Default: nothing. */
+  readonly onIntegrationRefresh?: () => void;
 }
 
 export type StatusLineOutcome = "applied" | "invalid";
+
+/**
+ * What the optional `onAnalysisChanged` listener is told (Phase 05.1, D-17): the
+ * shared transcript-analysis toggle moved (`toggle`) or "Delete cached usage
+ * analytics" ran (`delete`), and what the toggle reads now. Additive: Phase 5
+ * passes no listener and behaves exactly as before.
+ */
+export interface AnalysisChange {
+  readonly enabled: boolean;
+  readonly cause: "toggle" | "delete";
+}
 
 export interface UsageServices {
   /** The current summary, computed synchronously (the snapshot reads it in the same tick). */

@@ -27,6 +27,7 @@ import {
 import { CLIENT_RESPONSE_CAP_BYTES } from "./approval-wiring/types.js";
 import { mintToken } from "./auth/token.js";
 import { claudeRouteTable } from "./claude/routes.js";
+import { codexRouteTable } from "./codex/routes.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
@@ -325,6 +326,9 @@ const routeTable: Record<string, Record<string, Handler>> = {
   ...approvalRoutes,
   // Phase 6 (append-only, D-28): the task store routes, spread after the approval routes.
   ...taskRoutes,
+  // Phase 05.1 (append-only, D-25): the Codex routes, spread last. Every one answers
+  // the constant 503 when `ctx.codex` is absent; none dispatches work or writes Codex.
+  ...codexRouteTable,
 };
 
 /**
