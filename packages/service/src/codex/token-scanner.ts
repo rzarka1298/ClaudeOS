@@ -158,7 +158,7 @@ export type ScanOutcome =
   /** The sweep's file or byte budget ran out; the rest carries to the next sweep. */
   | { readonly kind: "capped" }
   /** The rollout exceeds the size bound: not read, rows and cursor untouched, never counted partially. */
-  | { readonly kind: "not-scanned"; readonly reason: "too-large" };
+  | { readonly kind: "not-scanned"; readonly reason: "too-large" | "source-truncated" };
 
 export interface SweepOutcome {
   /** True only when every listed file was visited without cancellation, cap or failure. */
@@ -444,6 +444,15 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     // Same size as the last complete read: nothing to read, not even the identity head.
     if (cursor !== null && cursor.size === size) return { kind: "unchanged" };
 
+    // The file is now smaller than the extent last read in full (truncated or
+    // recreated with fewer bytes): replacing the rows from it would erase usage
+    // that was already counted. The rows and the cursor (which holds that extent)
+    // stay; the rollout is replaced again only once it reaches the extent again.
+    if (cursor !== null && size < cursor.size) {
+      logger.warn({ reason: "rollout-source-truncated" }, "codex rollout shrank; rows kept");
+      return { kind: "not-scanned", reason: "source-truncated" };
+    }
+
     // Rows of a rollout that cannot be read in full stay as they are.
     if (size > maxRolloutBytes) {
       logger.warn({ reason: "rollout-too-large" }, "codex rollout too large; not scanned");
@@ -590,6 +599,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     let capped = false;
     let stopped = false;
     let notScanned = 0;
+    let truncatedSources = 0;
     for (const ref of refs) {
       if (!alive()) {
         stopped = true;
@@ -627,6 +637,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
         // Too large to read in full: never counted from a partial read, so the sweep
         // claims neither coverage nor first-scan completion.
         notScanned += 1;
+        if (outcome.reason === "source-truncated") truncatedSources += 1;
         await yieldNow();
         continue;
       }
@@ -655,7 +666,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       markCoveredDays(oldest);
       lastScanAt = nowIso();
     }
-    const notRescanned = countLegacyUsageThreads(db);
+    const notRescanned = countLegacyUsageThreads(db) + truncatedSources;
     if (notRescanned > 0 && !stopped) {
       logger.info({ notRescanned }, "codex usage kept from rollouts that could not be read again");
     }
