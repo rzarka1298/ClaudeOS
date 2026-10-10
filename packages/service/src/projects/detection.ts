@@ -7,6 +7,7 @@ import {
   hasControlCharacter,
 } from "@ccc/domain";
 import { TERMINAL_PRESETS } from "@ccc/launchers";
+import type { CodexDetection } from "../codex/detection.js";
 import type { CommandRunner } from "./command-runner.js";
 import { type GitResolution, resolveGit } from "./git-runner.js";
 import { toDisplayPath } from "./project-views.js";
@@ -87,6 +88,11 @@ export interface DetectorDeps {
   /** Defaults to `resolveGit(runner)` (D-10). */
   readonly resolveGit?: () => Promise<GitResolution>;
   readonly now?: () => Date;
+  /**
+   * Codex detection (plan 05.1-21). Optional: without it the response is
+   * exactly what Phase 4 produced and no Codex candidate resolves.
+   */
+  readonly codex?: CodexDetection;
 }
 
 export interface Detector {
@@ -103,6 +109,12 @@ export interface Detector {
    * (T-04-23), and the save still checks it is an executable file now.
    */
   candidatePath(candidateId: string): string | null;
+  /**
+   * The absolute path of a Codex candidate (plan 05.1-21): the known
+   * location of its id, for the save route only. `null` for an unknown id or
+   * when Codex detection is not wired.
+   */
+  codexCandidatePath(candidateId: string): string | null;
 }
 
 const MDFIND = "/usr/bin/mdfind";
@@ -320,6 +332,9 @@ export function createDetector(deps: DetectorDeps): Detector {
           ?.path ??
         null
       );
+    },
+    codexCandidatePath() {
+      return null;
     },
   };
 }

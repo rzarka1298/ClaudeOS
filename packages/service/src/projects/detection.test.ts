@@ -1,6 +1,8 @@
 import { DetectionResponseSchema } from "@ccc/domain";
 import { TERMINAL_PRESETS } from "@ccc/launchers";
 import { describe, expect, it } from "vitest";
+import type { BridgeStatus } from "../codex/bridge-state.js";
+import { createCodexDetection } from "../codex/detection.js";
 import {
   createFakeCommandRunner,
   type ScriptedReply,
@@ -291,5 +293,82 @@ describe("git detection (D-10)", () => {
   it("reports git unavailable when xcode-select fails and no fallback git exists", async () => {
     const { detector } = detectorWith([NOTHING_ELSE], { gitAvailable: false });
     expect((await detector.detect()).git).toBe("unavailable");
+  });
+});
+
+describe("Codex detection merged into the launcher detection (plan 05.1-21, D-11, D-12)", () => {
+  const CODEX = `${HOME}/.local/bin/codex`;
+  const READY_BRIDGE: BridgeStatus = {
+    state: "installed",
+    protocol: 2,
+    capabilities: ["agent"],
+    launcherPresent: true,
+    dir: `${HOME}/.local/state/codex-bridge`,
+    dirSource: "primary",
+    windows: [],
+  };
+
+  function withCodex() {
+    const runner = createFakeCommandRunner({
+      script: [
+        {
+          match: (file, args) => file === CODEX && args[0] === "--version",
+          outcome: { exitCode: 0, stdout: "codex-cli 0.159.2\n" },
+        },
+      ],
+    });
+    const codex = createCodexDetection({
+      runner,
+      homeDir: HOME,
+      isExecutable: (path) => Promise.resolve(path === CODEX),
+      readBridgeStatus: () => READY_BRIDGE,
+    });
+    const detector = createDetector({
+      runner: createFakeCommandRunner({ script: [NOTHING_ELSE] }),
+      homeDir: HOME,
+      readdir: () => Promise.resolve([]),
+      isExecutable: () => Promise.resolve(false),
+      resolveGit: () => Promise.resolve({ kind: "unavailable" }),
+      codex,
+    });
+    return { detector };
+  }
+
+  it("adds the optional codex, bridge and suggestedTerminal members, all schema-valid", async () => {
+    const response = await withCodex().detector.detect();
+    expect(DetectionResponseSchema.parse(response)).toEqual(response);
+    expect(response.codex).toEqual({
+      executables: [
+        {
+          candidateId: "user-install",
+          displayPath: "~/.local/bin/codex",
+          version: "0.159.2",
+          location: "user-install",
+        },
+      ],
+      doctor: "unknown",
+    });
+    expect(response.bridge).toBe("installed");
+    expect(response.suggestedTerminal).toEqual({ kind: "antigravity-terminal" });
+    expect(JSON.stringify(response)).not.toContain(HOME);
+  });
+
+  it("resolves a Codex candidate id to its path through the detector", () => {
+    const { detector } = withCodex();
+    expect(detector.codexCandidatePath("user-install")).toBe(CODEX);
+    expect(detector.codexCandidatePath("unknown")).toBeNull();
+  });
+
+  it("without the Codex dependency the response has none of the new members", async () => {
+    const { detector } = detectorWith([NOTHING_ELSE]);
+    const response = await detector.detect();
+    expect(Object.keys(response).sort()).toEqual([
+      "apps",
+      "claudeExecutables",
+      "detectedAt",
+      "git",
+      "terminalPresets",
+    ]);
+    expect(detector.codexCandidatePath("user-install")).toBeNull();
   });
 });
