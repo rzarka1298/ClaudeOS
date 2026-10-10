@@ -1,8 +1,9 @@
-import type { ClaudeIntegrationStatus } from "@ccc/domain";
+import type { ClaudeIntegrationStatus, CodexIntegrationStatus } from "@ccc/domain";
 import { Notice } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { motionMode } from "../motion.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
+import type { SettingsCodexSeam } from "./codex-settings.js";
 import {
   APPROVALS_GROUP_HEADING,
   applyNotifyApprovalsChange,
@@ -892,5 +893,170 @@ describe("Tasks group (plan 06-23, UI-SPEC S5)", () => {
     await flush();
     row(tab).item?.action?.({} as never, 0);
     expect(rebuild).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Codex group (plan 05.1-19, UI-SPEC S4-a and S4-c)", () => {
+  /** A row as a test reads it: the group's tuple holds differently shaped items. */
+  interface Row {
+    readonly name: string;
+    readonly desc?: string;
+    readonly action?: (el: HTMLElement, index: number) => void;
+  }
+
+  const INSTALLED: CodexIntegrationStatus = {
+    hooks: { state: "not-installed", lastEventAt: null, installedSince: null },
+    bridge: { state: "not-installed", lastWindowAt: null },
+    codex: { installed: true, version: "0.159.2" },
+    doctor: null,
+  };
+
+  function codexSeam(overrides: Partial<SettingsCodexSeam> = {}): SettingsCodexSeam {
+    return {
+      getIntegration: vi.fn().mockResolvedValue(INSTALLED),
+      copyText: vi.fn().mockResolvedValue(undefined),
+      openLauncherSettings: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function codexRows(tab: CommandCenterSettingTab): readonly Row[] {
+    const definitions = tab.getSettingDefinitions() as unknown as Array<{
+      type?: string;
+      heading?: string;
+      items?: Row[];
+    }>;
+    const group = definitions.find((item) => item.heading === "Codex");
+    if (!group?.items) throw new Error("expected the Codex group");
+    return group.items;
+  }
+
+  it("Test 1: appends the Codex group after every existing group and leaves their order alone", () => {
+    const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
+    const definitions = tab.getSettingDefinitions() as unknown as Array<{ heading?: string }>;
+    expect(definitions.map((item) => item.heading)).toEqual([
+      undefined,
+      CLAUDE_GROUP_HEADING,
+      APPROVALS_GROUP_HEADING,
+      TASKS_GROUP_HEADING,
+      "Codex",
+    ]);
+    expect(codexRows(tab).map((row) => row.name)).toEqual([
+      "Codex hooks",
+      "Copy install step",
+      "Copy uninstall step",
+      "Antigravity terminal bridge",
+      "Copy bridge install step",
+      "Launcher",
+      "Codex notify setting",
+    ]);
+  });
+
+  it("Test 6: reads Checking… until the service answers, then the status after the answer", async () => {
+    const tab = new CommandCenterSettingTab({} as never, {} as never, {
+      ...createHost(),
+      codex: codexSeam(),
+    });
+    expect(codexRows(tab)[0]?.desc).toBe("Checking…");
+    await flush();
+    expect(codexRows(tab)[0]?.desc).toBe(
+      "Not installed. Live status for interactive Codex sessions needs the optional hook package. Sessions and usage still appear from Codex's own records.",
+    );
+    expect(codexRows(tab)[3]?.desc).toBe("Not installed. Launches fall back to Terminal.");
+  });
+
+  it("Test 6: fetches once per display, never during its own update(), and a rejection settles on unavailable", async () => {
+    const getIntegration = vi.fn().mockRejectedValue(new Error("down"));
+    const tab = new CommandCenterSettingTab({} as never, {} as never, {
+      ...createHost(),
+      codex: codexSeam({ getIntegration }),
+    });
+    // Obsidian's update() re-reads getSettingDefinitions(); the stub's does not.
+    tab.update = () => {
+      tab.getSettingDefinitions();
+    };
+
+    tab.getSettingDefinitions();
+    await flush(12);
+
+    expect(getIntegration).toHaveBeenCalledTimes(1);
+    expect(codexRows(tab)[0]?.desc).toBe(
+      "Status unavailable — the companion service didn't respond.",
+    );
+  });
+
+  it("Test 4: the copy rows write the fixed repository-relative strings and post the locked Notices", async () => {
+    const copyText = vi.fn().mockResolvedValue(undefined);
+    const host = { ...createHost(), codex: codexSeam({ copyText }) };
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const rows = codexRows(tab);
+
+    rows[1]?.action?.({} as never, 1);
+    rows[2]?.action?.({} as never, 2);
+    rows[4]?.action?.({} as never, 4);
+    await flush();
+
+    expect(copyText.mock.calls).toEqual([
+      ["./scripts/codex-hooks/install.sh"],
+      ["./scripts/codex-hooks/uninstall.sh"],
+      ["node scripts/codex/install-user-kit.mjs"],
+    ]);
+    expect(host.notices).toEqual([
+      "Install step copied. Run it in Terminal.",
+      "Uninstall step copied. Run it in Terminal.",
+      "Install step copied. Run it in Terminal.",
+    ]);
+  });
+
+  it("Test 4: a refused clipboard write posts the copy-failed Notice and not the success one", async () => {
+    const copyText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
+    const host = { ...createHost(), codex: codexSeam({ copyText }) };
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    codexRows(tab)[1]?.action?.({} as never, 1);
+    await flush();
+
+    expect(host.notices).toEqual([CLAUDE_COPY_FAILED_NOTICE]);
+  });
+
+  it("Test 4: with no Codex seam a copy row is a no-op", async () => {
+    const host = createHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+
+    codexRows(tab)[1]?.action?.({} as never, 1);
+    codexRows(tab)[5]?.action?.({} as never, 5);
+    await flush();
+
+    expect(host.notices).toEqual([]);
+  });
+
+  it("Test 5: the Launcher row's action calls the injected launcher-settings seam", () => {
+    const openLauncherSettings = vi.fn();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, {
+      ...createHost(),
+      codex: codexSeam({ openLauncherSettings }),
+    });
+    codexRows(tab)[5]?.action?.({} as never, 5);
+    expect(openLauncherSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test 7: the transcript analysis description gains the Codex sentence and nothing else changes", () => {
+    const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
+    const items = tab.getSettingDefinitions()[1].items;
+    expect(items[4].desc).toBe(
+      "Count tokens from Claude Code's local transcripts. Only counts, model names and timestamps " +
+        "are stored — never prompts, replies or file contents. Hook telemetry keeps working when this is off. " +
+        "This also covers Codex session titles, previews and token activity.",
+    );
+    expect(items[4].control).toMatchObject({ type: "toggle", key: TRANSCRIPT_ANALYSIS_KEY });
+  });
+
+  it("Test 7: the delete row's description names Claude Code and Codex", () => {
+    const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
+    const item = tab.getSettingDefinitions()[1].items[5];
+    expect(item.name).toBe(CLAUDE_DELETE_USAGE_NAME);
+    expect(item.desc).toBe(
+      "Removes stored token counts, cost estimates, plan usage history and coverage records for Claude Code and Codex. Session history stays.",
+    );
   });
 });

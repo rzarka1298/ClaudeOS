@@ -6,6 +6,7 @@ import {
   type MotionPreference,
 } from "../motion.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
+import type { SettingsCodexSeam } from "./codex-settings.js";
 
 /**
  * The plugin's Settings tab — the owner's override for reduced motion
@@ -281,6 +282,8 @@ export interface SettingsTabHost {
   readonly notify?: (message: string) => void;
   /** The Claude settings section's service seam (UI-SPEC S5). Absent means not wired yet. */
   readonly claude?: SettingsClaudeSeam | undefined;
+  /** The Codex group's seam (plan 05.1-19, D-30). Absent means the group shows "Checking…" and copy is a no-op. */
+  readonly codex?: SettingsCodexSeam | undefined;
   /** The Approvals group's seam (plan 06-23). Absent means the test action is unavailable. */
   readonly approvals?: SettingsApprovalsSeam | undefined;
   /** The Tasks group's seam (plan 06-23). Absent means Rebuild task index is unavailable. */
