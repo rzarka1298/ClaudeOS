@@ -24,7 +24,7 @@ const SPECIFIER_PATTERNS: readonly RegExp[] = [
 ];
 const OPAQUE_LOAD = /\b(import|require)\s*\(\s*[^"'\s)]/;
 const FORBIDDEN_GLOBALS: readonly RegExp[] = [
-  new RegExp(["Date", "now"].join("\\.") + "\\s*\\("),
+  new RegExp(`${["Date", "now"].join("\\.")}\\s*\\(`),
   new RegExp(["new", "Date\\s*\\(\\s*\\)"].join("\\s+")),
   new RegExp(["process", "env"].join("\\.")),
   /\bfetch\s*\(/,
@@ -69,10 +69,7 @@ describe("Test 8: the Codex usage folder is pure (D-14)", () => {
   it("imports only @ccc/domain and sibling files, never a Node module", () => {
     const offenders = files.flatMap(({ name, source }) =>
       specifiersOf(source)
-        .filter(
-          (specifier) =>
-            specifier !== "@ccc/domain" && !specifier.startsWith("./") && specifier !== "zod",
-        )
+        .filter((specifier) => specifier !== "@ccc/domain" && !specifier.startsWith("./"))
         .map((specifier) => `${name}: ${specifier}`),
     );
     expect(offenders).toEqual([]);

@@ -4,6 +4,7 @@ import {
   CODEX_USAGE_STALE_MAX_AGE_MS,
   type CodexHeadroom,
   type CodexHeadroomReason,
+  CodexHeadroomSchema,
   type CodexUsageSnapshot,
   type CodexUsageWindow,
   type Freshness,
@@ -51,10 +52,20 @@ export interface HeadroomInput {
   readonly pausedRuns?: { readonly count: number; readonly earliestResetAt: string | null };
 }
 
-/** Live up to the live max age, stale up to the stale max age, unavailable beyond. */
+/**
+ * A read stamped slightly in the future (clock adjustment between the read and
+ * now) still counts as live; one stamped further ahead is not trusted.
+ */
+const CLOCK_SKEW_TOLERANCE_MS = 5_000;
+
+/**
+ * Live up to the live max age, stale up to the stale max age, unavailable
+ * beyond (Assumption A11 as interpreted: "older than 2 minutes refuses with
+ * numbers kept for display, older than 10 minutes becomes unavailable too-old").
+ */
 export function ageFreshness(observedAtMs: number, nowMs: number): Freshness {
   const age = nowMs - observedAtMs;
-  if (!Number.isFinite(age)) return "unavailable";
+  if (!Number.isFinite(age) || age < -CLOCK_SKEW_TOLERANCE_MS) return "unavailable";
   if (age <= CODEX_USAGE_LIVE_MAX_AGE_MS) return "live";
   if (age <= CODEX_USAGE_STALE_MAX_AGE_MS) return "stale";
   return "unavailable";
@@ -68,47 +79,119 @@ function worstOf(windows: readonly CodexUsageWindow[]): CodexUsageWindow | null 
   return worst;
 }
 
-export function evaluateGuard(input: GuardInput): GuardVerdict {
-  const { snapshot } = input;
-  if (snapshot === null || snapshot.kind === "unavailable") {
+/** A usable paused-run count: a finite number of at least one, else zero. */
+function pausedCount(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.floor(value) : 0;
+}
+
+/**
+ * Re-stamps freshness from the snapshot's age. Past the stale max age the
+ * snapshot becomes an unavailable `too-old` one, so no number survives.
+ */
+function applyMaxAge(
+  snapshot: CodexUsageSnapshot | null,
+  nowMs: number,
+): CodexUsageSnapshot | null {
+  if (snapshot === null || snapshot.kind === "unavailable") return snapshot;
+  const freshness = ageFreshness(Date.parse(snapshot.observedAt), nowMs);
+  if (freshness === "unavailable") {
     return {
-      allowed: false,
-      exitCode: GUARD_EXIT.UNAVAILABLE,
-      status: "unavailable",
-      reason: "usage-unavailable",
-      freshness: "unavailable",
-      usedPercent: null,
-      resetsAt: null,
-      ordinaryUsageAllowed: null,
+      kind: "unavailable",
+      reason: "too-old",
+      version: snapshot.codexVersion ?? null,
+      observedAt: snapshot.observedAt,
     };
   }
-  const worst = worstOf(snapshot.windows);
+  return { ...snapshot, freshness };
+}
+
+interface Evaluation {
+  readonly verdict: GuardVerdict;
+  /** The snapshot after the max-age rule; null when nothing was ever read. */
+  readonly effective: CodexUsageSnapshot | null;
+  readonly paused: number;
+}
+
+function evaluate(input: GuardInput): Evaluation {
+  const effective = applyMaxAge(input.snapshot, input.nowMs);
+  const paused = pausedCount(input.pausedRunCount);
+  if (effective === null || effective.kind === "unavailable") {
+    return {
+      effective,
+      paused,
+      verdict: {
+        allowed: false,
+        exitCode: GUARD_EXIT.UNAVAILABLE,
+        status: "unavailable",
+        reason: paused > 0 ? "paused-run" : "usage-unavailable",
+        freshness: "unavailable",
+        usedPercent: null,
+        resetsAt: null,
+        ordinaryUsageAllowed: null,
+      },
+    };
+  }
+  const worst = worstOf(effective.windows);
   const usedPercent = worst === null ? 0 : worst.usedPercent;
-  const ordinary =
-    snapshot.ordinaryUsageAllowed === true && snapshot.rateLimitReached
-      ? false
-      : snapshot.ordinaryUsageAllowed;
   const atReserve = usedPercent >= CODEX_RESERVE_PERCENT;
+  // The wrapper forces "not allowed" when any limit snapshot carries a reached type.
+  const ordinary =
+    effective.ordinaryUsageAllowed === true && effective.rateLimitReached
+      ? false
+      : effective.ordinaryUsageAllowed;
+  const fallbackOnly = effective.source === "rollout-fallback";
+  // Never gate on a read that is not a trustworthy live one (OQ-3, D-24, T-05.1-27).
+  const untrusted = fallbackOnly || effective.freshness === "stale" || ordinary === null;
+  let status: GuardStatus = "ok";
+  if (untrusted) status = "unavailable";
+  else if (ordinary === false || usedPercent >= 100) status = "exhausted";
+  else if (atReserve) status = "low";
   let exitCode: GuardExitCode = GUARD_EXIT.OK;
-  if (ordinary === false) exitCode = GUARD_EXIT.NOT_ALLOWED;
+  if (untrusted) exitCode = GUARD_EXIT.UNAVAILABLE;
+  else if (ordinary === false) exitCode = GUARD_EXIT.NOT_ALLOWED;
   else if (atReserve) exitCode = GUARD_EXIT.RESERVE;
+  else if (paused > 0) exitCode = GUARD_EXIT.PENDING_RESUME;
+  // The reason is the first row of the UI-SPEC table that holds, whatever the exit code.
+  let reason: CodexHeadroomReason | null = null;
+  if (atReserve || effective.rateLimitReached) reason = "reserve-line";
+  else if (effective.ordinaryUsageAllowed === false) reason = "usage-not-allowed";
+  else if (paused > 0) reason = "paused-run";
+  else if (fallbackOnly) reason = "no-live-read";
+  else if (untrusted) reason = "usage-unavailable";
   return {
-    allowed: exitCode === GUARD_EXIT.OK,
-    exitCode,
-    status: atReserve ? "low" : "ok",
-    reason: atReserve || snapshot.rateLimitReached ? "reserve-line" : null,
-    freshness: snapshot.freshness,
-    usedPercent,
-    resetsAt: worst?.resetsAt ?? null,
-    ordinaryUsageAllowed: ordinary,
+    effective,
+    paused,
+    verdict: {
+      allowed: exitCode === GUARD_EXIT.OK,
+      exitCode,
+      status,
+      reason,
+      freshness: effective.freshness,
+      usedPercent,
+      resetsAt: worst?.resetsAt ?? null,
+      ordinaryUsageAllowed: ordinary,
+    },
   };
 }
 
+/**
+ * The guard verdict. It allows only a live, app-server, fully-numeric read that
+ * is under the reserve line, says ordinary usage is allowed, and has no paused
+ * run waiting. Every other state refuses and says why.
+ */
+export function evaluateGuard(input: GuardInput): GuardVerdict {
+  return evaluate(input).verdict;
+}
+
+/** The read-only Codex headroom member (CODEX-11, D-23): a statement, never an instruction. */
 export function buildCodexHeadroom(input: HeadroomInput): CodexHeadroom {
-  const verdict = evaluateGuard(input);
-  const snapshot = input.snapshot;
-  const worst = snapshot?.kind === "available" ? worstOf(snapshot.windows) : null;
-  return {
+  const { verdict, effective, paused } = evaluate({
+    snapshot: input.snapshot,
+    nowMs: input.nowMs,
+    pausedRunCount: input.pausedRuns?.count ?? 0,
+  });
+  const worst = effective?.kind === "available" ? worstOf(effective.windows) : null;
+  const build = (earliestResetAt: string | null): CodexHeadroom => ({
     verdict: verdict.allowed ? "allow" : "refuse",
     reason: verdict.reason,
     worstWindow:
@@ -119,9 +202,22 @@ export function buildCodexHeadroom(input: HeadroomInput): CodexHeadroom {
             usedPercent: worst.usedPercent,
             resetsAt: worst.resetsAt,
           },
-    source: snapshot?.kind === "available" ? snapshot.source : null,
-    observedAt: snapshot?.observedAt ?? null,
+    source: effective?.kind === "available" ? effective.source : null,
+    observedAt: effective?.observedAt ?? null,
     freshness: verdict.freshness,
-    pausedRuns: input.pausedRuns ?? { count: 0, earliestResetAt: null },
+    pausedRuns: { count: paused, earliestResetAt },
+  });
+  const earliest = paused > 0 ? (input.pausedRuns?.earliestResetAt ?? null) : null;
+  for (const candidate of [build(earliest), build(null)]) {
+    if (CodexHeadroomSchema.safeParse(candidate).success) return candidate;
+  }
+  return {
+    verdict: "refuse",
+    reason: "usage-unavailable",
+    worstWindow: null,
+    source: null,
+    observedAt: null,
+    freshness: "unavailable",
+    pausedRuns: { count: paused, earliestResetAt: null },
   };
 }
