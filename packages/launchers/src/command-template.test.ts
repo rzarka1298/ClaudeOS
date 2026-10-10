@@ -444,7 +444,8 @@ describe("validateCommandTemplate, codex kind (D-11)", () => {
       ["sandbox equals", [CODEX, "--sandbox=danger-full-access"], 1],
       ["sandbox short attached", [CODEX, "-sdanger-full-access"], 1],
       ["sandbox short equals", [CODEX, "-s=danger-full-access"], 1],
-      ["config override value", [CODEX, "-c", 'sandbox_mode="danger-full-access"'], 2],
+      // -c is itself refused, so the first offending element is the flag
+      ["config override value", [CODEX, "-c", 'sandbox_mode="danger-full-access"'], 1],
       ["config override equals", [CODEX, "--config=sandbox_mode=danger_full_access"], 1],
       ["Phase 4 flag", [CODEX, "--dangerously-skip-permissions"], 1],
       ["Phase 4 mode", [CODEX, "--permission-mode", "bypassPermissions"], 2],
