@@ -635,6 +635,11 @@ async function composeCodexServices(
     follow: { follow },
     integration: {
       status: () => integration.status(),
+      // The first dashboard snapshot starts the one-time detection (fire-and-forget); the result
+      // reaches the plugin through codex.integration.updated, and only when it changed.
+      detectOnce() {
+        if (!detectionStarted && !stopped) startInstallRefresh();
+      },
       // The first read of the status by the Settings group or the card also runs the install
       // detection once (it spawns version probes, so the start only does it for an owner who
       // already saved a Codex launcher); later reads are cheap.

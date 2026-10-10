@@ -150,6 +150,9 @@ export function codexSnapshotFor(
   read(() => codex.sessions?.mirror.refreshIfStale());
   read(() => codex.headroom?.refreshIfStale());
   read(() => codex.tokens?.refreshIfStale());
+  // Install detection is lazy (startup skips it with no saved launcher), so the first snapshot is
+  // what starts it, once; a machine without Codex finds nothing and publishes nothing.
+  read(() => codex.integration?.detectOnce?.());
 
   if (sizeOf(parts) > budgetBytes) parts = fitSessions(parts, budgetBytes);
   for (const key of DROP_ORDER) {

@@ -49,6 +49,11 @@ export interface CodexIntegrationService {
   status(): CodexIntegrationStatus;
   /** Re-reads the four parts, publishes once when the status changed, and returns it. */
   refresh(): CodexIntegrationStatus;
+  /**
+   * Starts the one-time install detection when none has run in this service run (the first
+   * dashboard snapshot calls it); fire-and-forget, never awaited, a no-op afterwards.
+   */
+  detectOnce?(): void;
 }
 
 export function integrationRoutes(
