@@ -202,7 +202,16 @@ describe("env", () => {
     expect(reasonOf(withEnv(seventeen))).toBe("bad-env");
     expect(reasonOf(withEnv({ CCC_A: "x".repeat(AGENT_ENV_VALUE_MAX) }))).toBeNull();
     expect(reasonOf(withEnv({ CCC_A: "x".repeat(AGENT_ENV_VALUE_MAX + 1) }))).toBe("env-value");
-    for (const value of ["a\nb", "a\u0000b", "\u001b[31m", "a\u0085b", "a b", "a\tb", 5, null]) {
+    for (const value of [
+      "a\nb",
+      "a\u0000b",
+      "\u001b[31m",
+      "a\u0085b",
+      "a\u2028b",
+      "a\tb",
+      5,
+      null,
+    ]) {
       expect(reasonOf(withEnv({ CCC_A: value })), JSON.stringify(value)).toBe("env-value");
     }
   });
@@ -494,6 +503,7 @@ describe("validateAgentLaunchChecked (the injected filesystem checks)", () => {
     );
     expect(verdict).toEqual({ ok: false, reason: "banned-flag" });
     expect(isExecutable).not.toHaveBeenCalled();
+    expect(realDir).not.toHaveBeenCalled();
   });
 
   it("refuses an argv[0] that is not an executable file, asking the check about argv[0] only", async () => {
