@@ -307,6 +307,7 @@ export function createDetector(deps: DetectorDeps): Detector {
       const apps = await detectApps();
       const claudeExecutables = await detectClaude();
       const git = await findGit();
+      const codex = deps.codex === undefined ? null : await deps.codex.detectCodex();
       return {
         detectedAt: now().toISOString(),
         apps,
@@ -318,6 +319,15 @@ export function createDetector(deps: DetectorDeps): Detector {
           verified: false,
         })),
         git: git.kind,
+        // Plan 05.1-21: absent entirely when Codex detection is not wired, so the
+        // response is exactly what Phase 4 produced.
+        ...(codex === null
+          ? {}
+          : {
+              codex: { executables: [...codex.executables], doctor: codex.doctor },
+              bridge: codex.bridge,
+              suggestedTerminal: codex.suggestedTerminal,
+            }),
       };
     },
     async findBundle(bundleId) {
@@ -333,8 +343,8 @@ export function createDetector(deps: DetectorDeps): Detector {
         null
       );
     },
-    codexCandidatePath() {
-      return null;
+    codexCandidatePath(candidateId) {
+      return deps.codex?.candidatePath(candidateId) ?? null;
     },
   };
 }
