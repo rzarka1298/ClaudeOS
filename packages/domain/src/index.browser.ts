@@ -37,6 +37,7 @@ export * from "./classification.js";
 export * from "./claude-hook-events.js";
 export * from "./claude-integration.js";
 export * from "./claude-statusline.js";
+export * from "./codex-api.js";
 export * from "./codex-integration.js";
 export * from "./codex-sessions.js";
 export * from "./codex-usage.js";
