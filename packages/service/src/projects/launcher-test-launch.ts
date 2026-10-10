@@ -16,6 +16,7 @@ import {
   validateCommandTemplate,
 } from "@ccc/launchers";
 import { getLauncherConfig, type OperationalStore } from "@ccc/operational-store";
+import { createAntigravityDeps } from "./antigravity-terminal.js";
 import { VAULT_ROOT_META_KEY } from "./approved-roots.js";
 import { LAUNCH_CAP_MS } from "./launch-service.js";
 import type { Spawner } from "./spawner.js";
@@ -133,6 +134,7 @@ async function prepareClaudeCode(deps: TestLaunchDeps): Promise<PreparedTest> {
         scriptDir: deps.scriptDir,
         capMs,
         isExecutable,
+        antigravity: createAntigravityDeps({ store: deps.store, spawner: deps.spawner }),
       });
       if (terminal === null) return failure("launcher-not-configured");
       return terminal.launch({ cwd, argv: [config.executablePath, TEST_VERSION_FLAG], signal });

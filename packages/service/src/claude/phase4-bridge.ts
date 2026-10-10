@@ -14,6 +14,7 @@ import {
   WORKTREE_NAME_PATTERN,
 } from "@ccc/domain";
 import { getLauncherConfig, type OperationalStore } from "@ccc/operational-store";
+import { createAntigravityDeps } from "../projects/antigravity-terminal.js";
 import type { Spawner } from "../projects/spawner.js";
 import { isExecutableFile, selectTerminalLauncher } from "../projects/terminal-launchers.js";
 import type { ServiceLaunchGuard, WorktreeEntry } from "./launch-guard.js";
@@ -112,6 +113,7 @@ function createTerminalLauncher(deps: Phase4BridgeDeps): SessionTerminalLauncher
         scriptDir: deps.scriptDir,
         capMs,
         isExecutable: isExecutableFile,
+        antigravity: createAntigravityDeps({ store: deps.store, spawner: deps.spawner }),
       });
       if (adapter === null) return { ok: false, reason: "launcher-not-configured" };
       // The adapter honours this the way Phase 4's own cap does: it will not

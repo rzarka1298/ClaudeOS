@@ -31,6 +31,7 @@ import {
   type OperationalStore,
   touchLastOpened,
 } from "@ccc/operational-store";
+import { createAntigravityDeps } from "./antigravity-terminal.js";
 import type { Spawner } from "./spawner.js";
 import { isExecutableFile, selectTerminalLauncher } from "./terminal-launchers.js";
 
@@ -211,6 +212,7 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
       scriptDir: deps.scriptDir,
       capMs,
       isExecutable: isExecutableFile,
+      antigravity: createAntigravityDeps({ store: deps.store, spawner: deps.spawner }),
     });
   };
 
