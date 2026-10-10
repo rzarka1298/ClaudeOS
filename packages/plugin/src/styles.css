@@ -637,6 +637,12 @@
   margin-top: var(--ccc-space-md);
 }
 
+/* The Codex card is a glass card, so its disconnected explainer takes the same
+ * gap above the first section heading the hero rule above gives its rows. */
+.ccc-card[data-presentation="disconnected"] .ccc-state-body + .ccc-codex-sections {
+  margin-top: var(--ccc-space-md);
+}
+
 .ccc-error-glyph {
   margin-right: var(--ccc-space-xs);
   color: var(--ccc-danger);
@@ -975,6 +981,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--ccc-space-xs);
+}
+
+/* Stacked windows (the Codex plan-usage section) are separated by the
+ * "row → row" step rather than butting label against the previous legend. */
+.ccc-usage-row + .ccc-usage-row {
+  margin-block-start: var(--ccc-space-md);
 }
 
 /* The usage bar's height is `--ccc-space-sm` (0.5rem) per the ADR-0023
@@ -2985,6 +2997,16 @@ fieldset.ccc-template-rows > legend {
   gap: var(--ccc-space-xs);
   color: var(--ccc-ink-muted);
   font-size: var(--ccc-text-label);
+}
+
+/* The container (a div that holds the state line and the legend) spreads them:
+ * the state line stays left-aligned, the legend sits right, and at narrow
+ * widths the legend wraps onto its own line. The nested legend paragraph keeps
+ * the base flex-end rule above. */
+.ccc-command-center div.ccc-reserve-legend {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--ccc-space-xs) var(--ccc-space-md);
 }
 
 .ccc-command-center .ccc-codex-current {

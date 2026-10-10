@@ -151,3 +151,18 @@ describe("Phase 05.1 Codex CSS contract", () => {
     expect(bodyFor(`${ROOT} .ccc-launch-status-pair`)).toMatch(/gap:\s*var\(--ccc-space-sm\)/);
   });
 });
+
+describe("wave 4 spacing and legend alignment", () => {
+  it("spreads the state line and legend, separates plan-usage windows and the disconnected explainer", () => {
+    expect(bodyFor(`${ROOT} div.ccc-reserve-legend`)).toMatch(/justify-content:\s*space-between/);
+    expect(bodyFor(`${ROOT} div.ccc-reserve-legend`)).toMatch(/flex-wrap:\s*wrap/);
+    // The window and explainer spacing live outside the Phase 05.1 section,
+    // beside the rules they extend, because the section's class set is pinned.
+    expect(SOURCE).toMatch(
+      /\.ccc-usage-row \+ \.ccc-usage-row \{\s*margin-block-start: var\(--ccc-space-md\);/,
+    );
+    expect(SOURCE).toMatch(
+      /\.ccc-card\[data-presentation="disconnected"\] \.ccc-state-body \+ \.ccc-codex-sections \{\s*margin-top: var\(--ccc-space-md\);/,
+    );
+  });
+});
