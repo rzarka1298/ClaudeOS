@@ -5,6 +5,7 @@ import {
   type LaunchGuardDecision,
   type LaunchPairRequest,
   type LaunchPairResponse,
+  type LaunchPairResult,
   type LaunchRequest,
   type LaunchResponse,
   type LaunchResult,
@@ -12,6 +13,7 @@ import {
   type ProjectId,
   type ProjectLookup,
   parseStoredLauncherConfig,
+  type ResolvedProject,
   type StoredClaudeCodeConfig,
   type TerminalLauncher,
 } from "@ccc/domain";
@@ -34,6 +36,7 @@ import {
   touchLastOpened,
 } from "@ccc/operational-store";
 import { createAntigravityDeps } from "./antigravity-terminal.js";
+import { prepareCodexHalf } from "./pair-codex-half.js";
 import type { Spawner } from "./spawner.js";
 import { isExecutableFile, selectTerminalLauncher } from "./terminal-launchers.js";
 
@@ -158,6 +161,9 @@ type Prepared =
     }
   | { readonly kind: "refuse"; readonly error: LaunchErrorKind };
 
+/** The hand-off of a delegated launch (the Claude Code terminal). */
+type ClaudeDelegate = Extract<Prepared, { kind: "delegate" }>;
+
 /** Tracks one launch so a spawn that finishes after the cap cannot act as a success. */
 interface Attempt {
   cancelled: boolean;
@@ -173,7 +179,7 @@ function failure(error: LaunchErrorKind): LaunchResult {
   return { ok: false, error };
 }
 
-function refuse(error: LaunchErrorKind): Prepared {
+function refuse(error: LaunchErrorKind): Extract<Prepared, { kind: "refuse" }> {
   return { kind: "refuse", error };
 }
 
@@ -220,14 +226,21 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     });
   };
 
-  const prepareClaudeCode = async (projectId: ProjectId): Promise<Prepared> => {
+  /** The saved Claude Code configuration, or `null` when unset or no longer matching the schema. */
+  const claudeConfig = (): StoredClaudeCodeConfig | null => {
     const record = getLauncherConfig(deps.store.db, "claude-code");
-    const config = record === null ? null : parseStoredLauncherConfig("claude-code", record.config);
-    if (config === null) return refuse("launcher-not-configured");
-    const terminalLauncher = terminalFor(config);
-    if (terminalLauncher === null) return refuse("launcher-not-configured");
-    const project = await deps.lookup.resolve(projectId);
-    if ("error" in project) return refuse(project.error);
+    return record === null ? null : parseStoredLauncherConfig("claude-code", record.config);
+  };
+
+  /**
+   * Validates the stored template for `project` and builds the hand-off. Shared by the single
+   * Claude Code launch and the Claude half of the pair, so both run the very same checks.
+   */
+  const claudeDelegate = async (
+    config: StoredClaudeCodeConfig,
+    terminalLauncher: TerminalLauncher,
+    project: ResolvedProject,
+  ): Promise<ClaudeDelegate | Extract<Prepared, { kind: "refuse" }>> => {
     const template = [config.executablePath, ...config.args];
     // The validator's executable check is synchronous; the one path it asks
     // about (`argv[0]`) is checked asynchronously here first.
@@ -257,6 +270,16 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
           signal,
         }),
     };
+  };
+
+  const prepareClaudeCode = async (projectId: ProjectId): Promise<Prepared> => {
+    const config = claudeConfig();
+    if (config === null) return refuse("launcher-not-configured");
+    const terminalLauncher = terminalFor(config);
+    if (terminalLauncher === null) return refuse("launcher-not-configured");
+    const project = await deps.lookup.resolve(projectId);
+    if ("error" in project) return refuse(project.error);
+    return claudeDelegate(config, terminalLauncher, project);
   };
 
   const prepare = async (request: LaunchRequest): Promise<Prepared> => {
@@ -407,9 +430,219 @@ export function createLaunchService(deps: LaunchServiceDeps): LaunchService {
     return result;
   };
 
+  // -------------------------------------------------------------------------
+  // The pair (plan 05.1-20, D-10, OQ-6): Claude Code and Codex together.
+
+  /** What each half has reported so far; the cap reads these, so a finished half keeps its result. */
+  interface PairSlots {
+    claude?: LaunchPairResult["claude"];
+    codex?: LaunchPairResult["codex"];
+  }
+
+  const pairResultOf = (result: LaunchResult): LaunchPairResult["claude"] =>
+    result.ok ? { status: "opened" } : { status: "error", error: result.error };
+
+  /** The envelope: each half's own result, an unfinished half reads as `fallback`. */
+  const pairEnvelope = (slots: PairSlots, fallback: LaunchErrorKind): LaunchPairResult => ({
+    claude: slots.claude ?? { status: "error", error: fallback },
+    codex: slots.codex ?? { status: "error", error: fallback },
+  });
+
+  /** Starts the Claude half's hand-off and reports how it ended, as a single launch does. */
+  const runClaudeHalf = async (
+    delegate: ClaudeDelegate,
+    decision: Extract<LaunchGuardDecision, { ok: true }>,
+    state: Attempt,
+    slots: PairSlots,
+    onOpened: () => void,
+  ): Promise<void> => {
+    let delegated: LaunchResult;
+    try {
+      delegated = await delegate.run(state.signal, decision);
+    } catch {
+      // A throw inside this half is this half's spawn-failed, nothing else's.
+      await settle(decision, "failed");
+      if (!state.cancelled) slots.claude = { status: "error", error: "spawn-failed" };
+      return;
+    }
+    if (state.cancelled) {
+      // The terminal may still open late: the Run stays stale, never failed.
+      await settle(decision, "timeout");
+      return;
+    }
+    slots.claude = pairResultOf(delegated);
+    if (!delegated.ok) {
+      // `spawn-failed` and `timeout` cannot say whether the terminal opened (PR-17).
+      const uncertain = delegated.error === "timeout" || delegated.error === "spawn-failed";
+      await settle(decision, uncertain ? "timeout" : "failed");
+      return;
+    }
+    await settle(decision, "started");
+    onOpened();
+  };
+
+  /** Starts the Codex half's hand-off. It settles nothing: Codex has no Run (D-15). */
+  const runCodexHalf = async (
+    start: () => Promise<LaunchResult>,
+    state: Attempt,
+    slots: PairSlots,
+    onOpened: () => void,
+  ): Promise<void> => {
+    let result: LaunchResult;
+    try {
+      result = await start();
+    } catch {
+      result = failure("spawn-failed");
+    }
+    if (state.cancelled) return;
+    slots.codex = pairResultOf(result);
+    if (result.ok) onOpened();
+  };
+
+  /**
+   * Resolves the project, prepares both halves, asks the guard ONCE (Claude only) and starts the
+   * halves together, Claude's terminal call first. Returns the guard's conflict answer, or
+   * `undefined` when the per-half `slots` hold the outcome.
+   */
+  const attemptPair = async (
+    request: LaunchPairRequest,
+    state: Attempt,
+    slots: PairSlots,
+  ): Promise<LaunchPairResponse | undefined> => {
+    const project = await deps.lookup.resolve(request.projectId);
+    if (state.cancelled) return undefined;
+    if ("error" in project) {
+      slots.claude = { status: "error", error: project.error };
+      slots.codex = { status: "error", error: project.error };
+      return undefined;
+    }
+
+    // The terminal both halves use is the one the claude-code row chose.
+    const config = claudeConfig();
+    const terminal = config === null ? null : terminalFor(config);
+
+    const codex = await prepareCodexHalf({ store: deps.store }, project);
+    if (state.cancelled) return undefined;
+    if (codex.kind === "setup") slots.codex = { status: "setup" };
+    else if (terminal === null) {
+      slots.codex = { status: "error", error: "launcher-not-configured" };
+    }
+
+    const claude =
+      config === null || terminal === null
+        ? refuse("launcher-not-configured")
+        : await claudeDelegate(config, terminal, project);
+    if (state.cancelled) return undefined;
+
+    let decision: Extract<LaunchGuardDecision, { ok: true }> | null = null;
+    if (claude.kind === "delegate") {
+      // The ONE guard decision of the pair, for the Claude half only (OQ-6). A second call would
+      // pre-register a second Run (research Pitfall 2).
+      const verdict = await guard.check({
+        projectId: request.projectId,
+        action: "claude-code",
+        ...(request.choice === undefined ? {} : { choice: request.choice }),
+      });
+      if (state.cancelled) {
+        // Nothing was opened, so a Run the guard registered is dead, not stale.
+        if (verdict.ok) await settle(verdict, "failed");
+        return undefined;
+      }
+      if (verdict.ok) decision = verdict;
+      // A conflict is an answer: nothing is launched, not even Codex (D-29).
+      else if ("conflict" in verdict) return { ok: false, conflict: verdict.conflict };
+      else slots.claude = { status: "error", error: verdict.error };
+    } else {
+      slots.claude = { status: "error", error: claude.error };
+    }
+
+    let bookkept = false;
+    const onOpened = (): void => {
+      if (bookkept) return;
+      bookkept = true;
+      try {
+        afterSuccess(request.projectId);
+      } catch {
+        // The terminal opened; a bookkeeping failure must not turn that into an error.
+      }
+    };
+
+    // Both calls happen in this tick, Claude's first, so its bridge run id is minted first.
+    const halves: Promise<void>[] = [];
+    if (claude.kind === "delegate" && decision !== null) {
+      halves.push(runClaudeHalf(claude, decision, state, slots, onOpened));
+    }
+    if (codex.kind === "launch" && terminal !== null) {
+      halves.push(runCodexHalf(() => codex.run(terminal, state.signal), state, slots, onOpened));
+    }
+    await Promise.all(halves);
+    return undefined;
+  };
+
+  /** One pair launch under ONE cap; a cap that fires first returns the halves that finished. */
+  const runPair = async (request: LaunchPairRequest): Promise<LaunchPairResponse> => {
+    const controller = new AbortController();
+    const state: Attempt = { cancelled: false, signal: controller.signal };
+    const slots: PairSlots = {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cap = new Promise<LaunchPairResponse>((resolve) => {
+      timer = setTimeout(() => {
+        state.cancelled = true;
+        // Snapshot first: only halves that already finished keep their own result.
+        resolve(pairEnvelope(slots, "timeout"));
+        controller.abort();
+      }, capMs);
+    });
+    let result: LaunchPairResponse;
+    try {
+      result = await Promise.race([
+        attemptPair(request, state, slots).then(
+          (answer) => answer ?? pairEnvelope(slots, "timeout"),
+        ),
+        cap,
+      ]);
+    } catch {
+      // Anything unexpected: only kinds survive, and a half that already reported keeps its result.
+      result = pairEnvelope(slots, "spawn-failed");
+    } finally {
+      clearTimeout(timer);
+    }
+    logPair(request.projectId, result);
+    return result;
+  };
+
+  /** Log lines carry a kind and the project id, never a path, argv or environment (D-46). */
+  const logPair = (projectId: ProjectId, result: LaunchPairResponse): void => {
+    if ("conflict" in result) {
+      deps.logger.info(
+        { projectId, action: "claude-codex-pair", kind: "conflict" },
+        "pair conflict",
+      );
+      return;
+    }
+    const lines = [["claude-code", result.claude] as const, ["codex", result.codex] as const];
+    for (const [action, half] of lines) {
+      const kind = half.status === "error" ? half.error : half.status === "opened" ? "ok" : "setup";
+      const fields: LaunchLogFields = { projectId, action, kind };
+      if (half.status === "error") deps.logger.warn(fields, "pair launch failed");
+      else deps.logger.info(fields, "pair launch");
+    }
+  };
+
+  /** Pairs in flight: a distinct key family, so a pair never joins a single launch. */
+  const pairInFlight = new Map<string, Promise<LaunchPairResponse>>();
+
   return {
-    launchPair() {
-      return Promise.reject(new Error("not implemented"));
+    launchPair(request) {
+      // A retry with a different choice is a different launch, not a join.
+      const key = `pair\u0000${request.projectId}\u0000${JSON.stringify(request.choice ?? null)}`;
+      const joined = pairInFlight.get(key);
+      if (joined !== undefined) return joined;
+      const pending = runPair(request).finally(() => {
+        pairInFlight.delete(key);
+      });
+      pairInFlight.set(key, pending);
+      return pending;
     },
     launch(request) {
       // A retry with a different choice is a different launch, not a join.
