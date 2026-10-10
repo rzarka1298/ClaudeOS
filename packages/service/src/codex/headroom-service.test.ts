@@ -275,18 +275,20 @@ describe("publishing (D-24, D-25)", () => {
     const h = harness();
     const fixed = available(41, T0);
     h.reads.next = () => fixed;
+    h.service.start();
     await h.service.getUsage();
     expect(h.publish).toHaveBeenCalledTimes(1);
     const [type, payload] = h.publish.mock.calls[0] ?? [];
     expect(type).toBe("codex.usage.updated");
     expect(CodexUsageUpdatedPayloadSchema.safeParse(payload).success).toBe(true);
-    h.clock.now = T0 + 121 * SECOND;
-    h.reads.next = () => fixed;
-    await h.service.getUsage();
-    expect(h.reads.count).toBe(2);
+    // An identical read at the same instant changes nothing a viewer sees.
+    h.ticks[0]?.();
+    await vi.waitFor(() => expect(h.reads.count).toBe(2));
+    await Promise.resolve();
+    expect(h.publish).toHaveBeenCalledTimes(1);
+    // A different percent does.
     h.reads.next = () => available(55, h.clock.now);
-    h.clock.now = T0 + 250 * SECOND;
-    await h.service.getUsage();
-    expect(h.publish.mock.calls.length).toBeGreaterThanOrEqual(2);
+    h.ticks[0]?.();
+    await vi.waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
   });
 });
