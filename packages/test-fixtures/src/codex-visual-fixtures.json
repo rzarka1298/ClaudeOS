@@ -1,0 +1,260 @@
+{
+  "now": "2026-09-22T12:00:00.000Z",
+  "cases": {
+    "ready-mixed": {
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "0a1b2c3d-0001",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "headless",
+              "state": "running",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T11:12:00.000Z",
+              "lastActivityAt": "2026-09-22T11:59:00.000Z",
+              "resumesAfter": null,
+              "title": "Refactor the parser",
+              "hasTranscript": true,
+              "liveLogRunId": "run-alpha-1"
+            },
+            {
+              "threadId": "0a1b2c3d-0002",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "running",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T11:40:00.000Z",
+              "lastActivityAt": "2026-09-22T11:58:00.000Z",
+              "resumesAfter": null,
+              "title": "Draft the release notes",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c3d-0003",
+              "projectId": "project-charlie",
+              "projectName": "Charlie",
+              "origin": "interactive",
+              "state": "limit-paused",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T10:05:00.000Z",
+              "lastActivityAt": "2026-09-22T11:20:00.000Z",
+              "resumesAfter": "2026-09-22T16:40:00.000Z",
+              "title": "Migrate the schema",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c3d-0004",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "interactive",
+              "state": "stale",
+              "model": "example-model-mini",
+              "effort": "low",
+              "startedAt": "2026-09-22T08:30:00.000Z",
+              "lastActivityAt": "2026-09-22T09:40:00.000Z",
+              "resumesAfter": null,
+              "title": "Explore the cache layer",
+              "hasTranscript": false,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c3d-0005",
+              "projectId": "project-delta",
+              "projectName": "Delta",
+              "origin": "interactive",
+              "state": "failed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T10:30:00.000Z",
+              "lastActivityAt": "2026-09-22T10:52:00.000Z",
+              "resumesAfter": null,
+              "title": "Fix the flaky test",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c3d-0006",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "completed",
+              "model": "example-model-mini",
+              "effort": "low",
+              "startedAt": "2026-09-22T09:00:00.000Z",
+              "lastActivityAt": "2026-09-22T09:35:00.000Z",
+              "resumesAfter": null,
+              "title": "Write the changelog",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 0,
+          "analysisOn": true,
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z",
+              "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "app-server",
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T12:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "allow",
+            "reason": null,
+            "worstWindow": {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z"
+            },
+            "source": "app-server",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    }
+  }
+}

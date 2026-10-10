@@ -87,7 +87,7 @@ function walk(value: unknown, visit: (key: string | null, value: unknown) => voi
   }
 }
 
-function nullable<T>(parse: (value: unknown) => { success: boolean }, value: unknown): void {
+function nullable(parse: (value: unknown) => { success: boolean }, value: unknown): void {
   if (value === null) return;
   expect(parse(value).success).toBe(true);
 }

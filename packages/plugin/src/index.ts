@@ -4,6 +4,8 @@
 // other workspace package does; it re-exports the side-effect-free pieces.
 
 export type { ApprovalSummary, ApprovalsSnapshot } from "@ccc/domain/approval.js";
+// Phase 05.1 (plan 27) harness contract: the pair action id the Codex visual cells key their status by.
+export { LAUNCH_PAIR_ACTION } from "@ccc/domain/launch.js";
 export type { SessionView } from "@ccc/domain/session.js";
 export type { UsageSummary } from "@ccc/domain/usage.js";
 export type { ApprovalDetailResponse, ApprovalsApi } from "./approvals/api.js";
@@ -27,6 +29,14 @@ export { connectionChangedAt, connectionState, lastEvent } from "./connection-st
 export { serializeTaskFrontmatter } from "./frontmatter-serializer.js";
 export type { MotionMode } from "./motion.js";
 export { motionMode } from "./motion.js";
+// Phase 05.1 (plan 27) harness contract: the one launch status store the pair-launch cells pre-load.
+export type {
+  LaunchStatus,
+  PairClaudeLineStatus,
+  PairLaunchStatus,
+  PairLineStatus,
+} from "./projects/launch-status.js";
+export { launchStatus, launchStatusKey, resetLaunchStatus } from "./projects/launch-status.js";
 export { projectShortcutsStateFor } from "./projects/projects-state.js";
 export { attachEventClient } from "./service-connection.js";
 export type { TaskActionResult, TaskSaveInput } from "./tasks/actions.js";
@@ -53,6 +63,8 @@ export { TasksDestination } from "./view/tasks.js";
 export { createTasksViewState } from "./view/tasks-view-state.js";
 // ===== Phase 05.1: Codex visual harness contract =====
 export type { CodexCardData } from "./widgets/codex.js";
+export type { CodexParts } from "./widgets/codex-signals.js";
+export { codexStateFor } from "./widgets/codex-signals.js";
 export type {
   DataDependencyKey,
   QuickActionDescriptor,
