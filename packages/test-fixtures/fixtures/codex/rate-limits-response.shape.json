@@ -1,0 +1,54 @@
+{
+  "provenance": {
+    "handAuthored": true,
+    "fetchedFromNetwork": false,
+    "researchSection": "05.1-RESEARCH.md, section R2, paragraph Response (schema GetAccountRateLimitsResponse.json) and the Request paragraph",
+    "upstreamSource": "openai/codex, codex-rs app-server-protocol schema files, as transcribed in RESEARCH R2",
+    "upstreamRelease": "R2 does not pin a release for the schema read; the installed Codex in its local probe table is 0.159.2 and the wrapper's live read worked against it",
+    "note": "usedPercent is an integer upstream; the product also tolerates a float because rollouts carry one, so this snapshot checks 'number'. Refresh only deliberately."
+  },
+  "response": {
+    "required": [
+      "rateLimits"
+    ],
+    "members": {
+      "rateLimits": "snapshot",
+      "accountId": "string|null",
+      "ordinaryUsageAllowed": "boolean|null",
+      "rateLimitResetCredits": "object|null",
+      "rateLimitsByLimitId": "snapshotMap|null"
+    }
+  },
+  "snapshot": {
+    "required": [],
+    "members": {
+      "credits": "object|null",
+      "individualLimit": "number|null",
+      "limitId": "string|null",
+      "limitName": "string|null",
+      "normalModelSlug": "string|null",
+      "planType": "string|null",
+      "primary": "window|null",
+      "secondary": "window|null",
+      "rateLimitReachedType": "reachedType|null",
+      "spendControlReached": "boolean|null"
+    }
+  },
+  "window": {
+    "required": [
+      "usedPercent"
+    ],
+    "members": {
+      "usedPercent": "number",
+      "resetsAt": "integer|null",
+      "windowDurationMins": "integer|null"
+    }
+  },
+  "reachedTypes": [
+    "rate_limit_reached",
+    "workspace_owner_credits_depleted",
+    "workspace_member_credits_depleted",
+    "workspace_owner_usage_limit_reached",
+    "workspace_member_usage_limit_reached"
+  ]
+}

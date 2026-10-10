@@ -1,0 +1,199 @@
+{
+  "description": "Shared guard fixtures (plan 05.1-07). `shared` replies are fed through the real wrapper (usage and guard, fake codex on PATH) and through the TypeScript functions; every field must agree. `tsOnly` cases are asserted against the TypeScript only, each with the reason the TypeScript differs. Synthetic data only: the account id is an obviously fake marker.",
+  "decoyAccountId": "FAKE-ACCOUNT-MARKER-1",
+  "epochSecondsResetsAt": 1790000000,
+  "shared": [
+    {
+      "id": "weekly-under-line",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 41,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "a single weekly window under the reserve line"
+    },
+    {
+      "id": "two-windows-worst-in-by-id",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 20,
+            "windowDurationMins": 300,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": {
+          "codex_weekly": {
+            "limitId": "codex_weekly",
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 83,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790000000
+            },
+            "secondary": null
+          }
+        }
+      },
+      "note": "the worst window sits in rateLimitsByLimitId, not in rateLimits"
+    },
+    {
+      "id": "exactly-80",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 80,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "exactly at the reserve line refuses"
+    },
+    {
+      "id": "allowed-false",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": false,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 5,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null
+        },
+        "rateLimitsByLimitId": null
+      },
+      "note": "ordinary usage not allowed"
+    },
+    {
+      "id": "plan-and-decoy-present",
+      "reply": {
+        "accountId": "FAKE-ACCOUNT-MARKER-1",
+        "ordinaryUsageAllowed": true,
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 12,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790000000
+          },
+          "secondary": null,
+          "rateLimitReachedType": null,
+          "credits": {
+            "balance": "7.00"
+          }
+        },
+        "rateLimitsByLimitId": null,
+        "rateLimitResetCredits": {
+          "available": 2,
+          "detail": "FAKE-ACCOUNT-MARKER-1"
+        }
+      },
+      "note": "plan type, decoy account id and reset-credit data are all present and must all vanish"
+    }
+  ],
+  "tsOnly": [
+    {
+      "id": "negative-percent-sole-window",
+      "input": {
+        "kind": "reply",
+        "payload": {
+          "accountId": "FAKE-ACCOUNT-MARKER-1",
+          "ordinaryUsageAllowed": true,
+          "rateLimits": {
+            "limitId": "codex",
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": -5,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790000000
+            },
+            "secondary": null,
+            "rateLimitReachedType": null
+          },
+          "rateLimitsByLimitId": null
+        }
+      },
+      "expect": {
+        "allowed": false,
+        "exitCode": 12,
+        "status": "unavailable",
+        "reason": "usage-unavailable",
+        "usedPercent": null
+      },
+      "wrapperExit": 0,
+      "why": "the wrapper accepts a negative percent as a number and reports ok; the TS refuses it as a changed shape because the domain percent is 0 to 100"
+    },
+    {
+      "id": "limits-by-id-is-an-array",
+      "input": {
+        "kind": "reply",
+        "payload": {
+          "accountId": "FAKE-ACCOUNT-MARKER-1",
+          "ordinaryUsageAllowed": true,
+          "rateLimits": {
+            "limitId": "codex",
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 10,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790000000
+            },
+            "secondary": null,
+            "rateLimitReachedType": null
+          },
+          "rateLimitsByLimitId": [
+            {
+              "limitId": "x",
+              "primary": {
+                "usedPercent": 95,
+                "windowDurationMins": 300,
+                "resetsAt": 1790000000
+              },
+              "secondary": null
+            }
+          ]
+        }
+      },
+      "expect": {
+        "allowed": false,
+        "exitCode": 12,
+        "status": "unavailable",
+        "reason": "usage-unavailable",
+        "usedPercent": null
+      },
+      "wrapperExit": 10,
+      "why": "the wrapper reads an array's elements as limit snapshots; the TS refuses a limits-by-id member that is not an object instead of guessing"
+    }
+  ]
+}
