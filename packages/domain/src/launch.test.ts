@@ -4,18 +4,27 @@ import {
   DetectionResponseSchema,
   LAUNCH_ACTIONS,
   LAUNCH_ERROR_KINDS,
+  LAUNCH_PAIR_ACTION,
+  LAUNCH_PAIR_PATH,
   LAUNCH_PATH,
   LAUNCHER_IDS,
   LAUNCHER_TEST_AUTOMATION_CAP_MS,
   LauncherConfigRefusalBodySchema,
+  LauncherConfigViewSchema,
+  LaunchPairRequestSchema,
+  LaunchPairResponseSchema,
   LaunchRequestSchema,
   type LaunchResult,
   LaunchResultSchema,
   launchErrorKindSchema,
+  PairAgentResultSchema,
   parseStoredLauncherConfig,
+  REFUSED_TEMPLATES,
   SaveLauncherConfigRequestSchema,
+  StoredCodexConfigSchema,
   SystemSettingsPaneSchema,
   TEMPLATE_REFUSAL_REASONS,
+  TEST_LAUNCHER_IDS,
   type TerminalLauncher,
   type TerminalLaunchInput,
   TestLauncherRequestSchema,
@@ -23,6 +32,7 @@ import {
 } from "./launch.js";
 
 const PROJECT_ID = "0000000000123456789abcdef";
+const RUN_ID = "0mfk1a2b3c4d5e6f7a8b9c0d1";
 const LINE_FEED = String.fromCharCode(10);
 const CARRIAGE_RETURN = String.fromCharCode(13);
 
@@ -398,6 +408,8 @@ describe("launcher-config refusal body (PR-13)", () => {
       expect(TestLauncherRequestSchema.safeParse({ launcherId }).success).toBe(true);
     }
     expect(TestLauncherRequestSchema.safeParse({ launcherId: "terminal" }).success).toBe(false);
+    expect(TestLauncherRequestSchema.safeParse({ launcherId: "codex" }).success).toBe(true);
+    expect(TEST_LAUNCHER_IDS).toEqual([...LAUNCH_ACTIONS, "codex"]);
     expect(
       TestLauncherRequestSchema.safeParse({ launcherId: "finder", path: "/Applications" }).success,
     ).toBe(false);
@@ -463,5 +475,219 @@ describe("TerminalLauncher port (D-49, PR-07)", () => {
   it("a ProjectId-typed lookup key compiles against the port shapes", () => {
     const id = PROJECT_ID as ProjectId;
     expect(id).toBe(PROJECT_ID);
+  });
+});
+
+const CODEX_PATH = "/Users/USERNAME/.local/bin/codex";
+
+describe("Codex launcher config (D-11)", () => {
+  it("StoredCodexConfigSchema accepts an absolute executable and up to 31 arguments", () => {
+    expect(
+      StoredCodexConfigSchema.safeParse({ executablePath: CODEX_PATH, args: [] }).success,
+    ).toBe(true);
+    expect(
+      StoredCodexConfigSchema.safeParse({
+        executablePath: CODEX_PATH,
+        args: Array.from({ length: 31 }, () => "a"),
+      }).success,
+    ).toBe(true);
+  });
+
+  it("refuses a relative path, a 32nd argument, an empty argument and any extra key including terminal", () => {
+    const refuses = (value: unknown): boolean => !StoredCodexConfigSchema.safeParse(value).success;
+    expect(refuses({ executablePath: "bin/codex", args: [] })).toBe(true);
+    expect(
+      refuses({ executablePath: CODEX_PATH, args: Array.from({ length: 32 }, () => "a") }),
+    ).toBe(true);
+    expect(refuses({ executablePath: CODEX_PATH, args: [""] })).toBe(true);
+    expect(
+      refuses({ executablePath: CODEX_PATH, args: [], terminal: { kind: "terminal-app" } }),
+    ).toBe(true);
+    expect(refuses({ executablePath: CODEX_PATH, args: [], extra: 1 })).toBe(true);
+  });
+
+  it("parseStoredLauncherConfig('codex') returns the object or null", () => {
+    const stored = { executablePath: CODEX_PATH, args: ["{projectPath}"] };
+    expect(parseStoredLauncherConfig("codex", stored)).toEqual(stored);
+    expect(parseStoredLauncherConfig("codex", { executablePath: "codex", args: [] })).toBeNull();
+    expect(parseStoredLauncherConfig("codex", { bundleId: "com.openai.codex" })).toBeNull();
+  });
+
+  it("the save request has a codex branch that refuses a terminal key", () => {
+    const base = { launcherId: "codex", executable: { kind: "path", path: CODEX_PATH }, args: [] };
+    expect(SaveLauncherConfigRequestSchema.safeParse(base).success).toBe(true);
+    expect(
+      SaveLauncherConfigRequestSchema.safeParse({
+        launcherId: "codex",
+        executable: { kind: "candidate", candidateId: "c1" },
+        args: ["--flag"],
+      }).success,
+    ).toBe(true);
+    expect(
+      SaveLauncherConfigRequestSchema.safeParse({ ...base, terminal: { kind: "terminal-app" } })
+        .success,
+    ).toBe(false);
+  });
+
+  it("REFUSED_TEMPLATES contains codex and the refusal body accepts it", () => {
+    expect(REFUSED_TEMPLATES).toContain("codex");
+    expect(
+      LauncherConfigRefusalBodySchema.safeParse({
+        error: "launcher config refused",
+        reason: "forbidden-flag",
+        index: 1,
+        template: "codex",
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("pair launch contract (D-10, CODEX-02)", () => {
+  it("has its own path and leaves LAUNCH_ACTIONS at five entries", () => {
+    expect(LAUNCH_PAIR_PATH).toBe("/api/v1/projects/launch-pair");
+    expect(LAUNCH_PAIR_ACTION).toBe("claude-codex-pair");
+    expect(LAUNCH_ACTIONS).toHaveLength(5);
+    expect(
+      LaunchRequestSchema.safeParse({ action: "claude-codex-pair", projectId: PROJECT_ID }).success,
+    ).toBe(false);
+  });
+
+  it("LaunchPairRequestSchema accepts only projectId and an optional guard choice", () => {
+    expect(LaunchPairRequestSchema.safeParse({ projectId: PROJECT_ID }).success).toBe(true);
+    expect(
+      LaunchPairRequestSchema.safeParse({ projectId: PROJECT_ID, choice: { kind: "plan" } })
+        .success,
+    ).toBe(true);
+    for (const key of ["path", "argv", "executable", "agent", "shell"]) {
+      expect(
+        LaunchPairRequestSchema.safeParse({ projectId: PROJECT_ID, [key]: "x" }).success,
+        key,
+      ).toBe(false);
+    }
+    expect(LaunchPairRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("PairAgentResultSchema accepts opened, error with one kind, and setup", () => {
+    expect(PairAgentResultSchema.safeParse({ status: "opened" }).success).toBe(true);
+    expect(PairAgentResultSchema.safeParse({ status: "setup" }).success).toBe(true);
+    for (const error of LAUNCH_ERROR_KINDS) {
+      expect(PairAgentResultSchema.safeParse({ status: "error", error }).success, error).toBe(true);
+    }
+    expect(PairAgentResultSchema.safeParse({ status: "error" }).success).toBe(false);
+    expect(PairAgentResultSchema.safeParse({ status: "error", error: "nope" }).success).toBe(false);
+    expect(PairAgentResultSchema.safeParse({ status: "opened", error: "timeout" }).success).toBe(
+      false,
+    );
+  });
+
+  it("LaunchPairResponseSchema accepts the envelope and the guard conflict, nothing else", () => {
+    const opened = { status: "opened" };
+    expect(LaunchPairResponseSchema.safeParse({ claude: opened, codex: opened }).success).toBe(
+      true,
+    );
+    expect(
+      LaunchPairResponseSchema.safeParse({ claude: opened, codex: { status: "setup" } }).success,
+    ).toBe(true);
+    expect(
+      LaunchPairResponseSchema.safeParse({
+        claude: { status: "error", error: "bridge-outdated" },
+        codex: { status: "error", error: "window-not-ready" },
+      }).success,
+    ).toBe(true);
+    expect(
+      LaunchPairResponseSchema.safeParse({
+        ok: false,
+        conflict: {
+          projectName: "p",
+          conflicts: [{ runId: RUN_ID, sessionName: "s", state: "running", lastActivityAt: null }],
+        },
+      }).success,
+    ).toBe(true);
+    expect(LaunchPairResponseSchema.safeParse({ claude: opened }).success).toBe(false);
+    expect(LaunchPairResponseSchema.safeParse({ codex: opened }).success).toBe(false);
+    expect(
+      LaunchPairResponseSchema.safeParse({ claude: opened, codex: opened, gemini: opened }).success,
+    ).toBe(false);
+  });
+
+  it("the claude result never carries the setup status", () => {
+    const opened = { status: "opened" };
+    expect(
+      LaunchPairResponseSchema.safeParse({ claude: { status: "setup" }, codex: opened }).success,
+    ).toBe(false);
+  });
+});
+
+describe("additive configuration and detection views (D-11, D-12, CODEX-03)", () => {
+  const olderConfig = { antigravity: null, "claude-code": null, "claude-desktop": null };
+
+  it("LauncherConfigViewSchema parses an older answer, and a newer one with or without codex", () => {
+    expect(LauncherConfigViewSchema.safeParse(olderConfig).success).toBe(true);
+    expect(LauncherConfigViewSchema.safeParse({ ...olderConfig, codex: null }).success).toBe(true);
+    expect(
+      LauncherConfigViewSchema.safeParse({
+        ...olderConfig,
+        codex: { executableDisplay: "~/.local/bin/codex", args: [], tested: false },
+      }).success,
+    ).toBe(true);
+    expect(
+      LauncherConfigViewSchema.safeParse({
+        ...olderConfig,
+        codex: { executableDisplay: "~/.local/bin/codex", args: [], tested: false, terminal: {} },
+      }).success,
+    ).toBe(false);
+  });
+
+  const apps = {
+    antigravity: [],
+    "claude-desktop": [],
+    iterm2: [],
+    ghostty: [],
+    wezterm: [],
+    terminal: [],
+  };
+  const olderDetection = {
+    detectedAt: "2026-10-10T00:00:00.000Z",
+    apps,
+    claudeExecutables: [],
+    terminalPresets: [],
+    git: "available",
+  };
+
+  it("DetectionResponseSchema parses an older answer and a newer one with candidates, health, bridge and a suggestion", () => {
+    expect(DetectionResponseSchema.safeParse(olderDetection).success).toBe(true);
+    const newer = {
+      ...olderDetection,
+      codex: {
+        executables: [
+          {
+            candidateId: "c1",
+            displayPath: "~/.local/bin/codex",
+            version: "0.159.2",
+            location: "user-install",
+          },
+          {
+            candidateId: "c2",
+            displayPath: "/Applications/ChatGPT.app",
+            version: null,
+            location: "app-bundle",
+          },
+        ],
+        doctor: "unknown",
+      },
+      bridge: "installed",
+      suggestedTerminal: { kind: "antigravity-terminal" },
+    };
+    expect(DetectionResponseSchema.safeParse(newer).success).toBe(true);
+    expect(DetectionResponseSchema.safeParse({ ...newer, bridge: "installed-idle" }).success).toBe(
+      true,
+    );
+    expect(DetectionResponseSchema.safeParse({ ...newer, bridge: "melted" }).success).toBe(false);
+    expect(
+      DetectionResponseSchema.safeParse({
+        ...newer,
+        codex: { ...newer.codex, executables: [{ ...newer.codex.executables[0], path: "/x" }] },
+      }).success,
+    ).toBe(false);
   });
 });
