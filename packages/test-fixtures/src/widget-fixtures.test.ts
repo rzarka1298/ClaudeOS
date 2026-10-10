@@ -131,6 +131,18 @@ describe("widget-fixtures.json shape (UI-01, D-03, D-04)", () => {
     expect(fixtures.panels.map((panel) => panel.title)).toEqual([...PANEL_TITLES]);
   });
 
+  it("the codex unavailable cell carries the codex-data-changed reason the harness hands the frame (UI-SPEC codex-unavailable-format-changed)", () => {
+    const codex = readFixtures().panels.find((panel) => panel.id === "codex") as
+      | { unavailableReason?: { code?: string } }
+      | undefined;
+    expect(codex?.unavailableReason).toEqual({ code: "codex-data-changed" });
+    const harness = readFileSync(
+      join(REPO_ROOT, "packages", "test-fixtures", "harness", "main.tsx"),
+      "utf8",
+    );
+    expect(harness).toMatch(/kind: "unavailable",\s*reason: panel\.unavailableReason/);
+  });
+
   it("gives every panel all five state variants, each with a freshness footer payload", () => {
     const fixtures = readFixtures();
 

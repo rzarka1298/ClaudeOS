@@ -1336,6 +1336,9 @@ globalThis.CCC_FIXTURES = {
       "capability": "codex",
       "bodyKind": "usage",
       "sizeHint": "tall",
+      "unavailableReason": {
+        "code": "codex-data-changed"
+      },
       "states": {
         "live": {
           "observedAt": "2026-09-22T11:58:00.000Z",

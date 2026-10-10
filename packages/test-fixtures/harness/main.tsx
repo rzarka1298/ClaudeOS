@@ -115,6 +115,8 @@ type FixtureStateKey = "live" | "stale" | "empty" | "permission-required" | "fai
 interface FixturePanel {
   readonly id: string;
   readonly title: string;
+  /** Set on a panel whose unavailable cell is a typed reason, not "No source yet". */
+  readonly unavailableReason?: { readonly code: string };
   readonly states: Readonly<Record<FixtureStateKey, FixtureVariant>>;
 }
 
@@ -530,7 +532,16 @@ function cellFor(id: WidgetId, panel: FixturePanel, presentation: Presentation):
     case "loading":
       return { state: { kind: "loading" }, connection: LIVE };
     case "unavailable":
-      return { state: { kind: "unavailable" }, connection: LIVE };
+      return {
+        state:
+          panel.unavailableReason === undefined
+            ? { kind: "unavailable" }
+            : ({
+                kind: "unavailable",
+                reason: panel.unavailableReason,
+              } as unknown as WidgetState<unknown>),
+        connection: LIVE,
+      };
     case "ready":
       return { state: readyFrom(id, states, "live", false), connection: LIVE };
     case "stale":
