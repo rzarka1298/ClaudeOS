@@ -2,6 +2,7 @@ import {
   type DetectionResponse,
   type LauncherConfigView,
   TEMPLATE_REFUSAL_REASONS,
+  type TerminalChoice,
 } from "@ccc/domain";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,8 +14,12 @@ import {
   NOTHING_SAVED,
   OSASCRIPT_PRESET_ARGV,
 } from "../test-support/launchers-fixtures.js";
-import { ClaudeCodePanel } from "./claude-code-panel.js";
-import { createLaunchersSession, type LaunchersSession } from "./launchers-settings.js";
+import { ClaudeCodePanel, terminalLabelOf } from "./claude-code-panel.js";
+import {
+  createLaunchersSession,
+  type LaunchersSession,
+  LaunchersSettings,
+} from "./launchers-settings.js";
 import { TEMPLATE_REFUSAL_COPY } from "./template-editor.js";
 
 /**
@@ -394,5 +399,235 @@ describe("an uncertain save reconciles with the service (codex review 3, finding
     expect(
       screen.getByRole<HTMLInputElement>("radio", { name: "~/.local/bin/claude" }).checked,
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 05.1-31 Task 3: the Antigravity terminal choice (D-07, D-12, OQ-2)
+
+describe("the Antigravity terminal choice (plan 05.1-31)", () => {
+  const SUGGESTS_ANTIGRAVITY: DetectionResponse = {
+    ...DETECTION,
+    suggestedTerminal: { kind: "antigravity-terminal" },
+  };
+  const SUGGESTS_TERMINAL: DetectionResponse = {
+    ...DETECTION,
+    suggestedTerminal: { kind: "terminal-app" },
+  };
+  const HINT =
+    "Opens a tab in the project's Antigravity window. Needs the terminal bridge — see Settings → Codex.";
+
+  function saved(terminal: TerminalChoice, tested = false): LauncherConfigView {
+    return {
+      ...NOTHING_SAVED,
+      "claude-code": {
+        executableDisplay: "~/.local/bin/claude",
+        args: [],
+        terminal,
+        tested,
+      },
+    };
+  }
+
+  function terminalGroup(): HTMLElement {
+    return screen.getByRole("group", { name: "Terminal" });
+  }
+
+  function checkedTerminalLabel(): string | undefined {
+    const checked = within(terminalGroup())
+      .getAllByRole<HTMLInputElement>("radio")
+      .find((radio) => radio.checked);
+    return checked?.closest("label")?.textContent?.replace(/\s+/g, " ").trim();
+  }
+
+  it("offers three radios in order, with the detection's suggestion checked as a proposal and nothing sent", () => {
+    const actions = fakeLaunchersActions();
+    mount(actions, sessionWith(SUGGESTS_ANTIGRAVITY, NOTHING_SAVED));
+    const radios = within(terminalGroup()).getAllByRole("radio");
+    expect(radios.map((radio) => radio.closest("label")?.textContent?.split(" ")[0])).toEqual([
+      "Terminal",
+      "Antigravity",
+      "Custom",
+    ]);
+    expect(checkedTerminalLabel()).toMatch(/^Antigravity terminal/);
+    // A proposal is not a draft.
+    expect(screen.queryByText("Unsaved changes")).toBeNull();
+    expect(actions.save).not.toHaveBeenCalled();
+  });
+
+  it("saves { kind: antigravity-terminal } with nothing else once an executable is chosen", () => {
+    const actions = fakeLaunchersActions();
+    mount(actions, sessionWith(SUGGESTS_ANTIGRAVITY, NOTHING_SAVED));
+    fireEvent.click(screen.getByRole("radio", { name: "~/.local/bin/claude" }));
+    save();
+    expect(actions.save).toHaveBeenCalledTimes(1);
+    const request = vi.mocked(actions.save).mock.calls[0]?.[0];
+    expect(request).toEqual({
+      launcherId: "claude-code",
+      executable: { kind: "candidate", candidateId: "candidate-1" },
+      args: [],
+      terminal: { kind: "antigravity-terminal" },
+    });
+  });
+
+  it.each([
+    ["suggests Terminal", SUGGESTS_TERMINAL],
+    ["has no suggestion", DETECTION],
+  ])("proposes Terminal when detection %s, and the new radio is selectable", (_name, detection) => {
+    const actions = fakeLaunchersActions();
+    mount(actions, sessionWith(detection, NOTHING_SAVED));
+    expect(checkedTerminalLabel()).toMatch(/^Terminal/);
+    const radio = screen.getByRole<HTMLInputElement>("radio", { name: /^Antigravity terminal/ });
+    expect(radio.checked).toBe(false);
+    fireEvent.click(radio);
+    expect(radio.checked).toBe(true);
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "~/.local/bin/claude" }));
+    save();
+    expect(vi.mocked(actions.save).mock.calls[0]?.[0]).toMatchObject({
+      terminal: { kind: "antigravity-terminal" },
+    });
+  });
+
+  it("never rewrites a saved Terminal choice: detection, remounts and re-detects change nothing", () => {
+    const actions = fakeLaunchersActions();
+    const session = sessionWith(SUGGESTS_ANTIGRAVITY, saved({ kind: "terminal-app" }));
+    const view = mount(actions, session);
+    expect(checkedTerminalLabel()).toMatch(/^Terminal/);
+    expect(session.claudeDraft.value).toBeNull();
+    expect(screen.queryByText("Unsaved changes")).toBeNull();
+
+    session.detection.value = { ...SUGGESTS_ANTIGRAVITY, detectedAt: "2026-09-30T11:00:00.000Z" };
+    view.unmount();
+    mount(actions, session);
+    expect(checkedTerminalLabel()).toMatch(/^Terminal/);
+    expect(session.claudeDraft.value).toBeNull();
+    expect(screen.queryByText("Unsaved changes")).toBeNull();
+    expect(actions.save).not.toHaveBeenCalled();
+  });
+
+  it("never rewrites a saved custom choice either", () => {
+    const custom: TerminalChoice = {
+      kind: "custom",
+      preset: "ghostty",
+      argv: ["/usr/bin/open", "-na", "Ghostty", "--args", "-e", "{script}"],
+    };
+    const actions = fakeLaunchersActions();
+    const session = sessionWith(SUGGESTS_ANTIGRAVITY, saved(custom));
+    mount(actions, session);
+    expect(checkedTerminalLabel()).toMatch(/^Custom terminal/);
+    expect(session.claudeDraft.value).toBeNull();
+    expect(screen.queryByText("Unsaved changes")).toBeNull();
+    expect(actions.save).not.toHaveBeenCalled();
+  });
+
+  it("reads a saved Antigravity terminal back, restores it after a detour through custom, and shows no custom-only control", () => {
+    const actions = fakeLaunchersActions();
+    mount(actions, sessionWith(DETECTION, saved({ kind: "antigravity-terminal" })));
+    expect(checkedTerminalLabel()).toMatch(/^Antigravity terminal/);
+    expect(screen.queryByLabelText("Start from a preset")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Terminal arguments" })).toBeNull();
+    expect(screen.queryByText(/Automation permission/)).toBeNull();
+    expect(screen.getByText("No permission needed")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("radio", { name: /^Custom terminal/ }));
+    expect(screen.getByLabelText("Start from a preset")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: /^Antigravity terminal/ }));
+    expect(checkedTerminalLabel()).toMatch(/^Antigravity terminal/);
+    expect(screen.queryByLabelText("Start from a preset")).toBeNull();
+    expect(screen.queryByText("Unsaved changes")).toBeNull();
+  });
+
+  it("labels the new terminal Antigravity in the Test explanation and the question, and never waits a minute", async () => {
+    expect(terminalLabelOf({ kind: "antigravity-terminal" })).toBe("Antigravity");
+    const actions = fakeLaunchersActions();
+    mount(actions, sessionWith(DETECTION, saved({ kind: "antigravity-terminal" })));
+    expect(
+      screen.getByText(
+        "Test opens a new tab in Antigravity at the managed vault folder that shows the Claude Code version.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Test the Claude Code launcher" }));
+    expect(screen.queryByText(/up to a minute/)).toBeNull();
+    await settle();
+    expect(actions.test).toHaveBeenCalledWith("claude-code", { kind: "antigravity-terminal" });
+    expect(
+      screen.getByText(
+        "Test sent. Did a tab open in Antigravity and show the Claude Code version?",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("leaves the Terminal and custom sentences as they were", async () => {
+    mount(fakeLaunchersActions(), sessionWith(DETECTION, saved({ kind: "terminal-app" })));
+    expect(
+      screen.getByText(
+        "Test opens a new Terminal window at the managed vault folder that shows the Claude Code version.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Test the Claude Code launcher" }));
+    await settle();
+    expect(
+      screen.getByText("Test sent. Did a Terminal window open and show the Claude Code version?"),
+    ).toBeTruthy();
+  });
+
+  it("carries the planner-assumption hint exactly, with unique accessible names in the group", () => {
+    mount(fakeLaunchersActions(), sessionWith(DETECTION, NOTHING_SAVED));
+    expect(within(terminalGroup()).getByText(HINT)).toBeTruthy();
+    const names = within(terminalGroup())
+      .getAllByRole("radio")
+      .map((radio) => radio.closest("label")?.textContent);
+    expect(new Set(names).size).toBe(3);
+  });
+
+  it("disconnected: all three radios are aria-disabled and cannot change", () => {
+    const actions = fakeLaunchersActions();
+    render(
+      <ClaudeCodePanel
+        actions={actions}
+        session={sessionWith(DETECTION, saved({ kind: "terminal-app" }))}
+        connection={{ kind: "disconnected", reason: "service-unreachable" }}
+        now={Date.parse("2026-09-30T10:05:00.000Z")}
+        sampleDisplayPath="~/code/example-project"
+      />,
+    );
+    const radios = within(terminalGroup()).getAllByRole<HTMLInputElement>("radio");
+    expect(radios).toHaveLength(3);
+    for (const radio of radios) expect(radio.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(radios[1] as HTMLInputElement);
+    expect(checkedTerminalLabel()).toMatch(/^Terminal/);
+  });
+
+  it("the Codex panel's mount changes nothing about a saved Claude Code choice", async () => {
+    const actions = fakeLaunchersActions({
+      detect: () => Promise.resolve({ kind: "detected" as const, detection: SUGGESTS_ANTIGRAVITY }),
+      getConfigs: () =>
+        Promise.resolve({ kind: "loaded" as const, configs: saved({ kind: "terminal-app" }) }),
+    });
+    const session = createLaunchersSession();
+    render(
+      <LaunchersSettings
+        actions={actions}
+        connection={LIVE}
+        now={Date.parse("2026-09-30T10:05:00.000Z")}
+        session={session}
+      />,
+    );
+    await settle();
+    const claude = screen.getByRole("region", { name: "Claude Code" });
+    expect(
+      within(claude)
+        .getAllByRole<HTMLInputElement>("radio", { name: /terminal/i })
+        .find((radio) => radio.checked)
+        ?.closest("label")?.textContent,
+    ).toMatch(/^Terminal/);
+    expect(session.claudeDraft.value).toBeNull();
+    expect(session.codexDraft.value).toBeNull();
+    expect(actions.save).not.toHaveBeenCalled();
+    // The Codex panel mirrors the saved choice, not the suggestion.
+    expect(
+      within(screen.getByRole("region", { name: "Codex" })).getByText("Opens in Terminal."),
+    ).toBeTruthy();
   });
 });
