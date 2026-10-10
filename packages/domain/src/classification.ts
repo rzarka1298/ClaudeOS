@@ -97,6 +97,9 @@ export const CLASSIFICATION = {
     summary: "move a note between knowledge scopes",
   },
   "hooks.install": { ...RESERVED_POLICY, summary: "install a Claude Code hook" },
+  // Phase 05.1 (D-31): the one system-changing Codex action. Installing is an
+  // owner-run script, so this row is a classification only and has no executor.
+  "codex.hooks.install": { ...RESERVED_POLICY, summary: "install a Codex hook" },
   "automation.git-write": { ...RESERVED_POLICY, summary: "write to a Git repository" },
   publish: { ...RESERVED_POLICY, summary: "publish content outside this machine" },
   // A skill can do anything, so it fails closed until the skills phase classifies it.
@@ -126,6 +129,30 @@ export const CLASSIFICATION = {
   "launch.claude-desktop": {
     class: "direct-gesture",
     reason: "The owner clicks the control to bring Claude Desktop forward (D-05).",
+  },
+  // Phase 05.1 (D-31, assumption A10 -- OPEN OWNER-CONFIRMATION ITEM, see
+  // 05.1-RECONCILE.md R-OPEN): CONTEXT D-31 words these as reserved; they are
+  // direct gestures because a reserved row has no executor and would make the
+  // pair button inert. Only codex.hooks.install is reserved.
+  "launch.codex": {
+    class: "direct-gesture",
+    reason:
+      "The owner clicks the launch control for a registered project; the click is the decision (D-05).",
+  },
+  "launch.claude-codex-pair": {
+    class: "direct-gesture",
+    reason:
+      "The owner clicks the pair launch control for a registered project; the click is the decision (D-05).",
+  },
+  "codex.open-transcript": {
+    class: "direct-gesture",
+    reason:
+      "The owner asks to reveal or open a Codex transcript they listed; the click is the decision and nothing is changed (D-05).",
+  },
+  "codex.follow-log": {
+    class: "direct-gesture",
+    reason:
+      "The owner asks to follow a wrapper log in a terminal tab, which only reads the log; the click is the decision (D-05).",
   },
   "project.registry": {
     class: "direct-gesture",
@@ -255,6 +282,10 @@ export const CAPABILITY_OPERATION: Readonly<Record<string, OperationName>> = {
   "launch:finder": "launch.finder",
   "launch:github": "launch.github",
   "launch:claude-desktop": "launch.claude-desktop",
+  "launch:codex": "launch.codex",
+  "launch:claude-codex-pair": "launch.claude-codex-pair",
+  "codex:open-transcript": "codex.open-transcript",
+  "codex:follow-log": "codex.follow-log",
   "switcher:claude-code": "switcher.open",
   "session:focus": "session.focus",
   "session:resume": "session.resume",
