@@ -208,6 +208,66 @@ function identityOf(head: Uint8Array): string {
 const ROLLOUT_THREAD =
   /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([A-Za-z0-9][A-Za-z0-9_-]{0,126})\.jsonl$/;
 
+/** Settings key prefix of the per-turn analysis-off state. */
+const OFF_STATE_PREFIX = "codex_token_off:";
+
+const ZERO_COUNTERS: CodexTokenCounters = {
+  input: 0,
+  cachedInput: 0,
+  cacheWrite: 0,
+  output: 0,
+  reasoningOutput: 0,
+  total: 0,
+};
+
+const COUNTER_KEYS = [
+  "input",
+  "cachedInput",
+  "cacheWrite",
+  "output",
+  "reasoningOutput",
+  "total",
+] as const satisfies readonly (keyof CodexTokenCounters)[];
+
+/** What a turn needs to subtract analysis-off usage from its later records. */
+interface OffState {
+  /** The highest cumulative value seen for the turn, counted or not. */
+  readonly last: CodexTokenCounters;
+  /** The usage that arrived while analysis was off. */
+  readonly off: CodexTokenCounters;
+}
+
+function counterAt(counters: CodexTokenCounters, index: number): number {
+  const key = COUNTER_KEYS[index];
+  return key === undefined ? 0 : counters[key];
+}
+
+function combine(
+  left: CodexTokenCounters,
+  right: CodexTokenCounters,
+  fn: (left: number, right: number, index: number) => number,
+): CodexTokenCounters {
+  const out = { ...ZERO_COUNTERS };
+  COUNTER_KEYS.forEach((key, index) => {
+    out[key] = fn(left[key], right[key], index);
+  });
+  return out;
+}
+
+function parseOffState(text: string | null): OffState | null {
+  if (text === null) return null;
+  try {
+    const value = JSON.parse(text) as { last?: CodexTokenCounters; off?: CodexTokenCounters };
+    const valid = (c: unknown): c is CodexTokenCounters =>
+      typeof c === "object" &&
+      c !== null &&
+      COUNTER_KEYS.every((key) => Number.isFinite((c as Record<string, unknown>)[key]));
+    return valid(value.last) && valid(value.off) ? { last: value.last, off: value.off } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The thread id in a rollout's file name, or null for any other shape. The name is never stored. */
 function threadIdFromName(path: string): string | null {
   const match = ROLLOUT_THREAD.exec(basename(path));
@@ -562,9 +622,8 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
         return { kind: "held" };
       }
 
-      const turnFacts = result.facts.filter(
-        (fact) => fact.kind === "tokens-turn" && !offAt(fact.time, wasOff),
-      );
+      const offStates = new Map<string, OffState>();
+      const turnFacts = countedTurnFacts(result.facts, fileThreadId, wasOff, offStates);
       // The earliest bucket of any per-turn record in this chunk (off-period ones too:
       // they still prove the turns exist).
       let chunkCoverFrom: string | null = null;
@@ -647,6 +706,9 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
             ops.writeCumulativeBaseline(db, cumulativeThread, fold.next, at);
           }
         }
+        for (const [stateKey, state] of offStates) {
+          setCollectorSetting(db, stateKey, JSON.stringify(state), at);
+        }
         ops.writeCodexCursor(db, key, { inode: identity, size, offset: nextPosition }, at);
         ops.addCodexRecognition(db, parserVersion, tallies, at);
       })();
@@ -678,6 +740,94 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     database
       .prepare("DELETE FROM codex_token_deltas WHERE thread_id = ? AND bucket_start >= ?")
       .run(threadId, fromBucket);
+  }
+
+  /**
+   * The facts of one chunk that count. A per-turn record is cumulative within its
+   * turn, so a record inside an analysis-off period is dropped AND its increment
+   * is remembered per turn and taken off every later record of the same turn
+   * (100 before, 200 off, 300 after counts 200). The state (last value seen and
+   * the off-period total, six counters each) persists in the collector settings
+   * under `codex_token_off:<thread>:<turn>`, written in the chunk's transaction,
+   * and only for turns that had an off-period record. `offStates` collects the
+   * entries this chunk changed.
+   */
+  function countedTurnFacts(
+    facts: readonly RolloutFact[],
+    fileThreadId: string | null,
+    wasOff: (ms: number) => boolean,
+    offStates: Map<string, OffState>,
+  ): RolloutFact[] {
+    const counted: RolloutFact[] = [];
+    const loaded = new Map<string, OffState | null>();
+    /** The latest value seen per turn in this chunk, before anything is stored. */
+    const seen = new Map<string, CodexTokenCounters>();
+    const stateOf = (stateKey: string): OffState | null => {
+      const known = loaded.get(stateKey);
+      if (known !== undefined) return known;
+      const state = parseOffState(getCollectorSetting(db, stateKey));
+      loaded.set(stateKey, state);
+      return state;
+    };
+    for (const fact of facts) {
+      if (fact.kind !== "tokens-turn") continue;
+      const threadId = fact.threadId ?? fileThreadId;
+      if (fact.counters === null || threadId === null) {
+        if (!offAt(fact.time, wasOff)) counted.push(fact);
+        continue;
+      }
+      const stateKey = `${OFF_STATE_PREFIX}${threadId}:${fact.turnId}`;
+      const state = stateOf(stateKey);
+      const off = offAt(fact.time, wasOff);
+      if (off) {
+        const base =
+          state?.last ??
+          seen.get(stateKey) ??
+          storedTurnCounters(threadId, fact.turnId) ??
+          ZERO_COUNTERS;
+        seen.set(stateKey, fact.counters);
+        const next: OffState = {
+          last: combine(base, fact.counters, (a, b) => Math.max(a, b)),
+          off: combine(
+            state?.off ?? ZERO_COUNTERS,
+            fact.counters,
+            (offTotal, value, i) => offTotal + Math.max(0, value - counterAt(base, i)),
+          ),
+        };
+        loaded.set(stateKey, next);
+        offStates.set(stateKey, next);
+        continue;
+      }
+      if (state === null) {
+        seen.set(stateKey, fact.counters);
+        counted.push(fact);
+        continue;
+      }
+      const next: OffState = {
+        last: combine(state.last, fact.counters, (a, b) => Math.max(a, b)),
+        off: state.off,
+      };
+      loaded.set(stateKey, next);
+      offStates.set(stateKey, next);
+      counted.push({
+        ...fact,
+        counters: combine(ZERO_COUNTERS, fact.counters, (_zero, value, i) =>
+          Math.max(0, value - counterAt(state.off, i)),
+        ),
+      });
+    }
+    return counted;
+  }
+
+  function storedTurnCounters(threadId: string, turnId: string): CodexTokenCounters | null {
+    const row = db
+      .prepare(
+        `SELECT input, cached_input AS cachedInput, cache_write AS cacheWrite, output,
+                reasoning_output AS reasoningOutput, total
+           FROM codex_token_turns WHERE thread_id = ? AND turn_id = ?`,
+      )
+      .get(threadId, turnId) as CodexTokenCounters | undefined;
+    return row ?? null;
   }
 
   function offAt(time: string | null, wasOff: (ms: number) => boolean): boolean {
