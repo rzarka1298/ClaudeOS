@@ -21,6 +21,7 @@ import {
   readCumulativeBaseline,
   resetCodexScanState,
   saveRateLimitSnapshot,
+  setTurnContribution,
   upsertTurnTokens,
   writeCodexCursor,
   writeCumulativeBaseline,
@@ -73,6 +74,47 @@ function turnRows(): Array<Record<string, unknown>> {
     Record<string, unknown>
   >;
 }
+
+describe("setTurnContribution (precedence rule: a counted contribution can fall)", () => {
+  const base = { threadId: "t1", turnId: "u1", observedAt: NOW };
+
+  it("replaces the counters and the bucket, never maxing them", () => {
+    setTurnContribution(db, { ...base, bucketStart: B0, counters: counters(30) });
+    setTurnContribution(db, { ...base, bucketStart: B1, counters: counters(10) });
+    setTurnContribution(db, { ...base, bucketStart: B1, counters: counters(10) });
+    const rows = turnRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ bucket_start: B1, input: 10, total: 15 });
+  });
+
+  it("deletes the row for an all-zero contribution so the range reads unmeasured", () => {
+    setTurnContribution(db, { ...base, bucketStart: B0, counters: counters(30) });
+    setTurnContribution(db, {
+      ...base,
+      bucketStart: B0,
+      counters: {
+        input: 0,
+        cachedInput: 0,
+        cacheWrite: 0,
+        output: 0,
+        reasoningOutput: 0,
+        total: 0,
+      },
+    });
+    expect(turnRows()).toHaveLength(0);
+    expect(queryCodexTokenTotals(db, { start: B0, end: B1 })).toBeNull();
+  });
+
+  it("refuses a malformed record before any write", () => {
+    expect(() =>
+      setTurnContribution(db, {
+        ...base,
+        bucketStart: "2026-10-10T08:01:00.000Z",
+        counters: counters(1),
+      }),
+    ).toThrow(InvalidCodexRecordError);
+  });
+});
 
 describe("upsertTurnTokens (CODEX-10: latest cumulative wins, never summed)", () => {
   it("Test 1: three growing writes leave ONE row with the last counters and the first bucket", () => {

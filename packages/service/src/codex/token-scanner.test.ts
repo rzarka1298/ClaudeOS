@@ -26,6 +26,7 @@ import {
   jsonl,
   metaLine,
   perTurnRollout,
+  perTurnWithCumulativeRollout,
   raw,
   rolloutName,
   THREAD_A,
@@ -359,42 +360,18 @@ describe("Task 2: the cumulative fallback against a durable high-water mark", ()
     ]);
   });
 
-  it("keeps cumulative events out of the totals when the rollout has per-turn records", async () => {
+  it("counts a cumulative event beside each per-turn record once: the cumulative record is authoritative", async () => {
     const h = setup();
-    h.rollouts.write("2026-10-10", NAME, perTurnRollout());
+    h.rollouts.write("2026-10-10", NAME, perTurnWithCumulativeRollout());
     await h.scanner.sweep();
-    expect(count(h.temp.db, "codex_token_deltas")).toBe(0);
-    expect(count(h.temp.db, "codex_token_cumulative")).toBe(0);
+    expect(count(h.temp.db, "codex_token_cumulative")).toBe(1);
+    expect(turnRows(h.temp.db)).toHaveLength(0);
     expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(550);
   });
 
-  it("does not keep cumulative deltas once the same thread later shows per-turn records", async () => {
+  it("adds a later cumulative event to the totals instead of ignoring it (it covers everything up to its timestamp)", async () => {
     const h = setup();
-    h.rollouts.write(
-      DAY,
-      NAME,
-      jsonl([metaLine(), tokenCountLine({ timestamp: at(21), total: raw(100, 20) })]),
-    );
-    await h.scanner.sweep();
-    h.rollouts.append(
-      DAY,
-      NAME,
-      jsonl([
-        turnRecordLine({ turnId: turn(1), timestamp: at(30), usage: raw(100, 20) }),
-        tokenCountLine({ timestamp: at(30), total: raw(100, 20) }),
-      ]),
-    );
-    await h.scanner.sweep();
-    expect(count(h.temp.db, "codex_token_deltas")).toBe(0);
-    expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters).toMatchObject({
-      input: 100,
-      output: 20,
-    });
-  });
-
-  it("keeps cumulative events out of the totals for a per-turn thread after a restart", async () => {
-    const h = setup();
-    h.rollouts.write(DAY, NAME, perTurnRollout());
+    h.rollouts.write(DAY, NAME, perTurnWithCumulativeRollout());
     await h.scanner.sweep();
     h.restart();
     h.rollouts.append(
@@ -403,8 +380,7 @@ describe("Task 2: the cumulative fallback against a durable high-water mark", ()
       jsonl([tokenCountLine({ timestamp: at(1300), total: raw(500, 110) })]),
     );
     await h.scanner.sweep();
-    expect(count(h.temp.db, "codex_token_deltas")).toBe(0);
-    expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(550);
+    expect(queryCodexTokenTotals(h.temp.db, WIDE)?.counters.total).toBe(610);
   });
 
   it("counts nothing from cumulative lines when the file name carries no thread id", async () => {
@@ -616,7 +592,7 @@ describe("Task 2: recognition, the held verdict and the parser reset", () => {
 
   it("does not hold a version whose token lines are mostly readable", async () => {
     const h = setup();
-    h.rollouts.write("2026-10-10", NAME, perTurnRollout());
+    h.rollouts.write("2026-10-10", NAME, perTurnWithCumulativeRollout());
     await h.scanner.sweep();
     expect(readCodexRecognition(h.temp.db, 1)).toEqual({
       "0.159.2": { sessions: 8, recognized: 8 },

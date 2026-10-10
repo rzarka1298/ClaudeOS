@@ -183,8 +183,24 @@ export function jsonl(lines: readonly string[]): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** The usual per-turn rollout of the tracer: two turns, with cumulative events beside them. */
+/** The usual per-turn rollout of the tracer: two turns, per-turn records only. */
 export function perTurnRollout(): string {
+  return jsonl([
+    metaLine(),
+    ...contentLines(at(1)),
+    turnRecordLine({ turnId: turn(1), timestamp: at(21), usage: raw(100, 20) }),
+    turnRecordLine({ turnId: turn(1), timestamp: at(40), usage: raw(250, 60) }),
+    turnRecordLine({ turnId: turn(1), timestamp: at(65), usage: raw(400, 90) }),
+    turnRecordLine({ turnId: turn(2), timestamp: at(1200), usage: raw(50, 10) }),
+  ]);
+}
+
+/**
+ * The same two turns with a cumulative event beside every per-turn record (what
+ * Codex writes). Under the precedence rule the cumulative events are
+ * authoritative up to their last timestamp, so the per-turn records add nothing.
+ */
+export function perTurnWithCumulativeRollout(): string {
   return jsonl([
     metaLine(),
     ...contentLines(at(1)),

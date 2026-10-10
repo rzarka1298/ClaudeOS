@@ -5,7 +5,6 @@ import {
   EMPTY_CARRY,
   evaluateCliRecognition,
   foldCumulativeDeltas,
-  foldTurnTokens,
   parseRolloutChunk,
   type RolloutFact,
   type TranscriptCarry,
@@ -30,7 +29,7 @@ import {
   readCumulativeBaseline,
   resetCodexScanState,
   setCollectorSetting,
-  upsertTurnTokens,
+  setTurnContribution,
   writeCodexCursor,
   writeCumulativeBaseline,
 } from "@ccc/operational-store";
@@ -55,18 +54,19 @@ import { buildCodexTokenSummary } from "./token-summary.js";
  * - Access: every file operation goes through the allowlisted CODEX_HOME port
  *   with a reference the port itself listed; the scanner never opens a path it
  *   computed.
- * - Counting: the per-turn usage record keeps the LATEST cumulative value per
- *   (thread, turn) and the quarter hour of the turn's first record (the store
- *   takes the per-counter maximum, so a replay never lowers or doubles it).
+ * - Counting: ONE precedence rule per thread (see reconcileTurns). The
+ *   thread-cumulative `token_count` is authoritative up to its last timestamp;
+ *   per-turn usage counts only beyond it, as the growth of the turn's
+ *   within-turn counter past the value it had at that cut. Per-turn state is
+ *   replayed idempotently, so no chunk size or cursor reset changes a total.
  * - Cursors: keyed by the SHA-256 of the rollout path (no path is stored),
  *   with a content fingerprint of the file's first bytes standing in for an
  *   inode (the port offers none). A changed fingerprint or a shrunk file
  *   restarts at zero; the store's primary key keeps the rescan from double
  *   counting.
- * - Cumulative fallback: where only the cumulative `token_count` exists the
- *   scanner adds non-negative per-counter deltas against a durable per-thread
- *   high-water mark (D-24). A lower value never lowers the mark and is never
- *   read as a new counting epoch, so a replayed prefix changes nothing.
+ * - Cumulative usage: non-negative per-counter deltas against a durable
+ *   per-thread high-water mark (D-24). A lower value never lowers the mark and
+ *   is never read as a new counting epoch, so a replayed prefix changes nothing.
  * - Transaction: a chunk's counters, high-water marks, cursor advance and
  *   recognition tallies are written in ONE transaction.
  * - Format: per-CLI-version recognition tallies persist per parser version; a
@@ -116,7 +116,7 @@ export interface TokenScannerLogger {
  * make one of them fail between the delta, high-water-mark and cursor writes.
  */
 export interface TokenStoreOps {
-  readonly upsertTurnTokens: typeof upsertTurnTokens;
+  readonly setTurnContribution: typeof setTurnContribution;
   readonly addCumulativeDelta: typeof addCumulativeDelta;
   readonly readCumulativeBaseline: typeof readCumulativeBaseline;
   readonly writeCumulativeBaseline: typeof writeCumulativeBaseline;
@@ -208,12 +208,10 @@ function identityOf(head: Uint8Array): string {
 const ROLLOUT_THREAD =
   /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([A-Za-z0-9][A-Za-z0-9_-]{0,126})\.jsonl$/;
 
-/** Settings key prefix of the per-turn analysis-off state. */
-const OFF_STATE_PREFIX = "codex_token_off:";
-/** Settings key prefix of the per-thread per-turn transition instant. */
-const CUT_STATE_PREFIX = "codex_token_cut:";
-/** Settings key prefix of the once-per-thread duplicate check at the cut. */
-const CUT_CHECK_PREFIX = "codex_token_cutchk:";
+/** Settings key prefix of the per-turn precedence state (`<thread>:<turn>`). */
+const TURN_STATE_PREFIX = "codex_token_turn:";
+/** Settings key prefix of the per-thread last cumulative timestamp. */
+const CUM_AT_PREFIX = "codex_token_cumat:";
 
 const ZERO_COUNTERS: CodexTokenCounters = {
   input: 0,
@@ -233,12 +231,55 @@ const COUNTER_KEYS = [
   "total",
 ] as const satisfies readonly (keyof CodexTokenCounters)[];
 
-/** What a turn needs to subtract analysis-off usage from its later records. */
-interface OffState {
-  /** The highest cumulative value seen for the turn, counted or not. */
-  readonly last: CodexTokenCounters;
-  /** The usage that arrived while analysis was off. */
-  readonly off: CodexTokenCounters;
+/**
+ * What the precedence rule keeps per (thread, turn). All counters are
+ * high-waters or sums of increments, so replaying absorbed records changes
+ * nothing.
+ */
+interface TurnState {
+  /** The thread id the state belongs to (guards the key-prefix scan). */
+  thread: string;
+  /** The highest within-turn counters seen, counted or not. */
+  hw: CodexTokenCounters;
+  /** The value hw had at the thread's last cumulative timestamp. */
+  cut: CodexTokenCounters;
+  /** The usage that arrived while analysis was off, in total. */
+  off: CodexTokenCounters;
+  /** The part of `off` that arrived at or before the cut. */
+  offCut: CodexTokenCounters;
+  /** The bucket of the turn's earliest record. */
+  first: string | null;
+  /** The bucket of the earliest record after the cut, or null. */
+  anchor: string | null;
+  /** The latest record time, in ms. */
+  latestMs: number | null;
+}
+
+function freshTurn(): TurnState {
+  return {
+    thread: "",
+    hw: ZERO_COUNTERS,
+    cut: ZERO_COUNTERS,
+    off: ZERO_COUNTERS,
+    offCut: ZERO_COUNTERS,
+    first: null,
+    anchor: null,
+    latestMs: null,
+  };
+}
+
+function turnStateKey(threadId: string, turnId: string): string {
+  return `${TURN_STATE_PREFIX}${threadId}:${turnId}`;
+}
+
+/** A turn's counted usage: growth beyond the cut, less the off-period growth after it. */
+function contributionOf(state: TurnState): CodexTokenCounters {
+  return combine(state.hw, state.cut, (hw, cut, index) =>
+    Math.max(
+      0,
+      hw - cut - Math.max(0, counterAt(state.off, index) - counterAt(state.offCut, index)),
+    ),
+  );
 }
 
 function counterAt(counters: CodexTokenCounters, index: number): number {
@@ -258,15 +299,37 @@ function combine(
   return out;
 }
 
-function parseOffState(text: string | null): OffState | null {
+function parseTurnState(text: string | null): TurnState | null {
   if (text === null) return null;
   try {
-    const value = JSON.parse(text) as { last?: CodexTokenCounters; off?: CodexTokenCounters };
-    const valid = (c: unknown): c is CodexTokenCounters =>
+    const value = JSON.parse(text) as Partial<Record<keyof TurnState, unknown>>;
+    const counters = (c: unknown): c is CodexTokenCounters =>
       typeof c === "object" &&
       c !== null &&
       COUNTER_KEYS.every((key) => Number.isFinite((c as Record<string, unknown>)[key]));
-    return valid(value.last) && valid(value.off) ? { last: value.last, off: value.off } : null;
+    const optionalText = (v: unknown): v is string | null => v === null || typeof v === "string";
+    if (
+      typeof value.thread === "string" &&
+      counters(value.hw) &&
+      counters(value.cut) &&
+      counters(value.off) &&
+      counters(value.offCut) &&
+      optionalText(value.first) &&
+      optionalText(value.anchor) &&
+      (value.latestMs === null || Number.isFinite(value.latestMs))
+    ) {
+      return {
+        thread: value.thread,
+        hw: value.hw,
+        cut: value.cut,
+        off: value.off,
+        offCut: value.offCut,
+        first: value.first,
+        anchor: value.anchor,
+        latestMs: value.latestMs as number | null,
+      };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -294,7 +357,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
   const { db, logger, port } = deps;
   const parserVersion = deps.parserVersion ?? CODEX_TOKEN_PARSER_VERSION;
   const ops: TokenStoreOps = {
-    upsertTurnTokens,
+    setTurnContribution,
     addCumulativeDelta,
     readCumulativeBaseline,
     writeCumulativeBaseline,
@@ -487,8 +550,6 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     readonly next: CodexTokenCounters | null;
     readonly touched: boolean;
     readonly skipped: number;
-    /** The first event the cut covers (not off): its total and the mark before it. */
-    readonly firstCovered: { readonly before: number; readonly value: number } | null;
   }
 
   /**
@@ -501,11 +562,8 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     facts: readonly RolloutFact[],
     previous: CodexTokenCounters | null,
     wasOff: (ms: number) => boolean,
-    cutMs: number | null,
   ): CumulativeResult {
     let mark = previous;
-    let runMax = previous?.total ?? 0;
-    let firstCovered: { before: number; value: number } | null = null;
     let touched = false;
     let skipped = 0;
     const deltas = new Map<string, CodexTokenCounters>();
@@ -540,19 +598,12 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       if (fact.kind !== "tokens-cumulative" || fact.counters === null) continue;
       if (fact.time !== null) touched = true;
       const off = fact.time !== null && wasOff(Date.parse(fact.time));
-      if (fact.time !== null) {
-        const covered = cutMs !== null && Date.parse(fact.time) >= cutMs;
-        if (covered && firstCovered === null) {
-          firstCovered = { before: runMax, value: fact.counters.total };
-        }
-        runMax = Math.max(runMax, fact.counters.total);
-      }
       if (run.length > 0 && off !== runOff) flush();
       runOff = off;
       run.push(fact);
     }
     flush();
-    return { deltas, next: mark, touched, skipped, firstCovered };
+    return { deltas, next: mark, touched, skipped };
   }
 
   // --- Scanning one rollout ---------------------------------------------------
@@ -632,102 +683,29 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
         return { kind: "held" };
       }
 
-      const offStates = new Map<string, OffState>();
-      const turnFacts = countedTurnFacts(result.facts, fileThreadId, wasOff, offStates);
-      // The earliest instant of any per-turn record in this chunk (off-period ones
-      // too: they still prove the turns exist).
-      let chunkCutMs: number | null = null;
-      for (const fact of result.facts) {
-        if (fact.kind !== "tokens-turn" || fact.time === null) continue;
-        const ms = Date.parse(fact.time);
-        if (!Number.isNaN(ms) && (chunkCutMs === null || ms < chunkCutMs)) chunkCutMs = ms;
-      }
-      const turnFold = foldTurnTokens(turnFacts, {
-        dayOf: bucketOf,
-        ...(fileThreadId === null ? {} : { fallbackThreadId: fileThreadId }),
-      });
-      // Usage the per-turn records cover is counted from them alone; the cumulative
-      // events of those buckets describe the same tokens (R-OPEN 2). Cumulative usage
-      // from before the first per-turn record is history nothing else covers.
-      const cumulativeThread = fileThreadId;
-
       const nextPosition = position + result.bytesConsumed;
-      let skipped = turnFold.skipped;
+      let skipped = 0;
       db.transaction(() => {
-        counted = 0;
-        // Before this chunk's per-turn rows are stored: the legacy fallback reads them.
-        const cutMs =
-          cumulativeThread === null ? null : transitionCut(cumulativeThread, chunkCutMs, at);
-        for (const entry of turnFold.entries.values()) {
-          if (entry.day === "") {
-            skipped += 1;
-            continue;
-          }
-          ops.upsertTurnTokens(db, {
-            threadId: entry.threadId,
-            turnId: entry.turnId,
-            bucketStart: entry.day,
-            counters: entry.counters,
-            observedAt: new Date(Date.parse(entry.at)).toISOString(),
-          });
-          counted += 1;
-        }
-        // The cut is the instant of the thread's first per-turn record, kept durably
-        // (the in-memory map is lost on restart, and a thread's first chunks may be
-        // cumulative-only). Cumulative usage observed at or after it is covered by the
-        // per-turn records and is neither added nor kept; usage before it, even in the
-        // same quarter-hour bucket, stays.
-        if (cumulativeThread !== null) {
-          if (cutMs !== null) {
-            deleteCumulativeDeltasAfter(
-              db,
-              cumulativeThread,
-              bucketOf(new Date(cutMs).toISOString()),
-            );
-          }
-          const previous = ops.readCumulativeBaseline(db, cumulativeThread);
-          const covered = cutMs;
-          const silent = (ms: number): boolean => wasOff(ms) || (covered !== null && ms >= covered);
-          const fold = foldCumulative(result.facts, previous, silent, covered);
+        // One precedence rule per thread (see reconcileTurns): thread-cumulative records
+        // first for everything up to their last timestamp, per-turn records only beyond it.
+        const turns = reconcileTurns(result.facts, fileThreadId, wasOff, at);
+        skipped += turns.skipped;
+        counted = turns.counted;
+        if (fileThreadId !== null) {
+          const previous = ops.readCumulativeBaseline(db, fileThreadId);
+          const fold = foldCumulative(result.facts, previous, wasOff);
           skipped += fold.skipped;
-          // A covered event that adds nothing beyond the mark means the per-turn
-          // tokens were already in the cumulative counter: that history duplicates
-          // them, so the cut bucket's deltas go too. Checked once per thread.
-          const cutBucket = covered === null ? "" : bucketOf(new Date(covered).toISOString());
-          const checkKey = `${CUT_CHECK_PREFIX}${cumulativeThread}`;
-          let duplicate = false;
-          if (
-            covered !== null &&
-            fold.firstCovered !== null &&
-            getCollectorSetting(db, checkKey) === null
-          ) {
-            setCollectorSetting(db, checkKey, "1", at);
-            duplicate = fold.firstCovered.value <= fold.firstCovered.before;
-            if (duplicate) {
-              db.prepare(
-                "DELETE FROM codex_token_deltas WHERE thread_id = ? AND bucket_start >= ?",
-              ).run(cumulativeThread, cutBucket);
-            }
-          }
-          let kept = 0;
           for (const [bucket, delta] of fold.deltas) {
             if (bucket === "") {
               skipped += 1;
               continue;
             }
-            if (duplicate && bucket >= cutBucket) continue;
-            ops.addCumulativeDelta(db, { threadId: cumulativeThread, bucketStart: bucket, delta });
+            ops.addCumulativeDelta(db, { threadId: fileThreadId, bucketStart: bucket, delta });
             counted += 1;
-            kept += 1;
           }
-          // The mark follows the deltas: a chunk whose usage the per-turn records cover
-          // leaves it alone.
-          if (fold.touched && fold.next !== null && (covered === null || kept > 0)) {
-            ops.writeCumulativeBaseline(db, cumulativeThread, fold.next, at);
+          if (fold.touched && fold.next !== null) {
+            ops.writeCumulativeBaseline(db, fileThreadId, fold.next, at);
           }
-        }
-        for (const [stateKey, state] of offStates) {
-          setCollectorSetting(db, stateKey, JSON.stringify(state), at);
         }
         ops.writeCodexCursor(db, key, { inode: identity, size, offset: nextPosition }, at);
         ops.addCodexRecognition(db, parserVersion, tallies, at);
@@ -744,130 +722,163 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
   }
 
   /**
-   * The thread's transition cut in ms, lowered by this chunk's earliest per-turn
-   * record and persisted under `codex_token_cut:<thread>`. Without a stored cut but
-   * with stored per-turn rows (written before the cut existed) the first row's bucket
-   * start stands in for it.
+   * The one precedence rule between a thread's two token sources, applied to one
+   * chunk's facts IN FILE ORDER inside the chunk's transaction:
+   *
+   * - A thread-cumulative record is authoritative for everything up to and
+   *   including its timestamp. Its usage is the positive delta against the durable
+   *   high-water mark (foldCumulative); the latest such timestamp per thread, L,
+   *   persists under `codex_token_cumat:<thread>` and only ever moves forward.
+   * - A per-turn record counts only for usage AFTER L. Per turn the scanner keeps,
+   *   under `codex_token_turn:<thread>:<turn>`: `hw` (the high-water of the
+   *   within-turn counters), `cut` (the value hw had at L), `off`/`offCut` (the
+   *   usage that arrived while analysis was off, in total and as of L), the first
+   *   record's bucket and the first bucket after the cut. The turn's counted
+   *   contribution is max(0, hw - cut - (off - offCut)), stored as the turn's row
+   *   (replaced, never maxed, so it falls again when a later cumulative record
+   *   covers the turn; an all-zero contribution deletes the row).
+   * - When L advances to a later cumulative timestamp, every turn of the thread
+   *   whose latest record is not after it is cut at its current hw (its earlier
+   *   contribution is superseded); a record at or before L only raises `cut`.
+   *
+   * Every field is a maximum or a sum of increments over hw, so replaying records
+   * the state already absorbed changes nothing: a cursor reset, a restart and any
+   * chunk size reproduce identical totals. Timestamps in one rollout are taken to
+   * be non-decreasing in file order (the file is append-only); a turn record
+   * timestamped after a later-in-file cumulative record cannot be cut and keeps its
+   * previous cut.
    */
-  function transitionCut(threadId: string, chunkCutMs: number | null, at: string): number | null {
-    const key = `${CUT_STATE_PREFIX}${threadId}`;
-    const stored = Date.parse(getCollectorSetting(db, key) ?? "");
-    let cut: number | null = Number.isNaN(stored) ? null : stored;
-    if (cut === null) {
-      const row = db
-        .prepare("SELECT MIN(bucket_start) AS first FROM codex_token_turns WHERE thread_id = ?")
-        .get(threadId) as { first: string | null } | undefined;
-      const legacy = row?.first == null ? Number.NaN : Date.parse(row.first);
-      if (!Number.isNaN(legacy)) cut = legacy;
-    }
-    if (chunkCutMs !== null && (cut === null || chunkCutMs < cut)) cut = chunkCutMs;
-    if (cut !== null && cut !== stored) {
-      setCollectorSetting(db, key, new Date(cut).toISOString(), at);
-    }
-    return cut;
-  }
-
-  /** Drops a thread's cumulative deltas in buckets strictly after the cut's bucket. */
-  function deleteCumulativeDeltasAfter(
-    database: Database.Database,
-    threadId: string,
-    cutBucket: string,
-  ): void {
-    database
-      .prepare("DELETE FROM codex_token_deltas WHERE thread_id = ? AND bucket_start > ?")
-      .run(threadId, cutBucket);
-  }
-
-  /**
-   * The facts of one chunk that count. A per-turn record is cumulative within its
-   * turn, so a record inside an analysis-off period is dropped AND its increment
-   * is remembered per turn and taken off every later record of the same turn
-   * (100 before, 200 off, 300 after counts 200). The state (last value seen and
-   * the off-period total, six counters each) persists in the collector settings
-   * under `codex_token_off:<thread>:<turn>`, written in the chunk's transaction,
-   * and only for turns that had an off-period record. `offStates` collects the
-   * entries this chunk changed.
-   */
-  function countedTurnFacts(
+  function reconcileTurns(
     facts: readonly RolloutFact[],
     fileThreadId: string | null,
     wasOff: (ms: number) => boolean,
-    offStates: Map<string, OffState>,
-  ): RolloutFact[] {
-    const counted: RolloutFact[] = [];
-    const loaded = new Map<string, OffState | null>();
-    /** The latest value seen per turn in this chunk, before anything is stored. */
-    const seen = new Map<string, CodexTokenCounters>();
-    const stateOf = (stateKey: string): OffState | null => {
-      const known = loaded.get(stateKey);
-      if (known !== undefined) return known;
-      const state = parseOffState(getCollectorSetting(db, stateKey));
-      loaded.set(stateKey, state);
+    at: string,
+  ): { readonly counted: number; readonly skipped: number } {
+    interface ThreadCtx {
+      cumAtMs: number | null;
+      cumAtDirty: boolean;
+      readonly turns: Map<string, TurnState>;
+      readonly dirty: Set<string>;
+      allLoaded: boolean;
+    }
+    const threads = new Map<string, ThreadCtx>();
+    let skipped = 0;
+
+    const ctxOf = (threadId: string): ThreadCtx => {
+      let ctx = threads.get(threadId);
+      if (ctx === undefined) {
+        const stored = Date.parse(getCollectorSetting(db, `${CUM_AT_PREFIX}${threadId}`) ?? "");
+        ctx = {
+          cumAtMs: Number.isNaN(stored) ? null : stored,
+          cumAtDirty: false,
+          turns: new Map(),
+          dirty: new Set(),
+          allLoaded: false,
+        };
+        threads.set(threadId, ctx);
+      }
+      return ctx;
+    };
+    const turnOf = (threadId: string, ctx: ThreadCtx, turnId: string): TurnState => {
+      let state = ctx.turns.get(turnId);
+      if (state === undefined) {
+        state =
+          parseTurnState(getCollectorSetting(db, turnStateKey(threadId, turnId))) ?? freshTurn();
+        ctx.turns.set(turnId, state);
+      }
       return state;
     };
+    const loadAll = (threadId: string, ctx: ThreadCtx): void => {
+      if (ctx.allLoaded) return;
+      ctx.allLoaded = true;
+      const prefix = `${TURN_STATE_PREFIX}${threadId}:`;
+      const rows = db
+        .prepare("SELECT key, value FROM collector_settings WHERE key >= ? AND key < ?")
+        .all(prefix, `${prefix.slice(0, -1)};`) as Array<{ key: string; value: string }>;
+      for (const row of rows) {
+        const turnId = row.key.slice(prefix.length);
+        if (ctx.turns.has(turnId)) continue;
+        const state = parseTurnState(row.value);
+        // A thread id that is a prefix of another's cannot claim the other's turns.
+        if (state !== null && state.thread === threadId) ctx.turns.set(turnId, state);
+      }
+    };
+
     for (const fact of facts) {
+      if (fact.kind === "tokens-cumulative") {
+        if (fileThreadId === null || fact.counters === null || fact.time === null) continue;
+        const tcMs = Date.parse(fact.time);
+        if (Number.isNaN(tcMs)) continue;
+        const ctx = ctxOf(fileThreadId);
+        if (ctx.cumAtMs !== null && tcMs <= ctx.cumAtMs) continue;
+        loadAll(fileThreadId, ctx);
+        for (const [turnId, state] of ctx.turns) {
+          if (state.latestMs === null || state.latestMs > tcMs) continue;
+          state.cut = state.hw;
+          state.offCut = state.off;
+          state.anchor = null;
+          ctx.dirty.add(turnId);
+        }
+        ctx.cumAtMs = tcMs;
+        ctx.cumAtDirty = true;
+        continue;
+      }
       if (fact.kind !== "tokens-turn") continue;
       const threadId = fact.threadId ?? fileThreadId;
-      if (fact.counters === null || threadId === null) {
-        if (!offAt(fact.time, wasOff)) counted.push(fact);
+      const tMs = fact.time === null ? Number.NaN : Date.parse(fact.time);
+      const bucket = fact.time === null ? "" : bucketOf(fact.time);
+      if (fact.counters === null || threadId === null || Number.isNaN(tMs) || bucket === "") {
+        skipped += 1;
         continue;
       }
-      const stateKey = `${OFF_STATE_PREFIX}${threadId}:${fact.turnId}`;
-      const state = stateOf(stateKey);
-      const off = offAt(fact.time, wasOff);
-      if (off) {
-        const base =
-          state?.last ??
-          seen.get(stateKey) ??
-          storedTurnCounters(threadId, fact.turnId) ??
-          ZERO_COUNTERS;
-        seen.set(stateKey, fact.counters);
-        const next: OffState = {
-          last: combine(base, fact.counters, (a, b) => Math.max(a, b)),
-          off: combine(
-            state?.off ?? ZERO_COUNTERS,
-            fact.counters,
-            (offTotal, value, i) => offTotal + Math.max(0, value - counterAt(base, i)),
-          ),
-        };
-        loaded.set(stateKey, next);
-        offStates.set(stateKey, next);
-        continue;
+      const ctx = ctxOf(threadId);
+      const state = turnOf(threadId, ctx, fact.turnId);
+      const value = fact.counters;
+      const increment = combine(state.hw, value, (known, incoming) =>
+        Math.max(0, incoming - known),
+      );
+      const off = wasOff(tMs);
+      if (off) state.off = combine(state.off, increment, (total, add) => total + add);
+      state.hw = combine(state.hw, value, (known, incoming) => Math.max(known, incoming));
+      state.latestMs = state.latestMs === null ? tMs : Math.max(state.latestMs, tMs);
+      if (state.first === null || bucket < state.first) state.first = bucket;
+      if (ctx.cumAtMs !== null && tMs <= ctx.cumAtMs) {
+        state.cut = combine(state.cut, value, (known, incoming) => Math.max(known, incoming));
+        if (off) state.offCut = combine(state.offCut, increment, (total, add) => total + add);
+      } else if (state.anchor === null || bucket < state.anchor) {
+        state.anchor = bucket;
       }
-      if (state === null) {
-        seen.set(stateKey, fact.counters);
-        counted.push(fact);
-        continue;
-      }
-      const next: OffState = {
-        last: combine(state.last, fact.counters, (a, b) => Math.max(a, b)),
-        off: state.off,
-      };
-      loaded.set(stateKey, next);
-      offStates.set(stateKey, next);
-      counted.push({
-        ...fact,
-        counters: combine(ZERO_COUNTERS, fact.counters, (_zero, value, i) =>
-          Math.max(0, value - counterAt(state.off, i)),
-        ),
-      });
+      ctx.dirty.add(fact.turnId);
     }
-    return counted;
-  }
 
-  function storedTurnCounters(threadId: string, turnId: string): CodexTokenCounters | null {
-    const row = db
-      .prepare(
-        `SELECT input, cached_input AS cachedInput, cache_write AS cacheWrite, output,
-                reasoning_output AS reasoningOutput, total
-           FROM codex_token_turns WHERE thread_id = ? AND turn_id = ?`,
-      )
-      .get(threadId, turnId) as CodexTokenCounters | undefined;
-    return row ?? null;
-  }
-
-  function offAt(time: string | null, wasOff: (ms: number) => boolean): boolean {
-    return time !== null && wasOff(Date.parse(time));
+    let counted = 0;
+    for (const [threadId, ctx] of threads) {
+      if (ctx.cumAtDirty && ctx.cumAtMs !== null) {
+        setCollectorSetting(
+          db,
+          `${CUM_AT_PREFIX}${threadId}`,
+          new Date(ctx.cumAtMs).toISOString(),
+          at,
+        );
+      }
+      for (const turnId of ctx.dirty) {
+        const state = ctx.turns.get(turnId);
+        if (state === undefined) continue;
+        state.thread = threadId;
+        setCollectorSetting(db, turnStateKey(threadId, turnId), JSON.stringify(state), at);
+        const bucketStart = state.anchor ?? state.first;
+        if (bucketStart === null || state.latestMs === null) continue;
+        ops.setTurnContribution(db, {
+          threadId,
+          turnId,
+          bucketStart,
+          counters: contributionOf(state),
+          observedAt: new Date(state.latestMs).toISOString(),
+        });
+        counted += 1;
+      }
+    }
+    return { counted, skipped };
   }
 
   // --- Sweeping ----------------------------------------------------------------

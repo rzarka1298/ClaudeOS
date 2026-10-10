@@ -66,7 +66,8 @@ describe("Codex token scanner: historical cumulative usage", () => {
       jsonl([tokenCountLine({ timestamp: at(1300), total: raw(130, 0) })]),
     );
     await h.scanner.sweep();
-    expect(inputTotal(h)).toBe(110);
+    // The later cumulative record is authoritative for its own usage: 110 + 20.
+    expect(inputTotal(h)).toBe(130);
   });
 
   it("keeps historical usage when history and per-turn records share one chunk", async () => {
@@ -107,7 +108,7 @@ describe("Codex token scanner: same-bucket transition cut", () => {
     expect(inputTotal(h)).toBe(110);
     h.rollouts.append(DAY, NAME, jsonl([tokenCountLine({ timestamp: T3, total: raw(140, 0) })]));
     await h.scanner.sweep();
-    expect(inputTotal(h)).toBe(110);
+    expect(inputTotal(h)).toBe(140);
   });
 
   it("keeps it when both land in one chunk", async () => {

@@ -31,6 +31,7 @@ export {
   readCumulativeBaseline,
   resetCodexScanState,
   saveRateLimitSnapshot,
+  setTurnContribution,
   threadHasTurnRows,
   upsertTurnTokens,
   writeCodexCursor,

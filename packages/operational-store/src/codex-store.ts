@@ -144,6 +144,57 @@ export function upsertTurnTokens(db: Database.Database, input: TurnTokensInput):
 }
 
 /**
+ * Sets one turn's COUNTED contribution (plan 05.1-23 precedence rule): the usage
+ * of the turn that no thread-cumulative record already covers. Unlike
+ * {@link upsertTurnTokens} it REPLACES the stored counters and bucket, because a
+ * contribution can fall when a later cumulative record covers the turn; an
+ * all-zero contribution removes the row so an empty turn never makes a range
+ * look measured. The scanner recomputes the whole contribution from its
+ * persisted per-turn state, so calling this twice with the same input changes
+ * nothing.
+ */
+export function setTurnContribution(db: Database.Database, input: TurnTokensInput): void {
+  assertIdentifier("thread id", input.threadId);
+  assertIdentifier("turn id", input.turnId);
+  assertBucket(input.bucketStart);
+  assertInstant("observed time", input.observedAt);
+  assertCounters(input.counters);
+  const c = input.counters;
+  if (COUNTER_KEYS.every((key) => c[key] === 0)) {
+    db.prepare("DELETE FROM codex_token_turns WHERE thread_id = ? AND turn_id = ?").run(
+      input.threadId,
+      input.turnId,
+    );
+    return;
+  }
+  db.prepare(
+    `INSERT INTO codex_token_turns
+       (thread_id, turn_id, bucket_start, input, cached_input, cache_write, output, reasoning_output, total, observed_at)
+     VALUES (@threadId, @turnId, @bucketStart, @input, @cachedInput, @cacheWrite, @output, @reasoningOutput, @total, @observedAt)
+     ON CONFLICT (thread_id, turn_id) DO UPDATE SET
+       bucket_start = excluded.bucket_start,
+       input = excluded.input,
+       cached_input = excluded.cached_input,
+       cache_write = excluded.cache_write,
+       output = excluded.output,
+       reasoning_output = excluded.reasoning_output,
+       total = excluded.total,
+       observed_at = excluded.observed_at`,
+  ).run({
+    threadId: input.threadId,
+    turnId: input.turnId,
+    bucketStart: input.bucketStart,
+    observedAt: input.observedAt,
+    input: c.input,
+    cachedInput: c.cachedInput,
+    cacheWrite: c.cacheWrite,
+    output: c.output,
+    reasoningOutput: c.reasoningOutput,
+    total: c.total,
+  });
+}
+
+/**
  * Adds a per-bucket delta for a Codex version whose rollouts carry no per-turn
  * record. Additive: the caller (the scanner) is responsible for handing over a
  * delta only once, in the same transaction that advances its cursor and
