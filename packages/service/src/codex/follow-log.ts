@@ -61,6 +61,12 @@ export interface FollowLogDeps {
   /** Only `lstat` and `realpath`: the service has no way to read the log through this seam. */
   readonly fs: Pick<RunRecordFs, "lstat" | "realpath">;
   readonly readBridgeStatus: () => BridgeStatus;
+  /**
+   * The bridge status restricted to the candidate directory that contains `containing` (a run
+   * record's state directory). Absent: a run whose log is outside the primary directory is
+   * reported as unsupported (window-not-ready) instead of being queued where it would be rejected.
+   */
+  readonly readBridgeStatusContaining?: (containing: string) => BridgeStatus;
   readonly coveringWindow: (status: BridgeStatus, projectRoot: string) => BridgeWindow | null;
   /** The shared minter of strictly increasing bridge run ids. */
   readonly mintRunId: () => string;
@@ -216,6 +222,20 @@ export function createFollowLogService(deps: FollowLogDeps): FollowLogService {
     return info?.isDirectory === true ? real : root;
   }
 
+  /**
+   * True when the extension serving `status.dir` accepts the run's log: it is the project-local
+   * state directory (inside the project root), or it sits inside that bridge directory.
+   */
+  async function acceptsLog(
+    status: BridgeStatus,
+    record: { readonly stateDir: string; readonly projectRoot: string },
+  ): Promise<boolean> {
+    const rootReal = (await deps.fs.realpath(record.projectRoot)) ?? record.projectRoot;
+    if (isInside(record.stateDir, rootReal)) return true;
+    const dirReal = (await deps.fs.realpath(status.dir)) ?? status.dir;
+    return isInside(record.stateDir, dirReal);
+  }
+
   async function run(runId: string, signal: AbortSignal | undefined): Promise<FollowResult> {
     if (!CODEX_WRAPPER_RUN_ID_PATTERN.test(runId)) return refuse("not-found");
     if (signal?.aborted === true) return refuse("failed");
@@ -231,7 +251,13 @@ export function createFollowLogService(deps: FollowLogDeps): FollowLogService {
     if (log.kind === "missing") return refuse("run-ended");
     if (deps.now() - log.mtimeMs > deps.inactivityMs) return refuse("run-ended");
 
-    const status = deps.readBridgeStatus();
+    let status = deps.readBridgeStatus();
+    if (!(await acceptsLog(status, record))) {
+      // The log is under another candidate directory (default vs custom state home).
+      if (deps.readBridgeStatusContaining === undefined) return refuse("window-not-ready");
+      status = deps.readBridgeStatusContaining(record.stateDir);
+      if (!(await acceptsLog(status, record))) return refuse("window-not-ready");
+    }
     if (!status.launcherPresent || !status.launchable) return refuse("bridge-not-installed");
     // A window that has the project open must exist already: follow never cold-starts the IDE.
     if (deps.coveringWindow(status, record.projectRoot) === null) return refuse("window-not-ready");

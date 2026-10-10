@@ -365,6 +365,47 @@ describe("Test 3: every failure is one fixed code and nothing is written", () =>
   });
 });
 
+describe("a run found under a different bridge directory than the primary one", () => {
+  function setup() {
+    const sim = fx.simulator("current");
+    sim.heartbeat();
+    const custom = join(fx.home, "custom-state");
+    const customDir = join(custom, "codex-bridge");
+    bridgeCore.ensureDirs(customDir);
+    bridgeCore.writeProtocolMarker(customDir, "test-kit");
+    const userState = join(fx.stateDir, "projects", projectDirName(fx.projectDir));
+    const { runId } = runningRun({ dir: userState, kind: "task" });
+    const env = { XDG_STATE_HOME: custom };
+    const primary = () => readBridgeStatus({ env, home: fx.home, now: () => Date.now() });
+    return { sim, customDir, runId, env, primary };
+  }
+
+  it("is a clear window-not-ready, never queued where the extension would reject the log", async () => {
+    const { sim, customDir, runId, primary } = setup();
+    const r = rig({ sim, over: { readBridgeStatus: primary } });
+    expect(primary().dir).toBe(customDir);
+    expect(await r.service.follow({ runId })).toEqual({ ok: false, error: "window-not-ready" });
+    expect(readdirSync(join(customDir, "requests"))).toEqual([]);
+    expect(requestsNow()).toEqual([]);
+  });
+
+  it("is queued to the directory the record came from when a covering window is there", async () => {
+    const { sim, runId, env, primary } = setup();
+    const r = rig({
+      sim,
+      over: {
+        readBridgeStatus: primary,
+        readBridgeStatusContaining: (containing) =>
+          readBridgeStatus({ env, home: fx.home, now: () => Date.now(), containing }),
+      },
+    });
+    expect(await r.service.follow({ runId })).toEqual({ ok: true });
+    const raw = claimedRequest();
+    const verdict = bridgeCore.validateRequest(raw, { stateDir: fx.stateDir, checkAge: false });
+    expect(verdict.ok, verdict.reason).toBe(true);
+  });
+});
+
 describe("Test 4: the claim wait, the withdrawal and the claim race", () => {
   it("withdraws on timeout, answers window-not-ready and returns within the adapter deadline plus one poll", async () => {
     const sim = fx.simulator("current");

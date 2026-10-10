@@ -114,6 +114,11 @@ export interface ReadBridgeStatusOptions {
   /** A fixed time or a clock; defaults to `Date.now`. */
   readonly now?: number | (() => number);
   readonly fs?: BridgeStateFs;
+  /**
+   * Only consider candidate directories whose real path contains this path (a run record's state
+   * directory), so a follow request is queued where the extension can accept the live log.
+   */
+  readonly containing?: string;
 }
 
 function isInside(child: string, parent: string): boolean {
@@ -214,6 +219,14 @@ export function readBridgeStatus(options: ReadBridgeStatusOptions): BridgeStatus
   const candidates: string[] = [];
   if (acceptable(primary)) candidates.push(primary);
   if (fallback !== primary && acceptable(fallback)) candidates.push(fallback);
+
+  if (options.containing !== undefined) {
+    const wanted = options.containing;
+    for (let i = candidates.length - 1; i >= 0; i -= 1) {
+      const candidate = candidates[i] as string;
+      if (!isInside(wanted, fs.realpath(candidate) ?? candidate)) candidates.splice(i, 1);
+    }
+  }
 
   const chosen = candidates.find((dir) => hasBridge(fs, dir));
   const launchable = candidates.length > 0;

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { CodexBridgeStatusSchema } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BridgeFixture, createBridgeFixture } from "../test-support/bridge-fixtures.js";
+import { bridgeCore } from "../test-support/codex-run-fixtures.js";
 import {
   type BridgeStateFs,
   coveringWindow,
@@ -354,5 +355,35 @@ describe("coveringWindow by real path", () => {
     fx.simulator("outdated", { key: "a-window" }).heartbeat();
     const covering = coveringWindows(status(), fx.projectDir);
     expect(covering.map((w) => w.key)).toEqual(["a-window", "b-window"]);
+  });
+});
+
+describe("containing: the candidate directory that holds a given path", () => {
+  it("picks the default directory that contains the path even when the custom one has the bridge", () => {
+    fx.installLauncher();
+    fx.installMarker();
+    const custom = join(fx.home, "custom-state");
+    const env = { XDG_STATE_HOME: custom };
+    bridgeCore.ensureDirs(join(custom, "codex-bridge"));
+    bridgeCore.writeProtocolMarker(join(custom, "codex-bridge"), "test-kit");
+    const inDefault = join(fx.stateDir, "projects", "p-abc");
+    mkdirSync(inDefault, { recursive: true });
+    const plain = readBridgeStatus({ env, home: fx.home });
+    expect(plain.dir).toBe(join(custom, "codex-bridge"));
+    const narrowed = readBridgeStatus({ env, home: fx.home, containing: inDefault });
+    expect(narrowed.dir).toBe(fx.stateDir);
+    expect(narrowed.launchable).toBe(true);
+  });
+
+  it("is not launchable when no candidate directory contains the path", () => {
+    fx.installLauncher();
+    fx.installMarker();
+    const narrowed = readBridgeStatus({
+      env: {},
+      home: fx.home,
+      containing: join(fx.home, "somewhere-else", "projects", "p"),
+    });
+    expect(narrowed.launchable).toBe(false);
+    expect(narrowed.windows).toEqual([]);
   });
 });
