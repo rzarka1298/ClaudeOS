@@ -24,6 +24,8 @@ import {
   CodexUsageSnapshotSchema,
   HeadroomSignalSchema,
 } from "@ccc/domain/codex-usage.js";
+import { LAUNCH_ERROR_KINDS } from "@ccc/domain/launch.js";
+import { ProjectIdSchema } from "@ccc/domain/projects.js";
 import { describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -87,9 +89,22 @@ interface Case {
   readonly override?: string;
 }
 
+interface PairLine {
+  readonly kind: string;
+  readonly error?: string;
+}
+
+interface LaunchFixture {
+  readonly terminalLabel: string;
+  readonly projects: readonly { readonly id: string; readonly name: string }[];
+  readonly pairProjectId: string;
+  readonly pairs: Readonly<Record<string, { readonly claude: PairLine; readonly codex: PairLine }>>;
+}
+
 interface FixtureFile {
   readonly now: string;
   readonly cases: Readonly<Record<string, Case>>;
+  readonly launch: LaunchFixture;
 }
 
 const text = readFileSync(FIXTURE_PATH, "utf8");
@@ -320,6 +335,50 @@ describe("every case holds the shape the UI-SPEC row says it exists to show", ()
     expect(
       usage?.kind === "available" && usage.windows.some((w) => w.limitLabel?.length === 40),
     ).toBe(true);
+  });
+});
+
+/** The five pair-launch status cases of the UI-SPEC "Visual regression" table. */
+const PAIR_CASES = ["opening", "success-error", "setup", "window-not-ready", "both-error"] as const;
+
+describe("the launch block feeds the toolbar and pair-launch cells", () => {
+  const { launch } = fixtures;
+
+  it("shows the Antigravity terminal and two invented projects with real project ids", () => {
+    expect(launch.terminalLabel).toBe("Antigravity");
+    expect(launch.projects.map((project) => project.name)).toEqual(["Alpha", "Bravo"]);
+    for (const project of launch.projects) {
+      expect(ProjectIdSchema.safeParse(project.id).success, project.id).toBe(true);
+    }
+    expect(launch.projects.map((project) => project.id)).toContain(launch.pairProjectId);
+  });
+
+  it("holds exactly the five pair cases, each with a Claude line and a Codex line", () => {
+    expect(Object.keys(launch.pairs)).toEqual([...PAIR_CASES]);
+    for (const [id, pair] of Object.entries(launch.pairs)) {
+      for (const line of [pair.claude, pair.codex]) {
+        expect(["opening", "success", "error", "setup"], id).toContain(line.kind);
+        if (line.kind === "error") {
+          expect(LAUNCH_ERROR_KINDS as readonly string[], id).toContain(line.error);
+        } else {
+          expect(line.error, id).toBeUndefined();
+        }
+      }
+      // Claude's missing launcher is an error, never a setup state (UI-SPEC S2).
+      expect(pair.claude.kind, id).not.toBe("setup");
+    }
+  });
+
+  it("encodes the locked per-case statuses", () => {
+    const { pairs } = launch;
+    expect(pairs.opening).toEqual({ claude: { kind: "opening" }, codex: { kind: "opening" } });
+    expect(pairs["success-error"]?.claude.kind).toBe("success");
+    expect(pairs["success-error"]?.codex).toEqual({ kind: "error", error: "bridge-outdated" });
+    expect(pairs.setup?.codex.kind).toBe("setup");
+    expect(pairs["window-not-ready"]?.claude.error).toBe("window-not-ready");
+    expect(pairs["window-not-ready"]?.codex.error).toBe("window-not-ready");
+    expect(pairs["both-error"]?.claude.error).toBe("bridge-not-installed");
+    expect(pairs["both-error"]?.codex.error).toBe("bridge-not-installed");
   });
 });
 

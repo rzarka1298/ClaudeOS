@@ -100,16 +100,20 @@ const CODEX_CARD_CASES = [
   "long-text",
 ] as const;
 const CODEX_PANES = ["narrow", "full"] as const;
+const PAIR_CASES = ["opening", "success-error", "setup", "window-not-ready", "both-error"] as const;
 const CODEX_CELLS: readonly string[] = [
   ...CODEX_CARD_CASES.flatMap((id) => CODEX_PANES.map((pane) => `codex — ${id} — ${pane}`)),
   // ready-mixed again at data-motion reduced (UI-SPEC accessibility floor 13), and at 200 percent font size.
   ...CODEX_PANES.map((pane) => `codex — ready-mixed — ${pane} — reduced`),
   "codex — zoom-200 — narrow",
+  // The launch toolbar with the fifth button, and the five pair-launch status cases.
+  ...CODEX_PANES.map((pane) => `codex — launch-toolbar-five — ${pane}`),
+  ...PAIR_CASES.flatMap((id) => CODEX_PANES.map((pane) => `codex — launch-pair-${id} — ${pane}`)),
 ];
 
 /** The 121 cells the merged tree already had, and the Codex spec's final count (UI-SPEC "Visual regression"). */
 const MERGED_TREE_CELLS = 121;
-const CODEX_SPEC_CELLS = 35;
+const CODEX_SPEC_CELLS = 47;
 
 /** The titles `playwright test --list` prints for one spec file. */
 function titlesOf(listing: string, specFile: string): string[] {
@@ -150,6 +154,28 @@ describe("visual matrix (audit)", () => {
     ]) {
       expect(out).toContain(cell);
     }
+  }, 60_000);
+
+  it("declares exactly the 47 Codex baseline names, once each, all matching the stem rule", () => {
+    const run = execFileSync("node", [join(REPO_ROOT, "scripts", "list-visual-baselines.mjs")], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+    const names = run
+      .split("\n")
+      .filter((line) => line.startsWith("codex.spec.ts-snapshots/"))
+      .map((line) => line.slice("codex.spec.ts-snapshots/".length));
+    const stems = [
+      ...CODEX_CARD_CASES.flatMap((id) => CODEX_PANES.map((pane) => `codex-${id}--${pane}`)),
+      ...CODEX_PANES.map((pane) => `codex-ready-mixed-reduced--${pane}`),
+      "codex-zoom-200--narrow",
+      ...CODEX_PANES.map((pane) => `launch-toolbar-five--${pane}`),
+      ...PAIR_CASES.flatMap((id) => CODEX_PANES.map((pane) => `launch-pair-${id}--${pane}`)),
+    ];
+    expect(stems).toHaveLength(CODEX_SPEC_CELLS);
+    expect(new Set(names).size).toBe(names.length);
+    expect([...names].sort()).toEqual(stems.map((stem) => `${stem}-chromium-linux.png`).sort());
+    for (const stem of stems) expect(`${stem}.png`).toMatch(/^[a-z0-9][a-z0-9-]*\.png$/);
   }, 60_000);
 
   it("pins UTC, en-US, a 1024x768 viewport at scale 1 and disabled animations", () => {
