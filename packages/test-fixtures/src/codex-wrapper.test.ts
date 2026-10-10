@@ -2116,3 +2116,480 @@ describe("tui isolation: review of the isolation fix", () => {
     expect(tuiCalls(h)).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 05.1-10: content-free run tracking records (D-20) and the shared state-directory candidates.
+// An own block: the cases above are not touched.
+
+describe("run tracking records (plan 05.1-10)", () => {
+  const spawnedRecordKeys = [
+    "schemaVersion",
+    "runId",
+    "kind",
+    "role",
+    "sessionId",
+    "worktree",
+    "model",
+    "effort",
+    "startedAt",
+    "mode",
+    "status",
+    "resetsAt",
+    "finishedAt",
+  ].sort();
+  const pendingKeys = [
+    "schemaVersion",
+    "sessionId",
+    "runId",
+    "kind",
+    "role",
+    "worktree",
+    "resetsAt",
+    "recordedAt",
+  ].sort();
+  const DECOY = "DECOY-FINDING-TEXT-7731";
+  const DECOY_REVIEW = JSON.stringify({
+    verdict: "needs-attention",
+    summary: `${DECOY} summary`,
+    findings: [
+      {
+        severity: "high",
+        title: `${DECOY} title`,
+        body: `${DECOY} body`,
+        file: "src/a.ts",
+        line_start: 1,
+        line_end: 1,
+        confidence: 0.9,
+        recommendation: `${DECOY} fix`,
+      },
+    ],
+  });
+
+  // A fake `codex` that snapshots the sessions directory when `exec` starts (what a reader would
+  // see before Codex announces anything), then behaves as the shared fake. SNAP_LIMIT_NO_SESSION
+  // makes it hit the usage limit before any session id is announced.
+  const SNAPSHOT_CODEX = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const argv = process.argv.slice(2);
+if (argv[0] === "exec" && process.env.SNAP_SESSIONS) {
+  const files = {};
+  try {
+    for (const f of fs.readdirSync(process.env.SNAP_SESSIONS))
+      if (f.endsWith(".json")) files[f] = JSON.parse(fs.readFileSync(path.join(process.env.SNAP_SESSIONS, f), "utf8"));
+  } catch {}
+  fs.appendFileSync(process.env.SNAP_OUT, JSON.stringify(files) + "\n");
+  if (process.env.SNAP_LIMIT_NO_SESSION) {
+    process.stdout.write(JSON.stringify({ type: "turn.failed", error: { message: "You’ve hit your usage limit. Try again later." } }) + "\n");
+    process.exit(1);
+  }
+}
+require(process.env.SNAP_REAL);
+`;
+  let snapBin: string | null = null;
+  function snapshotBin(): string {
+    if (snapBin) return snapBin;
+    const dir = mkdtempSync(join(tmpdir(), "ccc-snap-bin-"));
+    writeFileSync(join(dir, "codex"), `#!${process.execPath}\n${SNAPSHOT_CODEX}`);
+    chmodSync(join(dir, "codex"), 0o755);
+    snapBin = dir;
+    return dir;
+  }
+  afterAll(() => {
+    if (snapBin) rmSync(snapBin, { recursive: true, force: true });
+  });
+
+  const stateRoot = (h: Harness) => join(h.root, ".planning", "codex");
+  const sessionsOf = (h: Harness) => {
+    const dir = join(stateRoot(h), "sessions");
+    return existsSync(dir)
+      ? readdirSync(dir)
+          .filter((f) => f.endsWith(".json"))
+          .sort()
+          .map((f) => ({ file: f, ...JSON.parse(readFileSync(join(dir, f), "utf8")) }))
+      : [];
+  };
+  const pendingOf = (h: Harness) => {
+    const f = join(stateRoot(h), "pending-resume.json");
+    return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : null;
+  };
+  const snapEnv = (h: Harness, extra: Record<string, string> = {}) => ({
+    PATH: `${snapshotBin()}:${fakeBin()}:${process.env.PATH ?? ""}`,
+    SNAP_SESSIONS: join(stateRoot(h), "sessions"),
+    SNAP_OUT: join(h.bin, "snapshots.jsonl"),
+    SNAP_REAL: join(fakeBin(), "codex"),
+    ...extra,
+  });
+  const snapshots = (h: Harness): Array<Record<string, Record<string, unknown>>> => {
+    const f = join(h.bin, "snapshots.jsonl");
+    return existsSync(f)
+      ? readFileSync(f, "utf8")
+          .trim()
+          .split("\n")
+          .map((l) => JSON.parse(l))
+      : [];
+  };
+
+  function spawnWrapper(h: Harness, args: string[], env: Record<string, string> = {}) {
+    const child = spawn(process.execPath, [join(h.root, WRAPPER), ...args], {
+      cwd: h.root,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: testEnv({
+        PATH: `${fakeBin()}:${process.env.PATH ?? ""}`,
+        HOME: h.home,
+        FAKE_CODEX_LOG: h.log,
+        FAKE_AG_LOG: h.agLog,
+        FAKE_CODEX_USAGE: usageResult(),
+        CCC_CODEX_KILL_GRACE_MS: "300",
+        ...env,
+      }),
+    });
+    let stdout = "";
+    child.stdout.on("data", (d) => {
+      stdout += d;
+    });
+    child.stderr.on("data", () => {});
+    const done = new Promise<number | null>((res) => child.on("exit", (code) => res(code)));
+    cleanups.unshift(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    });
+    return { child, done, stdout: () => stdout };
+  }
+
+  async function until<T>(read: () => T | null | undefined | false, ms = 15_000): Promise<T> {
+    for (let i = 0; i < ms / 50; i++) {
+      const v = read();
+      if (v) return v;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error("condition not reached in time");
+  }
+
+  const sorted = (o: object) => Object.keys(o).sort();
+
+  it.each(["review", "task", "resume"] as const)(
+    "%s: a running record exists before Codex starts, and the final one keeps its start",
+    (kind) => {
+      const h = harness();
+      const wt = linkedWorktree(h);
+      if (kind === "resume") h.run(["task", wt, briefFile(h)], { FAKE_CODEX_EXEC: "limit" });
+      const args =
+        kind === "review"
+          ? ["review", h.root, "HEAD~1"]
+          : kind === "task"
+            ? ["task", wt, briefFile(h)]
+            : ["resume", SESSION_ID];
+      const r = h.run(args, snapEnv(h, { FAKE_CODEX_FINAL: REVIEW_JSON }));
+      expect(r.status).toBe(0);
+      const snap = snapshots(h).at(-1) ?? {};
+      const before = Object.values(snap).find((s) => s.kind === kind);
+      expect(before).toMatchObject({
+        schemaVersion: 1,
+        kind,
+        status: "running",
+        mode: "headless",
+        sessionId: kind === "resume" ? SESSION_ID : null,
+      });
+      expect(typeof before?.startedAt).toBe("string");
+      expect(before).not.toHaveProperty("finishedAt");
+      const after = sessionsOf(h).find((s) => s.runId === before?.runId);
+      expect(after).toMatchObject({
+        schemaVersion: 1,
+        status: "ok",
+        sessionId: SESSION_ID,
+        startedAt: before?.startedAt,
+        mode: "headless",
+      });
+      expect(typeof after?.finishedAt).toBe("string");
+      expect(sorted(after ?? {}).filter((k) => k !== "file")).toEqual(spawnedRecordKeys);
+    },
+  );
+
+  it("review: a session announced while Codex blocks is persisted with the original start, then finalised as a timeout", async () => {
+    const h = harness();
+    const pidfile = join(h.bin, "hang.pid");
+    reapAfter(h, [pidfile]);
+    const run = spawnWrapper(h, ["review", h.root, "HEAD~1", "--timeout-sec", "3"], {
+      FAKE_CODEX_EXEC: "hang",
+      FAKE_CODEX_PIDFILE: pidfile,
+    });
+    const running = await until(() => sessionsOf(h).find((s) => s.sessionId === SESSION_ID));
+    expect(running).toMatchObject({
+      schemaVersion: 1,
+      kind: "review",
+      role: "review",
+      status: "running",
+      mode: "headless",
+    });
+    expect(running).not.toHaveProperty("finishedAt");
+    expect(await run.done).toBe(21);
+    const final = sessionsOf(h).find((s) => s.runId === running.runId);
+    expect(final).toMatchObject({
+      status: "timeout",
+      sessionId: SESSION_ID,
+      startedAt: running.startedAt,
+    });
+    expect(typeof final?.finishedAt).toBe("string");
+  });
+
+  it("review: a wrapper that is terminated after the announcement leaves the running record and no completion", async () => {
+    const h = harness();
+    const pidfile = join(h.bin, "hang.pid");
+    reapAfter(h, [pidfile]);
+    const run = spawnWrapper(h, ["review", h.root, "HEAD~1"], {
+      FAKE_CODEX_EXEC: "hang",
+      FAKE_CODEX_PIDFILE: pidfile,
+      CCC_CODEX_KILL_GRACE_MS: "300",
+    });
+    const running = await until(() => sessionsOf(h).find((s) => s.sessionId === SESSION_ID));
+    run.child.kill("SIGTERM");
+    expect(await run.done).toBe(130);
+    const left = sessionsOf(h).find((s) => s.runId === running.runId);
+    expect(left).toMatchObject({ status: "running", sessionId: SESSION_ID });
+    expect(left).not.toHaveProperty("finishedAt");
+    expect(left?.startedAt).toBe(running.startedAt);
+  });
+
+  it("review in the TUI: the announced session id and mode tui are persisted while it runs", async () => {
+    const h = harness();
+    const pidfile = join(h.bin, "tui.pid");
+    reapAfter(h, [pidfile]);
+    const run = spawnWrapper(h, ["review", h.root, "HEAD~1", "--timeout-sec", "4"], {
+      FAKE_AG_MODE: "claim",
+      CODEX_BRIDGE_CLAIM_TIMEOUT_MS: "8000",
+      FAKE_CODEX_TUI: "hang",
+      FAKE_CODEX_PIDFILE: pidfile,
+    });
+    const running = await until(() => sessionsOf(h).find((s) => s.sessionId === SESSION_ID));
+    expect(running).toMatchObject({ kind: "review", mode: "tui", status: "running" });
+    expect(running).not.toHaveProperty("finishedAt");
+    expect(await run.done).toBe(21);
+    const final = sessionsOf(h).find((s) => s.runId === running.runId);
+    expect(final).toMatchObject({ mode: "tui", status: "timeout", sessionId: SESSION_ID });
+    expect(final?.startedAt).toBe(running.startedAt);
+  });
+
+  it("review falling back from the TUI to headless records mode headless and the real session id", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1", "--timeout-sec", "30"], {
+      FAKE_AG_MODE: "claim",
+      CODEX_BRIDGE_CLAIM_TIMEOUT_MS: "8000",
+      CODEX_BRIDGE_INACTIVITY_MS: "1500",
+      FAKE_CODEX_TUI: "stall",
+      FAKE_CODEX_FINAL: REVIEW_JSON,
+    });
+    expect(r.status).toBe(0);
+    const [rec, ...rest] = sessionsOf(h);
+    expect(rest).toEqual([]);
+    expect(rec).toMatchObject({ status: "ok", mode: "headless", sessionId: SESSION_ID });
+    expect(rec?.startedAt <= rec?.finishedAt).toBe(true);
+  });
+
+  it("review: the headless callback saves the tracking record before it opens the bridge tab", () => {
+    const source = readFileSync(join(REPO_ROOT, WRAPPER), "utf8");
+    const start = source.indexOf("async function cmdReview(");
+    const body = source.slice(start, source.indexOf("\n}\n", start));
+    const callback = body.slice(body.indexOf("const onSession ="));
+    expect(callback.indexOf("saveTracking")).toBeGreaterThan(-1);
+    expect(callback.indexOf("saveTracking")).toBeLessThan(callback.indexOf("openBridgeTab("));
+  });
+
+  it.each([
+    ["ok", {}, 0, "ok"],
+    ["limit", { FAKE_CODEX_EXEC: "limit" }, 20, "limit"],
+    ["unavailable", { FAKE_CODEX_EXEC: "early" }, 22, "failed"],
+    ["unstructured", { FAKE_CODEX_FINAL: "plain prose, not the schema" }, 0, "failed"],
+  ] as const)(
+    "review %s: report status and exit code are unchanged and the tracking record maps it",
+    (reportStatus, env, exit, tracking) => {
+      const h = harness();
+      const r = h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: DECOY_REVIEW, ...env });
+      expect(r.status).toBe(exit);
+      expect(lastJson(r.stdout).status).toBe(reportStatus);
+      const [rec] = sessionsOf(h);
+      expect(rec?.status).toBe(tracking);
+      expect(sorted(rec ?? {}).filter((k) => k !== "file")).toEqual(spawnedRecordKeys);
+      expect(rec).toMatchObject({ schemaVersion: 1, kind: "review", role: "review" });
+      expect(typeof rec?.finishedAt).toBe("string");
+    },
+  );
+
+  it("review: no review text, verdict, commit, prompt or path reaches a tracking or pending record", () => {
+    const h = harness();
+    const base = h.repo.git("rev-parse", "HEAD~1").trim();
+    const head = h.repo.git("rev-parse", "HEAD").trim();
+    const r = h.run(["review", h.root, "HEAD~1"], {
+      FAKE_CODEX_FINAL: DECOY_REVIEW,
+      FAKE_CODEX_EXEC: "limit",
+    });
+    expect(r.status).toBe(20);
+    const files = [
+      ...readdirSync(join(stateRoot(h), "sessions")).map((f) =>
+        readFileSync(join(stateRoot(h), "sessions", f), "utf8"),
+      ),
+      readFileSync(join(stateRoot(h), "pending-resume.json"), "utf8"),
+    ].join("\n");
+    for (const secret of [
+      DECOY,
+      "needs-attention",
+      base,
+      head,
+      h.root,
+      "Off-by-one",
+      "codex-bridge run",
+    ])
+      expect(files).not.toContain(secret);
+    // The report keeps its content separately, as before.
+    const report = lastJson(r.stdout);
+    expect(report.report).toMatch(/-review\.json$/);
+  });
+
+  it.each([
+    ["review", ["review", "HEAD~1"]],
+    ["task", ["task"]],
+    ["resume", ["resume"]],
+  ] as const)(
+    "%s: a limit hit with a known session writes a versioned pending record joined to the session record",
+    (kind) => {
+      const h = harness();
+      const wt = linkedWorktree(h);
+      if (kind === "resume") h.run(["task", wt, briefFile(h)], { FAKE_CODEX_EXEC: "limit" });
+      const args =
+        kind === "review"
+          ? ["review", h.root, "HEAD~1"]
+          : kind === "task"
+            ? ["task", wt, briefFile(h)]
+            : ["resume", SESSION_ID];
+      const r = h.run(args, { FAKE_CODEX_EXEC: "limit" });
+      expect(r.status).toBe(20);
+      const run = sessionsOf(h).find((s) => s.kind === kind);
+      expect(run).toMatchObject({
+        status: "limit",
+        sessionId: SESSION_ID,
+        resetsAt: new Date(RESETS_AT * 1000).toISOString(),
+      });
+      const pending = pendingOf(h);
+      expect(sorted(pending)).toEqual(pendingKeys);
+      expect(pending).toMatchObject({
+        schemaVersion: 1,
+        kind,
+        runId: run?.runId,
+        sessionId: SESSION_ID,
+        role: run?.role,
+        worktree: run?.worktree,
+        resetsAt: new Date(RESETS_AT * 1000).toISOString(),
+      });
+      expect(r.out).toMatch(/Codex hit its usage limit/);
+      if (kind === "review") expect(r.out).not.toMatch(/After reset/);
+    },
+  );
+
+  it("review: a limit before any session id leaves sessionId null and writes no pending record", () => {
+    const h = harness();
+    const r = h.run(["review", h.root, "HEAD~1"], snapEnv(h, { SNAP_LIMIT_NO_SESSION: "1" }));
+    expect(r.status).toBe(20);
+    const [rec] = sessionsOf(h);
+    expect(rec).toMatchObject({ status: "limit", sessionId: null });
+    expect(pendingOf(h)).toBeNull();
+  });
+
+  it("a review limit never overwrites a task's pending resume, and never blocks the next task", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    h.run(["task", wt, briefFile(h)], { FAKE_CODEX_EXEC: "limit" });
+    expect(pendingOf(h)).toMatchObject({ kind: "task" });
+    expect(h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_EXEC: "limit" }).status).toBe(20);
+    expect(pendingOf(h)).toMatchObject({ kind: "task" });
+
+    const h2 = harness();
+    const wt2 = linkedWorktree(h2);
+    expect(h2.run(["review", h2.root, "HEAD~1"], { FAKE_CODEX_EXEC: "limit" }).status).toBe(20);
+    expect(pendingOf(h2)).toMatchObject({ kind: "review" });
+    expect(h2.run(["task", wt2, briefFile(h2)]).status).toBe(0);
+  });
+
+  it("a review that finishes ok clears a stale review pending record", () => {
+    const h = harness();
+    h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_EXEC: "limit" });
+    expect(pendingOf(h)).not.toBeNull();
+    expect(h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON }).status).toBe(0);
+    expect(pendingOf(h)).toBeNull();
+  });
+
+  it("resume still refuses a session that only a review produced", () => {
+    const h = harness();
+    expect(h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON }).status).toBe(0);
+    const r = h.run(["resume", SESSION_ID]);
+    expect(r.status).toBe(2);
+    expect(r.out).toMatch(/no recorded task session/);
+    expect(h.execCalls()).toHaveLength(1);
+  });
+
+  it("records without schemaVersion (older wrappers) are still read as valid", () => {
+    const h = harness();
+    const wt = linkedWorktree(h);
+    mkdirSync(join(stateRoot(h), "sessions"), { recursive: true });
+    writeFileSync(
+      join(stateRoot(h), "pending-resume.json"),
+      JSON.stringify({
+        sessionId: SESSION_ID,
+        runId: "20260101T000000000Z",
+        kind: "task",
+        role: "task",
+        worktree: ".claude/worktrees/codex-t",
+        resetsAt: null,
+        recordedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    expect(h.run(["task", wt, briefFile(h)]).status).toBe(13);
+    writeFileSync(
+      join(stateRoot(h), "sessions", "20260101T000000000Z.json"),
+      JSON.stringify({
+        runId: "20260101T000000000Z",
+        kind: "task",
+        role: "task",
+        sessionId: SESSION_ID,
+        worktree: ".claude/worktrees/codex-t",
+        model: "gpt-6.1-sol",
+        effort: "medium",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        status: "limit",
+      }),
+    );
+    const r = h.run(["resume", SESSION_ID]);
+    expect(r.status).toBe(0);
+    expect(h.execCalls()[0]?.argv.slice(0, 3)).toEqual(["exec", "resume", SESSION_ID]);
+  });
+});
+
+describe("wrapper state directory (plan 05.1-10)", () => {
+  const dirsOf = (h: Harness) => bridgeCore.projectStateCandidates(h.root, h.bridgeState);
+
+  it("uses the in-repo directory where git ignores every probe: the first bridge-core candidate", () => {
+    const h = harness();
+    expect(h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON }).status).toBe(0);
+    const [inRepo, userLevel] = dirsOf(h);
+    expect(existsSync(join(inRepo as string, "sessions"))).toBe(true);
+    expect(existsSync(join(userLevel as string, "sessions"))).toBe(false);
+  });
+
+  it("uses the bridge-state projects directory where git does not ignore them: the second candidate", () => {
+    const h = harness();
+    h.repo.write(".gitignore", ".claude/worktrees/\n");
+    h.repo.git("commit", "-q", "-am", "stop ignoring the codex state");
+    expect(h.run(["review", h.root, "HEAD~1"], { FAKE_CODEX_FINAL: REVIEW_JSON }).status).toBe(0);
+    const [inRepo, userLevel] = dirsOf(h);
+    expect(existsSync(join(inRepo as string, "sessions"))).toBe(false);
+    expect(existsSync(join(userLevel as string, "sessions"))).toBe(true);
+    expect(readdirSync(join(userLevel as string, "sessions"))).toHaveLength(1);
+  });
+
+  it("derives both directories from bridge-core, not from a local copy", () => {
+    const source = readFileSync(join(REPO_ROOT, WRAPPER), "utf8");
+    expect(source).toContain("bridge.projectStateCandidates(");
+    expect(source).toContain("bridge.STATE_PROBES");
+    expect(source).not.toMatch(/const STATE_PROBES = \[/);
+  });
+});
