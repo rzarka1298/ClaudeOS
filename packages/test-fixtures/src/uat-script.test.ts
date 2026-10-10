@@ -71,44 +71,56 @@ describe("guard (Test 1)", () => {
 
 run("front matter and results (Test 2)", () => {
   const tests = parseTests(text);
+  const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
+  // Agents ship the script with every result pending (status: testing); only
+  // the owner's run, recorded by the orchestrator, moves it to complete.
+  const complete = /^status: complete$/m.test(front);
 
   it("has the GSD front matter and a Current Test block", () => {
-    const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
-    expect(front).toMatch(/^status: testing$/m);
+    expect(front).toMatch(/^status: (testing|complete)$/m);
     expect(front).toMatch(/^phase: 06-approval-inbox-canonical-tasks$/m);
     expect(front).toMatch(/^source: \[.*06-\d\d-SUMMARY\.md.*\]$/m);
     expect(front).toMatch(/^started: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
     expect(front).toMatch(/^updated: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
     const current = section(text, "Current Test");
-    expect(current).toMatch(/number: 1\b/);
-    expect(current).toMatch(/awaiting: user response/);
+    if (complete) {
+      expect(current).toMatch(/\[testing complete\]/);
+    } else {
+      expect(current).toMatch(/number: 1\b/);
+      expect(current).toMatch(/awaiting: user response/);
+    }
   });
 
-  it("numbers 26 tests consecutively, each with an expected block and a pending result", () => {
+  it("numbers 26 tests consecutively, each with an expected block and one result", () => {
     expect(tests.map((test) => test.number)).toEqual(Array.from({ length: 26 }, (_, i) => i + 1));
     for (const test of tests) {
       expect(test.title.length, `test ${test.number}`).toBeGreaterThan(3);
       expect(test.body, `test ${test.number}`).toMatch(/^expected: /m);
-      expect(test.body.match(/^result: .*$/gm), `test ${test.number}`).toEqual([
-        "result: [pending]",
-      ]);
+      const results = test.body.match(/^result: .*$/gm) ?? [];
+      expect(results.length, `test ${test.number}`).toBe(1);
+      if (complete) expect(results[0], `test ${test.number}`).not.toBe("result: [pending]");
+      else expect(results[0], `test ${test.number}`).toBe("result: [pending]");
     }
   });
 
-  it("holds no result value other than pending anywhere", () => {
+  it("holds only pending results before the owner run, none after it", () => {
     const results = text.match(/^\s*result:.*$/gm) ?? [];
     expect(results.length).toBe(26);
-    for (const line of results) expect(line.trim()).toBe("result: [pending]");
-    expect(text).not.toMatch(/^(reported|severity|reason|blocked_by):/m);
+    for (const line of results) {
+      if (complete) expect(line.trim()).not.toBe("result: [pending]");
+      else expect(line.trim()).toBe("result: [pending]");
+    }
+    if (!complete) expect(text).not.toMatch(/^(reported|severity|reason|blocked_by):/m);
   });
 
-  it("counts every test as pending in the Summary block", () => {
+  it("keeps the Summary counts consistent with the results", () => {
     const summary = section(text, "Summary");
     expect(summary).toMatch(/^total: 26$/m);
-    expect(summary).toMatch(/^pending: 26$/m);
-    for (const key of ["passed", "issues", "skipped", "blocked"]) {
-      expect(summary).toMatch(new RegExp(`^${key}: 0$`, "m"));
-    }
+    const count = (key: string) => Number(new RegExp(`^${key}: (\\d+)$`, "m").exec(summary)?.[1]);
+    const keys = ["passed", "issues", "pending", "skipped", "blocked"];
+    for (const key of keys) expect(Number.isInteger(count(key)), key).toBe(true);
+    expect(keys.reduce((sum, key) => sum + count(key), 0)).toBe(26);
+    expect(count("pending")).toBe(complete ? 0 : 26);
   });
 });
 
