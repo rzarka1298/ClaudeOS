@@ -54,6 +54,11 @@
 #      (T-06-02)
 #  15. the approval public door approval/index.ts never references the minter
 #      (MAJOR-2)
+#  16. no non-test source file names a Codex credential file (the literal
+#      auth, a dot, json) -- the literal-scan leg of the CODEX-09 three-way
+#      enforcement, independent of the CODEX_HOME port and the canary test
+#      (D-26); test files, /test-support/ folders and packages/test-fixtures/
+#      are exempt
 #  Rules 11 to 14 scan non-test source files only and skip comment lines;
 #  every allow-list below is an anchored `^...` path match, never a substring.
 #
@@ -370,6 +375,27 @@ check_rule \
   "the approval public door (packages/service/src/approval/index.ts) references the minter (the public door must never import or re-export approval/mint, T-06-01)" \
   "mint/|mint-token" \
   $DOOR_FILES
+
+# --- Rule 16: no non-test source file names a Codex credential or config file,
+# the reset-credit consume RPC, or writes Codex's notify setting (D-26,
+# CODEX-09, CODEX-06). This is the literal-scan leg of the three-way CODEX-09
+# enforcement; the other two are the allowlisted CODEX_HOME file-access port and
+# the credential canary test, and this rule still reports if either quietly
+# stops working. It scans NON_TEST_FILES (every package, every module
+# extension) minus `/test-support/` folders and the whole packages/test-fixtures/
+# package, which builds the decoy credential file on purpose. Comment lines are
+# skipped by grep_noncomment. Each family is its own scan, merged into the one
+# report like rule 10 merges its scans, so the rule count moves by exactly one.
+# Family (a), the credential file: `auth`, a dot, `json`, preceded by a
+# non-identifier character or the line start, so `~/.codex/auth.json` and
+# "auth.json" are hits but an `oauth.json`-style name is not. ---
+CODEX_SCAN_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep -v '/test-support/' | grep -v '^packages/test-fixtures/' || true)
+CODEX_CREDENTIAL_PATTERN="(^|[^A-Za-z0-9_])auth[.]json"
+# shellcheck disable=SC2086
+codex_credential_hits=$(grep_noncomment "$CODEX_CREDENTIAL_PATTERN" $CODEX_SCAN_FILES || true)
+report_rule \
+  "a non-test source file names a Codex credential or config file, the reset-credit consume RPC, or writes Codex's notify setting (CODEX-09, CODEX-06; usage comes only from the app-server rate-limit read)" \
+  "$(printf '%s\n' "$codex_credential_hits" | grep -v '^$' | sort -u || true)"
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: checked ${RULES} rules."
