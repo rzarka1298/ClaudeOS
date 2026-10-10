@@ -606,3 +606,78 @@ describe("check-boundaries.sh confinement rules and the fixture trees", () => {
     expect(firedDescriptions(result.out)).toEqual([...ALL_CONFINEMENT_DESCRIPTIONS]);
   });
 });
+
+// The Codex credential backstop (D-26, CODEX-09, CODEX-06): the literal-scan leg
+// of the three-way enforcement, independent of the CODEX_HOME port allowlist and
+// the credential canary. One rule with four literal families; it is named by its
+// description text, never by number (M-4). Every forbidden literal is assembled
+// at runtime so this file is not itself a backstop hit.
+const CODEX_DESCRIPTION = "names a Codex credential or config file";
+const CODEX_REQUIREMENT = "CODEX-09";
+const CRED_FILE = `${"auth"}${"."}${"json"}`;
+const CREDENTIAL_LITERAL = `export const credentialPath = "~/.codex/${CRED_FILE}";\n`;
+
+describe("check-boundaries.sh Codex credential literal (D-26, CODEX-09)", () => {
+  it("fires on the credential file name in a service source file and names its own description", () => {
+    const path = "packages/service/src/codex/reader.ts";
+    const result = backstop({ [path]: CREDENTIAL_LITERAL });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain(CODEX_DESCRIPTION);
+    expect(result.out).toContain(CODEX_REQUIREMENT);
+    expect(result.out).toContain(path);
+    expect(firedDescriptions(result.out)).toEqual([]);
+  });
+
+  it("fires on a bare quoted file name too", () => {
+    const result = backstop({
+      "packages/service/src/codex/bare.ts": `export const name = "${CRED_FILE}";\n`,
+    });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain(CODEX_DESCRIPTION);
+  });
+
+  it("is quiet for the literal in a comment, a test file, a test-support folder and the test-fixtures package", () => {
+    const comment = backstop({
+      "packages/service/src/codex/doc.ts": `// never read ${CRED_FILE}\n/*\n * ~/.codex/${CRED_FILE}\n */\nexport const x = 1;\n`,
+    });
+    const testFile = backstop({ "packages/service/src/codex/reader.test.ts": CREDENTIAL_LITERAL });
+    const testSupport = backstop({
+      "packages/service/src/test-support/decoy.ts": CREDENTIAL_LITERAL,
+    });
+    const fixtures = backstop({ "packages/test-fixtures/src/codex-decoy.ts": CREDENTIAL_LITERAL });
+    for (const result of [comment, testFile, testSupport, fixtures]) {
+      expect(result.out).not.toContain(CODEX_DESCRIPTION);
+      expect(result.status).toBe(0);
+    }
+  });
+
+  it("scans every package, not only the service", () => {
+    for (const path of [
+      "packages/collectors/src/reader.ts",
+      "packages/plugin/src/reader.ts",
+      "packages/launchers/src/reader.ts",
+      "packages/operational-store/src/reader.ts",
+    ]) {
+      const result = backstop({ [path]: CREDENTIAL_LITERAL });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain(CODEX_DESCRIPTION);
+      expect(result.out).toContain(path);
+    }
+  });
+
+  it("scans the other module extensions too", () => {
+    for (const ext of ["mts", "cts", "js", "mjs", "cjs"]) {
+      const result = backstop({ [`packages/service/src/codex/ext.${ext}`]: CREDENTIAL_LITERAL });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain(CODEX_DESCRIPTION);
+    }
+  });
+
+  it("is quiet for a look-alike name that merely ends with the same letters", () => {
+    const result = backstop({
+      "packages/service/src/codex/ok.ts": `export const f = "oauth${"."}json";\n`,
+    });
+    expect(result.out).not.toContain(CODEX_DESCRIPTION);
+    expect(result.status).toBe(0);
+  });
+});
