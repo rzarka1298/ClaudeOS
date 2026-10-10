@@ -4,6 +4,7 @@ import {
   CODEX_WEEKLY_WINDOW_MINUTES,
   type CodexHeadroomReason,
   type CodexHeadroomVerdict,
+  type CodexUsageSnapshot,
   type CodexUsageUnavailableReason,
   type CodexUsageWindow,
 } from "@ccc/domain/codex-usage.js";
@@ -117,6 +118,21 @@ export function codexWindowLine(
       : `${percent} · resets ${when}`,
     outdated,
   };
+}
+
+/** Signature stub (plan 05.1-33, RED). */
+export function formatCodexAge(_iso: string, _nowMs: number): string {
+  return "";
+}
+
+/** Signature stub (plan 05.1-33, RED). */
+export function fallbackSourceLine(_iso: string, _nowMs: number): string {
+  return "";
+}
+
+/** Signature stub (plan 05.1-33, RED). */
+export function isFallbackTooOld(_usage: CodexUsageSnapshot, _nowMs: number): boolean {
+  return false;
 }
 
 export function reserveState(usedPercent: number): "under" | "over" {

@@ -137,9 +137,54 @@ describe("Codex plan usage", () => {
         />
       </>,
     );
-    getByText("From the newest Codex session log, not a live read.");
+    getByText("From Codex session log · under 1 min old");
+    getByText("Not a live read.");
     getByText("Held back");
     getByText("No live usage read yet.");
+  });
+  it("labels a rollout figure with its age, draws the bar, and uses no reserve language", () => {
+    const fallback: CodexUsageSnapshot = {
+      ...available,
+      source: "rollout-fallback",
+      ordinaryUsageAllowed: null,
+      freshness: "stale",
+      observedAt: new Date(nowMs - 7 * 60_000).toISOString(),
+      windows: [{ ...available.windows[0], usedPercent: 91 }],
+    };
+    const { container, getByText } = render(
+      <CodexPlanUsageSection usage={fallback} nowMs={nowMs} />,
+    );
+    getByText("From Codex session log · 7 min old");
+    getByText("Not a live read.");
+    expect(container.querySelectorAll("meter")).toHaveLength(1);
+    expect(container.querySelector(".ccc-reserve-tick, .ccc-reserve-legend")).toBeNull();
+    expect(container.textContent).not.toMatch(/reserve/i);
+    expect(container.textContent).not.toMatch(/Held back|Has headroom/);
+  });
+  it("renders a rollout figure older than the stale max age as unavailable, never a number", () => {
+    const old: CodexUsageSnapshot = {
+      ...available,
+      source: "rollout-fallback",
+      ordinaryUsageAllowed: null,
+      freshness: "stale",
+      observedAt: new Date(nowMs - 11 * 60_000).toISOString(),
+    };
+    const { container, getByText } = render(<CodexPlanUsageSection usage={old} nowMs={nowMs} />);
+    getByText("Codex usage unavailable");
+    getByText("The last usage read is too old to trust.");
+    expect(container.querySelector("meter")).toBeNull();
+    expect(container.textContent).not.toMatch(/[0-9%]/);
+  });
+  it("shows no figure and no zero when there is no usage at all", () => {
+    const { container, getByText } = render(<CodexPlanUsageSection usage={null} nowMs={nowMs} />);
+    getByText("Codex usage unavailable");
+    expect(container.querySelector("meter")).toBeNull();
+    expect(container.textContent).not.toMatch(/[0-9]%/);
+  });
+  it("keeps the live read's reserve line and legend", () => {
+    const { container } = render(<CodexPlanUsageSection usage={available} nowMs={nowMs} />);
+    expect(container.querySelector(".ccc-reserve-tick")).not.toBeNull();
+    expect(container.textContent).toContain("Under the 80% reserve line");
   });
   it.each(["read-failed", "shape-changed", "no-limits", "too-old"] as const)(
     "renders %s as numeric-free text",

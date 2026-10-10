@@ -23,7 +23,8 @@ describe("Codex pure copy and formatting", () => {
       reserveUnder: "Under the 80% reserve line",
       reserveOver: "At or over the 80% reserve line",
       reserveLegend: "80% reserve line",
-      fallbackSource: "From the newest Codex session log, not a live read.",
+      fallbackSource: "From Codex session log · {age} old",
+      fallbackNote: "Not a live read.",
       setupHeading: "Codex isn't set up",
       setupBody:
         "Install Codex on this Mac and add it in Settings → Launchers. Codex sessions and weekly usage appear here once it has run.",
@@ -272,5 +273,56 @@ describe("Plan 25 additive vocabulary", () => {
       );
       expect(line).not.toMatch(/[/\\]/);
     }
+  });
+});
+
+describe("the rollout fallback label and age (plan 05.1-33, OQ-3)", () => {
+  const observed = "2026-10-08T11:00:00.000Z";
+  const at = (ms: number) => Date.parse(observed) + ms;
+  const SEC = 1000;
+  const MIN = 60 * SEC;
+
+  it.each([
+    [0, "under 1 min"],
+    [59 * SEC, "under 1 min"],
+    [60 * SEC, "1 min"],
+    [12 * MIN, "12 min"],
+    [59 * MIN + 59 * SEC, "59 min"],
+    [90 * MIN, "1 hr"],
+    [26 * 60 * MIN, "1 d"],
+    [-30 * SEC, "under 1 min"],
+  ])("formats %i ms as %s", (elapsed, expected) => {
+    expect(format.formatCodexAge(observed, at(elapsed))).toBe(expected);
+  });
+
+  it("builds the source line from the shared age formatter", () => {
+    expect(format.fallbackSourceLine(observed, at(12 * MIN))).toBe(
+      "From Codex session log · 12 min old",
+    );
+    expect(format.fallbackSourceLine(observed, at(0))).toBe(
+      "From Codex session log · under 1 min old",
+    );
+  });
+
+  it("treats a rollout figure as too old only past the stale max age, never an app-server read", () => {
+    const base = {
+      kind: "available" as const,
+      windows: [{ windowMinutes: 10080, usedPercent: 41, resetsAt: null, limitLabel: null }],
+      ordinaryUsageAllowed: null,
+      rateLimitReached: false,
+      rateLimitReachedType: null,
+      source: "rollout-fallback" as const,
+      observedAt: observed,
+      freshness: "stale" as const,
+    };
+    expect(format.isFallbackTooOld(base, at(10 * MIN))).toBe(false);
+    expect(format.isFallbackTooOld(base, at(10 * MIN + SEC))).toBe(true);
+    expect(format.isFallbackTooOld({ ...base, source: "app-server" }, at(60 * MIN))).toBe(false);
+    expect(
+      format.isFallbackTooOld(
+        { kind: "unavailable", reason: "read-failed", version: null, observedAt: observed },
+        at(60 * MIN),
+      ),
+    ).toBe(false);
   });
 });
