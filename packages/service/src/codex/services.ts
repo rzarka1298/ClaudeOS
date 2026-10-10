@@ -106,7 +106,46 @@ export interface CodexServicesDeps {
   readonly mintRunId?: (() => string) | undefined;
   /** Opens the Codex thread store (the credential canary passes a recording opener). */
   readonly openDatabase?: OpenDatabase | undefined;
+  /** The wait bound on each `stop()` step (milliseconds); defaults to {@link CODEX_STOP_STEP_DEADLINE_MS}. */
+  readonly stopStepDeadlineMs?: number | undefined;
 }
+
+/**
+ * Runs one `stop()` step with a deadline and a try/catch of its own, so a hung or failing step never
+ * prevents the later steps. Logs reason codes and the step name only (no raw errors).
+ */
+export async function runBoundedStopStep(input: {
+  readonly name: string;
+  readonly run: () => void | Promise<void>;
+  readonly deadlineMs: number;
+  readonly logger: Pick<Logger, "warn">;
+}): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const running = Promise.resolve().then(input.run);
+    const timedOut = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), input.deadlineMs);
+    });
+    const outcome = await Promise.race([running.then(() => "done" as const), timedOut]);
+    if (outcome === "timeout") {
+      running.catch(() => undefined);
+      input.logger.warn(
+        { reason: "stop-step-timeout", step: input.name },
+        "codex service did not stop in time",
+      );
+    }
+  } catch (error: unknown) {
+    input.logger.warn(
+      { reason: "stop-step-failed", step: input.name, errorName: errorName(error) },
+      "codex service did not stop cleanly",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** How long `stop()` waits for one step before it moves on to the next (milliseconds). */
+export const CODEX_STOP_STEP_DEADLINE_MS = 1_000;
 
 export interface CodexServices {
   /** What `createRequestListener` carries as `RouteContext.codex`. */
@@ -674,16 +713,9 @@ async function composeCodexServices(
     stop() {
       stopPromise ??= (async () => {
         stopped = true;
-        const step = async (name: string, run: () => void | Promise<void>): Promise<void> => {
-          try {
-            await run();
-          } catch (error: unknown) {
-            logger.warn(
-              { reason: "stop-step-failed", step: name, errorName: errorName(error) },
-              "codex service did not stop cleanly",
-            );
-          }
-        };
+        const deadlineMs = deps.stopStepDeadlineMs ?? CODEX_STOP_STEP_DEADLINE_MS;
+        const step = (name: string, run: () => void | Promise<void>): Promise<void> =>
+          runBoundedStopStep({ name, run, deadlineMs, logger });
         // The spool first: no record is applied while the rest winds down.
         await step("spool", () => spool.stop());
         await step("headroom", () => headroom.stop());

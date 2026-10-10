@@ -445,6 +445,9 @@ async function main(): Promise<void> {
     stopApprovals: () => approvals.stop(),
     // Phase 05.1: the Codex services next, so their scans and reads finish before the store closes.
     stopCodex: () => codexServices.stop(),
+    onCodexStopTimeout: (reason) => {
+      logger.warn({ reason }, "shutdown: codex services did not stop in time");
+    },
     stopUsage: () => usageServices.stop(),
     stopClaude: () => claudeServices.stop(),
     closeServer: (done) => {

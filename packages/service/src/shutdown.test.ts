@@ -249,4 +249,40 @@ describe("graceful shutdown with the Codex services (plan 05.1-28)", () => {
       "store-closed",
     ]);
   });
+
+  it("does not let a stopCodex that never resolves block the rest of the teardown", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      const timeouts: string[] = [];
+      const shutdown = createShutdown({
+        ...h.deps,
+        stopCodex: () => new Promise<void>(() => undefined),
+        codexStopDeadlineMs: 50,
+        onCodexStopTimeout: (reason) => timeouts.push(reason),
+        closeConnections: () => h.events.push("connections"),
+      });
+      shutdown();
+      h.closeServer();
+      h.release();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(h.events).not.toContain("usage");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(timeouts).toEqual(["codex-stop-timeout"]);
+      expect(h.events).toEqual([
+        "keepalive-start",
+        "intake",
+        "connections",
+        "execution-settled",
+        "usage",
+        "claude",
+        "connections",
+        "store-closed",
+        "keepalive-stop",
+        "exit-0",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -43,7 +43,7 @@ import {
   saveRateLimitSnapshot,
   setCollectorSetting,
 } from "@ccc/operational-store";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShutdown } from "../shutdown.js";
 import { createBridgeFixture } from "../test-support/bridge-fixtures.js";
 import {
@@ -71,6 +71,7 @@ import type { BridgeStatus } from "./bridge-state.js";
 import { createCodexHomePort } from "./codex-home.js";
 import { CODEX_UNAVAILABLE_BODY } from "./route-support.js";
 import { CODEX_SNAPSHOT_BUDGET_BYTES } from "./routes.js";
+import { runBoundedStopStep } from "./services.js";
 
 /**
  * Plan 05.1-28 Task 1 (tracer): the composed Codex services answer GET headroom
@@ -83,6 +84,64 @@ const open: CodexComposition[] = [];
 
 afterEach(async () => {
   for (const composition of open.splice(0)) await composition.close();
+});
+
+describe("stop() step isolation", () => {
+  it("a step that never resolves is abandoned at its deadline and a failing step is contained", async () => {
+    vi.useFakeTimers();
+    try {
+      const warnings: Array<Record<string, unknown>> = [];
+      const logger = { warn: (fields: Record<string, unknown>) => warnings.push(fields) };
+      const ran: string[] = [];
+      const step = (name: string, run: () => void | Promise<void>) =>
+        runBoundedStopStep({ name, run, deadlineMs: 100, logger });
+      const all = (async () => {
+        await step("hung", () => new Promise<void>(() => undefined));
+        await step("throws", () => {
+          throw new Error("secret detail");
+        });
+        await step("later", () => {
+          ran.push("later");
+        });
+      })();
+      await vi.advanceTimersByTimeAsync(150);
+      await all;
+      expect(ran).toEqual(["later"]);
+      expect(warnings).toEqual([
+        { reason: "stop-step-timeout", step: "hung" },
+        { reason: "stop-step-failed", step: "throws", errorName: "Error" },
+      ]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a step that throws inside the real stop() does not keep the later steps from running", async () => {
+    const c = await compose({
+      appServer: { read: { kind: "hang" } },
+      deps: {
+        timers: {
+          setInterval: () => 1,
+          clearInterval: () => {
+            throw new Error("clear failed");
+          },
+        },
+      },
+    });
+    const pending = c.get(CODEX_HEADROOM_PATH);
+    const deadline = Date.now() + 5000;
+    while (c.appServerStarts() === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const pids = (c.appServer === null ? [] : readFakeLog(c.appServer.logPath)).flatMap((entry) =>
+      entry.t === "start" ? [entry.pid] : [],
+    );
+    expect(pids.length).toBeGreaterThan(0);
+    await c.codex?.stop();
+    await expectGone(pids);
+    await pending;
+  });
 });
 
 async function compose(options: CodexCompositionOptions): Promise<CodexComposition> {

@@ -12,6 +12,9 @@
  * keep-alive handle is held until the drain has finished; a second signal is a
  * no-op (it never exits early).
  */
+/** How long the shutdown waits for the Codex services to stop before it moves on (milliseconds). */
+export const CODEX_STOP_DEADLINE_MS = 5_000;
+
 export interface ShutdownDeps {
   readonly stopApprovals: () => Promise<void>;
   /**
@@ -19,6 +22,10 @@ export interface ShutdownDeps {
    * so its scans and reads finish before the store closes. Optional: absent in an older composition.
    */
   readonly stopCodex?: () => Promise<void>;
+  /** The wait bound on `stopCodex`; defaults to {@link CODEX_STOP_DEADLINE_MS}. Injectable for tests. */
+  readonly codexStopDeadlineMs?: number;
+  /** Reason-coded log line for a Codex stop that exceeded its deadline (never a raw error). */
+  readonly onCodexStopTimeout?: (reason: string) => void;
   readonly stopUsage: () => Promise<void>;
   readonly stopClaude: () => Promise<void>;
   /** Stops intake: timers and collectors that must not run during the drain. */
@@ -47,6 +54,33 @@ const realKeepAlive = {
   stop: (handle: unknown): void => clearInterval(handle as NodeJS.Timeout),
 };
 
+/**
+ * Waits for `stopCodex` at most the deadline: a hung Codex step must never keep the usage and
+ * Claude services from stopping, the store from closing or the process from exiting. A timeout
+ * is reported by the fixed reason code `codex-stop-timeout`; the stop keeps running unawaited.
+ */
+async function boundedCodexStop(deps: ShutdownDeps): Promise<void> {
+  if (deps.stopCodex === undefined) return;
+  const stopping = deps.stopCodex();
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(
+      () => resolve("timeout"),
+      deps.codexStopDeadlineMs ?? CODEX_STOP_DEADLINE_MS,
+    );
+  });
+  try {
+    const outcome = await Promise.race([stopping.then(() => "done" as const), timedOut]);
+    if (outcome === "timeout") {
+      // A late rejection of the abandoned stop is not an error anyone can act on.
+      stopping.catch(() => undefined);
+      deps.onCodexStopTimeout?.("codex-stop-timeout");
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createShutdown(deps: ShutdownDeps): () => void {
   const keepAlive = deps.keepAlive ?? realKeepAlive;
   let shuttingDown = false;
@@ -60,7 +94,7 @@ export function createShutdown(deps: ShutdownDeps): () => void {
       .catch((err: unknown) => {
         deps.onError("shutdown: approval services did not stop cleanly", err);
       })
-      .then(() => deps.stopCodex?.())
+      .then(() => boundedCodexStop(deps))
       .catch((err: unknown) => {
         deps.onError("shutdown: codex services did not stop cleanly", err);
       })
