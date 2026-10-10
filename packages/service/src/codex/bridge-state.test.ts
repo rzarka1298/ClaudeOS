@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { CodexBridgeStatusSchema } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BridgeFixture, createBridgeFixture } from "../test-support/bridge-fixtures.js";
-import { bridgeCore } from "../test-support/codex-run-fixtures.js";
 import {
   type BridgeStateFs,
   coveringWindow,
@@ -364,8 +363,14 @@ describe("containing: the candidate directory that holds a given path", () => {
     fx.installMarker();
     const custom = join(fx.home, "custom-state");
     const env = { XDG_STATE_HOME: custom };
-    bridgeCore.ensureDirs(join(custom, "codex-bridge"));
-    bridgeCore.writeProtocolMarker(join(custom, "codex-bridge"), "test-kit");
+    const dir = join(custom, "codex-bridge");
+    for (const name of ["windows", "requests", "claimed"]) {
+      mkdirSync(join(dir, name), { recursive: true });
+    }
+    writeFileSync(
+      join(dir, "protocol.json"),
+      JSON.stringify({ protocol: 2, capabilities: ["follow", "tui", "agent"], kit: "test-kit" }),
+    );
     const inDefault = join(fx.stateDir, "projects", "p-abc");
     mkdirSync(inDefault, { recursive: true });
     const plain = readBridgeStatus({ env, home: fx.home });

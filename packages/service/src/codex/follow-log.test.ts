@@ -371,8 +371,14 @@ describe("a run found under a different bridge directory than the primary one", 
     sim.heartbeat();
     const custom = join(fx.home, "custom-state");
     const customDir = join(custom, "codex-bridge");
-    bridgeCore.ensureDirs(customDir);
-    bridgeCore.writeProtocolMarker(customDir, "test-kit");
+    const dir = customDir;
+    for (const name of ["windows", "requests", "claimed"]) {
+      mkdirSync(join(dir, name), { recursive: true });
+    }
+    writeFileSync(
+      join(dir, "protocol.json"),
+      JSON.stringify({ protocol: 2, capabilities: ["follow", "tui", "agent"], kit: "test-kit" }),
+    );
     const userState = join(fx.stateDir, "projects", projectDirName(fx.projectDir));
     const { runId } = runningRun({ dir: userState, kind: "task" });
     const env = { XDG_STATE_HOME: custom };
