@@ -7,7 +7,7 @@
           "kind": "available",
           "sessions": [
             {
-              "threadId": "0a1b2c3d-0001",
+              "threadId": "0a1b2c31-0001",
               "projectId": "project-alpha",
               "projectName": "Alpha",
               "origin": "headless",
@@ -22,7 +22,7 @@
               "liveLogRunId": "run-alpha-1"
             },
             {
-              "threadId": "0a1b2c3d-0002",
+              "threadId": "0a1b2c32-0002",
               "projectId": "project-bravo",
               "projectName": "Bravo",
               "origin": "interactive",
@@ -37,7 +37,7 @@
               "liveLogRunId": null
             },
             {
-              "threadId": "0a1b2c3d-0003",
+              "threadId": "0a1b2c33-0003",
               "projectId": "project-charlie",
               "projectName": "Charlie",
               "origin": "interactive",
@@ -52,7 +52,7 @@
               "liveLogRunId": null
             },
             {
-              "threadId": "0a1b2c3d-0004",
+              "threadId": "0a1b2c34-0004",
               "projectId": "project-alpha",
               "projectName": "Alpha",
               "origin": "interactive",
@@ -67,7 +67,7 @@
               "liveLogRunId": null
             },
             {
-              "threadId": "0a1b2c3d-0005",
+              "threadId": "0a1b2c35-0005",
               "projectId": "project-delta",
               "projectName": "Delta",
               "origin": "interactive",
@@ -82,7 +82,7 @@
               "liveLogRunId": null
             },
             {
-              "threadId": "0a1b2c3d-0006",
+              "threadId": "0a1b2c36-0006",
               "projectId": "project-bravo",
               "projectName": "Bravo",
               "origin": "interactive",
@@ -113,6 +113,2216 @@
               "usedPercent": 41,
               "resetsAt": "2026-09-29T16:40:00.000Z",
               "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "app-server",
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T12:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "allow",
+            "reason": null,
+            "worstWindow": {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z"
+            },
+            "source": "app-server",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "ready-over-reserve": {
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "1f2e3d41-0001",
+              "projectId": "project-charlie",
+              "projectName": "Charlie",
+              "origin": "interactive",
+              "state": "limit-paused",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T10:05:00.000Z",
+              "lastActivityAt": "2026-09-22T11:41:00.000Z",
+              "resumesAfter": "2026-09-22T16:40:00.000Z",
+              "title": "Migrate the schema",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "1f2e3d42-0002",
+              "projectId": "project-delta",
+              "projectName": "Delta",
+              "origin": "interactive",
+              "state": "limit-paused",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T09:10:00.000Z",
+              "lastActivityAt": "2026-09-22T11:30:00.000Z",
+              "resumesAfter": null,
+              "title": "Port the importer",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "1f2e3d43-0003",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "completed",
+              "model": "example-model-mini",
+              "effort": "low",
+              "startedAt": "2026-09-22T08:00:00.000Z",
+              "lastActivityAt": "2026-09-22T08:48:00.000Z",
+              "resumesAfter": null,
+              "title": "Write the changelog",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "1f2e3d44-0004",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "interactive",
+              "state": "completed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T07:20:00.000Z",
+              "lastActivityAt": "2026-09-22T07:55:00.000Z",
+              "resumesAfter": null,
+              "title": "Tidy the fixtures",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 2,
+          "analysisOn": true,
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 83,
+              "resetsAt": "2026-09-29T16:40:00.000Z",
+              "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "app-server",
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T12:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "refuse",
+            "reason": "reserve-line",
+            "worstWindow": {
+              "windowMinutes": 10080,
+              "usedPercent": 83,
+              "resetsAt": "2026-09-29T16:40:00.000Z"
+            },
+            "source": "app-server",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live",
+            "pausedRuns": {
+              "count": 2,
+              "earliestResetAt": "2026-09-22T16:40:00.000Z"
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "ready-fallback-source": {
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "2a3b4c51-0001",
+              "projectId": "project-echo",
+              "projectName": "Echo",
+              "origin": "interactive",
+              "state": "running",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T11:46:00.000Z",
+              "lastActivityAt": "2026-09-22T11:59:00.000Z",
+              "resumesAfter": null,
+              "title": "Review the migration plan",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "2a3b4c52-0002",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "interactive",
+              "state": "completed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T09:00:00.000Z",
+              "lastActivityAt": "2026-09-22T09:41:00.000Z",
+              "resumesAfter": null,
+              "title": "Update the docs",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 0,
+          "analysisOn": true,
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 38,
+              "resetsAt": "2026-09-29T16:40:00.000Z",
+              "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "rollout-fallback",
+          "observedAt": "2026-09-22T11:59:00.000Z",
+          "freshness": "cached",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T12:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "refuse",
+            "reason": "no-live-read",
+            "worstWindow": {
+              "windowMinutes": 10080,
+              "usedPercent": 38,
+              "resetsAt": "2026-09-29T16:40:00.000Z"
+            },
+            "source": "rollout-fallback",
+            "observedAt": "2026-09-22T11:59:00.000Z",
+            "freshness": "cached",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "ready-analysis-off": {
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "3c4d5e61-0001",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "running",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T11:33:00.000Z",
+              "lastActivityAt": "2026-09-22T11:58:00.000Z",
+              "resumesAfter": null,
+              "title": null,
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "3c4d5e62-0002",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "interactive",
+              "state": "failed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T10:10:00.000Z",
+              "lastActivityAt": "2026-09-22T10:21:00.000Z",
+              "resumesAfter": null,
+              "title": null,
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "3c4d5e63-0003",
+              "projectId": null,
+              "projectName": null,
+              "origin": "interactive",
+              "state": "completed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T09:02:00.000Z",
+              "lastActivityAt": "2026-09-22T09:30:00.000Z",
+              "resumesAfter": null,
+              "title": null,
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "3c4d5e64-0004",
+              "projectId": "project-charlie",
+              "projectName": "Charlie",
+              "origin": "interactive",
+              "state": "completed",
+              "model": null,
+              "effort": null,
+              "startedAt": "2026-09-22T08:15:00.000Z",
+              "lastActivityAt": "2026-09-22T08:44:00.000Z",
+              "resumesAfter": null,
+              "title": null,
+              "hasTranscript": true,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 0,
+          "analysisOn": false,
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z",
+              "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "app-server",
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T12:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "allow",
+            "reason": null,
+            "worstWindow": {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z"
+            },
+            "source": "app-server",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "unavailable",
+              "reason": "analysis-off",
+              "version": null
+            },
+            "last-7-days": {
+              "kind": "unavailable",
+              "reason": "analysis-off",
+              "version": null
+            },
+            "this-month": {
+              "kind": "unavailable",
+              "reason": "analysis-off",
+              "version": null
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "not-installed",
+            "lastEventAt": null,
+            "installedSince": null
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "ready-partial-sessions": {
+      "parts": {
+        "sessions": {
+          "kind": "unavailable",
+          "reason": "format-changed",
+          "version": "0.160.0"
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z",
+              "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "app-server",
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T12:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "allow",
+            "reason": null,
+            "worstWindow": {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z"
+            },
+            "source": "app-server",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "ready-partial-tokens": {
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "0a1b2c31-0001",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "headless",
+              "state": "running",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T11:12:00.000Z",
+              "lastActivityAt": "2026-09-22T11:59:00.000Z",
+              "resumesAfter": null,
+              "title": "Refactor the parser",
+              "hasTranscript": true,
+              "liveLogRunId": "run-alpha-1"
+            },
+            {
+              "threadId": "0a1b2c32-0002",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "running",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T11:40:00.000Z",
+              "lastActivityAt": "2026-09-22T11:58:00.000Z",
+              "resumesAfter": null,
+              "title": "Draft the release notes",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c33-0003",
+              "projectId": "project-charlie",
+              "projectName": "Charlie",
+              "origin": "interactive",
+              "state": "limit-paused",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T10:05:00.000Z",
+              "lastActivityAt": "2026-09-22T11:20:00.000Z",
+              "resumesAfter": "2026-09-22T16:40:00.000Z",
+              "title": "Migrate the schema",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c34-0004",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "interactive",
+              "state": "stale",
+              "model": "example-model-mini",
+              "effort": "low",
+              "startedAt": "2026-09-22T08:30:00.000Z",
+              "lastActivityAt": "2026-09-22T09:40:00.000Z",
+              "resumesAfter": null,
+              "title": "Explore the cache layer",
+              "hasTranscript": false,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 0,
+          "analysisOn": true,
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z",
+              "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "app-server",
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T12:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "allow",
+            "reason": null,
+            "worstWindow": {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z"
+            },
+            "source": "app-server",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": true,
+                "missingSources": [
+                  "Transcript analysis"
+                ]
+              },
+              "coverage": {
+                "horizonDate": "2026-09-18",
+                "uncoveredDays": 2,
+                "analysisOffDays": 2
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": true,
+                "missingSources": [
+                  "Transcript analysis"
+                ]
+              },
+              "coverage": {
+                "horizonDate": "2026-09-18",
+                "uncoveredDays": 17,
+                "analysisOffDays": 2
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "usage-unavailable": {
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "0a1b2c31-0001",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "headless",
+              "state": "running",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T11:12:00.000Z",
+              "lastActivityAt": "2026-09-22T11:59:00.000Z",
+              "resumesAfter": null,
+              "title": "Refactor the parser",
+              "hasTranscript": true,
+              "liveLogRunId": "run-alpha-1"
+            },
+            {
+              "threadId": "0a1b2c32-0002",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "running",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T11:40:00.000Z",
+              "lastActivityAt": "2026-09-22T11:58:00.000Z",
+              "resumesAfter": null,
+              "title": "Draft the release notes",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c33-0003",
+              "projectId": "project-charlie",
+              "projectName": "Charlie",
+              "origin": "interactive",
+              "state": "limit-paused",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T10:05:00.000Z",
+              "lastActivityAt": "2026-09-22T11:20:00.000Z",
+              "resumesAfter": "2026-09-22T16:40:00.000Z",
+              "title": "Migrate the schema",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c34-0004",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "interactive",
+              "state": "stale",
+              "model": "example-model-mini",
+              "effort": "low",
+              "startedAt": "2026-09-22T08:30:00.000Z",
+              "lastActivityAt": "2026-09-22T09:40:00.000Z",
+              "resumesAfter": null,
+              "title": "Explore the cache layer",
+              "hasTranscript": false,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c35-0005",
+              "projectId": "project-delta",
+              "projectName": "Delta",
+              "origin": "interactive",
+              "state": "failed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T10:30:00.000Z",
+              "lastActivityAt": "2026-09-22T10:52:00.000Z",
+              "resumesAfter": null,
+              "title": "Fix the flaky test",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 0,
+          "analysisOn": true,
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "unavailable",
+          "reason": "read-failed",
+          "version": null,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T12:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "refuse",
+            "reason": "usage-unavailable",
+            "worstWindow": null,
+            "source": null,
+            "observedAt": null,
+            "freshness": "unavailable",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "usage-outdated": {
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "0a1b2c31-0001",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "headless",
+              "state": "running",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T11:12:00.000Z",
+              "lastActivityAt": "2026-09-22T11:59:00.000Z",
+              "resumesAfter": null,
+              "title": "Refactor the parser",
+              "hasTranscript": true,
+              "liveLogRunId": "run-alpha-1"
+            },
+            {
+              "threadId": "0a1b2c32-0002",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "running",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T11:40:00.000Z",
+              "lastActivityAt": "2026-09-22T11:58:00.000Z",
+              "resumesAfter": null,
+              "title": "Draft the release notes",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c33-0003",
+              "projectId": "project-charlie",
+              "projectName": "Charlie",
+              "origin": "interactive",
+              "state": "limit-paused",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T10:05:00.000Z",
+              "lastActivityAt": "2026-09-22T11:20:00.000Z",
+              "resumesAfter": "2026-09-22T16:40:00.000Z",
+              "title": "Migrate the schema",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c34-0004",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "interactive",
+              "state": "stale",
+              "model": "example-model-mini",
+              "effort": "low",
+              "startedAt": "2026-09-22T08:30:00.000Z",
+              "lastActivityAt": "2026-09-22T09:40:00.000Z",
+              "resumesAfter": null,
+              "title": "Explore the cache layer",
+              "hasTranscript": false,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c35-0005",
+              "projectId": "project-delta",
+              "projectName": "Delta",
+              "origin": "interactive",
+              "state": "failed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T10:30:00.000Z",
+              "lastActivityAt": "2026-09-22T10:52:00.000Z",
+              "resumesAfter": null,
+              "title": "Fix the flaky test",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 0,
+          "analysisOn": true,
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 64,
+              "resetsAt": "2026-09-22T11:00:00.000Z",
+              "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "app-server",
+          "observedAt": "2026-09-22T11:59:00.000Z",
+          "freshness": "cached",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T11:59:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T11:59:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "refuse",
+            "reason": "usage-unavailable",
+            "worstWindow": null,
+            "source": "app-server",
+            "observedAt": "2026-09-22T11:59:00.000Z",
+            "freshness": "cached",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "empty": {
+      "parts": {
+        "sessions": null,
+        "usage": null,
+        "headroom": null,
+        "tokens": null,
+        "integration": {
+          "hooks": {
+            "state": "not-installed",
+            "lastEventAt": null,
+            "installedSince": null
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "loading": {
+      "override": "loading",
+      "parts": {
+        "sessions": null,
+        "usage": null,
+        "headroom": null,
+        "tokens": null,
+        "integration": null
+      }
+    },
+    "stale": {
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "4d5e6f71-0001",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "interactive",
+              "state": "completed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T06:10:00.000Z",
+              "lastActivityAt": "2026-09-22T06:52:00.000Z",
+              "resumesAfter": null,
+              "title": "Refactor the parser",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "4d5e6f72-0002",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "failed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T05:30:00.000Z",
+              "lastActivityAt": "2026-09-22T05:41:00.000Z",
+              "resumesAfter": null,
+              "title": "Fix the flaky test",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "4d5e6f73-0003",
+              "projectId": "project-delta",
+              "projectName": "Delta",
+              "origin": "interactive",
+              "state": "stale",
+              "model": "example-model",
+              "effort": "low",
+              "startedAt": "2026-09-22T04:20:00.000Z",
+              "lastActivityAt": "2026-09-22T04:58:00.000Z",
+              "resumesAfter": null,
+              "title": "Explore the cache layer",
+              "hasTranscript": false,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 0,
+          "analysisOn": true,
+          "observedAt": "2026-09-22T08:00:00.000Z",
+          "freshness": "stale",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z",
+              "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "app-server",
+          "observedAt": "2026-09-22T08:00:00.000Z",
+          "freshness": "stale",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T08:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T08:00:00.000Z",
+            "freshness": "stale"
+          },
+          "codex": {
+            "verdict": "allow",
+            "reason": null,
+            "worstWindow": {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z"
+            },
+            "source": "app-server",
+            "observedAt": "2026-09-22T08:00:00.000Z",
+            "freshness": "stale",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T08:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "stale",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T08:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "stale",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T08:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "stale",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T08:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "error": {
+      "override": "error",
+      "parts": {
+        "sessions": null,
+        "usage": null,
+        "headroom": null,
+        "tokens": null,
+        "integration": null
+      }
+    },
+    "disconnected": {
+      "connection": "disconnected",
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "0a1b2c31-0001",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "headless",
+              "state": "running",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T11:12:00.000Z",
+              "lastActivityAt": "2026-09-22T11:59:00.000Z",
+              "resumesAfter": null,
+              "title": "Refactor the parser",
+              "hasTranscript": true,
+              "liveLogRunId": "run-alpha-1"
+            },
+            {
+              "threadId": "0a1b2c32-0002",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "running",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T11:40:00.000Z",
+              "lastActivityAt": "2026-09-22T11:58:00.000Z",
+              "resumesAfter": null,
+              "title": "Draft the release notes",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c33-0003",
+              "projectId": "project-charlie",
+              "projectName": "Charlie",
+              "origin": "interactive",
+              "state": "limit-paused",
+              "model": "example-model",
+              "effort": "high",
+              "startedAt": "2026-09-22T10:05:00.000Z",
+              "lastActivityAt": "2026-09-22T11:20:00.000Z",
+              "resumesAfter": "2026-09-22T16:40:00.000Z",
+              "title": "Migrate the schema",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c34-0004",
+              "projectId": "project-alpha",
+              "projectName": "Alpha",
+              "origin": "interactive",
+              "state": "stale",
+              "model": "example-model-mini",
+              "effort": "low",
+              "startedAt": "2026-09-22T08:30:00.000Z",
+              "lastActivityAt": "2026-09-22T09:40:00.000Z",
+              "resumesAfter": null,
+              "title": "Explore the cache layer",
+              "hasTranscript": false,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c35-0005",
+              "projectId": "project-delta",
+              "projectName": "Delta",
+              "origin": "interactive",
+              "state": "failed",
+              "model": "example-model",
+              "effort": "medium",
+              "startedAt": "2026-09-22T10:30:00.000Z",
+              "lastActivityAt": "2026-09-22T10:52:00.000Z",
+              "resumesAfter": null,
+              "title": "Fix the flaky test",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            },
+            {
+              "threadId": "0a1b2c36-0006",
+              "projectId": "project-bravo",
+              "projectName": "Bravo",
+              "origin": "interactive",
+              "state": "completed",
+              "model": "example-model-mini",
+              "effort": "low",
+              "startedAt": "2026-09-22T09:00:00.000Z",
+              "lastActivityAt": "2026-09-22T09:35:00.000Z",
+              "resumesAfter": null,
+              "title": "Write the changelog",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 0,
+          "analysisOn": true,
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z",
+              "limitLabel": null
+            }
+          ],
+          "ordinaryUsageAllowed": true,
+          "rateLimitReached": false,
+          "rateLimitReachedType": null,
+          "source": "app-server",
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "codexVersion": "0.159.2"
+        },
+        "headroom": {
+          "generatedAt": "2026-09-22T12:00:00.000Z",
+          "claude": {
+            "kind": "available",
+            "window": "five-hour",
+            "usedPercent": 62,
+            "resetsAt": "2026-09-22T16:40:00.000Z",
+            "source": "claude-code-status-line",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live"
+          },
+          "codex": {
+            "verdict": "allow",
+            "reason": null,
+            "worstWindow": {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z"
+            },
+            "source": "app-server",
+            "observedAt": "2026-09-22T12:00:00.000Z",
+            "freshness": "live",
+            "pausedRuns": {
+              "count": 0,
+              "earliestResetAt": null
+            }
+          }
+        },
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "available",
+              "range": "today",
+              "bounds": {
+                "start": "2026-09-22T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 600000,
+                "cachedInput": 350000,
+                "cacheWrite": 20000,
+                "output": 220000,
+                "reasoningOutput": 60000,
+                "total": 1250000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "last-7-days": {
+              "kind": "available",
+              "range": "last-7-days",
+              "bounds": {
+                "start": "2026-09-16T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 3072000,
+                "cachedInput": 1792000,
+                "cacheWrite": 102400,
+                "output": 1126400,
+                "reasoningOutput": 307200,
+                "total": 6400000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            },
+            "this-month": {
+              "kind": "available",
+              "range": "this-month",
+              "bounds": {
+                "start": "2026-09-01T00:00:00.000Z",
+                "end": "2026-09-22T12:00:00.000Z"
+              },
+              "totals": {
+                "input": 10080000,
+                "cachedInput": 5880000,
+                "cacheWrite": 336000,
+                "output": 3696000,
+                "reasoningOutput": 1008000,
+                "total": 21000000
+              },
+              "observedAt": "2026-09-22T12:00:00.000Z",
+              "source": "codex-session-logs",
+              "freshness": "live",
+              "partiality": {
+                "partial": false
+              },
+              "coverage": {
+                "horizonDate": null,
+                "uncoveredDays": 0,
+                "analysisOffDays": 0
+              }
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "setup-not-installed": {
+      "parts": {
+        "sessions": null,
+        "usage": null,
+        "headroom": null,
+        "tokens": null,
+        "integration": {
+          "hooks": {
+            "state": "not-installed",
+            "lastEventAt": null,
+            "installedSince": null
+          },
+          "bridge": {
+            "state": "not-installed",
+            "lastWindowAt": null
+          },
+          "codex": {
+            "installed": false,
+            "version": null
+          },
+          "doctor": null
+        }
+      }
+    },
+    "unavailable-format-changed": {
+      "parts": {
+        "sessions": {
+          "kind": "unavailable",
+          "reason": "format-changed",
+          "version": "0.160.0"
+        },
+        "usage": {
+          "kind": "unavailable",
+          "reason": "shape-changed",
+          "version": "0.160.0",
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "headroom": null,
+        "tokens": {
+          "ranges": {
+            "today": {
+              "kind": "unavailable",
+              "reason": "format-changed",
+              "version": "0.160.0"
+            },
+            "last-7-days": {
+              "kind": "unavailable",
+              "reason": "format-changed",
+              "version": "0.160.0"
+            },
+            "this-month": {
+              "kind": "unavailable",
+              "reason": "format-changed",
+              "version": "0.160.0"
+            }
+          },
+          "firstScanPending": false,
+          "observedAt": "2026-09-22T12:00:00.000Z"
+        },
+        "integration": {
+          "hooks": {
+            "state": "installed",
+            "lastEventAt": "2026-09-22T11:59:00.000Z",
+            "installedSince": "2026-09-20T09:00:00.000Z"
+          },
+          "bridge": {
+            "state": "installed",
+            "lastWindowAt": "2026-09-22T11:50:00.000Z"
+          },
+          "codex": {
+            "installed": true,
+            "version": "0.159.2"
+          },
+          "doctor": null
+        }
+      }
+    },
+    "long-text": {
+      "parts": {
+        "sessions": {
+          "kind": "available",
+          "sessions": [
+            {
+              "threadId": "5e6f7081-0001",
+              "projectId": "project-alpha",
+              "projectName": "Alpha-Bravo-Charlie-Delta-Echo-Foxtrot-Golf-Hotel-India-Juliet-Alpha-Bravo-Charlie-Foxtrot",
+              "origin": "headless",
+              "state": "running",
+              "model": "example-model-with-a-long-identifier-name-v2.5-preview-09261",
+              "effort": "extra-high-effort-012345",
+              "startedAt": "2026-09-22T11:20:00.000Z",
+              "lastActivityAt": "2026-09-22T11:59:00.000Z",
+              "resumesAfter": null,
+              "title": "Reconcile the extraordinarily long session name with every nested module",
+              "hasTranscript": true,
+              "liveLogRunId": "run-long-1"
+            },
+            {
+              "threadId": "5e6f7082-0002",
+              "projectId": "project-alpha",
+              "projectName": "Alpha-Bravo-Charlie-Delta-Echo-Foxtrot-Golf-Hotel-India-Juliet-Alpha-Bravo-Charlie-Foxtrot",
+              "origin": "interactive",
+              "state": "completed",
+              "model": "example-model-with-a-long-identifier-name-v2.5-preview-09261",
+              "effort": "extra-high-effort-012345",
+              "startedAt": "2026-09-22T09:00:00.000Z",
+              "lastActivityAt": "2026-09-22T09:44:00.000Z",
+              "resumesAfter": null,
+              "title": "Summarise the quarterly planning notes into a short list of follow ups",
+              "hasTranscript": true,
+              "liveLogRunId": null
+            }
+          ],
+          "hiddenCount": 0,
+          "analysisOn": true,
+          "observedAt": "2026-09-22T12:00:00.000Z",
+          "freshness": "live",
+          "partiality": {
+            "partial": false
+          }
+        },
+        "usage": {
+          "kind": "available",
+          "windows": [
+            {
+              "windowMinutes": 10080,
+              "usedPercent": 41,
+              "resetsAt": "2026-09-29T16:40:00.000Z",
+              "limitLabel": "Weekly-plan-limit-example-tier-012345678"
             }
           ],
           "ordinaryUsageAllowed": true,
