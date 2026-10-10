@@ -52,11 +52,16 @@ with the same class, status, lifetime, maximum approval age and retry policy.
 | `automation.git-write` | approval-required | reserved | 24 hours | 5 minutes | never |
 | `publish` | approval-required | reserved | 24 hours | 5 minutes | never |
 | `skill.run` | approval-required | reserved | 24 hours | 5 minutes | never |
+| `codex.hooks.install` | approval-required | reserved | 24 hours | 5 minutes | never |
 | `launch.antigravity` | direct-gesture | - | - | - | - |
 | `launch.claude-code` | direct-gesture | - | - | - | - |
 | `launch.finder` | direct-gesture | - | - | - | - |
 | `launch.github` | direct-gesture | - | - | - | - |
 | `launch.claude-desktop` | direct-gesture | - | - | - | - |
+| `launch.codex` | direct-gesture | - | - | - | - |
+| `launch.claude-codex-pair` | direct-gesture | - | - | - | - |
+| `codex.open-transcript` | direct-gesture | - | - | - | - |
+| `codex.follow-log` | direct-gesture | - | - | - | - |
 | `project.registry` | direct-gesture | - | - | - | - |
 | `switcher.open` | direct-gesture | - | - | - | - |
 | `session.focus` | direct-gesture | - | - | - | - |
