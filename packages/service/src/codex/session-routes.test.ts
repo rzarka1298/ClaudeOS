@@ -82,6 +82,7 @@ function listener(table: Record<string, Record<string, Handler>>, ctx: RouteCont
     const path = new URL(req.url ?? "", "http://localhost").pathname;
     const handler = table[path]?.[req.method ?? "GET"];
     if (!handler) {
+      req.resume();
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "no such route" }));
       return;
@@ -288,7 +289,7 @@ describe("the route table", () => {
     expect(Object.keys(table[CODEX_SESSIONS_PATH] ?? {})).toEqual(["GET"]);
     expect(Object.keys(table[CODEX_OPEN_TRANSCRIPT_PATH] ?? {})).toEqual(["POST"]);
     for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
-      expect(await request(method, CODEX_SESSIONS_PATH, "{}")).toEqual({
+      expect(await request(method, CODEX_SESSIONS_PATH)).toEqual({
         status: 404,
         body: { error: "no such route" },
         raw: JSON.stringify({ error: "no such route" }),
@@ -303,6 +304,7 @@ describe("the route table", () => {
 describe("Test 5: no path, rollout name or cwd in responses or logs; no write allowlist", () => {
   it("logged lines from the earlier requests carry no path", () => {
     const text = logged.join("\n");
+    expect(logged.length).toBeGreaterThan(0);
     expect(text).not.toContain("/Users/");
     expect(text).not.toContain("rollout-");
   });
