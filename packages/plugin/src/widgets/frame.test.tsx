@@ -926,6 +926,7 @@ describe("a panel title used mid-sentence keeps its proper nouns", () => {
     "claude-usage": "Claude usage",
     "tech-intel": "technology and market intelligence",
     "github-discoveries": "GitHub discoveries",
+    codex: "Codex sessions and usage",
     "quick-actions": "quick actions",
   };
 
