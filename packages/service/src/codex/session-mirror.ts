@@ -103,10 +103,22 @@ export interface CodexSessionMirrorDeps {
 }
 
 /** Applied in order to each built view; may only return a valid view for the same thread. */
+export interface SessionOverlayContext {
+  /** True when a limit-hit fact follows the last lifecycle event (or there is no lifecycle event). */
+  readonly limitHitAfter: boolean;
+  /** The thread the view describes (plan 05.1-26): lets an overlay match its own records. */
+  readonly threadId: string;
+  /** The ISO time of the last lifecycle event, or null when the rollout has none. */
+  readonly lastLifecycleAt: string | null;
+}
+
 export type SessionOverlay = (
   view: CodexSessionView,
-  context: { readonly limitHitAfter: boolean },
+  context: SessionOverlayContext,
 ) => CodexSessionView;
+
+/** Called on each subscriber-gated tick, before the poll starts; must not throw. */
+export type TickHook = () => void | Promise<void>;
 
 export interface CodexSessionMirror {
   /** The cached snapshot, read synchronously; null before the first successful poll. */
@@ -121,6 +133,8 @@ export interface CodexSessionMirror {
   stop(): void;
   refreshIfStale(): void;
   addOverlay(overlay: SessionOverlay): () => void;
+  /** Registers work to run on each subscriber-gated tick (plan 05.1-26); returns a remover. */
+  addTickHook(hook: TickHook): () => void;
   invalidate(): void;
 }
 
@@ -149,6 +163,7 @@ interface PrivateEntry {
 interface BaseView {
   readonly view: CodexSessionView;
   readonly limitHitAfter: boolean;
+  readonly lastLifecycleAt: string | null;
 }
 
 interface BaseState {
@@ -240,6 +255,7 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
   let timerHandle: unknown = null;
   let lastPublishedKey: string | null = null;
   const overlays: SessionOverlay[] = [];
+  const tickHooks: TickHook[] = [];
 
   async function projectFor(cwd: string, nowMs: number): Promise<string | null> {
     const known = attributions.get(cwd);
@@ -261,7 +277,11 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
     for (const overlay of overlays) {
       try {
         const parsed = CodexSessionViewSchema.safeParse(
-          overlay(view, { limitHitAfter: entry.limitHitAfter }),
+          overlay(view, {
+            limitHitAfter: entry.limitHitAfter,
+            threadId: view.threadId,
+            lastLifecycleAt: null,
+          }),
         );
         if (parsed.success && parsed.data.threadId === view.threadId) view = parsed.data;
         else failures.count += 1;
@@ -496,7 +516,11 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
         notListed += 1;
         continue;
       }
-      views.push({ view: parsed.data, limitHitAfter: lifecycle.limitHitAfter });
+      views.push({
+        view: parsed.data,
+        limitHitAfter: lifecycle.limitHitAfter,
+        lastLifecycleAt: null,
+      });
     }
 
     const state: BaseState = {
@@ -547,6 +571,13 @@ export function createCodexSessionMirror(deps: CodexSessionMirrorDeps): CodexSes
       const stale =
         current === null || lastAttemptMs === null || deps.now() - lastAttemptMs > 3 * intervalMs;
       if (stale) void pollNow();
+    },
+    addTickHook(hook) {
+      tickHooks.push(hook);
+      return () => {
+        const index = tickHooks.indexOf(hook);
+        if (index >= 0) tickHooks.splice(index, 1);
+      };
     },
     addOverlay(overlay) {
       overlays.push(overlay);

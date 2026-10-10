@@ -904,3 +904,91 @@ describe("resolveCodexInactivityMs", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 05.1-26: the additive overlay context and the tick hook (own block).
+
+describe("plan 05.1-26: the overlay context and tick hooks", () => {
+  it("passes the thread id, the limit-hit fact and the last lifecycle time to every overlay", async () => {
+    const limitLine = JSON.stringify({
+      type: "event_msg",
+      timestamp: new Date(at(2 * MINUTE)).toISOString(),
+      payload: { type: "error", message: "You hit a usage limit" },
+    });
+    const built = build([
+      {
+        id: "thread-limit",
+        agoMs: 2 * MINUTE,
+        lines: [started(3 * MINUTE), limitLine],
+        thread: { cwd: CWD_A },
+      },
+      { id: "thread-plain", agoMs: 60 * MINUTE, lines: [completed(60 * MINUTE)] },
+    ]);
+    const seen: Array<{
+      threadId: string;
+      limitHitAfter: boolean;
+      lastLifecycleAt: string | null;
+    }> = [];
+    built.mirror.addOverlay((view, context) => {
+      seen.push({ ...context });
+      expect(context.threadId).toBe(view.threadId);
+      return view;
+    });
+    await built.mirror.pollNow();
+    const byId = new Map(seen.map((entry) => [entry.threadId, entry]));
+    expect(byId.get("thread-limit")).toEqual({
+      threadId: "thread-limit",
+      limitHitAfter: true,
+      lastLifecycleAt: new Date(at(3 * MINUTE)).toISOString(),
+    });
+    expect(byId.get("thread-plain")).toEqual({
+      threadId: "thread-plain",
+      limitHitAfter: false,
+      lastLifecycleAt: new Date(at(60 * MINUTE)).toISOString(),
+    });
+  });
+
+  it("runs tick hooks on a subscriber-gated tick only, survives a throwing or rejecting hook, and removes a hook", async () => {
+    const t = fakeTimers();
+    const subs = { n: 0 };
+    const built = build(RUNNING_SPECS);
+    const mirror = createCodexSessionMirror({
+      ...built.deps,
+      timers: t.timers,
+      subscribers: () => subs.n,
+    });
+    const order: string[] = [];
+    const removeFirst = mirror.addTickHook(() => {
+      order.push("first");
+    });
+    mirror.addTickHook(() => {
+      order.push("throws");
+      throw new Error("hook failed /Users/USERNAME/secret");
+    });
+    mirror.addTickHook(async () => {
+      order.push("rejects");
+      throw new Error("async hook failed");
+    });
+    mirror.addTickHook(() => {
+      order.push("last");
+    });
+    mirror.start();
+
+    t.fire();
+    await Promise.resolve();
+    expect(order).toEqual([]);
+
+    subs.n = 1;
+    t.fire();
+    await mirror.pollNow();
+    expect(order).toEqual(["first", "throws", "rejects", "last"]);
+    expect(mirror.snapshot()?.kind).toBe("available");
+
+    removeFirst();
+    order.length = 0;
+    t.fire();
+    await mirror.pollNow();
+    expect(order).toEqual(["throws", "rejects", "last"]);
+    mirror.stop();
+  });
+});
