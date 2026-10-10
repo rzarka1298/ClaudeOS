@@ -4,7 +4,10 @@ import http, { type Server } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  LAUNCH_PAIR_PATH,
   LAUNCH_PATH,
+  type LaunchPairResponse,
+  LaunchPairResponseSchema,
   LaunchResultSchema,
   PROJECT_REGISTER_PATH,
   type ProjectId,
@@ -19,8 +22,9 @@ import {
   type OperationalStore,
   openStore,
 } from "@ccc/operational-store";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSpawner, type FakeSpawner } from "../test-support/fake-spawner.js";
+import type { LaunchService } from "./launch-service.js";
 
 // `../routes.js` imports the redacting singleton logger, which resolves its
 // log file from `CCC_RUNTIME_DIR` at import time: point it at a throwaway
@@ -229,5 +233,135 @@ describe("reveal a registered project in Finder over the socket (tracer, PROJ-07
     expect(reply.status).toBe(200);
     expect(reply.body).toEqual({ ok: false, error: "project-missing" });
     expect(JSON.stringify(reply.body)).not.toContain("/");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The pair route (plan 05.1-20, D-10, CODEX-02)
+
+describe("POST /api/v1/projects/launch-pair", () => {
+  const PAIR_ENVELOPE: LaunchPairResponse = {
+    claude: { status: "opened" },
+    codex: { status: "setup" },
+  };
+  let pairDir: string;
+  let pairServer: Server | null;
+
+  beforeEach(() => {
+    pairDir = realpathSync.native(mkdtempSync(join(TEST_BASE, "pr-")));
+    pairServer = null;
+  });
+
+  afterEach(() => {
+    pairServer?.close();
+    rmSync(pairDir, { recursive: true, force: true });
+  });
+
+  /** A second server over a stub launch member, so the route is judged on its own. */
+  async function serveWith(
+    launch: Partial<LaunchService> | undefined,
+  ): Promise<{ socket: string; token: string }> {
+    const secret = randomBytes(32);
+    const socket = join(pairDir, "p.sock");
+    pairServer = await startSocketServer({
+      socketPath: socket,
+      requestListener: createRequestListener({
+        store,
+        getSecret: () => secret,
+        eventBus: createEventBus(),
+        projects: storeBackedProjects(store),
+        ...(launch === undefined ? {} : { launch: launch as LaunchService }),
+      }),
+    });
+    return { socket, token: mintToken(secret, { nowMs: Date.now() }) };
+  }
+
+  const PROJECT = "0000000000123456789abcdef";
+
+  it("answers 200 with the typed envelope for a well-formed request over the real service (no launchers saved)", async () => {
+    const projectId = await registerProject();
+    const reply = await post(socketPath, LAUNCH_PAIR_PATH, { projectId }, token);
+    expect(reply.status).toBe(200);
+    expect(LaunchPairResponseSchema.parse(reply.body)).toEqual({
+      claude: { status: "error", error: "launcher-not-configured" },
+      codex: { status: "setup" },
+    });
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("passes the project id and the choice to launchPair, once, and relays its envelope", async () => {
+    const launchPair = vi.fn(() => Promise.resolve(PAIR_ENVELOPE));
+    const { socket, token: t } = await serveWith({ launchPair });
+    const reply = await post(
+      socket,
+      LAUNCH_PAIR_PATH,
+      { projectId: PROJECT, choice: { kind: "plan" } },
+      t,
+    );
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual(PAIR_ENVELOPE);
+    expect(launchPair).toHaveBeenCalledTimes(1);
+    expect(launchPair).toHaveBeenCalledWith({ projectId: PROJECT, choice: { kind: "plan" } });
+  });
+
+  it("relays the guard's conflict answer as a 200", async () => {
+    const conflict = { ok: false, conflict: { projectName: "Example", conflicts: [] } };
+    const { socket, token: t } = await serveWith({
+      launchPair: () => Promise.resolve(conflict as never),
+    });
+    const reply = await post(socket, LAUNCH_PAIR_PATH, { projectId: PROJECT }, t);
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual(conflict);
+  });
+
+  it.each(["path", "argv", "agent", "executable", "shell", "action"])(
+    "refuses a body carrying the extra key %s with the constant 400 and calls nothing",
+    async (key) => {
+      const launchPair = vi.fn(() => Promise.resolve(PAIR_ENVELOPE));
+      const { socket, token: t } = await serveWith({ launchPair });
+      const reply = await post(
+        socket,
+        LAUNCH_PAIR_PATH,
+        { projectId: PROJECT, [key]: key === "argv" ? ["/bin/sh"] : "/bin/sh" },
+        t,
+      );
+      expect(reply.status).toBe(400);
+      expect(reply.body).toEqual({ error: "invalid request body" });
+      expect(launchPair).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a body without a project id and an unauthenticated request", async () => {
+    const launchPair = vi.fn(() => Promise.resolve(PAIR_ENVELOPE));
+    const { socket, token: t } = await serveWith({ launchPair });
+    const missing = await post(socket, LAUNCH_PAIR_PATH, {}, t);
+    expect(missing.status).toBe(400);
+    const anonymous = await post(socket, LAUNCH_PAIR_PATH, { projectId: PROJECT }, null);
+    expect(anonymous.status).toBe(401);
+    expect(launchPair).not.toHaveBeenCalled();
+  });
+
+  it("answers the constant 500 body when no launch service is wired", async () => {
+    const { socket, token: t } = await serveWith(undefined);
+    const reply = await post(socket, LAUNCH_PAIR_PATH, { projectId: PROJECT }, t);
+    expect(reply.status).toBe(500);
+    expect(reply.body).toEqual({ error: "internal error" });
+  });
+
+  it("never leaks the message of a launchPair that throws", async () => {
+    const { socket, token: t } = await serveWith({
+      launchPair: () => Promise.reject(new Error("exploded at /Users/USERNAME/secret")),
+    });
+    const reply = await post(socket, LAUNCH_PAIR_PATH, { projectId: PROJECT }, t);
+    expect(reply.status).toBe(500);
+    expect(reply.body).toEqual({ error: "internal error" });
+    expect(JSON.stringify(reply.body)).not.toContain("secret");
+  });
+
+  it("adds exactly one POST-only route and leaves the single launch route as it was", async () => {
+    const { launchRoutes } = await import("./launch-routes.js");
+    expect(Object.keys(launchRoutes).sort()).toEqual([LAUNCH_PATH, LAUNCH_PAIR_PATH].sort());
+    expect(Object.keys(launchRoutes[LAUNCH_PAIR_PATH] ?? {})).toEqual(["POST"]);
+    expect(Object.keys(launchRoutes[LAUNCH_PATH] ?? {})).toEqual(["POST"]);
   });
 });
