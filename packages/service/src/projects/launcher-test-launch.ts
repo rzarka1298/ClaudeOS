@@ -1,10 +1,11 @@
 import {
   LAUNCHER_TEST_AUTOMATION_CAP_MS,
-  type LaunchAction,
   type LaunchErrorKind,
   type LaunchResult,
   parseStoredLauncherConfig,
   type SystemSettingsPane,
+  type TemplateRefusalReason,
+  type TestLauncherId,
   terminalMayPromptForAutomation,
 } from "@ccc/domain";
 import {
@@ -142,7 +143,27 @@ async function prepareClaudeCode(deps: TestLaunchDeps): Promise<PreparedTest> {
   };
 }
 
-async function prepare(launcherId: LaunchAction, deps: TestLaunchDeps): Promise<PreparedTest> {
+/**
+ * Why a saved Codex row (plan 05.1-21) does not pass: a reason and the index into
+ * `[executable, ...args]`. Signature stub; the checks land with the implementation.
+ */
+export interface CodexRowRefusal {
+  readonly reason: TemplateRefusalReason;
+  readonly index: number | null;
+}
+
+export function codexRowRefusal(
+  _argv: readonly string[],
+  _executableOk: boolean,
+): CodexRowRefusal | null {
+  return null;
+}
+
+async function prepareCodex(_deps: TestLaunchDeps): Promise<PreparedTest> {
+  return { kind: "refuse", error: "launcher-not-configured" };
+}
+
+async function prepare(launcherId: TestLauncherId, deps: TestLaunchDeps): Promise<PreparedTest> {
   switch (launcherId) {
     case "antigravity":
     case "claude-desktop": {
@@ -156,6 +177,8 @@ async function prepare(launcherId: LaunchAction, deps: TestLaunchDeps): Promise<
       return { kind: "spawn", argv: openUrl(GITHUB_HOME) };
     case "claude-code":
       return prepareClaudeCode(deps);
+    case "codex":
+      return prepareCodex(deps);
   }
 }
 
@@ -164,7 +187,7 @@ async function prepare(launcherId: LaunchAction, deps: TestLaunchDeps): Promise<
  * row alone — synchronously, before any check runs — so the cap that covers
  * the whole Test is known when it starts.
  */
-function mayPromptForAutomation(launcherId: LaunchAction, store: OperationalStore): boolean {
+function mayPromptForAutomation(launcherId: TestLauncherId, store: OperationalStore): boolean {
   if (launcherId !== "claude-code") return false;
   const record = getLauncherConfig(store.db, "claude-code");
   const config = record === null ? null : parseStoredLauncherConfig("claude-code", record.config);
@@ -182,7 +205,7 @@ const DEADLINE: unique symbol = Symbol("test deadline");
  * finishes after the deadline never spawns anything. Never rejects.
  */
 export async function testLaunch(
-  launcherId: LaunchAction,
+  launcherId: TestLauncherId,
   deps: TestLaunchDeps,
 ): Promise<LaunchResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -203,7 +226,7 @@ export async function testLaunch(
 
 /** {@link testLaunch}'s body; any throw is the caller's to turn into a failure. */
 async function runTest(
-  launcherId: LaunchAction,
+  launcherId: TestLauncherId,
   deps: TestLaunchDeps,
   startDeadline: (ms: number, onDeadline: () => void) => void,
 ): Promise<LaunchResult> {

@@ -206,6 +206,15 @@ describe("the bridge word and the suggested terminal are a proposal (D-12, OQ-2)
     expect(TerminalChoiceSchema.safeParse(result.suggestedTerminal).success).toBe(true);
   });
 
+  it("Test 5: a bridge whose state directory is not launchable reports not-installed and proposes Terminal.app", async () => {
+    const { subject } = detection({
+      bridge: { ...bridgeStatus("not-installed"), launchable: false },
+    });
+    const result = await subject.detectCodex();
+    expect(result.bridge).toBe("not-installed");
+    expect(result.suggestedTerminal).toEqual({ kind: "terminal-app" });
+  });
+
   it("Test 5: a bridge found only in the default folder is different-folder and Terminal.app is proposed", async () => {
     const { subject } = detection({ bridge: bridgeStatus("installed", "default-fallback") });
     const result = await subject.detectCodex();

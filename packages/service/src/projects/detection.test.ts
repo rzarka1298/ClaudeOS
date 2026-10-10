@@ -305,6 +305,7 @@ describe("Codex detection merged into the launcher detection (plan 05.1-21, D-11
     launcherPresent: true,
     dir: `${HOME}/.local/state/codex-bridge`,
     dirSource: "primary",
+    launchable: true,
     windows: [],
   };
 

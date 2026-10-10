@@ -1,4 +1,12 @@
-import { chmodSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import {
   DetectionResponseSchema,
@@ -16,8 +24,11 @@ import {
   type TemplateRefusalReason,
 } from "@ccc/domain";
 import { type TemplateRefusal, validateCommandTemplate } from "@ccc/launchers";
-import { getLauncherConfig, listLauncherConfigs } from "@ccc/operational-store";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { getLauncherConfig, listLauncherConfigs, saveLauncherConfig } from "@ccc/operational-store";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type CodexDetection, createCodexDetection } from "../codex/detection.js";
+import { logger } from "../logging.js";
+import { INVALID_BODY_BODY } from "../route-kit.js";
 import type { ScriptedReply } from "../test-support/fake-command-runner.js";
 import { type LauncherHarness, startLauncherHarness } from "../test-support/launcher-harness.js";
 
@@ -602,5 +613,365 @@ describe("a save's validation is bounded inside the client's budget (codex revie
 
     await settled;
     expect(getLauncherConfig(harness.store.db, "antigravity")).toBeNull();
+  });
+});
+
+describe("the Codex launcher: save, view, test and mark tested (plan 05.1-21, D-11, CODEX-03)", () => {
+  /** `~/.local/bin/codex` in the harness home: a symlink to a versioned fake binary. */
+  let codexSymlink: string;
+  let codexDetection: CodexDetection;
+
+  beforeEach(async () => {
+    harness.close();
+    harness = await startLauncherHarness({
+      script: installed([ANTIGRAVITY]),
+      wrapDetector: (detector) => ({
+        ...detector,
+        codexCandidatePath: (candidateId) => codexDetection.candidatePath(candidateId),
+      }),
+    });
+    codexDetection = createCodexDetection({
+      runner: harness.runner,
+      homeDir: harness.homeDir,
+      readBridgeStatus: () => {
+        throw new Error("not used by the save routes");
+      },
+    });
+    const real = join(harness.homeDir, ".codex-fake", "releases", "9.9.9", "codex");
+    makeExecutable(real);
+    codexSymlink = join(harness.homeDir, ".local", "bin", "codex");
+    mkdirSync(dirname(codexSymlink), { recursive: true });
+    symlinkSync(real, codexSymlink);
+  });
+
+  const BAN_CASES: readonly (readonly [string, readonly string[], number])[] = [
+    ["the approval and sandbox bypass flag", ["--dangerously-bypass-approvals-and-sandbox"], 1],
+    ["the hook-trust bypass", ["--dangerously-bypass-hook-trust"], 1],
+    ["yolo", ["--yolo"], 1],
+    ["full-auto", ["--full-auto"], 1],
+    ["approve-for-me", ["--approve-for-me"], 1],
+    [
+      "a sandbox flag with the danger value as two elements",
+      ["--sandbox", "danger-full-access"],
+      2,
+    ],
+    ["the equals form", ["--sandbox=danger-full-access"], 1],
+    ["an attached short form", ["-sdanger-full-access"], 1],
+    ["a config override carrying the danger value", ["-c", 'sandbox_mode="danger-full-access"'], 1],
+    ["the long config flag", ["--config", "model=o3"], 1],
+    ["the profile flag", ["--profile", "work"], 1],
+    ["the short profile flag", ["-p", "work"], 1],
+    ["upper case with underscores", ["--YOLO"], 1],
+    ["a full-width spelling", ["--ｙｏｌｏ"], 1],
+    ["the Phase 4 Claude skip flag", ["--dangerously-skip-permissions"], 1],
+    ["the Phase 4 Claude permission mode", ["--permission-mode", "bypassPermissions"], 1],
+    ["a flag after an ordinary argument", ["--model", "o3", "--yolo"], 3],
+    ["a flag the agent allowlist does not carry", ["--bg"], 1],
+    ["an unknown subcommand operand", ["exec"], 1],
+    ["an approval value the allowlist does not carry", ["-a", "never"], 1],
+  ];
+
+  async function savedCodex() {
+    return getLauncherConfig(harness.store.db, "codex");
+  }
+
+  function saveBody(args: readonly string[] = [], executable: unknown = null): unknown {
+    return {
+      launcherId: "codex",
+      executable: executable ?? { kind: "candidate", candidateId: "user-install" },
+      args,
+    };
+  }
+
+  it("saves a detected candidate with empty arguments, stores no terminal, and the view shows it display-safe", async () => {
+    const reply = await harness.post(LAUNCHERS_SAVE_PATH, saveBody());
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual({ ok: true });
+    const stored = await savedCodex();
+    // The symlink path, never its realpath (D-21), and no terminal key (D-11).
+    expect(stored?.config).toEqual({ executablePath: codexSymlink, args: [] });
+    expect(Object.keys(stored?.config as object).sort()).toEqual(["args", "executablePath"]);
+
+    const view = await harness.post(LAUNCHERS_GET_PATH, {});
+    const parsed = LauncherConfigViewSchema.parse(view.body);
+    expect(parsed.codex).toEqual({
+      executableDisplay: "~/.local/bin/codex",
+      args: [],
+      tested: false,
+    });
+    expect(JSON.stringify(view.body)).not.toContain(harness.homeDir);
+  });
+
+  it("saves a typed absolute path and an ordinary model argument", async () => {
+    const reply = await harness.post(
+      LAUNCHERS_SAVE_PATH,
+      saveBody(["--model", "o3"], { kind: "path", path: codexSymlink }),
+    );
+    expect(reply.status).toBe(200);
+    expect((await savedCodex())?.config).toEqual({
+      executablePath: codexSymlink,
+      args: ["--model", "o3"],
+    });
+  });
+
+  it("keeps a whole-token project placeholder as a value of the working-directory flag", async () => {
+    const reply = await harness.post(LAUNCHERS_SAVE_PATH, saveBody(["-C", "{projectPath}"]));
+    expect(reply.status).toBe(200);
+  });
+
+  it.each(BAN_CASES)(
+    "refuses %s with the structured body naming the index and the template, and stores nothing",
+    async (_name, args, index) => {
+      const reply = await harness.post(LAUNCHERS_SAVE_PATH, saveBody(args));
+      expect(reply.status).toBe(422);
+      expect(reply.body).toEqual({
+        error: "launcher config refused",
+        reason: "forbidden-flag",
+        index,
+        template: "codex",
+      });
+      expect(LauncherConfigRefusalBodySchema.parse(reply.body).template).toBe("codex");
+      // The refusal never echoes the argument.
+      for (const argument of args) {
+        expect(JSON.stringify(reply.body)).not.toContain(argument.replace(/^-+/, ""));
+      }
+      expect(await savedCodex()).toBeNull();
+    },
+  );
+
+  it("refuses a stored-shape bypass that an already saved row would carry only by this route", async () => {
+    // The route is the only writer: a refused save leaves a previously saved row as it was.
+    await harness.post(LAUNCHERS_SAVE_PATH, saveBody(["--model", "o3"]));
+    const before = await savedCodex();
+    const reply = await harness.post(LAUNCHERS_SAVE_PATH, saveBody(["--yolo"]));
+    expect(reply.status).toBe(422);
+    expect(await savedCodex()).toEqual(before);
+  });
+
+  describe("the executable", () => {
+    function typed(path: string): unknown {
+      return saveBody([], { kind: "path", path });
+    }
+
+    it("refuses a file that is present but not executable", async () => {
+      const path = join(harness.homeDir, "plain", "codex");
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, "x");
+      chmodSync(path, 0o644);
+      const reply = await harness.post(LAUNCHERS_SAVE_PATH, typed(path));
+      expect(reply.status).toBe(422);
+      expect(reply.body).toEqual({
+        error: "launcher config refused",
+        reason: "executable-not-executable",
+        index: 0,
+        template: "codex",
+      });
+      expect(await savedCodex()).toBeNull();
+    });
+
+    it("refuses a path that does not exist", async () => {
+      const reply = await harness.post(LAUNCHERS_SAVE_PATH, typed("/nonexistent/dir/codex"));
+      expect(reply.status).toBe(422);
+      expect(reply.body).toMatchObject({ reason: "executable-not-executable", index: 0 });
+      expect(await savedCodex()).toBeNull();
+    });
+
+    it.each([
+      "claude",
+      "sh",
+      "bash",
+      "env",
+      "node",
+      "python3",
+      "osascript",
+      "Codex",
+      "codex.sh",
+      "codex-wrapper",
+    ])("refuses an executable whose basename is %s, not exactly codex", async (name) => {
+      const path = join(harness.homeDir, "shim", name);
+      makeExecutable(path);
+      const reply = await harness.post(LAUNCHERS_SAVE_PATH, typed(path));
+      expect(reply.status).toBe(422);
+      expect(reply.body).toEqual({
+        error: "launcher config refused",
+        reason: "executable-not-found",
+        index: 0,
+        template: "codex",
+      });
+      expect(await savedCodex()).toBeNull();
+    });
+
+    it("refuses a real interpreter path even when it is executable", async () => {
+      const reply = await harness.post(LAUNCHERS_SAVE_PATH, typed("/bin/sh"));
+      expect(reply.status).toBe(422);
+      expect(reply.body).toMatchObject({ reason: "executable-not-found", index: 0 });
+    });
+
+    it("refuses a candidate id this service does not know", async () => {
+      const reply = await harness.post(
+        LAUNCHERS_SAVE_PATH,
+        saveBody([], { kind: "candidate", candidateId: "never-detected" }),
+      );
+      expect(reply.status).toBe(422);
+      expect(reply.body).toEqual({
+        error: "launcher config refused",
+        reason: "executable-not-found",
+        index: 0,
+        template: "codex",
+      });
+    });
+
+    it("refuses a relative typed path through the strict schema", async () => {
+      const reply = await harness.post(LAUNCHERS_SAVE_PATH, typed("codex"));
+      expect(reply.status).toBe(400);
+      expect(reply.body).toEqual(INVALID_BODY_BODY);
+    });
+  });
+
+  describe("the strict request shape", () => {
+    it.each([
+      ["a terminal key", { ...(saveBody() as object), terminal: { kind: "terminal-app" } }],
+      ["an extra key", { ...(saveBody() as object), env: { A: "b" } }],
+      ["a Claude-only field", { ...(saveBody() as object), permissionMode: "plan" }],
+      [
+        "no arguments member",
+        { launcherId: "codex", executable: { kind: "candidate", candidateId: "user-install" } },
+      ],
+      ["a bundle id", { launcherId: "codex", bundleId: "com.example.codex" }],
+    ])("answers the constant 400 for %s and stores nothing", async (_name, body) => {
+      const reply = await harness.post(LAUNCHERS_SAVE_PATH, body);
+      expect(reply.status).toBe(400);
+      expect(reply.body).toEqual(INVALID_BODY_BODY);
+      expect(await savedCodex()).toBeNull();
+    });
+  });
+
+  it("logs the route, the launcher id and the reason only", async () => {
+    const warn = vi.spyOn(logger, "warn");
+    const info = vi.spyOn(logger, "info");
+    try {
+      await harness.post(LAUNCHERS_SAVE_PATH, saveBody(["--yolo"]));
+      await harness.post(LAUNCHERS_SAVE_PATH, saveBody());
+      const calls = [...warn.mock.calls, ...info.mock.calls];
+      expect(calls.length).toBeGreaterThan(0);
+      for (const [fields] of calls) {
+        expect(
+          Object.keys(fields as object).every((key) =>
+            ["route", "launcherId", "reason"].includes(key),
+          ),
+        ).toBe(true);
+      }
+      expect(JSON.stringify(calls)).not.toContain("yolo");
+      expect(JSON.stringify(calls)).not.toContain(harness.homeDir);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
+  describe("the Test step and mark-tested", () => {
+    async function saveBoth(): Promise<void> {
+      const claude = await detectedClaudeSave();
+      expect(claude.status).toBe(200);
+      expect((await harness.post(LAUNCHERS_SAVE_PATH, saveBody())).status).toBe(200);
+    }
+
+    async function detectedClaudeSave() {
+      return harness.post(LAUNCHERS_SAVE_PATH, {
+        launcherId: "claude-code",
+        executable: { kind: "path", path: join(harness.homeDir, "bin-claude") },
+        args: [],
+        terminal: { kind: "terminal-app" },
+      });
+    }
+
+    beforeEach(() => {
+      makeExecutable(join(harness.homeDir, "bin-claude"));
+    });
+
+    it("runs the saved codex with the version flag in the claude-code row's terminal", async () => {
+      await saveBoth();
+      const reply = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "codex" });
+      expect(reply.status).toBe(200);
+      expect(LaunchResultSchema.parse(reply.body)).toEqual({ ok: true });
+      expect(harness.spawner.calls).toHaveLength(1);
+      const argv = harness.spawner.calls[0]?.argv ?? [];
+      expect(argv.slice(0, 3)).toEqual(["/usr/bin/open", "-b", "com.apple.Terminal"]);
+      const script = readFileSync(argv[3] ?? "", "utf8");
+      expect(script.split("\n")).toContain(`'${codexSymlink}' '--version'`);
+      expect(script).toContain(`cd -- '${harness.homeDir}' ||`);
+    });
+
+    it("answers launcher-not-configured and spawns nothing without a claude-code row", async () => {
+      expect((await harness.post(LAUNCHERS_SAVE_PATH, saveBody())).status).toBe(200);
+      const reply = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "codex" });
+      expect(reply.status).toBe(200);
+      expect(reply.body).toEqual({ ok: false, error: "launcher-not-configured" });
+      expect(harness.spawner.calls).toHaveLength(0);
+    });
+
+    it("answers launcher-not-configured and spawns nothing without a codex row", async () => {
+      expect((await detectedClaudeSave()).status).toBe(200);
+      const reply = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "codex" });
+      expect(reply.body).toEqual({ ok: false, error: "launcher-not-configured" });
+      expect(harness.spawner.calls).toHaveLength(0);
+    });
+
+    it("re-validates the saved row: a row that carries a banned argument is not tested", async () => {
+      expect((await detectedClaudeSave()).status).toBe(200);
+      // A row written around the route (an older build, a hand edit) is still refused at Test.
+      saveLauncherConfig(harness.store.db, "codex", {
+        executablePath: codexSymlink,
+        args: ["--dangerously-bypass-approvals-and-sandbox"],
+      });
+      const reply = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "codex" });
+      expect(reply.body).toEqual({ ok: false, error: "launcher-not-configured" });
+      expect(harness.spawner.calls).toHaveLength(0);
+    });
+
+    it("marks the codex launcher tested after a passing Test, and the view reflects it", async () => {
+      await saveBoth();
+      expect((await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "codex" })).body).toEqual({
+        ok: true,
+      });
+      const mark = await harness.post(LAUNCHERS_MARK_TESTED_PATH, { launcherId: "codex" });
+      expect(mark.status).toBe(200);
+      const view = LauncherConfigViewSchema.parse(
+        (await harness.post(LAUNCHERS_GET_PATH, {})).body,
+      );
+      expect(view.codex?.tested).toBe(true);
+    });
+
+    it("refuses to mark codex tested without a passing Test, and a new save clears the flag", async () => {
+      await saveBoth();
+      const early = await harness.post(LAUNCHERS_MARK_TESTED_PATH, { launcherId: "codex" });
+      expect(early.status).toBe(409);
+      await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "codex" });
+      expect((await harness.post(LAUNCHERS_MARK_TESTED_PATH, { launcherId: "codex" })).status).toBe(
+        200,
+      );
+      // Saving a different row resets Tested and the passing Test no longer counts.
+      expect((await harness.post(LAUNCHERS_SAVE_PATH, saveBody(["--model", "o3"]))).status).toBe(
+        200,
+      );
+      const view = LauncherConfigViewSchema.parse(
+        (await harness.post(LAUNCHERS_GET_PATH, {})).body,
+      );
+      expect(view.codex?.tested).toBe(false);
+      expect((await harness.post(LAUNCHERS_MARK_TESTED_PATH, { launcherId: "codex" })).status).toBe(
+        409,
+      );
+    });
+
+    it("refuses a second Test of a row saved since the running Test read it", async () => {
+      await saveBoth();
+      harness.spawner.mode = { kind: "succeed", delayMs: 200 };
+      const first = harness.post(LAUNCHERS_TEST_PATH, { launcherId: "codex" });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      await harness.post(LAUNCHERS_SAVE_PATH, saveBody(["--model", "o3"]));
+      const second = await harness.post(LAUNCHERS_TEST_PATH, { launcherId: "codex" });
+      expect(second.status).toBe(409);
+      expect((await first).status).toBe(200);
+    });
   });
 });
