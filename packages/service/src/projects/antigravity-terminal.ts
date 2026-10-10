@@ -258,7 +258,9 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
         return fail("bridge-not-installed");
       }
       const covering = deps.windowsCovering(status, verdict.projectRoot);
-      if (covering.some((window) => !hasAgentCapability(window))) {
+      // Every fresh window shares the one queue, and an old extension deletes agent requests it
+      // cannot claim, so a window on ANOTHER project that lacks the capability is just as fatal.
+      if (status.windows.some((window) => !hasAgentCapability(window))) {
         log("bridge-outdated:window");
         return fail("bridge-outdated");
       }

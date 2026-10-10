@@ -236,6 +236,31 @@ describe("typed errors for a missing or outdated bridge", () => {
     expectNothingWritten();
   });
 
+  it("an outdated window on ANOTHER project that shares the queue is bridge-outdated before anything is written", async () => {
+    fx.simulator("current", { now: () => clock.t, key: "a-new" }).heartbeat();
+    fx.simulator("outdated", {
+      now: () => clock.t,
+      key: "b-old",
+      folders: [join(fx.base, "other-project")],
+    }).heartbeat();
+    const result = await createAntigravityTerminalLauncher(deps()).launch(input());
+    expect(result).toEqual({ ok: false, error: "bridge-outdated" });
+    expectNothingWritten();
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("a stale outdated heartbeat on another project is ignored", async () => {
+    fx.simulator("outdated", {
+      now: () => clock.t - 10 * 60_000,
+      key: "b-old",
+      folders: [join(fx.base, "other-project")],
+    }).heartbeat();
+    const win = warmWindow();
+    sleepHook = () => void win.tick();
+    const result = await createAntigravityTerminalLauncher(deps()).launch(input());
+    expect(result).toEqual({ ok: true });
+  });
+
   it("a non-launchable bridge dir is bridge-not-installed and writes nothing", async () => {
     const result = await createAntigravityTerminalLauncher(
       deps({
