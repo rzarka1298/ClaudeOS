@@ -123,6 +123,51 @@ const CASES: readonly Case[] = [
     expected: 160,
   },
   {
+    name: "two off intervals: stale cover is consumed by an off cumulative delta => 150",
+    records: [
+      cum(t(10, 1), 100),
+      pt(1, t(10, 2), 150),
+      cum(t(10, 4), 150),
+      cum(t(10, 5), 250),
+      cum(t(10, 17), 300),
+    ],
+    off: [
+      [t(10, 2), t(10, 3)],
+      [t(10, 5), t(10, 6)],
+    ],
+    expected: 150,
+  },
+  {
+    name: "off cumulative delta larger than the cover consumes it all, later usage counts => 150",
+    records: [
+      cum(t(10, 1), 100),
+      pt(1, t(10, 2), 150),
+      cum(t(10, 4), 150),
+      cum(t(10, 5), 400),
+      cum(t(10, 17), 450),
+    ],
+    off: [
+      [t(10, 2), t(10, 3)],
+      [t(10, 5), t(10, 6)],
+    ],
+    expected: 150,
+  },
+  {
+    name: "off cumulative delta smaller than the cover leaves the rest to cover later usage => 100",
+    records: [
+      cum(t(10, 1), 100),
+      pt(1, t(10, 2), 150),
+      cum(t(10, 4), 100),
+      cum(t(10, 5), 120),
+      cum(t(10, 17), 170),
+    ],
+    off: [
+      [t(10, 2), t(10, 3)],
+      [t(10, 5), t(10, 6)],
+    ],
+    expected: 100,
+  },
+  {
     name: "analysis-off increment is never counted: 100 / 200 (off) / 300 => 200",
     records: [pt(1, t(10, 0, 50), 100), pt(1, t(10, 2, 30), 200), pt(1, t(10, 4, 10), 300)],
     off: [[t(10, 2), t(10, 3)]],

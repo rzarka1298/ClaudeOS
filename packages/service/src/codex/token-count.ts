@@ -197,12 +197,14 @@ export function tokensForRollout(
       skipped += 1;
       continue;
     }
-    if (cumulativeOff) continue;
+    // Cover is consumed by EVERY positive cumulative delta, off-period or not: the
+    // cumulative total contains the covered usage whichever record reports it.
     for (const name of KEYS) {
       const covered = Math.min(pool[name], delta[name]);
       pool[name] -= covered;
       delta[name] -= covered;
     }
+    if (cumulativeOff) continue;
     addToBucket(out, bucket, delta);
   }
 
