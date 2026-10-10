@@ -185,7 +185,7 @@
       "id": "control-del-middle",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u007fb"],
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "ab"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -194,7 +194,7 @@
       "id": "control-del-leading",
       "category": "control-char",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "\u007f--model"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--model"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -203,7 +203,7 @@
       "id": "control-del-trailing",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u007f"],
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -212,7 +212,7 @@
       "id": "control-del-argv0",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude\u007f"],
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -221,7 +221,7 @@
       "id": "control-del-only",
       "category": "control-char",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "\u007f"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", ""],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -230,7 +230,7 @@
       "id": "control-ls-middle",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u2028b"],
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a b"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -239,7 +239,7 @@
       "id": "control-ls-leading",
       "category": "control-char",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "\u2028--model"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", " --model"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -248,7 +248,7 @@
       "id": "control-ls-trailing",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u2028"],
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model "],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -257,7 +257,7 @@
       "id": "control-ls-argv0",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude\u2028"],
+      "argv": ["/Users/USERNAME/.local/bin/claude "],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -266,7 +266,7 @@
       "id": "control-ls-only",
       "category": "control-char",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "\u2028"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", " "],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -275,7 +275,7 @@
       "id": "control-ps-middle",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u2029b"],
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a b"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -284,7 +284,7 @@
       "id": "control-ps-leading",
       "category": "control-char",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "\u2029--model"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", " --model"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -293,7 +293,7 @@
       "id": "control-ps-trailing",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u2029"],
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model "],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -302,7 +302,7 @@
       "id": "control-ps-argv0",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude\u2029"],
+      "argv": ["/Users/USERNAME/.local/bin/claude "],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -311,7 +311,7 @@
       "id": "control-ps-only",
       "category": "control-char",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "\u2029"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", " "],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -365,7 +365,7 @@
       "id": "control-c1-nel-middle",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "a\u0085b"],
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model", "ab"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -374,7 +374,7 @@
       "id": "control-c1-nel-leading",
       "category": "control-char",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "\u0085--model"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--model"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -383,7 +383,7 @@
       "id": "control-c1-nel-trailing",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude", "--model\u0085"],
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--model"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -392,7 +392,7 @@
       "id": "control-c1-nel-argv0",
       "category": "control-char",
       "agent": "claude",
-      "argv": ["/Users/USERNAME/.local/bin/claude\u0085"],
+      "argv": ["/Users/USERNAME/.local/bin/claude"],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -401,7 +401,7 @@
       "id": "control-c1-nel-only",
       "category": "control-char",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "\u0085"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", ""],
       "env": {},
       "expect": "reject",
       "reason": "argv-control"
@@ -471,6 +471,7 @@
       "agent": "claude",
       "argv": [
         "/Users/USERNAME/.local/bin/claude",
+        "--append-system-prompt",
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       ],
       "env": {},
@@ -564,37 +565,37 @@
       "agent": "claude",
       "argv": [
         "/Users/USERNAME/.local/bin/claude",
+        "-c",
+        "--append-system-prompt",
         "a0",
+        "--append-system-prompt",
         "a1",
+        "--append-system-prompt",
         "a2",
+        "--append-system-prompt",
         "a3",
+        "--append-system-prompt",
         "a4",
+        "--append-system-prompt",
         "a5",
+        "--append-system-prompt",
         "a6",
+        "--append-system-prompt",
         "a7",
+        "--append-system-prompt",
         "a8",
+        "--append-system-prompt",
         "a9",
+        "--append-system-prompt",
         "a10",
+        "--append-system-prompt",
         "a11",
+        "--append-system-prompt",
         "a12",
+        "--append-system-prompt",
         "a13",
-        "a14",
-        "a15",
-        "a16",
-        "a17",
-        "a18",
-        "a19",
-        "a20",
-        "a21",
-        "a22",
-        "a23",
-        "a24",
-        "a25",
-        "a26",
-        "a27",
-        "a28",
-        "a29",
-        "a30"
+        "--append-system-prompt",
+        "a14"
       ],
       "env": {},
       "expect": "accept"
@@ -801,7 +802,7 @@
       "id": "basename-nbsp",
       "category": "basename-mismatch",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/bin/codex\u00a0"],
+      "argv": ["/Users/USERNAME/bin/codex "],
       "env": {},
       "expect": "reject",
       "reason": "argv0-basename"
@@ -979,7 +980,7 @@
       "argv": [
         "/Users/USERNAME/.local/bin/claude",
         "--permission-mode",
-        "\uff42\uff59\uff50\uff41\uff53\uff53\uff30\uff45\uff52\uff4d\uff49\uff53\uff53\uff49\uff4f\uff4e\uff53"
+        "ｂｙｐａｓｓＰｅｒｍｉｓｓｉｏｎｓ"
       ],
       "env": {},
       "expect": "reject",
@@ -1070,7 +1071,7 @@
       "id": "ban-yolo-fullwidth",
       "category": "ban-token",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "--\uff59\uff4f\uff4c\uff4f"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--ｙｏｌｏ"],
       "env": {},
       "expect": "reject",
       "reason": "banned-flag"
@@ -1079,7 +1080,7 @@
       "id": "ban-yolo-zero-width",
       "category": "ban-token",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "--yo\u200blo"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--yo​lo"],
       "env": {},
       "expect": "reject",
       "reason": "banned-flag"
@@ -1088,7 +1089,7 @@
       "id": "ban-yolo-soft-hyphen",
       "category": "ban-token",
       "agent": "codex",
-      "argv": ["/Users/USERNAME/.local/bin/codex", "--yo\u00adlo"],
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--yo­lo"],
       "env": {},
       "expect": "reject",
       "reason": "banned-flag"
@@ -1600,7 +1601,7 @@
       "agent": "claude",
       "argv": ["/Users/USERNAME/.local/bin/claude"],
       "env": {
-        "CCC_X": "a\u007fb"
+        "CCC_X": "ab"
       },
       "expect": "reject",
       "reason": "env-value"
@@ -1611,7 +1612,7 @@
       "agent": "claude",
       "argv": ["/Users/USERNAME/.local/bin/claude"],
       "env": {
-        "CCC_X": "a\u2028b"
+        "CCC_X": "a b"
       },
       "expect": "reject",
       "reason": "env-value"
@@ -1622,7 +1623,7 @@
       "agent": "claude",
       "argv": ["/Users/USERNAME/.local/bin/claude"],
       "env": {
-        "CCC_X": "a\u2029b"
+        "CCC_X": "a b"
       },
       "expect": "reject",
       "reason": "env-value"
@@ -1644,7 +1645,7 @@
       "agent": "claude",
       "argv": ["/Users/USERNAME/.local/bin/claude"],
       "env": {
-        "CCC_X": "a\u0085b"
+        "CCC_X": "ab"
       },
       "expect": "reject",
       "reason": "env-value"
@@ -1855,11 +1856,7 @@
       "id": "accept-unicode-path",
       "category": "accept",
       "agent": "codex",
-      "argv": [
-        "/Users/USERNAME/.local/bin/codex",
-        "-C",
-        "/Users/USERNAME/projekte/uber-\u00fcn\u00ef"
-      ],
+      "argv": ["/Users/USERNAME/.local/bin/codex", "-C", "/Users/USERNAME/projekte/uber-ünï"],
       "env": {},
       "expect": "accept"
     },
@@ -2353,6 +2350,146 @@
       "argv": ["/Users/USERNAME/.local/bin/claude", "-c"],
       "env": {},
       "expect": "accept"
+    },
+    {
+      "id": "codex-subcommand-alias-e",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "e", "rm -rf x"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-subcommand-alias-a",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "a", "some-task-id"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-subcommand-alias-e-after-flag",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--model", "gpt-5.4", "e", "prompt"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-subcommand-alias-a-after-sandbox",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "--sandbox", "read-only", "a", "id"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-subcommand-review",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "review", "--uncommitted"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-subcommand-fork",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "fork"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-subcommand-unknown-word",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "frobnicate"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-bare-prompt-operand",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": ["/Users/USERNAME/.local/bin/codex", "do the thing"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "codex-subcommand-after-resume-uuid",
+      "category": "ban-token",
+      "agent": "codex",
+      "argv": [
+        "/Users/USERNAME/.local/bin/codex",
+        "resume",
+        "11111111-2222-3333-4444-555555555555",
+        "e"
+      ],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-subcommand-plugins-alias",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "plugins", "list"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-subcommand-unknown-word",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "frobnicate"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-subcommand-after-flag",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--permission-mode", "plan", "mcp", "add"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-subcommand-after-boolean-flag",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "-c", "install"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-bare-prompt-operand",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "do the thing"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
+    },
+    {
+      "id": "claude-double-dash-operand",
+      "category": "ban-token",
+      "agent": "claude",
+      "argv": ["/Users/USERNAME/.local/bin/claude", "--", "mcp", "add"],
+      "env": {},
+      "expect": "reject",
+      "reason": "banned-flag"
     }
   ]
 }

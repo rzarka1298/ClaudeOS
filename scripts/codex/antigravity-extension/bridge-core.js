@@ -164,33 +164,32 @@ const DENIED_LONG_FLAGS = [
   "--allowed-tools",
 ];
 const DENIED_CODEX_SHORT = ["c", "p"]; // -c key=value overrides, -p profile (claude's -c is --continue)
-const DENIED_SUBCOMMANDS = {
+// Subcommands are ALLOWLISTED, never denylisted (review: the CLIs have aliases such as codex
+// `e` = exec and `a` = apply). The product launches `claude` with no subcommand and `codex`
+// with no subcommand or `resume <uuid>`; every other bare operand (a subcommand, an alias or a
+// positional prompt, which would be dispatched as a subcommand if it matched one) is refused.
+const ALLOWED_SUBCOMMANDS = { claude: [], codex: ["resume"] };
+// Flags known to take one value (the value is not an operand). --add-dir is variadic for claude.
+const VALUE_FLAGS = {
   claude: [
-    "mcp",
-    "config",
-    "plugin",
-    "plugins",
-    "update",
-    "upgrade",
-    "install",
-    "setup-token",
-    "doctor",
-    "migrate-installer",
+    "--model",
+    "--permission-mode",
+    "--resume",
+    "-r",
+    "--session-id",
+    "--append-system-prompt",
+    "--add-dir",
   ],
   codex: [
-    "mcp",
-    "mcp-server",
-    "login",
-    "logout",
-    "exec",
-    "apply",
-    "cloud",
-    "proto",
-    "completion",
-    "sandbox",
-    "debug",
-    "features",
-    "app-server",
+    "--model",
+    "-m",
+    "--cd",
+    "-C",
+    "--add-dir",
+    "--ask-for-approval",
+    "-a",
+    "--sandbox",
+    "-s",
   ],
 };
 const PERMISSION_MODES = ["default", "plan", "acceptEdits"];
@@ -224,13 +223,29 @@ function parseFlag(element) {
 
 /** The reason an argv[1..] breaks the flag rules, or null. */
 function flagRuleViolation(agent, argv) {
-  const denied = DENIED_SUBCOMMANDS[agent];
+  const valueFlags = VALUE_FLAGS[agent];
+  const variadic = DIR_FLAGS[agent].variadic;
+  let consumedUpTo = 0; // argv indexes <= this are values of an earlier flag, not operands
+  let operands = 0;
   for (let i = 1; i < argv.length; i++) {
     const element = argv[i];
-    if (denied.includes(element)) return "banned-flag";
     const parsed = parseFlag(element);
-    if (!parsed) continue;
+    if (!parsed) {
+      if (i <= consumedUpTo) continue;
+      // A bare operand (or `--`): only codex's `resume` as the first operand is allowed.
+      if (element === "--" || operands > 0 || !ALLOWED_SUBCOMMANDS[agent].includes(element))
+        return "banned-flag";
+      operands++;
+      consumedUpTo = i + 1; // the session id, validated below
+      continue;
+    }
     const { flag, inline } = parsed;
+    if (inline === undefined && valueFlags.includes(flag)) {
+      consumedUpTo = i + 1;
+      if (variadic.includes(flag))
+        while (consumedUpTo + 1 < argv.length && !argv[consumedUpTo + 1].startsWith("-"))
+          consumedUpTo++;
+    }
     const value = inline !== undefined ? inline : argv[i + 1];
     if (DENIED_LONG_FLAGS.includes(flag)) return "banned-flag";
     if (agent === "codex" && flag.length === 2 && DENIED_CODEX_SHORT.includes(flag[1]))
