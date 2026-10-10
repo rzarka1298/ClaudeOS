@@ -32,6 +32,13 @@ import {
 /** The production refresh cadence while the dashboard is watching (D-24). */
 export const HEADROOM_REFRESH_INTERVAL_MS = 60_000;
 
+/**
+ * After a failed (or unconfigured) refresh, read-through callers wait this long before the next
+ * attempt, so a broken app-server is never hammered. It is deliberately short: freshness is
+ * judged from the last SUCCESSFUL read, so a stale cache keeps retrying soon.
+ */
+export const HEADROOM_FAILURE_RETRY_MS = 10_000;
+
 export interface HeadroomTimers {
   setInterval(fn: () => void, ms: number): unknown;
   clearInterval(handle: unknown): void;
@@ -97,7 +104,10 @@ export function createHeadroomService(deps: HeadroomServiceDeps): HeadroomServic
   /** True while `lastGood` came from the store and no read in this process has succeeded. */
   let fromStore = false;
   let lastFailure: CodexUsageSnapshot | null = null;
-  let lastAttemptMs: number | null = null;
+  /** When the last attempt that did NOT produce a live app-server read ended. */
+  let lastFailedAttemptMs: number | null = null;
+  /** Observation time of the last successful read in this process (a reloaded snapshot is not one). */
+  let lastSuccessObservedMs: number | null = null;
   let inFlight: Promise<void> | null = null;
   let timerHandle: unknown = null;
   let lastPublishedKey: string | null = null;
@@ -190,7 +200,7 @@ export function createHeadroomService(deps: HeadroomServiceDeps): HeadroomServic
 
   async function runRefresh(): Promise<void> {
     if (!configured()) {
-      lastAttemptMs = deps.now();
+      lastFailedAttemptMs = deps.now();
       publishIfChanged();
       return;
     }
@@ -201,8 +211,10 @@ export function createHeadroomService(deps: HeadroomServiceDeps): HeadroomServic
       deps.logger?.warn({ reason: "client-threw" }, "codex usage read failed");
       snapshot = missingUsage(deps.now());
     }
-    lastAttemptMs = deps.now();
     if (snapshot.kind === "available" && snapshot.source === "app-server") {
+      const observed = Date.parse(snapshot.observedAt);
+      lastSuccessObservedMs = Number.isFinite(observed) ? observed : deps.now();
+      lastFailedAttemptMs = null;
       lastGood = snapshot;
       fromStore = false;
       try {
@@ -211,6 +223,7 @@ export function createHeadroomService(deps: HeadroomServiceDeps): HeadroomServic
         deps.logger?.warn({ reason: "persist-failed" }, "codex usage snapshot not saved");
       }
     } else {
+      lastFailedAttemptMs = deps.now();
       lastFailure = snapshot;
     }
     publishIfChanged();
@@ -226,7 +239,13 @@ export function createHeadroomService(deps: HeadroomServiceDeps): HeadroomServic
   }
 
   function needsRefresh(): boolean {
-    return lastAttemptMs === null || deps.now() - lastAttemptMs > CODEX_USAGE_LIVE_MAX_AGE_MS;
+    const nowMs = deps.now();
+    if (lastFailedAttemptMs !== null && nowMs - lastFailedAttemptMs <= HEADROOM_FAILURE_RETRY_MS) {
+      return false;
+    }
+    return (
+      lastSuccessObservedMs === null || nowMs - lastSuccessObservedMs > CODEX_USAGE_LIVE_MAX_AGE_MS
+    );
   }
 
   async function ensureFresh(): Promise<void> {

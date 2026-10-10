@@ -227,6 +227,28 @@ describe("read-through and peeks (D-24)", () => {
   });
 });
 
+describe("failed refresh does not suppress read-through (finding: stale cache)", () => {
+  it("a failed read retries after the short failure throttle, not after the 2 minute live window", async () => {
+    const h = harness();
+    await h.service.getUsage();
+    h.clock.now = T0 + 121 * SECOND;
+    h.reads.next = () => failedRead(h.clock.now);
+    await h.service.getUsage();
+    expect(h.reads.count).toBe(2);
+    // Within the failure throttle: app-server is not hammered.
+    h.clock.now += 5 * SECOND;
+    await h.service.getUsage();
+    expect(h.reads.count).toBe(2);
+    // Past it, with the cache still stale: read again, and recover.
+    h.clock.now += 11 * SECOND;
+    h.reads.next = () => available(52, h.clock.now);
+    const after = await h.service.getUsage();
+    expect(h.reads.count).toBe(3);
+    expect(after).toMatchObject({ kind: "available", freshness: "live" });
+    if (after.kind === "available") expect(after.windows[0]?.usedPercent).toBe(52);
+  });
+});
+
 describe("refresh timer gated by subscribers (D-24)", () => {
   it("Test 5: no read on a tick without subscribers; one read per tick with one; stop clears", async () => {
     const h = harness();
