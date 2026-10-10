@@ -9,7 +9,9 @@ import type {
   WorktreeListResponse,
 } from "@ccc/domain/session-actions.js";
 import { ClaudeRequestError } from "@ccc/service-api-client";
+import type { LaunchTimerControls } from "../projects/launch-status.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
+import type { CodexFollowChoice, CodexFollowWarningViewModel } from "./codex-modals.js";
 import { clearActionStatus, setActionStatus } from "./session-action-status.js";
 import {
   type ConcurrentChoiceResolution,
@@ -78,6 +80,34 @@ export interface SessionActionUi {
   readonly openTranscriptWarning: (vm: TranscriptWarningViewModel) => Promise<TranscriptChoice>;
   /** Opens the force-terminate request (S4-c). There is no typed-confirmation shortcut (D-01). */
   readonly openTerminateRequest: (vm: TerminateRequestViewModel) => Promise<TerminateChoice>;
+  /**
+   * Opens the Codex transcript plaintext warning (05.1 UI-SPEC S3-a) -- on EVERY
+   * press, never cached (D-29). Optional: a host that predates Codex omits it
+   * and the Codex cases fall to the "isn't available yet" branch.
+   */
+  readonly openCodexTranscriptWarning?:
+    | ((vm: TranscriptWarningViewModel) => Promise<TranscriptChoice>)
+    | undefined;
+  /** Opens the Codex follow-log warning (05.1 UI-SPEC S3-b) -- on EVERY press (D-29, R-16). */
+  readonly openCodexFollowWarning?:
+    | ((vm: CodexFollowWarningViewModel) => Promise<CodexFollowChoice>)
+    | undefined;
+}
+
+/**
+ * The Codex client calls the runner needs (plan 05.1-19). Loosely typed on
+ * purpose, like {@link SessionActionRequestMap}: the real validation happens in
+ * `@ccc/service-api-client`, where `command-center-view.ts` binds these. The
+ * runner never imports the client's request functions.
+ */
+export interface CodexActionDeps {
+  readonly openTranscript: (request: {
+    threadId: string;
+    via: "reveal" | "open";
+  }) => Promise<unknown>;
+  readonly followLog: (request: { runId: string }) => Promise<unknown>;
+  /** The success auto-clear timers; production defaults to the window timers. */
+  readonly timers?: LaunchTimerControls | undefined;
 }
 
 /**
@@ -119,6 +149,8 @@ export interface SessionActionDeps {
   listProjects(): readonly ProjectOption[] | null;
   /** `null` when the service hasn't reported it yet. */
   cleanupPeriodDays(): number | null;
+  /** The Codex flows' client calls (plan 05.1-19). Absent means the Codex cases are unavailable. */
+  readonly codex?: CodexActionDeps | undefined;
 }
 
 /**
@@ -129,7 +161,7 @@ export interface SessionActionDeps {
  */
 export type SessionActionHost = Pick<
   SessionActionDeps,
-  "requestSessionAction" | "setTranscriptAnalysis" | "ui"
+  "requestSessionAction" | "setTranscriptAnalysis" | "ui" | "codex"
 >;
 
 /**
