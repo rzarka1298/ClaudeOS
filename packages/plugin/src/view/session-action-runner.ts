@@ -14,11 +14,13 @@ import type { LaunchTimerControls } from "../projects/launch-status.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { clearCodexActionStatus, setCodexActionStatus } from "./codex-action-status.js";
 import {
+  CODEX_FOLLOW_COPY,
   CODEX_TRANSCRIPT_COPY,
   type CodexActionCopy,
   type CodexFollowChoice,
   type CodexFollowWarningViewModel,
   type CodexReason,
+  codexFollowWarningViewModel,
   codexReasonFor,
   codexTranscriptWarningViewModel,
 } from "./codex-modals.js";
@@ -616,6 +618,51 @@ async function runCodexOpenTranscript(
   }
 }
 
+/** `descriptor.target`, narrowed to the `{ wrapperRunId }` shape the Codex follow-log action uses. */
+function getWrapperRunId(descriptor: QuickActionDescriptor): string | null {
+  const target = descriptor.target;
+  return target !== undefined && "wrapperRunId" in target ? target.wrapperRunId : null;
+}
+
+/**
+ * Codex `Follow live log` (D-29, R-16): the same structure as
+ * {@link runCodexOpenTranscript} with its own, shorter warning. The target is
+ * a wrapper run id, never a thread id -- an interactive session has no live
+ * log to follow.
+ */
+async function runCodexFollowLog(
+  descriptor: QuickActionDescriptor,
+  deps: SessionActionDeps,
+): Promise<void> {
+  const wrapperRunId = getWrapperRunId(descriptor);
+  const codex = deps.codex;
+  const openWarning = deps.ui.openCodexFollowWarning;
+  if (wrapperRunId === null || codex === undefined || openWarning === undefined) {
+    deps.ui.notify(unavailableMessage(descriptor.label));
+    return;
+  }
+  const copy = CODEX_FOLLOW_COPY;
+  setCodexActionStatus({ kind: "pending", text: copy.pending });
+  const choice = await openSafely(() => openWarning(codexFollowWarningViewModel()));
+  if (choice === MODAL_FAILED) {
+    reportCodexFailure(deps, copy, codexReasonFor("unrecognised-response"));
+    return;
+  }
+  if (choice === "cancel") {
+    clearCodexActionStatus();
+    return;
+  }
+  try {
+    await codex.followLog({ runId: wrapperRunId });
+    setCodexActionStatus(
+      { kind: "success", text: copy.success },
+      codex.timers ?? windowLaunchTimers(),
+    );
+  } catch (error) {
+    reportCodexFailure(deps, copy, codexReasonOf(error));
+  }
+}
+
 const ENABLE_ANALYSIS_PENDING_TEXT = "Turning on transcript analysis…";
 const ENABLE_ANALYSIS_FAILURE_MESSAGE =
   "Couldn't turn on transcript analysis. Check the service in Settings → Diagnostics, then try again.";
@@ -674,6 +721,9 @@ export async function runSessionAction(
       return;
     case "codex:open-transcript":
       await runCodexOpenTranscript(descriptor, deps);
+      return;
+    case "codex:follow-log":
+      await runCodexFollowLog(descriptor, deps);
       return;
     default:
       deps.ui.notify(unavailableMessage(descriptor.label));

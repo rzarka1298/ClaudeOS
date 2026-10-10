@@ -1,8 +1,9 @@
-import { type App, Modal } from "obsidian";
-import type {
-  ModalButtonView,
-  TranscriptChoice,
-  TranscriptWarningViewModel,
+import { type App, ButtonComponent, Modal } from "obsidian";
+import {
+  type ModalButtonView,
+  type TranscriptChoice,
+  TranscriptWarningModal,
+  type TranscriptWarningViewModel,
 } from "./session-modals.js";
 
 /**
@@ -98,6 +99,17 @@ export const CODEX_FOLLOW_COPY: CodexActionCopy = {
   failure: (reason) => `▲ Couldn't follow the live log: ${reason}.`,
 };
 
+const FOLLOW_TITLE = "Follow this live log?";
+const FOLLOW_BODY_1 =
+  "The live log is plain text on your Mac and can include prompts, replies and file contents. Anything readable by your user account can read it.";
+const FOLLOW_BODY_2 =
+  "It opens as a tab in this project's Antigravity window and only reads the log. It doesn't send anything to Codex.";
+
+/**
+ * The follow-log warning (S3-b, R-16): its own, shorter modal, because the
+ * live log can include prompts and file contents and the warning must be true
+ * for what is read. Two buttons only; nothing in the shape can be remembered.
+ */
 export interface CodexFollowWarningViewModel {
   readonly title: string;
   readonly bodies: readonly [string, string];
@@ -105,29 +117,74 @@ export interface CodexFollowWarningViewModel {
   readonly initialFocus: "cancel";
 }
 
+/** What `openCodexFollowWarning` resolves to. */
 export type CodexFollowChoice = "follow" | "cancel";
 
-/** RED stub (plan 05.1-19 task 2): signature only. */
 export function codexFollowWarningViewModel(): CodexFollowWarningViewModel {
   return {
-    title: "",
-    bodies: ["", ""],
+    title: FOLLOW_TITLE,
+    bodies: [FOLLOW_BODY_1, FOLLOW_BODY_2],
     buttons: [
-      { label: "", cta: false, destructive: false },
-      { label: "", cta: false, destructive: false },
+      { label: "Follow in Antigravity", cta: true, destructive: false },
+      { label: "Cancel", cta: false, destructive: false },
     ],
     initialFocus: "cancel",
   };
 }
 
-/** RED stub (plan 05.1-19 task 2): signature only. */
+/**
+ * A thin renderer over {@link codexFollowWarningViewModel}. Single-settle, like
+ * every modal in this plugin: `onClose` (Escape, a click outside) resolves
+ * `"cancel"`, and a choice made first wins. It has no extra control, because
+ * the view model has nothing to back one with (D-29).
+ */
 export class CodexFollowWarningModal extends Modal {
+  private readonly vm: CodexFollowWarningViewModel;
+  private readonly decide: (choice: CodexFollowChoice) => void;
+  private settled = false;
+
   constructor(
     app: App,
-    _vm: CodexFollowWarningViewModel,
-    _decide: (choice: CodexFollowChoice) => void,
+    vm: CodexFollowWarningViewModel,
+    decide: (choice: CodexFollowChoice) => void,
   ) {
     super(app);
+    this.vm = vm;
+    this.decide = decide;
+  }
+
+  private settle(choice: CodexFollowChoice): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.decide(choice);
+  }
+
+  onOpen(): void {
+    const { titleEl, contentEl } = this;
+    titleEl.setText(this.vm.title);
+    for (const body of this.vm.bodies) {
+      contentEl.createEl("p", { text: body });
+    }
+    const buttonRow = contentEl.createDiv();
+    const [follow, cancel] = this.vm.buttons;
+    new ButtonComponent(buttonRow)
+      .setButtonText(follow.label)
+      .setCta()
+      .onClick(() => {
+        this.settle("follow");
+        this.close();
+      });
+    const cancelButton = new ButtonComponent(buttonRow).setButtonText(cancel.label).onClick(() => {
+      this.settle("cancel");
+      this.close();
+    });
+    // Initial focus on Cancel, the safest option (UI-SPEC S3-b).
+    cancelButton.buttonEl.focus();
+  }
+
+  onClose(): void {
+    this.settle("cancel");
+    this.contentEl.empty();
   }
 }
 
@@ -139,12 +196,25 @@ export interface CodexUi {
   readonly openCodexFollowWarning: (vm: CodexFollowWarningViewModel) => Promise<CodexFollowChoice>;
 }
 
-/** RED stub (plan 05.1-19 task 2): signature only. */
-export function createObsidianCodexUi(_app: App): CodexUi {
+/**
+ * The production Codex openers, merged into the existing session-action `ui`
+ * object by the view host. The transcript warning reuses
+ * {@link TranscriptWarningModal}, which renders any three-button view model
+ * and resolves reveal, open or cancel; only the follow warning needs its own
+ * class. This and `session-modals.ts` are the only places the Codex flows
+ * touch Obsidian's modal surface.
+ */
+export function createObsidianCodexUi(app: App): CodexUi {
   return {
-    openCodexTranscriptWarning: (_vm: TranscriptWarningViewModel): Promise<TranscriptChoice> =>
-      Promise.resolve("cancel"),
-    openCodexFollowWarning: (_vm: CodexFollowWarningViewModel): Promise<CodexFollowChoice> =>
-      Promise.resolve("cancel"),
+    openCodexTranscriptWarning(vm: TranscriptWarningViewModel): Promise<TranscriptChoice> {
+      return new Promise<TranscriptChoice>((resolve) => {
+        new TranscriptWarningModal(app, vm, resolve).open();
+      });
+    },
+    openCodexFollowWarning(vm: CodexFollowWarningViewModel): Promise<CodexFollowChoice> {
+      return new Promise<CodexFollowChoice>((resolve) => {
+        new CodexFollowWarningModal(app, vm, resolve).open();
+      });
+    },
   };
 }

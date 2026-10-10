@@ -22,7 +22,7 @@ import type { SessionActionHost } from "./session-action-runner.js";
  * the view builds, so the binding is proven without rendering the dashboard.
  */
 
-const captured = vi.hoisted(() => ({ sessionActions: undefined as unknown }));
+const captured = vi.hoisted((): { sessionActions: unknown } => ({ sessionActions: undefined }));
 
 vi.mock("./shell.js", () => ({
   Shell: (props: { sessionActions?: unknown }) => {

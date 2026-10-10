@@ -2,7 +2,9 @@ import type { ProjectId } from "@ccc/domain";
 import {
   type AuthenticatedSocketApiClient,
   type EventClient,
+  followCodexLog,
   getSessionUsage,
+  openCodexTranscript,
   openSystemSettings,
   refreshProjects,
   requestSessionAction,
@@ -18,6 +20,7 @@ import { createProjectsActions, createScanActions } from "../projects/projects-a
 import { createSystemSettingsOpener } from "../projects/system-settings-opener.js";
 import { attachEventClient, refreshProjectsOnConnect } from "../service-connection.js";
 import type { CommandCenterSettings } from "../settings.js";
+import { createObsidianCodexUi } from "./codex-modals.js";
 import type { DestinationId } from "./destinations.js";
 import { registerSwitcherScope } from "./quick-switcher.js";
 import { createObsidianSessionActionUi } from "./session-modals.js";
@@ -147,7 +150,16 @@ export class CommandCenterView extends ItemView {
           requestSessionAction: (action, body) =>
             requestSessionAction(this.host.client, action, body as never) as never,
           setTranscriptAnalysis: (enabled) => setTranscriptAnalysis(this.host.client, enabled),
-          ui: createObsidianSessionActionUi(this.app),
+          // The Codex row actions (plan 05.1-19): the client calls are bound
+          // here and nowhere else, like the Claude ones above.
+          codex: {
+            openTranscript: (request) => openCodexTranscript(this.host.client, request),
+            followLog: (request) => followCodexLog(this.host.client, request),
+          },
+          ui: {
+            ...createObsidianSessionActionUi(this.app),
+            ...createObsidianCodexUi(this.app),
+          },
         },
       }),
       this.contentEl,

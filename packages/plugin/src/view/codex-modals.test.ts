@@ -161,11 +161,11 @@ describe("createObsidianCodexUi (production seam against the Obsidian stub)", ()
 
   /** Replaces `Modal.open` so the test can reach the instance the opener built. */
   function captureModal(): { readonly get: () => Modal | undefined } {
-    let captured: Modal | undefined;
+    const opened: Modal[] = [];
     vi.spyOn(Modal.prototype, "open").mockImplementation(function (this: Modal) {
-      captured = this;
+      opened.push(this);
     });
-    return { get: () => captured };
+    return { get: () => opened[0] };
   }
 
   it("returns the two Codex openers", () => {
