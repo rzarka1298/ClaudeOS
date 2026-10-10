@@ -388,3 +388,158 @@ cell("codex — zoom-200 — narrow", "codex-zoom-200--narrow.png", async (page,
   await expectNoHorizontalOverflow(card);
   await expect(card).toHaveScreenshot(snapshot);
 });
+
+// ---------------------------------------------------------------------------
+// The launch toolbar with the fifth `Claude + Codex` button, and the five
+// per-agent pair-launch status cases (UI-SPEC S2). Both render the REAL Project
+// shortcuts widget over two invented projects; the pair cases pre-load the one
+// launch status store for the first project with a plain, non-expiring write.
+// ---------------------------------------------------------------------------
+
+/** Opens one launch cell and returns the Project shortcuts card, mounted and fully in view. */
+async function openLaunch(page: Page, caseId: string, pane: Pane): Promise<Locator> {
+  await page.goto(harnessUrl({ view: "pair", case: caseId, pane, motion: "full" }));
+  const card = page.locator(".ccc-card");
+  await expect(card).toHaveCount(1);
+  await expect(card.locator("h3")).toHaveText("Project shortcuts");
+  await fitViewportToCard(page);
+  return card;
+}
+
+/** The five toolbar buttons in UI-SPEC order (visible labels). */
+const TOOLBAR_LABELS = [
+  "Antigravity",
+  "Claude Code",
+  "Claude + Codex",
+  "Finder",
+  "GitHub",
+] as const;
+
+/** No path-shaped text: a leading slash or tilde segment, a drive letter, a file extension of an app. */
+const PATH_SHAPED = /(?:^|\s)(?:\/|~\/)[\w.-]+|[A-Za-z]:\\|\.app\b/;
+
+for (const pane of PANES) {
+  cell(
+    `codex — launch-toolbar-five — ${pane}`,
+    `launch-toolbar-five--${pane}.png`,
+    async (page, snapshot) => {
+      const card = await openLaunch(page, "toolbar", pane);
+      const toolbar = card.getByRole("toolbar").first();
+      const buttons = toolbar.getByRole("button");
+      await expect(buttons).toHaveCount(5);
+      await expect(buttons).toHaveText([...TOOLBAR_LABELS]);
+      // Roving tabindex: reach the fifth-button's neighbour, then arrow onto it with the keyboard,
+      // so the focus-visible ring shows exactly as it does for a keyboard user.
+      await buttons.nth(0).focus();
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("ArrowRight");
+      const pair = buttons.nth(2);
+      await expect(pair).toBeFocused();
+      // The visible label is contained in the accessible name (WCAG 2.5.3).
+      await expect(pair).toHaveAttribute("aria-label", "Open Alpha with Claude + Codex");
+      expect(await pair.getAttribute("aria-label")).toContain("Claude + Codex");
+      await expect(pair).toHaveCSS("outline-style", "solid");
+      await expect(pair).toHaveCSS("outline-width", /^[1-9]\d*(\.\d+)?px$/);
+      const box = await pair.boundingBox();
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(24);
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(24);
+      // The roving tabindex leaves exactly one button in the tab order.
+      await expect(toolbar.locator("button[tabindex='0']")).toHaveCount(1);
+      await expect(card).toHaveScreenshot(snapshot);
+    },
+  );
+}
+
+interface PairExpectation {
+  /** The visible text of each agent line (glyph included), Claude Code first. */
+  readonly lines: readonly [string, string];
+  readonly tones: readonly [string, string];
+  /** The inline action buttons that follow the status region, in order. */
+  readonly buttons: readonly string[];
+}
+
+const PAIR_CASE_EXPECTATIONS: Readonly<Record<string, PairExpectation>> = {
+  opening: {
+    lines: ["Claude Code: Opening a tab in Antigravity…", "Codex: Opening a tab in Antigravity…"],
+    tones: ["opening", "opening"],
+    buttons: [],
+  },
+  "success-error": {
+    lines: [
+      "✓ Claude Code: Opened in an Antigravity tab",
+      "▲ Codex: The Antigravity terminal bridge is out of date. Run its install step again from Settings → Codex, then try again.",
+    ],
+    tones: ["success", "error"],
+    buttons: ["Open Codex settings"],
+  },
+  setup: {
+    lines: [
+      "✓ Claude Code: Opened in an Antigravity tab",
+      "◌ Codex: Codex isn't set up yet. Install it, then add it in Settings → Launchers.",
+    ],
+    tones: ["success", "setup"],
+    buttons: ["Set up Codex"],
+  },
+  "window-not-ready": {
+    lines: [
+      "▲ Claude Code: Antigravity is still starting. Its window is opening now. Try again in a few seconds.",
+      "▲ Codex: Antigravity is still starting. Its window is opening now. Try again in a few seconds.",
+    ],
+    tones: ["error", "error"],
+    buttons: ["Try again"],
+  },
+  "both-error": {
+    lines: [
+      "▲ Claude Code: The Antigravity terminal bridge isn't installed. Install it from Settings → Codex, or switch to Terminal in Settings → Launchers, then try again.",
+      "▲ Codex: The Antigravity terminal bridge isn't installed. Install it from Settings → Codex, or switch to Terminal in Settings → Launchers, then try again.",
+    ],
+    tones: ["error", "error"],
+    buttons: ["Open Codex settings"],
+  },
+};
+
+for (const [caseId, expected] of Object.entries(PAIR_CASE_EXPECTATIONS)) {
+  for (const pane of PANES) {
+    cell(
+      `codex — launch-pair-${caseId} — ${pane}`,
+      `launch-pair-${caseId}--${pane}.png`,
+      async (page, snapshot) => {
+        const card = await openLaunch(page, caseId, pane);
+        // One persistent status region holds exactly the two lines, Claude Code first.
+        const region = card.locator(".ccc-launch-status-pair");
+        await expect(region).toHaveCount(1);
+        await expect(region).toHaveAttribute("role", "status");
+        const lines = region.locator(".ccc-launch-agent-line");
+        await expect(lines).toHaveCount(2);
+        await expect(lines.nth(0)).toHaveAttribute("data-agent", "claude");
+        await expect(lines.nth(1)).toHaveAttribute("data-agent", "codex");
+        for (const index of [0, 1] as const) {
+          const line = lines.nth(index);
+          await expect(line).toHaveAttribute("data-tone", expected.tones[index]);
+          const text = (await line.innerText()).replace(/\s+/g, " ").trim();
+          expect(text).toBe(expected.lines[index]);
+          expect(text).not.toMatch(PATH_SHAPED);
+        }
+        // The action buttons follow the region (never inside it), one per distinct action.
+        const row = card.locator(".ccc-list-row").first();
+        const actions = row.locator("button.ccc-list-more");
+        await expect(actions).toHaveText([...expected.buttons]);
+        await expect(region.locator("button")).toHaveCount(0);
+        // A setup line is a setup state, not an error: no error glyph on it.
+        if (caseId === "setup")
+          await expect(lines.nth(1).locator(".ccc-error-glyph")).toHaveCount(0);
+        // While either half is opening the pair button is dimmed but still focusable.
+        const pairButton = row.getByRole("button", { name: "Open Alpha with Claude + Codex" });
+        if (caseId === "opening") {
+          await expect(pairButton).toHaveAttribute("aria-disabled", "true");
+          await expect(pairButton).toHaveAttribute("data-launch-state", "opening");
+        } else {
+          await expect(pairButton).not.toHaveAttribute("data-launch-state", "opening");
+        }
+        // The second project's row has no status: the region belongs to the first project only.
+        await expect(card.locator(".ccc-launch-status-pair")).toHaveCount(1);
+        await expect(card).toHaveScreenshot(snapshot);
+      },
+    );
+  }
+}

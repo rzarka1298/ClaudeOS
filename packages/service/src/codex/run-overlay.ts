@@ -1,6 +1,7 @@
 import type { CodexSessionState } from "@ccc/domain";
 import {
   type PendingFact,
+  type PrivatePending,
   type PrivateRun,
   type RunFact,
   type RunRecordReader,
@@ -46,8 +47,60 @@ export interface RunStateDecision {
   readonly resumesAfter: string | null;
 }
 
-export function decideRunState(_input: RunStateInput): RunStateDecision {
-  throw new Error("run-overlay: not implemented");
+function timeOf(iso: string): number {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
+ * The resume time of a pause when (and only when) the run is paused by the usage limit, else null
+ * for "not paused". A pause needs the pending-resume record naming this thread's session PLUS a
+ * second signal: the wrapper's own record for that run says it hit the limit, or the rollout shows
+ * a limit-hit fact after the last lifecycle event (D-20, CODEX-11, T-05.1-27).
+ */
+function pauseOf(input: RunStateInput): { readonly resumesAfter: string | null } | null {
+  const pending = input.pending;
+  if (pending === null) return null;
+  // A finished turn is never paused, whatever else the files say.
+  if (input.state === "completed") return null;
+  const recordedMs = timeOf(pending.recordedAt);
+  // Activity after the pending record was written means the thread is running (or ran) again.
+  if (input.state === "running" && timeOf(input.lastActivityAt) > recordedMs) return null;
+  if (input.lastLifecycleAt !== null && timeOf(input.lastLifecycleAt) > recordedMs) return null;
+  // A later run of the same session supersedes the pending record.
+  const record = input.record;
+  if (record !== null && record.runId !== pending.runId && timeOf(record.startedAt) > recordedMs) {
+    return null;
+  }
+  const wrapperSaysLimit = input.pendingRun?.status === "limit";
+  if (!wrapperSaysLimit && !input.limitHitAfter) return null;
+  return { resumesAfter: pending.resetsAt ?? input.pendingRun?.resetsAt ?? null };
+}
+
+/**
+ * The one rule table for what a wrapper record may change about a session's state (D-18, D-20).
+ *
+ * 1. End reports, from the newest record naming the session. They resolve what a rollout cannot
+ *    and never the reverse: `ok` turns a STALE view into completed; `failed` and `timeout` turn a
+ *    running or stale view into failed; a `running`, `limit` or `refused` record changes nothing,
+ *    and no state is ever moved to completed without an explicit ok report.
+ * 2. The pause, applied LAST so a paused run is never also reported failed: see {@link pauseOf}.
+ */
+export function decideRunState(input: RunStateInput): RunStateDecision {
+  let state = input.state;
+  const record = input.record;
+  if (record !== null) {
+    if (record.status === "ok" && state === "stale") state = "completed";
+    else if (
+      (record.status === "failed" || record.status === "timeout") &&
+      (state === "running" || state === "stale")
+    ) {
+      state = "failed";
+    }
+  }
+  const pause = pauseOf(input);
+  if (pause !== null) return { state: "limit-paused", resumesAfter: pause.resumesAfter };
+  return { state, resumesAfter: input.resumesAfter };
 }
 
 export interface RunOverlayDeps {
@@ -75,28 +128,36 @@ export interface RunOverlay {
 
 const MAX_PROJECT_NAME = 256;
 
-function timeOf(iso: string): number {
-  const ms = Date.parse(iso);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
 export function createRunOverlay(deps: RunOverlayDeps): RunOverlay {
   /** The newest record per session id (lower case). */
   let latestBySession = new Map<string, PrivateRun>();
+  let runById = new Map<string, PrivateRun>();
+  let pendingBySession = new Map<string, PrivatePending>();
   /** The key of the last scan the mirror was told about; an empty scan is the starting point. */
   let lastKey = "|";
   let lastSkipKey = "";
 
   function index(next: RunRecordScan): void {
     const bySession = new Map<string, PrivateRun>();
+    const byId = new Map<string, PrivateRun>();
     for (const run of next.runs) {
+      byId.set(run.runId, run);
       if (run.sessionId === null) continue;
       const known = bySession.get(run.sessionId);
       if (known === undefined || timeOf(run.startedAt) > timeOf(known.startedAt)) {
         bySession.set(run.sessionId, run);
       }
     }
+    const pendingMap = new Map<string, PrivatePending>();
+    for (const record of next.pending) {
+      const known = pendingMap.get(record.sessionId);
+      if (known === undefined || timeOf(record.recordedAt) > timeOf(known.recordedAt)) {
+        pendingMap.set(record.sessionId, record);
+      }
+    }
     latestBySession = bySession;
+    runById = byId;
+    pendingBySession = pendingMap;
   }
 
   /** The run id whose live log may be followed, or null (D-29). */
@@ -114,24 +175,40 @@ export function createRunOverlay(deps: RunOverlayDeps): RunOverlay {
       .join(",");
   }
 
-  const overlay: SessionOverlay = (view) => {
+  const overlay: SessionOverlay = (view, context) => {
     try {
       const key = view.threadId.toLowerCase();
       const record = latestBySession.get(key) ?? null;
-      if (record === null) return view;
+      const pending = pendingBySession.get(key) ?? null;
+      if (record === null && pending === null) return view;
       let next = view;
-      next = {
-        ...next,
-        origin: record.kind === "review" ? "review" : "headless",
-        liveLogRunId: liveLogRunIdOf(record, deps.now()),
-      };
-      // Attribution by working directory is more specific than a record's directory: keep it.
-      if (next.projectId === null) {
+      if (record !== null) {
         next = {
           ...next,
-          projectId: record.projectId,
-          projectName: record.projectName.slice(0, MAX_PROJECT_NAME),
+          origin: record.kind === "review" ? "review" : "headless",
+          liveLogRunId: liveLogRunIdOf(record, deps.now()),
         };
+        // Attribution by working directory is more specific than a record's directory: keep it.
+        if (next.projectId === null) {
+          next = {
+            ...next,
+            projectId: record.projectId,
+            projectName: record.projectName.slice(0, MAX_PROJECT_NAME),
+          };
+        }
+      }
+      const decision = decideRunState({
+        state: next.state,
+        lastActivityAt: next.lastActivityAt,
+        resumesAfter: next.resumesAfter,
+        limitHitAfter: context.limitHitAfter,
+        lastLifecycleAt: context.lastLifecycleAt,
+        record,
+        pending,
+        pendingRun: pending === null ? null : (runById.get(pending.runId) ?? null),
+      });
+      if (decision.state !== next.state || decision.resumesAfter !== next.resumesAfter) {
+        next = { ...next, state: decision.state, resumesAfter: decision.resumesAfter };
       }
       return next;
     } catch {

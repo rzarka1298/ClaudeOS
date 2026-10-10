@@ -2466,5 +2466,104 @@
         }
       }
     }
+  },
+  "launch": {
+    "terminalLabel": "Antigravity",
+    "projects": [
+      {
+        "id": "alphaproj0a1b2c3d4e5f6071",
+        "name": "Alpha",
+        "pinned": false,
+        "git": {
+          "kind": "repo",
+          "branch": "main",
+          "detached": false,
+          "dirty": false,
+          "commits": [],
+          "remote": null
+        },
+        "gitReadFailed": false,
+        "github": {
+          "kind": "github",
+          "label": "example-alpha",
+          "source": "remote"
+        },
+        "observedAt": "2026-09-22T12:00:00.000Z",
+        "openItems": null,
+        "sessionCount": null,
+        "nextTask": null
+      },
+      {
+        "id": "bravoproj0a1b2c3d4e5f6072",
+        "name": "Bravo",
+        "pinned": false,
+        "git": {
+          "kind": "repo",
+          "branch": "main",
+          "detached": false,
+          "dirty": false,
+          "commits": [],
+          "remote": null
+        },
+        "gitReadFailed": false,
+        "github": {
+          "kind": "github",
+          "label": "example-bravo",
+          "source": "remote"
+        },
+        "observedAt": "2026-09-22T12:00:00.000Z",
+        "openItems": null,
+        "sessionCount": null,
+        "nextTask": null
+      }
+    ],
+    "pairProjectId": "alphaproj0a1b2c3d4e5f6071",
+    "pairs": {
+      "opening": {
+        "claude": {
+          "kind": "opening"
+        },
+        "codex": {
+          "kind": "opening"
+        }
+      },
+      "success-error": {
+        "claude": {
+          "kind": "success"
+        },
+        "codex": {
+          "kind": "error",
+          "error": "bridge-outdated"
+        }
+      },
+      "setup": {
+        "claude": {
+          "kind": "success"
+        },
+        "codex": {
+          "kind": "setup"
+        }
+      },
+      "window-not-ready": {
+        "claude": {
+          "kind": "error",
+          "error": "window-not-ready"
+        },
+        "codex": {
+          "kind": "error",
+          "error": "window-not-ready"
+        }
+      },
+      "both-error": {
+        "claude": {
+          "kind": "error",
+          "error": "bridge-not-installed"
+        },
+        "codex": {
+          "kind": "error",
+          "error": "bridge-not-installed"
+        }
+      }
+    }
   }
 }

@@ -22,8 +22,27 @@
  * plugin's own "no inline style" rule does not apply to them.
  */
 
-import type { CodexCardData, CodexParts, ConnectionState, WidgetState } from "@ccc/plugin";
-import { codexStateFor, connectionState, motionMode, WIDGETS, WidgetFrame } from "@ccc/plugin";
+import type {
+  CodexCardData,
+  CodexParts,
+  ConnectionState,
+  LaunchStatus,
+  PairLaunchStatus,
+  ProjectShortcutsData,
+  WidgetState,
+} from "@ccc/plugin";
+import {
+  codexStateFor,
+  connectionState,
+  LAUNCH_PAIR_ACTION,
+  launchStatus,
+  launchStatusKey,
+  motionMode,
+  resetLaunchStatus,
+  WIDGETS,
+  WidgetFrame,
+  WidgetHostContext,
+} from "@ccc/plugin";
 import type { VNode } from "preact";
 import fixtureFile from "../src/codex-visual-fixtures.json";
 
@@ -40,9 +59,18 @@ interface CaseFixture {
   readonly override?: "loading" | "error";
 }
 
+/** The launch block: two invented projects and the five pair statuses. */
+interface LaunchFixture {
+  readonly terminalLabel: string;
+  readonly projects: ProjectShortcutsData["projects"];
+  readonly pairProjectId: string;
+  readonly pairs: Readonly<Record<string, Omit<PairLaunchStatus, "kind">>>;
+}
+
 interface FixtureFile {
   readonly now: string;
   readonly cases: Readonly<Record<string, CaseFixture>>;
+  readonly launch: LaunchFixture;
 }
 
 const FIXTURES = fixtureFile as unknown as FixtureFile;
@@ -129,17 +157,88 @@ function CodexCardCell({ caseId, pane }: { readonly caseId: string; readonly pan
 }
 
 // ---------------------------------------------------------------------------
+// The launch toolbar and pair-launch status cells: the REAL Project shortcuts
+// widget (its S1 toolbar with the fifth `Claude + Codex` button, and the one
+// persistent status region) over two invented projects, with the one launch
+// status store pre-loaded for the first project. The store write is a plain
+// signal assignment, so no success-clear timer exists and a line never expires
+// during a cell; the store is reset on every mount so a cell never inherits
+// another's status.
+// ---------------------------------------------------------------------------
+
+const HARNESS_WIDGET_HOST = { switcherAvailable: true } as const;
+
+const TOOLBAR_CASE = "toolbar";
+
+function launchData(): ProjectShortcutsData {
+  const { terminalLabel, projects } = FIXTURES.launch;
+  return {
+    projects,
+    launchers: {
+      antigravity: "set-up",
+      "claude-code": { status: "set-up", terminalLabel },
+      "claude-desktop": "set-up",
+    },
+  } as unknown as ProjectShortcutsData;
+}
+
+function seedPairStatus(caseId: string): boolean {
+  resetLaunchStatus();
+  if (caseId === TOOLBAR_CASE) return true;
+  const pair = FIXTURES.launch.pairs[caseId];
+  if (pair === undefined) return false;
+  const projectId = FIXTURES.launch.pairProjectId as Parameters<typeof launchStatusKey>[0];
+  launchStatus.value = new Map<string, LaunchStatus>([
+    [launchStatusKey(projectId, LAUNCH_PAIR_ACTION), { kind: "pair", ...pair } as LaunchStatus],
+  ]);
+  return true;
+}
+
+function PairLaunchCell({ caseId, pane }: { readonly caseId: string; readonly pane: Pane }): VNode {
+  if (!seedPairStatus(caseId)) {
+    return <HarnessError message={`Unknown pair-launch case "${caseId}".`} />;
+  }
+  const definition = WIDGETS["project-shortcuts"];
+  const state: WidgetState<ProjectShortcutsData> = {
+    kind: "ready",
+    data: launchData(),
+    observedAt: FIXTURES.now,
+    freshness: "live",
+    partiality: { partial: false },
+    isEmpty: false,
+  };
+  connectionState.value = LIVE;
+  return (
+    <PaneCell pane={pane}>
+      <WidgetHostContext.Provider value={HARNESS_WIDGET_HOST}>
+        {/* A no-op dispatcher and navigator: the buttons and the error actions
+            render exactly as the real card draws them; nothing runs on click. */}
+        <WidgetFrame
+          definition={definition}
+          state={state}
+          connection={connectionState.value}
+          size={definition.preferredSize}
+          now={NOW}
+          onQuickAction={() => {}}
+          onNavigate={() => {}}
+        />
+      </WidgetHostContext.Provider>
+    </PaneCell>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The entry the harness delegates to.
 // ---------------------------------------------------------------------------
 
 /** The `view` values this module owns; `main.tsx` delegates exactly these. */
 export function isCodexView(view: string): boolean {
-  return view === "codex";
+  return view === "codex" || view === "pair";
 }
 
 /**
- * Renders one Codex cell from the page's query parameters: `view`, `case`,
- * `pane` (narrow or full). `motion` is validated and applied by the harness
+ * Renders one Codex cell from the page's query parameters: `view` (codex or
+ * pair), `case`, `pane` (narrow or full). `motion` is validated and applied by the harness
  * entry before it delegates here.
  */
 export function CodexCell({ params }: { readonly params: URLSearchParams }): VNode {
@@ -150,5 +249,6 @@ export function CodexCell({ params }: { readonly params: URLSearchParams }): VNo
     return <HarnessError message={`Unknown pane "${pane}" — expected narrow or full.`} />;
   }
   if (view === "codex") return <CodexCardCell caseId={caseId} pane={pane} />;
+  if (view === "pair") return <PairLaunchCell caseId={caseId} pane={pane} />;
   return <HarnessError message={`Unknown codex view "${view}".`} />;
 }
