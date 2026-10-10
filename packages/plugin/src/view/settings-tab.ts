@@ -6,7 +6,7 @@ import {
   type MotionPreference,
 } from "../motion.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
-import type { SettingsCodexSeam } from "./codex-settings.js";
+import { buildCodexGroup, CodexSettingsState, type SettingsCodexSeam } from "./codex-settings.js";
 
 /**
  * The plugin's Settings tab — the owner's override for reduced motion
@@ -111,14 +111,15 @@ export const TRANSCRIPT_ANALYSIS_KEY = "claude.transcriptAnalysis";
 export const CLAUDE_TRANSCRIPT_ANALYSIS_NAME = "Transcript analysis";
 export const CLAUDE_TRANSCRIPT_ANALYSIS_DESC =
   "Count tokens from Claude Code's local transcripts. Only counts, model names and timestamps " +
-  "are stored — never prompts, replies or file contents. Hook telemetry keeps working when this is off.";
+  "are stored — never prompts, replies or file contents. Hook telemetry keeps working when this is off. " +
+  "This also covers Codex session titles, previews and token activity.";
 export const CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE =
   "Couldn't change transcript analysis. The companion service didn't respond.";
 
 // Row 6 -- delete cached usage analytics (destructive action, Task 3 wires the click).
 export const CLAUDE_DELETE_USAGE_NAME = "Delete cached usage analytics";
 export const CLAUDE_DELETE_USAGE_DESC =
-  "Removes stored token counts, cost estimates, plan usage history and coverage records. Session history stays.";
+  "Removes stored token counts, cost estimates, plan usage history and coverage records for Claude Code and Codex. Session history stays.";
 export const CLAUDE_DELETE_USAGE_RETAINED_NOTE = "Existing totals are kept until you delete them.";
 export const CLAUDE_USAGE_DELETED_NOTICE = "Cached usage analytics deleted.";
 export const CLAUDE_USAGE_DELETE_FAILED_NOTICE =
@@ -370,16 +371,22 @@ export class CommandCenterSettingTab extends PluginSettingTab {
   private claudeStatusInFlight = false;
   /** True while this tab's OWN `update()` runs, whose `getSettingDefinitions()` must not refetch. */
   private selfUpdating = false;
+  /** The Codex group's status and fetch rule (plan 05.1-19): same behaviour as the Claude status above. */
+  private readonly codexState: CodexSettingsState;
   /** R-15: set once a successful write turns transcript analysis off; row 6 reflects it. */
   private transcriptJustDisabled = false;
 
   constructor(app: App, plugin: Plugin, host: SettingsTabHost) {
     super(app, plugin);
     this.host = host;
+    this.codexState = new CodexSettingsState(host.codex?.getIntegration, () => {
+      this.rerender();
+    });
   }
 
   getSettingDefinitions() {
     this.ensureClaudeStatusLoaded();
+    if (!this.selfUpdating) this.codexState.load();
     const reducedMotionItem = {
       name: REDUCED_MOTION_NAME,
       desc: REDUCED_MOTION_DESC,
@@ -503,11 +510,24 @@ export class CommandCenterSettingTab extends PluginSettingTab {
       heading: TASKS_GROUP_HEADING,
       items: [rebuildItem] as [typeof rebuildItem],
     };
-    return [reducedMotionItem, claudeGroup, approvalsGroup, tasksGroup] as [
+    // The Codex group (plan 05.1-19) is appended after every existing group, in
+    // its own section: never inserted by index, never reordering another group.
+    const codexGroup = buildCodexGroup({
+      status: this.codexState.status,
+      nowMs: Date.now(),
+      copy: (text, notice) => {
+        void this.copyCodexStep(text, notice);
+      },
+      openLauncherSettings: () => {
+        this.host.codex?.openLauncherSettings();
+      },
+    });
+    return [reducedMotionItem, claudeGroup, approvalsGroup, tasksGroup, codexGroup] as [
       typeof reducedMotionItem,
       typeof claudeGroup,
       typeof approvalsGroup,
       typeof tasksGroup,
+      typeof codexGroup,
     ];
   }
 
@@ -635,6 +655,22 @@ export class CommandCenterSettingTab extends PluginSettingTab {
     if (!this.host.claude) return;
     try {
       await this.host.claude.copyText(command);
+    } catch {
+      this.notify(CLAUDE_COPY_FAILED_NOTICE);
+      return;
+    }
+    this.notify(copiedNotice);
+  }
+
+  /**
+   * The Codex copy rows: writes a fixed, repository-relative step (D-12 -- the
+   * dashboard never installs anything itself) and notifies. A missing seam is a
+   * no-op; a refused clipboard write says so instead of claiming a copy.
+   */
+  private async copyCodexStep(text: string, copiedNotice: string): Promise<void> {
+    if (!this.host.codex) return;
+    try {
+      await this.host.codex.copyText(text);
     } catch {
       this.notify(CLAUDE_COPY_FAILED_NOTICE);
       return;

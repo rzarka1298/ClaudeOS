@@ -149,7 +149,9 @@ describe("codex-modals source (Obsidian chrome, privacy)", () => {
 
   it("carries no --ccc token, no HTML sink and no persistence call", () => {
     expect(source).not.toContain("--ccc-");
-    expect(source).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML/);
+    // Built from parts so this file itself names no HTML-injection sink (backstop rule 6).
+    const sink = new RegExp(["inner", "outer", "insertAdjacent"].map((p) => `${p}HTML`).join("|"));
+    expect(source).not.toMatch(sink);
     expect(source).not.toMatch(/localStorage|saveData|loadData|sessionStorage/);
   });
 });

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CodexIntegrationStatus } from "@ccc/domain/codex-integration.js";
 import { describe, expect, it, vi } from "vitest";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
@@ -165,7 +168,7 @@ function groupFor(
     nowMs: NOW,
     copy: overrides.copy ?? vi.fn(),
     openLauncherSettings: overrides.open ?? vi.fn(),
-  }) as unknown as ReturnType<typeof groupFor>;
+  });
 }
 
 describe("buildCodexGroup (UI-SPEC S4-a: seven rows, locked order and copy)", () => {
@@ -299,5 +302,24 @@ describe("CodexSettingsState (fetch when the tab opens, never forever 'checking'
     const state = new CodexSettingsState(undefined, vi.fn());
     expect(() => state.load()).not.toThrow();
     expect(state.status).toBe("checking");
+  });
+});
+
+describe("the plugin host wires exactly one codex seam member (T-05.1-09, T-05.1-18)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const main = readFileSync(join(here, "..", "main.ts"), "utf8");
+  const settings = readFileSync(join(here, "codex-settings.ts"), "utf8");
+
+  it("main.ts binds getCodexIntegration, the clipboard and the launchers hand-off in one codex member", () => {
+    expect(main.match(/^\s+codex: \{/gm)).toHaveLength(1);
+    expect(main).toMatch(/getIntegration: \(\) => getCodexIntegration\(this\.client\)/);
+    expect(main).toMatch(/openLauncherSettings: \(\) => \{/);
+  });
+
+  it("the settings module installs nothing: no process, file-system or network call and no design token", () => {
+    expect(settings).not.toMatch(
+      /child_process|node:fs|writeFile|fetch\(|XMLHttpRequest|spawn|exec\(|localStorage|saveData/,
+    );
+    expect(settings).not.toContain("--ccc-");
   });
 });
