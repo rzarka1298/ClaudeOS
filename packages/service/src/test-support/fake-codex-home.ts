@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -11,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import Database from "better-sqlite3";
 import {
   type CodexFs,
   type CodexHomePort,
@@ -66,6 +68,52 @@ export interface FakeCodexHomeOptions {
   readonly withDecoys?: boolean;
   /** Plants a rollout-named symlink inside sessions that points at the decoy credential file. */
   readonly escapeSymlink?: boolean;
+  /** Creates the synthetic thread store from one of the DDL fixtures. */
+  readonly database?: FakeDatabaseOptions;
+}
+
+export type FakeDdl = "floor" | "current" | "changed";
+
+export interface FakeThread {
+  readonly id: string;
+  readonly updatedAtMs: number;
+  readonly createdAtMs?: number;
+  readonly rolloutPath?: string;
+  readonly cwd?: string;
+  readonly source?: string;
+  readonly cliVersion?: string;
+  readonly archived?: boolean;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  readonly threadSource?: string;
+  readonly agentNickname?: string;
+  readonly title?: string;
+  readonly name?: string;
+}
+
+export interface FakeDatabaseOptions {
+  readonly ddl: FakeDdl;
+  readonly threads?: readonly FakeThread[];
+  /** Default "wal", the mode the real store uses. */
+  readonly journalMode?: "wal" | "delete";
+}
+
+/** Planted in the never-select columns; none of these may reach any reader output. */
+export const DECOY_PROMPT = "DECOY-PROMPT-TEXT-NOT-REAL";
+export const DECOY_GIT_ORIGIN = "DECOY-GIT-ORIGIN-NOT-REAL";
+export const DECOY_CREATOR_ID = "DECOY-CREATOR-ID-NOT-REAL";
+export const DECOY_PREVIEW = "DECOY-PREVIEW-TEXT-NOT-REAL";
+export const NEVER_SELECT_DECOYS: readonly string[] = [
+  DECOY_PROMPT,
+  DECOY_GIT_ORIGIN,
+  DECOY_CREATOR_ID,
+  DECOY_PREVIEW,
+];
+
+const DDL_DIR = new URL("./codex-fixtures/", import.meta.url);
+
+export function loadFakeDdl(ddl: FakeDdl): string {
+  return readFileSync(new URL(`ddl-${ddl}.sql`, DDL_DIR), "utf8");
 }
 
 export interface FakeCodexHome {
@@ -83,6 +131,8 @@ export interface FakeCodexHome {
   rolloutPath(day: string, name: string): string;
   /** Path of the escape symlink when `escapeSymlink` was requested. */
   readonly escapeSymlinkPath: string;
+  /** Absolute path of the synthetic thread store (it exists only when `database` was given). */
+  readonly dbPath: string;
   /** name, size and mtime of every entry under the root, keyed by relative path. */
   snapshot(): Map<string, string>;
   cleanup(): void;
@@ -132,8 +182,12 @@ export function createFakeCodexHome(options: FakeCodexHomeOptions = {}): FakeCod
     symlinkSync(credentialPath, escapeSymlinkPath);
   }
 
+  const dbPath = join(root, "state_5.sqlite");
+  if (options.database !== undefined) buildFakeDatabase(root, dbPath, options.database);
+
   return {
     root,
+    dbPath,
     decoys: {
       credentialName: CREDENTIAL_NAME,
       configName: CONFIG_NAME,
@@ -147,6 +201,59 @@ export function createFakeCodexHome(options: FakeCodexHomeOptions = {}): FakeCod
     snapshot: () => snapshotTree(root),
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
+}
+
+function buildFakeDatabase(root: string, dbPath: string, options: FakeDatabaseOptions): void {
+  const db = new Database(dbPath);
+  try {
+    db.pragma(`journal_mode = ${options.journalMode === "delete" ? "DELETE" : "WAL"}`);
+    db.exec(loadFakeDdl(options.ddl));
+    const present = new Set(
+      (db.pragma("table_info(threads)") as { name: string }[]).map((row) => row.name),
+    );
+    for (const thread of options.threads ?? []) {
+      const created = thread.createdAtMs ?? thread.updatedAtMs - 1000;
+      const values: Record<string, string | number | null> = {
+        id: thread.id,
+        rollout_path:
+          thread.rolloutPath ??
+          join(root, "sessions", "2026", "10", "06", `rollout-${thread.id}.jsonl`),
+        cwd: thread.cwd ?? "/Users/USERNAME/repo",
+        source: thread.source ?? "cli",
+        cli_version: thread.cliVersion ?? "0.159.2",
+        archived: thread.archived === true ? 1 : 0,
+        updated_at_ms: thread.updatedAtMs,
+        created_at_ms: created,
+        created_at: Math.floor(created / 1000),
+        updated_at: Math.floor(thread.updatedAtMs / 1000),
+        model: thread.model ?? null,
+        reasoning_effort: thread.reasoningEffort ?? null,
+        thread_source: thread.threadSource ?? null,
+        agent_nickname: thread.agentNickname ?? null,
+        title: thread.title ?? null,
+        name: thread.name ?? null,
+        first_user_message: DECOY_PROMPT,
+        preview: DECOY_PREVIEW,
+        git_origin_url: DECOY_GIT_ORIGIN,
+        git_sha: DECOY_GIT_ORIGIN,
+        git_branch: DECOY_GIT_ORIGIN,
+        creator_user_id: DECOY_CREATOR_ID,
+        creator_account_id: DECOY_CREATOR_ID,
+      };
+      const columns = Object.keys(values).filter((column) => present.has(column));
+      const marks = columns.map(() => "?").join(", ");
+      db.prepare(`INSERT INTO threads (${columns.join(", ")}) VALUES (${marks})`).run(
+        ...columns.map((column) => values[column] ?? null),
+      );
+    }
+    db.prepare("INSERT INTO _sqlx_migrations (version, description, success) VALUES (?, ?, ?)").run(
+      1,
+      "synthetic",
+      1,
+    );
+  } finally {
+    db.close();
+  }
 }
 
 function snapshotTree(root: string): Map<string, string> {
