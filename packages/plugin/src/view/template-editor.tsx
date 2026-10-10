@@ -1,4 +1,8 @@
-import { MAX_TEMPLATE_ARGUMENTS, type TemplateRefusalReason } from "@ccc/domain";
+import {
+  MAX_TEMPLATE_ARGUMENTS,
+  type RefusedTemplate,
+  type TemplateRefusalReason,
+} from "@ccc/domain";
 import type { VNode } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { FieldError, type RowError } from "./launcher-panel-kit.js";
@@ -39,14 +43,84 @@ export const TEMPLATE_REFUSAL_COPY: Readonly<Record<TemplateRefusalReason, strin
 };
 
 /**
+ * The Codex ban set, written normalised (lower-case alphanumerics only) so no
+ * flag spelling appears in source: the approval-and-sandbox bypass, the
+ * hook-trust bypass, the "skip every prompt" spellings, the unrestricted
+ * sandbox value and the two Phase 4 permission tokens. This is the plugin's
+ * own trivial mirror of the launchers package's list (the plugin may not
+ * import that package); the service stays authoritative (D-11, T-05.1-15).
+ */
+const CODEX_BAN_TOKENS: readonly string[] = [
+  "dangerouslybypassapprovalsandsandbox",
+  "dangerouslybypasshooktrust",
+  "yolo",
+  "fullauto",
+  "approveforme",
+  "dangerfullaccess",
+  "dangerouslyskippermissions",
+  "bypasspermissions",
+];
+
+/** The same normalisation the service uses: NFKC, lower-case, alphanumerics only. */
+function normaliseForFlagMatch(element: string): string {
+  return element
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/** `--config`/`--profile` in any spelling and the short `-c`/`-p` forms (the service refuses them outright). */
+function isCodexConfigFlag(element: string): boolean {
+  if (element.startsWith("--")) {
+    const eq = element.indexOf("=");
+    const name = (eq === -1 ? element : element.slice(0, eq)).toLowerCase().replace(/_/g, "-");
+    return name === "--config" || name === "--profile";
+  }
+  return /^-[cp]/.test(element);
+}
+
+/** Why a Codex argument is refused, or `null` when the trivial check lets it through. */
+function codexRefusalKind(element: string): "ban" | "config" | null {
+  const normalised = normaliseForFlagMatch(element);
+  if (CODEX_BAN_TOKENS.some((token) => normalised.includes(token))) return "ban";
+  return isCodexConfigFlag(element) ? "config" : null;
+}
+
+/** The refused argument as the owner sees it: a bare value is shown with the flag before it. */
+function refusedFlagDisplay(value: string, previous: string | undefined): string {
+  const shown =
+    !value.startsWith("-") && previous !== undefined && previous.startsWith("-")
+      ? `${previous} ${value}`
+      : value;
+  return shown.length > 80 ? `${shown.slice(0, 77)}...` : shown;
+}
+
+/** The Codex refusal sentence (UI-SPEC S4-b) for the argument the owner typed. */
+function codexRefusalSentence(value: string, previous: string | undefined): string {
+  const flag = refusedFlagDisplay(value, previous);
+  return codexRefusalKind(value) === "config"
+    ? `${flag} isn't allowed. It can change Codex's own settings, so this app never launches Codex with it.`
+    : `${flag} isn't allowed. It turns off Codex's sandbox or approval checks, so this app never launches Codex with it.`;
+}
+
+/**
  * The copy for one refusal, given the refused argument's value when known.
  * `forbidden-flag` covers more than the one flag S7 names (the service also
  * refuses `--permission-mode bypassPermissions` and any `--settings`), so
  * the line names what the owner actually typed rather than a flag they did
- * not.
+ * not. A Codex refusal (`options.template` of `codex`) uses the Codex
+ * sentence, naming the argument (and the flag before a bare value).
  */
-export function refusalCopy(reason: TemplateRefusalReason, value?: string): string {
+export function refusalCopy(
+  reason: TemplateRefusalReason,
+  value?: string,
+  options: {
+    readonly template?: RefusedTemplate | undefined;
+    readonly previous?: string | undefined;
+  } = {},
+): string {
   if (reason === "forbidden-flag" && value !== undefined) {
+    if (options.template === "codex") return codexRefusalSentence(value, options.previous);
     const normalised = value.trim().toLowerCase();
     if (normalised.startsWith("--settings")) return "--settings isn't allowed here.";
     if (normalised.includes("permission-mode") || normalised === "bypasspermissions") {
@@ -64,10 +138,19 @@ function templateIndexOf(kind: TemplateEditorKind, row: number): number {
 }
 
 /** The trivial blur-time check for one row (PR-13); `null` when it passes. */
-function checkRow(kind: TemplateEditorKind, row: number, value: string): string | null {
+function checkRow(
+  kind: TemplateEditorKind,
+  row: number,
+  value: string,
+  previous?: string,
+): string | null {
   if (value.includes("\n") || value.includes("\r")) return TEMPLATE_REFUSAL_COPY["line-break"];
   if (value === "") return TEMPLATE_REFUSAL_COPY["empty-argument"];
   if (kind === "terminal" && row === 0 && !value.startsWith("/")) return EXECUTABLE_NOT_ABSOLUTE;
+  // Codex only (D-11): a refused argument is caught here too, before any request.
+  if (kind === "codex" && codexRefusalKind(value) !== null) {
+    return codexRefusalSentence(value, previous);
+  }
   return null;
 }
 
@@ -75,7 +158,7 @@ function checkRow(kind: TemplateEditorKind, row: number, value: string): string 
 export function checkTemplate(kind: TemplateEditorKind, value: readonly string[]): RowError[] {
   const problems: RowError[] = [];
   value.forEach((element, row) => {
-    const problem = checkRow(kind, row, element);
+    const problem = checkRow(kind, row, element, value[row - 1]);
     if (problem !== null) problems.push([templateIndexOf(kind, row), problem]);
   });
   return problems;
@@ -167,7 +250,7 @@ export function TemplateEditor({
   }
 
   function blurRow(row: number): void {
-    const problem = checkRow(kind, row, value[row] ?? "");
+    const problem = checkRow(kind, row, value[row] ?? "", value[row - 1]);
     const index = templateIndexOf(kind, row);
     const next = new Map(blurErrors);
     if (problem === null) next.delete(index);

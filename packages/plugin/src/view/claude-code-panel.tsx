@@ -64,6 +64,14 @@ export function terminalLabelOf(terminal: TerminalDraft | TerminalChoice): strin
 }
 
 /**
+ * The terminal a never-saved panel proposes. A proposal only: it is never
+ * saved and never changes a saved choice (OQ-2).
+ */
+export function proposedTerminal(_detection: DetectionResponse | null): TerminalChoice {
+  return { kind: "terminal-app" };
+}
+
+/**
  * The presets in their offered order, from detection when it has them (one
  * copy of each preset lives in `@ccc/launchers`, PR-13). Before detection
  * answers, each preset starts as an empty executable plus `{script}` — the

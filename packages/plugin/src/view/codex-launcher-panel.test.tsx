@@ -6,6 +6,7 @@ import type { LaunchersActions } from "../projects/launchers-actions.js";
 import {
   CODEX_APP_BUNDLE,
   CODEX_USER_INSTALL,
+  DETECTION,
   fakeLaunchersActions,
   NOTHING_SAVED,
   withCodexDetection,
@@ -559,7 +560,6 @@ describe("Check Codex health (R4)", () => {
     await settle();
     expect(actions.codexDoctor).toHaveBeenCalledTimes(2);
   });
-
 });
 
 describe("accessibility floors", () => {

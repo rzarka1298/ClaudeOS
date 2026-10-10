@@ -293,6 +293,29 @@ export function terminalInSentence(label: string): string {
   return label === "Your terminal" ? "your terminal" : label;
 }
 
+/**
+ * The Test explanation and the "did it open" question for a product opened in
+ * a terminal: the Antigravity terminal opens a tab, every other choice a
+ * window (UI-SPEC "Single-launch copy under the Antigravity terminal
+ * launcher"). `product` is `Claude Code` or `Codex`.
+ */
+export function terminalTestSentences(
+  terminalLabel: string,
+  product: string,
+): { readonly explanation: string; readonly question: string } {
+  if (terminalLabel === "Antigravity") {
+    return {
+      explanation: `Test opens a new tab in Antigravity at the managed vault folder that shows the ${product} version.`,
+      question: `Test sent. Did a tab open in Antigravity and show the ${product} version?`,
+    };
+  }
+  const label = terminalInSentence(terminalLabel);
+  return {
+    explanation: `Test opens a new ${label} window at the managed vault folder that shows the ${product} version.`,
+    question: `Test sent. Did a ${label} window open and show the ${product} version?`,
+  };
+}
+
 /** The wording a panel's Test lines need (UI-SPEC S6 Test rows). */
 export interface TestCopy {
   /** The panel's app name, as in `Did {app} open?`. */
