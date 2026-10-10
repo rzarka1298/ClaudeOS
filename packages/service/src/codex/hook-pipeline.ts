@@ -81,6 +81,8 @@ export interface CodexHookPipeline {
   lastEventAt(): number | null;
   /** The spool poller's drop counter, wired after the poller exists. */
   attachDropCount(read: () => number): void;
+  /** Entry counts of the two bounded collections (a bound, never their content). */
+  sizes(): { readonly eventIds: number; readonly threads: number };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -238,6 +240,9 @@ export function createCodexHookPipeline(deps: CodexHookPipelineDeps): CodexHookP
     lastEventAt: () => lastReceiptAt,
     attachDropCount(read) {
       readDropCount = read;
+    },
+    sizes() {
+      throw new Error("not implemented");
     },
   };
 }
