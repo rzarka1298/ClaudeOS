@@ -10,6 +10,7 @@ import {
   launcherDisplayName,
 } from "../projects/launch-copy.js";
 import {
+  isLaunchOpening,
   launchStatus,
   launchStatusKey,
   type ProjectLaunchActionId,
@@ -228,7 +229,7 @@ export function chooseSwitcherItem(item: SwitcherItem, host: SwitcherHost): void
   }
 
   const willSend =
-    host.connection().kind !== "disconnected" && launchStatus.value.get(key)?.kind !== "opening";
+    host.connection().kind !== "disconnected" && !isLaunchOpening(launchStatus.value.get(key));
   if (willSend) host.notify(launchAnnouncement(item.action, terminal, item.projectName ?? ""));
 
   const ctx: QuickActionContext = {

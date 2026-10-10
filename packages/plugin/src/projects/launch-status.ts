@@ -46,6 +46,19 @@ export interface PairLaunchStatus {
 }
 
 /**
+ * `true` while a single launch, or either half of a pair, is still opening:
+ * the one test the toolbar, the quick switcher and the requesters share so a
+ * second activation is ignored the same way everywhere.
+ */
+export function isLaunchOpening(status: LaunchStatus | undefined): boolean {
+  if (status === undefined) return false;
+  if (status.kind === "pair") {
+    return status.claude.kind === "opening" || status.codex.kind === "opening";
+  }
+  return status.kind === "opening";
+}
+
+/**
  * The timer functions a caller injects so a view host can track and clear
  * every pending timer on unload (PLUG-03 — "everything registered must
  * unregister"). Production binds these to `window.setTimeout`/

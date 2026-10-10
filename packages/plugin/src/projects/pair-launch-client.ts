@@ -20,6 +20,7 @@ import {
 import { launchErrorNotice, launcherDisplayName } from "./launch-copy.js";
 import {
   clearLaunchStatus,
+  isLaunchOpening,
   type LaunchTimerControls,
   launchStatus,
   launchStatusKey,
@@ -98,14 +99,6 @@ function codexLine(result: PairAgentResult): PairLineStatus {
   return { kind: "error", error: result.error };
 }
 
-/** `true` while either agent line of a pair is still opening. */
-function pairIsOpening(key: string): boolean {
-  const status = launchStatus.value.get(key);
-  return (
-    status?.kind === "pair" && (status.claude.kind === "opening" || status.codex.kind === "opening")
-  );
-}
-
 /**
  * Builds the pair's `requestLaunch` half. Order, every call:
  * 1. A press while the pair is already opening is ignored.
@@ -132,7 +125,7 @@ export function createPairRequester({
 
   return (projectId) => {
     const key = launchStatusKey(projectId, LAUNCH_PAIR_ACTION);
-    if (pairIsOpening(key)) return;
+    if (isLaunchOpening(launchStatus.value.get(key))) return;
     const release = holdStatus?.();
     let held = release !== undefined;
     const settle = (): void => {

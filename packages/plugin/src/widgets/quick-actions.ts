@@ -1,8 +1,10 @@
-import type { LaunchAction, ProjectId } from "@ccc/domain";
+import type { ProjectId } from "@ccc/domain";
 import { launchActionSchema } from "@ccc/domain";
 import { classifyCapability } from "@ccc/domain/classification.js";
+import { LAUNCH_PAIR_ACTION } from "@ccc/domain/launch.js";
 import type { ProjectLaunchActionId } from "../projects/launch-status.js";
 import type { DestinationId } from "../view/destinations.js";
+import { requestLaunchersFocus } from "../view/launchers-focus.js";
 import type { QuickActionDescriptor } from "./contract.js";
 
 /**
@@ -87,7 +89,7 @@ const SETTINGS: DestinationId = "settings";
 const TASKS: DestinationId = "tasks";
 
 /** The action that needs no project (D-06). */
-const NO_TARGET_ACTION: LaunchAction = "claude-desktop";
+const NO_TARGET_ACTION = "claude-desktop";
 
 /** The quick switcher's prefill for a Claude Code launch (S8, UI-SPEC). */
 export const SWITCHER_CLAUDE_CODE_PREFILL = "Start Claude Code in ";
@@ -95,6 +97,14 @@ export const SWITCHER_CLAUDE_CODE_PREFILL = "Start Claude Code in ";
 /** The `connect:claude-hooks` Notice (UI-SPEC setup state): the install is a command the owner runs. */
 const CLAUDE_HOOKS_NOTICE =
   "Claude Code hooks are installed by a command you run yourself. Copy it from Obsidian settings → Claude command center → Claude.";
+
+/**
+ * The `connect:codex-settings` Notice: no public Obsidian API opens a plugin's
+ * settings tab, so the honest answer is the path to it. "Claude command
+ * center" is the product name, the only place the word appears (UI-SPEC S2).
+ */
+const CODEX_SETTINGS_NOTICE =
+  "Open Codex settings from Obsidian settings → Claude command center → Codex.";
 
 /** `Connect Google Calendar and Gmail` → `Google Calendar and Gmail`. */
 function sourceFromLabel(label: string): string {
@@ -137,6 +147,19 @@ export function dispatchQuickAction(
     return { kind: "navigated", destination: SETTINGS };
   }
 
+  if (descriptor.capability === "connect:codex") {
+    // The Codex setup pill: the same hand-off the launchers' own setup action uses.
+    requestLaunchersFocus();
+    ctx.navigate(SETTINGS);
+    return { kind: "navigated", destination: SETTINGS };
+  }
+
+  if (descriptor.capability === "connect:codex-settings") {
+    ctx.navigate(SETTINGS);
+    ctx.notify(CODEX_SETTINGS_NOTICE);
+    return { kind: "navigated", destination: SETTINGS };
+  }
+
   if (descriptor.capability.startsWith("connect:")) {
     const source = sourceFromLabel(descriptor.label);
     ctx.navigate(SETTINGS);
@@ -147,20 +170,30 @@ export function dispatchQuickAction(
   }
 
   if (
-    (descriptor.capability.startsWith("session:") || descriptor.capability.startsWith("usage:")) &&
+    (descriptor.capability.startsWith("session:") ||
+      descriptor.capability.startsWith("usage:") ||
+      descriptor.capability.startsWith("codex:")) &&
     ctx.runSessionAction !== undefined
   ) {
-    // The runner owns every modal, client call and outcome (05-15). It only
-    // ever requests a proposal for terminate; nothing here executes one.
+    // The runner owns every modal, client call and outcome (05-15; the Codex
+    // row actions of plan 05.1-19 are its `codex:` cases). It only ever
+    // requests a proposal for terminate; nothing here executes one.
     ctx.runSessionAction(descriptor);
     return { kind: "session-action-requested", capability: descriptor.capability };
   }
 
   if (descriptor.capability.startsWith("launch:")) {
     const suffix = descriptor.capability.slice("launch:".length);
+    // The pair is not a `LaunchAction` (the domain kept those at five), so it
+    // is accepted by name beside them. `launch:codex` has no arm: there is no
+    // Codex-alone launch this phase (UI-SPEC R-12).
     const parsed = launchActionSchema.safeParse(suffix);
-    if (parsed.success) {
-      const action = parsed.data;
+    const action: ProjectLaunchActionId | undefined = parsed.success
+      ? parsed.data
+      : suffix === LAUNCH_PAIR_ACTION
+        ? LAUNCH_PAIR_ACTION
+        : undefined;
+    if (action !== undefined) {
       if (action === NO_TARGET_ACTION) {
         ctx.requestLaunch(null, action);
         return { kind: "launch-requested", action };

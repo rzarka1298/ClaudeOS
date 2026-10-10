@@ -17,7 +17,7 @@ import {
   renderCopy,
 } from "../projects/launch-copy.js";
 import {
-  type LaunchStatus,
+  isLaunchOpening,
   latestLaunchStatus,
   launchStatus,
   launchStatusKey,
@@ -113,14 +113,6 @@ export const OPEN_CODEX_SETTINGS_DESCRIPTOR: QuickActionDescriptor = {
   capability: "connect:codex-settings",
 };
 
-/** `true` while a single launch, or either half of a pair, is still opening. */
-function isOpening(status: LaunchStatus | undefined): boolean {
-  if (status === undefined) return false;
-  if (status.kind === "pair")
-    return status.claude.kind === "opening" || status.codex.kind === "opening";
-  return status.kind === "opening";
-}
-
 export interface LaunchToolbarProps {
   readonly projectId: ProjectId;
   readonly projectName: string;
@@ -172,7 +164,7 @@ export function LaunchToolbar({
 
   function activate(spec: LaunchButtonSpec): void {
     const key = launchStatusKey(projectId, spec.action);
-    if (isOpening(statuses.get(key))) return;
+    if (isLaunchOpening(statuses.get(key))) return;
     // GitHub with nowhere to go: say why, inline, and send nothing (UI-SPEC S2).
     if (spec.action === "github" && !hasGithub) {
       setLaunchError(key, "no-github-remote");
@@ -189,7 +181,7 @@ export function LaunchToolbar({
       onKeyDown={handleKeyDown}
     >
       {LAUNCH_BUTTONS.map((spec, index) => {
-        const opening = isOpening(statuses.get(launchStatusKey(projectId, spec.action)));
+        const opening = isLaunchOpening(statuses.get(launchStatusKey(projectId, spec.action)));
         const noRemote = spec.action === "github" && !hasGithub;
         const pairNote = spec.action === LAUNCH_PAIR_ACTION && codexMissing;
         return (

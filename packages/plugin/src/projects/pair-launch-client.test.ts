@@ -486,11 +486,12 @@ describe("createPluginLauncher routes the pair id to the pair requester", () => 
   });
 
   it("a pair id with no project is ignored", () => {
-    const client: SocketApiClient = { request: vi.fn(NEVER) as never };
+    const request = vi.fn(NEVER);
+    const client: SocketApiClient = { request: request as never };
     const registry = { launchTimers: vi.fn() } as unknown as HostRegistry;
     const launch = createPluginLauncher({ registry, client, notify: vi.fn(), timers: timers() });
     launch(null, "claude-codex-pair");
-    expect(client.request).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
     expect(launchStatus.value.size).toBe(0);
   });
 });

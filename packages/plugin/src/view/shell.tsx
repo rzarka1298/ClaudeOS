@@ -92,9 +92,7 @@ export interface ShellProps {
    * default is a no-op so this component never imports
    * `@ccc/service-api-client` itself (D-24).
    */
-  // Method syntax on purpose: a host or test double that only ever launches the
-  // five single actions stays assignable (parameter bivariance).
-  requestLaunch?(projectId: ProjectId | null, action: ProjectLaunchActionId): void;
+  requestLaunch?: RequestLaunchHandler;
   /**
    * Opens the Claude Code quick switcher, prefilled. Absent (until plan
    * 04-14 wires one), S8's `Start a Claude Code session` renders unavailable
@@ -154,6 +152,14 @@ export interface ShellProps {
 }
 
 function noNotify(_message: string): void {}
+/**
+ * Bivariant on purpose: a host or test double that only ever launches the five
+ * single actions stays assignable to the widened pair-aware signature.
+ */
+type RequestLaunchHandler = {
+  bivarianceHack(projectId: ProjectId | null, action: ProjectLaunchActionId): void;
+}["bivarianceHack"];
+
 function noRequestLaunch(_projectId: ProjectId | null, _action: ProjectLaunchActionId): void {}
 
 const FAILED_OUTCOME = Promise.resolve({ kind: "failed" as const });

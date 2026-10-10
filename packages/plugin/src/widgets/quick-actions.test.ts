@@ -6,7 +6,12 @@ import { CAPABILITY_OPERATION, classifyCapability } from "@ccc/domain/classifica
 import { describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
 import type { HostRegistry } from "../host-registry.js";
-import { launchStatus, launchStatusKey, resetLaunchStatus } from "../projects/launch-status.js";
+import {
+  launchStatus,
+  launchStatusKey,
+  resetLaunchStatus,
+  retainLaunchStatus,
+} from "../projects/launch-status.js";
 import { createPluginLauncher } from "../projects/plugin-launcher.js";
 import { launchersFocusRequested } from "../view/launchers-focus.js";
 import type { QuickActionDescriptor } from "./contract.js";
@@ -620,7 +625,7 @@ describe("the pair launch and the Codex branches (plan 05.1-17)", () => {
         id: "x",
         label: "An action",
         capability,
-        target: { threadId: "thread-1" } as never,
+        target: { threadId: "thread-1" },
       };
       expect(dispatchQuickAction(descriptor, ctx)).toEqual({
         kind: "session-action-requested",
@@ -726,6 +731,8 @@ describe("the dispatcher still has exactly its documented outcomes (plan 05.1-17
 describe("a pair descriptor while the service is disconnected (UI-SPEC floor 12, T-05.1-18)", () => {
   it("is refused by the launcher with the existing Notice, one error line and no per-agent lines", () => {
     resetLaunchStatus();
+    // An open command-center view holds the shared store, as in the running plugin.
+    const releaseView = retainLaunchStatus();
     connectionState.value = { kind: "disconnected", reason: "socket closed" };
     const client = { request: vi.fn(() => new Promise<never>(() => {})) };
     const notify = vi.fn();
@@ -759,6 +766,7 @@ describe("a pair descriptor while the service is disconnected (UI-SPEC floor 12,
       error: "service-disconnected",
     });
     connectionState.value = { kind: "connecting" };
+    releaseView();
     resetLaunchStatus();
   });
 });
