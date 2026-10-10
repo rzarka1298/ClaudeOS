@@ -1,6 +1,5 @@
 import type {
   DetectionResponse,
-  LaunchAction,
   LaunchErrorKind,
   LauncherConfigView,
   LauncherId,
@@ -9,13 +8,16 @@ import type {
   SystemSettingsPane,
   TemplateRefusalReason,
   TerminalChoice,
+  TestLauncherId,
 } from "@ccc/domain";
 import {
+  CodexRequestError,
   detectLaunchers,
   getLauncherConfigs,
   markLauncherTested,
   openSystemSettings,
   ProjectsRequestError,
+  runCodexDoctor,
   type SocketApiClient,
   SocketUnreachableError,
   saveLauncherConfig,
@@ -69,6 +71,16 @@ export type MarkTestedOutcome =
 
 export type OpenSettingsOutcome = { readonly kind: "opened" } | LauncherActionFailure;
 
+/**
+ * The owner-triggered Codex health check, reduced to which fixed line the
+ * panel shows (CODEX-03, R4). Nothing of the doctor's own output survives
+ * this seam: not a check id, not a version, not a path.
+ */
+export type CodexDoctorOutcome =
+  | { readonly kind: "healthy" }
+  | { readonly kind: "problem" }
+  | LauncherActionFailure;
+
 /** Every outcome a {@link LaunchersActions} method can resolve to. */
 export type LauncherActionOutcome =
   | DetectOutcome
@@ -76,7 +88,8 @@ export type LauncherActionOutcome =
   | SaveOutcome
   | TestOutcome
   | MarkTestedOutcome
-  | OpenSettingsOutcome;
+  | OpenSettingsOutcome
+  | CodexDoctorOutcome;
 
 export interface LaunchersActions {
   /** Finds candidate apps, `claude` executables and the terminal presets (D-27). */
@@ -91,13 +104,15 @@ export interface LaunchersActions {
    * Automation cap when the Test may meet that prompt (wave 5).
    */
   readonly test: (
-    launcherId: LaunchAction,
+    launcherId: TestLauncherId,
     terminal?: TerminalChoice | null,
   ) => Promise<TestOutcome>;
   /** The owner answered "It opened" (RR-14). */
   readonly markTested: (launcherId: LauncherId) => Promise<MarkTestedOutcome>;
   /** Opens one of the two fixed System Settings panes (RR-16). */
   readonly openSystemSettings: (pane: SystemSettingsPane) => Promise<OpenSettingsOutcome>;
+  /** Runs `codex doctor` once, on the owner's press only (CODEX-03). */
+  readonly codexDoctor: () => Promise<CodexDoctorOutcome>;
 }
 
 function classifyFailure(error: unknown): LauncherActionFailure {
@@ -172,6 +187,19 @@ export function createLaunchersActions(client: SocketApiClient): LaunchersAction
         await openSystemSettings(client, pane);
         return { kind: "opened" };
       } catch (error: unknown) {
+        return classifyFailure(error);
+      }
+    },
+    async codexDoctor() {
+      try {
+        const summary = await runCodexDoctor(client);
+        return summary.overall === "ok" ? { kind: "healthy" } : { kind: "problem" };
+      } catch (error: unknown) {
+        // The Codex client reports its own fixed codes; only the one that
+        // says the service is away is told apart (SC-3: no message is read).
+        if (error instanceof CodexRequestError && error.code === "service-disconnected") {
+          return { kind: "service-disconnected" };
+        }
         return classifyFailure(error);
       }
     },

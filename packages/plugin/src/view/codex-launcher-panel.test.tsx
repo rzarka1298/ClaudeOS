@@ -20,7 +20,7 @@ import { createLaunchersSession, type LaunchersSession } from "./launchers-setti
  */
 
 const LIVE: ConnectionState = { kind: "live" };
-const DISCONNECTED: ConnectionState = { kind: "disconnected" };
+const DISCONNECTED: ConnectionState = { kind: "disconnected", reason: "service-unreachable" };
 const NOW = Date.parse("2026-09-30T10:05:00.000Z");
 
 const ONE_CANDIDATE = withCodexDetection([CODEX_USER_INSTALL]);

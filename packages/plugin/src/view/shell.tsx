@@ -178,6 +178,7 @@ const noLaunchersActions: LaunchersActions = {
   test: () => Promise.resolve({ kind: "error", error: "spawn-failed" }),
   markTested: () => FAILED_OUTCOME,
   openSystemSettings: () => FAILED_OUTCOME,
+  codexDoctor: () => FAILED_OUTCOME,
 };
 function noPickFolder(_options: PickFolderOptions): Promise<FolderPick> {
   return Promise.resolve({ kind: "unavailable" });

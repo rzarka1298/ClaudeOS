@@ -12,7 +12,6 @@ import {
   LAUNCHERS_MARK_TESTED_PATH,
   LAUNCHERS_SAVE_PATH,
   LAUNCHERS_TEST_PATH,
-  type LaunchAction,
   LauncherConfigRefusalBodySchema,
   type LauncherConfigView,
   LauncherConfigViewSchema,
@@ -58,6 +57,7 @@ import {
   type SystemSettingsPane,
   type TemplateRefusalReason,
   type TerminalChoice,
+  type TestLauncherId,
   terminalMayPromptForAutomation,
 } from "@ccc/domain";
 import type { SocketApiClient } from "./socket-api-client.js";
@@ -337,7 +337,7 @@ export async function saveLauncherConfig(
  */
 export function testLauncher(
   client: SocketApiClient,
-  launcherId: LaunchAction,
+  launcherId: TestLauncherId,
   opts: { readonly terminal?: TerminalChoice | null | undefined } = {},
 ): Promise<LaunchResult> {
   return postValidated(
@@ -351,10 +351,13 @@ export function testLauncher(
 
 /** The client budget for one Test (finding 2). */
 function testBudgetMs(
-  launcherId: LaunchAction,
+  launcherId: TestLauncherId,
   terminal: TerminalChoice | null | undefined,
 ): number {
-  if (launcherId !== "claude-code") return LAUNCHER_TEST_CLIENT_TIMEOUT_MS;
+  // Codex's Test opens the saved Claude Code terminal, so it meets the same prompt.
+  if (launcherId !== "claude-code" && launcherId !== "codex") {
+    return LAUNCHER_TEST_CLIENT_TIMEOUT_MS;
+  }
   if (terminal == null || terminalMayPromptForAutomation(terminal)) {
     return LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS;
   }

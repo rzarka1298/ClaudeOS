@@ -83,6 +83,7 @@ function fakeActions(overrides: Partial<LaunchersActions> = {}): LaunchersAction
     test: vi.fn(() => Promise.resolve({ kind: "sent" as const })),
     markTested: vi.fn(() => Promise.resolve({ kind: "marked" as const })),
     openSystemSettings: vi.fn(() => Promise.resolve({ kind: "opened" as const })),
+    codexDoctor: vi.fn(() => Promise.resolve({ kind: "healthy" as const })),
     ...overrides,
   };
 }
@@ -345,7 +346,7 @@ describe("drafts live in memory only (D-27, RR-25)", () => {
 });
 
 describe("the panels and the progress line (S6, RR-26)", () => {
-  it("renders the heading, intro and the five panels in order", async () => {
+  it("renders the heading, intro and the panels in order (the Codex panel follows Claude Code)", async () => {
     mount(fakeActions());
     await settle();
     expect(screen.getByRole("heading", { level: 3, name: "Launchers" })).toBeTruthy();
@@ -355,7 +356,14 @@ describe("the panels and the progress line (S6, RR-26)", () => {
       ),
     ).toBeTruthy();
     const names = screen.getAllByRole("heading", { level: 4 }).map((h) => h.textContent);
-    expect(names).toEqual(["Antigravity", "Claude Code", "Claude Desktop", "Finder", "GitHub"]);
+    expect(names).toEqual([
+      "Antigravity",
+      "Claude Code",
+      "Codex",
+      "Claude Desktop",
+      "Finder",
+      "GitHub",
+    ]);
   });
 
   it("counts only Antigravity, Claude Code and Claude Desktop", async () => {

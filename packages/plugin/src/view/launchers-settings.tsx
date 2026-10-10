@@ -7,6 +7,7 @@ import type { LaunchersActions } from "../projects/launchers-actions.js";
 import { projectRowsFrom, projectsSnapshot } from "../projects/projects-state.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
 import { ClaudeCodePanel } from "./claude-code-panel.js";
+import { CodexLauncherPanel } from "./codex-launcher-panel.js";
 import {
   type AppDraft,
   type AppLauncherId,
@@ -258,6 +259,13 @@ export function LaunchersSettings({
         disabled={disconnected}
       />
       <ClaudeCodePanel
+        actions={actions}
+        session={session}
+        connection={connection}
+        now={now}
+        sampleDisplayPath={sampleDisplayPath()}
+      />
+      <CodexLauncherPanel
         actions={actions}
         session={session}
         connection={connection}

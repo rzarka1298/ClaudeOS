@@ -15,8 +15,12 @@ import { FieldError, type RowError } from "./launcher-panel-kit.js";
  * `errors` keyed by the template index it names.
  */
 
-/** `claude-code` edits `[claude, ...args]`'s args; `terminal` edits a custom terminal's whole argv. */
-export type TemplateEditorKind = "claude-code" | "terminal";
+/**
+ * `claude-code` edits `[claude, ...args]`'s args; `codex` (Phase 05.1) edits
+ * `[codex, ...args]`'s args the same way; `terminal` edits a custom terminal's
+ * whole argv.
+ */
+export type TemplateEditorKind = "claude-code" | "codex" | "terminal";
 
 /** The S7 copy for each service refusal reason (the `▲` is rendered beside it). */
 export const TEMPLATE_REFUSAL_COPY: Readonly<Record<TemplateRefusalReason, string>> = {
@@ -184,7 +188,12 @@ export function TemplateEditor({
     emit(value.filter((_, index) => index !== row));
   }
 
-  const legend = kind === "terminal" ? "Terminal arguments" : "Claude Code arguments";
+  const legend =
+    kind === "terminal"
+      ? "Terminal arguments"
+      : kind === "codex"
+        ? "Codex arguments"
+        : "Claude Code arguments";
   const placeholderButton =
     kind === "terminal" ? (
       <button
@@ -208,15 +217,17 @@ export function TemplateEditor({
       </button>
     );
   const previewItems =
-    kind === "claude-code" && executableDisplay !== null ? [executableDisplay, ...value] : value;
+    kind !== "terminal" && executableDisplay !== null ? [executableDisplay, ...value] : value;
 
   return (
     <div className="ccc-inline-form">
       <fieldset className="ccc-template-rows">
         <legend className="ccc-field-label">{legend}</legend>
-        {kind === "claude-code" && value.length === 0 && (
+        {kind !== "terminal" && value.length === 0 && (
           <p className="ccc-field-help">
-            No extra arguments. Claude Code starts with its defaults.
+            {kind === "codex"
+              ? "No extra arguments. Codex starts with its defaults."
+              : "No extra arguments. Claude Code starts with its defaults."}
           </p>
         )}
         {value.map((element, row) => {
@@ -293,7 +304,7 @@ export function TemplateEditor({
         Exactly what runs, one argument per line. Nothing is passed through a shell.
       </p>
       <p className="ccc-field-help">
-        {kind === "claude-code"
+        {kind !== "terminal"
           ? `Runs inside ${terminalLabel}, at the project folder:`
           : "Starts the terminal with:"}
       </p>
