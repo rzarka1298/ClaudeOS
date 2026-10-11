@@ -577,8 +577,8 @@ describe("a stalled publication (Codex final review: queue handoff)", () => {
   function stalledWriter(
     afterPublish: () => void = () => {},
   ): NonNullable<AntigravityTerminalDeps["writeRequest"]> {
-    return async (dir, request) => {
-      await writeBridgeRequest(dir, request);
+    return async (dir, request, options) => {
+      await writeBridgeRequest(dir, request, options);
       afterPublish();
       return new Promise<string | null>(() => {});
     };
@@ -607,4 +607,52 @@ describe("a stalled publication (Codex final review: queue handoff)", () => {
     await expect(launcher.launch(input())).resolves.toEqual({ ok: true });
     expect(fx.claimedFiles()).toHaveLength(1);
   });
+
+  describe("a pending collision check never touches another launch's request", () => {
+    const taken = "20261010T120000000Z";
+    function otherLaunchRequest(): AgentBridgeRequest {
+      return {
+        runId: taken,
+        kind: "agent",
+        mode: "agent",
+        agent: "claude",
+        projectRoot: fx.projectDir,
+        cwd: fx.projectDir,
+        argv: [fx.claudePath, "--other-launch"],
+        env: {},
+        sessionId: null,
+        liveLog: null,
+        pid: null,
+        createdAt: new Date(clock.t).toISOString(),
+        protocol: 2,
+      };
+    }
+    /** A writer whose collision check is still pending at the deadline: nothing is published. */
+    const pendingWriter: NonNullable<AntigravityTerminalDeps["writeRequest"]> = () =>
+      new Promise<string | null>(() => {});
+
+    it("an existing queued request of another launch is not withdrawn and the launch times out", async () => {
+      await writeBridgeRequest(fx.stateDir, otherLaunchRequest());
+      const launcher = createAntigravityTerminalLauncher(
+        deps({ ...realClock, capMs: 700, mintRunId: () => taken, writeRequest: pendingWriter }),
+      );
+      const result = await launcher.launch(input());
+      expect(result.ok).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(fx.requestFiles()).toEqual([`${taken}.json`]);
+    });
+
+    it("an already-claimed request of another launch is not reported as this launch's success", async () => {
+      const sim = warmWindow();
+      await writeBridgeRequest(fx.stateDir, otherLaunchRequest());
+      sim.tick(); // the other launch's request is claimed
+      expect(fx.claimedFiles()).toEqual([`${taken}.json`]);
+      const launcher = createAntigravityTerminalLauncher(
+        deps({ ...realClock, capMs: 700, mintRunId: () => taken, writeRequest: pendingWriter }),
+      );
+      const result = await launcher.launch(input());
+      expect(result.ok).toBe(false);
+    });
+  });
 });
+
