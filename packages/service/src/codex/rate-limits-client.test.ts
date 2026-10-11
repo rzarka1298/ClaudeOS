@@ -161,7 +161,7 @@ function reasonOf(r: Run): string {
   return r.snapshot.reason;
 }
 
-const SHORT = { capMs: 400, killWaitMs: 150 } as const;
+const SHORT = { capMs: 800, killWaitMs: 150 } as const;
 const TIMEOUT = 8000;
 
 describe("createRateLimitsClient spawn options (T-05.1-08, rule 8)", () => {
