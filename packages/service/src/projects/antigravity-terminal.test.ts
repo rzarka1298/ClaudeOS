@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TerminalLaunchInput } from "@ccc/domain";
 import { createRunIdMinter, openInApp } from "@ccc/launchers";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type AgentBridgeRequest,
   withdrawRequest,
@@ -569,5 +569,40 @@ describe("source hygiene (boundary rules 8 and 9)", () => {
       [".kil", "l("],
     ].map((parts) => parts.join(""));
     for (const token of forbidden) expect(source.includes(token)).toBe(false);
+  });
+});
+
+describe("a stalled publication (Codex final review: queue handoff)", () => {
+  /** A writer that publishes the request and then never settles, as a stalled temp-file cleanup did. */
+  function stalledWriter(afterPublish: () => void = () => {}): AntigravityTerminalDeps["writeRequest"] {
+    return async (dir, request) => {
+      await writeBridgeRequest(dir, request);
+      afterPublish();
+      return new Promise<string | null>(() => {});
+    };
+  }
+  const realClock = {
+    now: () => Date.now(),
+    sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  };
+
+  it("the timeout withdraws a request that was published but whose writer has not returned", async () => {
+    warmWindow(); // present but never ticked: nobody claims
+    const launcher = createAntigravityTerminalLauncher(
+      deps({ ...realClock, capMs: 700, writeRequest: stalledWriter() }),
+    );
+    const result = await launcher.launch(input());
+    expect(result.ok).toBe(false);
+    await vi.waitFor(() => expect(fx.requestFiles()).toEqual([]), { timeout: 2000 });
+    expect(fx.claimedFiles()).toEqual([]);
+  });
+
+  it("a request claimed before the timeout is a successful hand-off even when the writer never returns", async () => {
+    const sim = warmWindow();
+    const launcher = createAntigravityTerminalLauncher(
+      deps({ ...realClock, capMs: 700, writeRequest: stalledWriter(() => void sim.tick()) }),
+    );
+    await expect(launcher.launch(input())).resolves.toEqual({ ok: true });
+    expect(fx.claimedFiles()).toHaveLength(1);
   });
 });

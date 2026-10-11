@@ -107,6 +107,8 @@ export interface AntigravityTerminalDeps {
   readonly pollMs?: number;
   /** Reason codes only: never a path, an argument or an environment value. */
   readonly log?: (reason: string) => void;
+  /** Test seam for the request writer; defaults to {@link writeBridgeRequest}. */
+  readonly writeRequest?: typeof writeBridgeRequest;
   /** Test seam for the withdraw race; defaults to {@link withdrawRequest}. */
   readonly withdraw?: (stateDir: string, runId: string) => WithdrawResult | Promise<WithdrawResult>;
 }
@@ -192,6 +194,7 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
   const now = deps.now ?? Date.now;
   const capMs = deps.capMs ?? DEFAULT_CAP_MS;
   const withdraw = deps.withdraw ?? withdrawRequest;
+  const writeRequest = deps.writeRequest ?? writeBridgeRequest;
   const log = (reason: string): void => deps.log?.(reason);
 
   /** Opens the IDE on `cwd`; the saved bundle was checked by the caller. */
@@ -227,7 +230,7 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
       state.firstRunId = null;
       let written: string | null;
       try {
-        written = await writeBridgeRequest(stateDir, {
+        written = await writeRequest(stateDir, {
           ...base,
           runId,
           createdAt: new Date(now()).toISOString(),
