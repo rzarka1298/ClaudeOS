@@ -255,7 +255,7 @@ describe("the concurrent-write conflict (R-09)", () => {
 
   it("a second press while the conflict dialog waits starts nothing", async () => {
     const launchPair = vi.fn((_c: SocketApiClient, _r: LaunchPairRequest) =>
-      Promise.resolve(CONFLICT as LaunchPairResponse),
+      Promise.resolve(CONFLICT),
     );
     const chooseOnConflict = vi.fn(() => new Promise<{ kind: "plan" }>(() => undefined));
     const { requester } = build(launchPair, { chooseOnConflict });
