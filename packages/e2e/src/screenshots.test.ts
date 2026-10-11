@@ -2,8 +2,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -16,13 +16,13 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { REPO_ROOT } from "./repo-paths.js";
 import {
-  SHOTS_PREFIX,
   assertShotInside,
   captureRegion,
   createShotsDir,
   deleteShotsDir,
   purgeStaleShotDirs,
   regionArgs,
+  SHOTS_PREFIX,
   shotPath,
 } from "./screenshots.js";
 
@@ -189,7 +189,12 @@ describe("regionArgs and captureRegion (Test 5)", () => {
   const rect = { x: 1064, y: 32, w: 440, h: 180 };
 
   it("builds the quiet region argv with the comma-joined rectangle and the output path", () => {
-    expect(regionArgs(rect, "/out/shot.png")).toEqual(["-x", "-R", "1064,32,440,180", "/out/shot.png"]);
+    expect(regionArgs(rect, "/out/shot.png")).toEqual([
+      "-x",
+      "-R",
+      "1064,32,440,180",
+      "/out/shot.png",
+    ]);
     expect(() => regionArgs({ x: 0, y: 0, w: 10000, h: 10000 }, "/o.png")).not.toThrow();
   });
 
@@ -220,7 +225,9 @@ describe("regionArgs and captureRegion (Test 5)", () => {
       },
     });
     expect(result).toBe(out);
-    expect(calls).toEqual([{ file: "/usr/sbin/screencapture", args: ["-x", "-R", "1064,32,440,180", out] }]);
+    expect(calls).toEqual([
+      { file: "/usr/sbin/screencapture", args: ["-x", "-R", "1064,32,440,180", out] },
+    ]);
 
     let ran = false;
     await expect(
@@ -248,7 +255,9 @@ describe("never in the repository (Test 6)", () => {
   it("has no write call that mentions the repository root", () => {
     const writes = source
       .split("\n")
-      .filter((line) => /mkdirSync|writeFileSync|copyFileSync|renameSync|appendFileSync/.test(line));
+      .filter((line) =>
+        /mkdirSync|writeFileSync|copyFileSync|renameSync|appendFileSync/.test(line),
+      );
     for (const line of writes) expect(line).not.toMatch(/REPO_ROOT|repoRoot/);
     expect(source).not.toMatch(/writeFileSync|copyFileSync|appendFileSync/);
   });
