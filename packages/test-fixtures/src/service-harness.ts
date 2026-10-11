@@ -9,6 +9,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVICE_ENTRY = path.resolve(__dirname, "../../service/dist/main.js");
 const REAL_RUNTIME_DIR = path.join(homedir(), ".claude-command-center");
 
+/** Every service this process spawned and has not seen exit; killed when the test process ends. */
+const liveChildren = new Set<ChildProcess>();
+process.on("exit", () => {
+  for (const child of liveChildren) child.kill("SIGKILL");
+});
+
 export interface StartServiceForTestOptions {
   socketPath: string;
   /**
@@ -100,14 +106,29 @@ export async function startServiceForTest({
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  await waitForSocket(socketPath, waitAttempts);
+  liveChildren.add(child);
+  child.once("exit", () => liveChildren.delete(child));
+  try {
+    await waitForSocket(socketPath, waitAttempts);
+  } catch (error: unknown) {
+    // The wait failing must never leave the service running (F8): end it unconditionally.
+    child.kill("SIGKILL");
+    if (error instanceof Error) (error as Error & { childPid?: number }).childPid = child.pid;
+    throw error;
+  }
 
   return {
     pid: child.pid,
     stop(): Promise<void> {
       return new Promise((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          resolve();
+          return;
+        }
         child.once("exit", () => resolve());
         child.kill("SIGTERM");
+        // A service that ignores the polite signal must not outlive the test.
+        setTimeout(() => child.kill("SIGKILL"), 3000).unref();
       });
     },
     kill(): Promise<void> {
