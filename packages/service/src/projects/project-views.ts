@@ -113,9 +113,14 @@ const PRESET_LABELS: Readonly<Record<string, string>> = {
 };
 
 function terminalLabel(terminal: TerminalChoice): string {
-  return terminal.kind === "terminal-app"
-    ? "Terminal"
-    : (PRESET_LABELS[terminal.preset] ?? "Your terminal");
+  switch (terminal.kind) {
+    case "terminal-app":
+      return "Terminal";
+    case "antigravity-terminal":
+      return "Antigravity";
+    case "custom":
+      return PRESET_LABELS[terminal.preset] ?? "Your terminal";
+  }
 }
 
 function statusOf(record: LauncherConfigRecord | undefined, parses: boolean): LauncherStatus {

@@ -9,6 +9,11 @@ import type {
   SaveOutcome,
 } from "../projects/launchers-actions.js";
 import {
+  CODEX_USER_INSTALL,
+  fakeLaunchersActions,
+  withCodexDetection,
+} from "../test-support/launchers-fixtures.js";
+import {
   createLaunchersSession,
   type LaunchersSession,
   LaunchersSettings,
@@ -78,6 +83,7 @@ function fakeActions(overrides: Partial<LaunchersActions> = {}): LaunchersAction
     test: vi.fn(() => Promise.resolve({ kind: "sent" as const })),
     markTested: vi.fn(() => Promise.resolve({ kind: "marked" as const })),
     openSystemSettings: vi.fn(() => Promise.resolve({ kind: "opened" as const })),
+    codexDoctor: vi.fn(() => Promise.resolve({ kind: "healthy" as const })),
     ...overrides,
   };
 }
@@ -340,7 +346,7 @@ describe("drafts live in memory only (D-27, RR-25)", () => {
 });
 
 describe("the panels and the progress line (S6, RR-26)", () => {
-  it("renders the heading, intro and the five panels in order", async () => {
+  it("renders the heading, intro and the panels in order (the Codex panel follows Claude Code)", async () => {
     mount(fakeActions());
     await settle();
     expect(screen.getByRole("heading", { level: 3, name: "Launchers" })).toBeTruthy();
@@ -350,7 +356,14 @@ describe("the panels and the progress line (S6, RR-26)", () => {
       ),
     ).toBeTruthy();
     const names = screen.getAllByRole("heading", { level: 4 }).map((h) => h.textContent);
-    expect(names).toEqual(["Antigravity", "Claude Code", "Claude Desktop", "Finder", "GitHub"]);
+    expect(names).toEqual([
+      "Antigravity",
+      "Claude Code",
+      "Codex",
+      "Claude Desktop",
+      "Finder",
+      "GitHub",
+    ]);
   });
 
   it("counts only Antigravity, Claude Code and Claude Desktop", async () => {
@@ -701,5 +714,59 @@ describe("an uncertain save reconciles with the service (codex review 3, finding
       name: /Antigravity Preview/,
     });
     expect(preview.checked).toBe(true);
+  });
+});
+
+describe("the Codex panel in the section (plan 05.1-31)", () => {
+  it("sits directly after the Claude Code panel and leaves the launcher count at three", async () => {
+    const actions = fakeLaunchersActions({
+      detect: () =>
+        Promise.resolve({
+          kind: "detected" as const,
+          detection: withCodexDetection([CODEX_USER_INSTALL]),
+        }),
+    });
+    render(<LaunchersSettings actions={actions} connection={LIVE} now={NOW} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const names = screen
+      .getAllByRole("heading", { level: 4 })
+      .map((heading) => heading.textContent);
+    expect(names).toEqual([
+      "Antigravity",
+      "Claude Code",
+      "Codex",
+      "Claude Desktop",
+      "Finder",
+      "GitHub",
+    ]);
+    expect(screen.getByText("0 of 3 launchers set up")).toBeTruthy();
+    expect(
+      within(screen.getByRole("region", { name: "Codex" })).getByRole<HTMLInputElement>("radio", {
+        name: "Found Codex 0.159.2 at ~/.local/bin/codex.",
+      }).checked,
+    ).toBe(true);
+  });
+
+  it("a saved Codex row does not change the count of three app launchers", async () => {
+    const actions = fakeLaunchersActions({
+      getConfigs: () =>
+        Promise.resolve({
+          kind: "loaded" as const,
+          configs: {
+            ...NOTHING_SAVED,
+            codex: { executableDisplay: "~/.local/bin/codex", args: [], tested: false },
+          },
+        }),
+    });
+    render(<LaunchersSettings actions={actions} connection={LIVE} now={NOW} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("0 of 3 launchers set up")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Codex" })).getByText("Set up")).toBeTruthy();
   });
 });

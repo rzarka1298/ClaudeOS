@@ -8,6 +8,7 @@ import {
   createTasksClient,
   deleteUsageAnalytics,
   getClaudeIntegration,
+  getCodexIntegration,
   refreshProjects,
   setTranscriptAnalysis,
 } from "@ccc/service-api-client";
@@ -38,6 +39,8 @@ import { listVaultWorkspaces } from "./tasks/workspaces.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 import { openDeleteUsageModal as openDeleteUsageModalDialog } from "./view/delete-usage-modal.js";
 import { createLaunchConflictChooser } from "./view/launch-conflict-choice.js";
+import { requestLaunchersFocus } from "./view/launchers-focus.js";
+import { requestDestination } from "./view/navigation-request.js";
 import { configureNotify } from "./view/notify-port.js";
 import { createPluginSwitcher } from "./view/plugin-switcher.js";
 import {
@@ -270,6 +273,19 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
           setTranscriptAnalysis: (enabled: boolean) => setTranscriptAnalysis(this.client, enabled),
           deleteUsageAnalytics: () => deleteUsageAnalytics(this.client),
           copyText: (text: string) => navigator.clipboard.writeText(text),
+        },
+        // The Codex group (plan 05.1-19, D-30): status read, the copy-only install
+        // steps and the Launchers hand-off. Nothing here installs or writes anything.
+        codex: {
+          getIntegration: () => getCodexIntegration(this.client),
+          copyText: (text: string) => navigator.clipboard.writeText(text),
+          // Same hand-off as the Set up launchers command: focus request first,
+          // then the Settings destination, then the view.
+          openLauncherSettings: () => {
+            requestLaunchersFocus();
+            requestDestination("settings");
+            void this.revealView();
+          },
         },
         // The Approvals group: Send a test approval and its availability.
         approvals: {

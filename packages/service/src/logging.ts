@@ -29,6 +29,26 @@ const APPROVAL_CONTENT_PATHS = APPROVAL_CONTENT_KEYS.flatMap((key) => [
 ]);
 
 /**
+ * The Codex account and credential field names (Phase 05.1, CODEX-09, T-05.1-06): the account
+ * identifier and creator identifier forms of the thread store and the app-server reply, and the
+ * rate-limit reply itself, which carries the account. The parts never hold these values; this is
+ * the net behind that structure, at the top level and one level of nesting.
+ */
+const CODEX_ACCOUNT_KEYS = [
+  "accountId",
+  "account_id",
+  "creatorAccountId",
+  "creator_account_id",
+  "creatorUserId",
+  "creator_user_id",
+  "rateLimits",
+  "rate_limits",
+  "rateLimitsByLimitId",
+  "rate_limits_by_limit_id",
+];
+const CODEX_ACCOUNT_PATHS = CODEX_ACCOUNT_KEYS.flatMap((key) => [key, `*.${key}`]);
+
+/**
  * Every path a credential could reach this logger through, at the top
  * level and one level of nesting (SVC-10 / ADR-0017). `req.headers.
  * authorization` is named explicitly because pino's own HTTP request
@@ -51,6 +71,7 @@ const REDACT_PATHS = [
   "refreshToken",
   "*.refreshToken",
   ...APPROVAL_CONTENT_PATHS,
+  ...CODEX_ACCOUNT_PATHS,
 ];
 
 /**

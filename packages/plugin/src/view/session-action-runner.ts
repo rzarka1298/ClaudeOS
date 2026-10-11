@@ -8,8 +8,22 @@ import type {
   TerminateRequestResponse,
   WorktreeListResponse,
 } from "@ccc/domain/session-actions.js";
-import { ClaudeRequestError } from "@ccc/service-api-client";
+import { ClaudeRequestError, CodexRequestError } from "@ccc/service-api-client";
+import { windowLaunchTimers } from "../projects/launch-client.js";
+import type { LaunchTimerControls } from "../projects/launch-status.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
+import { clearCodexActionStatus, setCodexActionStatus } from "./codex-action-status.js";
+import {
+  CODEX_FOLLOW_COPY,
+  CODEX_TRANSCRIPT_COPY,
+  type CodexActionCopy,
+  type CodexFollowChoice,
+  type CodexFollowWarningViewModel,
+  type CodexReason,
+  codexFollowWarningViewModel,
+  codexReasonFor,
+  codexTranscriptWarningViewModel,
+} from "./codex-modals.js";
 import { clearActionStatus, setActionStatus } from "./session-action-status.js";
 import {
   type ConcurrentChoiceResolution,
@@ -78,6 +92,34 @@ export interface SessionActionUi {
   readonly openTranscriptWarning: (vm: TranscriptWarningViewModel) => Promise<TranscriptChoice>;
   /** Opens the force-terminate request (S4-c). There is no typed-confirmation shortcut (D-01). */
   readonly openTerminateRequest: (vm: TerminateRequestViewModel) => Promise<TerminateChoice>;
+  /**
+   * Opens the Codex transcript plaintext warning (05.1 UI-SPEC S3-a) -- on EVERY
+   * press, never cached (D-29). Optional: a host that predates Codex omits it
+   * and the Codex cases fall to the "isn't available yet" branch.
+   */
+  readonly openCodexTranscriptWarning?:
+    | ((vm: TranscriptWarningViewModel) => Promise<TranscriptChoice>)
+    | undefined;
+  /** Opens the Codex follow-log warning (05.1 UI-SPEC S3-b) -- on EVERY press (D-29, R-16). */
+  readonly openCodexFollowWarning?:
+    | ((vm: CodexFollowWarningViewModel) => Promise<CodexFollowChoice>)
+    | undefined;
+}
+
+/**
+ * The Codex client calls the runner needs (plan 05.1-19). Loosely typed on
+ * purpose, like {@link SessionActionRequestMap}: the real validation happens in
+ * `@ccc/service-api-client`, where `command-center-view.ts` binds these. The
+ * runner never imports the client's request functions.
+ */
+export interface CodexActionDeps {
+  readonly openTranscript: (request: {
+    threadId: string;
+    via: "reveal" | "open";
+  }) => Promise<unknown>;
+  readonly followLog: (request: { runId: string }) => Promise<unknown>;
+  /** The success auto-clear timers; production defaults to the window timers. */
+  readonly timers?: LaunchTimerControls | undefined;
 }
 
 /**
@@ -119,6 +161,8 @@ export interface SessionActionDeps {
   listProjects(): readonly ProjectOption[] | null;
   /** `null` when the service hasn't reported it yet. */
   cleanupPeriodDays(): number | null;
+  /** The Codex flows' client calls (plan 05.1-19). Absent means the Codex cases are unavailable. */
+  readonly codex?: CodexActionDeps | undefined;
 }
 
 /**
@@ -129,7 +173,7 @@ export interface SessionActionDeps {
  */
 export type SessionActionHost = Pick<
   SessionActionDeps,
-  "requestSessionAction" | "setTranscriptAnalysis" | "ui"
+  "requestSessionAction" | "setTranscriptAnalysis" | "ui" | "codex"
 >;
 
 /**
@@ -511,6 +555,114 @@ async function runTerminateRequest(
   }
 }
 
+/** `descriptor.target`, narrowed to the `{ threadId }` shape the Codex transcript action uses. */
+function getThreadId(descriptor: QuickActionDescriptor): string | null {
+  const target = descriptor.target;
+  return target !== undefined && "threadId" in target ? target.threadId : null;
+}
+
+/**
+ * The reason for a failed Codex action: the client's fixed code, or the
+ * service-didn't-respond fallback for anything else. Never the error's own
+ * message, which can carry a path or process text (T-05.1-23).
+ */
+function codexReasonOf(error: unknown): CodexReason {
+  return codexReasonFor(error instanceof CodexRequestError ? error.code : "unrecognised-response");
+}
+
+/** Writes a Codex failure line and its Notice, both the same text (UI-SPEC S3 "Action feedback"). */
+function reportCodexFailure(deps: SessionActionDeps, copy: CodexActionCopy, reason: CodexReason) {
+  const text = copy.failure(reason);
+  setCodexActionStatus({ kind: "failure", text });
+  deps.ui.notify(text);
+}
+
+/**
+ * Codex `Open transcript` (D-29, CODEX-07): the acknowledgement is written in
+ * the click's own tick, BEFORE the warning, then the warning shows on EVERY
+ * press -- there is no cache and no "seen it already" branch here. Cancel
+ * (Escape, a click outside, the button) clears the line and calls nothing.
+ * Never throws: every branch ends in a status write plus, for a failure, a
+ * Notice.
+ */
+async function runCodexOpenTranscript(
+  descriptor: QuickActionDescriptor,
+  deps: SessionActionDeps,
+): Promise<void> {
+  const threadId = getThreadId(descriptor);
+  const codex = deps.codex;
+  const openWarning = deps.ui.openCodexTranscriptWarning;
+  if (threadId === null || codex === undefined || openWarning === undefined) {
+    deps.ui.notify(unavailableMessage(descriptor.label));
+    return;
+  }
+  const copy = CODEX_TRANSCRIPT_COPY;
+  setCodexActionStatus({ kind: "pending", text: copy.pending });
+  const choice = await openSafely(() => openWarning(codexTranscriptWarningViewModel()));
+  if (choice === MODAL_FAILED) {
+    reportCodexFailure(deps, copy, codexReasonFor("unrecognised-response"));
+    return;
+  }
+  if (choice === "cancel") {
+    clearCodexActionStatus();
+    return;
+  }
+  try {
+    await codex.openTranscript({ threadId, via: choice });
+    setCodexActionStatus(
+      { kind: "success", text: copy.success },
+      codex.timers ?? windowLaunchTimers(),
+    );
+  } catch (error) {
+    reportCodexFailure(deps, copy, codexReasonOf(error));
+  }
+}
+
+/** `descriptor.target`, narrowed to the `{ wrapperRunId }` shape the Codex follow-log action uses. */
+function getWrapperRunId(descriptor: QuickActionDescriptor): string | null {
+  const target = descriptor.target;
+  return target !== undefined && "wrapperRunId" in target ? target.wrapperRunId : null;
+}
+
+/**
+ * Codex `Follow live log` (D-29, R-16): the same structure as
+ * {@link runCodexOpenTranscript} with its own, shorter warning. The target is
+ * a wrapper run id, never a thread id -- an interactive session has no live
+ * log to follow.
+ */
+async function runCodexFollowLog(
+  descriptor: QuickActionDescriptor,
+  deps: SessionActionDeps,
+): Promise<void> {
+  const wrapperRunId = getWrapperRunId(descriptor);
+  const codex = deps.codex;
+  const openWarning = deps.ui.openCodexFollowWarning;
+  if (wrapperRunId === null || codex === undefined || openWarning === undefined) {
+    deps.ui.notify(unavailableMessage(descriptor.label));
+    return;
+  }
+  const copy = CODEX_FOLLOW_COPY;
+  setCodexActionStatus({ kind: "pending", text: copy.pending });
+  const choice = await openSafely(() => openWarning(codexFollowWarningViewModel()));
+  if (choice === MODAL_FAILED) {
+    reportCodexFailure(deps, copy, codexReasonFor("unrecognised-response"));
+    return;
+  }
+  if (choice === "cancel") {
+    clearCodexActionStatus();
+    return;
+  }
+  try {
+    await codex.followLog({ runId: wrapperRunId });
+    setCodexActionStatus(
+      { kind: "success", text: copy.success },
+      codex.timers ?? windowLaunchTimers(),
+    );
+  } catch (error) {
+    reportCodexFailure(deps, copy, codexReasonOf(error));
+  }
+}
+
 const ENABLE_ANALYSIS_PENDING_TEXT = "Turning on transcript analysis…";
 const ENABLE_ANALYSIS_FAILURE_MESSAGE =
   "Couldn't turn on transcript analysis. Check the service in Settings → Diagnostics, then try again.";
@@ -566,6 +718,12 @@ export async function runSessionAction(
       return;
     case "usage:enable-transcript-analysis":
       await runEnableTranscriptAnalysis(deps);
+      return;
+    case "codex:open-transcript":
+      await runCodexOpenTranscript(descriptor, deps);
+      return;
+    case "codex:follow-log":
+      await runCodexFollowLog(descriptor, deps);
       return;
     default:
       deps.ui.notify(unavailableMessage(descriptor.label));

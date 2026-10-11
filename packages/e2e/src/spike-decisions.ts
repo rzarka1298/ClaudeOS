@@ -51,6 +51,10 @@ export const PROVISIONAL_SPIKE_DECISIONS: Readonly<SpikeDecisions> = Object.free
 /** The decisions in force. The orchestrator replaces these values when it records the spikes. */
 export const SPIKE_DECISIONS: Readonly<SpikeDecisions> = Object.freeze({
   ...PROVISIONAL_SPIKE_DECISIONS,
+  // The only S1 run was negative (the plugin created 0 notifications and no click handler), and
+  // its probe was invalid (2.5 s wait against a 5 s delay, window focused). spy-only stays in
+  // force until the orchestrator re-runs S1 with the fixed probe and revisits this switch.
+  bannerAutomation: "spy-only",
   protocolDispatch: "onclick-only",
   reducedMotion: "setting-only",
   coexistence: "verified",

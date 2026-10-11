@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import http from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -7,6 +8,12 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVICE_ENTRY = path.resolve(__dirname, "../../service/dist/main.js");
 const REAL_RUNTIME_DIR = path.join(homedir(), ".claude-command-center");
+
+/** Every service this process spawned and has not seen exit; killed when the test process ends. */
+const liveChildren = new Set<ChildProcess>();
+process.on("exit", () => {
+  for (const child of liveChildren) child.kill("SIGKILL");
+});
 
 export interface StartServiceForTestOptions {
   socketPath: string;
@@ -69,9 +76,29 @@ export async function startServiceForTest({
       "startServiceForTest refuses the real runtime directory; use withTempSocketDir.",
     );
   }
+  // Codex isolation: the spawned service must never probe, stat, read or run
+  // this machine's real Codex (binaries, rollouts, state). Point its Codex home
+  // at an empty directory inside the fixture directory and disable the fixed
+  // install-location candidates; an empty state home keeps the bridge view at
+  // "not installed" (a real bridge would publish codex.integration.updated before the first heartbeat). A test may still override either through `env`.
+  const emptyCodexHome = path.join(path.dirname(socketPath), "codex-home-empty");
+  const emptyStateHome = path.join(path.dirname(socketPath), "state-home-empty");
+  mkdirSync(emptyCodexHome, { recursive: true });
+  mkdirSync(emptyStateHome, { recursive: true });
+  // A Codex home or state home the calling test already prepared inside the fixture directory
+  // (a fake Codex world) is kept; anything else inherited from the real machine is replaced.
+  const fixtureDir = path.resolve(path.dirname(socketPath));
+  const keepIfInFixture = (value: string | undefined, fallback: string): string =>
+    value !== undefined && path.resolve(value).startsWith(`${fixtureDir}${path.sep}`)
+      ? value
+      : fallback;
   const child: ChildProcess = spawn(process.execPath, [SERVICE_ENTRY], {
     env: {
       ...process.env,
+      CCC_CODEX_HOME: keepIfInFixture(process.env.CCC_CODEX_HOME, emptyCodexHome),
+      XDG_STATE_HOME: keepIfInFixture(process.env.XDG_STATE_HOME, emptyStateHome),
+      CCC_CODEX_BRIDGE_HOME: emptyStateHome,
+      CCC_CODEX_CANDIDATES_DISABLED: "1",
       CCC_SOCKET_PATH: socketPath,
       CCC_RUNTIME_DIR: path.dirname(socketPath),
       ...env,
@@ -79,14 +106,30 @@ export async function startServiceForTest({
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  await waitForSocket(socketPath, waitAttempts);
+  liveChildren.add(child);
+  child.once("exit", () => liveChildren.delete(child));
+  try {
+    await waitForSocket(socketPath, waitAttempts);
+  } catch (error: unknown) {
+    // The wait failing must never leave the service running (F8): end it unconditionally.
+    child.kill("SIGKILL");
+    if (error instanceof Error)
+      (error as Error & { childPid?: number | undefined }).childPid = child.pid;
+    throw error;
+  }
 
   return {
     pid: child.pid,
     stop(): Promise<void> {
       return new Promise((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          resolve();
+          return;
+        }
         child.once("exit", () => resolve());
         child.kill("SIGTERM");
+        // A service that ignores the polite signal must not outlive the test.
+        setTimeout(() => child.kill("SIGKILL"), 3000).unref();
       });
     },
     kill(): Promise<void> {

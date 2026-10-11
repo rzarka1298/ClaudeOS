@@ -14,6 +14,7 @@ import {
   WORKTREE_NAME_PATTERN,
 } from "@ccc/domain";
 import { getLauncherConfig, type OperationalStore } from "@ccc/operational-store";
+import { createAntigravityDeps } from "../projects/antigravity-terminal.js";
 import type { Spawner } from "../projects/spawner.js";
 import { isExecutableFile, selectTerminalLauncher } from "../projects/terminal-launchers.js";
 import type { ServiceLaunchGuard, WorktreeEntry } from "./launch-guard.js";
@@ -112,6 +113,7 @@ function createTerminalLauncher(deps: Phase4BridgeDeps): SessionTerminalLauncher
         scriptDir: deps.scriptDir,
         capMs,
         isExecutable: isExecutableFile,
+        antigravity: createAntigravityDeps({ store: deps.store, spawner: deps.spawner }),
       });
       if (adapter === null) return { ok: false, reason: "launcher-not-configured" };
       // The adapter honours this the way Phase 4's own cap does: it will not
@@ -154,6 +156,7 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
   async function guardThenRegister(
     plan: StartPlan,
     projectName: string,
+    projectId: string,
   ): Promise<LaunchGuardDecision> {
     if (plan.guardTarget !== null) {
       const verdict = await deps.guard.check({ cwd: plan.guardTarget });
@@ -173,6 +176,7 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
       cwd: plan.treeKnown ? plan.cwd : null,
       worktreeRoot,
       permissionMode: plan.planMode ? "plan" : null,
+      projectId,
       at: deps.now().toISOString(),
     });
     return {
@@ -231,14 +235,17 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
     async check(input: LaunchGuardInput): Promise<LaunchGuardDecision> {
       // Only a Claude Code session can write to a working tree concurrently.
       if (input.action !== "claude-code" || input.projectId === null) return { ok: true };
-      const project = await deps.lookup.resolve(input.projectId);
+      const projectId = input.projectId;
+      const project = await deps.lookup.resolve(projectId);
       // Re-checks can race with a moved project; never bypass the guard.
       if ("error" in project) return { ok: false, error: project.error };
       const plan = await planOf(input, project.path);
       if (plan === null) return REFUSED;
       // One chain per resolved worktree root, shared with resume and branch.
       const tree = (await deps.guard.worktreeRootOf(plan.cwd)) ?? plan.cwd;
-      return serializedOnTree(deps.guard, tree, () => guardThenRegister(plan, project.displayName));
+      return serializedOnTree(deps.guard, tree, () =>
+        guardThenRegister(plan, project.displayName, projectId),
+      );
     },
 
     async settle(runId, outcome): Promise<void> {

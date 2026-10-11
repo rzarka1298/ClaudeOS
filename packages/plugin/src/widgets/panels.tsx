@@ -316,6 +316,7 @@ function ProjectShortcutsBody({
                   actions={PROJECT_LAUNCH_ACTIONS}
                   onNavigate={onNavigate}
                   openSystemSettings={openSystemSettings}
+                  onQuickAction={onQuickAction}
                 />
               )
             : undefined

@@ -6,7 +6,9 @@
   },
   "include": ["src"],
   "references": [
+    { "path": "../collectors" },
     { "path": "../domain" },
+    { "path": "../launchers" },
     { "path": "../operational-store" },
     { "path": "../plugin" },
     { "path": "../service" },

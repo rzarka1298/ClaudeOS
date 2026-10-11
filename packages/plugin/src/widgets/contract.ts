@@ -88,8 +88,16 @@ export interface QuickActionDescriptor {
    * level quick actions, `connect:*`) name nothing beyond the capability.
    * `ListBody`'s row action fills this with `{ runId }` so the single
    * dispatcher can resolve which session a `session:*` capability targets.
+   * A thread id names a Codex session for open-transcript; a wrapper run id
+   * names a headless run for follow-log. The dispatcher reads opaque ids,
+   * never paths.
    */
-  readonly target?: { readonly projectId: ProjectId } | { readonly runId: string } | undefined;
+  readonly target?:
+    | { readonly projectId: ProjectId }
+    | { readonly runId: string }
+    | { readonly threadId: string }
+    | { readonly wrapperRunId: string }
+    | undefined;
 }
 
 /**
@@ -108,7 +116,9 @@ export type UnavailableReason =
   /** The installed hook cannot find its Node.js runtime, so no session is reported. */
   | { readonly code: "hook-runtime-missing" }
   /** The service could not read Claude Code's hook settings and no session has been seen. */
-  | { readonly code: "hooks-status-unknown" };
+  | { readonly code: "hooks-status-unknown" }
+  /** Codex data changed shape; the frame renders locked, version-free copy. */
+  | { readonly code: "codex-data-changed" };
 export type UnavailableReasonCode = UnavailableReason["code"];
 
 /**

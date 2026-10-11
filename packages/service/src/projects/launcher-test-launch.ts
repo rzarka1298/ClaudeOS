@@ -1,10 +1,12 @@
+import { basename } from "node:path";
 import {
   LAUNCHER_TEST_AUTOMATION_CAP_MS,
-  type LaunchAction,
   type LaunchErrorKind,
   type LaunchResult,
   parseStoredLauncherConfig,
   type SystemSettingsPane,
+  type TemplateRefusalReason,
+  type TestLauncherId,
   terminalMayPromptForAutomation,
 } from "@ccc/domain";
 import {
@@ -13,9 +15,11 @@ import {
   OPEN,
   openUrl,
   revealInFinder,
+  validateAgentLaunch,
   validateCommandTemplate,
 } from "@ccc/launchers";
 import { getLauncherConfig, type OperationalStore } from "@ccc/operational-store";
+import { createAntigravityDeps } from "./antigravity-terminal.js";
 import { VAULT_ROOT_META_KEY } from "./approved-roots.js";
 import { LAUNCH_CAP_MS } from "./launch-service.js";
 import type { Spawner } from "./spawner.js";
@@ -34,6 +38,9 @@ import { isExecutableFile, selectTerminalLauncher } from "./terminal-launchers.j
  *   then the login shell. The stored arguments are a project launch's and are
  *   not used, but the stored template is re-validated first (D-22), exactly
  *   as before a launch;
+ * - Codex (plan 05.1-21): the terminal chosen by the claude-code row, at the
+ *   same folder, running `<saved codex> --version`, then the login shell. The
+ *   saved row and the final argv are re-validated first (`codexRowRefusal`);
  * - Finder: `open -R <vault folder>`;
  * - GitHub: `open https://github.com`.
  *
@@ -133,6 +140,7 @@ async function prepareClaudeCode(deps: TestLaunchDeps): Promise<PreparedTest> {
         scriptDir: deps.scriptDir,
         capMs,
         isExecutable,
+        antigravity: createAntigravityDeps({ store: deps.store, spawner: deps.spawner }),
       });
       if (terminal === null) return failure("launcher-not-configured");
       return terminal.launch({ cwd, argv: [config.executablePath, TEST_VERSION_FLAG], signal });
@@ -140,7 +148,101 @@ async function prepareClaudeCode(deps: TestLaunchDeps): Promise<PreparedTest> {
   };
 }
 
-async function prepare(launcherId: LaunchAction, deps: TestLaunchDeps): Promise<PreparedTest> {
+/**
+ * Why a Codex row (plan 05.1-21, D-11) does not pass: a reason and the index
+ * into `[executable, ...args]`; `null` means the row passes.
+ */
+export interface CodexRowRefusal {
+  readonly reason: TemplateRefusalReason;
+  readonly index: number | null;
+}
+
+/**
+ * The one Codex row check, shared by the save route and the Test step so a
+ * saved row is held to exactly what was checked at save (T-05.1-15):
+ *
+ * 1. `argv[0]` is an absolute path whose basename is exactly `codex` (this
+ *    also refuses every interpreter or launcher shim);
+ * 2. `validateCommandTemplate` with the `codex` kind: the ban set in every
+ *    spelling, the config-carrying flags, only the project-path placeholder,
+ *    no line break, at most 32 elements;
+ * 3. `validateAgentLaunch` on the same argv, so the per-agent flag allowlist
+ *    the bridge helper applies to the final argv is applied here too.
+ *
+ * `executableOk` is the answer to "is `argv[0]` an executable file now",
+ * obtained by the caller (the check is asynchronous). The agent validator
+ * reports no index, so one is derived: the first element whose prefix is
+ * refused and stays refused after the next element (a value flag is refused
+ * until its value arrives).
+ */
+export function codexRowRefusal(
+  argv: readonly string[],
+  executableOk: boolean,
+): CodexRowRefusal | null {
+  const executable = argv[0];
+  if (executable === undefined || !executable.startsWith("/")) {
+    return { reason: "executable-not-absolute", index: 0 };
+  }
+  if (basename(executable) !== "codex") return { reason: "executable-not-found", index: 0 };
+  const template = validateCommandTemplate(argv, {
+    kind: "codex",
+    isExecutable: (path) => executableOk && path === executable,
+  });
+  if (!template.ok) return { reason: template.reason, index: template.index };
+  const passes = (length: number): boolean =>
+    validateAgentLaunch({ agent: "codex", argv: argv.slice(0, length), env: {} }).ok;
+  if (passes(argv.length)) return null;
+  for (let length = 1; length <= argv.length; length++) {
+    if (passes(length)) continue;
+    if (length < argv.length && passes(length + 1)) continue;
+    const index = length - 1;
+    return index === 0
+      ? { reason: "executable-not-found", index: 0 }
+      : { reason: "forbidden-flag", index };
+  }
+  return { reason: "forbidden-flag", index: argv.length - 1 };
+}
+
+/** The saved Codex launcher run with `--version` in the claude-code row's terminal. */
+async function prepareCodex(deps: TestLaunchDeps): Promise<PreparedTest> {
+  const codexRecord = getLauncherConfig(deps.store.db, "codex");
+  const config =
+    codexRecord === null ? null : parseStoredLauncherConfig("codex", codexRecord.config);
+  if (config === null) return { kind: "refuse", error: "launcher-not-configured" };
+  // Codex has no terminal of its own (D-11): the claude-code row decides.
+  const claudeRecord = getLauncherConfig(deps.store.db, "claude-code");
+  const claude =
+    claudeRecord === null ? null : parseStoredLauncherConfig("claude-code", claudeRecord.config);
+  if (claude === null) return { kind: "refuse", error: "launcher-not-configured" };
+  const isExecutable = deps.isExecutable ?? isExecutableFile;
+  const executableOk = await isExecutable(config.executablePath);
+  // The saved row is re-validated exactly as before a launch (D-22) ...
+  if (codexRowRefusal([config.executablePath, ...config.args], executableOk) !== null) {
+    return { kind: "refuse", error: "launcher-not-configured" };
+  }
+  // ... and so is the final argv this Test will actually run.
+  const argv = [config.executablePath, TEST_VERSION_FLAG];
+  if (codexRowRefusal(argv, executableOk) !== null) {
+    return { kind: "refuse", error: "launcher-not-configured" };
+  }
+  const cwd = testFolder(deps);
+  return {
+    kind: "terminal",
+    run: async (signal, capMs) => {
+      const terminal = selectTerminalLauncher(claude.terminal, {
+        spawner: deps.spawner,
+        scriptDir: deps.scriptDir,
+        capMs,
+        isExecutable,
+        antigravity: createAntigravityDeps({ store: deps.store, spawner: deps.spawner }),
+      });
+      if (terminal === null) return failure("launcher-not-configured");
+      return terminal.launch({ cwd, argv, signal });
+    },
+  };
+}
+
+async function prepare(launcherId: TestLauncherId, deps: TestLaunchDeps): Promise<PreparedTest> {
   switch (launcherId) {
     case "antigravity":
     case "claude-desktop": {
@@ -154,6 +256,8 @@ async function prepare(launcherId: LaunchAction, deps: TestLaunchDeps): Promise<
       return { kind: "spawn", argv: openUrl(GITHUB_HOME) };
     case "claude-code":
       return prepareClaudeCode(deps);
+    case "codex":
+      return prepareCodex(deps);
   }
 }
 
@@ -162,8 +266,9 @@ async function prepare(launcherId: LaunchAction, deps: TestLaunchDeps): Promise<
  * row alone — synchronously, before any check runs — so the cap that covers
  * the whole Test is known when it starts.
  */
-function mayPromptForAutomation(launcherId: LaunchAction, store: OperationalStore): boolean {
-  if (launcherId !== "claude-code") return false;
+function mayPromptForAutomation(launcherId: TestLauncherId, store: OperationalStore): boolean {
+  // Codex opens in the claude-code row's terminal, so it shares that row's answer.
+  if (launcherId !== "claude-code" && launcherId !== "codex") return false;
   const record = getLauncherConfig(store.db, "claude-code");
   const config = record === null ? null : parseStoredLauncherConfig("claude-code", record.config);
   return config !== null && terminalMayPromptForAutomation(config.terminal);
@@ -180,7 +285,7 @@ const DEADLINE: unique symbol = Symbol("test deadline");
  * finishes after the deadline never spawns anything. Never rejects.
  */
 export async function testLaunch(
-  launcherId: LaunchAction,
+  launcherId: TestLauncherId,
   deps: TestLaunchDeps,
 ): Promise<LaunchResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -201,7 +306,7 @@ export async function testLaunch(
 
 /** {@link testLaunch}'s body; any throw is the caller's to turn into a failure. */
 async function runTest(
-  launcherId: LaunchAction,
+  launcherId: TestLauncherId,
   deps: TestLaunchDeps,
   startDeadline: (ms: number, onDeadline: () => void) => void,
 ): Promise<LaunchResult> {

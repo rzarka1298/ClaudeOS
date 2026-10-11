@@ -441,7 +441,12 @@ export function removeScanRoot(db: Database.Database, scanRootId: ScanRootId): b
  * depend on a same-wave domain file; a test asserts it equals the domain
  * `LAUNCHER_IDS`.
  */
-export const STORED_LAUNCHER_IDS = ["antigravity", "claude-code", "claude-desktop"] as const;
+export const STORED_LAUNCHER_IDS = [
+  "antigravity",
+  "claude-code",
+  "claude-desktop",
+  "codex",
+] as const;
 export type StoredLauncherId = (typeof STORED_LAUNCHER_IDS)[number];
 
 /** One launcher's saved configuration. `config` is the parsed JSON the caller validated before saving. */

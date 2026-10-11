@@ -203,3 +203,46 @@ describe("approval payload redaction (06-12 Task 3)", () => {
     });
   });
 });
+
+describe("logging redaction of Codex account and credential names (CODEX-09, T-05.1-06)", () => {
+  const NAMES = [
+    "accountId",
+    "account_id",
+    "creatorAccountId",
+    "creator_account_id",
+    "creatorUserId",
+    "creator_user_id",
+    "rateLimits",
+    "rate_limits",
+  ];
+
+  it("censors each name at the top level and one level of nesting", () => {
+    const logger = createLogger(logPath);
+    for (const name of NAMES) {
+      logger.info({ [name]: `decoy-top-${name}` }, "top");
+      logger.info({ reply: { [name]: `decoy-nested-${name}` } }, "nested");
+    }
+    const raw = readFileSync(logPath, "utf8");
+    for (const name of NAMES) {
+      expect(raw).not.toContain(`decoy-top-${name}`);
+      expect(raw).not.toContain(`decoy-nested-${name}`);
+    }
+    const lines = readLines();
+    expect(lines).toHaveLength(NAMES.length * 2);
+    expect(lines[0]?.accountId).toBe(REDACTION_MARKER);
+    expect((lines[1]?.reply as Record<string, unknown> | undefined)?.accountId).toBe(
+      REDACTION_MARKER,
+    );
+  });
+
+  it("censors a whole rate-limit reply carrying an account id", () => {
+    const logger = createLogger(logPath);
+    logger.info(
+      { rateLimits: { primary: { usedPercent: 41 }, accountId: "decoy-reply-account" } },
+      "reply",
+    );
+    const raw = readFileSync(logPath, "utf8");
+    expect(raw).not.toContain("decoy-reply-account");
+    expect(raw).not.toContain("usedPercent");
+  });
+});

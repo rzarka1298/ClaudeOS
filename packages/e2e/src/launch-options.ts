@@ -1,16 +1,29 @@
+import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
+import {
+  canonicalPath,
+  isSameOrInside,
+  isStrictlyInside,
+  REAL_REALPATH,
+  type RealpathOps,
+} from "./canonical-path.js";
 import { INSTALLED_OBSIDIAN_BINARY, PLUGIN_BUILD_DIR, REPO_ROOT } from "./repo-paths.js";
 import type { SpikeDecisions } from "./spike-decisions.js";
 
 /**
- * Pure builder for the sandbox Obsidian's wdio capabilities (05.2-01, L-3, D-07, D-08).
+ * Builder for the sandbox Obsidian's wdio capabilities (05.2-01, L-3, D-07, D-08).
  *
  * It imports nothing from `obsidian` and nothing from wdio at runtime; the capability
  * shapes below mirror wdio-obsidian-service's `wdio:obsidianOptions` structurally, so the
  * unit test needs no wdio. The only filesystem inputs it accepts are the staged plugin
- * folder and a vault inside the run root, and it never touches the filesystem itself.
- * Every refusal is a fixed message that does not echo the offending path.
+ * folder and a vault inside the run root. Its filesystem reads are limited to `realpath`
+ * (every stage, vault, run root, cache, home and repository path is canonicalised before any
+ * comparison, so a symlink cannot smuggle the plugin package, an owner vault or the home
+ * directory past a textual check, Codex finding 2) and one `readdir` of the stage folder
+ * (it may hold only main.js, manifest.json and styles.css). It writes nothing. Both reads
+ * are injectable through `fs` for tests. Every refusal is a fixed message that does not echo
+ * the offending path.
  */
 
 export interface LaunchInput {
@@ -32,7 +45,21 @@ export interface LaunchInput {
   ownerVaultPaths?: readonly string[];
   /** Overridable for tests; defaults to the real home directory. */
   homeDir?: string;
+  /** Overridable for tests; defaults to the real filesystem (realpath and readdir only). */
+  fs?: LaunchFs;
 }
+
+/** The only filesystem reads this module makes. */
+export interface LaunchFs extends RealpathOps {
+  /** The entry names of a directory; throws when it is not a readable directory. */
+  readdirSync(path: string): string[];
+}
+
+const REAL_FS: LaunchFs = { ...REAL_REALPATH, readdirSync: (path) => readdirSync(path) };
+
+/** The only files a staged plugin folder may hold; styles.css is optional. */
+const STAGE_FILES: ReadonlySet<string> = new Set(["main.js", "manifest.json", "styles.css"]);
+const STAGE_REQUIRED = ["main.js", "manifest.json"] as const;
 
 export interface ObsidianLaunchOptions {
   appVersion: string;
@@ -58,22 +85,58 @@ const RUN_ROOT_PARENTS = ["/tmp", "/private/tmp"];
 const RUN_ROOT_PREFIX = "ccc-uat.";
 const ERR_OWNER_VAULT = "Refusing a vault that overlaps an owner vault.";
 const ERR_STAGE = "Refusing a plugin stage directory that is relative or is the plugin package.";
+const ERR_STAGE_CONTENTS =
+  "Refusing a plugin stage directory that holds anything but main.js, manifest.json and styles.css.";
 const ERR_CACHE =
   "Refusing a cache directory that is relative, inside the Obsidian profile, or inside the " +
   "repository without being .obsidian-cache.";
 
-/** True when `inner` equals `outer` or sits below it (boundary-safe, never a prefix match). */
-function isSameOrInside(outer: string, inner: string): boolean {
-  return inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : `${outer}${sep}`);
+/**
+ * The canonical (symlink-free) run root, or a throw. It must be the throwaway
+ * `mktemp /tmp/ccc-uat.XXXXXX` directory (D-05) and must not be, or contain, the home directory.
+ */
+export function assertRunRoot(
+  runRootInput: string,
+  homeInput: string,
+  fs: RealpathOps = REAL_REALPATH,
+): string {
+  if (!isAbsolute(runRootInput)) throw new Error(ERR_RUN_ROOT);
+  const runRoot = canonicalPath(runRootInput, fs);
+  // A run root that is the home directory, or an ancestor of it, would make "inside the run
+  // root" true for the owner's real folders.
+  if (isSameOrInside(runRoot, canonicalPath(homeInput, fs))) throw new Error(ERR_RUN_ROOT);
+  // A run root anywhere else, such as a folder under home, could contain an owner vault, and a
+  // big-vault run opens its vault in place. A link into home canonicalises away from /tmp.
+  if (
+    !RUN_ROOT_PARENTS.some((parent) => dirname(runRoot) === canonicalPath(parent, fs)) ||
+    !basename(runRoot).startsWith(RUN_ROOT_PREFIX) ||
+    basename(runRoot).length === RUN_ROOT_PREFIX.length
+  ) {
+    throw new Error(ERR_RUN_ROOT);
+  }
+  return runRoot;
 }
 
-function isStrictlyInside(outer: string, inner: string): boolean {
-  return inner !== outer && isSameOrInside(outer, inner);
+function assertStageContents(stage: string, fs: LaunchFs): void {
+  let names: string[];
+  try {
+    names = fs.readdirSync(stage);
+  } catch {
+    throw new Error(ERR_STAGE_CONTENTS);
+  }
+  if (
+    !names.every((name) => STAGE_FILES.has(name)) ||
+    !STAGE_REQUIRED.every((name) => names.includes(name))
+  ) {
+    throw new Error(ERR_STAGE_CONTENTS);
+  }
 }
 
 export function buildLaunchCapabilities(input: LaunchInput): LaunchCapability[] {
   const { decisions } = input;
-  const home = resolve(input.homeDir ?? homedir());
+  const fs = input.fs ?? REAL_FS;
+  const homeInput = input.homeDir ?? homedir();
+  const home = canonicalPath(homeInput, fs);
 
   if (input.binaryPath !== undefined) {
     if (decisions.launch !== "binaryPath" || input.binaryPath !== INSTALLED_OBSIDIAN_BINARY) {
@@ -81,46 +144,39 @@ export function buildLaunchCapabilities(input: LaunchInput): LaunchCapability[] 
     }
   }
 
-  if (!isAbsolute(input.runRoot)) throw new Error(ERR_RUN_ROOT);
-  const runRoot = resolve(input.runRoot);
-  // A run root that is the home directory, or an ancestor of it, would make "inside the run
-  // root" true for the owner's real folders.
-  if (isSameOrInside(runRoot, home)) throw new Error(ERR_RUN_ROOT);
-  // The run root must be the throwaway `mktemp /tmp/ccc-uat.XXXXXX` directory (D-05). A run
-  // root anywhere else, such as a folder under home, could contain an owner vault, and a
-  // big-vault run opens its vault in place.
-  if (
-    !RUN_ROOT_PARENTS.includes(dirname(runRoot)) ||
-    !basename(runRoot).startsWith(RUN_ROOT_PREFIX) ||
-    basename(runRoot).length === RUN_ROOT_PREFIX.length
-  ) {
-    throw new Error(ERR_RUN_ROOT);
-  }
+  const runRoot = assertRunRoot(input.runRoot, homeInput, fs);
 
   if (!isAbsolute(input.vaultPath)) throw new Error(ERR_OUTSIDE);
-  const vault = resolve(input.vaultPath);
+  const vault = canonicalPath(input.vaultPath, fs);
   if (!isStrictlyInside(runRoot, vault)) throw new Error(ERR_OUTSIDE);
 
   for (const ownerPath of input.ownerVaultPaths ?? []) {
-    const owner = resolve(ownerPath);
+    const owner = canonicalPath(ownerPath, fs);
     if (isSameOrInside(owner, vault) || isSameOrInside(vault, owner)) {
       throw new Error(ERR_OWNER_VAULT);
     }
   }
 
   if (!isAbsolute(input.pluginStageDir)) throw new Error(ERR_STAGE);
-  const stage = resolve(input.pluginStageDir);
+  const stage = canonicalPath(input.pluginStageDir, fs);
   // The plugin package folder holds the owner's data.json; only a staged copy may be installed.
-  if (isSameOrInside(resolve(PLUGIN_BUILD_DIR), stage)) throw new Error(ERR_STAGE);
+  // Both sides are real paths, so a link to the package (a pnpm workspace link included) is caught.
+  if (isSameOrInside(canonicalPath(PLUGIN_BUILD_DIR, fs), stage)) throw new Error(ERR_STAGE);
+  assertStageContents(stage, fs);
 
   if (!isAbsolute(input.cacheDir)) throw new Error(ERR_CACHE);
-  const cache = resolve(input.cacheDir);
-  if (isSameOrInside(join(home, "Library", "Application Support", "obsidian"), cache)) {
-    throw new Error(ERR_CACHE);
-  }
+  const cache = canonicalPath(input.cacheDir, fs);
+  const obsidianProfile = canonicalPath(
+    join(home, "Library", "Application Support", "obsidian"),
+    fs,
+  );
+  if (isSameOrInside(obsidianProfile, cache)) throw new Error(ERR_CACHE);
   // Inside the repository only the gitignored `.obsidian-cache` is safe: the downloaded
   // Obsidian archive must never be one `git add -A` from a commit.
-  if (isSameOrInside(resolve(REPO_ROOT), cache) && basename(cache) !== ".obsidian-cache") {
+  if (
+    isSameOrInside(canonicalPath(REPO_ROOT, fs), cache) &&
+    basename(cache) !== ".obsidian-cache"
+  ) {
     throw new Error(ERR_CACHE);
   }
 

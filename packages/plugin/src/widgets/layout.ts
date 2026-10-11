@@ -65,6 +65,7 @@ export const DEFAULT_LAYOUT: readonly LayoutEntry[] = [
   { widgetId: "active-sessions", size: "tall" },
   { widgetId: "project-shortcuts", size: "medium" },
   { widgetId: "claude-usage", size: "wide" },
+  { widgetId: "codex", size: "tall" },
   { widgetId: "tech-intel", size: "tall" },
   { widgetId: "github-discoveries", size: "medium" },
   { widgetId: "quick-actions", size: "small" },

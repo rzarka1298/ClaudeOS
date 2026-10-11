@@ -6,7 +6,9 @@
 // owns every side effect. The only internal import allowed is @ccc/domain
 // (eslint.config.mjs boundary map, SC-7).
 
+export * from "./agent-launch.js";
 export * from "./app-actions.js";
+export * from "./bridge-protocol.js";
 export * from "./command-template.js";
 export * from "./error-map.js";
 export * from "./git-parse.js";

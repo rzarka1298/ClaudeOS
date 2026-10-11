@@ -1,8 +1,10 @@
-import type { LaunchAction, ProjectId } from "@ccc/domain";
+import type { ProjectId } from "@ccc/domain";
 import {
   type AuthenticatedSocketApiClient,
   type EventClient,
+  followCodexLog,
   getSessionUsage,
+  openCodexTranscript,
   openSystemSettings,
   refreshProjects,
   requestSessionAction,
@@ -11,13 +13,14 @@ import {
 import { ItemView, Notice, Scope, type WorkspaceLeaf } from "obsidian";
 import { h, render } from "preact";
 import { pickFolder } from "../projects/folder-picker.js";
-import { retainLaunchStatus } from "../projects/launch-status.js";
+import { type ProjectLaunchActionId, retainLaunchStatus } from "../projects/launch-status.js";
 import { createLaunchersActions } from "../projects/launchers-actions.js";
 import type { RequestLaunch } from "../projects/plugin-launcher.js";
 import { createProjectsActions, createScanActions } from "../projects/projects-actions.js";
 import { createSystemSettingsOpener } from "../projects/system-settings-opener.js";
 import { attachEventClient, refreshProjectsOnConnect } from "../service-connection.js";
 import type { CommandCenterSettings } from "../settings.js";
+import { createObsidianCodexUi } from "./codex-modals.js";
 import type { DestinationId } from "./destinations.js";
 import { registerSwitcherScope } from "./quick-switcher.js";
 import { createObsidianSessionActionUi } from "./session-modals.js";
@@ -47,7 +50,7 @@ export interface CommandCenterViewHost {
    * `opening` status in a store another view still shows (codex review 3,
    * finding 1); the plugin clears its timers on unload (PLUG-03).
    */
-  requestLaunch(projectId: ProjectId | null, action: LaunchAction): void;
+  requestLaunch(projectId: ProjectId | null, action: ProjectLaunchActionId): void;
   /**
    * The plugin's combined connect hook (projects, approvals and tasks refresh,
    * plan 06-23). Absent in hosts that predate it; the view then refreshes
@@ -147,7 +150,16 @@ export class CommandCenterView extends ItemView {
           requestSessionAction: (action, body) =>
             requestSessionAction(this.host.client, action, body as never) as never,
           setTranscriptAnalysis: (enabled) => setTranscriptAnalysis(this.host.client, enabled),
-          ui: createObsidianSessionActionUi(this.app),
+          // The Codex row actions (plan 05.1-19): the client calls are bound
+          // here and nowhere else, like the Claude ones above.
+          codex: {
+            openTranscript: (request) => openCodexTranscript(this.host.client, request),
+            followLog: (request) => followCodexLog(this.host.client, request),
+          },
+          ui: {
+            ...createObsidianSessionActionUi(this.app),
+            ...createObsidianCodexUi(this.app),
+          },
         },
       }),
       this.contentEl,

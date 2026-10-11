@@ -1,6 +1,7 @@
-import type { DetectionResponse, LauncherConfigView } from "@ccc/domain";
+import type { DetectedCodexExecutable, DetectionResponse, LauncherConfigView } from "@ccc/domain";
 import { vi } from "vitest";
 import type {
+  CodexDoctorOutcome,
   ConfigsOutcome,
   DetectOutcome,
   LaunchersActions,
@@ -84,6 +85,29 @@ export const NOTHING_SAVED: LauncherConfigView = {
   "claude-desktop": null,
 };
 
+/** A user-installed Codex and an app-bundled one (display text only; ids are opaque). */
+export const CODEX_USER_INSTALL: DetectedCodexExecutable = {
+  candidateId: "codex-1",
+  displayPath: "~/.local/bin/codex",
+  version: "0.159.2",
+  location: "user-install",
+};
+
+export const CODEX_APP_BUNDLE: DetectedCodexExecutable = {
+  candidateId: "codex-2",
+  displayPath: "/Applications/Codex.app/Contents/Resources/codex",
+  version: "0.158.0",
+  location: "app-bundle",
+};
+
+/** `base` with the Phase 05.1 Codex members (detection never runs doctor, so it says unknown). */
+export function withCodexDetection(
+  executables: readonly DetectedCodexExecutable[],
+  base: DetectionResponse = DETECTION,
+): DetectionResponse {
+  return { ...base, codex: { executables: [...executables], doctor: "unknown" } };
+}
+
 export interface Deferred<T> {
   readonly promise: Promise<T>;
   resolve(value: T): void;
@@ -108,6 +132,7 @@ export function fakeLaunchersActions(overrides: Partial<LaunchersActions> = {}):
     test: vi.fn(() => Promise.resolve<TestOutcome>({ kind: "sent" })),
     markTested: vi.fn(() => Promise.resolve<MarkTestedOutcome>({ kind: "marked" })),
     openSystemSettings: vi.fn(() => Promise.resolve<OpenSettingsOutcome>({ kind: "opened" })),
+    codexDoctor: vi.fn(() => Promise.resolve<CodexDoctorOutcome>({ kind: "healthy" })),
     ...overrides,
   };
 }

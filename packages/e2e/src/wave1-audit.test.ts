@@ -14,6 +14,11 @@ const base = {
   runRoot: RUN_ROOT,
   cacheDir: "/repo/.obsidian-cache",
   homeDir: "/Users/USERNAME",
+  // Fictional paths: realpath is the identity and the stage lists as the three plugin files.
+  fs: {
+    realpathSync: (path: string) => path,
+    readdirSync: () => ["main.js", "manifest.json", "styles.css"],
+  },
 };
 const MSG_STAGE = "Refusing a plugin stage directory that is relative or is the plugin package.";
 

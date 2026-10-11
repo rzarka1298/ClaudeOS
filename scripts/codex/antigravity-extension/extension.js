@@ -4,7 +4,12 @@
 // No URI handler, no commands, no network. The extension only watches the
 // user-level request queue, claims requests for projects open in this window,
 // and opens a terminal that runs the fixed launcher `~/.local/bin/codex-bridge`
-// with argv ["follow", <runId>].
+// with argv ["follow" | "tui" | "agent", <runId>]. The run id has been checked
+// against a strict pattern; nothing else from a request reaches the terminal.
+// An agent request (protocol 2) names the program to run, but only the launcher
+// reads it, after re-validating it; this file never reads or logs argv or env.
+// The heartbeat advertises protocol 2 and the capabilities (see bridge-core.js);
+// an extension from before agent mode (0.1.0) writes neither.
 
 const fs = require("node:fs");
 const os = require("node:os");
@@ -51,6 +56,7 @@ function activate(context) {
       })) {
         const terminal = vscode.window.createTerminal(core.terminalOptions(request, command));
         terminal.show(true); // reveal the tab without stealing keyboard focus
+        // Kind and run id only: never argv or env (an agent request carries both).
         out.appendLine(`codex-bridge: opened ${request.kind} run ${request.runId}`);
       }
     } catch (err) {

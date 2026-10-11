@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { ApprovalSummary, ApprovalsSnapshot, ProposalId } from "./approval.js";
 import { ApprovalUpsertedPayloadSchema } from "./approval.js";
 import {
+  CodexIntegrationUpdatedPayloadSchema,
+  CodexSessionsUpdatedPayloadSchema,
+  CodexTokensUpdatedPayloadSchema,
+  CodexUsageUpdatedPayloadSchema,
+} from "./codex-api.js";
+import {
   EVENTS_PATH,
   LAST_EVENT_ID_HEADER,
   SERVICE_EVENT_TYPES,
@@ -246,7 +252,8 @@ describe("projects.updated (D-50 additive rule)", () => {
   });
 
   it("appends projects.updated directly after the three base types (Phase 5 and 6 append after it)", () => {
-    expect(SERVICE_EVENT_TYPES).toHaveLength(9);
+    // Phase 05.1 appends four more after tasks.changed; the prefix is what this pins.
+    expect(SERVICE_EVENT_TYPES.length).toBeGreaterThanOrEqual(9);
     expect(SERVICE_EVENT_TYPES[3]).toBe("projects.updated");
   });
 });
@@ -353,7 +360,8 @@ describe("approval additions to the event contract (Phase 6, Test 8)", () => {
 
 describe("tasks.changed (Phase 6 task 3, Test 5)", () => {
   it("is appended after approval.upserted and every earlier entry, nothing reordered", () => {
-    expect([...SERVICE_EVENT_TYPES]).toEqual([
+    // The first nine entries are Phases 1 to 6; Phase 05.1 appends after them.
+    expect([...SERVICE_EVENT_TYPES].slice(0, 9)).toEqual([
       "service.heartbeat",
       "connection.state",
       "stream.resync",
@@ -397,5 +405,138 @@ describe("tasks.changed (Phase 6 task 3, Test 5)", () => {
     });
     expect(envelope.success).toBe(true);
     expect(TasksChangedPayloadSchema.safeParse(envelope.data?.payload).success).toBe(false);
+  });
+});
+
+describe("Codex additions to the event contract (Phase 05.1 plan 06, Task 3)", () => {
+  const NOW = "2026-10-10T12:00:00.000Z";
+  const SESSIONS = {
+    kind: "available",
+    sessions: [],
+    hiddenCount: 0,
+    analysisOn: false,
+    observedAt: NOW,
+    freshness: "live",
+    partiality: { partial: false },
+  };
+  const USAGE = {
+    kind: "available",
+    windows: [{ windowMinutes: 10080, usedPercent: 41, resetsAt: NOW, limitLabel: null }],
+    ordinaryUsageAllowed: true,
+    rateLimitReached: false,
+    rateLimitReachedType: null,
+    source: "app-server",
+    observedAt: NOW,
+    freshness: "live",
+  };
+  const HEADROOM = {
+    generatedAt: NOW,
+    codex: {
+      verdict: "allow",
+      reason: null,
+      worstWindow: { windowMinutes: 10080, usedPercent: 41, resetsAt: NOW },
+      source: "app-server",
+      observedAt: NOW,
+      freshness: "live",
+      pausedRuns: { count: 0, earliestResetAt: null },
+    },
+    claude: { kind: "unavailable", reason: "wrapper-not-installed" },
+  };
+  const unavailableTokens = { kind: "unavailable", reason: "analysis-off", version: null };
+  const TOKENS = {
+    ranges: {
+      today: unavailableTokens,
+      "last-7-days": unavailableTokens,
+      "this-month": unavailableTokens,
+    },
+    firstScanPending: false,
+    observedAt: NOW,
+  };
+  const INTEGRATION = {
+    hooks: { state: "installed", lastEventAt: NOW, installedSince: NOW },
+    bridge: { state: "installed", lastWindowAt: NOW },
+    codex: { installed: true, version: "0.159.2" },
+    doctor: null,
+  };
+  const BASE = { serviceStartedAt: NOW, projects: EMPTY_PROJECTS_SNAPSHOT };
+
+  it("Test 1: keeps every existing entry in order and ends with the four Codex types", () => {
+    expect([...SERVICE_EVENT_TYPES].slice(0, 9)).toEqual([
+      "service.heartbeat",
+      "connection.state",
+      "stream.resync",
+      "projects.updated",
+      "session.upserted",
+      "usage.updated",
+      "claude-integration.updated",
+      "approval.upserted",
+      "tasks.changed",
+    ]);
+    expect([...SERVICE_EVENT_TYPES].slice(-4)).toEqual([
+      "codex.sessions.updated",
+      "codex.usage.updated",
+      "codex.tokens.updated",
+      "codex.integration.updated",
+    ]);
+    expect(SERVICE_EVENT_TYPES).toHaveLength(13);
+    for (const type of SERVICE_EVENT_TYPES.slice(-4)) {
+      expect(
+        ServiceEventSchema.safeParse({ id: 1, type, occurredAt: NOW, payload: null }).success,
+      ).toBe(true);
+    }
+  });
+
+  it("Test 2: the four payload schemas parse a valid payload and refuse an unknown extra key", () => {
+    expect(CodexSessionsUpdatedPayloadSchema.safeParse(SESSIONS).success).toBe(true);
+    expect(
+      CodexSessionsUpdatedPayloadSchema.safeParse({ ...SESSIONS, cwd: "/Users/USERNAME/repo" })
+        .success,
+    ).toBe(false);
+    expect(
+      CodexUsageUpdatedPayloadSchema.safeParse({ usage: USAGE, headroom: HEADROOM }).success,
+    ).toBe(true);
+    expect(
+      CodexUsageUpdatedPayloadSchema.safeParse({ usage: USAGE, headroom: HEADROOM, extra: 1 })
+        .success,
+    ).toBe(false);
+    expect(CodexUsageUpdatedPayloadSchema.safeParse({ usage: USAGE }).success).toBe(false);
+    expect(CodexTokensUpdatedPayloadSchema.safeParse(TOKENS).success).toBe(true);
+    expect(CodexTokensUpdatedPayloadSchema.safeParse({ ...TOKENS, cost: 1 }).success).toBe(false);
+    expect(CodexIntegrationUpdatedPayloadSchema.safeParse(INTEGRATION).success).toBe(true);
+    expect(
+      CodexIntegrationUpdatedPayloadSchema.safeParse({ ...INTEGRATION, authPath: "x" }).success,
+    ).toBe(false);
+  });
+
+  it("Test 3: the snapshot parses with no codex member, an empty codex object and each part present", () => {
+    const old = { lastEventId: 0, state: BASE };
+    expect(SnapshotResponseSchema.safeParse(old).data).toEqual(old);
+    const empty = { lastEventId: 1, state: { ...BASE, codex: {} } };
+    expect(SnapshotResponseSchema.safeParse(empty).data).toEqual(empty);
+    const parts = {
+      sessions: SESSIONS,
+      usage: USAGE,
+      headroom: HEADROOM,
+      tokens: TOKENS,
+      integration: INTEGRATION,
+    };
+    for (const [name, value] of Object.entries(parts)) {
+      const input = { lastEventId: 2, state: { ...BASE, codex: { [name]: value } } };
+      expect(SnapshotResponseSchema.safeParse(input).data, name).toEqual(input);
+    }
+    const all = { lastEventId: 3, state: { ...BASE, codex: parts } };
+    expect(SnapshotResponseSchema.safeParse(all).data).toEqual(all);
+  });
+
+  it("Test 3: the snapshot refuses a codex part that fails its schema and an unknown codex key", () => {
+    const bad = { lastEventId: 4, state: { ...BASE, codex: { usage: { kind: "available" } } } };
+    expect(SnapshotResponseSchema.safeParse(bad).success).toBe(false);
+    const unknown = { lastEventId: 4, state: { ...BASE, codex: { accountId: "x" } } };
+    expect(SnapshotResponseSchema.safeParse(unknown).success).toBe(false);
+    const wrongHeadroom = {
+      lastEventId: 4,
+      state: { ...BASE, codex: { headroom: { ...HEADROOM, recommendedAgent: "codex" } } },
+    };
+    expect(SnapshotResponseSchema.safeParse(wrongHeadroom).success).toBe(false);
   });
 });

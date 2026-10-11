@@ -1,11 +1,16 @@
 import type { ProjectId } from "@ccc/domain";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearLauncherErrors,
+  latestLaunchStatus,
   launchStatus,
   launchStatusKey,
   resetLaunchStatus,
+  SUCCESS_CLEAR_MS,
   setLaunchOpening,
   setLaunchResult,
+  setPairOpening,
+  setPairResult,
 } from "./launch-status.js";
 
 /**
@@ -124,5 +129,81 @@ describe("setLaunchOpening / setLaunchResult", () => {
     setLaunchOpening(launchStatusKey(null, "claude-desktop"));
     resetLaunchStatus();
     expect(launchStatus.value.size).toBe(0);
+  });
+});
+
+describe("the pair status variant (plan 05.1-17)", () => {
+  const PAIR_KEY = launchStatusKey(PROJECT_ID, "claude-codex-pair");
+
+  it("keys the pair apart from the five single actions", () => {
+    expect(PAIR_KEY).toBe(`${PROJECT_ID}:claude-codex-pair`);
+    expect(PAIR_KEY).not.toBe(launchStatusKey(PROJECT_ID, "claude-code"));
+  });
+
+  it("setPairOpening writes both agent lines as opening", () => {
+    setPairOpening(PAIR_KEY);
+    expect(launchStatus.value.get(PAIR_KEY)).toEqual({
+      kind: "pair",
+      claude: { kind: "opening" },
+      codex: { kind: "opening" },
+    });
+  });
+
+  it("setPairResult arms a 6 second clear only when neither line is an error or setup", () => {
+    const timers = fakeTimers();
+    setPairResult(PAIR_KEY, { kind: "success" }, { kind: "success" }, timers);
+    expect(timers.setTimer).toHaveBeenCalledTimes(1);
+    expect(timers.setTimer.mock.calls[0]?.[1]).toBe(SUCCESS_CLEAR_MS);
+    timers.fire(timers.setTimer.mock.results[0]?.value as number);
+    expect(launchStatus.value.has(PAIR_KEY)).toBe(false);
+  });
+
+  it("setPairResult arms nothing while a line is an error or a setup line", () => {
+    const timers = fakeTimers();
+    setPairResult(PAIR_KEY, { kind: "success" }, { kind: "setup" }, timers);
+    setPairResult(PAIR_KEY, { kind: "error", error: "spawn-failed" }, { kind: "success" }, timers);
+    expect(timers.setTimer).not.toHaveBeenCalled();
+    expect(launchStatus.value.get(PAIR_KEY)).toMatchObject({ claude: { kind: "error" } });
+  });
+
+  it("a stale clear timer never wipes a newer pair status", () => {
+    const timers = fakeTimers();
+    setPairResult(PAIR_KEY, { kind: "success" }, { kind: "success" }, timers);
+    const id = timers.setTimer.mock.results[0]?.value as number;
+    setPairOpening(PAIR_KEY);
+    timers.fire(id);
+    expect(launchStatus.value.get(PAIR_KEY)?.kind).toBe("pair");
+  });
+
+  it("latestLaunchStatus reports the pair among a row's actions by recency", () => {
+    setPairOpening(PAIR_KEY);
+    setLaunchOpening(launchStatusKey(PROJECT_ID, "finder"));
+    expect(
+      latestLaunchStatus(launchStatus.value, PROJECT_ID, ["finder", "claude-codex-pair"])?.action,
+    ).toBe("finder");
+    setPairOpening(PAIR_KEY);
+    expect(
+      latestLaunchStatus(launchStatus.value, PROJECT_ID, ["finder", "claude-codex-pair"])?.action,
+    ).toBe("claude-codex-pair");
+  });
+
+  it("clearLauncherErrors clears a pair with an error or setup line and keeps an opening one", () => {
+    const timers = fakeTimers();
+    setPairResult(
+      PAIR_KEY,
+      { kind: "success" },
+      { kind: "error", error: "bridge-outdated" },
+      timers,
+    );
+    clearLauncherErrors();
+    expect(launchStatus.value.has(PAIR_KEY)).toBe(false);
+
+    setPairResult(PAIR_KEY, { kind: "success" }, { kind: "setup" }, timers);
+    clearLauncherErrors();
+    expect(launchStatus.value.has(PAIR_KEY)).toBe(false);
+
+    setPairOpening(PAIR_KEY);
+    clearLauncherErrors();
+    expect(launchStatus.value.get(PAIR_KEY)?.kind).toBe("pair");
   });
 });

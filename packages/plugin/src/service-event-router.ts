@@ -3,6 +3,7 @@ import { adoptApprovalsFromSnapshot, applyApprovalServiceEvent } from "./approva
 import { applyProjectsDelta, applyProjectsSnapshot } from "./projects/projects-state.js";
 import { applyTasksChanged } from "./tasks/events.js";
 import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./widgets/claude-events.js";
+import { adoptCodexSnapshot, applyCodexServiceEvent } from "./widgets/codex-events.js";
 
 /**
  * The appendable fan-out router every phase's own event handling plugs into
@@ -23,12 +24,17 @@ export const EVENT_HANDLERS: Partial<Record<ServiceEventType, (event: ServiceEve
   "approval.upserted": applyApprovalServiceEvent,
   // Phase 6 (D-28): the task index changed; carries a generation.
   "tasks.changed": applyTasksChanged,
+  "codex.sessions.updated": applyCodexServiceEvent,
+  "codex.usage.updated": applyCodexServiceEvent,
+  "codex.tokens.updated": applyCodexServiceEvent,
+  "codex.integration.updated": applyCodexServiceEvent,
 };
 
 export const SNAPSHOT_APPLIERS: ReadonlyArray<(snapshot: SnapshotResponse) => void> = [
   applyProjectsSnapshot,
   adoptClaudeSnapshot,
   adoptApprovalsFromSnapshot,
+  adoptCodexSnapshot,
 ];
 
 /** Routes one event through {@link EVENT_HANDLERS}; an event with no handler is a no-op. */

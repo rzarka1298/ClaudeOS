@@ -45,12 +45,12 @@
 // no-op, and it never fails a run.
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -67,7 +67,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { homedir, tmpdir } from "node:os";
+import { homedir, constants as osConstants, tmpdir } from "node:os";
 import {
   basename,
   delimiter,
@@ -156,7 +156,8 @@ const USAGE_TEXT = `usage:
   codex.mjs resume <session-id> [--timeout-sec N] [-- <extra>]
   codex.mjs watch [--once] [--idle-exit-sec N]
   codex.mjs follow <run-id>
-  codex.mjs tui <run-id>`;
+  codex.mjs tui <run-id>
+  codex.mjs agent <run-id>`;
 
 // ---------------------------------------------------------------------------
 // argument parsing
@@ -302,33 +303,16 @@ function mainCheckoutOf(dir) {
 
 const BRIDGE_STATE = bridge.bridgeStateDir(process.env, homedir());
 
-// In-repo state only where git ignores it, so a run never dirties a checkout.
-// Every kind of file a run writes under <main>/.planning/codex/.
-const STATE_PROBES = [
-  "reports/x-review.json",
-  "reports/x-review.md",
-  "reports/x-task.json",
-  "sessions/x.json",
-  "live/x-task.log",
-  "live/x-task.jsonl",
-  "live/current.log",
-  "live/.current.1.tmp",
-  "pending-resume.json",
-  "x.json.1.tmp",
-].map((p) => `.planning/codex/${p}`);
-
+// In-repo state only where git ignores every kind of file a run writes (bridge.STATE_PROBES);
+// the two candidate directories come from bridge-core, the one place the service mirrors. Only
+// the `git check-ignore` call lives here.
 export function stateDirFor(main) {
-  const r = spawnSync("git", ["-C", main, "check-ignore", "--", ...STATE_PROBES], {
+  const [inRepo, userLevel] = bridge.projectStateCandidates(main, BRIDGE_STATE);
+  const r = spawnSync("git", ["-C", main, "check-ignore", "--", ...bridge.STATE_PROBES], {
     encoding: "utf8",
   });
   const ignored = new Set((r.stdout ?? "").split("\n").filter(Boolean));
-  if (STATE_PROBES.every((p) => ignored.has(p))) return join(main, ".planning", "codex");
-  const name =
-    basename(main)
-      .replace(/[^A-Za-z0-9._-]/g, "_")
-      .slice(0, 40) || "project";
-  const hash = createHash("sha256").update(main).digest("hex").slice(0, 10);
-  return join(BRIDGE_STATE, "projects", `${name}-${hash}`);
+  return bridge.STATE_PROBES.every((p) => ignored.has(p)) ? inRepo : userLevel;
 }
 
 let MAIN = null;
@@ -1492,18 +1476,28 @@ function roleArgs(role, { withSandboxFlag }) {
   ];
 }
 
+// Version of the content-free run records (sessions/<run>.json, pending-resume.json). A record
+// without the field is version 0; readers accept both.
+const RECORD_SCHEMA_VERSION = 1;
+
+// The content-free pending-resume record: ids, role, repository-relative worktree and times only.
+function writePending({ sessionId, id, kind, role, worktree, resetsAt }) {
+  writeJson(PENDING, {
+    schemaVersion: RECORD_SCHEMA_VERSION,
+    sessionId,
+    runId: id,
+    kind,
+    role,
+    worktree: rel(worktree),
+    resetsAt,
+    recordedAt: new Date().toISOString(),
+  });
+}
+
 async function recordLimit({ sessionId, id, kind, role, worktree }) {
   const usage = await currentUsage();
   if (sessionId) {
-    writeJson(PENDING, {
-      sessionId,
-      runId: id,
-      kind,
-      role,
-      worktree: rel(worktree),
-      resetsAt: usage.resetsAt,
-      recordedAt: new Date().toISOString(),
-    });
+    writePending({ sessionId, id, kind, role, worktree, resetsAt: usage.resetsAt });
   }
   say(
     `Codex hit its usage limit mid-run. Stop handing Codex work; resets ${usage.resetsAt ?? "unknown"}.` +
@@ -1722,8 +1716,32 @@ async function cmdReview({ positional, opts, extras }) {
     ...roleArgs("review", { withSandboxFlag: false }),
     ...extras,
   ];
-  const onSession = (sid) =>
+  // Content-free tracking record (D-20): ids, mode, status and times only, never report content.
+  // Written before Codex starts, updated when a session id is announced, finalised below.
+  const trackPath = join(SESSIONS, `${id}.json`);
+  const tracking = {
+    schemaVersion: RECORD_SCHEMA_VERSION,
+    runId: id,
+    kind: "review",
+    role: "review",
+    sessionId: null,
+    worktree: rel(worktree),
+    model: role.model,
+    effort: role.effort,
+    startedAt: new Date().toISOString(),
+    mode: extras.length ? "headless" : "tui",
+    status: "running",
+  };
+  const saveTracking = (patch) => {
+    Object.assign(tracking, patch);
+    writeJson(trackPath, tracking);
+  };
+  saveTracking({});
+  const tuiSession = (sid) => saveTracking({ sessionId: sid, mode: "tui" });
+  const onSession = (sid) => {
+    saveTracking({ sessionId: sid, mode: "headless" });
     openBridgeTab({ id, kind: "review", cwd: worktree, sessionId: sid, liveLog: live.log });
+  };
   const fallback = {};
   const startedMs = Date.now();
   let res = extras.length
@@ -1737,8 +1755,14 @@ async function cmdReview({ positional, opts, extras }) {
         prompt: reviewPrompt(base, head, id),
         timeoutSec,
         live,
+        onSession: tuiSession,
       });
   const mode = res ? "tui" : "headless";
+  // The TUI did not (or could not) finish the run: it continues headless. The id, if any, is the
+  // one the TUI announced; nothing is invented.
+  if (!res) {
+    saveTracking({ mode: "headless", sessionId: fallback.sessionId ?? tracking.sessionId });
+  }
   const fallbackInfo = fallback.reason ? fallbackRecord(fallback) : null;
   if (fallback.reason === "mid-run-inactivity") {
     const resumed = resumeArgs(
@@ -1814,6 +1838,30 @@ async function cmdReview({ positional, opts, extras }) {
     resetsAt = await recordLimit({ sessionId: null, id, kind: "review", role: "review", worktree });
     report.resetsAt = resetsAt;
   }
+  // Tracking: an unavailable or unstructured review is a failed run, never a clean one.
+  const sessionKnown = res.sessionId ?? tracking.sessionId;
+  saveTracking({
+    sessionId: sessionKnown,
+    status: status === "unavailable" || status === "unstructured" ? "failed" : status,
+    resetsAt,
+    finishedAt: report.finishedAt,
+  });
+  if (status === "limit" && sessionKnown) {
+    // A pending record already waiting for a task or resume is never replaced by a review's.
+    const waiting = existsSync(PENDING) ? readJson(PENDING) : null;
+    if (!existsSync(PENDING) || waiting?.kind === "review") {
+      writePending({
+        sessionId: sessionKnown,
+        id,
+        kind: "review",
+        role: "review",
+        worktree,
+        resetsAt,
+      });
+    }
+  } else if (status === "ok" && existsSync(PENDING) && readJson(PENDING)?.kind === "review") {
+    unlinkSync(PENDING);
+  }
   const jsonPath = join(REPORTS, `${id}-review.json`);
   writeJson(jsonPath, report);
   writeFileSync(join(REPORTS, `${id}-review.md`), reviewMarkdown(report));
@@ -1859,6 +1907,7 @@ async function runWorker({
   ]);
   const sessionPath = join(SESSIONS, `${id}.json`);
   const session = {
+    schemaVersion: RECORD_SCHEMA_VERSION,
     runId: id,
     kind,
     role,
@@ -1876,6 +1925,8 @@ async function runWorker({
     openBridgeTab({ id, kind, cwd: worktree, sessionId: sid, liveLog: live.log });
   };
   const tuiSession = (sid) => writeJson(sessionPath, { ...session, sessionId: sid, mode: "tui" });
+  // The first record exists before Codex starts, so a killed wrapper always leaves a trace.
+  writeJson(sessionPath, { ...session, mode: tuiPrompt ? "tui" : "headless" });
   const fallback = {};
   const startedMs = Date.now();
   let res = tuiPrompt
@@ -1893,6 +1944,9 @@ async function runWorker({
     : null;
   session.mode = res ? "tui" : "headless";
   if (fallback.reason) session.fallback = fallbackRecord(fallback);
+  if (tuiPrompt && !res) {
+    writeJson(sessionPath, { ...session, sessionId: fallback.sessionId ?? session.sessionId });
+  }
   if (fallback.reason === "mid-run-inactivity" && resumeFor) {
     const budget = await remainingBudget(
       startedMs,
@@ -1955,7 +2009,8 @@ async function cmdTask({ positional, opts, extras }) {
   const timeoutSec = positiveSeconds(opts.timeoutSec, DEFAULT_TIMEOUT_SEC.task, "--timeout-sec");
   enforceExtras(extras, "task");
   if (!opts.allowDirty) refuseIfDirty(worktree);
-  if (existsSync(PENDING)) {
+  // A review's pending record is advisory (a review is re-run, not resumed) and blocks nothing.
+  if (existsSync(PENDING) && readJson(PENDING)?.kind !== "review") {
     const p = readJson(PENDING);
     fail(
       EXIT.PENDING_RESUME,
@@ -2035,7 +2090,8 @@ function findSession(sessionId) {
     .filter((f) => f.endsWith(".json"))
     .sort()
     .map((f) => readJson(join(SESSIONS, f)))
-    .filter((s) => s?.sessionId === sessionId);
+    // A review's tracking record is not a resumable worker session.
+    .filter((s) => s?.sessionId === sessionId && s?.kind !== "review");
   return hits.at(-1) ?? null;
 }
 
@@ -2141,6 +2197,8 @@ async function cmdFollow({ positional }) {
   const v = bridge.readClaimed(BRIDGE_STATE, positional[0]);
   if (!v.ok) fail(EXIT.USAGE, `cannot follow run ${positional[0]}: ${v.reason}`);
   const req = v.request;
+  // An agent request has no live log: `agent <run-id>` is its only command.
+  if (req.mode === "agent") fail(EXIT.USAGE, `run ${req.runId} is an agent run; nothing to follow`);
   // An extension from before TUI mode runs `follow` for every request; a tui
   // request still gets the interactive Codex, never a log tail.
   if (req.mode === "tui") return cmdTui({ positional });
@@ -2194,6 +2252,103 @@ async function cmdFollow({ positional }) {
     spawnSync(process.env.SHELL || "/bin/zsh", ["-l"], { stdio: "inherit", cwd: req.cwd, env });
   }
   process.exit(EXIT.OK);
+}
+
+// ---------------------------------------------------------------------------
+// agent (run inside the Antigravity tab): Claude Code or Codex, exactly as validated (D-02, D-08)
+
+// The executable the saved launcher row names for each agent. The service writes this file (0600,
+// next to the request queue) before it queues a request; the helper enforces it when it exists and
+// refuses when it exists but cannot be trusted. Absent file: only the shared validation applies.
+//   { "schemaVersion": 1, "claude": "/absolute/path/claude", "codex": "/absolute/path/codex" }
+const AGENT_PINS_FILE = "agent-pins.json";
+
+function readAgentPin(agent) {
+  const file = join(BRIDGE_STATE, AGENT_PINS_FILE);
+  let st;
+  try {
+    st = lstatSync(file);
+  } catch (err) {
+    return err?.code === "ENOENT" ? { ok: true, pin: null } : { ok: false };
+  }
+  const mine = typeof process.getuid !== "function" || st.uid === process.getuid();
+  if (!st.isFile() || st.size > 4096 || !mine || (st.mode & 0o022) !== 0) return { ok: false };
+  const raw = readJson(file);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false };
+  const pin = raw[agent];
+  if (typeof pin !== "string" || !isAbsolute(pin)) return { ok: false };
+  return { ok: true, pin };
+}
+
+async function cmdAgent({ positional }) {
+  if (positional.length !== 1) fail(EXIT.USAGE, USAGE_TEXT);
+  // Every message is fixed text plus, at most, the run id when it has the run id shape.
+  const shown = bridge.RUN_ID_RE.test(positional[0]) ? ` ${positional[0]}` : "";
+  const refuse = (why) => fail(EXIT.USAGE, `agent${shown}: refused, nothing was started (${why})`);
+  const v = bridge.readClaimed(BRIDGE_STATE, positional[0]);
+  const missingExecutable = !v.ok && v.reason === "argv[0] is not an executable file";
+  if (!v.ok) {
+    refuse(
+      missingExecutable
+        ? "the agent executable is missing or not executable"
+        : "the request is missing or failed validation",
+    );
+  }
+  const req = v.request;
+  if (req.mode !== "agent" || req.kind !== "agent") refuse("not an agent run");
+  const pin = readAgentPin(req.agent);
+  if (!pin.ok) refuse("the executable pin file cannot be trusted");
+  if (pin.pin !== null && req.argv[0] !== pin.pin) {
+    refuse("the executable is not the one the launcher settings name");
+  }
+  // The exact argv and environment that will be exec'd go through the shared validator once more,
+  // as a request of their own; what it returns, not what was read, is what runs.
+  const final = bridge.validateRequest(
+    {
+      runId: req.runId,
+      kind: "agent",
+      mode: "agent",
+      agent: req.agent,
+      projectRoot: req.projectRoot,
+      cwd: req.cwd,
+      argv: [...req.argv],
+      env: { ...req.env },
+      sessionId: null,
+      liveLog: null,
+      pid: null,
+      createdAt: req.createdAt,
+      protocol: bridge.PROTOCOL_VERSION,
+    },
+    { stateDir: BRIDGE_STATE, checkAge: false },
+  );
+  if (!final.ok || final.request.argv.join("\0") !== req.argv.join("\0")) {
+    refuse("the final argument list failed validation");
+  }
+  const run = final.request;
+  const env = { ...process.env, ...run.env };
+  // Ctrl-C belongs to the agent: the helper must outlive it to hand the tab on.
+  process.on("SIGINT", () => {});
+  const child = spawnSync(run.argv[0], run.argv.slice(1), {
+    stdio: "inherit",
+    cwd: run.cwd,
+    env,
+    shell: false,
+  });
+  let code = child.status ?? 1;
+  if (child.error) {
+    say(`agent${shown}: the agent could not be started`);
+    code = 127;
+  } else if (child.signal) {
+    say(`agent${shown}: the agent was ended by a signal`);
+    code = 128 + (osConstants.signals[child.signal] ?? 1);
+  }
+  // Keep the tab usable, exactly like follow: hand it to a login shell in the run's directory.
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: test-only knob
+  if (process.env.CODEX_BRIDGE_FOLLOW_SHELL !== "0" && process.stdin.isTTY) {
+    spawnSync(process.env.SHELL || "/bin/zsh", ["-l"], { stdio: "inherit", cwd: run.cwd, env });
+    process.exit(EXIT.OK);
+  }
+  process.exit(code);
 }
 
 // ---------------------------------------------------------------------------
@@ -2350,6 +2505,8 @@ async function main() {
       return cmdFollow(parsed);
     case "tui":
       return cmdTui(parsed);
+    case "agent":
+      return cmdAgent(parsed);
     case "tui-check": {
       // Diagnostics: what the TUI isolation check sees (names + enabled only).
       const env = { ...process.env };

@@ -258,6 +258,14 @@ describe("session reducer — identity and linking (D-21)", () => {
 describe("session reducer — dashboard launches", () => {
   const rows: Row[] = [
     {
+      name: "a registered launch carries the project it was launched for (F7a)",
+      initial: [],
+      evidence: [launchRegistered(R1, at(1), { projectId: "p_alpha" })],
+      check: (o) => {
+        expect(o.only()).toMatchObject({ runId: R1, projectId: "p_alpha" });
+      },
+    },
+    {
       name: "a registered launch is queued, with no PID and no invented session",
       initial: [],
       evidence: [launchRegistered(R1, at(1))],

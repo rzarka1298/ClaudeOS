@@ -9,10 +9,12 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +37,7 @@ if (args[0] === "--list-extensions") {
 } else if (args[0] === "--install-extension") {
   const list = spawnSync("unzip", ["-l", args[1]], { encoding: "utf8" }).stdout;
   fs.writeFileSync(dir + "/vsix-listing.txt", list);
+  fs.writeFileSync(dir + "/vsix-package.json", spawnSync("unzip", ["-p", args[1], "extension/package.json"], { encoding: "utf8" }).stdout);
   fs.writeFileSync(db, "local.codex-bridge\n");
   process.stdout.write("Extension installed.\n");
 }
@@ -214,5 +217,84 @@ describe("install-user-kit", () => {
     );
     const again = k.install(["--claude-config"]);
     expect(again.out).toMatch(/^0 changes$/m);
+  });
+
+  describe("protocol marker and extension version (protocol 2)", () => {
+    const stateOf = (home: string) => join(home, ".local", "state", "codex-bridge");
+
+    it("writes protocol.json (0600, with the kit hash) once, and reports it unchanged afterwards", () => {
+      const k = kit();
+      const first = k.install();
+      expect(first.status).toBe(0);
+      expect(first.out).toMatch(/^changed: protocol marker .*protocol\.json/m);
+      const file = join(stateOf(k.home), "protocol.json");
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      const kitHash = readlinkSync(
+        join(k.home, ".local", "share", "codex-bridge", "current"),
+      ).replace("versions/", "");
+      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+        protocol: 2,
+        capabilities: ["follow", "tui", "agent"],
+        kit: kitHash,
+      });
+      const second = k.install();
+      expect(second.out).toMatch(/^unchanged: protocol marker/m);
+      expect(second.out).not.toMatch(/^changed:/m);
+      expect(second.out).toMatch(/^0 changes$/m);
+    });
+
+    it("--dry-run writes nothing and prints the marker change", () => {
+      const k = kit();
+      const r = k.install(["--dry-run"]);
+      expect(r.status).toBe(0);
+      expect(r.out).toMatch(/^would change: protocol marker/m);
+      expect(existsSync(stateOf(k.home))).toBe(false);
+    });
+
+    it("rewrites a stale marker (older kit hash) and leaves a current one alone", () => {
+      const k = kit();
+      k.install();
+      const file = join(stateOf(k.home), "protocol.json");
+      writeFileSync(file, JSON.stringify({ protocol: 1, capabilities: ["follow"], kit: "old" }));
+      const r = k.install();
+      expect(r.out).toMatch(/^changed: protocol marker/m);
+      expect(JSON.parse(readFileSync(file, "utf8")).protocol).toBe(2);
+    });
+
+    it("packs extension 0.2.0 and re-installs over an extension stamped by the 0.1.0 content", () => {
+      const k = kit();
+      writeFileSync(join(k.bin, "installed.txt"), "local.codex-bridge\n");
+      const share = join(k.home, ".local", "share", "codex-bridge");
+      mkdirSync(share, { recursive: true });
+      writeFileSync(join(share, "extension.sha256"), "0123456789ab\n");
+      const r = k.install();
+      expect(r.status).toBe(0);
+      expect(r.out).toMatch(/changed: Antigravity extension local\.codex-bridge/);
+      expect(k.agCalls().filter((c) => c[0] === "--install-extension")).toHaveLength(1);
+      const pkg = JSON.parse(readFileSync(join(k.bin, "vsix-package.json"), "utf8"));
+      expect(pkg.version).toBe("0.2.0");
+      expect(pkg.description).toMatch(/agent/i);
+      const stamp = readFileSync(join(share, "extension.sha256"), "utf8").trim();
+      expect(stamp).toMatch(/^[0-9a-f]{12}$/);
+      expect(stamp).not.toBe("0123456789ab");
+    });
+
+    it("adds no file to the kit or the extension: the corpus and the simulator stay test-only", () => {
+      const k = kit();
+      k.install();
+      const current = join(k.home, ".local", "share", "codex-bridge", "current");
+      expect(readdirSync(join(current, "antigravity-extension")).sort()).toEqual([
+        "bridge-core.js",
+        "extension.js",
+        "package.json",
+      ]);
+      expect(readdirSync(current).sort()).toEqual([
+        "antigravity-extension",
+        "codex.mjs",
+        "schemas",
+      ]);
+      const listing = readFileSync(join(k.bin, "vsix-listing.txt"), "utf8");
+      expect(listing).not.toMatch(/hostile-corpus|simulator/);
+    });
   });
 });

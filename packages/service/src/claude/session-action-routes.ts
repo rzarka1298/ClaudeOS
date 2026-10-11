@@ -447,6 +447,7 @@ async function guardThenRegister(
     cwd: plan.treeKnown ? plan.cwd : null,
     worktreeRoot,
     permissionMode: plan.planMode ? "plan" : null,
+    projectId: run.projectId,
     at: deps.now().toISOString(),
   });
   return { kind: "registered", runId };

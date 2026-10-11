@@ -8,7 +8,6 @@ import {
   LAUNCHERS_MARK_TESTED_PATH,
   LAUNCHERS_SAVE_PATH,
   LAUNCHERS_TEST_PATH,
-  type LaunchAction,
   type LauncherConfigRefusalBody,
   type LauncherConfigView,
   type LauncherId,
@@ -21,9 +20,11 @@ import {
   type SaveLauncherConfigRequest,
   SaveLauncherConfigRequestSchema,
   StoredClaudeCodeConfigSchema,
+  StoredCodexConfigSchema,
   type StoredLauncherConfig,
   SYSTEM_SETTINGS_OPEN_PATH,
   type TemplateRefusalReason,
+  type TestLauncherId,
   TestLauncherRequestSchema,
 } from "@ccc/domain";
 import { validateCommandTemplate } from "@ccc/launchers";
@@ -34,6 +35,7 @@ import {
   markLauncherTested,
   saveLauncherConfig,
 } from "@ccc/operational-store";
+import type Database from "better-sqlite3";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
 import {
@@ -46,7 +48,7 @@ import {
 } from "../route-kit.js";
 import type { Detector } from "./detection.js";
 import { LAUNCH_CAP_MS } from "./launch-service.js";
-import { openSystemSettingsArgv, testLaunch } from "./launcher-test-launch.js";
+import { codexRowRefusal, openSystemSettingsArgv, testLaunch } from "./launcher-test-launch.js";
 import { toDisplayPath } from "./project-views.js";
 import type { Spawner } from "./spawner.js";
 import { isExecutableFile } from "./terminal-launchers.js";
@@ -77,6 +79,12 @@ import { isExecutableFile } from "./terminal-launchers.js";
  *     Save also refuses an interpreter or launcher shim as the executable
  *     (`executable-not-found`) and any `--settings` argument (`forbidden-flag`)
  *     — wave-5 finding 8; ADR-0024 residual risks.
+ *   - Codex (plan 05.1-21, D-11): the executable resolves like Claude's (a
+ *     Codex candidate id or a typed absolute path) and `[executable, ...args]`
+ *     passes `codexRowRefusal`: basename exactly `codex`, the codex template
+ *     kind (the ban set in every spelling, no config-carrying flag) and the
+ *     per-agent flag allowlist. The stored row is `{ executablePath, args }`
+ *     with no terminal; the refusal carries `template: "codex"`.
  *   - The stored executable is the candidate's SYMLINK path, never its
  *     realpath, so a Claude Code update does not break the launcher (D-21).
  * - A refusal is the one structured body `{ error, reason, index, template? }`
@@ -165,7 +173,7 @@ function isExecutableOf(launchers: LauncherServices): (path: string) => Promise<
 /** Runs the pure validator over `argv` after checking `argv[0]` asynchronously. */
 async function validateTemplate(
   argv: readonly string[],
-  kind: RefusedTemplate,
+  kind: Exclude<RefusedTemplate, "codex">,
   isExecutable: (path: string) => Promise<boolean>,
 ): Promise<{ readonly reason: TemplateRefusalReason; readonly index: number | null } | null> {
   const executable = argv[0];
@@ -214,10 +222,40 @@ function claudeCodeShapeRefusal(
   return settings === -1 ? null : { reason: "forbidden-flag", index: settings };
 }
 
+/**
+ * The Codex save (plan 05.1-21, D-11, A14). The executable is a candidate id
+ * the detector resolves itself (never a path the plugin echoes back,
+ * T-05.1-01) or a typed absolute path; either way it must be an executable
+ * regular file now. The shared `codexRowRefusal` then applies what every
+ * launch applies: the basename is exactly `codex`, the codex template kind
+ * (the ban set in every spelling, no config-carrying flag, only the
+ * project-path placeholder) and the per-agent flag allowlist. The stored row
+ * is `{ executablePath, args }` with NO terminal. The refusal names an enum,
+ * an index and the template, never the argument.
+ */
+async function validateCodexSave(
+  body: Extract<SaveLauncherConfigRequest, { launcherId: "codex" }>,
+  launchers: LauncherServices,
+): Promise<Validation> {
+  const executablePath =
+    body.executable.kind === "candidate"
+      ? launchers.detector.codexCandidatePath(body.executable.candidateId)
+      : body.executable.path;
+  if (executablePath === null) return refused("executable-not-found", 0, "codex");
+  const executableOk = await isExecutableOf(launchers)(executablePath);
+  const refusal = codexRowRefusal([executablePath, ...body.args], executableOk);
+  if (refusal !== null) return refused(refusal.reason, refusal.index, "codex");
+  const config = StoredCodexConfigSchema.safeParse({ executablePath, args: body.args });
+  // Every field was validated above; the schema is the last word on the stored shape.
+  if (!config.success) return refused("executable-not-absolute", 0, "codex");
+  return { ok: true, config: config.data };
+}
+
 async function validateSave(
   body: SaveLauncherConfigRequest,
   launchers: LauncherServices,
 ): Promise<Validation> {
+  if (body.launcherId === "codex") return validateCodexSave(body, launchers);
   if (body.launcherId !== "claude-code") {
     const installed = await launchers.detector.findBundle(body.bundleId);
     if (!installed) return refused("bundle-not-found", null);
@@ -269,6 +307,9 @@ export function launcherConfigView(
     claudeRecord === undefined
       ? null
       : parseStoredLauncherConfig("claude-code", claudeRecord.config);
+  const codexRecord = byId.get("codex");
+  const codex =
+    codexRecord === undefined ? null : parseStoredLauncherConfig("codex", codexRecord.config);
   return {
     antigravity: app("antigravity"),
     "claude-code":
@@ -281,6 +322,17 @@ export function launcherConfigView(
             tested: claudeRecord.tested,
           },
     "claude-desktop": app("claude-desktop"),
+    // Present only once a Codex row exists, so an install that never set Codex
+    // up answers exactly what Phase 4 answered (the member is optional).
+    ...(codex === null || codexRecord === undefined
+      ? {}
+      : {
+          codex: {
+            executableDisplay: toDisplayPath(codex.executablePath, homeDir),
+            args: codex.args,
+            tested: codexRecord.tested,
+          },
+        }),
   };
 }
 
@@ -410,7 +462,21 @@ async function handleSave(
       sendJson(res, 422, validation.refusal);
       return;
     }
+    const previousTerminal =
+      launcherId === "claude-code" ? terminalOf(getLauncherConfig(ctx.store.db, launcherId)) : null;
     saveLauncherConfig(ctx.store.db, launcherId, validation.config);
+    if (launcherId === "claude-code" && previousTerminal !== null) {
+      // Codex shares this row's terminal: a different terminal means the saved Codex
+      // row was never tested there, so its tested status goes (re-saving the same
+      // row also resets it and moves its saved-at, which ends any older pass).
+      const codex = getLauncherConfig(ctx.store.db, "codex");
+      if (
+        codex !== null &&
+        terminalOf(getLauncherConfig(ctx.store.db, launcherId)) !== previousTerminal
+      ) {
+        saveLauncherConfig(ctx.store.db, "codex", codex.config);
+      }
+    }
     launchers.onLaunchersChanged();
     logger.info({ route: LAUNCHERS_SAVE_PATH, launcherId }, "launcher config saved");
     sendJson(res, 200, MUTATION_OK);
@@ -447,6 +513,29 @@ function fingerprint(record: LauncherConfigRecord): string {
   return `${record.updatedAt}\u0000${JSON.stringify(record.config)}`;
 }
 
+/**
+ * The saved row a Test (or its pass) is tied to. Codex has no terminal of its
+ * own (D-11): its Test opens in the claude-code row's terminal, so for Codex
+ * the row identity also carries that terminal. Changing the shared terminal
+ * then changes the identity: a running Test is no longer joined and an older
+ * pass is no longer accepted. Other launchers are their own row.
+ */
+function testedRow(
+  db: Database.Database,
+  launcherId: LauncherId,
+  record: LauncherConfigRecord | null,
+): LauncherConfigRecord | null {
+  if (record === null || launcherId !== "codex") return record;
+  const terminal = terminalOf(getLauncherConfig(db, "claude-code"));
+  return { ...record, updatedAt: `${record.updatedAt}\u0000terminal:${terminal}` };
+}
+
+/** The terminal choice a claude-code row carries, as comparable text ("" when none). */
+function terminalOf(record: LauncherConfigRecord | null): string {
+  const config = record?.config as { terminal?: unknown } | null | undefined;
+  return JSON.stringify(config?.terminal ?? null);
+}
+
 /** A second Test of a launcher whose running Test reads an older saved row (finding 2). */
 export const TEST_ALREADY_RUNNING_BODY: ApiErrorBody = {
   error: "a test of this launcher is already running",
@@ -457,9 +546,9 @@ interface RunningTest {
   readonly rowKey: string;
   readonly result: Promise<LaunchResult>;
 }
-const runningTests = new WeakMap<LauncherServices, Map<LaunchAction, RunningTest>>();
+const runningTests = new WeakMap<LauncherServices, Map<TestLauncherId, RunningTest>>();
 
-function runningTestsOf(launchers: LauncherServices): Map<LaunchAction, RunningTest> {
+function runningTestsOf(launchers: LauncherServices): Map<TestLauncherId, RunningTest> {
   let running = runningTests.get(launchers);
   if (running === undefined) {
     running = new Map();
@@ -496,7 +585,12 @@ export function recordTestOutcome(
 }
 
 function isLauncherId(action: string): action is LauncherId {
-  return action === "antigravity" || action === "claude-code" || action === "claude-desktop";
+  return (
+    action === "antigravity" ||
+    action === "claude-code" ||
+    action === "claude-desktop" ||
+    action === "codex"
+  );
 }
 
 async function handleTest(
@@ -512,7 +606,9 @@ async function handleTest(
   try {
     // The row the Test reads, captured first: a save racing the Test must
     // not let the new configuration inherit this Test's pass.
-    const before = isLauncherId(launcherId) ? getLauncherConfig(ctx.store.db, launcherId) : null;
+    const before = isLauncherId(launcherId)
+      ? testedRow(ctx.store.db, launcherId, getLauncherConfig(ctx.store.db, launcherId))
+      : null;
     const rowKey = before === null ? "" : fingerprint(before);
     const running = runningTestsOf(launchers);
     const inFlight = running.get(launcherId);
@@ -552,7 +648,7 @@ async function handleTest(
 
 /** Fires one Test and records its outcome against the launcher's pass (RR-14). */
 async function runTest(
-  launcherId: LaunchAction,
+  launcherId: TestLauncherId,
   before: LauncherConfigRecord | null,
   launchers: LauncherServices,
   ctx: RouteContext,
@@ -574,7 +670,7 @@ async function runTest(
       launcherId,
       result,
       before,
-      getLauncherConfig(ctx.store.db, launcherId),
+      testedRow(ctx.store.db, launcherId, getLauncherConfig(ctx.store.db, launcherId)),
     );
   }
   return result;
@@ -596,7 +692,7 @@ async function handleMarkTested(
   if (launchers === null) return;
   const launcherId = body.value.launcherId;
   try {
-    const record = getLauncherConfig(ctx.store.db, launcherId);
+    const record = testedRow(ctx.store.db, launcherId, getLauncherConfig(ctx.store.db, launcherId));
     const passed = passedTestsOf(launchers).get(launcherId);
     if (record === null || passed === undefined || passed !== fingerprint(record)) {
       logger.warn(
