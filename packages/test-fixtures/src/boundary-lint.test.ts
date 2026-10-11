@@ -87,6 +87,14 @@ const FIXTURES: readonly Fixture[] = [
     forbiddenImportSpecifier: '"@ccc/adapters"',
     cleanContent: 'export type { RunId } from "@ccc/domain";\n',
   },
+  // The e2e runner element (plan 05.2-02, D-01, E2E-02): e2e may import only
+  // domain, service-api-client, keychain and test-fixtures, so the plugin is
+  // a forbidden target.
+  {
+    file: "e2e/e2e-imports-plugin.ts",
+    forbiddenImportSpecifier: '"@ccc/plugin"',
+    cleanContent: 'export type { RunId } from "@ccc/domain";\n',
+  },
 ];
 
 describe("import-boundary lint fixtures (REPO-03)", () => {
@@ -502,6 +510,104 @@ describe("the approval public door never re-exports the minter (review MAJOR-2)"
   });
 });
 
+// The e2e runner element (plan 05.2-02, D-01, E2E-02, T-05.2-05/06/07). The
+// importer path is virtual (packages/e2e need not exist yet); every target is a
+// REAL file reached by a relative specifier ending in the compiled-style `.js`
+// suffix the local resolver maps to `.ts`. e2e may import exactly domain,
+// service-api-client, keychain and test-fixtures.
+const E2E_IMPORTER = "packages/e2e/src/probe.ts";
+const E2E_ALLOWED: ReadonlyArray<readonly [string, string]> = [
+  ["domain", "../../domain/src/index.js"],
+  ["keychain", "../../keychain/src/index.js"],
+  ["service-api-client", "../../service-api-client/src/index.js"],
+  ["test-fixtures", "../../test-fixtures/src/index.js"],
+];
+const E2E_FORBIDDEN: ReadonlyArray<readonly [string, string]> = [
+  ["service", "../../service/src/logging.js"],
+  ["plugin", "../../plugin/src/index.js"],
+  ["operational-store", "../../operational-store/src/index.js"],
+  ["adapters", "../../adapters/src/index.js"],
+  ["vault-repo", "../../vault-repo/src/index.js"],
+  ["scheduler", "../../scheduler/src/index.js"],
+  ["collectors", "../../collectors/src/index.js"],
+  ["launchers", "../../launchers/src/index.js"],
+];
+
+describe("e2e element policy: four allowed edges, eight forbidden edges (D-01, E2E-02)", () => {
+  for (const [name, specifier] of E2E_ALLOWED) {
+    test(`QUIET: e2e -> ${name}`, async () => {
+      expect(await boundariesFor(E2E_IMPORTER, `import "${specifier}";\n`)).toHaveLength(0);
+    });
+  }
+  for (const [name, specifier] of E2E_FORBIDDEN) {
+    test(`FIRES: e2e -> ${name}`, async () => {
+      const messages = await boundariesFor(E2E_IMPORTER, `import "${specifier}";\n`);
+      expect(messages.length).toBeGreaterThan(0);
+      expect(messages.map((m) => m.ruleId)).toContain("boundaries/dependencies");
+    });
+    test(`quiet half of "e2e -> ${name}": the import replaced by a domain type import`, async () => {
+      expect(await boundariesFor(E2E_IMPORTER, DOMAIN_TYPE_IMPORT)).toHaveLength(0);
+    });
+  }
+});
+
+// e2e is a LEAF (plan 05.2-02, task 2; D-01, T-05.2-06): no other element may
+// import it. The target is the committed e2e-clean fixture, which the exclusive
+// boundary-violations/e2e descriptor classifies as e2e wherever it is imported
+// from. Each FIRES case has a control (a domain type import) that stays quiet.
+const E2E_TARGET = "test-fixtures/boundary-violations/e2e/e2e-clean.js";
+const LEAF_IMPORTERS: ReadonlyArray<readonly [string, string, string]> = [
+  ["service", "packages/service/src/probe.ts", `../../${E2E_TARGET}`],
+  [
+    "test-fixtures",
+    "packages/test-fixtures/src/probe.ts",
+    `../${E2E_TARGET.replace("test-fixtures/", "")}`,
+  ],
+  ["plugin", "packages/plugin/src/probe.ts", `../../${E2E_TARGET}`],
+  ["keychain", "packages/keychain/src/probe.ts", `../../${E2E_TARGET}`],
+  ["domain", "packages/domain/src/probe.ts", `../../${E2E_TARGET}`],
+];
+
+describe("e2e is a leaf: nothing else may import it (D-01, T-05.2-06)", () => {
+  for (const [name, importer, specifier] of LEAF_IMPORTERS) {
+    test(`FIRES: ${name} -> e2e`, async () => {
+      const messages = await boundariesFor(importer, `import "${specifier}";\n`);
+      expect(messages.length).toBeGreaterThan(0);
+      expect(messages.map((m) => m.ruleId)).toContain("boundaries/dependencies");
+    });
+  }
+  for (const [name, importer] of LEAF_IMPORTERS) {
+    test(`quiet half of "${name} -> e2e": no e2e import${name === "domain" ? " (empty file)" : " (a domain type import)"}`, async () => {
+      const code = name === "domain" ? "export {};\n" : DOMAIN_TYPE_IMPORT;
+      expect(await boundariesFor(importer, code)).toHaveLength(0);
+    });
+  }
+  test("QUIET: a service file importing a sibling service file is unchanged", async () => {
+    expect(
+      await boundariesFor(
+        "packages/service/src/probe.ts",
+        'import { createLogger } from "./logging.js";\nexport const l = createLogger;\n',
+      ),
+    ).toHaveLength(0);
+  });
+  test("QUIET: a test-fixtures file importing the service package is unchanged", async () => {
+    expect(
+      await boundariesFor(
+        "packages/test-fixtures/src/probe.ts",
+        'import "../../service/src/logging.js";\n',
+      ),
+    ).toHaveLength(0);
+  });
+  test("QUIET: the service still imports the other previously allowed elements", async () => {
+    expect(
+      await boundariesFor(
+        "packages/service/src/probe.ts",
+        'import "../../keychain/src/index.js";\n',
+      ),
+    ).toHaveLength(0);
+  });
+});
+
 describe("element list and config shape (plan 06-02)", () => {
   type ConfigBlock = Record<string, unknown>;
   interface Descriptor {
@@ -526,6 +632,7 @@ describe("element list and config shape (plan 06-02)", () => {
     "approval-minter",
     "collectors",
     "domain",
+    "e2e",
     "executors",
     "keychain",
     "launchers",
@@ -539,10 +646,28 @@ describe("element list and config shape (plan 06-02)", () => {
     "vault-repo",
   ];
 
-  test("the element descriptors cover exactly the sixteen asserted types", async () => {
+  test("the element descriptors cover exactly the seventeen asserted types", async () => {
     const elements = await loadDescriptors();
     expect([...new Set(elements.map((e) => e.type))].sort()).toEqual(EXPECTED_ELEMENT_TYPES);
-    expect(EXPECTED_ELEMENT_TYPES).toHaveLength(16);
+    expect(EXPECTED_ELEMENT_TYPES).toHaveLength(17);
+  });
+
+  test("e2e is a package element: its source and its node_modules link are both classified", async () => {
+    const patterns = (await loadDescriptors())
+      .filter((e) => e.type === "e2e")
+      .map((e) => e.pattern);
+    expect(patterns).toContain("packages/e2e");
+    expect(patterns).toContain("node_modules/@ccc/e2e");
+    expect(patterns).toContain("boundary-violations/e2e");
+  });
+
+  test("the boundary-violations/e2e fixture descriptor is exclusive and listed after the package descriptors", async () => {
+    const elements = await loadDescriptors();
+    const index = elements.findIndex((e) => e.pattern === "boundary-violations/e2e");
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect((elements[index] as Descriptor & { exclusive?: boolean }).exclusive).toBe(true);
+    expect(index).toBeGreaterThan(elements.findIndex((e) => e.pattern === "packages/domain"));
+    expect(index).toBeGreaterThan(elements.findIndex((e) => e.pattern === "packages/e2e"));
   });
 
   test("the three new types and untrusted are never generated as package descriptors", async () => {
