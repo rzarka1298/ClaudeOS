@@ -108,17 +108,8 @@ export async function startServiceForTest({
 
   liveChildren.add(child);
   child.once("exit", () => liveChildren.delete(child));
-  try {
-    await waitForSocket(socketPath, waitAttempts);
-  } catch (error: unknown) {
-    // The wait failing must never leave the service running (F8): end it unconditionally.
-    child.kill("SIGKILL");
-    if (error instanceof Error)
-      (error as Error & { childPid?: number | undefined }).childPid = child.pid;
-    throw error;
-  }
 
-  return {
+  const handle: TestServiceHandle = {
     pid: child.pid,
     stop(): Promise<void> {
       return new Promise((resolve) => {
@@ -143,6 +134,20 @@ export async function startServiceForTest({
       });
     },
   };
+
+  try {
+    await waitForSocket(socketPath, waitAttempts);
+  } catch (err: unknown) {
+    // The wait failing must never leave the service running (F8): end it unconditionally.
+    child.kill("SIGKILL");
+    // Also hand the pid and the handle to the caller on the error (append-only, 05.2-03) so a
+    // sandbox teardown can account for it; callers that ignore the properties are unaffected.
+    throw Object.assign(err instanceof Error ? err : new Error(String(err)), {
+      childPid: child.pid,
+      handle,
+    });
+  }
+  return handle;
 }
 
 /**

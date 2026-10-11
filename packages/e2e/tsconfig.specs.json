@@ -10,5 +10,5 @@
     "rootDir": ".",
     "types": ["node", "mocha", "@wdio/globals/types", "expect-webdriverio", "wdio-obsidian-service"]
   },
-  "include": ["src", "specs", "smoke", "wdio.smoke.conf.ts"]
+  "include": ["src", "specs", "smoke", "wdio.conf.ts", "wdio.smoke.conf.ts"]
 }
