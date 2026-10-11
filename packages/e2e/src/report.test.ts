@@ -176,6 +176,56 @@ describe("renderReport (Test 6)", () => {
   });
 });
 
+describe("renderReport sanitising (Task 2, Test 7)", () => {
+  const home = ["", "Users", "dana"].join("/");
+  const email = ["dana", "corp.io"].join("@");
+  const hex = "ab12".repeat(12);
+
+  it("removes a home path, an email and a long hex string from every message", () => {
+    const text = renderReport({
+      ...INPUT,
+      homeDir: home,
+      rows: [
+        {
+          number: 5,
+          title: `Probe in ${home}/notes`,
+          runClass: "auto",
+          resolution: {
+            kind: "status",
+            item: 5,
+            status: "fail",
+            reason: "1 test failed",
+            message: `opened ${home}/vault/x.md for ${email} with ${hex}`,
+          },
+        },
+        {
+          number: 2,
+          title: "Owner",
+          runClass: "owner",
+          resolution: {
+            kind: "owner",
+            item: 2,
+            partials: [
+              {
+                title: "[06-UAT#02] partial",
+                state: "failed",
+                durationMs: 3,
+                message: `saw ${email} at ${home}/x`,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(text).not.toContain(home);
+    expect(text).not.toContain(email);
+    expect(text).not.toContain(hex);
+    expect(text).toContain("/Users/USERNAME/vault/x.md");
+    expect(text).toContain("[email]");
+    expect(text).toContain("[hash]");
+  });
+});
+
 describe("resolveReportPath", () => {
   it("puts the report in the phase folder named by the prefix", () => {
     expect(resolveReportPath({ phaseDir: "/repo/.planning/phases/06-x", phasePrefix: "06" })).toBe(

@@ -23,6 +23,8 @@ export interface ReportInput {
   readonly buildHash: string;
   readonly phasePrefix: string;
   readonly rows: readonly ReportRow[];
+  /** The running user's home directory, so the sanitiser can mask it in messages. */
+  readonly homeDir?: string | undefined;
 }
 
 const CELL_MAX_LENGTH = 200;
