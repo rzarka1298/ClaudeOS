@@ -138,6 +138,8 @@ describe("startGuard new-worktree names", () => {
         state: "queued",
         cwd: null,
         worktreeRoot: null,
+        // F7a: the launch knows its project, so the Run is never "Unclassified".
+        projectId,
       });
     } finally {
       await pipeline.stop();
