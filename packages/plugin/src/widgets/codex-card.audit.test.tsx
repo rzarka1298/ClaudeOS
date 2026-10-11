@@ -141,13 +141,13 @@ function refused(reason: keyof typeof REASON_LINES, pausedRuns = headroom.codex.
 }
 
 describe("headroom strip: glyph and word, one reason, paused runs (CODEX-11, D-23)", () => {
-  it("an allow reads a check glyph beside Has headroom, the worst window, and no reason line", () => {
+  it("an allow reads a check glyph beside Has headroom, shows the plan-usage window only once, and no reason line", () => {
     const { container } = render(<CodexHeadroomSection data={data} />);
     const cell = codexCell(container);
     const verdict = cell.querySelector(".ccc-state-heading");
     expect(verdict?.textContent?.replace(/\s+/g, " ").trim()).toBe("✓ Has headroom");
     expect(verdict?.querySelector("[aria-hidden='true']")?.textContent).toBe("✓");
-    expect(cell.textContent).toContain("41% used · Weekly window · 10,080 min");
+    expect(cell.textContent).not.toMatch(/41% used|7-day window|10,080/);
     for (const line of Object.values(REASON_LINES)) expect(cell.textContent).not.toContain(line);
   });
 

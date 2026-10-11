@@ -2987,6 +2987,26 @@ fieldset.ccc-template-rows > legend {
   border-style: dashed;
 }
 
+/* Headroom cells share five rows (label, verdict or figure, reason, source,
+ * paused runs) through a subgrid, so Claude and Codex line up row for row. */
+.ccc-command-center .ccc-headroom-reason {
+  grid-row: 3;
+}
+
+.ccc-command-center .ccc-headroom-observed {
+  grid-row: 4;
+}
+
+.ccc-command-center .ccc-headroom-paused {
+  grid-row: 5;
+}
+
+/* An empty live region stays in the accessibility tree for later announcements
+ * but leaves the panel's flow, so it adds no flex gap. */
+.ccc-launcher-panel .ccc-launch-status:empty {
+  position: absolute;
+}
+
 /* ===== Phase 05.1: Codex card, reserve tick, pair status ===== */
 
 .ccc-command-center .ccc-codex-sections {
@@ -3016,9 +3036,11 @@ fieldset.ccc-template-rows > legend {
 }
 
 .ccc-command-center .ccc-headroom-cell {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ccc-space-xs);
+  display: grid;
+  grid-row: span 5;
+  grid-template-rows: subgrid;
+  align-content: start;
+  row-gap: var(--ccc-space-xs);
   min-width: 0;
   overflow-wrap: anywhere;
 }

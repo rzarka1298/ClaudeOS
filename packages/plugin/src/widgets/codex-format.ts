@@ -95,9 +95,17 @@ const NUMBER = new Intl.NumberFormat("en");
 const PLURAL = new Intl.PluralRules("en");
 const VERSION_SHAPE = /^\d{1,6}(?:\.\d{1,6}){0,3}$/;
 
+const MINUTES_PER_HOUR = 60;
+const MINUTES_PER_DAY = 1440;
+
+/** `7-day window`, `5-hour window`, else the generic `{n} min window`. */
 export function formatCodexWindowLabel(minutes: number | null): string {
   if (minutes === null) return "Usage window";
-  if (minutes === CODEX_WEEKLY_WINDOW_MINUTES) return "Weekly window · 10,080 min";
+  if (minutes === CODEX_WEEKLY_WINDOW_MINUTES) return "7-day window";
+  if (minutes > 0 && minutes % MINUTES_PER_DAY === 0)
+    return `${NUMBER.format(minutes / MINUTES_PER_DAY)}-day window`;
+  if (minutes > 0 && minutes % MINUTES_PER_HOUR === 0)
+    return `${NUMBER.format(minutes / MINUTES_PER_HOUR)}-hour window`;
   return `${NUMBER.format(minutes)} min window`;
 }
 

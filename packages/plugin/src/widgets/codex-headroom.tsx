@@ -2,13 +2,7 @@ import { CODEX_USAGE_LIVE_MAX_AGE_MS } from "@ccc/domain/codex-usage.js";
 import type { Freshness } from "@ccc/domain/freshness.js";
 import type { VNode } from "preact";
 import { FRESHNESS_LABEL, WINDOW_LABEL } from "./claude-usage.js";
-import {
-  CODEX_COPY,
-  formatCodexWindowLabel,
-  headroomReasonLine,
-  pausedRunsLine,
-  verdictLabel,
-} from "./codex-format.js";
+import { CODEX_COPY, headroomReasonLine, pausedRunsLine, verdictLabel } from "./codex-format.js";
 import type { CodexCardData } from "./codex-signals.js";
 import { FRESHNESS_GLYPH } from "./footer.js";
 import { formatAbsoluteTime } from "./relative-time.js";
@@ -25,7 +19,7 @@ function Observation({
   readonly freshness: Freshness;
 }): VNode {
   return (
-    <p className="ccc-list-meta">
+    <p className="ccc-list-meta ccc-headroom-observed">
       {`Source: ${source} · Observed ${formatAbsoluteTime(observedAt)} · `}
       <span aria-hidden="true">{FRESHNESS_GLYPH[freshness]}</span> {FRESHNESS_LABEL[freshness]}
     </p>
@@ -69,14 +63,6 @@ export function CodexHeadroomSection({ data }: { readonly data: CodexCardData })
       observed: formatAbsoluteTime(claude.observedAt),
       freshness: FRESHNESS_LABEL[claude.freshness],
     });
-  if (codex?.verdict === "allow" && codex.worstWindow !== null && codex.observedAt !== null)
-    rows.push({
-      numberLabel: `Codex ${formatCodexWindowLabel(codex.worstWindow.windowMinutes)}: ${formatPercentUsed(codex.worstWindow.usedPercent)}`,
-      source: codex.source === "rollout-fallback" ? CODEX_COPY.tokenSource : CODEX_COPY.usageSource,
-      range: formatCodexWindowLabel(codex.worstWindow.windowMinutes),
-      observed: formatAbsoluteTime(codex.observedAt),
-      freshness: FRESHNESS_LABEL[codex.freshness],
-    });
   const paused = codex
     ? pausedRunsLine(codex.pausedRuns.count, codex.pausedRuns.earliestResetAt, data.nowMs)
     : null;
@@ -111,12 +97,10 @@ export function CodexHeadroomSection({ data }: { readonly data: CodexCardData })
               <span aria-hidden="true">{codex?.verdict === "allow" ? "✓" : "⊘"}</span>{" "}
               <span>{verdictLabel(codex?.verdict ?? "refuse")}</span>
             </p>
-            {codex?.reason ? (
-              <p className="ccc-state-body">{headroomReasonLine(codex.reason)}</p>
-            ) : (
-              codex?.worstWindow && (
-                <p className="ccc-state-body">{`${formatPercentUsed(codex.worstWindow.usedPercent)} · ${formatCodexWindowLabel(codex.worstWindow.windowMinutes)}`}</p>
-              )
+            {codex?.reason && (
+              <p className="ccc-state-body ccc-headroom-reason">
+                {headroomReasonLine(codex.reason)}
+              </p>
             )}
             {codex?.source && codex.observedAt && (
               <Observation
@@ -130,7 +114,7 @@ export function CodexHeadroomSection({ data }: { readonly data: CodexCardData })
               />
             )}
             {paused !== null && (
-              <p className="ccc-list-meta">
+              <p className="ccc-list-meta ccc-headroom-paused">
                 <span aria-hidden="true">‖</span> {paused}
               </p>
             )}

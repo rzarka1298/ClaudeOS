@@ -65,7 +65,7 @@ describe("Codex plan usage", () => {
     expect(meter.getAttribute("aria-valuetext")).toBe("41% used");
     expect(meter.getAttribute("aria-hidden")).toBeNull();
     expect(document.getElementById(meter.getAttribute("aria-labelledby") ?? "")?.textContent).toBe(
-      "Weekly window · 10,080 min",
+      "7-day window",
     );
     expect(
       document.getElementById(meter.getAttribute("aria-describedby") ?? "")?.textContent,
@@ -103,7 +103,7 @@ describe("Codex plan usage", () => {
         <CodexPlanUsageSection usage={available} nowMs={nowMs} />
       </>,
     );
-    getByText("300 min window");
+    getByText("5-hour window");
     getByText("Usage window");
     getByText("Limit: Primary");
     expect(queryByText("Limit: /hidden")).toBeNull();
@@ -226,7 +226,7 @@ describe("Codex plan usage", () => {
     fireEvent.click(getByRole("button", { name: "Source for plan usage" }));
     const panel = container.querySelector(".ccc-source-panel");
     if (panel === null) throw new Error("expected the Source disclosure panel");
-    expect(panel.textContent).toContain("Codex Weekly window · 10,080 min: 41% used");
+    expect(panel.textContent).toContain("Codex 7-day window: 41% used");
     expect(panel.textContent).toContain("Source: Codex app-server");
     expect(panel.textContent).toContain("Freshness: Live");
     expect(panel.textContent).not.toMatch(/[/\\]/);

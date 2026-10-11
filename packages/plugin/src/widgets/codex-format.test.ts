@@ -88,9 +88,15 @@ describe("Codex pure copy and formatting", () => {
     expect(Object.isFrozen(format.CODEX_COPY)).toBe(true);
   });
   it.each([
-    [10080, "Weekly window · 10,080 min"],
-    [300, "300 min window"],
-    [1440, "1,440 min window"],
+    [10080, "7-day window"],
+    [300, "5-hour window"],
+    [60, "1-hour window"],
+    [1440, "1-day window"],
+    [20160, "14-day window"],
+    [45, "45 min window"],
+    [0, "0 min window"],
+    [1500, "25-hour window"],
+    [1501, "1,501 min window"],
     [null, "Usage window"],
   ])("labels the %s minute window", (minutes, label) => {
     expect(format.formatCodexWindowLabel(minutes)).toBe(label);

@@ -139,6 +139,8 @@ async function expectReadyMixed(card: Locator): Promise<void> {
   await expect(card.locator("h4")).toHaveText([...SECTION_HEADINGS]);
   await expect(codexCell(card)).toContainText("Has headroom");
   await expect(section(card, "Plan usage")).toContainText("41% used · resets Sep 29, 4:40 PM");
+  await expect(section(card, "Plan usage")).toContainText("7-day window");
+  await expect(section(card, "Headroom")).not.toContainText("7-day window");
   await expect(section(card, "Plan usage").locator("meter")).toHaveCount(1);
   await expect(section(card, "Plan usage").locator(".ccc-reserve-tick")).toHaveCount(1);
   await expect(section(card, "Current run")).toContainText("Refactor the parser");

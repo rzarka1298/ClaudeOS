@@ -591,6 +591,8 @@ describe("accessibility floors", () => {
     const regions = within(panel()).getAllByRole("status");
     expect(regions).toHaveLength(2);
     expect(regions.map((element) => element.textContent)).toEqual(["", ""]);
+    // Empty regions stay mounted but are :empty, which the stylesheet lifts out of the flex gap.
+    for (const region of regions) expect(region.matches(".ccc-launch-status:empty")).toBe(true);
   });
 
   it("disconnected: every new control is aria-disabled yet still focusable", () => {

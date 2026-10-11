@@ -94,7 +94,8 @@ describe("Phase 05.1 Codex CSS contract", () => {
     );
     expect(bodyFor(`${ROOT} .ccc-headroom-strip`)).toMatch(/gap:\s*var\(--ccc-space-md\)/);
     const cell = bodyFor(`${ROOT} .ccc-headroom-cell`);
-    expect(cell).toMatch(/flex-direction:\s*column/);
+    expect(cell).toMatch(/grid-template-rows:\s*subgrid/);
+    expect(cell).toMatch(/grid-row:\s*span 5/);
     expect(cell).toMatch(/overflow-wrap:\s*anywhere/);
     expect(cell).toMatch(/min-width:\s*0/);
   });
@@ -190,6 +191,21 @@ describe("Phase 05.1 wave-5 visual fixes", () => {
     expect(bodyFor(`${ROOT} .ccc-headroom-strip`)).toMatch(
       /calc\(\(100% - var\(--ccc-space-md\)\) \/ 2\)/,
     );
+  });
+  it("places the reason, source and paused rows on fixed subgrid rows so the columns align", () => {
+    for (const [name, row] of [
+      ["reason", 3],
+      ["observed", 4],
+      ["paused", 5],
+    ] as const)
+      expect(FIX_ALL).toMatch(
+        new RegExp(`\\.ccc-command-center \\.ccc-headroom-${name} \\{\\s*grid-row: ${row};`),
+      );
+  });
+  it("lifts an empty launcher status region out of the flex flow without hiding it", () => {
+    const rule = FIX_ALL.match(/\.ccc-launcher-panel \.ccc-launch-status:empty \{[^}]*\}/);
+    expect(rule?.[0]).toMatch(/position:\s*absolute/);
+    expect(rule?.[0]).not.toMatch(/display:\s*none|visibility|clip|opacity/);
   });
   it("keeps the pair status action clear of the next separator", () => {
     expect(FIX_ALL).toMatch(

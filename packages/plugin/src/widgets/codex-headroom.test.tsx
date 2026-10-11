@@ -64,9 +64,29 @@ it("renders Claude then Codex, the verdict and a read-only strip", () => {
   ).toEqual(["Claude", "Codex"]);
   getByText("Has headroom");
   getByText("62% used · 5-hour window");
-  getByText("41% used · Weekly window · 10,080 min");
+  expect(container.textContent).not.toMatch(/41% used|7-day window|10,080/);
   expect(container.querySelectorAll(".ccc-headroom-cell button")).toHaveLength(0);
   getByRole("button", { name: "Source for headroom" });
+});
+it("gives every row of the two columns a fixed grid row so verdicts and reasons align", () => {
+  const view = render(
+    <CodexHeadroomSection
+      data={{
+        ...data,
+        headroom: {
+          ...headroom,
+          codex: { ...headroom.codex, verdict: "refuse", reason: "paused-run" },
+        },
+      }}
+    />,
+  );
+  const [claude, codex] = [...view.container.querySelectorAll(".ccc-headroom-cell")];
+  expect(claude?.querySelector(".ccc-headroom-reason")).toBeNull();
+  expect(claude?.querySelector(".ccc-headroom-observed")).not.toBeNull();
+  expect(codex?.querySelector(".ccc-headroom-reason")?.textContent).toBe(
+    "A paused run is waiting for its reset.",
+  );
+  expect(codex?.querySelector(".ccc-headroom-observed")).not.toBeNull();
 });
 it("keeps unavailable Claude capacity numeric-free", () => {
   const { container, getByText } = render(
