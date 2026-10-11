@@ -11,8 +11,8 @@ import { setCodexInstalled } from "./codex-install-state.js";
 import {
   codexHeadroom,
   codexIntegration,
-  codexSnapshotEpoch,
   codexSessions,
+  codexSnapshotEpoch,
   codexTokens,
   codexUsage,
   lastCodexEventAt,

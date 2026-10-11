@@ -1,8 +1,8 @@
-import { adoptCodexSnapshot } from "../widgets/codex-events.js";
 import type { ClaudeIntegrationStatus, CodexIntegrationStatus } from "@ccc/domain";
 import { Notice } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { motionMode } from "../motion.js";
+import { adoptCodexSnapshot } from "../widgets/codex-events.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 import type { SettingsCodexSeam } from "./codex-settings.js";
 import {

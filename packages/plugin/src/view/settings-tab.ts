@@ -1,11 +1,11 @@
 import type { ClaudeIntegrationStatus } from "@ccc/domain";
+import { effect } from "@preact/signals";
 import { type App, Notice, type Plugin, PluginSettingTab } from "obsidian";
 import {
   applyMotionPreference,
   type MediaQueryListLike,
   type MotionPreference,
 } from "../motion.js";
-import { effect } from "@preact/signals";
 import { codexIntegration, codexSnapshotEpoch } from "../widgets/codex-signals.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 import { buildCodexGroup, CodexSettingsState, type SettingsCodexSeam } from "./codex-settings.js";
