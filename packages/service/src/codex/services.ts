@@ -188,6 +188,7 @@ function createAbsentCodexHomePort(): CodexHomePort {
     readNamed: () => null,
     listRolloutFiles: () => [],
     listNewestRolloutFiles: () => [],
+    listModifiedRolloutFiles: () => [],
     statRollout: () => null,
     readRolloutRange: () => {
       throw new CodexHomeAccessError("unreadable");

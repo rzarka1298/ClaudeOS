@@ -74,6 +74,7 @@ function explodingPort(): CodexHomePort {
     readNamed: boom,
     listRolloutFiles: boom,
     listNewestRolloutFiles: boom,
+    listModifiedRolloutFiles: boom,
     statRollout: boom,
     readRolloutRange: () => {
       throw new CodexHomeAccessError("unreadable");
