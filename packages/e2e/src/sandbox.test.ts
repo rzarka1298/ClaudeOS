@@ -96,7 +96,9 @@ describe("withSandbox sweep wiring (Task 2, Test 7)", () => {
 
   it("throws a fixed 'another UAT run is active' error without creating anything when the sweep is busy", async () => {
     const table: ProcessEntry[] = [];
-    const sweep = vi.fn(() => Promise.resolve({ status: "busy" as const, runRoot: "/tmp/ccc-uat.abc123" }));
+    const sweep = vi.fn(() =>
+      Promise.resolve({ status: "busy" as const, runRoot: "/tmp/ccc-uat.abc123" }),
+    );
     const body = vi.fn(() => Promise.resolve());
     await expect(withSandbox(baseOptions(table, { sweep }), body)).rejects.toThrow(
       /another UAT run is active/i,

@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } f
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildServiceEnv } from "./isolation-guards.js";
-import { createRunRoot, type RunRootPaths } from "./run-root.js";
 import { SERVICE_ENTRY } from "./repo-paths.js";
+import { createRunRoot, type RunRootPaths } from "./run-root.js";
 import type { Stoppable } from "./sandbox.js";
 import { createServiceFixture } from "./service-fixture.js";
 
@@ -31,7 +31,10 @@ function fakeHandle(pid: number, behaviour: { stopHangs?: boolean } = {}) {
   };
 }
 
-function setup(handles: Array<ReturnType<typeof fakeHandle>>, wait?: (ms: number) => Promise<void>) {
+function setup(
+  handles: Array<ReturnType<typeof fakeHandle>>,
+  wait?: (ms: number) => Promise<void>,
+) {
   const sandbox = {
     paths,
     account: ACCOUNT,
@@ -71,7 +74,9 @@ describe("service fixture start (Test 5)", () => {
   it("adds the three override variables for the expiry kind and passes waitAttempts", async () => {
     const { startService, fixture } = setup([fakeHandle(7002)]);
     await fixture.start({ kind: "expiry", waitAttempts: 600 });
-    const call = startService.mock.calls[0] as unknown as [{ env: Record<string, string>; waitAttempts: number }];
+    const call = startService.mock.calls[0] as unknown as [
+      { env: Record<string, string>; waitAttempts: number },
+    ];
     expect(call[0].env.CCC_ENABLE_TEST_OVERRIDES).toBe("1");
     expect(call[0].env.CCC_APPROVAL_TEST_TTL_MS).toBe("15000");
     expect(call[0].env.CCC_APPROVAL_SWEEP_MS).toBe("500");
@@ -87,7 +92,12 @@ describe("service fixture start (Test 5)", () => {
   it("refuses to start when the sandbox locations resolve to the owner's real folders", async () => {
     const { fixture, startService } = setup([fakeHandle(7005)]);
     const real = createServiceFixture(
-      { paths: { ...paths, runtimeDir: join(base, "home", ".claude-command-center") }, account: ACCOUNT, registerService: vi.fn(), unregister: vi.fn() },
+      {
+        paths: { ...paths, runtimeDir: join(base, "home", ".claude-command-center") },
+        account: ACCOUNT,
+        registerService: vi.fn(),
+        unregister: vi.fn(),
+      },
       { startService, wait: () => new Promise<void>(() => undefined), home: join(base, "home") },
     );
     await expect(real.start({})).rejects.toThrow(/real runtime directory|run root/);
@@ -124,7 +134,9 @@ describe("service fixture stop, restart, reset (Test 6)", () => {
     await fixture.restart();
     expect(first.stop).toHaveBeenCalledTimes(1);
     expect(startService).toHaveBeenCalledTimes(2);
-    const calls = startService.mock.calls as unknown as Array<[{ socketPath: string; env: Record<string, string> }]>;
+    const calls = startService.mock.calls as unknown as Array<
+      [{ socketPath: string; env: Record<string, string> }]
+    >;
     expect(calls[1]?.[0].socketPath).toBe(paths.socketPath);
     expect(calls[1]?.[0].env).toEqual(calls[0]?.[0].env);
     expect(sandbox.registerService).toHaveBeenLastCalledWith(second, SERVICE_ENTRY);
@@ -143,7 +155,13 @@ describe("service fixture stop, restart, reset (Test 6)", () => {
     }
     await fixture.resetData();
     expect(handle.stop).toHaveBeenCalledTimes(1);
-    for (const name of ["operational.db", "operational.db-wal", "operational.db-shm", "logs", "spool"]) {
+    for (const name of [
+      "operational.db",
+      "operational.db-wal",
+      "operational.db-shm",
+      "logs",
+      "spool",
+    ]) {
       expect(existsSync(join(paths.runtimeDir, name))).toBe(false);
     }
     expect(existsSync(join(paths.runtimeDir, "keep.txt"))).toBe(true);
@@ -153,11 +171,15 @@ describe("service fixture stop, restart, reset (Test 6)", () => {
 
   it("surfaces the harness error from a service that never exposes its socket, still handing its handle to teardown", async () => {
     const orphan = fakeHandle(7106);
-    const failure = Object.assign(new Error("Service socket never became reachable"), { handle: orphan });
+    const failure = Object.assign(new Error("Service socket never became reachable"), {
+      handle: orphan,
+    });
     const sandbox = {
       paths,
       account: ACCOUNT,
-      registerService: vi.fn<(handle: Stoppable, marker?: string) => Promise<void>>(() => Promise.resolve()),
+      registerService: vi.fn<(handle: Stoppable, marker?: string) => Promise<void>>(() =>
+        Promise.resolve(),
+      ),
       unregister: vi.fn(),
     };
     const fixture = createServiceFixture(sandbox, {

@@ -194,4 +194,5 @@ export type SweepOutcome =
       accountsDeleted: string[];
       removed: string[];
       stillAlive: string[];
+      errors: string[];
     };

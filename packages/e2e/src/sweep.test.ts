@@ -62,7 +62,11 @@ describe("planSweep (Test 3)", () => {
   });
 
   it("never terminates a recycled pid (different start time) or a marker mismatch", () => {
-    const recycled = planSweep([staleRun([servicePid])], [{ ...serviceRow, start: OTHER_START }], options);
+    const recycled = planSweep(
+      [staleRun([servicePid])],
+      [{ ...serviceRow, start: OTHER_START }],
+      options,
+    );
     expect(recycled.runs[0]?.actions.some((a) => a.type === "terminate")).toBe(false);
     const wrongCommand = planSweep(
       [staleRun([servicePid])],
@@ -73,7 +77,13 @@ describe("planSweep (Test 3)", () => {
   });
 
   it("does not terminate when the ledgered start time or marker is empty", () => {
-    const noStart: LedgerEntry = { kind: "pid", role: "service", pid: 555, start: "", marker: SERVICE_MARKER };
+    const noStart: LedgerEntry = {
+      kind: "pid",
+      role: "service",
+      pid: 555,
+      start: "",
+      marker: SERVICE_MARKER,
+    };
     const noMarker: LedgerEntry = { kind: "pid", role: "service", pid: 555, start: START };
     for (const entry of [noStart, noMarker]) {
       const plan = planSweep([staleRun([entry])], [serviceRow], options);
@@ -82,7 +92,11 @@ describe("planSweep (Test 3)", () => {
   });
 
   it("reports busy and nothing else when the owner process is alive with the same start time", () => {
-    const owner: ProcessEntry = { pid: 100, start: runEntry.kind === "run" ? runEntry.ownerStart : "", command: "node cli.js" };
+    const owner: ProcessEntry = {
+      pid: 100,
+      start: runEntry.kind === "run" ? runEntry.ownerStart : "",
+      command: "node cli.js",
+    };
     const plan = planSweep([staleRun([servicePid])], [owner, serviceRow], options);
     expect(plan.busy).toBe(ROOT);
     expect(plan.runs).toEqual([]);
@@ -120,11 +134,17 @@ describe("planSweep (Test 3)", () => {
     const young: SweepRunInput = { runRoot: ROOT, ageMs: 1000, entries: [] };
     expect(planSweep([young], [], options).busy).toBe(ROOT);
     const old: SweepRunInput = { runRoot: ROOT, ageMs: OLD, entries: null };
-    expect(planSweep([old], [], options).runs[0]?.actions).toEqual([{ type: "remove-root", path: ROOT }]);
+    expect(planSweep([old], [], options).runs[0]?.actions).toEqual([
+      { type: "remove-root", path: ROOT },
+    ]);
   });
 
   it("lists unledgered processes naming the run root for manual cleanup, never signalling them", () => {
-    const stray: ProcessEntry = { pid: 900, start: START, command: `Obsidian --user-data-dir=${ROOT}/wdio` };
+    const stray: ProcessEntry = {
+      pid: 900,
+      start: START,
+      command: `Obsidian --user-data-dir=${ROOT}/wdio`,
+    };
     const plan = planSweep([staleRun([])], [stray], options);
     expect(plan.runs[0]?.manual).toEqual([stray]);
     expect(plan.runs[0]?.actions.some((a) => a.type === "terminate")).toBe(false);
@@ -169,7 +189,11 @@ describe("executeSweep (Test 4)", () => {
 
   it("never signals a recycled pid", async () => {
     const d = deps(() => [{ ...serviceRow, start: OTHER_START }]);
-    const plan = planSweep([staleRun([servicePid])], [{ ...serviceRow, start: OTHER_START }], options);
+    const plan = planSweep(
+      [staleRun([servicePid])],
+      [{ ...serviceRow, start: OTHER_START }],
+      options,
+    );
     await executeSweep(plan, d);
     expect(d.terminate).not.toHaveBeenCalled();
   });
@@ -195,7 +219,10 @@ describe("executeSweep (Test 4)", () => {
   });
 
   it("returns none when there is nothing to do", async () => {
-    const outcome = await executeSweep({ busy: null, runs: [] }, deps(() => []));
+    const outcome = await executeSweep(
+      { busy: null, runs: [] },
+      deps(() => []),
+    );
     expect(outcome).toEqual({ status: "none" });
   });
 

@@ -39,7 +39,13 @@ const ENTRIES: LedgerEntry[] = [
 ];
 
 describe("leak detection (Task 2, Test 2)", () => {
-  const pidEntry: LedgerEntry = { kind: "pid", role: "service", pid: 321, start: "T1", marker: "m" };
+  const pidEntry: LedgerEntry = {
+    kind: "pid",
+    role: "service",
+    pid: 321,
+    start: "T1",
+    marker: "m",
+  };
 
   it("reports a ledgered pid only when the table has the same pid with the same start time", () => {
     expect(findLeaks([pidEntry], [{ pid: 321, start: "T1", command: "x" }])).toEqual([

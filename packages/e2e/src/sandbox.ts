@@ -16,7 +16,9 @@ import {
   readLedger,
   type SweepOutcome,
 } from "./ledger.js";
+import { readProcessTable } from "./process-table.js";
 import { createRunRoot, type RunRootPaths, removeRunRoot } from "./run-root.js";
+import { runStaleSweep } from "./sweep.js";
 
 /**
  * withSandbox (05.2-03, D-05, D-06): create the guarded run root, ledger the run and its
@@ -44,6 +46,8 @@ export interface SandboxHandle {
   registerChild(role: string, handle: Stoppable, marker?: string): Promise<void>;
   registerAccount(account: string): Promise<void>;
   registerDir(path: string): Promise<void>;
+  /** Drops a handle that has already exited so teardown does not wait on it again. */
+  unregister(handle: Stoppable): void;
   readTable(): Promise<ProcessEntry[]>;
 }
 
@@ -101,7 +105,7 @@ function isStrictlyInside(outer: string, inner: string): boolean {
 }
 
 /** SIGTERM through the handle, then kill after the deadline when it has not exited. */
-async function stopWithDeadline(
+export async function stopWithDeadline(
   handle: Stoppable,
   wait: (ms: number) => Promise<void>,
   deadlineMs: number,
@@ -137,23 +141,22 @@ export async function withSandbox<T>(
   }
 
   const base = options.base ?? DEFAULT_RUN_BASE;
-  const readTable = options.readTable ?? (() => Promise.resolve<ProcessEntry[]>([]));
+  const readTable = options.readTable ?? (() => readProcessTable());
   const deleteAccount = options.deleteAccount ?? ((account: string) => deleteUatAccount(account));
   const wait = options.wait ?? realWait;
   const deadlineMs = options.stopDeadlineMs ?? STOP_DEADLINE_MS;
   const ownerPid = options.ownerPid ?? process.pid;
   const now = options.now ?? (() => new Date());
 
-  const sweep: SweepOutcome = options.sweep
-    ? await options.sweep({
-        base,
-        home: options.home,
-        readTable,
-        deleteAccount,
-        wait,
-        selfPid: ownerPid,
-      })
-    : { status: "none" };
+  const sweepFn: SweepFn = options.sweep ?? runStaleSweep;
+  const sweep: SweepOutcome = await sweepFn({
+    base,
+    home: options.home,
+    readTable,
+    deleteAccount,
+    wait,
+    selfPid: ownerPid,
+  });
   if (sweep.status === "busy") {
     throw new Error("Another UAT run is active; wait for it to finish or stop it first.");
   }
@@ -198,6 +201,10 @@ export async function withSandbox<T>(
       if (accounts.has(extra)) return;
       accounts.add(extra);
       appendLedger(paths.ledgerPath, { kind: "account", account: extra });
+    },
+    unregister(handle) {
+      const at = processes.findIndex((entry) => entry.handle === handle);
+      if (at >= 0) processes.splice(at, 1);
     },
     async registerDir(path) {
       if (!isStrictlyInside(paths.root, path)) {

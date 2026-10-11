@@ -79,9 +79,7 @@ export async function startServiceForTest({
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  await waitForSocket(socketPath, waitAttempts);
-
-  return {
+  const handle: TestServiceHandle = {
     pid: child.pid,
     stop(): Promise<void> {
       return new Promise((resolve) => {
@@ -100,6 +98,16 @@ export async function startServiceForTest({
       });
     },
   };
+
+  try {
+    await waitForSocket(socketPath, waitAttempts);
+  } catch (err: unknown) {
+    // The spawned service is still running when its socket never answers. Hand its handle to
+    // the caller on the error (append-only, 05.2-03) so a sandbox teardown can stop it; callers
+    // that ignore the property behave exactly as before.
+    throw Object.assign(err instanceof Error ? err : new Error(String(err)), { handle });
+  }
+  return handle;
 }
 
 /**
