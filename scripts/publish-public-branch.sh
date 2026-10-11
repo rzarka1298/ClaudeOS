@@ -143,6 +143,9 @@ if [ -z "$REVS" ]; then
   echo "ERROR: filtered history is empty — refusing to produce a public branch." >&2
   exit 1
 fi
+REV_BATCHES="$WORK/rev-batches"
+rm -rf "$REV_BATCHES" && mkdir -p "$REV_BATCHES"
+printf '%s\n' $REVS | split -l 200 - "$REV_BATCHES/revs."
 
 # Failures name the denylist LINE NUMBER, never the pattern: the whole
 # reason the list is untracked is that the patterns are themselves the
@@ -155,10 +158,21 @@ while IFS= read -r pattern; do
   # Content of every blob in every rewritten commit. `git grep` exits 0 on a
   # match, 1 on no match, and >1 on an ERROR (a malformed ERE, for one) --
   # so the three are distinguished rather than collapsed into a boolean.
+  # Searched in batches of revisions: one `git grep` over every revision at
+  # once grew past the machine's memory once the history reached a few
+  # thousand commits (killed with 137). Same revisions, same blobs searched;
+  # the first match or error stops the scan.
+  grep_status=1
   set +e
-  # shellcheck disable=SC2086
-  git grep -qE -- "$pattern" $REVS
-  grep_status=$?
+  for batch in "$REV_BATCHES"/*; do
+    # shellcheck disable=SC2046
+    git grep -qE -- "$pattern" $(cat "$batch")
+    batch_status=$?
+    if [ "$batch_status" -ne 1 ]; then
+      grep_status=$batch_status
+      break
+    fi
+  done
   set -e
   if [ "$grep_status" -eq 0 ]; then
     echo "ERROR: denylist line $line_no matches filtered CONTENT — refusing." >&2
