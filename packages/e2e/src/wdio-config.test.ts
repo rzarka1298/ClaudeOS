@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildWdioEnv } from "./isolation-guards.js";
+import type { LaunchFs } from "./launch-options.js";
 import type { RunRootPaths } from "./run-root.js";
 import { loadRunContext } from "./spec-context.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
@@ -32,7 +33,14 @@ const paths: RunRootPaths = {
 const env = (profile: "standard" | "full" = "standard"): Record<string, string> =>
   buildWdioEnv(paths, { account: "ccc-uat-0123abcd", profile });
 
-const opts = { base: BASE, home: HOME };
+// The run root above is fictional, so realpath is the identity and the stage lists as the three
+// plugin files; the real-filesystem behaviour is covered in launch-options-canonical.test.ts.
+const FAKE_FS: LaunchFs = {
+  realpathSync: (path) => path,
+  readdirSync: () => ["main.js", "manifest.json", "styles.css"],
+};
+
+const opts = { base: BASE, home: HOME, fs: FAKE_FS };
 
 interface CapabilityShape {
   "wdio:obsidianOptions": { vault: string; copy: boolean; appVersion: string; binaryPath?: string };

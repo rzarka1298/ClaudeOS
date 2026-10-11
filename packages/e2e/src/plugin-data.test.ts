@@ -163,7 +163,8 @@ describe("seedPluginData and links (Codex re-review finding 1)", () => {
         }),
       ).toThrow(/symbolic link/);
       expect(readdirSync(join(owner, "plugins", PLUGIN_ID))).toEqual([]);
-      if (linkAt === "data-json") expect(readFileSync(join(owner, "data.json"), "utf8")).toBe("owner");
+      if (linkAt === "data-json")
+        expect(readFileSync(join(owner, "data.json"), "utf8")).toBe("owner");
     }
   });
 });

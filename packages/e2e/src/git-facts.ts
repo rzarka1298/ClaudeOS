@@ -36,9 +36,9 @@ const defaultExec: ExecFile = async (file, args, options) => {
 const FULL_HASH = /^[0-9a-f]{40}$/;
 const COMMIT_ISH = /^[0-9a-f]{7,40}$/;
 
-async function run(exec: ExecFile, cwd: string, args: readonly string[]): Promise<string | null> {
+async function run(runGit: ExecFile, cwd: string, args: readonly string[]): Promise<string | null> {
   try {
-    const { stdout } = await exec("git", args, { cwd });
+    const { stdout } = await runGit("git", args, { cwd });
     return stdout;
   } catch {
     return null;

@@ -23,7 +23,23 @@ interface Finding {
 
 const GUARD_MODULE = "src/isolation-guards.ts";
 const GUARD_MODULE_TEST = "src/isolation-guards.test.ts";
-const REGION_CAPTURE_FILES = ["src/screenshots.ts", "specs/notification-look.e2e.ts"];
+const REGION_CAPTURE_FILES = [
+  "src/screenshots.ts",
+  "src/screenshots.test.ts",
+  "specs/notification-look.e2e.ts",
+];
+/**
+ * Files that name the owner's live socket path only to REFUSE it: the isolation guards, the
+ * environment check and the vault plugin-data writer, each with its test. Exact paths only.
+ */
+const LIVE_SOCKET_REFUSAL_FILES = [
+  GUARD_MODULE,
+  GUARD_MODULE_TEST,
+  "src/uat-env.ts",
+  "src/uat-env.test.ts",
+  "src/vault-plugin-data.ts",
+  "src/vault-plugin-data.test.ts",
+];
 
 interface LineRule {
   id: string;
@@ -41,7 +57,7 @@ const LINE_RULES: LineRule[] = [
   {
     id: "owner-runtime-or-claude-path",
     pattern: /\.claude-command-center|["'`/]\.claude(["'`/]|$)/,
-    allowedFiles: [GUARD_MODULE, GUARD_MODULE_TEST],
+    allowedFiles: LIVE_SOCKET_REFUSAL_FILES,
   },
   { id: "open-command", pattern: /(spawn|execFile)\w*\(\s*["'`]open["'`]/ },
   { id: "shell-option", pattern: /(^|[^A-Za-z0-9_.])["']?shell["']?\s*:\s*(?!false\b)(?=\S)/ },

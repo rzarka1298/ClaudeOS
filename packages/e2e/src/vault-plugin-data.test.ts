@@ -247,7 +247,10 @@ describe("isolatePluginData refuses a link on the way to data.json (Codex re-rev
     const { runRoot, vault, socket } = setup();
     const calls: string[] = [];
     const spy: PluginDataFs = {
-      readFile: (path) => (calls.push(`read ${path}`), null),
+      readFile: (path) => {
+        calls.push(`read ${path}`);
+        return null;
+      },
       writeFileAtomic: (path) => void calls.push(`write ${path}`),
       mkdirp: (path) => void calls.push(`mkdirp ${path}`),
       isSymlink: (path) => path.endsWith("plugins"),

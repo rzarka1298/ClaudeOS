@@ -1,6 +1,6 @@
 import { join, resolve, sep } from "node:path";
 import { assertRunRootShape } from "./isolation-guards.js";
-import { buildLaunchCapabilities, type LaunchCapability } from "./launch-options.js";
+import { buildLaunchCapabilities, type LaunchCapability, type LaunchFs } from "./launch-options.js";
 import { parseProfile } from "./profile.js";
 import { REPO_ROOT } from "./repo-paths.js";
 import { SPIKE_DECISIONS, type SpikeDecisions } from "./spike-decisions.js";
@@ -47,6 +47,8 @@ export interface WdioConfigOptions {
   home?: string | undefined;
   decisions?: SpikeDecisions | undefined;
   cacheDir?: string | undefined;
+  /** Tests only: realpath and readdir for the launch guards; defaults to the real filesystem. */
+  fs?: LaunchFs | undefined;
 }
 
 const NOT_RUNNER =
@@ -88,6 +90,7 @@ export function buildWdioConfig(
     runRoot,
     cacheDir,
     ...(options.home === undefined ? {} : { homeDir: options.home }),
+    ...(options.fs === undefined ? {} : { fs: options.fs }),
   };
 
   const capabilities: WdioCapability[] = buildLaunchCapabilities({
