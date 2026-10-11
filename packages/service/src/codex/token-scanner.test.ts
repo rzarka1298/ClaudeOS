@@ -186,7 +186,12 @@ describe("Task 1 (tracer): one rollout with per-turn records is scanned once, co
     await h.scanner.scanFile({ path: h.rollouts.home.rolloutPath(DAY, NAME) });
 
     expect(outcome.completed).toBe(false);
-    expect(h.spy.calls).toEqual({ listRolloutFiles: 0, statRollout: 0, readRolloutRange: 0 });
+    expect(h.spy.calls).toEqual({
+      listRolloutFiles: 0,
+      listModifiedRolloutFiles: 0,
+      statRollout: 0,
+      readRolloutRange: 0,
+    });
     expect(usageRows(h.temp.db)).toHaveLength(0);
     expect(cursorRows(h.temp.db)).toHaveLength(0);
     const { ranges } = h.scanner.summary();
@@ -583,7 +588,12 @@ describe("Task 2: recognition, the held verdict and the parser reset", () => {
     h.spy.reset();
     const again = await h.scanner.sweep();
     expect(again.held).toBe(true);
-    expect(h.spy.calls).toEqual({ listRolloutFiles: 0, statRollout: 0, readRolloutRange: 0 });
+    expect(h.spy.calls).toEqual({
+      listRolloutFiles: 0,
+      listModifiedRolloutFiles: 0,
+      statRollout: 0,
+      readRolloutRange: 0,
+    });
 
     h.restart();
     const afterRestart = await h.scanner.sweep();
@@ -803,7 +813,12 @@ describe("Task 2: scheduling, subscriber gating and publication", () => {
     h.state.subscribers = 0;
     h.timers.tick();
     await h.scanner.idle();
-    expect(h.spy.calls).toEqual({ listRolloutFiles: 0, statRollout: 0, readRolloutRange: 0 });
+    expect(h.spy.calls).toEqual({
+      listRolloutFiles: 0,
+      listModifiedRolloutFiles: 0,
+      statRollout: 0,
+      readRolloutRange: 0,
+    });
 
     h.state.subscribers = 1;
     h.timers.tick();

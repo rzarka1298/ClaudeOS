@@ -130,7 +130,8 @@ export interface TokenStoreOps {
 
 export interface TokenScannerDeps {
   readonly db: Database.Database;
-  readonly port: Pick<CodexHomePort, "listRolloutFiles" | "statRollout" | "readRolloutRange">;
+  readonly port: Pick<CodexHomePort, "listRolloutFiles" | "statRollout" | "readRolloutRange"> &
+    Partial<Pick<CodexHomePort, "listModifiedRolloutFiles">>;
   readonly logger: TokenScannerLogger;
   readonly now: () => Date;
   /** The local time zone ranges and covered days are computed in (D-45). */
@@ -625,8 +626,14 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
 
     const nowMs = deps.now().getTime();
     let refs: readonly RolloutRef[];
+    let datedCount = 0;
     try {
-      refs = port.listRolloutFiles({ from: nowMs - CODEX_LISTING_DAYS * DAY_MS, to: nowMs });
+      const range = { from: nowMs - CODEX_LISTING_DAYS * DAY_MS, to: nowMs };
+      refs = port.listRolloutFiles(range);
+      datedCount = refs.length;
+      // Threads dated before the window but appended to inside it (W1): same caps, same semantics.
+      const modified = port.listModifiedRolloutFiles?.(range) ?? [];
+      if (modified.length > 0) refs = [...refs, ...modified];
     } catch (err: unknown) {
       logger.warn(
         { reason: err instanceof CodexHomeAccessError ? err.code : "list-failed" },
@@ -634,7 +641,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       );
       return none;
     }
-    const truncated = refs.length >= MAX_ROLLOUT_LIST;
+    const truncated = datedCount >= MAX_ROLLOUT_LIST || refs.length >= MAX_ROLLOUT_LIST;
     if (truncated)
       logger.warn({ cap: refs.length }, "codex rollout listing truncated; coverage held");
 
@@ -647,13 +654,15 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     let stopped = false;
     let notScanned = 0;
     let truncatedSources = 0;
-    for (const ref of refs) {
+    for (const [position, ref] of refs.entries()) {
       if (!alive()) {
         stopped = true;
         break;
       }
+      // Only the dated window decides which days may be marked covered; a rollout found by its
+      // modification time is scanned (and can fail the sweep) but never widens the claim.
       const day = dayOfPath(ref.path);
-      if (day !== null && (oldest === null || day < oldest)) oldest = day;
+      if (position < datedCount && day !== null && (oldest === null || day < oldest)) oldest = day;
       let outcome: ScanOutcome;
       try {
         outcome = await scanOne(ref, gen, budget);

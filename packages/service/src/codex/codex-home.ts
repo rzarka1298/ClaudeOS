@@ -141,6 +141,15 @@ export interface CodexHomePort {
     range: { readonly from: number; readonly to: number },
     limit: number,
   ): readonly RolloutRef[];
+  /**
+   * Rollouts in dated folders OLDER than the listing range whose modification time is at or after
+   * `range.from`: a thread created long ago and appended to today. Read-only, newest folder first,
+   * bounded by the list cap and a folder-visit cap.
+   */
+  listModifiedRolloutFiles(range: {
+    readonly from: number;
+    readonly to: number;
+  }): readonly RolloutRef[];
   statRollout(ref: RolloutRef): { readonly size: number; readonly mtimeMs: number } | null;
   readRolloutRange(ref: RolloutRef, offset: number, maxBytes: number): BoundedRead;
   /** The contained real path of a sessions file, or null for anything not openable. */
@@ -453,6 +462,84 @@ export function createCodexHomePort(options: {
         for (const name of names) {
           if (found.length >= cap) return found;
           found.push({ path: join(dir, name) });
+        }
+      }
+      return found;
+    },
+
+    listModifiedRolloutFiles(range: {
+      readonly from: number;
+      readonly to: number;
+    }): readonly RolloutRef[] {
+      const { from, to } = range;
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) {
+        throw new CodexHomeAccessError("bad-argument");
+      }
+      // Days inside the dated window are the dated listing's job; only older folders are walked.
+      const firstDay = Math.floor(from / DAY_MS) - 1;
+      const sessions = realSessions();
+      if (sessions === null) return [];
+      const subdirs = (dir: string, pattern: RegExp): string[] => {
+        let resolved: string;
+        try {
+          resolved = fs.realpath(dir);
+        } catch (error) {
+          if (isMissing(error)) return [];
+          throw unreadable();
+        }
+        if (resolved !== sessions && !checkPathContainmentResolved(resolved, sessions).contained) {
+          return [];
+        }
+        let entries: readonly CodexDirEntry[];
+        try {
+          entries = fs.readDir(dir);
+        } catch (error) {
+          if (isMissing(error)) return [];
+          throw unreadable();
+        }
+        return entries
+          .filter((entry) => !entry.isFile && pattern.test(entry.name))
+          .map((entry) => entry.name)
+          .sort()
+          .reverse();
+      };
+      const found: RolloutRef[] = [];
+      let visited = 0;
+      for (const year of subdirs(join(root, SESSIONS_DIR), /^\d{4}$/)) {
+        for (const month of subdirs(join(root, SESSIONS_DIR, year), /^\d{2}$/)) {
+          for (const dom of subdirs(join(root, SESSIONS_DIR, year, month), /^\d{2}$/)) {
+            const dayStart = Date.UTC(Number(year), Number(month) - 1, Number(dom));
+            if (Math.floor(dayStart / DAY_MS) >= firstDay) continue;
+            visited += 1;
+            if (visited > MAX_ROLLOUT_LIST_DAYS * 10) return found;
+            const dir = join(root, SESSIONS_DIR, year, month, dom);
+            let entries: readonly CodexDirEntry[];
+            try {
+              entries = fs.readDir(dir);
+            } catch (error) {
+              if (isMissing(error)) continue;
+              throw unreadable();
+            }
+            const names = entries
+              .filter(
+                (entry) =>
+                  entry.isFile && ROLLOUT_NAME.test(entry.name) && !entry.name.includes(".."),
+              )
+              .map((entry) => entry.name)
+              .sort()
+              .reverse();
+            for (const name of names) {
+              if (found.length >= MAX_ROLLOUT_LIST) return found;
+              let mtimeMs: number;
+              try {
+                mtimeMs = fs.stat(join(dir, name)).mtimeMs;
+              } catch (error) {
+                if (isMissing(error)) continue;
+                throw unreadable();
+              }
+              if (mtimeMs >= from) found.push({ path: join(dir, name) });
+            }
+          }
         }
       }
       return found;

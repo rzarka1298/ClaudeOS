@@ -331,7 +331,11 @@ export function dumpCodexTables(db: Database.Database): string {
 
 // --- A recording view over the real port ----------------------------------------
 
-export type PortMethods = "listRolloutFiles" | "statRollout" | "readRolloutRange";
+export type PortMethods =
+  | "listRolloutFiles"
+  | "listModifiedRolloutFiles"
+  | "statRollout"
+  | "readRolloutRange";
 
 export interface SpyPort {
   readonly port: Pick<CodexHomePort, PortMethods>;
@@ -343,6 +347,7 @@ export interface SpyPort {
 export function spyOnPort(real: Pick<CodexHomePort, PortMethods>): SpyPort {
   const calls: Record<PortMethods, number> = {
     listRolloutFiles: 0,
+    listModifiedRolloutFiles: 0,
     statRollout: 0,
     readRolloutRange: 0,
   };
@@ -352,6 +357,7 @@ export function spyOnPort(real: Pick<CodexHomePort, PortMethods>): SpyPort {
     bytesRead: () => bytes,
     reset() {
       calls.listRolloutFiles = 0;
+      calls.listModifiedRolloutFiles = 0;
       calls.statRollout = 0;
       calls.readRolloutRange = 0;
       bytes = 0;
@@ -360,6 +366,10 @@ export function spyOnPort(real: Pick<CodexHomePort, PortMethods>): SpyPort {
       listRolloutFiles(range) {
         calls.listRolloutFiles += 1;
         return real.listRolloutFiles(range);
+      },
+      listModifiedRolloutFiles(range) {
+        calls.listModifiedRolloutFiles += 1;
+        return real.listModifiedRolloutFiles(range);
       },
       statRollout(ref) {
         calls.statRollout += 1;
