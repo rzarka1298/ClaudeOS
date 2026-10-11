@@ -4,8 +4,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -91,6 +93,28 @@ describe("copyStore (Test 5)", () => {
     writeFileSync(join(dest, "operational-copy.db-wal"), "STALE");
     copyStore({ runtimeDir: runtime, destDir: dest });
     expect(existsSync(join(dest, "operational-copy.db-wal"))).toBe(false);
+  });
+
+  it("refuses a destination folder or copy file that is a link, leaving the target alone", () => {
+    const runtime = join(root, "runtime");
+    mkdirSync(runtime);
+    writeFileSync(join(runtime, "operational.db"), "DB3");
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(elsewhere);
+    writeFileSync(join(elsewhere, "operational-copy.db-wal"), "KEEP");
+    symlinkSync(elsewhere, join(root, "dest-link"));
+    expect(() => copyStore({ runtimeDir: runtime, destDir: join(root, "dest-link") })).toThrow(
+      /symbolic link/,
+    );
+    expect(readdirSync(elsewhere)).toEqual(["operational-copy.db-wal"]);
+    expect(readFileSync(join(elsewhere, "operational-copy.db-wal"), "utf8")).toBe("KEEP");
+
+    const dest = join(root, "dest2");
+    mkdirSync(dest);
+    writeFileSync(join(elsewhere, "target.db"), "OWNER");
+    symlinkSync(join(elsewhere, "target.db"), join(dest, "operational-copy.db"));
+    expect(() => copyStore({ runtimeDir: runtime, destDir: dest })).toThrow(/symbolic link/);
+    expect(readFileSync(join(elsewhere, "target.db"), "utf8")).toBe("OWNER");
   });
 
   it("throws a fixed message when the source database is missing", () => {

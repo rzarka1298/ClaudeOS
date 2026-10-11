@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { assertNoSymlinkBelow, isSymlinkOnDisk, MSG_PATH_LINK } from "./canonical-path.js";
 
 /**
  * Plugin data seeding and plugin staging for the sandbox Obsidian (05.2-04, D-05, D-07).
@@ -111,6 +112,9 @@ export function seedPluginData(input: {
 }): string {
   assertPluginDataKeys(input.data);
   if (!isStrictlyInside(input.runRoot, input.vaultDir)) throw new Error(OUTSIDE_RUN_ROOT);
+  // A link at .obsidian, plugins, the plugin folder or data.json would redirect the write.
+  const relative = join(".obsidian", "plugins", PLUGIN_ID, "data.json");
+  assertNoSymlinkBelow(realResolve(input.vaultDir), relative);
   const pluginDir = join(input.vaultDir, ".obsidian", "plugins", PLUGIN_ID);
   mkdirSync(pluginDir, { recursive: true, mode: 0o700 });
   const target = join(pluginDir, "data.json");
@@ -132,6 +136,7 @@ export function stagePlugin(input: { buildDir: string; stageDir: string }): void
   if (existsSync(input.stageDir) && readdirSync(input.stageDir).length > 0) {
     throw new Error("The plugin stage folder is not empty.");
   }
+  if (isSymlinkOnDisk(input.stageDir)) throw new Error(MSG_PATH_LINK);
   mkdirSync(input.stageDir, { recursive: true, mode: 0o700 });
   chmodSync(input.stageDir, 0o700);
   for (const name of PLUGIN_STAGE_FILES) {

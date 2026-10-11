@@ -7,6 +7,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -131,6 +132,42 @@ describe("seedPluginData (Test 1)", () => {
   });
 });
 
+describe("seedPluginData and links (Codex re-review finding 1)", () => {
+  it("refuses a plugin folder or data.json that is a link, leaving the target alone", () => {
+    for (const linkAt of ["plugin-folder", "data-json", "obsidian"]) {
+      const vault = join(root, "vaults", `v-${linkAt}`);
+      const owner = join(root, `owner-${linkAt}`);
+      mkdirSync(join(owner, "plugins", PLUGIN_ID), { recursive: true });
+      mkdirSync(vault, { recursive: true });
+      if (linkAt === "obsidian") {
+        symlinkSync(owner, join(vault, ".obsidian"));
+      } else if (linkAt === "plugin-folder") {
+        mkdirSync(join(vault, ".obsidian", "plugins"), { recursive: true });
+        symlinkSync(
+          join(owner, "plugins", PLUGIN_ID),
+          join(vault, ".obsidian", "plugins", PLUGIN_ID),
+        );
+      } else {
+        mkdirSync(join(vault, ".obsidian", "plugins", PLUGIN_ID), { recursive: true });
+        writeFileSync(join(owner, "data.json"), "owner");
+        symlinkSync(
+          join(owner, "data.json"),
+          join(vault, ".obsidian", "plugins", PLUGIN_ID, "data.json"),
+        );
+      }
+      expect(() =>
+        seedPluginData({
+          runRoot: root,
+          vaultDir: vault,
+          data: buildPluginData({ socketPath: SOCKET }),
+        }),
+      ).toThrow(/symbolic link/);
+      expect(readdirSync(join(owner, "plugins", PLUGIN_ID))).toEqual([]);
+      if (linkAt === "data-json") expect(readFileSync(join(owner, "data.json"), "utf8")).toBe("owner");
+    }
+  });
+});
+
 describe("stagePlugin (Test 2)", () => {
   function makeBuild(extra: Record<string, string> = {}): string {
     const build = join(root, "build");
@@ -167,5 +204,15 @@ describe("stagePlugin (Test 2)", () => {
     mkdirSync(stage);
     writeFileSync(join(stage, "data.json"), "{}");
     expect(() => stagePlugin({ buildDir: build, stageDir: stage })).toThrow(/not empty/);
+  });
+
+  it("refuses a stage folder that is a link to an empty folder elsewhere", () => {
+    const build = makeBuild();
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(elsewhere);
+    const stage = join(root, "stage-link");
+    symlinkSync(elsewhere, stage);
+    expect(() => stagePlugin({ buildDir: build, stageDir: stage })).toThrow(/symbolic link/);
+    expect(readdirSync(elsewhere)).toEqual([]);
   });
 });

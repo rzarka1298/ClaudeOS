@@ -1,7 +1,13 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { canonicalPath, isStrictlyInside } from "./canonical-path.js";
+import {
+  assertNoSymlinkBelow,
+  canonicalPath,
+  isStrictlyInside,
+  isSymlinkOnDisk,
+  MSG_PATH_LINK,
+} from "./canonical-path.js";
 import { assertRunRoot } from "./launch-options.js";
 
 /**
@@ -26,6 +32,7 @@ export const PLUGIN_DATA_RELATIVE = join(".obsidian", "plugins", PLUGIN_ID, "dat
 export const MSG_SOCKET_OUTSIDE =
   "Refusing a socket path that is not strictly inside the run root, or that is the owner's live socket.";
 export const MSG_VAULT_OUTSIDE = "Refusing a vault outside the run root.";
+export { MSG_PATH_LINK };
 export const MSG_DATA_MALFORMED = "Refusing a plugin data.json that is not a JSON object.";
 export const MSG_DATA_VERIFY =
   "The plugin data.json does not hold the isolated socket path after writing.";
@@ -36,6 +43,8 @@ export interface PluginDataFs {
   /** Writes the whole file atomically (temporary file in the same directory, then rename). */
   writeFileAtomic(path: string, text: string): void;
   mkdirp(path: string): void;
+  /** True when `path` itself is a symbolic link (live or dangling). */
+  isSymlink(path: string): boolean;
 }
 
 export const REAL_PLUGIN_DATA_FS: PluginDataFs = {
@@ -60,6 +69,7 @@ export const REAL_PLUGIN_DATA_FS: PluginDataFs = {
   mkdirp(path) {
     mkdirSync(path, { recursive: true, mode: 0o700 });
   },
+  isSymlink: isSymlinkOnDisk,
 };
 
 export interface PluginDataPlan {
@@ -132,7 +142,14 @@ export function isolatePluginData(input: IsolatePluginDataInput): IsolatePluginD
     throw new Error(MSG_SOCKET_OUTSIDE);
   }
 
+  // The vault root is canonical, but the folders below it are not: a link at .obsidian,
+  // plugins or the plugin folder (or at data.json) would carry the write out of the run root.
+  // Check every component, and the resolved destination, before reading or writing anything.
+  assertNoSymlinkBelow(vault, PLUGIN_DATA_RELATIVE, (path) => fs.isSymlink(path));
   const dataPath = join(vault, PLUGIN_DATA_RELATIVE);
+  if (!isStrictlyInside(runRoot, canonicalPath(dirname(dataPath)))) {
+    throw new Error(MSG_PATH_LINK);
+  }
   const plan = planPluginData(fs.readFile(dataPath), input.socketPath);
   fs.mkdirp(dirname(dataPath));
   fs.writeFileAtomic(dataPath, plan.text);

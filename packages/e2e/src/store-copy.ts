@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { isSymlinkOnDisk, MSG_PATH_LINK } from "./canonical-path.js";
 
 /**
  * Read-only access to the throwaway service's operational store (05.2-04, D-02, T-05.2-15).
@@ -64,9 +65,13 @@ export function copyStore(input: { runtimeDir: string; destDir: string }): { cop
   if (!existsSync(source)) {
     throw new Error("Store copy failed: the operational database is not present.");
   }
-  mkdirSync(input.destDir, { recursive: true, mode: 0o700 });
   const copyPath = join(input.destDir, COPY_DB_NAME);
   const copyWal = `${copyPath}-wal`;
+  // copyFileSync and rmSync follow a link: refuse one at the folder or at any file we touch.
+  for (const path of [input.destDir, copyPath, copyWal, `${copyPath}-shm`]) {
+    if (isSymlinkOnDisk(path)) throw new Error(MSG_PATH_LINK);
+  }
+  mkdirSync(input.destDir, { recursive: true, mode: 0o700 });
   // A stale copied log from an earlier read must never be replayed onto a fresh copy.
   rmSync(copyWal, { force: true });
   rmSync(`${copyPath}-shm`, { force: true });
