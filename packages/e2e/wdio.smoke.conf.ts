@@ -27,8 +27,8 @@ import {
 } from "./src/installed-app.js";
 import { buildLaunchCapabilities } from "./src/launch-options.js";
 import { REPO_ROOT } from "./src/repo-paths.js";
-import { assertCacheDir, assertIsolatedEnv, assertShotsDir } from "./src/uat-env.js";
 import { SPIKE_DECISIONS } from "./src/spike-decisions.js";
+import { assertCacheDir, assertIsolatedEnv, assertShotsDir } from "./src/uat-env.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
