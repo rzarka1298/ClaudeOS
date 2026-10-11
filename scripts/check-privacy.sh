@@ -126,6 +126,11 @@ while IFS= read -r f; do
   FILE_COUNT=$((FILE_COUNT + 1))
   case "$f" in
     .planning/phases/*/*.md) check_email=0 ;;
+    # The lockfile records third-party registry metadata verbatim, including a
+    # maintainer contact address inside some `deprecated:` messages (05.2-01:
+    # the wdio dependency tree pulls in deprecated glob releases). That is
+    # never the owner's address; rules 1 and 3 still apply to it.
+    pnpm-lock.yaml) check_email=0 ;;
     *) check_email=1 ;;
   esac
   # No `|| true`: a file that could not be read (or an awk that failed on

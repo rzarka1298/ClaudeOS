@@ -34,6 +34,7 @@ export default defineConfig({
       "packages/adapters",
       "packages/collectors",
       "packages/domain",
+      "packages/e2e",
       "packages/keychain",
       "packages/launchers",
       "packages/operational-store",
