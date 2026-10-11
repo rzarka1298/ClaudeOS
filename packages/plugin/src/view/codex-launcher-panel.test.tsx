@@ -523,16 +523,42 @@ describe("Check Codex health (R4)", () => {
     expect(healthRegion().getAttribute("aria-busy")).toBeNull();
   });
 
-  it("shows exactly the problem line for a problem outcome and echoes nothing else", async () => {
+  it("shows the problem line with the failing check ids and nothing else", async () => {
     const actions = fakeLaunchersActions({
-      codexDoctor: vi.fn(() => Promise.resolve({ kind: "problem" as const })),
+      codexDoctor: vi.fn(() =>
+        Promise.resolve({ kind: "problem" as const, ids: ["auth.login", "config.toml"] }),
+      ),
     });
     mount(actions, sessionWith(ONE_CANDIDATE, SAVED_CODEX));
     fireEvent.click(checkButton());
     await settle();
-    expect(healthRegion().textContent).toContain("Codex doctor reported a problem.");
+    expect(healthRegion().textContent).toContain(
+      "Codex doctor reported a problem: auth.login, config.toml.",
+    );
     expect(healthRegion().querySelector(".ccc-error-glyph")).not.toBeNull();
-    expect(healthRegion().textContent).not.toMatch(/\/|check|version/i);
+  });
+
+  it("shows the warnings line naming the warning ids", async () => {
+    const actions = fakeLaunchersActions({
+      codexDoctor: vi.fn(() => Promise.resolve({ kind: "warning" as const, ids: ["config.toml"] })),
+    });
+    mount(actions, sessionWith(ONE_CANDIDATE, SAVED_CODEX));
+    fireEvent.click(checkButton());
+    await settle();
+    expect(healthRegion().textContent).toContain(
+      "Codex doctor reports it's healthy, with warnings: config.toml.",
+    );
+  });
+
+  it("shows a neutral line when the report was not recognised", async () => {
+    const actions = fakeLaunchersActions({
+      codexDoctor: vi.fn(() => Promise.resolve({ kind: "unknown" as const })),
+    });
+    mount(actions, sessionWith(ONE_CANDIDATE, SAVED_CODEX));
+    fireEvent.click(checkButton());
+    await settle();
+    expect(healthRegion().textContent).toContain("Codex doctor's report wasn't recognised.");
+    expect(healthRegion().textContent).not.toContain("problem");
   });
 
   it.each(["service-disconnected", "failed"] as const)(

@@ -284,14 +284,50 @@ describe("the Codex launcher actions (plan 05.1-31 Task 1)", () => {
     body: { overall, codexVersion: null, checks: [] },
   });
 
-  it("codexDoctor maps ok to healthy and every other verdict to problem, rendering none of it", async () => {
+  const WITH_CHECKS = (overall: string, checks: [string, string][]) => ({
+    status: 200,
+    body: {
+      overall,
+      codexVersion: null,
+      checks: checks.map(([id, status]) => ({ id, category: "x", status })),
+    },
+  });
+  const verdictOf = (response: ReturnType<typeof WITH_CHECKS>) =>
+    createLaunchersActions(fakeClient(() => response).client).codexDoctor();
+
+  it("codexDoctor maps ok to healthy and an unrecognised report to unknown", async () => {
     const ok = fakeClient(() => SUMMARY("ok"));
     expect(await createLaunchersActions(ok.client).codexDoctor()).toEqual({ kind: "healthy" });
     expect(ok.requests[0]?.path).toBe(CODEX_DOCTOR_PATH);
-    for (const overall of ["warning", "fail", "unrecognised"]) {
-      const { client } = fakeClient(() => SUMMARY(overall));
-      expect(await createLaunchersActions(client).codexDoctor()).toEqual({ kind: "problem" });
-    }
+    const { client } = fakeClient(() => SUMMARY("unrecognised"));
+    expect(await createLaunchersActions(client).codexDoctor()).toEqual({ kind: "unknown" });
+  });
+
+  it("codexDoctor ignores terminal.* checks, which a background run always trips", async () => {
+    expect(
+      await verdictOf(WITH_CHECKS("warning", [["terminal.env", "warning"], ["auth.login", "ok"]])),
+    ).toEqual({ kind: "healthy" });
+    expect(await verdictOf(WITH_CHECKS("fail", [["terminal.size", "fail"]]))).toEqual({
+      kind: "healthy",
+    });
+  });
+
+  it("codexDoctor names the warning check ids of a healthy-with-warnings report", async () => {
+    expect(
+      await verdictOf(
+        WITH_CHECKS("warning", [["terminal.env", "warning"], ["config.toml", "warning"]]),
+      ),
+    ).toEqual({ kind: "warning", ids: ["config.toml"] });
+  });
+
+  it("codexDoctor names the failing check ids and keeps fail a problem", async () => {
+    expect(
+      await verdictOf(
+        WITH_CHECKS("fail", [["auth.login", "fail"], ["config.toml", "warning"]]),
+      ),
+    ).toEqual({ kind: "problem", ids: ["auth.login"] });
+    expect(await verdictOf(WITH_CHECKS("fail", []))).toEqual({ kind: "problem", ids: [] });
+    expect(await verdictOf(WITH_CHECKS("warning", []))).toEqual({ kind: "warning", ids: [] });
   });
 
   it("codexDoctor never rejects: an unreachable socket is service-disconnected, anything else failed", async () => {
