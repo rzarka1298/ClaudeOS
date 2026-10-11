@@ -229,18 +229,22 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
       const runId = state.firstRunId ?? deps.mintRunId();
       state.firstRunId = null;
       let written: string | null;
-      // Recorded BEFORE the request can exist, so the timeout handler can always withdraw it,
-      // even while the writer is still settling.
-      state.bridge = { dir: stateDir, runId };
+      // Recorded the instant THIS write publishes (and not before: until then the name may belong
+      // to another launch), so the timeout handler can withdraw it while the writer settles.
       try {
         written = await writeRequest(
           stateDir,
           { ...base, runId, createdAt: new Date(now()).toISOString() },
-          { isCancelled: () => state.cancelled },
+          {
+            isCancelled: () => state.cancelled,
+            onPublished: () => {
+              state.bridge = { dir: stateDir, runId };
+            },
+          },
         );
       } catch {
+        // A published request (state.bridge set by onPublished) stays withdrawable.
         log("request-write-failed");
-        state.bridge = null;
         return null;
       }
       if (written !== null && state.cancelled) {
@@ -252,7 +256,7 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
         return null;
       }
       if (written !== null) return runId;
-      // Not ours (the name was taken): never let a timeout withdraw someone else's request.
+      // Nothing of ours is queued (name taken, or the writer took its own request back).
       state.bridge = null;
       log("run-id-collision");
     }

@@ -615,10 +615,10 @@ describe("a stalled publication (Codex final review: queue handoff)", () => {
         runId: taken,
         kind: "agent",
         mode: "agent",
-        agent: "claude",
+        agent: "codex",
         projectRoot: fx.projectDir,
         cwd: fx.projectDir,
-        argv: [fx.claudePath, "--other-launch"],
+        argv: [fx.codexPath],
         env: {},
         sessionId: null,
         liveLog: null,
@@ -655,4 +655,3 @@ describe("a stalled publication (Codex final review: queue handoff)", () => {
     });
   });
 });
-

@@ -147,6 +147,12 @@ export interface WriteBridgeRequestOptions {
    * nothing, or takes back what it just published, and returns `null`.
    */
   readonly isCancelled?: () => boolean;
+  /**
+   * Called synchronously the moment THIS write has published the request (its own link or rename
+   * succeeded), before any cleanup. Only a request reported here is the caller's to withdraw: a
+   * name that already belonged to another launch is never reported.
+   */
+  readonly onPublished?: () => void;
 }
 
 /**
@@ -186,6 +192,7 @@ export async function writeBridgeRequest(
       // A filesystem without hard links: the rename is still atomic.
       try {
         await rename(tmp, final);
+        options.onPublished?.();
         if (cancelled()) {
           void unlinkQuietly(final);
           return null;
@@ -199,6 +206,7 @@ export async function writeBridgeRequest(
     await unlinkQuietly(tmp);
     throw error;
   }
+  options.onPublished?.();
   // The request is published. The temp name is only litter now: it is removed in the background
   // so a stalled delete can never hold back the hand-off (the caller must be able to withdraw the
   // request the moment it exists).
