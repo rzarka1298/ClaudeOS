@@ -608,6 +608,36 @@ describe("a stalled publication (Codex final review: queue handoff)", () => {
     expect(fx.claimedFiles()).toHaveLength(1);
   });
 
+  describe("a published request whose writer completion is delayed past the deadline", () => {
+    /** Publishes through the real writer but reports nothing back: no callback, no return. */
+    function silentWriter(
+      afterPublish: () => void,
+    ): NonNullable<AntigravityTerminalDeps["writeRequest"]> {
+      return async (dir, request) => {
+        await writeBridgeRequest(dir, request);
+        afterPublish();
+        return new Promise<string | null>(() => {});
+      };
+    }
+    it("a claim that landed before the deadline is a successful hand-off (content, not callbacks, proves ownership)", async () => {
+      const sim = warmWindow();
+      const launcher = createAntigravityTerminalLauncher(
+        deps({ ...realClock, capMs: 700, writeRequest: silentWriter(() => void sim.tick()) }),
+      );
+      await expect(launcher.launch(input())).resolves.toEqual({ ok: true });
+      expect(fx.claimedFiles()).toHaveLength(1);
+    });
+
+    it("an unclaimed one is withdrawn", async () => {
+      warmWindow();
+      const launcher = createAntigravityTerminalLauncher(
+        deps({ ...realClock, capMs: 700, writeRequest: silentWriter(() => {}) }),
+      );
+      expect((await launcher.launch(input())).ok).toBe(false);
+      await vi.waitFor(() => expect(fx.requestFiles()).toEqual([]), { timeout: 2000 });
+    });
+  });
+
   describe("a pending collision check never touches another launch's request", () => {
     const taken = "20261010T120000000Z";
     function otherLaunchRequest(): AgentBridgeRequest {
