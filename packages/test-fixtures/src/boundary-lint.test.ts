@@ -551,6 +551,53 @@ describe("e2e element policy: four allowed edges, eight forbidden edges (D-01, E
   }
 });
 
+// e2e is a LEAF (plan 05.2-02, task 2; D-01, T-05.2-06): no other element may
+// import it. The target is the committed e2e-clean fixture, which the exclusive
+// boundary-violations/e2e descriptor classifies as e2e wherever it is imported
+// from. Each FIRES case has a control (a domain type import) that stays quiet.
+const E2E_TARGET = "test-fixtures/boundary-violations/e2e/e2e-clean.js";
+const LEAF_IMPORTERS: ReadonlyArray<readonly [string, string, string]> = [
+  ["service", "packages/service/src/probe.ts", `../../${E2E_TARGET}`],
+  ["test-fixtures", "packages/test-fixtures/src/probe.ts", `../${E2E_TARGET.replace("test-fixtures/", "")}`],
+  ["plugin", "packages/plugin/src/probe.ts", `../../${E2E_TARGET}`],
+  ["keychain", "packages/keychain/src/probe.ts", `../../${E2E_TARGET}`],
+  ["domain", "packages/domain/src/probe.ts", `../../${E2E_TARGET}`],
+];
+
+describe("e2e is a leaf: nothing else may import it (D-01, T-05.2-06)", () => {
+  for (const [name, importer, specifier] of LEAF_IMPORTERS) {
+    test(`FIRES: ${name} -> e2e`, async () => {
+      const messages = await boundariesFor(importer, `import "${specifier}";\n`);
+      expect(messages.length).toBeGreaterThan(0);
+      expect(messages.map((m) => m.ruleId)).toContain("boundaries/dependencies");
+    });
+  }
+  for (const [name, importer] of LEAF_IMPORTERS) {
+    test(`quiet half of "${name} -> e2e": no e2e import${name === "domain" ? " (empty file)" : " (a domain type import)"}`, async () => {
+      const code = name === "domain" ? "export {};\n" : DOMAIN_TYPE_IMPORT;
+      expect(await boundariesFor(importer, code)).toHaveLength(0);
+    });
+  }
+  test("QUIET: a service file importing a sibling service file is unchanged", async () => {
+    expect(
+      await boundariesFor(
+        "packages/service/src/probe.ts",
+        'import { createLogger } from "./logging.js";\nexport const l = createLogger;\n',
+      ),
+    ).toHaveLength(0);
+  });
+  test("QUIET: a test-fixtures file importing the service package is unchanged", async () => {
+    expect(
+      await boundariesFor("packages/test-fixtures/src/probe.ts", 'import "../../service/src/logging.js";\n'),
+    ).toHaveLength(0);
+  });
+  test("QUIET: the service still imports the other previously allowed elements", async () => {
+    expect(
+      await boundariesFor("packages/service/src/probe.ts", 'import "../../keychain/src/index.js";\n'),
+    ).toHaveLength(0);
+  });
+});
+
 describe("element list and config shape (plan 06-02)", () => {
   type ConfigBlock = Record<string, unknown>;
   interface Descriptor {
