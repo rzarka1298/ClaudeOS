@@ -386,13 +386,12 @@ describe("a run found under a different bridge directory than the primary one", 
     return { sim, customDir, runId, env, primary };
   }
 
-  it("is a clear window-not-ready, never queued where the extension would reject the log", async () => {
+  it("05.1-post: follows through the fallback directory where the fresh window is, never the idle primary", async () => {
     const { sim, customDir, runId, primary } = setup();
     const r = rig({ sim, over: { readBridgeStatus: primary } });
-    expect((await primary()).dir).toBe(customDir);
-    expect(await r.service.follow({ runId })).toEqual({ ok: false, error: "window-not-ready" });
+    expect((await primary()).dir).toBe(fx.stateDir);
+    expect(await r.service.follow({ runId })).toEqual({ ok: true });
     expect(readdirSync(join(customDir, "requests"))).toEqual([]);
-    expect(requestsNow()).toEqual([]);
   });
 
   it("is queued to the directory the record came from when a covering window is there", async () => {

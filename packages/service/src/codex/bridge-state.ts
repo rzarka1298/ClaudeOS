@@ -231,11 +231,21 @@ export async function readBridgeStatus(options: ReadBridgeStatusOptions): Promis
     }
   }
 
+  // Fresh window evidence beats marker-only evidence: an IDE that is heartbeating in the fallback
+  // directory is the one that will watch the queue, whatever the primary's idle marker says.
   let chosen: string | undefined;
   for (const candidate of candidates) {
-    if (await hasBridge(fs, candidate)) {
+    if ((await readWindows(fs, candidate, nowMs)).length > 0) {
       chosen = candidate;
       break;
+    }
+  }
+  if (chosen === undefined) {
+    for (const candidate of candidates) {
+      if (await hasBridge(fs, candidate)) {
+        chosen = candidate;
+        break;
+      }
     }
   }
   const launchable = candidates.length > 0;
