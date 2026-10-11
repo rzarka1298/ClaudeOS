@@ -89,7 +89,7 @@ describe("ADR-13 Codex architecture contract (task 1)", () => {
       "backstop rule 16",
       "negative control",
       "migration 0009",
-      "rollout fallback is not implemented",
+      "rollout fallback is display only",
       "A10",
       "token counting unit",
       "default Codex arguments",
@@ -261,9 +261,7 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       expect(frontmatter(read(`${phase}/${entry[1]}`))).toContain(`wave: ${entry[2]}`);
       expect(entry[3]?.trim().length).toBeGreaterThan(10);
     }
-    const waves = Math.max(
-      ...entries.map((entry) => Number(entry[2])),
-    );
+    const waves = Math.max(...entries.map((entry) => Number(entry[2])));
     expect(block).toContain(`**Plans**: ${plans.length} plans, ${waves} waves`);
     expect(block).not.toContain("**Plans**: TBD");
     expect(roadmap).toContain(

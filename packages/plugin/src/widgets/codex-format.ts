@@ -1,6 +1,7 @@
 import type { CodexTokenCounters } from "@ccc/domain/codex-sessions.js";
 import {
   CODEX_RESERVE_PERCENT,
+  CODEX_USAGE_STALE_MAX_AGE_MS,
   CODEX_WEEKLY_WINDOW_MINUTES,
   type CodexHeadroomReason,
   type CodexHeadroomVerdict,
@@ -27,7 +28,8 @@ export const CODEX_COPY = Object.freeze({
   reserveUnder: "Under the 80% reserve line",
   reserveOver: "At or over the 80% reserve line",
   reserveLegend: "80% reserve line",
-  fallbackSource: "From the newest Codex session log, not a live read.",
+  fallbackSource: "From Codex session log · {age} old",
+  fallbackNote: "Not a live read.",
   setupHeading: "Codex isn't set up",
   setupBody:
     "Install Codex on this Mac and add it in Settings → Launchers. Codex sessions and weekly usage appear here once it has run.",
@@ -120,19 +122,39 @@ export function codexWindowLine(
   };
 }
 
-/** Signature stub (plan 05.1-33, RED). */
-export function formatCodexAge(_iso: string, _nowMs: number): string {
-  return "";
+const MS_PER_MINUTE = 60_000;
+
+/**
+ * How old an observation is, for the rollout fallback label: `under 1 min`,
+ * `N min`, `N hr` or `N d`. A future stamp (a clock a little ahead) reads as
+ * the youngest age rather than a negative one.
+ */
+export function formatCodexAge(iso: string, nowMs: number): string {
+  const elapsed = Math.max(0, nowMs - Date.parse(iso));
+  const minutes = Math.floor(elapsed / MS_PER_MINUTE);
+  if (minutes < 1) return "under 1 min";
+  if (minutes < 60) return `${NUMBER.format(minutes)} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${NUMBER.format(hours)} hr`;
+  return `${NUMBER.format(Math.floor(hours / 24))} d`;
 }
 
-/** Signature stub (plan 05.1-33, RED). */
-export function fallbackSourceLine(_iso: string, _nowMs: number): string {
-  return "";
+/** The source-and-age label of a rollout figure, e.g. `From Codex session log · 12 min old`. */
+export function fallbackSourceLine(iso: string, nowMs: number): string {
+  return CODEX_COPY.fallbackSource.replace("{age}", formatCodexAge(iso, nowMs));
 }
 
-/** Signature stub (plan 05.1-33, RED). */
-export function isFallbackTooOld(_usage: CodexUsageSnapshot, _nowMs: number): boolean {
-  return false;
+/**
+ * True for a rollout figure older than the stale max age. The service already
+ * turns such a figure into an unavailable snapshot; the card re-checks against
+ * its own clock so a pushed figure that ages on screen never stays a number.
+ */
+export function isFallbackTooOld(usage: CodexUsageSnapshot, nowMs: number): boolean {
+  return (
+    usage.kind === "available" &&
+    usage.source === "rollout-fallback" &&
+    nowMs - Date.parse(usage.observedAt) > CODEX_USAGE_STALE_MAX_AGE_MS
+  );
 }
 
 export function reserveState(usedPercent: number): "under" | "over" {

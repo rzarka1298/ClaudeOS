@@ -1,11 +1,14 @@
 import { CODEX_LIMIT_LABEL_PATTERN, type CodexUsageSnapshot } from "@ccc/domain/codex-usage.js";
+import type { Freshness } from "@ccc/domain/freshness.js";
 import type { VNode } from "preact";
 import { useId } from "preact/hooks";
 import { FRESHNESS_LABEL } from "./claude-usage.js";
 import {
   CODEX_COPY,
   codexWindowLine,
+  fallbackSourceLine,
   formatCodexWindowLabel,
+  isFallbackTooOld,
   reserveState,
   unavailableUsageBody,
 } from "./codex-format.js";
@@ -14,14 +17,30 @@ import { formatAbsoluteTime } from "./relative-time.js";
 import { SourceDisclosure } from "./source-disclosure.js";
 import { formatPercentUsed } from "./usage-format.js";
 
+function logFreshness(freshness: Freshness): Freshness {
+  return freshness === "live" ? "cached" : freshness;
+}
+
 export function CodexPlanUsageSection({
-  usage,
+  usage: reported,
   nowMs,
 }: {
   readonly usage: CodexUsageSnapshot | null;
   readonly nowMs: number;
 }): VNode {
   const id = useId();
+  // A rollout figure past the stale max age is never a number (plan 05.1-33, OQ-3).
+  const usage: CodexUsageSnapshot | null =
+    reported !== null && isFallbackTooOld(reported, nowMs)
+      ? {
+          kind: "unavailable",
+          reason: "too-old",
+          version: reported.kind === "available" ? (reported.codexVersion ?? null) : null,
+          observedAt: reported.observedAt,
+        }
+      : reported;
+  // The rollout figure is display only: it never speaks of the reserve line, which needs a live read.
+  const fromLog = usage?.kind === "available" && usage.source === "rollout-fallback";
   const rows =
     usage?.kind === "available"
       ? usage.windows.map((window) => ({
@@ -50,6 +69,7 @@ export function CodexPlanUsageSection({
             const stateId = `${id}-reserve-${index}`;
             const line = codexWindowLine(window, nowMs);
             const over = reserveState(window.usedPercent) === "over";
+            const showReserve = !line.outdated && !fromLog;
             return (
               <div className="ccc-usage-row" key={labelId}>
                 <p className="ccc-list-meta" id={labelId}>
@@ -60,7 +80,17 @@ export function CodexPlanUsageSection({
                     <p className="ccc-list-meta">{`Limit: ${window.limitLabel}`}</p>
                   )}
                 <p className="ccc-state-heading">{line.text}</p>
-                {!line.outdated && (
+                {!line.outdated && fromLog && (
+                  <meter
+                    className="ccc-usage-meter"
+                    min={0}
+                    max={100}
+                    value={window.usedPercent}
+                    aria-labelledby={labelId}
+                    aria-valuetext={formatPercentUsed(window.usedPercent)}
+                  />
+                )}
+                {showReserve && (
                   <>
                     <span className="ccc-reserve-meter-wrap">
                       <meter
@@ -96,15 +126,21 @@ export function CodexPlanUsageSection({
             );
           })}
           {usage.source === "rollout-fallback" && (
-            <p className="ccc-list-meta">
-              {CODEX_COPY.fallbackSource}{" "}
-              <span className="ccc-badge" data-badge={usage.freshness}>
-                <span className="ccc-badge-glyph" aria-hidden="true">
-                  {FRESHNESS_GLYPH[usage.freshness]}
+            <>
+              {/* A figure read from a log is never "live", whatever its age. */}
+              <p className="ccc-list-meta">{fallbackSourceLine(usage.observedAt, nowMs)}</p>
+              <p className="ccc-list-meta">
+                {CODEX_COPY.fallbackNote}{" "}
+                <span className="ccc-badge" data-badge={logFreshness(usage.freshness)}>
+                  <span className="ccc-badge-glyph" aria-hidden="true">
+                    {FRESHNESS_GLYPH[logFreshness(usage.freshness)]}
+                  </span>
+                  <span className="ccc-badge-label">
+                    {FRESHNESS_LABEL[logFreshness(usage.freshness)]}
+                  </span>
                 </span>
-                <span className="ccc-badge-label">{FRESHNESS_LABEL[usage.freshness]}</span>
-              </span>
-            </p>
+              </p>
+            </>
           )}
         </>
       )}

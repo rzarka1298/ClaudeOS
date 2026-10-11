@@ -106,9 +106,21 @@ No credential file or private endpoint is consulted, and no reset-credit or
 consume operation exists.
 
 OQ-3 permits a rollout snapshot to draw a bar only; it can never allow the
-guard. The rollout fallback is not implemented in the composed service:
-its provider returns null (plan 28, wave 7). Without a live read, headroom
-refuses. This is a known delivery gap, not verified fallback behavior.
+guard. Plan 33 delivers that fallback in the composed service (owner decision
+2026-10-10). When the live read is unavailable, the bar shows the newest
+`rate_limits` figure from the Codex rollout files, labelled with its source
+and age ("From Codex session log · N min old"), and never as zero. A reader
+lists the newest rollout files through the allowlisted CODEX_HOME port (the
+31-day window, a bounded number of files, a capped tail of each), takes the
+newest figure by the record's own timestamp, and passes it through the same
+rollout normaliser: only percent, window minutes, reset time and a validated
+limit label survive, and plan type, credits and account fields never do. Its
+source is `rollout-fallback`, so the rollout fallback is display only: the
+guard, the 80 percent reserve and the headroom verdict still require a live
+read and refuse without one. A figure older than ten minutes (the stale max
+age) reads unavailable instead of a number. The reader is covered by
+synthetic-rollout tests; it has not been observed against the owner's real
+rollout files (Owner UAT).
 
 ### 6. Preserve the reserve and expose a read-only signal
 
@@ -240,7 +252,7 @@ Snapshot additions are optional and bounded before approvals receive the
 remaining space under the 64 KiB cap. Codex startup faults degrade its routes
 to 503 rather than stopping Claude; Codex shutdown is bounded before the
 store closes. Without a configured executable, capacity stays unavailable.
-The missing rollout fallback remains a phase gap for the judges.
+The rollout fallback (plan 33) is display only; it adds no way to pass the gate.
 
 The owner must install and trust optional hooks and the bridge in isolated
 UAT before accepting real-machine behavior. Accessibility follows the

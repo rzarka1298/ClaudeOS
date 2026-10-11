@@ -179,9 +179,8 @@ const CASE_ASSERTIONS: Readonly<Record<string, (card: Locator, page: Page) => Pr
     await expect(section(card, "Recent sessions")).toContainText("2 more sessions aren't shown.");
   },
   "ready-fallback-source": async (card) => {
-    await expect(section(card, "Plan usage")).toContainText(
-      "From the newest Codex session log, not a live read.",
-    );
+    await expect(section(card, "Plan usage")).toContainText("From Codex session log · 1 min old");
+    await expect(section(card, "Plan usage")).toContainText("Not a live read.");
     await expect(section(card, "Plan usage").locator("meter")).toHaveCount(1);
     await expect(codexCell(card)).toContainText("Held back");
     await expect(codexCell(card)).toContainText("No live usage read yet.");

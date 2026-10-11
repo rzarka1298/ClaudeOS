@@ -149,7 +149,7 @@ describe("Codex plan usage", () => {
       ordinaryUsageAllowed: null,
       freshness: "stale",
       observedAt: new Date(nowMs - 7 * 60_000).toISOString(),
-      windows: [{ ...available.windows[0], usedPercent: 91 }],
+      windows: [{ windowMinutes: 10080, usedPercent: 91, resetsAt: null, limitLabel: null }],
     };
     const { container, getByText } = render(
       <CodexPlanUsageSection usage={fallback} nowMs={nowMs} />,
@@ -160,6 +160,18 @@ describe("Codex plan usage", () => {
     expect(container.querySelector(".ccc-reserve-tick, .ccc-reserve-legend")).toBeNull();
     expect(container.textContent).not.toMatch(/reserve/i);
     expect(container.textContent).not.toMatch(/Held back|Has headroom/);
+  });
+  it("never calls a rollout figure live, whatever its age", () => {
+    const fresh: CodexUsageSnapshot = {
+      ...available,
+      source: "rollout-fallback",
+      ordinaryUsageAllowed: null,
+      freshness: "live",
+      observedAt: new Date(nowMs - 20_000).toISOString(),
+    };
+    const { container } = render(<CodexPlanUsageSection usage={fresh} nowMs={nowMs} />);
+    expect(container.querySelector('.ccc-badge[data-badge="cached"]')).not.toBeNull();
+    expect(container.querySelector('.ccc-badge[data-badge="live"]')).toBeNull();
   });
   it("renders a rollout figure older than the stale max age as unavailable, never a number", () => {
     const old: CodexUsageSnapshot = {
