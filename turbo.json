@@ -3,7 +3,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "main.js"]
+      "outputs": ["dist/**", "main.js", "styles.css"]
     },
     "test": {
       "dependsOn": ["build"],
