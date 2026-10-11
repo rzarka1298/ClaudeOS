@@ -75,7 +75,8 @@ describe("isRunCurrent (Test 4)", () => {
 
   it("is stale with reason 'unknown HEAD' when the recorded HEAD is missing", () => {
     for (const recorded of [undefined, "", "unknown"]) {
-      expect(check([], recorded)).toEqual({ current: false, reason: "unknown HEAD", files: [] });
+      const result = isRunCurrent({ recordedHead: recorded, currentHead: B, changedFiles: [] });
+      expect(result).toEqual({ current: false, reason: "unknown HEAD", files: [] });
     }
   });
 

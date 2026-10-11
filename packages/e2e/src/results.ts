@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
 import type { UatProfile } from "./profile.js";
+import { sanitizeText } from "./sanitize.js";
 import type { RunClass } from "./uat-tags.js";
 
 export type TestState = "passed" | "failed" | "skipped" | "pending";
@@ -183,18 +184,6 @@ export interface RecorderOptions {
   readonly sanitize?: (text: string, options?: { maxLength?: number }) => string;
 }
 
-function tidy(text: string, options?: { maxLength?: number }): string {
-  const flat = Array.from(text, (char) => {
-    const code = char.charCodeAt(0);
-    return code < 32 || code === 127 ? " " : char;
-  })
-    .join("")
-    .replace(/\s+/g, " ")
-    .trim();
-  const limit = options?.maxLength ?? MESSAGE_MAX_LENGTH;
-  return flat.length <= limit ? flat : `${flat.slice(0, Math.max(0, limit - 3))}...`;
-}
-
 function stateOf(test: MochaTestLike): TestState {
   if (test.pending === true || test.state === "pending") return "skipped";
   if (test.state === "passed") return "passed";
@@ -205,7 +194,7 @@ function stateOf(test: MochaTestLike): TestState {
 /** Appends one result line per finished test; the message goes through the sanitiser. */
 export function installResultRecorder(options: RecorderOptions): void {
   const append = options.append ?? ((path: string, data: string) => appendFileSync(path, data));
-  const sanitize = options.sanitize ?? tidy;
+  const sanitize = options.sanitize ?? sanitizeText;
   options.afterEach(function recordTest(this: { currentTest?: MochaTestLike }) {
     const test = this.currentTest;
     if (test === undefined) return;

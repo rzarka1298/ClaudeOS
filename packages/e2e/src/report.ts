@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { UatProfile } from "./profile.js";
 import type { ItemResolution } from "./results.js";
+import { sanitizeText } from "./sanitize.js";
 import type { RunClass } from "./uat-tags.js";
 
 export interface ReportRow {
@@ -31,25 +32,15 @@ const CELL_MAX_LENGTH = 200;
 const BUILD_HASH_ERROR = "The report needs a twelve-character hexadecimal build hash.";
 const RUN_ID_ERROR = "The report needs an eight-character hexadecimal run id.";
 
-type SanitizeFn = (text: string, options?: { homeDir?: string; maxLength?: number }) => string;
+type Plain = (text: string, maxLength?: number) => string;
 
-/** Replaced by the real sanitiser in the next task; until then it only collapses and truncates. */
-const sanitizeText: SanitizeFn = (text, options) => {
-  const flat = text.replace(/\s+/g, " ").trim();
-  const limit = options?.maxLength ?? CELL_MAX_LENGTH;
-  return flat.length <= limit ? flat : `${flat.slice(0, Math.max(0, limit - 3))}...`;
-};
-
-/** Text only (PRIV-04): no markdown image, no data URL, and nothing that breaks a table cell. */
-function plain(text: string, maxLength: number = CELL_MAX_LENGTH): string {
-  return sanitizeText(text, { maxLength })
-    .replace(/data:[a-z]+\/[a-z0-9.+-]+[^\s)]*/gi, "[data-url]")
-    .replace(/!\[/g, "[")
-    .replace(/</g, "(")
-    .replace(/\|/g, "\\|");
+/** Text only (PRIV-04): sanitised, and nothing that breaks a table cell or opens a tag. */
+function makePlain(homeDir: string | undefined): Plain {
+  return (text, maxLength = CELL_MAX_LENGTH) =>
+    sanitizeText(text, { maxLength, homeDir }).replace(/</g, "(").replace(/\|/g, "\\|");
 }
 
-function noteFor(row: ReportRow): string {
+function noteFor(row: ReportRow, plain: Plain): string {
   if (row.resolution.kind === "owner") {
     const count = row.resolution.partials.length;
     return count === 0
@@ -68,6 +59,7 @@ function statusFor(row: ReportRow): string {
 export function renderReport(input: ReportInput): string {
   if (!/^[0-9a-f]{12}$/.test(input.buildHash)) throw new Error(BUILD_HASH_ERROR);
   if (!/^[0-9a-f]{8}$/.test(input.runId)) throw new Error(RUN_ID_ERROR);
+  const plain = makePlain(input.homeDir);
   const rows = [...input.rows].sort((a, b) => a.number - b.number);
   const autoRows = rows.filter((row) => row.runClass !== "owner");
   const count = (status: string) =>
@@ -104,7 +96,7 @@ export function renderReport(input: ReportInput): string {
     "| --- | --- | --- | --- | --- |",
     ...rows.map(
       (row) =>
-        `| ${row.number} | ${plain(row.title, 80)} | ${row.runClass} | ${statusFor(row)} | ${noteFor(row)} |`,
+        `| ${row.number} | ${plain(row.title, 80)} | ${row.runClass} | ${statusFor(row)} | ${noteFor(row, plain)} |`,
     ),
     "",
     "## Owner partials",

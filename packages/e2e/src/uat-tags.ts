@@ -82,6 +82,8 @@ export interface UatItem {
   readonly legacyTags: readonly string[];
   /** Lines at column zero that start with `result:`; the owner's, never the runner's. */
   readonly resultLines: number;
+  /** The value of the first column-zero result line (the owner's), or null when there is none. */
+  readonly resultValue: string | null;
   /** Zero-based line indexes into the script text. */
   readonly headingLine: number;
   readonly endLine: number;
@@ -145,6 +147,7 @@ function readItem(lines: readonly string[], headingLine: number, endLine: number
   const duplicates: TagKey[] = [];
   let legacyTags: string[] = [];
   let resultLines = 0;
+  let resultValue: string | null = null;
   let inExpected = false;
   for (let index = headingLine + 1; index < endLine; index += 1) {
     const line = lines[index] as string;
@@ -162,6 +165,7 @@ function readItem(lines: readonly string[], headingLine: number, endLine: number
       legacyTags = value.split(/[,\s]+/).filter(Boolean);
     } else if (key === "result") {
       resultLines += 1;
+      resultValue ??= value;
     } else if (isTagKey(key) && value !== "") {
       if (values.has(key)) {
         if (!duplicates.includes(key)) duplicates.push(key);
@@ -190,6 +194,7 @@ function readItem(lines: readonly string[], headingLine: number, endLine: number
     autoResult: values.get("auto-result") ?? null,
     legacyTags,
     resultLines,
+    resultValue,
     headingLine,
     endLine,
     tagLines,
