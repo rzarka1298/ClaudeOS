@@ -1,3 +1,4 @@
+import { adoptCodexSnapshot } from "../widgets/codex-events.js";
 import type { ClaudeIntegrationStatus, CodexIntegrationStatus } from "@ccc/domain";
 import { Notice } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -963,6 +964,64 @@ describe("Codex group (plan 05.1-19, UI-SPEC S4-a and S4-c)", () => {
       "Not installed. Live status for interactive Codex sessions needs the optional hook package. Sessions and usage still appear from Codex's own records.",
     );
     expect(codexRows(tab)[3]?.desc).toBe("Not installed. Launches fall back to Terminal.");
+  });
+
+  it("F4: a snapshot after a reconnect refreshes the hooks row without reopening Settings", async () => {
+    const INSTALLED_NO_EVENTS: CodexIntegrationStatus = {
+      ...INSTALLED,
+      hooks: { state: "installed", lastEventAt: null, installedSince: "2026-10-11T00:00:00.000Z" },
+    };
+    let current = INSTALLED;
+    const getIntegration = vi.fn().mockImplementation(async () => current);
+    const tab = new CommandCenterSettingTab({} as never, {} as never, {
+      ...createHost(),
+      codex: codexSeam({ getIntegration }),
+    });
+    tab.update = () => {
+      tab.getSettingDefinitions();
+    };
+    tab.getSettingDefinitions();
+    await flush(12);
+    expect(codexRows(tab)[0]?.desc).toContain("Not installed");
+
+    // Service restarted; the reconnect snapshot carries no integration part, so the tab refetches.
+    current = INSTALLED_NO_EVENTS;
+    adoptCodexSnapshot({ state: { codex: {} } } as never);
+    await flush(12);
+    expect(codexRows(tab)[0]?.desc).toContain("Installed, but no events have arrived");
+    tab.hide();
+  });
+
+  it("F4: a snapshot that carries the integration status is adopted directly", async () => {
+    // Any later fetch hangs, so only the pushed status can change the row.
+    const getIntegration = vi
+      .fn()
+      .mockResolvedValueOnce(INSTALLED)
+      .mockReturnValue(new Promise(() => {}));
+    const tab = new CommandCenterSettingTab({} as never, {} as never, {
+      ...createHost(),
+      codex: codexSeam({ getIntegration }),
+    });
+    tab.update = () => {
+      tab.getSettingDefinitions();
+    };
+    tab.getSettingDefinitions();
+    await flush(12);
+    expect(codexRows(tab)[0]?.desc).toContain("Not installed");
+
+    adoptCodexSnapshot({
+      state: {
+        codex: {
+          integration: {
+            ...INSTALLED,
+            hooks: { state: "installed", lastEventAt: null, installedSince: null },
+          },
+        },
+      },
+    } as never);
+    await flush(12);
+    expect(codexRows(tab)[0]?.desc).toContain("Installed, but no events have arrived");
+    tab.hide();
   });
 
   it("Test 6: fetches once per display, never during its own update(), and a rejection settles on unavailable", async () => {
