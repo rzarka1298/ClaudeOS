@@ -208,6 +208,7 @@ export function buildCodexGroup(input: CodexGroupInput) {
 export class CodexSettingsState {
   status: CodexStatusInput = "checking";
   private inFlight = false;
+  private reloadQueued = false;
   private readonly getIntegration: (() => Promise<CodexIntegrationStatus>) | undefined;
   private readonly onChange: () => void;
 
@@ -217,6 +218,21 @@ export class CodexSettingsState {
   ) {
     this.getIntegration = getIntegration;
     this.onChange = onChange;
+  }
+
+  /** Takes a status the service pushed (snapshot replay); it supersedes any read in flight. */
+  adopt(status: CodexIntegrationStatus): void {
+    this.status = status;
+    this.onChange();
+  }
+
+  /** A re-read that is never dropped: one in flight is followed by a fresh one. */
+  refresh(): void {
+    if (this.inFlight) {
+      this.reloadQueued = true;
+      return;
+    }
+    this.load();
   }
 
   /** Starts a read unless one is already in flight or no service seam is wired. */
@@ -232,12 +248,20 @@ export class CodexSettingsState {
         this.inFlight = false;
         this.status = status;
         this.onChange();
+        this.runQueuedReload();
       },
       () => {
         this.inFlight = false;
         this.status = "unavailable";
         this.onChange();
+        this.runQueuedReload();
       },
     );
+  }
+
+  private runQueuedReload(): void {
+    if (!this.reloadQueued) return;
+    this.reloadQueued = false;
+    this.load();
   }
 }

@@ -25,6 +25,8 @@ export const codexUsage = signal<CodexUsageSnapshot | null>(null);
 export const codexHeadroom = signal<HeadroomSignal | null>(null);
 export const codexTokens = signal<CodexTokenSummary | null>(null);
 export const codexIntegration = signal<CodexIntegrationStatus | null>(null);
+/** Bumped by every snapshot (first connect and each reconnect replay) so open views can refetch. */
+export const codexSnapshotEpoch = signal(0);
 export const lastCodexEventAt = signal<string | null>(null);
 const FRESHNESS_RANK: Readonly<Record<Freshness, number>> = {
   live: 0,

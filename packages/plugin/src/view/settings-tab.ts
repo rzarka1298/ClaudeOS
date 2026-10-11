@@ -5,6 +5,8 @@ import {
   type MediaQueryListLike,
   type MotionPreference,
 } from "../motion.js";
+import { effect } from "@preact/signals";
+import { codexIntegration, codexSnapshotEpoch } from "../widgets/codex-signals.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 import { buildCodexGroup, CodexSettingsState, type SettingsCodexSeam } from "./codex-settings.js";
 
@@ -373,6 +375,7 @@ export class CommandCenterSettingTab extends PluginSettingTab {
   private selfUpdating = false;
   /** The Codex group's status and fetch rule (plan 05.1-19): same behaviour as the Claude status above. */
   private readonly codexState: CodexSettingsState;
+  private stopCodexLive: (() => void) | undefined;
   /** R-15: set once a successful write turns transcript analysis off; row 6 reflects it. */
   private transcriptJustDisabled = false;
 
@@ -384,9 +387,40 @@ export class CommandCenterSettingTab extends PluginSettingTab {
     });
   }
 
+  /**
+   * F4: while the tab is shown, a snapshot after a reconnect (epoch bump) re-reads
+   * the Codex status, and a pushed integration status replaces the shown one.
+   */
+  private armCodexLiveRefresh(): void {
+    if (this.stopCodexLive) return;
+    let first = true;
+    let lastIntegration = codexIntegration.peek();
+    this.stopCodexLive = effect(() => {
+      codexSnapshotEpoch.value;
+      const integration = codexIntegration.value;
+      if (first) {
+        first = false;
+        return;
+      }
+      if (integration !== null && integration !== lastIntegration) {
+        lastIntegration = integration;
+        this.codexState.adopt(integration);
+      } else {
+        this.codexState.refresh();
+      }
+    });
+  }
+
+  hide(): void {
+    this.stopCodexLive?.();
+    this.stopCodexLive = undefined;
+    super.hide();
+  }
+
   getSettingDefinitions() {
     this.ensureClaudeStatusLoaded();
     if (!this.selfUpdating) this.codexState.load();
+    this.armCodexLiveRefresh();
     const reducedMotionItem = {
       name: REDUCED_MOTION_NAME,
       desc: REDUCED_MOTION_DESC,

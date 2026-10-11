@@ -11,6 +11,7 @@ import { setCodexInstalled } from "./codex-install-state.js";
 import {
   codexHeadroom,
   codexIntegration,
+  codexSnapshotEpoch,
   codexSessions,
   codexTokens,
   codexUsage,
@@ -64,6 +65,8 @@ export function applyCodexServiceEvent(event: ServiceEvent): boolean {
 
 /** Optional snapshot members are adopted together; absence never clears a signal. */
 export function adoptCodexSnapshot(snapshot: SnapshotResponse): void {
+  // Every snapshot is a (re)connect: tell open views to refetch even when it carries no Codex part.
+  codexSnapshotEpoch.value += 1;
   const parsed = CodexSnapshotStateSchema.safeParse(snapshot.state.codex);
   if (!parsed.success) return;
   const parts = parsed.data;

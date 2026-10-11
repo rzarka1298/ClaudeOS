@@ -200,6 +200,8 @@ export class PluginSettingTab {
   update(): void {}
 
   hide(): void {}
+
+  hide(): void {}
 }
 
 /** The chainable builder, reduced to the calls that keep a chain legal. */
