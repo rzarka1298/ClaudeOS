@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type BridgeFixture, createBridgeFixture } from "../test-support/bridge-fixtures.js";
 import {
   type AgentBridgeRequest,
@@ -51,8 +51,8 @@ describe("writeBridgeRequest and waitForClaim (tracer)", () => {
     const path = await writeBridgeRequest(fx.stateDir, agentRequest(RUN_A));
     expect(path).toBe(join(fx.requestsDir, `${RUN_A}.json`));
     expect(statSync(path as string).mode & 0o777).toBe(0o600);
-    // No temp file is left behind: only the final name is in the directory.
-    expect(readdirSync(fx.requestsDir)).toEqual([`${RUN_A}.json`]);
+    // No temp file is left behind once the background cleanup ran: only the final name remains.
+    await vi.waitFor(() => expect(readdirSync(fx.requestsDir)).toEqual([`${RUN_A}.json`]));
     expect(JSON.parse(readFileSync(path as string, "utf8"))).toMatchObject({
       runId: RUN_A,
       kind: "agent",
