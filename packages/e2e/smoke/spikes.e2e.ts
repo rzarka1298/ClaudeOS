@@ -7,10 +7,20 @@
  */
 import { browser } from "@wdio/globals";
 import { SPIKE_DECISIONS } from "../src/spike-decisions.js";
+import { decideS1, pollUntil, type S1Evidence } from "../src/spike-s1.js";
 import { evaluateSocketIsolation } from "../src/vault-plugin-data.js";
 import { readIsolationFacts } from "./isolation-facts.js";
+import { refocusWindow, unfocusWindow } from "./window-focus.js";
 
 const PLUGIN_COMMAND = "claude-command-center:open-overview";
+
+/** The plugin delays a test approval by 5 s; wait well beyond it, but never unbounded. */
+const S1_WAIT_MS = 15_000;
+
+interface SpyWindow {
+  __spikeNotes?: Array<{ title: string; source: string; instance: Notification }>;
+  __spikeSource?: string;
+}
 
 function result(n: number, verdict: "pass" | "fail" | "manual", evidence: unknown): void {
   console.log(`SPIKE-RESULT S${n} ${verdict} ${JSON.stringify(evidence)}`);
@@ -25,7 +35,7 @@ describe("spikes S1 to S5 against the sandbox Obsidian", () => {
     await browser.executeObsidianCommand(PLUGIN_COMMAND);
   });
 
-  it("S1: notification permission, a spy wrapper, the plugin's test approval and a direct probe", async () => {
+  it("S1: an unfocused window, the plugin's own test-approval notification and its click handler", async () => {
     try {
       // Refuse to send a test approval unless the plugin provably talks to the run-root socket
       // (S0 asserts the same fact): otherwise the approval could land in the owner's store.
@@ -34,11 +44,12 @@ describe("spikes S1 to S5 against the sandbox Obsidian", () => {
         result(1, "fail", { refused: "socket isolation not proven", reason: isolation.reason });
         return;
       }
-      await browser.executeObsidian(({ app }) => {
-        const w = window as unknown as {
-          __spikeNotes?: Array<{ title: string; source: string; instance: Notification }>;
-          __spikeSource?: string;
-        };
+
+      // Install the spy, then unfocus the window: a focused Obsidian suppresses native approval
+      // notifications, and the plugin delays a test approval by 5 s, so both must hold before
+      // the button is pressed and the wait below must outlast the delay.
+      await browser.executeObsidian(() => {
+        const w = window as unknown as SpyWindow;
         const Original = window.Notification;
         w.__spikeNotes = [];
         w.__spikeSource = "plugin";
@@ -49,6 +60,10 @@ describe("spikes S1 to S5 against the sandbox Obsidian", () => {
           }
         }
         window.Notification = Spy as unknown as typeof Notification;
+      });
+      const blur = await unfocusWindow();
+
+      const buttonFound = await browser.executeObsidian(({ app }) => {
         const setting = (
           app as unknown as { setting: { open(): void; openTabById(id: string): void } }
         ).setting;
@@ -58,31 +73,54 @@ describe("spikes S1 to S5 against the sandbox Obsidian", () => {
           (el) =>
             el.querySelector(".setting-item-name")?.textContent?.trim() === "Send a test approval",
         );
-        item?.querySelector("button")?.click();
+        const button = item?.querySelector("button");
+        button?.click();
+        return button !== null && button !== undefined;
       });
-      await browser.pause(2500);
-      const evidence = await browser.executeObsidian(() => {
-        const w = window as unknown as {
-          __spikeNotes?: Array<{ title: string; source: string; instance: Notification }>;
-          __spikeSource?: string;
-        };
-        const pluginPosted = (w.__spikeNotes ?? []).filter((n) => n.source === "plugin");
+
+      const readPlugin = () =>
+        browser.executeObsidian(() => {
+          const w = window as unknown as SpyWindow;
+          const posted = (w.__spikeNotes ?? []).filter((n) => n.source === "plugin");
+          return {
+            created: posted.length,
+            clickHandler: posted.some((n) => typeof n.instance.onclick === "function"),
+          };
+        });
+      const waited = await pollUntil(readPlugin, (seen) => seen.created >= 1, {
+        timeoutMs: S1_WAIT_MS,
+        intervalMs: 500,
+        sleep: (ms) => browser.pause(ms),
+      });
+
+      // Direct probe, kept as a control: it shows whether this window can raise a notification at all.
+      const control = await browser.executeObsidian(() => {
+        const w = window as unknown as SpyWindow;
         w.__spikeSource = "probe";
         const probe = new window.Notification("CCC spike probe", { body: "spike probe" });
         probe.onclick = () => undefined;
         return {
           permission: Notification.permission,
           hasFocus: document.hasFocus(),
-          pluginNotificationsCreated: pluginPosted.length,
-          pluginClickHandlerExists: pluginPosted.some(
-            (n) => typeof n.instance.onclick === "function",
-          ),
           probeCreated: (w.__spikeNotes ?? []).filter((n) => n.source === "probe").length,
         };
       });
-      result(1, evidence.permission === "granted" ? "pass" : "fail", evidence);
+
+      const evidence: S1Evidence = {
+        permission: control.permission,
+        buttonFound,
+        blur,
+        waitedMs: waited.waitedMs,
+        timedOut: waited.timedOut,
+        pluginNotificationsCreated: waited.value.created,
+        pluginClickHandlerExists: waited.value.clickHandler,
+      };
+      const decision = decideS1(evidence);
+      result(1, decision.verdict, { ...evidence, ...control, reason: decision.reason });
     } catch (error) {
       result(1, "fail", failure(error));
+    } finally {
+      await refocusWindow();
     }
   });
 
