@@ -596,7 +596,9 @@ describe("element list and config shape (plan 06-02)", () => {
   });
 
   test("e2e is a package element: its source and its node_modules link are both classified", async () => {
-    const patterns = (await loadDescriptors()).filter((e) => e.type === "e2e").map((e) => e.pattern);
+    const patterns = (await loadDescriptors())
+      .filter((e) => e.type === "e2e")
+      .map((e) => e.pattern);
     expect(patterns).toContain("packages/e2e");
     expect(patterns).toContain("node_modules/@ccc/e2e");
     expect(patterns).toContain("boundary-violations/e2e");

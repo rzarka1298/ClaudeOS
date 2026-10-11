@@ -22,8 +22,9 @@ import tsParser from "@typescript-eslint/parser";
 import boundaries from "eslint-plugin-boundaries";
 
 /**
- * Every element type this repository recognises. Exactly 16 -- one per
- * REPO-02 package (12), plus four sub-package elements carved out of
+ * Every element type this repository recognises. Exactly 17 -- one per
+ * package (13: the 12 REPO-02 packages plus `e2e`, the Phase 05.2 live-UAT
+ * runner package, D-01), plus four sub-package elements carved out of
  * `service`: `untrusted` (ADR-0014) and the three Phase 6 elements
  * `approval` (the engine folder), `approval-minter` (the one file that can
  * mint a capability token) and `executors` (effect code), per D-01, D-03 and
@@ -48,6 +49,11 @@ const ELEMENT_TYPES = [
   "service",
   "plugin",
   "test-fixtures",
+  // The Phase 05.2 live-UAT runner (D-01, E2E-02). It spawns processes, touches
+  // the Keychain and drives a GUI, so it is a LEAF: it may import only
+  // domain, service-api-client, keychain and test-fixtures, and nothing may
+  // import it. A package with no element is skipped by the lint entirely.
+  "e2e",
 ];
 
 /**
@@ -57,7 +63,7 @@ const ELEMENT_TYPES = [
 const SUBFOLDER_ELEMENT_TYPES = ["untrusted", "approval", "approval-minter", "executors"];
 
 /**
- * The 12 element types that are also real pnpm workspace packages (every
+ * The 13 element types that are also real pnpm workspace packages (every
  * `ELEMENT_TYPES` entry except the sub-package elements).
  */
 const PACKAGE_ELEMENT_TYPES = ELEMENT_TYPES.filter((t) => !SUBFOLDER_ELEMENT_TYPES.includes(t));
@@ -101,8 +107,8 @@ function packageDescriptors(type) {
  * after `packages/service`, a file under `packages/service/src/untrusted/`
  * was classified as plain `service` (verified with
  * ESLINT_PLUGIN_BOUNDARIES_DEBUG=1: `types: ["service"]`), so the
- * `untrusted` boundary never fired. The three "violation fixture" entries at
- * the end are the only exclusive descriptors that stay after the package
+ * `untrusted` boundary never fired. The four "violation fixture" entries at
+ * the end (service, untrusted, collectors and, from plan 05.2-02, e2e) are the only exclusive descriptors that stay after the package
  * descriptors: their paths (`boundary-violations/<element>`) are not nested
  * inside a broader element that would claim them first, and the fixtures must
  * not be reclassified as `test-fixtures` (allowed to import everything,
@@ -164,6 +170,14 @@ const elements = [
   {
     type: "collectors",
     pattern: "boundary-violations/collectors",
+    exclusive: true,
+  },
+  // The e2e runner fixtures (plan 05.2-02). Same reasoning as the three above:
+  // packages/test-fixtures/boundary-violations/e2e/ must impersonate `e2e`,
+  // not `test-fixtures`, or the fixture is inert.
+  {
+    type: "e2e",
+    pattern: "boundary-violations/e2e",
     exclusive: true,
   },
 ];
@@ -318,6 +332,20 @@ export default [
             {
               from: { element: { type: "plugin" } },
               allow: allowElementTypes(["domain", "service-api-client"]),
+            },
+            // e2e -- the live-UAT runner (D-01, E2E-02, T-05.2-07). It may
+            // import domain, the service socket client, the Keychain wrapper
+            // and the shared test package, and nothing else: never the
+            // service, the store, the plugin or an adapter, so it can only
+            // reach the product through its socket.
+            {
+              from: { element: { type: "e2e" } },
+              allow: allowElementTypes([
+                "domain",
+                "service-api-client",
+                "keychain",
+                "test-fixtures",
+              ]),
             },
             // test-fixtures -- may import every element except the minter, so
             // no test can import the one module that mints a token (T-06-01;
