@@ -113,7 +113,8 @@ export async function startServiceForTest({
   } catch (error: unknown) {
     // The wait failing must never leave the service running (F8): end it unconditionally.
     child.kill("SIGKILL");
-    if (error instanceof Error) (error as Error & { childPid?: number }).childPid = child.pid;
+    if (error instanceof Error)
+      (error as Error & { childPid?: number | undefined }).childPid = child.pid;
     throw error;
   }
 
