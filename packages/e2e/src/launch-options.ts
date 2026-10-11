@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { isSameOrInside, isStrictlyInside } from "./canonical-path.js";
 import { INSTALLED_OBSIDIAN_BINARY, PLUGIN_BUILD_DIR, REPO_ROOT } from "./repo-paths.js";
 import type { SpikeDecisions } from "./spike-decisions.js";
 
@@ -62,13 +63,26 @@ const ERR_CACHE =
   "Refusing a cache directory that is relative, inside the Obsidian profile, or inside the " +
   "repository without being .obsidian-cache.";
 
-/** True when `inner` equals `outer` or sits below it (boundary-safe, never a prefix match). */
-function isSameOrInside(outer: string, inner: string): boolean {
-  return inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : `${outer}${sep}`);
-}
-
-function isStrictlyInside(outer: string, inner: string): boolean {
-  return inner !== outer && isSameOrInside(outer, inner);
+/**
+ * The run root as a resolved absolute path, or a throw. It must be the throwaway
+ * `mktemp /tmp/ccc-uat.XXXXXX` directory (D-05) and must not be, or contain, the home directory.
+ */
+export function assertRunRoot(runRootInput: string, home: string): string {
+  if (!isAbsolute(runRootInput)) throw new Error(ERR_RUN_ROOT);
+  const runRoot = resolve(runRootInput);
+  // A run root that is the home directory, or an ancestor of it, would make "inside the run
+  // root" true for the owner's real folders.
+  if (isSameOrInside(runRoot, resolve(home))) throw new Error(ERR_RUN_ROOT);
+  // A run root anywhere else, such as a folder under home, could contain an owner vault, and a
+  // big-vault run opens its vault in place.
+  if (
+    !RUN_ROOT_PARENTS.includes(dirname(runRoot)) ||
+    !basename(runRoot).startsWith(RUN_ROOT_PREFIX) ||
+    basename(runRoot).length === RUN_ROOT_PREFIX.length
+  ) {
+    throw new Error(ERR_RUN_ROOT);
+  }
+  return runRoot;
 }
 
 export function buildLaunchCapabilities(input: LaunchInput): LaunchCapability[] {
@@ -81,21 +95,7 @@ export function buildLaunchCapabilities(input: LaunchInput): LaunchCapability[] 
     }
   }
 
-  if (!isAbsolute(input.runRoot)) throw new Error(ERR_RUN_ROOT);
-  const runRoot = resolve(input.runRoot);
-  // A run root that is the home directory, or an ancestor of it, would make "inside the run
-  // root" true for the owner's real folders.
-  if (isSameOrInside(runRoot, home)) throw new Error(ERR_RUN_ROOT);
-  // The run root must be the throwaway `mktemp /tmp/ccc-uat.XXXXXX` directory (D-05). A run
-  // root anywhere else, such as a folder under home, could contain an owner vault, and a
-  // big-vault run opens its vault in place.
-  if (
-    !RUN_ROOT_PARENTS.includes(dirname(runRoot)) ||
-    !basename(runRoot).startsWith(RUN_ROOT_PREFIX) ||
-    basename(runRoot).length === RUN_ROOT_PREFIX.length
-  ) {
-    throw new Error(ERR_RUN_ROOT);
-  }
+  const runRoot = assertRunRoot(input.runRoot, home);
 
   if (!isAbsolute(input.vaultPath)) throw new Error(ERR_OUTSIDE);
   const vault = resolve(input.vaultPath);

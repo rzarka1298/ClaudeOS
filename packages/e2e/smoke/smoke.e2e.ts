@@ -7,6 +7,8 @@
 import { join } from "node:path";
 import { browser } from "@wdio/globals";
 import { obsidianPage } from "wdio-obsidian-service";
+import { evaluateSocketIsolation } from "../src/vault-plugin-data.js";
+import { readIsolationFacts } from "./isolation-facts.js";
 
 interface RendererFacts {
   pluginId: string | null;
@@ -49,6 +51,13 @@ describe("S0 smoke: sandbox launch with the installed app", () => {
         dataJsonKeys = "missing";
       }
 
+      // Fail loudly unless the plugin provably talks to the run-root socket: the renderer must see
+      // CCC_SOCKET_PATH equal to it and the persisted socketPathOverride must not differ.
+      const isolation = evaluateSocketIsolation(await readIsolationFacts());
+      if (!isolation.ok) {
+        throw new Error(`Socket isolation not proven: ${isolation.reason}.`);
+      }
+
       const shotsDir = process.env.CCC_UAT_SHOTS_DIR ?? "";
       const shotPath = join(shotsDir, "s0-page.png");
       await browser.saveScreenshot(shotPath);
@@ -58,6 +67,7 @@ describe("S0 smoke: sandbox launch with the installed app", () => {
         appVersion: browser.getObsidianVersion(),
         installerVersion: browser.getObsidianInstallerVersion(),
         dataJsonKeys,
+        socketIsolation: isolation.reason,
         screenshot: shotPath,
       };
       console.log(`SPIKE-RESULT S0 pass ${JSON.stringify(evidence)}`);

@@ -17,7 +17,9 @@
  * The isolation variables CCC_SOCKET_PATH, CCC_RUNTIME_DIR, CLAUDE_CONFIG_DIR and CODEX_HOME
  * (all inside the run root) and CCC_INSTALL_SECRET_ACCOUNT (a ccc-uat- account) are also
  * REQUIRED, inherited from the calling shell; assertIsolatedEnv refuses to run without them.
- * Spike S0 records whether the renderer sees CCC_SOCKET_PATH.
+ * Before launch the config writes socketPathOverride = CCC_SOCKET_PATH into the vault's
+ * .obsidian/plugins/claude-command-center/data.json (the plugin prefers that setting over the
+ * environment variable); spikes S0 and S1 then fail if the renderer does not see that socket.
  */
 
 import { homedir } from "node:os";
@@ -29,6 +31,7 @@ import { buildLaunchCapabilities } from "./src/launch-options.js";
 import { REPO_ROOT } from "./src/repo-paths.js";
 import { SPIKE_DECISIONS } from "./src/spike-decisions.js";
 import { assertCacheDir, assertIsolatedEnv, assertShotsDir } from "./src/uat-env.js";
+import { isolatePluginData } from "./src/vault-plugin-data.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -59,6 +62,17 @@ const specFile = which === "smoke" ? "./smoke/smoke.e2e.ts" : "./smoke/spikes.e2
 if (SPIKE_DECISIONS.launch === "binaryPath") {
   assertInstallerVersionMatches(SPIKE_DECISIONS.installerVersion, readInstalledInstallerVersion());
 }
+
+// The plugin prefers a persisted socketPathOverride over CCC_SOCKET_PATH, so the environment
+// guard above is not enough: a supplied vault could still name the owner's live socket in its
+// data.json (Codex finding 1). Write the isolated socket into the vault's plugin data BEFORE the
+// capabilities are built, replacing any conflicting value and verifying the file afterwards.
+// assertIsolatedEnv has already proven CCC_SOCKET_PATH is set and inside the run root.
+isolatePluginData({
+  vaultPath,
+  runRoot,
+  socketPath: requireEnv("CCC_SOCKET_PATH"),
+});
 
 // buildLaunchCapabilities refuses a vault outside the run root, the home directory, the plugin
 // package folder (it holds the owner's data.json) and any binary other than the installed app.

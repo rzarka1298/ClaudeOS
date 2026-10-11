@@ -7,6 +7,8 @@
  */
 import { browser } from "@wdio/globals";
 import { SPIKE_DECISIONS } from "../src/spike-decisions.js";
+import { evaluateSocketIsolation } from "../src/vault-plugin-data.js";
+import { readIsolationFacts } from "./isolation-facts.js";
 
 const PLUGIN_COMMAND = "claude-command-center:open-overview";
 
@@ -25,6 +27,13 @@ describe("spikes S1 to S5 against the sandbox Obsidian", () => {
 
   it("S1: notification permission, a spy wrapper, the plugin's test approval and a direct probe", async () => {
     try {
+      // Refuse to send a test approval unless the plugin provably talks to the run-root socket
+      // (S0 asserts the same fact): otherwise the approval could land in the owner's store.
+      const isolation = evaluateSocketIsolation(await readIsolationFacts());
+      if (!isolation.ok) {
+        result(1, "fail", { refused: "socket isolation not proven", reason: isolation.reason });
+        return;
+      }
       await browser.executeObsidian(({ app }) => {
         const w = window as unknown as {
           __spikeNotes?: Array<{ title: string; source: string; instance: Notification }>;
