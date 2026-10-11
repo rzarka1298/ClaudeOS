@@ -67,6 +67,8 @@ export interface HeadroomServiceDeps {
   readonly fallback: () => CodexUsageSnapshot | null;
   /** Runs paused by the usage limit (plan 26 binds this). */
   readonly pausedRuns: () => { readonly count: number; readonly earliestResetAt: string | null };
+  /** Awaited before a signal is built, so the paused-run summary exists before the first session poll. */
+  readonly preparePausedRuns?: () => Promise<void>;
   /** The Claude member, injected (plan 28 binds it to the Phase 5 usage services). */
   readonly claudeView: () => ClaudeHeadroomView;
   /** Open event-stream subscribers; the timer reads only while this is above zero. */
@@ -249,6 +251,11 @@ export function createHeadroomService(deps: HeadroomServiceDeps): HeadroomServic
   }
 
   async function ensureFresh(): Promise<void> {
+    try {
+      await deps.preparePausedRuns?.();
+    } catch {
+      // The summary then reads whatever the mirror already holds.
+    }
     if (needsRefresh()) await refresh();
   }
 

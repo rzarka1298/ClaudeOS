@@ -475,6 +475,8 @@ async function composeCodexServices(
     // and the 80 percent reserve still require a live read.
     fallback: () => rolloutRateLimits.read(),
     pausedRuns: () => summarizePausedRuns(mirror.snapshot()),
+    // Before the first session poll (which needs SSE subscribers) the mirror is empty: poll once.
+    preparePausedRuns: () => (mirror.snapshot() === null ? mirror.pollNow() : Promise.resolve()),
     claudeView: () => claudeHeadroomViewOf(deps.usageSummary()),
     subscribers,
     publish: (type: "codex.usage.updated", payload: CodexUsageUpdatedPayload) => {
