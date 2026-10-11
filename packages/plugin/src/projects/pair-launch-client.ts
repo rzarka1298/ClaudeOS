@@ -122,10 +122,12 @@ export function createPairRequester({
   launchPair = postLaunchPair,
 }: CreatePairRequesterOptions): (projectId: ProjectId) => void {
   const timers: LaunchTimerControls = { setTimer, clearTimer };
+  /** Pairs between press and final answer, including while the conflict dialog hides the status. */
+  const inFlight = new Set<string>();
 
   return (projectId) => {
     const key = launchStatusKey(projectId, LAUNCH_PAIR_ACTION);
-    if (isLaunchOpening(launchStatus.value.get(key))) return;
+    if (inFlight.has(key) || isLaunchOpening(launchStatus.value.get(key))) return;
     const release = holdStatus?.();
     let held = release !== undefined;
     const settle = (): void => {
@@ -155,6 +157,7 @@ export function createPairRequester({
       return;
     }
 
+    inFlight.add(key);
     setPairOpening(key);
 
     const send = async (body: LaunchPairRequest): Promise<Outcome> => {
@@ -233,6 +236,9 @@ export function createPairRequester({
       .catch(() => {
         // A throwing `notify` must not become an unhandled rejection.
       })
-      .finally(settle);
+      .finally(() => {
+        inFlight.delete(key);
+        settle();
+      });
   };
 }

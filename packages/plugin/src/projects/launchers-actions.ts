@@ -140,8 +140,9 @@ function isConflict(error: unknown): boolean {
  * child with no terminal, so every `terminal.*` check (terminal.env, ...)
  * reports a warning there even for a healthy Codex. Those checks are ignored
  * by id prefix; only the remaining checks decide healthy, warning or problem.
- * With no listed non-ok check left, the overall status decides only when
- * nothing was ignored (a report whose checks were capped or off-shape).
+ * With no listed non-ok check left, an overall fail or warning still stands
+ * unless an ignored terminal check at least as bad explains it (a report whose
+ * checks were capped or off-shape must never read healthier than Codex said).
  */
 export function doctorVerdict(summary: CodexDoctorSummary): CodexDoctorOutcome {
   if (summary.overall === "unrecognised") return { kind: "unknown" };
@@ -150,10 +151,16 @@ export function doctorVerdict(summary: CodexDoctorSummary): CodexDoctorOutcome {
   if (failIds.length > 0) return { kind: "problem", ids: failIds };
   const warnIds = counted.filter((check) => check.status === "warning").map((check) => check.id);
   if (warnIds.length > 0) return { kind: "warning", ids: warnIds };
-  const ignoredNonOk = summary.checks.some(
-    (check) => check.id.startsWith("terminal.") && check.status !== "ok",
-  );
-  if (ignoredNonOk || summary.overall === "ok") return { kind: "healthy" };
+  if (summary.overall === "ok") return { kind: "healthy" };
+  // The overall status is only explained away by an ignored terminal check at least as bad as
+  // it: a fail needs an ignored fail, a warning any ignored non-ok. Otherwise something the
+  // list does not show (truncated or off-shape) caused it, so never report healthier.
+  const ignored = summary.checks.filter((check) => check.id.startsWith("terminal."));
+  const explained =
+    summary.overall === "fail"
+      ? ignored.some((check) => check.status === "fail")
+      : ignored.some((check) => check.status !== "ok");
+  if (explained) return { kind: "healthy" };
   return summary.overall === "fail" ? { kind: "problem", ids: [] } : { kind: "warning", ids: [] };
 }
 

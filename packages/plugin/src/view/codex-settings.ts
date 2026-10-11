@@ -209,6 +209,8 @@ export class CodexSettingsState {
   status: CodexStatusInput = "checking";
   private inFlight = false;
   private reloadQueued = false;
+  /** Bumped by every adopted update; a read that began before the latest bump is stale. */
+  private adoptedVersion = 0;
   private readonly getIntegration: (() => Promise<CodexIntegrationStatus>) | undefined;
   private readonly onChange: () => void;
 
@@ -222,6 +224,7 @@ export class CodexSettingsState {
 
   /** Takes a status the service pushed (snapshot replay); it supersedes any read in flight. */
   adopt(status: CodexIntegrationStatus): void {
+    this.adoptedVersion += 1;
     this.status = status;
     this.onChange();
   }
@@ -240,20 +243,26 @@ export class CodexSettingsState {
     if (this.inFlight || this.getIntegration === undefined) return;
     this.inFlight = true;
     const getIntegration = this.getIntegration;
+    const startedAt = this.adoptedVersion;
     // `new Promise` also turns a synchronous throw in the seam into a rejection.
     new Promise<CodexIntegrationStatus>((resolve) => {
       resolve(getIntegration());
     }).then(
       (status) => {
         this.inFlight = false;
-        this.status = status;
-        this.onChange();
+        // An update adopted while this read ran is newer than its answer.
+        if (startedAt === this.adoptedVersion) {
+          this.status = status;
+          this.onChange();
+        }
         this.runQueuedReload();
       },
       () => {
         this.inFlight = false;
-        this.status = "unavailable";
-        this.onChange();
+        if (startedAt === this.adoptedVersion) {
+          this.status = "unavailable";
+          this.onChange();
+        }
         this.runQueuedReload();
       },
     );
