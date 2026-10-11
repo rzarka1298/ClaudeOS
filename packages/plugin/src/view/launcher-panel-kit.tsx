@@ -87,7 +87,9 @@ export type CodexDoctorState =
   | { readonly kind: "idle" }
   | { readonly kind: "checking" }
   | { readonly kind: "healthy" }
-  | { readonly kind: "problem" }
+  | { readonly kind: "warning"; readonly ids: readonly string[] }
+  | { readonly kind: "problem"; readonly ids: readonly string[] }
+  | { readonly kind: "unknown" }
   | { readonly kind: "service-failure" };
 
 /** What a panel's persistent status line says (UI-SPEC S6). */

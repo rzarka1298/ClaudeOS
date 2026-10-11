@@ -1,4 +1,5 @@
 import type {
+  CodexDoctorSummary,
   DetectionResponse,
   LaunchErrorKind,
   LauncherConfigView,
@@ -74,11 +75,16 @@ export type OpenSettingsOutcome = { readonly kind: "opened" } | LauncherActionFa
 /**
  * The owner-triggered Codex health check, reduced to which fixed line the
  * panel shows (CODEX-03, R4). Nothing of the doctor's own output survives
- * this seam: not a check id, not a version, not a path.
+ * this seam but allowlisted check ids (CODEX_DOCTOR check ids are
+ * `[A-Za-z0-9_.-]` strings, never paths) and the verdict.
  */
 export type CodexDoctorOutcome =
   | { readonly kind: "healthy" }
-  | { readonly kind: "problem" }
+  /** Healthy, but a check (never a terminal.* one) warned; `ids` are allowlisted check ids. */
+  | { readonly kind: "warning"; readonly ids: readonly string[] }
+  | { readonly kind: "problem"; readonly ids: readonly string[] }
+  /** The report had an unknown schema or shape: neither healthy nor a problem. */
+  | { readonly kind: "unknown" }
   | LauncherActionFailure;
 
 /** Every outcome a {@link LaunchersActions} method can resolve to. */
@@ -129,6 +135,30 @@ function isConflict(error: unknown): boolean {
 }
 
 /** The production {@link LaunchersActions}, bound to one authenticated client. */
+/**
+ * The doctor verdict. The service runs `codex doctor --json` as a background
+ * child with no terminal, so every `terminal.*` check (terminal.env, ...)
+ * reports a warning there even for a healthy Codex. Those checks are ignored
+ * by id prefix; only the remaining checks decide healthy, warning or problem.
+ * With no listed non-ok check left, the overall status decides only when
+ * nothing was ignored (a report whose checks were capped or off-shape).
+ */
+export function doctorVerdict(summary: CodexDoctorSummary): CodexDoctorOutcome {
+  if (summary.overall === "unrecognised") return { kind: "unknown" };
+  const counted = summary.checks.filter((check) => !check.id.startsWith("terminal."));
+  const failIds = counted.filter((check) => check.status === "fail").map((check) => check.id);
+  if (failIds.length > 0) return { kind: "problem", ids: failIds };
+  const warnIds = counted.filter((check) => check.status === "warning").map((check) => check.id);
+  if (warnIds.length > 0) return { kind: "warning", ids: warnIds };
+  const ignoredNonOk = summary.checks.some(
+    (check) => check.id.startsWith("terminal.") && check.status !== "ok",
+  );
+  if (ignoredNonOk || summary.overall === "ok") return { kind: "healthy" };
+  return summary.overall === "fail"
+    ? { kind: "problem", ids: [] }
+    : { kind: "warning", ids: [] };
+}
+
 export function createLaunchersActions(client: SocketApiClient): LaunchersActions {
   return {
     async detect() {
@@ -193,7 +223,7 @@ export function createLaunchersActions(client: SocketApiClient): LaunchersAction
     async codexDoctor() {
       try {
         const summary = await runCodexDoctor(client);
-        return summary.overall === "ok" ? { kind: "healthy" } : { kind: "problem" };
+        return doctorVerdict(summary);
       } catch (error: unknown) {
         // The Codex client reports its own fixed codes; only the one that
         // says the service is away is told apart (SC-3: no message is read).

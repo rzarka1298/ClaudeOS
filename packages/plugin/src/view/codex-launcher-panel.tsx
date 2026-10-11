@@ -182,7 +182,18 @@ function blockClickWhen(disabled: boolean): ((event: MouseEvent) => void) | unde
 /** Why the health control cannot run right now, if it cannot. */
 type HealthBlock = "disconnected" | "save-first" | "busy" | null;
 
-/** The health region: one of three fixed lines, never any doctor output (R4). */
+/** Most check ids named in a health line; the rest are summarised as a count. */
+const MAX_NAMED_CHECK_IDS = 5;
+
+/** `: a, b` (allowlisted check ids, never paths), or nothing when none are known. */
+function idList(ids: readonly string[]): string {
+  if (ids.length === 0) return "";
+  const shown = ids.slice(0, MAX_NAMED_CHECK_IDS).join(", ");
+  const more = ids.length - MAX_NAMED_CHECK_IDS;
+  return more > 0 ? `: ${shown} and ${more} more` : `: ${shown}`;
+}
+
+/** The health region: fixed lines plus allowlisted check ids, never other doctor output (R4). */
 function HealthLines({ state }: { readonly state: CodexDoctorState }): VNode | null {
   switch (state.kind) {
     case "checking":
@@ -196,15 +207,26 @@ function HealthLines({ state }: { readonly state: CodexDoctorState }): VNode | n
           Codex doctor reports it's healthy.
         </>
       );
+    case "warning":
+      return (
+        <>
+          <span className="ccc-meta-glyph" aria-hidden="true">
+            ✓
+          </span>{" "}
+          Codex doctor reports it's healthy, with warnings{idList(state.ids)}.
+        </>
+      );
     case "problem":
       return (
         <>
           <span className="ccc-error-glyph" aria-hidden="true">
             ▲
           </span>
-          Codex doctor reported a problem.
+          Codex doctor reported a problem{idList(state.ids)}.
         </>
       );
+    case "unknown":
+      return <>Codex doctor's report wasn't recognised.</>;
     case "service-failure":
       return (
         <>
@@ -355,10 +377,10 @@ export function CodexLauncherPanel({
     session.codexDoctor.value = { kind: "checking" };
     void actions.codexDoctor().then((outcome) => {
       session.codexDoctor.value =
-        outcome.kind === "healthy"
-          ? { kind: "healthy" }
-          : outcome.kind === "problem"
-            ? { kind: "problem" }
+        outcome.kind === "healthy" || outcome.kind === "unknown"
+          ? { kind: outcome.kind }
+          : outcome.kind === "warning" || outcome.kind === "problem"
+            ? { kind: outcome.kind, ids: outcome.ids }
             : { kind: "service-failure" };
     });
   }
