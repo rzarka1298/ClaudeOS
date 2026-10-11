@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  type DriverBrowser,
-  type SandboxProbe,
   assertSandboxConnected,
+  type DriverBrowser,
   parseCountInWords,
   pollUntil,
   runPluginCommand,
+  type SandboxProbe,
 } from "./driver.js";
 
 function fakeClock() {
@@ -138,7 +138,7 @@ describe("assertSandboxConnected (Test 8)", () => {
   });
 
   it("throws a fixed category-only message for a mismatched environment", async () => {
-    const real = "/Users/someone/.ccc/svc.sock";
+    const real = "/home-elsewhere/ccc/svc.sock";
     const error = await assertSandboxConnected(
       probeBrowser({ envSocketPath: real, pluginSocketOverride: SANDBOX }),
       { expectedSocketPath: SANDBOX },
@@ -156,7 +156,7 @@ describe("assertSandboxConnected (Test 8)", () => {
         expectedSocketPath: SANDBOX,
       }),
     ).rejects.toThrow(/renderer socket environment/);
-    const other = "/Users/someone/.ccc/svc.sock";
+    const other = "/home-elsewhere/ccc/svc.sock";
     const error = await assertSandboxConnected(
       probeBrowser({ envSocketPath: SANDBOX, pluginSocketOverride: other }),
       { expectedSocketPath: SANDBOX },

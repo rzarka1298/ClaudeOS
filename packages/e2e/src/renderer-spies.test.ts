@@ -198,7 +198,11 @@ describe("console capture (Test 3)", () => {
     expect(installConsoleCapture()).toBe(true);
     expect(installConsoleCapture()).toBe(false);
     const long = "x".repeat(900);
-    (fake as unknown as { error: (...a: unknown[]) => void }).error("boom", { a: 1 }, new Error("bad"));
+    (fake as unknown as { error: (...a: unknown[]) => void }).error(
+      "boom",
+      { a: 1 },
+      new Error("bad"),
+    );
     (fake as unknown as { error: (...a: unknown[]) => void }).error(long);
     win.dispatch("error", { message: "window failed" });
     const errors = readConsoleErrors();
@@ -287,7 +291,9 @@ describe("self-contained (Test 5)", () => {
     const Wrapped = win.Notification as typeof FakeNotification;
     const n = new Wrapped("Hello", { body: "B" });
     n.onclick = () => {};
-    expect((evalIn("readNotifications", scope)() as { records: unknown[] }).records).toHaveLength(1);
+    expect((evalIn("readNotifications", scope)() as { records: unknown[] }).records).toHaveLength(
+      1,
+    );
     expect(evalIn("fireNotificationClick", scope)(0)).toBe(true);
 
     expect(evalIn("installLongtaskObserver", scope)()).toBe(true);
