@@ -93,6 +93,21 @@ describe("createRolloutRateLimitsReader (plan 05.1-33, OQ-3, CODEX-08)", () => {
     expect(CodexUsageSnapshotSchema.safeParse(snapshot).success).toBe(true);
   });
 
+  it("fresh log beyond the 5,000-file listing cap is still used (Codex final review)", () => {
+    const oldAt = NOW - 9 * DAY;
+    const olds: FakeRollout[] = [];
+    for (let i = 0; i < 5000; i += 1) {
+      const stamp = `00-${String(Math.floor(i / 60)).padStart(2, "0")}-${String(i % 60).padStart(2, "0")}`;
+      olds.push(rollout("2026-10-01", stamp, oldAt, limitsLine(oldAt, 5)));
+    }
+    const fresh = rollout("2026-10-10", "11-00-00", NOW - MIN, limitsLine(NOW - MIN, 77));
+    const { reader } = setup([...olds, fresh]);
+    const snapshot = reader.read();
+    expect(snapshot?.kind === "available" && snapshot.observedAt).toBe(
+      new Date(NOW - MIN).toISOString(),
+    );
+  }, 120_000);
+
   it("Test 2: a resumed older-named file whose last record is newest beats a newer-named file", () => {
     const { reader } = setup([
       rollout("2026-10-08", "09-00-00", NOW - MIN, limitsLine(NOW - MIN, 63)),
