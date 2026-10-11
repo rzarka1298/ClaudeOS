@@ -651,6 +651,38 @@ describe("the overlay order and the shared inactivity window", () => {
     expect(await stateOf()).toBe("limit-paused");
   });
 
+  it("05.1-post: a headroom-first request counts pending resumes before any session poll", async () => {
+    const now = Date.now();
+    const c = await compose({
+      appServer: { read: { kind: "result", result: weeklyReply(41) } },
+      home: codexHomeWithThreads(
+        [{ id: SESSION, agoMs: 15 * 60_000, lifecycle: [["task_started", 20 * 60_000]] }],
+        now,
+      ),
+      prepare: ({ store, dir }) => {
+        const root = realpathSync(mkdtempSync(join(dir, "proj-")));
+        insertProject(store.db, { path: root, displayName: "pause-project" });
+        const state = join(root, ".planning", "codex");
+        const pendingRun = nextRunId();
+        writeRunRecord(state, {
+          runId: pendingRun,
+          sessionId: SESSION,
+          status: "limit",
+          resetsAt: new Date(now + 3_600_000).toISOString(),
+        });
+        writePendingResume(state, {
+          sessionId: SESSION,
+          runId: pendingRun,
+          resetsAt: new Date(now + 3_600_000).toISOString(),
+          recordedAt: new Date(now - 10 * 60_000).toISOString(),
+        });
+      },
+    });
+    const reply = await c.get(CODEX_HEADROOM_PATH);
+    const signal = HeadroomSignalSchema.parse(reply.body);
+    expect(signal.codex.pausedRuns.count).toBe(1);
+  });
+
   it("Test 7: the source registers the run overlay before the hook overlay and resolves the inactivity window once", () => {
     const source = readFileSync(fileURLToPath(new URL("./services.ts", import.meta.url)), "utf8");
     const run = source.indexOf("createRunOverlay(");
