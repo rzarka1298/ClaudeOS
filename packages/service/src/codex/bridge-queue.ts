@@ -147,12 +147,6 @@ export interface WriteBridgeRequestOptions {
    * nothing, or takes back what it just published, and returns `null`.
    */
   readonly isCancelled?: () => boolean;
-  /**
-   * Called synchronously the moment THIS write has published the request (its own link or rename
-   * succeeded), before any cleanup. Only a request reported here is the caller's to withdraw: a
-   * name that already belonged to another launch is never reported.
-   */
-  readonly onPublished?: () => void;
 }
 
 /**
@@ -192,7 +186,6 @@ export async function writeBridgeRequest(
       // A filesystem without hard links: the rename is still atomic.
       try {
         await rename(tmp, final);
-        options.onPublished?.();
         if (cancelled()) {
           void unlinkQuietly(final);
           return null;
@@ -206,7 +199,6 @@ export async function writeBridgeRequest(
     await unlinkQuietly(tmp);
     throw error;
   }
-  options.onPublished?.();
   // The request is published. The temp name is only litter now: it is removed in the background
   // so a stalled delete can never hold back the hand-off (the caller must be able to withdraw the
   // request the moment it exists).
@@ -256,6 +248,41 @@ export async function waitForClaim(
     if (remaining <= 0) return "timeout";
     await sleep(Math.min(pollMs, remaining), options.signal);
   }
+}
+
+/** The env key that carries a launch attempt's random ownership nonce (any `CCC_` key passes the shared validator). */
+export const BRIDGE_NONCE_ENV_KEY = "CCC_BRIDGE_NONCE";
+
+export type RequestOwnership = "claimed" | "queued" | "none";
+
+async function nonceOf(path: string): Promise<string | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const env = (parsed as { env?: unknown }).env;
+    if (typeof env !== "object" || env === null) return null;
+    const nonce = (env as Record<string, unknown>)[BRIDGE_NONCE_ENV_KEY];
+    return typeof nonce === "string" ? nonce : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the file under `runId` is THIS attempt's request, decided by content: the nonce inside
+ * the request body must equal `nonce`. A claimed file wins over a queued one. A file that is
+ * missing, unreadable, unparseable or carries another nonce is not ours (`none`) and is never touched.
+ */
+export async function inspectRequestOwnership(
+  stateDir: string,
+  runId: string,
+  nonce: string,
+): Promise<RequestOwnership> {
+  if (!isRunId(runId) || nonce.length === 0) return "none";
+  const name = `${runId}.json`;
+  if ((await nonceOf(join(claimedDir(stateDir), name))) === nonce) return "claimed";
+  if ((await nonceOf(join(requestsDir(stateDir), name))) === nonce) return "queued";
+  return "none";
 }
 
 /**

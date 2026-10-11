@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { access, constants, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -13,6 +14,8 @@ import { getLauncherConfig, type OperationalStore } from "@ccc/operational-store
 import {
   type AgentBridgeRequest,
   type AgentPins,
+  BRIDGE_NONCE_ENV_KEY,
+  inspectRequestOwnership,
   type WithdrawResult,
   waitForClaim,
   withdrawRequest,
@@ -186,7 +189,8 @@ function agentOf(argv: readonly string[]): "claude" | "codex" | null {
 interface LaunchState {
   cancelled: boolean;
   phase: "prep" | "wait";
-  bridge: { dir: string; runId: string } | null;
+  /** The attempt in flight: the nonce inside its request body is what proves a file is ours. */
+  bridge: { dir: string; runId: string; nonce: string } | null;
   firstRunId: string | null;
 }
 
@@ -229,21 +233,25 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
       const runId = state.firstRunId ?? deps.mintRunId();
       state.firstRunId = null;
       let written: string | null;
-      // Recorded the instant THIS write publishes (and not before: until then the name may belong
-      // to another launch), so the timeout handler can withdraw it while the writer settles.
+      // The attempt is recorded before the write with a random nonce that travels inside the
+      // request body. Whether a file under this run id is ours is decided by that content, never
+      // by when a callback fires: the timeout handler reads the nonce before it withdraws or
+      // accepts anything.
+      const nonce = randomBytes(16).toString("hex");
+      state.bridge = { dir: stateDir, runId, nonce };
       try {
         written = await writeRequest(
           stateDir,
-          { ...base, runId, createdAt: new Date(now()).toISOString() },
           {
-            isCancelled: () => state.cancelled,
-            onPublished: () => {
-              state.bridge = { dir: stateDir, runId };
-            },
+            ...base,
+            env: { ...base.env, [BRIDGE_NONCE_ENV_KEY]: nonce },
+            runId,
+            createdAt: new Date(now()).toISOString(),
           },
+          { isCancelled: () => state.cancelled },
         );
       } catch {
-        // A published request (state.bridge set by onPublished) stays withdrawable.
+        // A request that did get published stays reachable through state.bridge.
         log("request-write-failed");
         return null;
       }
@@ -367,7 +375,6 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
     );
     if (runId === null) return fail(state.cancelled ? "timeout" : "spawn-failed");
     state.phase = "wait";
-    state.bridge = { dir: status.dir, runId };
     const productRunId = env.CCC_RUN_ID;
     if (productRunId !== undefined) rememberBridgeRun(productRunId, runId);
 
@@ -440,7 +447,7 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
           }
           // Take the request back; one the extension claimed first is a hand-off after all. A
           // withdraw that itself stalls only delays the answer by a short grace.
-          const { dir, runId } = state.bridge;
+          const { dir, runId, nonce } = state.bridge;
           let settled = false;
           const finish = (result: LaunchResult): void => {
             if (settled) return;
@@ -449,12 +456,20 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
             resolveBackstop(result);
           };
           const graceTimer = setTimeout(() => finish(failure), WITHDRAW_GRACE_MS);
-          void Promise.resolve()
-            .then(() => withdraw(dir, runId))
-            .then(
-              (outcome) => finish(outcome === "claimed" ? { ok: true } : failure),
-              () => finish(failure),
-            );
+          // Ownership is decided by the nonce inside the request body: only our own queued request
+          // is withdrawn and only our own claimed one is a hand-off; any other file under this
+          // run id (another launch's, unreadable) is left alone and the answer is the timeout.
+          void inspectRequestOwnership(dir, runId, nonce)
+            .then(async (owned) => {
+              if (owned === "claimed") return { ok: true } as LaunchResult;
+              if (owned === "queued") {
+                return (await withdraw(dir, runId)) === "claimed"
+                  ? ({ ok: true } as LaunchResult)
+                  : failure;
+              }
+              return failure;
+            })
+            .then(finish, () => finish(failure));
         };
         const arm = (delay: number, graceOnly: boolean): void => {
           timer = setTimeout(
