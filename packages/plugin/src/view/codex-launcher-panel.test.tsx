@@ -155,7 +155,11 @@ describe("detection is a setup state, never an error (CODEX-03, UI-SPEC S4-b)", 
     );
     expect(line.textContent).toContain("◌");
     expect(within(panel()).getByText("Not set up")).toBeTruthy();
-    expect(within(panel()).getAllByRole("radio").map((r) => r.getAttribute("type"))).toHaveLength(1);
+    expect(
+      within(panel())
+        .getAllByRole("radio")
+        .map((r) => r.getAttribute("type")),
+    ).toHaveLength(1);
     expect(panel().querySelector(".ccc-error-glyph")).toBeNull();
     expect(panel().querySelector(".ccc-field-error")).toBeNull();
     expect(panel().innerHTML).not.toContain("danger");

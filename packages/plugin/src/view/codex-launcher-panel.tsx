@@ -386,7 +386,6 @@ export function CodexLauncherPanel({
   }
 
   const executableDisplay = executableDisplayOf(current.executable, candidates);
-  const showExecutableChoices = candidates.length > 0 || current.executable?.kind === "path";
   const notInstalled = detection !== null && candidates.length === 0 && saved === null;
 
   return (
@@ -407,47 +406,45 @@ export function CodexLauncherPanel({
         </p>
       )}
 
-      {showExecutableChoices && (
-        <fieldset className="ccc-radio-group">
-          <legend className="ccc-field-label">Codex executable</legend>
-          {candidates.map((option) => (
-            <label key={option.candidateId}>
-              <input
-                type="radio"
-                name={executableGroup}
-                aria-disabled={ariaDisabled}
-                onClick={blockClickWhen(disabled)}
-                checked={
-                  current.executable?.kind === "candidate" &&
-                  current.executable.candidateId === option.candidateId
-                }
-                onChange={() =>
-                  update({ executable: { kind: "candidate", candidateId: option.candidateId } })
-                }
-              />{" "}
-              <FoundLine option={option} />
-            </label>
-          ))}
-          <label>
+      <fieldset className="ccc-radio-group">
+        <legend className="ccc-field-label">Codex executable</legend>
+        {candidates.map((option) => (
+          <label key={option.candidateId}>
             <input
               type="radio"
               name={executableGroup}
               aria-disabled={ariaDisabled}
               onClick={blockClickWhen(disabled)}
-              checked={current.executable?.kind === "path"}
+              checked={
+                current.executable?.kind === "candidate" &&
+                current.executable.candidateId === option.candidateId
+              }
               onChange={() =>
-                update({
-                  executable: {
-                    kind: "path",
-                    text: current.executable?.kind === "path" ? current.executable.text : "",
-                  },
-                })
+                update({ executable: { kind: "candidate", candidateId: option.candidateId } })
               }
             />{" "}
-            Use a different path
+            <FoundLine option={option} />
           </label>
-        </fieldset>
-      )}
+        ))}
+        <label>
+          <input
+            type="radio"
+            name={executableGroup}
+            aria-disabled={ariaDisabled}
+            onClick={blockClickWhen(disabled)}
+            checked={current.executable?.kind === "path"}
+            onChange={() =>
+              update({
+                executable: {
+                  kind: "path",
+                  text: current.executable?.kind === "path" ? current.executable.text : "",
+                },
+              })
+            }
+          />{" "}
+          Use a different path
+        </label>
+      </fieldset>
       {current.executable?.kind === "path" && (
         <div className="ccc-inline-form">
           <label className="ccc-field-label" htmlFor={pathInputId}>
