@@ -150,7 +150,12 @@ export function doctorVerdict(summary: CodexDoctorSummary): CodexDoctorOutcome {
   const failIds = counted.filter((check) => check.status === "fail").map((check) => check.id);
   if (failIds.length > 0) return { kind: "problem", ids: failIds };
   const warnIds = counted.filter((check) => check.status === "warning").map((check) => check.id);
-  if (warnIds.length > 0) return { kind: "warning", ids: warnIds };
+  if (warnIds.length > 0) {
+    // A warning never hides an overall fail that no listed (or ignored) failing check explains.
+    const failExplained = summary.checks.some((check) => check.status === "fail");
+    if (summary.overall === "fail" && !failExplained) return { kind: "problem", ids: [] };
+    return { kind: "warning", ids: warnIds };
+  }
   if (summary.overall === "ok") return { kind: "healthy" };
   // The overall status is only explained away by an ignored terminal check at least as bad as
   // it: a fail needs an ignored fail, a warning any ignored non-ok. Otherwise something the
