@@ -171,6 +171,19 @@ describe("normalizeRateLimitsReply off-shape input (research R2 stability postur
     expect(windowsOf(weeklyReply(12.5))[0]?.usedPercent).toBe(12.5);
   });
 
+  it("keeps one window per limit id and duration when rateLimits and rateLimitsByLimitId repeat it", () => {
+    const week = { usedPercent: 2, windowDurationMins: 10_080, resetsAt: 1_790_000_000 };
+    const windows = windowsOf({
+      rateLimits: { limitId: "codex", primary: week },
+      rateLimitsByLimitId: {
+        codex: { limitId: "codex", primary: week },
+        other: { limitId: "other", primary: week },
+      },
+      ordinaryUsageAllowed: true,
+    });
+    expect(windows.map((w) => w.limitLabel)).toEqual(["codex", "other"]);
+  });
+
   it("keeps the eight worst windows when a reply carries more (T-05.1-12)", () => {
     const byId: Record<string, unknown> = {};
     for (let i = 0; i < 40; i += 1) {
