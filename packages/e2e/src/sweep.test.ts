@@ -119,7 +119,7 @@ describe("planSweep (Test 3)", () => {
 
   it("never plans a directory outside the run root or a root outside /tmp/ccc-uat.*", () => {
     const sneaky = staleRun([
-      { kind: "dir", path: "/Users/someone/important" },
+      { kind: "dir", path: "/Users/USERNAME/important" },
       { kind: "dir", path: `${ROOT}/../elsewhere` },
       { kind: "dir", path: ROOT },
     ]);
@@ -154,7 +154,7 @@ describe("planSweep (Test 3)", () => {
 describe("executeSweep (Test 4)", () => {
   function deps(table: () => ProcessEntry[]) {
     return {
-      terminate: vi.fn().mockResolvedValue(undefined),
+      sendTerm: vi.fn().mockResolvedValue(undefined),
       deleteAccount: vi.fn().mockResolvedValue("deleted"),
       removeDir: vi.fn(),
       removeRunRoot: vi.fn(),
@@ -166,14 +166,14 @@ describe("executeSweep (Test 4)", () => {
   it("runs each action once with the injected collaborators and reports the summary", async () => {
     let alive = [serviceRow];
     const d = deps(() => alive);
-    d.terminate.mockImplementation(() => {
+    d.sendTerm.mockImplementation(() => {
       alive = [];
       return Promise.resolve();
     });
     const plan = planSweep([staleRun([servicePid])], alive, options);
     const outcome = await executeSweep(plan, d);
-    expect(d.terminate).toHaveBeenCalledTimes(1);
-    expect(d.terminate).toHaveBeenCalledWith(555);
+    expect(d.sendTerm).toHaveBeenCalledTimes(1);
+    expect(d.sendTerm).toHaveBeenCalledWith(555);
     expect(d.deleteAccount).toHaveBeenCalledWith("ccc-uat-0123abcd");
     expect(d.removeDir).toHaveBeenCalledWith(`${ROOT}/vaults`);
     expect(d.removeRunRoot).toHaveBeenCalledWith(ROOT);
@@ -195,14 +195,14 @@ describe("executeSweep (Test 4)", () => {
       options,
     );
     await executeSweep(plan, d);
-    expect(d.terminate).not.toHaveBeenCalled();
+    expect(d.sendTerm).not.toHaveBeenCalled();
   });
 
   it("reports a survivor for the owner, sends no second signal and keeps the run root", async () => {
     const d = deps(() => [serviceRow]);
     const plan = planSweep([staleRun([servicePid])], [serviceRow], options);
     const outcome = await executeSweep(plan, d);
-    expect(d.terminate).toHaveBeenCalledTimes(1);
+    expect(d.sendTerm).toHaveBeenCalledTimes(1);
     expect(d.removeRunRoot).not.toHaveBeenCalled();
     expect(outcome.status).toBe("swept");
     if (outcome.status === "swept") {

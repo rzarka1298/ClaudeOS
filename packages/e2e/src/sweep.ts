@@ -133,7 +133,7 @@ export function planSweep(
 }
 
 export interface SweepDeps {
-  terminate: (pid: number) => Promise<void>;
+  sendTerm: (pid: number) => Promise<void>;
   deleteAccount: (account: string) => Promise<unknown>;
   removeDir: (path: string) => void;
   removeRunRoot: (path: string) => void;
@@ -166,7 +166,7 @@ export async function executeSweep(plan: SweepPlan, deps: SweepDeps): Promise<Sw
     for (const action of run.actions) {
       if (action.type !== "terminate") continue;
       const row = before.find((candidate) => candidate.pid === action.pid);
-      if (await attempt(`terminate ${action.pid}`, () => deps.terminate(action.pid))) {
+      if (await attempt(`terminate ${action.pid}`, () => deps.sendTerm(action.pid))) {
         terminated.push(action.pid);
         if (row !== undefined) signalled.push({ pid: row.pid, start: row.start });
       }
@@ -267,7 +267,7 @@ export async function runStaleSweep(context: SweepContext): Promise<SweepOutcome
     home: context.home,
   });
   return executeSweep(plan, {
-    terminate: terminateByPid,
+    sendTerm: terminateByPid,
     deleteAccount: context.deleteAccount,
     removeDir: (path) => rmSync(path, { recursive: true, force: true }),
     removeRunRoot: (path) => removeRunRoot(path, { base: context.base, home: context.home }),
