@@ -245,7 +245,9 @@ describe("createRateLimitsClient scenario matrix (T-05.1-06, T-05.1-11, T-05.1-1
 
   it("logs the integer JSON-RPC error code of a failed read, never its message text", async () => {
     const r = await run({ read: { kind: "error" } });
-    expect(r.logged).toEqual([[{ reason: "read-error", rpcCode: -32000 }, "codex usage read failed"]]);
+    expect(r.logged).toEqual([
+      [{ reason: "read-error", rpcCode: -32000 }, "codex usage read failed"],
+    ]);
     expect(JSON.stringify(r.logged)).not.toContain(FAKE_ACCOUNT_ID);
   });
 

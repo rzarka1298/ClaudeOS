@@ -484,7 +484,7 @@ describe("the pair button (plan 05.1-17, D-13, R-10)", () => {
       expect(codex?.dataset.tone).toBe("error");
       expect(codex?.querySelector(".ccc-error-glyph")?.textContent).toBe("▲");
       expect(codex?.textContent).toBe(
-        "▲ Codex: The Antigravity terminal bridge is out of date. Run its install step again from Settings → Codex, then try again.",
+        "▲ Codex: An open Antigravity window is still running an old terminal bridge. Reload all Antigravity windows (Developer: Reload Window). If that doesn't help, run the bridge install step again from Settings → Codex, then try again.",
       );
     });
 

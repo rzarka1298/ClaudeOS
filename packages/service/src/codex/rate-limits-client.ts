@@ -50,10 +50,7 @@ export const RATE_LIMITS_TOTAL_CAP_BYTES = 512 * 1024;
 
 export interface RateLimitsLogger {
   /** Reason codes and an integer JSON-RPC error code only. No reply text is ever passed. */
-  warn(
-    fields: { readonly reason: string; readonly rpcCode?: number },
-    message: string,
-  ): void;
+  warn(fields: { readonly reason: string; readonly rpcCode?: number }, message: string): void;
 }
 
 export interface RateLimitsClientDeps {
@@ -308,7 +305,11 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
         } else if (message.id === 2 && phase === "read") {
           if (message.error) {
             const code = isRecord(message.error) ? message.error.code : undefined;
-            fail("read-error", undefined, Number.isSafeInteger(code) ? (code as number) : undefined);
+            fail(
+              "read-error",
+              undefined,
+              Number.isSafeInteger(code) ? (code as number) : undefined,
+            );
             return;
           }
           settle(normalizeRateLimitsReply(message.result, { observedAtMs: now() }));

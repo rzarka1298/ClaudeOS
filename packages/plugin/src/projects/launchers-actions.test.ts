@@ -305,7 +305,12 @@ describe("the Codex launcher actions (plan 05.1-31 Task 1)", () => {
 
   it("codexDoctor ignores terminal.* checks, which a background run always trips", async () => {
     expect(
-      await verdictOf(WITH_CHECKS("warning", [["terminal.env", "warning"], ["auth.login", "ok"]])),
+      await verdictOf(
+        WITH_CHECKS("warning", [
+          ["terminal.env", "warning"],
+          ["auth.login", "ok"],
+        ]),
+      ),
     ).toEqual({ kind: "healthy" });
     expect(await verdictOf(WITH_CHECKS("fail", [["terminal.size", "fail"]]))).toEqual({
       kind: "healthy",
@@ -315,7 +320,10 @@ describe("the Codex launcher actions (plan 05.1-31 Task 1)", () => {
   it("codexDoctor names the warning check ids of a healthy-with-warnings report", async () => {
     expect(
       await verdictOf(
-        WITH_CHECKS("warning", [["terminal.env", "warning"], ["config.toml", "warning"]]),
+        WITH_CHECKS("warning", [
+          ["terminal.env", "warning"],
+          ["config.toml", "warning"],
+        ]),
       ),
     ).toEqual({ kind: "warning", ids: ["config.toml"] });
   });
@@ -323,7 +331,10 @@ describe("the Codex launcher actions (plan 05.1-31 Task 1)", () => {
   it("codexDoctor names the failing check ids and keeps fail a problem", async () => {
     expect(
       await verdictOf(
-        WITH_CHECKS("fail", [["auth.login", "fail"], ["config.toml", "warning"]]),
+        WITH_CHECKS("fail", [
+          ["auth.login", "fail"],
+          ["config.toml", "warning"],
+        ]),
       ),
     ).toEqual({ kind: "problem", ids: ["auth.login"] });
     expect(await verdictOf(WITH_CHECKS("fail", []))).toEqual({ kind: "problem", ids: [] });

@@ -154,9 +154,7 @@ export function doctorVerdict(summary: CodexDoctorSummary): CodexDoctorOutcome {
     (check) => check.id.startsWith("terminal.") && check.status !== "ok",
   );
   if (ignoredNonOk || summary.overall === "ok") return { kind: "healthy" };
-  return summary.overall === "fail"
-    ? { kind: "problem", ids: [] }
-    : { kind: "warning", ids: [] };
+  return summary.overall === "fail" ? { kind: "problem", ids: [] } : { kind: "warning", ids: [] };
 }
 
 export function createLaunchersActions(client: SocketApiClient): LaunchersActions {
