@@ -132,15 +132,32 @@ function scanWindow(raw: unknown, names: Names, limitLabel: string | null, scan:
   });
 }
 
-function scanLimit(raw: PlainObject, names: Names, scan: Scan): void {
+function scanLimit(raw: PlainObject, names: Names, scan: Scan, fallbackId?: string): void {
   const reached = raw[names.reachedType];
   if (reached) {
     scan.reached = true;
     scan.reachedValue ??= reached;
   }
-  const label = labelOf(raw[names.limitId]);
+  const label = labelOf(raw[names.limitId]) ?? labelOf(fallbackId);
   scanWindow(raw.primary, names, label, scan);
   scanWindow(raw.secondary, names, label, scan);
+}
+
+/**
+ * One window per distinct limit id and duration. A live reply repeats the same
+ * window in `rateLimits` and `rateLimitsByLimitId`; the higher use wins so the
+ * guard never reads less than any copy said.
+ */
+function dedupeWindows(windows: readonly CodexUsageWindow[]): CodexUsageWindow[] {
+  const kept = new Map<string, CodexUsageWindow>();
+  for (const window of windows) {
+    const key = `${window.limitLabel ?? ""}|${window.windowMinutes ?? ""}`;
+    const existing = kept.get(key);
+    if (existing === undefined || window.usedPercent > existing.usedPercent) {
+      kept.set(key, window);
+    }
+  }
+  return [...kept.values()];
 }
 
 /** The eight highest windows, in their original order (T-05.1-12; the worst is always kept). */
@@ -187,7 +204,7 @@ function finish(
   const version = safeVersion(options.codexVersion);
   const candidate = {
     kind: "available" as const,
-    windows: capWindows(scan.windows),
+    windows: capWindows(dedupeWindows(scan.windows)),
     ordinaryUsageAllowed,
     rateLimitReached: scan.reached,
     rateLimitReachedType: scan.reached ? reachedTypeOf(scan.reachedValue) : null,
@@ -216,8 +233,8 @@ export function normalizeRateLimitsReply(
   }
   const scan = newScan();
   scanLimit(limits, REPLY_NAMES, scan);
-  for (const entry of Object.values(byId ?? {})) {
-    if (isPlainObject(entry)) scanLimit(entry, REPLY_NAMES, scan);
+  for (const [id, entry] of Object.entries(byId ?? {})) {
+    if (isPlainObject(entry)) scanLimit(entry, REPLY_NAMES, scan, id);
   }
   const allowed = raw.ordinaryUsageAllowed;
   return finish(scan, typeof allowed === "boolean" ? allowed : null, "app-server", options);
