@@ -156,6 +156,7 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
   async function guardThenRegister(
     plan: StartPlan,
     projectName: string,
+    projectId: string,
   ): Promise<LaunchGuardDecision> {
     if (plan.guardTarget !== null) {
       const verdict = await deps.guard.check({ cwd: plan.guardTarget });
@@ -175,6 +176,7 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
       cwd: plan.treeKnown ? plan.cwd : null,
       worktreeRoot,
       permissionMode: plan.planMode ? "plan" : null,
+      projectId,
       at: deps.now().toISOString(),
     });
     return {
@@ -240,7 +242,7 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
       if (plan === null) return REFUSED;
       // One chain per resolved worktree root, shared with resume and branch.
       const tree = (await deps.guard.worktreeRootOf(plan.cwd)) ?? plan.cwd;
-      return serializedOnTree(deps.guard, tree, () => guardThenRegister(plan, project.displayName));
+      return serializedOnTree(deps.guard, tree, () => guardThenRegister(plan, project.displayName, input.projectId));
     },
 
     async settle(runId, outcome): Promise<void> {

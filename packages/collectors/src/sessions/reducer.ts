@@ -83,6 +83,8 @@ export type Evidence =
       readonly worktreeRoot: string | null;
       /** `plan` for a plan-mode launch (not write-capable); null when unknown. */
       readonly permissionMode: string | null;
+      /** The project the launch was started for (F7a), so the queued Run is never unclassified. */
+      readonly projectId?: string | null;
       readonly at: string;
     }
   | {
@@ -276,6 +278,7 @@ export function reduce(
           cwd: evidence.cwd,
           worktreeRoot: evidence.worktreeRoot,
           permissionMode: evidence.permissionMode,
+          projectId: evidence.projectId ?? null,
         }),
       );
     }
