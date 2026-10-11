@@ -243,6 +243,12 @@ describe("createRateLimitsClient scenario matrix (T-05.1-06, T-05.1-11, T-05.1-1
     expect(reasonOf(error)).toBe("read-failed");
   });
 
+  it("logs the integer JSON-RPC error code of a failed read, never its message text", async () => {
+    const r = await run({ read: { kind: "error" } });
+    expect(r.logged).toEqual([[{ reason: "read-error", rpcCode: -32000 }, "codex usage read failed"]]);
+    expect(JSON.stringify(r.logged)).not.toContain(FAKE_ACCOUNT_ID);
+  });
+
   it("Test 1d: unknown keys at every level change nothing", async () => {
     const plain = await run({ read: { kind: "result", result: weeklyReply(41) } });
     const noisy = await run({
