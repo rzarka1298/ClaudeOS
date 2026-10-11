@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { CleanupResult } from "./keychain-cleanup.js";
-import type { ProcessEntry } from "./ledger.js";
+import { appendLedger, type ProcessEntry } from "./ledger.js";
 import { type SandboxOptions, withSandbox } from "./sandbox.js";
 
 let base: string;
@@ -69,6 +69,62 @@ function baseOptions(
     ...overrides,
   };
 }
+
+describe("withSandbox sweep wiring (Task 2, Test 7)", () => {
+  it("calls the sweep before creating a new run root and returns its summary", async () => {
+    const table: ProcessEntry[] = [];
+    const order: string[] = [];
+    const summary = {
+      status: "swept" as const,
+      terminated: [1],
+      accountsDeleted: ["ccc-uat-old00001"],
+      removed: ["/tmp/ccc-uat.old000"],
+      stillAlive: [],
+      errors: [],
+    };
+    const sweep = vi.fn(() => {
+      order.push(`sweep:${readdirSync(base).length}`);
+      return Promise.resolve(summary);
+    });
+    const outcome = await withSandbox(baseOptions(table, { sweep }), () => {
+      order.push(`body:${readdirSync(base).length}`);
+      return Promise.resolve();
+    });
+    expect(order).toEqual(["sweep:0", "body:1"]);
+    expect(outcome.sweep).toEqual(summary);
+  });
+
+  it("throws a fixed 'another UAT run is active' error without creating anything when the sweep is busy", async () => {
+    const table: ProcessEntry[] = [];
+    const sweep = vi.fn(() => Promise.resolve({ status: "busy" as const, runRoot: "/tmp/ccc-uat.abc123" }));
+    const body = vi.fn(() => Promise.resolve());
+    await expect(withSandbox(baseOptions(table, { sweep }), body)).rejects.toThrow(
+      /another UAT run is active/i,
+    );
+    expect(body).not.toHaveBeenCalled();
+    expect(readdirSync(base)).toEqual([]);
+  });
+
+  it("the default sweep removes a stale run root left by a dead owner", async () => {
+    const table: ProcessEntry[] = [];
+    const stale = join(base, "ccc-uat.stale1");
+    mkdirSync(stale);
+    appendLedger(join(stale, "ledger.jsonl"), {
+      kind: "run",
+      runId: "deadbeef",
+      runRoot: stale,
+      startedAt: "2026-10-11T10:00:00.000Z",
+      ownerPid: 88888,
+      ownerStart: "Sun Oct 11 09:00:00 2026",
+    });
+    appendLedger(join(stale, "ledger.jsonl"), { kind: "account", account: "ccc-uat-deadbeef" });
+    const options = baseOptions(table);
+    const outcome = await withSandbox(options, () => Promise.resolve());
+    expect(existsSync(stale)).toBe(false);
+    expect(outcome.sweep.status).toBe("swept");
+    expect(options.deleteAccount).toHaveBeenCalledWith("ccc-uat-deadbeef");
+  });
+});
 
 describe("withSandbox tracer (Test 9)", () => {
   it("tears everything down after a failing body: stop, account delete, root removed, no leaks", async () => {

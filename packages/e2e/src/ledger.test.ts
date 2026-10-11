@@ -2,7 +2,13 @@ import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendLedger, type LedgerEntry, readLedger } from "./ledger.js";
+import {
+  appendLedger,
+  findLeaks,
+  findRunRootProcesses,
+  type LedgerEntry,
+  readLedger,
+} from "./ledger.js";
 
 let dir: string;
 let file: string;
@@ -31,6 +37,30 @@ const ENTRIES: LedgerEntry[] = [
   { kind: "leaked", at: "2026-10-11T10:05:00.000Z", pids: [777] },
   { kind: "closed", at: "2026-10-11T10:06:00.000Z" },
 ];
+
+describe("leak detection (Task 2, Test 2)", () => {
+  const pidEntry: LedgerEntry = { kind: "pid", role: "service", pid: 321, start: "T1", marker: "m" };
+
+  it("reports a ledgered pid only when the table has the same pid with the same start time", () => {
+    expect(findLeaks([pidEntry], [{ pid: 321, start: "T1", command: "x" }])).toEqual([
+      { pid: 321, reason: "ledgered process still alive", role: "service", command: "x" },
+    ]);
+    expect(findLeaks([pidEntry], [{ pid: 321, start: "T2", command: "x" }])).toEqual([]);
+    expect(findLeaks([pidEntry], [{ pid: 322, start: "T1", command: "x" }])).toEqual([]);
+    expect(findLeaks([{ kind: "account", account: "ccc-uat-abc" }], [])).toEqual([]);
+  });
+
+  it("reports processes naming the run root and excludes the runner's own pid", () => {
+    const table = [
+      { pid: 10, start: "T", command: "Obsidian --user-data-dir=/tmp/ccc-uat.abc123/wdio" },
+      { pid: 11, start: "T", command: "node runner /tmp/ccc-uat.abc123" },
+      { pid: 12, start: "T", command: "unrelated /tmp/ccc-uat.zzz999" },
+    ];
+    expect(findRunRootProcesses(table, "/tmp/ccc-uat.abc123", 11).map((leak) => leak.pid)).toEqual([
+      10,
+    ]);
+  });
+});
 
 describe("ledger (Test 8)", () => {
   it("writes JSON lines with mode 0600 and reads them back in order", () => {
