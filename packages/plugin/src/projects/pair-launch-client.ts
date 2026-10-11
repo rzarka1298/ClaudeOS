@@ -188,6 +188,8 @@ export function createPairRequester({
           failWhole("spawn-failed");
           return;
         }
+        // Nothing is opening while the owner decides: show no status until a choice is made.
+        clearLaunchStatus(key);
         let choice: ConflictChoice;
         try {
           choice = await chooseOnConflict(outcome.result.conflict, projectId);
@@ -200,6 +202,7 @@ export function createPairRequester({
           clearLaunchStatus(key);
           return;
         }
+        setPairOpening(key);
         outcome = await send({ ...request, choice });
       }
       if (isDisposed()) return;
