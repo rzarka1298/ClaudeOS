@@ -52,7 +52,11 @@ describe("no build-script allowance was widened for the wdio set (T-05.2-01)", (
     const text = readFileSync(join(REPO_ROOT, "pnpm-workspace.yaml"), "utf8");
     const block = /^allowBuilds:\n((?: {2}.*\n)+)/m.exec(text)?.[1] ?? "";
     expect(block).toContain("better-sqlite3");
-    for (const name of ["classic-level", "edgedriver", "geckodriver", "wdio", "webdriverio"]) {
+    // The owner denied the build scripts of these (2026-10-11): explicit `false` is the only legal value.
+    for (const name of ["classic-level", "edgedriver", "geckodriver"]) {
+      expect(block, name).toMatch(new RegExp(`^ {2}${name}: false$`, "m"));
+    }
+    for (const name of ["wdio", "webdriverio"]) {
       expect(block, name).not.toContain(name);
     }
   });

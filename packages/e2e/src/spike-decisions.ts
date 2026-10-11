@@ -51,4 +51,9 @@ export const PROVISIONAL_SPIKE_DECISIONS: Readonly<SpikeDecisions> = Object.free
 /** The decisions in force. The orchestrator replaces these values when it records the spikes. */
 export const SPIKE_DECISIONS: Readonly<SpikeDecisions> = Object.freeze({
   ...PROVISIONAL_SPIKE_DECISIONS,
+  protocolDispatch: "onclick-only",
+  reducedMotion: "setting-only",
+  coexistence: "verified",
+  obsidianCacheSha256: "146ef8470d8cbb4a6db209bdc19bf2bad13350444186c0fd93c31087b142b92f",
+  status: "recorded",
 });
