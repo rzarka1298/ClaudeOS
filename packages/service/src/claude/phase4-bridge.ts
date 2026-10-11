@@ -235,14 +235,17 @@ function createStartGuard(deps: Phase4BridgeDeps): LaunchGuard {
     async check(input: LaunchGuardInput): Promise<LaunchGuardDecision> {
       // Only a Claude Code session can write to a working tree concurrently.
       if (input.action !== "claude-code" || input.projectId === null) return { ok: true };
-      const project = await deps.lookup.resolve(input.projectId);
+      const projectId = input.projectId;
+      const project = await deps.lookup.resolve(projectId);
       // Re-checks can race with a moved project; never bypass the guard.
       if ("error" in project) return { ok: false, error: project.error };
       const plan = await planOf(input, project.path);
       if (plan === null) return REFUSED;
       // One chain per resolved worktree root, shared with resume and branch.
       const tree = (await deps.guard.worktreeRootOf(plan.cwd)) ?? plan.cwd;
-      return serializedOnTree(deps.guard, tree, () => guardThenRegister(plan, project.displayName, input.projectId));
+      return serializedOnTree(deps.guard, tree, () =>
+        guardThenRegister(plan, project.displayName, projectId),
+      );
     },
 
     async settle(runId, outcome): Promise<void> {
