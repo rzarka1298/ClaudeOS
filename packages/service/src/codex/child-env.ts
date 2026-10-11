@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { open, realpath, stat } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 
 /**
@@ -27,54 +27,55 @@ const STANDARD_DIRS: readonly string[] = ["/opt/homebrew/bin", "/usr/local/bin"]
 const SHEBANG_HEAD_BYTES = 256;
 const ENV_SHEBANG = /^#!\s*\/usr\/bin\/env\s+([A-Za-z0-9._-]+)\s*$/;
 
+/**
+ * Every call is asynchronous (a stalled mount must never block the event loop) and may never
+ * settle; {@link codexChildEnv} bounds the whole preparation with a deadline.
+ */
 export interface ChildEnvFs {
   /** The first bytes of the file as text, or `null` when unreadable. */
-  readHead(path: string): string | null;
+  readHead(path: string): Promise<string | null>;
   /** The resolved real path of a directory that is world-unwritable, or `null`. */
-  safeDirectory(path: string): string | null;
-  isExecutableFile(path: string): boolean;
+  safeDirectory(path: string): Promise<string | null>;
+  isExecutableFile(path: string): Promise<boolean>;
 }
 
 export const realChildEnvFs: ChildEnvFs = {
-  readHead(path) {
-    let fd: number | null = null;
+  async readHead(path) {
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
     try {
-      fd = openSync(path, "r");
+      handle = await open(path, "r");
       const buffer = Buffer.alloc(SHEBANG_HEAD_BYTES);
-      const read = readSync(fd, buffer, 0, SHEBANG_HEAD_BYTES, 0);
-      return buffer.subarray(0, read).toString("latin1");
+      const { bytesRead } = await handle.read(buffer, 0, SHEBANG_HEAD_BYTES, 0);
+      return buffer.subarray(0, bytesRead).toString("latin1");
     } catch {
       return null;
     } finally {
-      if (fd !== null) {
-        try {
-          closeSync(fd);
-        } catch {
-          // Nothing to do.
-        }
-      }
+      await handle?.close().catch(() => undefined);
     }
   },
-  safeDirectory(path) {
+  async safeDirectory(path) {
     try {
       if (!isAbsolute(path)) return null;
-      const real = realpathSync(path);
-      const stat = statSync(real);
-      if (!stat.isDirectory() || (stat.mode & 0o002) !== 0) return null;
+      const real = await realpath(path);
+      const info = await stat(real);
+      if (!info.isDirectory() || (info.mode & 0o002) !== 0) return null;
       return real;
     } catch {
       return null;
     }
   },
-  isExecutableFile(path) {
+  async isExecutableFile(path) {
     try {
-      const stat = statSync(path);
-      return stat.isFile() && (stat.mode & 0o111) !== 0;
+      const info = await stat(path);
+      return info.isFile() && (info.mode & 0o111) !== 0;
     } catch {
       return false;
     }
   },
 };
+
+/** How long preparing the environment may take; part of (never added to) the probe's own cap. */
+export const CHILD_ENV_PREPARE_DEADLINE_MS = 1500;
 
 export interface CodexChildEnvOptions {
   readonly executablePath: string;
@@ -85,6 +86,10 @@ export interface CodexChildEnvOptions {
   /** The pinned Node's path; the service's own by default. */
   readonly nodeExecPath?: string;
   readonly fs?: ChildEnvFs;
+  /** Longest the filesystem inspection may take; default {@link CHILD_ENV_PREPARE_DEADLINE_MS}. */
+  readonly deadlineMs?: number;
+  /** Ends the preparation early (the answer is then `null`). */
+  readonly signal?: AbortSignal;
 }
 
 /** The interpreter name of a `#!/usr/bin/env <name>` first line, else `null`. */
@@ -94,27 +99,52 @@ function envInterpreter(head: string | null): string | null {
   return ENV_SHEBANG.exec(firstLine)?.[1] ?? null;
 }
 
-export function codexChildEnv(options: CodexChildEnvOptions): Record<string, string> {
-  const fs = options.fs ?? realChildEnvFs;
-  let path = BASE_PATH;
-  const name = envInterpreter(fs.readHead(options.executablePath));
-  if (name !== null) {
-    const candidates = [
-      dirname(options.nodeExecPath ?? process.execPath),
-      dirname(options.executablePath),
-      ...(options.platformDirs ?? STANDARD_DIRS),
-    ];
-    for (const candidate of candidates) {
-      const dir = fs.safeDirectory(candidate);
-      if (dir !== null && !dir.includes(delimiter) && fs.isExecutableFile(join(dir, name))) {
-        path = `${dir}${delimiter}${BASE_PATH}`;
-        break;
-      }
+async function discoverPath(options: CodexChildEnvOptions, fs: ChildEnvFs): Promise<string> {
+  const name = envInterpreter(await fs.readHead(options.executablePath));
+  if (name === null) return BASE_PATH;
+  const candidates = [
+    dirname(options.nodeExecPath ?? process.execPath),
+    dirname(options.executablePath),
+    ...(options.platformDirs ?? STANDARD_DIRS),
+  ];
+  for (const candidate of candidates) {
+    const dir = await fs.safeDirectory(candidate);
+    if (dir !== null && !dir.includes(delimiter) && (await fs.isExecutableFile(join(dir, name)))) {
+      return `${dir}${delimiter}${BASE_PATH}`;
     }
   }
-  const env: Record<string, string> = { HOME: options.home, PATH: path, LC_ALL: "C" };
-  if (options.codexHome !== null && options.codexHome.length > 0) {
-    env.CODEX_HOME = options.codexHome;
+  return BASE_PATH;
+}
+
+/**
+ * The child environment, or `null` when it could not be prepared in time (the deadline passed or
+ * the signal fired while the launcher or interpreter was being inspected). Callers report their
+ * existing "unavailable" outcome for `null`. Nothing here blocks the event loop.
+ */
+export async function codexChildEnv(
+  options: CodexChildEnvOptions,
+): Promise<Record<string, string> | null> {
+  const fs = options.fs ?? realChildEnvFs;
+  const deadlineMs = Math.max(1, options.deadlineMs ?? CHILD_ENV_PREPARE_DEADLINE_MS);
+  const { signal } = options;
+  if (signal?.aborted === true) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const cutoff = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), deadlineMs);
+    onAbort = () => resolve(null);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    const path = await Promise.race([discoverPath(options, fs).catch(() => BASE_PATH), cutoff]);
+    if (path === null) return null;
+    const env: Record<string, string> = { HOME: options.home, PATH: path, LC_ALL: "C" };
+    if (options.codexHome !== null && options.codexHome.length > 0) {
+      env.CODEX_HOME = options.codexHome;
+    }
+    return env;
+  } finally {
+    clearTimeout(timer);
+    if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
   }
-  return env;
 }

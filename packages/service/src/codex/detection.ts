@@ -8,7 +8,7 @@ import type { CommandRunner } from "../projects/command-runner.js";
 import { toDisplayPath } from "../projects/project-views.js";
 import { isExecutableFile } from "../projects/terminal-launchers.js";
 import { type BridgeStatus, toBridgeStatusView } from "./bridge-state.js";
-import { codexChildEnv } from "./child-env.js";
+import { CHILD_ENV_PREPARE_DEADLINE_MS, codexChildEnv } from "./child-env.js";
 
 /**
  * Codex detection (plan 05.1-21, D-11, D-12, CODEX-03): which `codex`
@@ -111,6 +111,8 @@ export interface CodexDetectionDeps {
   readonly isExecutable?: (path: string) => Promise<boolean>;
   /** The bridge state as the service sees it (plan 05.1-13); never throws. */
   readonly readBridgeStatus: () => BridgeStatus | Promise<BridgeStatus>;
+  /** Test seam: the deadline for preparing the version probe's child environment. */
+  readonly envDeadlineMs?: number;
 }
 
 export interface CodexDetectionResult {
@@ -136,8 +138,12 @@ export interface CodexDetection {
 }
 
 /** The fixed child environment (shared policy): nothing is inherited from the service. */
-function childEnv(homeDir: string, executablePath: string): Readonly<Record<string, string>> {
-  return codexChildEnv({ executablePath, codexHome: null, home: homeDir });
+function childEnv(
+  homeDir: string,
+  executablePath: string,
+  deadlineMs: number,
+): Promise<Readonly<Record<string, string>> | null> {
+  return codexChildEnv({ executablePath, codexHome: null, home: homeDir, deadlineMs });
 }
 
 /** A version probe that outlasts this is a hang. */
@@ -191,9 +197,17 @@ export function createCodexDetection(deps: CodexDetectionDeps): CodexDetection {
 
   const versionOf = async (path: string): Promise<string | null> => {
     try {
+      // Preparing the environment is part of the probe's own timeout, never added to it.
+      const startedAt = performance.now();
+      const env = await childEnv(
+        deps.homeDir,
+        path,
+        Math.min(deps.envDeadlineMs ?? CHILD_ENV_PREPARE_DEADLINE_MS, VERSION_TIMEOUT_MS),
+      );
+      if (env === null) return null;
       const outcome = await deps.runner.run(path, ["--version"], {
-        timeoutMs: VERSION_TIMEOUT_MS,
-        env: childEnv(deps.homeDir, path),
+        timeoutMs: Math.max(1, Math.floor(VERSION_TIMEOUT_MS - (performance.now() - startedAt))),
+        env,
         maxBufferBytes: VERSION_MAX_OUTPUT_BYTES,
       });
       if (outcome.exitCode !== 0 || outcome.truncated || outcome.timedOut) return null;

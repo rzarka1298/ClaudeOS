@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { parseDoctorJson } from "@ccc/collectors";
 import { CODEX_DOCTOR_CAP_MS, type CodexDoctorSummary } from "@ccc/domain";
-import { codexChildEnv } from "./child-env.js";
+import { CHILD_ENV_PREPARE_DEADLINE_MS, codexChildEnv } from "./child-env.js";
 import type { SpawnFn, SpawnOptionsLite } from "./rate-limits-client.js";
 
 /**
@@ -58,6 +58,8 @@ export interface DoctorProbeDeps {
   readonly capMs?: number;
   /** How long the child gets to exit after the default termination signal before it is forced. */
   readonly killWaitMs?: number;
+  /** Test seam: the deadline for preparing the child environment; default {@link CHILD_ENV_PREPARE_DEADLINE_MS}. */
+  readonly envDeadlineMs?: number;
   /** The most stdout read before the run is judged hostile. */
   readonly maxOutputBytes?: number;
   readonly logger?: DoctorProbeLogger;
@@ -91,11 +93,12 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
 
   let inFlight: Promise<DoctorRunResult> | null = null;
 
-  function childEnv(path: string): Record<string, string> {
+  function childEnv(path: string, deadlineMs: number): Promise<Record<string, string> | null> {
     return codexChildEnv({
       executablePath: path,
       codexHome: deps.codexHome?.() ?? null,
       home: (deps.homeDir ?? homedir)(),
+      deadlineMs,
     });
   }
 
@@ -104,16 +107,39 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
     return { kind: "failed" };
   }
 
-  function runOnce(): Promise<DoctorRunResult> {
+  /** The environment is prepared under a deadline that is part of the run's own cap. */
+  async function runOnce(): Promise<DoctorRunResult> {
     const path = deps.executablePath();
-    if (path === null) return Promise.resolve({ kind: "unavailable" });
+    if (path === null) return { kind: "unavailable" };
+    const startedAt = performance.now();
+    let env: Record<string, string> | null;
+    try {
+      env = await childEnv(
+        path,
+        Math.min(deps.envDeadlineMs ?? CHILD_ENV_PREPARE_DEADLINE_MS, capMs),
+      );
+    } catch {
+      env = null;
+    }
+    if (env === null) {
+      deps.logger?.warn({ reason: "env-timeout" }, "codex doctor run unavailable");
+      return { kind: "unavailable" };
+    }
+    return spawnAndRun(path, env, Math.max(1, capMs - (performance.now() - startedAt)));
+  }
+
+  function spawnAndRun(
+    path: string,
+    env: Record<string, string>,
+    remainingCapMs: number,
+  ): Promise<DoctorRunResult> {
     return new Promise((resolve) => {
       let child: ChildProcess;
       try {
         child = spawnChild(path, ["doctor", "--json"], {
           shell: false,
           stdio: ["pipe", "pipe", "ignore"],
-          env: childEnv(path),
+          env,
           windowsHide: true,
         });
       } catch {
@@ -160,7 +186,7 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
         if (result === null) settle(failed(code));
       };
 
-      const capTimer = setTimeout(() => fail("timeout"), capMs);
+      const capTimer = setTimeout(() => fail("timeout"), remainingCapMs);
 
       child.on("error", () => {
         if (child.pid === undefined) {

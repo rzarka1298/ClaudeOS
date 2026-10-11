@@ -8,6 +8,15 @@ import { createExecFileCommandRunner } from "../projects/command-runner.js";
 import { weeklyReply, writeFakeAppServer } from "../test-support/fake-codex-app-server.js";
 import { doctorReport, writeFakeDoctor } from "../test-support/fake-codex-doctor.js";
 import { type ChildEnvFs, codexChildEnv } from "./child-env.js";
+
+/** The environment, which is never `null` in these tests (no deadline is hit). */
+async function prepared(
+  options: Parameters<typeof codexChildEnv>[0],
+): Promise<Record<string, string>> {
+  const env = await codexChildEnv(options);
+  if (env === null) throw new Error("child environment was not prepared");
+  return env;
+}
 import { createCodexDetection } from "./detection.js";
 import { createDoctorProbe } from "./doctor-probe.js";
 import { createRateLimitsClient } from "./rate-limits-client.js";
@@ -44,25 +53,25 @@ describe("codexChildEnv (unit, injected fs)", () => {
     present?: readonly string[];
   }): ChildEnvFs {
     return {
-      readHead: () => options.head,
-      safeDirectory: (path) => ((options.safe ?? []).includes(path) ? path : null),
-      isExecutableFile: (path) => (options.present ?? []).includes(path),
+      readHead: () => Promise.resolve(options.head),
+      safeDirectory: (path) => Promise.resolve((options.safe ?? []).includes(path) ? path : null),
+      isExecutableFile: (path) => Promise.resolve((options.present ?? []).includes(path)),
     };
   }
   const base = { executablePath: "/x/bin/codex", codexHome: null, home: "/Users/USERNAME" };
 
-  it("a native executable keeps PATH exactly /usr/bin:/bin", () => {
-    const env = codexChildEnv({ ...base, fs: fsOf({ head: "\u007fELF binary" }) });
+  it("a native executable keeps PATH exactly /usr/bin:/bin", async () => {
+    const env = await prepared({ ...base, fs: fsOf({ head: "\u007fELF binary" }) });
     expect(env).toEqual({ HOME: "/Users/USERNAME", PATH: "/usr/bin:/bin", LC_ALL: "C" });
   });
 
-  it("a #!/bin/sh shebang is unaffected", () => {
-    const env = codexChildEnv({ ...base, fs: fsOf({ head: "#!/bin/sh\nexec x\n" }) });
+  it("a #!/bin/sh shebang is unaffected", async () => {
+    const env = await prepared({ ...base, fs: fsOf({ head: "#!/bin/sh\nexec x\n" }) });
     expect(env.PATH).toBe("/usr/bin:/bin");
   });
 
-  it("an env shebang puts the pinned Node directory first, ahead of the launcher directory", () => {
-    const env = codexChildEnv({
+  it("an env shebang puts the pinned Node directory first, ahead of the launcher directory", async () => {
+    const env = await prepared({
       ...base,
       nodeExecPath: "/pin/node-dir/node",
       platformDirs: [],
@@ -75,28 +84,32 @@ describe("codexChildEnv (unit, injected fs)", () => {
     expect(env.PATH).toBe("/pin/node-dir:/usr/bin:/bin");
   });
 
-  it("falls to the launcher directory, then the standard directories", () => {
+  it("falls to the launcher directory, then the standard directories", async () => {
     const common = { ...base, nodeExecPath: "/pin/node", head: "#!/usr/bin/env node\n" };
     expect(
-      codexChildEnv({
-        ...common,
-        fs: fsOf({ head: common.head, safe: ["/x/bin"], present: ["/x/bin/node"] }),
-      }).PATH,
+      (
+        await prepared({
+          ...common,
+          fs: fsOf({ head: common.head, safe: ["/x/bin"], present: ["/x/bin/node"] }),
+        })
+      ).PATH,
     ).toBe("/x/bin:/usr/bin:/bin");
     expect(
-      codexChildEnv({
-        ...common,
-        fs: fsOf({
-          head: common.head,
-          safe: ["/opt/homebrew/bin"],
-          present: ["/opt/homebrew/bin/node"],
-        }),
-      }).PATH,
+      (
+        await prepared({
+          ...common,
+          fs: fsOf({
+            head: common.head,
+            safe: ["/opt/homebrew/bin"],
+            present: ["/opt/homebrew/bin/node"],
+          }),
+        })
+      ).PATH,
     ).toBe("/opt/homebrew/bin:/usr/bin:/bin");
   });
 
-  it("a directory that fails validation (world-writable, not real) is never used", () => {
-    const env = codexChildEnv({
+  it("a directory that fails validation (world-writable, not real) is never used", async () => {
+    const env = await prepared({
       ...base,
       nodeExecPath: "/pin/node",
       fs: fsOf({ head: "#!/usr/bin/env node\n", safe: [], present: ["/pin/node", "/x/bin/node"] }),
@@ -104,33 +117,51 @@ describe("codexChildEnv (unit, injected fs)", () => {
     expect(env.PATH).toBe("/usr/bin:/bin");
   });
 
-  it("an interpreter found nowhere leaves PATH minimal and never throws", () => {
-    const env = codexChildEnv({ ...base, fs: fsOf({ head: "#!/usr/bin/env node\n" }) });
+  it("an interpreter found nowhere leaves PATH minimal and never throws", async () => {
+    const env = await prepared({ ...base, fs: fsOf({ head: "#!/usr/bin/env node\n" }) });
     expect(env.PATH).toBe("/usr/bin:/bin");
   });
 
-  it("an unreadable launcher or an env shebang with flags or paths adds nothing", () => {
+  it("an unreadable launcher or an env shebang with flags or paths adds nothing", async () => {
     const present = ["/x/bin/node", "/x/bin/-S"];
     for (const head of [null, "#!/usr/bin/env -S node --x\n", "#!/usr/bin/env ../node\n"]) {
-      const env = codexChildEnv({ ...base, fs: fsOf({ head, safe: ["/x/bin"], present }) });
+      const env = await prepared({ ...base, fs: fsOf({ head, safe: ["/x/bin"], present }) });
       expect(env.PATH).toBe("/usr/bin:/bin");
     }
   });
 
-  it("holds only HOME, LC_ALL, PATH, plus CODEX_HOME when configured", () => {
-    const env = codexChildEnv({ ...base, codexHome: "/h/.codex", fs: fsOf({ head: null }) });
+  it("holds only HOME, LC_ALL, PATH, plus CODEX_HOME when configured", async () => {
+    const env = await prepared({ ...base, codexHome: "/h/.codex", fs: fsOf({ head: null }) });
     expect(Object.keys(env).sort()).toEqual(["CODEX_HOME", "HOME", "LC_ALL", "PATH"]);
-    expect(codexChildEnv({ ...base, codexHome: "", fs: fsOf({ head: null }) })).not.toHaveProperty(
+    expect(await prepared({ ...base, codexHome: "", fs: fsOf({ head: null }) })).not.toHaveProperty(
       "CODEX_HOME",
     );
   });
 
-  it("real fs: the pinned directory resolves, a world-writable directory does not", () => {
+  it("answers null when the filesystem never settles, once the deadline passes", async () => {
+    const hung = new Promise<never>(() => {});
+    const env = await codexChildEnv({
+      ...base,
+      deadlineMs: 30,
+      fs: { readHead: () => hung, safeDirectory: () => hung, isExecutableFile: () => hung },
+    });
+    expect(env).toBeNull();
+  });
+
+  it("answers null at once for an aborted signal", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    expect(
+      await codexChildEnv({ ...base, signal: controller.signal, fs: fsOf({ head: null }) }),
+    ).toBeNull();
+  });
+
+  it("real fs: the pinned directory resolves, a world-writable directory does not", async () => {
     const launcherDir = tempDir();
     const launcher = join(launcherDir, "codex");
     writeFileSync(launcher, "#!/usr/bin/env node\n");
     chmodSync(launcher, 0o755);
-    const env = codexChildEnv({ ...base, executablePath: launcher, platformDirs: [] });
+    const env = await prepared({ ...base, executablePath: launcher, platformDirs: [] });
     expect(env.PATH).toBe(`${dirname(process.execPath)}:/usr/bin:/bin`);
 
     const open = tempDir();
@@ -138,7 +169,7 @@ describe("codexChildEnv (unit, injected fs)", () => {
     const shim = join(open, "node");
     writeFileSync(shim, "#!/bin/sh\n");
     chmodSync(shim, 0o755);
-    const blocked = codexChildEnv({
+    const blocked = await prepared({
       ...base,
       executablePath: join(open, "codex"),
       nodeExecPath: "/nonexistent/node",
@@ -149,7 +180,7 @@ describe("codexChildEnv (unit, injected fs)", () => {
 });
 
 describe("the minimal PATH cannot start an env-node launcher without the policy", () => {
-  it("control: the bare minimal PATH fails to find node", () => {
+  it("control: the bare minimal PATH fails to find node", async () => {
     const dir = tempDir();
     const launcher = join(dir, "codex");
     writeFileSync(launcher, '#!/usr/bin/env node\nconsole.log("codex-cli 0.159.2");\n');
@@ -157,7 +188,7 @@ describe("the minimal PATH cannot start an env-node launcher without the policy"
     const bare = spawnSync(launcher, ["--version"], { env: { PATH: "/usr/bin:/bin" } });
     expect(bare.status).not.toBe(0);
     const policy = spawnSync(launcher, ["--version"], {
-      env: codexChildEnv({ executablePath: launcher, codexHome: null, home: dir }),
+      env: await prepared({ executablePath: launcher, codexHome: null, home: dir }),
     });
     expect(policy.stdout.toString()).toBe("codex-cli 0.159.2\n");
   });

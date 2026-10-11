@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { normalizeRateLimitsReply } from "@ccc/collectors";
 import type { CodexUsageSnapshot, CodexUsageUnavailableReason } from "@ccc/domain";
-import { codexChildEnv } from "./child-env.js";
+import { CHILD_ENV_PREPARE_DEADLINE_MS, codexChildEnv } from "./child-env.js";
 
 /**
  * The Codex usage read (plan 05.1-15, D-21, CODEX-08, CODEX-09).
@@ -64,6 +64,8 @@ export interface RateLimitsClientDeps {
   readonly now?: () => number;
   readonly capMs?: number;
   readonly killWaitMs?: number;
+  /** Test seam: the deadline for preparing the child environment; default {@link CHILD_ENV_PREPARE_DEADLINE_MS}. */
+  readonly envDeadlineMs?: number;
   readonly disposeGraceMs?: number;
   readonly lineCapBytes?: number;
   readonly totalCapBytes?: number;
@@ -125,11 +127,17 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
   let disposed = false;
   let disposing: Promise<void> | null = null;
 
-  function childEnv(path: string): Record<string, string> {
+  function childEnv(
+    path: string,
+    deadlineMs: number,
+    signal: AbortSignal,
+  ): Promise<Record<string, string> | null> {
     return codexChildEnv({
       executablePath: path,
       codexHome: deps.codexHome?.() ?? null,
       home: (deps.homeDir ?? homedir)(),
+      deadlineMs,
+      signal,
     });
   }
 
@@ -138,17 +146,43 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
     return unavailable("read-failed", now());
   }
 
-  function runOnce(): Promise<CodexUsageSnapshot> {
-    if (disposed) return Promise.resolve(failed("disposed"));
+  /** The environment is prepared under a deadline that is part of the read's own cap. */
+  async function runOnce(): Promise<CodexUsageSnapshot> {
+    if (disposed) return failed("disposed");
     const path = deps.executablePath();
-    if (path === null) return Promise.resolve(failed("no-executable"));
+    if (path === null) return failed("no-executable");
+    const startedAt = performance.now();
+    const preparing = new AbortController();
+    abortCurrent = () => preparing.abort();
+    let env: Record<string, string> | null;
+    try {
+      env = await childEnv(
+        path,
+        Math.min(deps.envDeadlineMs ?? CHILD_ENV_PREPARE_DEADLINE_MS, capMs),
+        preparing.signal,
+      );
+    } catch {
+      env = null;
+    } finally {
+      abortCurrent = null;
+    }
+    if (env === null) return failed(disposed ? "disposed" : "env-timeout");
+    if (disposed) return failed("disposed");
+    return spawnAndRun(path, env, Math.max(1, capMs - (performance.now() - startedAt)));
+  }
+
+  function spawnAndRun(
+    path: string,
+    env: Record<string, string>,
+    remainingCapMs: number,
+  ): Promise<CodexUsageSnapshot> {
     return new Promise((resolve) => {
       let child: ChildProcess;
       try {
         child = spawnChild(path, ["app-server"], {
           shell: false,
           stdio: ["pipe", "pipe", "ignore"],
-          env: childEnv(path),
+          env,
           windowsHide: true,
         });
       } catch {
@@ -218,7 +252,7 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
         if (result === null) settle(failed(code), graceMs);
       };
 
-      const capTimer = setTimeout(() => fail("timeout"), capMs);
+      const capTimer = setTimeout(() => fail("timeout"), remainingCapMs);
       abortCurrent = abort;
 
       child.on("error", () => {
