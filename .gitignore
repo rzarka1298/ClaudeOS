@@ -43,6 +43,9 @@ PRIVACY-GATE-REPORT.md
 packages/plugin/data.json
 packages/plugin/layout.json
 
+# wdio-obsidian-service download cache (Obsidian app archive, chromedriver) at any depth (D-08).
+.obsidian-cache/
+
 # Codex wrapper runtime state (reports, sessions, live logs, pending resume):
 # local-only, may hold command output and absolute worktree paths.
 .planning/codex/

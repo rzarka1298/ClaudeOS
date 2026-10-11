@@ -31,6 +31,7 @@
     { "path": "packages/scheduler" },
     { "path": "packages/collectors" },
     { "path": "packages/launchers" },
-    { "path": "packages/keychain" }
+    { "path": "packages/keychain" },
+    { "path": "packages/e2e" }
   ]
 }
