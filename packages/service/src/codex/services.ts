@@ -42,7 +42,7 @@ import {
   createCodexHomePort,
   resolveCodexHome,
 } from "./codex-home.js";
-import type { CodexDetection } from "./detection.js";
+import { bridgeHomeFromEnv, type CodexDetection } from "./detection.js";
 import { createDoctorProbe } from "./doctor-probe.js";
 import type { DoctorRouteDeps } from "./doctor-routes.js";
 import { createFollowLogService } from "./follow-log.js";
@@ -265,6 +265,7 @@ async function composeCodexServices(
   const now = deps.now ?? Date.now;
   const timers = deps.timers ?? defaultHeadroomTimers;
   const codexHome = configuredCodexHome(deps.env, deps.home);
+  const bridgeHome = bridgeHomeFromEnv(deps.env, deps.home);
   // ONE inactivity window for the mirror, the run overlay, the hook overlay and the follow
   // service: they must agree on when a session is no longer live.
   const inactivityMs = resolveCodexInactivityMs(deps.env);
@@ -316,7 +317,7 @@ async function composeCodexServices(
   }
 
   const readBridge: () => BridgeStatus | Promise<BridgeStatus> =
-    deps.readBridgeStatus ?? (() => readBridgeStatus({ env: deps.env, home: deps.home, now }));
+    deps.readBridgeStatus ?? (() => readBridgeStatus({ env: deps.env, home: bridgeHome, now }));
 
   let stopped = false;
   let started = false;
@@ -396,7 +397,7 @@ async function composeCodexServices(
   });
 
   const bridgeDirs = [
-    ...new Set([bridgeStateDir(deps.env, deps.home), bridgeStateDir({}, deps.home)]),
+    ...new Set([bridgeStateDir(deps.env, bridgeHome), bridgeStateDir({}, bridgeHome)]),
   ];
   const runReader = createRunRecordReader({
     listProjects: () => lookup.list(),
@@ -530,7 +531,7 @@ async function composeCodexServices(
     // A run whose log sits under another candidate state directory (default versus custom state
     // home) is queued to the directory that holds it, never to one that would reject the log.
     readBridgeStatusContaining: (containing) =>
-      readBridgeStatus({ env: deps.env, home: deps.home, now, containing }),
+      readBridgeStatus({ env: deps.env, home: bridgeHome, now, containing }),
     coveringWindow,
     mintRunId: deps.mintRunId ?? mintSharedBridgeRunId,
     now,

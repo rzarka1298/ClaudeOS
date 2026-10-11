@@ -57,8 +57,54 @@ export function CODEX_CANDIDATE_PATHS(homeDir: string): readonly CodexCandidate[
   ];
 }
 
+/**
+ * Test-isolation override for the candidate list (a service-spawning test must
+ * never stat or execute the machine's real Codex). Default behaviour is
+ * unchanged when neither variable is set or valid.
+ *
+ *   - `CCC_CODEX_CANDIDATES_DISABLED=1` (exactly "1"): no candidate at all, so
+ *     nothing is probed and nothing is run; a machine "without Codex".
+ *   - `CCC_CODEX_CANDIDATES_DIR=<absolute dir>`: the single candidate
+ *     `<dir>/codex` (id `user-install`) replaces the fixed locations.
+ *
+ * `disabled` wins; a relative or malformed directory is ignored.
+ */
+export function codexCandidatesFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  homeDir: string,
+): readonly CodexCandidate[] {
+  if (env.CCC_CODEX_CANDIDATES_DISABLED === "1") return [];
+  const dir = env.CCC_CODEX_CANDIDATES_DIR;
+  if (dir?.startsWith("/") && !dir.includes("\0")) {
+    return [
+      {
+        candidateId: "user-install",
+        path: `${dir.replace(/\/+$/, "")}/codex`,
+        location: "user-install",
+      },
+    ];
+  }
+  return CODEX_CANDIDATE_PATHS(homeDir);
+}
+
+/**
+ * Test-isolation override for where the bridge state is looked up
+ * (`CCC_CODEX_BRIDGE_HOME=<absolute dir>`): that directory stands in for the
+ * owner's home when the bridge state folders are derived, so a spawned test
+ * service never reads a real bridge. Unset or not absolute: the real home.
+ */
+export function bridgeHomeFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  homeDir: string,
+): string {
+  const dir = env.CCC_CODEX_BRIDGE_HOME;
+  return dir?.startsWith("/") && !dir.includes("\0") ? dir : homeDir;
+}
+
 export interface CodexDetectionDeps {
   readonly runner: CommandRunner;
+  /** The candidate locations; defaults to the fixed {@link CODEX_CANDIDATE_PATHS}. */
+  readonly candidates?: (homeDir: string) => readonly CodexCandidate[];
   /** The resolved home directory (`resolveHomeDir`). */
   readonly homeDir: string;
   /** Regular file + `X_OK`; defaults to {@link isExecutableFile}. */
@@ -141,6 +187,7 @@ function suggestionFor(readiness: BridgeReadiness): TerminalChoice {
 
 export function createCodexDetection(deps: CodexDetectionDeps): CodexDetection {
   const isExecutable = deps.isExecutable ?? isExecutableFile;
+  const candidates = deps.candidates ?? CODEX_CANDIDATE_PATHS;
 
   const versionOf = async (path: string): Promise<string | null> => {
     try {
@@ -168,7 +215,7 @@ export function createCodexDetection(deps: CodexDetectionDeps): CodexDetection {
 
   return {
     async detectCodex() {
-      const probed = await Promise.all(CODEX_CANDIDATE_PATHS(deps.homeDir).map(probe));
+      const probed = await Promise.all(candidates(deps.homeDir).map(probe));
       const executables = probed.filter(
         (found): found is DetectedCodexExecutable => found !== null,
       );
@@ -182,8 +229,7 @@ export function createCodexDetection(deps: CodexDetectionDeps): CodexDetection {
     },
     candidatePath(candidateId) {
       return (
-        CODEX_CANDIDATE_PATHS(deps.homeDir).find((known) => known.candidateId === candidateId)
-          ?.path ?? null
+        candidates(deps.homeDir).find((known) => known.candidateId === candidateId)?.path ?? null
       );
     },
   };

@@ -262,3 +262,55 @@ describe("detection writes nothing and never runs doctor (Test 6, D-17)", () => 
     expect(runner.calls.flatMap((call) => call.args)).not.toContain("doctor");
   });
 });
+
+describe("candidate override for test isolation", () => {
+  it("defaults to the fixed locations", async () => {
+    const { codexCandidatesFromEnv } = await import("./detection.js");
+    expect(codexCandidatesFromEnv({}, HOME)).toEqual(CODEX_CANDIDATE_PATHS(HOME));
+    expect(codexCandidatesFromEnv({ CCC_CODEX_CANDIDATES_DISABLED: "0" }, HOME)).toEqual(
+      CODEX_CANDIDATE_PATHS(HOME),
+    );
+    expect(codexCandidatesFromEnv({ CCC_CODEX_CANDIDATES_DIR: "relative/dir" }, HOME)).toEqual(
+      CODEX_CANDIDATE_PATHS(HOME),
+    );
+  });
+
+  it("disabled lists nothing and wins over a directory", async () => {
+    const { codexCandidatesFromEnv } = await import("./detection.js");
+    expect(
+      codexCandidatesFromEnv(
+        { CCC_CODEX_CANDIDATES_DISABLED: "1", CCC_CODEX_CANDIDATES_DIR: "/fake" },
+        HOME,
+      ),
+    ).toEqual([]);
+  });
+
+  it("a directory replaces the fixed locations with <dir>/codex", async () => {
+    const { codexCandidatesFromEnv } = await import("./detection.js");
+    expect(codexCandidatesFromEnv({ CCC_CODEX_CANDIDATES_DIR: "/fake/" }, HOME)).toEqual([
+      { candidateId: "user-install", path: "/fake/codex", location: "user-install" },
+    ]);
+  });
+
+  it("detection with no candidates probes and runs nothing", async () => {
+    const runner = createFakeCommandRunner({ script: [] });
+    const subject = createCodexDetection({
+      runner,
+      homeDir: HOME,
+      candidates: () => [],
+      isExecutable: () => Promise.resolve(true),
+      readBridgeStatus: () => bridgeStatus("not-installed"),
+    });
+    expect((await subject.detectCodex()).executables).toEqual([]);
+    expect(runner.calls).toEqual([]);
+  });
+});
+
+describe("bridge home override for test isolation", () => {
+  it("uses the real home unless an absolute directory is given", async () => {
+    const { bridgeHomeFromEnv } = await import("./detection.js");
+    expect(bridgeHomeFromEnv({}, HOME)).toBe(HOME);
+    expect(bridgeHomeFromEnv({ CCC_CODEX_BRIDGE_HOME: "rel" }, HOME)).toBe(HOME);
+    expect(bridgeHomeFromEnv({ CCC_CODEX_BRIDGE_HOME: "/empty" }, HOME)).toBe("/empty");
+  });
+});

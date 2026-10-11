@@ -18,7 +18,11 @@ import { getInstallSecret } from "./auth/install-secret.js";
 import { startClaudeServices } from "./claude/services.js";
 import { startUsageServices } from "./claude/usage-services.js";
 import { readBridgeStatus } from "./codex/bridge-state.js";
-import { createCodexDetection } from "./codex/detection.js";
+import {
+  bridgeHomeFromEnv,
+  codexCandidatesFromEnv,
+  createCodexDetection,
+} from "./codex/detection.js";
 import { type CodexServices, startCodexServices } from "./codex/services.js";
 import { createEventBus } from "./events/event-bus.js";
 // The composition root is the ONLY importer of the executors folder (APPR-01,
@@ -263,7 +267,9 @@ async function main(): Promise<void> {
   const codexDetection = createCodexDetection({
     runner: commandRunner,
     homeDir,
-    readBridgeStatus: () => readBridgeStatus({ env: process.env, home: homeDir }),
+    candidates: (home) => codexCandidatesFromEnv(process.env, home),
+    readBridgeStatus: () =>
+      readBridgeStatus({ env: process.env, home: bridgeHomeFromEnv(process.env, homeDir) }),
   });
   // <<< Phase 05.1 (Codex detection) end
   const launchers: LauncherServices = {
