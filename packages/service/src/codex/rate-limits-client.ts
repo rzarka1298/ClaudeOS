@@ -49,8 +49,11 @@ export const RATE_LIMITS_LINE_CAP_BYTES = 128 * 1024;
 export const RATE_LIMITS_TOTAL_CAP_BYTES = 512 * 1024;
 
 export interface RateLimitsLogger {
-  /** Reason codes only. Nothing from the reply is ever passed. */
-  warn(fields: { readonly reason: string }, message: string): void;
+  /** Reason codes and an integer JSON-RPC error code only. No reply text is ever passed. */
+  warn(
+    fields: { readonly reason: string; readonly rpcCode?: number },
+    message: string,
+  ): void;
 }
 
 export interface RateLimitsClientDeps {
@@ -141,8 +144,11 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
     });
   }
 
-  function failed(code: string): CodexUsageSnapshot {
-    deps.logger?.warn({ reason: code }, "codex usage read failed");
+  function failed(code: string, rpcCode?: number): CodexUsageSnapshot {
+    deps.logger?.warn(
+      rpcCode === undefined ? { reason: code } : { reason: code, rpcCode },
+      "codex usage read failed",
+    );
     return unavailable("read-failed", now());
   }
 
@@ -248,8 +254,8 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
         if (result === null) fail("disposed", disposeGraceMs);
         else if (!exited && !escalating) scheduleEscalation(Math.min(disposeGraceMs, killWaitMs));
       };
-      const fail = (code: string, graceMs?: number): void => {
-        if (result === null) settle(failed(code), graceMs);
+      const fail = (code: string, graceMs?: number, rpcCode?: number): void => {
+        if (result === null) settle(failed(code, rpcCode), graceMs);
       };
 
       const capTimer = setTimeout(() => fail("timeout"), remainingCapMs);
@@ -301,7 +307,8 @@ export function createRateLimitsClient(deps: RateLimitsClientDeps): RateLimitsCl
           });
         } else if (message.id === 2 && phase === "read") {
           if (message.error) {
-            fail("read-error");
+            const code = isRecord(message.error) ? message.error.code : undefined;
+            fail("read-error", undefined, Number.isSafeInteger(code) ? (code as number) : undefined);
             return;
           }
           settle(normalizeRateLimitsReply(message.result, { observedAtMs: now() }));
