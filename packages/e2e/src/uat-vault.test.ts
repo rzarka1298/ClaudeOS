@@ -1,14 +1,23 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GENERATOR_SCRIPT } from "./repo-paths.js";
 import {
+  generateUatVault,
+  parseGeneratedCount,
   UAT_CLOCK,
   UAT_SEED,
   UAT_ZONE,
-  generateUatVault,
-  parseGeneratedCount,
 } from "./uat-vault.js";
 
 const SOCKET = "/tmp/ccc-uat-y/svc.sock";
@@ -30,7 +39,9 @@ describe("constants and output parsing", () => {
   });
 
   it("parses the generated-N line and rejects anything else with a fixed message", () => {
-    expect(parseGeneratedCount("generated 300 task notes plus 6 live-check notes in 4 scopes\n")).toBe(300);
+    expect(
+      parseGeneratedCount("generated 300 task notes plus 6 live-check notes in 4 scopes\n"),
+    ).toBe(300);
     expect(parseGeneratedCount("generated 12 task notes in 2 scopes")).toBe(12);
     expect(() => parseGeneratedCount("nothing here")).toThrow(
       "Vault generator output was not understood.",

@@ -13,13 +13,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AUDIT_ROWS_SQL,
-  EFFECTS_PER_PROPOSAL_SQL,
-  EFFECT_COUNT_SQL,
-  EXPIRED_EVENTS_SQL,
-  SQLITE_TOOL,
   assertCopyPath,
   copyStore,
+  EFFECT_COUNT_SQL,
+  EFFECTS_PER_PROPOSAL_SQL,
+  EXPIRED_EVENTS_SQL,
   queryStore,
+  SQLITE_TOOL,
 } from "./store-copy.js";
 
 function haveSqlite(): boolean {

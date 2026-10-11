@@ -2,8 +2,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -13,10 +13,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  PLUGIN_DATA_KEYS,
-  PLUGIN_ID,
   assertPluginDataKeys,
   buildPluginData,
+  PLUGIN_DATA_KEYS,
+  PLUGIN_ID,
   seedPluginData,
   stagePlugin,
 } from "./plugin-data.js";
