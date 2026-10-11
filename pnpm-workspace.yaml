@@ -2,7 +2,10 @@ packages:
   - "packages/*"
 allowBuilds:
   better-sqlite3: true
+  classic-level: false
+  edgedriver: false
   esbuild: true
+  geckodriver: false
 minimumReleaseAgeExclude:
   - '@turbo/darwin-64@2.10.13'
   - '@turbo/darwin-arm64@2.10.13'
