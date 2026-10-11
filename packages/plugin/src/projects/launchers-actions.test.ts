@@ -330,6 +330,30 @@ describe("the Codex launcher actions (plan 05.1-31 Task 1)", () => {
     });
   });
 
+  it("05.1-post: a retained warning never downgrades an overall failure no listed check explains", async () => {
+    expect(await verdictOf(WITH_CHECKS("fail", [["config.toml", "warning"]]))).toEqual({
+      kind: "problem",
+      ids: [],
+    });
+    expect(
+      await verdictOf(
+        WITH_CHECKS("fail", [
+          ["terminal.env", "warning"],
+          ["config.toml", "warning"],
+        ]),
+      ),
+    ).toEqual({ kind: "problem", ids: [] });
+    // An ignored terminal fail does explain the overall fail: the warning stands.
+    expect(
+      await verdictOf(
+        WITH_CHECKS("fail", [
+          ["terminal.size", "fail"],
+          ["config.toml", "warning"],
+        ]),
+      ),
+    ).toEqual({ kind: "warning", ids: ["config.toml"] });
+  });
+
   it("codexDoctor names the warning check ids of a healthy-with-warnings report", async () => {
     expect(
       await verdictOf(
