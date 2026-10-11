@@ -38,9 +38,13 @@ const AGENT_RUNS_SPEC_PATH = join(
   "visual",
   "agent-runs.spec.ts",
 );
+/** The Codex card, toolbar and pair-launch matrix (plan 05.1-27): a third spec
+ * file over the same harness page, under the identical purity contract. */
+const CODEX_SPEC_PATH = join(REPO_ROOT, "packages", "test-fixtures", "visual", "codex.spec.ts");
 const SPEC_PATHS = [
   ["widgets.spec.ts", SPEC_PATH],
   ["agent-runs.spec.ts", AGENT_RUNS_SPEC_PATH],
+  ["codex.spec.ts", CODEX_SPEC_PATH],
 ] as const;
 
 /** The exact set of modules the visual spec may import. */
@@ -55,6 +59,17 @@ const DETERMINISM_FIXTURE_PATH = join(
   "widget-fixtures.json",
 );
 
+/** The Codex harness module (plan 05.1-27) and the one synthetic fixture file it
+ * may read besides the plugin barrel and preact. */
+const CODEX_CELLS_PATH = join(HARNESS_DIR, "codex-cells.tsx");
+const CODEX_FIXTURE_PATH = join(
+  REPO_ROOT,
+  "packages",
+  "test-fixtures",
+  "src",
+  "codex-visual-fixtures.json",
+);
+
 /** The exact set of modules the harness entry may import (order irrelevant).
  * `./task-fixtures.json` was added deliberately by plan 06-22 for the Tasks and
  * project tasks cells: a third synthetic-only fixture file, validated against
@@ -62,11 +77,23 @@ const DETERMINISM_FIXTURE_PATH = join(
  * `./approval-fixtures.json` was added deliberately by plan 06-17 for the
  * Approvals cells: a second synthetic-only fixture file next to the harness
  * entry, validated against the domain schemas and scanned for personal data by
- * `approvals-harness.test.ts`. Nothing else was added to the set. */
+ * `approvals-harness.test.ts`. `./codex-cells` was added deliberately by plan
+ * 05.1-27: the one delegating import for the Codex card, toolbar and pair-launch
+ * cells; that module's own imports are pinned separately below. Nothing else
+ * was added to the set. */
 const ALLOWED_IMPORTS = [
   "../src/widget-fixtures.json",
   "./approval-fixtures.json",
+  "./codex-cells",
   "./task-fixtures.json",
+  "@ccc/plugin",
+  "preact",
+] as const;
+
+/** What the Codex harness module may import: preact, the plugin barrel and its
+ * own synthetic fixture file, nothing else (plan 05.1-27, T-05.1-39). */
+const CODEX_CELLS_ALLOWED_IMPORTS = [
+  "../src/codex-visual-fixtures.json",
   "@ccc/plugin",
   "preact",
 ] as const;
@@ -109,7 +136,7 @@ function importSpecifiers(source: string): string[] {
 }
 
 describe("visual harness purity (PRIV-04 layer 1, T-03-03)", () => {
-  it("imports exactly preact, @ccc/plugin and the three synthetic fixture files", () => {
+  it("imports exactly preact, @ccc/plugin, the three synthetic fixture files and the Codex cells module", () => {
     const specifiers = importSpecifiers(readIfPresent(MAIN_PATH)).filter(
       (specifier) => !TOLERATED_IMPORTS.has(specifier),
     );
@@ -136,6 +163,37 @@ describe("visual harness purity (PRIV-04 layer 1, T-03-03)", () => {
     expect(code.filter((line) => /\bexternal\s*:/.test(line))).toEqual([]);
     // iife, not esm: Chromium blocks module scripts on file:// origins.
     expect(code.some((line) => /format\s*:\s*["']iife["']/.test(line))).toBe(true);
+  });
+
+  it("codex-cells.tsx imports exactly preact, @ccc/plugin and the Codex synthetic fixture file", () => {
+    expect(existsSync(CODEX_CELLS_PATH)).toBe(true);
+    const specifiers = importSpecifiers(readIfPresent(CODEX_CELLS_PATH)).filter(
+      (specifier) => !TOLERATED_IMPORTS.has(specifier),
+    );
+
+    expect(specifiers).toEqual([...CODEX_CELLS_ALLOWED_IMPORTS].sort());
+    const fixtureSpecifier = specifiers.find((specifier) =>
+      specifier.endsWith("codex-visual-fixtures.json"),
+    );
+    expect(resolve(dirname(CODEX_CELLS_PATH), fixtureSpecifier ?? "")).toBe(CODEX_FIXTURE_PATH);
+  });
+
+  it("codex-cells.tsx names no network call, no Obsidian API and no companion-service client", () => {
+    const code = codeLines(readIfPresent(CODEX_CELLS_PATH));
+
+    expect(code.filter((line) => /\bfetch\s*\(/.test(line))).toEqual([]);
+    expect(
+      code.filter((line) => /\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b/.test(line)),
+    ).toEqual([]);
+    expect(code.filter((line) => line.includes("obsidian"))).toEqual([]);
+    expect(code.filter((line) => line.includes("@ccc/service-api-client"))).toEqual([]);
+  });
+
+  it("the Codex fixture file is plain data: no remote reference of any kind", () => {
+    const fixtureText = readIfPresent(CODEX_FIXTURE_PATH);
+
+    expect(fixtureText.length).toBeGreaterThan(0);
+    expect(fixtureText.match(/[a-z][a-z0-9+.-]*:\/\//gi)).toBeNull();
   });
 
   it("reads the same fixture file the determinism test pins", () => {

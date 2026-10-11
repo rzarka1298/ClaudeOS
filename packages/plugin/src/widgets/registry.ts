@@ -1,3 +1,4 @@
+import { codexWidget } from "./codex.js";
 import type { WidgetDefinition } from "./contract.js";
 import {
   activeSessionsWidget,
@@ -39,6 +40,7 @@ export const WIDGETS = {
   "active-sessions": activeSessionsWidget,
   "project-shortcuts": projectShortcutsWidget,
   "claude-usage": claudeUsageWidget,
+  codex: codexWidget,
   "tech-intel": techIntelWidget,
   "github-discoveries": githubDiscoveriesWidget,
   "quick-actions": quickActionsWidget,
@@ -60,6 +62,7 @@ export const PRD_PANEL_ORDER = [
   "active-sessions",
   "project-shortcuts",
   "claude-usage",
+  "codex",
   "tech-intel",
   "github-discoveries",
   "quick-actions",

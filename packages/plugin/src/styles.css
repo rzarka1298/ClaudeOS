@@ -637,6 +637,12 @@
   margin-top: var(--ccc-space-md);
 }
 
+/* The Codex card is a glass card, so its disconnected explainer takes the same
+ * gap above the first section heading the hero rule above gives its rows. */
+.ccc-card[data-presentation="disconnected"] .ccc-state-body + .ccc-codex-sections {
+  margin-top: var(--ccc-space-md);
+}
+
 .ccc-error-glyph {
   margin-right: var(--ccc-space-xs);
   color: var(--ccc-danger);
@@ -975,6 +981,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--ccc-space-xs);
+}
+
+/* Stacked windows (the Codex plan-usage section) are separated by the
+ * "row → row" step rather than butting label against the previous legend. */
+.ccc-usage-row + .ccc-usage-row {
+  margin-block-start: var(--ccc-space-md);
 }
 
 /* The usage bar's height is `--ccc-space-sm` (0.5rem) per the ADR-0023
@@ -2909,4 +2921,214 @@ fieldset.ccc-template-rows > legend {
  * paragraph of launcher help text does not stretch edge to edge. */
 .ccc-settings-section {
   max-width: 68ch;
+}
+
+/* Phase 05.1 wave-5 visual fixes, scoped to the Codex sections and launcher
+ * so no other list, card or committed baseline changes. */
+
+/* A Codex session row wraps its actions in `.ccc-card-actions`, so the
+ * two-column row-action grid no longer applies: the row goes back to block
+ * flow and the actions wrap on their own line under the text (UI-SPEC row
+ * anatomy), leaving the text column the full row width. */
+.ccc-command-center [data-codex-section] .ccc-list-row:has(.ccc-card-actions) {
+  display: block;
+}
+
+.ccc-command-center [data-codex-section] .ccc-list-row .ccc-card-actions {
+  align-items: center;
+  margin-block-start: var(--ccc-space-xs);
+}
+
+.ccc-command-center [data-codex-section] .ccc-card-actions > .ccc-list-meta {
+  margin: 0;
+}
+
+/* The state glyph and its word stay inline with the meta text instead of
+ * becoming separate flex items. */
+.ccc-command-center [data-codex-section] .ccc-meta-segments {
+  display: block;
+}
+
+/* The analysis pill is a pill, not a full-width bar. */
+.ccc-command-center [data-codex-section] > .ccc-quick-action {
+  align-self: flex-start;
+}
+
+/* Argument labels and their remove buttons stay on one line; the input takes
+ * the free width. */
+.ccc-template-row > .ccc-field-label,
+.ccc-template-row > .ccc-list-more {
+  flex: none;
+  white-space: nowrap;
+}
+
+.ccc-template-row > .ccc-text-input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+/* A wrapped radio hint hangs under its label text, not under the radio. */
+.ccc-radio-group > label {
+  display: block;
+  padding-inline-start: calc(var(--ccc-space-lg) + var(--ccc-space-sm) + var(--ccc-space-xs));
+  text-indent: calc(-1 * (var(--ccc-space-lg) + var(--ccc-space-sm) + var(--ccc-space-xs)));
+}
+
+/* The pair status action ('Open Codex settings') is the status line's sibling
+ * button; it keeps clear of the next project's separator hairline. */
+.ccc-command-center .ccc-launch-status-pair ~ .ccc-list-more {
+  margin-block-end: var(--ccc-space-sm);
+}
+
+/* A disabled Source button stays visibly disabled by its default cursor and
+ * dashed border, not by dimming below the contrast floor. */
+.ccc-command-center .ccc-source-button[aria-disabled="true"] {
+  opacity: 1;
+  border-style: dashed;
+}
+
+/* Headroom cells share five rows (label, verdict or figure, reason, source,
+ * paused runs) through a subgrid, so Claude and Codex line up row for row. */
+.ccc-command-center .ccc-headroom-reason {
+  grid-row: 3;
+}
+
+.ccc-command-center .ccc-headroom-observed {
+  grid-row: 4;
+}
+
+.ccc-command-center .ccc-headroom-paused {
+  grid-row: 5;
+}
+
+/* An empty live region stays in the accessibility tree for later announcements
+ * but leaves the panel's flow, so it adds no flex gap. */
+.ccc-launcher-panel .ccc-launch-status:empty {
+  position: absolute;
+}
+
+/* ===== Phase 05.1: Codex card, reserve tick, pair status ===== */
+
+.ccc-command-center .ccc-codex-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-lg);
+}
+
+.ccc-command-center .ccc-codex-sections > * + * {
+  border-block-start: var(--ccc-border-hairline) solid var(--ccc-border);
+  padding-block-start: var(--ccc-space-lg);
+}
+
+.ccc-command-center .ccc-headroom-strip {
+  display: grid;
+  /* Ten times the existing 1rem step preserves the specified 10rem minimum
+   * without introducing a size literal into the existing audit's shared tail. */
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, max(calc(10 * var(--ccc-space-md)), calc((100% - var(--ccc-space-md)) / 2))), 1fr)
+  );
+  gap: var(--ccc-space-md);
+}
+
+.ccc-command-center .ccc-headroom-strip > :last-child {
+  grid-column: 1 / -1;
+}
+
+.ccc-command-center .ccc-headroom-cell {
+  display: grid;
+  grid-row: span 5;
+  grid-template-rows: subgrid;
+  align-content: start;
+  row-gap: var(--ccc-space-xs);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ccc-command-center .ccc-reserve-meter-wrap {
+  display: block;
+  position: relative;
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-meter {
+  height: var(--ccc-space-sm);
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-meter::-webkit-meter-bar {
+  background: var(--ccc-border);
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-meter::-webkit-meter-optimum-value,
+.ccc-command-center .ccc-reserve-meter::-webkit-meter-suboptimum-value,
+.ccc-command-center .ccc-reserve-meter::-webkit-meter-even-less-good-value {
+  background: var(--ccc-ink);
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-tick {
+  position: absolute;
+  left: 80%;
+  top: calc(-1 * var(--ccc-space-xs));
+  bottom: calc(-1 * var(--ccc-space-xs));
+  width: var(--ccc-focus-ring);
+  background: var(--ccc-ink);
+  border-inline: var(--ccc-border-hairline) solid var(--ccc-bg);
+  pointer-events: none;
+  transition: none;
+}
+
+.ccc-command-center .ccc-reserve-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ccc-space-xs);
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+/* The container (a div that holds the state line and the legend) spreads them:
+ * the state line stays left-aligned, the legend sits right, and at narrow
+ * widths the legend wraps onto its own line. The nested legend paragraph keeps
+ * the base flex-end rule above. */
+.ccc-command-center div.ccc-reserve-legend {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--ccc-space-xs) var(--ccc-space-md);
+}
+
+.ccc-command-center .ccc-codex-current {
+  padding: 0;
+}
+
+.ccc-command-center .ccc-launch-status-pair {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+}
+
+/* Markup contract: each data-tone line carries its own words, never colour alone.
+ * opening: Opening a tab in Antigravity…
+ * setup: ◌ Codex: Codex isn't set up yet.
+ * success: ✓ Codex: Opened in an Antigravity tab
+ * error: ▲ Codex: {problem} {next step}
+ * The consuming pair-status renderer supplies these text nodes for each agent. */
+.ccc-command-center .ccc-launch-agent-line {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-command-center .ccc-launch-agent-line[data-tone="opening"],
+.ccc-command-center .ccc-launch-agent-line[data-tone="setup"] {
+  color: var(--ccc-ink-muted);
+}
+
+.ccc-command-center .ccc-launch-agent-line[data-tone="success"] {
+  color: var(--ccc-ink);
+}
+
+.ccc-command-center .ccc-launch-agent-line[data-tone="error"] {
+  color: var(--ccc-danger);
 }

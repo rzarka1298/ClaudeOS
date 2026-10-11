@@ -132,7 +132,7 @@ export class ButtonComponent {
    */
   disabled = false;
 
-  constructor(_containerEl: StubElement) {}
+  constructor(readonly containerEl: StubElement) {}
 
   setButtonText(_text: string): this {
     return this;

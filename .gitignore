@@ -29,6 +29,9 @@ packages/test-fixtures/visual/widgets.spec.ts-snapshots/*
 # 05-13 Task 3: a second spec file, same allowlist rule.
 packages/test-fixtures/visual/agent-runs.spec.ts-snapshots/*
 !packages/test-fixtures/visual/agent-runs.spec.ts-snapshots/*-chromium-linux.png
+# 05.1-27: the Codex card, toolbar and pair-launch spec, same allowlist rule.
+packages/test-fixtures/visual/codex.spec.ts-snapshots/*
+!packages/test-fixtures/visual/codex.spec.ts-snapshots/*-chromium-linux.png
 .DS_Store
 .obsidian/
 PRIVACY-GATE-REPORT.md

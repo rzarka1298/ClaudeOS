@@ -194,3 +194,27 @@ describe("saveLauncherConfig's client budget (codex review 3, finding 4)", () =>
     expect(LAUNCHER_SAVE_VALIDATION_CAP_MS).toBeGreaterThan(5000);
   });
 });
+
+describe("testLauncher's client budget for the codex id (plan 05.1-31)", () => {
+  it("uses the Automation budget exactly when the saved terminal may prompt, as claude-code does", async () => {
+    const { client, seen } = recordingClient({ ok: true });
+    await testLauncher(client, "codex", {
+      terminal: { kind: "custom", preset: "iterm2", argv: ["/usr/bin/osascript", "{script}"] },
+    });
+    await testLauncher(client, "codex");
+    expect(seen.map((opts) => opts.timeoutMs)).toEqual([
+      LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS,
+      LAUNCHER_TEST_AUTOMATION_CLIENT_TIMEOUT_MS,
+    ]);
+  });
+
+  it("uses the ordinary Test budget for Terminal and the Antigravity terminal", async () => {
+    const { client, seen } = recordingClient({ ok: true });
+    await testLauncher(client, "codex", { terminal: { kind: "terminal-app" } });
+    await testLauncher(client, "codex", { terminal: { kind: "antigravity-terminal" } });
+    expect(seen.map((opts) => opts.timeoutMs)).toEqual([
+      LAUNCHER_TEST_CLIENT_TIMEOUT_MS,
+      LAUNCHER_TEST_CLIENT_TIMEOUT_MS,
+    ]);
+  });
+});

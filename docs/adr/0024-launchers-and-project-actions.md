@@ -2,9 +2,12 @@
 status: accepted
 satisfies: ADR-07
 supersedes-in-part: 0011
+superseded-in-part-by: 0028
 ---
 
 # Launchers target apps by bundle ID and reach a terminal only through a generated, POSIX-quoted, self-deleting script
+
+> 2026-10-10: Superseded in part by ADR-0028: the terminal choice gains a third kind, Antigravity terminal, reached through a validated argv-only request/claim queue. The existing adapters and their decisions remain unchanged.
 
 Phase 4 lets the owner act on a registered project from the dashboard: open it in Antigravity,
 reveal it in Finder, open its GitHub page, bring Claude Desktop forward, or start a new interactive

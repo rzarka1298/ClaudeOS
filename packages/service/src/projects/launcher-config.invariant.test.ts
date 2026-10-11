@@ -149,10 +149,16 @@ function scriptArgvLine(argv: readonly string[]): string {
 
 describe("every launcher launches exactly its stored configuration", () => {
   it("iterates every launcher id", () => {
-    expect([...LAUNCHER_IDS].sort()).toEqual(["antigravity", "claude-code", "claude-desktop"]);
+    expect([...LAUNCHER_IDS].sort()).toEqual([
+      "antigravity",
+      "claude-code",
+      "claude-desktop",
+      "codex",
+    ]);
   });
 
-  for (const launcherId of LAUNCHER_IDS) {
+  // Codex is not a LaunchAction: it launches through the pair path (plan 05.1-13 onwards).
+  for (const launcherId of LAUNCHER_IDS.filter((id) => id !== "codex")) {
     it(`${launcherId}: nothing saved is launcher-not-configured and spawns nothing`, async () => {
       expect(await launch(launcherId)).toEqual({ ok: false, error: "launcher-not-configured" });
       expect(harness.spawner.calls).toHaveLength(0);
@@ -160,7 +166,7 @@ describe("every launcher launches exactly its stored configuration", () => {
     });
   }
 
-  for (const launcherId of LAUNCHER_IDS.filter((id) => id !== "claude-code")) {
+  for (const launcherId of LAUNCHER_IDS.filter((id) => id !== "claude-code" && id !== "codex")) {
     it(`${launcherId}: spawns the saved bundle ID, and the next save changes it`, async () => {
       const [first, second] = INSTALLED_BUNDLES;
       const expected = (bundleId: string): readonly string[] =>
@@ -205,7 +211,7 @@ describe("Claude Code launches its stored executable, arguments and terminal, fo
         const script = scriptOf(handOff);
         if (terminal.kind === "terminal-app") {
           expect(handOff).toEqual(["/usr/bin/open", "-b", "com.apple.Terminal", script]);
-        } else {
+        } else if (terminal.kind === "custom") {
           expect(handOff).toEqual(renderCommandTemplate(terminal.argv, { script, projectPath }));
         }
         const body = readFileSync(script, "utf8");

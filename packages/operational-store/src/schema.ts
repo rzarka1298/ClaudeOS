@@ -567,3 +567,134 @@ export const taskDeps = sqliteTable(
     index("task_deps_dep_idx").on(table.depId),
   ],
 );
+
+// ---------------------------------------------------------------------------
+// Phase 05.1 (plan 11, D-15, D-24, CODEX-08, CODEX-10): Codex token activity and
+// the last rate-limit snapshot. Counters, hashed cursor keys, identifiers and the
+// last normalised snapshot ONLY. No body, prompt, title, path, project name or
+// account column exists in any table below, and none may be added: the audit in
+// `migration-codex.audit.test.ts` walks every column name. Counters are `integer`
+// because SQL adds into them or compares them.
+// ---------------------------------------------------------------------------
+
+/**
+ * One row per Codex turn (thread id and turn id): the LATEST cumulative
+ * counters for that turn, never a sum of events (a running total summed would
+ * count the same tokens many times). `bucket_start` is the UTC quarter hour of
+ * the FIRST record seen for the turn and is written once. Counters and
+ * identifiers only; no content column exists and none may be added.
+ */
+export const codexTokenTurns = sqliteTable(
+  "codex_token_turns",
+  {
+    threadId: text("thread_id").notNull(),
+    turnId: text("turn_id").notNull(),
+    bucketStart: text("bucket_start").notNull(),
+    input: integer("input").notNull(),
+    cachedInput: integer("cached_input").notNull(),
+    cacheWrite: integer("cache_write").notNull(),
+    output: integer("output").notNull(),
+    reasoningOutput: integer("reasoning_output").notNull(),
+    total: integer("total").notNull(),
+    observedAt: text("observed_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.threadId, table.turnId] }),
+    index("codex_token_turns_bucket_idx").on(table.bucketStart),
+  ],
+);
+
+/**
+ * Additive per-bucket deltas for Codex versions whose rollouts carry no per-turn
+ * record. The same six counters, summed into (thread id, bucket start). Counters
+ * and identifiers only; no content column exists and none may be added.
+ */
+export const codexTokenDeltas = sqliteTable(
+  "codex_token_deltas",
+  {
+    threadId: text("thread_id").notNull(),
+    bucketStart: text("bucket_start").notNull(),
+    input: integer("input").notNull(),
+    cachedInput: integer("cached_input").notNull(),
+    cacheWrite: integer("cache_write").notNull(),
+    output: integer("output").notNull(),
+    reasoningOutput: integer("reasoning_output").notNull(),
+    total: integer("total").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.threadId, table.bucketStart] }),
+    index("codex_token_deltas_bucket_idx").on(table.bucketStart),
+  ],
+);
+
+/**
+ * The durable monotonic cumulative high-water mark per thread and counter. It
+ * is dedup state independent of file identity and cursor position: a parser
+ * reset or a rescan can never count previous usage again. Each counter only
+ * ever rises. Counters and identifiers only; no content column exists.
+ */
+export const codexTokenCumulative = sqliteTable("codex_token_cumulative", {
+  threadId: text("thread_id").primaryKey(),
+  input: integer("input").notNull(),
+  cachedInput: integer("cached_input").notNull(),
+  cacheWrite: integer("cache_write").notNull(),
+  output: integer("output").notNull(),
+  reasoningOutput: integer("reasoning_output").notNull(),
+  total: integer("total").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+/**
+ * Rollout scanner cursors. `cursor_key` is the SHA-256 hex of the rollout path,
+ * computed by the CALLER: this table never receives or stores a path. `size` and
+ * `offset` are `integer` byte counts. No content column exists and none may be added.
+ */
+export const codexRolloutCursors = sqliteTable("codex_rollout_cursors", {
+  cursorKey: text("cursor_key").primaryKey(),
+  inode: text("inode").notNull(),
+  size: integer("size").notNull(),
+  offset: integer("offset").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+/**
+ * The Codex coverage ledger: one row per local calendar day a Codex scan covered.
+ * The shared toggle log still governs analysis-off days (one toggle, both agents).
+ */
+export const codexCoverageDays = sqliteTable("codex_coverage_days", {
+  day: text("day").primaryKey(),
+  recordedAt: text("recorded_at").notNull(),
+});
+
+/**
+ * Per-version recognition tallies (parser version, Codex CLI version): how many
+ * sessions were read and how many the parser recognised. Counters and version
+ * strings only; no content column exists and none may be added.
+ */
+export const codexRecognition = sqliteTable(
+  "codex_recognition",
+  {
+    parserVersion: integer("parser_version").notNull(),
+    cliVersion: text("cli_version").notNull(),
+    sessions: integer("sessions").notNull(),
+    recognized: integer("recognized").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.parserVersion, table.cliVersion] })],
+);
+
+/**
+ * The single last normalised rate-limit snapshot (D-23). `id` is constrained to 1.
+ * The JSON is built by the domain normaliser, which has no account field, and is
+ * re-validated against the domain schema on write and on read. Numbers, window
+ * minutes, labels, times and source only; no account, credit or auth member.
+ */
+export const codexRateLimitSnapshot = sqliteTable(
+  "codex_rate_limit_snapshot",
+  {
+    id: integer("id").primaryKey(),
+    snapshotJson: text("snapshot_json").notNull(),
+    observedAt: text("observed_at").notNull(),
+  },
+  (table) => [check("codex_rate_limit_snapshot_single_row", sql`${table.id} = 1`)],
+);

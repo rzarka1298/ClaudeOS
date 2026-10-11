@@ -15,6 +15,10 @@ import {
   renderLaunchScript,
   validateCommandTemplate,
 } from "@ccc/launchers";
+import {
+  type AntigravityTerminalDeps,
+  createAntigravityTerminalLauncher,
+} from "./antigravity-terminal.js";
 import { SCRIPT_MAX_AGE_MS, sweepStaleScripts, writeLaunchScript } from "./script-dir.js";
 import type { Spawner, SpawnOutcome } from "./spawner.js";
 
@@ -62,6 +66,12 @@ export interface TerminalAdapterDeps {
    * {@link DEFAULT_DETACH_GRACE_MS}; never more than the cap.
    */
   readonly detachGraceMs?: number;
+  /**
+   * What the Antigravity terminal adapter needs (plan 05.1-13): the bridge reader, the queue, the
+   * saved launcher rows and the cold-start spawner. Absent, no adapter handles
+   * `{ kind: "antigravity-terminal" }` and the caller answers `launcher-not-configured`.
+   */
+  readonly antigravity?: AntigravityTerminalDeps;
 }
 
 const DEFAULT_CAP_MS = 4000;
@@ -310,6 +320,16 @@ export function selectTerminalLauncher(
   switch (choice.kind) {
     case "terminal-app":
       return createTerminalAppLauncher(deps);
+    case "antigravity-terminal": {
+      // The bridge adapter (plan 05.1-13, D-07). Without its deps no adapter handles the choice.
+      if (deps.antigravity === undefined) return null;
+      // The pipeline cap reaches the adapter so its own deadline stays below it.
+      const antigravity =
+        deps.capMs === undefined || deps.antigravity.capMs !== undefined
+          ? deps.antigravity
+          : { ...deps.antigravity, capMs: deps.capMs };
+      return createAntigravityTerminalLauncher(antigravity);
+    }
     case "custom":
       return createCustomTemplateLauncher({
         ...deps,

@@ -43,6 +43,7 @@ function fiveFor(name: string): string[] {
     `Go to ${name}`,
     `Open ${name} in Antigravity`,
     `Start Claude Code in ${name}`,
+    `Open ${name} with Claude + Codex`,
     `Reveal ${name} in Finder`,
     `Open ${name} on GitHub`,
   ];
@@ -100,14 +101,14 @@ describe("S9 overflow and empty text (audit)", () => {
     };
   }
 
-  it("with sixty projects every one of the 309 items stays reachable, never cut at Obsidian's limit", () => {
+  it("with sixty projects every one of the 369 items stays reachable, never cut at Obsidian's limit", () => {
     const many = Array.from({ length: 60 }, (_, i) => view(i + 1, `project-${i}`));
     const modal = new ProjectSwitcherModal(
       {} as App,
       hostFor(() => snapshotOf(many)),
     );
     const items = modal.getItems();
-    expect(items).toHaveLength(60 * 5 + 1 + DESTINATIONS.length);
+    expect(items).toHaveLength(60 * 6 + 1 + DESTINATIONS.length);
     expect(modal.limit).toBeGreaterThanOrEqual(items.length);
   });
 

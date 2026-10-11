@@ -1,4 +1,5 @@
-import type { LaunchAction, LaunchErrorKind } from "@ccc/domain";
+import type { LaunchErrorKind } from "@ccc/domain";
+import type { PairLineStatus, ProjectLaunchActionId } from "./launch-status.js";
 
 /**
  * The fixed S2 acknowledgement/success copy per launcher (UI-SPEC "Launch
@@ -11,42 +12,66 @@ import type { LaunchAction, LaunchErrorKind } from "@ccc/domain";
  * only substitution path.
  */
 
-const LAUNCHER_DISPLAY_NAMES: Readonly<Record<LaunchAction, string>> = {
+const LAUNCHER_DISPLAY_NAMES: Readonly<Record<ProjectLaunchActionId, string>> = {
   antigravity: "Antigravity",
   "claude-code": "Claude Code",
   finder: "Finder",
   github: "Your browser",
   "claude-desktop": "Claude Desktop",
+  // A single-line error under the pair's key (no per-agent result exists).
+  "claude-codex-pair": "Claude + Codex",
 };
 
 /** The `{Launcher}` substitution for a D-26 line (UI-SPEC "Launch error copy"). */
-export function launcherDisplayName(action: LaunchAction): string {
+export function launcherDisplayName(action: ProjectLaunchActionId): string {
   return LAUNCHER_DISPLAY_NAMES[action];
 }
 
-const ACKNOWLEDGEMENTS: Readonly<Record<LaunchAction, (terminalLabel: string) => string>> = {
-  antigravity: () => "Opening in Antigravity…",
-  "claude-code": (terminalLabel) => `Opening a ${terminalLabel} window…`,
-  finder: () => "Revealing in Finder…",
-  github: () => "Opening GitHub…",
-  "claude-desktop": () => "Opening Claude Desktop…",
-};
+/**
+ * The Antigravity terminal opens a TAB, not a window, so its sentences differ
+ * (UI-SPEC "Single-launch copy under the Antigravity terminal launcher");
+ * without this `Opening a Antigravity window…` would ship. Every other label
+ * keeps its Phase 4 wording.
+ */
+function isAntigravity(terminalLabel: string): boolean {
+  return terminalLabel === "Antigravity";
+}
+
+const ACKNOWLEDGEMENTS: Readonly<Record<ProjectLaunchActionId, (terminalLabel: string) => string>> =
+  {
+    antigravity: () => "Opening in Antigravity…",
+    "claude-code": (terminalLabel) =>
+      isAntigravity(terminalLabel)
+        ? "Opening a tab in Antigravity…"
+        : `Opening a ${terminalLabel} window…`,
+    finder: () => "Revealing in Finder…",
+    github: () => "Opening GitHub…",
+    "claude-desktop": () => "Opening Claude Desktop…",
+    "claude-codex-pair": () => "Opening Claude Code and Codex…",
+  };
 
 /** The while-in-flight status line, written into `launchStatus` in the same render as the click (D-40). */
-export function launchAcknowledgement(action: LaunchAction, terminalLabel: string): string {
+export function launchAcknowledgement(
+  action: ProjectLaunchActionId,
+  terminalLabel: string,
+): string {
   return ACKNOWLEDGEMENTS[action](terminalLabel);
 }
 
-const SUCCESS_LINES: Readonly<Record<LaunchAction, (terminalLabel: string) => string>> = {
+const SUCCESS_LINES: Readonly<Record<ProjectLaunchActionId, (terminalLabel: string) => string>> = {
   antigravity: () => "Opened in Antigravity",
-  "claude-code": (terminalLabel) => `Opened a ${terminalLabel} window for Claude Code`,
+  "claude-code": (terminalLabel) =>
+    isAntigravity(terminalLabel)
+      ? "Opened a tab in Antigravity for Claude Code"
+      : `Opened a ${terminalLabel} window for Claude Code`,
   finder: () => "Revealed in Finder",
   github: () => "Opened GitHub in your browser",
   "claude-desktop": () => "Brought Claude Desktop to the front",
+  "claude-codex-pair": () => "Opened Claude Code and Codex",
 };
 
 /** The `✓` success line, auto-cleared six seconds after it is written (RR-04). */
-export function launchSuccessLine(action: LaunchAction, terminalLabel: string): string {
+export function launchSuccessLine(action: ProjectLaunchActionId, terminalLabel: string): string {
   return SUCCESS_LINES[action](terminalLabel);
 }
 
@@ -78,7 +103,10 @@ export type LaunchErrorAction =
   | "set-up-launchers"
   | "go-to-projects"
   | "open-automation"
-  | "open-privacy-security";
+  | "open-privacy-security"
+  | "open-codex-settings"
+  | "try-again"
+  | "set-up-codex";
 
 export interface LaunchErrorCopy {
   /** The inline `▲` line. */
@@ -163,6 +191,29 @@ export const LAUNCH_ERROR_COPY: Readonly<Record<LaunchErrorKind, LaunchErrorCopy
     action: "set-up-launchers",
     notice: "{Launcher} couldn't be started. Check it in Settings → Launchers.",
   },
+  // Phase 05.1 (UI-SPEC "Typed errors").
+  "bridge-not-installed": {
+    action: "open-codex-settings",
+    problem: "The Antigravity terminal bridge isn't installed.",
+    nextStep:
+      "Install it from Settings → Codex, or switch to Terminal in Settings → Launchers, then try again.",
+    notice:
+      "The Antigravity terminal bridge isn't installed. Install it from Settings → Codex, or switch to Terminal in Settings → Launchers.",
+  },
+  "bridge-outdated": {
+    action: "open-codex-settings",
+    problem: "An open Antigravity window is still running an old terminal bridge.",
+    nextStep:
+      "Reload all Antigravity windows (Developer: Reload Window). If that doesn't help, run the bridge install step again from Settings → Codex, then try again.",
+    notice:
+      "An open Antigravity window is still running an old terminal bridge. Reload all Antigravity windows (Developer: Reload Window). If that doesn't help, run the bridge install step again from Settings → Codex.",
+  },
+  "window-not-ready": {
+    action: "try-again",
+    problem: "Antigravity is still starting.",
+    nextStep: "Its window is opening now. Try again in a few seconds.",
+    notice: "Antigravity is still starting. Try again in a few seconds.",
+  },
 };
 
 /** The visible label of each inline action button (UI-SPEC table; PR-11 for Privacy & Security). */
@@ -171,6 +222,9 @@ export const LAUNCH_ERROR_ACTION_LABELS: Readonly<Record<LaunchErrorAction, stri
   "go-to-projects": "Go to Projects",
   "open-automation": "Open Automation settings",
   "open-privacy-security": "Open Privacy & Security settings",
+  "open-codex-settings": "Open Codex settings",
+  "try-again": "Try again",
+  "set-up-codex": "Set up Codex",
 };
 
 /** The D-26 Notice for a failed launch (UI-SPEC "Launch error copy", PR-11 for `folder-access-denied`). */
@@ -178,15 +232,19 @@ export function launchErrorNotice(kind: LaunchErrorKind, values: LaunchCopyValue
   return renderCopy(LAUNCH_ERROR_COPY[kind].notice, values);
 }
 
-const ANNOUNCEMENTS: Readonly<Record<LaunchAction, (terminal: string, project: string) => string>> =
-  {
-    antigravity: (_terminal, project) => `Opening ${project} in Antigravity…`,
-    "claude-code": (terminal, project) =>
-      `Opening a ${terminal} window for Claude Code in ${project}…`,
-    finder: (_terminal, project) => `Revealing ${project} in Finder…`,
-    github: (_terminal, project) => `Opening ${project} on GitHub…`,
-    "claude-desktop": () => "Opening Claude Desktop…",
-  };
+const ANNOUNCEMENTS: Readonly<
+  Record<ProjectLaunchActionId, (terminal: string, project: string) => string>
+> = {
+  antigravity: (_terminal, project) => `Opening ${project} in Antigravity…`,
+  "claude-code": (terminal, project) =>
+    isAntigravity(terminal)
+      ? `Opening a tab in Antigravity for Claude Code in ${project}…`
+      : `Opening a ${terminal} window for Claude Code in ${project}…`,
+  finder: (_terminal, project) => `Revealing ${project} in Finder…`,
+  github: (_terminal, project) => `Opening ${project} on GitHub…`,
+  "claude-desktop": () => "Opening Claude Desktop…",
+  "claude-codex-pair": (_terminal, project) => `Opening Claude Code and Codex in ${project}…`,
+};
 
 /**
  * The live-region announcement while a launch is in flight (UI-SPEC S2
@@ -194,9 +252,87 @@ const ANNOUNCEMENTS: Readonly<Record<LaunchAction, (terminal: string, project: s
  * quick-switcher posts the same text as its acknowledgement Notice.
  */
 export function launchAnnouncement(
-  action: LaunchAction,
+  action: ProjectLaunchActionId,
   terminalLabel: string,
   projectName: string,
 ): string {
   return ANNOUNCEMENTS[action](terminalLabel, projectName);
+}
+
+// ---------------------------------------------------------------------------
+// Pair launch (Phase 05.1, UI-SPEC S2 "Per-agent two-line status")
+
+/** The two agents of a pair, Claude Code first (D-10). */
+export type PairAgent = "claude" | "codex";
+
+/** The `{Launcher}` for a pair line: the agent's name. */
+export const PAIR_AGENT_NAMES: Readonly<Record<PairAgent, string>> = {
+  claude: "Claude Code",
+  codex: "Codex",
+};
+
+/** The Codex setup line body (C-09): a setup state, never an error. */
+export const PAIR_CODEX_SETUP_TEXT =
+  "Codex isn't set up yet. Install it, then add it in Settings → Launchers.";
+
+/** The hidden description of the pair button when Codex is known to be missing (D-10). */
+export const PAIR_CODEX_MISSING_NOTE = "Codex isn't set up, so only Claude Code will open.";
+
+function pairOpeningText(terminalLabel: string): string {
+  return isAntigravity(terminalLabel)
+    ? "Opening a tab in Antigravity…"
+    : `Opening a ${terminalLabel} window…`;
+}
+
+function pairOpenedText(terminalLabel: string): string {
+  return isAntigravity(terminalLabel)
+    ? "Opened in an Antigravity tab"
+    : `Opened a ${terminalLabel} window`;
+}
+
+/**
+ * The text of one agent's pair line, without its glyph. Every state has its
+ * own words, so colour is never the only cue. `{Launcher}` in an error row is
+ * the agent's name; the project name is substituted only where a Notice row
+ * needs it, and the visible lines never carry it.
+ */
+export function pairLineText(
+  agent: PairAgent,
+  line: PairLineStatus,
+  terminalLabel: string,
+  projectName: string,
+): string {
+  const name = PAIR_AGENT_NAMES[agent];
+  switch (line.kind) {
+    case "opening":
+      return `${name}: ${pairOpeningText(terminalLabel)}`;
+    case "success":
+      return `${name}: ${pairOpenedText(terminalLabel)}`;
+    case "setup":
+      return `${name}: ${PAIR_CODEX_SETUP_TEXT}`;
+    case "error": {
+      const copy = LAUNCH_ERROR_COPY[line.error];
+      const values = { launcher: name, terminal: terminalLabel, project: projectName };
+      return `${name}: ${renderCopy(copy.problem, values)} ${renderCopy(copy.nextStep, values)}`;
+    }
+  }
+}
+
+/**
+ * What the pair region's hidden live announcement reads: the opening sentence
+ * naming the project while either line is opening, otherwise the two line
+ * statements and nothing else (UI-SPEC S2).
+ */
+export function pairAnnouncement(
+  claude: PairLineStatus,
+  codex: PairLineStatus,
+  terminalLabel: string,
+  projectName: string,
+): string {
+  if (claude.kind === "opening" || codex.kind === "opening") {
+    return launchAnnouncement("claude-codex-pair", terminalLabel, projectName);
+  }
+  const statement = (agent: PairAgent, line: PairLineStatus): string =>
+    pairLineText(agent, line, terminalLabel, projectName).replace(/\.$/, "");
+  return `${statement("claude", claude)}. ${statement("codex", codex)}.`;
 }

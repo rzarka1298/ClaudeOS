@@ -2,7 +2,12 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/pre
 import type { VNode } from "preact";
 import { useState } from "preact/hooks";
 import { afterEach, describe, expect, it } from "vitest";
-import { TemplateEditor, type TemplateEditorKind } from "./template-editor.js";
+import {
+  checkTemplate,
+  refusalCopy,
+  TemplateEditor,
+  type TemplateEditorKind,
+} from "./template-editor.js";
 
 /**
  * S7 argument template editor (Task 2, RR-13, PR-13, D-22): one labelled
@@ -203,5 +208,58 @@ describe("blur-time checks only (PR-13)", () => {
       "--dangerously-skip-permissions isn't allowed here.",
     );
     expect(screen.getByLabelText("Argument 1").getAttribute("aria-invalid")).toBeNull();
+  });
+});
+
+describe("the codex kind (plan 05.1-31)", () => {
+  const TAIL =
+    "isn't allowed. It turns off Codex's sandbox or approval checks, so this app never launches Codex with it.";
+
+  it("edits [codex, ...args]: a Codex arguments group, template indexes from 1, the codex empty hint", () => {
+    render(<Harness kind="codex" initial={[]} executableDisplay="~/.local/bin/codex" />);
+    expect(screen.getByRole("group", { name: "Codex arguments" })).toBeTruthy();
+    expect(screen.getByText("No extra arguments. Codex starts with its defaults.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add argument" }));
+    expect(screen.getByLabelText("Argument 1")).toBeTruthy();
+    expect(previewItems()[0]).toBe("~/.local/bin/codex");
+  });
+
+  it("checkTemplate refuses the six forms and the config flags on the row that carries them, claude-code does not", () => {
+    const flags = [
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--yolo",
+      "--full-auto",
+      "--approve-for-me",
+      "--dangerously-bypass-hook-trust",
+      "--sandbox=danger-full-access",
+    ];
+    for (const flag of flags) {
+      expect(checkTemplate("codex", ["--model", flag])).toEqual([[2, `${flag} ${TAIL}`]]);
+      expect(checkTemplate("claude-code", [flag])).toEqual([]);
+    }
+    expect(checkTemplate("codex", ["-s", "danger-full-access"])).toEqual([
+      [2, `-s danger-full-access ${TAIL}`],
+    ]);
+    expect(checkTemplate("codex", ["--sandbox", "workspace-write"])).toEqual([]);
+    expect(checkTemplate("codex", ["--model", "example"])).toEqual([]);
+  });
+
+  it("refusalCopy names the offending argument for a codex forbidden-flag refusal", () => {
+    expect(refusalCopy("forbidden-flag", "--yolo", { template: "codex" })).toBe(`--yolo ${TAIL}`);
+    expect(
+      refusalCopy("forbidden-flag", "danger-full-access", {
+        template: "codex",
+        previous: "--sandbox",
+      }),
+    ).toBe(`--sandbox danger-full-access ${TAIL}`);
+    // The Claude Code wording is untouched.
+    expect(refusalCopy("forbidden-flag", "--settings=x")).toBe("--settings isn't allowed here.");
+  });
+
+  it("blur shows the refusal on the row", () => {
+    render(<Harness kind="codex" initial={["--yolo"]} />);
+    fireEvent.blur(screen.getByLabelText("Argument 1"));
+    expect(screen.getByLabelText("Argument 1").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText(`--yolo ${TAIL}`)).toBeTruthy();
   });
 });

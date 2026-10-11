@@ -199,6 +199,7 @@ export function launchRegistered(
     readonly cwd?: string;
     readonly worktreeRoot?: string | null;
     readonly permissionMode?: string | null;
+    readonly projectId?: string | null;
   } = {},
 ): Evidence {
   return {
@@ -210,6 +211,7 @@ export function launchRegistered(
     cwd: options.cwd ?? "/Users/USERNAME/code/synthetic-project",
     worktreeRoot: options.worktreeRoot ?? null,
     permissionMode: options.permissionMode ?? null,
+    projectId: options.projectId ?? null,
     at: whenAt,
   };
 }

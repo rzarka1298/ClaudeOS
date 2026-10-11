@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CodexSnapshotStateSchema } from "@ccc/domain/codex-api.js";
 import { describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -79,15 +80,68 @@ const TASKS_CELLS = [
   "tasks — tasks-today — full — reduced",
 ] as const;
 
+/** The cells `codex.spec.ts` adds (plan 05.1-27), as `codex — {case} — {pane}`. Grown per task. */
+const CODEX_CARD_CASES = [
+  "ready-mixed",
+  "ready-over-reserve",
+  "ready-fallback-source",
+  "ready-analysis-off",
+  "ready-partial-sessions",
+  "ready-partial-tokens",
+  "usage-unavailable",
+  "usage-outdated",
+  "empty",
+  "loading",
+  "stale",
+  "error",
+  "disconnected",
+  "setup-not-installed",
+  "unavailable-format-changed",
+  "long-text",
+] as const;
+const CODEX_PANES = ["narrow", "full"] as const;
+const PAIR_CASES = ["opening", "success-error", "setup", "window-not-ready", "both-error"] as const;
+const CODEX_CELLS: readonly string[] = [
+  ...CODEX_CARD_CASES.flatMap((id) => CODEX_PANES.map((pane) => `codex — ${id} — ${pane}`)),
+  // ready-mixed again at data-motion reduced (UI-SPEC accessibility floor 13), and at 200 percent font size.
+  ...CODEX_PANES.map((pane) => `codex — ready-mixed — ${pane} — reduced`),
+  "codex — zoom-200 — narrow",
+  // The launch toolbar with the fifth button, and the five pair-launch status cases.
+  ...CODEX_PANES.map((pane) => `codex — launch-toolbar-five — ${pane}`),
+  ...PAIR_CASES.flatMap((id) => CODEX_PANES.map((pane) => `codex — launch-pair-${id} — ${pane}`)),
+];
+
+/** The 121 cells the merged tree already had, and the Codex spec's final count (UI-SPEC "Visual regression"). */
+const MERGED_TREE_CELLS = 121;
+const CODEX_SPEC_CELLS = 47;
+
+/** The titles `playwright test --list` prints for one spec file. */
+function titlesOf(listing: string, specFile: string): string[] {
+  return listing
+    .split("\n")
+    .filter((line) => line.includes(`${specFile}:`))
+    .map((line) => line.split(" › ").slice(2).join(" › ").trim());
+}
+
 describe("visual matrix (audit)", () => {
-  it("lists exactly 113 cells: 8 widgets x 8 presentations + 5 motion cells + 4 Agent runs cells + 21 approvals cells + 19 tasks cells", () => {
+  it("lists the merged-tree 121 cells (9 widgets x 8 presentations + 5 motion + 4 Agent runs + 21 approvals + 19 tasks) plus the Codex spec's own", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toMatch(/Total: 113 tests in 4 files/);
+    expect(out).toContain(`Total: ${MERGED_TREE_CELLS + CODEX_SPEC_CELLS} tests in 5 files`);
+    expect(CODEX_CELLS).toHaveLength(CODEX_SPEC_CELLS);
+    expect(titlesOf(out, "codex.spec.ts").sort()).toEqual([...CODEX_CELLS].sort());
     expect(APPROVALS_CELLS).toHaveLength(21);
     for (const cell of APPROVALS_CELLS) expect(out).toContain(cell);
     expect(TASKS_CELLS).toHaveLength(19);
     for (const cell of TASKS_CELLS) expect(out).toContain(cell);
     for (const cell of [
+      "codex — loading",
+      "codex — empty",
+      "codex — ready",
+      "codex — stale",
+      "codex — disconnected",
+      "codex — error",
+      "codex — permission-required",
+      "codex — unavailable",
       "background — full",
       "background — reduced",
       "service-health — ready — motion full",
@@ -100,6 +154,28 @@ describe("visual matrix (audit)", () => {
     ]) {
       expect(out).toContain(cell);
     }
+  }, 60_000);
+
+  it("declares exactly the 47 Codex baseline names, once each, all matching the stem rule", () => {
+    const run = execFileSync("node", [join(REPO_ROOT, "scripts", "list-visual-baselines.mjs")], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+    const names = run
+      .split("\n")
+      .filter((line) => line.startsWith("codex.spec.ts-snapshots/"))
+      .map((line) => line.slice("codex.spec.ts-snapshots/".length));
+    const stems = [
+      ...CODEX_CARD_CASES.flatMap((id) => CODEX_PANES.map((pane) => `codex-${id}--${pane}`)),
+      ...CODEX_PANES.map((pane) => `codex-ready-mixed-reduced--${pane}`),
+      "codex-zoom-200--narrow",
+      ...CODEX_PANES.map((pane) => `launch-toolbar-five--${pane}`),
+      ...PAIR_CASES.flatMap((id) => CODEX_PANES.map((pane) => `launch-pair-${id}--${pane}`)),
+    ];
+    expect(stems).toHaveLength(CODEX_SPEC_CELLS);
+    expect(new Set(names).size).toBe(names.length);
+    expect([...names].sort()).toEqual(stems.map((stem) => `${stem}-chromium-linux.png`).sort());
+    for (const stem of stems) expect(`${stem}.png`).toMatch(/^[a-z0-9][a-z0-9-]*\.png$/);
   }, 60_000);
 
   it("pins UTC, en-US, a 1024x768 viewport at scale 1 and disabled animations", () => {
@@ -115,18 +191,21 @@ describe("visual matrix (audit)", () => {
     expect(config).toContain('updateSnapshots: "none"');
   });
 
-  it.each(["widgets.spec.ts", "agent-runs.spec.ts", "approvals.spec.ts", "tasks.spec.ts"])(
-    "%s skips the whole file on a non-Linux host unless the local override is set",
-    (fileName) => {
-      const spec = readFileSync(
-        join(REPO_ROOT, "packages", "test-fixtures", "visual", fileName),
-        "utf8",
-      );
-      expect(spec).toMatch(
-        /test\.skip\(\s*process\.platform !== "linux" && !process\.env\.CCC_VISUAL_ALLOW_LOCAL/,
-      );
-    },
-  );
+  it.each([
+    "widgets.spec.ts",
+    "agent-runs.spec.ts",
+    "approvals.spec.ts",
+    "tasks.spec.ts",
+    "codex.spec.ts",
+  ])("%s skips the whole file on a non-Linux host unless the local override is set", (fileName) => {
+    const spec = readFileSync(
+      join(REPO_ROOT, "packages", "test-fixtures", "visual", fileName),
+      "utf8",
+    );
+    expect(spec).toMatch(
+      /test\.skip\(\s*process\.platform !== "linux" && !process\.env\.CCC_VISUAL_ALLOW_LOCAL/,
+    );
+  });
 
   it.each(["approvals.spec.ts", "tasks.spec.ts"])(
     "%s scrolls every scroller to the top before the capture (focus moves scroll a pane)",
@@ -146,4 +225,14 @@ describe("visual matrix (audit)", () => {
       .filter((path) => /test-fixtures|widget-fixtures/.test(readFileSync(path, "utf8")));
     expect(leaks).toEqual([]);
   });
+});
+
+it("Codex fixture parts satisfy the strict service snapshot contract", () => {
+  const fixtures = JSON.parse(readFileSync(join(HERE, "widget-fixtures.json"), "utf8")) as {
+    panels: { id: string; states: Record<string, { data: unknown }> }[];
+  };
+  const panel = fixtures.panels.find((panel) => panel.id === "codex");
+  expect(panel).toBeDefined();
+  for (const state of Object.values(panel?.states ?? {}))
+    expect(CodexSnapshotStateSchema.safeParse(state.data).success).toBe(true);
 });

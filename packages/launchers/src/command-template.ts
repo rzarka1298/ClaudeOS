@@ -58,14 +58,33 @@ export const FORBIDDEN_PERMISSION_TOKENS = [
   "bypasspermissions",
 ] as const;
 
+/**
+ * The Codex ban set, written normalised (lower-case alphanumerics only): the
+ * approval-and-sandbox bypass flag, the hook-trust bypass, the three
+ * "skip every prompt" spellings and the unrestricted sandbox value. The codex
+ * template kind and the agent-launch validator both read this one list; the
+ * flag spellings are never written out in source (D-11, T-05.1-15).
+ */
+export const FORBIDDEN_CODEX_TOKENS = [
+  "dangerouslybypassapprovalsandsandbox",
+  "dangerouslybypasshooktrust",
+  "yolo",
+  "fullauto",
+  "approveforme",
+  "dangerfullaccess",
+] as const;
+
 /** Executable plus arguments never exceed this many elements (UI-SPEC S7). */
 export const MAX_TEMPLATE_ARGS = MAX_TEMPLATE_ARGUMENTS;
 
 /**
  * `terminal`: a custom terminal command; must contain `{script}` and may use `{projectPath}`.
  * `claude-code`: the `claude` command line; may use `{projectPath}` only. In both, `argv[0]` is the executable.
+ * `codex`: the `codex` command line; may use `{projectPath}` only and additionally refuses the Codex ban set
+ * ({@link FORBIDDEN_CODEX_TOKENS}) and config-carrying flags, so a saved template can never carry a
+ * sandbox or approval bypass (D-11).
  */
-export type TemplateKind = "terminal" | "claude-code";
+export type TemplateKind = "terminal" | "claude-code" | "codex";
 
 /** The refusals this pure validator can decide; the bundle and executable lookups are service-side. */
 export type TemplateRefusal = Exclude<
@@ -100,6 +119,7 @@ export interface TerminalPreset {
 const ALLOWED_PLACEHOLDERS: Readonly<Record<TemplateKind, readonly Placeholder[]>> = {
   terminal: ["{projectPath}", "{script}"],
   "claude-code": ["{projectPath}"],
+  codex: ["{projectPath}"],
 };
 
 /** An element that is entirely one brace-wrapped name, e.g. `{script}` or a typo like `{scrpt}`. */
@@ -110,17 +130,52 @@ function hasLineBreak(element: string): boolean {
   return element.includes("\n") || element.includes("\r") || element.includes(NUL);
 }
 
-function normaliseForFlagMatch(element: string): string {
+/**
+ * The one normalisation every flag and ban-token match uses: NFKC, lower-case,
+ * every non-alphanumeric removed. Shared with the agent-launch validator so the
+ * two never drift (D-08, D-11).
+ */
+export function normaliseForFlagMatch(element: string): string {
   return element
     .normalize("NFKC")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 }
 
-/** `previous` is the element before this one, for the `--permission-mode <mode>` form. */
-function containsForbiddenFlag(element: string, previous: string | undefined): boolean {
+/**
+ * True for a codex config-carrying flag in any spelling: `--config`, `--profile` (any case, `_` as
+ * `-`, with or without `=value`) and the short `-c` / `-p` (also `-cvalue`, `-c=value`). Their
+ * values are TOML the CLI decodes after a text match would have passed (`\u002d` escapes), so the
+ * codex kind refuses the flags outright, as the agent-launch validator does. `-C` (`--cd`) is not one.
+ */
+function isCodexConfigFlag(element: string): boolean {
+  if (element.startsWith("--")) {
+    const eq = element.indexOf("=");
+    const name = (eq === -1 ? element : element.slice(0, eq)).toLowerCase().replace(/_/g, "-");
+    return name === "--config" || name === "--profile";
+  }
+  return /^-[cp]/.test(element);
+}
+
+/**
+ * `previous` is the element before this one, for the `--permission-mode <mode>` form. The codex
+ * kind refuses the union of the Phase 4 tokens and the Codex set, plus the config-carrying flags;
+ * the other kinds keep exactly the Phase 4 pair.
+ */
+function containsForbiddenFlag(
+  element: string,
+  previous: string | undefined,
+  kind: TemplateKind,
+): boolean {
   const normalised = normaliseForFlagMatch(element);
   if (FORBIDDEN_PERMISSION_TOKENS.some((token) => normalised.includes(token))) return true;
+  if (
+    kind === "codex" &&
+    (FORBIDDEN_CODEX_TOKENS.some((token) => normalised.includes(token)) ||
+      isCodexConfigFlag(element))
+  ) {
+    return true;
+  }
   // Subsumed by the token check today; kept explicit so the two-element
   // `--permission-mode bypassPermissions` form stays refused if the tokens change.
   return (
@@ -178,7 +233,8 @@ export function validateCommandTemplate(
   for (const [index, element] of argv.entries()) {
     if (hasLineBreak(element)) return refuse("line-break", index);
     if (element === "") return refuse("empty-argument", index);
-    if (containsForbiddenFlag(element, argv[index - 1])) return refuse("forbidden-flag", index);
+    if (containsForbiddenFlag(element, argv[index - 1], options.kind))
+      return refuse("forbidden-flag", index);
 
     if (index === 0) {
       if (!element.startsWith("/")) return refuse("executable-not-absolute", 0);

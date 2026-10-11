@@ -81,17 +81,18 @@ const DEFAULT_ORDER = [
   "Active Claude sessions",
   "Project shortcuts",
   "Claude usage",
+  "Codex sessions and usage",
   "Technology and market intelligence",
   "GitHub discoveries",
   "Quick actions",
 ];
 
 describe("the Overview renders the default layout (UI-07, D-12)", () => {
-  it("places eight real cards in the default order inside the overview tabpanel", () => {
+  it("places nine real cards in the default order inside the overview tabpanel", () => {
     const { container } = render(<Shell />);
     const cards = overviewCards(container);
 
-    expect(cards).toHaveLength(8);
+    expect(cards).toHaveLength(9);
     expect(cards.map(cardTitle)).toEqual(DEFAULT_ORDER);
     expect(cardNamed(container, "Today").getAttribute("data-size")).toBe("wide");
     expect(cardNamed(container, "Active Claude sessions").getAttribute("data-size")).toBe("tall");
@@ -111,7 +112,7 @@ describe("the Overview renders the default layout (UI-07, D-12)", () => {
     expect(screen.getByRole("heading", { level: 3, name: "Registered projects" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
-    expect(overviewCards(container)).toHaveLength(8);
+    expect(overviewCards(container)).toHaveLength(9);
   });
 
   it("feeds the service-health card from the live connection signals", () => {
@@ -126,7 +127,7 @@ describe("the Overview renders the default layout (UI-07, D-12)", () => {
     );
   });
 
-  it("composes the default layout into eight entries in order with nothing skipped", () => {
+  it("composes the default layout into nine entries in order with nothing skipped", () => {
     const resolution = composeLayout(DEFAULT_LAYOUT, undefined, WIDGETS, ENABLED_FLAGS);
 
     expect(resolution.entries).toEqual([
@@ -135,6 +136,7 @@ describe("the Overview renders the default layout (UI-07, D-12)", () => {
       { widgetId: "active-sessions", size: "tall" },
       { widgetId: "project-shortcuts", size: "medium" },
       { widgetId: "claude-usage", size: "wide" },
+      { widgetId: "codex", size: "tall" },
       { widgetId: "tech-intel", size: "tall" },
       { widgetId: "github-discoveries", size: "medium" },
       { widgetId: "quick-actions", size: "small" },
@@ -273,6 +275,15 @@ const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
   },
   "tech-intel": { stories: [], marketSummary: null },
   "github-discoveries": { repos: [] },
+  codex: {
+    sessions: null,
+    usage: null,
+    headroom: null,
+    tokens: null,
+    integration: null,
+    nowMs: Date.parse("2026-09-25T11:58:00Z"),
+    analysisOn: false,
+  },
   "quick-actions": {
     launchers: {
       antigravity: "set-up",
@@ -315,7 +326,7 @@ const TERMINAL = new Set([
 ]);
 
 describe("PERF-02: cached Overview data renders within 2 seconds", () => {
-  it("PERF-02 places eight cached ready cards in the DOM on a synchronous render, under 2000 ms", () => {
+  it("PERF-02 places nine cached ready cards in the DOM on a synchronous render, under 2000 ms", () => {
     const states = cachedStates();
 
     const started = performance.now();
@@ -324,7 +335,7 @@ describe("PERF-02: cached Overview data renders within 2 seconds", () => {
 
     // No await and no timer advance above this line: first paint IS the data.
     const cards = overviewCards(container);
-    expect(cards).toHaveLength(8);
+    expect(cards).toHaveLength(9);
     for (const card of cards) {
       expect(card.getAttribute("data-presentation")).toBe("ready");
       expect(card.querySelector('.ccc-badge[data-badge="cached"]')?.textContent).toContain(
@@ -336,7 +347,7 @@ describe("PERF-02: cached Overview data renders within 2 seconds", () => {
 });
 
 describe("PERF-03: a slow integration blocks neither its siblings nor navigation", () => {
-  it("PERF-03 leaves seven terminal cards and working arrow-key navigation while one key never resolves", () => {
+  it("PERF-03 leaves eight terminal cards and working arrow-key navigation while one key never resolves", () => {
     const states = cachedStates();
     // A source whose request never settles: its card stays loading forever.
     const pending = signal<WidgetState<unknown>>({ kind: "loading" });
@@ -348,12 +359,12 @@ describe("PERF-03: a slow integration blocks neither its siblings nor navigation
     const { container } = render(<Shell stateFor={(id) => states[id]} />);
 
     const cards = overviewCards(container);
-    expect(cards).toHaveLength(8);
+    expect(cards).toHaveLength(9);
     const slow = cardNamed(container, "Technology and market intelligence");
     expect(slow.getAttribute("data-presentation")).toBe("loading");
     expect(slow.getAttribute("aria-busy")).toBe("true");
     const others = cards.filter((card) => card !== slow);
-    expect(others).toHaveLength(7);
+    expect(others).toHaveLength(8);
     for (const card of others) {
       expect(TERMINAL.has(card.getAttribute("data-presentation") ?? "")).toBe(true);
     }
@@ -367,7 +378,7 @@ describe("PERF-03: a slow integration blocks neither its siblings nor navigation
     expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe(
       "true",
     );
-    expect(overviewCards(container)).toHaveLength(8);
+    expect(overviewCards(container)).toHaveLength(9);
   });
 });
 
@@ -399,7 +410,7 @@ describe("per-card signal isolation: one widget's update re-renders only its car
           now={Date.parse("2026-09-25T12:00:00Z")}
         />,
       );
-      expect(renders).toHaveLength(8);
+      expect(renders).toHaveLength(9);
       renders.length = 0;
 
       void act(() => {
@@ -430,11 +441,11 @@ describe("the Overview path never reaches for a client (PERF-01 extended)", () =
 
   it("renders every card, navigates and refreshes without constructing a client", () => {
     const { container, rerender } = render(<Shell />);
-    expect(overviewCards(container)).toHaveLength(8);
+    expect(overviewCards(container)).toHaveLength(9);
     fireEvent.click(screen.getByRole("tab", { name: "Projects" }));
     fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
     rerender(<Shell />);
-    expect(overviewCards(container)).toHaveLength(8);
+    expect(overviewCards(container)).toHaveLength(9);
     expect(clientSpy).not.toHaveBeenCalled();
   });
 });

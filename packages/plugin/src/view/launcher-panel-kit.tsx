@@ -48,6 +48,7 @@ export type ExecutableDraft =
 
 export type TerminalDraft =
   | { readonly kind: "terminal-app" }
+  | { readonly kind: "antigravity-terminal" }
   | {
       readonly kind: "custom";
       readonly preset: TerminalPresetId;
@@ -60,6 +61,36 @@ export interface ClaudeCodeDraft {
   readonly args: readonly string[];
   readonly terminal: TerminalDraft;
 }
+
+/**
+ * The Codex panel's in-progress configuration (Phase 05.1, D-11): which
+ * `codex` and which arguments. There is no terminal member: Codex opens in
+ * the Claude Code row's terminal.
+ */
+export interface CodexDraft {
+  readonly executable: ExecutableDraft;
+  readonly args: readonly string[];
+}
+
+/**
+ * The identity of a launcher panel: the five launch actions plus Codex, which
+ * is a launcher but not a launch action (Phase 05.1, D-11).
+ */
+export type PanelId = LaunchAction | "codex";
+
+/**
+ * The Codex health check's state (CODEX-03, R4). Only the owner's press
+ * leaves `idle`; nothing a doctor run returns is kept, only which of the
+ * fixed outcomes it was.
+ */
+export type CodexDoctorState =
+  | { readonly kind: "idle" }
+  | { readonly kind: "checking" }
+  | { readonly kind: "healthy" }
+  | { readonly kind: "warning"; readonly ids: readonly string[] }
+  | { readonly kind: "problem"; readonly ids: readonly string[] }
+  | { readonly kind: "unknown" }
+  | { readonly kind: "service-failure" };
 
 /** What a panel's persistent status line says (UI-SPEC S6). */
 export type PanelStatus =
@@ -115,8 +146,12 @@ export interface LaunchersSession {
   readonly configs: Signal<LauncherConfigView | null>;
   readonly appDrafts: Signal<Partial<Record<AppLauncherId, AppDraft>>>;
   readonly claudeDraft: Signal<ClaudeCodeDraft | null>;
-  readonly status: Signal<Partial<Record<LaunchAction, PanelStatus>>>;
-  readonly saveErrors: Signal<Partial<Record<LaunchAction, SaveError>>>;
+  /** The Codex panel's draft (Phase 05.1); memory only, like every draft. */
+  readonly codexDraft: Signal<CodexDraft | null>;
+  /** The owner-triggered Codex health check (Phase 05.1, CODEX-03). */
+  readonly codexDoctor: Signal<CodexDoctorState>;
+  readonly status: Signal<Partial<Record<PanelId, PanelStatus>>>;
+  readonly saveErrors: Signal<Partial<Record<PanelId, SaveError>>>;
   /** Set once detection has been started automatically, so a failure is not retried on every open. */
   autoDetected: boolean;
   /** How many `getConfigs` requests this session has issued (see {@link loadConfigs}). */
@@ -132,6 +167,8 @@ export function createLaunchersSession(): LaunchersSession {
     configs: signal(null),
     appDrafts: signal({}),
     claudeDraft: signal(null),
+    codexDraft: signal(null),
+    codexDoctor: signal({ kind: "idle" }),
     status: signal({}),
     saveErrors: signal({}),
     autoDetected: false,
@@ -161,17 +198,13 @@ export function loadConfigs(
   });
 }
 
-export function setPanelStatus(
-  session: LaunchersSession,
-  id: LaunchAction,
-  status: PanelStatus,
-): void {
+export function setPanelStatus(session: LaunchersSession, id: PanelId, status: PanelStatus): void {
   session.status.value = { ...session.status.value, [id]: status };
 }
 
 export function setSaveError(
   session: LaunchersSession,
-  id: LaunchAction,
+  id: PanelId,
   error: SaveError | null,
 ): void {
   const next = { ...session.saveErrors.value };
@@ -188,6 +221,16 @@ export const LAUNCHER_PANEL_NAMES: Readonly<Record<LaunchAction, string>> = {
   finder: "Finder",
   github: "GitHub",
 };
+
+/** The Codex panel's name and description (UI-SPEC S4-b, verbatim). */
+export const CODEX_PANEL_NAME = "Codex";
+export const CODEX_PANEL_DESCRIPTION =
+  "Which codex runs and with which arguments. It opens in the same terminal as Claude Code.";
+
+/** A panel's display name, including Codex (which `launch-copy.ts` has no entry for). */
+export function panelDisplayName(id: PanelId): string {
+  return id === "codex" ? CODEX_PANEL_NAME : launcherDisplayName(id);
+}
 
 export const PANEL_DESCRIPTIONS: Readonly<Record<LaunchAction, string>> = {
   antigravity: "Opens a project folder in Antigravity.",
@@ -252,6 +295,29 @@ export function terminalInSentence(label: string): string {
   return label === "Your terminal" ? "your terminal" : label;
 }
 
+/**
+ * The Test explanation and the "did it open" question for a product opened in
+ * a terminal: the Antigravity terminal opens a tab, every other choice a
+ * window (UI-SPEC "Single-launch copy under the Antigravity terminal
+ * launcher"). `product` is `Claude Code` or `Codex`.
+ */
+export function terminalTestSentences(
+  terminalLabel: string,
+  product: string,
+): { readonly explanation: string; readonly question: string } {
+  if (terminalLabel === "Antigravity") {
+    return {
+      explanation: `Test opens a new tab in Antigravity at the managed vault folder that shows the ${product} version.`,
+      question: `Test sent. Did a tab open in Antigravity and show the ${product} version?`,
+    };
+  }
+  const label = terminalInSentence(terminalLabel);
+  return {
+    explanation: `Test opens a new ${label} window at the managed vault folder that shows the ${product} version.`,
+    question: `Test sent. Did a ${label} window open and show the ${product} version?`,
+  };
+}
+
 /** The wording a panel's Test lines need (UI-SPEC S6 Test rows). */
 export interface TestCopy {
   /** The panel's app name, as in `Did {app} open?`. */
@@ -268,7 +334,7 @@ export interface TestCopy {
 export function runLauncherTest(
   session: LaunchersSession,
   actions: LaunchersActions,
-  id: LaunchAction,
+  id: PanelId,
   terminal: TerminalChoice | null,
 ): void {
   setPanelStatus(session, id, { kind: "testing" });
@@ -286,8 +352,8 @@ export function runLauncherTest(
   });
 }
 
-function isLauncherId(id: LaunchAction): id is LauncherId {
-  return id === "antigravity" || id === "claude-code" || id === "claude-desktop";
+function isLauncherId(id: PanelId): id is LauncherId {
+  return id === "antigravity" || id === "claude-code" || id === "claude-desktop" || id === "codex";
 }
 
 /**
@@ -299,7 +365,7 @@ function isLauncherId(id: LaunchAction): id is LauncherId {
 export function answerLauncherTest(
   session: LaunchersSession,
   actions: LaunchersActions,
-  id: LaunchAction,
+  id: PanelId,
   opened: boolean,
 ): void {
   if (!opened) {
@@ -393,9 +459,9 @@ export function TestLauncherButton({
 }
 
 /** A Test outcome's two lines (problem, next step) plus any extra explanation. */
-function testErrorLines(error: LaunchErrorKind, id: LaunchAction, copy: TestCopy): string[] {
+function testErrorLines(error: LaunchErrorKind, id: PanelId, copy: TestCopy): string[] {
   const values = {
-    launcher: launcherDisplayName(id),
+    launcher: panelDisplayName(id),
     terminal: terminalInSentence(copy.terminal),
     project: null,
   };
@@ -418,7 +484,7 @@ function testErrorLines(error: LaunchErrorKind, id: LaunchAction, copy: TestCopy
   return lines;
 }
 
-function problemLines(status: PanelStatus, id: LaunchAction, copy: TestCopy): string[] | null {
+function problemLines(status: PanelStatus, id: PanelId, copy: TestCopy): string[] | null {
   switch (status.kind) {
     case "save-failed":
       return [
@@ -456,7 +522,7 @@ export function PanelStatusLine({
   now,
   copy,
 }: {
-  readonly id: LaunchAction;
+  readonly id: PanelId;
   readonly status: PanelStatus;
   readonly now: number;
   readonly copy: TestCopy;
@@ -535,7 +601,7 @@ export function PanelFollowUps({
   disabled,
   testButtonRef,
 }: {
-  readonly id: LaunchAction;
+  readonly id: PanelId;
   readonly status: PanelStatus;
   readonly session: LaunchersSession;
   readonly actions: LaunchersActions;

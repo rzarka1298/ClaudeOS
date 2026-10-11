@@ -1,6 +1,6 @@
 import type {
+  CodexDoctorSummary,
   DetectionResponse,
-  LaunchAction,
   LaunchErrorKind,
   LauncherConfigView,
   LauncherId,
@@ -9,13 +9,16 @@ import type {
   SystemSettingsPane,
   TemplateRefusalReason,
   TerminalChoice,
+  TestLauncherId,
 } from "@ccc/domain";
 import {
+  CodexRequestError,
   detectLaunchers,
   getLauncherConfigs,
   markLauncherTested,
   openSystemSettings,
   ProjectsRequestError,
+  runCodexDoctor,
   type SocketApiClient,
   SocketUnreachableError,
   saveLauncherConfig,
@@ -69,6 +72,21 @@ export type MarkTestedOutcome =
 
 export type OpenSettingsOutcome = { readonly kind: "opened" } | LauncherActionFailure;
 
+/**
+ * The owner-triggered Codex health check, reduced to which fixed line the
+ * panel shows (CODEX-03, R4). Nothing of the doctor's own output survives
+ * this seam but allowlisted check ids (CODEX_DOCTOR check ids are
+ * `[A-Za-z0-9_.-]` strings, never paths) and the verdict.
+ */
+export type CodexDoctorOutcome =
+  | { readonly kind: "healthy" }
+  /** Healthy, but a check (never a terminal.* one) warned; `ids` are allowlisted check ids. */
+  | { readonly kind: "warning"; readonly ids: readonly string[] }
+  | { readonly kind: "problem"; readonly ids: readonly string[] }
+  /** The report had an unknown schema or shape: neither healthy nor a problem. */
+  | { readonly kind: "unknown" }
+  | LauncherActionFailure;
+
 /** Every outcome a {@link LaunchersActions} method can resolve to. */
 export type LauncherActionOutcome =
   | DetectOutcome
@@ -76,7 +94,8 @@ export type LauncherActionOutcome =
   | SaveOutcome
   | TestOutcome
   | MarkTestedOutcome
-  | OpenSettingsOutcome;
+  | OpenSettingsOutcome
+  | CodexDoctorOutcome;
 
 export interface LaunchersActions {
   /** Finds candidate apps, `claude` executables and the terminal presets (D-27). */
@@ -91,13 +110,15 @@ export interface LaunchersActions {
    * Automation cap when the Test may meet that prompt (wave 5).
    */
   readonly test: (
-    launcherId: LaunchAction,
+    launcherId: TestLauncherId,
     terminal?: TerminalChoice | null,
   ) => Promise<TestOutcome>;
   /** The owner answered "It opened" (RR-14). */
   readonly markTested: (launcherId: LauncherId) => Promise<MarkTestedOutcome>;
   /** Opens one of the two fixed System Settings panes (RR-16). */
   readonly openSystemSettings: (pane: SystemSettingsPane) => Promise<OpenSettingsOutcome>;
+  /** Runs `codex doctor` once, on the owner's press only (CODEX-03). */
+  readonly codexDoctor: () => Promise<CodexDoctorOutcome>;
 }
 
 function classifyFailure(error: unknown): LauncherActionFailure {
@@ -114,6 +135,35 @@ function isConflict(error: unknown): boolean {
 }
 
 /** The production {@link LaunchersActions}, bound to one authenticated client. */
+/**
+ * The doctor verdict. The service runs `codex doctor --json` as a background
+ * child with no terminal, so every `terminal.*` check (terminal.env, ...)
+ * reports a warning there even for a healthy Codex. Those checks are ignored
+ * by id prefix; only the remaining checks decide healthy, warning or problem.
+ * With no listed non-ok check left, an overall fail or warning still stands
+ * unless an ignored terminal check at least as bad explains it (a report whose
+ * checks were capped or off-shape must never read healthier than Codex said).
+ */
+export function doctorVerdict(summary: CodexDoctorSummary): CodexDoctorOutcome {
+  if (summary.overall === "unrecognised") return { kind: "unknown" };
+  const counted = summary.checks.filter((check) => !check.id.startsWith("terminal."));
+  const failIds = counted.filter((check) => check.status === "fail").map((check) => check.id);
+  if (failIds.length > 0) return { kind: "problem", ids: failIds };
+  const warnIds = counted.filter((check) => check.status === "warning").map((check) => check.id);
+  if (warnIds.length > 0) return { kind: "warning", ids: warnIds };
+  if (summary.overall === "ok") return { kind: "healthy" };
+  // The overall status is only explained away by an ignored terminal check at least as bad as
+  // it: a fail needs an ignored fail, a warning any ignored non-ok. Otherwise something the
+  // list does not show (truncated or off-shape) caused it, so never report healthier.
+  const ignored = summary.checks.filter((check) => check.id.startsWith("terminal."));
+  const explained =
+    summary.overall === "fail"
+      ? ignored.some((check) => check.status === "fail")
+      : ignored.some((check) => check.status !== "ok");
+  if (explained) return { kind: "healthy" };
+  return summary.overall === "fail" ? { kind: "problem", ids: [] } : { kind: "warning", ids: [] };
+}
+
 export function createLaunchersActions(client: SocketApiClient): LaunchersActions {
   return {
     async detect() {
@@ -172,6 +222,19 @@ export function createLaunchersActions(client: SocketApiClient): LaunchersAction
         await openSystemSettings(client, pane);
         return { kind: "opened" };
       } catch (error: unknown) {
+        return classifyFailure(error);
+      }
+    },
+    async codexDoctor() {
+      try {
+        const summary = await runCodexDoctor(client);
+        return doctorVerdict(summary);
+      } catch (error: unknown) {
+        // The Codex client reports its own fixed codes; only the one that
+        // says the service is away is told apart (SC-3: no message is read).
+        if (error instanceof CodexRequestError && error.code === "service-disconnected") {
+          return { kind: "service-disconnected" };
+        }
         return classifyFailure(error);
       }
     },

@@ -1,8 +1,8 @@
 {
   "name": "codex-bridge",
   "displayName": "Codex Bridge",
-  "description": "Opens a terminal tab per Codex run started through the codex-bridge wrapper: live log, then codex resume.",
-  "version": "0.1.0",
+  "description": "Opens a terminal tab per Codex run started through the codex-bridge wrapper (live log, then codex resume), and agent tabs that run claude or codex through the fixed launcher.",
+  "version": "0.2.0",
   "publisher": "local",
   "license": "MIT",
   "private": true,

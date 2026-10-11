@@ -32,6 +32,7 @@ import type {
   ApprovalsApi,
   ApprovalsSnapshot,
   ClaudeUsageData,
+  CodexCardData,
   ConnectionState,
   GithubDiscoveriesData,
   MotionMode,
@@ -85,6 +86,7 @@ import type { ComponentChildren } from "preact";
 import { render } from "preact";
 import fixtureFile from "../src/widget-fixtures.json";
 import approvalFixtureFile from "./approval-fixtures.json";
+import { CodexCell, isCodexView } from "./codex-cells";
 import taskFixtureFile from "./task-fixtures.json";
 
 // ---------------------------------------------------------------------------
@@ -114,6 +116,8 @@ type FixtureStateKey = "live" | "stale" | "empty" | "permission-required" | "fai
 interface FixturePanel {
   readonly id: string;
   readonly title: string;
+  /** Set on a panel whose unavailable cell is a typed reason, not "No source yet". */
+  readonly unavailableReason?: { readonly code: string };
   readonly states: Readonly<Record<FixtureStateKey, FixtureVariant>>;
 }
 
@@ -420,6 +424,19 @@ function adaptClaudeUsage(data: Fields): ClaudeUsageData {
   return { summary: summary ?? EMPTY_USAGE_SUMMARY, nowMs: NOW };
 }
 
+function adaptCodex(data: Fields): CodexCardData {
+  const sessions = (data.sessions as CodexCardData["sessions"] | undefined) ?? null;
+  return {
+    sessions,
+    usage: (data.usage as CodexCardData["usage"] | undefined) ?? null,
+    headroom: (data.headroom as CodexCardData["headroom"] | undefined) ?? null,
+    tokens: (data.tokens as CodexCardData["tokens"] | undefined) ?? null,
+    integration: (data.integration as CodexCardData["integration"] | undefined) ?? null,
+    nowMs: NOW,
+    analysisOn: sessions?.kind === "available" && sessions.analysisOn,
+  };
+}
+
 function adaptTechIntel(data: Fields): TechIntelData {
   return {
     stories: list(data.rows).map((row) => ({
@@ -468,6 +485,7 @@ const ADAPTERS: { readonly [K in WidgetId]: Adapter } = {
   "active-sessions": adaptActiveSessions,
   "project-shortcuts": adaptProjectShortcuts,
   "claude-usage": adaptClaudeUsage,
+  codex: adaptCodex,
   "tech-intel": adaptTechIntel,
   "github-discoveries": adaptGithubDiscoveries,
   "quick-actions": adaptQuickActions,
@@ -515,7 +533,16 @@ function cellFor(id: WidgetId, panel: FixturePanel, presentation: Presentation):
     case "loading":
       return { state: { kind: "loading" }, connection: LIVE };
     case "unavailable":
-      return { state: { kind: "unavailable" }, connection: LIVE };
+      return {
+        state:
+          panel.unavailableReason === undefined
+            ? { kind: "unavailable" }
+            : ({
+                kind: "unavailable",
+                reason: panel.unavailableReason,
+              } as unknown as WidgetState<unknown>),
+        connection: LIVE,
+      };
     case "ready":
       return { state: readyFrom(id, states, "live", false), connection: LIVE };
     case "stale":
@@ -1650,6 +1677,10 @@ function HarnessCell() {
     return <HarnessError message={`Unknown motion "${motion}" — expected full or reduced.`} />;
   }
   motionMode.value = motion;
+
+  // The Codex card, toolbar and pair-launch cells (plan 05.1-27) live in their
+  // own module; this is the one delegating branch.
+  if (isCodexView(view)) return <CodexCell params={params} />;
 
   if ((view === "tasks" || view === "projects") && isTasksCase(params.get("case") ?? "")) {
     const width = params.get("width") ?? "full";

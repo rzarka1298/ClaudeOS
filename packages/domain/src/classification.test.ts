@@ -39,6 +39,7 @@ const DAY = 24 * HOUR;
 const ENABLED = ["diagnostic.test", "session.force-terminate"];
 const RESERVED = [
   "automation.git-write",
+  "codex.hooks.install",
   "hooks.install",
   "publish",
   "skill.run",
@@ -56,6 +57,10 @@ const R_CAPS_DESCRIPTOR_STRINGS = [
   "launch:finder",
   "launch:github",
   "launch:claude-desktop",
+  "launch:codex",
+  "launch:claude-codex-pair",
+  "codex:open-transcript",
+  "codex:follow-log",
   "switcher:claude-code",
   "session:focus",
   "session:resume",
@@ -125,7 +130,7 @@ describe("enabled and reserved sets (Test 2)", () => {
     expect(enabled).toEqual(ENABLED);
   });
 
-  it("reserves exactly vault delete, cross-scope move, hook install, automation Git write, publish and skill run", () => {
+  it("reserves exactly vault delete, cross-scope move, both hook installs, automation Git write, publish and skill run", () => {
     const reserved = Object.entries(CLASSIFICATION)
       .filter(([, row]) => row.class === "approval-required" && row.status === "reserved")
       .map(([name]) => name)
@@ -229,7 +234,7 @@ describe("exhaustiveness over descriptor capability strings (Test 3)", () => {
 
 /** A double-quoted `<prefix>:<name>` capability descriptor literal. Template literals are not matched. */
 const CAPABILITY_LITERAL =
-  /"((?:launch|session|usage|skill|task|note|data|switcher|connect):[a-z][a-z-]*)"/g;
+  /"((?:launch|session|usage|skill|task|note|data|switcher|connect|codex):[a-z][a-z-]*)"/g;
 
 describe("source scan exclusion of test-only directories", () => {
   it("skips test-support/ but still scans product paths (a planted literal is caught)", () => {
@@ -464,3 +469,61 @@ function collectTokenLiterals(): TokenLiteralHit[] {
   }
   return hits;
 }
+
+describe("Phase 05.1 capabilities (D-31, assumption A10)", () => {
+  const DIRECT = [
+    ["launch:codex", "launch.codex"],
+    ["launch:claude-codex-pair", "launch.claude-codex-pair"],
+    ["codex:open-transcript", "codex.open-transcript"],
+    ["codex:follow-log", "codex.follow-log"],
+  ] as const;
+
+  it("classifies the four launch and open capabilities as direct gestures naming the click as the decision", () => {
+    for (const [capability, operation] of DIRECT) {
+      const hit = classifyCapability(capability);
+      expect(hit?.operation, capability).toBe(operation);
+      expect(hit?.row.class, capability).toBe("direct-gesture");
+      if (hit?.row.class !== "direct-gesture") throw new Error("unreachable");
+      expect(hit.row.reason.trim().length, capability).toBeGreaterThan(0);
+      expect(hit.row.reason, capability).toMatch(/click/);
+    }
+  });
+
+  it("reserves codex.hooks.install with the same policy as the merged hooks.install row", () => {
+    const codex = CLASSIFICATION["codex.hooks.install"];
+    const claude = CLASSIFICATION["hooks.install"];
+    expect(codex.class).toBe("approval-required");
+    expect(codex.status).toBe("reserved");
+    const { summary: codexSummary, ...codexPolicy } = codex;
+    const { summary: claudeSummary, ...claudePolicy } = claude;
+    expect(codexPolicy).toEqual(claudePolicy);
+    expect(codexSummary).toMatch(/Codex hook/);
+    expect(codexSummary).not.toBe(claudeSummary);
+    // Like hooks.install it has no capability string: only the engine can name it.
+    expect(Object.values(CAPABILITY_OPERATION)).not.toContain("codex.hooks.install");
+  });
+
+  it("makes no other new row reserved, and adds no connect row", () => {
+    for (const [, operation] of DIRECT) {
+      expect(CLASSIFICATION[operation].class).toBe("direct-gesture");
+    }
+    expect(Object.keys(CLASSIFICATION).filter((name) => name.startsWith("connect."))).toEqual([
+      "connect.navigate",
+    ]);
+  });
+
+  it("fails the exhaustiveness proof when any one of the five rows is removed (copy of the table)", () => {
+    const names = [...DIRECT.map(([, operation]) => operation), "codex.hooks.install"] as const;
+    for (const removed of names) {
+      const copy: Record<string, unknown> = { ...CLASSIFICATION };
+      delete copy[removed];
+      const unresolved = [
+        ...Object.entries(CAPABILITY_OPERATION)
+          .filter(([, operation]) => !Object.hasOwn(copy, operation))
+          .map(([capability]) => capability),
+        ...(Object.hasOwn(copy, "codex.hooks.install") ? [] : ["codex.hooks.install"]),
+      ];
+      expect(unresolved, removed).not.toEqual([]);
+    }
+  });
+});

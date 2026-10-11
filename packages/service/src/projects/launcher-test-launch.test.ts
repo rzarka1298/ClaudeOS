@@ -375,3 +375,127 @@ describe("a Test never rejects (codex review 3b, finding 4)", () => {
     expect(spawner.detached).toHaveLength(0);
   });
 });
+
+describe("the Codex Test step (plan 05.1-21, D-11)", () => {
+  let codex: string;
+
+  beforeEach(() => {
+    codex = join(dir, "bin", "codex");
+    writeFileSync(codex, "#!/bin/sh\nexit 0\n");
+    chmodSync(codex, 0o755);
+  });
+
+  function saveCodex(args: readonly string[] = [], executablePath: string = codex): void {
+    saveLauncherConfig(store.db, "codex", { executablePath, args });
+  }
+
+  it("runs the saved codex with the version flag in the claude-code row's terminal at the vault", async () => {
+    store.writeServiceMeta(VAULT_ROOT_META_KEY, vaultRoot);
+    saveClaudeCode({ kind: "terminal-app" });
+    saveCodex(["--model", "o3"]);
+
+    expect(await testLaunch("codex", deps())).toEqual({ ok: true });
+
+    expect(spawner.calls).toHaveLength(1);
+    const argv = spawner.calls[0]?.argv ?? [];
+    expect(argv.slice(0, 3)).toEqual(["/usr/bin/open", "-b", "com.apple.Terminal"]);
+    const script = readFileSync(argv[3] ?? "", "utf8");
+    expect(script.split("\n")).toContain(`'${codex}' '--version'`);
+    expect(script).toContain(`cd -- '${vaultRoot}' ||`);
+    // The stored arguments are a launch's, and claude is not what this Test runs.
+    expect(script).not.toContain("o3");
+    expect(script).not.toContain(claude);
+  });
+
+  it("uses the owner's home when no vault is set up", async () => {
+    saveClaudeCode({ kind: "terminal-app" });
+    saveCodex();
+    expect(await testLaunch("codex", deps())).toEqual({ ok: true });
+    const script = readFileSync(spawner.calls[0]?.argv[3] ?? "", "utf8");
+    expect(script).toContain(`cd -- '${homeDir}' ||`);
+  });
+
+  it("follows the claude-code row's custom terminal", async () => {
+    store.writeServiceMeta(VAULT_ROOT_META_KEY, vaultRoot);
+    const wezterm = TERMINAL_PRESETS.find((preset) => preset.id === "wezterm");
+    saveClaudeCode({ kind: "custom", preset: "wezterm", argv: [...(wezterm?.argv ?? [])] });
+    saveCodex();
+    expect(await testLaunch("codex", deps())).toEqual({ ok: true });
+    expect(spawner.calls[0]?.argv.slice(0, 4)).toEqual([
+      "/usr/bin/open",
+      "-na",
+      "WezTerm",
+      "--args",
+    ]);
+  });
+
+  it("gives an osascript terminal the Automation cap, as the Claude Code Test does", async () => {
+    saveClaudeCode(ITERM2_TERMINAL);
+    saveCodex();
+    spawner.mode = { kind: "succeed", delayMs: 100 };
+    const result = await testLaunch("codex", deps({ capMs: 40, automationCapMs: 600 }));
+    expect(result).toEqual({ ok: true });
+    expect(spawner.calls[0]?.opts.timeoutMs).toBe(600);
+  });
+
+  it("is launcher-not-configured with no claude-code row, spawning nothing", async () => {
+    saveCodex();
+    expect(await testLaunch("codex", deps())).toEqual({
+      ok: false,
+      error: "launcher-not-configured",
+    });
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("is launcher-not-configured with no codex row, spawning nothing", async () => {
+    saveClaudeCode({ kind: "terminal-app" });
+    expect(await testLaunch("codex", deps())).toEqual({
+      ok: false,
+      error: "launcher-not-configured",
+    });
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it.each([
+    ["a banned flag", ["--dangerously-bypass-approvals-and-sandbox"]],
+    ["the yolo spelling", ["--yolo"]],
+    ["a config override", ["-c", 'sandbox_mode="danger-full-access"']],
+    ["a flag outside the agent allowlist", ["--bg"]],
+    ["a bare operand", ["exec"]],
+  ])(
+    "re-validates the saved row: %s is launcher-not-configured and spawns nothing",
+    async (_name, args) => {
+      saveClaudeCode({ kind: "terminal-app" });
+      saveCodex(args);
+      expect(await testLaunch("codex", deps())).toEqual({
+        ok: false,
+        error: "launcher-not-configured",
+      });
+      expect(spawner.calls).toHaveLength(0);
+    },
+  );
+
+  it("re-validates the executable: gone from disk, not named codex, or not executable", async () => {
+    saveClaudeCode({ kind: "terminal-app" });
+    // Not named codex.
+    saveCodex([], claude);
+    expect(await testLaunch("codex", deps())).toEqual({
+      ok: false,
+      error: "launcher-not-configured",
+    });
+    // Not executable on disk.
+    saveCodex([], codex);
+    expect(await testLaunch("codex", deps({ isExecutable: () => Promise.resolve(false) }))).toEqual(
+      { ok: false, error: "launcher-not-configured" },
+    );
+    expect(spawner.calls).toHaveLength(0);
+  });
+
+  it("a hand-off that fails maps to its launch error", async () => {
+    saveClaudeCode({ kind: "terminal-app" });
+    saveCodex();
+    spawner.mode = { kind: "fail", outcome: { exitCode: 1, stderrClass: "bundle-not-found" } };
+    const result = await testLaunch("codex", deps());
+    expect(result.ok).toBe(false);
+  });
+});

@@ -32,10 +32,10 @@ const RULE9 = "sends the interrupt signal";
 const RULE10 = "forges a CapabilityToken";
 
 describe("check-boundaries.sh rules 8, 9 and 10", () => {
-  it("counts fourteen rules and passes on a clean tree", () => {
+  it("counts sixteen rules and passes on a clean tree", () => {
     const result = backstop({});
     expect(result.status).toBe(0);
-    expect(result.out).toContain("checked 15 rules");
+    expect(result.out).toContain("checked 16 rules");
   });
 
   it("rule 8 fires on a shell-string exec in packages/service, and only rule 8", () => {

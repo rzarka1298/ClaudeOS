@@ -227,6 +227,7 @@ describe("Shell — Settings › Launchers (D-37, D-30)", () => {
       test: vi.fn(),
       markTested: vi.fn(),
       openSystemSettings: vi.fn(),
+      codexDoctor: vi.fn(),
     };
   }
 
@@ -379,6 +380,7 @@ describe("Shell — navigation requests from the switcher and commands (S9, D-30
           test: vi.fn(),
           markTested: vi.fn(),
           openSystemSettings: vi.fn(),
+          codexDoctor: vi.fn(),
         }}
       />,
     );
@@ -405,6 +407,7 @@ describe("Shell — navigation requests from the switcher and commands (S9, D-30
     test: vi.fn(),
     markTested: vi.fn(),
     openSystemSettings: vi.fn(),
+    codexDoctor: vi.fn(),
   };
 
   it("Set up launchers lands on the Launchers heading when the shell opens on Settings (wave-7 finding 1)", async () => {
