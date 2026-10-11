@@ -1,8 +1,9 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import type { CleanupResult } from "./keychain-cleanup.js";
 import type { ProcessEntry } from "./ledger.js";
-import { withSandbox } from "./sandbox.js";
+import { type SandboxOptions, withSandbox } from "./sandbox.js";
 
 let base: string;
 
@@ -19,8 +20,8 @@ const START = "Sun Oct 11 10:00:01 2026";
 
 interface FakeService {
   pid: number;
-  stop: ReturnType<typeof vi.fn>;
-  kill: ReturnType<typeof vi.fn>;
+  stop: Mock<() => Promise<void>>;
+  kill: Mock<() => Promise<void>>;
 }
 
 /** A service handle whose process lives in the fake table until stop (or kill) removes it. */
@@ -48,7 +49,12 @@ function fakeService(
   };
 }
 
-function baseOptions(table: ProcessEntry[], overrides: Record<string, unknown> = {}) {
+function baseOptions(
+  table: ProcessEntry[],
+  overrides: Omit<Partial<SandboxOptions>, "deleteAccount"> & {
+    deleteAccount?: Mock<(account: string) => Promise<CleanupResult>>;
+  } = {},
+): SandboxOptions & { deleteAccount: Mock<(account: string) => Promise<CleanupResult>> } {
   return {
     base,
     home: join(base, "home"),
@@ -56,7 +62,9 @@ function baseOptions(table: ProcessEntry[], overrides: Record<string, unknown> =
     platform: "darwin",
     ownerPid: 99990,
     readTable: () => Promise.resolve([...table]),
-    deleteAccount: vi.fn(() => Promise.resolve("deleted" as const)),
+    deleteAccount: vi.fn<(account: string) => Promise<CleanupResult>>(() =>
+      Promise.resolve("deleted"),
+    ),
     wait: NEVER,
     ...overrides,
   };
@@ -150,7 +158,11 @@ describe("withSandbox tracer (Test 9)", () => {
     let root = "";
     const outcome = await withSandbox(options, async (sandbox) => {
       root = sandbox.paths.root;
-      table.push({ pid: 6001, start: START, command: `/Applications/Obsidian.app --user-data-dir=${root}/wdio/x` });
+      table.push({
+        pid: 6001,
+        start: START,
+        command: `/Applications/Obsidian.app --user-data-dir=${root}/wdio/x`,
+      });
       table.push({ pid: 99990, start: START, command: `node runner ${root}` });
     });
     expect(outcome.leaks.map((leak) => leak.pid)).toEqual([6001]);
@@ -161,7 +173,9 @@ describe("withSandbox tracer (Test 9)", () => {
   it("records a cleanup failure without hiding the body's own error", async () => {
     const table: ProcessEntry[] = [];
     const options = baseOptions(table, {
-      deleteAccount: vi.fn(() => Promise.reject(new Error("keychain locked"))),
+      deleteAccount: vi.fn<(account: string) => Promise<CleanupResult>>(() =>
+        Promise.reject(new Error("keychain locked")),
+      ),
     });
     const boom = new Error("body failed");
     const outcome = await withSandbox(options, () => Promise.reject(boom));

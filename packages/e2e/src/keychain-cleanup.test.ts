@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import { deleteSecret, setSecret } from "@ccc/keychain";
+import { describe, expect, it, vi } from "vitest";
 import { deleteUatAccount } from "./keychain-cleanup.js";
 
 describe("deleteUatAccount (Test 7)", () => {
@@ -37,17 +37,21 @@ describe("deleteUatAccount (Test 7)", () => {
 
 // The real Keychain is touched only when the orchestrator opts in (plan 05.2-09's baseline run
 // sets CCC_UAT_KEYCHAIN_SELFTEST=1 on darwin); the default test run never reads or writes it.
-const REAL_SELFTEST = process.platform === "darwin" && process.env.CCC_UAT_KEYCHAIN_SELFTEST === "1";
+const REAL_SELFTEST =
+  process.platform === "darwin" && process.env.CCC_UAT_KEYCHAIN_SELFTEST === "1";
 
-describe.skipIf(!REAL_SELFTEST)("Keychain round trip with a throwaway account (darwin, opt-in)", () => {
-  it("writes, deletes and then reports absent", async () => {
-    const account = `ccc-uat-selftest-${Date.now().toString(16)}`;
-    try {
-      await setSecret(account, "c2VsZnRlc3Q=");
-      await expect(deleteUatAccount(account, { deleter: deleteSecret })).resolves.toBe("deleted");
-      await expect(deleteUatAccount(account)).resolves.toBe("absent");
-    } finally {
-      await deleteUatAccount(account).catch(() => undefined);
-    }
-  });
-});
+describe.skipIf(!REAL_SELFTEST)(
+  "Keychain round trip with a throwaway account (darwin, opt-in)",
+  () => {
+    it("writes, deletes and then reports absent", async () => {
+      const account = `ccc-uat-selftest-${Date.now().toString(16)}`;
+      try {
+        await setSecret(account, "c2VsZnRlc3Q=");
+        await expect(deleteUatAccount(account, { deleter: deleteSecret })).resolves.toBe("deleted");
+        await expect(deleteUatAccount(account)).resolves.toBe("absent");
+      } finally {
+        await deleteUatAccount(account).catch(() => undefined);
+      }
+    });
+  },
+);

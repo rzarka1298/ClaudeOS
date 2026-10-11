@@ -98,7 +98,9 @@ describe("run root shape (Test 2)", () => {
 
   it("rejects a base that sits inside the owner's runtime directory", () => {
     const badBase = join(realRuntimeDir(home), "base");
-    expect(() => assertRunRootShape(join(badBase, RUN_ROOT_NAME), { base: badBase, home })).toThrow();
+    expect(() =>
+      assertRunRootShape(join(badBase, RUN_ROOT_NAME), { base: badBase, home }),
+    ).toThrow();
   });
 
   it("rejects a run root that is a symlink escaping the base (real paths compared)", () => {
@@ -152,7 +154,10 @@ describe("real paths refused (Test 3)", () => {
       expect((err as Error).message).not.toContain(home);
     }
     expect(() =>
-      refuseRealPaths({ ...good, claudeConfigDir: join(realClaudeConfigDir(home), "projects") }, { home }),
+      refuseRealPaths(
+        { ...good, claudeConfigDir: join(realClaudeConfigDir(home), "projects") },
+        { home },
+      ),
     ).toThrow();
   });
 
@@ -163,7 +168,9 @@ describe("real paths refused (Test 3)", () => {
     const link = join(scratch, "link");
     symlinkSync(realRuntimeDir(home), link);
     expect(() => refuseRealPaths({ ...good, runtimeDir: link }, { home })).toThrow();
-    expect(() => refuseRealPaths({ ...good, socketPath: join(link, "svc.sock") }, { home })).toThrow();
+    expect(() =>
+      refuseRealPaths({ ...good, socketPath: join(link, "svc.sock") }, { home }),
+    ).toThrow();
     const claudeLink = join(scratch, "claude-link");
     symlinkSync(realClaudeConfigDir(home), claudeLink);
     expect(() => refuseRealPaths({ ...good, claudeConfigDir: claudeLink }, { home })).toThrow();
