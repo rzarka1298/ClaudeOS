@@ -14,16 +14,20 @@
  *   CCC_UAT_SHOTS_DIR   a mode-700 folder outside the repository for page screenshots
  * Optional:
  *   CCC_UAT_SPEC        smoke (default, spike S0) or spikes (S1 to S5)
- * The renderer's CCC_SOCKET_PATH and the other isolation variables (CCC_RUNTIME_DIR,
- * CLAUDE_CONFIG_DIR, CODEX_HOME, CCC_INSTALL_SECRET_ACCOUNT) are inherited from the calling
- * shell; spike S0 records whether the renderer sees CCC_SOCKET_PATH.
+ * The isolation variables CCC_SOCKET_PATH, CCC_RUNTIME_DIR, CLAUDE_CONFIG_DIR and CODEX_HOME
+ * (all inside the run root) and CCC_INSTALL_SECRET_ACCOUNT (a ccc-uat- account) are also
+ * REQUIRED, inherited from the calling shell; assertIsolatedEnv refuses to run without them.
+ * Spike S0 records whether the renderer sees CCC_SOCKET_PATH.
  */
 
+import { homedir } from "node:os";
 import {
   assertInstallerVersionMatches,
   readInstalledInstallerVersion,
 } from "./src/installed-app.js";
 import { buildLaunchCapabilities } from "./src/launch-options.js";
+import { REPO_ROOT } from "./src/repo-paths.js";
+import { assertCacheDir, assertIsolatedEnv, assertShotsDir } from "./src/uat-env.js";
 import { SPIKE_DECISIONS } from "./src/spike-decisions.js";
 
 function requireEnv(name: string): string {
@@ -38,7 +42,13 @@ const runRoot = requireEnv("CCC_UAT_RUN_ROOT");
 const vaultPath = requireEnv("CCC_UAT_VAULT");
 const pluginStageDir = requireEnv("CCC_UAT_PLUGIN_DIR");
 const cacheDir = requireEnv("CCC_UAT_CACHE_DIR");
-requireEnv("CCC_UAT_SHOTS_DIR");
+const shotsDir = requireEnv("CCC_UAT_SHOTS_DIR");
+
+// Fail closed (D-05, L-3): without these the sandbox plugin would talk to the owner's live
+// service socket, and spike S1 would write a real approval into the owner's store.
+assertIsolatedEnv(process.env, { runRoot, home: homedir() });
+assertShotsDir(shotsDir, REPO_ROOT);
+assertCacheDir(cacheDir, REPO_ROOT);
 
 const which = process.env.CCC_UAT_SPEC ?? "smoke";
 if (which !== "smoke" && which !== "spikes") {
