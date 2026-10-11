@@ -468,7 +468,7 @@ const PAIR_CASE_EXPECTATIONS: Readonly<Record<string, PairExpectation>> = {
   "success-error": {
     lines: [
       "✓ Claude Code: Opened in an Antigravity tab",
-      "▲ Codex: The Antigravity terminal bridge is out of date. Run its install step again from Settings → Codex, then try again.",
+      "▲ Codex: An open Antigravity window is still running an old terminal bridge. Reload all Antigravity windows (Developer: Reload Window). If that doesn't help, run the bridge install step again from Settings → Codex, then try again.",
     ],
     tones: ["success", "error"],
     buttons: ["Open Codex settings"],

@@ -160,10 +160,11 @@ describe("the three bridge error rows (UI-SPEC Typed errors, D-09, OQ-1)", () =>
     });
     expect(LAUNCH_ERROR_COPY["bridge-outdated"]).toEqual({
       action: "open-codex-settings",
-      problem: "The Antigravity terminal bridge is out of date.",
-      nextStep: "Run its install step again from Settings → Codex, then try again.",
+      problem: "An open Antigravity window is still running an old terminal bridge.",
+      nextStep:
+        "Reload all Antigravity windows (Developer: Reload Window). If that doesn't help, run the bridge install step again from Settings → Codex, then try again.",
       notice:
-        "The Antigravity terminal bridge is out of date. Run its install step again from Settings → Codex.",
+        "An open Antigravity window is still running an old terminal bridge. Reload all Antigravity windows (Developer: Reload Window). If that doesn't help, run the bridge install step again from Settings → Codex.",
     });
     expect(LAUNCH_ERROR_COPY["window-not-ready"]).toEqual({
       action: "try-again",
