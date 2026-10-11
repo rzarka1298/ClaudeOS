@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildLaunchCapabilities, type LaunchInput } from "./launch-options.js";
-import { INSTALLED_OBSIDIAN_BINARY, PLUGIN_BUILD_DIR } from "./repo-paths.js";
+import { INSTALLED_OBSIDIAN_BINARY, PLUGIN_BUILD_DIR, REPO_ROOT } from "./repo-paths.js";
 import { PROVISIONAL_SPIKE_DECISIONS, type SpikeDecisions } from "./spike-decisions.js";
 
 const HOME = "/Users/USERNAME";
@@ -14,7 +14,9 @@ const MSG_OUTSIDE = "Refusing a vault outside the run root.";
 const MSG_RUN_ROOT = "Refusing a run root that is or contains the home directory.";
 const MSG_OWNER_VAULT = "Refusing a vault that overlaps an owner vault.";
 const MSG_STAGE = "Refusing a plugin stage directory that is relative or is the plugin package.";
-const MSG_CACHE = "Refusing a cache directory that is relative or inside the Obsidian profile.";
+const MSG_CACHE =
+  "Refusing a cache directory that is relative, inside the Obsidian profile, or inside the " +
+  "repository without being .obsidian-cache.";
 
 function input(
   overrides: Partial<LaunchInput> = {},
@@ -145,6 +147,41 @@ describe("buildLaunchCapabilities, vault safety (D-07, D-08)", () => {
         input({ cacheDir: `${HOME}/Library/Application Support/obsidian/c` }),
       ),
     ).toThrowError(MSG_CACHE);
+  });
+});
+
+describe("run-root placement (MEDIUM-1, D-05, D-07)", () => {
+  it("refuses a run root below the home directory that is not under /tmp", () => {
+    expect(() =>
+      buildLaunchCapabilities(
+        input({ runRoot: `${HOME}/Documents`, vaultPath: `${HOME}/Documents/OwnerVault` }),
+      ),
+    ).toThrow(MSG_RUN_ROOT);
+  });
+
+  it("refuses a /tmp child without the ccc-uat. prefix, or a nested one", () => {
+    for (const root of ["/tmp/other", "/tmp/ccc-uat.x/nested", "/tmp"]) {
+      expect(() =>
+        buildLaunchCapabilities(input({ runRoot: root, vaultPath: `${root}/v` })),
+      ).toThrow(MSG_RUN_ROOT);
+    }
+  });
+
+  it("refuses a big-vault run opened in place under the home directory", () => {
+    expect(() =>
+      buildLaunchCapabilities(
+        input({ bigVault: true, runRoot: `${HOME}/x`, vaultPath: `${HOME}/x/v` }),
+      ),
+    ).toThrow(MSG_RUN_ROOT);
+  });
+
+  it("refuses a cache directory inside the repository unless it is .obsidian-cache", () => {
+    expect(() => buildLaunchCapabilities(input({ cacheDir: `${REPO_ROOT}/cache` }))).toThrow(
+      MSG_CACHE,
+    );
+    expect(() =>
+      buildLaunchCapabilities(input({ cacheDir: `${REPO_ROOT}/.obsidian-cache` })),
+    ).not.toThrow();
   });
 });
 

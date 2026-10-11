@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
-import { INSTALLED_OBSIDIAN_BINARY, PLUGIN_BUILD_DIR } from "./repo-paths.js";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { INSTALLED_OBSIDIAN_BINARY, PLUGIN_BUILD_DIR, REPO_ROOT } from "./repo-paths.js";
 import type { SpikeDecisions } from "./spike-decisions.js";
 
 /**
@@ -53,9 +53,14 @@ export interface LaunchCapability {
 const ERR_BINARY = "Refusing to launch any Obsidian binary other than the installed app.";
 const ERR_OUTSIDE = "Refusing a vault outside the run root.";
 const ERR_RUN_ROOT = "Refusing a run root that is or contains the home directory.";
+/** The only places a run root may live: a direct child named `ccc-uat.*` of the short /tmp. */
+const RUN_ROOT_PARENTS = ["/tmp", "/private/tmp"];
+const RUN_ROOT_PREFIX = "ccc-uat.";
 const ERR_OWNER_VAULT = "Refusing a vault that overlaps an owner vault.";
 const ERR_STAGE = "Refusing a plugin stage directory that is relative or is the plugin package.";
-const ERR_CACHE = "Refusing a cache directory that is relative or inside the Obsidian profile.";
+const ERR_CACHE =
+  "Refusing a cache directory that is relative, inside the Obsidian profile, or inside the " +
+  "repository without being .obsidian-cache.";
 
 /** True when `inner` equals `outer` or sits below it (boundary-safe, never a prefix match). */
 function isSameOrInside(outer: string, inner: string): boolean {
@@ -81,6 +86,16 @@ export function buildLaunchCapabilities(input: LaunchInput): LaunchCapability[] 
   // A run root that is the home directory, or an ancestor of it, would make "inside the run
   // root" true for the owner's real folders.
   if (isSameOrInside(runRoot, home)) throw new Error(ERR_RUN_ROOT);
+  // The run root must be the throwaway `mktemp /tmp/ccc-uat.XXXXXX` directory (D-05). A run
+  // root anywhere else, such as a folder under home, could contain an owner vault, and a
+  // big-vault run opens its vault in place.
+  if (
+    !RUN_ROOT_PARENTS.includes(dirname(runRoot)) ||
+    !basename(runRoot).startsWith(RUN_ROOT_PREFIX) ||
+    basename(runRoot).length === RUN_ROOT_PREFIX.length
+  ) {
+    throw new Error(ERR_RUN_ROOT);
+  }
 
   if (!isAbsolute(input.vaultPath)) throw new Error(ERR_OUTSIDE);
   const vault = resolve(input.vaultPath);
@@ -101,6 +116,11 @@ export function buildLaunchCapabilities(input: LaunchInput): LaunchCapability[] 
   if (!isAbsolute(input.cacheDir)) throw new Error(ERR_CACHE);
   const cache = resolve(input.cacheDir);
   if (isSameOrInside(join(home, "Library", "Application Support", "obsidian"), cache)) {
+    throw new Error(ERR_CACHE);
+  }
+  // Inside the repository only the gitignored `.obsidian-cache` is safe: the downloaded
+  // Obsidian archive must never be one `git add -A` from a commit.
+  if (isSameOrInside(resolve(REPO_ROOT), cache) && basename(cache) !== ".obsidian-cache") {
     throw new Error(ERR_CACHE);
   }
 
