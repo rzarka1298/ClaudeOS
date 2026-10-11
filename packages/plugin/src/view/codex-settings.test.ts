@@ -276,6 +276,26 @@ describe("CodexSettingsState (fetch when the tab opens, never forever 'checking'
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
+  it("a fetch started before an adopted update cannot overwrite it when it resolves later", async () => {
+    const resolvers: Array<(status: CodexIntegrationStatus) => void> = [];
+    const state = new CodexSettingsState(
+      () =>
+        new Promise<CodexIntegrationStatus>((resolve) => {
+          resolvers.push(resolve);
+        }),
+      vi.fn(),
+    );
+    const older = integration({});
+    const newer = integration({ hooks: { state: "installed", lastEventAt: FIVE_MIN_AGO } });
+
+    state.load();
+    state.adopt(newer);
+    resolvers[0]?.(older);
+    await flush();
+
+    expect(state.status).toBe(newer);
+  });
+
   it("starts no second fetch while one is in flight, and keeps the last status during a refetch", async () => {
     const resolvers: Array<(status: CodexIntegrationStatus) => void> = [];
     const getIntegration = vi.fn(

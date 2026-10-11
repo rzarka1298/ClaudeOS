@@ -317,6 +317,19 @@ describe("the Codex launcher actions (plan 05.1-31 Task 1)", () => {
     });
   });
 
+  it("codexDoctor never reports healthier than an overall status the listed checks cannot explain", async () => {
+    // Overall fail, but the only non-ok listed check is an ignored terminal warning.
+    expect(await verdictOf(WITH_CHECKS("fail", [["terminal.env", "warning"]]))).toEqual({
+      kind: "problem",
+      ids: [],
+    });
+    // Overall warning with a truncated list that shows nothing non-ok at all.
+    expect(await verdictOf(WITH_CHECKS("warning", [["auth.login", "ok"]]))).toEqual({
+      kind: "warning",
+      ids: [],
+    });
+  });
+
   it("codexDoctor names the warning check ids of a healthy-with-warnings report", async () => {
     expect(
       await verdictOf(
