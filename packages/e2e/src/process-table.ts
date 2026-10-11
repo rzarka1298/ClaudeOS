@@ -39,10 +39,8 @@ const defaultExecFile: ExecFileFn = (file, args, options) =>
 const MAX_LISTING_BYTES = 64 * 1024 * 1024;
 
 /** Runs the listing as an argv array (no shell) with a fixed locale so start-time text is stable. */
-export async function readProcessTable(
-  exec: ExecFileFn = defaultExecFile,
-): Promise<ProcessEntry[]> {
-  const { stdout } = await exec("ps", ["-axo", "pid=,lstart=,command="], {
+export async function readProcessTable(run: ExecFileFn = defaultExecFile): Promise<ProcessEntry[]> {
+  const { stdout } = await run("ps", ["-axo", "pid=,lstart=,command="], {
     env: { ...process.env, LC_ALL: "C" },
     maxBuffer: MAX_LISTING_BYTES,
   });

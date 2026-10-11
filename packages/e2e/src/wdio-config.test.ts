@@ -2,15 +2,10 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildWdioEnv } from "./isolation-guards.js";
 import type { RunRootPaths } from "./run-root.js";
-import { SPIKE_DECISIONS } from "./spike-decisions.js";
 import { loadRunContext } from "./spec-context.js";
-import {
-  buildWdioProcessEnv,
-  buildWdioArgv,
-  forwardSignals,
-  locateWdioBin,
-} from "./wdio-spawn.js";
+import { SPIKE_DECISIONS } from "./spike-decisions.js";
 import { buildWdioConfig, SCALE_SPEC } from "./wdio-config.js";
+import { buildWdioArgv, buildWdioProcessEnv, forwardSignals, locateWdioBin } from "./wdio-spawn.js";
 
 const BASE = "/tmp";
 const ROOT = "/tmp/ccc-uat.abc123";
@@ -105,13 +100,17 @@ describe("buildWdioConfig refusals (Test 3)", () => {
   });
 
   it("refuses a vault outside the run root, a missing vault, and a missing plugin stage", () => {
-    expect(() => buildWdioConfig({ ...env(), CCC_UAT_VAULT_LIVE: "/tmp/elsewhere/vault" }, opts)).toThrow();
+    expect(() =>
+      buildWdioConfig({ ...env(), CCC_UAT_VAULT_LIVE: "/tmp/elsewhere/vault" }, opts),
+    ).toThrow();
     expect(() => buildWdioConfig(without("CCC_UAT_VAULT_LIVE"), opts)).toThrow();
     expect(() => buildWdioConfig(without("CCC_UAT_PLUGIN_STAGE"), opts)).toThrow();
   });
 
   it("refuses a socket or TMPDIR outside the run root, and a full profile without the big vault", () => {
-    expect(() => buildWdioConfig({ ...env(), CCC_SOCKET_PATH: "/tmp/elsewhere/svc.sock" }, opts)).toThrow();
+    expect(() =>
+      buildWdioConfig({ ...env(), CCC_SOCKET_PATH: "/tmp/elsewhere/svc.sock" }, opts),
+    ).toThrow();
     expect(() => buildWdioConfig(without("CCC_SOCKET_PATH"), opts)).toThrow();
     expect(() => buildWdioConfig({ ...env(), TMPDIR: "/var/tmp" }, opts)).toThrow();
     const noBig = { ...env("full") };
@@ -144,8 +143,17 @@ describe("loadRunContext (Test 5)", () => {
 
 describe("wdio spawn wrapper (Test 7)", () => {
   it("builds an argv array through the package's own binary entry, never npx or pnpm", () => {
-    const argv = buildWdioArgv("/pkg/@wdio/cli/bin/wdio.js", "/repo/packages/e2e/wdio.conf.ts", ["--spec", "x"]);
-    expect(argv).toEqual(["/pkg/@wdio/cli/bin/wdio.js", "run", "/repo/packages/e2e/wdio.conf.ts", "--spec", "x"]);
+    const argv = buildWdioArgv("/pkg/@wdio/cli/bin/wdio.js", "/repo/packages/e2e/wdio.conf.ts", [
+      "--spec",
+      "x",
+    ]);
+    expect(argv).toEqual([
+      "/pkg/@wdio/cli/bin/wdio.js",
+      "run",
+      "/repo/packages/e2e/wdio.conf.ts",
+      "--spec",
+      "x",
+    ]);
     expect(argv.join(" ")).not.toMatch(/npx|pnpm/);
   });
 
@@ -165,7 +173,12 @@ describe("wdio spawn wrapper (Test 7)", () => {
 
   it("merges the wdio env over a scrubbed environment (no overrides, no isolation leftovers)", () => {
     const merged = buildWdioProcessEnv(
-      { PATH: "/usr/bin", CCC_ENABLE_TEST_OVERRIDES: "1", CCC_SOCKET_PATH: "/real/svc.sock", CODEX_HOME: "/real" },
+      {
+        PATH: "/usr/bin",
+        CCC_ENABLE_TEST_OVERRIDES: "1",
+        CCC_SOCKET_PATH: "/real/svc.sock",
+        CODEX_HOME: "/real",
+      },
       env(),
     );
     expect(merged.PATH).toBe("/usr/bin");

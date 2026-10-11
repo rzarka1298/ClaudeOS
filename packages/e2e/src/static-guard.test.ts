@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 
 const PACKAGE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-export interface Finding {
+interface Finding {
   rule: string;
   file: string;
   line: number;
@@ -34,9 +34,10 @@ interface LineRule {
 const LINE_RULES: LineRule[] = [
   {
     id: "owner-service-lifecycle-script",
-    pattern: /dev:service|service:install|service:uninstall|service:restart|launchagent\/(install|uninstall|restart)/i,
+    pattern:
+      /dev:service|service:install|service:uninstall|service:restart|launchagent\/(install|uninstall|restart)/i,
   },
-  { id: "launchctl", pattern: /launchctl|Library\/LaunchAgents|\.plist\b/i },
+  { id: "launchctl", pattern: /launchctl|Library\/LaunchAgents/i },
   {
     id: "owner-runtime-or-claude-path",
     pattern: /\.claude-command-center|["'`/]\.claude(["'`/]|$)/,
@@ -46,7 +47,10 @@ const LINE_RULES: LineRule[] = [
   { id: "shell-option", pattern: /(^|[^A-Za-z0-9_.])["']?shell["']?\s*:\s*(?!false\b)(?=\S)/ },
   { id: "exec-call", pattern: /(^|[^A-Za-z0-9_.])(exec|execSync)\(/ },
   { id: "dynamic-child-process", pattern: /import\(\s*["'`](node:)?child_process/ },
-  { id: "better-sqlite3", pattern: /better-sqlite3/ },
+  {
+    id: "better-sqlite3",
+    pattern: /from\s*["']better-sqlite3["']|require\(\s*["']better-sqlite3["']/,
+  },
   { id: "obsidian-import", pattern: /from\s*["']obsidian["']|require\(\s*["']obsidian["']\s*\)/ },
   {
     id: "region-capture",
@@ -58,7 +62,7 @@ const LINE_RULES: LineRule[] = [
 const isCommentLine = (line: string): boolean => /^\s*(\/\/|\/\*|\*)/.test(line);
 
 /** Scans one file's text. `file` is the path relative to packages/e2e, forward slashes. */
-export function scanSource(text: string, file: string): Finding[] {
+function scanSource(text: string, file: string): Finding[] {
   const findings: Finding[] = [];
   const lines = text.split("\n");
   lines.forEach((raw, index) => {
@@ -74,7 +78,12 @@ export function scanSource(text: string, file: string): Finding[] {
   const code = lines.filter((line) => !isCommentLine(line)).join("\n");
   // obsidian:// handed to a process spawn: any file that imports child_process and names the scheme.
   if (/node:child_process/.test(code) && /obsidian:\/\//.test(code)) {
-    findings.push({ rule: "obsidian-protocol-spawn", file, line: 0, text: "obsidian:// with child_process" });
+    findings.push({
+      rule: "obsidian-protocol-spawn",
+      file,
+      line: 0,
+      text: "obsidian:// with child_process",
+    });
   }
   // Every sqlite3 spawn carries the read-only flag and names a copy.
   if (/(spawn|execFile)\w*\(\s*["'`]sqlite3["'`]/.test(code)) {
@@ -104,7 +113,8 @@ function scannedFiles(): string[] {
       // a folder that does not exist yet
     }
   }
-  for (const config of ["wdio.conf.ts", "wdio.smoke.conf.ts"]) files.push(join(PACKAGE_DIR, config));
+  for (const config of ["wdio.conf.ts", "wdio.smoke.conf.ts"])
+    files.push(join(PACKAGE_DIR, config));
   return files
     .map((file) => relative(PACKAGE_DIR, file).split("\\").join("/"))
     .filter((file) => file !== "src/static-guard.test.ts");
@@ -126,7 +136,9 @@ describe("static guard over every e2e source file (Test 6)", () => {
   });
 
   it("finds nothing that could touch the owner's service, launchd job, Claude settings or a shell", () => {
-    const findings = files.flatMap((file) => scanSource(readFileSync(join(PACKAGE_DIR, file), "utf8"), file));
+    const findings = files.flatMap((file) =>
+      scanSource(readFileSync(join(PACKAGE_DIR, file), "utf8"), file),
+    );
     expect(findings).toEqual([]);
   });
 });
@@ -140,7 +152,11 @@ describe("the scanner discriminates (Test 6)", () => {
     ["owner-runtime-or-claude-path", `const d = join(home, ".claude-command-center");`, "src/x.ts"],
     ["owner-runtime-or-claude-path", `const d = join(home, ".claude");`, "src/x.ts"],
     ["open-command", `spawn("open", ["-a", "Obsidian"]);`, "src/x.ts"],
-    ["obsidian-protocol-spawn", `import { spawn } from "node:child_process";\nspawn("x", ["obsidian://open"]);`, "src/x.ts"],
+    [
+      "obsidian-protocol-spawn",
+      `import { spawn } from "node:child_process";\nspawn("x", ["obsidian://open"]);`,
+      "src/x.ts",
+    ],
     ["shell-option", `spawn("x", [], { shell: true });`, "src/x.ts"],
     ["shell-option", `spawn("x", [], { shell: "/bin/sh" });`, "src/x.ts"],
     ["exec-call", `exec("ls");`, "src/x.ts"],

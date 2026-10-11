@@ -56,6 +56,27 @@ function assertPrivate(path: string): void {
   }
 }
 
+/** Every path inside a run root, derived from the root and the run id (no filesystem access). */
+export function pathsForRoot(root: string, runId: string): RunRootPaths {
+  return {
+    runId,
+    root,
+    runtimeDir: join(root, "rt"),
+    socketPath: join(root, "rt", "svc.sock"),
+    dbPath: join(root, "rt", "operational.db"),
+    claudeConfigDir: join(root, "claude"),
+    codexHome: join(root, "codex"),
+    vaultsDir: join(root, "vaults"),
+    pluginStageDir: join(root, "plugin-stage"),
+    tmpDir: join(root, "tmp"),
+    wdioDir: join(root, "wdio"),
+    ledgerPath: join(root, "ledger.jsonl"),
+    resultsPath: join(root, "results.jsonl"),
+    lookPendingPath: join(root, "look-pending.jsonl"),
+    versionsPath: join(root, "versions.json"),
+  };
+}
+
 export function createRunRoot(options: RunRootOptions = {}): RunRootPaths {
   const base = options.base ?? DEFAULT_RUN_BASE;
   const root = mkdtempSync(join(base, RUN_ROOT_PREFIX));
@@ -63,23 +84,7 @@ export function createRunRoot(options: RunRootOptions = {}): RunRootPaths {
     assertRunRootShape(root, { base, home: options.home });
     chmodSync(root, 0o700);
     assertPrivate(root);
-    const paths: RunRootPaths = {
-      runId: randomBytes(4).toString("hex"),
-      root,
-      runtimeDir: join(root, "rt"),
-      socketPath: join(root, "rt", "svc.sock"),
-      dbPath: join(root, "rt", "operational.db"),
-      claudeConfigDir: join(root, "claude"),
-      codexHome: join(root, "codex"),
-      vaultsDir: join(root, "vaults"),
-      pluginStageDir: join(root, "plugin-stage"),
-      tmpDir: join(root, "tmp"),
-      wdioDir: join(root, "wdio"),
-      ledgerPath: join(root, "ledger.jsonl"),
-      resultsPath: join(root, "results.jsonl"),
-      lookPendingPath: join(root, "look-pending.jsonl"),
-      versionsPath: join(root, "versions.json"),
-    };
+    const paths = pathsForRoot(root, randomBytes(4).toString("hex"));
     for (const dir of [
       paths.runtimeDir,
       paths.claudeConfigDir,

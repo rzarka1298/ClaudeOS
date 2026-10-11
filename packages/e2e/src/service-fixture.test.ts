@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildServiceEnv } from "./isolation-guards.js";
+import { buildServiceEnv, realRuntimeDir } from "./isolation-guards.js";
 import { SERVICE_ENTRY } from "./repo-paths.js";
 import { createRunRoot, type RunRootPaths } from "./run-root.js";
 import type { Stoppable } from "./sandbox.js";
@@ -93,7 +93,7 @@ describe("service fixture start (Test 5)", () => {
     const { fixture, startService } = setup([fakeHandle(7005)]);
     const real = createServiceFixture(
       {
-        paths: { ...paths, runtimeDir: join(base, "home", ".claude-command-center") },
+        paths: { ...paths, runtimeDir: realRuntimeDir(join(base, "home")) },
         account: ACCOUNT,
         registerService: vi.fn(),
         unregister: vi.fn(),
