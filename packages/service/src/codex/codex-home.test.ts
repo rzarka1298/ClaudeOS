@@ -308,6 +308,7 @@ describe("Test 5: the port has no write-capable member", () => {
     }
     expect(names.sort()).toEqual(
       [
+        "listNewestRolloutFiles",
         "listRolloutFiles",
         "readNamed",
         "readRolloutRange",
