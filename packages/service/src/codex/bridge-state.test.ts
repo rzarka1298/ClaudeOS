@@ -171,6 +171,26 @@ describe("state directory candidates (R6, T-05.1-28)", () => {
     expect(CodexBridgeStatusSchema.safeParse(view).success).toBe(true);
   });
 
+  it("05.1-post: a fresh window in the fallback beats a marker-only primary", async () => {
+    fx.installLauncher();
+    fx.installMarker();
+    fx.simulator("current").heartbeat();
+    const primary = join(fx.home, "custom-state", "codex-bridge");
+    mkdirSync(primary, { recursive: true });
+    writeFileSync(
+      join(primary, "protocol.json"),
+      JSON.stringify({ protocol: 2, capabilities: ["follow", "tui", "agent"], kit: "k" }),
+    );
+    const s = await readBridgeStatus({
+      env: { XDG_STATE_HOME: join(fx.home, "custom-state") },
+      home: fx.home,
+    });
+    expect(s.dir).toBe(fx.stateDir);
+    expect(s.dirSource).toBe("default-fallback");
+    expect(s.state).toBe("installed");
+    expect(s.windows).toHaveLength(1);
+  });
+
   it("with nothing in either place the primary is kept and nothing is called a fallback", async () => {
     fx.installLauncher();
     const primary = join(fx.home, "custom-state", "codex-bridge");
