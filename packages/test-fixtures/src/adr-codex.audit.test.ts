@@ -142,7 +142,7 @@ const uatSubjects = [
   ["0.1.0", "bridge-outdated"],
   ["bridge absent", "Terminal.app"],
   ["Codex missing", "Claude", "Check Codex health"],
-  ["app-server", "minimal", "codex-bridge usage", "Weekly window · 10,080 min"],
+  ["app-server", "minimal", "codex-bridge usage", "7-day window"],
   ["/hooks", "10 s", "latency", "TUI", "installed-no-events"],
   ["warning", "every open", "Follow live log", "cold-start"],
   ["attribution", "unknown", "limit-paused"],
