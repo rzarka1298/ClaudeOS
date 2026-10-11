@@ -188,7 +188,7 @@ describe("createRolloutRateLimitsReader (plan 05.1-33, OQ-3, CODEX-08)", () => {
     const warn = vi.fn();
     const reader = createRolloutRateLimitsReader({
       port: {
-        listRolloutFiles: () => {
+        listNewestRolloutFiles: () => {
           throw new Error("/Users/USERNAME/secret-path exploded");
         },
         statRollout: () => null,
@@ -255,9 +255,9 @@ describe("createRolloutRateLimitsReader (plan 05.1-33, OQ-3, CODEX-08)", () => {
     ]);
     const reader = createRolloutRateLimitsReader({
       port: {
-        listRolloutFiles: (range) => {
+        listNewestRolloutFiles: (range, limit) => {
           listed();
-          return port.listRolloutFiles(range);
+          return port.listNewestRolloutFiles(range, limit);
         },
         statRollout: (ref) => port.statRollout(ref),
         readRolloutRange: (ref, offset, max) => port.readRolloutRange(ref, offset, max),

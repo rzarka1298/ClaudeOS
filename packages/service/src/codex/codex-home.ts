@@ -136,6 +136,11 @@ export interface CodexHomePort {
   readNamed(name: string, maxBytes: number): BoundedRead | null;
   /** Rollout files in dated folders covering the range (padded one day each side). */
   listRolloutFiles(range: { readonly from: number; readonly to: number }): readonly RolloutRef[];
+  /** The newest `limit` rollout files covering the range, newest first (never past the list cap). */
+  listNewestRolloutFiles(
+    range: { readonly from: number; readonly to: number },
+    limit: number,
+  ): readonly RolloutRef[];
   statRollout(ref: RolloutRef): { readonly size: number; readonly mtimeMs: number } | null;
   readRolloutRange(ref: RolloutRef, offset: number, maxBytes: number): BoundedRead;
   /** The contained real path of a sessions file, or null for anything not openable. */
@@ -393,6 +398,60 @@ export function createCodexHomePort(options: {
           .sort();
         for (const name of names) {
           if (found.length >= MAX_ROLLOUT_LIST) return found;
+          found.push({ path: join(dir, name) });
+        }
+      }
+      return found;
+    },
+
+    listNewestRolloutFiles(
+      range: { readonly from: number; readonly to: number },
+      limit: number,
+    ): readonly RolloutRef[] {
+      const { from, to } = range;
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) {
+        throw new CodexHomeAccessError("bad-argument");
+      }
+      const firstDay = Math.floor(from / DAY_MS) - 1;
+      const lastDay = Math.floor(to / DAY_MS) + 1;
+      if (lastDay - firstDay + 1 > MAX_ROLLOUT_LIST_DAYS) {
+        throw new CodexHomeAccessError("bad-argument");
+      }
+      const sessions = realSessions();
+      if (sessions === null) return [];
+      const cap = Math.max(0, Math.min(Math.floor(limit), MAX_ROLLOUT_LIST));
+      const found: RolloutRef[] = [];
+      if (cap === 0) return found;
+      for (let day = lastDay; day >= firstDay; day -= 1) {
+        const date = new Date(day * DAY_MS);
+        const year = String(date.getUTCFullYear()).padStart(4, "0");
+        const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+        const dom = String(date.getUTCDate()).padStart(2, "0");
+        const dir = join(root, SESSIONS_DIR, year, month, dom);
+        let resolvedDir: string;
+        try {
+          resolvedDir = fs.realpath(dir);
+        } catch (error) {
+          if (isMissing(error)) continue;
+          throw unreadable();
+        }
+        if (!checkPathContainmentResolved(resolvedDir, sessions).contained) continue;
+        let entries: readonly CodexDirEntry[];
+        try {
+          entries = fs.readDir(dir);
+        } catch (error) {
+          if (isMissing(error)) continue;
+          throw unreadable();
+        }
+        const names = entries
+          .filter(
+            (entry) => entry.isFile && ROLLOUT_NAME.test(entry.name) && !entry.name.includes(".."),
+          )
+          .map((entry) => entry.name)
+          .sort()
+          .reverse();
+        for (const name of names) {
+          if (found.length >= cap) return found;
           found.push({ path: join(dir, name) });
         }
       }

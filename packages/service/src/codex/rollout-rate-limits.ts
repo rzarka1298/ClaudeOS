@@ -49,7 +49,7 @@ export interface RolloutRateLimitsReader {
 }
 
 export interface RolloutRateLimitsDeps {
-  readonly port: Pick<CodexHomePort, "listRolloutFiles" | "statRollout" | "readRolloutRange">;
+  readonly port: Pick<CodexHomePort, "listNewestRolloutFiles" | "statRollout" | "readRolloutRange">;
   readonly now: () => number;
   /** Reason codes only. */
   readonly logger?: { warn(fields: { readonly reason: string }, message: string): void };
@@ -80,14 +80,17 @@ export function createRolloutRateLimitsReader(
   function candidates(nowMs: number): readonly Candidate[] | null {
     let refs: readonly RolloutRef[];
     try {
-      refs = deps.port.listRolloutFiles({ from: nowMs - ROLLOUT_FALLBACK_WINDOW_MS, to: nowMs });
+      refs = deps.port.listNewestRolloutFiles(
+        { from: nowMs - ROLLOUT_FALLBACK_WINDOW_MS, to: nowMs },
+        MAX_STAT_CANDIDATES,
+      );
     } catch {
       warn("rollout-list-failed");
       return null;
     }
     const found: Candidate[] = [];
-    // The listing is oldest day first, names sorted: the tail is the newest.
-    for (const ref of refs.slice(-MAX_STAT_CANDIDATES)) {
+    // The listing is newest day first, names descending, and already bounded to the newest.
+    for (const ref of refs.slice(0, MAX_STAT_CANDIDATES)) {
       try {
         const stat = deps.port.statRollout(ref);
         if (stat !== null && stat.mtimeMs >= nowMs - ROLLOUT_FALLBACK_WINDOW_MS) {
