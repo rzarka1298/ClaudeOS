@@ -103,6 +103,42 @@ describe("Codex token scanner: a later incomplete rescan never claims full cover
     expect(todayOf(h.scanner).partiality.partial).toBe(false);
   });
 
+  it("is partial when the rollout is truncated to zero bytes, and keeps the counters", async () => {
+    const h = await counted();
+    h.rollouts.write(DAY, NAME, "");
+    h.state.nowMs += 1000;
+    await h.scanner.sweep();
+    expect(todayOf(h.scanner).totals.input).toBe(40);
+    expect(todayOf(h.scanner).partiality.partial).toBe(true);
+    h.rollouts.write(DAY, NAME, bigger());
+    h.state.nowMs += 1000;
+    await h.scanner.sweep();
+    expect(todayOf(h.scanner).totals.input).toBe(60);
+    expect(todayOf(h.scanner).partiality.partial).toBe(false);
+  });
+
+  it("is partial when a changed rollout cannot be read again, and clears once readable", async () => {
+    const h = await counted();
+    h.rollouts.write(DAY, NAME, bigger());
+    h.state.nowMs += 1000;
+    const unreadable = h.makeScanner({
+      port: {
+        listRolloutFiles: (range) => h.spy.port.listRolloutFiles(range),
+        statRollout: (ref) => h.spy.port.statRollout(ref),
+        readRolloutRange: () => {
+          throw new CodexHomeAccessError("unreadable");
+        },
+      },
+    });
+    const outcome = await unreadable.sweep();
+    expect(outcome.failedFiles).toBe(1);
+    expect(todayOf(unreadable).totals.input).toBe(40);
+    expect(todayOf(unreadable).partiality.partial).toBe(true);
+    await h.scanner.sweep();
+    expect(todayOf(h.scanner).totals.input).toBe(60);
+    expect(todayOf(h.scanner).partiality.partial).toBe(false);
+  });
+
   it("clears when a refused rollout is readable again and unchanged", async () => {
     const h = await counted();
     await refusingScanner(h).sweep();

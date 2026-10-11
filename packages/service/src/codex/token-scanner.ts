@@ -457,10 +457,11 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       }
       throw err;
     }
-    if (size === 0) return { kind: "unchanged" };
-
     const key = cursorKeyOf(ref.path);
     const cursor = readCodexCursor(db, key);
+    // An empty file that was never counted has nothing to read. An empty file that WAS
+    // counted is a truncation: the shrink guard below keeps its rows and marks it.
+    if (size === 0 && cursor === null) return { kind: "unchanged" };
     // Same size AND same modification time as the last complete read, computed under
     // this parser: nothing to read. A same-size rewrite changes the mtime; a cursor
     // without a stored mtime (written before it existed) is recomputed once. A cursor
@@ -512,11 +513,19 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
     while (position < size) {
       if (!alive()) return { kind: "cancelled" };
       const length = Math.min(chunkBytes, size - position);
-      const chunk = port.readRolloutRange(ref, position, length).bytes;
+      let chunk: Uint8Array;
+      try {
+        chunk = port.readRolloutRange(ref, position, length).bytes;
+        // The file shrank under the read: nothing is counted from a partial read.
+        if (chunk.length === 0) throw new Error("rollout-short-read");
+      } catch (err: unknown) {
+        // A counted rollout whose rescan failed keeps its rows but is an incomplete
+        // source, exactly like a refused or truncated one: no full coverage is claimed.
+        if (cursor !== null) markCodexRolloutIncomplete(db, key, nowIso());
+        throw err;
+      }
       // Re-checked after the read: a switch-off during it writes nothing.
       if (!alive()) return { kind: "cancelled" };
-      // The file shrank under the read: nothing is counted from a partial read.
-      if (chunk.length === 0) throw new Error("rollout-short-read");
       if (budget !== undefined) budget.bytesLeft -= chunk.length;
       if (headLength < IDENTITY_BYTES) {
         const take = Math.min(chunk.length, IDENTITY_BYTES - headLength);
