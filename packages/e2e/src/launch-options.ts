@@ -110,10 +110,14 @@ export function buildLaunchCapabilities(input: LaunchInput): LaunchCapability[] 
     vault,
     copy: input.bigVault !== true,
   };
+  // The installer version is always passed. In binaryPath mode wdio-obsidian-service otherwise
+  // defaults it to "earliest" for the app version and downloads the chromedriver of THAT
+  // installer's Electron, which does not match the Electron of the binary actually launched
+  // (spike S0: chromedriver for Chrome 120 against a Chrome 150 app). decisions.installerVersion
+  // must equal the installed app's version (see installed-app.ts).
+  options.installerVersion = decisions.installerVersion;
   if (decisions.launch === "binaryPath") {
     options.binaryPath = INSTALLED_OBSIDIAN_BINARY;
-  } else {
-    options.installerVersion = decisions.installerVersion;
   }
 
   return [

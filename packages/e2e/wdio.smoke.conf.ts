@@ -19,6 +19,7 @@
  * shell; spike S0 records whether the renderer sees CCC_SOCKET_PATH.
  */
 import { buildLaunchCapabilities } from "./src/launch-options.js";
+import { assertInstallerVersionMatches, readInstalledInstallerVersion } from "./src/installed-app.js";
 import { SPIKE_DECISIONS } from "./src/spike-decisions.js";
 
 function requireEnv(name: string): string {
@@ -40,6 +41,10 @@ if (which !== "smoke" && which !== "spikes") {
   throw new Error("CCC_UAT_SPEC must be smoke or spikes.");
 }
 const specFile = which === "smoke" ? "./smoke/smoke.e2e.ts" : "./smoke/spikes.e2e.ts";
+
+if (SPIKE_DECISIONS.launch === "binaryPath") {
+  assertInstallerVersionMatches(SPIKE_DECISIONS.installerVersion, readInstalledInstallerVersion());
+}
 
 // buildLaunchCapabilities refuses a vault outside the run root, the home directory, the plugin
 // package folder (it holds the owner's data.json) and any binary other than the installed app.

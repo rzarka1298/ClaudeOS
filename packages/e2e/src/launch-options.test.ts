@@ -42,7 +42,8 @@ describe("buildLaunchCapabilities, binaryPath mode (L-3)", () => {
     expect(options?.vault).toBe(VAULT);
     expect(caps[0]?.browserName).toBe("obsidian");
     expect(caps[0]?.browserVersion).toBe("1.14.4");
-    expect(options && "installerVersion" in options).toBe(false);
+    // chromedriver is chosen from installerVersion, so binaryPath mode must pin it too.
+    expect(options?.installerVersion).toBe("1.13.7");
   });
 
   it("accepts the installed binary path when passed explicitly", () => {
