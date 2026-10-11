@@ -46,3 +46,12 @@ packages/plugin/layout.json
 # Codex wrapper runtime state (reports, sessions, live logs, pending resume):
 # local-only, may hold command output and absolute worktree paths.
 .planning/codex/
+
+# Internal planning artifacts — never tracked in the public repo
+.planning/
+.claude/
+.obsidian/
+.gsd/
+CONTEXT.md
+claude-command-center-prd.md
+PRIVACY-GATE-REPORT.md
