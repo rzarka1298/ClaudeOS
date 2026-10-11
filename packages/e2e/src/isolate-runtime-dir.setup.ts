@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
@@ -17,6 +18,11 @@ const TEST_BASE = join(homedir(), ".ccc-test");
 mkdirSync(TEST_BASE, { recursive: true });
 const runtimeDir = mkdtempSync(join(TEST_BASE, "rt-"));
 process.env.CCC_RUNTIME_DIR = runtimeDir;
+// The service prefers CCC_SOCKET_PATH over the runtime dir, so an orchestrator-exported
+// smoke-run socket must not leak into unit tests. A throwaway keychain account keeps any
+// test that deletes or reads the install secret off the owner's default account.
+delete process.env.CCC_SOCKET_PATH;
+process.env.CCC_INSTALL_SECRET_ACCOUNT = `ccc-uat-test-${randomBytes(4).toString("hex")}`;
 
 afterAll(() => {
   rmSync(runtimeDir, { recursive: true, force: true });
