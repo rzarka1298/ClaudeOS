@@ -280,9 +280,14 @@ export async function inspectRequestOwnership(
 ): Promise<RequestOwnership> {
   if (!isRunId(runId) || nonce.length === 0) return "none";
   const name = `${runId}.json`;
-  if ((await nonceOf(join(claimedDir(stateDir), name))) === nonce) return "claimed";
-  if ((await nonceOf(join(requestsDir(stateDir), name))) === nonce) return "queued";
-  return "none";
+  const claimedPath = join(claimedDir(stateDir), name);
+  if ((await nonceOf(claimedPath)) === nonce) return "claimed";
+  if ((await nonceOf(join(requestsDir(stateDir), name))) === nonce) {
+    return "queued";
+  }
+  // A claim is an atomic rename requests/ -> claimed/. A file that left requests/ after the first
+  // look (or that the queued read missed for that reason) is therefore visible in claimed/ now.
+  return (await nonceOf(claimedPath)) === nonce ? "claimed" : "none";
 }
 
 /**
