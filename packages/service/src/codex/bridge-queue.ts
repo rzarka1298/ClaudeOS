@@ -141,6 +141,14 @@ function tempName(base: string): string {
   return `.${base}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
 }
 
+export interface WriteBridgeRequestOptions {
+  /**
+   * Polled just before and just after the request is published. A cancelled write publishes
+   * nothing, or takes back what it just published, and returns `null`.
+   */
+  readonly isCancelled?: () => boolean;
+}
+
 /**
  * Writes `<stateDir>/requests/<runId>.json` (0600) by temp file and atomic hard-link, returning the
  * path, or `null` when a request or a claimed file with that run id already exists (the caller
@@ -150,6 +158,7 @@ function tempName(base: string): string {
 export async function writeBridgeRequest(
   stateDir: string,
   request: AgentBridgeRequest,
+  options: WriteBridgeRequestOptions = {},
 ): Promise<string | null> {
   assertAgentRequestShape(request);
   const dir = requestsDir(stateDir);
@@ -157,8 +166,13 @@ export async function writeBridgeRequest(
   const final = join(dir, name);
   if ((await exists(final)) || (await exists(join(claimedDir(stateDir), name)))) return null;
   await mkdir(dir, { recursive: true, mode: 0o700 });
+  const cancelled = options.isCancelled ?? ((): boolean => false);
   const tmp = join(dir, tempName(request.runId));
   await writeFile(tmp, `${JSON.stringify(request, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  if (cancelled()) {
+    void unlinkQuietly(tmp);
+    return null;
+  }
   try {
     // link() fails with EEXIST instead of replacing a file, which rename() would do silently.
     await link(tmp, final);
@@ -172,6 +186,10 @@ export async function writeBridgeRequest(
       // A filesystem without hard links: the rename is still atomic.
       try {
         await rename(tmp, final);
+        if (cancelled()) {
+          void unlinkQuietly(final);
+          return null;
+        }
         return final;
       } catch (renameError) {
         await unlinkQuietly(tmp);
@@ -181,7 +199,14 @@ export async function writeBridgeRequest(
     await unlinkQuietly(tmp);
     throw error;
   }
-  await unlinkQuietly(tmp);
+  // The request is published. The temp name is only litter now: it is removed in the background
+  // so a stalled delete can never hold back the hand-off (the caller must be able to withdraw the
+  // request the moment it exists).
+  void unlinkQuietly(tmp);
+  if (cancelled()) {
+    void unlinkQuietly(final);
+    return null;
+  }
   return final;
 }
 

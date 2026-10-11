@@ -574,7 +574,9 @@ describe("source hygiene (boundary rules 8 and 9)", () => {
 
 describe("a stalled publication (Codex final review: queue handoff)", () => {
   /** A writer that publishes the request and then never settles, as a stalled temp-file cleanup did. */
-  function stalledWriter(afterPublish: () => void = () => {}): AntigravityTerminalDeps["writeRequest"] {
+  function stalledWriter(
+    afterPublish: () => void = () => {},
+  ): NonNullable<AntigravityTerminalDeps["writeRequest"]> {
     return async (dir, request) => {
       await writeBridgeRequest(dir, request);
       afterPublish();

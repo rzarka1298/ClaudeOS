@@ -220,7 +220,7 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
   async function queue(
     stateDir: string,
     base: Omit<AgentBridgeRequest, "runId" | "createdAt">,
-    state: { cancelled: boolean; firstRunId: string | null },
+    state: LaunchState,
   ): Promise<string | null> {
     for (let attempt = 0; attempt < MAX_MINT_ATTEMPTS; attempt += 1) {
       if (state.cancelled) return null;
@@ -229,14 +229,18 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
       const runId = state.firstRunId ?? deps.mintRunId();
       state.firstRunId = null;
       let written: string | null;
+      // Recorded BEFORE the request can exist, so the timeout handler can always withdraw it,
+      // even while the writer is still settling.
+      state.bridge = { dir: stateDir, runId };
       try {
-        written = await writeRequest(stateDir, {
-          ...base,
-          runId,
-          createdAt: new Date(now()).toISOString(),
-        });
+        written = await writeRequest(
+          stateDir,
+          { ...base, runId, createdAt: new Date(now()).toISOString() },
+          { isCancelled: () => state.cancelled },
+        );
       } catch {
         log("request-write-failed");
+        state.bridge = null;
         return null;
       }
       if (written !== null && state.cancelled) {
@@ -248,6 +252,8 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
         return null;
       }
       if (written !== null) return runId;
+      // Not ours (the name was taken): never let a timeout withdraw someone else's request.
+      state.bridge = null;
       log("run-id-collision");
     }
     return null;
@@ -261,6 +267,7 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
    * backstops a poll or a withdraw that stalls (a short grace after the deadline).
    */
   const WAIT_GRACE_MS = DEADLINE_MARGIN_MS / 2;
+  const WITHDRAW_GRACE_MS = 150;
 
   async function launchBody(
     input: TerminalLaunchInput,
@@ -421,14 +428,29 @@ export function createAntigravityTerminalLauncher(deps: AntigravityTerminalDeps)
       const backstop = new Promise<LaunchResult>((resolveBackstop) => {
         const giveUp = (): void => {
           state.cancelled = true;
-          if (state.bridge !== null) {
-            const { dir, runId } = state.bridge;
-            void Promise.resolve()
-              .then(() => withdraw(dir, runId))
-              .catch(() => undefined);
-          }
           log(state.phase === "prep" ? "stalled:prepare" : "stalled:wait");
-          resolveBackstop(fail(state.phase === "prep" ? "timeout" : "window-not-ready"));
+          const failure = fail(state.phase === "prep" ? "timeout" : "window-not-ready");
+          if (state.bridge === null) {
+            resolveBackstop(failure);
+            return;
+          }
+          // Take the request back; one the extension claimed first is a hand-off after all. A
+          // withdraw that itself stalls only delays the answer by a short grace.
+          const { dir, runId } = state.bridge;
+          let settled = false;
+          const finish = (result: LaunchResult): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(graceTimer);
+            resolveBackstop(result);
+          };
+          const graceTimer = setTimeout(() => finish(failure), WITHDRAW_GRACE_MS);
+          void Promise.resolve()
+            .then(() => withdraw(dir, runId))
+            .then(
+              (outcome) => finish(outcome === "claimed" ? { ok: true } : failure),
+              () => finish(failure),
+            );
         };
         const arm = (delay: number, graceOnly: boolean): void => {
           timer = setTimeout(
