@@ -558,7 +558,11 @@ describe("e2e element policy: four allowed edges, eight forbidden edges (D-01, E
 const E2E_TARGET = "test-fixtures/boundary-violations/e2e/e2e-clean.js";
 const LEAF_IMPORTERS: ReadonlyArray<readonly [string, string, string]> = [
   ["service", "packages/service/src/probe.ts", `../../${E2E_TARGET}`],
-  ["test-fixtures", "packages/test-fixtures/src/probe.ts", `../${E2E_TARGET.replace("test-fixtures/", "")}`],
+  [
+    "test-fixtures",
+    "packages/test-fixtures/src/probe.ts",
+    `../${E2E_TARGET.replace("test-fixtures/", "")}`,
+  ],
   ["plugin", "packages/plugin/src/probe.ts", `../../${E2E_TARGET}`],
   ["keychain", "packages/keychain/src/probe.ts", `../../${E2E_TARGET}`],
   ["domain", "packages/domain/src/probe.ts", `../../${E2E_TARGET}`],
@@ -588,12 +592,18 @@ describe("e2e is a leaf: nothing else may import it (D-01, T-05.2-06)", () => {
   });
   test("QUIET: a test-fixtures file importing the service package is unchanged", async () => {
     expect(
-      await boundariesFor("packages/test-fixtures/src/probe.ts", 'import "../../service/src/logging.js";\n'),
+      await boundariesFor(
+        "packages/test-fixtures/src/probe.ts",
+        'import "../../service/src/logging.js";\n',
+      ),
     ).toHaveLength(0);
   });
   test("QUIET: the service still imports the other previously allowed elements", async () => {
     expect(
-      await boundariesFor("packages/service/src/probe.ts", 'import "../../keychain/src/index.js";\n'),
+      await boundariesFor(
+        "packages/service/src/probe.ts",
+        'import "../../keychain/src/index.js";\n',
+      ),
     ).toHaveLength(0);
   });
 });

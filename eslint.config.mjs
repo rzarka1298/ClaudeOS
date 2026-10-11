@@ -188,10 +188,16 @@ const elements = [
  * narrower policies below. */
 const APPROVAL_SIDE = ["approval", "approval-minter", "executors"];
 
-/** Every element except `plugin` and the approval side -- the "service may
- * import everything else" allow list. */
+/** The runner element is a leaf (D-01, T-05.2-06): it drives a GUI, spawns
+ * processes and touches the Keychain, so product code and the shared test
+ * package must never be able to import it. Removed from every allow list that
+ * is built from ELEMENT_TYPES. */
+const LEAF_ELEMENTS = ["e2e"];
+
+/** Every element except `plugin`, the approval side and the leaf runner --
+ * the "service may import everything else" allow list. */
 const SERVICE_FREE_IMPORTS = ELEMENT_TYPES.filter(
-  (t) => t !== "plugin" && !APPROVAL_SIDE.includes(t),
+  (t) => t !== "plugin" && !APPROVAL_SIDE.includes(t) && !LEAF_ELEMENTS.includes(t),
 );
 
 /** Builds a `boundaries/dependencies` `allow` clause for one or more target
@@ -349,10 +355,14 @@ export default [
             },
             // test-fixtures -- may import every element except the minter, so
             // no test can import the one module that mints a token (T-06-01;
-            // tests that need a token cast it locally, see backstop rule 10).
+            // tests that need a token cast it locally, see backstop rule 10),
+            // and except the e2e runner, which is a leaf (T-05.2-06): the
+            // shared test package must not be able to pull in the GUI runner.
             {
               from: { element: { type: "test-fixtures" } },
-              allow: allowElementTypes(ELEMENT_TYPES.filter((t) => t !== "approval-minter")),
+              allow: allowElementTypes(
+                ELEMENT_TYPES.filter((t) => t !== "approval-minter" && !LEAF_ELEMENTS.includes(t)),
+              ),
             },
           ],
         },
