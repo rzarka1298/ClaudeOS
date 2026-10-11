@@ -130,6 +130,22 @@ describe("activeSessionsMetric (Test 5, UI-SPEC 'Metric derivation')", () => {
     expect(metric.srLabel).toBe("3 active sessions, running or waiting for approval");
   });
 
+  it("appends an 'N starting' note only when N > 0, without changing the numeral (F7a)", () => {
+    const withStarting = activeSessionsMetric({
+      sessions: [
+        session({ runId: runId(1), state: "running" }),
+        session({ runId: runId(2), state: "starting" }),
+        session({ runId: runId(3), state: "starting" }),
+      ],
+      nowMs: 0,
+    });
+    expect(withStarting.value).toBe(1);
+    expect(withStarting.caption).toBe("0 waiting for approval · 0 unknown · 2 starting");
+    expect(activeSessionsMetric({ sessions: [], nowMs: 0 }).caption).toBe(
+      "0 waiting for approval · 0 unknown",
+    );
+  });
+
   it("returns a null share and a zero caption when nothing is running or waiting (the empty hero, E1)", () => {
     const metric = activeSessionsMetric({ sessions: [], nowMs: 0 });
 

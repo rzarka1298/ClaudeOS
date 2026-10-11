@@ -51,16 +51,19 @@ export function activeSessionsMetric(data: ActiveSessionsData): HeroMetric {
   let runningOrWaiting = 0;
   let waiting = 0;
   let unknown = 0;
+  let starting = 0;
   for (const session of data.sessions) {
     if (session.state === "running" || session.state === "waiting-for-approval") {
       runningOrWaiting += 1;
     }
     if (session.state === "waiting-for-approval") waiting += 1;
     if (session.state === "stale") unknown += 1;
+    if (session.state === "starting") starting += 1;
   }
   return {
     value: runningOrWaiting,
-    caption: `${waiting} waiting for approval · ${unknown} unknown`,
+    // A launch still starting is not counted in the numeral; say so in text when there is one.
+    caption: `${waiting} waiting for approval · ${unknown} unknown${starting > 0 ? ` · ${starting} starting` : ""}`,
     share: runningOrWaiting === 0 ? null : { value: waiting, max: runningOrWaiting },
     srLabel: `${runningOrWaiting} active sessions, running or waiting for approval`,
   };
