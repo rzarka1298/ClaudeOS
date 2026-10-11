@@ -102,7 +102,9 @@ scan_file() {
       }
 
       # --- Rule 2: email address, excluding the reserved example domains. ---
-      if (check_email == "1") {
+      # check_email "lock" (root pnpm-lock.yaml): skip only lines holding a `deprecated:`
+      # registry message, so an address anywhere else in the lockfile is still flagged.
+      if (check_email == "1" || (check_email == "lock" && line !~ /deprecated:/)) {
         rest = line
         while (match(rest, /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/)) {
           addr = substr(rest, RSTART, RLENGTH)
@@ -129,8 +131,9 @@ while IFS= read -r f; do
     # The lockfile records third-party registry metadata verbatim, including a
     # maintainer contact address inside some `deprecated:` messages (05.2-01:
     # the wdio dependency tree pulls in deprecated glob releases). That is
-    # never the owner's address; rules 1 and 3 still apply to it.
-    pnpm-lock.yaml) check_email=0 ;;
+    # never the owner's address. Only those `deprecated:` lines are exempt from
+    # rule 2; rules 1 and 3 apply to every line.
+    pnpm-lock.yaml) check_email=lock ;;
     *) check_email=1 ;;
   esac
   # No `|| true`: a file that could not be read (or an awk that failed on
