@@ -7,18 +7,37 @@ export interface SpecTitle {
   readonly title: string;
 }
 
-/** Test, it and describe titles in a spec source that begin with the bracketed item prefix. */
-export function extractSpecTitles(
-  _file: string,
-  _source: string,
-  _phasePrefix: string,
-): SpecTitle[] {
-  throw new Error("extractSpecTitles is not implemented yet (typed skeleton)");
+const TEST_CALL =
+  /\b(?:it|test|describe)(?:\.(?:skip|only))?\(\s*(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
+
+/**
+ * Test, it and describe titles in a spec source that begin with the bracketed item prefix.
+ * Whole-line and block comments are ignored, and so is any string that is not the title
+ * argument of a test call.
+ */
+export function extractSpecTitles(file: string, source: string, phasePrefix: string): SpecTitle[] {
+  const uncommented = source
+    .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, " "))
+    .split("\n")
+    .map((line) => (line.trimStart().startsWith("//") ? "" : line))
+    .join("\n");
+  const found: SpecTitle[] = [];
+  for (const match of uncommented.matchAll(TEST_CALL)) {
+    const title = (match[2] as string).replace(/\\(.)/g, "$1");
+    if (itemNumberOf(title, phasePrefix) !== null) found.push({ file, title });
+  }
+  return found;
 }
 
 /** Groups extracted titles by spec file, ready for lintTags. */
-export function groupTitles(_titles: readonly SpecTitle[]): Map<string, string[]> {
-  throw new Error("groupTitles is not implemented yet (typed skeleton)");
+export function groupTitles(titles: readonly SpecTitle[]): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const entry of titles) {
+    const list = grouped.get(entry.file) ?? [];
+    list.push(entry.title);
+    grouped.set(entry.file, list);
+  }
+  return grouped;
 }
 
 /** The facts about a script item that the classification table is checked against. */
@@ -28,11 +47,74 @@ export type MapCheckItem = Pick<UatItem, "number" | "runClass" | "via" | "ownerW
   readonly fullProfileOnly?: boolean;
 };
 
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
+}
+
+/**
+ * Checks a parsed script against the classification table (D-09, D-13). Via is compared for
+ * automated items, an owner item's spec only when it carries one, and the profile flag and
+ * auto-part only when the caller supplies them. One finding per item names the differing fields.
+ */
 export function checkMapAgainstScript(
-  _items: readonly MapCheckItem[],
-  _plan: readonly ItemPlan[],
+  items: readonly MapCheckItem[],
+  plan: readonly ItemPlan[],
 ): TagFinding[] {
-  throw new Error("checkMapAgainstScript is not implemented yet (typed skeleton)");
+  const found: TagFinding[] = [];
+  const byNumber = new Map(items.map((item) => [item.number, item] as const));
+  const planned = new Set(plan.map((entry) => entry.number));
+  for (const entry of plan) {
+    const item = byNumber.get(entry.number);
+    if (item === undefined) {
+      found.push(
+        finding(
+          "MAP_ITEM_MISSING",
+          entry.number,
+          `Item ${entry.number} is in the table but not in the script.`,
+        ),
+      );
+      continue;
+    }
+    const differs: string[] = [];
+    if (item.runClass !== entry.runClass) differs.push("run");
+    if (entry.runClass !== "owner" && !sameSet(item.via, entry.via)) differs.push("via");
+    if ((item.ownerWhy ?? null) !== entry.ownerWhy) differs.push("owner-why");
+    const specFile = item.spec === null ? null : (parseSpecValue(item.spec)?.file ?? item.spec);
+    if (
+      entry.runClass === "owner"
+        ? specFile !== null && specFile !== entry.specFile
+        : specFile !== entry.specFile
+    ) {
+      differs.push("spec");
+    }
+    if (item.autoPart !== undefined && (item.autoPart !== null) !== (entry.autoPart !== null)) {
+      differs.push("auto-part");
+    }
+    if (item.fullProfileOnly !== undefined && item.fullProfileOnly !== (entry.profile === "full")) {
+      differs.push("profile");
+    }
+    if (differs.length > 0) {
+      found.push(
+        finding(
+          "MAP_MISMATCH",
+          entry.number,
+          `Item ${entry.number} differs from the classification table in: ${differs.join(", ")}.`,
+        ),
+      );
+    }
+  }
+  for (const item of items) {
+    if (!planned.has(item.number)) {
+      found.push(
+        finding(
+          "MAP_ITEM_UNKNOWN",
+          item.number,
+          `Item ${item.number} is not in the classification table.`,
+        ),
+      );
+    }
+  }
+  return found;
 }
 
 /** Stable codes for the item-to-test mapping lint (D-09, E2E-04, E2E-06, T-05.2-18). */
