@@ -6,6 +6,7 @@
     "declarationMap": false,
     "incremental": false,
     "noEmit": true,
+    "lib": ["ES2022", "DOM"],
     "rootDir": ".",
     "types": ["node", "mocha", "@wdio/globals/types", "expect-webdriverio", "wdio-obsidian-service"]
   },

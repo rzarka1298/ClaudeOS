@@ -99,7 +99,9 @@ describe("buildLaunchCapabilities, vault safety (D-07, D-08)", () => {
       buildLaunchCapabilities(input({ runRoot: HOME, vaultPath: `${HOME}/vault` })),
     ).toThrowError(MSG_RUN_ROOT);
     expect(() =>
-      buildLaunchCapabilities(input({ runRoot: "/Users", vaultPath: "/Users/vault" })),
+      buildLaunchCapabilities(
+        input({ runRoot: "/home", vaultPath: "/home/vault", homeDir: "/home/tester" }),
+      ),
     ).toThrowError(MSG_RUN_ROOT);
   });
 
