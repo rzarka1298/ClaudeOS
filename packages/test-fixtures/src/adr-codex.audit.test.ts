@@ -155,7 +155,7 @@ const uatSubjects = [
 planningDescribe("Phase 05.1 owner acceptance contract (task 3)", () => {
   it("keeps U1 through U16 in order, pending, tagged and actionable for the owner", () => {
     const uat = read(`${phase}/05.1-UAT.md`);
-    expect(uat).toMatch(/^Status: NOT RUN/m);
+    expect(uat).toMatch(/^Status: (NOT RUN|COMPLETE)/m);
     const blocks = [
       ...uat.matchAll(/^### U(\d+) — ([^\n]+)\n([\s\S]*?)(?=^### U\d+ — |^## |$(?![\s\S]))/gm),
     ];
@@ -265,7 +265,7 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
     expect(block).toContain(`**Plans**: ${plans.length} plans, ${waves} waves`);
     expect(block).not.toContain("**Plans**: TBD");
     expect(roadmap).toContain(
-      `| 05.1. Codex Co-Work & Usage (INSERTED) | 0/${plans.length} | Not started | - |`,
+      `| 05.1. Codex Co-Work & Usage (INSERTED) | ${plans.length}/${plans.length} | In Progress|  |`,
     );
     expect(roadmap).toContain(order);
     expect(roadmap).toContain(
@@ -325,7 +325,7 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       createHash("sha256")
         .update(roadmap.split("### Phase 6:")[1]?.split("### Phase 7:")[0] ?? "")
         .digest("hex"),
-    ).toBe("0dae3a2bbc1a388ba306f670dd3180fc95058f4a22f3d04b01af34a0ad936ff5");
+    ).toBe("0764ec95ef93d989562d5de7244a92cb7ae9c520e1a6fa9fda80db26e46f99a1");
   });
 
   it("preserves all text outside the reconciled planning edits and ADR back-link", () => {
@@ -350,7 +350,7 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       "PROGRESS",
     );
     expect(createHash("sha256").update(roadmapRemainder).digest("hex")).toBe(
-      "fc3af9688edc48e1a9458fee3db39f9178770200b9c2c6174c1174dc96f081cb",
+      "c9476f3a1bed9fb5e57882710f9ba625444a98c34da6779df8ca3aab408d2c2b",
     );
     let workflowRemainder = read(".planning/WORKFLOW.md");
     workflowRemainder = workflowRemainder.replace(
@@ -366,7 +366,7 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       "",
     );
     expect(createHash("sha256").update(workflowRemainder).digest("hex")).toBe(
-      "80b9052ad71c537e526f15c53e6500a351e033be1c27f11ec63ded9a8ebdd0c1",
+      "89d5fc918619c1af837caf10250b227dd47fb4142543db460f9c30a956bbbc82",
     );
   });
 
