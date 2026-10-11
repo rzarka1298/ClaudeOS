@@ -225,6 +225,34 @@ describe("the concurrent-write conflict (R-09)", () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
+  it("shows no opening lines while the dialog waits, and opening again after a choice", async () => {
+    const answers: LaunchPairResponse[] = [
+      CONFLICT,
+      { claude: { status: "opened" }, codex: { status: "opened" } },
+    ];
+    const launchPair = vi.fn((_c: SocketApiClient, _r: LaunchPairRequest) =>
+      Promise.resolve(answers.shift() as LaunchPairResponse),
+    );
+    let choose: (choice: { kind: "plan" }) => void = () => undefined;
+    const chooseOnConflict = vi.fn(
+      () =>
+        new Promise<{ kind: "plan" }>((resolve) => {
+          choose = resolve;
+        }),
+    );
+    const { requester } = build(launchPair, { chooseOnConflict });
+
+    requester(PROJECT_ID);
+    await vi.waitFor(() => {
+      expect(chooseOnConflict).toHaveBeenCalledTimes(1);
+    });
+    expect(launchStatus.value.has(PAIR_KEY)).toBe(false);
+    choose({ kind: "plan" });
+    await vi.waitFor(() => {
+      expect(launchPair).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("a chosen option re-sends the same request plus that choice", async () => {
     const answers: LaunchPairResponse[] = [
       CONFLICT,
