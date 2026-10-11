@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildLaunchCapabilities, type LaunchInput } from "./launch-options.js";
+import { buildLaunchCapabilities, type LaunchFs, type LaunchInput } from "./launch-options.js";
 import { INSTALLED_OBSIDIAN_BINARY, PLUGIN_BUILD_DIR, REPO_ROOT } from "./repo-paths.js";
 import { PROVISIONAL_SPIKE_DECISIONS, type SpikeDecisions } from "./spike-decisions.js";
 
@@ -18,6 +18,16 @@ const MSG_CACHE =
   "Refusing a cache directory that is relative, inside the Obsidian profile, or inside the " +
   "repository without being .obsidian-cache.";
 
+/**
+ * The textual cases below use fictional paths, so realpath is the identity and the stage lists
+ * as the three plugin files. Symlink and stage-content behaviour is covered with the real
+ * filesystem in launch-options-canonical.test.ts.
+ */
+const FAKE_FS: LaunchFs = {
+  realpathSync: (path) => path,
+  readdirSync: () => ["main.js", "manifest.json", "styles.css"],
+};
+
 function input(
   overrides: Partial<LaunchInput> = {},
   decisions?: Partial<SpikeDecisions>,
@@ -29,6 +39,7 @@ function input(
     runRoot: RUN_ROOT,
     cacheDir: CACHE,
     homeDir: HOME,
+    fs: FAKE_FS,
     ...overrides,
   };
 }

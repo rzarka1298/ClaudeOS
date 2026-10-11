@@ -119,7 +119,7 @@ export interface IsolatePluginDataResult {
 export function isolatePluginData(input: IsolatePluginDataInput): IsolatePluginDataResult {
   const fs = input.fs ?? REAL_PLUGIN_DATA_FS;
   const home = resolve(input.homeDir ?? homedir());
-  const runRoot = canonicalPath(assertRunRoot(input.runRoot, home));
+  const runRoot = assertRunRoot(input.runRoot, home);
 
   if (!isAbsolute(input.vaultPath)) throw new Error(MSG_VAULT_OUTSIDE);
   const vault = canonicalPath(input.vaultPath);
