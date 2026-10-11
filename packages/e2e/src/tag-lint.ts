@@ -1,5 +1,39 @@
 import { itemNumberOf } from "./results.js";
+import type { ItemPlan } from "./spec-map.js";
 import { parseSpecValue, type TagFinding, type UatItem } from "./uat-tags.js";
+
+export interface SpecTitle {
+  readonly file: string;
+  readonly title: string;
+}
+
+/** Test, it and describe titles in a spec source that begin with the bracketed item prefix. */
+export function extractSpecTitles(
+  _file: string,
+  _source: string,
+  _phasePrefix: string,
+): SpecTitle[] {
+  throw new Error("extractSpecTitles is not implemented yet (typed skeleton)");
+}
+
+/** Groups extracted titles by spec file, ready for lintTags. */
+export function groupTitles(_titles: readonly SpecTitle[]): Map<string, string[]> {
+  throw new Error("groupTitles is not implemented yet (typed skeleton)");
+}
+
+/** The facts about a script item that the classification table is checked against. */
+export type MapCheckItem = Pick<UatItem, "number" | "runClass" | "via" | "ownerWhy" | "spec"> & {
+  readonly autoPart?: string | null;
+  /** When supplied, compared with the table's profile flag. */
+  readonly fullProfileOnly?: boolean;
+};
+
+export function checkMapAgainstScript(
+  _items: readonly MapCheckItem[],
+  _plan: readonly ItemPlan[],
+): TagFinding[] {
+  throw new Error("checkMapAgainstScript is not implemented yet (typed skeleton)");
+}
 
 /** Stable codes for the item-to-test mapping lint (D-09, E2E-04, E2E-06, T-05.2-18). */
 export const LINT_CODES = {

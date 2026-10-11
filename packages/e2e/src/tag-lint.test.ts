@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { LINT_CODES, lintTags } from "./tag-lint.js";
+import { UAT_ITEM_PLAN, UAT_PHASE_PREFIX } from "./spec-map.js";
+import {
+  checkMapAgainstScript,
+  extractSpecTitles,
+  groupTitles,
+  LINT_CODES,
+  lintTags,
+  type MapCheckItem,
+} from "./tag-lint.js";
 import { parseUatScript } from "./uat-tags.js";
 
 const LOOK_SPEC = "packages/e2e/specs/notification-look.e2e.ts";
@@ -141,5 +149,156 @@ describe("lintTags (Test 3)", () => {
     blocks[1] = "run: owner\nauto-part: SECRET-NOTE-TEXT\nauto-result: pass @ 0a1b2c3d 2026-10-11";
     const found = lint(blocks);
     expect(JSON.stringify(found)).not.toContain("SECRET-NOTE-TEXT");
+  });
+});
+
+describe("extractSpecTitles (Task 3, Test 5)", () => {
+  const SOURCE = [
+    'describe("[06-UAT#05] reload twice", () => {',
+    '  it("[06-UAT#05] one navigation", async () => {});',
+    "  it.skip('[06-UAT#06] chips', () => {});",
+    "  it.only(`[06-UAT#07] deny`, () => {});",
+    '  test("[06-UAT#08] approve", () => {});',
+    '  describe.skip("[06-UAT#09] expiry", () => {});',
+    '  // it("[06-UAT#10] commented out", () => {});',
+    '  /* it("[06-UAT#11] block commented", () => {}); */',
+    '  it("see [06-UAT#12] mid-text", () => {});',
+    '  it("[07-UAT#13] other phase", () => {});',
+    '  const label = "[06-UAT#14] not a test call";',
+    "});",
+  ].join("\n");
+
+  it("finds titles in it, test and describe calls with skip and only variants", () => {
+    const found = extractSpecTitles("packages/e2e/specs/x.e2e.ts", SOURCE, "06");
+    expect(found.map((entry) => entry.title)).toEqual([
+      "[06-UAT#05] reload twice",
+      "[06-UAT#05] one navigation",
+      "[06-UAT#06] chips",
+      "[06-UAT#07] deny",
+      "[06-UAT#08] approve",
+      "[06-UAT#09] expiry",
+    ]);
+  });
+
+  it("returns each title with its file name", () => {
+    const found = extractSpecTitles("packages/e2e/specs/x.e2e.ts", SOURCE, "06");
+    expect(found.every((entry) => entry.file === "packages/e2e/specs/x.e2e.ts")).toBe(true);
+  });
+
+  it("ignores commented lines and strings that merely contain the prefix mid-text", () => {
+    const text = extractSpecTitles("f", SOURCE, "06")
+      .map((entry) => entry.title)
+      .join("\n");
+    for (const ignored of ["#10", "#11", "#12", "#13", "#14"]) expect(text).not.toContain(ignored);
+  });
+
+  it("handles an escaped quote inside a title", () => {
+    const found = extractSpecTitles("f", "it('[06-UAT#05] it\\'s fine', () => {});", "06");
+    expect(found).toHaveLength(1);
+  });
+
+  it("groups titles by file for lintTags", () => {
+    const grouped = groupTitles([
+      { file: "a", title: "[06-UAT#01] x" },
+      { file: "b", title: "[06-UAT#02] y" },
+      { file: "a", title: "[06-UAT#03] z" },
+    ]);
+    expect(Object.fromEntries(grouped)).toEqual({
+      a: ["[06-UAT#01] x", "[06-UAT#03] z"],
+      b: ["[06-UAT#02] y"],
+    });
+  });
+});
+
+function scriptFromPlan(): string {
+  const blocks = UAT_ITEM_PLAN.map((plan) => {
+    const nn = String(plan.number).padStart(2, "0");
+    const lines = [`### ${plan.number}. Item ${plan.number}`, `run: ${plan.runClass}`];
+    if (plan.via.length > 0) lines.push(`via: ${plan.via.join(", ")}`);
+    if (plan.specFile !== null)
+      lines.push(`spec: ${plan.specFile}::[${UAT_PHASE_PREFIX}-UAT#${nn}]`);
+    if (plan.ownerWhy !== null) lines.push(`owner-why: ${plan.ownerWhy}`);
+    if (plan.autoPart !== null) lines.push(`auto-part: ${plan.autoPart}`);
+    lines.push("result: [pending]", "");
+    return lines.join("\n");
+  });
+  return `---\nphase: 06-demo\n---\n\n## Tests\n\n${blocks.join("\n")}`;
+}
+
+describe("checkMapAgainstScript (Task 3, Test 6)", () => {
+  it("returns nothing for a script built from the map", () => {
+    const parsed = parseUatScript(scriptFromPlan());
+    expect(parsed.items).toHaveLength(26);
+    expect(parsed.findings).toEqual([]);
+    expect(checkMapAgainstScript(parsed.items, UAT_ITEM_PLAN)).toEqual([]);
+  });
+
+  function mutated(edit: (text: string) => string) {
+    return checkMapAgainstScript(parseUatScript(edit(scriptFromPlan())).items, UAT_ITEM_PLAN);
+  }
+
+  it("reports an item whose class differs", () => {
+    const found = mutated((text) =>
+      text.replace("### 6. Item 6\nrun: auto", "### 6. Item 6\nrun: owner"),
+    );
+    expect(found).toEqual([
+      { code: "MAP_MISMATCH", item: 6, message: expect.stringContaining("run") },
+    ]);
+  });
+
+  it("reports an item whose via differs", () => {
+    const found = mutated((text) => text.replace("via: dom, spy\n", "via: dom\n"));
+    expect(found.map((finding) => finding.item)).toEqual([5]);
+    expect(found[0]?.message).toContain("via");
+  });
+
+  it("reports an owner-why that differs", () => {
+    const found = mutated((text) => text.replace("owner-why: focus", "owner-why: space"));
+    expect(found).toEqual([
+      { code: "MAP_MISMATCH", item: 3, message: expect.stringContaining("owner-why") },
+    ]);
+  });
+
+  it("reports a spec file that differs", () => {
+    const found = mutated((text) =>
+      text.replace(
+        "packages/e2e/specs/approvals-expiry.e2e.ts::[06-UAT#09]",
+        "packages/e2e/specs/approvals-core.e2e.ts::[06-UAT#09]",
+      ),
+    );
+    expect(found.map((finding) => finding.item)).toEqual([9]);
+    expect(found[0]?.message).toContain("spec");
+  });
+
+  it("reports an auto-part that is present or absent against the table", () => {
+    const missing = mutated((text) => text.replace(/^auto-part: .*\n/m, ""));
+    expect(missing.map((finding) => finding.item)).toEqual([2]);
+    const extra = mutated((text) =>
+      text.replace("### 26. Item 26\nrun: owner", "### 26. Item 26\nrun: owner\nauto-part: x"),
+    );
+    expect(extra.map((finding) => finding.item)).toEqual([26]);
+  });
+
+  it("reports the full-profile flag when the item carries one", () => {
+    const base = parseUatScript(scriptFromPlan()).items;
+    const items: MapCheckItem[] = base.map((item) => ({
+      ...item,
+      fullProfileOnly: item.number === 21 ? false : item.number === 6,
+    }));
+    const found = checkMapAgainstScript(items, UAT_ITEM_PLAN);
+    expect(found.map((finding) => finding.item).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([
+      6, 21,
+    ]);
+  });
+
+  it("reports an item missing from the script and one the table does not know", () => {
+    const base = parseUatScript(scriptFromPlan()).items;
+    const withoutLast = checkMapAgainstScript(base.slice(0, 25), UAT_ITEM_PLAN);
+    expect(withoutLast).toEqual([
+      { code: "MAP_ITEM_MISSING", item: 26, message: expect.any(String) },
+    ]);
+    const first = base[0] as MapCheckItem;
+    const extra = checkMapAgainstScript([...base, { ...first, number: 27 }], UAT_ITEM_PLAN);
+    expect(extra).toEqual([{ code: "MAP_ITEM_UNKNOWN", item: 27, message: expect.any(String) }]);
   });
 });
