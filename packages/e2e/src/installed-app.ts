@@ -9,15 +9,20 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
 /** Validates a CFBundleShortVersionString value; returns it or throws a fixed message. */
 export function parseInstallerVersion(raw: string): string {
   const version = raw.trim();
-  if (!SEMVER.test(version)) throw new Error("The installed Obsidian reports no usable installer version.");
+  if (!SEMVER.test(version))
+    throw new Error("The installed Obsidian reports no usable installer version.");
   return version;
 }
 
 /** Reads the installed app's installer version (read-only, via plutil). */
 export function readInstalledInstallerVersion(plistPath: string = INFO_PLIST): string {
-  const raw = execFileSync("/usr/bin/plutil", ["-extract", "CFBundleShortVersionString", "raw", plistPath], {
-    encoding: "utf8",
-  });
+  const raw = execFileSync(
+    "/usr/bin/plutil",
+    ["-extract", "CFBundleShortVersionString", "raw", plistPath],
+    {
+      encoding: "utf8",
+    },
+  );
   return parseInstallerVersion(raw);
 }
 
@@ -27,6 +32,8 @@ export function readInstalledInstallerVersion(plistPath: string = INFO_PLIST): s
  */
 export function assertInstallerVersionMatches(recorded: string, installed: string): void {
   if (recorded !== installed) {
-    throw new Error(`Installed Obsidian installer is ${installed} but the recorded decision is ${recorded}.`);
+    throw new Error(
+      `Installed Obsidian installer is ${installed} but the recorded decision is ${recorded}.`,
+    );
   }
 }

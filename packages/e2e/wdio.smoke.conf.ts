@@ -18,8 +18,12 @@
  * CLAUDE_CONFIG_DIR, CODEX_HOME, CCC_INSTALL_SECRET_ACCOUNT) are inherited from the calling
  * shell; spike S0 records whether the renderer sees CCC_SOCKET_PATH.
  */
+
+import {
+  assertInstallerVersionMatches,
+  readInstalledInstallerVersion,
+} from "./src/installed-app.js";
 import { buildLaunchCapabilities } from "./src/launch-options.js";
-import { assertInstallerVersionMatches, readInstalledInstallerVersion } from "./src/installed-app.js";
 import { SPIKE_DECISIONS } from "./src/spike-decisions.js";
 
 function requireEnv(name: string): string {
