@@ -155,7 +155,7 @@ describe("detection is a setup state, never an error (CODEX-03, UI-SPEC S4-b)", 
     );
     expect(line.textContent).toContain("◌");
     expect(within(panel()).getByText("Not set up")).toBeTruthy();
-    expect(within(panel()).queryByRole("radio")).toBeNull();
+    expect(within(panel()).getAllByRole("radio").map((r) => r.getAttribute("type"))).toHaveLength(1);
     expect(panel().querySelector(".ccc-error-glyph")).toBeNull();
     expect(panel().querySelector(".ccc-field-error")).toBeNull();
     expect(panel().innerHTML).not.toContain("danger");
@@ -166,7 +166,22 @@ describe("detection is a setup state, never an error (CODEX-03, UI-SPEC S4-b)", 
   it("renders the same setup state for a service that reports no executables", () => {
     mount(fakeLaunchersActions(), sessionWith(withCodexDetection([])));
     expect(within(panel()).getByText(/Codex isn't installed on this Mac/)).toBeTruthy();
-    expect(within(panel()).queryByRole("radio")).toBeNull();
+    expect(within(panel()).getAllByRole("radio")).toHaveLength(1);
+  });
+
+  it("05.1-post: with nothing detected the owner can still configure a custom path", () => {
+    const actions = fakeLaunchersActions();
+    mount(actions, sessionWith(withCodexDetection([])));
+    fireEvent.click(within(panel()).getByRole("radio", { name: "Use a different path" }));
+    fireEvent.input(within(panel()).getByLabelText("Path to codex"), {
+      target: { value: "/opt/example/bin/codex" },
+    });
+    fireEvent.click(saveButton());
+    expect(actions.save).toHaveBeenCalledWith({
+      launcherId: "codex",
+      executable: { kind: "path", path: "/opt/example/bin/codex" },
+      args: [],
+    });
   });
 
   it("shows nothing about installation before detection has answered", () => {
