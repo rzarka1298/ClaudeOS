@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -106,6 +106,21 @@ function fakeCodexIn(c: CodexComposition, usedPercent = 41) {
     doctor: { behavior: { kind: "print", stdout: doctorReport() } },
   });
 }
+
+describe("F4: a service restarted over an existing hook copy", () => {
+  it("reports installed-no-events from the first status read, not not-installed", async () => {
+    const c = await compose({
+      prepare: ({ runtimeDir }) => {
+        const root = join(runtimeDir, "codex-hooks");
+        mkdirSync(join(root, "codex-hook"), { recursive: true });
+        writeFileSync(join(root, "codex-hook", "entry.js"), "// hook\n", { mode: 0o600 });
+        writeFileSync(join(root, "package.json"), "{}\n", { mode: 0o600 });
+      },
+    });
+    const body = CodexIntegrationStatusSchema.parse((await c.get(CODEX_INTEGRATION_PATH)).body);
+    expect(body.hooks.state).toBe("installed-no-events");
+  });
+});
 
 describe("Task 1 (tracer), Test 1: a saved fake launcher, then a headroom read through its app-server", () => {
   it("saves the Codex launcher by typed path, reads 41 percent as allow, and the fake saw exactly the documented process", async () => {
