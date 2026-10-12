@@ -110,8 +110,12 @@ async function recordedPid(sessionId: string): Promise<number> {
       const { copyPath } = copyStore({
         runtimeDir: context.paths.runtimeDir,
         destDir: context.paths.tmpDir,
+        runRoot: context.runRoot,
       });
-      return recordedPidFor(await queryStore({ copyPath, sql: RUNS_SQL }), sessionId);
+      return recordedPidFor(
+        await queryStore({ copyPath, sql: RUNS_SQL, runRoot: context.runRoot }),
+        sessionId,
+      );
     },
     { timeoutMs: 30_000, intervalMs: 500, describe: "the service to record the session pid" },
   );
@@ -286,8 +290,9 @@ describe("synthetic session", () => {
     const { copyPath } = copyStore({
       runtimeDir: context.paths.runtimeDir,
       destDir: context.paths.tmpDir,
+      runRoot: context.runRoot,
     });
-    const rows = await queryStore({ copyPath, sql: AUDIT_SEQUENCE_SQL });
+    const rows = await queryStore({ copyPath, sql: AUDIT_SEQUENCE_SQL, runRoot: context.runRoot });
     const events = rows.map((row) => String(row.event));
     expect(checkAuditSequence(events)).toEqual({ ok: true, reason: "" });
   });

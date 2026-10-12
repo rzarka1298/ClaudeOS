@@ -141,8 +141,13 @@ export function createPreflightPorts(): PreflightPorts {
       const { copyPath } = copyStore({
         runtimeDir: sandbox.paths.runtimeDir,
         destDir: join(sandbox.paths.tmpDir, "preflight"),
+        runRoot: sandbox.paths.root,
       });
-      const rows = await queryStore({ copyPath, sql: AUDIT_COUNT_SQL });
+      const rows = await queryStore({
+        copyPath,
+        sql: AUDIT_COUNT_SQL,
+        runRoot: sandbox.paths.root,
+      });
       return Number(rows[0]?.audit_rows ?? 0);
     },
     fingerprint: async () => {

@@ -971,11 +971,16 @@ export async function readStore(context: RunContext): Promise<StoreReading> {
   const { copyPath } = copyStore({
     runtimeDir: context.paths.runtimeDir,
     destDir: join(context.paths.tmpDir, "store-reads"),
+    runRoot: context.runRoot,
   });
-  const rows = await queryStore({ copyPath, sql: AUDIT_ROWS_SQL });
-  const effects = await queryStore({ copyPath, sql: EFFECT_COUNT_SQL });
-  const perProposal = await queryStore({ copyPath, sql: EFFECTS_PER_PROPOSAL_SQL });
-  const expired = await queryStore({ copyPath, sql: EXPIRED_EVENTS_SQL });
+  const rows = await queryStore({ copyPath, sql: AUDIT_ROWS_SQL, runRoot: context.runRoot });
+  const effects = await queryStore({ copyPath, sql: EFFECT_COUNT_SQL, runRoot: context.runRoot });
+  const perProposal = await queryStore({
+    copyPath,
+    sql: EFFECTS_PER_PROPOSAL_SQL,
+    runRoot: context.runRoot,
+  });
+  const expired = await queryStore({ copyPath, sql: EXPIRED_EVENTS_SQL, runRoot: context.runRoot });
   return {
     rows: rows.map((row) => ({
       seq: num(row["seq"]),

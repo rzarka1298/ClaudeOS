@@ -381,10 +381,12 @@ describe("cross-cutting items", () => {
     const beforeStore = copyStore({
       runtimeDir: context.paths.runtimeDir,
       destDir: context.paths.tmpDir,
+      runRoot: context.runRoot,
     });
     const beforeCount = await queryStore({
       copyPath: beforeStore.copyPath,
       sql: PROPOSAL_COUNT_SQL,
+      runRoot: context.runRoot,
     });
     const beforeTree: ProcessNode[] = await readProcessTree();
     const table = await readProcessTable();
@@ -430,8 +432,13 @@ describe("cross-cutting items", () => {
     const afterStore = copyStore({
       runtimeDir: context.paths.runtimeDir,
       destDir: context.paths.tmpDir,
+      runRoot: context.runRoot,
     });
-    const afterCount = await queryStore({ copyPath: afterStore.copyPath, sql: PROPOSAL_COUNT_SQL });
+    const afterCount = await queryStore({
+      copyPath: afterStore.copyPath,
+      sql: PROPOSAL_COUNT_SQL,
+      runRoot: context.runRoot,
+    });
     expect(afterCount).toEqual(beforeCount);
     expect(diffNewDescendants(beforeTree, await readProcessTree(), ancestors)).toEqual([]);
 

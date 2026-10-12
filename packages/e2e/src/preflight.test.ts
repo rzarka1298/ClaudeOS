@@ -204,3 +204,22 @@ describe("the preflight never opens the real store (Test 3)", () => {
     expect(source).not.toContain("realRuntimeDir");
   });
 });
+
+describe("every store copy and read is bound to the run root (Wave 2 store-copy guard)", () => {
+  const dir = new URL("../", import.meta.url);
+  const files = [
+    "src/preflight.ts",
+    "src/spec-support/approvals-support.ts",
+    "specs/cross-cutting.e2e.ts",
+    "specs/synthetic-session.e2e.ts",
+  ];
+
+  it("passes runRoot to every copyStore and queryStore call", () => {
+    for (const file of files) {
+      const source = readFileSync(new URL(file, dir), "utf8");
+      const calls = source.match(/(?:copyStore|queryStore)\(\{[\s\S]*?\}\)/g) ?? [];
+      expect(calls.length, file).toBeGreaterThan(0);
+      for (const call of calls) expect(call, `${file}: ${call.slice(0, 40)}`).toContain("runRoot");
+    }
+  });
+});
