@@ -83,9 +83,18 @@ describe("hook record, environment and arguments (Test 2)", () => {
   });
 
   it("runs the hook through spawn with that environment, feeds the record and refuses a non-ledgered pid", async () => {
-    const calls: Array<{ file: string; args: string[]; env: Record<string, string>; shell: unknown }> = [];
+    const calls: Array<{
+      file: string;
+      args: string[];
+      env: Record<string, string>;
+      shell: unknown;
+    }> = [];
     let stdinText = "";
-    const spawnFn = ((file: string, args: string[], options: { env: Record<string, string>; shell?: unknown }) => {
+    const spawnFn = ((
+      file: string,
+      args: string[],
+      options: { env: Record<string, string>; shell?: unknown },
+    ) => {
       calls.push({ file, args, env: options.env, shell: options.shell });
       const child = new EventEmitter() as EventEmitter & { stdin: PassThrough };
       child.stdin = new PassThrough();
@@ -189,9 +198,7 @@ describe("notification assertions (Test 5)", () => {
     expect(
       checkNotificationRecord({ ...good, body: "The dashboard asks to delete /Users/x/notes." }).ok,
     ).toBe(false);
-    expect(
-      checkNotificationRecord(good, { forbidden: ["run a test"] }).ok,
-    ).toBe(false);
+    expect(checkNotificationRecord(good, { forbidden: ["run a test"] }).ok).toBe(false);
     expect(checkNotificationRecord({ ...good, body: null }).ok).toBe(false);
     expect(checkNotificationRecord({ ...good, actions: [{ action: "approve" }] }).ok).toBe(false);
     expect(checkNotificationRecord({ ...good, permission: null }).ok).toBe(false);
@@ -217,8 +224,16 @@ describe("store facts and window activation", () => {
 
   it("checks the audit sequence requested, denied, requested, approved then executed and failed", () => {
     const full = [
-      "requested", "denied", "requested", "approved", "claimed", "executed",
-      "requested", "approved", "claimed", "failed",
+      "requested",
+      "denied",
+      "requested",
+      "approved",
+      "claimed",
+      "executed",
+      "requested",
+      "approved",
+      "claimed",
+      "failed",
     ];
     expect(checkAuditSequence(full)).toEqual({ ok: true, reason: "" });
     expect(checkAuditSequence(["requested", "approved"]).ok).toBe(false);
