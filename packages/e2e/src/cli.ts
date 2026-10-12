@@ -7,14 +7,28 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { type AutoOutcome, applyAutoResults } from "./apply-auto-results.js";
+import { applyRatification } from "./apply-ratification.js";
 import { buildHash } from "./build-hash.js";
-import { parseRunArgs, RUN_USAGE, UsageError } from "./cli-args.js";
+import {
+  LOOK_USAGE,
+  parseLookArgs,
+  parseRatifyArgs,
+  parseReportArgs,
+  parseRunArgs,
+  RUN_USAGE,
+  UsageError,
+} from "./cli-args.js";
 import { type GitFacts, readGitFacts } from "./git-facts.js";
 import { assertInstallerVersionMatches, readInstalledInstallerVersion } from "./installed-app.js";
+import { listPending, recordVerdict, writeLookHandoff } from "./look.js";
 import { PLUGIN_STAGE_FILES, stagePlugin } from "./plugin-data.js";
+import { ratifyReport } from "./ratify.js";
 import { HOOK_ENTRY, PLUGIN_BUILD_DIR, REPO_ROOT, SERVICE_ENTRY } from "./repo-paths.js";
+import { parseReport } from "./report-io.js";
+import type { ItemStatus } from "./results.js";
 import { parseResultsFile } from "./results.js";
 import {
   type LookPendingItem,
@@ -26,7 +40,13 @@ import {
 } from "./run-uat.js";
 import { withSandbox } from "./sandbox.js";
 import { sanitizeText } from "./sanitize.js";
-import { createShotsDir, deleteShotsDir, purgeStaleShotDirs } from "./screenshots.js";
+import {
+  createShotsDir,
+  deleteShotsDir,
+  purgeStaleShotDirs,
+  SHOTS_PREFIX,
+  shotPath,
+} from "./screenshots.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
 import { generateUatVault } from "./uat-vault.js";
 import { isolatePluginData } from "./vault-plugin-data.js";
@@ -163,9 +183,8 @@ export function createRunPorts(): RunPorts {
       if (path === null) console.log(text);
       else writeAtomic(path, text);
     },
-    // Replaced by the look module's handoff writer (Task 2).
     handoffLooks: (input) => {
-      if (input.items.length === 0) deleteShotsDir(input.shotsDir);
+      writeLookHandoff(input);
     },
   };
 }
@@ -201,6 +220,125 @@ const runCommand: CommandHandler = async (argv, deps) => {
   return outcome.exitCode;
 };
 
+const REAL_IO: CliIo = {
+  readText,
+  writeText: writeAtomic,
+  readGitFacts: (since) =>
+    readGitFacts({ cwd: REPO_ROOT, ...(since === undefined ? {} : { since }) }),
+  now: () => new Date(),
+  tmpDir: () => tmpdir(),
+};
+
+function ioFor(deps: CliDeps): CliIo {
+  return { ...REAL_IO, ...deps.io };
+}
+
+function dateOf(io: CliIo): string {
+  return io.now().toISOString().slice(0, 10);
+}
+
+function mustRead(io: CliIo, path: string, what: string): string {
+  const text = io.readText(path);
+  if (text === null) throw new Error(`The ${what} could not be read.`);
+  return text;
+}
+
+const lookCommand: CommandHandler = async (argv, deps) => {
+  if (argv[0] === "--help") {
+    deps.write(LOOK_USAGE);
+    return 0;
+  }
+  const args = parseLookArgs(argv);
+  const io = ioFor(deps);
+  const shotsDir = join(args.shotsBase ?? io.tmpDir(), `${SHOTS_PREFIX}${args.run}`);
+  if (args.kind === "list") {
+    const state = listPending(shotsDir);
+    deps.write(`Shots folder: ${shotsDir}`);
+    for (const entry of state.items) {
+      const files = entry.labels.map((label) => basename(shotPath(shotsDir, entry.item, label)));
+      deps.write(`Item ${entry.item}: ${entry.count} image(s): ${files.join(", ")}`);
+    }
+    if (state.items.length === 0) deps.write("No looks are pending.");
+    return 0;
+  }
+  const result = recordVerdict({
+    shotsDir,
+    item: args.item,
+    verdict: args.verdict,
+    images: args.images,
+  });
+  deps.write(
+    `Item ${result.item}: verdict ${result.status} recorded; ${result.remaining} look(s) still pending.`,
+  );
+  if (result.remaining === 0) deps.write("All looks are done; the shots folder was deleted.");
+  return 0;
+};
+
+const FINAL_STATUSES = ["pass", "fail", "inconclusive"];
+
+const reportCommand: CommandHandler = async (argv, deps) => {
+  const args = parseReportArgs(argv);
+  const io = ioFor(deps);
+  const parsed = parseReport(mustRead(io, args.report, "report"));
+  if (parsed.frontMatter["run-id"] !== args.run) {
+    throw new Error("The report is not for the requested run id.");
+  }
+  if (parsed.frontMatter["item-mapping"] === "unavailable") {
+    throw new Error("The report has no item mapping to a UAT script.");
+  }
+  if (args.script === undefined) {
+    deps.write("No script was given; nothing was written.");
+    return 0;
+  }
+  const outcomes: AutoOutcome[] = parsed.rows
+    .filter((row) => row.runClass !== "owner" && FINAL_STATUSES.includes(row.status))
+    .map((row) => ({ item: row.number, status: row.status as ItemStatus }));
+  const text = applyAutoResults({
+    text: mustRead(io, args.script, "script"),
+    outcomes,
+    runId: args.run,
+    date: dateOf(io),
+  });
+  if (args.writeScript) {
+    io.writeText(args.script, text);
+    deps.write(`Wrote ${outcomes.length} auto-result line(s).`);
+  } else {
+    deps.write(`Would write ${outcomes.length} auto-result line(s); add --write-script to apply.`);
+  }
+  return 0;
+};
+
+const ratifyCommand: CommandHandler = async (argv, deps) => {
+  const args = parseRatifyArgs(argv);
+  const io = ioFor(deps);
+  const reportText = mustRead(io, args.report, "report");
+  const recordedHead = parseReport(reportText).frontMatter["git-head"];
+  const facts = await io.readGitFacts(recordedHead);
+  const date = dateOf(io);
+  const result = ratifyReport(reportText, {
+    runId: args.run,
+    statement: args.statement,
+    date,
+    currentHead: facts.head,
+    changedFiles: facts.changedSince,
+  });
+  if (!result.ok) {
+    for (const reason of result.reasons) deps.write(`Refused: ${reason}.`);
+    return 1;
+  }
+  let results: { text: string; items: number[] } | undefined;
+  if (args.writeResults && args.script !== undefined) {
+    results = applyRatification(mustRead(io, args.script, "script"), args.run);
+  }
+  io.writeText(args.report, result.text);
+  if (results !== undefined && args.script !== undefined && results.items.length > 0) {
+    io.writeText(args.script, results.text);
+  }
+  deps.write(`Ratified run ${args.run} on ${date}.`);
+  if (results !== undefined) deps.write(`Wrote ${results.items.length} result line(s).`);
+  return 0;
+};
+
 const notYet: CommandHandler = async (_argv, deps) => {
   deps.write("This command is not available yet.");
   return 2;
@@ -209,9 +347,9 @@ const notYet: CommandHandler = async (_argv, deps) => {
 export const COMMANDS: Readonly<Record<string, CommandHandler>> = {
   run: runCommand,
   preflight: notYet,
-  look: notYet,
-  report: notYet,
-  ratify: notYet,
+  look: lookCommand,
+  report: reportCommand,
+  ratify: ratifyCommand,
   "lint-tags": notYet,
 };
 

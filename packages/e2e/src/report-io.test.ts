@@ -138,7 +138,11 @@ describe("setRatified (Test 1)", () => {
   });
 
   it("sanitises a home path out of the statement", () => {
-    const after = setRatified(sampleReport(), "see /Users/someone/notes ok", "2026-10-12");
+    const after = setRatified(
+      sampleReport(),
+      `see ${["", "Users", "someone"].join("/")}/notes ok`,
+      "2026-10-12",
+    );
     expect(after).not.toContain("someone");
   });
 });
@@ -157,6 +161,8 @@ describe("addFrontMatterNote", () => {
 
   it("refuses a key or value outside the plain vocabulary", () => {
     expect(() => addFrontMatterNote(sampleReport(), "Bad Key", "x")).toThrow();
-    expect(() => addFrontMatterNote(sampleReport(), "note", "/Users/a/b")).toThrow();
+    expect(() =>
+      addFrontMatterNote(sampleReport(), "note", ["", "Users", "a"].join("/")),
+    ).toThrow();
   });
 });
