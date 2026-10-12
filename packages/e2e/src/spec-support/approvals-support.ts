@@ -201,22 +201,48 @@ export function findNewNotification(
   return -1;
 }
 
-// RED skeleton (05.2-06 task 3): wrong answers until the GREEN commit.
+/** The two Notices the Rebuild task index row shows, parsed. */
 export type RebuildStatus =
   | { phase: "rebuilding" }
   | { phase: "rebuilt"; tasks: number; attention: number };
 
-export function parseRebuildStatus(_text: string): RebuildStatus | null {
-  return null;
+const REBUILT = /^Task index rebuilt\. (\d+) tasks? found\.(?: (\d+) notes? needs? attention\.)?$/;
+
+/**
+ * Parses `Rebuilding the task index…` and `Task index rebuilt. N tasks found.` with the optional
+ * ` M notes need attention.` suffix; null for any other text.
+ */
+export function parseRebuildStatus(text: string): RebuildStatus | null {
+  if (text === APPROVALS_COPY.rebuildStarted) return { phase: "rebuilding" };
+  const match = REBUILT.exec(text);
+  if (match?.[1] === undefined) return null;
+  return {
+    phase: "rebuilt",
+    tasks: Number(match[1]),
+    attention: match[2] === undefined ? 0 : Number(match[2]),
+  };
 }
 
+/**
+ * True when a state change was first seen at or after the moment a countdown reached zero and no
+ * more than `graceMs` later. Seeing it before zero would mean the UI decided an expiry itself.
+ */
 export function settledWithinGrace(
-  _expiresAtMs: number,
-  _observedAtMs: number,
-  _graceMs: number,
+  expiresAtMs: number,
+  observedAtMs: number,
+  graceMs: number,
 ): boolean {
-  return false;
+  return observedAtMs >= expiresAtMs && observedAtMs - expiresAtMs <= graceMs;
 }
+
+/** Just after the lifetime ends, before the 500 ms sweeper is likely to have moved the request. */
+export const EXPIRY_PRESS_OFFSET_MS = 5;
+/** The 500 ms sweep, the event to the plugin and one 200 ms poll, with margin. */
+export const EXPIRY_SETTLE_GRACE_MS = 3_000;
+/** The test lifetime is 15 s; anything longer means the test override is not in force. */
+export const EXPIRY_LIFETIME_CEILING_MS = 20_000;
+/** Reopening the settings tab and reading it twice a second is enough to catch a re-render. */
+export const SETTINGS_POLL_MS = 500;
 
 /** Reads the Agent runs count chip's visible text: `3`, or `9+` when capped; null otherwise. */
 export function parseCountChip(text: string): { count: number; capped: boolean } | null {
@@ -254,6 +280,8 @@ interface LeafLite {
 }
 
 interface AppLite {
+  /** Obsidian's settings modal controller (not in the typed API). */
+  setting?: { open(): void; close(): void; openTabById(id: string): void };
   workspace: {
     on(name: string, callback: (leaf: LeafLite | null) => void): unknown;
     getLeavesOfType(viewType: string): unknown[];
@@ -261,6 +289,8 @@ interface AppLite {
     setActiveLeaf(leaf: LeafLite, params?: { focus?: boolean }): void;
   };
 }
+
+declare const setTimeout: (callback: () => void, delayMs: number) => unknown;
 
 interface RendererWindow {
   app?: AppLite;
@@ -641,6 +671,128 @@ export function countLeavesOfType(viewType: string): number {
   return window.app?.workspace.getLeavesOfType(viewType).length ?? 0;
 }
 
+/** Runs in the renderer: opens Obsidian's settings on this plugin's tab; false when unavailable. */
+export function openPluginSettings(pluginId: string): boolean {
+  const setting = window.app?.setting;
+  if (setting === undefined) return false;
+  setting.open();
+  setting.openTabById(pluginId);
+  return true;
+}
+
+/** Runs in the renderer: closes Obsidian's settings. */
+export function closeSettings(): boolean {
+  const setting = window.app?.setting;
+  if (setting === undefined) return false;
+  setting.close();
+  return true;
+}
+
+/** One row of the open settings tab. */
+export interface SettingRow {
+  name: string;
+  description: string;
+  /** The row is shown disabled (a disabled class, native attribute or aria-disabled inside it). */
+  disabled: boolean;
+  hasToggle: boolean;
+  toggleOn: boolean;
+}
+
+/** The open settings tab: its group headings and its rows. */
+export interface SettingsSnapshot {
+  open: boolean;
+  headings: string[];
+  rows: SettingRow[];
+}
+
+/** Runs in the renderer: reads the open settings modal. Obsidian renders the rows, so only its stable classes are read. */
+export function readSettingsSnapshot(): SettingsSnapshot {
+  const items = Array.from(document.querySelectorAll(".modal.mod-settings .setting-item"));
+  const headings: string[] = [];
+  const rows: SettingRow[] = [];
+  for (const item of items) {
+    const name = item.querySelector(".setting-item-name")?.textContent ?? "";
+    if (item.matches(".setting-item-heading")) {
+      headings.push(name);
+      continue;
+    }
+    rows.push({
+      name,
+      description: item.querySelector(".setting-item-description")?.textContent ?? "",
+      disabled:
+        item.matches(".is-disabled") ||
+        item.querySelector("button[disabled], .is-disabled, [aria-disabled='true']") !== null,
+      hasToggle: item.querySelector(".checkbox-container") !== null,
+      toggleOn: item.querySelector(".checkbox-container.is-enabled") !== null,
+    });
+  }
+  return { open: document.querySelector(".modal.mod-settings") !== null, headings, rows };
+}
+
+/** Runs in the renderer: presses the action control of the settings row named `name`; false when there is none. */
+export function pressSettingRow(name: string): boolean {
+  for (const item of Array.from(document.querySelectorAll(".modal.mod-settings .setting-item"))) {
+    if ((item.querySelector(".setting-item-name")?.textContent ?? "").trim() !== name) continue;
+    const control = item.querySelector("button") ?? item.querySelector(".clickable-icon") ?? item;
+    control.click();
+    return true;
+  }
+  return false;
+}
+
+/** Runs in the renderer: flips the toggle of the settings row named `name`; false when there is none. */
+export function toggleSettingRow(name: string): boolean {
+  for (const item of Array.from(document.querySelectorAll(".modal.mod-settings .setting-item"))) {
+    if ((item.querySelector(".setting-item-name")?.textContent ?? "").trim() !== name) continue;
+    const toggle = item.querySelector(".checkbox-container");
+    if (toggle === null) return false;
+    toggle.click();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Runs in the renderer: schedules a click on the Deny or Approve once control for the epoch
+ * millisecond `atEpochMs` and returns at once. The control is looked up when the timer fires.
+ * Returns false when the control is not on screen now.
+ */
+export function scheduleDecisionClick(kind: "deny" | "approve", atEpochMs: number): boolean {
+  if (document.querySelector(`[data-decision='${kind}']`) === null) return false;
+  setTimeout(
+    () => {
+      document.querySelector(`[data-decision='${kind}']`)?.click();
+    },
+    Math.max(0, atEpochMs - Date.now()),
+  );
+  return true;
+}
+
+/** Runs in the renderer: presses a destination tab (agent-runs, tasks ...); false when absent. */
+export function clickTab(destinationId: string): boolean {
+  const tab = document.querySelector(`#ccc-tab-${destinationId}`);
+  if (tab === null) return false;
+  tab.click();
+  return true;
+}
+
+/** The active destination panel: its heading, all its text and how many controls are disabled. */
+export interface PanelSnapshot {
+  heading: string;
+  text: string;
+  disabledCount: number;
+}
+
+/** Runs in the renderer: reads the active destination panel. */
+export function readPanelSnapshot(): PanelSnapshot {
+  const panel = document.querySelector(".ccc-content");
+  return {
+    heading: panel?.querySelector("h2")?.textContent ?? "",
+    text: panel?.textContent ?? "",
+    disabledCount: panel?.querySelectorAll("[aria-disabled='true']").length ?? 0,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Spec-side helpers
 
@@ -648,6 +800,8 @@ export function countLeavesOfType(viewType: string): number {
 export interface SupportBrowser extends DriverBrowser {
   execute<R, A extends unknown[]>(script: (...args: A) => R, ...args: A): Promise<R>;
   keys(value: string | string[]): Promise<void>;
+  /** wdio-obsidian-service: reboots Obsidian on the same vault copy (no new copy). */
+  reloadObsidian(): Promise<void>;
 }
 
 /** Collapses whitespace in every string of a snapshot; the renderer functions return raw text. */
@@ -939,4 +1093,68 @@ export function readMirrorFiles(vaultPath: string): MirrorFile[] {
       const path = join(dir, name);
       return { name, mtimeMs: statSync(path).mtimeMs, content: readFileSync(path, "utf8") };
     });
+}
+
+/** Opens the plugin's settings tab and returns what it shows (whitespace squashed). */
+export async function openSettingsTab(browser: SupportBrowser): Promise<SettingsSnapshot> {
+  return pollUntil(async () => {
+    if (!(await browser.execute(openPluginSettings, PLUGIN_ID))) return null;
+    const snapshot = squashDeep(await browser.execute(readSettingsSnapshot));
+    return snapshot.open && snapshot.rows.length > 0 ? snapshot : null;
+  }, uiWait("the plugin settings tab"));
+}
+
+/** The row named `name`; a missing row fails with its name. */
+export function settingRow(snapshot: SettingsSnapshot, name: string): SettingRow {
+  const row = snapshot.rows.find((candidate) => candidate.name === name);
+  if (row === undefined) throw new Error(`The settings tab has no "${name}" row.`);
+  return row;
+}
+
+/** The plugin's saved settings (data.json) as the plugin itself loads them. */
+export async function readPluginSettings(
+  browser: SupportBrowser,
+): Promise<Record<string, unknown>> {
+  const data = await browser.executeObsidian(
+    async (
+      ctx: {
+        app?: {
+          plugins?: {
+            plugins?: Record<string, { loadData?: () => Promise<unknown> } | undefined>;
+          };
+        };
+      },
+      pluginId: string,
+    ) => (await ctx.app?.plugins?.plugins?.[pluginId]?.loadData?.()) ?? null,
+    PLUGIN_ID,
+  );
+  return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
+}
+
+/** Starts the throwaway service of `kind` unless it is already running. */
+export async function ensureRunning(
+  fixture: ServiceFixture,
+  kind: ServiceKind = "normal",
+): Promise<void> {
+  if (!fixture.isRunning()) await fixture.start({ kind });
+}
+
+/** Presses a destination tab and waits for its panel heading. */
+export async function visitDestination(
+  browser: SupportBrowser,
+  destinationId: string,
+  label: string,
+): Promise<void> {
+  if (!(await browser.execute(clickTab, destinationId))) {
+    throw new Error(`The ${label} tab is not on screen.`);
+  }
+  await pollUntil(
+    async () => squashDeep(await browser.execute(readPanelSnapshot)).heading === label,
+    uiWait(`the ${label} destination`),
+  );
+}
+
+/** The active destination panel, whitespace squashed. */
+export async function readPanel(browser: SupportBrowser): Promise<PanelSnapshot> {
+  return squashDeep(await browser.execute(readPanelSnapshot));
 }

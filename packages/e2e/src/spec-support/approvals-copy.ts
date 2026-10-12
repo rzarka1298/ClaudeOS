@@ -51,6 +51,8 @@ export function findDrift(
 }
 
 const COPY = "view/approvals-copy.ts";
+const SETTINGS = "view/settings-tab.ts";
+const TASKS_COPY = "view/tasks-copy.ts";
 
 export const APPROVALS_COPY = Object.freeze({
   // Locked labels (approvals-copy.ts).
@@ -147,23 +149,35 @@ export const APPROVALS_COPY = Object.freeze({
   overviewCommandSuffix: mirror("overviewCommandSuffix", "main.ts", "open-overview"),
   overviewLabel: mirror("overviewLabel", "view/destinations.ts", "Overview"),
 
-  // RED skeleton (05.2-06 task 3): empty until the GREEN commit.
-  expiring: "",
-  reasonStale: "",
-  reasonExpired: "",
-  approvalsGroupHeading: "",
-  tasksGroupHeading: "",
-  notifyApprovalsName: "",
-  sendTestApprovalName: "",
-  rebuildName: "",
-  rebuildStarted: "",
-  rebuildDonePrefix: "",
-  needsService: "",
-  serviceDisconnected: "",
-  tasksDisconnectedReason: "",
-  agentRunsLabel: "",
-  tasksLabel: "",
-  notifyApprovalsKey: "",
+  // Expiry and disabled reasons (approvals-copy.ts: EXPIRING, DISABLED_REASONS).
+  expiring: mirror("expiring", COPY, "Expiring…"),
+  reasonStale: mirror("reasonStale", COPY, "This list may be out of date. Refresh, then decide."),
+  reasonExpired: mirror("reasonExpired", COPY, "This request has expired."),
+
+  // The plugin's settings tab (view/settings-tab.ts): group headings, row names, rebuild status.
+  approvalsGroupHeading: mirror("approvalsGroupHeading", SETTINGS, "Approvals"),
+  tasksGroupHeading: mirror("tasksGroupHeading", SETTINGS, "Tasks"),
+  notifyApprovalsName: mirror("notifyApprovalsName", SETTINGS, "Approval notifications"),
+  notifyApprovalsKey: mirror("notifyApprovalsKey", SETTINGS, "notifyApprovals"),
+  sendTestApprovalName: mirror("sendTestApprovalName", SETTINGS, "Send a test approval"),
+  rebuildName: mirror("rebuildName", SETTINGS, "Rebuild task index"),
+  rebuildStarted: mirror("rebuildStarted", SETTINGS, "Rebuilding the task index…"),
+  rebuildDonePrefix: mirror("rebuildDonePrefix", SETTINGS, "Task index rebuilt."),
+  needsService: mirror(
+    "needsService",
+    SETTINGS,
+    "Needs the companion service, which isn't running.",
+  ),
+
+  // The Tasks destination and the tab labels (view/tasks-copy.ts, view/destinations.ts).
+  serviceDisconnected: mirror("serviceDisconnected", TASKS_COPY, "Service disconnected"),
+  tasksDisconnectedReason: mirror(
+    "tasksDisconnectedReason",
+    TASKS_COPY,
+    "The companion service isn't running.",
+  ),
+  agentRunsLabel: mirror("agentRunsLabel", "view/destinations.ts", "Agent runs"),
+  tasksLabel: mirror("tasksLabel", "view/destinations.ts", "Tasks"),
 });
 
 /**
