@@ -196,7 +196,8 @@ describe("notification assertions (Test 5)", () => {
   it("fails a wrong title, a body naming a target, offered actions and a missing permission", () => {
     expect(checkNotificationRecord({ ...good, title: "Something" }).ok).toBe(false);
     expect(
-      checkNotificationRecord({ ...good, body: "The dashboard asks to delete /Users/x/notes." }).ok,
+      checkNotificationRecord({ ...good, body: "The dashboard asks to delete /var/data/notes." })
+        .ok,
     ).toBe(false);
     expect(checkNotificationRecord(good, { forbidden: ["run a test"] }).ok).toBe(false);
     expect(checkNotificationRecord({ ...good, body: null }).ok).toBe(false);
