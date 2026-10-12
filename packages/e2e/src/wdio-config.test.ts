@@ -217,3 +217,47 @@ describe("wdio spawn wrapper (Test 7)", () => {
     expect(handlers.size).toBe(0);
   });
 });
+
+describe("the version-recording before hook (05.2-09 Test 8)", () => {
+  const fakeBrowser = (app: string, installer: string) => ({
+    getObsidianVersion: () => app,
+    getObsidianInstallerVersion: () => installer,
+  });
+
+  it("writes the observed versions into the run root's versions file", async () => {
+    const written: Array<{ path: string; text: string }> = [];
+    const config = buildWdioConfig(env(), {
+      ...opts,
+      versionsIo: {
+        read: () => null,
+        write: (path, text) => {
+          written.push({ path, text });
+        },
+      },
+    });
+    await config.before?.([], [], fakeBrowser("1.14.4", "1.13.7"));
+    expect(written).toHaveLength(1);
+    expect(written[0]?.path).toBe(join(ROOT, "versions.json"));
+    expect(JSON.parse(written[0]?.text ?? "{}")).toEqual({
+      app: "1.14.4",
+      installer: "1.13.7",
+      mismatches: [],
+    });
+  });
+
+  it("reconciles with an earlier record and records a drift between specs", async () => {
+    let stored: string | null = null;
+    const config = buildWdioConfig(env(), {
+      ...opts,
+      versionsIo: {
+        read: () => stored,
+        write: (_path, text) => {
+          stored = text;
+        },
+      },
+    });
+    await config.before?.([], [], fakeBrowser("1.14.4", "1.13.7"));
+    await config.before?.([], [], fakeBrowser("1.15.0", "1.13.7"));
+    expect(JSON.parse(stored ?? "{}").mismatches).toContain("app-changed-between-specs");
+  });
+});

@@ -1,9 +1,11 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { assertRunRootShape } from "./isolation-guards.js";
 import { buildLaunchCapabilities, type LaunchCapability, type LaunchFs } from "./launch-options.js";
 import { parseProfile } from "./profile.js";
 import { REPO_ROOT } from "./repo-paths.js";
 import { SPIKE_DECISIONS, type SpikeDecisions } from "./spike-decisions.js";
+import { formatVersions, parseVersions, reconcileVersions } from "./versions.js";
 
 /**
  * The real wdio configuration, built by a pure function from the run environment (05.2-03,
@@ -40,6 +42,20 @@ export interface WdioRunConfig {
   logLevel: "warn";
   specFileRetries: 0;
   waitforTimeout: number;
+  /** Records the app and installer versions each spec's session reports (D-08). */
+  before?: (capabilities: unknown, specs: string[], browser: VersionBrowser) => Promise<void>;
+}
+
+/** The two service getters the version hook reads. */
+export interface VersionBrowser {
+  getObsidianVersion(): string;
+  getObsidianInstallerVersion(): string;
+}
+
+/** Reads and writes the run root's versions file; tests inject it. */
+export interface VersionsIo {
+  read: (path: string) => string | null;
+  write: (path: string, text: string) => void;
 }
 
 export interface WdioConfigOptions {
@@ -49,6 +65,8 @@ export interface WdioConfigOptions {
   cacheDir?: string | undefined;
   /** Tests only: realpath and readdir for the launch guards; defaults to the real filesystem. */
   fs?: LaunchFs | undefined;
+  /** Tests only: where the before hook reads and writes versions.json. */
+  versionsIo?: VersionsIo | undefined;
 }
 
 const NOT_RUNNER =
@@ -65,6 +83,36 @@ function requireInside(runRoot: string, label: string, value: string | undefined
     throw new Error(`Refusing ${label} that is missing or outside the run root.`);
   }
   return value;
+}
+
+const REAL_VERSIONS_IO: VersionsIo = {
+  read: (path) => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      return null;
+    }
+  },
+  write: (path, text) => {
+    writeFileSync(path, text, { mode: 0o600 });
+  },
+};
+
+/** The before hook: reconcile what this session reports with the record so far (D-08). */
+function versionHook(
+  versionsPath: string,
+  decisions: SpikeDecisions,
+  io: VersionsIo,
+): NonNullable<WdioRunConfig["before"]> {
+  return async (_capabilities, _specs, browser) => {
+    const observed = {
+      app: browser.getObsidianVersion(),
+      installer: browser.getObsidianInstallerVersion(),
+    };
+    const text = io.read(versionsPath);
+    const existing = text === null ? undefined : parseVersions(text);
+    io.write(versionsPath, formatVersions(reconcileVersions(existing, observed, decisions)));
+  };
 }
 
 export function buildWdioConfig(
@@ -129,5 +177,10 @@ export function buildWdioConfig(
     // D-11: a failed look or assertion is a result, never something to retry away.
     specFileRetries: 0,
     waitforTimeout: 10_000,
+    before: versionHook(
+      join(runRoot, "versions.json"),
+      decisions,
+      options.versionsIo ?? REAL_VERSIONS_IO,
+    ),
   };
 }
