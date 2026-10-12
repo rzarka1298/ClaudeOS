@@ -35,3 +35,21 @@ describe("cross-cutting spec titles (Test 5)", () => {
     for (const item of items) expect(PLANNED_CROSS).toContain(item);
   });
 });
+
+describe("the whole cross set (Task 3, Test 6)", () => {
+  it("notification-look holds exactly [06-UAT#01] and synthetic-session exactly [06-UAT#11]", () => {
+    expect(titlesOf("notification-look").map(itemOf)).toEqual([1]);
+    expect(titlesOf("synthetic-session").map(itemOf)).toEqual([11]);
+    expect(titlesOf("notification-look")[0]?.startsWith("[06-UAT#01]")).toBe(true);
+    expect(titlesOf("synthetic-session")[0]?.startsWith("[06-UAT#11]")).toBe(true);
+  });
+
+  it("with cross-cutting, the three files cover items 1, 11, 12, 20, 22, 23 and 25 once each", () => {
+    const all = [
+      ...titlesOf("cross-cutting"),
+      ...titlesOf("notification-look"),
+      ...titlesOf("synthetic-session"),
+    ].map(itemOf);
+    expect(all.sort((a, b) => a - b)).toEqual([1, 11, 12, 20, 22, 23, 25]);
+  });
+});
