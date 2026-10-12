@@ -46,6 +46,12 @@ export interface StatusInput {
   readonly runClass: RunClass;
   /** True for an item only the full profile runs (the 10,000-task item, D-13). */
   readonly fullProfileOnly?: boolean;
+  /**
+   * Every spec test title expected for this item (from `extractSpecTitles`). When supplied, an
+   * item cannot pass while any of them has no record (a hook failure or killed worker leaves no
+   * `afterEach` record). The caller should always supply it.
+   */
+  readonly expectedTitles?: readonly string[];
 }
 
 export interface ResolveInput {
@@ -147,6 +153,17 @@ export function resolveItemStatus(input: ResolveInput): ItemResolution {
   const isLook = item.runClass === "auto+look";
   if (isLook && verdict?.verdict === "fail") {
     return resolution(item.number, "fail", "the look verdict failed");
+  }
+  const expected = item.expectedTitles ?? [];
+  const recorded = new Set(matching.map((entry) => entry.title));
+  const present = new Set(expected.filter((title) => recorded.has(title)));
+  const expectedCount = new Set(expected).size;
+  if (expectedCount > 0 && present.size < expectedCount) {
+    return resolution(
+      item.number,
+      "inconclusive",
+      `${present.size} of ${expectedCount} expected tests recorded`,
+    );
   }
   const unfinished = matching.filter((entry) => entry.state !== "passed");
   if (unfinished.length > 0) {
