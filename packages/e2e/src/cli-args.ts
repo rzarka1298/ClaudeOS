@@ -253,3 +253,26 @@ export function parseRatifyArgs(argv: readonly string[]): RatifyArgs {
     writeResults: values["write-results"] === true,
   };
 }
+
+export interface PreflightArgs {
+  requireRealService: boolean;
+}
+
+export function parsePreflightArgs(argv: readonly string[]): PreflightArgs {
+  const values = parseStrict(argv, { "require-real-service": { type: "boolean" } });
+  return { requireRealService: values["require-real-service"] === true };
+}
+
+export interface LintArgs {
+  script: string;
+  specsDir: string;
+}
+
+/** Both flags are required and nothing is discovered, so a typo cannot lint nothing. */
+export function parseLintArgs(argv: readonly string[]): LintArgs {
+  const values = parseStrict(argv, {
+    script: { type: "string" },
+    "specs-dir": { type: "string" },
+  });
+  return { script: requireText(values, "script"), specsDir: requireText(values, "specs-dir") };
+}

@@ -1,6 +1,7 @@
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -12,9 +13,12 @@ import { pathToFileURL } from "node:url";
 import { type AutoOutcome, applyAutoResults } from "./apply-auto-results.js";
 import { applyRatification } from "./apply-ratification.js";
 import { buildHash } from "./build-hash.js";
+import { realCacheFiles, verifyObsidianCache } from "./cache-verify.js";
 import {
   LOOK_USAGE,
+  parseLintArgs,
   parseLookArgs,
+  parsePreflightArgs,
   parseRatifyArgs,
   parseReportArgs,
   parseRunArgs,
@@ -23,9 +27,16 @@ import {
 } from "./cli-args.js";
 import { type GitFacts, readGitFacts } from "./git-facts.js";
 import { assertInstallerVersionMatches, readInstalledInstallerVersion } from "./installed-app.js";
+import { lintTagsCommand } from "./lint-command.js";
 import { listPending, recordVerdict, writeLookHandoff } from "./look.js";
 import { PLUGIN_STAGE_FILES, stagePlugin } from "./plugin-data.js";
-import type { PreflightOptions, PreflightOutcome, PreflightPorts } from "./preflight.js";
+import {
+  createPreflightPorts,
+  type PreflightOptions,
+  type PreflightOutcome,
+  type PreflightPorts,
+  runPreflight,
+} from "./preflight.js";
 import { ratifyReport } from "./ratify.js";
 import { HOOK_ENTRY, PLUGIN_BUILD_DIR, REPO_ROOT, SERVICE_ENTRY } from "./repo-paths.js";
 import { parseReport } from "./report-io.js";
@@ -52,6 +63,7 @@ import { SPIKE_DECISIONS } from "./spike-decisions.js";
 import { generateUatVault } from "./uat-vault.js";
 import { isolatePluginData } from "./vault-plugin-data.js";
 import { parseVersions } from "./versions.js";
+import { OBSIDIAN_CACHE_DIR } from "./wdio-config.js";
 import { spawnWdio } from "./wdio-spawn.js";
 
 /**
@@ -132,8 +144,7 @@ export function createRunPorts(): RunPorts {
         assertInstallerVersionMatches(decisions.installerVersion, readInstalledInstallerVersion());
       }
     },
-    // The download cache checksum is wired in by the cache-verify module (Task 3).
-    verifyCache: () => ({ ok: true, note: "not checked" }),
+    verifyCache: () => verifyObsidianCache(decisions, realCacheFiles(OBSIDIAN_CACHE_DIR)),
     purgeShots: (base) => {
       purgeStaleShotDirs({ base: base ?? tmpdir(), keepRunIds: [] });
     },
@@ -231,7 +242,13 @@ const REAL_IO: CliIo = {
     readGitFacts({ cwd: REPO_ROOT, ...(since === undefined ? {} : { since }) }),
   now: () => new Date(),
   tmpDir: () => tmpdir(),
-  listFiles: () => [],
+  listFiles: (dir) => {
+    try {
+      return readdirSync(dir);
+    } catch {
+      return [];
+    }
+  },
 };
 
 function ioFor(deps: CliDeps): CliIo {
@@ -344,18 +361,38 @@ const ratifyCommand: CommandHandler = async (argv, deps) => {
   return 0;
 };
 
-const notYet: CommandHandler = async (_argv, deps) => {
-  deps.write("This command is not available yet.");
-  return 2;
+const preflightCommand: CommandHandler = async (argv, deps) => {
+  const args = parsePreflightArgs(argv);
+  const ports = (deps.createPreflightPorts ?? createPreflightPorts)();
+  const outcome = await (deps.runPreflight ?? runPreflight)(
+    { requireRealService: args.requireRealService },
+    ports,
+  );
+  for (const line of outcome.lines) deps.write(line);
+  deps.write(outcome.ok ? "Preflight passed." : "Preflight failed.");
+  return outcome.ok ? 0 : 1;
+};
+
+const lintTagsHandler: CommandHandler = async (argv, deps) => {
+  const args = parseLintArgs(argv);
+  const io = ioFor(deps);
+  const result = lintTagsCommand({
+    scriptPath: args.script,
+    specsDir: args.specsDir,
+    readFile: io.readText,
+    listFiles: io.listFiles,
+  });
+  for (const line of result.lines) deps.write(line);
+  return result.exitCode;
 };
 
 export const COMMANDS: Readonly<Record<string, CommandHandler>> = {
   run: runCommand,
-  preflight: notYet,
+  preflight: preflightCommand,
   look: lookCommand,
   report: reportCommand,
   ratify: ratifyCommand,
-  "lint-tags": notYet,
+  "lint-tags": lintTagsHandler,
 };
 
 export async function main(argv: readonly string[], deps: CliDeps = {}): Promise<number> {
