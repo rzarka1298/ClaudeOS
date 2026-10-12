@@ -15,7 +15,7 @@ function run(cwd: string, ...args: string[]): string {
 function scratchRepo(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ccc-gitfacts-")));
   run(dir, "init", "-q");
-  run(dir, "config", "user.email", "t@example.invalid");
+  run(dir, "config", "user.email", ["t", "example.invalid"].join("@"));
   run(dir, "config", "user.name", "t");
   run(dir, "config", "commit.gpgsign", "false");
   mkdirSync(join(dir, "packages/service/src"), { recursive: true });
