@@ -40,6 +40,20 @@ export interface WdioRunConfig {
   logLevel: "warn";
   specFileRetries: 0;
   waitforTimeout: number;
+  /** Records the app and installer versions each spec's session reports (D-08). */
+  before?: (capabilities: unknown, specs: string[], browser: VersionBrowser) => Promise<void>;
+}
+
+/** The two service getters the version hook reads. */
+export interface VersionBrowser {
+  getObsidianVersion(): string;
+  getObsidianInstallerVersion(): string;
+}
+
+/** Reads and writes the run root's versions file; tests inject it. */
+export interface VersionsIo {
+  read: (path: string) => string | null;
+  write: (path: string, text: string) => void;
 }
 
 export interface WdioConfigOptions {
@@ -49,6 +63,8 @@ export interface WdioConfigOptions {
   cacheDir?: string | undefined;
   /** Tests only: realpath and readdir for the launch guards; defaults to the real filesystem. */
   fs?: LaunchFs | undefined;
+  /** Tests only: where the before hook reads and writes versions.json. */
+  versionsIo?: VersionsIo | undefined;
 }
 
 const NOT_RUNNER =
