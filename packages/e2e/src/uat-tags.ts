@@ -53,6 +53,7 @@ export const TAG_CODES = {
   autoResultInvalid: "AUTO_RESULT_INVALID",
   autoResultPending: "AUTO_RESULT_PENDING",
   tagDuplicate: "TAG_DUPLICATE",
+  itemDuplicate: "ITEM_DUPLICATE",
 } as const;
 
 export interface TagFinding {
@@ -202,7 +203,9 @@ function readItem(lines: readonly string[], headingLine: number, endLine: number
 }
 
 export function parseUatScript(text: string): ParsedScript {
-  const lines = text.split("\n");
+  // A CRLF script must parse like an LF one: `.` does not match `\r`, so item headings and
+  // tag lines would otherwise vanish (Wave 2 review LOW-7).
+  const lines = text.split(/\r?\n/);
   const headings: number[] = [];
   lines.forEach((line, index) => {
     if (ITEM_HEADING.test(line)) headings.push(index);
@@ -233,6 +236,21 @@ function finding(code: string, item: number, message: string): TagFinding {
 
 export function validateTags(items: readonly UatItem[]): TagFinding[] {
   const found: TagFinding[] = [];
+  const seen = new Set<number>();
+  const repeated = new Set<number>();
+  for (const item of items) {
+    if (seen.has(item.number)) repeated.add(item.number);
+    seen.add(item.number);
+  }
+  for (const number of repeated) {
+    found.push(
+      finding(
+        TAG_CODES.itemDuplicate,
+        number,
+        `Item ${number} appears more than once in the script.`,
+      ),
+    );
+  }
   for (const item of items) {
     const n = item.number;
     for (const key of item.duplicateTags) {
