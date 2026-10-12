@@ -343,6 +343,7 @@ const ratifyCommand: CommandHandler = async (argv, deps) => {
     date,
     currentHead: facts.head,
     changedFiles: facts.changedSince,
+    currentClean: facts.clean,
   });
   if (!result.ok) {
     for (const reason of result.reasons) deps.write(`Refused: ${reason}.`);

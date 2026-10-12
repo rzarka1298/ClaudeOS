@@ -47,7 +47,12 @@ const GOOD = [row(1, "pass", "auto+look"), row(5, "pass"), row(21, "skipped-prof
 
 function check(
   text: string,
-  over: Partial<{ runId: string; currentHead: string; changedFiles: string[] | null }> = {},
+  over: Partial<{
+    runId: string;
+    currentHead: string;
+    changedFiles: string[] | null;
+    currentClean: boolean | undefined;
+  }> = {},
 ) {
   const parsed: ParsedReport = parseReport(text);
   return checkRatifiable({
@@ -55,6 +60,7 @@ function check(
     runId: over.runId ?? "0123abcd",
     currentHead: over.currentHead ?? HEAD,
     changedFiles: over.changedFiles === undefined ? [] : over.changedFiles,
+    currentClean: "currentClean" in over ? over.currentClean : true,
   });
 }
 
@@ -98,6 +104,18 @@ describe("checkRatifiable (Test 4)", () => {
     );
   });
 
+  it("refuses when the working tree now has uncommitted changes or its state is unknown", () => {
+    expect(check(report(GOOD), { currentClean: false }).join(" ")).toMatch(/uncommitted/);
+    expect(check(report(GOOD), { currentClean: undefined }).join(" ")).toMatch(/unknown/);
+  });
+
+  it("refuses a report whose recorded clean flag is false or not a boolean, even at the same HEAD", () => {
+    const dirty = report(GOOD, { gitClean: false });
+    expect(check(dirty).length).toBeGreaterThan(0);
+    const odd = report(GOOD).replace("git-clean: true", "git-clean: maybe");
+    expect(check(odd).join(" ")).toMatch(/clean|dirty/);
+  });
+
   it("refuses an already ratified report", () => {
     const ratified = report(GOOD).replace("ratified: pending", "ratified: ok (2026-10-12)");
     expect(check(ratified).join(" ")).toMatch(/already ratified/);
@@ -137,6 +155,7 @@ describe("ratifyReport (Test 5)", () => {
     date: "2026-10-12",
     currentHead: HEAD,
     changedFiles: [] as string[],
+    currentClean: true as boolean | undefined,
   };
 
   it("writes the statement and the date into the front matter and nothing else", () => {
@@ -157,6 +176,11 @@ describe("ratifyReport (Test 5)", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reasons.length).toBeGreaterThan(0);
+  });
+
+  it("refuses when the current tree is dirty or unknown", () => {
+    expect(ratifyReport(report(GOOD), { ...input, currentClean: false }).ok).toBe(false);
+    expect(ratifyReport(report(GOOD), { ...input, currentClean: undefined }).ok).toBe(false);
   });
 
   it("refuses an empty or multi-line statement", () => {

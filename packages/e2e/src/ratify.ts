@@ -19,9 +19,18 @@ export interface RatifyInput {
   currentHead: string;
   /** Files changed since the run's HEAD, or null when they could not be listed. */
   changedFiles: string[] | null;
+  /** Whether the tracked files match HEAD now; false or unknown refuses (Wave 2 MEDIUM-4). */
+  currentClean: boolean | undefined;
 }
 
 export type RatifyResult = { ok: true; text: string } | { ok: false; reasons: string[] };
+
+/** The report records the flag as text; only the exact words count, anything else is unknown. */
+function cleanFlag(value: string | undefined): boolean | undefined {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
 
 function itemList(numbers: readonly number[]): string {
   return numbers.join(", ");
@@ -32,6 +41,7 @@ export function checkRatifiable(input: {
   runId: string;
   currentHead: string;
   changedFiles: string[] | null;
+  currentClean: boolean | undefined;
 }): string[] {
   const { report } = input;
   const front = report.frontMatter;
@@ -61,6 +71,8 @@ export function checkRatifiable(input: {
       recordedHead: front["git-head"],
       currentHead: input.currentHead,
       changedFiles: input.changedFiles,
+      recordedClean: cleanFlag(front["git-clean"]),
+      currentClean: input.currentClean,
     });
     if (!staleness.current) {
       const files =
@@ -98,6 +110,7 @@ export function ratifyReport(text: string, input: RatifyInput): RatifyResult {
     runId: input.runId,
     currentHead: input.currentHead,
     changedFiles: input.changedFiles,
+    currentClean: input.currentClean,
   });
   if (reasons.length > 0) return { ok: false, reasons };
   return { ok: true, text: setRatified(text, input.statement, input.date) };

@@ -369,6 +369,20 @@ describe("ratify command (Test 8)", () => {
     expect(files["/s/06-UAT.md"]).toContain("result: pass - auto run 0123abcd");
   });
 
+  it("refuses when the working tree is dirty now, changing nothing", async () => {
+    const files = { "/r/report.md": reportText(allPass) };
+    const before = files["/r/report.md"];
+    const { code, out } = await run(
+      ["ratify", "--run", "0123abcd", "--report", "/r/report.md", "--statement", "ok"],
+      memoryIo(files, {
+        readGitFacts: async () => ({ head: HEAD, clean: false, changedSince: [] }),
+      }),
+    );
+    expect(code).toBe(1);
+    expect(out).toMatch(/uncommitted/);
+    expect(files["/r/report.md"]).toBe(before);
+  });
+
   it("refuses a dirty-tree run", async () => {
     const files = { "/r/report.md": reportText(allPass, { gitClean: false }) };
     const { code } = await run(
