@@ -76,8 +76,8 @@ export function installNotificationSpy(): boolean {
   // The constructible wrapper is returned from an immediately-invoked arrow instead of being
   // bound to a name: esbuild `keepNames` (wdio's tsx loader) rewrites a named function
   // expression to `__name(function ...)`, a helper that does not exist in the renderer.
+  // biome-ignore lint/complexity/useArrowFunction: the wrapper is called with `new`, so it must be a constructible function, not an arrow.
   const Wrapper = (() =>
-    // biome-ignore lint/complexity/useArrowFunction: the wrapper is called with `new`, so it must be a constructible function, not an arrow.
     function (title: string, options?: { body?: string; tag?: string }) {
       const instance = new Original(title, options) as { onclick?: unknown };
       kept.push({

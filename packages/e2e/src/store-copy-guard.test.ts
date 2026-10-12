@@ -5,10 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { realRuntimeDir } from "./isolation-guards.js";
 import {
   AUDIT_ROWS_SQL,
+  copyStore,
   EFFECT_COUNT_SQL,
   EFFECTS_PER_PROPOSAL_SQL,
   EXPIRED_EVENTS_SQL,
-  copyStore,
   queryStore,
 } from "./store-copy.js";
 

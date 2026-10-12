@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CleanupResult } from "./keychain-cleanup.js";
 import { appendLedger, type ProcessEntry } from "./ledger.js";
-import { type SandboxOptions, type Stoppable, stopWithDeadline, withSandbox } from "./sandbox.js";
 import { createRunRoot } from "./run-root.js";
+import { type SandboxOptions, type Stoppable, stopWithDeadline, withSandbox } from "./sandbox.js";
 import { createServiceFixture } from "./service-fixture.js";
 import { executeSweep, type SweepPlan } from "./sweep.js";
 
