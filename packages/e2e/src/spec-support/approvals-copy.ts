@@ -146,6 +146,24 @@ export const APPROVALS_COPY = Object.freeze({
   ),
   overviewCommandSuffix: mirror("overviewCommandSuffix", "main.ts", "open-overview"),
   overviewLabel: mirror("overviewLabel", "view/destinations.ts", "Overview"),
+
+  // RED skeleton (05.2-06 task 3): empty until the GREEN commit.
+  expiring: "",
+  reasonStale: "",
+  reasonExpired: "",
+  approvalsGroupHeading: "",
+  tasksGroupHeading: "",
+  notifyApprovalsName: "",
+  sendTestApprovalName: "",
+  rebuildName: "",
+  rebuildStarted: "",
+  rebuildDonePrefix: "",
+  needsService: "",
+  serviceDisconnected: "",
+  tasksDisconnectedReason: "",
+  agentRunsLabel: "",
+  tasksLabel: "",
+  notifyApprovalsKey: "",
 });
 
 /**

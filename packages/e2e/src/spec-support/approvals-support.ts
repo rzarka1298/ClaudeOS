@@ -201,6 +201,23 @@ export function findNewNotification(
   return -1;
 }
 
+// RED skeleton (05.2-06 task 3): wrong answers until the GREEN commit.
+export type RebuildStatus =
+  | { phase: "rebuilding" }
+  | { phase: "rebuilt"; tasks: number; attention: number };
+
+export function parseRebuildStatus(_text: string): RebuildStatus | null {
+  return null;
+}
+
+export function settledWithinGrace(
+  _expiresAtMs: number,
+  _observedAtMs: number,
+  _graceMs: number,
+): boolean {
+  return false;
+}
+
 /** Reads the Agent runs count chip's visible text: `3`, or `9+` when capped; null otherwise. */
 export function parseCountChip(text: string): { count: number; capped: boolean } | null {
   const match = /^(\d+)(\+?)$/.exec(text.trim());

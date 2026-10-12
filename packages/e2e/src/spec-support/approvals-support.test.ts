@@ -9,6 +9,8 @@ import {
   findNewNotification,
   isExactlyOneNavigation,
   parseCountChip,
+  parseRebuildStatus,
+  settledWithinGrace,
   squashDeep,
 } from "./approvals-support.js";
 
@@ -144,6 +146,52 @@ describe("findNewestMirrorNote (Task 2 Test 2)", () => {
     expect(findNewestMirrorNote(files, "CCCCCCCCCCCCCCCCCCCCCCCCC")).toBeNull();
     const longer = [{ name: "x.md", mtimeMs: 1, content: link("AAAAAAAAAAAAAAAAAAAAAAAAAB") }];
     expect(findNewestMirrorNote(longer, "AAAAAAAAAAAAAAAAAAAAAAAAA")).toBeNull();
+  });
+});
+
+describe("parseRebuildStatus (Task 3 Test 2)", () => {
+  it("recognises the rebuilding status", () => {
+    expect(parseRebuildStatus("Rebuilding the task index…")).toEqual({ phase: "rebuilding" });
+  });
+
+  it("reads the rebuilt status with and without the attention suffix", () => {
+    expect(parseRebuildStatus("Task index rebuilt. 302 tasks found.")).toEqual({
+      phase: "rebuilt",
+      tasks: 302,
+      attention: 0,
+    });
+    expect(
+      parseRebuildStatus("Task index rebuilt. 302 tasks found. 2 notes need attention."),
+    ).toEqual({ phase: "rebuilt", tasks: 302, attention: 2 });
+  });
+
+  it("reads the singular forms", () => {
+    expect(parseRebuildStatus("Task index rebuilt. 1 task found. 1 note needs attention.")).toEqual(
+      {
+        phase: "rebuilt",
+        tasks: 1,
+        attention: 1,
+      },
+    );
+  });
+
+  it("returns null for any other text", () => {
+    expect(parseRebuildStatus("Couldn't rebuild the task index.")).toBeNull();
+    expect(parseRebuildStatus("Task index rebuilt. many tasks found.")).toBeNull();
+    expect(parseRebuildStatus("")).toBeNull();
+  });
+});
+
+describe("settledWithinGrace (Task 3 Test 2)", () => {
+  it("is true when the change was seen after the countdown reached zero and within the grace", () => {
+    expect(settledWithinGrace(1_000, 1_000, 3_000)).toBe(true);
+    expect(settledWithinGrace(1_000, 3_900, 3_000)).toBe(true);
+    expect(settledWithinGrace(1_000, 4_000, 3_000)).toBe(true);
+  });
+
+  it("is false when it was seen before zero or after the grace", () => {
+    expect(settledWithinGrace(1_000, 999, 3_000)).toBe(false);
+    expect(settledWithinGrace(1_000, 4_001, 3_000)).toBe(false);
   });
 });
 

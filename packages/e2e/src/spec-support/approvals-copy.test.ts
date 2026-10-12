@@ -41,6 +41,27 @@ describe("approvals copy mirror, task 2 strings (Task 2 Test 1)", () => {
   });
 });
 
+describe("approvals copy mirror, task 3 strings (Task 3 Test 1)", () => {
+  it("holds the expiry, disconnect and settings literals as the plugin words them", () => {
+    expect(APPROVALS_COPY.expiring).toBe("Expiring…");
+    expect(APPROVALS_COPY.reasonStale).toBe("This list may be out of date. Refresh, then decide.");
+    expect(APPROVALS_COPY.reasonExpired).toBe("This request has expired.");
+    expect(APPROVALS_COPY.approvalsGroupHeading).toBe("Approvals");
+    expect(APPROVALS_COPY.tasksGroupHeading).toBe("Tasks");
+    expect(APPROVALS_COPY.notifyApprovalsName).toBe("Approval notifications");
+    expect(APPROVALS_COPY.sendTestApprovalName).toBe("Send a test approval");
+    expect(APPROVALS_COPY.rebuildName).toBe("Rebuild task index");
+    expect(APPROVALS_COPY.rebuildStarted).toBe("Rebuilding the task index…");
+    expect(APPROVALS_COPY.rebuildDonePrefix).toBe("Task index rebuilt.");
+    expect(APPROVALS_COPY.needsService).toBe("Needs the companion service, which isn't running.");
+    expect(APPROVALS_COPY.serviceDisconnected).toBe("Service disconnected");
+    expect(APPROVALS_COPY.tasksDisconnectedReason).toBe("The companion service isn't running.");
+    expect(APPROVALS_COPY.agentRunsLabel).toBe("Agent runs");
+    expect(APPROVALS_COPY.tasksLabel).toBe("Tasks");
+    expect(APPROVALS_COPY.notifyApprovalsKey).toBe("notifyApprovals");
+  });
+});
+
 describe("approvals copy mirror (Test 1)", () => {
   it("holds the task 1 literals exactly as the plugin words them", () => {
     expect(APPROVALS_COPY.sectionHeading).toBe("Approvals");
