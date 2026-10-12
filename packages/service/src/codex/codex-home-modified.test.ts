@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFakeCodexHome, type FakeCodexHome, recordingFs } from "../test-support/fake-codex-home.js";
+import {
+  createFakeCodexHome,
+  type FakeCodexHome,
+  recordingFs,
+} from "../test-support/fake-codex-home.js";
 import { createCodexHomePort } from "./codex-home.js";
 
 let home: FakeCodexHome | undefined;

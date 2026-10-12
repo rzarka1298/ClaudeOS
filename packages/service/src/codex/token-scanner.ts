@@ -641,7 +641,9 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       );
       return none;
     }
-    const truncated = datedCount >= MAX_ROLLOUT_LIST || refs.length >= MAX_ROLLOUT_LIST;
+    // Each listing is judged against the cap on its own: two complete listings that sum past it are complete.
+    const truncated =
+      datedCount >= MAX_ROLLOUT_LIST || refs.length - datedCount >= MAX_ROLLOUT_LIST;
     if (truncated)
       logger.warn({ cap: refs.length }, "codex rollout listing truncated; coverage held");
 

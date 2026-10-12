@@ -513,6 +513,15 @@ export function createCodexHomePort(options: {
             visited += 1;
             if (visited > MAX_ROLLOUT_LIST_DAYS * 10) return found;
             const dir = join(root, SESSIONS_DIR, year, month, dom);
+            // Containment first: a symlinked day folder must resolve inside sessions before it is read.
+            let resolvedDay: string;
+            try {
+              resolvedDay = fs.realpath(dir);
+            } catch (error) {
+              if (isMissing(error)) continue;
+              throw unreadable();
+            }
+            if (!checkPathContainmentResolved(resolvedDay, sessions).contained) continue;
             let entries: readonly CodexDirEntry[];
             try {
               entries = fs.readDir(dir);

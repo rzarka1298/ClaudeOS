@@ -34,8 +34,8 @@ describe("05.1-post: listing truncation is per listing", () => {
     });
     const outcome = await harness.scanner.sweep();
     expect(outcome.completed).toBe(true);
-    expect(queryCodexCoverage(harness.temp.db, "2026-10-10", "2026-10-10").map((d) => d.status)).toEqual([
-      "covered",
-    ]);
+    expect(
+      queryCodexCoverage(harness.temp.db, "2026-10-10", "2026-10-10").map((d) => d.status),
+    ).toEqual(["covered"]);
   });
 });
