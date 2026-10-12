@@ -29,6 +29,8 @@ export interface StartServiceArgs {
   dbPath: string;
   env: Record<string, string>;
   waitAttempts?: number;
+  /** Called with the service pid as soon as it is spawned, before the socket is ready. */
+  onSpawn?: (pid: number) => void | Promise<void>;
 }
 
 export interface ServiceFixtureDeps {
@@ -41,7 +43,9 @@ export interface ServiceFixtureDeps {
 export type FixtureSandbox = Pick<
   SandboxHandle,
   "paths" | "account" | "registerService" | "unregister"
->;
+> & {
+  recordSpawn?: SandboxHandle["recordSpawn"];
+};
 
 export interface ServiceFixture {
   start(options?: StartOptions): Promise<void>;
@@ -100,6 +104,8 @@ export function createServiceFixture(
       env: buildServiceEnv(paths, sandbox.account, options.kind ?? "normal"),
     };
     if (options.waitAttempts !== undefined) args.waitAttempts = options.waitAttempts;
+    const record = sandbox.recordSpawn;
+    if (record !== undefined) args.onSpawn = (pid) => record.call(sandbox, pid, SERVICE_ENTRY);
     let handle: Stoppable;
     try {
       handle = await startService(args);

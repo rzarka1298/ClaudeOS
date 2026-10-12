@@ -66,6 +66,9 @@ function baseOptions(
       Promise.resolve("deleted"),
     ),
     wait: NEVER,
+    // Unit tests never signal a real pid and never register real signal handlers.
+    sendTerm: () => Promise.reject(new Error("unit tests send no signals")),
+    signals: { on: () => undefined, off: () => undefined },
     ...overrides,
   };
 }
@@ -212,7 +215,10 @@ describe("withSandbox tracer (Test 9)", () => {
 
   it("flags a process that merely names the run root, and excludes the runner itself", async () => {
     const table: ProcessEntry[] = [];
-    const options = baseOptions(table);
+    const options = baseOptions(table, {
+      sendTerm: () => Promise.resolve(),
+      wait: () => Promise.resolve(),
+    });
     let root = "";
     const outcome = await withSandbox(options, async (sandbox) => {
       root = sandbox.paths.root;

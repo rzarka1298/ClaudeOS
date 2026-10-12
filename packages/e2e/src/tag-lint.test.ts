@@ -197,9 +197,9 @@ describe("extractSpecTitles (Task 3, Test 5)", () => {
 
   it("groups titles by file for lintTags", () => {
     const grouped = groupTitles([
-      { file: "a", title: "[06-UAT#01] x" },
-      { file: "b", title: "[06-UAT#02] y" },
-      { file: "a", title: "[06-UAT#03] z" },
+      { file: "a", title: "[06-UAT#01] x", only: false },
+      { file: "b", title: "[06-UAT#02] y", only: false },
+      { file: "a", title: "[06-UAT#03] z", only: false },
     ]);
     expect(Object.fromEntries(grouped)).toEqual({
       a: ["[06-UAT#01] x", "[06-UAT#03] z"],

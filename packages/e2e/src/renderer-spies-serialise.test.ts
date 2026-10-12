@@ -109,8 +109,8 @@ describe("renderer spies survive wdio's tsx/esbuild keepNames transform (HIGH-1)
       "clearConsoleErrors",
     ]) {
       const fn = mod[name] as (...args: never[]) => unknown;
-      const args = name === "stubDocumentHasFocus" ? [false] : [];
-      const script = serialise(fn, ...args);
+      const args: unknown[] = name === "stubDocumentHasFocus" ? [false] : [];
+      const script = (serialise as (f: unknown, ...a: unknown[]) => string)(fn, ...args);
       expect(() => vm.runInContext(`(function(){${script}})()`, ctx), name).not.toThrow();
     }
   });

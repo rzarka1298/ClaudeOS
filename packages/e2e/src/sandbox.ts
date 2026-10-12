@@ -8,6 +8,7 @@ import {
 import { type CleanupResult, deleteUatAccount } from "./keychain-cleanup.js";
 import {
   appendLedger,
+  appendPidOnce,
   findLeaks,
   findRunRootProcesses,
   type Leak,
@@ -18,7 +19,7 @@ import {
 } from "./ledger.js";
 import { readProcessTable } from "./process-table.js";
 import { createRunRoot, type RunRootPaths, removeRunRoot } from "./run-root.js";
-import { runStaleSweep } from "./sweep.js";
+import { isSignalablePid, matchesLedgeredProcess, runStaleSweep, terminateByPid } from "./sweep.js";
 
 /**
  * withSandbox (05.2-03, D-05, D-06): create the guarded run root, ledger the run and its
@@ -44,6 +45,8 @@ export interface SandboxHandle {
   account: string;
   registerService(handle: Stoppable, marker?: string): Promise<void>;
   registerChild(role: string, handle: Stoppable, marker?: string): Promise<void>;
+  /** Ledgers a service pid the moment it spawns, before its socket is ready (MEDIUM-2b). */
+  recordSpawn(pid: number, marker?: string): Promise<void>;
   registerAccount(account: string): Promise<void>;
   registerDir(path: string): Promise<void>;
   /** Drops a handle that has already exited so teardown does not wait on it again. */
@@ -77,6 +80,17 @@ export interface SandboxOptions {
   wait?: (ms: number) => Promise<void>;
   stopDeadlineMs?: number;
   sweep?: SweepFn;
+  /** The pid-based TERM used for ledgered leftovers; defaults to the sweep's single signal. */
+  sendTerm?: (pid: number) => Promise<void>;
+  /** Where SIGINT and SIGTERM are caught so an interrupted run still tears down. */
+  signals?: SignalSource;
+  /** Called with 128 + signal number after a signal-driven teardown; defaults to process.exit. */
+  exit?: (code: number) => void;
+}
+
+export interface SignalSource {
+  on(signal: "SIGINT" | "SIGTERM", handler: () => void): unknown;
+  off(signal: "SIGINT" | "SIGTERM", handler: () => void): unknown;
 }
 
 export interface SandboxOutcome<T> {
@@ -104,20 +118,30 @@ function isStrictlyInside(outer: string, inner: string): boolean {
   return b !== a && b.startsWith(a.endsWith(sep) ? a : `${a}${sep}`);
 }
 
-/** SIGTERM through the handle, then kill after the deadline when it has not exited. */
+/**
+ * SIGTERM through the handle, then kill after the deadline when it has not exited. A rejected
+ * stop counts as not exited, and kill has its own deadline: a process that survives both makes
+ * this throw so the caller records it instead of hanging the teardown (Wave 2 review LOW-2).
+ */
 export async function stopWithDeadline(
   handle: Stoppable,
   wait: (ms: number) => Promise<void>,
   deadlineMs: number,
 ): Promise<void> {
-  const stopped = Promise.resolve()
-    .then(() => handle.stop())
-    .then(
-      () => true,
-      () => true,
-    );
-  const exited = await Promise.race([stopped, wait(deadlineMs).then(() => false)]);
-  if (!exited) await handle.kill();
+  const attempt = async (step: () => Promise<void>): Promise<boolean> => {
+    try {
+      await step();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const stopped = attempt(() => handle.stop());
+  if (await Promise.race([stopped, wait(deadlineMs).then(() => false)])) return;
+  const killed = attempt(() => handle.kill());
+  if (!(await Promise.race([killed, wait(deadlineMs).then(() => false)]))) {
+    throw new Error("A process did not exit after stop and kill; it is reported as a leak.");
+  }
 }
 
 export async function withSandbox<T>(
@@ -194,7 +218,17 @@ export async function withSandbox<T>(
         marker === undefined
           ? { kind: "pid", role, pid: handle.pid, start: row?.start ?? "" }
           : { kind: "pid", role, pid: handle.pid, start: row?.start ?? "", marker };
-      appendLedger(paths.ledgerPath, entry);
+      appendPidOnce(paths.ledgerPath, entry);
+    },
+    async recordSpawn(pid, marker) {
+      const row = (await readTable()).find((entry) => entry.pid === pid);
+      appendPidOnce(paths.ledgerPath, {
+        kind: "pid",
+        role: "service",
+        pid,
+        start: row?.start ?? "",
+        ...(marker === undefined ? {} : { marker }),
+      });
     },
     async registerAccount(extra) {
       assertUatAccount(extra);
@@ -219,48 +253,124 @@ export async function withSandbox<T>(
   let failed = false;
   let leaks: Leak[] = [];
   let runRootRemoved = false;
+
+  const sendTerm = options.sendTerm ?? terminateByPid;
+
+  /**
+   * Ledgered leftovers: first record every process still naming the run root (Obsidian and its
+   * helpers are launched by the wdio service and never ledgered) with its start time, then
+   * TERM only the ledgered pids whose pid, start time and marker still match a fresh table.
+   * Never the runner itself. No uncatchable signal is sent by pid; a survivor stays a leak.
+   */
+  async function terminateLedgered(): Promise<void> {
+    const table = await readTable();
+    const known = readLedger(paths.ledgerPath);
+    for (const row of findRunRootProcesses(table, paths.root, ownerPid)) {
+      const full = table.find((candidate) => candidate.pid === row.pid);
+      if (full === undefined || full.start === "") continue;
+      const already = known.some(
+        (entry) => entry.kind === "pid" && entry.pid === full.pid && entry.start === full.start,
+      );
+      if (!already) {
+        appendLedger(paths.ledgerPath, {
+          kind: "pid",
+          role: "leftover",
+          pid: full.pid,
+          start: full.start,
+          marker: paths.root,
+        });
+      }
+    }
+    const fresh = await readTable();
+    const sent: number[] = [];
+    for (const entry of readLedger(paths.ledgerPath)) {
+      if (entry.kind !== "pid" || entry.pid === ownerPid || !isSignalablePid(entry.pid)) continue;
+      if (sent.includes(entry.pid)) continue;
+      const row = fresh.find((candidate) => matchesLedgeredProcess(candidate, entry));
+      if (row === undefined) continue;
+      try {
+        await sendTerm(entry.pid);
+        sent.push(entry.pid);
+      } catch (err) {
+        cleanupErrors.push(asError(err));
+      }
+    }
+    if (sent.length > 0) await wait(deadlineMs);
+  }
+
+  let tornDown: Promise<void> | undefined;
+  function teardown(): Promise<void> {
+    tornDown ??= (async () => {
+      for (const { handle } of [...processes].reverse()) {
+        try {
+          await stopWithDeadline(handle, wait, deadlineMs);
+        } catch (err) {
+          cleanupErrors.push(asError(err));
+        }
+      }
+      try {
+        await terminateLedgered();
+      } catch (err) {
+        cleanupErrors.push(asError(err));
+      }
+      for (const ledgered of accounts) {
+        try {
+          await deleteAccount(ledgered);
+        } catch (err) {
+          cleanupErrors.push(asError(err));
+        }
+      }
+      try {
+        const table = await readTable();
+        const ledgered = findLeaks(readLedger(paths.ledgerPath), table);
+        const seen = new Set(ledgered.map((leak) => leak.pid));
+        leaks = [
+          ...ledgered,
+          ...findRunRootProcesses(table, paths.root, ownerPid).filter(
+            (leak) => !seen.has(leak.pid),
+          ),
+        ];
+      } catch (err) {
+        cleanupErrors.push(asError(err));
+      }
+      try {
+        if (leaks.length === 0) {
+          removeRunRoot(paths.root, { base, home: options.home });
+          runRootRemoved = true;
+        } else {
+          appendLedger(paths.ledgerPath, {
+            kind: "leaked",
+            at: now().toISOString(),
+            pids: leaks.map((leak) => leak.pid),
+          });
+        }
+      } catch (err) {
+        cleanupErrors.push(asError(err));
+      }
+    })();
+    return tornDown;
+  }
+
+  const signals: SignalSource = options.signals ?? process;
+  const exit = options.exit ?? ((code: number) => process.exit(code));
+  const onInterrupt = (code: number) => () => {
+    void teardown().finally(() => exit(code));
+  };
+  const onSigint = onInterrupt(130);
+  const onSigterm = onInterrupt(143);
+  signals.on("SIGINT", onSigint);
+  signals.on("SIGTERM", onSigterm);
   try {
     value = await body(sandbox);
   } catch (err) {
     failed = true;
     error = err;
   } finally {
-    for (const { handle } of [...processes].reverse()) {
-      try {
-        await stopWithDeadline(handle, wait, deadlineMs);
-      } catch (err) {
-        cleanupErrors.push(asError(err));
-      }
-    }
-    for (const ledgered of accounts) {
-      try {
-        await deleteAccount(ledgered);
-      } catch (err) {
-        cleanupErrors.push(asError(err));
-      }
-    }
     try {
-      const table = await readTable();
-      leaks = [
-        ...findLeaks(readLedger(paths.ledgerPath), table),
-        ...findRunRootProcesses(table, paths.root, ownerPid),
-      ];
-    } catch (err) {
-      cleanupErrors.push(asError(err));
-    }
-    try {
-      if (leaks.length === 0) {
-        removeRunRoot(paths.root, { base, home: options.home });
-        runRootRemoved = true;
-      } else {
-        appendLedger(paths.ledgerPath, {
-          kind: "leaked",
-          at: now().toISOString(),
-          pids: leaks.map((leak) => leak.pid),
-        });
-      }
-    } catch (err) {
-      cleanupErrors.push(asError(err));
+      await teardown();
+    } finally {
+      signals.off("SIGINT", onSigint);
+      signals.off("SIGTERM", onSigterm);
     }
   }
 
