@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { isSymlinkOnDisk, MSG_PATH_LINK } from "./canonical-path.js";
+import { isSameOrInside, isSymlinkOnDisk, MSG_PATH_LINK } from "./canonical-path.js";
+import { realRuntimeDir } from "./isolation-guards.js";
 
 /**
  * Read-only access to the throwaway service's operational store (05.2-04, D-02, T-05.2-15).
@@ -56,11 +58,59 @@ export function assertCopyPath(copyPath: string): void {
   }
 }
 
+const MSG_REAL_RUNTIME = "Refusing the owner's real runtime folder.";
+const MSG_OUTSIDE_ROOT = "Refusing a store path outside the run root.";
+
+/** Rejects a path in the owner's real runtime folder, and one outside `runRoot` when given. */
+function assertStorePath(path: string, runRoot: string | undefined): void {
+  const real = realRuntimeDir(homedir());
+  if (isSameOrInside(real, resolve(path))) throw new Error(MSG_REAL_RUNTIME);
+  if (runRoot !== undefined && !isSameOrInside(resolve(runRoot), resolve(path))) {
+    throw new Error(MSG_OUTSIDE_ROOT);
+  }
+}
+
+const FORBIDDEN_SQL_WORDS =
+  /\b(?:attach|detach|vacuum|pragma|insert|update|delete|drop|create|alter|replace|reindex|analyze|load_extension|begin|commit|rollback|savepoint|release)\b/i;
+
+/**
+ * Only a single read-only SELECT (or WITH ... SELECT) statement may reach sqlite3: no second
+ * statement, no dot-command, and none of the keywords that write, attach another file or change
+ * settings (`VACUUM INTO` is an arbitrary file write even on a read-only connection).
+ */
+export function assertReadOnlySql(sql: string): void {
+  const text = sql.trim().replace(/;\s*$/, "");
+  if (text === "" || text.startsWith(".")) {
+    throw new Error("A sqlite3 dot-command is not allowed; pass one SQL statement.");
+  }
+  if (!/^(?:select|with)\b/i.test(text) || text.includes(";") || FORBIDDEN_SQL_WORDS.test(text)) {
+    throw new Error("Only one read-only SELECT statement may be run against the store copy.");
+  }
+}
+
+function snapshotOf(path: string): string {
+  try {
+    const info = statSync(path);
+    return `${info.size}:${info.mtimeMs}`;
+  } catch {
+    return "";
+  }
+}
+
+const COPY_ATTEMPTS = 5;
+
 /**
  * Copies `operational.db` and (when present) `operational.db-wal` from the runtime directory
  * to `operational-copy.db` and `operational-copy.db-wal` in `destDir`. Never opens the source.
  */
-export function copyStore(input: { runtimeDir: string; destDir: string }): { copyPath: string } {
+export function copyStore(input: {
+  runtimeDir: string;
+  destDir: string;
+  /** When given, both folders must sit inside it. */
+  runRoot?: string | undefined;
+}): { copyPath: string } {
+  assertStorePath(input.runtimeDir, input.runRoot);
+  assertStorePath(input.destDir, input.runRoot);
   const source = join(input.runtimeDir, "operational.db");
   if (!existsSync(source)) {
     throw new Error("Store copy failed: the operational database is not present.");
@@ -75,9 +125,16 @@ export function copyStore(input: { runtimeDir: string; destDir: string }): { cop
   // A stale copied log from an earlier read must never be replayed onto a fresh copy.
   rmSync(copyWal, { force: true });
   rmSync(`${copyPath}-shm`, { force: true });
-  copyFileSync(source, copyPath);
   const sourceWal = `${source}-wal`;
-  if (existsSync(sourceWal)) copyFileSync(sourceWal, copyWal);
+  // The running service may checkpoint between the two copies; repeat until the database and
+  // log did not change while they were copied (best effort after COPY_ATTEMPTS).
+  for (let attempt = 0; attempt < COPY_ATTEMPTS; attempt += 1) {
+    const before = `${snapshotOf(source)}|${snapshotOf(sourceWal)}`;
+    copyFileSync(source, copyPath);
+    rmSync(copyWal, { force: true });
+    if (existsSync(sourceWal)) copyFileSync(sourceWal, copyWal);
+    if (before === `${snapshotOf(source)}|${snapshotOf(sourceWal)}`) break;
+  }
   return { copyPath };
 }
 
@@ -86,12 +143,12 @@ export async function queryStore(input: {
   copyPath: string;
   sql: string;
   deps?: StoreCopyDeps;
+  /** When given, the copy must sit inside it. */
+  runRoot?: string | undefined;
 }): Promise<Array<Record<string, unknown>>> {
   assertCopyPath(input.copyPath);
-  // A leading dot is a sqlite3 shell dot-command (.shell, .system, .output ...), not SQL.
-  if (input.sql.trimStart().startsWith(".")) {
-    throw new Error("A sqlite3 dot-command is not allowed; pass one SQL statement.");
-  }
+  assertStorePath(input.copyPath, input.runRoot);
+  assertReadOnlySql(input.sql);
   const deps = input.deps ?? defaultDeps;
   let stdout: string;
   try {

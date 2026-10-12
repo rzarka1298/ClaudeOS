@@ -5,7 +5,13 @@ const A = "1111111111111111111111111111111111111111";
 const B = "2222222222222222222222222222222222222222";
 
 function check(changed: string[] | null, recorded: string | undefined = A, now: string = B) {
-  return isRunCurrent({ recordedHead: recorded, currentHead: now, changedFiles: changed });
+  return isRunCurrent({
+    recordedHead: recorded,
+    currentHead: now,
+    changedFiles: changed,
+    recordedClean: true,
+    currentClean: true,
+  });
 }
 
 describe("isRunCurrent (Test 4)", () => {
@@ -75,7 +81,13 @@ describe("isRunCurrent (Test 4)", () => {
 
   it("is stale with reason 'unknown HEAD' when the recorded HEAD is missing", () => {
     for (const recorded of [undefined, "", "unknown"]) {
-      const result = isRunCurrent({ recordedHead: recorded, currentHead: B, changedFiles: [] });
+      const result = isRunCurrent({
+        recordedHead: recorded,
+        currentHead: B,
+        changedFiles: [],
+        recordedClean: true,
+        currentClean: true,
+      });
       expect(result).toEqual({ current: false, reason: "unknown HEAD", files: [] });
     }
   });

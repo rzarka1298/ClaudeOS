@@ -1,5 +1,5 @@
 import { assertRunRootShape, assertUatAccount } from "./isolation-guards.js";
-import { appendLedger, type LedgerEntry } from "./ledger.js";
+import { appendPidOnce, type LedgerEntry } from "./ledger.js";
 import { readProcessTable } from "./process-table.js";
 import { parseProfile, type UatProfile } from "./profile.js";
 import { pathsForRoot, type RunRootPaths } from "./run-root.js";
@@ -87,7 +87,17 @@ export function serviceFixtureFor(context: RunContext): ServiceFixture {
         start: row?.start ?? "",
         ...(marker === undefined ? {} : { marker }),
       };
-      appendLedger(context.paths.ledgerPath, entry);
+      appendPidOnce(context.paths.ledgerPath, entry as Extract<LedgerEntry, { kind: "pid" }>);
+    },
+    async recordSpawn(pid: number, marker?: string): Promise<void> {
+      const row = (await readProcessTable()).find((entry) => entry.pid === pid);
+      appendPidOnce(context.paths.ledgerPath, {
+        kind: "pid",
+        role: "service",
+        pid,
+        start: row?.start ?? "",
+        ...(marker === undefined ? {} : { marker }),
+      });
     },
     unregister(): void {},
   };

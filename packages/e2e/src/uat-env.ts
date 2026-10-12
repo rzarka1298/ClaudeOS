@@ -1,9 +1,11 @@
 import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import { canonicalPath, REAL_REALPATH, type RealpathOps } from "./canonical-path.js";
 
 /**
  * Pure guards for the environment the live-UAT sandbox runs in (05.2 review HIGH-1,
- * MEDIUM-2; D-05, D-08, D-12, L-3). They never touch the filesystem and never echo the
- * offending value: every refusal is a fixed message.
+ * MEDIUM-2; D-05, D-08, D-12, L-3). They never write the filesystem and never echo the
+ * offending value: every refusal is a fixed message. The isolation paths are canonicalised
+ * (read-only `realpath`) so a link cannot pass a text comparison.
  */
 
 export const MSG_ISOLATION =
@@ -47,15 +49,20 @@ export interface IsolationContext {
 export function assertIsolatedEnv(
   env: Readonly<Record<string, string | undefined>>,
   context: IsolationContext,
+  ops: RealpathOps = REAL_REALPATH,
 ): void {
-  const runRoot = resolve(context.runRoot);
-  const liveSocket = join(resolve(context.home), ".claude-command-center", "svc.sock");
+  // Every path is compared after links are followed (Wave 2 review LOW-5): a link inside the run
+  // root that points at the owner's runtime folder or outside the root passed a text comparison.
+  const runRoot = canonicalPath(resolve(context.runRoot), ops);
+  const liveRuntime = canonicalPath(join(resolve(context.home), ".claude-command-center"), ops);
 
   for (const name of ISOLATED_PATH_VARS) {
     const value = env[name];
     if (value === undefined || value === "" || !isAbsolute(value)) throw new Error(MSG_ISOLATION);
-    const path = resolve(value);
-    if (!isStrictlyInside(runRoot, path) || path === liveSocket) throw new Error(MSG_ISOLATION);
+    const path = canonicalPath(resolve(value), ops);
+    if (!isStrictlyInside(runRoot, path) || isSameOrInside(liveRuntime, path)) {
+      throw new Error(MSG_ISOLATION);
+    }
   }
 
   const account = env.CCC_INSTALL_SECRET_ACCOUNT;

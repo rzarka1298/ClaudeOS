@@ -186,18 +186,24 @@ describe("queryStore (Test 5)", () => {
     expect(rows).toEqual([{ n: 4 }]);
   });
 
-  sqliteIt("fails an INSERT against the copy with the tool's read-only error", async () => {
-    makeStore(join(root, "runtime"));
-    const { copyPath } = copyStore({ runtimeDir: join(root, "runtime"), destDir: join(root, "d") });
-    const before = readFileSync(copyPath);
-    await expect(
-      queryStore({
-        copyPath,
-        sql: "insert into diagnostic_effects values ('zz','t');",
-      }),
-    ).rejects.toThrow(/readonly/i);
-    expect(readFileSync(copyPath).equals(before)).toBe(true);
-  });
+  sqliteIt(
+    "refuses an INSERT before it reaches the tool and leaves the copy untouched",
+    async () => {
+      makeStore(join(root, "runtime"));
+      const { copyPath } = copyStore({
+        runtimeDir: join(root, "runtime"),
+        destDir: join(root, "d"),
+      });
+      const before = readFileSync(copyPath);
+      await expect(
+        queryStore({
+          copyPath,
+          sql: "insert into diagnostic_effects values ('zz','t');",
+        }),
+      ).rejects.toThrow(/read-only SELECT/i);
+      expect(readFileSync(copyPath).equals(before)).toBe(true);
+    },
+  );
 });
 
 describe("fixed queries (Test 6)", () => {

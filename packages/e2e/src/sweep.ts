@@ -30,7 +30,7 @@ export interface SweepRunInput {
 }
 
 export type SweepAction =
-  | { type: "terminate"; pid: number; role: string }
+  | { type: "terminate"; pid: number; role: string; start: string; marker: string }
   | { type: "delete-account"; account: string }
   | { type: "remove-dir"; path: string }
   | { type: "remove-root"; path: string };
@@ -107,7 +107,13 @@ export function planSweep(
         const row = table.find((candidate) => sameProcess(candidate, entry.pid, entry.start));
         if (row !== undefined && entry.marker !== undefined && entry.marker !== "") {
           if (row.command.includes(entry.marker)) {
-            actions.push({ type: "terminate", pid: entry.pid, role: entry.role });
+            actions.push({
+              type: "terminate",
+              pid: entry.pid,
+              role: entry.role,
+              start: entry.start,
+              marker: entry.marker,
+            });
           }
         }
       }
@@ -141,6 +147,18 @@ export interface SweepDeps {
   wait: (ms: number) => Promise<void>;
 }
 
+/** A pid is only ever signalled when it is a real, positive, non-init process id. */
+export const isSignalablePid = (pid: number): boolean => Number.isSafeInteger(pid) && pid > 1;
+
+/** True when `row` is the ledgered process: pid, start time and (when given) command marker. */
+export function matchesLedgeredProcess(
+  row: ProcessEntry,
+  entry: { pid: number; start: string; marker?: string | undefined },
+): boolean {
+  if (!sameProcess(row, entry.pid, entry.start)) return false;
+  return entry.marker === undefined || entry.marker === "" || row.command.includes(entry.marker);
+}
+
 export async function executeSweep(plan: SweepPlan, deps: SweepDeps): Promise<SweepOutcome> {
   if (plan.busy !== null) return { status: "busy", runRoot: plan.busy };
   if (plan.runs.length === 0) return { status: "none" };
@@ -165,7 +183,16 @@ export async function executeSweep(plan: SweepPlan, deps: SweepDeps): Promise<Sw
     const before = run.actions.some((a) => a.type === "terminate") ? await deps.readTable() : [];
     for (const action of run.actions) {
       if (action.type !== "terminate") continue;
-      const row = before.find((candidate) => candidate.pid === action.pid);
+      // Re-verify identity immediately before the signal: the table was read after planning, so
+      // a pid recycled in between must not be signalled (Wave 2 review LOW-1).
+      if (!isSignalablePid(action.pid)) continue;
+      const row = before.find(
+        (candidate) =>
+          sameProcess(candidate, action.pid, action.start) &&
+          action.marker !== "" &&
+          candidate.command.includes(action.marker),
+      );
+      if (row === undefined) continue;
       if (await attempt(`terminate ${action.pid}`, () => deps.sendTerm(action.pid))) {
         terminated.push(action.pid);
         if (row !== undefined) signalled.push({ pid: row.pid, start: row.start });
@@ -252,7 +279,7 @@ export function listCandidateRuns(base: string, now: number = Date.now()): Sweep
 const execFileAsync = promisify(execFile);
 
 /** The only pid-based signal: TERM through the system kill command, argv array, no shell. */
-const terminateByPid = async (pid: number): Promise<void> => {
+export const terminateByPid = async (pid: number): Promise<void> => {
   await execFileAsync("kill", ["-TERM", String(pid)]);
 };
 

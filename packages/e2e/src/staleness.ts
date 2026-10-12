@@ -8,6 +8,14 @@ export interface StalenessInput {
   readonly currentHead: string;
   /** Files changed since the recorded HEAD, or null when they could not be listed. */
   readonly changedFiles: readonly string[] | null;
+  /**
+   * The `git-clean` flag recorded in the report. Only `true` counts: a run made on a dirty tree
+   * tested uncommitted code, which no commit identifies (Wave 2 review MEDIUM-4). Undefined is
+   * unknown and therefore stale.
+   */
+  readonly recordedClean?: boolean | undefined;
+  /** Whether the tracked files match HEAD now; uncommitted edits make a run stale. */
+  readonly currentClean?: boolean | undefined;
 }
 
 /**
@@ -50,6 +58,20 @@ function known(head: string | undefined): head is string {
 export function isRunCurrent(input: StalenessInput): Staleness {
   if (!known(input.recordedHead) || !known(input.currentHead)) {
     return { current: false, reason: "unknown HEAD", files: [] };
+  }
+  if (input.recordedClean !== true) {
+    const reason =
+      input.recordedClean === false
+        ? "the run was recorded on a dirty working tree"
+        : "the recorded clean flag is unknown";
+    return { current: false, reason, files: [] };
+  }
+  if (input.currentClean !== true) {
+    const reason =
+      input.currentClean === false
+        ? "the working tree has uncommitted changes"
+        : "the working tree state is unknown";
+    return { current: false, reason, files: [] };
   }
   if (input.recordedHead === input.currentHead) return { current: true };
   if (input.changedFiles === null) return { current: false, reason: "changes unknown", files: [] };

@@ -56,7 +56,8 @@ describe("readGitFacts (Test 3)", () => {
   it("lists the files changed since a given commit from the name-only diff", async () => {
     const { exec } = fake({
       ...CLEAN_REPLIES,
-      [`diff --name-only ${SINCE} HEAD --`]: "packages/e2e/src/a.ts\n.planning/x.md\n\n",
+      [`diff --name-only -z --no-renames ${SINCE} HEAD --`]:
+        "packages/e2e/src/a.ts\0.planning/x.md\0",
     });
     const facts = await readGitFacts({ exec, cwd: "/repo", since: SINCE });
     expect(facts.changedSince).toEqual(["packages/e2e/src/a.ts", ".planning/x.md"]);
@@ -65,7 +66,7 @@ describe("readGitFacts (Test 3)", () => {
   it("calls git with argv arrays only and the working directory, never a shell string", async () => {
     const { exec, calls } = fake({
       ...CLEAN_REPLIES,
-      [`diff --name-only ${SINCE} HEAD --`]: "",
+      [`diff --name-only -z --no-renames ${SINCE} HEAD --`]: "",
     });
     await readGitFacts({ exec, cwd: "/repo", since: SINCE });
     expect(calls.length).toBe(3);
@@ -96,7 +97,7 @@ describe("readGitFacts (Test 3)", () => {
   it("reports unknown changes when only the diff fails", async () => {
     const { exec } = fake({
       ...CLEAN_REPLIES,
-      [`diff --name-only ${SINCE} HEAD --`]: new Error("bad revision"),
+      [`diff --name-only -z --no-renames ${SINCE} HEAD --`]: new Error("bad revision"),
     });
     const facts = await readGitFacts({ exec, cwd: "/repo", since: SINCE });
     expect(facts).toEqual({ head: HEAD, clean: true, changedSince: null });

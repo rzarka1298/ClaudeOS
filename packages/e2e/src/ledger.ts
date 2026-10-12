@@ -120,6 +120,24 @@ export function appendLedger(path: string, entry: LedgerEntry): void {
 }
 
 /**
+ * Appends a pid entry unless the ledger already holds the same pid with the same (non-empty)
+ * start time. Early ledgering at spawn and the later registration of the same process would
+ * otherwise write it twice. Returns whether a line was written.
+ */
+export function appendPidOnce(path: string, entry: Extract<LedgerEntry, { kind: "pid" }>): boolean {
+  if (
+    entry.start !== "" &&
+    readLedger(path).some(
+      (known) => known.kind === "pid" && known.pid === entry.pid && known.start === entry.start,
+    )
+  ) {
+    return false;
+  }
+  appendLedger(path, entry);
+  return true;
+}
+
+/**
  * Reads every entry in order. A missing file is an empty ledger; a torn last line (a crash
  * mid-append) is ignored; any other malformed line, or an unknown kind, throws.
  */

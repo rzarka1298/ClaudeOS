@@ -257,3 +257,42 @@ describe("installResultRecorder", () => {
     expect(parseResultsFile(writes[0]?.data ?? "")[0]?.message).toBe("[clean]");
   });
 });
+
+describe("resolveItemStatus with expected titles (Wave 2 review MEDIUM-1)", () => {
+  const expectedTitles = ["[06-UAT#05] a", "[06-UAT#05] b", "[06-UAT#05] c"];
+  const item: StatusInput = { number: 5, runClass: "auto", expectedTitles };
+
+  it("is inconclusive, never a pass, when an expected test has no record", () => {
+    const resolution = resolve(item, [record("[06-UAT#05] a", "passed")]);
+    expect(statusOf(resolution)).toBe("inconclusive");
+    expect(resolution).toMatchObject({ reason: "1 of 3 expected tests recorded" });
+  });
+
+  it("is a pass when every expected title passed", () => {
+    const results = expectedTitles.map((title) => record(title, "passed"));
+    expect(statusOf(resolve(item, results))).toBe("pass");
+  });
+
+  it("a recorded failure still wins over the missing-test inconclusive", () => {
+    const resolution = resolve(item, [record("[06-UAT#05] a", "failed", "boom")]);
+    expect(statusOf(resolution)).toBe("fail");
+  });
+
+  it("a look item with all expected tests present but one missing is not 'look pending'", () => {
+    const look: StatusInput = {
+      number: 1,
+      runClass: "auto+look",
+      expectedTitles: ["[06-UAT#01] a", "[06-UAT#01] b"],
+    };
+    const resolution = resolve(
+      look,
+      [record("[06-UAT#01] a", "passed")],
+      [{ item: 1, verdict: "pass", images: 1 }],
+    );
+    expect(statusOf(resolution)).toBe("inconclusive");
+  });
+
+  it("no record at all is still 'no test ran'", () => {
+    expect(resolve(item, [])).toMatchObject({ status: "fail", reason: "no test ran" });
+  });
+});

@@ -28,6 +28,12 @@ export interface StartServiceForTestOptions {
   env?: Record<string, string>;
   /** How many 100 ms polls to wait for the socket (append-only, 06-25): a service that walks a large vault first needs longer than the default five seconds on a loaded machine. */
   waitAttempts?: number;
+  /**
+   * Called with the child pid right after the process is spawned, before the socket wait
+   * (append-only, 05.2 Wave 2 review MEDIUM-2): lets a sandbox ledger the pid while the service
+   * is still starting. A rejection ends the child and fails the start.
+   */
+  onSpawn?: (pid: number) => void | Promise<void>;
 }
 
 export interface TestServiceHandle {
@@ -68,6 +74,7 @@ export async function startServiceForTest({
   socketPath,
   env,
   waitAttempts,
+  onSpawn,
 }: StartServiceForTestOptions): Promise<TestServiceHandle> {
   // Belt and braces beside the service's own RealRuntimeDirUnderTestError:
   // never even spawn a service aimed at the real runtime directory.
@@ -136,6 +143,7 @@ export async function startServiceForTest({
   };
 
   try {
+    if (onSpawn !== undefined && child.pid !== undefined) await onSpawn(child.pid);
     await waitForSocket(socketPath, waitAttempts);
   } catch (err: unknown) {
     // The wait failing must never leave the service running (F8): end it unconditionally.

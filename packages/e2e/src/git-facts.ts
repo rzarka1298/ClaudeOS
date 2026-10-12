@@ -57,12 +57,18 @@ export async function readGitFacts(input: GitFactsInput): Promise<GitFacts> {
 
   let changedSince: string[] | null = null;
   if (input.since !== undefined && COMMIT_ISH.test(input.since)) {
-    const diff = await run(exec, input.cwd, ["diff", "--name-only", input.since, "HEAD", "--"]);
+    const diff = await run(exec, input.cwd, [
+      "diff",
+      "--name-only",
+      "-z",
+      "--no-renames",
+      input.since,
+      "HEAD",
+      "--",
+    ]);
     if (diff !== null) {
-      changedSince = diff
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line !== "");
+      // NUL-separated and rename-free: a moved file lists its old path too, and no path is quoted.
+      changedSince = diff.split("\0").filter((entry) => entry !== "");
     }
   }
   return { head, clean, changedSince };

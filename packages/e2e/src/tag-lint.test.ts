@@ -168,15 +168,13 @@ describe("extractSpecTitles (Task 3, Test 5)", () => {
     "});",
   ].join("\n");
 
-  it("finds titles in it, test and describe calls with skip and only variants", () => {
+  it("finds titles in it and test calls with skip and only variants, not describe", () => {
     const found = extractSpecTitles("packages/e2e/specs/x.e2e.ts", SOURCE, "06");
     expect(found.map((entry) => entry.title)).toEqual([
-      "[06-UAT#05] reload twice",
       "[06-UAT#05] one navigation",
       "[06-UAT#06] chips",
       "[06-UAT#07] deny",
       "[06-UAT#08] approve",
-      "[06-UAT#09] expiry",
     ]);
   });
 
@@ -199,9 +197,9 @@ describe("extractSpecTitles (Task 3, Test 5)", () => {
 
   it("groups titles by file for lintTags", () => {
     const grouped = groupTitles([
-      { file: "a", title: "[06-UAT#01] x" },
-      { file: "b", title: "[06-UAT#02] y" },
-      { file: "a", title: "[06-UAT#03] z" },
+      { file: "a", title: "[06-UAT#01] x", only: false },
+      { file: "b", title: "[06-UAT#02] y", only: false },
+      { file: "a", title: "[06-UAT#03] z", only: false },
     ]);
     expect(Object.fromEntries(grouped)).toEqual({
       a: ["[06-UAT#01] x", "[06-UAT#03] z"],

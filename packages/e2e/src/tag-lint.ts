@@ -5,13 +5,16 @@ import { parseSpecValue, type TagFinding, type UatItem } from "./uat-tags.js";
 export interface SpecTitle {
   readonly file: string;
   readonly title: string;
+  /** True for `it.only` / `test.only`, which silently drops every other test in the file. */
+  readonly only: boolean;
 }
 
-const TEST_CALL =
-  /\b(?:it|test|describe)(?:\.(?:skip|only))?\(\s*(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
+// `describe` is deliberately absent: the result recorder sees only `test.title` (an `it` title),
+// never the enclosing `describe` title, so lint and resolver must count the same calls.
+const TEST_CALL = /\b(?:it|test)(\.(?:skip|only))?\(\s*(['"`])((?:\\.|(?!\2)[^\\\n])*)\2/g;
 
 /**
- * Test, it and describe titles in a spec source that begin with the bracketed item prefix.
+ * `it` and `test` titles in a spec source that begin with the bracketed item prefix.
  * Whole-line and block comments are ignored, and so is any string that is not the title
  * argument of a test call.
  */
@@ -23,8 +26,40 @@ export function extractSpecTitles(file: string, source: string, phasePrefix: str
     .join("\n");
   const found: SpecTitle[] = [];
   for (const match of uncommented.matchAll(TEST_CALL)) {
-    const title = (match[2] as string).replace(/\\(.)/g, "$1");
-    if (itemNumberOf(title, phasePrefix) !== null) found.push({ file, title });
+    const title = (match[3] as string).replace(/\\(.)/g, "$1");
+    if (itemNumberOf(title, phasePrefix) !== null) {
+      found.push({ file, title, only: match[1] === ".only" });
+    }
+  }
+  return found;
+}
+
+/** The titles expected per item number, for `resolveItemStatus` (an item cannot pass with a test missing). */
+export function expectedTitlesByItem(
+  titles: readonly SpecTitle[],
+  phasePrefix: string,
+): Map<number, string[]> {
+  const grouped = new Map<number, string[]>();
+  for (const entry of titles) {
+    const number = itemNumberOf(entry.title, phasePrefix);
+    if (number === null) continue;
+    const list = grouped.get(number) ?? [];
+    list.push(entry.title);
+    grouped.set(number, list);
+  }
+  return grouped;
+}
+
+/** One finding per `.only` test: it would run alone and silently skip every other item. */
+export function findOnlyTests(titles: readonly SpecTitle[], phasePrefix = "\\d{2}"): TagFinding[] {
+  const pattern = new RegExp(`^\\[${phasePrefix}-UAT#(\\d{2})\\]`);
+  const found: TagFinding[] = [];
+  for (const entry of titles) {
+    if (!entry.only) continue;
+    const number = Number(pattern.exec(entry.title)?.[1] ?? 0);
+    found.push(
+      finding(LINT_CODES.onlyTest, number, `${entry.file} has an .only test for item ${number}.`),
+    );
   }
   return found;
 }
@@ -129,6 +164,7 @@ export const LINT_CODES = {
   duplicateTitle: "DUPLICATE_TITLE",
   ownerNoWhy: "OWNER_NO_WHY",
   ownerAutoResult: "OWNER_AUTO_RESULT",
+  onlyTest: "ONLY_TEST",
 } as const;
 
 export interface LintInput {
