@@ -54,7 +54,7 @@ describe("planSweep (Test 3)", () => {
     expect(plan.busy).toBeNull();
     expect(plan.runs).toHaveLength(1);
     expect(plan.runs[0]?.actions).toEqual([
-      { type: "terminate", pid: 555, role: "service" },
+      { type: "terminate", pid: 555, role: "service", start: START, marker: SERVICE_MARKER },
       { type: "delete-account", account: "ccc-uat-0123abcd" },
       { type: "remove-dir", path: `${ROOT}/vaults` },
       { type: "remove-root", path: ROOT },
