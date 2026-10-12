@@ -111,3 +111,28 @@ describe("the words the status-change, duplicate and proposed items assert (Task
     expect(LIVE_CHECK_TITLES.hostile).not.toBe("");
   });
 });
+
+describe("the words the views and project panel items assert (Task 3 Test 1)", () => {
+  it("mirrors the eight view names in the order the chips use", () => {
+    expect([
+      TASKS_TEXT.chipAll,
+      TASKS_TEXT.chipToday,
+      TASKS_TEXT.chipUpcoming,
+      TASKS_TEXT.chipOverdue,
+      TASKS_TEXT.chipProject,
+      TASKS_TEXT.chipProposed,
+      TASKS_TEXT.chipBlocked,
+      TASKS_TEXT.chipCompleted,
+    ]).toEqual(["All", "Today", "Upcoming", "Overdue", "Project", "Proposed", "Blocked", "Completed"]);
+  });
+
+  it("mirrors the Show tasks, panel, empty-line and filter-group wording", () => {
+    expect(TASKS_TEXT.showTasksFor).toBe("Show tasks for ");
+    expect(TASKS_TEXT.closeProjectTasks).toBe("Close project tasks");
+    expect(TASKS_TEXT.emptyAllHeading).toBe("Nothing here yet");
+    expect(TASKS_TEXT.taskFiltersLabel).toBe("Task filters");
+    expect(TASKS_TEXT.showingPrefix).toBe("Showing ");
+    expect(TASKS_TEXT.tabProjects).toBe("Projects");
+    expect(TASKS_TEXT.tabProjectsId).toBe("projects");
+  });
+});

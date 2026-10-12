@@ -314,6 +314,78 @@ export function untrustedRenderVerdict(
 }
 
 // ---------------------------------------------------------------------------
+// Views, movement, long tasks, panel independence (pure) -- typed skeleton
+
+export const TASK_PAGE_LIMIT = 0;
+export const MOVE_ALLOWANCE_MS = 0;
+export const LONGTASK_BAR_MS = 0;
+
+export type CountsVerdict = { ok: true } | { ok: false; view: string };
+
+export function countsMatchLists(
+  _chips: Readonly<Record<string, number | null>>,
+  _listLengths: Readonly<Record<string, number>>,
+): CountsVerdict {
+  throw new Error("not implemented");
+}
+
+export function movedWithin(
+  _before: Readonly<Record<string, number | null>>,
+  _after: Readonly<Record<string, number | null>>,
+  _expectedDelta: Readonly<Record<string, number>>,
+  _elapsedMs: number,
+  _allowanceMs: number,
+): boolean {
+  throw new Error("not implemented");
+}
+
+export interface LongtaskReading {
+  supported: boolean;
+  entries: Array<{ startTime: number; duration: number }>;
+}
+export type LongtaskVerdict =
+  | { verdict: "pass" }
+  | { verdict: "fail"; longestMs: number }
+  | { verdict: "inconclusive"; reason: string };
+
+export function evaluateLongtasks(_reading: LongtaskReading, _barMs: number): LongtaskVerdict {
+  throw new Error("not implemented");
+}
+
+export type InteractionVerdict =
+  | { ok: true; slowest: string }
+  | { ok: false; slowest: string; slowestMs?: number };
+
+export function measureInteractions(
+  _results: ReadonlyArray<{ label: string; ms: number }>,
+  _barMs: number,
+): InteractionVerdict {
+  throw new Error("not implemented");
+}
+
+export interface SurfaceSnapshot {
+  active: string;
+  counts: Readonly<Record<string, number | null>>;
+}
+
+export function panelIndependent(
+  _globalBefore: SurfaceSnapshot,
+  _globalAfter: SurfaceSnapshot,
+  _panelBefore: SurfaceSnapshot,
+  _panelAfter: SurfaceSnapshot,
+): boolean {
+  throw new Error("not implemented");
+}
+
+export function emptyProjectVerdict(_facts: {
+  panelRowIds: readonly string[];
+  globalRowIds: readonly string[];
+  emptyHeading: string | null;
+}): { ok: true } | { ok: false; reason: string } {
+  throw new Error("not implemented");
+}
+
+// ---------------------------------------------------------------------------
 // Renderer side (self-contained)
 
 interface RElement {

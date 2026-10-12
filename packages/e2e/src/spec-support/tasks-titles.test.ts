@@ -50,6 +50,23 @@ describe("tasks-core titles (Test 4)", () => {
   });
 });
 
+describe("tasks-views, tasks-scale and the whole tasks set (Task 3 Test 6)", () => {
+  it("tasks-views holds exactly 18 and 19, once each", () => {
+    expect(numbersOf(titlesOf("tasks-views")).sort()).toEqual([...PLANNED["tasks-views"]]);
+  });
+
+  it("tasks-scale holds exactly 21", () => {
+    expect(numbersOf(titlesOf("tasks-scale"))).toEqual([...PLANNED["tasks-scale"]]);
+  });
+
+  it("the whole tasks set equals 14 to 19 and 21 once each", () => {
+    const all = (Object.keys(PLANNED) as SpecName[]).flatMap((name) =>
+      numbersOf(titlesOf(name)),
+    );
+    expect(all.sort()).toEqual([14, 15, 16, 17, 18, 19, 21]);
+  });
+});
+
 describe("the classification table agrees with the planned sets", () => {
   it("maps each planned item to its spec file", () => {
     for (const name of Object.keys(PLANNED) as SpecName[]) {

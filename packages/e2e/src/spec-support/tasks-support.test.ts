@@ -4,10 +4,19 @@ import {
   checkCreatedNote,
   checkStatusChangeDiff,
   classifyDuplicateAttention,
+  countsMatchLists,
   duePropertyVerdict,
+  emptyProjectVerdict,
+  evaluateLongtasks,
   inspectUntrustedRender,
+  LONGTASK_BAR_MS,
   localDateIn,
+  MOVE_ALLOWANCE_MS,
+  measureInteractions,
+  movedWithin,
   notInEitherList,
+  panelIndependent,
+  TASK_PAGE_LIMIT,
   parseNoteFrontmatter,
   readDecisionOutcome,
   readerSelectors,
@@ -489,5 +498,160 @@ describe("the Properties view check and the vault operation (U-6, U-7)", () => {
     expect(await run(ctx, "delete", "a.md", "")).toBe("ok");
     expect(await run(ctx, "delete", "missing.md", "")).toBe("missing");
     expect(calls).toEqual(["copy a 1.md", "delete"]);
+  });
+});
+
+const VIEWS = ["all", "today", "upcoming", "overdue", "project", "proposed", "blocked", "completed"];
+
+function chipsOf(counts: number[]): Record<string, number> {
+  return Object.fromEntries(VIEWS.map((view, index) => [view, counts[index] ?? 0]));
+}
+
+describe("countsMatchLists (Task 3 Test 2)", () => {
+  it("is ok when each rendered list has the length its chip names", () => {
+    const counts = chipsOf([30, 3, 4, 1, 0, 2, 5, 6]);
+    const lists = chipsOf([TASK_PAGE_LIMIT, 3, 4, 1, 0, 2, 5, 6]);
+    expect(countsMatchLists(counts, lists)).toEqual({ ok: true });
+  });
+
+  it("tolerates the paging limit and nothing beyond it", () => {
+    expect(TASK_PAGE_LIMIT).toBe(25);
+    expect(countsMatchLists(chipsOf([300]), chipsOf([25]))).toEqual({ ok: true });
+    expect(countsMatchLists(chipsOf([300]), chipsOf([26]))).toMatchObject({
+      ok: false,
+      view: "all",
+    });
+  });
+
+  it("names the view that mismatches", () => {
+    const counts = chipsOf([3, 3, 4, 1, 0, 2, 5, 6]);
+    const lists = chipsOf([3, 3, 3, 1, 0, 2, 5, 6]);
+    expect(countsMatchLists(counts, lists)).toEqual({ ok: false, view: "upcoming" });
+  });
+
+  it("fails a view that has no count or no list", () => {
+    expect(countsMatchLists({ all: null }, { all: 0 })).toMatchObject({ ok: false, view: "all" });
+    expect(countsMatchLists({ all: 1 }, {})).toMatchObject({ ok: false, view: "all" });
+  });
+});
+
+describe("movedWithin (Task 3 Test 3)", () => {
+  const before = chipsOf([10, 2, 3, 1]);
+
+  it("is true when exactly the expected chips moved by the expected amounts in time", () => {
+    const after = { ...before, today: 1, overdue: 2 };
+    expect(MOVE_ALLOWANCE_MS).toBe(2000);
+    expect(movedWithin(before, after, { today: -1, overdue: 1 }, 1500, MOVE_ALLOWANCE_MS)).toBe(
+      true,
+    );
+  });
+
+  it("is false when it took too long, a chip moved by another amount or an extra chip moved", () => {
+    const after = { ...before, today: 1, overdue: 2 };
+    expect(movedWithin(before, after, { today: -1, overdue: 1 }, 2500, MOVE_ALLOWANCE_MS)).toBe(
+      false,
+    );
+    expect(movedWithin(before, after, { today: -1, overdue: 2 }, 100, MOVE_ALLOWANCE_MS)).toBe(
+      false,
+    );
+    expect(
+      movedWithin(before, { ...after, all: 11 }, { today: -1, overdue: 1 }, 100, MOVE_ALLOWANCE_MS),
+    ).toBe(false);
+    expect(movedWithin(before, before, { today: -1 }, 100, MOVE_ALLOWANCE_MS)).toBe(false);
+  });
+});
+
+describe("long tasks and interaction timings (Task 3 Test 4, T-05.2-28)", () => {
+  it("passes a supported observer whose longest entry is at or under the bar", () => {
+    expect(LONGTASK_BAR_MS).toBe(300);
+    const entries = [
+      { startTime: 1, duration: 120 },
+      { startTime: 9, duration: 300 },
+    ];
+    expect(evaluateLongtasks({ supported: true, entries }, LONGTASK_BAR_MS)).toEqual({
+      verdict: "pass",
+    });
+    expect(evaluateLongtasks({ supported: true, entries: [] }, LONGTASK_BAR_MS)).toEqual({
+      verdict: "pass",
+    });
+  });
+
+  it("fails an entry over the bar and reports the longest", () => {
+    const entries = [
+      { startTime: 1, duration: 120 },
+      { startTime: 9, duration: 301 },
+    ];
+    expect(evaluateLongtasks({ supported: true, entries }, LONGTASK_BAR_MS)).toEqual({
+      verdict: "fail",
+      longestMs: 301,
+    });
+  });
+
+  it("is inconclusive, never a pass, when the observer is unsupported", () => {
+    const result = evaluateLongtasks({ supported: false, entries: [] }, LONGTASK_BAR_MS);
+    expect(result.verdict).toBe("inconclusive");
+    expect(result).toHaveProperty("reason");
+    expect(
+      evaluateLongtasks({ supported: false, entries: [{ startTime: 0, duration: 1 }] }, 300).verdict,
+    ).toBe("inconclusive");
+  });
+
+  it("fails when any interaction is over the bar and names the slowest", () => {
+    const ok = [
+      { label: "chip today", ms: 80 },
+      { label: "scroll", ms: 300 },
+    ];
+    expect(measureInteractions(ok, LONGTASK_BAR_MS)).toEqual({ ok: true, slowest: "scroll" });
+    expect(
+      measureInteractions([...ok, { label: "create a task", ms: 450 }], LONGTASK_BAR_MS),
+    ).toEqual({ ok: false, slowest: "create a task", slowestMs: 450 });
+  });
+
+  it("fails an empty set of timings: nothing measured is not a pass", () => {
+    expect(measureInteractions([], LONGTASK_BAR_MS)).toMatchObject({ ok: false });
+  });
+});
+
+describe("panel independence (Task 3 Test 5)", () => {
+  const snap = (active: string, counts: Record<string, number>) => ({ active, counts });
+  const same = snap("all", { all: 2, today: 1 });
+
+  it("is true when the global side changed and the panel stayed the same", () => {
+    expect(
+      panelIndependent(snap("today", { all: 5 }), snap("overdue", { all: 5 }), same, same),
+    ).toBe(true);
+  });
+
+  it("is true for the reverse call with the roles swapped", () => {
+    expect(
+      panelIndependent(same, same, snap("all", { all: 2 }), snap("overdue", { all: 2 })),
+    ).toBe(false);
+    expect(
+      panelIndependent(snap("all", { all: 2 }), snap("overdue", { all: 2 }), same, same),
+    ).toBe(true);
+  });
+
+  it("is false when the panel moved with the global change or nothing changed at all", () => {
+    expect(
+      panelIndependent(
+        snap("today", { all: 5 }),
+        snap("overdue", { all: 5 }),
+        same,
+        snap("all", { all: 9, today: 1 }),
+      ),
+    ).toBe(false);
+    expect(panelIndependent(same, same, same, same)).toBe(false);
+  });
+
+  it("an empty project shows its own empty line, not the global list", () => {
+    expect(
+      emptyProjectVerdict({ panelRowIds: [], globalRowIds: ["a", "b"], emptyHeading: "Nothing here yet" }),
+    ).toEqual({ ok: true });
+    expect(
+      emptyProjectVerdict({ panelRowIds: ["a"], globalRowIds: ["a", "b"], emptyHeading: null }),
+    ).toMatchObject({ ok: false });
+    expect(
+      emptyProjectVerdict({ panelRowIds: [], globalRowIds: ["a"], emptyHeading: null }),
+    ).toMatchObject({ ok: false });
   });
 });

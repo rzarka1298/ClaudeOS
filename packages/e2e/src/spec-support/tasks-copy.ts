@@ -59,6 +59,18 @@ export const TASKS_TEXT_TABLE = {
   rowActionAccept: ["accept", `${VIEW}task-list.tsx`, "literal"],
   rowActionDismiss: ["dismiss", `${VIEW}task-list.tsx`, "literal"],
   dueToday: ["Due today", `${VIEW}tasks-format.ts`, "literal"],
+  // Typed skeleton (RED): the views and project panel entries carry no value yet.
+  chipUpcoming: ["", DOMAIN_TASKS, "literal"],
+  chipOverdue: ["", DOMAIN_TASKS, "literal"],
+  chipProject: ["", DOMAIN_TASKS, "literal"],
+  chipBlocked: ["", DOMAIN_TASKS, "literal"],
+  chipCompleted: ["", DOMAIN_TASKS, "literal"],
+  showTasksFor: ["", `${VIEW}project-card.tsx`, "fragment"],
+  closeProjectTasks: ["", `${VIEW}project-tasks.tsx`, "fragment"],
+  emptyAllHeading: ["", TASKS_COPY, "literal"],
+  showingPrefix: ["", TASKS_COPY, "fragment"],
+  tabProjects: ["", `${VIEW}destinations.ts`, "literal"],
+  tabProjectsId: ["", `${VIEW}destinations.ts`, "literal"],
 } as const satisfies CopyTable;
 
 export const TASKS_CLASSES_TABLE = {
