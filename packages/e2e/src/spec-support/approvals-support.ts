@@ -1,3 +1,4 @@
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   type ApprovalsClient,
@@ -6,6 +7,7 @@ import {
 } from "@ccc/service-api-client";
 import { type DriverBrowser, type PollOptions, pollUntil, runPluginCommand } from "../driver.js";
 import type { ServiceKind } from "../isolation-guards.js";
+import { readNotifications } from "../renderer-spies.js";
 import { installResultRecorder, type RecorderOptions } from "../results.js";
 import type { ServiceFixture } from "../service-fixture.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../spec-context.js";
@@ -95,56 +97,115 @@ export function containsInOrder(history: readonly string[], expected: readonly s
   return true;
 }
 
-// RED skeleton (05.2-06 task 2): typed answers that are wrong until the GREEN commit.
-
+/** One recorded view activation (workspace active-leaf-change), by view type. */
 export interface ActivationEntry {
   readonly viewType: string;
 }
 
+/**
+ * True when a banner click caused exactly one navigation: one activation of the command-center
+ * view among the recorded ones (other views are ignored) and one command-center leaf. A
+ * duplicate handler would show as a second activation or a second leaf.
+ */
 export function isExactlyOneNavigation(
-  _entries: readonly ActivationEntry[],
-  _viewType: string,
-  _leafCount: number,
+  entries: readonly ActivationEntry[],
+  viewType: string,
+  leafCount: number,
 ): boolean {
-  return false;
+  return leafCount === 1 && entries.filter((entry) => entry.viewType === viewType).length === 1;
 }
 
+/** One step of a keyboard walk over the filter chips: the key, the focused and the pressed chip names. */
 export interface ChipStep {
   readonly key: string;
   readonly focused: string | null;
   readonly pressed: string | null;
 }
 
+/** The accessible name of a chip announces its label and count: `Pending, 2 requests`. */
+const CHIP_NAME = /^(Pending|Decided|Expired), \d+ requests?$/;
+
+/**
+ * Checks a chip-keyboard transcript against the expected walk: same length and keys, the focused
+ * and pressed chips start with the expected labels, and every focused chip announces its count
+ * in its name. Returns the problems found.
+ */
 export function checkChipTranscript(
-  _transcript: readonly ChipStep[],
-  _expected: ReadonlyArray<{ key: string; focused: string; pressed: string }>,
+  transcript: readonly ChipStep[],
+  expected: ReadonlyArray<{ key: string; focused: string; pressed: string }>,
 ): string[] {
-  return ["not implemented"];
+  if (transcript.length !== expected.length) {
+    return [`the walk has ${transcript.length} steps, expected ${expected.length}`];
+  }
+  const problems: string[] = [];
+  expected.forEach((want, index) => {
+    const step = transcript[index] as ChipStep;
+    if (step.key !== want.key)
+      problems.push(`step ${index + 1}: key ${step.key}, expected ${want.key}`);
+    if (step.focused === null || !step.focused.startsWith(want.focused)) {
+      problems.push(`step ${index + 1}: focus is not on the ${want.focused} chip`);
+    } else if (!CHIP_NAME.test(step.focused)) {
+      problems.push(`step ${index + 1}: the focused chip name does not announce its count`);
+    }
+    if (step.pressed === null || !step.pressed.startsWith(want.pressed)) {
+      problems.push(`step ${index + 1}: the pressed chip is not ${want.pressed}`);
+    }
+  });
+  return problems;
 }
 
+/** A note in the vault's system folder, read with Node file APIs. */
 export interface MirrorFile {
   readonly name: string;
   readonly mtimeMs: number;
   readonly content: string;
 }
 
+/**
+ * The name of the newest note whose text links `obsidian://ccc-approval?id=<proposalId>`; an id
+ * that merely starts with the given one does not match. Null when no note links it.
+ */
 export function findNewestMirrorNote(
-  _files: readonly MirrorFile[],
-  _proposalId: string,
+  files: readonly MirrorFile[],
+  proposalId: string,
 ): string | null {
-  return "not implemented";
+  const needle = `${APPROVALS_COPY.mirrorLinkPrefix}${proposalId}`;
+  let best: MirrorFile | null = null;
+  for (const file of files) {
+    let from = 0;
+    let found = false;
+    for (;;) {
+      const at = file.content.indexOf(needle, from);
+      if (at < 0) break;
+      const next = file.content[at + needle.length] ?? "";
+      if (!/[A-Za-z0-9]/.test(next)) {
+        found = true;
+        break;
+      }
+      from = at + 1;
+    }
+    if (found && (best === null || file.mtimeMs > best.mtimeMs)) best = file;
+  }
+  return best === null ? null : best.name;
 }
 
+/** The first index at or after `fromIndex` whose title is `title`, or -1. */
 export function findNewNotification(
-  _records: ReadonlyArray<{ title: string }>,
-  _fromIndex: number,
-  _title: string,
+  records: ReadonlyArray<{ title: string }>,
+  fromIndex: number,
+  title: string,
 ): number {
-  return -2;
+  for (let index = Math.max(0, fromIndex); index < records.length; index += 1) {
+    if (records[index]?.title === title) return index;
+  }
+  return -1;
 }
 
-export function parseCountChip(_text: string): { count: number; capped: boolean } | null {
-  return { count: -1, capped: false };
+/** Reads the Agent runs count chip's visible text: `3`, or `9+` when capped; null otherwise. */
+export function parseCountChip(text: string): { count: number; capped: boolean } | null {
+  const match = /^(\d+)(\+?)$/.exec(text.trim());
+  if (match?.[1] === undefined) return null;
+  return { count: Number(match[1]), capped: match[2] === "+" };
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +231,22 @@ interface DomDoc {
   querySelectorAll(selector: string): ArrayLike<DomEl>;
 }
 
+interface LeafLite {
+  detach(): void;
+  view?: { getViewType?: () => string };
+}
+
+interface AppLite {
+  workspace: {
+    on(name: string, callback: (leaf: LeafLite | null) => void): unknown;
+    getLeavesOfType(viewType: string): unknown[];
+    getLeaf(kind: string): LeafLite;
+    setActiveLeaf(leaf: LeafLite, params?: { focus?: boolean }): void;
+  };
+}
+
 interface RendererWindow {
+  app?: AppLite;
   __cccUatSpies?: Record<string, unknown>;
   MutationObserver?: new (
     callback: () => void,
@@ -202,6 +278,10 @@ export interface PaneSnapshot {
   countdown: string;
   /** The state block's explanation text. */
   explanation: string;
+  /** The requester-supplied reason text. */
+  reason: string;
+  /** The risk list items (empty when the block reads "None listed."). */
+  risks: string[];
   /** The polite status line text. */
   status: string;
   denyPresent: boolean;
@@ -241,6 +321,8 @@ export function readPaneSnapshot(): PaneSnapshot {
       captions: [],
       countdown: "",
       explanation: "",
+      reason: "",
+      risks: [],
       status,
       denyPresent: false,
       approvePresent: false,
@@ -276,6 +358,10 @@ export function readPaneSnapshot(): PaneSnapshot {
     captions: Array.from(pane.querySelectorAll("[data-caption]")).map((el) => el.textContent ?? ""),
     countdown: pane.querySelector(".ccc-approval-time")?.textContent ?? "",
     explanation: pane.querySelector(".ccc-approval-explanation")?.textContent ?? "",
+    reason: pane.querySelector(".ccc-approval-reason")?.textContent ?? "",
+    risks: Array.from(pane.querySelectorAll(".ccc-approval-risks li")).map(
+      (el) => el.textContent ?? "",
+    ),
     status,
     denyPresent: deny !== null,
     approvePresent: approve !== null,
@@ -398,12 +484,153 @@ export function resetStatusHistory(): boolean {
   return true;
 }
 
+/** The Agent runs tab's pending-approval chip. */
+export interface NavChipSnapshot {
+  present: boolean;
+  /** The visible number (`3`, or `9+`), empty when the chip is absent. */
+  visible: string;
+  /** The visually hidden sentence that carries the true count into the tab's name. */
+  spoken: string;
+}
+
+/** Runs in the renderer: reads the Agent runs tab and its count chip (the tab strip is always on screen). */
+export function readNavChip(): NavChipSnapshot {
+  const tab = document.querySelector("#ccc-tab-agent-runs");
+  if (tab === null) return { present: false, visible: "", spoken: "" };
+  return {
+    present: true,
+    visible: tab.querySelector(".ccc-nav-count")?.textContent ?? "",
+    spoken: tab.querySelector(".ccc-visually-hidden")?.textContent ?? "",
+  };
+}
+
+/** Runs in the renderer: the active destination's heading (the panel's h2), or an empty string. */
+export function readDestinationHeading(): string {
+  return document.querySelector(".ccc-content h2")?.textContent ?? "";
+}
+
+/** Runs in the renderer: puts keyboard focus on the Approvals heading; false when it is not on screen. */
+export function focusApprovalsHeading(): boolean {
+  const heading = document.querySelector(".ccc-approvals h3");
+  if (heading === null) return false;
+  heading.focus();
+  return true;
+}
+
+/** Runs in the renderer: presses the modal button with exactly this text; false when there is none. */
+export function clickModalButton(label: string): boolean {
+  for (const button of Array.from(document.querySelectorAll(".modal button"))) {
+    if ((button.textContent ?? "").trim() === label) {
+      button.click();
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Runs in the renderer: records every distinct Obsidian Notice text that appears (the Notice
+ * constructor lives inside Obsidian, so the page is watched instead). Returns false when a
+ * recorder is already installed.
+ */
+export function installNoticeRecorder(): boolean {
+  const w = window;
+  const ns = w.__cccUatSpies ?? {};
+  w.__cccUatSpies = ns;
+  if (ns["notices"] !== undefined) return false;
+  const seen: string[] = [];
+  ns["notices"] = seen;
+  const Observer = w.MutationObserver;
+  if (Observer === undefined) return false;
+  new Observer(() => {
+    for (const notice of Array.from(document.querySelectorAll(".notice"))) {
+      const now = (notice.textContent ?? "").trim();
+      if (now !== "" && !seen.includes(now)) seen.push(now);
+    }
+  }).observe(document.body, { subtree: true, childList: true, characterData: true });
+  return true;
+}
+
+/** Runs in the renderer: the Notice texts seen since the last clear, oldest first. */
+export function readNotices(): string[] {
+  const seen = window.__cccUatSpies?.["notices"] as string[] | undefined;
+  return seen === undefined ? [] : [...seen];
+}
+
+/** Runs in the renderer: forgets the recorded Notice texts (the recorder keeps running). */
+export function clearNotices(): boolean {
+  const seen = window.__cccUatSpies?.["notices"] as string[] | undefined;
+  if (seen === undefined) return false;
+  seen.length = 0;
+  return true;
+}
+
+/** Runs in the renderer: records every workspace active-leaf-change by view type. */
+export function installActivationRecorder(): boolean {
+  const w = window;
+  const ns = w.__cccUatSpies ?? {};
+  w.__cccUatSpies = ns;
+  if (ns["activations"] !== undefined) return false;
+  const seen: Array<{ viewType: string }> = [];
+  ns["activations"] = seen;
+  if (w.app === undefined) return false;
+  w.app.workspace.on("active-leaf-change", (leaf) => {
+    seen.push({ viewType: leaf?.view?.getViewType?.() ?? "" });
+  });
+  return true;
+}
+
+/** Runs in the renderer: the recorded activations since the last reset. */
+export function readActivations(): Array<{ viewType: string }> {
+  const seen = window.__cccUatSpies?.["activations"] as Array<{ viewType: string }> | undefined;
+  return seen === undefined ? [] : seen.map((entry) => ({ ...entry }));
+}
+
+/** Runs in the renderer: forgets the recorded activations (the recorder keeps running). */
+export function resetActivations(): boolean {
+  const seen = window.__cccUatSpies?.["activations"] as unknown[] | undefined;
+  if (seen === undefined) return false;
+  seen.length = 0;
+  return true;
+}
+
+/**
+ * Runs in the renderer: opens a new empty tab and makes it the active leaf, so the next jump to
+ * the command center is a real activation rather than a no-op on an already active leaf.
+ */
+export function activateScratchLeaf(): boolean {
+  const w = window;
+  if (w.app === undefined) return false;
+  const leaf = w.app.workspace.getLeaf("tab");
+  w.app.workspace.setActiveLeaf(leaf, { focus: true });
+  const ns = w.__cccUatSpies ?? {};
+  w.__cccUatSpies = ns;
+  ns["scratchLeaf"] = leaf;
+  return true;
+}
+
+/** Runs in the renderer: closes the empty tab opened by activateScratchLeaf. */
+export function detachScratchLeaf(): boolean {
+  const ns = window.__cccUatSpies;
+  const leaf = ns?.["scratchLeaf"] as LeafLite | undefined;
+  if (ns === undefined || leaf === undefined) return false;
+  leaf.detach();
+  ns["scratchLeaf"] = undefined;
+  return true;
+}
+
+/** Runs in the renderer: how many open leaves hold this view type. */
+export function countLeavesOfType(viewType: string): number {
+  return window.app?.workspace.getLeavesOfType(viewType).length ?? 0;
+}
+
 // ---------------------------------------------------------------------------
 // Spec-side helpers
 
 /** The slice of the wdio browser these helpers use; the real browser satisfies it. */
 export interface SupportBrowser extends DriverBrowser {
   execute<R, A extends unknown[]>(script: (...args: A) => R, ...args: A): Promise<R>;
+  keys(value: string | string[]): Promise<void>;
 }
 
 /** Collapses whitespace in every string of a snapshot; the renderer functions return raw text. */
@@ -596,4 +823,103 @@ export async function readStore(context: RunContext): Promise<StoreReading> {
       event: text(row["event"]) ?? "",
     })),
   };
+}
+
+/** The Agent runs count chip, whitespace squashed. */
+export async function readNav(browser: SupportBrowser): Promise<NavChipSnapshot> {
+  return squashDeep(await browser.execute(readNavChip));
+}
+
+/** Runs the Open overview command, so the Approvals section is off screen, and waits for the Overview heading. */
+export async function openOverview(browser: SupportBrowser): Promise<void> {
+  await runPluginCommand(browser, `${PLUGIN_ID}:${APPROVALS_COPY.overviewCommandSuffix}`);
+  await pollUntil(
+    async () =>
+      (await browser.execute(readDestinationHeading)).trim() === APPROVALS_COPY.overviewLabel,
+    uiWait("the Overview destination"),
+  );
+}
+
+/**
+ * Runs Set up managed vault in the vault copy: starts the command, presses Confirm in the plan
+ * modal and waits for the "Managed vault ready" Notice. Safe to repeat (existing paths are kept).
+ */
+export async function ensureManagedVault(browser: SupportBrowser): Promise<void> {
+  await browser.execute(installNoticeRecorder);
+  await browser.execute(clearNotices);
+  await runPluginCommand(browser, SETUP_COMMAND_ID);
+  await pollUntil(
+    () => browser.execute(clickModalButton, APPROVALS_COPY.confirmButton),
+    uiWait("the vault setup confirmation"),
+  );
+  await pollUntil(
+    async () =>
+      (await browser.execute(readNotices)).some((notice) =>
+        notice.startsWith(APPROVALS_COPY.vaultReadyPrefix),
+      ),
+    uiWait("the managed vault ready notice"),
+  );
+}
+
+/**
+ * Waits for a recorded notification titled `title` at or after `fromIndex` in the spy's list and
+ * returns its index (wrapped, because index 0 is a legitimate answer a poll would treat as falsy).
+ */
+export async function waitForNotification(
+  browser: SupportBrowser,
+  fromIndex: number,
+  title: string = APPROVALS_COPY.notificationTitle,
+): Promise<{ index: number }> {
+  return pollUntil(
+    async () => {
+      const { records } = await browser.execute(readNotifications);
+      const index = findNewNotification(records, fromIndex, title);
+      return index >= 0 ? { index } : null;
+    },
+    uiWait(`a "${title}" notification`),
+  );
+}
+
+/** How many notifications the spy has recorded so far. */
+export async function notificationCount(browser: SupportBrowser): Promise<number> {
+  return (await browser.execute(readNotifications)).records.length;
+}
+
+/** The keys of the chip walk and the labels they are reported under. */
+export type ChipKey = "Tab" | "Shift+Tab" | "Enter";
+
+/**
+ * Walks the filter chips with the keyboard from the Approvals heading: sends each key, then
+ * records which chip has focus (its accessible name) and which is pressed.
+ */
+export async function walkChips(
+  browser: SupportBrowser,
+  keys: readonly ChipKey[],
+): Promise<ChipStep[]> {
+  if (!(await browser.execute(focusApprovalsHeading))) {
+    throw new Error("The Approvals heading is not on screen, so the chip walk cannot start.");
+  }
+  const steps: ChipStep[] = [];
+  for (const key of keys) {
+    await browser.keys(key === "Shift+Tab" ? ["Shift", "Tab"] : key);
+    const { chips } = await readChips(browser);
+    steps.push({
+      key,
+      focused: chips.find((chip) => chip.focused)?.name ?? null,
+      pressed: chips.find((chip) => chip.pressed)?.name ?? null,
+    });
+  }
+  return steps;
+}
+
+/** Reads the notes in the vault copy's system folder (Node file APIs; never written). */
+export function readMirrorFiles(vaultPath: string): MirrorFile[] {
+  const dir = join(vaultPath, "system");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith(".md"))
+    .map((name) => {
+      const path = join(dir, name);
+      return { name, mtimeMs: statSync(path).mtimeMs, content: readFileSync(path, "utf8") };
+    });
 }

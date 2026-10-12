@@ -98,17 +98,82 @@ export const APPROVALS_COPY = Object.freeze({
   inboxCommandSuffix: mirror("inboxCommandSuffix", "approvals/commands.ts", "open-approval-inbox"),
   setupCommandSuffix: mirror("setupCommandSuffix", "setup-command.ts", "set-up-managed-vault"),
 
-  // RED skeleton (05.2-06 task 2): empty until the GREEN commit.
-  filterGroupLabel: "",
-  countdownPrefix: "",
-  deniedAutomatically: "",
-  providedByCaption: "",
-  requestedByTerm: "",
-  notificationTitle: "",
-  inboxNoticeText: "",
-  vaultReadyPrefix: "",
-  confirmButton: "",
-  mirrorLinkPrefix: "",
-  commandCenterViewType: "",
-  agentRunsTabSpoken: "",
+  // The request pane and the filter chips (approvals-copy.ts, approval-detail.tsx).
+  filterGroupLabel: mirror("filterGroupLabel", COPY, "Approval filter"),
+  countdownPrefix: mirror("countdownPrefix", COPY, "Expires"),
+  deniedAutomatically: mirror(
+    "deniedAutomatically",
+    COPY,
+    "If you don't decide, it's denied automatically.",
+  ),
+  computedCaption: mirror("computedCaption", COPY, "Computed by the command center"),
+  providedByCaption: mirror("providedByCaption", "view/approval-detail.tsx", "Provided by "),
+  requestedByTerm: mirror("requestedByTerm", COPY, "Requested by"),
+  decisionGroupLabel: mirror("decisionGroupLabel", COPY, "Decision"),
+  // BLOCK_HEADING.
+  headingHappen: mirror("headingHappen", COPY, "What will happen"),
+  headingTarget: mirror("headingTarget", COPY, "Target"),
+  headingReason: mirror("headingReason", COPY, "Reason"),
+  headingRisks: mirror("headingRisks", COPY, "Risks"),
+
+  // The native notification and the Obsidian Notice that replaces it (approvals/notify.ts).
+  notificationTitle: mirror("notificationTitle", "approvals/notify.ts", "Approval needed"),
+  inboxNoticeText: mirror(
+    "inboxNoticeText",
+    "approvals/notify.ts",
+    'Approval needed. Run "Open approval inbox" from the command palette to review it.',
+  ),
+
+  // Vault setup (setup-command.ts) and the mirror note link the service writes.
+  vaultReadyPrefix: mirror("vaultReadyPrefix", "setup-command.ts", "Managed vault ready:"),
+  confirmButton: mirror("confirmButton", "setup-command.ts", "Confirm"),
+  mirrorLinkPrefix: mirror(
+    "mirrorLinkPrefix",
+    "../../service/src/approval-wiring/mirror.ts",
+    "obsidian://ccc-approval?id=",
+  ),
+
+  // The command-center view and the Agent runs count chip.
+  commandCenterViewType: mirror(
+    "commandCenterViewType",
+    "view/command-center-view.ts",
+    "claude-command-center-view",
+  ),
+  agentRunsTabSpoken: mirror(
+    "agentRunsTabSpoken",
+    "view/destination-tabs.tsx",
+    "approval request needs your decision",
+  ),
+  overviewCommandSuffix: mirror("overviewCommandSuffix", "main.ts", "open-overview"),
+  overviewLabel: mirror("overviewLabel", "view/destinations.ts", "Overview"),
 });
+
+/**
+ * The class names, data attributes and ids the renderer functions in approvals-support.ts read.
+ * Those functions cannot reference outer variables, so their selectors are literals; registering
+ * the tokens here makes the drift test prove each one still exists in the plugin's markup.
+ */
+const SELECTORS: ReadonlyArray<readonly [string, string]> = [
+  ["ccc-approvals-status", "view/approvals-section.tsx"],
+  ["ccc-filter-chip", "view/approvals-section.tsx"],
+  ["ccc-approval-row-button", "view/approvals-section.tsx"],
+  ["ccc-approval-row-meta", "view/approvals-section.tsx"],
+  ["data-selected", "view/approvals-section.tsx"],
+  ["ccc-approval-detail", "view/approval-detail.tsx"],
+  ["ccc-approval-history", "view/approval-detail.tsx"],
+  ["ccc-approval-time", "view/approval-detail.tsx"],
+  ["ccc-approval-reason", "view/approval-detail.tsx"],
+  ["ccc-approval-risks", "view/approval-detail.tsx"],
+  ["ccc-approval-relocated", "view/approval-detail.tsx"],
+  ["ccc-approval-explanation", "view/approval-detail.tsx"],
+  ["data-block", "view/approval-detail.tsx"],
+  ["data-caption", "view/approval-detail.tsx"],
+  ["data-decision", "view/approval-decision.tsx"],
+  ["ccc-list-meta", "view/approval-decision.tsx"],
+  ["ccc-nav-count", "view/destination-tabs.tsx"],
+  ["ccc-visually-hidden", "view/destination-tabs.tsx"],
+  ["ccc-tab-", "view/destination-tabs.tsx"],
+  ["agent-runs", "view/destinations.ts"],
+];
+
+for (const [token, source] of SELECTORS) mirror(`selector:${token}`, source, token);
