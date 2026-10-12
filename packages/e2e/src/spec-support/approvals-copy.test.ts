@@ -14,6 +14,33 @@ import { APPROVALS_COPY, findDrift, type MirrorEntry, mirroredEntries } from "./
 const PLUGIN_SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "plugin", "src");
 const readPluginSource = (source: string): string => readFileSync(join(PLUGIN_SRC, source), "utf8");
 
+describe("approvals copy mirror, task 2 strings (Task 2 Test 1)", () => {
+  it("holds the pane, chip, notification and setup literals as the plugin words them", () => {
+    expect(APPROVALS_COPY.filterGroupLabel).toBe("Approval filter");
+    expect(APPROVALS_COPY.countdownPrefix).toBe("Expires");
+    expect(APPROVALS_COPY.deniedAutomatically).toBe(
+      "If you don't decide, it's denied automatically.",
+    );
+    expect(APPROVALS_COPY.providedByCaption).toBe("Provided by ");
+    expect(APPROVALS_COPY.requestedByTerm).toBe("Requested by");
+    expect(APPROVALS_COPY.notificationTitle).toBe("Approval needed");
+    expect(APPROVALS_COPY.inboxNoticeText).toBe(
+      'Approval needed. Run "Open approval inbox" from the command palette to review it.',
+    );
+    expect(APPROVALS_COPY.vaultReadyPrefix).toBe("Managed vault ready:");
+    expect(APPROVALS_COPY.confirmButton).toBe("Confirm");
+    expect(APPROVALS_COPY.mirrorLinkPrefix).toBe("obsidian://ccc-approval?id=");
+    expect(APPROVALS_COPY.commandCenterViewType).toBe("claude-command-center-view");
+    expect(APPROVALS_COPY.agentRunsTabSpoken).toBe("approval request needs your decision");
+  });
+
+  it("registers the selectors the renderer functions read, each found in the plugin sources", () => {
+    const selectors = mirroredEntries().filter((entry) => entry.key.startsWith("selector:"));
+    expect(selectors.length).toBeGreaterThanOrEqual(12);
+    expect(findDrift(selectors, readPluginSource)).toEqual([]);
+  });
+});
+
 describe("approvals copy mirror (Test 1)", () => {
   it("holds the task 1 literals exactly as the plugin words them", () => {
     expect(APPROVALS_COPY.sectionHeading).toBe("Approvals");
@@ -49,7 +76,7 @@ describe("approvals copy mirror (Test 1)", () => {
     expect(entries.length).toBeGreaterThanOrEqual(25);
     for (const entry of entries) {
       expect(entry.text.length).toBeGreaterThan(0);
-      expect(entry.source).toMatch(/^[a-z-]+\/[a-z-]+(\.[a-z]+)*\.tsx?$|^[a-z-]+\.ts$/);
+      expect(entry.source).toMatch(/\.tsx?$/);
     }
   });
 

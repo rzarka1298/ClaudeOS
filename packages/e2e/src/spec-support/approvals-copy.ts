@@ -97,4 +97,18 @@ export const APPROVALS_COPY = Object.freeze({
   // Command id suffixes; the plugin id prefix comes from the sandbox driver.
   inboxCommandSuffix: mirror("inboxCommandSuffix", "approvals/commands.ts", "open-approval-inbox"),
   setupCommandSuffix: mirror("setupCommandSuffix", "setup-command.ts", "set-up-managed-vault"),
+
+  // RED skeleton (05.2-06 task 2): empty until the GREEN commit.
+  filterGroupLabel: "",
+  countdownPrefix: "",
+  deniedAutomatically: "",
+  providedByCaption: "",
+  requestedByTerm: "",
+  notificationTitle: "",
+  inboxNoticeText: "",
+  vaultReadyPrefix: "",
+  confirmButton: "",
+  mirrorLinkPrefix: "",
+  commandCenterViewType: "",
+  agentRunsTabSpoken: "",
 });

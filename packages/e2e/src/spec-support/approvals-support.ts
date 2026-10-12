@@ -95,6 +95,58 @@ export function containsInOrder(history: readonly string[], expected: readonly s
   return true;
 }
 
+// RED skeleton (05.2-06 task 2): typed answers that are wrong until the GREEN commit.
+
+export interface ActivationEntry {
+  readonly viewType: string;
+}
+
+export function isExactlyOneNavigation(
+  _entries: readonly ActivationEntry[],
+  _viewType: string,
+  _leafCount: number,
+): boolean {
+  return false;
+}
+
+export interface ChipStep {
+  readonly key: string;
+  readonly focused: string | null;
+  readonly pressed: string | null;
+}
+
+export function checkChipTranscript(
+  _transcript: readonly ChipStep[],
+  _expected: ReadonlyArray<{ key: string; focused: string; pressed: string }>,
+): string[] {
+  return ["not implemented"];
+}
+
+export interface MirrorFile {
+  readonly name: string;
+  readonly mtimeMs: number;
+  readonly content: string;
+}
+
+export function findNewestMirrorNote(
+  _files: readonly MirrorFile[],
+  _proposalId: string,
+): string | null {
+  return "not implemented";
+}
+
+export function findNewNotification(
+  _records: ReadonlyArray<{ title: string }>,
+  _fromIndex: number,
+  _title: string,
+): number {
+  return -2;
+}
+
+export function parseCountChip(_text: string): { count: number; capped: boolean } | null {
+  return { count: -1, capped: false };
+}
+
 // ---------------------------------------------------------------------------
 // Renderer-side types and functions
 

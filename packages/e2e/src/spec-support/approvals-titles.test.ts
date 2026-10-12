@@ -24,15 +24,33 @@ function numbersOf(titles: readonly string[]): number[] {
   return titles.map((title) => itemNumberOf(title, UAT_PHASE_PREFIX) as number);
 }
 
+const CORE_PLANNED = [7, 6, 5, 8, 2, 3, 4];
+const OWNER_PARTIALS = [2, 3, 4];
+
 describe("approvals-core titles (Test 4)", () => {
-  it("starts with the Deny item, [06-UAT#07]", () => {
+  it("holds the Deny item, [06-UAT#07]", () => {
     const titles = titlesOf("approvals-core");
     expect(titles.some((title) => title.startsWith("[06-UAT#07]"))).toBe(true);
   });
 
   it("holds only planned approvals-core items and each prefix at most once", () => {
     const numbers = numbersOf(titlesOf("approvals-core"));
-    for (const number of numbers) expect([7, 6, 5, 8, 2, 3, 4]).toContain(number);
+    for (const number of numbers) expect(CORE_PLANNED).toContain(number);
     expect(new Set(numbers).size).toBe(numbers.length);
+  });
+});
+
+describe("approvals-core titles, complete (Task 2 Test 3)", () => {
+  it("holds exactly the seven planned titles in the planned order, once each", () => {
+    expect(numbersOf(titlesOf("approvals-core"))).toEqual(CORE_PLANNED);
+  });
+
+  it("ends the three owner-item titles with the words auto-part", () => {
+    const titles = titlesOf("approvals-core");
+    for (const title of titles) {
+      const number = itemNumberOf(title, UAT_PHASE_PREFIX) as number;
+      if (OWNER_PARTIALS.includes(number)) expect(title.endsWith("auto-part")).toBe(true);
+      else expect(title.endsWith("auto-part")).toBe(false);
+    }
   });
 });
