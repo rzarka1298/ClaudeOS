@@ -25,7 +25,7 @@ describe("findCopyDrift (Test 1, the guard discriminates)", () => {
     label: ["Create a task", "owner.ts", "literal"],
     prefix: ["Accept task: ", "owner.ts", "fragment"],
   };
-  const source = 'export const L = "Create a task";\nconst p = `Accept task: ${t}`;';
+  const source = ['export const L = "Create a task";', 'const p = "Accept task: " + t;'].join("\n");
 
   it("reports nothing when every mirrored value is in its owner", () => {
     expect(findCopyDrift(table, () => source)).toEqual([]);
@@ -38,8 +38,10 @@ describe("findCopyDrift (Test 1, the guard discriminates)", () => {
 
   it("requires the quoted form for a literal and any substring for a fragment", () => {
     const loose = 'const x = "Create a task now";';
-    expect(findCopyDrift({ label: table.label }, () => loose)).toEqual(["label"]);
-    expect(findCopyDrift({ prefix: table.prefix }, () => "Accept task: x")).toEqual([]);
+    const label: CopyTable = { label: ["Create a task", "owner.ts", "literal"] };
+    const prefix: CopyTable = { prefix: ["Accept task: ", "owner.ts", "fragment"] };
+    expect(findCopyDrift(label, () => loose)).toEqual(["label"]);
+    expect(findCopyDrift(prefix, () => "Accept task: x")).toEqual([]);
   });
 
   it("reports a missing owner file as drift, never as a pass", () => {

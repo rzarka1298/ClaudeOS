@@ -1,9 +1,20 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { checkCreatedNote, parseNoteFrontmatter } from "./tasks-support.js";
+import {
+  checkCreatedNote,
+  parseNoteFrontmatter,
+  readerSelectors,
+  rendererClick,
+  rendererReadTasks,
+  rendererSetInput,
+} from "./tasks-support.js";
 
 const ID = "abcdefghij0123456789klmno";
 
-function note(overrides: Record<string, string | null> = {}, title = "Weekly report draft"): string {
+function note(
+  overrides: Record<string, string | null> = {},
+  title = "Weekly report draft",
+): string {
   const base: Record<string, string | null> = {
     id: ID,
     scope: "global",
@@ -137,5 +148,32 @@ describe("checkCreatedNote (Test 3)", () => {
       checkCreatedNote(note(), "other-12345678.md", expected),
     ].map((result) => (result.ok ? "ok" : result.code));
     expect(new Set(codes).size).toBe(4);
+  });
+});
+
+describe("renderer functions are self-contained (wdio serialises them with toString)", () => {
+  const emptyDocument = { querySelector: () => null, querySelectorAll: () => [] };
+
+  function inFreshRealm(fn: (...args: never[]) => unknown, ...args: unknown[]): unknown {
+    const source = fn.toString();
+    expect(source).not.toContain("__name(");
+    return runInNewContext(`(${source})(null, ...args)`, { document: emptyDocument, args });
+  }
+
+  it("rendererClick finds nothing in an empty document and reports false", () => {
+    expect(inFreshRealm(rendererClick, "button", "Confirm")).toBe(false);
+  });
+
+  it("rendererSetInput reports false when the form is absent", () => {
+    expect(inFreshRealm(rendererSetInput, "form", "Title", "x")).toBe(false);
+  });
+
+  it("rendererReadTasks reports an unmounted surface for a missing root", () => {
+    const result = inFreshRealm(rendererReadTasks, "section.none", readerSelectors()) as {
+      mounted: boolean;
+      rows: unknown[];
+    };
+    expect(result.mounted).toBe(false);
+    expect(result.rows).toEqual([]);
   });
 });
