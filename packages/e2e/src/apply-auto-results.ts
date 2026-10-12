@@ -31,7 +31,8 @@ const MESSAGES = {
 
 const SUMMARY_KEYS = ["auto-passed", "auto-failed", "owner-pending"] as const;
 
-function countSummary(text: string): Record<(typeof SUMMARY_KEYS)[number], number> {
+/** Counts only auto-results written by `runId`: an older run's line proves nothing about this one. */
+function countSummary(text: string, runId: string): Record<(typeof SUMMARY_KEYS)[number], number> {
   const { items } = parseUatScript(text);
   let passed = 0;
   let failed = 0;
@@ -41,9 +42,10 @@ function countSummary(text: string): Record<(typeof SUMMARY_KEYS)[number], numbe
       if (item.resultValue === null || item.resultValue.startsWith("[pending]")) ownerPending += 1;
       continue;
     }
-    const state = item.autoResult === null ? null : AUTO_RESULT_PATTERN.exec(item.autoResult)?.[1];
-    if (state === "pass") passed += 1;
-    if (state === "fail") failed += 1;
+    const match = item.autoResult === null ? null : AUTO_RESULT_PATTERN.exec(item.autoResult);
+    if (match === null || match === undefined || match[2] !== runId) continue;
+    if (match[1] === "pass") passed += 1;
+    if (match[1] === "fail") failed += 1;
   }
   return { "auto-passed": passed, "auto-failed": failed, "owner-pending": ownerPending };
 }
@@ -88,7 +90,7 @@ export function applyAutoResults(input: ApplyInput): string {
   });
 
   let text = rewritten.join("\n");
-  const counts = countSummary(text);
+  const counts = countSummary(text, input.runId);
   const after = parseUatScript(text);
   const lines = text.split("\n");
   const missing: string[] = [];
