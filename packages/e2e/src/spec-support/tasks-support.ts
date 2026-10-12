@@ -572,7 +572,8 @@ export function rendererSetInput(
  * Reads one tasks surface: the chips with their accessible names, the rows, the volume line, the
  * attention list and the create form. `rootSelector` picks the global destination or a project
  * panel. Class names and the disconnected sentence arrive as arguments (the function has no
- * outer variables).
+ * outer variables). It declares no nested function: tsx compiles with keepNames, and a nested
+ * function would call a helper the renderer does not have.
  */
 export function rendererReadTasks(
   _ctx: unknown,
@@ -593,7 +594,6 @@ export function rendererReadTasks(
     disconnected: false,
   };
   if (root === null) return empty;
-  const text = (element: RElement | null): string => (element?.textContent ?? "").trim();
   const chips: RenderedTasks["chips"] = [];
   const chipNodes = root.querySelectorAll(cfg.chip);
   for (let index = 0; index < chipNodes.length; index += 1) {
@@ -601,7 +601,7 @@ export function rendererReadTasks(
     if (chip === undefined) continue;
     chips.push({
       filter: chip.getAttribute("data-filter") ?? "",
-      name: chip.getAttribute("aria-label") ?? text(chip),
+      name: chip.getAttribute("aria-label") ?? (chip?.textContent ?? "").trim(),
       pressed: chip.getAttribute("aria-pressed") === "true",
     });
   }
@@ -614,9 +614,9 @@ export function rendererReadTasks(
     const date = row.querySelector(cfg.date);
     rows.push({
       id: row.getAttribute("data-task-id") ?? "",
-      title: title?.getAttribute("title") ?? text(title),
+      title: title?.getAttribute("title") ?? (title?.textContent ?? "").trim(),
       status: row.getAttribute("data-status") ?? "",
-      datePhrase: date === null ? null : text(date),
+      datePhrase: date === null ? null : (date?.textContent ?? "").trim(),
     });
   }
   const attention: RenderedTasks["attention"] = [];
@@ -625,9 +625,9 @@ export function rendererReadTasks(
     const item = attentionNodes[index];
     if (item === undefined) continue;
     attention.push({
-      title: text(item.querySelector(cfg.attentionTitle)),
-      reason: text(item.querySelector(cfg.attentionHelp)),
-      path: text(item.querySelector(cfg.attentionPath)),
+      title: (item.querySelector(cfg.attentionTitle)?.textContent ?? "").trim(),
+      reason: (item.querySelector(cfg.attentionHelp)?.textContent ?? "").trim(),
+      path: (item.querySelector(cfg.attentionPath)?.textContent ?? "").trim(),
     });
   }
   const heading = root.querySelector(cfg.listHeading);
@@ -637,11 +637,12 @@ export function rendererReadTasks(
     mounted: true,
     chips,
     rows,
-    showing: heading === null ? null : text(heading),
-    emptyHeading: emptyHeading === null ? null : text(emptyHeading),
-    status: text(root.querySelector(cfg.status)),
+    showing: heading === null ? null : (heading?.textContent ?? "").trim(),
+    emptyHeading: emptyHeading === null ? null : (emptyHeading?.textContent ?? "").trim(),
+    status: (root.querySelector(cfg.status)?.textContent ?? "").trim(),
     attention,
-    attentionHeading: attentionSection === null ? null : text(attentionSection),
+    attentionHeading:
+      attentionSection === null ? null : (attentionSection?.textContent ?? "").trim(),
     formOpen: root.querySelector(cfg.form) !== null,
     disconnected: (root.textContent ?? "").includes(cfg.disconnectedText),
   };
