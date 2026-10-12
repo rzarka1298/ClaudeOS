@@ -11,6 +11,7 @@ import {
 } from "./run-uat.js";
 import type { SandboxHandle, SandboxOutcome } from "./sandbox.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
+import type { SpecTitle } from "./tag-lint.js";
 import { parseUatScript } from "./uat-tags.js";
 
 const ROOT = "/tmp/ccc-uat.test01";
@@ -79,6 +80,9 @@ const record = (title: string, state: ResultRecord["state"]): ResultRecord => ({
   message: state === "failed" ? "boom" : "",
 });
 
+// No expectations by default; the tests that exercise them pass their own titles.
+const DEFAULT_TITLES: SpecTitle[] = [];
+
 const GOOD_RESULTS: ResultRecord[] = [
   record("[06-UAT#01] banner appears", "passed"),
   record("[06-UAT#02] click handler part", "passed"),
@@ -101,6 +105,7 @@ function harness(
     script?: string | null;
     looks?: LookPendingItem[];
     leaks?: number;
+    titles?: SpecTitle[];
   } = {},
 ): Harness {
   const calls: string[] = [];
@@ -178,6 +183,10 @@ function harness(
       calls.push("wdio");
       wdioInputs.push({ wdioEnv: input.wdioEnv, extraArgs: input.extraArgs });
       return { exitCode: 0, signal: null };
+    },
+    readSpecTitles: () => {
+      calls.push("read-spec-titles");
+      return setup.titles ?? DEFAULT_TITLES;
     },
     readResults: () => {
       calls.push("read-results");
@@ -272,7 +281,9 @@ describe("runUat order (Test 3)", () => {
   it("runs the standard profile in the fixed order and never builds the big vault", async () => {
     const h = harness();
     await runUat(options(), h.ports);
-    const order = h.calls.filter((call) => call !== "installed-app" && call !== "read-script");
+    const order = h.calls.filter(
+      (call) => call !== "installed-app" && call !== "read-script" && call !== "read-spec-titles",
+    );
     expect(order).toEqual([
       "checks",
       "verify-cache",
@@ -450,6 +461,72 @@ describe("runUat statuses to report (Test 5)", () => {
     const outcome = await runUat(options(), h.ports);
     expect(outcome.exitCode).toBe(1);
     expect(h.reports[0]?.text).toContain("version-mismatch: app-differs-from-decision");
+  });
+});
+
+describe("runUat expected titles (Wave 2 fix: a missing test cannot pass)", () => {
+  const titles = (...names: string[]): SpecTitle[] =>
+    names.map((title) => ({ file: "packages/e2e/specs/approvals-core.e2e.ts", title, only: false }));
+
+  it("marks an item inconclusive when one of its spec tests left no record, and exits 1", async () => {
+    const h = harness(
+      {},
+      {
+        results: [
+          record("[06-UAT#01] banner", "passed"),
+          record("[06-UAT#05] deny", "passed"),
+          record("[06-UAT#07] approve", "passed"),
+        ],
+        titles: titles(
+          "[06-UAT#01] banner",
+          "[06-UAT#05] deny",
+          "[06-UAT#05] deny again",
+          "[06-UAT#07] approve",
+        ),
+      },
+    );
+    const outcome = await runUat(options(), h.ports);
+    const row = (item: number) =>
+      (h.reports[0]?.text ?? "").split("\n").find((line) => line.startsWith(`| ${item} |`));
+    expect(row(5)).toContain("| inconclusive |");
+    expect(row(5)).toContain("1 of 2 expected tests recorded");
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.failedItems).toEqual([5]);
+  });
+
+  it("passes the item when every expected title has a record", async () => {
+    const h = harness(
+      {},
+      {
+        results: [
+          record("[06-UAT#01] banner", "passed"),
+          record("[06-UAT#05] deny", "passed"),
+          record("[06-UAT#05] deny again", "passed"),
+          record("[06-UAT#07] approve", "passed"),
+        ],
+        titles: titles(
+          "[06-UAT#01] banner",
+          "[06-UAT#05] deny",
+          "[06-UAT#05] deny again",
+          "[06-UAT#07] approve",
+        ),
+      },
+    );
+    const outcome = await runUat(options(), h.ports);
+    expect(outcome.failedItems).toEqual([]);
+    expect(outcome.exitCode).toBe(0);
+  });
+
+  it("reads the spec titles with the script's phase prefix", async () => {
+    const seen: string[] = [];
+    const h = harness({
+      readSpecTitles: (prefix) => {
+        seen.push(prefix);
+        return [];
+      },
+    });
+    await runUat(options(), h.ports);
+    expect(seen).toEqual(["06"]);
   });
 });
 

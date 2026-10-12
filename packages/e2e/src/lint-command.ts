@@ -1,6 +1,13 @@
 import { join } from "node:path";
 import { SPEC_FILES, specsForProfile, UAT_ITEM_PLAN, UAT_PHASE_PREFIX } from "./spec-map.js";
-import { checkMapAgainstScript, extractSpecTitles, groupTitles, lintTags } from "./tag-lint.js";
+import {
+  checkMapAgainstScript,
+  expectedTitlesByItem,
+  extractSpecTitles,
+  findOnlyTests,
+  groupTitles,
+  lintTags,
+} from "./tag-lint.js";
 import { parseUatScript, phasePrefixOf, type TagFinding } from "./uat-tags.js";
 import { SCALE_SPEC } from "./wdio-config.js";
 
@@ -63,6 +70,8 @@ export function lintTagsCommand(input: LintCommandInput): LintCommandResult {
   const found: TagFinding[] = [
     ...parsed.findings,
     ...lintTags({ items: parsed.items, specTitles, phasePrefix }),
+    // An .only test would run alone and silently skip every other item.
+    ...findOnlyTests(titles, phasePrefix),
   ];
 
   const extra: string[] = [];
@@ -85,6 +94,10 @@ export function lintTagsCommand(input: LintCommandInput): LintCommandResult {
   return {
     exitCode: lines.length === 0 ? 0 : 1,
     lines:
-      lines.length === 0 ? ["ok: no findings"] : [...lines, `failed: ${lines.length} finding(s)`],
+      lines.length === 0
+        ? [
+            `ok: no findings, ${expectedTitlesByItem(titles, phasePrefix).size} item(s) with expected tests`,
+          ]
+        : [...lines, `failed: ${lines.length} finding(s)`],
   };
 }

@@ -60,6 +60,7 @@ import {
   shotPath,
 } from "./screenshots.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
+import { extractSpecTitles } from "./tag-lint.js";
 import { generateUatVault } from "./uat-vault.js";
 import { isolatePluginData } from "./vault-plugin-data.js";
 import { parseVersions } from "./versions.js";
@@ -179,6 +180,15 @@ export function createRunPorts(): RunPorts {
         wdioEnv,
         extraArgs,
       }),
+    readSpecTitles: (prefix) => {
+      const dir = join(E2E_DIR, "specs");
+      const names = readdirSync(dir)
+        .filter((name) => name.endsWith(".e2e.ts"))
+        .sort();
+      return names.flatMap((name) =>
+        extractSpecTitles(`packages/e2e/specs/${name}`, readText(join(dir, name)) ?? "", prefix),
+      );
+    },
     readResults: (path) => {
       const text = readText(path);
       return text === null ? [] : parseResultsFile(text);

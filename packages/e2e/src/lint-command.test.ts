@@ -94,6 +94,32 @@ describe("lintTagsCommand (Test 4)", () => {
     expect(result.lines.join("\n")).toContain("SCALE_IN_STANDARD");
   });
 
+  it("flags an .only test with ONLY_TEST and its item number", () => {
+    const specs = buildSpecs();
+    const name = Object.keys(specs)[0] as string;
+    specs[name] = (specs[name] as string).replace("it(", "it.only(");
+    const result = run(buildScript(), specs);
+    expect(result.exitCode).toBe(1);
+    expect(result.lines.join("\n")).toMatch(/ONLY_TEST item \d+/);
+  });
+
+  it("reports a spec file with no tagged test as TAGGED_NO_TEST, not SPEC_FILE_MISSING", () => {
+    const target = UAT_ITEM_PLAN.find((entry) => entry.specFile !== null)?.specFile as string;
+    const skip = UAT_ITEM_PLAN.filter((entry) => entry.specFile === target).map(
+      (entry) => entry.number,
+    );
+    const result = run(buildScript(), buildSpecs(skip));
+    const text = result.lines.join("\n");
+    expect(text).toContain("TAGGED_NO_TEST");
+    expect(text).not.toContain("SPEC_FILE_MISSING item");
+    expect(text).not.toMatch(/^SPEC_FILE_MISSING/m);
+  });
+
+  it("states how many items have expected tests when everything is consistent", () => {
+    const result = run(buildScript(), buildSpecs());
+    expect(result.lines.join("\n")).toMatch(/\d+ item\(s\) with expected tests/);
+  });
+
   it("fails when the script cannot be read", () => {
     const result = lintTagsCommand({
       scriptPath: SCRIPT_PATH,

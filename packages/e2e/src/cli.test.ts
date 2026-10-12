@@ -97,6 +97,7 @@ describe("cli command table (Test 9)", () => {
       "deleteShots",
       "spawnWdio",
       "readResults",
+      "readSpecTitles",
       "readLookPending",
       "readVersions",
       "readScript",

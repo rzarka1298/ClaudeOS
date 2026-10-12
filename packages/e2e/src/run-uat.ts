@@ -8,6 +8,7 @@ import type { SandboxHandle, SandboxOutcome } from "./sandbox.js";
 import { sanitizeText } from "./sanitize.js";
 import { UAT_ITEM_PLAN, UAT_PHASE_PREFIX } from "./spec-map.js";
 import type { SpikeDecisions } from "./spike-decisions.js";
+import { expectedTitlesByItem, type SpecTitle } from "./tag-lint.js";
 import { parseUatScript, phasePrefixOf } from "./uat-tags.js";
 import type { VaultKind } from "./uat-vault.js";
 import { finalMismatches, type VersionRecord } from "./versions.js";
@@ -70,6 +71,8 @@ export interface RunPorts {
     wdioEnv: Record<string, string>;
     extraArgs: string[];
   }) => Promise<WdioResult>;
+  /** The tagged test titles of the spec files, for the expected-title check. */
+  readSpecTitles: (phasePrefix: string) => SpecTitle[];
   readResults: (path: string) => ResultRecord[];
   readLookPending: (path: string) => LookPendingItem[];
   readVersions: (path: string) => VersionRecord | undefined;
@@ -155,6 +158,7 @@ function rowsFrom(
   scriptText: string | null,
   results: readonly ResultRecord[],
   profile: UatProfile,
+  readSpecTitles: (phasePrefix: string) => SpecTitle[],
 ): { rows: ReportRow[]; phasePrefix: string; mapped: boolean } {
   if (scriptText === null) {
     const rows = results.map((entry, index): ReportRow => {
@@ -173,6 +177,8 @@ function rowsFrom(
   }
   const parsed = parseUatScript(scriptText);
   const phasePrefix = phasePrefixOf(parsed.frontMatter) ?? UAT_PHASE_PREFIX;
+  // Every tagged spec test an item expects, so an item cannot pass while one left no record.
+  const expected = expectedTitlesByItem(readSpecTitles(phasePrefix), phasePrefix);
   const rows = parsed.items.map((item): ReportRow => {
     const plan = UAT_ITEM_PLAN.find((entry) => entry.number === item.number);
     const resolution = resolveItemStatus({
@@ -180,6 +186,7 @@ function rowsFrom(
         number: item.number,
         runClass: item.runClass,
         fullProfileOnly: plan?.profile === "full",
+        expectedTitles: expected.get(item.number) ?? [],
       },
       results,
       looks: [],
@@ -246,7 +253,12 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
       const versions = ports.readVersions(sandbox.paths.versionsPath);
       const versionProblems = finalMismatches(versions, results.length > 0);
       const git = await ports.readGitFacts();
-      const { rows, phasePrefix, mapped } = rowsFrom(scriptText, results, options.profile);
+      const { rows, phasePrefix, mapped } = rowsFrom(
+        scriptText,
+        results,
+        options.profile,
+        ports.readSpecTitles,
+      );
 
       let text = renderReport({
         runId: sandbox.runId,
