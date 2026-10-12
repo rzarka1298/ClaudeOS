@@ -6,6 +6,8 @@
  * live run. Specs read values from TASKS_TEXT and TASKS_CLASSES, never from a literal.
  */
 
+import { VALID_HOSTILE_TASK_TITLES } from "@ccc/domain";
+
 /** `literal`: the double-quoted form appears in the owner. `fragment`: the text appears anywhere. */
 export type CopyKind = "literal" | "fragment";
 /** value, owner file (relative to the repository root), kind. */
@@ -44,15 +46,19 @@ export const TASKS_TEXT_TABLE = {
   chipToday: ["Today", DOMAIN_TASKS, "literal"],
   statusInbox: ["inbox", DOMAIN_SCHEMA, "literal"],
   statusReady: ["ready", DOMAIN_SCHEMA, "literal"],
-  // Typed skeleton (RED): the entries below carry no value yet.
-  chipProposed: ["", DOMAIN_TASKS, "literal"],
-  statusDone: ["", DOMAIN_SCHEMA, "literal"],
-  statusCancelled: ["", DOMAIN_SCHEMA, "literal"],
-  acceptNamePrefix: ["", TASKS_COPY, "fragment"],
-  dismissNamePrefix: ["", TASKS_COPY, "fragment"],
-  duplicateAttention: ["", FORMS_COPY, "fragment"],
-  taskActionsLabel: ["", FORMS_COPY, "literal"],
-  decisionAccepted: ["", DOMAIN_SCHEMA, "literal"],
+  // Status change, duplicate and proposed items.
+  chipProposed: ["Proposed", DOMAIN_TASKS, "literal"],
+  statusDone: ["done", DOMAIN_SCHEMA, "literal"],
+  statusCancelled: ["cancelled", DOMAIN_SCHEMA, "literal"],
+  acceptNamePrefix: ["Accept task: ", TASKS_COPY, "fragment"],
+  dismissNamePrefix: ["Dismiss task: ", TASKS_COPY, "fragment"],
+  duplicateAttention: ["Shares its ID with", FORMS_COPY, "fragment"],
+  taskActionsLabel: ["Task actions", FORMS_COPY, "literal"],
+  decisionAccepted: ["accepted", DOMAIN_SCHEMA, "literal"],
+  decisionDismissed: ["dismissed", DOMAIN_SCHEMA, "literal"],
+  rowActionAccept: ["accept", `${VIEW}task-list.tsx`, "literal"],
+  rowActionDismiss: ["dismiss", `${VIEW}task-list.tsx`, "literal"],
+  dueToday: ["Due today", `${VIEW}tasks-format.ts`, "literal"],
 } as const satisfies CopyTable;
 
 export const TASKS_CLASSES_TABLE = {
@@ -61,6 +67,7 @@ export const TASKS_CLASSES_TABLE = {
   taskTitle: ["ccc-task-title", `${VIEW}task-list.tsx`, "fragment"],
   taskAction: ["ccc-task-action", `${VIEW}task-list.tsx`, "fragment"],
   taskListHeading: ["ccc-task-list-heading", `${VIEW}task-list.tsx`, "fragment"],
+  taskMore: ["ccc-task-more", `${VIEW}task-list.tsx`, "fragment"],
   taskForm: ["ccc-task-form", `${VIEW}task-form.tsx`, "fragment"],
   filterChip: ["ccc-filter-chip", `${VIEW}task-chips.tsx`, "fragment"],
   tasksStatus: ["ccc-tasks-status", `${VIEW}tasks-workspace.tsx`, "fragment"],
@@ -77,14 +84,22 @@ export const TASKS_CLASSES_TABLE = {
   tabPrefix: ["ccc-tab-", `${VIEW}destination-tabs.tsx`, "fragment"],
 } as const satisfies CopyTable;
 
-// Typed skeleton (RED): the live-check entries carry no value yet.
+/**
+ * The synthetic live-check notes the generated live vault carries (`--live-check`). The e2e
+ * package must not import the fixtures, so the titles are mirrored and read back from the file
+ * that writes them. The hostile proposed title is the first valid entry of the shared hostile
+ * corpus, exactly as the fixture picks it.
+ */
 const FIXTURES = "packages/test-fixtures/src/task-fixtures.ts";
 export const LIVE_CHECK_TABLE = {
-  propertiesDate: ["", FIXTURES, "literal"],
-  proposedPlain: ["", FIXTURES, "literal"],
-  proposedWithSource: ["", FIXTURES, "literal"],
-  hostile: ["", FIXTURES, "literal"],
+  propertiesDate: ["Live check properties style date", FIXTURES, "literal"],
+  proposedPlain: ["Live check proposed plain", FIXTURES, "literal"],
+  proposedWithSource: ["Live check proposed with source", FIXTURES, "literal"],
+  sourceLink: ["https://example.invalid/synthetic-source", FIXTURES, "literal"],
 } as const satisfies CopyTable;
+
+/** The synthetic host of the source link; a rendered anchor to it would be a failure. */
+export const SYNTHETIC_LINK_HOST = "example.invalid";
 
 type Values<T extends CopyTable> = { readonly [K in keyof T]: T[K][0] };
 
@@ -98,9 +113,11 @@ export const TASKS_TEXT: Values<typeof TASKS_TEXT_TABLE> = Object.freeze(values(
 export const TASKS_CLASSES: Values<typeof TASKS_CLASSES_TABLE> = Object.freeze(
   values(TASKS_CLASSES_TABLE),
 );
-export const LIVE_CHECK_TITLES: Values<typeof LIVE_CHECK_TABLE> = Object.freeze(
-  values(LIVE_CHECK_TABLE),
-);
+export const LIVE_CHECK_TITLES: Values<typeof LIVE_CHECK_TABLE> & { readonly hostile: string } =
+  Object.freeze({
+    ...values(LIVE_CHECK_TABLE),
+    hostile: VALID_HOSTILE_TASK_TITLES[0] ?? "",
+  });
 
 /**
  * The keys of a table whose value is no longer in its owner file. `read` returns the owner's

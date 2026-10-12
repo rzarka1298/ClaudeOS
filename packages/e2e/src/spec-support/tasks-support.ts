@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { NOTE_ID_PATTERN, taskSlug } from "@ccc/domain";
 import {
@@ -147,7 +147,7 @@ export function notesForTitle(files: readonly NoteFile[], title: string): NoteFi
 }
 
 // ---------------------------------------------------------------------------
-// Status change, decisions, dates, duplicates (pure) -- typed skeleton
+// Status change, decisions, dates, duplicates (pure)
 
 export type StatusDiffCode =
   | "not-a-note"
@@ -161,46 +161,131 @@ export type StatusDiffCode =
   | "extra-change";
 export type StatusDiffVerdict = { ok: true } | { ok: false; code: StatusDiffCode };
 
+/** The keys a status change is allowed to touch. */
+const STATUS_CHANGE_KEYS: ReadonlySet<string> = new Set(["status", "updated", "completed"]);
+
+function noteLines(text: string): string[] {
+  return text.split("\n").map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+}
+
+function keyOfLine(line: string): string | null {
+  return /^([A-Za-z_][A-Za-z0-9_-]*):/.exec(line)?.[1] ?? null;
+}
+
+/**
+ * Checks the raw diff of a status change made by the plugin (test 15, U-6): the status moved to
+ * the expected value, `updated` moved, `completed` is set when done is expected, the `due` line
+ * is byte-identical and unquoted, and every other line of the note is unchanged.
+ */
 export function checkStatusChangeDiff(
-  _before: string,
-  _after: string,
-  _options: { expectStatus: string },
+  before: string,
+  after: string,
+  options: { expectStatus: string },
 ): StatusDiffVerdict {
-  throw new Error("not implemented");
+  const was = parseNoteFrontmatter(before);
+  const now = parseNoteFrontmatter(after);
+  if (!was.ok || !now.ok) return { ok: false, code: "not-a-note" };
+  const statusAfter = unquote(now.map["status"]);
+  if (unquote(was.map["status"]) === statusAfter) return { ok: false, code: "status-unchanged" };
+  if (statusAfter !== options.expectStatus) return { ok: false, code: "status-wrong" };
+
+  const dueBefore = noteLines(before).find((line) => keyOfLine(line) === "due");
+  const dueAfter = noteLines(after).find((line) => keyOfLine(line) === "due");
+  if (dueBefore === undefined) return { ok: false, code: "due-missing" };
+  if (dueAfter !== undefined && /^due:[ \t]*["']/.test(dueAfter)) {
+    return { ok: false, code: "due-quoted" };
+  }
+  if (dueAfter !== dueBefore) return { ok: false, code: "due-changed" };
+
+  if (options.expectStatus === "done") {
+    const completed = now.map["completed"];
+    if (completed === undefined || completed === "" || completed === was.map["completed"]) {
+      return { ok: false, code: "completed-missing" };
+    }
+  }
+  const updated = now.map["updated"];
+  if (updated === undefined || updated === was.map["updated"]) {
+    return { ok: false, code: "updated-unchanged" };
+  }
+
+  const rest = (text: string): string =>
+    noteLines(text)
+      .filter((line) => !STATUS_CHANGE_KEYS.has(keyOfLine(line) ?? ""))
+      .join("\n");
+  if (rest(before) !== rest(after)) return { ok: false, code: "extra-change" };
+  return { ok: true };
 }
 
-export function readDecisionOutcome(_text: string): "accepted" | "dismissed" | null {
-  throw new Error("not implemented");
+/** The outcome of the nested `decision` map of a note, or null when none is recorded. */
+export function readDecisionOutcome(text: string): "accepted" | "dismissed" | null {
+  const parsed = parseNoteFrontmatter(text);
+  if (!parsed.ok) return null;
+  const lines = noteLines(text);
+  const start = lines.findIndex((line) => /^decision:[ \t]*$/.test(line));
+  if (start < 0) return null;
+  for (const line of lines.slice(start + 1)) {
+    if (!/^[ \t]/.test(line)) break;
+    const outcome = /^[ \t]+outcome:[ \t]*(accepted|dismissed)[ \t]*$/.exec(line)?.[1];
+    if (outcome === "accepted" || outcome === "dismissed") return outcome;
+  }
+  return null;
 }
 
-export function redateDueLine(_text: string, _date: string): string {
-  throw new Error("not implemented");
+const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Rewrites the `due` line to an unquoted date and leaves every other byte alone. The fixture
+ * vault is generated against a fixed clock, so a spec re-dates a note to the machine's today
+ * before it asserts what Today shows; writing the line directly keeps the unquoted form.
+ */
+export function redateDueLine(text: string, date: string): string {
+  if (!PLAIN_DATE.test(date)) throw new Error("A due date must be a plain YYYY-MM-DD date.");
+  if (!/^due:/m.test(text)) throw new Error("The note has no due line to re-date.");
+  return text.replace(/^due:[^\r\n]*/m, `due: ${date}`);
 }
 
-export function localDateIn(_zone: string, _ms: number): string {
-  throw new Error("not implemented");
+/** `YYYY-MM-DD` of an instant in a named IANA zone. */
+export function localDateIn(zone: string, ms: number): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(ms);
+  const pick = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
+  return `${pick("year")}-${pick("month")}-${pick("day")}`;
 }
 
-export function shiftLocalDate(_date: string, _days: number): string {
-  throw new Error("not implemented");
+/** A calendar date moved by whole days. */
+export function shiftLocalDate(date: string, days: number): string {
+  if (!PLAIN_DATE.test(date)) throw new Error("A date must be a plain YYYY-MM-DD date.");
+  const moved = new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000);
+  return moved.toISOString().slice(0, 10);
 }
 
+/**
+ * True only when the original and its copy both sit under Notes need attention (the title is
+ * listed twice) and the task appears in no list.
+ */
 export function classifyDuplicateAttention(
-  _attentionTitles: readonly string[],
-  _originalTitle: string,
-  _listTitles: readonly string[] = [],
+  attentionTitles: readonly string[],
+  originalTitle: string,
+  listTitles: readonly string[] = [],
 ): boolean {
-  throw new Error("not implemented");
+  const held = attentionTitles.filter((title) => title === originalTitle).length;
+  return held >= 2 && !listTitles.includes(originalTitle);
 }
 
+/** True when the task is in neither the Today nor the Upcoming list. */
 export function notInEitherList(
-  _today: readonly string[],
-  _upcoming: readonly string[],
-  _title: string,
+  today: readonly string[],
+  upcoming: readonly string[],
+  title: string,
 ): boolean {
-  throw new Error("not implemented");
+  return !today.includes(title) && !upcoming.includes(title);
 }
 
+/** What the renderer found when it looked for markup made from untrusted text. */
 export interface UntrustedCounts {
   scripts: number;
   anchors: number;
@@ -209,22 +294,23 @@ export interface UntrustedCounts {
 }
 export type UntrustedVerdict =
   | { ok: true }
-  | { ok: false; code: "script-created" | "link-clickable" | "text-not-shown" | "link-text-not-shown" };
+  | {
+      ok: false;
+      code: "script-created" | "link-clickable" | "text-not-shown" | "link-text-not-shown";
+    };
 
+/** Plain-text rendering holds when nothing was created from the text and it is shown as text. */
 export function untrustedRenderVerdict(
-  _counts: UntrustedCounts,
-  _options: { requireLinkText?: boolean } = {},
+  counts: UntrustedCounts,
+  options: { requireLinkText?: boolean } = {},
 ): UntrustedVerdict {
-  throw new Error("not implemented");
-}
-
-export function inspectUntrustedRender(
-  _ctx: unknown,
-  _rootSelector: string,
-  _title: string,
-  _linkText: string,
-): UntrustedCounts {
-  throw new Error("not implemented");
+  if (counts.scripts > 0) return { ok: false, code: "script-created" };
+  if (counts.anchors > 0) return { ok: false, code: "link-clickable" };
+  if (counts.titleElements < 1) return { ok: false, code: "text-not-shown" };
+  if (options.requireLinkText === true && (counts.linkTextElements ?? 0) < 1) {
+    return { ok: false, code: "link-text-not-shown" };
+  }
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +323,7 @@ interface RElement {
   querySelectorAll(selector: string): ArrayLike<RElement>;
   click(): void;
   dispatchEvent(event: unknown): boolean;
+  value?: string;
 }
 
 declare const document: {
@@ -433,6 +520,38 @@ export function rendererReadTasks(
 // ---------------------------------------------------------------------------
 // Spec-side helpers
 
+/**
+ * Looks, inside the surface at `rootSelector`, for anything made from untrusted text: script
+ * elements, anchors whose address is on the synthetic host of `linkText`, and elements whose own
+ * text is the title or contains the link text (proof the text is shown as text).
+ */
+export function inspectUntrustedRender(
+  _ctx: unknown,
+  rootSelector: string,
+  title: string,
+  linkText: string,
+): UntrustedCounts {
+  const root = document.querySelector(rootSelector);
+  if (root === null) return { scripts: 0, anchors: 0, titleElements: 0, linkTextElements: 0 };
+  const host = linkText.replace(/^[a-z]+:\/\//i, "").split("/")[0] ?? "";
+  const scripts = root.querySelectorAll("script").length;
+  let anchors = 0;
+  const links = root.querySelectorAll("a[href]");
+  for (let index = 0; index < links.length; index += 1) {
+    const href = links[index]?.getAttribute("href") ?? "";
+    if (host !== "" && href.includes(host)) anchors += 1;
+  }
+  let titleElements = 0;
+  let linkTextElements = 0;
+  const everything = root.querySelectorAll("*");
+  for (let index = 0; index < everything.length; index += 1) {
+    const text = (everything[index]?.textContent ?? "").trim();
+    if (text === title) titleElements += 1;
+    if (linkText !== "" && text.includes(linkText)) linkTextElements += 1;
+  }
+  return { scripts, anchors, titleElements, linkTextElements };
+}
+
 /** The slice of the wdio-obsidian-service browser the tasks helpers use. */
 export interface TasksBrowser extends DriverBrowser {
   executeObsidian<T, A extends unknown[]>(
@@ -610,4 +729,195 @@ export async function submitCreateForm(
     ...WAIT.short,
     describe: `the ${label} button to be pressable`,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Rows, details, note files and vault operations (spec side)
+
+/** The facts Obsidian's Properties view shows for the `due` property. */
+export interface DueProperty {
+  found: boolean;
+  inputType: string | null;
+  value: string | null;
+}
+
+export type DuePropertyVerdict =
+  | { ok: true }
+  | { ok: false; code: "property-missing" | "not-a-date-input" | "has-time" };
+
+/** The Properties view shows `due` as a date input holding a plain date, no time. */
+export function duePropertyVerdict(property: DueProperty): DuePropertyVerdict {
+  if (!property.found) return { ok: false, code: "property-missing" };
+  if (property.inputType !== "date") return { ok: false, code: "not-a-date-input" };
+  if (property.value === null || !PLAIN_DATE.test(property.value)) {
+    return { ok: false, code: "has-time" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Reads Obsidian's own Properties view for the `due` property of the open note. The markup is
+ * Obsidian's, so the lookup is defensive: the property container by its key attribute, then
+ * its first input.
+ */
+export function rendererInspectDue(_ctx: unknown): DueProperty {
+  const container = document.querySelector('.metadata-property[data-property-key="due"]');
+  if (container === null) return { found: false, inputType: null, value: null };
+  const input = container.querySelector("input");
+  return {
+    found: true,
+    inputType: input === null ? null : input.getAttribute("type"),
+    value: input === null ? null : (input.value ?? null),
+  };
+}
+
+interface VaultFileApi {
+  app: {
+    vault: {
+      getAbstractFileByPath(path: string): unknown;
+      copy(file: unknown, newPath: string): Promise<unknown>;
+      delete(file: unknown): Promise<void>;
+    };
+  };
+}
+
+/** Copies or deletes one note through the Obsidian vault API; `missing` when it is not there. */
+export async function rendererVaultOp(
+  ctx: VaultFileApi,
+  operation: "copy" | "delete",
+  path: string,
+  target: string,
+): Promise<"ok" | "missing"> {
+  const file = ctx.app.vault.getAbstractFileByPath(path);
+  if (file === null || file === undefined) return "missing";
+  if (operation === "copy") await ctx.app.vault.copy(file, target);
+  else await ctx.app.vault.delete(file);
+  return "ok";
+}
+
+/** Throws unless `name` is one plain note file name (no folder, no dot-dot). */
+function assertNoteName(name: string): void {
+  if (!/^[^/\\]+\.md$/.test(name) || name.startsWith(".") || name === "index.md") {
+    throw new Error("Refusing a note file name that is not one plain task note.");
+  }
+}
+
+/** Overwrites one global task note of the sandbox vault; nothing else is ever written. */
+export function writeGlobalTaskNote(
+  vaultPath: string,
+  runRoot: string,
+  name: string,
+  text: string,
+): void {
+  assertVaultInsideRunRoot(vaultPath, runRoot);
+  assertNoteName(name);
+  writeFileSync(join(vaultPath, TASK_FOLDERS_GLOBAL, name), text);
+}
+
+/** The note whose frontmatter id is `id`. */
+export function noteById(files: readonly NoteFile[], id: string): NoteFile | undefined {
+  return files.find((file) => {
+    const parsed = parseNoteFrontmatter(file.text);
+    return parsed.ok && unquote(parsed.map["id"]) === id;
+  });
+}
+
+/** The row with this exact title, if the surface lists one. */
+export function rowByTitle(
+  tasks: RenderedTasks,
+  title: string,
+): RenderedTasks["rows"][number] | undefined {
+  return tasks.rows.find((row) => row.title === title);
+}
+
+/** Presses a chip and waits for the surface to answer for it. */
+export async function showFilter(
+  browser: TasksBrowser,
+  root: string,
+  filter: string,
+): Promise<void> {
+  await clickChip(browser, root, filter);
+  await pollUntil(
+    async () => {
+      const tasks = await readTasks(browser, root);
+      return tasks.chips.some((chip) => chip.filter === filter && chip.pressed);
+    },
+    { ...WAIT.short, describe: `the ${filter} chip to be pressed` },
+  );
+}
+
+/**
+ * Presses Show more until every wanted title is listed or no more pages remain; returns the last
+ * reading. A short list needs no press.
+ */
+export async function loadRowsFor(
+  browser: TasksBrowser,
+  root: string,
+  titles: readonly string[],
+): Promise<RenderedTasks> {
+  const more = `${root} button.${TASKS_CLASSES.taskMore}`;
+  for (let page = 0; page < 40; page += 1) {
+    const tasks = await readTasks(browser, root);
+    if (titles.every((title) => rowByTitle(tasks, title) !== undefined)) return tasks;
+    if (!(await browser.executeObsidian(rendererClick, more, null))) return tasks;
+    await pollUntil(async () => (await readTasks(browser, root)).rows.length > tasks.rows.length, {
+      ...WAIT.short,
+      describe: "the next page of tasks",
+    });
+  }
+  return readTasks(browser, root);
+}
+
+const rowSelector = (root: string, id: string): string =>
+  `${root} li.${TASKS_CLASSES.taskRow}[data-task-id="${id}"]`;
+
+/** Opens a row's detail pane by pressing its title button. */
+export async function selectRow(browser: TasksBrowser, root: string, id: string): Promise<void> {
+  const selector = `${rowSelector(root, id)} button.${TASKS_CLASSES.taskTitle}`;
+  await pollUntil(() => browser.executeObsidian(rendererClick, selector, null), {
+    ...WAIT.short,
+    describe: "the row's title button",
+  });
+  await pollUntil(
+    async () => (await readTasks(browser, `${root} section.${TASKS_CLASSES.taskDetail}`)).mounted,
+    { ...WAIT.short, describe: "the detail pane to load" },
+  );
+}
+
+/** Presses a button of the open detail pane's Task actions group by its label. */
+export async function pressDetailAction(
+  browser: TasksBrowser,
+  root: string,
+  label: string,
+): Promise<void> {
+  const group = `${root} section.${TASKS_CLASSES.taskDetail} [role="group"][aria-label="${TASKS_TEXT.taskActionsLabel}"] button`;
+  await pollUntil(() => browser.executeObsidian(rendererClick, group, label), {
+    ...WAIT.short,
+    describe: `the ${label} button of the detail pane`,
+  });
+}
+
+/** Presses a row's Accept or Dismiss pill. */
+export async function pressRowAction(
+  browser: TasksBrowser,
+  root: string,
+  id: string,
+  action: "accept" | "dismiss" | "mark-done",
+): Promise<void> {
+  const selector = `${rowSelector(root, id)} button.${TASKS_CLASSES.taskAction}[data-action="${action}"]`;
+  await pollUntil(() => browser.executeObsidian(rendererClick, selector, null), {
+    ...WAIT.short,
+    describe: `the ${action} pill of the row`,
+  });
+}
+
+/** Opens one note in Obsidian so its Properties view renders. */
+export async function readDueProperty(browser: TasksBrowser): Promise<DueProperty> {
+  return pollUntil(
+    async () => {
+      const property = await browser.executeObsidian(rendererInspectDue);
+      return property.found ? property : null;
+    },
+    { ...WAIT.short, describe: "the Properties view to show the due property" },
+  );
 }

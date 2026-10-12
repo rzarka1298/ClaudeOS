@@ -4,6 +4,7 @@ import {
   checkCreatedNote,
   checkStatusChangeDiff,
   classifyDuplicateAttention,
+  duePropertyVerdict,
   inspectUntrustedRender,
   localDateIn,
   notInEitherList,
@@ -12,8 +13,10 @@ import {
   readerSelectors,
   redateDueLine,
   rendererClick,
+  rendererInspectDue,
   rendererReadTasks,
   rendererSetInput,
+  rendererVaultOp,
   shiftLocalDate,
   untrustedRenderVerdict,
 } from "./tasks-support.js";
@@ -202,7 +205,7 @@ describe("checkStatusChangeDiff (Test 2, the raw diff of a Mark done)", () => {
     "",
   ].join("\n");
 
-  function after(edit: (lines: string[]) => string[]): string {
+  function edited(edit: (lines: string[]) => string[]): string {
     return edit(before.split("\n")).join("\n");
   }
 
@@ -211,7 +214,7 @@ describe("checkStatusChangeDiff (Test 2, the raw diff of a Mark done)", () => {
     return line === "status: ready" ? `status: ${status}` : line;
   }
 
-  const doneAfter = after((lines) =>
+  const doneAfter = edited((lines) =>
     lines
       .map((line) => moved(line, "done"))
       .flatMap((line) =>
@@ -226,7 +229,7 @@ describe("checkStatusChangeDiff (Test 2, the raw diff of a Mark done)", () => {
   });
 
   it("accepts a cancel that adds no completed line", () => {
-    const cancelled = after((lines) => lines.map((line) => moved(line, "cancelled")));
+    const cancelled = edited((lines) => lines.map((line) => moved(line, "cancelled")));
     expect(checkStatusChangeDiff(before, cancelled, { expectStatus: "cancelled" })).toEqual({
       ok: true,
     });
@@ -443,5 +446,48 @@ describe("untrusted text rendering (Test 4)", () => {
       { document },
     );
     expect(counts).toEqual({ scripts: 0, anchors: 1, titleElements: 2, linkTextElements: 1 });
+  });
+});
+
+describe("the Properties view check and the vault operation (U-6, U-7)", () => {
+  it("accepts a date input holding a plain date", () => {
+    expect(duePropertyVerdict({ found: true, inputType: "date", value: "2026-10-12" })).toEqual({
+      ok: true,
+    });
+  });
+
+  it("rejects a missing property, a text input and a value with a time", () => {
+    expect(duePropertyVerdict({ found: false, inputType: null, value: null })).toMatchObject({
+      code: "property-missing",
+    });
+    expect(
+      duePropertyVerdict({ found: true, inputType: "text", value: "2026-10-12" }),
+    ).toMatchObject({ code: "not-a-date-input" });
+    expect(
+      duePropertyVerdict({ found: true, inputType: "date", value: "2026-10-12T09:00" }),
+    ).toMatchObject({ code: "has-time" });
+  });
+
+  it("the renderer functions are self-contained and tolerate an empty document", async () => {
+    const empty = { querySelector: () => null, querySelectorAll: () => [] };
+    const due = runInNewContext(`(${rendererInspectDue.toString()})(null)`, { document: empty });
+    expect(due).toEqual({ found: false, inputType: null, value: null });
+    const calls: string[] = [];
+    const ctx = {
+      app: {
+        vault: {
+          getAbstractFileByPath: (path: string) => (path === "a.md" ? { path } : null),
+          copy: async (_file: unknown, target: string) => void calls.push(`copy ${target}`),
+          delete: async () => void calls.push("delete"),
+        },
+      },
+    };
+    const source = rendererVaultOp.toString();
+    expect(source).not.toContain("__name(");
+    const run = runInNewContext(`(${source})`, {}) as typeof rendererVaultOp;
+    expect(await run(ctx, "copy", "a.md", "a 1.md")).toBe("ok");
+    expect(await run(ctx, "delete", "a.md", "")).toBe("ok");
+    expect(await run(ctx, "delete", "missing.md", "")).toBe("missing");
+    expect(calls).toEqual(["copy a 1.md", "delete"]);
   });
 });
