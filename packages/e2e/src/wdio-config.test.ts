@@ -1,10 +1,13 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { canonicalPath } from "./canonical-path.js";
 import { buildWdioEnv } from "./isolation-guards.js";
 import type { LaunchFs } from "./launch-options.js";
 import type { RunRootPaths } from "./run-root.js";
 import { loadRunContext } from "./spec-context.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
+import type { PluginDataFs } from "./vault-plugin-data.js";
 import { buildWdioConfig, SCALE_SPEC } from "./wdio-config.js";
 import { buildWdioArgv, buildWdioProcessEnv, forwardSignals, locateWdioBin } from "./wdio-spawn.js";
 
@@ -40,7 +43,18 @@ const FAKE_FS: LaunchFs = {
   readdirSync: () => ["main.js", "manifest.json", "styles.css"],
 };
 
-const opts = { base: BASE, home: HOME, fs: FAKE_FS };
+// An in-memory plugin data folder, so the config's isolation write never touches the disk.
+const dataWrites = new Map<string, string>();
+const FAKE_PLUGIN_FS: PluginDataFs = {
+  readFile: (path) => dataWrites.get(path) ?? null,
+  writeFileAtomic: (path, text) => {
+    dataWrites.set(path, text);
+  },
+  mkdirp: () => {},
+  isSymlink: () => false,
+};
+
+const opts = { base: BASE, home: HOME, fs: FAKE_FS, pluginDataFs: FAKE_PLUGIN_FS };
 
 interface CapabilityShape {
   "wdio:obsidianOptions": { vault: string; copy: boolean; appVersion: string; binaryPath?: string };
@@ -192,7 +206,8 @@ describe("wdio spawn wrapper (Test 7)", () => {
     expect(merged.PATH).toBe("/usr/bin");
     expect(merged.CCC_SOCKET_PATH).toBe(paths.socketPath);
     expect(merged.CCC_ENABLE_TEST_OVERRIDES).toBeUndefined();
-    expect(merged.CODEX_HOME).toBeUndefined();
+    // the inherited real value is replaced by the run-root one the runner built
+    expect(merged.CODEX_HOME).toBe(paths.codexHome);
     for (const [key, value] of Object.entries(env())) expect(merged[key]).toBe(value);
   });
 
@@ -259,5 +274,59 @@ describe("the version-recording before hook (05.2-09 Test 8)", () => {
     await config.before?.([], [], fakeBrowser("1.14.4", "1.13.7"));
     await config.before?.([], [], fakeBrowser("1.15.0", "1.13.7"));
     expect(JSON.parse(stored ?? "{}").mismatches).toContain("app-changed-between-specs");
+  });
+});
+
+describe("the config enforces the isolation guards before it builds capabilities (LOW-5)", () => {
+  const dataPath = (vault: string) =>
+    join(canonicalPath(vault), ".obsidian", "plugins", "claude-command-center", "data.json");
+
+  it("writes the run-root socket into the live vault's plugin data", () => {
+    dataWrites.clear();
+    buildWdioConfig(env(), opts);
+    const live = dataWrites.get(dataPath(join(ROOT, "vaults", "live"))) ?? "";
+    expect(JSON.parse(live).socketPathOverride).toBe(paths.socketPath);
+    expect(dataWrites.has(dataPath(join(ROOT, "vaults", "big")))).toBe(false);
+  });
+
+  it("also isolates the big vault in the full profile", () => {
+    dataWrites.clear();
+    buildWdioConfig(env("full"), opts);
+    const big = dataWrites.get(dataPath(join(ROOT, "vaults", "big"))) ?? "";
+    expect(JSON.parse(big).socketPathOverride).toBe(paths.socketPath);
+  });
+
+  it("refuses an environment without the isolation variables and writes nothing", () => {
+    dataWrites.clear();
+    for (const name of [
+      "CCC_RUNTIME_DIR",
+      "CLAUDE_CONFIG_DIR",
+      "CODEX_HOME",
+      "CCC_INSTALL_SECRET_ACCOUNT",
+    ]) {
+      const broken: Record<string, string | undefined> = { ...env() };
+      delete broken[name];
+      expect(() => buildWdioConfig(broken, opts), name).toThrow();
+    }
+    expect(dataWrites.size).toBe(0);
+  });
+
+  it("refuses an isolation variable that points outside the run root", () => {
+    expect(() => buildWdioConfig({ ...env(), CODEX_HOME: "/tmp/elsewhere/codex" }, opts)).toThrow();
+  });
+
+  it("calls the env guard, then the plugin data write, then builds the capabilities (source order)", () => {
+    const source = readFileSync(new URL("./wdio-config.ts", import.meta.url), "utf8");
+    const guard = source.indexOf("assertIsolatedEnv(");
+    const isolate = source.indexOf("isolatePluginData(");
+    const build = source.indexOf("buildLaunchCapabilities({");
+    expect(guard).toBeGreaterThan(-1);
+    expect(isolate).toBeGreaterThan(guard);
+    expect(build).toBeGreaterThan(isolate);
+  });
+
+  it("is the only thing wdio.conf.ts loads, so the real path runs both guards", () => {
+    const conf = readFileSync(new URL("../wdio.conf.ts", import.meta.url), "utf8");
+    expect(conf).toContain("buildWdioConfig(process.env)");
   });
 });

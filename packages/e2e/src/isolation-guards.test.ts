@@ -263,6 +263,15 @@ describe("wdio env (Test 5)", () => {
     }
   });
 
+  it("carries the isolation variables the launch guard checks, all inside the run root", () => {
+    const root = join("/tmp", RUN_ROOT_NAME);
+    const env = buildWdioEnv(paths(root), { account: "ccc-uat-0123abcd", profile: "standard" });
+    expect(env.CCC_RUNTIME_DIR).toBe(join(root, "rt"));
+    expect(env.CLAUDE_CONFIG_DIR).toBe(join(root, "claude"));
+    expect(env.CODEX_HOME).toBe(join(root, "codex"));
+    expect(env.CCC_INSTALL_SECRET_ACCOUNT).toBe("ccc-uat-0123abcd");
+  });
+
   it("adds the big vault only in the full profile", () => {
     const root = join("/tmp", RUN_ROOT_NAME);
     const env = buildWdioEnv(paths(root), { account: "ccc-uat-0123abcd", profile: "full" });

@@ -247,6 +247,12 @@ export function buildWdioEnv(paths: RunRootPaths, options: WdioEnvOptions): Reco
   assertUatAccount(options.account);
   const env: Record<string, string> = {
     CCC_SOCKET_PATH: paths.socketPath,
+    // The launch guard (assertIsolatedEnv) checks these in the wdio process, and anything the
+    // sandbox Obsidian spawns inherits them, so it can only ever reach run-root locations.
+    CCC_RUNTIME_DIR: paths.runtimeDir,
+    CLAUDE_CONFIG_DIR: paths.claudeConfigDir,
+    CODEX_HOME: paths.codexHome,
+    CCC_INSTALL_SECRET_ACCOUNT: options.account,
     CCC_UAT_RUN_ROOT: paths.root,
     CCC_UAT_RUN_ID: paths.runId,
     CCC_UAT_PROFILE: options.profile,

@@ -1,10 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { assertRunRootShape } from "./isolation-guards.js";
 import { buildLaunchCapabilities, type LaunchCapability, type LaunchFs } from "./launch-options.js";
 import { parseProfile } from "./profile.js";
 import { REPO_ROOT } from "./repo-paths.js";
 import { SPIKE_DECISIONS, type SpikeDecisions } from "./spike-decisions.js";
+import { assertIsolatedEnv } from "./uat-env.js";
+import { isolatePluginData, type PluginDataFs } from "./vault-plugin-data.js";
 import { formatVersions, parseVersions, reconcileVersions } from "./versions.js";
 
 /**
@@ -67,6 +70,8 @@ export interface WdioConfigOptions {
   fs?: LaunchFs | undefined;
   /** Tests only: where the before hook reads and writes versions.json. */
   versionsIo?: VersionsIo | undefined;
+  /** Tests only: where the vault plugin data is written; defaults to the real filesystem. */
+  pluginDataFs?: PluginDataFs | undefined;
 }
 
 const NOT_RUNNER =
@@ -127,8 +132,22 @@ export function buildWdioConfig(
   const profile = parseProfile(env.CCC_UAT_PROFILE);
   const vaultLive = requireInside(runRoot, "a live vault", env.CCC_UAT_VAULT_LIVE);
   const pluginStage = requireInside(runRoot, "a plugin stage folder", env.CCC_UAT_PLUGIN_STAGE);
-  requireInside(runRoot, "a socket path", env.CCC_SOCKET_PATH);
+  const socketPath = requireInside(runRoot, "a socket path", env.CCC_SOCKET_PATH);
   requireInside(runRoot, "a TMPDIR", env.TMPDIR);
+  // The service, Claude, Codex and Keychain isolation variables must all point inside the run
+  // root before anything is written or launched (HIGH-1, LOW-5); then each vault's plugin data
+  // is pinned to the run-root socket, because the plugin prefers that setting over the variable.
+  assertIsolatedEnv(env, { runRoot, home: options.home ?? homedir() });
+  const isolate = (vaultPath: string): void => {
+    isolatePluginData({
+      vaultPath,
+      runRoot,
+      socketPath,
+      ...(options.home === undefined ? {} : { homeDir: options.home }),
+      ...(options.pluginDataFs === undefined ? {} : { fs: options.pluginDataFs }),
+    });
+  };
+  isolate(vaultLive);
 
   const decisions = options.decisions ?? SPIKE_DECISIONS;
   const cacheDir = options.cacheDir ?? OBSIDIAN_CACHE_DIR;
@@ -152,6 +171,7 @@ export function buildWdioConfig(
 
   if (profile === "full") {
     const vaultBig = requireInside(runRoot, "a big vault", env.CCC_UAT_VAULT_BIG);
+    isolate(vaultBig);
     // The 10,000-task vault is used in place, never copied (D-07).
     for (const capability of buildLaunchCapabilities({
       ...launch,
