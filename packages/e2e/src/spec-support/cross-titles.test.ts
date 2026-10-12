@@ -25,6 +25,10 @@ describe("cross-cutting spec titles (Test 5)", () => {
     expect(titles.some((title) => title.startsWith("[06-UAT#25]"))).toBe(true);
   });
 
+  it("holds exactly [06-UAT#25], #23, #12, #20 and #22, once each", () => {
+    expect(titles.map(itemOf).sort((a, b) => a - b)).toEqual([12, 20, 22, 23, 25]);
+  });
+
   it("holds only planned items, each at most once", () => {
     const items = titles.map(itemOf);
     expect(new Set(items).size).toBe(items.length);

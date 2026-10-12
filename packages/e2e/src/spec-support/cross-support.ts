@@ -158,3 +158,72 @@ export function recordLookPending(input: {
   renameSync(temporary, file);
   return { ...merged, labels: [...merged.labels] };
 }
+
+// --- Task 2 typed skeletons (replaced in the GREEN commit) -----------------------------------
+
+export interface AlwaysAllowHit {
+  phrase: string;
+  source: string;
+}
+export function scanForAlwaysAllow(
+  _texts: ReadonlyArray<{ label: string; text: string }>,
+): AlwaysAllowHit[] {
+  throw new Error("scanForAlwaysAllow is not implemented yet (typed skeleton).");
+}
+
+export interface MotionSample {
+  transitionDuration: string;
+  animationDuration: string;
+  animationName: string;
+}
+export function allMotionOff(_styles: readonly MotionSample[]): boolean {
+  throw new Error("allMotionOff is not implemented yet (typed skeleton).");
+}
+export function anyMotionOn(_styles: readonly MotionSample[]): boolean {
+  throw new Error("anyMotionOn is not implemented yet (typed skeleton).");
+}
+export function motionAnnouncementPresent(_liveText: string): boolean {
+  throw new Error("motionAnnouncementPresent is not implemented yet (typed skeleton).");
+}
+
+export interface FocusRingStyle {
+  outlineStyle: string;
+  outlineWidth: string;
+  boxShadow: string;
+}
+export function focusRingVisible(_style: FocusRingStyle): boolean {
+  throw new Error("focusRingVisible is not implemented yet (typed skeleton).");
+}
+export function checkFocusOrder(
+  _recorded: readonly string[],
+  _expected: readonly string[],
+): { ok: boolean; reason: string } {
+  throw new Error("checkFocusOrder is not implemented yet (typed skeleton).");
+}
+export function firstFocusInRequestIsDeny(_recorded: readonly string[]): boolean {
+  throw new Error("firstFocusInRequestIsDeny is not implemented yet (typed skeleton).");
+}
+
+export interface FileDiff {
+  changed: string[];
+  added: string[];
+  removed: string[];
+}
+export function diffFileHashes(
+  _before: Readonly<Record<string, string>>,
+  _after: Readonly<Record<string, string>>,
+): FileDiff {
+  throw new Error("diffFileHashes is not implemented yet (typed skeleton).");
+}
+export interface ProcessNode {
+  pid: number;
+  ppid: number;
+  command: string;
+}
+export function diffNewDescendants(
+  _before: readonly ProcessNode[],
+  _after: readonly ProcessNode[],
+  _ancestors: readonly number[],
+): ProcessNode[] {
+  throw new Error("diffNewDescendants is not implemented yet (typed skeleton).");
+}
