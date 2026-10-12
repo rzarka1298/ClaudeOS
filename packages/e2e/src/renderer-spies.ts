@@ -19,6 +19,21 @@
  *   deep link stays owner or auto-part only.
  */
 
+/**
+ * Builds the script body wdio sends to the renderer (`browser.execute(script)`): a prelude that
+ * defines the esbuild `__name` helper (a no-op), then the function applied to JSON-serialised
+ * arguments. Specs must not rely on a bare `fn.toString()`: wdio's tsx loader compiles with
+ * `keepNames`, and any named function expression or const-bound arrow would otherwise call a
+ * helper the renderer does not have (Wave 2 review HIGH-1). The result is a function BODY (it
+ * contains `return`), as the WebDriver execute command expects.
+ */
+export function serialiseForRenderer<A extends unknown[]>(
+  fn: (...args: A) => unknown,
+  ...args: A
+): string {
+  return `var __name=function(f){return f;};return (${fn.toString()}).apply(null, ${JSON.stringify(args)});`;
+}
+
 interface RendererDocument {
   hasFocus: () => boolean;
 }
@@ -58,25 +73,34 @@ export function installNotificationSpy(): boolean {
   }> = [];
   ns["notificationOriginal"] = Original;
   ns["notifications"] = kept;
-  // biome-ignore lint/complexity/useArrowFunction: the wrapper is called with `new`, so it must be a constructible function, not an arrow.
-  const Wrapper = function (title: string, options?: { body?: string; tag?: string }) {
-    const instance = new Original(title, options) as { onclick?: unknown };
-    kept.push({
-      instance,
-      title: String(title),
-      body: typeof options?.body === "string" ? options.body : null,
-      tag: typeof options?.tag === "string" ? options.tag : null,
-    });
-    return instance;
-  } as unknown as typeof Original;
+  // The constructible wrapper is returned from an immediately-invoked arrow instead of being
+  // bound to a name: esbuild `keepNames` (wdio's tsx loader) rewrites a named function
+  // expression to `__name(function ...)`, a helper that does not exist in the renderer.
+  const Wrapper = (() =>
+    // biome-ignore lint/complexity/useArrowFunction: the wrapper is called with `new`, so it must be a constructible function, not an arrow.
+    function (title: string, options?: { body?: string; tag?: string }) {
+      const instance = new Original(title, options) as { onclick?: unknown };
+      kept.push({
+        instance,
+        title: String(title),
+        body: typeof options?.body === "string" ? options.body : null,
+        tag: typeof options?.tag === "string" ? options.tag : null,
+      });
+      return instance;
+    })() as unknown as typeof Original;
   Wrapper.prototype = Original.prototype;
+  // Array elements are not a naming context, so esbuild keepNames leaves these arrows alone.
+  const accessors = [
+    () => Original.permission,
+    (...args: unknown[]) => Original.requestPermission?.(...args),
+  ];
   Object.defineProperty(Wrapper, "permission", {
-    get: () => Original.permission,
+    get: accessors[0] as () => string | undefined,
     enumerable: true,
     configurable: true,
   });
   Object.defineProperty(Wrapper, "requestPermission", {
-    value: (...args: unknown[]) => Original.requestPermission?.(...args),
+    value: accessors[1],
     writable: true,
     configurable: true,
   });
