@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseRunArgs, RUN_USAGE, UsageError } from "./cli-args.js";
+import { type ArgsEnv, parseRunArgs, RUN_USAGE, UsageError } from "./cli-args.js";
 
 const REPO = "/Users/USERNAME/ClaudeOS";
-const env = { repoRoot: REPO, isDirectory: () => false };
+const env: ArgsEnv = { repoRoot: REPO, isDirectory: () => false };
 
-function refusal(argv: string[], options = env): string {
+function refusal(argv: string[], options: ArgsEnv = env): string {
   try {
     parseRunArgs(argv, options);
   } catch (error) {

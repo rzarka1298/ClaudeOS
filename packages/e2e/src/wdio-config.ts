@@ -1,9 +1,11 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { assertRunRootShape } from "./isolation-guards.js";
 import { buildLaunchCapabilities, type LaunchCapability, type LaunchFs } from "./launch-options.js";
 import { parseProfile } from "./profile.js";
 import { REPO_ROOT } from "./repo-paths.js";
 import { SPIKE_DECISIONS, type SpikeDecisions } from "./spike-decisions.js";
+import { formatVersions, parseVersions, reconcileVersions } from "./versions.js";
 
 /**
  * The real wdio configuration, built by a pure function from the run environment (05.2-03,
@@ -83,6 +85,36 @@ function requireInside(runRoot: string, label: string, value: string | undefined
   return value;
 }
 
+const REAL_VERSIONS_IO: VersionsIo = {
+  read: (path) => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      return null;
+    }
+  },
+  write: (path, text) => {
+    writeFileSync(path, text, { mode: 0o600 });
+  },
+};
+
+/** The before hook: reconcile what this session reports with the record so far (D-08). */
+function versionHook(
+  versionsPath: string,
+  decisions: SpikeDecisions,
+  io: VersionsIo,
+): NonNullable<WdioRunConfig["before"]> {
+  return async (_capabilities, _specs, browser) => {
+    const observed = {
+      app: browser.getObsidianVersion(),
+      installer: browser.getObsidianInstallerVersion(),
+    };
+    const text = io.read(versionsPath);
+    const existing = text === null ? undefined : parseVersions(text);
+    io.write(versionsPath, formatVersions(reconcileVersions(existing, observed, decisions)));
+  };
+}
+
 export function buildWdioConfig(
   env: Readonly<Record<string, string | undefined>>,
   options: WdioConfigOptions = {},
@@ -145,5 +177,10 @@ export function buildWdioConfig(
     // D-11: a failed look or assertion is a result, never something to retry away.
     specFileRetries: 0,
     waitforTimeout: 10_000,
+    before: versionHook(
+      join(runRoot, "versions.json"),
+      decisions,
+      options.versionsIo ?? REAL_VERSIONS_IO,
+    ),
   };
 }
