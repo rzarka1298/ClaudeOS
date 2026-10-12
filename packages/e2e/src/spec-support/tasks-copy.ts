@@ -44,6 +44,15 @@ export const TASKS_TEXT_TABLE = {
   chipToday: ["Today", DOMAIN_TASKS, "literal"],
   statusInbox: ["inbox", DOMAIN_SCHEMA, "literal"],
   statusReady: ["ready", DOMAIN_SCHEMA, "literal"],
+  // Typed skeleton (RED): the entries below carry no value yet.
+  chipProposed: ["", DOMAIN_TASKS, "literal"],
+  statusDone: ["", DOMAIN_SCHEMA, "literal"],
+  statusCancelled: ["", DOMAIN_SCHEMA, "literal"],
+  acceptNamePrefix: ["", TASKS_COPY, "fragment"],
+  dismissNamePrefix: ["", TASKS_COPY, "fragment"],
+  duplicateAttention: ["", FORMS_COPY, "fragment"],
+  taskActionsLabel: ["", FORMS_COPY, "literal"],
+  decisionAccepted: ["", DOMAIN_SCHEMA, "literal"],
 } as const satisfies CopyTable;
 
 export const TASKS_CLASSES_TABLE = {
@@ -68,6 +77,15 @@ export const TASKS_CLASSES_TABLE = {
   tabPrefix: ["ccc-tab-", `${VIEW}destination-tabs.tsx`, "fragment"],
 } as const satisfies CopyTable;
 
+// Typed skeleton (RED): the live-check entries carry no value yet.
+const FIXTURES = "packages/test-fixtures/src/task-fixtures.ts";
+export const LIVE_CHECK_TABLE = {
+  propertiesDate: ["", FIXTURES, "literal"],
+  proposedPlain: ["", FIXTURES, "literal"],
+  proposedWithSource: ["", FIXTURES, "literal"],
+  hostile: ["", FIXTURES, "literal"],
+} as const satisfies CopyTable;
+
 type Values<T extends CopyTable> = { readonly [K in keyof T]: T[K][0] };
 
 function values<T extends CopyTable>(table: T): Values<T> {
@@ -79,6 +97,9 @@ function values<T extends CopyTable>(table: T): Values<T> {
 export const TASKS_TEXT: Values<typeof TASKS_TEXT_TABLE> = Object.freeze(values(TASKS_TEXT_TABLE));
 export const TASKS_CLASSES: Values<typeof TASKS_CLASSES_TABLE> = Object.freeze(
   values(TASKS_CLASSES_TABLE),
+);
+export const LIVE_CHECK_TITLES: Values<typeof LIVE_CHECK_TABLE> = Object.freeze(
+  values(LIVE_CHECK_TABLE),
 );
 
 /**

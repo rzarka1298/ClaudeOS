@@ -2,11 +2,20 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
   checkCreatedNote,
+  checkStatusChangeDiff,
+  classifyDuplicateAttention,
+  inspectUntrustedRender,
+  localDateIn,
+  notInEitherList,
   parseNoteFrontmatter,
+  readDecisionOutcome,
   readerSelectors,
+  redateDueLine,
   rendererClick,
   rendererReadTasks,
   rendererSetInput,
+  shiftLocalDate,
+  untrustedRenderVerdict,
 } from "./tasks-support.js";
 
 const ID = "abcdefghij0123456789klmno";
@@ -175,5 +184,264 @@ describe("renderer functions are self-contained (wdio serialises them with toStr
     };
     expect(result.mounted).toBe(false);
     expect(result.rows).toEqual([]);
+  });
+});
+
+describe("checkStatusChangeDiff (Test 2, the raw diff of a Mark done)", () => {
+  const before = [
+    "---",
+    "id: abcdefghij0123456789klmno",
+    "updated: 2026-10-08T08:00:00.000Z",
+    "type: task",
+    'title: "Live check properties style date"',
+    "status: ready",
+    "due: 2026-10-08",
+    "tags: []",
+    "---",
+    "Synthetic live-check task.",
+    "",
+  ].join("\n");
+
+  function after(edit: (lines: string[]) => string[]): string {
+    return edit(before.split("\n")).join("\n");
+  }
+
+  function moved(line: string, status: string): string {
+    if (line.startsWith("updated:")) return "updated: 2026-10-08T09:00:00.000Z";
+    return line === "status: ready" ? `status: ${status}` : line;
+  }
+
+  const doneAfter = after((lines) =>
+    lines
+      .map((line) => moved(line, "done"))
+      .flatMap((line) =>
+        line.startsWith("due:") ? [line, "completed: 2026-10-08T09:00:00.000Z"] : [line],
+      ),
+  );
+
+  it("accepts a diff of only status, updated and completed with the due line untouched", () => {
+    expect(checkStatusChangeDiff(before, doneAfter, { expectStatus: "done" })).toEqual({
+      ok: true,
+    });
+  });
+
+  it("accepts a cancel that adds no completed line", () => {
+    const cancelled = after((lines) => lines.map((line) => moved(line, "cancelled")));
+    expect(checkStatusChangeDiff(before, cancelled, { expectStatus: "cancelled" })).toEqual({
+      ok: true,
+    });
+  });
+
+  it("rejects a changed due line", () => {
+    const text = doneAfter.replace("due: 2026-10-08", "due: 2026-10-09");
+    expect(checkStatusChangeDiff(before, text, { expectStatus: "done" })).toMatchObject({
+      ok: false,
+      code: "due-changed",
+    });
+  });
+
+  it("rejects a due line the writer quoted", () => {
+    const text = doneAfter.replace("due: 2026-10-08", 'due: "2026-10-08"');
+    expect(checkStatusChangeDiff(before, text, { expectStatus: "done" })).toMatchObject({
+      ok: false,
+      code: "due-quoted",
+    });
+  });
+
+  it("rejects an extra changed key", () => {
+    const text = doneAfter.replace('title: "Live check properties style date"', 'title: "Other"');
+    expect(checkStatusChangeDiff(before, text, { expectStatus: "done" })).toMatchObject({
+      ok: false,
+      code: "extra-change",
+    });
+  });
+
+  it("rejects a changed body", () => {
+    const text = doneAfter.replace("Synthetic live-check task.", "Edited.");
+    expect(checkStatusChangeDiff(before, text, { expectStatus: "done" })).toMatchObject({
+      ok: false,
+      code: "extra-change",
+    });
+  });
+
+  it("rejects a missing completed line when done is expected", () => {
+    const text = doneAfter
+      .split("\n")
+      .filter((line) => !line.startsWith("completed:"))
+      .join("\n");
+    expect(checkStatusChangeDiff(before, text, { expectStatus: "done" })).toMatchObject({
+      ok: false,
+      code: "completed-missing",
+    });
+  });
+
+  it("rejects an unchanged status", () => {
+    expect(checkStatusChangeDiff(before, before, { expectStatus: "done" })).toMatchObject({
+      ok: false,
+      code: "status-unchanged",
+    });
+  });
+
+  it("rejects a status other than the expected one", () => {
+    expect(checkStatusChangeDiff(before, doneAfter, { expectStatus: "cancelled" })).toMatchObject({
+      ok: false,
+      code: "status-wrong",
+    });
+  });
+
+  it("rejects an updated stamp that did not move", () => {
+    const text = doneAfter.replace(
+      "updated: 2026-10-08T09:00:00.000Z",
+      "updated: 2026-10-08T08:00:00.000Z",
+    );
+    expect(checkStatusChangeDiff(before, text, { expectStatus: "done" })).toMatchObject({
+      ok: false,
+      code: "updated-unchanged",
+    });
+  });
+
+  it("rejects a note that has no due line before the change", () => {
+    const noDue = before.replace("due: 2026-10-08\n", "");
+    expect(checkStatusChangeDiff(noDue, doneAfter, { expectStatus: "done" })).toMatchObject({
+      ok: false,
+      code: "due-missing",
+    });
+  });
+
+  it("rejects text that is not a note", () => {
+    expect(checkStatusChangeDiff("x", doneAfter, { expectStatus: "done" })).toMatchObject({
+      ok: false,
+      code: "not-a-note",
+    });
+  });
+});
+
+describe("readDecisionOutcome and redateDueLine", () => {
+  it("reads the outcome of the nested decision map", () => {
+    const text =
+      "---\nstatus: ready\ndecision:\n  outcome: accepted\n  at: 2026-10-08T09:00:00.000Z\n---\n";
+    expect(readDecisionOutcome(text)).toBe("accepted");
+    expect(readDecisionOutcome(text.replace("accepted", "dismissed"))).toBe("dismissed");
+  });
+
+  it("reads null when no decision is recorded or the note is unreadable", () => {
+    expect(readDecisionOutcome("---\nstatus: ready\n---\n")).toBeNull();
+    expect(readDecisionOutcome("nothing")).toBeNull();
+    expect(readDecisionOutcome("---\ndecision:\n  outcome: maybe\n---\n")).toBeNull();
+  });
+
+  it("re-dates the due line unquoted and leaves every other line alone", () => {
+    const text = "---\nstatus: ready\ndue: 2026-10-08\ntags: []\n---\nbody\n";
+    expect(redateDueLine(text, "2026-10-11")).toBe(
+      "---\nstatus: ready\ndue: 2026-10-11\ntags: []\n---\nbody\n",
+    );
+  });
+
+  it("refuses a note with no due line and a date that is not a date", () => {
+    expect(() => redateDueLine("---\nstatus: ready\n---\n", "2026-10-11")).toThrow();
+    expect(() => redateDueLine("---\ndue: 2026-10-08\n---\n", "tomorrow")).toThrow();
+  });
+});
+
+describe("local dates", () => {
+  it("formats a date in a named zone", () => {
+    const ms = Date.parse("2026-10-11T23:30:00Z");
+    expect(localDateIn("UTC", ms)).toBe("2026-10-11");
+    expect(localDateIn("Pacific/Auckland", ms)).toBe("2026-10-12");
+  });
+
+  it("shifts a date across month and year ends", () => {
+    expect(shiftLocalDate("2026-10-31", 1)).toBe("2026-11-01");
+    expect(shiftLocalDate("2026-01-01", -1)).toBe("2025-12-31");
+    expect(shiftLocalDate("2026-10-11", 0)).toBe("2026-10-11");
+  });
+});
+
+describe("duplicate classification (Test 3)", () => {
+  it("is true only when the original and the copy both sit under attention and in no list", () => {
+    expect(
+      classifyDuplicateAttention(["Plan roadmap", "Plan roadmap", "Other"], "Plan roadmap"),
+    ).toBe(true);
+  });
+
+  it("is false when only one of the two is under attention", () => {
+    expect(classifyDuplicateAttention(["Plan roadmap", "Other"], "Plan roadmap")).toBe(false);
+  });
+
+  it("is false when neither is under attention", () => {
+    expect(classifyDuplicateAttention([], "Plan roadmap")).toBe(false);
+  });
+
+  it("is false when the task still appears in a list", () => {
+    expect(
+      classifyDuplicateAttention(["Plan roadmap", "Plan roadmap"], "Plan roadmap", [
+        "Plan roadmap",
+      ]),
+    ).toBe(false);
+  });
+
+  it("confirms the original left Today and Upcoming while both are held back", () => {
+    expect(notInEitherList(["A"], ["B"], "Plan roadmap")).toBe(true);
+    expect(notInEitherList(["Plan roadmap"], [], "Plan roadmap")).toBe(false);
+    expect(notInEitherList([], ["Plan roadmap"], "Plan roadmap")).toBe(false);
+  });
+});
+
+describe("untrusted text rendering (Test 4)", () => {
+  it("accepts zero scripts, zero such anchors and at least one text element", () => {
+    expect(untrustedRenderVerdict({ scripts: 0, anchors: 0, titleElements: 1 })).toEqual({
+      ok: true,
+    });
+  });
+
+  it("rejects a script element, a clickable synthetic link and a missing text element", () => {
+    expect(untrustedRenderVerdict({ scripts: 1, anchors: 0, titleElements: 1 })).toMatchObject({
+      ok: false,
+      code: "script-created",
+    });
+    expect(untrustedRenderVerdict({ scripts: 0, anchors: 1, titleElements: 1 })).toMatchObject({
+      ok: false,
+      code: "link-clickable",
+    });
+    expect(untrustedRenderVerdict({ scripts: 0, anchors: 0, titleElements: 0 })).toMatchObject({
+      ok: false,
+      code: "text-not-shown",
+    });
+  });
+
+  it("can require the source link text to be on screen as text", () => {
+    const counts = { scripts: 0, anchors: 0, titleElements: 1, linkTextElements: 0 };
+    expect(untrustedRenderVerdict(counts, { requireLinkText: true })).toMatchObject({
+      ok: false,
+      code: "link-text-not-shown",
+    });
+    expect(
+      untrustedRenderVerdict({ ...counts, linkTextElements: 2 }, { requireLinkText: true }),
+    ).toEqual({ ok: true });
+  });
+
+  it("counts scripts, anchors to the synthetic host and exact-text elements in a rendered tree", () => {
+    const element = (text: string, href?: string): object => ({
+      textContent: text,
+      getAttribute: (name: string) => (name === "href" ? (href ?? null) : null),
+    });
+    const tree: Record<string, object[]> = {
+      script: [],
+      "a[href]": [element("see", "https://example.invalid/synthetic-source")],
+      "*": [
+        element("yes"),
+        element("yes"),
+        element("see https://example.invalid/synthetic-source and more"),
+      ],
+    };
+    const root = { querySelectorAll: (selector: string) => tree[selector] ?? [] };
+    const document = { querySelector: () => root };
+    const source = inspectUntrustedRender.toString();
+    expect(source).not.toContain("__name(");
+    const counts = runInNewContext(
+      `(${source})(null, "root", "yes", "https://example.invalid/synthetic-source")`,
+      { document },
+    );
+    expect(counts).toEqual({ scripts: 0, anchors: 1, titleElements: 2, linkTextElements: 1 });
   });
 });

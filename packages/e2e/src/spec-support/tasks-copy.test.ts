@@ -5,6 +5,8 @@ import { REPO_ROOT } from "../repo-paths.js";
 import {
   type CopyTable,
   findCopyDrift,
+  LIVE_CHECK_TABLE,
+  LIVE_CHECK_TITLES,
   TASKS_CLASSES_TABLE,
   TASKS_TEXT,
   TASKS_TEXT_TABLE,
@@ -75,10 +77,37 @@ describe("the mirrored tasks copy and class names (Test 1)", () => {
   });
 
   it("names owner files that exist", () => {
-    for (const table of [TASKS_TEXT_TABLE, TASKS_CLASSES_TABLE]) {
+    for (const table of [TASKS_TEXT_TABLE, TASKS_CLASSES_TABLE, LIVE_CHECK_TABLE]) {
       for (const [, owner] of Object.values(table)) {
         expect(existsSync(join(REPO_ROOT, owner))).toBe(true);
       }
     }
+  });
+});
+
+describe("the words the status-change, duplicate and proposed items assert (Task 2 Test 1)", () => {
+  it("mirrors the chip, status, name-prefix and duplicate wording", () => {
+    expect(TASKS_TEXT.chipProposed).toBe("Proposed");
+    expect(TASKS_TEXT.statusDone).toBe("done");
+    expect(TASKS_TEXT.statusCancelled).toBe("cancelled");
+    expect(TASKS_TEXT.acceptNamePrefix).toBe("Accept task: ");
+    expect(TASKS_TEXT.dismissNamePrefix).toBe("Dismiss task: ");
+    expect(TASKS_TEXT.duplicateAttention).toBe("Shares its ID with");
+    expect(TASKS_TEXT.taskActionsLabel).toBe("Task actions");
+    expect(TASKS_TEXT.decisionAccepted).toBe("accepted");
+  });
+
+  it("every mirrored live-check title and the source link appears in the fixture that writes it", () => {
+    expect(Object.keys(LIVE_CHECK_TABLE).length).toBeGreaterThanOrEqual(4);
+    expect(findCopyDrift(LIVE_CHECK_TABLE, realSource)).toEqual([]);
+    expect(LIVE_CHECK_TITLES.propertiesDate).toBe("Live check properties style date");
+    expect(LIVE_CHECK_TITLES.proposedPlain).toBe("Live check proposed plain");
+    expect(LIVE_CHECK_TITLES.proposedWithSource).toBe("Live check proposed with source");
+  });
+
+  it("takes the hostile proposed title from the same corpus entry the fixture writes", () => {
+    const fixture = realSource("packages/test-fixtures/src/task-fixtures.ts");
+    expect(fixture).toContain("VALID_HOSTILE_TASK_TITLES[0]");
+    expect(LIVE_CHECK_TITLES.hostile).not.toBe("");
   });
 });

@@ -147,6 +147,87 @@ export function notesForTitle(files: readonly NoteFile[], title: string): NoteFi
 }
 
 // ---------------------------------------------------------------------------
+// Status change, decisions, dates, duplicates (pure) -- typed skeleton
+
+export type StatusDiffCode =
+  | "not-a-note"
+  | "status-unchanged"
+  | "status-wrong"
+  | "due-missing"
+  | "due-quoted"
+  | "due-changed"
+  | "completed-missing"
+  | "updated-unchanged"
+  | "extra-change";
+export type StatusDiffVerdict = { ok: true } | { ok: false; code: StatusDiffCode };
+
+export function checkStatusChangeDiff(
+  _before: string,
+  _after: string,
+  _options: { expectStatus: string },
+): StatusDiffVerdict {
+  throw new Error("not implemented");
+}
+
+export function readDecisionOutcome(_text: string): "accepted" | "dismissed" | null {
+  throw new Error("not implemented");
+}
+
+export function redateDueLine(_text: string, _date: string): string {
+  throw new Error("not implemented");
+}
+
+export function localDateIn(_zone: string, _ms: number): string {
+  throw new Error("not implemented");
+}
+
+export function shiftLocalDate(_date: string, _days: number): string {
+  throw new Error("not implemented");
+}
+
+export function classifyDuplicateAttention(
+  _attentionTitles: readonly string[],
+  _originalTitle: string,
+  _listTitles: readonly string[] = [],
+): boolean {
+  throw new Error("not implemented");
+}
+
+export function notInEitherList(
+  _today: readonly string[],
+  _upcoming: readonly string[],
+  _title: string,
+): boolean {
+  throw new Error("not implemented");
+}
+
+export interface UntrustedCounts {
+  scripts: number;
+  anchors: number;
+  titleElements: number;
+  linkTextElements?: number;
+}
+export type UntrustedVerdict =
+  | { ok: true }
+  | { ok: false; code: "script-created" | "link-clickable" | "text-not-shown" | "link-text-not-shown" };
+
+export function untrustedRenderVerdict(
+  _counts: UntrustedCounts,
+  _options: { requireLinkText?: boolean } = {},
+): UntrustedVerdict {
+  throw new Error("not implemented");
+}
+
+export function inspectUntrustedRender(
+  _ctx: unknown,
+  _rootSelector: string,
+  _title: string,
+  _linkText: string,
+): UntrustedCounts {
+  throw new Error("not implemented");
+}
+
+// ---------------------------------------------------------------------------
 // Renderer side (self-contained)
 
 interface RElement {

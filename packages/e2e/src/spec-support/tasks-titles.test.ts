@@ -44,6 +44,10 @@ describe("tasks-core titles (Test 4)", () => {
     for (const number of numbers) expect(PLANNED["tasks-core"]).toContain(number);
     expect(new Set(numbers).size).toBe(numbers.length);
   });
+
+  it("holds exactly 14, 15, 16 and 17, once each (Task 2 Test 5)", () => {
+    expect([...numbers].sort()).toEqual([...PLANNED["tasks-core"]]);
+  });
 });
 
 describe("the classification table agrees with the planned sets", () => {
