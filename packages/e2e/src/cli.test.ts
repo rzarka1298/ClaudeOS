@@ -1,5 +1,10 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { COMMANDS, createRunPorts, main } from "./cli.js";
+import { type CliIo, COMMANDS, createRunPorts, main } from "./cli.js";
+import { writeLookHandoff } from "./look.js";
+import { type ReportRow, renderReport } from "./report.js";
 import type { RunOptions, RunOutcome, RunPorts } from "./run-uat.js";
 
 const OUTCOME: RunOutcome = {
@@ -104,5 +109,342 @@ describe("cli command table (Test 9)", () => {
       expect(typeof ports[name], name).toBe("function");
     }
     expect(ports.platform).toBe(process.platform);
+  });
+});
+
+const HEAD = "a".repeat(40);
+
+const statusRow = (
+  number: number,
+  status: "pass" | "fail" | "inconclusive (look pending)",
+  runClass: "auto" | "auto+look" = "auto",
+): ReportRow => ({
+  number,
+  title: `Item ${number}`,
+  runClass,
+  resolution: { kind: "status", item: number, status, reason: "r", message: "" },
+});
+
+const OWNER_ROW: ReportRow = {
+  number: 2,
+  title: "Owner item",
+  runClass: "owner",
+  resolution: { kind: "owner", item: 2, partials: [] },
+};
+
+function reportText(rows: ReportRow[], extra: { gitClean?: boolean } = {}): string {
+  return renderReport({
+    runId: "0123abcd",
+    profile: "standard",
+    startedAt: "2026-10-11T10:00:00.000Z",
+    finishedAt: "2026-10-11T10:05:00.000Z",
+    appVersion: "1.14.4",
+    installerVersion: "1.13.7",
+    gitHead: HEAD,
+    gitClean: extra.gitClean ?? true,
+    buildHash: "0123456789ab",
+    phasePrefix: "06",
+    rows,
+  });
+}
+
+const SCRIPT = [
+  "---",
+  "status: testing",
+  "phase: 06-demo",
+  "---",
+  "",
+  "## Tests",
+  "",
+  "### 1. Banner look",
+  "run: auto+look",
+  "via: spy, shot",
+  "spec: packages/e2e/specs/notification-look.e2e.ts::[06-UAT#01]",
+  "expected: |",
+  "  The banner appears.",
+  "result: [pending]",
+  "",
+  "### 2. Click the banner",
+  "run: owner",
+  "owner-why: banner-click",
+  "expected: |",
+  "  Click it.",
+  "result: [pending]",
+  "",
+  "### 3. Deny",
+  "run: auto",
+  "via: dom, store",
+  "spec: packages/e2e/specs/approvals-core.e2e.ts::[06-UAT#03]",
+  "expected: |",
+  "  Deny.",
+  "result: [pending]",
+  "",
+  "### 4. Approve",
+  "run: auto",
+  "via: dom",
+  "spec: packages/e2e/specs/approvals-core.e2e.ts::[06-UAT#04]",
+  "expected: |",
+  "  Approve.",
+  "result: [pending]",
+  "",
+  "## Summary",
+  "",
+  "total: 4",
+  "passed: 0",
+  "issues: 0",
+  "pending: 4",
+  "skipped: 0",
+  "blocked: 0",
+  "",
+].join("\n");
+
+function memoryIo(files: Record<string, string>, over: Partial<CliIo> = {}): CliIo {
+  return {
+    readText: (path) => files[path] ?? null,
+    writeText: (path, text) => {
+      files[path] = text;
+    },
+    readGitFacts: async () => ({ head: HEAD, clean: true, changedSince: [] }),
+    now: () => new Date("2026-10-12T08:00:00Z"),
+    tmpDir: () => "/tmp",
+    ...over,
+  };
+}
+
+async function run(argv: string[], io: CliIo): Promise<{ code: number; out: string }> {
+  const lines: string[] = [];
+  const code = await main(argv, { write: (line) => lines.push(line), io });
+  return { code, out: lines.join("\n") };
+}
+
+describe("report command (Test 7)", () => {
+  const rows = [
+    statusRow(1, "inconclusive (look pending)", "auto+look"),
+    OWNER_ROW,
+    statusRow(3, "pass"),
+    statusRow(4, "fail"),
+  ];
+
+  it("writes auto-result lines only for final statuses, never for a look still pending", async () => {
+    const files = { "/r/report.md": reportText(rows), "/s/06-UAT.md": SCRIPT };
+    const { code, out } = await run(
+      [
+        "report",
+        "--run",
+        "0123abcd",
+        "--report",
+        "/r/report.md",
+        "--script",
+        "/s/06-UAT.md",
+        "--write-script",
+      ],
+      memoryIo(files),
+    );
+    expect(code).toBe(0);
+    const script = files["/s/06-UAT.md"] as string;
+    expect(script).toContain("auto-result: pass @ 0123abcd 2026-10-12");
+    expect(script).toContain("auto-result: fail @ 0123abcd 2026-10-12");
+    expect(script.match(/^auto-result:/gm)).toHaveLength(2);
+    expect(out).toContain("2");
+  });
+
+  it("does not write the script without --write-script", async () => {
+    const files = { "/r/report.md": reportText(rows), "/s/06-UAT.md": SCRIPT };
+    const { code } = await run(
+      ["report", "--run", "0123abcd", "--report", "/r/report.md", "--script", "/s/06-UAT.md"],
+      memoryIo(files),
+    );
+    expect(code).toBe(0);
+    expect(files["/s/06-UAT.md"]).toBe(SCRIPT);
+  });
+
+  it("with no script prints that nothing was written and exits 0", async () => {
+    const files = { "/r/report.md": reportText(rows) };
+    const { code, out } = await run(
+      ["report", "--run", "0123abcd", "--report", "/r/report.md"],
+      memoryIo(files),
+    );
+    expect(code).toBe(0);
+    expect(out).toMatch(/nothing was written/i);
+  });
+
+  it("refuses a report of another run", async () => {
+    const files = { "/r/report.md": reportText(rows), "/s/06-UAT.md": SCRIPT };
+    const { code } = await run(
+      [
+        "report",
+        "--run",
+        "deadbeef",
+        "--report",
+        "/r/report.md",
+        "--script",
+        "/s/06-UAT.md",
+        "--write-script",
+      ],
+      memoryIo(files),
+    );
+    expect(code).toBe(1);
+    expect(files["/s/06-UAT.md"]).toBe(SCRIPT);
+  });
+
+  it("exits 2 when --run or --report is missing", async () => {
+    expect((await run(["report", "--report", "/r/report.md"], memoryIo({}))).code).toBe(2);
+    expect((await run(["report", "--run", "0123abcd"], memoryIo({}))).code).toBe(2);
+  });
+});
+
+describe("ratify command (Test 8)", () => {
+  const allPass = [
+    statusRow(1, "pass", "auto+look"),
+    OWNER_ROW,
+    statusRow(3, "pass"),
+    statusRow(4, "pass"),
+  ];
+
+  it("requires --run, --statement and --report", async () => {
+    const io = memoryIo({});
+    expect((await run(["ratify", "--statement", "ok", "--report", "/r"], io)).code).toBe(2);
+    expect((await run(["ratify", "--run", "0123abcd", "--report", "/r"], io)).code).toBe(2);
+    expect((await run(["ratify", "--run", "0123abcd", "--statement", "ok"], io)).code).toBe(2);
+  });
+
+  it("prints the reasons and exits 1 when the run is not ratifiable, changing nothing", async () => {
+    const files = { "/r/report.md": reportText([...allPass, statusRow(7, "fail")]) };
+    const before = files["/r/report.md"];
+    const { code, out } = await run(
+      ["ratify", "--run", "0123abcd", "--report", "/r/report.md", "--statement", "ok"],
+      memoryIo(files),
+    );
+    expect(code).toBe(1);
+    expect(out).toContain("7");
+    expect(files["/r/report.md"]).toBe(before);
+  });
+
+  it("on success prints the run id and the date only, and writes the front matter", async () => {
+    const files = { "/r/report.md": reportText(allPass) };
+    const { code, out } = await run(
+      [
+        "ratify",
+        "--run",
+        "0123abcd",
+        "--report",
+        "/r/report.md",
+        "--statement",
+        "Owner ratifies it",
+      ],
+      memoryIo(files),
+    );
+    expect(code).toBe(0);
+    expect(out).toContain("0123abcd");
+    expect(out).toContain("2026-10-12");
+    expect(out).not.toContain("Owner ratifies it");
+    expect(files["/r/report.md"]).toContain("ratified: Owner ratifies it (2026-10-12)");
+  });
+
+  it("writes pass - auto run results into the script only with --write-results", async () => {
+    const withResults = ["auto-result: pass @ 0123abcd 2026-10-12"];
+    const script = SCRIPT.replace(
+      "spec: packages/e2e/specs/approvals-core.e2e.ts::[06-UAT#03]",
+      `spec: packages/e2e/specs/approvals-core.e2e.ts::[06-UAT#03]\n${withResults[0]}`,
+    );
+    const files = { "/r/report.md": reportText(allPass), "/s/06-UAT.md": script };
+    const base = [
+      "ratify",
+      "--run",
+      "0123abcd",
+      "--report",
+      "/r/report.md",
+      "--statement",
+      "ok",
+      "--script",
+      "/s/06-UAT.md",
+    ];
+    await run(base, memoryIo(files));
+    expect(files["/s/06-UAT.md"]).toBe(script);
+    files["/r/report.md"] = reportText(allPass);
+    const { code } = await run([...base, "--write-results"], memoryIo(files));
+    expect(code).toBe(0);
+    expect(files["/s/06-UAT.md"]).toContain("result: pass - auto run 0123abcd");
+  });
+
+  it("refuses a dirty-tree run", async () => {
+    const files = { "/r/report.md": reportText(allPass, { gitClean: false }) };
+    const { code } = await run(
+      ["ratify", "--run", "0123abcd", "--report", "/r/report.md", "--statement", "ok"],
+      memoryIo(files),
+    );
+    expect(code).toBe(1);
+  });
+});
+
+describe("look command", () => {
+  it("lists pending items and records a verdict through the shots folder", async () => {
+    const base = mkdtempSync(join(tmpdir(), "cli-look-"));
+    try {
+      const shots = join(base, "ccc-uat-shots-0123abcd");
+      mkdirSync(shots, { mode: 0o700 });
+      writeFileSync(join(shots, "12-pane.png"), "x");
+      const reportPath = join(base, "report.md");
+      writeFileSync(
+        reportPath,
+        reportText([statusRow(12, "inconclusive (look pending)", "auto+look")]),
+      );
+      writeLookHandoff({
+        shotsDir: shots,
+        runId: "0123abcd",
+        reportPath,
+        items: [{ item: 12, labels: ["pane"], count: 1 }],
+      });
+      const io = memoryIo({}, { tmpDir: () => base });
+      const listed = await run(["look", "list", "--run", "0123abcd", "--shots-dir", base], io);
+      expect(listed.code).toBe(0);
+      expect(listed.out).toContain("12");
+      const recorded = await run(
+        [
+          "look",
+          "record",
+          "--run",
+          "0123abcd",
+          "--shots-dir",
+          base,
+          "--item",
+          "12",
+          "--verdict",
+          "pass",
+          "--images",
+          "1",
+        ],
+        io,
+      );
+      expect(recorded.code).toBe(0);
+      expect(existsSync(shots)).toBe(false);
+      expect(readFileSync(reportPath, "utf8")).toContain("| pass |");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("exits 2 for an unknown subcommand or a bad verdict", async () => {
+    const io = memoryIo({});
+    expect((await run(["look", "wander"], io)).code).toBe(2);
+    expect(
+      (
+        await run(
+          [
+            "look",
+            "record",
+            "--run",
+            "0123abcd",
+            "--item",
+            "1",
+            "--verdict",
+            "maybe",
+            "--images",
+            "1",
+          ],
+          io,
+        )
+      ).code,
+    ).toBe(2);
   });
 });

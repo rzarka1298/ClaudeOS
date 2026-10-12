@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildHash } from "./build-hash.js";
 import { parseRunArgs, RUN_USAGE, UsageError } from "./cli-args.js";
-import { readGitFacts } from "./git-facts.js";
+import { type GitFacts, readGitFacts } from "./git-facts.js";
 import { assertInstallerVersionMatches, readInstalledInstallerVersion } from "./installed-app.js";
 import { PLUGIN_STAGE_FILES, stagePlugin } from "./plugin-data.js";
 import { HOOK_ENTRY, PLUGIN_BUILD_DIR, REPO_ROOT, SERVICE_ENTRY } from "./repo-paths.js";
@@ -40,7 +40,17 @@ import { spawnWdio } from "./wdio-spawn.js";
  * pipeline in run-uat.ts is tested with fakes.
  */
 
+/** The file, git and clock access of the report, ratify and look handlers; tests inject it. */
+export interface CliIo {
+  readText: (path: string) => string | null;
+  writeText: (path: string, text: string) => void;
+  readGitFacts: (since: string | undefined) => Promise<GitFacts>;
+  now: () => Date;
+  tmpDir: () => string;
+}
+
 export interface CliDeps {
+  io?: Partial<CliIo>;
   write?: (line: string) => void;
   runUat?: (options: RunOptions, ports: RunPorts) => Promise<RunOutcome>;
   createRunPorts?: () => RunPorts;
