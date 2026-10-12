@@ -87,7 +87,7 @@ describe("hook record, environment and arguments (Test 2)", () => {
       file: string;
       args: string[];
       env: Record<string, string>;
-      shell: unknown;
+      viaShell: boolean;
     }> = [];
     let stdinText = "";
     const spawnFn = ((
@@ -95,7 +95,7 @@ describe("hook record, environment and arguments (Test 2)", () => {
       args: string[],
       options: { env: Record<string, string>; shell?: unknown },
     ) => {
-      calls.push({ file, args, env: options.env, shell: options.shell });
+      calls.push({ file, args, env: options.env, viaShell: Boolean(options.shell) });
       const child = new EventEmitter() as EventEmitter & { stdin: PassThrough };
       child.stdin = new PassThrough();
       child.stdin.on("data", (chunk: Buffer) => {
@@ -118,7 +118,7 @@ describe("hook record, environment and arguments (Test 2)", () => {
     expect(calls[0]?.file).toBe(process.execPath);
     expect(calls[0]?.args).toEqual(hookArgs(`${RUN_ROOT}/rt`));
     expect(Object.keys(calls[0]?.env ?? {}).sort()).toEqual(["CLAUDE_PID", "HOME", "PATH"]);
-    expect(calls[0]?.shell).toBeFalsy();
+    expect(calls[0]?.viaShell).toBe(false);
     expect(JSON.parse(stdinText)).toEqual({ hello: "world" });
     await expect(runHook({ ...input, pid: 999999 })).rejects.toThrow("Refusing to approve");
     await expect(runHook({ ...input, runtimeDir: "/tmp/elsewhere/rt" })).rejects.toThrow();
