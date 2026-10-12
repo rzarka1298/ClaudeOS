@@ -25,6 +25,7 @@ import { type GitFacts, readGitFacts } from "./git-facts.js";
 import { assertInstallerVersionMatches, readInstalledInstallerVersion } from "./installed-app.js";
 import { listPending, recordVerdict, writeLookHandoff } from "./look.js";
 import { PLUGIN_STAGE_FILES, stagePlugin } from "./plugin-data.js";
+import type { PreflightOptions, PreflightOutcome, PreflightPorts } from "./preflight.js";
 import { ratifyReport } from "./ratify.js";
 import { HOOK_ENTRY, PLUGIN_BUILD_DIR, REPO_ROOT, SERVICE_ENTRY } from "./repo-paths.js";
 import { parseReport } from "./report-io.js";
@@ -67,10 +68,13 @@ export interface CliIo {
   readGitFacts: (since: string | undefined) => Promise<GitFacts>;
   now: () => Date;
   tmpDir: () => string;
+  listFiles: (dir: string) => string[];
 }
 
 export interface CliDeps {
   io?: Partial<CliIo>;
+  runPreflight?: (options: PreflightOptions, ports: PreflightPorts) => Promise<PreflightOutcome>;
+  createPreflightPorts?: () => PreflightPorts;
   write?: (line: string) => void;
   runUat?: (options: RunOptions, ports: RunPorts) => Promise<RunOutcome>;
   createRunPorts?: () => RunPorts;
@@ -227,6 +231,7 @@ const REAL_IO: CliIo = {
     readGitFacts({ cwd: REPO_ROOT, ...(since === undefined ? {} : { since }) }),
   now: () => new Date(),
   tmpDir: () => tmpdir(),
+  listFiles: () => [],
 };
 
 function ioFor(deps: CliDeps): CliIo {

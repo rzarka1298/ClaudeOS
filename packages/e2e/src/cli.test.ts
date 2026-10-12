@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type CliIo, COMMANDS, createRunPorts, main } from "./cli.js";
 import { writeLookHandoff } from "./look.js";
+import type { PreflightOptions, PreflightPorts } from "./preflight.js";
 import { type ReportRow, renderReport } from "./report.js";
 import type { RunOptions, RunOutcome, RunPorts } from "./run-uat.js";
 
@@ -207,6 +208,7 @@ function memoryIo(files: Record<string, string>, over: Partial<CliIo> = {}): Cli
     readGitFacts: async () => ({ head: HEAD, clean: true, changedSince: [] }),
     now: () => new Date("2026-10-12T08:00:00Z"),
     tmpDir: () => "/tmp",
+    listFiles: () => [],
     ...over,
   };
 }
@@ -446,5 +448,85 @@ describe("look command", () => {
         )
       ).code,
     ).toBe(2);
+  });
+});
+
+describe("preflight command", () => {
+  const okPorts = {} as unknown as PreflightPorts;
+
+  it("runs runPreflight with the parsed flag and returns 0 when it is ok", async () => {
+    const seen: PreflightOptions[] = [];
+    const lines: string[] = [];
+    const code = await main(["preflight", "--require-real-service"], {
+      write: (line) => lines.push(line),
+      createPreflightPorts: () => okPorts,
+      runPreflight: async (options) => {
+        seen.push(options);
+        return { ok: true, lines: ["ok: service started"] };
+      },
+    });
+    expect(code).toBe(0);
+    expect(seen).toEqual([{ requireRealService: true }]);
+    expect(lines.join("\n")).toContain("ok: service started");
+  });
+
+  it("returns 1 when the preflight fails and 2 for an unknown flag", async () => {
+    const failing = await main(["preflight"], {
+      write: () => {},
+      createPreflightPorts: () => okPorts,
+      runPreflight: async () => ({ ok: false, lines: ["fail: real store or socket changed"] }),
+    });
+    expect(failing).toBe(1);
+    expect(await main(["preflight", "--bogus"], { write: () => {} })).toBe(2);
+  });
+});
+
+describe("lint-tags command", () => {
+  it("requires both --script and --specs-dir", async () => {
+    expect((await run(["lint-tags", "--script", "/s"], memoryIo({}))).code).toBe(2);
+    expect((await run(["lint-tags", "--specs-dir", "/d"], memoryIo({}))).code).toBe(2);
+  });
+
+  it("exits 1 when the script cannot be read, printing a code only", async () => {
+    const { code, out } = await run(
+      ["lint-tags", "--script", "/s/06-UAT.md", "--specs-dir", "/d"],
+      memoryIo({}),
+    );
+    expect(code).toBe(1);
+    expect(out).toContain("SCRIPT_UNREADABLE");
+  });
+});
+
+describe("cli and scripts stay consistent (Test 5)", () => {
+  const read = (relative: string) =>
+    JSON.parse(readFileSync(new URL(relative, import.meta.url), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+  const pkg = read("../package.json").scripts;
+  const root = read("../../../package.json").scripts;
+
+  it("maps every package script that runs the CLI to a command in the table", () => {
+    for (const [name, command] of Object.entries(pkg)) {
+      const match = /^node dist\/cli\.js (\S+)$/.exec(command);
+      if (match === null) continue;
+      expect(Object.keys(COMMANDS), name).toContain(match[1]);
+    }
+  });
+
+  it("exposes every command through a one-word script except ratify", () => {
+    const exposed = Object.values(pkg)
+      .map((command) => /^node dist\/cli\.js (\S+)$/.exec(command)?.[1])
+      .filter((command): command is string => command !== undefined);
+    for (const command of Object.keys(COMMANDS)) {
+      if (command === "ratify") expect(exposed).not.toContain("ratify");
+      else expect(exposed, command).toContain(command);
+    }
+  });
+
+  it("keeps the root uat:auto script unchanged and out of every ci script", () => {
+    expect(root["uat:auto"]).toBe("turbo run build && pnpm --filter @ccc/e2e run uat");
+    for (const [name, command] of Object.entries(root)) {
+      if (name.startsWith("ci:")) expect(command, name).not.toMatch(/uat|e2e/i);
+    }
   });
 });
