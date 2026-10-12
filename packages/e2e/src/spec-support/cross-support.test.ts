@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,7 +12,9 @@ import {
   diffNewDescendants,
   firstFocusInRequestIsDeny,
   focusRingVisible,
+  hashVaultFiles,
   motionAnnouncementPresent,
+  parseTreeListing,
   readLookPending,
   recordLookPending,
   scanForAlwaysAllow,
@@ -278,5 +280,31 @@ describe("diff helpers (Task 2, Test 4)", () => {
       node(23, 20, "/usr/bin/open -a Terminal"),
     ];
     expect(diffNewDescendants(before, after, [20]).map((n) => n.pid)).toEqual([23]);
+  });
+
+  it("parses a process listing and ignores malformed lines", () => {
+    const listing = "  10     1 /usr/bin/node svc.js\nnot a row\n  11    10 osascript -e x y\n";
+    expect(parseTreeListing(listing)).toEqual([
+      { pid: 10, ppid: 1, command: "/usr/bin/node svc.js" },
+      { pid: 11, ppid: 10, command: "osascript -e x y" },
+    ]);
+  });
+
+  it("hashes vault files, skips .obsidian and refuses a vault outside the run root", () => {
+    const runRoot = mkdtempSync(join(tmpdir(), "cross-hash-"));
+    try {
+      const vault = join(runRoot, "vault");
+      mkdirSync(join(vault, ".obsidian"), { recursive: true });
+      mkdirSync(join(vault, "tasks"), { recursive: true });
+      writeFileSync(join(vault, "tasks", "a.md"), "alpha");
+      writeFileSync(join(vault, ".obsidian", "x.json"), "{}");
+      const first = hashVaultFiles(vault, runRoot);
+      expect(Object.keys(first)).toEqual(["tasks/a.md"]);
+      writeFileSync(join(vault, "tasks", "a.md"), "beta");
+      expect(diffFileHashes(first, hashVaultFiles(vault, runRoot)).changed).toEqual(["tasks/a.md"]);
+      expect(() => hashVaultFiles(tmpdir(), runRoot)).toThrow();
+    } finally {
+      rmSync(runRoot, { recursive: true, force: true });
+    }
   });
 });
