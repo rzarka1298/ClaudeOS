@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { NOTE_ID_PATTERN, taskSlug } from "@ccc/domain";
+import { NOTE_ID_PATTERN, TASK_PAGE_SIZE, taskSlug } from "@ccc/domain";
 import {
   type AuthenticatedSocketApiClient,
   createAuthenticatedClient,
@@ -314,29 +314,53 @@ export function untrustedRenderVerdict(
 }
 
 // ---------------------------------------------------------------------------
-// Views, movement, long tasks, panel independence (pure) -- typed skeleton
+// Views, movement, long tasks, panel independence (pure)
 
-export const TASK_PAGE_LIMIT = 0;
-export const MOVE_ALLOWANCE_MS = 0;
-export const LONGTASK_BAR_MS = 0;
+/** A list shows at most one page; a chip count above it is matched by a full page. */
+export const TASK_PAGE_LIMIT: number = TASK_PAGE_SIZE;
+/** The UAT wording: counts change "within a second or two" without a manual refresh. */
+export const MOVE_ALLOWANCE_MS = 2000;
+/** The UAT wording: no pause longer than about a third of a second. */
+export const LONGTASK_BAR_MS = 300;
 
 export type CountsVerdict = { ok: true } | { ok: false; view: string };
 
+/**
+ * True for every view when the count in the chip's accessible name equals the length of the
+ * rendered list, up to the paging limit (a longer list shows one full page). Names the first view
+ * that does not match, and fails a view that has no count or no list.
+ */
 export function countsMatchLists(
-  _chips: Readonly<Record<string, number | null>>,
-  _listLengths: Readonly<Record<string, number>>,
+  chips: Readonly<Record<string, number | null>>,
+  listLengths: Readonly<Record<string, number>>,
 ): CountsVerdict {
-  throw new Error("not implemented");
+  for (const [view, count] of Object.entries(chips)) {
+    const length = listLengths[view];
+    if (count === null || length === undefined) return { ok: false, view };
+    if (length !== Math.min(count, TASK_PAGE_LIMIT)) return { ok: false, view };
+  }
+  return { ok: true };
 }
 
+/**
+ * True when exactly the expected chips changed, each by the expected amount, within the
+ * allowance. A chip not named in `expectedDelta` must be unchanged.
+ */
 export function movedWithin(
-  _before: Readonly<Record<string, number | null>>,
-  _after: Readonly<Record<string, number | null>>,
-  _expectedDelta: Readonly<Record<string, number>>,
-  _elapsedMs: number,
-  _allowanceMs: number,
+  before: Readonly<Record<string, number | null>>,
+  after: Readonly<Record<string, number | null>>,
+  expectedDelta: Readonly<Record<string, number>>,
+  elapsedMs: number,
+  allowanceMs: number,
 ): boolean {
-  throw new Error("not implemented");
+  if (elapsedMs > allowanceMs) return false;
+  for (const view of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const was = before[view];
+    const now = after[view];
+    if (was === null || was === undefined || now === null || now === undefined) return false;
+    if (now - was !== (expectedDelta[view] ?? 0)) return false;
+  }
+  return Object.keys(expectedDelta).every((view) => view in before && expectedDelta[view] !== 0);
 }
 
 export interface LongtaskReading {
@@ -348,41 +372,74 @@ export type LongtaskVerdict =
   | { verdict: "fail"; longestMs: number }
   | { verdict: "inconclusive"; reason: string };
 
-export function evaluateLongtasks(_reading: LongtaskReading, _barMs: number): LongtaskVerdict {
-  throw new Error("not implemented");
+/**
+ * Judges the renderer's long-task entries against the bar. A renderer that cannot report long
+ * tasks is inconclusive, never a pass: a timing assertion must not pass because nothing was
+ * measured (T-05.2-28).
+ */
+export function evaluateLongtasks(reading: LongtaskReading, barMs: number): LongtaskVerdict {
+  if (!reading.supported) {
+    return { verdict: "inconclusive", reason: "the renderer does not report long tasks" };
+  }
+  const longestMs = reading.entries.reduce(
+    (longest, entry) => Math.max(longest, entry.duration),
+    0,
+  );
+  return longestMs > barMs ? { verdict: "fail", longestMs } : { verdict: "pass" };
 }
 
 export type InteractionVerdict =
   | { ok: true; slowest: string }
   | { ok: false; slowest: string; slowestMs?: number };
 
+/** Fails when any timed interaction is over the bar, or when nothing was timed at all. */
 export function measureInteractions(
-  _results: ReadonlyArray<{ label: string; ms: number }>,
-  _barMs: number,
+  results: ReadonlyArray<{ label: string; ms: number }>,
+  barMs: number,
 ): InteractionVerdict {
-  throw new Error("not implemented");
+  const slowest = results.reduce<{ label: string; ms: number } | undefined>(
+    (worst, entry) => (worst === undefined || entry.ms > worst.ms ? entry : worst),
+    undefined,
+  );
+  if (slowest === undefined) return { ok: false, slowest: "(nothing was timed)" };
+  if (slowest.ms > barMs) return { ok: false, slowest: slowest.label, slowestMs: slowest.ms };
+  return { ok: true, slowest: slowest.label };
 }
 
+/** The chips of one tasks surface: the pressed chip and every parsed count. */
 export interface SurfaceSnapshot {
   active: string;
   counts: Readonly<Record<string, number | null>>;
 }
 
-export function panelIndependent(
-  _globalBefore: SurfaceSnapshot,
-  _globalAfter: SurfaceSnapshot,
-  _panelBefore: SurfaceSnapshot,
-  _panelAfter: SurfaceSnapshot,
-): boolean {
-  throw new Error("not implemented");
+function sameSnapshot(a: SurfaceSnapshot, b: SurfaceSnapshot): boolean {
+  if (a.active !== b.active) return false;
+  const views = new Set([...Object.keys(a.counts), ...Object.keys(b.counts)]);
+  return [...views].every((view) => a.counts[view] === b.counts[view]);
 }
 
-export function emptyProjectVerdict(_facts: {
+/**
+ * True when the first surface really changed and the second stayed the same. Call it once with
+ * (global, panel) and once with (panel, global) to prove independence in both directions.
+ */
+export function panelIndependent(
+  globalBefore: SurfaceSnapshot,
+  globalAfter: SurfaceSnapshot,
+  panelBefore: SurfaceSnapshot,
+  panelAfter: SurfaceSnapshot,
+): boolean {
+  return !sameSnapshot(globalBefore, globalAfter) && sameSnapshot(panelBefore, panelAfter);
+}
+
+/** A project with no tasks shows its own empty line, never the global list. */
+export function emptyProjectVerdict(facts: {
   panelRowIds: readonly string[];
   globalRowIds: readonly string[];
   emptyHeading: string | null;
 }): { ok: true } | { ok: false; reason: string } {
-  throw new Error("not implemented");
+  if (facts.panelRowIds.length > 0) return { ok: false, reason: "the panel lists tasks" };
+  if (facts.emptyHeading === null) return { ok: false, reason: "the panel shows no empty line" };
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +453,7 @@ interface RElement {
   click(): void;
   dispatchEvent(event: unknown): boolean;
   value?: string;
+  scrollIntoView?(): void;
 }
 
 declare const document: {
@@ -643,7 +701,14 @@ export const WAIT = {
   short: { timeoutMs: 15_000, intervalMs: 250 },
   /** The service answering and the plugin connecting after a start. */
   connect: { timeoutMs: 90_000, intervalMs: 1_000 },
+  /** The boot walk of the 10,000-task vault and the plugin catching up with it (test 21). */
+  scale: { timeoutMs: 480_000, intervalMs: 2_000 },
 } as const;
+
+/** 100 ms polls the throwaway service gets to open its socket after walking the big vault. */
+export const SCALE_SERVICE_WAIT_ATTEMPTS = 1_200;
+/** Mocha's per-hook and per-test limit for the scale file; above the longest wait it contains. */
+export const SCALE_MOCHA_TIMEOUT_MS = 900_000;
 
 /** The plugin command id as Obsidian registers it. */
 export function pluginCommandId(command: string): string {
@@ -759,6 +824,15 @@ export async function waitForChipCounts(
  */
 export async function runSetUpManagedVault(browser: TasksBrowser, minAll: number): Promise<void> {
   await openTasks(browser);
+  await confirmManagedVaultSetup(browser);
+  await waitForChipCounts(browser, GLOBAL_ROOT, (counts) => (counts["all"] ?? 0) >= minAll, {
+    ...WAIT.connect,
+    describe: `the Tasks destination to count at least ${minAll} tasks`,
+  });
+}
+
+/** Runs the Set up managed vault command and presses Confirm on its plan; waits for nothing else. */
+export async function confirmManagedVaultSetup(browser: TasksBrowser): Promise<void> {
   const command = pluginCommandId(TASKS_TEXT.setupCommand);
   await pollUntil(
     async () => {
@@ -770,10 +844,77 @@ export async function runSetUpManagedVault(browser: TasksBrowser, minAll: number
     },
     { ...WAIT.connect, describe: "the managed vault setup to be confirmed" },
   );
-  await waitForChipCounts(browser, GLOBAL_ROOT, (counts) => (counts["all"] ?? 0) >= minAll, {
-    ...WAIT.connect,
-    describe: `the Tasks destination to count at least ${minAll} tasks`,
+}
+
+/** Switches the command center to a destination by its id and waits until its tab is selected. */
+export async function openDestination(browser: TasksBrowser, destinationId: string): Promise<void> {
+  const tab = `#${TASKS_CLASSES.tabPrefix}${destinationId}`;
+  await pollUntil(() => browser.executeObsidian(rendererClick, tab, null), {
+    ...WAIT.short,
+    describe: `the ${destinationId} tab`,
   });
+  await pollUntil(() => browser.executeObsidian(rendererExists, `${tab}[aria-selected="true"]`), {
+    ...WAIT.short,
+    describe: `the ${destinationId} tab to be selected`,
+  });
+}
+
+/** True when something matches the selector. */
+export function rendererExists(_ctx: unknown, selector: string): boolean {
+  return document.querySelector(selector) !== null;
+}
+
+/**
+ * Clicks like {@link rendererClick} and reports how long the interface took to settle: the time
+ * from the click until two animation frames have passed (the work done by the click handler and
+ * the render that follows). Used for the per-interaction timings of the scale item.
+ */
+export async function rendererTimedClick(
+  _ctx: unknown,
+  selector: string,
+  text: string | null,
+): Promise<{ clicked: boolean; ms: number }> {
+  const scope = globalThis as unknown as {
+    performance: { now(): number };
+    requestAnimationFrame(callback: () => void): number;
+  };
+  const start = scope.performance.now();
+  const found = document.querySelectorAll(selector);
+  let clicked = false;
+  for (let index = 0; index < found.length; index += 1) {
+    const element = found[index];
+    if (element === undefined) continue;
+    if (text === null || (element.textContent ?? "").trim() === text) {
+      element.click();
+      clicked = true;
+      break;
+    }
+  }
+  if (!clicked) return { clicked, ms: 0 };
+  await new Promise<void>((done) => {
+    scope.requestAnimationFrame(() => scope.requestAnimationFrame(() => done()));
+  });
+  return { clicked, ms: Math.round(scope.performance.now() - start) };
+}
+
+/** Scrolls the last matching element into view and reports the time to settle, as above. */
+export async function rendererTimedScroll(
+  _ctx: unknown,
+  selector: string,
+): Promise<{ scrolled: boolean; ms: number }> {
+  const scope = globalThis as unknown as {
+    performance: { now(): number };
+    requestAnimationFrame(callback: () => void): number;
+  };
+  const start = scope.performance.now();
+  const found = document.querySelectorAll(selector);
+  const last = found[found.length - 1];
+  if (last === undefined || last.scrollIntoView === undefined) return { scrolled: false, ms: 0 };
+  last.scrollIntoView();
+  await new Promise<void>((done) => {
+    scope.requestAnimationFrame(() => scope.requestAnimationFrame(() => done()));
+  });
+  return { scrolled: true, ms: Math.round(scope.performance.now() - start) };
 }
 
 /** Opens the create form with the Create task command and waits for it. */
@@ -992,4 +1133,90 @@ export async function readDueProperty(browser: TasksBrowser): Promise<DuePropert
     },
     { ...WAIT.short, describe: "the Properties view to show the due property" },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Views, projects and the scale item (spec side)
+
+/** The total in a `Showing 25 of 1,234` line, or null. */
+export function parseShowingTotal(line: string | null): number | null {
+  const match = /\bof ([\d,]+)\s*$/.exec((line ?? "").trim());
+  return match?.[1] === undefined ? null : Number(match[1].replace(/,/g, ""));
+}
+
+/** The pressed chip and every parsed count of a reading. */
+export function snapshotOf(tasks: RenderedTasks): SurfaceSnapshot {
+  return {
+    active: tasks.chips.find((chip) => chip.pressed)?.filter ?? "",
+    counts: chipCounts(tasks),
+  };
+}
+
+/**
+ * Binds a note to a project: sets the `projectId` line inside the frontmatter, replacing an
+ * existing one. Every other byte is kept.
+ */
+export function setProjectId(text: string, projectId: string): string {
+  const lines = text.split("\n");
+  if (lines[0] !== "---") throw new Error("The note has no frontmatter to bind.");
+  const end = lines.indexOf("---", 1);
+  if (end < 0) throw new Error("The note's frontmatter is not closed.");
+  const line = `projectId: ${projectId}`;
+  const existing = lines.findIndex(
+    (entry, index) => index > 0 && index < end && /^projectId:/.test(entry),
+  );
+  if (existing >= 0) lines[existing] = line;
+  else lines.splice(end, 0, line);
+  return lines.join("\n");
+}
+
+/**
+ * Opens a project's task panel from the Projects destination (the card's Show tasks control) and
+ * waits for the panel of that project to mount. A panel that is already open is left alone.
+ */
+export async function openProjectPanel(browser: TasksBrowser, projectName: string): Promise<void> {
+  await openDestination(browser, TASKS_TEXT.tabProjectsId);
+  const panel = `${PROJECT_ROOT}[aria-label="${TASKS_TEXT.projectPanelPrefix}${projectName}"]`;
+  if (!(await browser.executeObsidian(rendererExists, panel))) {
+    const button = `button.${TASKS_CLASSES.projectShowTasks}[aria-label="${TASKS_TEXT.showTasksFor}${projectName}"]`;
+    await pollUntil(() => browser.executeObsidian(rendererClick, button, null), {
+      ...WAIT.connect,
+      describe: `the Show tasks control of the project ${projectName}`,
+    });
+  }
+  await pollUntil(() => browser.executeObsidian(rendererExists, panel), {
+    ...WAIT.short,
+    describe: `the task panel of the project ${projectName}`,
+  });
+}
+
+/** Presses every chip in turn and returns the count and the rendered list length of each. */
+export async function readEveryView(
+  browser: TasksBrowser,
+  root: string,
+  filters: readonly string[],
+): Promise<{
+  counts: Record<string, number | null>;
+  listLengths: Record<string, number>;
+  showing: Record<string, number | null>;
+}> {
+  const counts: Record<string, number | null> = {};
+  const listLengths: Record<string, number> = {};
+  const showing: Record<string, number | null> = {};
+  for (const filter of filters) {
+    await showFilter(browser, root, filter);
+    const tasks = await pollUntil(
+      async () => {
+        const reading = await readTasks(browser, root);
+        const settled =
+          reading.rows.length > 0 || reading.emptyHeading !== null || filter === "project";
+        return settled ? reading : null;
+      },
+      { ...WAIT.short, describe: `the ${filter} list to render` },
+    );
+    counts[filter] = chipCounts(tasks)[filter] ?? null;
+    listLengths[filter] = tasks.rows.length;
+    showing[filter] = parseShowingTotal(tasks.showing);
+  }
+  return { counts, listLengths, showing };
 }

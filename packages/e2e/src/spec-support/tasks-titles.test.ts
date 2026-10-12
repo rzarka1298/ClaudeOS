@@ -60,9 +60,7 @@ describe("tasks-views, tasks-scale and the whole tasks set (Task 3 Test 6)", () 
   });
 
   it("the whole tasks set equals 14 to 19 and 21 once each", () => {
-    const all = (Object.keys(PLANNED) as SpecName[]).flatMap((name) =>
-      numbersOf(titlesOf(name)),
-    );
+    const all = (Object.keys(PLANNED) as SpecName[]).flatMap((name) => numbersOf(titlesOf(name)));
     expect(all.sort()).toEqual([14, 15, 16, 17, 18, 19, 21]);
   });
 });

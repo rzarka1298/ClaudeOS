@@ -123,7 +123,16 @@ describe("the words the views and project panel items assert (Task 3 Test 1)", (
       TASKS_TEXT.chipProposed,
       TASKS_TEXT.chipBlocked,
       TASKS_TEXT.chipCompleted,
-    ]).toEqual(["All", "Today", "Upcoming", "Overdue", "Project", "Proposed", "Blocked", "Completed"]);
+    ]).toEqual([
+      "All",
+      "Today",
+      "Upcoming",
+      "Overdue",
+      "Project",
+      "Proposed",
+      "Blocked",
+      "Completed",
+    ]);
   });
 
   it("mirrors the Show tasks, panel, empty-line and filter-group wording", () => {

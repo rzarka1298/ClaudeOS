@@ -16,8 +16,8 @@ import {
   movedWithin,
   notInEitherList,
   panelIndependent,
-  TASK_PAGE_LIMIT,
   parseNoteFrontmatter,
+  parseShowingTotal,
   readDecisionOutcome,
   readerSelectors,
   redateDueLine,
@@ -26,7 +26,9 @@ import {
   rendererReadTasks,
   rendererSetInput,
   rendererVaultOp,
+  setProjectId,
   shiftLocalDate,
+  TASK_PAGE_LIMIT,
   untrustedRenderVerdict,
 } from "./tasks-support.js";
 
@@ -501,7 +503,16 @@ describe("the Properties view check and the vault operation (U-6, U-7)", () => {
   });
 });
 
-const VIEWS = ["all", "today", "upcoming", "overdue", "project", "proposed", "blocked", "completed"];
+const VIEWS = [
+  "all",
+  "today",
+  "upcoming",
+  "overdue",
+  "project",
+  "proposed",
+  "blocked",
+  "completed",
+];
 
 function chipsOf(counts: number[]): Record<string, number> {
   return Object.fromEntries(VIEWS.map((view, index) => [view, counts[index] ?? 0]));
@@ -592,7 +603,8 @@ describe("long tasks and interaction timings (Task 3 Test 4, T-05.2-28)", () => 
     expect(result.verdict).toBe("inconclusive");
     expect(result).toHaveProperty("reason");
     expect(
-      evaluateLongtasks({ supported: false, entries: [{ startTime: 0, duration: 1 }] }, 300).verdict,
+      evaluateLongtasks({ supported: false, entries: [{ startTime: 0, duration: 1 }] }, 300)
+        .verdict,
     ).toBe("inconclusive");
   });
 
@@ -623,12 +635,12 @@ describe("panel independence (Task 3 Test 5)", () => {
   });
 
   it("is true for the reverse call with the roles swapped", () => {
-    expect(
-      panelIndependent(same, same, snap("all", { all: 2 }), snap("overdue", { all: 2 })),
-    ).toBe(false);
-    expect(
-      panelIndependent(snap("all", { all: 2 }), snap("overdue", { all: 2 }), same, same),
-    ).toBe(true);
+    expect(panelIndependent(same, same, snap("all", { all: 2 }), snap("overdue", { all: 2 }))).toBe(
+      false,
+    );
+    expect(panelIndependent(snap("all", { all: 2 }), snap("overdue", { all: 2 }), same, same)).toBe(
+      true,
+    );
   });
 
   it("is false when the panel moved with the global change or nothing changed at all", () => {
@@ -643,9 +655,30 @@ describe("panel independence (Task 3 Test 5)", () => {
     expect(panelIndependent(same, same, same, same)).toBe(false);
   });
 
+  it("binds a note to a project by one frontmatter line and keeps every other byte", () => {
+    const text = "---\nid: x\nstatus: ready\n---\nbody\n";
+    expect(setProjectId(text, "p1")).toBe("---\nid: x\nstatus: ready\nprojectId: p1\n---\nbody\n");
+    expect(setProjectId("---\nid: x\nprojectId: old\n---\nb\n", "p2")).toBe(
+      "---\nid: x\nprojectId: p2\n---\nb\n",
+    );
+    expect(() => setProjectId("no frontmatter", "p")).toThrow();
+    expect(() => setProjectId("---\nid: x\n", "p")).toThrow();
+  });
+
+  it("reads the total of a Showing line", () => {
+    expect(parseShowingTotal("Showing 25 of 1,234")).toBe(1234);
+    expect(parseShowingTotal("Showing 3 of 3")).toBe(3);
+    expect(parseShowingTotal(null)).toBeNull();
+    expect(parseShowingTotal("Nothing")).toBeNull();
+  });
+
   it("an empty project shows its own empty line, not the global list", () => {
     expect(
-      emptyProjectVerdict({ panelRowIds: [], globalRowIds: ["a", "b"], emptyHeading: "Nothing here yet" }),
+      emptyProjectVerdict({
+        panelRowIds: [],
+        globalRowIds: ["a", "b"],
+        emptyHeading: "Nothing here yet",
+      }),
     ).toEqual({ ok: true });
     expect(
       emptyProjectVerdict({ panelRowIds: ["a"], globalRowIds: ["a", "b"], emptyHeading: null }),
