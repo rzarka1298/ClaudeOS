@@ -1,4 +1,5 @@
-import { resolve, sep } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 import {
   assertUatAccount,
   DEFAULT_RUN_BASE,
@@ -298,6 +299,19 @@ export async function withSandbox<T>(
    * TERM only the ledgered pids whose pid, start time and marker still match a fresh table.
    * Never the runner itself. No uncatchable signal is sent by pid; a survivor stays a leak.
    */
+  function logKill(pid: number, role: string, start: string): void {
+    try {
+      mkdirSync(paths.wdioDir, { recursive: true });
+      appendFileSync(
+        join(paths.wdioDir, "runner-kills.log"),
+        `${new Date().toISOString()} pid=${pid} role=${role} start=${start} reason=teardown-ledgered-identity\n`,
+        { mode: 0o600 },
+      );
+    } catch {
+      // logging must never stop a cleanup
+    }
+  }
+
   async function terminateLedgered(): Promise<void> {
     const table = await readTable();
     const known = readLedger(paths.ledgerPath);
@@ -325,6 +339,9 @@ export async function withSandbox<T>(
       const row = fresh.find((candidate) => matchesLedgeredProcess(candidate, entry));
       if (row === undefined) continue;
       try {
+        // Every signal is logged BEFORE it is sent, into the wdio folder the runner keeps, so a
+        // session that dies can be matched against runner kills (exact pid + start time only).
+        logKill(entry.pid, entry.role, entry.start);
         await sendTerm(entry.pid);
         sent.push(entry.pid);
       } catch (err) {

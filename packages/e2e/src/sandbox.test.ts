@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { CleanupResult } from "./keychain-cleanup.js";
@@ -232,6 +232,33 @@ describe("withSandbox tracer (Test 9)", () => {
     expect(outcome.leaks.map((leak) => leak.pid)).toEqual([6001]);
     expect(outcome.ok).toBe(false);
     expect(existsSync(root)).toBe(true);
+  });
+
+  it("logs every signal it sends (pid, role, start, reason) to a log the kept wdio folder carries", async () => {
+    const table: ProcessEntry[] = [];
+    const sent: number[] = [];
+    const options = baseOptions(table, {
+      sendTerm: (pid: number) => {
+        sent.push(pid);
+        return Promise.resolve();
+      },
+      wait: () => Promise.resolve(),
+    });
+    let root = "";
+    await withSandbox(options, async (sandbox) => {
+      root = sandbox.paths.root;
+      table.push({
+        pid: 6101,
+        start: START,
+        command: `/Applications/Obsidian.app --user-data-dir=${root}/wdio/x`,
+      });
+    });
+    expect(sent).toEqual([6101]);
+    const log = readFileSync(join(root, "wdio", "runner-kills.log"), "utf8");
+    expect(log).toContain("pid=6101");
+    expect(log).toContain("role=leftover");
+    expect(log).toContain(`start=${START}`);
+    expect(log).toContain("reason=teardown-ledgered-identity");
   });
 
   it("records a cleanup failure without hiding the body's own error", async () => {
