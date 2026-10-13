@@ -329,4 +329,12 @@ describe("the config enforces the isolation guards before it builds capabilities
     const conf = readFileSync(new URL("../wdio.conf.ts", import.meta.url), "utf8");
     expect(conf).toContain("buildWdioConfig(process.env)");
   });
+
+  it("the before hook records versions only and installs no result recorder (no duplicated results)", () => {
+    for (const file of ["./wdio-config.ts", "../wdio.conf.ts"]) {
+      const source = readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(source, file).not.toContain("installResultRecorder");
+      expect(source, file).not.toContain("resultsPath");
+    }
+  });
 });
