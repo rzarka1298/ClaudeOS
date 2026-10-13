@@ -53,7 +53,18 @@ export async function readGitFacts(input: GitFactsInput): Promise<GitFacts> {
   if (head === "unknown") return { head, clean: false, changedSince: null };
 
   const status = await run(exec, input.cwd, ["status", "--porcelain", "--untracked-files=no"]);
-  const clean = status !== null && status.trim() === "";
+  // A new, not yet added source file under packages/ or scripts/ is part of what a run tested but
+  // no commit identifies it, so it makes the tree unclean too (Wave 3 WR-06).
+  const untracked = await run(exec, input.cwd, [
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    "packages",
+    "scripts",
+  ]);
+  const clean = status !== null && status.trim() === "" && untracked !== null && untracked === "";
 
   let changedSince: string[] | null = null;
   if (input.since !== undefined && COMMIT_ISH.test(input.since)) {

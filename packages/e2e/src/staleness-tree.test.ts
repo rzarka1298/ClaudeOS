@@ -41,3 +41,32 @@ describe("isRunCurrent and the working tree (Wave 2 review MEDIUM-4)", () => {
     expect(result.current).toBe(false);
   });
 });
+
+describe("product paths (Wave 3 WR-06)", () => {
+  const input = (changed: string[]) => ({
+    recordedHead: A,
+    currentHead: B,
+    changedFiles: changed,
+    recordedClean: true,
+    currentClean: true,
+  });
+
+  it.each([
+    "packages/e2e/specs/approvals-core.e2e.ts",
+    "packages/e2e/src/report.ts",
+    "packages/e2e/package.json",
+    ".claude/settings.json",
+    ".claude/hooks/pre-tool.sh",
+  ])("a change to %s makes the run stale", (file) => {
+    expect(isRunCurrent(input([file])).current).toBe(false);
+  });
+
+  it.each([
+    "packages/e2e/src/report.test.ts",
+    ".claude/skills/x/SKILL.md",
+    ".claude/worktrees/agent-1/file.ts",
+    ".planning/STATE.md",
+  ])("a change to %s leaves the run current", (file) => {
+    expect(isRunCurrent(input([file])).current).toBe(true);
+  });
+});

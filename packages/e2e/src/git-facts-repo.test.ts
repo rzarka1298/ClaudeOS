@@ -64,3 +64,25 @@ describe("readGitFacts against a real repository (MEDIUM-3)", () => {
     }
   });
 });
+
+describe("readGitFacts counts untracked product files (Wave 3 WR-06)", () => {
+  it("an untracked file under packages/ makes the tree unclean", async () => {
+    const dir = scratchRepo();
+    try {
+      writeFileSync(join(dir, "packages/service/src/new.ts"), "export {};\n");
+      expect((await readGitFacts({ cwd: dir })).clean).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an untracked document outside packages/ and scripts/ leaves it clean", async () => {
+    const dir = scratchRepo();
+    try {
+      writeFileSync(join(dir, "docs/note.md"), "x\n");
+      expect((await readGitFacts({ cwd: dir })).clean).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
