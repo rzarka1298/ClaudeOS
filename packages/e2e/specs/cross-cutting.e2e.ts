@@ -618,6 +618,16 @@ describe("cross-cutting items", () => {
         browser.execute(() => document.querySelector('form[aria-label="Create a task"]') !== null),
       { timeoutMs: 15_000, intervalMs: 250, describe: "the create form" },
     );
+    // The form moves focus to its Title field in an effect after it mounts. Escape reaches the
+    // form only from inside it, so wait for that focus first: the trace of run 16 shows Escape
+    // sent 0.14 s after the command, while focus still sat in the task detail field.
+    await pollUntil(
+      () =>
+        browser.execute(
+          () => document.activeElement?.closest('form[aria-label="Create a task"]') != null,
+        ),
+      { timeoutMs: 10_000, intervalMs: 100, describe: "focus inside the create form" },
+    );
     await browser.keys(Key.Escape);
     await pollUntil(
       () =>
