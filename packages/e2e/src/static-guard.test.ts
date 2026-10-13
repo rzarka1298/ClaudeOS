@@ -29,6 +29,12 @@ const REGION_CAPTURE_FILES = [
   "specs/notification-look.e2e.ts",
 ];
 /**
+ * Files that read the repository's own project skill under the repository root (never the owner's
+ * home folder) to pin the shared ratification wording (05.2-10). Exact paths only.
+ */
+const REPO_SKILL_READERS = ["src/docs-wording.test.ts"];
+
+/**
  * Files that name the owner's live socket path only to REFUSE it: the isolation guards, the
  * environment check and the vault plugin-data writer, each with its test. Exact paths only.
  */
@@ -57,7 +63,7 @@ const LINE_RULES: LineRule[] = [
   {
     id: "owner-runtime-or-claude-path",
     pattern: /\.claude-command-center|["'`/]\.claude(["'`/]|$)/,
-    allowedFiles: LIVE_SOCKET_REFUSAL_FILES,
+    allowedFiles: [...LIVE_SOCKET_REFUSAL_FILES, ...REPO_SKILL_READERS],
   },
   { id: "open-command", pattern: /(spawn|execFile)\w*\(\s*["'`]open["'`]/ },
   { id: "shell-option", pattern: /(^|[^A-Za-z0-9_.])["']?shell["']?\s*:\s*(?!false\b)(?=\S)/ },
