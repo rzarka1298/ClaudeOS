@@ -172,9 +172,16 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
       let result: DoctorRunResult | null = null;
       let exited = false;
       endActive = () => {
-        if (exited) return;
+        // Whichever of exit/close comes first ends the run: a grandchild may hold stdout open
+        // after the child itself is gone, so stdout is destroyed rather than waited on.
         if (result === null) {
           settle({ kind: "unavailable" });
+          child.stdout?.destroy();
+          return;
+        }
+        if (exited) {
+          child.stdout?.destroy();
+          done();
           return;
         }
         // Already ending (a cap, a hostile stream): go straight to the forced stop.

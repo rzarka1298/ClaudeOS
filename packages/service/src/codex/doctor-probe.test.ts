@@ -1,9 +1,9 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { CODEX_DOCTOR_CAP_MS, CodexDoctorSummarySchema } from "@ccc/domain";
 import { afterAll, describe, expect, it } from "vitest";
 import {
