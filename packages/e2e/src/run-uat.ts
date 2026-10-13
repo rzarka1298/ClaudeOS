@@ -57,6 +57,11 @@ export interface RunOptions {
   specs: readonly string[];
 }
 
+/** What the runner asks of the sandbox's own teardown. */
+export interface SandboxHooks {
+  beforeRemove?: (info: { root: string; wdioDir: string; runId: string }) => void;
+}
+
 export interface RunPorts {
   env: Readonly<Record<string, string | undefined>>;
   platform: string;
@@ -68,7 +73,10 @@ export interface RunPorts {
   checkInstalledApp: () => void;
   verifyCache: () => CacheVerdict;
   purgeShots: (shotsBase: string | undefined) => void;
-  runSandbox: <T>(body: (sandbox: SandboxHandle) => Promise<T>) => Promise<SandboxOutcome<T>>;
+  runSandbox: <T>(
+    body: (sandbox: SandboxHandle) => Promise<T>,
+    hooks?: SandboxHooks,
+  ) => Promise<SandboxOutcome<T>>;
   generateVault: (sandbox: SandboxHandle, kind: VaultKind, profile: UatProfile) => Promise<void>;
   stageGeneratedPlugin: (sandbox: SandboxHandle) => void;
   createShots: (runId: string, shotsBase: string | undefined) => string;
@@ -281,126 +289,130 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   let captured: { reportPath: string | null; baseReport: string; wdioFailed: boolean } | undefined;
   let outcome: SandboxOutcome<Produced>;
   try {
-    outcome = await ports.runSandbox(async (sandbox): Promise<Produced> => {
-      // Only after the sandbox started (so a run refused as busy purges nothing, Codex finding 4).
-      ports.purgeShots(options.shotsDir);
-      await ports.generateVault(sandbox, "live", options.profile);
-      if (options.profile === "full") await ports.generateVault(sandbox, "big", options.profile);
-      ports.stageGeneratedPlugin(sandbox);
-      const shots = ports.createShots(sandbox.runId, options.shotsDir);
-      shotsDir = shots;
-      const wdioEnv = buildWdioEnv(sandbox.paths, {
-        account: sandbox.account,
-        profile: options.profile,
-        shotsDir: shots,
-      });
-      const extraArgs = options.specs.flatMap((spec) => ["--spec", spec]);
-      let wdioFailed = false;
-      try {
-        const result = await ports.spawnWdio({ sandbox, wdioEnv, extraArgs });
-        wdioFailed = result.exitCode !== 0;
-      } catch {
-        wdioFailed = true;
-      }
-      try {
-        const saved = ports.saveWdioLogs?.({
-          wdioDir: sandbox.paths.wdioDir,
+    outcome = await ports.runSandbox(
+      async (sandbox): Promise<Produced> => {
+        // Only after the sandbox started (so a run refused as busy purges nothing, Codex finding 4).
+        ports.purgeShots(options.shotsDir);
+        await ports.generateVault(sandbox, "live", options.profile);
+        if (options.profile === "full") await ports.generateVault(sandbox, "big", options.profile);
+        ports.stageGeneratedPlugin(sandbox);
+        const shots = ports.createShots(sandbox.runId, options.shotsDir);
+        shotsDir = shots;
+        const wdioEnv = buildWdioEnv(sandbox.paths, {
+          account: sandbox.account,
+          profile: options.profile,
+          shotsDir: shots,
+        });
+        const extraArgs = options.specs.flatMap((spec) => ["--spec", spec]);
+        let wdioFailed = false;
+        try {
+          const result = await ports.spawnWdio({ sandbox, wdioEnv, extraArgs });
+          wdioFailed = result.exitCode !== 0;
+        } catch {
+          wdioFailed = true;
+        }
+        // Results are read even after a wdio failure: a partial report beats none.
+        const results = ports.readResults(sandbox.paths.resultsPath);
+        const scriptText = options.script === undefined ? null : ports.readScript(options.script);
+        const looks = ports.readLookPending(sandbox.paths.lookPendingPath);
+        const versions = ports.readVersions(sandbox.paths.versionsPath);
+        const versionProblems = finalMismatches(versions, results.length > 0);
+        const git = await ports.readGitFacts();
+        const built = rowsFrom(scriptText, results, options.profile, ports.readSpecTitles);
+        const { phasePrefix, mapped } = built;
+        let rows = built.rows;
+
+        const reportPath = resolveReportPath({
+          phaseDir: options.phaseDir,
+          phasePrefix,
+          out: options.out,
+        });
+        let pending = rows
+          .filter((row) => statusOf(row) === LOOK_PENDING_STATUS)
+          .map((row): LookPendingItem => {
+            const recorded = looks.find((entry) => entry.item === row.number);
+            return recorded ?? { item: row.number, labels: [], count: 0 };
+          });
+        // The handoff comes before the report is rendered: when it fails the images are gone, so the
+        // report must not offer looks nobody can record (Codex re-review 3).
+        try {
+          ports.handoffLooks({ shotsDir: shots, runId: sandbox.runId, reportPath, items: pending });
+          handedOff = true;
+        } catch {
+          // The run is still reported; the failure is a run problem, so ratify refuses it.
+          handoffFailed = true;
+          const unavailable = new Set(pending.map((entry) => entry.item));
+          rows = rows.map((row) =>
+            unavailable.has(row.number) && row.resolution.kind === "status"
+              ? { ...row, resolution: { ...row.resolution, status: LOOK_UNAVAILABLE_STATUS } }
+              : row,
+          );
+          pending = [];
+        }
+
+        let text = renderReport({
           runId: sandbox.runId,
+          profile: options.profile,
+          startedAt: startedAt.toISOString(),
+          finishedAt: ports.now().toISOString(),
+          appVersion: versions?.app ?? "unknown",
+          installerVersion: versions?.installer ?? "unknown",
+          gitHead: git.head,
+          gitClean: git.clean,
+          buildHash: ports.buildHash(),
+          phasePrefix,
+          rows,
+          homeDir: ports.homeDir,
         });
-        if (saved) ports.log(`wdio logs kept in ${saved}`);
-      } catch {
-        ports.log("The wdio logs could not be kept.");
-      }
+        if (versionProblems.length > 0) {
+          text = addFrontMatterNote(text, "version-mismatch", versionProblems.join(","));
+        }
+        if (!mapped) text = addFrontMatterNote(text, "item-mapping", "unavailable");
+        const baseReport = text;
+        // `teardown-pending` stays in the report until teardown finished and the final outcome was
+        // written; a run that dies in between can never be ratified (Codex finding 2).
+        const writtenProblems = [...(wdioFailed ? ["wdio-failed"] : []), "teardown-pending"];
+        if (writtenProblems.length > 0) {
+          text = addFrontMatterNote(text, "run-problems", writtenProblems.join(","));
+        }
+        captured = { reportPath, baseReport, wdioFailed };
+        // A stdout-only report is printed once, after teardown, with the final outcome: printing a
+        // provisional one first would leave two reports on the screen. A file report is written now
+        // (marked teardown-pending) so a crash leaves something, and finalised below.
+        if (reportPath !== null) ports.writeReport(reportPath, text);
 
-      // Results are read even after a wdio failure: a partial report beats none.
-      const results = ports.readResults(sandbox.paths.resultsPath);
-      const scriptText = options.script === undefined ? null : ports.readScript(options.script);
-      const looks = ports.readLookPending(sandbox.paths.lookPendingPath);
-      const versions = ports.readVersions(sandbox.paths.versionsPath);
-      const versionProblems = finalMismatches(versions, results.length > 0);
-      const git = await ports.readGitFacts();
-      const built = rowsFrom(scriptText, results, options.profile, ports.readSpecTitles);
-      const { phasePrefix, mapped } = built;
-      let rows = built.rows;
-
-      const reportPath = resolveReportPath({
-        phaseDir: options.phaseDir,
-        phasePrefix,
-        out: options.out,
-      });
-      let pending = rows
-        .filter((row) => statusOf(row) === LOOK_PENDING_STATUS)
-        .map((row): LookPendingItem => {
-          const recorded = looks.find((entry) => entry.item === row.number);
-          return recorded ?? { item: row.number, labels: [], count: 0 };
-        });
-      // The handoff comes before the report is rendered: when it fails the images are gone, so the
-      // report must not offer looks nobody can record (Codex re-review 3).
-      try {
-        ports.handoffLooks({ shotsDir: shots, runId: sandbox.runId, reportPath, items: pending });
-        handedOff = true;
-      } catch {
-        // The run is still reported; the failure is a run problem, so ratify refuses it.
-        handoffFailed = true;
-        const unavailable = new Set(pending.map((entry) => entry.item));
-        rows = rows.map((row) =>
-          unavailable.has(row.number) && row.resolution.kind === "status"
-            ? { ...row, resolution: { ...row.resolution, status: LOOK_UNAVAILABLE_STATUS } }
-            : row,
-        );
-        pending = [];
-      }
-
-      let text = renderReport({
-        runId: sandbox.runId,
-        profile: options.profile,
-        startedAt: startedAt.toISOString(),
-        finishedAt: ports.now().toISOString(),
-        appVersion: versions?.app ?? "unknown",
-        installerVersion: versions?.installer ?? "unknown",
-        gitHead: git.head,
-        gitClean: git.clean,
-        buildHash: ports.buildHash(),
-        phasePrefix,
-        rows,
-        homeDir: ports.homeDir,
-      });
-      if (versionProblems.length > 0) {
-        text = addFrontMatterNote(text, "version-mismatch", versionProblems.join(","));
-      }
-      if (!mapped) text = addFrontMatterNote(text, "item-mapping", "unavailable");
-      const baseReport = text;
-      // `teardown-pending` stays in the report until teardown finished and the final outcome was
-      // written; a run that dies in between can never be ratified (Codex finding 2).
-      const writtenProblems = [...(wdioFailed ? ["wdio-failed"] : []), "teardown-pending"];
-      if (writtenProblems.length > 0) {
-        text = addFrontMatterNote(text, "run-problems", writtenProblems.join(","));
-      }
-      captured = { reportPath, baseReport, wdioFailed };
-      // A stdout-only report is printed once, after teardown, with the final outcome: printing a
-      // provisional one first would leave two reports on the screen. A file report is written now
-      // (marked teardown-pending) so a crash leaves something, and finalised below.
-      if (reportPath !== null) ports.writeReport(reportPath, text);
-
-      const failedItems = mapped
-        ? rows
-            .filter((row) => ["fail", "inconclusive"].includes(statusOf(row) ?? ""))
-            .map((row) => row.number)
-        : [];
-      const tally = (status: string): number =>
-        rows.filter((row) => statusOf(row) === status).length;
-      const counts = `pass ${tally("pass")}, fail ${tally("fail")}, look pending ${pending.length}.`;
-      return {
-        reportPath,
-        lookPending: pending,
-        failedItems,
-        wdioFailed,
-        versionProblems,
-        counts,
-        baseReport,
-        writtenProblems,
-      };
-    });
+        const failedItems = mapped
+          ? rows
+              .filter((row) => ["fail", "inconclusive"].includes(statusOf(row) ?? ""))
+              .map((row) => row.number)
+          : [];
+        const tally = (status: string): number =>
+          rows.filter((row) => statusOf(row) === status).length;
+        const counts = `pass ${tally("pass")}, fail ${tally("fail")}, look pending ${pending.length}.`;
+        return {
+          reportPath,
+          lookPending: pending,
+          failedItems,
+          wdioFailed,
+          versionProblems,
+          counts,
+          baseReport,
+          writtenProblems,
+        };
+      },
+      {
+        // Kept only after teardown has logged its kills and before the run root is removed, so the
+        // kept folder holds runner-kills.log (a copy taken earlier never saw it).
+        beforeRemove: ({ wdioDir, runId }) => {
+          try {
+            const saved = ports.saveWdioLogs?.({ wdioDir, runId });
+            if (saved) ports.log(`wdio logs kept in ${saved}`);
+          } catch {
+            ports.log("The wdio logs could not be kept.");
+          }
+        },
+      },
+    );
   } catch (error) {
     return refusal(plain((error as Error).message, ports));
   }

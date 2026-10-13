@@ -85,6 +85,12 @@ export interface SandboxOptions {
   sendTerm?: (pid: number) => Promise<void>;
   /** Where SIGINT and SIGTERM are caught so an interrupted run still tears down. */
   signals?: SignalSource;
+  /**
+   * Called once teardown has stopped everything (the runner-kills log is complete) and before the
+   * run root is removed, so a caller can keep what lives under it (the wdio logs). A throw is
+   * recorded as a cleanup error and never stops the removal.
+   */
+  beforeRemove?: (info: { root: string; wdioDir: string; runId: string }) => void;
   /** Called with 128 + signal number after a signal-driven teardown; defaults to process.exit. */
   exit?: (code: number) => void;
 }
@@ -384,6 +390,11 @@ export async function withSandbox<T>(
             (leak) => !seen.has(leak.pid),
           ),
         ];
+      } catch (err) {
+        cleanupErrors.push(asError(err));
+      }
+      try {
+        options.beforeRemove?.({ root: paths.root, wdioDir: paths.wdioDir, runId: paths.runId });
       } catch (err) {
         cleanupErrors.push(asError(err));
       }

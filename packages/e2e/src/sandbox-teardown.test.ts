@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CleanupResult } from "./keychain-cleanup.js";
@@ -71,6 +71,36 @@ describe("parent teardown stops services a spec ledgered (MEDIUM-2a)", () => {
     expect(opts.sent).toEqual([555]);
     expect(outcome.leaks).toEqual([]);
     expect(outcome.cleanupErrors).toEqual([]);
+    expect(outcome.runRootRemoved).toBe(true);
+  });
+
+  it("calls the beforeRemove hook after the ledgered kill is logged and before the run root goes", async () => {
+    const table: ProcessEntry[] = [];
+    let seen: { log: string | null; rootExists: boolean } | undefined;
+    const opts = options(table, {
+      beforeRemove: ({ wdioDir, root }) => {
+        let log: string | null = null;
+        try {
+          log = readFileSync(join(wdioDir, "runner-kills.log"), "utf8");
+        } catch {
+          log = null;
+        }
+        seen = { log, rootExists: existsSync(root) };
+      },
+    });
+    const outcome = await withSandbox(opts, (sandbox) => {
+      table.push({ pid: 557, start: START, command: `node ${SERVICE_MARKER}` });
+      appendLedger(sandbox.paths.ledgerPath, {
+        kind: "pid",
+        role: "service",
+        pid: 557,
+        start: START,
+        marker: SERVICE_MARKER,
+      });
+      return Promise.resolve();
+    });
+    expect(seen?.rootExists).toBe(true);
+    expect(seen?.log).toContain("557");
     expect(outcome.runRootRemoved).toBe(true);
   });
 

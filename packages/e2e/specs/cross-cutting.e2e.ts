@@ -18,6 +18,7 @@
  * "inconclusive (look pending)" until Claude records a verdict. This file never uses the screen
  * capture tool, and a screenshot failure fails the test.
  */
+
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createApprovalsClient, createAuthenticatedClient } from "@ccc/service-api-client";
@@ -46,6 +47,7 @@ import { INSTALLED_OBSIDIAN_BINARY } from "../src/repo-paths.js";
 import { installResultRecorder, type RecorderOptions } from "../src/results.js";
 import { assertShotInside, shotPath } from "../src/screenshots.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
+import { APPROVALS_COPY } from "../src/spec-support/approvals-copy.js";
 import {
   clearPending,
   openSettingsTab,
@@ -83,6 +85,13 @@ import {
   scanForAlwaysAllow,
 } from "../src/spec-support/cross-support.js";
 import { waitUntilQuiet } from "../src/spec-support/quiescence.js";
+import {
+  maximizeCommandCenter,
+  readAvailableScreen,
+  recoverFocus,
+  rememberFocus,
+  restoreLayout,
+} from "../src/spec-support/shot-layout.js";
 import { TASKS_TEXT } from "../src/spec-support/tasks-copy.js";
 import {
   asTasksBrowser,
@@ -203,9 +212,37 @@ async function shot(item: number, label: string): Promise<string> {
   if (dir === undefined) throw new Error("No shots folder: a look item cannot record images.");
   const path = shotPath(dir, item, label);
   assertShotInside(dir, path);
-  await browser.saveScreenshot(path);
+  // The owner asked for full-size shots: the sandboxed window takes the display's usable size and
+  // the command center the width of the workspace; the sidebars go back afterwards. Focus must be
+  // where it was (item 22 shoots focused controls), so it is remembered and checked.
+  const screen = await browser.execute(readAvailableScreen);
+  if (screen.width > 0 && screen.height > 0) {
+    try {
+      await browser.setWindowRect(0, 0, screen.width, screen.height);
+    } catch {
+      await browser.maximizeWindow().catch(() => undefined);
+    }
+  }
+  await browser.execute(rememberFocus);
+  const layout = await browser.execute(
+    maximizeCommandCenter,
+    APPROVALS_COPY.commandCenterViewType,
+    Math.max(600, screen.width - 80),
+  );
+  try {
+    await browser.pause(SHOT_SETTLE_MS);
+    const focusKept = await browser.execute(recoverFocus);
+    if (!focusKept) throw new Error("Focus moved when the layout was enlarged for the screenshot.");
+    await browser.saveScreenshot(path);
+  } finally {
+    await browser.execute(restoreLayout, layout);
+    await browser.execute(recoverFocus);
+  }
   return label;
 }
+
+/** Time the enlarged layout gets to repaint before a screenshot. */
+const SHOT_SETTLE_MS = 500;
 
 /** Writes the plugin's reducedMotion setting, reloads the plugin and reopens the overview. */
 async function setReducedMotion(value: "auto" | "reduced"): Promise<void> {
@@ -527,10 +564,15 @@ describe("cross-cutting items", () => {
       heading = await browser.execute(recordFocusInRenderer);
     }
     if (heading !== null) opened.push(heading.name);
-    const deny =
-      heading?.name.startsWith(DENY_LABEL) === true
-        ? heading
-        : await pressTabUntil((r) => r.name.startsWith(DENY_LABEL), 6, sequence);
+    let deny: FocusRecord;
+    if (heading?.name.startsWith(DENY_LABEL) === true) {
+      // Focus already settled on Deny: record it like a Tab stop, so the Deny-before-Approve order
+      // check below sees it whichever branch ran.
+      deny = heading;
+      sequence.push(heading);
+    } else {
+      deny = await pressTabUntil((r) => r.name.startsWith(DENY_LABEL), 6, sequence);
+    }
     opened.push(deny.name);
     labels.push(await shot(22, "deny-focused"));
     const approve = await pressTabUntil((r) => r.name.startsWith(APPROVE_LABEL), 4, sequence);

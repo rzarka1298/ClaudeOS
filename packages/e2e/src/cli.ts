@@ -155,7 +155,11 @@ export function createRunPorts(): RunPorts {
         maxAgeMs: 7 * 24 * 60 * 60 * 1000,
       });
     },
-    runSandbox: (body) => withSandbox({}, body),
+    runSandbox: (body, hooks) =>
+      withSandbox(
+        { ...(hooks?.beforeRemove === undefined ? {} : { beforeRemove: hooks.beforeRemove }) },
+        body,
+      ),
     generateVault: async (sandbox, kind, profile) => {
       const vault = await generateUatVault({
         runRoot: sandbox.paths.root,

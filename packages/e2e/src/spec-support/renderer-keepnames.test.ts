@@ -21,6 +21,7 @@ const SUPPORT_FILES = [
   "tasks-support.ts",
   "cross-support.ts",
   "synthetic-session.ts",
+  "shot-layout.ts",
 ];
 
 interface EsbuildLike {

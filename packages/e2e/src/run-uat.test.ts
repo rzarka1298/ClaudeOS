@@ -141,7 +141,10 @@ function harness(
     purgeShots: () => {
       calls.push("purge-shots");
     },
-    runSandbox: async <T>(body: (box: SandboxHandle) => Promise<T>) => {
+    runSandbox: async <T>(
+      body: (box: SandboxHandle) => Promise<T>,
+      hooks?: { beforeRemove?: (info: { root: string; wdioDir: string; runId: string }) => void },
+    ) => {
       calls.push("sandbox-start");
       let value: T | undefined;
       let error: unknown;
@@ -153,6 +156,7 @@ function harness(
         error = err;
       }
       calls.push("teardown", "delete-account", "leak-check");
+      hooks?.beforeRemove?.({ root: ROOT, wdioDir: sandbox.paths.wdioDir, runId: RUN_ID });
       const leaks = Array.from({ length: setup.leaks ?? 0 }, (_unused, index) => ({
         pid: 900 + index,
       }));
@@ -346,10 +350,13 @@ describe("runUat failure still tears down (Test 4)", () => {
     const h = harness({});
     h.ports.saveWdioLogs = ({ wdioDir }) => {
       seen.push(wdioDir);
+      h.calls.push("save-wdio-logs");
       return "/tmp/ccc-uat-wdio-logs-x";
     };
     const outcome = await runUat(options(), h.ports);
     expect(seen).toHaveLength(1);
+    // After the teardown steps that write runner-kills.log, before the run root goes (Codex review).
+    expect(h.calls.indexOf("save-wdio-logs")).toBeGreaterThan(h.calls.indexOf("leak-check"));
     expect(seen[0]).toMatch(/wdio$/);
     const failing = harness({});
     failing.ports.saveWdioLogs = () => {
