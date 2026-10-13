@@ -25,12 +25,12 @@ import { APPROVALS_COPY } from "../src/spec-support/approvals-copy.js";
 import {
   type ApprovalsEnvironment,
   activateScratchLeaf,
+  approvalStatusReached,
   checkChipTranscript,
   checkDeniedAudit,
   clearPending,
   clickChip,
   clickDecision,
-  approvalStatusReached,
   containsInOrder,
   countLeavesOfType,
   detachScratchLeaf,

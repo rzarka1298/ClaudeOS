@@ -1,19 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AuditRowLike,
+  approvalStatusReached,
   type ChipStep,
   checkChipTranscript,
   checkDeniedAudit,
-  approvalStatusReached,
   containsInOrder,
   expiredWithinBound,
-  readScheduledPress,
-  scheduleDecisionClick,
   findNewestMirrorNote,
   findNewNotification,
   isExactlyOneNavigation,
   parseCountChip,
   parseRebuildStatus,
+  readScheduledPress,
+  scheduleDecisionClick,
   settledWithinGrace,
   squashDeep,
 } from "./approvals-support.js";
