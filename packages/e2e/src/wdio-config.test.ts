@@ -103,6 +103,14 @@ describe("buildWdioConfig (Tests 1 and 2)", () => {
   });
 });
 
+describe("settling between apps (run 13)", () => {
+  it("waits for the previous app to exit and settles, before and after each session", () => {
+    const config = buildWdioConfig(env(), opts);
+    expect(typeof config.afterSession).toBe("function");
+    expect(typeof config.beforeSession).toBe("function");
+  });
+});
+
 describe("Obsidian's own log (session deaths, runs 6 to 9)", () => {
   it("asks every launch for Chromium file logging inside the kept wdio folder", () => {
     for (const profile of ["standard", "full"] as const) {

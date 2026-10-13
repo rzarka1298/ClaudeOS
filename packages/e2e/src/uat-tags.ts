@@ -14,6 +14,7 @@ export const OWNER_WHY = [
   "banner-appearance",
   "banner-click",
   "settings-dialog",
+  "session-stability",
   "space",
   "focus",
   "multi-window",

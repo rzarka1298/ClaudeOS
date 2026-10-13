@@ -154,7 +154,6 @@ describe("inline renderer functions in the specs and support modules", () => {
     ...SUPPORT_FILES.map((file) => join(HERE, file)),
     ...[
       "approvals-core",
-      "approvals-expiry",
       "approvals-lifecycle",
       "cross-cutting",
       "notification-look",

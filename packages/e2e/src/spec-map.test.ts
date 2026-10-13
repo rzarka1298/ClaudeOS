@@ -2,13 +2,12 @@ import { describe, expect, it } from "vitest";
 import { SPEC_FILES, specsForProfile, UAT_ITEM_PLAN, UAT_PHASE_PREFIX } from "./spec-map.js";
 import { OWNER_WHY, VIA_TOKENS } from "./uat-tags.js";
 
-const AUTO_NUMBERS = [5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 21, 23, 24, 25];
+const AUTO_NUMBERS = [5, 6, 7, 8, 10, 11, 14, 15, 16, 17, 18, 19, 21, 23, 24, 25];
 const LOOK_NUMBERS = [20, 22];
-const OWNER_NUMBERS = [1, 2, 3, 4, 12, 13, 26];
+const OWNER_NUMBERS = [1, 2, 3, 4, 9, 12, 13, 26];
 
 const NAMES = [
   "approvals-core",
-  "approvals-expiry",
   "approvals-lifecycle",
   "tasks-core",
   "tasks-views",
@@ -28,7 +27,6 @@ const EXPECTED_FILE: Record<number, string> = {
   6: "approvals-core",
   7: "approvals-core",
   8: "approvals-core",
-  9: "approvals-expiry",
   10: "approvals-lifecycle",
   11: "synthetic-session",
   12: "cross-cutting",
@@ -53,7 +51,7 @@ describe("spec map counts (Test 1)", () => {
     );
   });
 
-  it("classifies 17 auto, 2 auto+look and 7 owner exactly as D-09 (amended 2026-10-13) lists them", () => {
+  it("classifies 16 auto, 2 auto+look and 8 owner exactly as D-09 (amended 2026-10-13) lists them", () => {
     const numbers = (runClass: string) =>
       UAT_ITEM_PLAN.filter((item) => item.runClass === runClass).map((item) => item.number);
     expect(numbers("auto")).toEqual(AUTO_NUMBERS);
@@ -137,7 +135,7 @@ describe("spec map fields (Test 2)", () => {
 });
 
 describe("spec files (Test 3)", () => {
-  it("lists exactly the nine spec files under packages/e2e/specs", () => {
+  it("lists exactly the eight spec files under packages/e2e/specs", () => {
     expect([...SPEC_FILES].sort()).toEqual(NAMES.map(file).sort());
   });
 
@@ -154,16 +152,16 @@ describe("spec files (Test 3)", () => {
 });
 
 describe("specsForProfile (Test 4)", () => {
-  it("omits the scale spec in the standard profile and keeps the other eight", () => {
+  it("omits the scale spec in the standard profile and keeps the other seven", () => {
     const standard = specsForProfile("standard");
     expect(standard).not.toContain(file("tasks-scale"));
-    expect(standard.length).toBe(8);
+    expect(standard.length).toBe(7);
     for (const name of NAMES.filter((entry) => entry !== "tasks-scale")) {
       expect(standard).toContain(file(name));
     }
   });
 
-  it("returns all nine in the full profile", () => {
+  it("returns all eight in the full profile", () => {
     expect([...specsForProfile("full")].sort()).toEqual([...SPEC_FILES].sort());
   });
 });

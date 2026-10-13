@@ -41,32 +41,25 @@ describe("approvals-core titles (Test 4)", () => {
 });
 
 describe("expiry and lifecycle titles, and the whole approvals set (Task 3 Test 3)", () => {
-  it("holds exactly [06-UAT#09] in approvals-expiry", () => {
-    expect(numbersOf(titlesOf("approvals-expiry"))).toEqual([9]);
-  });
-
   it("holds exactly [06-UAT#24] and [06-UAT#10], in that order (item 13 is owner-run), in approvals-lifecycle", () => {
     expect(numbersOf(titlesOf("approvals-lifecycle"))).toEqual([24, 10]);
   });
 
-  it("covers items 2 to 10 and 24 once each across the three files: ten titles", () => {
+  it("covers items 2 to 8, 10 and 24 once each across the two files (item 9 is owner-run): nine titles", () => {
     const all = [
       ...numbersOf(titlesOf("approvals-core")),
-      ...numbersOf(titlesOf("approvals-expiry")),
       ...numbersOf(titlesOf("approvals-lifecycle")),
     ];
-    expect(all).toHaveLength(10);
-    expect([...all].sort((a, b) => a - b)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 24]);
+    expect(all).toHaveLength(9);
+    expect([...all].sort((a, b) => a - b)).toEqual([2, 3, 4, 5, 6, 7, 8, 10, 24]);
   });
 
-  it("starts a service of the expiry kind in the expiry spec only", () => {
+  it("starts a service of the expiry kind in no spec (item 9 is owner-run)", () => {
     for (const name of ["approvals-core", "approvals-lifecycle"]) {
       const source = readFileSync(join(SPECS, `${name}.e2e.ts`), "utf8");
       expect(source).not.toMatch(/startApprovalsEnvironment\(\s*["']expiry["']/);
       expect(source).not.toMatch(/kind:\s*["']expiry["']/);
     }
-    const expiry = readFileSync(join(SPECS, "approvals-expiry.e2e.ts"), "utf8");
-    expect(expiry).toMatch(/startApprovalsEnvironment\(\s*["']expiry["']/);
   });
 });
 

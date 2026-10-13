@@ -59,6 +59,8 @@ export interface WdioRunConfig {
   beforeSuite?: (suite: unknown) => Promise<void>;
   /** Waits for the finished spec's app to exit before the next spec's app launches. */
   afterSession?: () => Promise<void>;
+  /** The same wait, before the next session starts. */
+  beforeSession?: () => Promise<void>;
 }
 
 /** The two service getters the version hook reads. */
@@ -158,6 +160,29 @@ function versionSuiteHook(
   return async () => {
     const live = (globalThis as { browser?: Partial<VersionBrowser> }).browser;
     recordVersions(versionsPath, decisions, io, live);
+  };
+}
+
+/** Milliseconds macOS gets after the previous Obsidian is gone before the next one launches. */
+export const APP_SETTLE_MS = 3_000;
+
+function settleBetweenApps(runRoot: string): () => Promise<void> {
+  return async () => {
+    const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+    try {
+      await waitForAppExit({
+        readTable: () => readProcessTable(),
+        appBinary: INSTALLED_OBSIDIAN_BINARY,
+        runRoot,
+        sleep,
+        now: () => Date.now(),
+        timeoutMs: 20_000,
+        intervalMs: 500,
+      });
+    } catch {
+      // waiting is best effort; the next spec's launch is the real test
+    }
+    await sleep(APP_SETTLE_MS);
   };
 }
 
@@ -305,21 +330,11 @@ export function buildWdioConfig(
       decisions,
       options.versionsIo ?? REAL_VERSIONS_IO,
     ),
-    afterSession: async () => {
-      try {
-        await waitForAppExit({
-          readTable: () => readProcessTable(),
-          appBinary: INSTALLED_OBSIDIAN_BINARY,
-          runRoot,
-          sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-          now: () => Date.now(),
-          timeoutMs: 20_000,
-          intervalMs: 500,
-        });
-      } catch {
-        // waiting is best effort; the next spec's launch is the real test
-      }
-    },
+    // Run 13: the launches that died at once were the ones started within about a second of the
+    // previous app's exit. Wait for the previous app's processes to be gone and then let macOS
+    // settle, before a session ends and again before the next one starts.
+    afterSession: settleBetweenApps(runRoot),
+    beforeSession: settleBetweenApps(runRoot),
     beforeSuite: launchRetrySuiteHook(
       versionSuiteHook(
         join(runRoot, "versions.json"),

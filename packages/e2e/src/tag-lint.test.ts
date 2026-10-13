@@ -260,11 +260,11 @@ describe("checkMapAgainstScript (Task 3, Test 6)", () => {
   it("reports a spec file that differs", () => {
     const found = mutated((text) =>
       text.replace(
-        "packages/e2e/specs/approvals-expiry.e2e.ts::[06-UAT#09]",
-        "packages/e2e/specs/approvals-core.e2e.ts::[06-UAT#09]",
+        "packages/e2e/specs/approvals-lifecycle.e2e.ts::[06-UAT#10]",
+        "packages/e2e/specs/approvals-core.e2e.ts::[06-UAT#10]",
       ),
     );
-    expect(found.map((finding) => finding.item)).toEqual([9]);
+    expect(found.map((finding) => finding.item)).toEqual([10]);
     expect(found[0]?.message).toContain("spec");
   });
 

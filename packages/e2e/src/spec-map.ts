@@ -18,7 +18,6 @@ function specPath(name: string): string {
 
 export const SPEC_FILES = [
   specPath("approvals-core"),
-  specPath("approvals-expiry"),
   specPath("approvals-lifecycle"),
   specPath("tasks-core"),
   specPath("tasks-views"),
@@ -43,7 +42,6 @@ export interface ItemPlan {
 }
 
 const CORE = specPath("approvals-core") as SpecFile;
-const EXPIRY = specPath("approvals-expiry") as SpecFile;
 const LIFECYCLE = specPath("approvals-lifecycle") as SpecFile;
 const TASKS_CORE = specPath("tasks-core") as SpecFile;
 const TASKS_VIEWS = specPath("tasks-views") as SpecFile;
@@ -103,7 +101,9 @@ export const UAT_ITEM_PLAN: readonly ItemPlan[] = [
   automated(6, "auto", ["dom"], CORE),
   automated(7, "auto", ["dom", "store"], CORE),
   automated(8, "auto", ["dom", "store"], CORE),
-  automated(9, "auto", ["dom", "store"], EXPIRY),
+  // The 15 second expiry walk closed the Obsidian window under the driver in every run (about 12 s
+  // after launch, runs 6 to 13, also after a relaunch), so the item is owner-run (D-09 amendment 4).
+  owner(9, "session-stability", null, null),
   automated(10, "auto", ["dom", "proc", "store"], LIFECYCLE),
   automated(11, "auto", ["dom", "proc", "store"], SYNTHETIC),
   // The walk reads the settings groups and looks at them, and the dialog never attaches under a
