@@ -47,7 +47,6 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShutdown } from "../shutdown.js";
 import { createBridgeFixture } from "../test-support/bridge-fixtures.js";
-import { readFakeDoctorStarts, writeFakeDoctor } from "../test-support/fake-codex-doctor.js";
 import {
   type CodexComposition,
   type CodexCompositionOptions,
@@ -63,6 +62,7 @@ import {
   writeRunRecord,
 } from "../test-support/codex-run-fixtures.js";
 import { readFakeLog, weeklyReply } from "../test-support/fake-codex-app-server.js";
+import { readFakeDoctorStarts, writeFakeDoctor } from "../test-support/fake-codex-doctor.js";
 import {
   assertNoForbiddenAccess,
   assertNoMarkerLeak,
