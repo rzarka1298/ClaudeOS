@@ -291,7 +291,11 @@ describe("05.1-sec NEW-06: the doctor probe is disposable", () => {
   it("spawns nothing when disposed while the environment is still being prepared", async () => {
     const doctor = fake({ behavior: { kind: "print", stdout: doctorReport({}) } });
     const { spawn, calls } = recordingSpawn();
-    const probe = createDoctorProbe({ executablePath: () => doctor.path, spawn, now: () => NOW_MS });
+    const probe = createDoctorProbe({
+      executablePath: () => doctor.path,
+      spawn,
+      now: () => NOW_MS,
+    });
     const pending = probe.run();
     await probe.dispose();
     const result = await pending;
@@ -303,7 +307,11 @@ describe("05.1-sec NEW-06: the doctor probe is disposable", () => {
   it("refuses to start a run after dispose", async () => {
     const doctor = fake({ behavior: { kind: "print", stdout: doctorReport({}) } });
     const { spawn, calls } = recordingSpawn();
-    const probe = createDoctorProbe({ executablePath: () => doctor.path, spawn, now: () => NOW_MS });
+    const probe = createDoctorProbe({
+      executablePath: () => doctor.path,
+      spawn,
+      now: () => NOW_MS,
+    });
     await probe.dispose();
     expect((await probe.run()).kind).toBe("unavailable");
     expect(calls).toHaveLength(0);

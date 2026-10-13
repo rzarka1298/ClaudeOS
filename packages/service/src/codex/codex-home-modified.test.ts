@@ -67,7 +67,10 @@ describe("05.1-sec NEW-02: listNewestRolloutFiles limit and containment", () => 
     mkdirSync(dir, { recursive: true });
     const total = MAX_ROLLOUT_LIST + 20;
     for (let i = 0; i < total; i += 1) {
-      writeFileSync(join(dir, `rollout-2026-10-06T10-00-00-${String(i).padStart(5, "0")}.jsonl`), "");
+      writeFileSync(
+        join(dir, `rollout-2026-10-06T10-00-00-${String(i).padStart(5, "0")}.jsonl`),
+        "",
+      );
     }
     const port = createCodexHomePort({ root: home.root });
     for (const limit of [

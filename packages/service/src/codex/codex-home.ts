@@ -431,7 +431,9 @@ export function createCodexHomePort(options: {
       // Anything that is not a safe integer of at least 1 (NaN, Infinity, negative, fractional)
       // gets the default cap, so a hostile limit can never disable the bound.
       const cap =
-        Number.isSafeInteger(limit) && limit >= 1 ? Math.min(limit, MAX_ROLLOUT_LIST) : MAX_ROLLOUT_LIST;
+        Number.isSafeInteger(limit) && limit >= 1
+          ? Math.min(limit, MAX_ROLLOUT_LIST)
+          : MAX_ROLLOUT_LIST;
       const found: RolloutRef[] = [];
       for (let day = lastDay; day >= firstDay; day -= 1) {
         const date = new Date(day * DAY_MS);
