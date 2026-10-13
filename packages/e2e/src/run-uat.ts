@@ -8,7 +8,14 @@ import type { SandboxHandle, SandboxOutcome } from "./sandbox.js";
 import { sanitizeText } from "./sanitize.js";
 import { UAT_ITEM_PLAN, UAT_PHASE_PREFIX } from "./spec-map.js";
 import type { SpikeDecisions } from "./spike-decisions.js";
-import { expectedTitlesByItem, type SpecTitle } from "./tag-lint.js";
+import {
+  expectedTitlesByItem,
+  findOnlyTests,
+  groupTitles,
+  LINT_CODES,
+  lintTags,
+  type SpecTitle,
+} from "./tag-lint.js";
 import { parseUatScript, phasePrefixOf } from "./uat-tags.js";
 import type { VaultKind } from "./uat-vault.js";
 import { finalMismatches, type VersionRecord } from "./versions.js";
@@ -208,6 +215,32 @@ function rowsFrom(
   return { rows, phasePrefix, mapped: true };
 }
 
+/**
+ * The script/test mapping findings (parser findings, tags without an item or an item without a
+ * test, `.only` tests): the same checks the lint command makes, run before anything launches so a
+ * report with a silently dropped item can never be ratified. Finding codes and item numbers only.
+ */
+export function mappingFindings(
+  scriptText: string,
+  readSpecTitles: (phasePrefix: string) => SpecTitle[],
+): string[] {
+  const parsed = parseUatScript(scriptText);
+  const phasePrefix = phasePrefixOf(parsed.frontMatter) ?? UAT_PHASE_PREFIX;
+  const titles = readSpecTitles(phasePrefix);
+  const found = [
+    ...parsed.findings,
+    // A tagged test with no matching script item  would be dropped silently from the report. A tagged item with no test is
+    // already caught per item, by the expected-titles check in resolveItemStatus.
+    ...lintTags({ items: parsed.items, specTitles: groupTitles(titles), phasePrefix }).filter(
+      (entry) => entry.code === LINT_CODES.testNoItem,
+    ),
+    ...findOnlyTests(titles, phasePrefix),
+  ];
+  return found.map((entry) =>
+    entry.item === null ? entry.code : `${entry.code} item ${entry.item}`,
+  );
+}
+
 function statusOf(row: ReportRow): string | null {
   return row.resolution.kind === "status" ? row.resolution.status : null;
 }
@@ -229,6 +262,15 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   }
   const cache = ports.verifyCache();
   if (!cache.ok) return refusal(`The Obsidian download cache check failed: ${cache.note}`);
+  if (options.script !== undefined) {
+    const early = ports.readScript(options.script);
+    if (early !== null) {
+      const findings = mappingFindings(early, ports.readSpecTitles);
+      if (findings.length > 0) {
+        return refusal(`The script and the specs do not map one to one: ${findings.join("; ")}.`);
+      }
+    }
+  }
 
   const startedAt = ports.now();
   let shotsDir: string | undefined;

@@ -24,7 +24,7 @@ function fake(replies: Record<string, string | Error>): { exec: ExecFile; calls:
 
 const CLEAN_REPLIES = {
   "rev-parse HEAD": `${HEAD}\n`,
-  "status --porcelain --untracked-files=no": "",
+  "status --porcelain --untracked-files=no -- . :(exclude).planning": "",
   "ls-files --others --exclude-standard -z -- packages scripts": "",
 };
 
@@ -41,7 +41,8 @@ describe("readGitFacts (Test 3)", () => {
   it("is not clean when the porcelain output is non-empty", async () => {
     const { exec } = fake({
       ...CLEAN_REPLIES,
-      "status --porcelain --untracked-files=no": " M packages/plugin/src/main.ts\n",
+      "status --porcelain --untracked-files=no -- . :(exclude).planning":
+        " M packages/plugin/src/main.ts\n",
     });
     const facts = await readGitFacts({ exec, cwd: "/repo" });
     expect(facts.clean).toBe(false);

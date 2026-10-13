@@ -78,7 +78,8 @@ export function assertIsolatedEnv(
 /** Screenshots must be absolute and outside the repository (they may show owner data). */
 export function assertShotsDir(path: string, repoRoot: string): void {
   if (!isAbsolute(path)) throw new Error(MSG_SHOTS_DIR);
-  if (isSameOrInside(resolve(repoRoot), resolve(path))) throw new Error(MSG_SHOTS_DIR);
+  // Canonical paths, so a symlink that points into the repository is refused too.
+  if (isSameOrInside(canonicalPath(repoRoot), canonicalPath(path))) throw new Error(MSG_SHOTS_DIR);
 }
 
 /** A cache inside the repository must be the gitignored `.obsidian-cache` directory. */

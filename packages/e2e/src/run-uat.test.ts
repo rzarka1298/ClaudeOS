@@ -361,6 +361,19 @@ describe("runUat failure still tears down (Test 4)", () => {
     expect(failing.calls).toContain("write-report");
   });
 
+  it("refuses before launching when a test has no script item (Codex review: item 99 dropped)", async () => {
+    const h = harness(
+      {},
+      {
+        titles: [{ file: "packages/e2e/specs/x.e2e.ts", title: "[06-UAT#99] stray", only: false }],
+      },
+    );
+    const outcome = await runUat(options({ script: "/s/06-UAT.md" }), h.ports);
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.message).toContain("TEST_NO_ITEM item 99");
+    expect(h.calls).not.toContain("wdio");
+  });
+
   it("tears down and exits 1 on a non-zero wdio exit", async () => {
     const h = harness({ spawnWdio: async () => ({ exitCode: 1, signal: null }) });
     const outcome = await runUat(options(), h.ports);
@@ -553,7 +566,7 @@ describe("runUat expected titles (Wave 2 fix: a missing test cannot pass)", () =
       },
     });
     await runUat(options(), h.ports);
-    expect(seen).toEqual(["06"]);
+    expect(new Set(seen)).toEqual(new Set(["06"]));
   });
 });
 

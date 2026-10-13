@@ -26,6 +26,24 @@ function scratchRepo(): string {
   return dir;
 }
 
+describe("readGitFacts and planning evidence (Codex review: report updates blocked ratification)", () => {
+  it("a modified tracked planning file does not make the tree unclean; a product change does", async () => {
+    const dir = scratchRepo();
+    try {
+      mkdirSync(join(dir, ".planning/phases/06"), { recursive: true });
+      writeFileSync(join(dir, ".planning/phases/06/06-UAT.md"), "one\n");
+      run(dir, "add", ".");
+      run(dir, "commit", "-q", "-m", "evidence");
+      writeFileSync(join(dir, ".planning/phases/06/06-UAT.md"), "two\n");
+      expect((await readGitFacts({ cwd: dir })).clean).toBe(true);
+      writeFileSync(join(dir, "packages/service/src/a.ts"), "export const a = 2;\n");
+      expect((await readGitFacts({ cwd: dir })).clean).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("readGitFacts against a real repository (MEDIUM-3)", () => {
   it("a product file moved out of packages/ is reported, so the run is stale", async () => {
     const dir = scratchRepo();

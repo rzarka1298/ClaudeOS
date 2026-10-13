@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -80,6 +81,21 @@ describe("assertIsolatedEnv (HIGH-1, D-05, L-3)", () => {
     } catch (error) {
       expect((error as Error).message).not.toContain("secret-place");
     }
+  });
+});
+
+describe("assertShotsDir resolves symlinks (Codex review)", () => {
+  it("refuses an outside-looking path that is a symlink into the repository", () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "ccc-shots-link-")));
+    const repo = join(base, "repo");
+    mkdirSync(join(repo, "inside"), { recursive: true });
+    const link = join(base, "link");
+    symlinkSync(join(repo, "inside"), link);
+    expect(() => assertShotsDir(link, repo)).toThrow(MSG_SHOTS_DIR);
+    expect(() => assertShotsDir(join(link, "deeper"), repo)).toThrow(MSG_SHOTS_DIR);
+    const other = join(base, "other");
+    mkdirSync(other);
+    expect(() => assertShotsDir(other, repo)).not.toThrow();
   });
 });
 
