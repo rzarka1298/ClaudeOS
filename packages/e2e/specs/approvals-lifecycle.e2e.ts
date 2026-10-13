@@ -1,8 +1,9 @@
 /**
- * Approvals lifecycle (05.2-06, E2E-04): Phase 6 UAT items 13, 24 and 10 on a service with the
+ * Approvals lifecycle (05.2-06, E2E-04): Phase 6 UAT items 24 and 10 (item 13 is owner-run since
+ * the D-09 amendment of 2026-10-13: Obsidian never attaches the settings dialog to the driver) on a service with the
  * normal lifetime (never the expiry kind: a 15 second lifetime would expire the request while
- * the service is down, which is the Gap recorded in the UAT script). The order matters: item 13
- * needs the service up and ends with it stopped, item 24 starts it again first, and item 10
+ * the service is down, which is the Gap recorded in the UAT script). The order matters: item 24
+ * starts the service first and ends with it up, and item 10
  * ends with a full Obsidian reload. The file starts by proving the plugin talks to the sandbox
  * socket only and stops its own service at the end.
  */
@@ -72,103 +73,6 @@ describe("approvals lifecycle", () => {
   after(async () => {
     await browser.execute(restoreDocumentHasFocus);
     await env.stop();
-  });
-
-  it("[06-UAT#13] Settings: Approvals and Tasks groups", async () => {
-    const settings = await openSettingsTab(browser);
-    expect(settings.headings).toEqual(
-      expect.arrayContaining([
-        APPROVALS_COPY.approvalsGroupHeading,
-        APPROVALS_COPY.tasksGroupHeading,
-      ]),
-    );
-    const notifyRow = settingRow(settings, APPROVALS_COPY.notifyApprovalsName);
-    expect(notifyRow.hasToggle).toBe(true);
-    settingRow(settings, APPROVALS_COPY.sendTestApprovalName);
-    settingRow(settings, APPROVALS_COPY.rebuildName);
-
-    // Approval notifications off: no native banner, the request still lists, a Notice appears.
-    try {
-      if (notifyRow.toggleOn) {
-        expect(await browser.execute(toggleSettingRow, APPROVALS_COPY.notifyApprovalsName)).toBe(
-          true,
-        );
-      }
-      await pollUntil(
-        async () =>
-          (await readPluginSettings(browser))[APPROVALS_COPY.notifyApprovalsKey] === false,
-        uiWait("the notification setting to be saved off"),
-      );
-      await browser.execute(closeSettings);
-
-      await clearPending(env.approvals);
-      await browser.execute(stubDocumentHasFocus, false);
-      const seen = await notificationCount(browser);
-      await sendTestApproval(env.approvals);
-      await pollUntil(
-        async () => (await env.approvals.list()).pending.length === 1,
-        uiWait("the request to be listed by the service"),
-      );
-      await pollUntil(async () => {
-        const nav = await readNav(browser);
-        return nav.visible !== "";
-      }, uiWait("the request to reach the plugin"));
-      expect((await browser.execute(readNotifications)).records).toHaveLength(seen);
-
-      // Window focused and the section off screen: an Obsidian Notice replaces the banner.
-      await clearPending(env.approvals);
-      await browser.execute(stubDocumentHasFocus, true);
-      await openOverview(browser);
-      await browser.execute(clearNotices);
-      await sendTestApproval(env.approvals);
-      await pollUntil(
-        async () => (await browser.execute(readNotices)).includes(APPROVALS_COPY.inboxNoticeText),
-        uiWait("the Obsidian Notice for the new request"),
-      );
-      expect(await notificationCount(browser)).toBe(seen);
-      await openApprovalInbox(browser);
-      await pollUntil(async () => {
-        const rows = await readRows(browser);
-        return rows.some((row) => row.state === "pending");
-      }, uiWait("the request in the Approvals list"));
-    } finally {
-      // Leave the setting on for whatever runs after this file.
-      const restore = await openSettingsTab(browser);
-      if (!settingRow(restore, APPROVALS_COPY.notifyApprovalsName).toggleOn) {
-        await browser.execute(toggleSettingRow, APPROVALS_COPY.notifyApprovalsName);
-      }
-      await browser.execute(closeSettings);
-    }
-
-    // Rebuild task index: "Rebuilding ..." then "Task index rebuilt. N tasks found." with two
-    // notes needing attention in the live vault.
-    await openSettingsTab(browser);
-    await browser.execute(clearNotices);
-    expect(await browser.execute(pressSettingRow, APPROVALS_COPY.rebuildName)).toBe(true);
-    const rebuilt = await pollUntil(async () => {
-      const statuses = (await browser.execute(readNotices)).map(parseRebuildStatus);
-      const done = statuses.find((status) => status?.phase === "rebuilt");
-      return done?.phase === "rebuilt" && statuses.some((s) => s?.phase === "rebuilding")
-        ? done
-        : null;
-    }, uiWait("the task index rebuild to report"));
-    expect(rebuilt.tasks).toBeGreaterThanOrEqual(300);
-    expect(rebuilt.attention).toBe(2);
-
-    // With the service stopped both rows say the companion service is needed. The settings tab
-    // only re-renders when it is opened, so each poll reopens it.
-    await env.fixture.stop();
-    await pollUntil(
-      async () => {
-        await browser.execute(closeSettings);
-        const settings = await openSettingsTab(browser);
-        return [APPROVALS_COPY.sendTestApprovalName, APPROVALS_COPY.rebuildName].every((name) =>
-          settingRow(settings, name).description.includes(APPROVALS_COPY.needsService),
-        );
-      },
-      { ...uiWait("both rows to need the companion service"), intervalMs: SETTINGS_POLL_MS },
-    );
-    await browser.execute(closeSettings);
   });
 
   it("[06-UAT#24] Disconnect drill: both destinations say so, controls are disabled, Obsidian responds, and they recover", async () => {

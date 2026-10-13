@@ -103,6 +103,21 @@ describe("buildWdioConfig (Tests 1 and 2)", () => {
   });
 });
 
+describe("Obsidian's own log (session deaths, runs 6 to 9)", () => {
+  it("asks every launch for Chromium file logging inside the kept wdio folder", () => {
+    for (const profile of ["standard", "full"] as const) {
+      const caps = buildWdioConfig(env(profile), opts).capabilities as unknown as Array<{
+        "goog:chromeOptions"?: { args?: string[] };
+      }>;
+      for (const cap of caps) {
+        const args = cap["goog:chromeOptions"]?.args ?? [];
+        expect(args).toContain("--enable-logging=file");
+        expect(args).toContain(`--log-file=${join(ROOT, "wdio", "obsidian.log")}`);
+      }
+    }
+  });
+});
+
 describe("buildWdioConfig refusals (Test 3)", () => {
   const without = (name: string): Record<string, string> => {
     const copy = { ...env() };

@@ -52,9 +52,9 @@ run("the retrofit matches the spec map (Test 1)", () => {
     expect(count("auto")).toBe(planned("auto"));
     expect(count("auto+look")).toBe(planned("auto+look"));
     expect(count("owner")).toBe(planned("owner"));
-    // D-09: 18, 4 and 4 (or 18, 3 and 5 after a documented banner downgrade, Test 6).
-    expect(count("auto")).toBe(18);
-    expect(count("auto+look") + count("owner")).toBe(8);
+    // D-09 with its 2026-10-13 amendments: 17 auto, 3 auto+look and 6 owner.
+    expect(count("auto")).toBe(17);
+    expect(count("auto+look") + count("owner")).toBe(9);
   });
 
   it("gives every item the run, via, owner-why, auto-part and spec line the map holds", () => {
@@ -81,10 +81,10 @@ run("the retrofit matches the spec map (Test 1)", () => {
     const numbers = (runClass: string) =>
       parsed.items.filter((item) => item.runClass === runClass).map((item) => item.number);
     expect(numbers("auto")).toEqual([
-      5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 21, 23, 24, 25,
+      5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 21, 23, 24, 25,
     ]);
     expect(numbers("auto+look")).toEqual([12, 20, 22]);
-    expect(numbers("owner")).toEqual([1, 2, 3, 4, 26]);
+    expect(numbers("owner")).toEqual([1, 2, 3, 4, 13, 26]);
   });
 });
 

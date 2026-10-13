@@ -107,7 +107,9 @@ export const UAT_ITEM_PLAN: readonly ItemPlan[] = [
   automated(10, "auto", ["dom", "proc", "store"], LIFECYCLE),
   automated(11, "auto", ["dom", "proc", "store"], SYNTHETIC),
   automated(12, "auto+look", ["dom", "fs", "shot"], CROSS),
-  automated(13, "auto", ["dom", "spy", "proc"], LIFECYCLE),
+  // Obsidian never attaches the settings dialog under a programmatic open (containers=0 in live
+  // runs 6 to 9), so the item cannot be driven; the owner walks it (D-09 amendment 2026-10-13).
+  owner(13, "settings-dialog", null, null),
   automated(14, "auto", ["dom", "fs"], TASKS_CORE),
   automated(15, "auto", ["dom", "fs"], TASKS_CORE),
   automated(16, "auto", ["dom", "fs"], TASKS_CORE),

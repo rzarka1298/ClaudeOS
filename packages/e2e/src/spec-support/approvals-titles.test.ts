@@ -45,18 +45,18 @@ describe("expiry and lifecycle titles, and the whole approvals set (Task 3 Test 
     expect(numbersOf(titlesOf("approvals-expiry"))).toEqual([9]);
   });
 
-  it("holds exactly [06-UAT#13], [06-UAT#24] and [06-UAT#10], in that order, in approvals-lifecycle", () => {
-    expect(numbersOf(titlesOf("approvals-lifecycle"))).toEqual([13, 24, 10]);
+  it("holds exactly [06-UAT#24] and [06-UAT#10], in that order (item 13 is owner-run), in approvals-lifecycle", () => {
+    expect(numbersOf(titlesOf("approvals-lifecycle"))).toEqual([24, 10]);
   });
 
-  it("covers items 2 to 10, 13 and 24 once each across the three files: eleven titles", () => {
+  it("covers items 2 to 10 and 24 once each across the three files: ten titles", () => {
     const all = [
       ...numbersOf(titlesOf("approvals-core")),
       ...numbersOf(titlesOf("approvals-expiry")),
       ...numbersOf(titlesOf("approvals-lifecycle")),
     ];
-    expect(all).toHaveLength(11);
-    expect([...all].sort((a, b) => a - b)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 24]);
+    expect(all).toHaveLength(10);
+    expect([...all].sort((a, b) => a - b)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 24]);
   });
 
   it("starts a service of the expiry kind in the expiry spec only", () => {

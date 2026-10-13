@@ -1,10 +1,11 @@
 import { waitForAppExit } from "./app-exit.js";
 import { readProcessTable } from "./process-table.js";
 import { INSTALLED_OBSIDIAN_BINARY } from "./repo-paths.js";
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { assertRunRootShape } from "./isolation-guards.js";
+import { ensureLaunched } from "./launch-retry.js";
 import { buildLaunchCapabilities, type LaunchCapability, type LaunchFs } from "./launch-options.js";
 import { parseProfile } from "./profile.js";
 import { REPO_ROOT } from "./repo-paths.js";
@@ -30,6 +31,7 @@ export const MOCHA_TIMEOUT_MS = 180_000;
 export const OBSIDIAN_CACHE_DIR = join(REPO_ROOT, "packages", "e2e", ".obsidian-cache");
 
 export type WdioCapability = LaunchCapability & {
+  "goog:chromeOptions"?: { args: string[] };
   "wdio:specs"?: string[];
   "wdio:exclude"?: string[];
 };
@@ -160,6 +162,48 @@ function versionSuiteHook(
   };
 }
 
+interface RetryBrowser {
+  sessionId?: string;
+  execute: (script: () => unknown) => Promise<unknown>;
+  reloadObsidian: () => Promise<void>;
+}
+
+/**
+ * The suite hook with the single bounded launch retry in front: a window that already closed
+ * before the first test is relaunched once (see launch-retry.ts) and the warning is kept in the
+ * wdio folder. Only the first suite of a session is probed.
+ */
+function launchRetrySuiteHook(
+  next: NonNullable<WdioRunConfig["beforeSuite"]>,
+  wdioDir: string,
+): NonNullable<WdioRunConfig["beforeSuite"]> {
+  const probed = new Set<string>();
+  return async (suite) => {
+    const live = (globalThis as { browser?: RetryBrowser }).browser;
+    const key = `${live?.sessionId}`;
+    if (live !== undefined && typeof live.reloadObsidian === "function" && !probed.has(key)) {
+      probed.add(key);
+      await ensureLaunched({
+        probe: () => live.execute(() => 1),
+        relaunch: () => live.reloadObsidian(),
+        warn: (message) => {
+          console.warn(message);
+          try {
+            mkdirSync(wdioDir, { recursive: true });
+            appendFileSync(
+              join(wdioDir, "launch-retries.log"),
+              `${new Date().toISOString()} ${message}\n`,
+            );
+          } catch {
+            // the console line above is the record when the folder cannot be written
+          }
+        },
+      });
+    }
+    await next(suite);
+  };
+}
+
 export function buildWdioConfig(
   env: Readonly<Record<string, string | undefined>>,
   options: WdioConfigOptions = {},
@@ -200,11 +244,18 @@ export function buildWdioConfig(
     ...(options.fs === undefined ? {} : { fs: options.fs }),
   };
 
+  // Obsidian's own output: Chromium appends every spec's launch to one file in the kept wdio
+  // folder, so a window that closes under the driver leaves a trace (the service sets no logging).
+  const wdioDir = join(runRoot, "wdio");
+  const obsidianLog = join(wdioDir, "obsidian.log");
+  const chromeOptions = { args: ["--enable-logging=file", `--log-file=${obsidianLog}`] };
+
   const capabilities: WdioCapability[] = buildLaunchCapabilities({
     ...launch,
     vaultPath: vaultLive,
   }).map((capability) => ({
     ...capability,
+    "goog:chromeOptions": chromeOptions,
     "wdio:specs": [SPEC_GLOB],
     "wdio:exclude": [SCALE_SPEC],
   }));
@@ -218,7 +269,11 @@ export function buildWdioConfig(
       vaultPath: vaultBig,
       bigVault: true,
     })) {
-      capabilities.push({ ...capability, "wdio:specs": [SCALE_SPEC] });
+      capabilities.push({
+        ...capability,
+        "goog:chromeOptions": chromeOptions,
+        "wdio:specs": [SCALE_SPEC],
+      });
     }
   }
 
@@ -257,10 +312,13 @@ export function buildWdioConfig(
         // waiting is best effort; the next spec's launch is the real test
       }
     },
-    beforeSuite: versionSuiteHook(
-      join(runRoot, "versions.json"),
-      decisions,
-      options.versionsIo ?? REAL_VERSIONS_IO,
+    beforeSuite: launchRetrySuiteHook(
+      versionSuiteHook(
+        join(runRoot, "versions.json"),
+        decisions,
+        options.versionsIo ?? REAL_VERSIONS_IO,
+      ),
+      wdioDir,
     ),
   };
 }
