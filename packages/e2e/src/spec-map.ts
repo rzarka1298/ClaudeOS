@@ -106,7 +106,14 @@ export const UAT_ITEM_PLAN: readonly ItemPlan[] = [
   automated(9, "auto", ["dom", "store"], EXPIRY),
   automated(10, "auto", ["dom", "proc", "store"], LIFECYCLE),
   automated(11, "auto", ["dom", "proc", "store"], SYNTHETIC),
-  automated(12, "auto+look", ["dom", "fs", "shot"], CROSS),
+  // The walk reads the settings groups and looks at them, and the dialog never attaches under a
+  // programmatic open (D-09 amendment 3, 2026-10-13); the rest of the walk is the automated part.
+  owner(
+    12,
+    "settings-dialog",
+    "the approvals pane, the banner text and the mirror note offer no remember, always-allow or skip wording and only Deny and Approve once",
+    CROSS,
+  ),
   // Obsidian never attaches the settings dialog under a programmatic open (containers=0 in live
   // runs 6 to 9), so the item cannot be driven; the owner walks it (D-09 amendment 2026-10-13).
   owner(13, "settings-dialog", null, null),

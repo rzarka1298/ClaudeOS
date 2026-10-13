@@ -208,7 +208,14 @@ async function focusLandsOnDeny(): Promise<boolean> {
       }),
     { timeoutMs: 15_000, intervalMs: 250, describe: "the decision controls to be enabled" },
   );
-  const first = await browser.execute(recordFocusInRenderer);
+  // The pane moves focus to Deny itself once the request has loaded, and the session heading takes
+  // focus on selection; the two can land in either order. Give the pane a moment to settle on Deny
+  // before pressing Tab, or a late move to Deny makes the Tab step on to Approve (run 10).
+  let first = await browser.execute(recordFocusInRenderer);
+  for (let attempt = 0; attempt < 12 && first?.name.startsWith(DENY_LABEL) !== true; attempt += 1) {
+    await browser.pause(250);
+    first = await browser.execute(recordFocusInRenderer);
+  }
   if (first?.name.startsWith(DENY_LABEL) === true) return true;
   await browser.keys(Key.Tab);
   const next: FocusRecord | null = await browser.execute(recordFocusInRenderer);

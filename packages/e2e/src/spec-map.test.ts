@@ -3,8 +3,8 @@ import { SPEC_FILES, specsForProfile, UAT_ITEM_PLAN, UAT_PHASE_PREFIX } from "./
 import { OWNER_WHY, VIA_TOKENS } from "./uat-tags.js";
 
 const AUTO_NUMBERS = [5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 21, 23, 24, 25];
-const LOOK_NUMBERS = [12, 20, 22];
-const OWNER_NUMBERS = [1, 2, 3, 4, 13, 26];
+const LOOK_NUMBERS = [20, 22];
+const OWNER_NUMBERS = [1, 2, 3, 4, 12, 13, 26];
 
 const NAMES = [
   "approvals-core",
@@ -53,7 +53,7 @@ describe("spec map counts (Test 1)", () => {
     );
   });
 
-  it("classifies 17 auto, 3 auto+look and 6 owner exactly as D-09 (amended 2026-10-13) lists them", () => {
+  it("classifies 17 auto, 2 auto+look and 7 owner exactly as D-09 (amended 2026-10-13) lists them", () => {
     const numbers = (runClass: string) =>
       UAT_ITEM_PLAN.filter((item) => item.runClass === runClass).map((item) => item.number);
     expect(numbers("auto")).toEqual(AUTO_NUMBERS);
@@ -97,6 +97,13 @@ describe("spec map fields (Test 2)", () => {
   it("records the owner reason of item 1, the banner's own appearance (D-09 amendment)", () => {
     expect(UAT_ITEM_PLAN[0]?.runClass).toBe("owner");
     expect(UAT_ITEM_PLAN[0]?.ownerWhy).toBe("banner-appearance");
+  });
+
+  it("records the owner reason of item 12, the settings walk (D-09 amendment 3)", () => {
+    const item = UAT_ITEM_PLAN.find((entry) => entry.number === 12);
+    expect(item?.runClass).toBe("owner");
+    expect(item?.ownerWhy).toBe("settings-dialog");
+    expect(item?.autoPart).not.toBeNull();
   });
 
   it("records the owner reason of item 13, the settings dialog Obsidian never attaches (D-09 amendment)", () => {

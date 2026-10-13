@@ -111,6 +111,11 @@ describe("Obsidian's own log (session deaths, runs 6 to 9)", () => {
       }>;
       for (const cap of caps) {
         const args = cap["goog:chromeOptions"]?.args ?? [];
+        expect(
+          (cap as { "wdio:chromedriverOptions"?: { verbose?: boolean } })[
+            "wdio:chromedriverOptions"
+          ]?.verbose,
+        ).toBe(true);
         expect(args).toContain("--enable-logging=file");
         expect(args).toContain(`--log-file=${join(ROOT, "wdio", "obsidian.log")}`);
       }

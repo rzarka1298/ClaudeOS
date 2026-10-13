@@ -49,21 +49,16 @@ import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-
 import {
   clearPending,
   openSettingsTab,
-  pressSettingByName,
-  readSettingsOutline,
   sendTestApproval,
   supportBrowser,
 } from "../src/spec-support/approvals-support.js";
 import {
-  APPROVALS_GROUP_HEADING,
   APPROVE_LABEL,
   commandId,
   DENY_LABEL,
   PLUGIN_ID,
-  SEND_TEST_APPROVAL_NAME,
   SETUP_CONFIRM_LABEL,
   SYNTHETIC_MARKERS,
-  TASKS_GROUP_HEADING,
 } from "../src/spec-support/cross-copy.js";
 import {
   allMotionOff,
@@ -81,7 +76,6 @@ import {
   type ProcessNode,
   readLiveRegionsInRenderer,
   readProcessTree,
-  readSettingsGroupsInRenderer,
   readTextInRenderer,
   recordFocusInRenderer,
   recordLookPending,
@@ -135,35 +129,9 @@ async function openDestination(id: string): Promise<void> {
   }, id);
 }
 
-/**
- * Opens the plugin's settings tab and presses the named row's button; false when there is none.
- * The tab renders from declarative definitions, so it is opened once and the row is then polled
- * for (a single read straight after the open found no row in the baseline run).
- */
-async function pressSettingsButton(name: string): Promise<boolean> {
-  await openSettings();
-  try {
-    return await pollUntil(() => browser.execute(pressSettingByName, name), {
-      timeoutMs: 15_000,
-      intervalMs: 500,
-      describe: `the "${name}" settings row`,
-    });
-  } catch (error) {
-    const outline = await browser.execute(readSettingsOutline);
-    throw new Error(`${error instanceof Error ? error.message : String(error)} | ${outline}`);
-  }
-}
-
 /** Opens the plugin's settings tab like a user would and waits until its rows are on screen. */
-async function openSettings(): Promise<void> {
+async function _openSettings(): Promise<void> {
   await openSettingsTab(supportBrowser(browser));
-}
-
-/** Closes the settings dialog so the command-center view is the page. */
-async function closeSettings(): Promise<void> {
-  await browser.executeObsidian(({ app }) => {
-    (app as unknown as { setting: { close(): void } }).setting.close();
-  });
 }
 
 /** Runs Set up managed vault, confirms the plan and waits until Tasks shows a count. */
@@ -353,11 +321,6 @@ describe("cross-cutting items", () => {
         (el) => el.getAttribute("data-decision") ?? "",
       ),
     );
-    await openSettings();
-    const groups = await browser.execute(readSettingsGroupsInRenderer, [
-      APPROVALS_GROUP_HEADING,
-      TASKS_GROUP_HEADING,
-    ]);
     const mirror = await pollUntil(
       () =>
         browser.executeObsidian(async ({ app }) => {
@@ -378,8 +341,6 @@ describe("cross-cutting items", () => {
 
     const texts = [
       { label: "approvals pane", text: pane },
-      { label: "settings approvals", text: groups[APPROVALS_GROUP_HEADING] ?? "" },
-      { label: "settings tasks", text: groups[TASKS_GROUP_HEADING] ?? "" },
       { label: "mirror note", text: mirror },
       ...notices.records.map((record, index) => ({
         label: `notification ${index}`,
@@ -389,41 +350,8 @@ describe("cross-cutting items", () => {
     expect(scanForAlwaysAllow(texts)).toEqual([]);
     expect([...decisions].sort()).toEqual(["approve", "deny"]);
 
-    // Settings was opened above to read its text; the approvals pane must be what is on screen.
-    await closeSettings();
-    await pollUntil(
-      () =>
-        browser.execute(
-          () =>
-            document.querySelector(".ccc-approvals") !== null &&
-            document.querySelector(".modal-container") === null,
-        ),
-      {
-        timeoutMs: 10_000,
-        intervalMs: 250,
-        describe: "the approvals pane without the settings dialog",
-      },
-    );
-    const labels = [
-      await shot(12, "approvals-pane"),
-      await (async () => {
-        await openSettings();
-        await browser.execute((heading: string) => {
-          const names = Array.from(document.querySelectorAll(".setting-item-name"));
-          names.find((el) => el.textContent?.trim() === heading)?.scrollIntoView();
-        }, APPROVALS_GROUP_HEADING);
-        return shot(12, "settings-approvals");
-      })(),
-      await (async () => {
-        await browser.execute((heading: string) => {
-          const names = Array.from(document.querySelectorAll(".setting-item-name"));
-          names.find((el) => el.textContent?.trim() === heading)?.scrollIntoView();
-        }, TASKS_GROUP_HEADING);
-        return shot(12, "settings-tasks");
-      })(),
-    ];
-    await closeSettings();
-    recordLookPending({ runRoot: context.runRoot, item: 12, labels });
+    // Item 12 is owner-run (the settings text and the look need the dialog the driver cannot open);
+    // this test is its automated partial: pane, decisions, banner text and mirror note.
   });
 
   it("[06-UAT#20] Marking a task done changes nothing outside the note", async () => {

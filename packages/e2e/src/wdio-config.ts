@@ -248,6 +248,13 @@ export function buildWdioConfig(
   const wdioDir = join(runRoot, "wdio");
   const obsidianLog = join(wdioDir, "obsidian.log");
   const chromeOptions = { args: ["--enable-logging=file", `--log-file=${obsidianLog}`] };
+  // chromedriver's verbose log carries the DevTools events (target detached, crashed) that say why a
+  // window went; it lands in the kept wdio-<n>-chromedriver.log files.
+  const chromedriverOptions = { verbose: true };
+  // The wdio type for these options does not list chromedriver's verbose switch, so it is added untyped.
+  const chromedriverExtra = {
+    "wdio:chromedriverOptions": chromedriverOptions,
+  } as unknown as Record<never, never>;
 
   const capabilities: WdioCapability[] = buildLaunchCapabilities({
     ...launch,
@@ -255,6 +262,7 @@ export function buildWdioConfig(
   }).map((capability) => ({
     ...capability,
     "goog:chromeOptions": chromeOptions,
+    ...chromedriverExtra,
     "wdio:specs": [SPEC_GLOB],
     "wdio:exclude": [SCALE_SPEC],
   }));
@@ -271,6 +279,7 @@ export function buildWdioConfig(
       capabilities.push({
         ...capability,
         "goog:chromeOptions": chromeOptions,
+        ...chromedriverExtra,
         "wdio:specs": [SCALE_SPEC],
       });
     }
