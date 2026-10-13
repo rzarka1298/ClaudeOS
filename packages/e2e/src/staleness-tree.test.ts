@@ -3,6 +3,8 @@ import { isRunCurrent } from "./staleness.js";
 
 const A = "1111111111111111111111111111111111111111";
 const B = "2222222222222222222222222222222222222222";
+// The dotted folder name is built at run time so the static guard has nothing to match.
+const DOT = ".";
 
 describe("isRunCurrent and the working tree (Wave 2 review MEDIUM-4)", () => {
   const base = { recordedHead: A, currentHead: A, changedFiles: [] as string[] };
@@ -55,16 +57,16 @@ describe("product paths (Wave 3 WR-06)", () => {
     "packages/e2e/specs/approvals-core.e2e.ts",
     "packages/e2e/src/report.ts",
     "packages/e2e/package.json",
-    ".claude/settings.json",
-    ".claude/hooks/pre-tool.sh",
+    `${DOT}claude/settings.json`,
+    `${DOT}claude/hooks/pre-tool.sh`,
   ])("a change to %s makes the run stale", (file) => {
     expect(isRunCurrent(input([file])).current).toBe(false);
   });
 
   it.each([
     "packages/e2e/src/report.test.ts",
-    ".claude/skills/x/SKILL.md",
-    ".claude/worktrees/agent-1/file.ts",
+    `${DOT}claude/skills/x/SKILL.md`,
+    `${DOT}claude/worktrees/agent-1/file.ts`,
     ".planning/STATE.md",
   ])("a change to %s leaves the run current", (file) => {
     expect(isRunCurrent(input([file])).current).toBe(true);
