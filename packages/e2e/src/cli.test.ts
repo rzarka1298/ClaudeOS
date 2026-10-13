@@ -6,6 +6,7 @@ import { type CliIo, COMMANDS, createRunPorts, main } from "./cli.js";
 import { writeLookHandoff } from "./look.js";
 import type { PreflightOptions, PreflightPorts } from "./preflight.js";
 import { type ReportRow, renderReport } from "./report.js";
+import { addFrontMatterNote } from "./report-io.js";
 import type { RunOptions, RunOutcome, RunPorts } from "./run-uat.js";
 
 const OUTCOME: RunOutcome = {
@@ -543,5 +544,103 @@ describe("cli and scripts stay consistent (Test 5)", () => {
     for (const [name, command] of Object.entries(root)) {
       if (name.startsWith("ci:")) expect(command, name).not.toMatch(/uat|e2e/i);
     }
+  });
+});
+
+describe("ratify is re-runnable after a failed script write (Wave 3 WR-02)", () => {
+  const rows = [
+    statusRow(1, "pass", "auto+look"),
+    OWNER_ROW,
+    statusRow(3, "pass"),
+    statusRow(4, "pass"),
+  ];
+  const script = SCRIPT.replace(
+    "spec: packages/e2e/specs/approvals-core.e2e.ts::[06-UAT#03]",
+    "spec: packages/e2e/specs/approvals-core.e2e.ts::[06-UAT#03]\nauto-result: pass @ 0123abcd 2026-10-12",
+  );
+  const argv = [
+    "ratify",
+    "--run",
+    "0123abcd",
+    "--report",
+    "/r/report.md",
+    "--statement",
+    "ok",
+    "--script",
+    "/s/06-UAT.md",
+    "--write-results",
+  ];
+
+  it("a failing script write leaves the report unratified, and a second ratify succeeds", async () => {
+    const files: Record<string, string> = {
+      "/r/report.md": reportText(rows),
+      "/s/06-UAT.md": script,
+    };
+    let failing = true;
+    const io = memoryIo(files, {
+      writeText: (path, text) => {
+        if (failing && path === "/s/06-UAT.md") throw new Error("read-only");
+        files[path] = text;
+      },
+    });
+    const first = await run(argv, io);
+    expect(first.code).toBe(1);
+    expect(files["/r/report.md"]).toContain("ratified: pending");
+    failing = false;
+    const second = await run(argv, io);
+    expect(second.code).toBe(0);
+    expect(files["/r/report.md"]).toContain("ratified: ok (2026-10-12)");
+    expect(files["/s/06-UAT.md"]).toContain("result: pass - auto run 0123abcd");
+  });
+});
+
+describe("report --write-script refuses runs ratify would refuse (Wave 3 WR-07)", () => {
+  const rows = [statusRow(3, "pass"), statusRow(4, "pass")];
+  const argv = [
+    "report",
+    "--run",
+    "0123abcd",
+    "--report",
+    "/r/report.md",
+    "--script",
+    "/s/06-UAT.md",
+    "--write-script",
+  ];
+  const cases: Array<[string, string, Partial<CliIo>]> = [
+    ["a dirty-tree run", reportText(rows, { gitClean: false }), {}],
+    ["a version-mismatch run", addFrontMatterNote(reportText(rows), "version-mismatch", "app"), {}],
+    [
+      "a run with recorded problems",
+      addFrontMatterNote(reportText(rows), "run-problems", "leak"),
+      {},
+    ],
+    [
+      "a stale run",
+      reportText(rows),
+      {
+        readGitFacts: async () => ({
+          head: "b".repeat(40),
+          clean: true,
+          changedSince: ["packages/service/src/a.ts"],
+        }),
+      },
+    ],
+  ];
+
+  it.each(cases)("%s: exit 1 and the script is unchanged", async (_name, text, over) => {
+    const files: Record<string, string> = { "/r/report.md": text, "/s/06-UAT.md": SCRIPT };
+    const { code } = await run(argv, memoryIo(files, over));
+    expect(code).toBe(1);
+    expect(files["/s/06-UAT.md"]).toBe(SCRIPT);
+  });
+
+  it("still writes for a clean, current run", async () => {
+    const files: Record<string, string> = {
+      "/r/report.md": reportText(rows),
+      "/s/06-UAT.md": SCRIPT,
+    };
+    const { code } = await run(argv, memoryIo(files));
+    expect(code).toBe(0);
+    expect(files["/s/06-UAT.md"]).toContain("auto-result: pass @ 0123abcd");
   });
 });

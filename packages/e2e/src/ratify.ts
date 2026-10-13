@@ -36,13 +36,20 @@ function itemList(numbers: readonly number[]): string {
   return numbers.join(", ");
 }
 
-export function checkRatifiable(input: {
+interface RunValidityInput {
   report: ParsedReport;
   runId: string;
   currentHead: string;
   changedFiles: string[] | null;
   currentClean: boolean | undefined;
-}): string[] {
+}
+
+/**
+ * The run-level reasons a run cannot be ratified or copied into the script (front matter,
+ * run id, tree state, version, recorded problems, mapping, staleness). Item rows and the
+ * ratified marker are checked by `checkRatifiable` on top of this (Wave 3 WR-07).
+ */
+export function checkRunValidity(input: RunValidityInput): string[] {
   const { report } = input;
   const front = report.frontMatter;
   const reasons: string[] = [];
@@ -53,9 +60,6 @@ export function checkRatifiable(input: {
   }
   if (front["run-id"] !== undefined && front["run-id"] !== input.runId) {
     reasons.push("the report is not for the requested run id");
-  }
-  if (front.ratified !== undefined && front.ratified !== "pending") {
-    reasons.push("the report is already ratified");
   }
   if (front["git-clean"] !== undefined && front["git-clean"] !== "true") {
     reasons.push("the run was made on a dirty tree");
@@ -82,6 +86,16 @@ export function checkRatifiable(input: {
         staleness.files.length > 0 ? ` (${staleness.files.length} product file(s))` : "";
       reasons.push(`the run is stale: ${staleness.reason}${files}`);
     }
+  }
+  return reasons;
+}
+
+export function checkRatifiable(input: RunValidityInput): string[] {
+  const { report } = input;
+  const reasons = checkRunValidity(input);
+  const ratified = report.frontMatter.ratified;
+  if (ratified !== undefined && ratified !== "pending") {
+    reasons.push("the report is already ratified");
   }
 
   const automated = report.rows.filter((row) => row.runClass !== "owner");

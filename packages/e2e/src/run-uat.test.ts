@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ratifyReport } from "./ratify.js";
 import type { ResultRecord } from "./results.js";
 import { pathsForRoot } from "./run-root.js";
 import {
@@ -10,7 +11,6 @@ import {
   runUat,
 } from "./run-uat.js";
 import type { SandboxHandle, SandboxOutcome } from "./sandbox.js";
-import { ratifyReport } from "./ratify.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
 import type { SpecTitle } from "./tag-lint.js";
 import { parseUatScript } from "./uat-tags.js";
