@@ -311,6 +311,7 @@ describe("diff helpers (Task 2, Test 4)", () => {
 });
 
 describe("checkNotePreserved (item 20, strict)", () => {
+  const rules = { changeable: ["status", "updated"], mayAdd: ["completed"] };
   const before = [
     "---",
     "id: abc",
@@ -326,43 +327,37 @@ describe("checkNotePreserved (item 20, strict)", () => {
   const after = before
     .replace("status: ready", "status: done")
     .replace("2026-10-13T10:00:00Z", "2026-10-13T11:00:00Z");
+  const completedAdded = after.replace(
+    "updated: 2026-10-13T11:00:00Z",
+    "updated: 2026-10-13T11:00:00Z\ncompleted: 2026-10-13T11:00:00Z",
+  );
 
-  it("accepts a change of status and updated only", () => {
-    expect(checkNotePreserved(before, after, ["status", "updated"])).toEqual({
-      ok: true,
-      reason: "",
-    });
+  it("accepts a change of status and updated, and the added completed key", () => {
+    expect(checkNotePreserved(before, after, rules)).toEqual({ ok: true, reason: "" });
+    expect(checkNotePreserved(before, completedAdded, rules)).toEqual({ ok: true, reason: "" });
   });
 
   it("refuses a changed, dropped or moved body", () => {
+    expect(checkNotePreserved(before, after.replace("Synthetic task 238.", ""), rules).ok).toBe(
+      false,
+    );
     expect(
-      checkNotePreserved(before, after.replace("Synthetic task 238.", ""), ["status", "updated"])
-        .ok,
-    ).toBe(false);
-    expect(
-      checkNotePreserved(before, after.replace("---\nSynthetic", "---\n\nSynthetic"), [
-        "status",
-        "updated",
-      ]).ok,
+      checkNotePreserved(before, after.replace("---\nSynthetic", "---\n\nSynthetic"), rules).ok,
     ).toBe(false);
   });
 
-  it("refuses another frontmatter key changing, being added or dropped", () => {
+  it("names a dropped key, an undocumented added key, and a changed one", () => {
+    expect(checkNotePreserved(before, after.replace("type: task\n", ""), rules).reason).toBe(
+      "A frontmatter key was dropped type.",
+    );
     expect(
-      checkNotePreserved(before, after.replace("id: abc", "id: abd"), ["status", "updated"]).ok,
-    ).toBe(false);
+      checkNotePreserved(before, after.replace("tags:", "reviewed: yes\ntags:"), rules).reason,
+    ).toBe("A frontmatter key was added reviewed.");
+    expect(checkNotePreserved(before, after.replace("id: abc", "id: abd"), rules).reason).toBe(
+      'Frontmatter key "id" changed.',
+    );
     expect(
-      checkNotePreserved(before, after.replace("type: task\n", ""), ["status", "updated"]).ok,
-    ).toBe(false);
-    expect(
-      checkNotePreserved(before, after.replace("tags:", "completed: yes\ntags:"), [
-        "status",
-        "updated",
-      ]).ok,
-    ).toBe(false);
-    expect(
-      checkNotePreserved(before, after.replace("  - home", "  - work"), ["status", "updated"])
-        .reason,
+      checkNotePreserved(before, after.replace("  - home", "  - work"), rules).reason,
     ).toContain("tags");
   });
 });

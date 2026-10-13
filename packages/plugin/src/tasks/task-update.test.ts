@@ -48,6 +48,23 @@ describe("Test 2: updateTaskNote applies one edit and nothing else", () => {
     }
   });
 
+  it("completing adds exactly one frontmatter key, `completed`, and drops none (TASK-08, D-37)", async () => {
+    const { vault, file } = setup();
+    await updateTaskNote(vault, file, OPEN_NOTE, {
+      now: NOW,
+      changes: { status: "done", completed: NOW },
+    });
+    const keysOf = (text: string): string[] =>
+      (/^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "")
+        .split("\n")
+        .map((line) => /^([A-Za-z0-9_-]+):/.exec(line)?.[1])
+        .filter((key): key is string => key !== undefined);
+    const before = keysOf(OPEN_NOTE);
+    const after = keysOf(vault.read(TASK_PATH));
+    expect(after.filter((key) => !before.includes(key))).toEqual(["completed"]);
+    expect(before.filter((key) => !after.includes(key))).toEqual([]);
+  });
+
   it("replaces the body only when the edit carries a description", async () => {
     const { vault, file } = setup();
     await updateTaskNote(vault, file, OPEN_NOTE, {

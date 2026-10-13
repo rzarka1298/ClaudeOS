@@ -563,28 +563,40 @@ function frontmatterEntries(frontmatter: string): Array<{ key: string; text: str
 
 /**
  * Compares a task note before and after Mark done: the body must be byte-identical, and every
- * frontmatter entry except the allowed keys must be present, unchanged and in the same order; an
- * added or dropped entry is a difference too.
+ * frontmatter entry must be present, unchanged and in the same order, except the keys that may
+ * change (`status`, `updated`) and the keys that may be added (`completed`, which TASK-08 sets and
+ * the task schema defines; D-37). Any other added or dropped key is named in the reason.
  */
 export function checkNotePreserved(
   before: string,
   after: string,
-  changeableKeys: readonly string[],
+  rules: { changeable: readonly string[]; mayAdd: readonly string[] },
 ): { ok: boolean; reason: string } {
   const a = splitNote(before);
   const b = splitNote(after);
   if (a === null || b === null) return { ok: false, reason: "A note has no frontmatter block." };
   if (a.body !== b.body) return { ok: false, reason: "The note body changed." };
-  const keep = (entry: { key: string }): boolean => !changeableKeys.includes(entry.key);
-  const left = frontmatterEntries(a.frontmatter).filter(keep);
-  const right = frontmatterEntries(b.frontmatter).filter(keep);
-  if (left.length !== right.length)
-    return { ok: false, reason: "A frontmatter key was added or dropped." };
-  for (let index = 0; index < left.length; index += 1) {
-    if ((left[index] as { text: string }).text !== (right[index] as { text: string }).text) {
+  const left = frontmatterEntries(a.frontmatter);
+  const right = frontmatterEntries(b.frontmatter);
+  const leftKeys = left.map((entry) => entry.key);
+  const rightKeys = right.map((entry) => entry.key);
+  const added = rightKeys.filter((key) => !leftKeys.includes(key) && !rules.mayAdd.includes(key));
+  const dropped = leftKeys.filter((key) => !rightKeys.includes(key));
+  if (added.length > 0 || dropped.length > 0) {
+    const parts = [
+      ...(added.length > 0 ? [`added ${added.join(", ")}`] : []),
+      ...(dropped.length > 0 ? [`dropped ${dropped.join(", ")}`] : []),
+    ];
+    return { ok: false, reason: `A frontmatter key was ${parts.join("; ")}.` };
+  }
+  const keep = (entry: { key: string }): boolean => !rules.changeable.includes(entry.key);
+  const same = left.filter(keep);
+  const kept = right.filter((entry) => keep(entry) && leftKeys.includes(entry.key));
+  for (let index = 0; index < same.length; index += 1) {
+    if ((same[index] as { text: string }).text !== (kept[index]?.text ?? "")) {
       return {
         ok: false,
-        reason: `Frontmatter key "${(left[index] as { key: string }).key}" changed.`,
+        reason: `Frontmatter key "${(same[index] as { key: string }).key}" changed.`,
       };
     }
   }

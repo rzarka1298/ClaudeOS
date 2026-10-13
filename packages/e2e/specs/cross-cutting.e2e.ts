@@ -524,7 +524,14 @@ describe("cross-cutting items", () => {
     expect(changedText).toMatch(/status:\s*done/);
     const beforeText = beforeNotes.get(notes[0] as string);
     expect(beforeText).toBeDefined();
-    expect(checkNotePreserved(beforeText as string, changedText, ["status", "updated"])).toEqual({
+    expect(
+      checkNotePreserved(beforeText as string, changedText, {
+        // TASK-08 (D-37): completing sets `done` and `completed` and advances `updated`; the task
+        // schema defines `completed`, so it may be added. Nothing else may change.
+        changeable: ["status", "updated"],
+        mayAdd: ["completed"],
+      }),
+    ).toEqual({
       ok: true,
       reason: "",
     });
