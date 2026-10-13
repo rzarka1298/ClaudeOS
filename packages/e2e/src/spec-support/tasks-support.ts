@@ -955,6 +955,8 @@ export interface DueProperty {
   value: string | null;
   /** The container's `data-property-type` (Obsidian's own type for the property), when present. */
   propertyType?: string | null;
+  /** The value input's class attribute (Obsidian marks a date widget with `mod-date`). */
+  inputClass?: string | null;
 }
 
 export type DuePropertyVerdict =
@@ -967,7 +969,10 @@ export function duePropertyVerdict(property: DueProperty): DuePropertyVerdict {
   // Obsidian marks a date property's container with data-property-type="date" and may draw it
   // as a text-like input (it has no stable input type), so either signal says "a date, not text
   // or a datetime"; the plain-date value check below still rejects a time.
-  const isDate = property.inputType === "date" || property.propertyType === "date";
+  const isDate =
+    property.inputType === "date" ||
+    property.propertyType === "date" ||
+    (property.inputClass ?? "").split(/\s+/).includes("mod-date");
   if (!isDate) return { ok: false, code: "not-a-date-input" };
   if (property.value === null || !PLAIN_DATE.test(property.value)) {
     return { ok: false, code: "has-time" };
@@ -983,10 +988,14 @@ export function duePropertyVerdict(property: DueProperty): DuePropertyVerdict {
 export function rendererInspectDue(_ctx: unknown): DueProperty {
   const container = document.querySelector('.metadata-property[data-property-key="due"]');
   if (container === null) return { found: false, inputType: null, value: null };
-  const input = container.querySelector("input");
+  // The key (the property name) is an input too, so the value input is looked up inside the
+  // value cell; the baseline run read the key input and saw type text, value "due".
+  const input =
+    container.querySelector(".metadata-property-value input") ?? container.querySelector("input");
   return {
     found: true,
     propertyType: container.getAttribute("data-property-type"),
+    inputClass: input === null ? null : input.getAttribute("class"),
     inputType: input === null ? null : input.getAttribute("type"),
     value: input === null ? null : (input.value ?? null),
   };

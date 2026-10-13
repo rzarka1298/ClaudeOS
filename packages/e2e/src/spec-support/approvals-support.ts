@@ -748,7 +748,7 @@ export interface SettingsSnapshot {
 
 /** Runs in the renderer: reads the open settings modal. Obsidian renders the rows, so only its stable classes are read. */
 export function readSettingsSnapshot(): SettingsSnapshot {
-  const items = Array.from(document.querySelectorAll(".modal.mod-settings .setting-item"));
+  const items = Array.from(document.querySelectorAll(".setting-item"));
   const headings: string[] = [];
   const rows: SettingRow[] = [];
   for (const item of items) {
@@ -767,12 +767,12 @@ export function readSettingsSnapshot(): SettingsSnapshot {
       toggleOn: item.querySelector(".checkbox-container.is-enabled") !== null,
     });
   }
-  return { open: document.querySelector(".modal.mod-settings") !== null, headings, rows };
+  return { open: items.length > 0, headings, rows };
 }
 
 /** Runs in the renderer: presses the action control of the settings row named `name`; false when there is none. */
 export function pressSettingRow(name: string): boolean {
-  for (const item of Array.from(document.querySelectorAll(".modal.mod-settings .setting-item"))) {
+  for (const item of Array.from(document.querySelectorAll(".setting-item"))) {
     if ((item.querySelector(".setting-item-name")?.textContent ?? "").trim() !== name) continue;
     const control = item.querySelector("button") ?? item.querySelector(".clickable-icon") ?? item;
     control.click();
@@ -790,7 +790,7 @@ export function pressSettingRow(name: string): boolean {
  * row's handler). False when no such name is on screen.
  */
 export function pressSettingByName(name: string): boolean {
-  const candidates = Array.from(document.querySelectorAll(".modal *")).filter(
+  const candidates = Array.from(document.querySelectorAll("body *")).filter(
     (el) => el.children.length === 0 && (el.textContent ?? "").trim() === name,
   );
   const hit = candidates[0];
@@ -803,14 +803,18 @@ export function pressSettingByName(name: string): boolean {
 
 /** Runs in the renderer: what the open settings modal contains, for a failure message. */
 export function readSettingsOutline(): string {
-  const modal = document.querySelector(".modal");
-  if (modal === null) return "no .modal is open";
+  const w = window as unknown as {
+    app?: { setting?: { activeTab?: { id?: string }; containerEl?: DomEl } };
+  };
+  const setting = w.app?.setting;
+  const facts = `setting=${setting === undefined ? "missing" : "present"} activeTab=${setting?.activeTab?.id ?? "none"} container=${setting?.containerEl?.getAttribute("class") ?? "none"}`;
+  const root = document.querySelector(".mod-settings, .vertical-tab-content") ?? document.body;
   const seen: string[] = [];
-  for (const el of Array.from(modal.querySelectorAll("*"))) {
+  for (const el of Array.from(root.querySelectorAll("*"))) {
     if (el.children.length > 0 || (el.textContent ?? "").trim() === "") continue;
     const chain: string[] = [];
     let node: DomEl | null = el;
-    for (let depth = 0; node !== null && node !== modal && depth < 3; depth += 1) {
+    for (let depth = 0; node !== null && node !== root && depth < 3; depth += 1) {
       chain.push(
         `${node.tagName.toLowerCase()}.${(node.getAttribute("class") ?? "").replace(/\s+/g, ".")}`,
       );
@@ -819,12 +823,12 @@ export function readSettingsOutline(): string {
     seen.push(`${(el.textContent ?? "").trim().slice(0, 30)} <${chain.join(" < ")}>`);
     if (seen.length >= 25) break;
   }
-  return `modal.${(modal.getAttribute("class") ?? "").replace(/\s+/g, ".")}: ${seen.join(" | ")}`;
+  return `${facts} root=${root.getAttribute("class") ?? "body"}: ${seen.join(" | ")}`;
 }
 
 /** Runs in the renderer: flips the toggle of the settings row named `name`; false when there is none. */
 export function toggleSettingRow(name: string): boolean {
-  for (const item of Array.from(document.querySelectorAll(".modal.mod-settings .setting-item"))) {
+  for (const item of Array.from(document.querySelectorAll(".setting-item"))) {
     if ((item.querySelector(".setting-item-name")?.textContent ?? "").trim() !== name) continue;
     const toggle = item.querySelector(".checkbox-container");
     if (toggle === null) return false;

@@ -492,17 +492,34 @@ describe("the Properties view check and the vault operation (U-6, U-7)", () => {
   });
 
   it("rendererInspectDue reports the container's property type", () => {
-    const input = { getAttribute: () => "text", value: "2026-10-12" };
+    const input = {
+      getAttribute: (name: string) => (name === "type" ? "text" : "metadata-input mod-date"),
+      value: "2026-10-12",
+    };
+    const key = { getAttribute: () => "text", value: "due" };
     const container = {
       getAttribute: (name: string) => (name === "data-property-type" ? "date" : null),
-      querySelector: () => input,
+      // Only the value-cell selector finds the value input; the bare one finds the key input.
+      querySelector: (selector: string) =>
+        selector.includes("metadata-property-value") ? input : key,
     };
     const doc = { querySelector: () => container };
     expect(runInNewContext(`(${rendererInspectDue.toString()})(null)`, { document: doc })).toEqual({
       found: true,
       propertyType: "date",
+      inputClass: "metadata-input mod-date",
       inputType: "text",
       value: "2026-10-12",
+    });
+    // A mod-date class alone says date; mod-datetime does not.
+    const base = { found: true, inputType: "text", value: "2026-10-12" };
+    expect(duePropertyVerdict({ ...base, inputClass: "metadata-input mod-date" })).toEqual({
+      ok: true,
+    });
+    expect(
+      duePropertyVerdict({ ...base, inputClass: "metadata-input mod-datetime" }),
+    ).toMatchObject({
+      ok: false,
     });
   });
 
