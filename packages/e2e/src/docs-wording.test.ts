@@ -31,7 +31,7 @@ function section(text: string, heading: RegExp): string {
   const start = text.search(heading);
   if (start === -1) return "";
   const rest = text.slice(start);
-  const level = /^(#+)/.exec(rest)?.[1].length ?? 2;
+  const level = /^(#+)/.exec(rest)?.[1]?.length ?? 2;
   const lines = rest.split("\n");
   const end = lines.findIndex(
     (line, index) =>
