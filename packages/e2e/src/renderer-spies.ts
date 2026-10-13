@@ -79,7 +79,10 @@ export function installNotificationSpy(): boolean {
   // biome-ignore lint/complexity/useArrowFunction: the wrapper is called with `new`, so it must be a constructible function, not an arrow.
   const Wrapper = (() =>
     function (title: string, options?: { body?: string; tag?: string }) {
-      const instance = new Original(title, options) as { onclick?: unknown };
+      // The real constructor is never called: a native banner during an automated run is noise at
+      // best (owner-run item 1 covers its appearance) and the windows that showed one died in
+      // runs 6 to 10. The instance only retains the click handler.
+      const instance: { onclick?: unknown } = { onclick: null };
       kept.push({
         instance,
         title: String(title),

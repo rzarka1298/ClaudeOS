@@ -49,9 +49,9 @@ import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-
 import {
   clearPending,
   openSettingsTab,
-  sendTestApproval,
   pressSettingByName,
   readSettingsOutline,
+  sendTestApproval,
   supportBrowser,
 } from "../src/spec-support/approvals-support.js";
 import {

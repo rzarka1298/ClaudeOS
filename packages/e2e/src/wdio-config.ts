@@ -1,14 +1,13 @@
-import { waitForAppExit } from "./app-exit.js";
-import { readProcessTable } from "./process-table.js";
-import { INSTALLED_OBSIDIAN_BINARY } from "./repo-paths.js";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { waitForAppExit } from "./app-exit.js";
 import { assertRunRootShape } from "./isolation-guards.js";
-import { ensureLaunched } from "./launch-retry.js";
 import { buildLaunchCapabilities, type LaunchCapability, type LaunchFs } from "./launch-options.js";
+import { ensureLaunched } from "./launch-retry.js";
+import { readProcessTable } from "./process-table.js";
 import { parseProfile } from "./profile.js";
-import { REPO_ROOT } from "./repo-paths.js";
+import { INSTALLED_OBSIDIAN_BINARY, REPO_ROOT } from "./repo-paths.js";
 import { SPIKE_DECISIONS, type SpikeDecisions } from "./spike-decisions.js";
 import { assertIsolatedEnv } from "./uat-env.js";
 import { isolatePluginData, type PluginDataFs } from "./vault-plugin-data.js";

@@ -139,7 +139,7 @@ describe("renderer spies survive wdio's tsx/esbuild keepNames transform (HIGH-1)
     );
     expect(install).toBe(true);
     const wrapped = vm.runInContext("new window.Notification('t', {body: 'b'})", ctx);
-    expect((wrapped as FakeNotification).title).toBe("t");
+    expect((wrapped as { onclick: unknown }).onclick).toBeNull();
     const read = vm.runInContext(
       `(function(){${serialiseForRenderer(spies.readNotifications)}})()`,
       ctx,

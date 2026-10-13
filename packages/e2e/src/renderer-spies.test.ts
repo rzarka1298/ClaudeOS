@@ -20,11 +20,14 @@ class FakeNotification {
     FakeNotification.requestCalls += 1;
     return "granted";
   }
+  static constructed = 0;
   onclick: ((event: unknown) => void) | null = null;
   constructor(
     public title: string,
     public options?: { body?: string; tag?: string },
-  ) {}
+  ) {
+    FakeNotification.constructed += 1;
+  }
 }
 
 class FakePerformanceObserver {
@@ -83,6 +86,7 @@ function makeConsole() {
 beforeEach(() => {
   FakeNotification.permission = "granted";
   FakeNotification.requestCalls = 0;
+  FakeNotification.constructed = 0;
   FakePerformanceObserver.last = null;
 });
 afterEach(() => {
@@ -113,6 +117,16 @@ describe("notification spy (Test 1)", () => {
       { title: "Second", body: "More", tag: null, hasOnclick: false },
     ]);
     expect(JSON.parse(JSON.stringify(read))).toEqual(read);
+  });
+
+  it("never constructs the real notification, so no native banner is shown during a run", () => {
+    const win = setup();
+    installNotificationSpy();
+    const Wrapped = win.Notification as typeof FakeNotification;
+    const made = new Wrapped("Approval needed", { body: "x", tag: "t" });
+    expect(FakeNotification.constructed).toBe(0);
+    expect(made.onclick).toBeNull();
+    expect(readNotifications().records).toHaveLength(1);
   });
 
   it("fires the retained handler once and reports false for a missing handler or index", () => {
