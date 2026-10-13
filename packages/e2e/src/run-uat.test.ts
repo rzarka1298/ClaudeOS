@@ -466,7 +466,11 @@ describe("runUat statuses to report (Test 5)", () => {
 
 describe("runUat expected titles (Wave 2 fix: a missing test cannot pass)", () => {
   const titles = (...names: string[]): SpecTitle[] =>
-    names.map((title) => ({ file: "packages/e2e/specs/approvals-core.e2e.ts", title, only: false }));
+    names.map((title) => ({
+      file: "packages/e2e/specs/approvals-core.e2e.ts",
+      title,
+      only: false,
+    }));
 
   it("marks an item inconclusive when one of its spec tests left no record, and exits 1", async () => {
     const h = harness(
