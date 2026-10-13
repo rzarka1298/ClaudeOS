@@ -98,6 +98,21 @@ export function containsInOrder(history: readonly string[], expected: readonly s
   return true;
 }
 
+/**
+ * The status line after an approval: the plugin deliberately skips the intermediate "approved"
+ * line when the outcome event beats the response (`FINISHED_AFTER_APPROVAL`), so the history may
+ * be just [carriedOut]. Either [approved, ..., carriedOut] or a history that ends on carriedOut
+ * is accepted; anything else (no carriedOut, or a later status after it) is not (Wave 3 IN-01).
+ */
+export function approvalStatusReached(
+  statuses: readonly string[],
+  approved: string,
+  carriedOut: string,
+): boolean {
+  if (containsInOrder(statuses, [approved, carriedOut])) return true;
+  return statuses.length > 0 && statuses[statuses.length - 1] === carriedOut;
+}
+
 /** One recorded view activation (workspace active-leaf-change), by view type. */
 export interface ActivationEntry {
   readonly viewType: string;

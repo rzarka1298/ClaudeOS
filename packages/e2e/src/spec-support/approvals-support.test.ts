@@ -4,6 +4,7 @@ import {
   type ChipStep,
   checkChipTranscript,
   checkDeniedAudit,
+  approvalStatusReached,
   containsInOrder,
   expiredWithinBound,
   readScheduledPress,
@@ -264,5 +265,27 @@ describe("expiry timing (Wave 3 WR-08)", () => {
       expect(readScheduledPress()).toBe("clicked");
       expect(clicks).toEqual(["click"]);
     });
+  });
+});
+
+describe("approvalStatusReached (Wave 3 IN-01)", () => {
+  const approved = "Approved.";
+  const carriedOut = "Carried out.";
+
+  it("accepts the full sequence", () => {
+    expect(approvalStatusReached([approved, carriedOut], approved, carriedOut)).toBe(true);
+  });
+
+  it("accepts a history of just the outcome", () => {
+    expect(approvalStatusReached([carriedOut], approved, carriedOut)).toBe(true);
+  });
+
+  it("still requires the outcome", () => {
+    expect(approvalStatusReached([approved], approved, carriedOut)).toBe(false);
+    expect(approvalStatusReached([], approved, carriedOut)).toBe(false);
+  });
+
+  it("rejects an outcome that a later status overrode", () => {
+    expect(approvalStatusReached([carriedOut, "Error."], approved, carriedOut)).toBe(false);
   });
 });

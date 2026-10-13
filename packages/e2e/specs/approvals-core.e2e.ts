@@ -30,6 +30,7 @@ import {
   clearPending,
   clickChip,
   clickDecision,
+  approvalStatusReached,
   containsInOrder,
   countLeavesOfType,
   detachScratchLeaf,
@@ -282,8 +283,14 @@ describe("approvals core", () => {
     );
     // The status line is recorded because the middle state is short: a poll could miss it.
     const statuses = await browser.execute(readStatusHistory);
+    // The middle status may legitimately never render when the outcome beats the response;
+    // the outcome itself is still verified here and by the strict history below.
     expect(
-      containsInOrder(statuses, [APPROVALS_COPY.statusApproved, APPROVALS_COPY.statusCarriedOut]),
+      approvalStatusReached(
+        statuses,
+        APPROVALS_COPY.statusApproved,
+        APPROVALS_COPY.statusCarriedOut,
+      ),
     ).toBe(true);
     expect(
       containsInOrder(done.history, [
