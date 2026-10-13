@@ -724,6 +724,8 @@ async function composeCodexServices(
             : deps.stopStepDeadlineMs;
         // The spool first: no record is applied while the rest winds down.
         await step("spool", () => spool.stop());
+        // No doctor child may spawn or linger once shutdown has begun.
+        await step("doctor", () => doctorProbe.dispose(), appServerMs);
         await step("headroom", () => headroom.stop(), appServerMs);
         await step("mirror", () => mirror.stop());
         await step("tokens", () => tokens.stop());

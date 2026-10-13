@@ -68,6 +68,12 @@ export interface DoctorProbeDeps {
 export interface DoctorProbe {
   /** Never rejects. Overlapping calls share one child. */
   run(): Promise<DoctorRunResult>;
+  /**
+   * Stops for good: aborts an environment preparation in progress (so nothing spawns afterwards),
+   * ends an in-flight child (default signal, then forced) and resolves once it is gone. Later
+   * `run()` calls answer `unavailable` without starting anything. Never rejects.
+   */
+  dispose(): Promise<void>;
 }
 
 /** How long the child gets to exit after the default termination signal before it is forced. */
@@ -92,6 +98,10 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
   const maxOutputBytes = deps.maxOutputBytes ?? DOCTOR_MAX_OUTPUT_BYTES;
 
   let inFlight: Promise<DoctorRunResult> | null = null;
+  let disposed = false;
+  const aborter = new AbortController();
+  /** Ends the running child, when there is one. */
+  let endActive: (() => void) | null = null;
 
   function childEnv(path: string, deadlineMs: number): Promise<Record<string, string> | null> {
     return codexChildEnv({
@@ -99,6 +109,7 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
       codexHome: deps.codexHome?.() ?? null,
       home: (deps.homeDir ?? homedir)(),
       deadlineMs,
+      signal: aborter.signal,
     });
   }
 
@@ -109,6 +120,7 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
 
   /** The environment is prepared under a deadline that is part of the run's own cap. */
   async function runOnce(): Promise<DoctorRunResult> {
+    if (disposed) return { kind: "unavailable" };
     const path = deps.executablePath();
     if (path === null) return { kind: "unavailable" };
     const startedAt = performance.now();
@@ -121,6 +133,7 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
     } catch {
       env = null;
     }
+    if (disposed) return { kind: "unavailable" };
     if (env === null) {
       deps.logger?.warn({ reason: "env-timeout" }, "codex doctor run unavailable");
       return { kind: "unavailable" };
@@ -148,6 +161,7 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
       }
       let result: DoctorRunResult | null = null;
       let exited = false;
+      endActive = () => settle({ kind: "unavailable" });
       let total = 0;
       const chunks: Buffer[] = [];
       let escalateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -157,7 +171,10 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
         clearTimeout(capTimer);
         clearTimeout(escalateTimer);
         clearTimeout(backstopTimer);
-        if (result !== null) resolve(result);
+        if (result !== null) {
+          endActive = null;
+          resolve(result);
+        }
       };
       /** Records the outcome, then ends the child: default signal, wait, escalate. */
       const settle = (outcome: DoctorRunResult): void => {
@@ -234,7 +251,15 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
   }
 
   return {
+    async dispose() {
+      disposed = true;
+      aborter.abort();
+      endActive?.();
+      const pending = inFlight;
+      if (pending !== null) await pending.catch(() => undefined);
+    },
     run() {
+      if (disposed) return Promise.resolve<DoctorRunResult>({ kind: "unavailable" });
       if (inFlight !== null) return inFlight;
       let started: Promise<DoctorRunResult>;
       try {
