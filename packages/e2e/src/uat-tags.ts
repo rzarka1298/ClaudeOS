@@ -11,6 +11,7 @@ export const VIA_TOKENS = ["dom", "spy", "store", "fs", "log", "proc", "shot"] a
 export type ViaToken = (typeof VIA_TOKENS)[number];
 
 export const OWNER_WHY = [
+  "banner-appearance",
   "banner-click",
   "space",
   "focus",

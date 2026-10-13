@@ -72,7 +72,15 @@ function owner(
 }
 
 export const UAT_ITEM_PLAN: readonly ItemPlan[] = [
-  automated(1, "auto+look", ["spy", "shot"], LOOK),
+  // The banner's own appearance cannot be captured while bannerAutomation is spy-only (no screen
+  // region), so the item is owner-run with the spy checks as its automated partial (Codex review:
+  // an auto+look item with no images could never be ratified).
+  owner(
+    1,
+    "banner-appearance",
+    "an unfocused window creates exactly one generic notification with a click handler and no request text",
+    LOOK,
+  ),
   owner(
     2,
     "banner-click",

@@ -185,26 +185,7 @@ describe("notification banner", () => {
     );
     expect(verdict).toEqual({ ok: true, problems: [] });
 
-    if (SPIKE_DECISIONS.bannerAutomation !== "spy-and-region") {
-      console.log(
-        "banner region capture skipped: bannerAutomation is spy-only (S1 re-run pending); the banner's appearance stays with the owner",
-      );
-      return;
-    }
-    const shotsDir = context.shotsDir;
-    if (shotsDir === undefined)
-      throw new Error("No shots folder: the banner capture cannot be recorded.");
-    const screen = await browser.execute(() => ({
-      width: Math.round(window.screen.width),
-      height: Math.round(window.screen.height),
-    }));
-    const rect = bannerRegion(screen);
-    const labels: string[] = [];
-    for (const label of ["banner-first", "banner-second"]) {
-      await captureRegion({ shotsDir, outPath: shotPath(shotsDir, 1, label), rect });
-      labels.push(label);
-      if (labels.length < 2) await browser.pause(BANNER_SETTLE_MS);
-    }
-    recordLookPending({ runRoot: context.runRoot, item: 1, labels });
+    // The banner's appearance is not captured (bannerAutomation is spy-only, S1 re-run pending):
+    // item 1 is owner-run and this test is its automated partial.
   });
 });

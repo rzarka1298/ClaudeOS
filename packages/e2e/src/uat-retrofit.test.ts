@@ -83,8 +83,8 @@ run("the retrofit matches the spec map (Test 1)", () => {
     expect(numbers("auto")).toEqual([
       5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 21, 23, 24, 25,
     ]);
-    expect(numbers("auto+look")).toEqual([1, 12, 20, 22]);
-    expect(numbers("owner")).toEqual([2, 3, 4, 26]);
+    expect(numbers("auto+look")).toEqual([12, 20, 22]);
+    expect(numbers("owner")).toEqual([1, 2, 3, 4, 26]);
   });
 });
 
@@ -158,10 +158,10 @@ run("the banner downgrade is never silent (Test 6)", () => {
     expect(entry?.number).toBe(1);
     expect(item?.runValue).toBe(entry?.runClass);
     if (entry?.runClass === "owner") {
-      // The downgrade: perception stays with the owner and the spy part is the auto-part.
-      expect(entry.ownerWhy).toBe("perception");
+      // The downgrade: the banner appearance stays with the owner and the spy part is the auto-part.
+      expect(entry.ownerWhy).toBe("banner-appearance");
       expect(entry.autoPart).not.toBeNull();
-      expect(item?.ownerWhy).toBe("perception");
+      expect(item?.ownerWhy).toBe("banner-appearance");
       expect(item?.autoPart).not.toBeNull();
     } else {
       expect(entry?.runClass).toBe("auto+look");

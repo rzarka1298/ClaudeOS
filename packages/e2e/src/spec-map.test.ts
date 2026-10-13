@@ -3,8 +3,8 @@ import { SPEC_FILES, specsForProfile, UAT_ITEM_PLAN, UAT_PHASE_PREFIX } from "./
 import { OWNER_WHY, VIA_TOKENS } from "./uat-tags.js";
 
 const AUTO_NUMBERS = [5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 21, 23, 24, 25];
-const LOOK_NUMBERS = [1, 12, 20, 22];
-const OWNER_NUMBERS = [2, 3, 4, 26];
+const LOOK_NUMBERS = [12, 20, 22];
+const OWNER_NUMBERS = [1, 2, 3, 4, 26];
 
 const NAMES = [
   "approvals-core",
@@ -54,7 +54,7 @@ describe("spec map counts (Test 1)", () => {
     );
   });
 
-  it("classifies 18 auto, 4 auto+look and 4 owner exactly as D-09 lists them", () => {
+  it("classifies 18 auto, 3 auto+look and 5 owner exactly as D-09 (amended 2026-10-13) lists them", () => {
     const numbers = (runClass: string) =>
       UAT_ITEM_PLAN.filter((item) => item.runClass === runClass).map((item) => item.number);
     expect(numbers("auto")).toEqual(AUTO_NUMBERS);
@@ -95,6 +95,11 @@ describe("spec map fields (Test 2)", () => {
     expect(last?.ownerWhy).toBe("decision");
   });
 
+  it("records the owner reason of item 1, the banner's own appearance (D-09 amendment)", () => {
+    expect(UAT_ITEM_PLAN[0]?.runClass).toBe("owner");
+    expect(UAT_ITEM_PLAN[0]?.ownerWhy).toBe("banner-appearance");
+  });
+
   it("records the owner reasons of items 2, 3 and 4", () => {
     expect(UAT_ITEM_PLAN.slice(1, 4).map((item) => item.ownerWhy)).toEqual([
       "banner-click",
@@ -110,7 +115,7 @@ describe("spec map fields (Test 2)", () => {
 
   it("holds the tool lists the research table assigns", () => {
     const via = (n: number) => [...(UAT_ITEM_PLAN[n - 1]?.via ?? [])].sort();
-    expect(via(1)).toEqual(["shot", "spy"]);
+    expect(via(1)).toEqual([]);
     expect(via(5)).toEqual(["dom", "spy"]);
     expect(via(10)).toEqual(["dom", "proc", "store"]);
     expect(via(20)).toEqual(["dom", "fs", "log", "proc", "shot"]);

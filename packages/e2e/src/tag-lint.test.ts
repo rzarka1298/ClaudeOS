@@ -270,7 +270,7 @@ describe("checkMapAgainstScript (Task 3, Test 6)", () => {
 
   it("reports an auto-part that is present or absent against the table", () => {
     const missing = mutated((text) => text.replace(/^auto-part: .*\n/m, ""));
-    expect(missing.map((finding) => finding.item)).toEqual([2]);
+    expect(missing.map((finding) => finding.item)).toEqual([1]);
     const extra = mutated((text) =>
       text.replace("### 26. Item 26\nrun: owner", "### 26. Item 26\nrun: owner\nauto-part: x"),
     );
