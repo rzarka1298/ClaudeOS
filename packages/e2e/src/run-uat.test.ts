@@ -297,8 +297,8 @@ describe("runUat order (Test 3)", () => {
       "wdio",
       "read-results",
       "read-look-pending",
-      "write-report",
       "handoff",
+      "write-report",
       "teardown",
       "delete-account",
       "leak-check",
@@ -742,5 +742,38 @@ describe("runUat survives a failing screenshot handoff (Codex re-review 2)", () 
     await runUat(options({ phaseDir: undefined, out: undefined }), h.ports);
     expect(h.reports).toHaveLength(1);
     expect(h.reports[0]?.text).toContain("run-problems: handoff-error,leak,cleanup-error");
+  });
+});
+
+describe("runUat marks looks unavailable when the handoff fails (Codex re-review 3)", () => {
+  const allPass: ResultRecord[] = [
+    record("[06-UAT#01] banner appears", "passed"),
+    record("[06-UAT#05] deny", "passed"),
+  ];
+
+  it("lists no actionable look and marks the item unavailable in the report", async () => {
+    const h = harness(
+      {
+        handoffLooks: () => {
+          throw new Error("ENOSPC");
+        },
+      },
+      { results: allPass },
+    );
+    const outcome = await runUat(options(), h.ports);
+    const last = h.reports[h.reports.length - 1]?.text ?? "";
+    expect(last).toContain("inconclusive (look unavailable: handoff failed)");
+    expect(last).not.toContain("inconclusive (look pending)");
+    expect(last).toContain("run-problems: handoff-error");
+    expect(outcome.lookPending).toEqual([]);
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.message).not.toMatch(/look pending [1-9]/);
+  });
+
+  it("a successful handoff still offers the look", async () => {
+    const h = harness({}, { results: allPass });
+    const outcome = await runUat(options(), h.ports);
+    expect(outcome.lookPending.map((entry) => entry.item)).toEqual([1]);
+    expect(h.reports[h.reports.length - 1]?.text).toContain("inconclusive (look pending)");
   });
 });

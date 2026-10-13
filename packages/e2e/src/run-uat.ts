@@ -93,6 +93,7 @@ export interface RunOutcome {
 }
 
 const LOOK_PENDING_STATUS = "inconclusive (look pending)";
+const LOOK_UNAVAILABLE_STATUS = "inconclusive (look unavailable: handoff failed)";
 const LOOK_RECORD_ERROR = "The look-pending file holds a line that is not a valid record.";
 
 const MSG = {
@@ -262,12 +263,37 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
       const versions = ports.readVersions(sandbox.paths.versionsPath);
       const versionProblems = finalMismatches(versions, results.length > 0);
       const git = await ports.readGitFacts();
-      const { rows, phasePrefix, mapped } = rowsFrom(
-        scriptText,
-        results,
-        options.profile,
-        ports.readSpecTitles,
-      );
+      const built = rowsFrom(scriptText, results, options.profile, ports.readSpecTitles);
+      const { phasePrefix, mapped } = built;
+      let rows = built.rows;
+
+      const reportPath = resolveReportPath({
+        phaseDir: options.phaseDir,
+        phasePrefix,
+        out: options.out,
+      });
+      let pending = rows
+        .filter((row) => statusOf(row) === LOOK_PENDING_STATUS)
+        .map((row): LookPendingItem => {
+          const recorded = looks.find((entry) => entry.item === row.number);
+          return recorded ?? { item: row.number, labels: [], count: 0 };
+        });
+      // The handoff comes before the report is rendered: when it fails the images are gone, so the
+      // report must not offer looks nobody can record (Codex re-review 3).
+      try {
+        ports.handoffLooks({ shotsDir: shots, runId: sandbox.runId, reportPath, items: pending });
+        handedOff = true;
+      } catch {
+        // The run is still reported; the failure is a run problem, so ratify refuses it.
+        handoffFailed = true;
+        const unavailable = new Set(pending.map((entry) => entry.item));
+        rows = rows.map((row) =>
+          unavailable.has(row.number) && row.resolution.kind === "status"
+            ? { ...row, resolution: { ...row.resolution, status: LOOK_UNAVAILABLE_STATUS } }
+            : row,
+        );
+        pending = [];
+      }
 
       let text = renderReport({
         runId: sandbox.runId,
@@ -294,30 +320,11 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
       if (writtenProblems.length > 0) {
         text = addFrontMatterNote(text, "run-problems", writtenProblems.join(","));
       }
-      const reportPath = resolveReportPath({
-        phaseDir: options.phaseDir,
-        phasePrefix,
-        out: options.out,
-      });
       captured = { reportPath, baseReport, wdioFailed };
       // A stdout-only report is printed once, after teardown, with the final outcome: printing a
       // provisional one first would leave two reports on the screen. A file report is written now
       // (marked teardown-pending) so a crash leaves something, and finalised below.
       if (reportPath !== null) ports.writeReport(reportPath, text);
-
-      const pending = rows
-        .filter((row) => statusOf(row) === LOOK_PENDING_STATUS)
-        .map((row): LookPendingItem => {
-          const recorded = looks.find((entry) => entry.item === row.number);
-          return recorded ?? { item: row.number, labels: [], count: 0 };
-        });
-      try {
-        ports.handoffLooks({ shotsDir: shots, runId: sandbox.runId, reportPath, items: pending });
-        handedOff = true;
-      } catch {
-        // The run is still reported; the failure is a run problem, so ratify refuses it.
-        handoffFailed = true;
-      }
 
       const failedItems = mapped
         ? rows
@@ -342,7 +349,9 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
     return refusal(plain((error as Error).message, ports));
   }
 
-  if (shotsDir !== undefined && !handedOff) {
+  // A handoff that succeeded before the body failed (for example the report write) points at a
+  // report that does not exist: the images go too.
+  if (shotsDir !== undefined && (!handedOff || outcome.error !== undefined)) {
     try {
       ports.deleteShots(shotsDir);
     } catch {

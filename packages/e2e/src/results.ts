@@ -24,6 +24,7 @@ export type ItemStatus =
   | "fail"
   | "inconclusive"
   | "inconclusive (look pending)"
+  | "inconclusive (look unavailable: handoff failed)"
   | "skipped-profile";
 
 export type ItemResolution =
