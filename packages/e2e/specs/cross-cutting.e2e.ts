@@ -49,6 +49,7 @@ import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-
 import {
   clearPending,
   openSettingsTab,
+  sendTestApproval,
   pressSettingByName,
   readSettingsOutline,
   supportBrowser,
@@ -214,8 +215,13 @@ async function settlePendingRequests(): Promise<void> {
 /** Sends a test approval and waits until its row shows in the Pending list of Approvals. */
 async function sendTestApprovalAndWait(): Promise<void> {
   await settlePendingRequests();
-  expect(await pressSettingsButton(SEND_TEST_APPROVAL_NAME)).toBe(true);
-  await closeSettings();
+  // The request is made through the service client, the same call the settings row makes after
+  // its delay. Opening the settings dialog programmatically does not attach it in this Obsidian
+  // (see item 13), and the notification path under test starts at the plugin's upsert hook, not at
+  // the button. Item 13 still presses the real row.
+  await sendTestApproval(
+    createApprovalsClient(createAuthenticatedClient({ socketPath: context.socketPath })),
+  );
   await openDestination("agent-runs");
   await pollUntil(
     () => browser.execute(() => document.querySelectorAll(".ccc-approval-row").length > 0),

@@ -35,9 +35,7 @@ import { captureRegion, shotPath } from "../src/screenshots.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
 import {
   clearPending,
-  openSettingsTab,
-  pressSettingByName,
-  readSettingsOutline,
+  sendTestApproval as sendTestApprovalViaClient,
   supportBrowser,
 } from "../src/spec-support/approvals-support.js";
 import { SEND_TEST_APPROVAL_NAME, SYNTHETIC_MARKERS } from "../src/spec-support/cross-copy.js";
@@ -79,24 +77,11 @@ async function settlePendingRequests(): Promise<void> {
 
 /** Presses Send a test approval in the plugin's settings and closes the dialog. */
 async function sendTestApproval(): Promise<void> {
-  // Open the tab once, then poll for the row: it renders from declarative definitions, so a read
-  // straight after the open can miss it (and re-opening on every poll restarts the render).
-  await openSettingsTab(supportBrowser(browser));
-  let pressed: boolean;
-  try {
-    pressed = await pollUntil(() => browser.execute(pressSettingByName, SEND_TEST_APPROVAL_NAME), {
-      timeoutMs: 15_000,
-      intervalMs: 500,
-      describe: "the Send a test approval settings row",
-    });
-  } catch (error) {
-    const outline = await browser.execute(readSettingsOutline);
-    throw new Error(`${error instanceof Error ? error.message : String(error)} | ${outline}`);
-  }
-  await browser.executeObsidian(({ app }) => {
-    (app as unknown as { setting: { close(): void } }).setting.close();
-  });
-  expect(pressed).toBe(true);
+  // Through the service client (the settings dialog cannot be attached programmatically in this
+  // Obsidian, see item 13); the notification path under test starts at the plugin's upsert hook.
+  await sendTestApprovalViaClient(
+    createApprovalsClient(createAuthenticatedClient({ socketPath: context.socketPath })),
+  );
 }
 
 const pendingRows = (): Promise<number> =>

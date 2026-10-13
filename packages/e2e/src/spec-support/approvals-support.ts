@@ -853,7 +853,19 @@ export function readSettingsOutline(): string {
     .map((el) => (el.textContent ?? "").trim())
     .slice(0, 40)
     .join(",");
-  const facts = `containers=${containers} nav=[${navItems}] setting=${setting === undefined ? "missing" : "present"} activeTab=${setting?.activeTab?.id ?? "none"} container=${setting?.containerEl?.getAttribute("class") ?? "none"}`;
+  const settingFacts = setting as unknown as
+    | { containerEl?: DomEl & { isConnected?: boolean; parentElement: DomEl | null } }
+    | undefined;
+  const connected = settingFacts?.containerEl?.isConnected;
+  const parentClass = settingFacts?.containerEl?.parentElement?.getAttribute("class") ?? "none";
+  const bodyKids = Array.from(document.body.children as ArrayLike<DomEl>)
+    .map(
+      (el) =>
+        `${el.tagName.toLowerCase()}.${(el.getAttribute("class") ?? "").replace(/\s+/g, ".")}`,
+    )
+    .slice(0, 12)
+    .join(",");
+  const facts = `connected=${connected} parent=${parentClass} bodyKids=[${bodyKids}] containers=${containers} nav=[${navItems}] setting=${setting === undefined ? "missing" : "present"} activeTab=${setting?.activeTab?.id ?? "none"} container=${setting?.containerEl?.getAttribute("class") ?? "none"}`;
   const root = document.querySelector(".modal-container") ?? document.body;
   const seen: string[] = [];
   for (const el of Array.from(root.querySelectorAll("*"))) {
