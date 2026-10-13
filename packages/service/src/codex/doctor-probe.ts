@@ -58,6 +58,8 @@ export interface DoctorProbeDeps {
   readonly capMs?: number;
   /** How long the child gets to exit after the default termination signal before it is forced. */
   readonly killWaitMs?: number;
+  /** Test seam: the shorter grace used once disposed; default {@link DOCTOR_DISPOSE_KILL_WAIT_MS}. */
+  readonly disposeKillWaitMs?: number;
   /** Test seam: the deadline for preparing the child environment; default {@link CHILD_ENV_PREPARE_DEADLINE_MS}. */
   readonly envDeadlineMs?: number;
   /** The most stdout read before the run is judged hostile. */
@@ -79,6 +81,12 @@ export interface DoctorProbe {
 /** How long the child gets to exit after the default termination signal before it is forced. */
 export const DOCTOR_KILL_WAIT_MS = 2_000;
 
+/**
+ * The termination grace on disposal (shutdown): short, so default signal, grace, forced stop and
+ * exit confirmation (about twice this) fit inside the doctor stop step's deadline.
+ */
+export const DOCTOR_DISPOSE_KILL_WAIT_MS = 400;
+
 /** A real report is a few kilobytes; this is generous and still bounded. */
 export const DOCTOR_MAX_OUTPUT_BYTES = 1024 * 1024;
 
@@ -99,6 +107,8 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
 
   let inFlight: Promise<DoctorRunResult> | null = null;
   let disposed = false;
+  /** The grace before the forced stop; shortened by dispose. */
+  let graceMs = killWaitMs;
   const aborter = new AbortController();
   /** Ends the running child, when there is one. */
   let endActive: (() => void) | null = null;
@@ -161,7 +171,16 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
       }
       let result: DoctorRunResult | null = null;
       let exited = false;
-      endActive = () => settle({ kind: "unavailable" });
+      endActive = () => {
+        if (exited) return;
+        if (result === null) {
+          settle({ kind: "unavailable" });
+          return;
+        }
+        // Already ending (a cap, a hostile stream): go straight to the forced stop.
+        clearTimeout(escalateTimer);
+        forceKill();
+      };
       let total = 0;
       const chunks: Buffer[] = [];
       let escalateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -190,14 +209,16 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
         } catch {
           // Already gone; the exit event follows.
         }
-        escalateTimer = setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Already gone.
-          }
-          backstopTimer = setTimeout(done, killWaitMs);
-        }, killWaitMs);
+        escalateTimer = setTimeout(forceKill, graceMs);
+      };
+      const forceKill = (): void => {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Already gone.
+        }
+        clearTimeout(backstopTimer);
+        backstopTimer = setTimeout(done, graceMs);
       };
       const fail = (code: string): void => {
         if (result === null) settle(failed(code));
@@ -253,6 +274,7 @@ export function createDoctorProbe(deps: DoctorProbeDeps): DoctorProbe {
   return {
     async dispose() {
       disposed = true;
+      graceMs = Math.min(killWaitMs, deps.disposeKillWaitMs ?? DOCTOR_DISPOSE_KILL_WAIT_MS);
       aborter.abort();
       endActive?.();
       const pending = inFlight;

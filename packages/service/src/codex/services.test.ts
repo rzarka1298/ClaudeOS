@@ -895,7 +895,10 @@ describe("05.1-sec NEW-06: stop() ends an in-flight doctor child", () => {
   it("a doctor child that ignores the default termination signal is gone when stop() resolves", async () => {
     const c = await compose({});
     const fakeDir = mkdtempSync(join(c.dir, "doctor-"));
-    const doctor = writeFakeDoctor(fakeDir, { behavior: { kind: "hang" }, ignoreTermination: true });
+    const doctor = writeFakeDoctor(fakeDir, {
+      behavior: { kind: "hang" },
+      ignoreTermination: true,
+    });
     saveLauncherConfig(c.store.db, "codex", { executablePath: doctor.path, args: [] });
     const reply = c.post(CODEX_DOCTOR_PATH, {});
     const deadline = Date.now() + 5000;
