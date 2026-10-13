@@ -702,3 +702,45 @@ describe("runUat finalizes a stdout-only report after teardown (Codex re-review 
     expect(h.reports[0]?.text).not.toContain("teardown-pending");
   });
 });
+
+describe("runUat survives a failing screenshot handoff (Codex re-review 2)", () => {
+  const allPass: ResultRecord[] = [
+    record("[06-UAT#05] deny", "passed"),
+    record("[06-UAT#02] click handler part", "passed"),
+  ];
+  const failingHandoff = {
+    handoffLooks: () => {
+      throw new Error("ENOSPC");
+    },
+  };
+
+  it("a stdout-only report is still printed once, with handoff-error", async () => {
+    const h = harness(failingHandoff, { results: allPass, looks: [] });
+    const outcome = await runUat(options({ phaseDir: undefined, out: undefined }), h.ports);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]?.path).toBeNull();
+    expect(h.reports[0]?.text).toContain("run-problems: handoff-error");
+    expect(h.reports[0]?.text).not.toContain("teardown-pending");
+    expect(outcome.exitCode).toBe(1);
+  });
+
+  it("a file report is finalised with handoff-error", async () => {
+    const h = harness(failingHandoff, { results: allPass, looks: [] });
+    await runUat(options(), h.ports);
+    const last = h.reports[h.reports.length - 1]?.text ?? "";
+    expect(last).toContain("run-problems: handoff-error");
+    expect(last).not.toContain("teardown-pending");
+  });
+
+  it("does not hide a leak or a cleanup error", async () => {
+    const h = harness(failingHandoff, {
+      results: allPass,
+      looks: [],
+      leaks: 1,
+      cleanupErrors: 1,
+    });
+    await runUat(options({ phaseDir: undefined, out: undefined }), h.ports);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]?.text).toContain("run-problems: handoff-error,leak,cleanup-error");
+  });
+});

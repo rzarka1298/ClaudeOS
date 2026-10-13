@@ -227,6 +227,10 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   const startedAt = ports.now();
   let shotsDir: string | undefined;
   let handedOff = false;
+  let handoffFailed = false;
+  // Kept outside the sandbox callback so the final report is written even if the callback fails
+  // after rendering it (for example when the screenshot handoff throws).
+  let captured: { reportPath: string | null; baseReport: string; wdioFailed: boolean } | undefined;
   let outcome: SandboxOutcome<Produced>;
   try {
     outcome = await ports.runSandbox(async (sandbox): Promise<Produced> => {
@@ -295,6 +299,7 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
         phasePrefix,
         out: options.out,
       });
+      captured = { reportPath, baseReport, wdioFailed };
       // A stdout-only report is printed once, after teardown, with the final outcome: printing a
       // provisional one first would leave two reports on the screen. A file report is written now
       // (marked teardown-pending) so a crash leaves something, and finalised below.
@@ -306,8 +311,13 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
           const recorded = looks.find((entry) => entry.item === row.number);
           return recorded ?? { item: row.number, labels: [], count: 0 };
         });
-      ports.handoffLooks({ shotsDir: shots, runId: sandbox.runId, reportPath, items: pending });
-      handedOff = true;
+      try {
+        ports.handoffLooks({ shotsDir: shots, runId: sandbox.runId, reportPath, items: pending });
+        handedOff = true;
+      } catch {
+        // The run is still reported; the failure is a run problem, so ratify refuses it.
+        handoffFailed = true;
+      }
 
       const failedItems = mapped
         ? rows
@@ -351,6 +361,7 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
     problems.push(`${outcome.cleanupErrors.length} cleanup error(s)`);
   }
   if (produced?.wdioFailed === true) problems.push("wdio failed");
+  if (handoffFailed) problems.push("the screenshot handoff failed");
   if ((produced?.versionProblems.length ?? 0) > 0) {
     problems.push(`version mismatch (${produced?.versionProblems.join(", ")})`);
   }
@@ -359,19 +370,20 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   }
   // Leaks and cleanup errors are only known after teardown: put them in the report too, so a
   // run that exited non-zero cannot be ratified (Wave 3 WR-01).
-  if (produced !== undefined) {
+  if (captured !== undefined) {
     const final = [
-      ...(produced.wdioFailed ? ["wdio-failed"] : []),
+      ...(captured.wdioFailed ? ["wdio-failed"] : []),
+      ...(handoffFailed ? ["handoff-error"] : []),
       ...(outcome.leaks.length > 0 ? ["leak"] : []),
       ...(outcome.cleanupErrors.length > 0 ? ["cleanup-error"] : []),
       ...(outcome.error !== undefined ? ["run-error"] : []),
     ];
     try {
       ports.writeReport(
-        produced.reportPath,
+        captured.reportPath,
         final.length === 0
-          ? produced.baseReport
-          : addFrontMatterNote(produced.baseReport, "run-problems", final.join(",")),
+          ? captured.baseReport
+          : addFrontMatterNote(captured.baseReport, "run-problems", final.join(",")),
       );
     } catch {
       problems.push("the report could not be updated with the final run outcome");
