@@ -30,6 +30,7 @@ const MSG = {
   count: "The stated image count does not match the count the run recorded.",
   missing: "A recorded image is missing, so no verdict can be recorded.",
   report: "The report cannot take this verdict.",
+  noReport: "This run wrote no report file, so a verdict has nowhere to be recorded.",
 } as const;
 
 export interface LookState {
@@ -154,69 +155,90 @@ function isRegularFile(path: string): boolean {
   }
 }
 
+function unlinkIfPresent(file: string): void {
+  try {
+    unlinkSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+/**
+ * Records a look verdict. The report row is written first, so the verdict is durable before any
+ * image is deleted; a retry after a half-finished cleanup finds the row already holding the same
+ * verdict and only finishes the cleanup (Wave 3 WR-05). A run whose report was never written to
+ * a file has nowhere to keep a verdict, so it is refused and nothing is deleted (WR-04).
+ */
 export function recordVerdict(input: VerdictInput): VerdictResult {
   const state = listPending(input.shotsDir);
   const entry = state.items.find((candidate) => candidate.item === input.item);
   if (entry === undefined) throw new Error(MSG.notPending);
   if (entry.count < 1) throw new Error(MSG.noImages);
   if (input.images !== entry.count) throw new Error(MSG.count);
+  if (state.reportPath === null) throw new Error(MSG.noReport);
 
   const files = entry.labels.map((label) => shotPath(input.shotsDir, input.item, label));
-  for (const file of files) {
-    assertShotInside(input.shotsDir, file);
-    if (!isRegularFile(file)) throw new Error(MSG.missing);
-  }
+  for (const file of files) assertShotInside(input.shotsDir, file);
 
-  // The status comes from the same table the run used, with the verdict as the only new fact.
-  let reportText: string | null = null;
+  let reportText: string;
   let phasePrefix = UAT_PHASE_PREFIX;
-  if (state.reportPath !== null) {
-    try {
-      reportText = readFileSync(state.reportPath, "utf8");
-      const parsed = parseReport(reportText);
-      const row = parsed.rows.find((candidate) => candidate.number === input.item);
-      if (
-        parsed.frontMatter["run-id"] !== state.runId ||
-        row === undefined ||
-        row.status !== LOOK_PENDING_STATUS
-      ) {
-        throw new Error(MSG.report);
-      }
-      phasePrefix = parsed.frontMatter.phase ?? UAT_PHASE_PREFIX;
-    } catch {
+  let rowStatus: string;
+  let rowIsLook = false;
+  try {
+    reportText = readFileSync(state.reportPath, "utf8");
+    const parsed = parseReport(reportText);
+    const row = parsed.rows.find((candidate) => candidate.number === input.item);
+    if (parsed.frontMatter["run-id"] !== state.runId || row === undefined) {
       throw new Error(MSG.report);
     }
-  }
-  const resolution = resolveItemStatus({
-    item: { number: input.item, runClass: "auto+look" },
-    results: [
-      {
-        title: `[${phasePrefix}-UAT#${String(input.item).padStart(2, "0")}] look`,
-        state: "passed",
-        durationMs: 0,
-        message: "",
-      },
-    ],
-    looks: [{ item: input.item, verdict: input.verdict, images: input.images }],
-    profile: "standard",
-    phasePrefix,
-  });
-  if (
-    resolution.kind !== "status" ||
-    (resolution.status !== "pass" && resolution.status !== "fail")
-  ) {
+    rowStatus = row.status;
+    rowIsLook = row.runClass === "auto+look";
+    phasePrefix = parsed.frontMatter.phase ?? UAT_PHASE_PREFIX;
+  } catch {
     throw new Error(MSG.report);
   }
-  const status = resolution.status;
+  // The row already holds this very verdict: an earlier call wrote the report and then failed
+  // while deleting images or updating the state. Finish that cleanup.
+  const alreadyRecorded = rowIsLook && rowStatus === input.verdict;
+  if (!alreadyRecorded && rowStatus !== LOOK_PENDING_STATUS) throw new Error(MSG.report);
 
-  if (state.reportPath !== null && reportText !== null) {
-    const note = status === "pass" ? "the look verdict passed" : "the look verdict failed";
-    writeAtomic(state.reportPath, updateReportOutcome(reportText, input.item, status, note), 0o644);
+  if (!alreadyRecorded) {
+    for (const file of files) {
+      if (!isRegularFile(file)) throw new Error(MSG.missing);
+    }
+    // The status comes from the same table the run used, with the verdict as the only new fact.
+    const resolution = resolveItemStatus({
+      item: { number: input.item, runClass: "auto+look" },
+      results: [
+        {
+          title: `[${phasePrefix}-UAT#${String(input.item).padStart(2, "0")}] look`,
+          state: "passed",
+          durationMs: 0,
+          message: "",
+        },
+      ],
+      looks: [{ item: input.item, verdict: input.verdict, images: input.images }],
+      profile: "standard",
+      phasePrefix,
+    });
+    if (
+      resolution.kind !== "status" ||
+      (resolution.status !== "pass" && resolution.status !== "fail")
+    ) {
+      throw new Error(MSG.report);
+    }
+    const note =
+      resolution.status === "pass" ? "the look verdict passed" : "the look verdict failed";
+    writeAtomic(
+      state.reportPath,
+      updateReportOutcome(reportText, input.item, resolution.status, note),
+      0o644,
+    );
   }
-  for (const file of files) unlinkSync(file);
+  for (const file of files) unlinkIfPresent(file);
 
   const remaining = state.items.filter((candidate) => candidate.item !== input.item);
   if (remaining.length === 0) deleteShotsDir(input.shotsDir);
   else writeState(input.shotsDir, { ...state, items: remaining });
-  return { item: input.item, status, remaining: remaining.length };
+  return { item: input.item, status: input.verdict, remaining: remaining.length };
 }
