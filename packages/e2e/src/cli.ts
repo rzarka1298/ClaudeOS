@@ -1,5 +1,4 @@
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -66,6 +65,7 @@ import { generateUatVault } from "./uat-vault.js";
 import { isolatePluginData } from "./vault-plugin-data.js";
 import { parseVersions } from "./versions.js";
 import { OBSIDIAN_CACHE_DIR } from "./wdio-config.js";
+import { keepWdioLogs } from "./wdio-logs.js";
 import { spawnWdio } from "./wdio-spawn.js";
 
 /**
@@ -178,15 +178,7 @@ export function createRunPorts(): RunPorts {
     deleteShots: (dir) => {
       deleteShotsDir(dir);
     },
-    saveWdioLogs: ({ wdioDir, runId }) => {
-      if (!existsSync(wdioDir)) return null;
-      const dest = join(tmpdir(), `ccc-uat-wdio-logs-${runId}`);
-      mkdirSync(dest, { recursive: true, mode: 0o700 });
-      for (const name of readdirSync(wdioDir)) {
-        if (name.endsWith(".log")) copyFileSync(join(wdioDir, name), join(dest, name));
-      }
-      return dest;
-    },
+    saveWdioLogs: ({ wdioDir, runId }) => keepWdioLogs({ wdioDir, destBase: tmpdir(), runId }),
     spawnWdio: ({ sandbox, wdioEnv, extraArgs }) =>
       spawnWdio({
         sandbox,
