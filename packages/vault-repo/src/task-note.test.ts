@@ -265,6 +265,35 @@ describe("Test 3: dates stay strings", () => {
   });
 });
 
+describe("Test 3b: a date-only value keeps the quoting it had in the source", () => {
+  const note = (due: string): string =>
+    stringifyTaskNote(frontmatterFor("Dated", { due: "2026-10-04" }), "").replace(
+      /^due: .*$/m,
+      `due: ${due}`,
+    ) + "";
+
+  test("parse reports the unquoted date-only keys, and stringify writes them unquoted", () => {
+    const parsed = parseTaskNote(note("2026-10-04"));
+    expect([...parsed.plainDateKeys]).toEqual(["due"]);
+    const text = stringifyTaskNote(
+      parsed.frontmatter,
+      parsed.body,
+      parsed.passthrough,
+      parsed.plainDateKeys,
+    );
+    expect(text).toMatch(/^due: 2026-10-04$/m);
+    expect(parseTaskNote(text).frontmatter.due).toBe("2026-10-04");
+  });
+
+  test("a quoted source date is not reported and stays quoted", () => {
+    const parsed = parseTaskNote(note("'2026-10-04'"));
+    expect(parsed.plainDateKeys.size).toBe(0);
+    expect(
+      stringifyTaskNote(parsed.frontmatter, "", parsed.passthrough, parsed.plainDateKeys),
+    ).toMatch(/^due: ['"]2026-10-04['"]$/m);
+  });
+});
+
 describe("Test 4: Obsidian-style YAML variants", () => {
   test("every shared variant gives the outcome the corpus names", () => {
     for (const variant of YAML_NOTE_VARIANTS) {

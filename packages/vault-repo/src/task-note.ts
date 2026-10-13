@@ -83,6 +83,8 @@ export interface ParsedTaskNote {
   readonly body: string;
   /** Keys the task schema does not own, in read order, so a rewrite keeps them. */
   readonly passthrough: Record<string, unknown>;
+  /** Keys whose source value was an unquoted `YYYY-MM-DD`; a rewrite keeps them unquoted. */
+  readonly plainDateKeys: ReadonlySet<string>;
 }
 
 /**
@@ -218,7 +220,12 @@ export function parseTaskNote(raw: string): ParsedTaskNote {
       configurable: true,
     });
   }
-  return { frontmatter: result.data, body, passthrough };
+  return {
+    frontmatter: result.data,
+    body,
+    passthrough,
+    plainDateKeys: plainDateKeys(frontmatterBlock(raw)),
+  };
 }
 
 /** Rebuilds a nested map with its keys in a fixed order, dropping absent ones (YAML cannot dump `undefined`). */
@@ -232,8 +239,33 @@ function orderedMap(value: object, order: readonly string[]): Record<string, unk
   return ordered;
 }
 
+const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The top-level keys whose value is an UNQUOTED `YYYY-MM-DD` in a frontmatter
+ * block (js-yaml would re-quote them on dump, and Obsidian Properties then
+ * treats the value as text). Twin of the plugin's `plainDateKeys`.
+ */
+export function plainDateKeys(block: string): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const line of block.split("\n")) {
+    const match = /^([^\s:#'"][^:]*):[ \t]+(\d{4}-\d{2}-\d{2})[ \t]*(?:#.*)?$/.exec(line);
+    if (match) keys.add((match[1] as string).trim());
+  }
+  return keys;
+}
+
+/** The text between the opening and closing `---` lines (empty when there is none). */
+function frontmatterBlock(raw: string): string {
+  const end = raw.indexOf("\n---", 4);
+  return end === -1 ? "" : raw.slice(4, end + 1);
+}
+
 /** One `key: value` entry dumped on its own, so key order belongs to the loops below and not to a YAML option. */
-function dumpEntry(key: string, value: unknown): string {
+function dumpEntry(key: string, value: unknown, plainDates?: ReadonlySet<string>): string {
+  if (plainDates?.has(key) && typeof value === "string" && PLAIN_DATE.test(value)) {
+    return `${key}: ${value}\n`;
+  }
   return yaml.safeDump({ [key]: value }, { noRefs: true });
 }
 
@@ -255,6 +287,7 @@ export function stringifyTaskNote(
   frontmatter: TaskFrontmatter,
   body: string,
   passthrough: Readonly<Record<string, unknown>> = {},
+  plainDates: ReadonlySet<string> = new Set(),
 ): string {
   const source = frontmatter as unknown as Record<string, unknown>;
   let block = "";
@@ -266,12 +299,12 @@ export function stringifyTaskNote(
     } else if (key === "decision") {
       block += dumpEntry(key, orderedMap(value as object, TASK_DECISION_KEY_ORDER));
     } else {
-      block += dumpEntry(key, value);
+      block += dumpEntry(key, value, plainDates);
     }
   }
   for (const [key, value] of Object.entries(passthrough)) {
     if (value === undefined || OWNED_KEYS.has(key)) continue;
-    block += dumpEntry(key, value);
+    block += dumpEntry(key, value, plainDates);
   }
   return `---\n${block}---\n${body}`;
 }

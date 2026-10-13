@@ -156,7 +156,7 @@ export const COMPLETED_NOTE = [
   "title: Draft the weekly review",
   "status: done",
   "priority: high",
-  "due: '2026-10-09'",
+  "due: 2026-10-09",
   `completed: '${NOW}'`,
   "sourceType: manual",
   "dependencies: []",
