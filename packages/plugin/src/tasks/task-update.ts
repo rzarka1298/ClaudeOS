@@ -9,14 +9,13 @@ import {
   type TaskStatus,
 } from "@ccc/domain/task-schema.js";
 import yaml from "js-yaml";
-import { plainDateKeys } from "../frontmatter-serializer.js";
 import type { Vault } from "obsidian";
 import {
   applyConflictSafeUpdate,
   type ManagedNoteFile,
   type ProcessableVault,
 } from "../conflict-safe.js";
-import { serializeTaskFrontmatter } from "../frontmatter-serializer.js";
+import { plainDateKeys, serializeTaskFrontmatter } from "../frontmatter-serializer.js";
 
 /**
  * The plugin's one writer of task notes (plan 06-18; D-35, D-37, ADR-0022
@@ -181,7 +180,10 @@ export function parseTaskContent(content: string): ReadTaskResult {
   for (const [key, value] of Object.entries(data)) {
     if (!OWNED_KEYS.has(key)) passthrough.push([key, value]);
   }
-  return { kind: "ok", content, task: {
+  return {
+    kind: "ok",
+    content,
+    task: {
       frontmatter: result.data,
       body,
       passthrough,

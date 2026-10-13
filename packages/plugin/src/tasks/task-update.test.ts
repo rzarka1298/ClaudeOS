@@ -10,6 +10,7 @@ import {
   VALID_HOSTILE_TASK_TITLES,
 } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
+import { serializeTaskFrontmatter } from "../frontmatter-serializer.js";
 import { FakeVault } from "../test-support/fake-obsidian-host.js";
 import {
   COMPLETED_NOTE,
@@ -20,7 +21,6 @@ import {
   TASK_PATH,
   taskEditVault,
 } from "../test-support/task-note-fixtures.js";
-import { serializeTaskFrontmatter } from "../frontmatter-serializer.js";
 import { parseTaskContent, readTaskForEdit, updateTaskNote } from "./task-update.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -202,7 +202,11 @@ describe("Test 8b: a date-only value keeps the quoting it had in the source", ()
   it("serializeTaskFrontmatter writes only the named keys unquoted", () => {
     const read = parseTaskContent(OPEN_NOTE);
     if (read.kind !== "ok") throw new Error("fixture unreadable");
-    const withKeys = serializeTaskFrontmatter(read.task.frontmatter, read.task.passthrough, new Set(["due"]));
+    const withKeys = serializeTaskFrontmatter(
+      read.task.frontmatter,
+      read.task.passthrough,
+      new Set(["due"]),
+    );
     const without = serializeTaskFrontmatter(read.task.frontmatter, read.task.passthrough);
     expect(withKeys).toContain("due: 2026-10-09\n");
     expect(without).toContain("due: '2026-10-09'\n");

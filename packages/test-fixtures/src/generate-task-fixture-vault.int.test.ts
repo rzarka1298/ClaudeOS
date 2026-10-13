@@ -224,8 +224,17 @@ describe("live-check notes (Test 3)", () => {
     const read = parseTaskContent(text);
     if (read.kind !== "ok") throw new Error("live-check note unreadable");
     const doneAt = "2026-10-13T10:00:00.000Z";
-    const done = { ...read.task.frontmatter, status: "done" as const, updated: doneAt, completed: doneAt };
-    const pluginBlock = serializeTaskFrontmatter(done, read.task.passthrough, read.task.plainDateKeys);
+    const done = {
+      ...read.task.frontmatter,
+      status: "done" as const,
+      updated: doneAt,
+      completed: doneAt,
+    };
+    const pluginBlock = serializeTaskFrontmatter(
+      done,
+      read.task.passthrough,
+      read.task.plainDateKeys,
+    );
     const service = parseTaskNote(text);
     const serviceText = stringifyTaskNote(
       { ...service.frontmatter, status: "done", updated: doneAt, completed: doneAt },

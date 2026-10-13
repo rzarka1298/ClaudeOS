@@ -275,7 +275,12 @@ describe("Test 3b: a date-only value keeps the quoting it had in the source", ()
   test("parse reports the unquoted date-only keys, and stringify writes them unquoted", () => {
     const parsed = parseTaskNote(note("2026-10-04"));
     expect([...parsed.plainDateKeys]).toEqual(["due"]);
-    const text = stringifyTaskNote(parsed.frontmatter, parsed.body, parsed.passthrough, parsed.plainDateKeys);
+    const text = stringifyTaskNote(
+      parsed.frontmatter,
+      parsed.body,
+      parsed.passthrough,
+      parsed.plainDateKeys,
+    );
     expect(text).toMatch(/^due: 2026-10-04$/m);
     expect(parseTaskNote(text).frontmatter.due).toBe("2026-10-04");
   });
@@ -283,9 +288,9 @@ describe("Test 3b: a date-only value keeps the quoting it had in the source", ()
   test("a quoted source date is not reported and stays quoted", () => {
     const parsed = parseTaskNote(note("'2026-10-04'"));
     expect(parsed.plainDateKeys.size).toBe(0);
-    expect(stringifyTaskNote(parsed.frontmatter, "", parsed.passthrough, parsed.plainDateKeys)).toMatch(
-      /^due: ['"]2026-10-04['"]$/m,
-    );
+    expect(
+      stringifyTaskNote(parsed.frontmatter, "", parsed.passthrough, parsed.plainDateKeys),
+    ).toMatch(/^due: ['"]2026-10-04['"]$/m);
   });
 });
 
