@@ -302,6 +302,7 @@ describe("runUat order (Test 3)", () => {
       "teardown",
       "delete-account",
       "leak-check",
+      "write-report",
     ]);
     expect(h.calls).not.toContain("vault-big");
   });
@@ -635,11 +636,19 @@ describe("runUat records run problems in the report (Wave 3 WR-01)", () => {
     expect(lastReport(h)).toContain("cleanup-error");
   });
 
-  it("a clean run carries no run-problems line and writes the report once", async () => {
+  it("a clean run ends with a report without run-problems, after a pending first write", async () => {
     const h = harness({}, { results: allPass, looks: [] });
     await runUat(options(), h.ports);
-    expect(h.reports).toHaveLength(1);
+    expect(h.reports).toHaveLength(2);
+    expect(h.reports[0]?.text).toContain("run-problems: teardown-pending");
     expect(lastReport(h)).not.toContain("run-problems");
+  });
+
+  it("a run that never finished teardown leaves a report that ratify refuses (Codex 2)", async () => {
+    const h = harness({}, { results: allPass, looks: [] });
+    await runUat(options(), h.ports);
+    const first = h.reports[0]?.text ?? "";
+    expect(refusalReasons(first).some((reason) => /recorded problems/.test(reason))).toBe(true);
   });
 });
 

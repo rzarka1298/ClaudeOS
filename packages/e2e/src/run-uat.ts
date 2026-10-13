@@ -284,7 +284,9 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
       }
       if (!mapped) text = addFrontMatterNote(text, "item-mapping", "unavailable");
       const baseReport = text;
-      const writtenProblems = wdioFailed ? ["wdio-failed"] : [];
+      // `teardown-pending` stays in the report until teardown finished and the final outcome was
+      // written; a run that dies in between can never be ratified (Codex finding 2).
+      const writtenProblems = [...(wdioFailed ? ["wdio-failed"] : []), "teardown-pending"];
       if (writtenProblems.length > 0) {
         text = addFrontMatterNote(text, "run-problems", writtenProblems.join(","));
       }
@@ -361,15 +363,15 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
       ...(outcome.cleanupErrors.length > 0 ? ["cleanup-error"] : []),
       ...(outcome.error !== undefined ? ["run-error"] : []),
     ];
-    if (final.join(",") !== produced.writtenProblems.join(",")) {
-      try {
-        ports.writeReport(
-          produced.reportPath,
-          addFrontMatterNote(produced.baseReport, "run-problems", final.join(",")),
-        );
-      } catch {
-        problems.push("the report could not be updated with the run problems");
-      }
+    try {
+      ports.writeReport(
+        produced.reportPath,
+        final.length === 0
+          ? produced.baseReport
+          : addFrontMatterNote(produced.baseReport, "run-problems", final.join(",")),
+      );
+    } catch {
+      problems.push("the report could not be updated with the final run outcome");
     }
   }
   const summary = produced === undefined ? "" : ` ${produced.counts}`;
