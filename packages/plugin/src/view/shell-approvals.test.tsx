@@ -1,5 +1,6 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { configureApprovalsApi } from "../approvals/api.js";
 import {
   adoptApprovalsSnapshot,
   approvalDetailFocusRequested,
@@ -8,6 +9,7 @@ import {
 } from "../approvals/signals.js";
 import { connectionState } from "../connection-state.js";
 import { approvalsSnapshot, proposalId, summary } from "../test-support/approval-fixtures.js";
+import { approvalDetail, testApprovalView } from "../test-support/approval-view-fixtures.js";
 import type {
   NavigationSelection,
   QuickActionDescriptor,
@@ -163,6 +165,37 @@ describe("navigation intents (Test 3)", () => {
     expect(selectedProposalId.value).toBe(proposalId(7));
     expect(approvalDetailFocusRequested.value).toBe(false);
     expect(document.querySelector(".ccc-approval-detail")).not.toBeNull();
+  });
+
+  it("a second request for the request that is already open moves focus into its pane again (banner click, run 15)", async () => {
+    connectionState.value = { kind: "live" };
+    adoptApprovalsSnapshot(approvalsSnapshot({ pending: [summary(7)] }));
+    configureApprovalsApi({
+      list: async () => approvalsSnapshot({ pending: [summary(7)] }),
+      get: async () => approvalDetail(testApprovalView({ proposalId: proposalId(7) })),
+      decide: async () => {
+        throw new Error("decide was not expected");
+      },
+      test: async () => {
+        throw new Error("test was not expected");
+      },
+    });
+    render(<Shell />);
+    await act(async () => {
+      requestDestination("agent-runs", { focusProposalId: proposalId(7) });
+    });
+    await waitFor(() =>
+      expect(document.activeElement?.closest(".ccc-approval-detail")).not.toBeNull(),
+    );
+    // Focus leaves the pane, as it does when the owner works elsewhere; then the banner is clicked.
+    (document.activeElement as HTMLElement).blur();
+    tab(/^Agent runs/).focus();
+    await act(async () => {
+      requestDestination("agent-runs", { focusProposalId: proposalId(7) });
+    });
+    await waitFor(() =>
+      expect(document.activeElement?.closest(".ccc-approval-detail")).not.toBeNull(),
+    );
   });
 
   it("a request asking for the create form navigates to Tasks, which opens the form and consumes the intent", async () => {

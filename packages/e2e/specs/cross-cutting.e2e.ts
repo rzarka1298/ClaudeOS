@@ -542,7 +542,19 @@ describe("cross-cutting items", () => {
 
     // The retained notification handler (the banner click) lands in the same place.
     const fromBanner: string[] = [];
-    expect(await browser.execute(fireNotificationClick, 0)).toBe(true);
+    // The spy keeps every notification of the session (item 12's included), so the click must be
+    // the one for THIS request, found by its tag; index 0 was a request item 12 had long settled
+    // (run 15: the click opened a decided request and focus never reached Deny).
+    const pendingNow = (
+      await createApprovalsClient(
+        createAuthenticatedClient({ socketPath: context.socketPath }),
+      ).list()
+    ).pending;
+    expect(pendingNow).toHaveLength(1);
+    const recorded = (await browser.execute(readNotifications)).records;
+    const bannerIndex = recorded.findIndex((record) => record.tag === pendingNow[0]?.proposalId);
+    expect(bannerIndex).toBeGreaterThanOrEqual(0);
+    expect(await browser.execute(fireNotificationClick, bannerIndex)).toBe(true);
     // The click selects the request and the pane then moves focus (heading, then Deny) as the
     // request loads. Wait until focus is inside the opened request and has settled on Deny; only
     // a focus that settled elsewhere is walked with Tab.
