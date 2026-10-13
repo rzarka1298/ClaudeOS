@@ -79,6 +79,7 @@ import {
   sampleMotionInRenderer,
   scanForAlwaysAllow,
 } from "../src/spec-support/cross-support.js";
+import { waitUntilQuiet } from "../src/spec-support/quiescence.js";
 import { copyStore, queryStore } from "../src/store-copy.js";
 
 const asDriver = (): DriverBrowser => browser as unknown as DriverBrowser;
@@ -417,8 +418,32 @@ describe("cross-cutting items", () => {
         diffFileHashes(beforeFiles, hashVaultFiles(vaultPath, context.runRoot)).changed.length > 0,
       { timeoutMs: 20_000, intervalMs: 500, describe: "the task note to change" },
     );
-    // A short settle period: absence of a prompt, an approval or a new process has no event to wait on.
-    await browser.pause(2_000);
+    // Absence of a prompt, an approval or a new process has no event to wait on, so the vault
+    // files and the proposal count must stay unchanged for a whole quiet window, sampled once a
+    // second, within a bound. A fixed pause passed vacuously when a late write arrived (WR-09).
+    const quiet = await waitUntilQuiet({
+      sample: async () => {
+        const settled = copyStore({
+          runtimeDir: context.paths.runtimeDir,
+          destDir: context.paths.tmpDir,
+          runRoot: context.runRoot,
+        });
+        return {
+          files: diffFileHashes(beforeFiles, hashVaultFiles(vaultPath, context.runRoot)),
+          proposals: await queryStore({
+            copyPath: settled.copyPath,
+            sql: PROPOSAL_COUNT_SQL,
+            runRoot: context.runRoot,
+          }),
+        };
+      },
+      sleep: (ms) => browser.pause(ms),
+      now: () => Date.now(),
+      quietMs: 3_000,
+      intervalMs: 1_000,
+      timeoutMs: 15_000,
+    });
+    expect(quiet.quiet).toBe(true);
 
     const diff = diffFileHashes(beforeFiles, hashVaultFiles(vaultPath, context.runRoot));
     // The service regenerates a folder's index.md when a note in it changes; that is generated
