@@ -10,6 +10,7 @@ import {
   runUat,
 } from "./run-uat.js";
 import type { SandboxHandle, SandboxOutcome } from "./sandbox.js";
+import { ratifyReport } from "./ratify.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
 import type { SpecTitle } from "./tag-lint.js";
 import { parseUatScript } from "./uat-tags.js";
@@ -105,6 +106,7 @@ function harness(
     script?: string | null;
     looks?: LookPendingItem[];
     leaks?: number;
+    cleanupErrors?: number;
     titles?: SpecTitle[];
   } = {},
 ): Harness {
@@ -159,7 +161,7 @@ function harness(
         value,
         error,
         leaks,
-        cleanupErrors: [],
+        cleanupErrors: Array.from({ length: setup.cleanupErrors ?? 0 }, () => new Error("cleanup")),
         runId: RUN_ID,
         runRoot: ROOT,
         runRootRemoved: leaks.length === 0,
@@ -584,5 +586,59 @@ describe("the synthetic script used above", () => {
     const parsed = parseUatScript(SCRIPT);
     expect(parsed.items.map((item) => item.number)).toEqual([1, 2, 5, 7, 21]);
     expect(parsed.findings).toEqual([]);
+  });
+});
+
+describe("runUat records run problems in the report (Wave 3 WR-01)", () => {
+  const ratifyInput = {
+    runId: RUN_ID,
+    statement: "owner statement",
+    date: "2026-10-12",
+    currentHead: HEAD,
+    changedFiles: [] as string[],
+    currentClean: true,
+  };
+  const allPass: ResultRecord[] = [
+    record("[06-UAT#05] deny", "passed"),
+    record("[06-UAT#02] click handler part", "passed"),
+  ];
+  const lastReport = (h: Harness): string => h.reports[h.reports.length - 1]?.text ?? "";
+  const refusalReasons = (text: string): string[] => {
+    const result = ratifyReport(text, ratifyInput);
+    return result.ok ? [] : result.reasons;
+  };
+
+  it("a wdio failure after every row passed leaves a report that ratify refuses", async () => {
+    const h = harness(
+      { spawnWdio: async () => ({ exitCode: 1, signal: null }) },
+      { results: allPass, looks: [] },
+    );
+    await runUat(options(), h.ports);
+    expect(lastReport(h)).toContain("run-problems: wdio-failed");
+    expect(refusalReasons(lastReport(h)).some((reason) => /recorded problems/.test(reason))).toBe(
+      true,
+    );
+  });
+
+  it("a leaked process is added to the written report after teardown", async () => {
+    const h = harness({}, { results: allPass, looks: [], leaks: 1 });
+    await runUat(options(), h.ports);
+    expect(lastReport(h)).toContain("run-problems: leak");
+    expect(refusalReasons(lastReport(h)).some((reason) => /recorded problems/.test(reason))).toBe(
+      true,
+    );
+  });
+
+  it("a cleanup error is added to the written report after teardown", async () => {
+    const h = harness({}, { results: allPass, looks: [], cleanupErrors: 1 });
+    await runUat(options(), h.ports);
+    expect(lastReport(h)).toContain("cleanup-error");
+  });
+
+  it("a clean run carries no run-problems line and writes the report once", async () => {
+    const h = harness({}, { results: allPass, looks: [] });
+    await runUat(options(), h.ports);
+    expect(h.reports).toHaveLength(1);
+    expect(lastReport(h)).not.toContain("run-problems");
   });
 });

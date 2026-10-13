@@ -151,6 +151,10 @@ interface Produced {
   wdioFailed: boolean;
   versionProblems: string[];
   counts: string;
+  /** The report text before any run-problems line, kept to re-render it after teardown. */
+  baseReport: string;
+  /** The run-problems words already written into the report from inside the body. */
+  writtenProblems: string[];
 }
 
 /** One row per script item (D-09), or one per recorded test when there is no script. */
@@ -278,6 +282,11 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
         text = addFrontMatterNote(text, "version-mismatch", versionProblems.join(","));
       }
       if (!mapped) text = addFrontMatterNote(text, "item-mapping", "unavailable");
+      const baseReport = text;
+      const writtenProblems = wdioFailed ? ["wdio-failed"] : [];
+      if (writtenProblems.length > 0) {
+        text = addFrontMatterNote(text, "run-problems", writtenProblems.join(","));
+      }
       const reportPath = resolveReportPath({
         phaseDir: options.phaseDir,
         phasePrefix,
@@ -309,6 +318,8 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
         wdioFailed,
         versionProblems,
         counts,
+        baseReport,
+        writtenProblems,
       };
     });
   } catch (error) {
@@ -339,6 +350,26 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   }
   if ((produced?.failedItems.length ?? 0) > 0) {
     problems.push(`items not passed: ${produced?.failedItems.join(", ")}`);
+  }
+  // Leaks and cleanup errors are only known after teardown: put them in the report too, so a
+  // run that exited non-zero cannot be ratified (Wave 3 WR-01).
+  if (produced !== undefined && produced.reportPath !== null) {
+    const final = [
+      ...(produced.wdioFailed ? ["wdio-failed"] : []),
+      ...(outcome.leaks.length > 0 ? ["leak"] : []),
+      ...(outcome.cleanupErrors.length > 0 ? ["cleanup-error"] : []),
+      ...(outcome.error !== undefined ? ["run-error"] : []),
+    ];
+    if (final.join(",") !== produced.writtenProblems.join(",")) {
+      try {
+        ports.writeReport(
+          produced.reportPath,
+          addFrontMatterNote(produced.baseReport, "run-problems", final.join(",")),
+        );
+      } catch {
+        problems.push("the report could not be updated with the run problems");
+      }
+    }
   }
   const summary = produced === undefined ? "" : ` ${produced.counts}`;
   return {

@@ -63,6 +63,9 @@ export function checkRatifiable(input: {
   if (front["version-mismatch"] !== undefined) {
     reasons.push("the run recorded a version mismatch");
   }
+  if (front["run-problems"] !== undefined) {
+    reasons.push("the run recorded problems (wdio failure, leak or cleanup error)");
+  }
   if (front["item-mapping"] === "unavailable") {
     reasons.push("the run has no item mapping to a UAT script");
   }
