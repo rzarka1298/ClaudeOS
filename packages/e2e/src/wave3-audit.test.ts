@@ -28,7 +28,9 @@ function item(n: number, run: string, extra: string[], results: string[]): strin
 }
 
 function wrap(body: string[]): string {
-  return ["---", "status: testing", "phase: 06-demo", "---", "", "## Tests", "", ...body].join("\n");
+  return ["---", "status: testing", "phase: 06-demo", "---", "", "## Tests", "", ...body].join(
+    "\n",
+  );
 }
 
 function unchangedOrRefused(text: string): void {
@@ -68,7 +70,13 @@ describe("wave 3 audit: ratify unknown status", () => {
       number: n,
       title: `T${n}`,
       runClass: "auto" as const,
-      resolution: { kind: "status" as const, item: n, status: "pass" as const, reason: "r", message: "" },
+      resolution: {
+        kind: "status" as const,
+        item: n,
+        status: "pass" as const,
+        reason: "r",
+        message: "",
+      },
     });
     const rendered = renderReport({
       runId: "0123abcd",

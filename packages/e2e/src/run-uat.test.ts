@@ -664,3 +664,41 @@ describe("runUat purges screenshots only after the sandbox started (Codex findin
     expect(h.calls).not.toContain("purge-shots");
   });
 });
+
+describe("runUat finalizes a stdout-only report after teardown (Codex re-review 1)", () => {
+  const allPass: ResultRecord[] = [
+    record("[06-UAT#05] deny", "passed"),
+    record("[06-UAT#02] click handler part", "passed"),
+  ];
+  const noFile = (): RunOptions => options({ phaseDir: undefined, out: undefined });
+  const ratifyInput = {
+    runId: RUN_ID,
+    statement: "owner statement",
+    date: "2026-10-12",
+    currentHead: HEAD,
+    changedFiles: [] as string[],
+    currentClean: true,
+  };
+
+  it("prints exactly one report, the final one, without teardown-pending", async () => {
+    const h = harness({}, { results: allPass, looks: [] });
+    await runUat(noFile(), h.ports);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]?.path).toBeNull();
+    expect(h.reports[0]?.text).not.toContain("teardown-pending");
+    const result = ratifyReport(h.reports[0]?.text ?? "", ratifyInput);
+    const reasons = result.ok ? [] : result.reasons;
+    expect(reasons.some((reason) => /recorded problems/.test(reason))).toBe(false);
+  });
+
+  it("carries leaks and wdio failure in the one printed report", async () => {
+    const h = harness(
+      { spawnWdio: async () => ({ exitCode: 1, signal: null }) },
+      { results: allPass, looks: [], leaks: 1 },
+    );
+    await runUat(noFile(), h.ports);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]?.text).toContain("run-problems: wdio-failed,leak");
+    expect(h.reports[0]?.text).not.toContain("teardown-pending");
+  });
+});

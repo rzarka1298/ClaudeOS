@@ -295,7 +295,10 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
         phasePrefix,
         out: options.out,
       });
-      ports.writeReport(reportPath, text);
+      // A stdout-only report is printed once, after teardown, with the final outcome: printing a
+      // provisional one first would leave two reports on the screen. A file report is written now
+      // (marked teardown-pending) so a crash leaves something, and finalised below.
+      if (reportPath !== null) ports.writeReport(reportPath, text);
 
       const pending = rows
         .filter((row) => statusOf(row) === LOOK_PENDING_STATUS)
@@ -356,7 +359,7 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   }
   // Leaks and cleanup errors are only known after teardown: put them in the report too, so a
   // run that exited non-zero cannot be ratified (Wave 3 WR-01).
-  if (produced !== undefined && produced.reportPath !== null) {
+  if (produced !== undefined) {
     const final = [
       ...(produced.wdioFailed ? ["wdio-failed"] : []),
       ...(outcome.leaks.length > 0 ? ["leak"] : []),

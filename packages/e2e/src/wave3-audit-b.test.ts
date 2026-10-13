@@ -28,10 +28,14 @@ describe("wave 3 audit b: staleness clean flags", () => {
 describe("wave 3 audit b: motion verdict", () => {
   it("counts an unreadable duration as motion, never as off", () => {
     expect(
-      allMotionOff([{ transitionDuration: "garbage", animationDuration: "0s", animationName: "none" }]),
+      allMotionOff([
+        { transitionDuration: "garbage", animationDuration: "0s", animationName: "none" },
+      ]),
     ).toBe(false);
     expect(
-      anyMotionOn([{ transitionDuration: "garbage", animationDuration: "0s", animationName: "none" }]),
+      anyMotionOn([
+        { transitionDuration: "garbage", animationDuration: "0s", animationName: "none" },
+      ]),
     ).toBe(true);
   });
   it("counts any named animation with a positive duration as motion", () => {
