@@ -231,7 +231,11 @@ async function pressTabUntil(
     sequence.push(record);
     if (match(record)) return record;
   }
-  throw new Error("Keyboard focus never reached the expected control.");
+  const seen = sequence
+    .slice(-max)
+    .map((record) => `${record.tag}:${record.name}`)
+    .join(" | ");
+  throw new Error(`Keyboard focus never reached the expected control; focus visited: ${seen}`);
 }
 
 before(async function startRun() {
@@ -257,6 +261,12 @@ describe("cross-cutting items", () => {
     await browser.executeObsidian(({ app }) => {
       (app as unknown as { setting?: { close(): void } }).setting?.close();
     });
+    // A test that failed mid-flow must not leave its request pending for the next spec.
+    try {
+      await settlePendingRequests();
+    } catch {
+      // the next spec starts from a clean slate itself
+    }
   });
 
   it("[06-UAT#23] Reduced motion turns every transition and animation off and still announces", async function reducedMotion() {
@@ -533,17 +543,43 @@ describe("cross-cutting items", () => {
     // The retained notification handler (the banner click) lands in the same place.
     const fromBanner: string[] = [];
     expect(await browser.execute(fireNotificationClick, 0)).toBe(true);
-    const landed = await browser.execute(recordFocusInRenderer);
-    if (landed !== null) fromBanner.push(landed.name);
-    fromBanner.push(
-      (
-        await pressTabUntil(
-          (r) => r.name.startsWith(DENY_LABEL) || r.name.startsWith(APPROVE_LABEL),
-          6,
-          [],
-        )
-      ).name,
+    // The click selects the request and the pane then moves focus (heading, then Deny) as the
+    // request loads. Wait until focus is inside the opened request and has settled on Deny; only
+    // a focus that settled elsewhere is walked with Tab.
+    await pollUntil(
+      () =>
+        browser.execute(
+          () =>
+            document.activeElement?.closest(".ccc-approval-detail") != null &&
+            document.activeElement !== document.body,
+        ),
+      {
+        timeoutMs: 15_000,
+        intervalMs: 250,
+        describe: "focus inside the request opened by the banner",
+      },
     );
+    let landed = await browser.execute(recordFocusInRenderer);
+    for (
+      let attempt = 0;
+      attempt < 12 && landed?.name.startsWith(DENY_LABEL) !== true;
+      attempt += 1
+    ) {
+      await browser.pause(250);
+      landed = await browser.execute(recordFocusInRenderer);
+    }
+    if (landed !== null) fromBanner.push(landed.name);
+    if (landed?.name.startsWith(DENY_LABEL) !== true) {
+      fromBanner.push(
+        (
+          await pressTabUntil(
+            (r) => r.name.startsWith(DENY_LABEL) || r.name.startsWith(APPROVE_LABEL),
+            6,
+            [],
+          )
+        ).name,
+      );
+    }
     expect(firstFocusInRequestIsDeny(fromBanner)).toBe(true);
 
     // Tasks: the tab strip by arrow keys, then chips, list, detail and the create form.

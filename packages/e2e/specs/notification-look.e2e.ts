@@ -79,6 +79,9 @@ async function settlePendingRequests(): Promise<void> {
 async function sendTestApproval(): Promise<void> {
   // Through the service client (the settings dialog cannot be attached programmatically in this
   // Obsidian, see item 13); the notification path under test starts at the plugin's upsert hook.
+  // Start from a clean slate: an earlier spec that failed mid-flow can leave its request pending,
+  // and the service then refuses a new test request ("already pending").
+  await settlePendingRequests();
   await sendTestApprovalViaClient(
     createApprovalsClient(createAuthenticatedClient({ socketPath: context.socketPath })),
   );
