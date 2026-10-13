@@ -16,6 +16,7 @@ import {
   copyStore,
   EFFECT_COUNT_SQL,
   EFFECTS_PER_PROPOSAL_SQL,
+  EXPIRED_EVENT_TIMES_SQL,
   EXPIRED_EVENTS_SQL,
   queryStore,
 } from "../store-copy.js";
@@ -235,10 +236,32 @@ export function settledWithinGrace(
   return observedAtMs >= expiresAtMs && observedAtMs - expiresAtMs <= graceMs;
 }
 
-/** Just after the lifetime ends, before the 500 ms sweeper is likely to have moved the request. */
-export const EXPIRY_PRESS_OFFSET_MS = 5;
-/** The 500 ms sweep, the event to the plugin and one 200 ms poll, with margin. */
+/**
+ * The press is scheduled this long after the lifetime ends: far above timer jitter and clock
+ * skew between the page and the service, still well inside the 500 ms sweeper's first pass.
+ */
+export const EXPIRY_PRESS_OFFSET_MS = 50;
+/**
+ * How long the pane may take to SHOW the expiry: the 500 ms sweep, the event to the plugin, one
+ * 200 ms poll and a wdio round trip. This bounds the observer, not the service.
+ */
 export const EXPIRY_SETTLE_GRACE_MS = 3_000;
+/**
+ * The service side bound, from the UAT wording ("within about a second"): the audited `expired`
+ * event must carry a timestamp at most this long after the lifetime ended.
+ */
+export const EXPIRY_AUDIT_BOUND_MS = 1_000;
+
+/** True when the audited expiry (an ISO timestamp) falls in [expiresAt, expiresAt + bound]. */
+export function expiredWithinBound(
+  expiresAtMs: number,
+  auditedAt: string | undefined,
+  boundMs: number = EXPIRY_AUDIT_BOUND_MS,
+): boolean {
+  if (auditedAt === undefined) return false;
+  const at = Date.parse(auditedAt);
+  return Number.isFinite(at) && at >= expiresAtMs && at - expiresAtMs <= boundMs;
+}
 /** The test lifetime is 15 s; anything longer means the test override is not in force. */
 export const EXPIRY_LIFETIME_CEILING_MS = 20_000;
 /** Reopening the settings tab and reading it twice a second is enough to catch a re-render. */
@@ -758,14 +781,23 @@ export function toggleSettingRow(name: string): boolean {
  * Returns false when the control is not on screen now.
  */
 export function scheduleDecisionClick(kind: "deny" | "approve", atEpochMs: number): boolean {
+  const press = window as unknown as { __cccDecisionPress?: string };
+  press.__cccDecisionPress = "pending";
   if (document.querySelector(`[data-decision='${kind}']`) === null) return false;
   setTimeout(
     () => {
-      document.querySelector(`[data-decision='${kind}']`)?.click();
+      const button = document.querySelector(`[data-decision='${kind}']`);
+      press.__cccDecisionPress = button === null ? "no-button" : "clicked";
+      button?.click();
     },
     Math.max(0, atEpochMs - Date.now()),
   );
   return true;
+}
+
+/** Runs in the renderer: what the scheduled press did: pending, clicked or no-button. */
+export function readScheduledPress(): string {
+  return (window as unknown as { __cccDecisionPress?: string }).__cccDecisionPress ?? "none";
 }
 
 /** Runs in the renderer: presses a destination tab (agent-runs, tasks ...); false when absent. */
@@ -960,7 +992,7 @@ export interface StoreReading {
   rows: AuditRowLike[];
   effectCount: number;
   effectsPerProposal: Array<{ proposalId: string; effects: number }>;
-  expired: Array<{ seq: number; proposalId: string; event: string }>;
+  expired: Array<{ seq: number; proposalId: string; event: string; at?: string }>;
 }
 
 const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
@@ -981,6 +1013,11 @@ export async function readStore(context: RunContext): Promise<StoreReading> {
     runRoot: context.runRoot,
   });
   const expired = await queryStore({ copyPath, sql: EXPIRED_EVENTS_SQL, runRoot: context.runRoot });
+  const expiredTimes = await queryStore({
+    copyPath,
+    sql: EXPIRED_EVENT_TIMES_SQL,
+    runRoot: context.runRoot,
+  });
   return {
     rows: rows.map((row) => ({
       seq: num(row["seq"]),
@@ -993,11 +1030,19 @@ export async function readStore(context: RunContext): Promise<StoreReading> {
       proposalId: text(row["proposal_id"]) ?? "",
       effects: num(row["effects"]),
     })),
-    expired: expired.map((row) => ({
-      seq: num(row["seq"]),
-      proposalId: text(row["proposal_id"]) ?? "",
-      event: text(row["event"]) ?? "",
-    })),
+    expired: expired.map((row) => {
+      const proposalId = text(row["proposal_id"]) ?? "";
+      const at =
+        expiredTimes
+          .map((entry) => ({ id: text(entry["proposal_id"]), at: text(entry["at"]) }))
+          .find((entry) => entry.id === proposalId)?.at ?? undefined;
+      return {
+        seq: num(row["seq"]),
+        proposalId,
+        event: text(row["event"]) ?? "",
+        ...(at === undefined ? {} : { at }),
+      };
+    }),
   };
 }
 

@@ -11,6 +11,7 @@ import { APPROVALS_COPY } from "../src/spec-support/approvals-copy.js";
 import {
   type ApprovalsEnvironment,
   clearPending,
+  EXPIRY_AUDIT_BOUND_MS,
   EXPIRY_LIFETIME_CEILING_MS,
   EXPIRY_PRESS_OFFSET_MS,
   EXPIRY_SETTLE_GRACE_MS,
@@ -21,6 +22,8 @@ import {
   scheduleDecisionClick,
   selectOnlyPendingRequest,
   sendTestApproval,
+  expiredWithinBound,
+  readScheduledPress,
   settledWithinGrace,
   startApprovalsEnvironment,
   supportBrowser,
@@ -77,6 +80,9 @@ describe("approvals expiry", () => {
     );
     const observedAtMs = Date.now();
     expect(settledWithinGrace(expiresAtMs, observedAtMs, EXPIRY_SETTLE_GRACE_MS)).toBe(true);
+    // The scheduled press must have found the Deny button; if the pane had already dropped it,
+    // the closed-error line below can never appear and the cause is this, not a slow service.
+    expect(await browser.execute(readScheduledPress)).toBe("clicked");
 
     const closed = await waitForPane(
       browser,
@@ -96,6 +102,10 @@ describe("approvals expiry", () => {
       const read = await readStore(env.context);
       return read.expired.some((row) => row.proposalId === proposalId) ? read : null;
     }, uiWait("the expired event in the audit rows"));
-    expect(reading.expired.find((row) => row.proposalId === proposalId)?.event).toBe("expired");
+    const audited = reading.expired.find((row) => row.proposalId === proposalId);
+    expect(audited?.event).toBe("expired");
+    // The UAT bound (about a second) is checked on the service's own audit timestamp, not on
+    // when wdio happened to observe the pane.
+    expect(expiredWithinBound(expiresAtMs, audited?.at, EXPIRY_AUDIT_BOUND_MS)).toBe(true);
   });
 });

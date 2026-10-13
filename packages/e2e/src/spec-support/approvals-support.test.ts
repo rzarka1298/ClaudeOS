@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AuditRowLike,
   type ChipStep,
   checkChipTranscript,
   checkDeniedAudit,
   containsInOrder,
+  expiredWithinBound,
+  readScheduledPress,
+  scheduleDecisionClick,
   findNewestMirrorNote,
   findNewNotification,
   isExactlyOneNavigation,
@@ -213,5 +216,53 @@ describe("findNewNotification and parseCountChip (Task 2 Test 2)", () => {
     expect(parseCountChip("9+")).toEqual({ count: 9, capped: true });
     expect(parseCountChip("")).toBeNull();
     expect(parseCountChip("many")).toBeNull();
+  });
+});
+
+describe("expiry timing (Wave 3 WR-08)", () => {
+  it("expiredWithinBound uses the UAT bound of one second on the audit timestamp", () => {
+    const expiresAt = Date.parse("2026-10-12T10:00:15.000Z");
+    expect(expiredWithinBound(expiresAt, "2026-10-12T10:00:15.400Z")).toBe(true);
+    expect(expiredWithinBound(expiresAt, "2026-10-12T10:00:16.000Z")).toBe(true);
+    expect(expiredWithinBound(expiresAt, "2026-10-12T10:00:16.100Z")).toBe(false);
+    expect(expiredWithinBound(expiresAt, "2026-10-12T10:00:14.900Z")).toBe(false);
+    expect(expiredWithinBound(expiresAt, undefined)).toBe(false);
+    expect(expiredWithinBound(expiresAt, "not a date")).toBe(false);
+  });
+
+  describe("scheduleDecisionClick reports what the press did", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    });
+
+    function setup(present: () => boolean) {
+      vi.useFakeTimers();
+      const clicks: string[] = [];
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("document", {
+        querySelector: () => (present() ? { click: () => clicks.push("click") } : null),
+      });
+      return clicks;
+    }
+
+    it("is 'no-button' when the button disappeared before the timer fired", () => {
+      let present = true;
+      const clicks = setup(() => present);
+      expect(scheduleDecisionClick("deny", Date.now() + 50)).toBe(true);
+      present = false;
+      vi.advanceTimersByTime(100);
+      expect(readScheduledPress()).toBe("no-button");
+      expect(clicks).toEqual([]);
+    });
+
+    it("is 'clicked' when the button was still there", () => {
+      const clicks = setup(() => true);
+      scheduleDecisionClick("deny", Date.now() + 50);
+      expect(readScheduledPress()).toBe("pending");
+      vi.advanceTimersByTime(100);
+      expect(readScheduledPress()).toBe("clicked");
+      expect(clicks).toEqual(["click"]);
+    });
   });
 });
