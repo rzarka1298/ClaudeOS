@@ -278,6 +278,13 @@ after(async function stopRun() {
 });
 
 describe("cross-cutting items", () => {
+  // Never leave Obsidian's settings dialog open between tests.
+  afterEach(async () => {
+    await browser.executeObsidian(({ app }) => {
+      (app as unknown as { setting?: { close(): void } }).setting?.close();
+    });
+  });
+
   it("[06-UAT#23] Reduced motion turns every transition and animation off and still announces", async function reducedMotion() {
     try {
       await setReducedMotion("auto");

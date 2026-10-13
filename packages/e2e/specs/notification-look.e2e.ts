@@ -138,6 +138,13 @@ after(async function stopRun() {
 });
 
 describe("notification banner", () => {
+  // Never leave Obsidian's settings dialog open between tests.
+  afterEach(async () => {
+    await browser.executeObsidian(({ app }) => {
+      (app as unknown as { setting?: { close(): void } }).setting?.close();
+    });
+  });
+
   it("[06-UAT#01] An unfocused window gets one generic banner; a focused window gets none", async () => {
     // Focused: the window reports focus, so the plugin must create no native notification.
     await browser.execute(stubDocumentHasFocus, true);

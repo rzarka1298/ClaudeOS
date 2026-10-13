@@ -726,8 +726,16 @@ export function openPluginSettings(pluginId: string): boolean {
     | undefined;
   const setting = app?.setting;
   if (app === undefined || setting === undefined) return false;
-  const attached = document.querySelector(".modal-container .vertical-tab-nav-item") !== null;
+  const attached = document.querySelector(".modal-container") !== null;
   if (!attached) {
+    // The command TOGGLES the dialog, so it must run once, never on every poll (the sixth run
+    // saw containers=0 and activeTab=about: the poll kept closing what it had just opened).
+    const stamp = window as unknown as { __cccSettingsOpenedAt?: number };
+    const now = Date.now();
+    if (stamp.__cccSettingsOpenedAt !== undefined && now - stamp.__cccSettingsOpenedAt < 8000) {
+      return true;
+    }
+    stamp.__cccSettingsOpenedAt = now;
     const ran = app.commands?.executeCommandById("app:open-settings") === true;
     if (!ran) setting.open();
     return true;
