@@ -195,6 +195,19 @@ async function selectPendingRequest(): Promise<void> {
 
 /** Focus is on Deny, or on the pane heading with Deny the first control reached by Tab. */
 async function focusLandsOnDeny(): Promise<boolean> {
+  // The decision controls render disabled until the request has loaded, and Tab skips a
+  // disabled Deny (the fourth baseline run went heading -> Approve once). Wait for both to be
+  // enabled, then re-select the heading so Tab starts from a settled pane. The check itself,
+  // Deny first, is unchanged.
+  await pollUntil(
+    () =>
+      browser.execute(() => {
+        const deny = document.querySelector<HTMLButtonElement>('[data-decision="deny"]');
+        const approve = document.querySelector<HTMLButtonElement>('[data-decision="approve"]');
+        return deny !== null && approve !== null && !deny.disabled && !approve.disabled;
+      }),
+    { timeoutMs: 15_000, intervalMs: 250, describe: "the decision controls to be enabled" },
+  );
   const first = await browser.execute(recordFocusInRenderer);
   if (first?.name.startsWith(DENY_LABEL) === true) return true;
   await browser.keys(Key.Tab);
