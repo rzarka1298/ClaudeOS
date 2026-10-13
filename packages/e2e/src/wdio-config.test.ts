@@ -260,6 +260,32 @@ describe("the version-recording before hook (05.2-09 Test 8)", () => {
     });
   });
 
+  it("records from beforeSuite through the global browser, and skips quietly while it cannot report", async () => {
+    const written: string[] = [];
+    const config = buildWdioConfig(env(), {
+      ...opts,
+      versionsIo: { read: () => null, write: (_path, text) => void written.push(text) },
+    });
+    const holder = globalThis as { browser?: unknown };
+    const before = holder.browser;
+    try {
+      holder.browser = {};
+      await config.beforeSuite?.({});
+      expect(written).toHaveLength(0);
+      await config.before?.([], [], {} as never);
+      expect(written).toHaveLength(0);
+      holder.browser = fakeBrowser("1.14.4", "1.13.7");
+      await config.beforeSuite?.({});
+      expect(JSON.parse(written[0] ?? "{}")).toEqual({
+        app: "1.14.4",
+        installer: "1.13.7",
+        mismatches: [],
+      });
+    } finally {
+      holder.browser = before;
+    }
+  });
+
   it("reconciles with an earlier record and records a drift between specs", async () => {
     let stored: string | null = null;
     const config = buildWdioConfig(env(), {

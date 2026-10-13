@@ -1069,11 +1069,12 @@ export async function readNav(browser: SupportBrowser): Promise<NavChipSnapshot>
 /** Runs the Open overview command, so the Approvals section is off screen, and waits for the Overview heading. */
 export async function openOverview(browser: SupportBrowser): Promise<void> {
   await runPluginCommand(browser, `${PLUGIN_ID}:${APPROVALS_COPY.overviewCommandSuffix}`);
-  await pollUntil(
-    async () =>
-      (await browser.execute(readDestinationHeading)).trim() === APPROVALS_COPY.overviewLabel,
-    uiWait("the Overview destination"),
-  );
+  // The command only reveals the command center on whichever destination was last active (the
+  // baseline run found Agent runs still selected), so the Overview tab is pressed explicitly.
+  await pollUntil(async () => {
+    await browser.execute(clickTab, "overview");
+    return (await browser.execute(readDestinationHeading)).trim() === APPROVALS_COPY.overviewLabel;
+  }, uiWait("the Overview destination"));
 }
 
 /**
@@ -1162,9 +1163,15 @@ export function readMirrorFiles(vaultPath: string): MirrorFile[] {
 
 /** Opens the plugin's settings tab and returns what it shows (whitespace squashed). */
 export async function openSettingsTab(browser: SupportBrowser): Promise<SettingsSnapshot> {
+  // Open once and then only read. The tab is built from declarative definitions and may finish
+  // rendering a moment after it opens, so re-opening on every poll (the baseline run did) kept
+  // restarting that render and never saw a row. Reopen only when the modal is not open at all.
+  if (!(await browser.execute(openPluginSettings, PLUGIN_ID))) {
+    throw new Error("Obsidian's settings could not be opened (no app.setting).");
+  }
   return pollUntil(async () => {
-    if (!(await browser.execute(openPluginSettings, PLUGIN_ID))) return null;
     const snapshot = squashDeep(await browser.execute(readSettingsSnapshot));
+    if (!snapshot.open) await browser.execute(openPluginSettings, PLUGIN_ID);
     return snapshot.open && snapshot.rows.length > 0 ? snapshot : null;
   }, uiWait("the plugin settings tab"));
 }

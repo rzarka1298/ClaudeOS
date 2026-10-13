@@ -50,6 +50,7 @@ import {
   readChips,
   readMirrorFiles,
   readNav,
+  readPanelSnapshot,
   readRows,
   readStatusHistory,
   readStore,
@@ -253,12 +254,23 @@ describe("approvals core", () => {
     await browser.execute(clearConsoleErrors);
     expect(await browser.execute(fireNotificationClick, index)).toBe(true);
 
-    const pane = await waitForPane(
-      browser,
-      (candidate) =>
-        candidate.present && candidate.fields[APPROVALS_COPY.requestIdTerm] === proposalId,
-      "the pane of the request the stale banner points at",
-    );
+    let pane: Awaited<ReturnType<typeof waitForPane>>;
+    try {
+      pane = await waitForPane(
+        browser,
+        (candidate) =>
+          candidate.present && candidate.fields[APPROVALS_COPY.requestIdTerm] === proposalId,
+        "the pane of the request the stale banner points at",
+      );
+    } catch (error) {
+      // Say where the click landed, so a defect (the stale handler writing to the reloaded
+      // plugin's dead state, leaving the view on Overview) is told apart from a runner miss.
+      const landed = await browser.execute(readPanelSnapshot);
+      const open = await browser.execute(countLeavesOfType, APPROVALS_COPY.commandCenterViewType);
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)} | after the stale click the command center has ${open} view(s) and shows "${landed.heading}"`,
+      );
+    }
     expect(pane.state).toBe("pending");
     const leaves = await browser.execute(countLeavesOfType, APPROVALS_COPY.commandCenterViewType);
     const activations = await browser.execute(readActivations);

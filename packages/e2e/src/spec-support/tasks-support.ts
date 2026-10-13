@@ -953,6 +953,8 @@ export interface DueProperty {
   found: boolean;
   inputType: string | null;
   value: string | null;
+  /** The container's `data-property-type` (Obsidian's own type for the property), when present. */
+  propertyType?: string | null;
 }
 
 export type DuePropertyVerdict =
@@ -962,7 +964,11 @@ export type DuePropertyVerdict =
 /** The Properties view shows `due` as a date input holding a plain date, no time. */
 export function duePropertyVerdict(property: DueProperty): DuePropertyVerdict {
   if (!property.found) return { ok: false, code: "property-missing" };
-  if (property.inputType !== "date") return { ok: false, code: "not-a-date-input" };
+  // Obsidian marks a date property's container with data-property-type="date" and may draw it
+  // as a text-like input (it has no stable input type), so either signal says "a date, not text
+  // or a datetime"; the plain-date value check below still rejects a time.
+  const isDate = property.inputType === "date" || property.propertyType === "date";
+  if (!isDate) return { ok: false, code: "not-a-date-input" };
   if (property.value === null || !PLAIN_DATE.test(property.value)) {
     return { ok: false, code: "has-time" };
   }
@@ -980,6 +986,7 @@ export function rendererInspectDue(_ctx: unknown): DueProperty {
   const input = container.querySelector("input");
   return {
     found: true,
+    propertyType: container.getAttribute("data-property-type"),
     inputType: input === null ? null : input.getAttribute("type"),
     value: input === null ? null : (input.value ?? null),
   };
@@ -1127,13 +1134,22 @@ export async function pressRowAction(
 
 /** Opens one note in Obsidian so its Properties view renders. */
 export async function readDueProperty(browser: TasksBrowser): Promise<DueProperty> {
-  return pollUntil(
-    async () => {
-      const property = await browser.executeObsidian(rendererInspectDue);
-      return property.found ? property : null;
-    },
-    { ...WAIT.short, describe: "the Properties view to show the due property" },
-  );
+  // The note was re-dated on disk just before it was opened, so the first rendering can still be
+  // the old (text) one. Wait until the property reads as a date; if it never does, return the
+  // last reading so the caller's verdict names what Obsidian actually showed.
+  let last: DueProperty = { found: false, inputType: null, value: null };
+  try {
+    await pollUntil(
+      async () => {
+        last = await browser.executeObsidian(rendererInspectDue);
+        return duePropertyVerdict(last).ok ? last : null;
+      },
+      { ...WAIT.short, describe: "the Properties view to show the due property as a date" },
+    );
+  } catch {
+    // fall through with the last reading
+  }
+  return last;
 }
 
 // ---------------------------------------------------------------------------

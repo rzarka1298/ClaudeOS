@@ -17,7 +17,12 @@
  */
 import { createApprovalsClient, createAuthenticatedClient } from "@ccc/service-api-client";
 import { browser, expect } from "@wdio/globals";
-import { assertSandboxConnected, type DriverBrowser, pollUntil } from "../src/driver.js";
+import {
+  assertSandboxConnected,
+  type DriverBrowser,
+  pollUntil,
+  runPluginCommand,
+} from "../src/driver.js";
 import {
   installConsoleCapture,
   installNotificationSpy,
@@ -68,20 +73,29 @@ async function settlePendingRequests(): Promise<void> {
 
 /** Presses Send a test approval in the plugin's settings and closes the dialog. */
 async function sendTestApproval(): Promise<void> {
-  const pressed = await browser.executeObsidian(({ app }, rowName: string) => {
-    const setting = (
-      app as unknown as { setting: { open(): void; openTabById(id: string): void; close(): void } }
-    ).setting;
+  // Open the tab once, then poll for the row: it renders from declarative definitions, so a read
+  // straight after the open can miss it (and re-opening on every poll restarts the render).
+  await browser.executeObsidian(({ app }) => {
+    const setting = (app as unknown as { setting: { open(): void; openTabById(id: string): void } })
+      .setting;
     setting.open();
     setting.openTabById("claude-command-center");
-    const row = Array.from(document.querySelectorAll(".setting-item")).find(
-      (el) => el.querySelector(".setting-item-name")?.textContent?.trim() === rowName,
-    );
-    const button = row?.querySelector("button") ?? null;
-    button?.click();
-    setting.close();
-    return button !== null;
-  }, SEND_TEST_APPROVAL_NAME);
+  });
+  const pressed = await pollUntil(
+    () =>
+      browser.execute((rowName: string) => {
+        const row = Array.from(document.querySelectorAll(".setting-item")).find(
+          (el) => el.querySelector(".setting-item-name")?.textContent?.trim() === rowName,
+        );
+        const button = row?.querySelector("button") ?? null;
+        button?.click();
+        return button !== null;
+      }, SEND_TEST_APPROVAL_NAME),
+    { timeoutMs: 15_000, intervalMs: 500, describe: "the Send a test approval button" },
+  );
+  await browser.executeObsidian(({ app }) => {
+    (app as unknown as { setting: { close(): void } }).setting.close();
+  });
   expect(pressed).toBe(true);
 }
 
@@ -100,6 +114,11 @@ before(async function startRun() {
   });
   await browser.execute(installConsoleCapture);
   await browser.execute(installNotificationSpy);
+  // Nothing has opened the command center yet in this spec's fresh window, so open it first.
+  await runPluginCommand(
+    browser as unknown as DriverBrowser,
+    "claude-command-center:open-overview",
+  );
   await pollUntil(
     () => browser.execute(() => document.getElementById("ccc-tab-agent-runs") !== null),
     {

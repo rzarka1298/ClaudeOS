@@ -47,6 +47,12 @@ export interface WdioRunConfig {
   waitforTimeout: number;
   /** Records the app and installer versions each spec's session reports (D-08). */
   before?: (capabilities: unknown, specs: string[], browser: VersionBrowser) => Promise<void>;
+  /**
+   * The same recording, run once the session is fully set up. The baseline run recorded no
+   * versions: the service adds getObsidianVersion in its own before hook, which has not run yet
+   * when this config's `before` does, so the call threw and wdio swallowed it into a log file.
+   */
+  beforeSuite?: (suite: unknown) => Promise<void>;
 }
 
 /** The two service getters the version hook reads. */
@@ -103,6 +109,29 @@ const REAL_VERSIONS_IO: VersionsIo = {
   },
 };
 
+/** Records one observation; false when the session cannot report its versions yet. */
+function recordVersions(
+  versionsPath: string,
+  decisions: SpikeDecisions,
+  io: VersionsIo,
+  browser: Partial<VersionBrowser> | undefined,
+): boolean {
+  if (
+    typeof browser?.getObsidianVersion !== "function" ||
+    typeof browser.getObsidianInstallerVersion !== "function"
+  ) {
+    return false;
+  }
+  const observed = {
+    app: browser.getObsidianVersion(),
+    installer: browser.getObsidianInstallerVersion(),
+  };
+  const text = io.read(versionsPath);
+  const existing = text === null ? undefined : parseVersions(text);
+  io.write(versionsPath, formatVersions(reconcileVersions(existing, observed, decisions)));
+  return true;
+}
+
 /** The before hook: reconcile what this session reports with the record so far (D-08). */
 function versionHook(
   versionsPath: string,
@@ -110,13 +139,19 @@ function versionHook(
   io: VersionsIo,
 ): NonNullable<WdioRunConfig["before"]> {
   return async (_capabilities, _specs, browser) => {
-    const observed = {
-      app: browser.getObsidianVersion(),
-      installer: browser.getObsidianInstallerVersion(),
-    };
-    const text = io.read(versionsPath);
-    const existing = text === null ? undefined : parseVersions(text);
-    io.write(versionsPath, formatVersions(reconcileVersions(existing, observed, decisions)));
+    recordVersions(versionsPath, decisions, io, browser);
+  };
+}
+
+/** The suite hook: the service's commands exist by now, so the global browser can report. */
+function versionSuiteHook(
+  versionsPath: string,
+  decisions: SpikeDecisions,
+  io: VersionsIo,
+): NonNullable<WdioRunConfig["beforeSuite"]> {
+  return async () => {
+    const live = (globalThis as { browser?: Partial<VersionBrowser> }).browser;
+    recordVersions(versionsPath, decisions, io, live);
   };
 }
 
@@ -198,6 +233,11 @@ export function buildWdioConfig(
     specFileRetries: 0,
     waitforTimeout: 10_000,
     before: versionHook(
+      join(runRoot, "versions.json"),
+      decisions,
+      options.versionsIo ?? REAL_VERSIONS_IO,
+    ),
+    beforeSuite: versionSuiteHook(
       join(runRoot, "versions.json"),
       decisions,
       options.versionsIo ?? REAL_VERSIONS_IO,

@@ -15,7 +15,12 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { browser, expect } from "@wdio/globals";
 import { Key } from "webdriverio";
-import { assertSandboxConnected, type DriverBrowser, pollUntil } from "../src/driver.js";
+import {
+  assertSandboxConnected,
+  type DriverBrowser,
+  pollUntil,
+  runPluginCommand,
+} from "../src/driver.js";
 import { appendLedger } from "../src/ledger.js";
 import { readProcessTable } from "../src/process-table.js";
 import { installConsoleCapture } from "../src/renderer-spies.js";
@@ -71,6 +76,11 @@ const running = (entry: SacrificialChild): boolean =>
   entry.child.exitCode === null && entry.child.signalCode === null;
 
 async function openAgentRuns(): Promise<void> {
+  // The command center may not be open (nothing else in this spec opens it), so open it first.
+  await runPluginCommand(
+    browser as unknown as DriverBrowser,
+    "claude-command-center:open-overview",
+  );
   await pollUntil(
     () => browser.execute(() => document.getElementById("ccc-tab-agent-runs") !== null),
     {

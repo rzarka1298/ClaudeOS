@@ -479,6 +479,33 @@ describe("the Properties view check and the vault operation (U-6, U-7)", () => {
     ).toMatchObject({ code: "has-time" });
   });
 
+  it("accepts Obsidian's date property type when its input is not type=date, still rejecting a time", () => {
+    const base = { found: true, inputType: "text", value: "2026-10-12" };
+    expect(duePropertyVerdict({ ...base, propertyType: "date" })).toEqual({ ok: true });
+    expect(duePropertyVerdict({ ...base, propertyType: "text" })).toMatchObject({
+      ok: false,
+      code: "not-a-date-input",
+    });
+    expect(
+      duePropertyVerdict({ ...base, value: "2026-10-12T09:00", propertyType: "date" }),
+    ).toMatchObject({ ok: false, code: "has-time" });
+  });
+
+  it("rendererInspectDue reports the container's property type", () => {
+    const input = { getAttribute: () => "text", value: "2026-10-12" };
+    const container = {
+      getAttribute: (name: string) => (name === "data-property-type" ? "date" : null),
+      querySelector: () => input,
+    };
+    const doc = { querySelector: () => container };
+    expect(runInNewContext(`(${rendererInspectDue.toString()})(null)`, { document: doc })).toEqual({
+      found: true,
+      propertyType: "date",
+      inputType: "text",
+      value: "2026-10-12",
+    });
+  });
+
   it("the renderer functions are self-contained and tolerate an empty document", async () => {
     const empty = { querySelector: () => null, querySelectorAll: () => [] };
     const due = runInNewContext(`(${rendererInspectDue.toString()})(null)`, { document: empty });

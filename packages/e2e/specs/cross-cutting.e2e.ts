@@ -82,6 +82,16 @@ import {
   scanForAlwaysAllow,
 } from "../src/spec-support/cross-support.js";
 import { waitUntilQuiet } from "../src/spec-support/quiescence.js";
+import { TASKS_TEXT } from "../src/spec-support/tasks-copy.js";
+import {
+  asTasksBrowser,
+  GLOBAL_ROOT,
+  openTasks,
+  pressDetailAction,
+  readTasks,
+  selectRow,
+  showFilter,
+} from "../src/spec-support/tasks-support.js";
 import { copyStore, queryStore } from "../src/store-copy.js";
 
 const asDriver = (): DriverBrowser => browser as unknown as DriverBrowser;
@@ -118,20 +128,29 @@ async function openDestination(id: string): Promise<void> {
   }, id);
 }
 
-/** Opens the plugin's settings tab and presses the named row's button; false when there is none. */
+/**
+ * Opens the plugin's settings tab and presses the named row's button; false when there is none.
+ * The tab renders from declarative definitions, so it is opened once and the row is then polled
+ * for (a single read straight after the open found no row in the baseline run).
+ */
 async function pressSettingsButton(name: string): Promise<boolean> {
-  return browser.executeObsidian(({ app }, rowName: string) => {
-    const setting = (app as unknown as { setting: { open(): void; openTabById(id: string): void } })
-      .setting;
-    setting.open();
-    setting.openTabById("claude-command-center");
-    const row = Array.from(document.querySelectorAll(".setting-item")).find(
-      (el) => el.querySelector(".setting-item-name")?.textContent?.trim() === rowName,
+  await openSettings();
+  try {
+    return await pollUntil(
+      () =>
+        browser.execute((rowName: string) => {
+          const row = Array.from(document.querySelectorAll(".setting-item")).find(
+            (el) => el.querySelector(".setting-item-name")?.textContent?.trim() === rowName,
+          );
+          const button = row?.querySelector("button") ?? null;
+          button?.click();
+          return button !== null;
+        }, name),
+      { timeoutMs: 15_000, intervalMs: 500, describe: `the "${name}" settings button` },
     );
-    const button = row?.querySelector("button") ?? null;
-    button?.click();
-    return button !== null;
-  }, name);
+  } catch {
+    return false;
+  }
 }
 
 /** Opens the plugin's settings tab without pressing anything. */
@@ -400,18 +419,18 @@ describe("cross-cutting items", () => {
   });
 
   it("[06-UAT#20] Marking a task done changes nothing outside the note", async () => {
-    await openDestination("tasks");
-    const taskId = await pollUntil(
-      () =>
-        browser.execute(
-          () =>
-            document
-              .querySelector('.ccc-task-row .ccc-task-action[data-action="mark-done"]')
-              ?.closest(".ccc-task-row")
-              ?.getAttribute("data-task-id") ?? null,
-        ),
-      { timeoutMs: 20_000, intervalMs: 500, describe: "a task with Mark done" },
-    );
+    // Task rows carry no inline Mark done: it is a button of the detail pane's Task actions
+    // group (the run that first used a guessed row selector found none). Select one Upcoming row
+    // through the shared Tasks helpers, whose selectors are drift-checked against the plugin.
+    const tb = asTasksBrowser(browser);
+    await openTasks(tb);
+    await showFilter(tb, GLOBAL_ROOT, "upcoming");
+    const target = await pollUntil(async () => (await readTasks(tb, GLOBAL_ROOT)).rows[0] ?? null, {
+      timeoutMs: 20_000,
+      intervalMs: 500,
+      describe: "an Upcoming task to mark done",
+    });
+    await selectRow(tb, GLOBAL_ROOT, target.id);
 
     const vaultPath = obsidianPage.getVaultPath();
     const beforeFiles = hashVaultFiles(vaultPath, context.runRoot);
@@ -442,13 +461,7 @@ describe("cross-cutting items", () => {
     ];
     expect(ancestors.length).toBeGreaterThan(0);
 
-    await browser.execute((id: string) => {
-      (
-        document.querySelector(
-          `.ccc-task-row[data-task-id="${id}"] .ccc-task-action[data-action="mark-done"]`,
-        ) as HTMLElement
-      ).click();
-    }, taskId);
+    await pressDetailAction(tb, GLOBAL_ROOT, TASKS_TEXT.markDone);
     await pollUntil(
       () =>
         diffFileHashes(beforeFiles, hashVaultFiles(vaultPath, context.runRoot)).changed.length > 0,
@@ -505,11 +518,7 @@ describe("cross-cutting items", () => {
 
     // The macOS network or permission prompt part of the UAT wording cannot appear in a page
     // screenshot; the absence of any new process above stands in for it.
-    await browser.execute((id: string) => {
-      (
-        document.querySelector(`.ccc-task-row[data-task-id="${id}"] .ccc-task-title`) as HTMLElement
-      )?.click();
-    }, taskId);
+    // The selected row's detail pane is still open for the screenshot.
     const labels = [await shot(20, "task-detail")];
     recordLookPending({ runRoot: context.runRoot, item: 20, labels });
   });

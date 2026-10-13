@@ -97,6 +97,11 @@ describe("parseCountInWords (Test 7)", () => {
     });
   });
 
+  it("reads a grouped count as the plugin renders it (the 10,000-task baseline failure)", () => {
+    expect(parseCountInWords("All, 10,000 tasks")).toEqual({ label: "All", count: 10000 });
+    expect(parseCountInWords("Today, 1,234 tasks")).toEqual({ label: "Today", count: 1234 });
+  });
+
   it("returns null for anything else", () => {
     for (const text of [
       "",

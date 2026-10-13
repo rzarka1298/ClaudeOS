@@ -88,7 +88,7 @@ export async function pollUntil<T>(
   }
 }
 
-const COUNT_IN_WORDS = /^(.+?),\s*(?:(\d+)|no)\s+tasks?$/;
+const COUNT_IN_WORDS = /^(.+?),\s*(?:(\d{1,3}(?:,\d{3})+|\d+)|no)\s+tasks?$/;
 
 /** Parses 'Today, 3 tasks', 'Overdue, 1 task' and 'Blocked, no tasks'; null for anything else. */
 export function parseCountInWords(text: string): { label: string; count: number } | null {
@@ -96,7 +96,7 @@ export function parseCountInWords(text: string): { label: string; count: number 
   if (match?.[1] === undefined) return null;
   const label = match[1].trim();
   if (label === "") return null;
-  return { label, count: match[2] === undefined ? 0 : Number(match[2]) };
+  return { label, count: match[2] === undefined ? 0 : Number(match[2].replace(/,/g, "")) };
 }
 
 const PLUGIN_ID = "claude-command-center";
