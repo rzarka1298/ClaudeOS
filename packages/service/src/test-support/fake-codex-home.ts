@@ -402,6 +402,15 @@ export function exerciseCodexHomePort(port: CodexHomePort, home: FakeCodexHome):
 
   const dayStart = Date.UTC(2026, 9, 6);
   attempt(() => port.listRolloutFiles({ from: dayStart, to: dayStart + 86_400_000 }));
+  attempt(() => port.listNewestRolloutFiles({ from: dayStart, to: dayStart + 86_400_000 }, 10));
+  for (const hostile of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY, 0]) {
+    attempt(() =>
+      port.listNewestRolloutFiles({ from: dayStart, to: dayStart + 86_400_000 }, hostile),
+    );
+  }
+  attempt(() => port.listModifiedRolloutFiles({ from: dayStart, to: dayStart + 86_400_000 }));
+  attempt(() => port.listModifiedRolloutFiles({ from: Number.NaN, to: dayStart }));
+  attempt(() => port.listModifiedRolloutFiles({ from: dayStart, to: Number.NEGATIVE_INFINITY }));
   const refs: RolloutRef[] = [
     { path: home.rolloutPath("2026-10-06", "rollout-2026-10-06T10-00-00-aaaa.jsonl") },
     { path: home.decoys.credentialPath },

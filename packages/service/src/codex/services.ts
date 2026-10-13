@@ -43,7 +43,7 @@ import {
   resolveCodexHome,
 } from "./codex-home.js";
 import { bridgeHomeFromEnv, type CodexDetection } from "./detection.js";
-import { createDoctorProbe } from "./doctor-probe.js";
+import { createDoctorProbe, DOCTOR_DISPOSE_KILL_WAIT_MS } from "./doctor-probe.js";
 import type { DoctorRouteDeps } from "./doctor-routes.js";
 import { createFollowLogService } from "./follow-log.js";
 import {
@@ -724,6 +724,14 @@ async function composeCodexServices(
             : deps.stopStepDeadlineMs;
         // The spool first: no record is applied while the rest winds down.
         await step("spool", () => spool.stop());
+        // No doctor child may spawn or linger once shutdown has begun.
+        // Disposal needs grace + forced stop + exit confirmation (2 x the dispose grace), so its
+        // deadline covers that and never cuts it short; an injected short bound (tests) still wins.
+        const doctorMs =
+          deps.stopStepDeadlineMs === undefined
+            ? 2 * DOCTOR_DISPOSE_KILL_WAIT_MS + 500
+            : deps.stopStepDeadlineMs;
+        await step("doctor", () => doctorProbe.dispose(), doctorMs);
         await step("headroom", () => headroom.stop(), appServerMs);
         await step("mirror", () => mirror.stop());
         await step("tokens", () => tokens.stop());

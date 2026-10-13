@@ -428,9 +428,13 @@ export function createCodexHomePort(options: {
       }
       const sessions = realSessions();
       if (sessions === null) return [];
-      const cap = Math.max(0, Math.min(Math.floor(limit), MAX_ROLLOUT_LIST));
+      // Anything that is not a safe integer of at least 1 (NaN, Infinity, negative, fractional)
+      // gets the default cap, so a hostile limit can never disable the bound.
+      const cap =
+        Number.isSafeInteger(limit) && limit >= 1
+          ? Math.min(limit, MAX_ROLLOUT_LIST)
+          : MAX_ROLLOUT_LIST;
       const found: RolloutRef[] = [];
-      if (cap === 0) return found;
       for (let day = lastDay; day >= firstDay; day -= 1) {
         const date = new Date(day * DAY_MS);
         const year = String(date.getUTCFullYear()).padStart(4, "0");

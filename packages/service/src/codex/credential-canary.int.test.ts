@@ -693,7 +693,19 @@ describe("the service-wide credential canary", () => {
     expect(() => assertNoSentinelLeak(sinks)).not.toThrow();
   });
 
-  it("Test 3: the child processes ran with the documented argv, a key-name-only environment and no Codex-home cwd", () => {
+  it("Test 3: the child processes ran with the documented argv, a key-name-only environment and no Codex-home cwd", async () => {
+    // The fake app-server children write their lines after the cycle returns; wait (bounded) until
+    // every started app-server has logged its full three-message sequence before asserting.
+    const appServerLines = (): { starts: number; lines: number } => ({
+      starts: fakeCodexStarts(world.fake.logPath).filter((s) => s.argv[0] === "app-server").length,
+      lines: readFakeCodexLog(world.fake.logPath).filter((entry) => entry.t === "line").length,
+    });
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const seen = appServerLines();
+      if (seen.lines === 3 * seen.starts) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     const starts = fakeCodexStarts(world.fake.logPath);
     const argvs = starts.map((start) => start.argv.join(" "));
     expect(argvs).toContain("app-server");
