@@ -533,3 +533,60 @@ export function recordFocusInRenderer(): FocusRecord | null {
     },
   };
 }
+
+// --- the one changed note keeps its body and every other frontmatter key (06-UAT test 20) -------
+
+interface SplitNote {
+  frontmatter: string;
+  body: string;
+}
+
+function splitNote(text: string): SplitNote | null {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n)?([\s\S]*)$/.exec(text);
+  if (match === null) return null;
+  return { frontmatter: match[1] as string, body: `${match[2] ?? ""}${match[3] ?? ""}` };
+}
+
+/** Frontmatter as ordered entries: a top-level key line with the indented lines that follow it. */
+function frontmatterEntries(frontmatter: string): Array<{ key: string; text: string }> {
+  const entries: Array<{ key: string; text: string }> = [];
+  for (const line of frontmatter.split(/\r?\n/)) {
+    const key = /^([A-Za-z0-9_-]+):/.exec(line)?.[1];
+    if (key !== undefined) entries.push({ key, text: line });
+    else if (entries.length > 0) {
+      const last = entries[entries.length - 1] as { key: string; text: string };
+      last.text += `\n${line}`;
+    }
+  }
+  return entries;
+}
+
+/**
+ * Compares a task note before and after Mark done: the body must be byte-identical, and every
+ * frontmatter entry except the allowed keys must be present, unchanged and in the same order; an
+ * added or dropped entry is a difference too.
+ */
+export function checkNotePreserved(
+  before: string,
+  after: string,
+  changeableKeys: readonly string[],
+): { ok: boolean; reason: string } {
+  const a = splitNote(before);
+  const b = splitNote(after);
+  if (a === null || b === null) return { ok: false, reason: "A note has no frontmatter block." };
+  if (a.body !== b.body) return { ok: false, reason: "The note body changed." };
+  const keep = (entry: { key: string }): boolean => !changeableKeys.includes(entry.key);
+  const left = frontmatterEntries(a.frontmatter).filter(keep);
+  const right = frontmatterEntries(b.frontmatter).filter(keep);
+  if (left.length !== right.length)
+    return { ok: false, reason: "A frontmatter key was added or dropped." };
+  for (let index = 0; index < left.length; index += 1) {
+    if ((left[index] as { text: string }).text !== (right[index] as { text: string }).text) {
+      return {
+        ok: false,
+        reason: `Frontmatter key "${(left[index] as { key: string }).key}" changed.`,
+      };
+    }
+  }
+  return { ok: true, reason: "" };
+}

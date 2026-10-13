@@ -6,6 +6,7 @@ import {
   allMotionOff,
   anyMotionOn,
   checkFocusOrder,
+  checkNotePreserved,
   checkPluginDataKeys,
   countOccurrences,
   diffFileHashes,
@@ -306,5 +307,62 @@ describe("diff helpers (Task 2, Test 4)", () => {
     } finally {
       rmSync(runRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("checkNotePreserved (item 20, strict)", () => {
+  const before = [
+    "---",
+    "id: abc",
+    "type: task",
+    "status: ready",
+    "updated: 2026-10-13T10:00:00Z",
+    "tags:",
+    "  - home",
+    "---",
+    "Synthetic task 238.",
+    "",
+  ].join("\n");
+  const after = before
+    .replace("status: ready", "status: done")
+    .replace("2026-10-13T10:00:00Z", "2026-10-13T11:00:00Z");
+
+  it("accepts a change of status and updated only", () => {
+    expect(checkNotePreserved(before, after, ["status", "updated"])).toEqual({
+      ok: true,
+      reason: "",
+    });
+  });
+
+  it("refuses a changed, dropped or moved body", () => {
+    expect(
+      checkNotePreserved(before, after.replace("Synthetic task 238.", ""), ["status", "updated"])
+        .ok,
+    ).toBe(false);
+    expect(
+      checkNotePreserved(before, after.replace("---\nSynthetic", "---\n\nSynthetic"), [
+        "status",
+        "updated",
+      ]).ok,
+    ).toBe(false);
+  });
+
+  it("refuses another frontmatter key changing, being added or dropped", () => {
+    expect(
+      checkNotePreserved(before, after.replace("id: abc", "id: abd"), ["status", "updated"]).ok,
+    ).toBe(false);
+    expect(
+      checkNotePreserved(before, after.replace("type: task\n", ""), ["status", "updated"]).ok,
+    ).toBe(false);
+    expect(
+      checkNotePreserved(before, after.replace("tags:", "completed: yes\ntags:"), [
+        "status",
+        "updated",
+      ]).ok,
+    ).toBe(false);
+    expect(
+      checkNotePreserved(before, after.replace("  - home", "  - work"), ["status", "updated"])
+        .reason,
+    ).toContain("tags");
   });
 });

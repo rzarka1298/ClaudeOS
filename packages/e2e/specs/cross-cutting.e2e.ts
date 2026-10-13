@@ -19,7 +19,7 @@
  * capture tool, and a screenshot failure fails the test.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createApprovalsClient, createAuthenticatedClient } from "@ccc/service-api-client";
 import { browser, expect } from "@wdio/globals";
@@ -66,6 +66,7 @@ import {
   allMotionOff,
   anyMotionOn,
   checkFocusOrder,
+  checkNotePreserved,
   checkPluginDataKeys,
   countOccurrences,
   diffFileHashes,
@@ -205,6 +206,23 @@ async function sendTestApprovalAndWait(): Promise<void> {
     () => browser.execute(() => document.querySelectorAll(".ccc-approval-row").length > 0),
     { timeoutMs: 30_000, intervalMs: 500, describe: "the test request in Approvals" },
   );
+}
+
+/** Every Markdown note under the vault's task folders, by vault-relative path. */
+function readTaskNotes(vaultPath: string): Map<string, string> {
+  const notes = new Map<string, string>();
+  const walk = (dir: string, prefix: string): void => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      const relative = prefix === "" ? entry : `${prefix}/${entry}`;
+      if (entry === ".obsidian") continue;
+      if (statSync(full).isDirectory()) walk(full, relative);
+      else if (entry.endsWith(".md") && entry !== "index.md")
+        notes.set(relative, readFileSync(full, "utf8"));
+    }
+  };
+  walk(vaultPath, "");
+  return notes;
 }
 
 /** A page screenshot into the private shots folder; a failure fails the test (never swallowed). */
@@ -432,6 +450,9 @@ describe("cross-cutting items", () => {
 
     const vaultPath = obsidianPage.getVaultPath();
     const beforeFiles = hashVaultFiles(vaultPath, context.runRoot);
+    // The task notes' text before Mark done, to prove the changed note keeps its body and every
+    // other frontmatter key (a rewrite that dropped or moved the body would otherwise pass).
+    const beforeNotes = readTaskNotes(vaultPath);
     const beforeStore = copyStore({
       runtimeDir: context.paths.runtimeDir,
       destDir: context.paths.tmpDir,
@@ -499,7 +520,14 @@ describe("cross-cutting items", () => {
     expect(notes.length).toBe(1);
     expect(diff.added).toEqual([]);
     expect(diff.removed).toEqual([]);
-    expect(readFileSync(join(vaultPath, notes[0] as string), "utf8")).toMatch(/status:\s*done/);
+    const changedText = readFileSync(join(vaultPath, notes[0] as string), "utf8");
+    expect(changedText).toMatch(/status:\s*done/);
+    const beforeText = beforeNotes.get(notes[0] as string);
+    expect(beforeText).toBeDefined();
+    expect(checkNotePreserved(beforeText as string, changedText, ["status", "updated"])).toEqual({
+      ok: true,
+      reason: "",
+    });
 
     const afterStore = copyStore({
       runtimeDir: context.paths.runtimeDir,
