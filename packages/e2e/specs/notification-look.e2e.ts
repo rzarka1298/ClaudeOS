@@ -35,8 +35,10 @@ import { captureRegion, shotPath } from "../src/screenshots.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
 import {
   clearPending,
+  openSettingsTab,
   pressSettingByName,
   readSettingsOutline,
+  supportBrowser,
 } from "../src/spec-support/approvals-support.js";
 import { SEND_TEST_APPROVAL_NAME, SYNTHETIC_MARKERS } from "../src/spec-support/cross-copy.js";
 import { recordLookPending } from "../src/spec-support/cross-support.js";
@@ -79,12 +81,7 @@ async function settlePendingRequests(): Promise<void> {
 async function sendTestApproval(): Promise<void> {
   // Open the tab once, then poll for the row: it renders from declarative definitions, so a read
   // straight after the open can miss it (and re-opening on every poll restarts the render).
-  await browser.executeObsidian(({ app }) => {
-    const setting = (app as unknown as { setting: { open(): void; openTabById(id: string): void } })
-      .setting;
-    setting.open();
-    setting.openTabById("claude-command-center");
-  });
+  await openSettingsTab(supportBrowser(browser));
   let pressed: boolean;
   try {
     pressed = await pollUntil(() => browser.execute(pressSettingByName, SEND_TEST_APPROVAL_NAME), {

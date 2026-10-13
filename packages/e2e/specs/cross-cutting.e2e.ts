@@ -48,8 +48,10 @@ import { assertShotInside, shotPath } from "../src/screenshots.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
 import {
   clearPending,
+  openSettingsTab,
   pressSettingByName,
   readSettingsOutline,
+  supportBrowser,
 } from "../src/spec-support/approvals-support.js";
 import {
   APPROVALS_GROUP_HEADING,
@@ -151,14 +153,9 @@ async function pressSettingsButton(name: string): Promise<boolean> {
   }
 }
 
-/** Opens the plugin's settings tab without pressing anything. */
+/** Opens the plugin's settings tab like a user would and waits until its rows are on screen. */
 async function openSettings(): Promise<void> {
-  await browser.executeObsidian(({ app }) => {
-    const setting = (app as unknown as { setting: { open(): void; openTabById(id: string): void } })
-      .setting;
-    setting.open();
-    setting.openTabById("claude-command-center");
-  });
+  await openSettingsTab(supportBrowser(browser));
 }
 
 /** Closes the settings dialog so the command-center view is the page. */

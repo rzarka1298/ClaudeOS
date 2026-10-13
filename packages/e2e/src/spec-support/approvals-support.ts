@@ -712,12 +712,38 @@ export function countLeavesOfType(viewType: string): number {
   return window.app?.workspace.getLeavesOfType(viewType).length ?? 0;
 }
 
-/** Runs in the renderer: opens Obsidian's settings on this plugin's tab; false when unavailable. */
+/**
+ * Runs in the renderer: opens Obsidian's settings on this plugin's tab; false when unavailable.
+ * Called repeatedly by a poll, so it only acts on what is missing. The baseline facts: after
+ * `setting.open()` the settings container was NOT attached to the document (the dialog never
+ * showed), so the dialog is opened the way a user does, through the `app:open-settings`
+ * command, with `setting.open()` as the fallback; the plugin tab is then selected by id and, if
+ * that does not take, by clicking its entry in the dialog's sidebar by visible text.
+ */
 export function openPluginSettings(pluginId: string): boolean {
-  const setting = window.app?.setting;
-  if (setting === undefined) return false;
-  setting.open();
-  setting.openTabById(pluginId);
+  const app = window.app as
+    | (AppLite & { commands?: { executeCommandById(id: string): boolean } })
+    | undefined;
+  const setting = app?.setting;
+  if (app === undefined || setting === undefined) return false;
+  const attached = document.querySelector(".modal-container .vertical-tab-nav-item") !== null;
+  if (!attached) {
+    const ran = app.commands?.executeCommandById("app:open-settings") === true;
+    if (!ran) setting.open();
+    return true;
+  }
+  const hasRows = document.querySelector(".modal-container .setting-item") !== null;
+  const activeId = (setting as { activeTab?: { id?: string } }).activeTab?.id;
+  if (activeId !== pluginId || !hasRows) {
+    setting.openTabById(pluginId);
+    if (!hasRows) {
+      for (const el of Array.from(
+        document.querySelectorAll(".modal-container .vertical-tab-nav-item"),
+      )) {
+        if ((el.textContent ?? "").trim().toLowerCase() === "claude command center") el.click();
+      }
+    }
+  }
   return true;
 }
 
@@ -814,7 +840,12 @@ export function readSettingsOutline(): string {
     app?: { setting?: { activeTab?: { id?: string }; containerEl?: DomEl } };
   };
   const setting = w.app?.setting;
-  const facts = `setting=${setting === undefined ? "missing" : "present"} activeTab=${setting?.activeTab?.id ?? "none"} container=${setting?.containerEl?.getAttribute("class") ?? "none"}`;
+  const containers = document.querySelectorAll(".modal-container").length;
+  const navItems = Array.from(document.querySelectorAll(".modal-container .vertical-tab-nav-item"))
+    .map((el) => (el.textContent ?? "").trim())
+    .slice(0, 40)
+    .join(",");
+  const facts = `containers=${containers} nav=[${navItems}] setting=${setting === undefined ? "missing" : "present"} activeTab=${setting?.activeTab?.id ?? "none"} container=${setting?.containerEl?.getAttribute("class") ?? "none"}`;
   const root = document.querySelector(".modal-container") ?? document.body;
   const seen: string[] = [];
   for (const el of Array.from(root.querySelectorAll("*"))) {
