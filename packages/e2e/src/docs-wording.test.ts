@@ -75,7 +75,9 @@ run("WORKFLOW.md (Test 1)", () => {
 
   it("extends the compliance judge row with the ratified current run", () => {
     const row = flat(
-      text.split("\n").find((line) => line.includes("`prd-compliance-review`")) ?? "",
+      section(text, /^## Judge panel/m)
+        .split("\n")
+        .find((line) => line.includes("`prd-compliance-review`")) ?? "",
     );
     expect(row).toContain("ratified current run");
   });
