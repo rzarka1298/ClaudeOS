@@ -504,9 +504,23 @@ describe("cross-cutting items", () => {
       { timeoutMs: 15_000, intervalMs: 250, describe: "focus inside the opened request" },
     );
     const opened: string[] = [];
-    const heading = await browser.execute(recordFocusInRenderer);
+    // The pane moves focus to Deny itself once the request has loaded, while the heading may take
+    // it first; give the two a moment to settle before pressing Tab, or a late move to Deny makes
+    // the Tab step on past it (run 12, the same race as item 11).
+    let heading = await browser.execute(recordFocusInRenderer);
+    for (
+      let attempt = 0;
+      attempt < 12 && heading?.name.startsWith(DENY_LABEL) !== true;
+      attempt += 1
+    ) {
+      await browser.pause(250);
+      heading = await browser.execute(recordFocusInRenderer);
+    }
     if (heading !== null) opened.push(heading.name);
-    const deny = await pressTabUntil((r) => r.name.startsWith(DENY_LABEL), 6, sequence);
+    const deny =
+      heading?.name.startsWith(DENY_LABEL) === true
+        ? heading
+        : await pressTabUntil((r) => r.name.startsWith(DENY_LABEL), 6, sequence);
     opened.push(deny.name);
     labels.push(await shot(22, "deny-focused"));
     const approve = await pressTabUntil((r) => r.name.startsWith(APPROVE_LABEL), 4, sequence);

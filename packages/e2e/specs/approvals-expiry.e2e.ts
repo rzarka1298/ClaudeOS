@@ -6,6 +6,7 @@
  */
 import { browser as wdioBrowser } from "@wdio/globals";
 import { assertSandboxConnected, pollUntil } from "../src/driver.js";
+import { retryOnSessionDeath } from "../src/launch-retry.js";
 import { installConsoleCapture } from "../src/renderer-spies.js";
 import { APPROVALS_COPY } from "../src/spec-support/approvals-copy.js";
 import {
@@ -50,6 +51,22 @@ describe("approvals expiry", () => {
   });
 
   it("[06-UAT#09] A request nobody decides expires within a second of its lifetime and is audited", async () => {
+    // The window has closed under the driver about 12 s after launch in runs 6 to 12 (cause not
+    // found; see 05.2-CONTEXT.md). The body starts from a clean slate (it clears pending requests
+    // first), so one relaunch and a rerun proves the same thing; the retry is warned about.
+    await retryOnSessionDeath(
+      expiryBody,
+      async () => {
+        await browser.reloadObsidian();
+        await assertSandboxConnected(browser, { expectedSocketPath: env.context.socketPath });
+        await browser.execute(installConsoleCapture);
+        await browser.execute(installStatusRecorder);
+      },
+      (message) => console.warn(message),
+    );
+  });
+
+  async function expiryBody(): Promise<void> {
     await clearPending(env.approvals);
     const proposalId = await sendTestApproval(env.approvals);
     const summary = (await env.approvals.get(proposalId)).summary;
@@ -107,5 +124,5 @@ describe("approvals expiry", () => {
     // The UAT bound (about a second) is checked on the service's own audit timestamp, not on
     // when wdio happened to observe the pane.
     expect(expiredWithinBound(expiresAtMs, audited?.at, EXPIRY_AUDIT_BOUND_MS)).toBe(true);
-  });
+  }
 });

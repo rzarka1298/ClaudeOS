@@ -12,47 +12,43 @@ import { assertSandboxConnected, pollUntil } from "../src/driver.js";
 import {
   installConsoleCapture,
   installNotificationSpy,
-  readNotifications,
   restoreDocumentHasFocus,
-  stubDocumentHasFocus,
 } from "../src/renderer-spies.js";
 import { APPROVALS_COPY } from "../src/spec-support/approvals-copy.js";
 import {
   type ApprovalsEnvironment,
-  clearNotices,
   clearPending,
-  closeSettings,
   countLeavesOfType,
   ensureManagedVault,
   ensureRunning,
   installNoticeRecorder,
   installSpecResultRecorder,
   installStatusRecorder,
-  notificationCount,
-  openApprovalInbox,
-  openOverview,
-  openSettingsTab,
-  parseRebuildStatus,
-  pressSettingRow,
-  readNav,
-  readNotices,
   readPane,
   readPanel,
-  readPluginSettings,
-  readRows,
-  SETTINGS_POLL_MS,
   selectOnlyPendingRequest,
   sendTestApproval,
-  settingRow,
   startApprovalsEnvironment,
   supportBrowser,
-  toggleSettingRow,
   uiWait,
   visitDestination,
   waitForPane,
 } from "../src/spec-support/approvals-support.js";
 
 const browser = supportBrowser(wdioBrowser);
+
+/**
+ * Waits until the plugin's own client has reconnected after a service restart. A request opened
+ * while it is still reconnecting fails to load and the pane stays on "Couldn't load this request"
+ * (run 12: items 24 and 10 never saw their request), so every step that needs a loaded request
+ * waits for this first.
+ */
+async function waitForPluginConnected(): Promise<void> {
+  await pollUntil(
+    async () => !(await readPanel(browser)).text.includes(APPROVALS_COPY.serviceDisconnected),
+    uiWait("the plugin to be connected to the service"),
+  );
+}
 
 describe("approvals lifecycle", () => {
   let env: ApprovalsEnvironment;
@@ -77,12 +73,20 @@ describe("approvals lifecycle", () => {
 
   it("[06-UAT#24] Disconnect drill: both destinations say so, controls are disabled, Obsidian responds, and they recover", async () => {
     await ensureRunning(env.fixture);
+    await waitForPluginConnected();
     await clearPending(env.approvals);
     await sendTestApproval(env.approvals);
     await selectOnlyPendingRequest(browser);
     // Visit both destinations, ending on Agent runs with the request open.
     await visitDestination(browser, "tasks", APPROVALS_COPY.tasksLabel);
     await visitDestination(browser, "agent-runs", APPROVALS_COPY.agentRunsLabel);
+    // Coming back reloads the request; stopping the service before that finished left the pane on
+    // "Couldn't load this request" with no decision controls (run 12). Stop only once it is loaded.
+    await waitForPane(
+      browser,
+      (pane) => pane.present && pane.state === "pending" && !pane.denyDisabled,
+      "the request to be loaded and decidable before the service stops",
+    );
 
     await env.fixture.stop();
 
@@ -127,6 +131,7 @@ describe("approvals lifecycle", () => {
 
   it("[06-UAT#10] Service restart and full Obsidian reload while a request is pending", async () => {
     await ensureRunning(env.fixture);
+    await waitForPluginConnected();
     await clearPending(env.approvals);
     const proposalId = await sendTestApproval(env.approvals);
     const before = await selectOnlyPendingRequest(browser);

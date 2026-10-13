@@ -36,3 +36,32 @@ export async function ensureLaunched(ports: LaunchRetryPorts): Promise<boolean> 
   await ports.probe();
   return true;
 }
+
+const SESSION_DEATH =
+  /invalid session id|session deleted as the browser has closed the connection/i;
+
+export function isSessionDeath(error: unknown): boolean {
+  const text = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+  return SESSION_DEATH.test(text);
+}
+
+/**
+ * Runs a self-contained test body; if the window closed under the driver, relaunches once and runs
+ * the body again. Only for a body that starts from a clean slate (it clears what it needs), so the
+ * second run proves the same thing the first would have. Any other failure, or a second death,
+ * propagates, and every retry is warned about.
+ */
+export async function retryOnSessionDeath<T>(
+  body: () => Promise<T>,
+  relaunch: () => Promise<void>,
+  warn: (message: string) => void,
+): Promise<T> {
+  try {
+    return await body();
+  } catch (error) {
+    if (!isSessionDeath(error)) throw error;
+    warn("run-problem warning: the Obsidian window closed during the test; relaunching once");
+  }
+  await relaunch();
+  return await body();
+}
