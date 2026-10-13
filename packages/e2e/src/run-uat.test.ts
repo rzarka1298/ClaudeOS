@@ -341,6 +341,26 @@ describe("runUat failure still tears down (Test 4)", () => {
     expect(h.calls).toEqual(expect.arrayContaining(["teardown", "delete-account", "leak-check"]));
   });
 
+  it("keeps the wdio logs after wdio ran, and a failing copy does not fail the run", async () => {
+    const seen: string[] = [];
+    const h = harness({});
+    h.ports.saveWdioLogs = ({ wdioDir }) => {
+      seen.push(wdioDir);
+      return "/tmp/ccc-uat-wdio-logs-x";
+    };
+    const outcome = await runUat(options(), h.ports);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatch(/wdio$/);
+    const failing = harness({});
+    failing.ports.saveWdioLogs = () => {
+      throw new Error("disk full");
+    };
+    const again = await runUat(options(), failing.ports);
+    // A failing copy is logged and changes nothing about the outcome.
+    expect(again.exitCode).toBe(outcome.exitCode);
+    expect(failing.calls).toContain("write-report");
+  });
+
   it("tears down and exits 1 on a non-zero wdio exit", async () => {
     const h = harness({ spawnWdio: async () => ({ exitCode: 1, signal: null }) });
     const outcome = await runUat(options(), h.ports);

@@ -33,7 +33,11 @@ import {
 import { installResultRecorder, type RecorderOptions } from "../src/results.js";
 import { captureRegion, shotPath } from "../src/screenshots.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
-import { clearPending } from "../src/spec-support/approvals-support.js";
+import {
+  clearPending,
+  pressSettingByName,
+  readSettingsOutline,
+} from "../src/spec-support/approvals-support.js";
 import { SEND_TEST_APPROVAL_NAME, SYNTHETIC_MARKERS } from "../src/spec-support/cross-copy.js";
 import { recordLookPending } from "../src/spec-support/cross-support.js";
 import {
@@ -81,18 +85,17 @@ async function sendTestApproval(): Promise<void> {
     setting.open();
     setting.openTabById("claude-command-center");
   });
-  const pressed = await pollUntil(
-    () =>
-      browser.execute((rowName: string) => {
-        const row = Array.from(document.querySelectorAll(".setting-item")).find(
-          (el) => el.querySelector(".setting-item-name")?.textContent?.trim() === rowName,
-        );
-        const button = row?.querySelector("button") ?? null;
-        button?.click();
-        return button !== null;
-      }, SEND_TEST_APPROVAL_NAME),
-    { timeoutMs: 15_000, intervalMs: 500, describe: "the Send a test approval button" },
-  );
+  let pressed: boolean;
+  try {
+    pressed = await pollUntil(() => browser.execute(pressSettingByName, SEND_TEST_APPROVAL_NAME), {
+      timeoutMs: 15_000,
+      intervalMs: 500,
+      describe: "the Send a test approval settings row",
+    });
+  } catch (error) {
+    const outline = await browser.execute(readSettingsOutline);
+    throw new Error(`${error instanceof Error ? error.message : String(error)} | ${outline}`);
+  }
   await browser.executeObsidian(({ app }) => {
     (app as unknown as { setting: { close(): void } }).setting.close();
   });

@@ -1,4 +1,5 @@
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -176,6 +177,15 @@ export function createRunPorts(): RunPorts {
       createShotsDir({ runId, repoRoot: REPO_ROOT, ...(base === undefined ? {} : { base }) }),
     deleteShots: (dir) => {
       deleteShotsDir(dir);
+    },
+    saveWdioLogs: ({ wdioDir, runId }) => {
+      if (!existsSync(wdioDir)) return null;
+      const dest = join(tmpdir(), `ccc-uat-wdio-logs-${runId}`);
+      mkdirSync(dest, { recursive: true, mode: 0o700 });
+      for (const name of readdirSync(wdioDir)) {
+        if (name.endsWith(".log")) copyFileSync(join(wdioDir, name), join(dest, name));
+      }
+      return dest;
     },
     spawnWdio: ({ sandbox, wdioEnv, extraArgs }) =>
       spawnWdio({

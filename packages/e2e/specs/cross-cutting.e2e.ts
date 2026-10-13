@@ -46,7 +46,11 @@ import { INSTALLED_OBSIDIAN_BINARY } from "../src/repo-paths.js";
 import { installResultRecorder, type RecorderOptions } from "../src/results.js";
 import { assertShotInside, shotPath } from "../src/screenshots.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
-import { clearPending } from "../src/spec-support/approvals-support.js";
+import {
+  clearPending,
+  pressSettingByName,
+  readSettingsOutline,
+} from "../src/spec-support/approvals-support.js";
 import {
   APPROVALS_GROUP_HEADING,
   APPROVE_LABEL,
@@ -136,20 +140,14 @@ async function openDestination(id: string): Promise<void> {
 async function pressSettingsButton(name: string): Promise<boolean> {
   await openSettings();
   try {
-    return await pollUntil(
-      () =>
-        browser.execute((rowName: string) => {
-          const row = Array.from(document.querySelectorAll(".setting-item")).find(
-            (el) => el.querySelector(".setting-item-name")?.textContent?.trim() === rowName,
-          );
-          const button = row?.querySelector("button") ?? null;
-          button?.click();
-          return button !== null;
-        }, name),
-      { timeoutMs: 15_000, intervalMs: 500, describe: `the "${name}" settings button` },
-    );
-  } catch {
-    return false;
+    return await pollUntil(() => browser.execute(pressSettingByName, name), {
+      timeoutMs: 15_000,
+      intervalMs: 500,
+      describe: `the "${name}" settings row`,
+    });
+  } catch (error) {
+    const outline = await browser.execute(readSettingsOutline);
+    throw new Error(`${error instanceof Error ? error.message : String(error)} | ${outline}`);
   }
 }
 

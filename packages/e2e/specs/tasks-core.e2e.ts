@@ -142,7 +142,10 @@ describe("tasks core", () => {
     // Obsidian's own Properties view shows due as a date with no time.
     await obsidianPage.openFile(original.path);
     const property = await readDueProperty(tb);
-    expect(duePropertyVerdict(property)).toEqual({ ok: true });
+    const verdict = duePropertyVerdict(property);
+    // Name what the Properties view showed, so a miss shows the real markup facts.
+    if (!verdict.ok) throw new Error(`${verdict.code}: ${JSON.stringify(property)}`);
+    expect(verdict).toEqual({ ok: true });
 
     // In Tasks it appears under Today as an all-day item.
     await openTasks(tb);

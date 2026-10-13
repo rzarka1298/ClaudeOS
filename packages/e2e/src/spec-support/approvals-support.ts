@@ -303,6 +303,9 @@ interface DomEl {
   matches(selector: string): boolean;
   click(): void;
   focus(): void;
+  children: ArrayLike<DomEl>;
+  parentElement: DomEl | null;
+  closest(selector: string): DomEl | null;
 }
 
 interface DomDoc {
@@ -778,6 +781,47 @@ export function pressSettingRow(name: string): boolean {
   return false;
 }
 
+/**
+ * Runs in the renderer: presses the settings row whose visible name is exactly `name`, without
+ * assuming Obsidian's row markup (the declarative settings API renders it, and an action row has
+ * no <button> of its own: Obsidian calls the action when the ROW is clicked). It finds the
+ * leaf element carrying the name inside any modal, then clicks the row's own button when there is
+ * one and otherwise the row (the nearest .setting-item, or the name element, which bubbles to the
+ * row's handler). False when no such name is on screen.
+ */
+export function pressSettingByName(name: string): boolean {
+  const candidates = Array.from(document.querySelectorAll(".modal *")).filter(
+    (el) => el.children.length === 0 && (el.textContent ?? "").trim() === name,
+  );
+  const hit = candidates[0];
+  if (hit === undefined) return false;
+  const row = hit.closest(".setting-item") ?? hit.parentElement ?? hit;
+  const button = row.querySelector("button");
+  (button ?? row).click();
+  return true;
+}
+
+/** Runs in the renderer: what the open settings modal contains, for a failure message. */
+export function readSettingsOutline(): string {
+  const modal = document.querySelector(".modal");
+  if (modal === null) return "no .modal is open";
+  const seen: string[] = [];
+  for (const el of Array.from(modal.querySelectorAll("*"))) {
+    if (el.children.length > 0 || (el.textContent ?? "").trim() === "") continue;
+    const chain: string[] = [];
+    let node: DomEl | null = el;
+    for (let depth = 0; node !== null && node !== modal && depth < 3; depth += 1) {
+      chain.push(
+        `${node.tagName.toLowerCase()}.${(node.getAttribute("class") ?? "").replace(/\s+/g, ".")}`,
+      );
+      node = node.parentElement;
+    }
+    seen.push(`${(el.textContent ?? "").trim().slice(0, 30)} <${chain.join(" < ")}>`);
+    if (seen.length >= 25) break;
+  }
+  return `modal.${(modal.getAttribute("class") ?? "").replace(/\s+/g, ".")}: ${seen.join(" | ")}`;
+}
+
 /** Runs in the renderer: flips the toggle of the settings row named `name`; false when there is none. */
 export function toggleSettingRow(name: string): boolean {
   for (const item of Array.from(document.querySelectorAll(".modal.mod-settings .setting-item"))) {
@@ -1169,11 +1213,19 @@ export async function openSettingsTab(browser: SupportBrowser): Promise<Settings
   if (!(await browser.execute(openPluginSettings, PLUGIN_ID))) {
     throw new Error("Obsidian's settings could not be opened (no app.setting).");
   }
-  return pollUntil(async () => {
-    const snapshot = squashDeep(await browser.execute(readSettingsSnapshot));
-    if (!snapshot.open) await browser.execute(openPluginSettings, PLUGIN_ID);
-    return snapshot.open && snapshot.rows.length > 0 ? snapshot : null;
-  }, uiWait("the plugin settings tab"));
+  try {
+    return await pollUntil(async () => {
+      const snapshot = squashDeep(await browser.execute(readSettingsSnapshot));
+      if (!snapshot.open) await browser.execute(openPluginSettings, PLUGIN_ID);
+      return snapshot.open && snapshot.rows.length > 0 ? snapshot : null;
+    }, uiWait("the plugin settings tab"));
+  } catch (error) {
+    // Say what the modal holds, so the markup that was not matched can be read from the log, and
+    // leave Obsidian's settings closed so the specs after this one are not left under a dialog.
+    const outline = await browser.execute(readSettingsOutline);
+    await browser.execute(closeSettings);
+    throw new Error(`${error instanceof Error ? error.message : String(error)} | ${outline}`);
+  }
 }
 
 /** The row named `name`; a missing row fails with its name. */

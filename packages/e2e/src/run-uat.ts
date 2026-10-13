@@ -71,6 +71,11 @@ export interface RunPorts {
     wdioEnv: Record<string, string>;
     extraArgs: string[];
   }) => Promise<WdioResult>;
+  /**
+   * Optional: keeps wdio's per-worker logs (hook errors land there, not on the console) before
+   * the run root is torn down. Returns the folder it wrote, for the run log.
+   */
+  saveWdioLogs?: (input: { wdioDir: string; runId: string }) => string | null;
   /** The tagged test titles of the spec files, for the expected-title check. */
   readSpecTitles: (phasePrefix: string) => SpecTitle[];
   readResults: (path: string) => ResultRecord[];
@@ -254,6 +259,15 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
         wdioFailed = result.exitCode !== 0;
       } catch {
         wdioFailed = true;
+      }
+      try {
+        const saved = ports.saveWdioLogs?.({
+          wdioDir: sandbox.paths.wdioDir,
+          runId: sandbox.runId,
+        });
+        if (saved) ports.log(`wdio logs kept in ${saved}`);
+      } catch {
+        ports.log("The wdio logs could not be kept.");
       }
 
       // Results are read even after a wdio failure: a partial report beats none.

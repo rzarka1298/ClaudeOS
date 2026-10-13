@@ -199,7 +199,11 @@ async function focusLandsOnDeny(): Promise<boolean> {
   if (first?.name.startsWith(DENY_LABEL) === true) return true;
   await browser.keys(Key.Tab);
   const next: FocusRecord | null = await browser.execute(recordFocusInRenderer);
-  return next?.name.startsWith(DENY_LABEL) === true;
+  if (next?.name.startsWith(DENY_LABEL) === true) return true;
+  // Name what had focus, so a miss can be told from a Tab that never reached the page.
+  throw new Error(
+    `Focus did not reach Deny: first ${JSON.stringify(first?.name ?? null)} (${first?.tag ?? "none"}), after Tab ${JSON.stringify(next?.name ?? null)} (${next?.tag ?? "none"})`,
+  );
 }
 
 async function press(decision: "deny" | "approve"): Promise<void> {
