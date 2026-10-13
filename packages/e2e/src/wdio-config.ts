@@ -1,3 +1,6 @@
+import { waitForAppExit } from "./app-exit.js";
+import { readProcessTable } from "./process-table.js";
+import { INSTALLED_OBSIDIAN_BINARY } from "./repo-paths.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -53,6 +56,8 @@ export interface WdioRunConfig {
    * when this config's `before` does, so the call threw and wdio swallowed it into a log file.
    */
   beforeSuite?: (suite: unknown) => Promise<void>;
+  /** Waits for the finished spec's app to exit before the next spec's app launches. */
+  afterSession?: () => Promise<void>;
 }
 
 /** The two service getters the version hook reads. */
@@ -237,6 +242,21 @@ export function buildWdioConfig(
       decisions,
       options.versionsIo ?? REAL_VERSIONS_IO,
     ),
+    afterSession: async () => {
+      try {
+        await waitForAppExit({
+          readTable: () => readProcessTable(),
+          appBinary: INSTALLED_OBSIDIAN_BINARY,
+          runRoot,
+          sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+          now: () => Date.now(),
+          timeoutMs: 20_000,
+          intervalMs: 500,
+        });
+      } catch {
+        // waiting is best effort; the next spec's launch is the real test
+      }
+    },
     beforeSuite: versionSuiteHook(
       join(runRoot, "versions.json"),
       decisions,
