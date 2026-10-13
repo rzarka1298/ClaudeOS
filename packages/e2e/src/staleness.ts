@@ -24,7 +24,9 @@ export interface StalenessInput {
  * markdown outside packages are deliberately absent, so they leave a run current.
  */
 export const PRODUCT_PATH_PATTERNS: readonly RegExp[] = [
-  /^packages\/(?!e2e\/)[^/]+\//,
+  // The e2e package counts too (its specs decide what a run proves), except its unit tests.
+  /^packages\/(?!e2e\/src\/[^/]*\.test\.ts$)[^/]+\//,
+  /^\.claude\/(hooks\/|settings[^/]*\.json$)/,
   /^scripts\//,
   /^package\.json$/,
   /^pnpm-lock\.yaml$/,

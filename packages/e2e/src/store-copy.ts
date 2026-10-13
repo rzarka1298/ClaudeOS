@@ -32,6 +32,10 @@ export const EFFECTS_PER_PROPOSAL_SQL =
 /** Plain effect count (test 7 asserts zero after a denial). */
 export const EFFECT_COUNT_SQL = "select count(*) as effects from diagnostic_effects;";
 
+/** When each expiry was audited, service side (Wave 3 WR-08): `at` is an ISO timestamp. */
+export const EXPIRED_EVENT_TIMES_SQL =
+  "select proposal_id, at from approval_audit where event = 'expired' order by seq;";
+
 /** Expired audit events (06-UAT test 9). */
 export const EXPIRED_EVENTS_SQL =
   "select seq, proposal_id, event from approval_audit where event = 'expired' order by seq;";

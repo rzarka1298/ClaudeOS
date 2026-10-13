@@ -5,10 +5,12 @@ import { buildServiceEnv, refuseRealPaths, type ServiceKind } from "./isolation-
 import { SERVICE_ENTRY } from "./repo-paths.js";
 import type { RunRootPaths } from "./run-root.js";
 import {
+  realWait,
   type SandboxHandle,
   STOP_DEADLINE_MS,
   type Stoppable,
   stopWithDeadline,
+  type Wait,
 } from "./sandbox.js";
 
 /**
@@ -35,7 +37,7 @@ export interface StartServiceArgs {
 
 export interface ServiceFixtureDeps {
   startService?: (args: StartServiceArgs) => Promise<Stoppable>;
-  wait?: (ms: number) => Promise<void>;
+  wait?: Wait;
   home?: string | undefined;
   deadlineMs?: number;
 }
@@ -55,11 +57,6 @@ export interface ServiceFixture {
   resetData(): Promise<void>;
   isRunning(): boolean;
 }
-
-const realWait = (ms: number): Promise<void> =>
-  new Promise((done) => {
-    setTimeout(done, ms).unref();
-  });
 
 function handleFromError(err: unknown): Stoppable | undefined {
   if (typeof err === "object" && err !== null && "handle" in err) {

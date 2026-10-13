@@ -105,14 +105,22 @@ export function assertShotInside(dir: string, file: string): void {
 export function purgeStaleShotDirs(input: {
   base: string;
   keepRunIds: readonly string[];
+  /**
+   * When given, only folders last modified longer ago than this are removed, so the images and
+   * look-pending state of a recent, not yet judged run survive a later run (Wave 3 WR-03).
+   */
+  maxAgeMs?: number;
+  now?: number;
 }): string[] {
   if (!existsSync(input.base)) return [];
+  const now = input.now ?? Date.now();
   const removed: string[] = [];
   for (const name of readdirSync(input.base).sort()) {
     if (!name.startsWith(SHOTS_PREFIX)) continue;
     if (input.keepRunIds.includes(name.slice(SHOTS_PREFIX.length))) continue;
     const path = join(input.base, name);
     const stat = lstatSync(path);
+    if (input.maxAgeMs !== undefined && now - stat.mtimeMs < input.maxAgeMs) continue;
     if (stat.isSymbolicLink()) {
       unlinkSync(path);
       removed.push(name);

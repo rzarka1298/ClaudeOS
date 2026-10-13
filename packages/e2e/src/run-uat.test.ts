@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ratifyReport } from "./ratify.js";
 import type { ResultRecord } from "./results.js";
 import { pathsForRoot } from "./run-root.js";
 import {
@@ -105,6 +106,7 @@ function harness(
     script?: string | null;
     looks?: LookPendingItem[];
     leaks?: number;
+    cleanupErrors?: number;
     titles?: SpecTitle[];
   } = {},
 ): Harness {
@@ -159,7 +161,7 @@ function harness(
         value,
         error,
         leaks,
-        cleanupErrors: [],
+        cleanupErrors: Array.from({ length: setup.cleanupErrors ?? 0 }, () => new Error("cleanup")),
         runId: RUN_ID,
         runRoot: ROOT,
         runRootRemoved: leaks.length === 0,
@@ -287,8 +289,8 @@ describe("runUat order (Test 3)", () => {
     expect(order).toEqual([
       "checks",
       "verify-cache",
-      "purge-shots",
       "sandbox-start",
+      "purge-shots",
       "vault-live",
       "stage-plugin",
       "create-shots",
@@ -300,6 +302,7 @@ describe("runUat order (Test 3)", () => {
       "teardown",
       "delete-account",
       "leak-check",
+      "write-report",
     ]);
     expect(h.calls).not.toContain("vault-big");
   });
@@ -584,5 +587,80 @@ describe("the synthetic script used above", () => {
     const parsed = parseUatScript(SCRIPT);
     expect(parsed.items.map((item) => item.number)).toEqual([1, 2, 5, 7, 21]);
     expect(parsed.findings).toEqual([]);
+  });
+});
+
+describe("runUat records run problems in the report (Wave 3 WR-01)", () => {
+  const ratifyInput = {
+    runId: RUN_ID,
+    statement: "owner statement",
+    date: "2026-10-12",
+    currentHead: HEAD,
+    changedFiles: [] as string[],
+    currentClean: true,
+  };
+  const allPass: ResultRecord[] = [
+    record("[06-UAT#05] deny", "passed"),
+    record("[06-UAT#02] click handler part", "passed"),
+  ];
+  const lastReport = (h: Harness): string => h.reports[h.reports.length - 1]?.text ?? "";
+  const refusalReasons = (text: string): string[] => {
+    const result = ratifyReport(text, ratifyInput);
+    return result.ok ? [] : result.reasons;
+  };
+
+  it("a wdio failure after every row passed leaves a report that ratify refuses", async () => {
+    const h = harness(
+      { spawnWdio: async () => ({ exitCode: 1, signal: null }) },
+      { results: allPass, looks: [] },
+    );
+    await runUat(options(), h.ports);
+    expect(lastReport(h)).toContain("run-problems: wdio-failed");
+    expect(refusalReasons(lastReport(h)).some((reason) => /recorded problems/.test(reason))).toBe(
+      true,
+    );
+  });
+
+  it("a leaked process is added to the written report after teardown", async () => {
+    const h = harness({}, { results: allPass, looks: [], leaks: 1 });
+    await runUat(options(), h.ports);
+    expect(lastReport(h)).toContain("run-problems: leak");
+    expect(refusalReasons(lastReport(h)).some((reason) => /recorded problems/.test(reason))).toBe(
+      true,
+    );
+  });
+
+  it("a cleanup error is added to the written report after teardown", async () => {
+    const h = harness({}, { results: allPass, looks: [], cleanupErrors: 1 });
+    await runUat(options(), h.ports);
+    expect(lastReport(h)).toContain("cleanup-error");
+  });
+
+  it("a clean run ends with a report without run-problems, after a pending first write", async () => {
+    const h = harness({}, { results: allPass, looks: [] });
+    await runUat(options(), h.ports);
+    expect(h.reports).toHaveLength(2);
+    expect(h.reports[0]?.text).toContain("run-problems: teardown-pending");
+    expect(lastReport(h)).not.toContain("run-problems");
+  });
+
+  it("a run that never finished teardown leaves a report that ratify refuses (Codex 2)", async () => {
+    const h = harness({}, { results: allPass, looks: [] });
+    await runUat(options(), h.ports);
+    const first = h.reports[0]?.text ?? "";
+    expect(refusalReasons(first).some((reason) => /recorded problems/.test(reason))).toBe(true);
+  });
+});
+
+describe("runUat purges screenshots only after the sandbox started (Codex finding 4)", () => {
+  it("a run that is refused because another run is active purges nothing", async () => {
+    const h = harness({
+      runSandbox: async () => {
+        throw new Error("Another UAT run is active; wait for it to finish or stop it first.");
+      },
+    });
+    const outcome = await runUat(options(), h.ports);
+    expect(outcome.exitCode).toBe(2);
+    expect(h.calls).not.toContain("purge-shots");
   });
 });

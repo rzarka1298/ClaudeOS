@@ -16,6 +16,10 @@ export interface RatificationWrite {
   items: number[];
 }
 
+// A CRLF script keeps its endings: compare without the carriage return and write it back.
+const stripCr = (line: string): string => line.replace(/\r$/, "");
+const endingOf = (line: string): string => (line.endsWith("\r") ? "\r" : "");
+
 const MALFORMED = "The run id is not in the expected form.";
 const SUMMARY = "The script summary counts cannot take these results.";
 
@@ -30,8 +34,9 @@ export function applyRatification(script: string, runId: string): RatificationWr
     const match = AUTO_RESULT_PATTERN.exec(item.autoResult);
     if (match === null || match[1] !== "pass" || match[2] !== runId) continue;
     for (let index = item.headingLine + 1; index < item.endLine; index += 1) {
-      if (lines[index] === PENDING_RESULT) {
-        lines[index] = `result: pass - auto run ${runId}`;
+      const line = lines[index] as string;
+      if (stripCr(line) === PENDING_RESULT) {
+        lines[index] = `result: pass - auto run ${runId}${endingOf(line)}`;
         written.push(item.number);
         break;
       }
@@ -42,13 +47,14 @@ export function applyRatification(script: string, runId: string): RatificationWr
   const passedAt = parsed.summaryLines.passed;
   const pendingAt = parsed.summaryLines.pending;
   if (passedAt !== undefined && pendingAt !== undefined) {
-    const passed = Number(/^passed: (\d+)$/.exec(lines[passedAt] as string)?.[1]);
-    const pending = Number(/^pending: (\d+)$/.exec(lines[pendingAt] as string)?.[1]);
+    const passed = Number(/^passed: (\d+)$/.exec(stripCr(lines[passedAt] as string))?.[1]);
+    const pending = Number(/^pending: (\d+)$/.exec(stripCr(lines[pendingAt] as string))?.[1]);
     if (!Number.isInteger(passed) || !Number.isInteger(pending) || pending < written.length) {
       throw new Error(SUMMARY);
     }
-    lines[passedAt] = `passed: ${passed + written.length}`;
-    lines[pendingAt] = `pending: ${pending - written.length}`;
+    lines[passedAt] = `passed: ${passed + written.length}${endingOf(lines[passedAt] as string)}`;
+    lines[pendingAt] =
+      `pending: ${pending - written.length}${endingOf(lines[pendingAt] as string)}`;
   }
   return { text: lines.join("\n"), items: written };
 }

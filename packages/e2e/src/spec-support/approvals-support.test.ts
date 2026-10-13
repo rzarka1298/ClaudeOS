@@ -1,15 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AuditRowLike,
+  approvalStatusReached,
   type ChipStep,
   checkChipTranscript,
   checkDeniedAudit,
   containsInOrder,
+  expiredWithinBound,
   findNewestMirrorNote,
   findNewNotification,
   isExactlyOneNavigation,
   parseCountChip,
   parseRebuildStatus,
+  readScheduledPress,
+  scheduleDecisionClick,
   settledWithinGrace,
   squashDeep,
 } from "./approvals-support.js";
@@ -213,5 +217,75 @@ describe("findNewNotification and parseCountChip (Task 2 Test 2)", () => {
     expect(parseCountChip("9+")).toEqual({ count: 9, capped: true });
     expect(parseCountChip("")).toBeNull();
     expect(parseCountChip("many")).toBeNull();
+  });
+});
+
+describe("expiry timing (Wave 3 WR-08)", () => {
+  it("expiredWithinBound uses the UAT bound of one second on the audit timestamp", () => {
+    const expiresAt = Date.parse("2026-10-12T10:00:15.000Z");
+    expect(expiredWithinBound(expiresAt, "2026-10-12T10:00:15.400Z")).toBe(true);
+    expect(expiredWithinBound(expiresAt, "2026-10-12T10:00:16.000Z")).toBe(true);
+    expect(expiredWithinBound(expiresAt, "2026-10-12T10:00:16.100Z")).toBe(false);
+    expect(expiredWithinBound(expiresAt, "2026-10-12T10:00:14.900Z")).toBe(false);
+    expect(expiredWithinBound(expiresAt, undefined)).toBe(false);
+    expect(expiredWithinBound(expiresAt, "not a date")).toBe(false);
+  });
+
+  describe("scheduleDecisionClick reports what the press did", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    });
+
+    function setup(present: () => boolean) {
+      vi.useFakeTimers();
+      const clicks: string[] = [];
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("document", {
+        querySelector: () => (present() ? { click: () => clicks.push("click") } : null),
+      });
+      return clicks;
+    }
+
+    it("is 'no-button' when the button disappeared before the timer fired", () => {
+      let present = true;
+      const clicks = setup(() => present);
+      expect(scheduleDecisionClick("deny", Date.now() + 50)).toBe(true);
+      present = false;
+      vi.advanceTimersByTime(100);
+      expect(readScheduledPress()).toBe("no-button");
+      expect(clicks).toEqual([]);
+    });
+
+    it("is 'clicked' when the button was still there", () => {
+      const clicks = setup(() => true);
+      scheduleDecisionClick("deny", Date.now() + 50);
+      expect(readScheduledPress()).toBe("pending");
+      vi.advanceTimersByTime(100);
+      expect(readScheduledPress()).toBe("clicked");
+      expect(clicks).toEqual(["click"]);
+    });
+  });
+});
+
+describe("approvalStatusReached (Wave 3 IN-01)", () => {
+  const approved = "Approved.";
+  const carriedOut = "Carried out.";
+
+  it("accepts the full sequence", () => {
+    expect(approvalStatusReached([approved, carriedOut], approved, carriedOut)).toBe(true);
+  });
+
+  it("accepts a history of just the outcome", () => {
+    expect(approvalStatusReached([carriedOut], approved, carriedOut)).toBe(true);
+  });
+
+  it("still requires the outcome", () => {
+    expect(approvalStatusReached([approved], approved, carriedOut)).toBe(false);
+    expect(approvalStatusReached([], approved, carriedOut)).toBe(false);
+  });
+
+  it("rejects an outcome that a later status overrode", () => {
+    expect(approvalStatusReached([carriedOut, "Error."], approved, carriedOut)).toBe(false);
   });
 });

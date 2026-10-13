@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LOOK_PENDING_FILE, listPending, recordVerdict, writeLookHandoff } from "./look.js";
 import { type ReportRow, renderReport } from "./report.js";
-import { parseReport } from "./report-io.js";
+import { parseReport, updateReportOutcome } from "./report-io.js";
 import type { LookPendingItem } from "./run-uat.js";
 
 const lookRow = (number: number): ReportRow => ({
@@ -210,10 +210,37 @@ describe("recordVerdict (Tests 2 and 3)", () => {
     expect(() => recordVerdict({ shotsDir: shots, item: 5, verdict: "pass", images: 1 })).toThrow();
   });
 
-  it("records a verdict with no report path, deleting the images", () => {
+  it("refuses a verdict when the run wrote no report file, and deletes nothing (WR-04)", () => {
     const only = image(12, "pane");
     handoff([{ item: 12, labels: ["pane"], count: 1 }], "0123abcd", false);
-    recordVerdict({ shotsDir: shots, item: 12, verdict: "pass", images: 1 });
-    expect(existsSync(only)).toBe(false);
+    expect(() => recordVerdict({ shotsDir: shots, item: 12, verdict: "pass", images: 1 })).toThrow(
+      /no report/i,
+    );
+    expect(existsSync(only)).toBe(true);
+    expect(listPending(shots).items).toHaveLength(1);
+  });
+
+  it("a retry succeeds after the report was updated but the cleanup did not finish (WR-05)", () => {
+    const pane = image(12, "pane");
+    const detail = image(12, "detail");
+    handoff([{ item: 12, labels: ["pane", "detail"], count: 2 }]);
+    // The state a failed cleanup leaves: the row already holds the verdict, one image is gone.
+    writeFileSync(reportPath, updateReportOutcome(report(), 12, "pass", "the look verdict passed"));
+    rmSync(pane);
+    const result = recordVerdict({ shotsDir: shots, item: 12, verdict: "pass", images: 2 });
+    expect(result.status).toBe("pass");
+    expect(existsSync(detail)).toBe(false);
+    expect(
+      parseReport(readFileSync(reportPath, "utf8")).rows.find((r) => r.number === 12)?.status,
+    ).toBe("pass");
+  });
+
+  it("a retry with the opposite verdict is still refused after the row holds one (WR-05)", () => {
+    image(12, "pane");
+    handoff([{ item: 12, labels: ["pane"], count: 1 }]);
+    writeFileSync(reportPath, updateReportOutcome(report(), 12, "pass", "the look verdict passed"));
+    expect(() =>
+      recordVerdict({ shotsDir: shots, item: 12, verdict: "fail", images: 1 }),
+    ).toThrow();
   });
 });

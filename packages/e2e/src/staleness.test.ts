@@ -24,8 +24,7 @@ describe("isRunCurrent (Test 4)", () => {
       check([
         ".planning/phases/06/06-UAT.md",
         ".planning/STATE.md",
-        "packages/e2e/src/report.ts",
-        "packages/e2e/package.json",
+        "packages/e2e/src/report.test.ts",
         "docs/adr/0020-x.md",
         "README.md",
         "CHANGELOG.md",

@@ -226,12 +226,12 @@ describe("executeSweep (Test 4)", () => {
     expect(outcome).toEqual({ status: "none" });
   });
 
-  it("records an action failure and carries on with the rest", async () => {
+  it("records an account deletion failure and keeps the run root for the retry", async () => {
     const d = deps(() => []);
     d.deleteAccount.mockRejectedValue(new Error("keychain locked"));
     const plan = planSweep([staleRun([])], [], options);
     const outcome = await executeSweep(plan, d);
-    expect(d.removeRunRoot).toHaveBeenCalledWith(ROOT);
+    expect(d.removeRunRoot).not.toHaveBeenCalled();
     expect(outcome.status === "swept" && outcome.errors.length).toBe(1);
   });
 });

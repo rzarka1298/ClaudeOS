@@ -20,6 +20,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createApprovalsClient, createAuthenticatedClient } from "@ccc/service-api-client";
 import { browser, expect } from "@wdio/globals";
 import { obsidianPage } from "wdio-obsidian-service";
 import { Key } from "webdriverio";
@@ -45,6 +46,7 @@ import { INSTALLED_OBSIDIAN_BINARY } from "../src/repo-paths.js";
 import { installResultRecorder, type RecorderOptions } from "../src/results.js";
 import { assertShotInside, shotPath } from "../src/screenshots.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
+import { clearPending } from "../src/spec-support/approvals-support.js";
 import {
   APPROVALS_GROUP_HEADING,
   APPROVE_LABEL,
@@ -79,6 +81,7 @@ import {
   sampleMotionInRenderer,
   scanForAlwaysAllow,
 } from "../src/spec-support/cross-support.js";
+import { waitUntilQuiet } from "../src/spec-support/quiescence.js";
 import { copyStore, queryStore } from "../src/store-copy.js";
 
 const asDriver = (): DriverBrowser => browser as unknown as DriverBrowser;
@@ -176,8 +179,27 @@ async function ensureVaultSetup(): Promise<void> {
   );
 }
 
+/**
+ * Settles every pending request through the service API and waits until none is left, so the
+ * next "Send a test approval" is a NEW request: the service answers a second test request while
+ * one is pending with the same proposal, and the notifier skips proposal ids it has seen, so a
+ * reused request produces no fresh notification event (Codex finding 3).
+ */
+async function settlePendingRequests(): Promise<void> {
+  const approvals = createApprovalsClient(
+    createAuthenticatedClient({ socketPath: context.socketPath }),
+  );
+  await clearPending(approvals);
+  await pollUntil(async () => (await approvals.list()).pending.length === 0, {
+    timeoutMs: 15_000,
+    intervalMs: 250,
+    describe: "the earlier test request to be settled",
+  });
+}
+
 /** Sends a test approval and waits until its row shows in the Pending list of Approvals. */
 async function sendTestApprovalAndWait(): Promise<void> {
+  await settlePendingRequests();
   expect(await pressSettingsButton(SEND_TEST_APPROVAL_NAME)).toBe(true);
   await closeSettings();
   await openDestination("agent-runs");
@@ -340,6 +362,21 @@ describe("cross-cutting items", () => {
     expect(scanForAlwaysAllow(texts)).toEqual([]);
     expect([...decisions].sort()).toEqual(["approve", "deny"]);
 
+    // Settings was opened above to read its text; the approvals pane must be what is on screen.
+    await closeSettings();
+    await pollUntil(
+      () =>
+        browser.execute(
+          () =>
+            document.querySelector(".ccc-approvals") !== null &&
+            document.querySelector(".modal-container") === null,
+        ),
+      {
+        timeoutMs: 10_000,
+        intervalMs: 250,
+        describe: "the approvals pane without the settings dialog",
+      },
+    );
     const labels = [
       await shot(12, "approvals-pane"),
       await (async () => {
@@ -417,8 +454,32 @@ describe("cross-cutting items", () => {
         diffFileHashes(beforeFiles, hashVaultFiles(vaultPath, context.runRoot)).changed.length > 0,
       { timeoutMs: 20_000, intervalMs: 500, describe: "the task note to change" },
     );
-    // A short settle period: absence of a prompt, an approval or a new process has no event to wait on.
-    await browser.pause(2_000);
+    // Absence of a prompt, an approval or a new process has no event to wait on, so the vault
+    // files and the proposal count must stay unchanged for a whole quiet window, sampled once a
+    // second, within a bound. A fixed pause passed vacuously when a late write arrived (WR-09).
+    const quiet = await waitUntilQuiet({
+      sample: async () => {
+        const settled = copyStore({
+          runtimeDir: context.paths.runtimeDir,
+          destDir: context.paths.tmpDir,
+          runRoot: context.runRoot,
+        });
+        return {
+          files: diffFileHashes(beforeFiles, hashVaultFiles(vaultPath, context.runRoot)),
+          proposals: await queryStore({
+            copyPath: settled.copyPath,
+            sql: PROPOSAL_COUNT_SQL,
+            runRoot: context.runRoot,
+          }),
+        };
+      },
+      sleep: (ms) => browser.pause(ms),
+      now: () => Date.now(),
+      quietMs: 3_000,
+      intervalMs: 1_000,
+      timeoutMs: 15_000,
+    });
+    expect(quiet.quiet).toBe(true);
 
     const diff = diffFileHashes(beforeFiles, hashVaultFiles(vaultPath, context.runRoot));
     // The service regenerates a folder's index.md when a note in it changes; that is generated

@@ -25,6 +25,7 @@ function fake(replies: Record<string, string | Error>): { exec: ExecFile; calls:
 const CLEAN_REPLIES = {
   "rev-parse HEAD": `${HEAD}\n`,
   "status --porcelain --untracked-files=no": "",
+  "ls-files --others --exclude-standard -z -- packages scripts": "",
 };
 
 describe("readGitFacts (Test 3)", () => {
@@ -69,7 +70,7 @@ describe("readGitFacts (Test 3)", () => {
       [`diff --name-only -z --no-renames ${SINCE} HEAD --`]: "",
     });
     await readGitFacts({ exec, cwd: "/repo", since: SINCE });
-    expect(calls.length).toBe(3);
+    expect(calls.length).toBe(4);
     for (const call of calls) {
       expect(call.file).toBe("git");
       expect(Array.isArray(call.args)).toBe(true);

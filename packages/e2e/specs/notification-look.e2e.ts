@@ -15,6 +15,7 @@
  *
  * Authored and CI-checked only (D-15); the live run is the orchestrator's baseline in 05.2-09.
  */
+import { createApprovalsClient, createAuthenticatedClient } from "@ccc/service-api-client";
 import { browser, expect } from "@wdio/globals";
 import { assertSandboxConnected, type DriverBrowser, pollUntil } from "../src/driver.js";
 import {
@@ -27,6 +28,7 @@ import {
 import { installResultRecorder, type RecorderOptions } from "../src/results.js";
 import { captureRegion, shotPath } from "../src/screenshots.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
+import { clearPending } from "../src/spec-support/approvals-support.js";
 import { SEND_TEST_APPROVAL_NAME, SYNTHETIC_MARKERS } from "../src/spec-support/cross-copy.js";
 import { recordLookPending } from "../src/spec-support/cross-support.js";
 import {
@@ -45,6 +47,24 @@ const service = (): ReturnType<typeof serviceFixtureFor> => {
   if (fixture === undefined) fixture = serviceFixtureFor(context);
   return fixture;
 };
+
+/**
+ * Settles every pending request through the service API and waits until none is left, so the
+ * next "Send a test approval" is a NEW request: the service answers a second test request while
+ * one is pending with the same proposal, and the notifier skips proposal ids it has seen, so a
+ * reused request produces no fresh notification event (Codex finding 3).
+ */
+async function settlePendingRequests(): Promise<void> {
+  const approvals = createApprovalsClient(
+    createAuthenticatedClient({ socketPath: context.socketPath }),
+  );
+  await clearPending(approvals);
+  await pollUntil(async () => (await approvals.list()).pending.length === 0, {
+    timeoutMs: 15_000,
+    intervalMs: 250,
+    describe: "the earlier test request to be settled",
+  });
+}
 
 /** Presses Send a test approval in the plugin's settings and closes the dialog. */
 async function sendTestApproval(): Promise<void> {
@@ -117,6 +137,7 @@ describe("notification banner", () => {
     // Unfocused: Finder (the only allowlisted app) comes to the front and the renderer reports no focus.
     await activateAllowlistedApp("Finder");
     await browser.execute(stubDocumentHasFocus, false);
+    await settlePendingRequests();
     await sendTestApproval();
     const seen = await pollUntil(
       async () => {

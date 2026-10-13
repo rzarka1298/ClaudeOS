@@ -37,7 +37,7 @@ import {
   type PreflightPorts,
   runPreflight,
 } from "./preflight.js";
-import { ratifyReport } from "./ratify.js";
+import { checkRunValidity, ratifyReport } from "./ratify.js";
 import { HOOK_ENTRY, PLUGIN_BUILD_DIR, REPO_ROOT, SERVICE_ENTRY } from "./repo-paths.js";
 import { parseReport } from "./report-io.js";
 import type { ItemStatus } from "./results.js";
@@ -147,7 +147,12 @@ export function createRunPorts(): RunPorts {
     },
     verifyCache: () => verifyObsidianCache(decisions, realCacheFiles(OBSIDIAN_CACHE_DIR)),
     purgeShots: (base) => {
-      purgeStaleShotDirs({ base: base ?? tmpdir(), keepRunIds: [] });
+      // Seven days: a finished run waiting for its look verdict must outlive later runs.
+      purgeStaleShotDirs({
+        base: base ?? tmpdir(),
+        keepRunIds: [],
+        maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      });
     },
     runSandbox: (body) => withSandbox({}, body),
     generateVault: async (sandbox, kind, profile) => {
@@ -322,6 +327,20 @@ const reportCommand: CommandHandler = async (argv, deps) => {
     deps.write("No script was given; nothing was written.");
     return 0;
   }
+  // The same run-level checks as ratify: a dirty, stale, version-mismatched or problem run must
+  // not leave auto-result lines behind (Wave 3 WR-07).
+  const facts = await io.readGitFacts(parsed.frontMatter["git-head"]);
+  const invalid = checkRunValidity({
+    report: parsed,
+    runId: args.run,
+    currentHead: facts.head,
+    changedFiles: facts.changedSince,
+    currentClean: facts.clean,
+  });
+  if (invalid.length > 0) {
+    for (const reason of invalid) deps.write(`Refused: ${reason}.`);
+    return 1;
+  }
   const outcomes: AutoOutcome[] = parsed.rows
     .filter((row) => row.runClass !== "owner" && FINAL_STATUSES.includes(row.status))
     .map((row) => ({ item: row.number, status: row.status as ItemStatus }));
@@ -363,10 +382,13 @@ const ratifyCommand: CommandHandler = async (argv, deps) => {
   if (args.writeResults && args.script !== undefined) {
     results = applyRatification(mustRead(io, args.script, "script"), args.run);
   }
-  io.writeText(args.report, result.text);
+  // Script first: if it fails, the report is still unratified and ratify can simply be re-run
+  // (applyRatification is idempotent). The reverse order left a ratified report and no results
+  // (Wave 3 WR-02).
   if (results !== undefined && args.script !== undefined && results.items.length > 0) {
     io.writeText(args.script, results.text);
   }
+  io.writeText(args.report, result.text);
   deps.write(`Ratified run ${args.run} on ${date}.`);
   if (results !== undefined) deps.write(`Wrote ${results.items.length} result line(s).`);
   return 0;
