@@ -67,8 +67,34 @@ import yaml from "js-yaml";
  * writer — which dumps the whole map at once — exactly.
  */
 
+const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The top-level keys whose value is an UNQUOTED `YYYY-MM-DD` in a frontmatter
+ * block. js-yaml quotes such strings on dump, and Obsidian Properties then
+ * treats the value as text; a rewrite passes these keys back so the date keeps
+ * the form the user (or Properties) gave it. A quoted source date is not listed.
+ * Twin of `plainDateKeys` in `@ccc/vault-repo`'s task-note.ts.
+ */
+export function plainDateKeys(block: string): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const line of block.split("\n")) {
+    const match = /^([^\s:#'"][^:]*):[ \t]+(\d{4}-\d{2}-\d{2})[ \t]*(?:#.*)?$/.exec(line);
+    if (match) keys.add((match[1] as string).trim());
+  }
+  return keys;
+}
+
 /** One `key: value` entry, dumped on its own. See the module note above. */
-function dumpEntry(key: string, value: unknown, noRefs = false): string {
+function dumpEntry(
+  key: string,
+  value: unknown,
+  noRefs = false,
+  plainDates?: ReadonlySet<string>,
+): string {
+  if (plainDates?.has(key) && typeof value === "string" && PLAIN_DATE.test(value)) {
+    return `${key}: ${value}\n`;
+  }
   return yaml.safeDump({ [key]: value }, noRefs ? { noRefs: true } : undefined);
 }
 
@@ -119,6 +145,7 @@ export function serializeManagedFrontmatter(frontmatter: NoteFrontmatter): strin
 export function serializePassthroughFrontmatter(
   entries: readonly (readonly [string, unknown])[],
   noRefs = false,
+  plainDates?: ReadonlySet<string>,
 ): string {
   let out = "";
   for (const [key, value] of entries) {
@@ -126,7 +153,7 @@ export function serializePassthroughFrontmatter(
     // `undefined` carries no information to preserve, so dropping it loses
     // nothing a round-trip could have kept.
     if (value === undefined) continue;
-    out += dumpEntry(key, value, noRefs);
+    out += dumpEntry(key, value, noRefs, plainDates);
   }
   return out;
 }
@@ -146,6 +173,7 @@ export function serializePassthroughFrontmatter(
 export function serializeTaskFrontmatter(
   frontmatter: TaskFrontmatter,
   passthrough: readonly (readonly [string, unknown])[] = [],
+  plainDates: ReadonlySet<string> = new Set(),
 ): string {
   const source = frontmatter as unknown as Record<string, unknown>;
   let out = "";
@@ -157,7 +185,7 @@ export function serializeTaskFrontmatter(
     } else if (key === "decision") {
       out += dumpEntry(key, orderedMap(value as object, TASK_DECISION_KEY_ORDER), true);
     } else {
-      out += dumpEntry(key, value, true);
+      out += dumpEntry(key, value, true, plainDates);
     }
   }
   const owned: ReadonlySet<string> = new Set(TASK_FRONTMATTER_KEY_ORDER);
@@ -166,6 +194,7 @@ export function serializeTaskFrontmatter(
     serializePassthroughFrontmatter(
       passthrough.filter(([key]) => !owned.has(key)),
       true,
+      plainDates,
     )
   );
 }

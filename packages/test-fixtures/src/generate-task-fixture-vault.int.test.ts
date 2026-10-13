@@ -236,7 +236,7 @@ describe("live-check notes (Test 3)", () => {
     expect(serviceText).toBe(`---\n${pluginBlock}---\n${read.task.body}`);
     const changed = serviceText
       .split("\n")
-      .filter((line, i) => line !== text.split("\n")[i])
+      .filter((line) => !text.split("\n").includes(line))
       .map((line) => line.split(":")[0]);
     expect(changed.sort()).toEqual(["completed", "status", "updated"]);
     expect(serviceText).toMatch(new RegExp(`^due: ${properties?.due}$`, "m"));

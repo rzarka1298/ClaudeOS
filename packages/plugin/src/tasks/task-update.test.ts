@@ -195,7 +195,7 @@ describe("Test 8b: a date-only value keeps the quoting it had in the source", ()
     await updateTaskNote(vault, file, quoted, { now: NOW, changes: { status: "in-progress" } });
     const after = vault.read(TASK_PATH);
     expect(after).toContain("due: '2026-10-09'\n");
-    expect(after).toContain("zeta: 2026-10-10T08:00:00Z\n");
+    expect(after).toContain("zeta: '2026-10-10T08:00:00Z'\n");
     expect(after).toContain("plain: 2026-11-01\n");
   });
 

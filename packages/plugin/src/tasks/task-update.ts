@@ -9,6 +9,7 @@ import {
   type TaskStatus,
 } from "@ccc/domain/task-schema.js";
 import yaml from "js-yaml";
+import { plainDateKeys } from "../frontmatter-serializer.js";
 import type { Vault } from "obsidian";
 import {
   applyConflictSafeUpdate,
@@ -74,6 +75,8 @@ export interface ParsedTask {
   readonly body: string;
   /** Keys the task schema does not own, in read order, so a rewrite keeps them. */
   readonly passthrough: readonly (readonly [string, unknown])[];
+  /** Keys whose source value was an unquoted `YYYY-MM-DD`; a rewrite keeps them unquoted. */
+  readonly plainDateKeys: ReadonlySet<string>;
 }
 
 /** What an edit needs from a vault: the atomic modify and an uncached read. */
@@ -178,7 +181,13 @@ export function parseTaskContent(content: string): ReadTaskResult {
   for (const [key, value] of Object.entries(data)) {
     if (!OWNED_KEYS.has(key)) passthrough.push([key, value]);
   }
-  return { kind: "ok", content, task: { frontmatter: result.data, body, passthrough } };
+  return { kind: "ok", content, task: {
+      frontmatter: result.data,
+      body,
+      passthrough,
+      plainDateKeys: plainDateKeys(block),
+    },
+  };
 }
 
 /**
@@ -252,7 +261,7 @@ export async function updateTaskNote(
   }
 
   const body = edit.changes.description ?? read.task.body;
-  const next = `---\n${serializeTaskFrontmatter(validated.data, read.task.passthrough)}---\n${body}`;
+  const next = `---\n${serializeTaskFrontmatter(validated.data, read.task.passthrough, read.task.plainDateKeys)}---\n${body}`;
   // Never write what the readers (service parseTaskNote, this module's parse) would
   // refuse: the whole-file and frontmatter limits, the alias-expansion bound and the
   // schema are all re-checked on the exact bytes about to be written.
