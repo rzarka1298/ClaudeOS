@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import {
   CLAUDE_TRANSCRIPT_ANALYSIS_PATH,
   CLAUDE_USAGE_DELETE_PATH,
+  CODEX_DOCTOR_PATH,
   CODEX_FOLLOW_LOG_PATH,
   CODEX_HEADROOM_PATH,
   CODEX_HOOK_EVENTS_PATH,
@@ -46,6 +47,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShutdown } from "../shutdown.js";
 import { createBridgeFixture } from "../test-support/bridge-fixtures.js";
+import { readFakeDoctorStarts, writeFakeDoctor } from "../test-support/fake-codex-doctor.js";
 import {
   type CodexComposition,
   type CodexCompositionOptions,
@@ -888,3 +890,23 @@ const NOT_INSTALLED_BRIDGE: BridgeStatus = {
   launchable: true,
   windows: [],
 };
+
+describe("05.1-sec NEW-06: stop() ends an in-flight doctor child", () => {
+  it("a doctor child that ignores the default termination signal is gone when stop() resolves", async () => {
+    const c = await compose({});
+    const fakeDir = mkdtempSync(join(c.dir, "doctor-"));
+    const doctor = writeFakeDoctor(fakeDir, { behavior: { kind: "hang" }, ignoreTermination: true });
+    saveLauncherConfig(c.store.db, "codex", { executablePath: doctor.path, args: [] });
+    const reply = c.post(CODEX_DOCTOR_PATH, {});
+    const deadline = Date.now() + 5000;
+    while (readFakeDoctorStarts(doctor.logPath).length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const pids = readFakeDoctorStarts(doctor.logPath).map((start) => start.pid);
+    expect(pids).toHaveLength(1);
+    await c.codex?.stop();
+    // No waiting: the child must already be gone when stop() resolves.
+    for (const pid of pids) expect(pidAlive(pid)).toBe(false);
+    await reply.catch(() => undefined);
+  }, 20_000);
+});
