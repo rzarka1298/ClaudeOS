@@ -86,13 +86,14 @@ import {
 } from "../src/spec-support/cross-support.js";
 import { waitUntilQuiet } from "../src/spec-support/quiescence.js";
 import {
+  bringSubjectIntoView,
   maximizeCommandCenter,
   readAvailableScreen,
   recoverFocus,
   rememberFocus,
   restoreLayout,
 } from "../src/spec-support/shot-layout.js";
-import { TASKS_TEXT } from "../src/spec-support/tasks-copy.js";
+import { TASKS_CLASSES, TASKS_TEXT } from "../src/spec-support/tasks-copy.js";
 import {
   asTasksBrowser,
   GLOBAL_ROOT,
@@ -207,14 +208,20 @@ async function sendTestApprovalAndWait(): Promise<void> {
 }
 
 /** A page screenshot into the private shots folder; a failure fails the test (never swallowed). */
-async function shot(item: number, label: string): Promise<string> {
+async function shot(
+  item: number,
+  label: string,
+  subject: { selector: string; block: "center" | "start" },
+): Promise<string> {
   const dir = context.shotsDir;
   if (dir === undefined) throw new Error("No shots folder: a look item cannot record images.");
   const path = shotPath(dir, item, label);
   assertShotInside(dir, path);
-  // The owner asked for full-size shots: the sandboxed window takes the display's usable size and
-  // the command center the width of the workspace; the sidebars go back afterwards. Focus must be
-  // where it was (item 22 shoots focused controls), so it is remembered and checked.
+  // The owner asked for full-size shots: the sandboxed window takes the display's usable size
+  // (when the window manager lets it) and the command center the width of the window, measured so
+  // its right edge stays inside; the sidebars go back afterwards. Focus must be where it was
+  // (item 22 shoots focused controls), and the subject of the shot is scrolled into view and
+  // checked, because the re-layout moved the scroll position (run 18).
   const screen = await browser.execute(readAvailableScreen);
   if (screen.width > 0 && screen.height > 0) {
     try {
@@ -224,15 +231,20 @@ async function shot(item: number, label: string): Promise<string> {
     }
   }
   await browser.execute(rememberFocus);
-  const layout = await browser.execute(
-    maximizeCommandCenter,
-    APPROVALS_COPY.commandCenterViewType,
-    Math.max(600, screen.width - 80),
-  );
+  const layout = await browser.execute(maximizeCommandCenter, APPROVALS_COPY.commandCenterViewType);
   try {
+    if (!layout.fits) {
+      throw new Error(
+        `The command center would be clipped for the screenshot (right edge ${layout.rightEdge} of ${layout.innerWidth}).`,
+      );
+    }
     await browser.pause(SHOT_SETTLE_MS);
     const focusKept = await browser.execute(recoverFocus);
     if (!focusKept) throw new Error("Focus moved when the layout was enlarged for the screenshot.");
+    const seen = await browser.execute(bringSubjectIntoView, subject.selector, subject.block);
+    if (!seen.found || !seen.inView) {
+      throw new Error(`The subject of the screenshot (${subject.selector}) is not on screen.`);
+    }
     await browser.saveScreenshot(path);
   } finally {
     await browser.execute(restoreLayout, layout);
@@ -240,6 +252,9 @@ async function shot(item: number, label: string): Promise<string> {
   }
   return label;
 }
+
+/** The shot is of the focused control. */
+const FOCUSED = { selector: ":focus", block: "center" } as const;
 
 /** Time the enlarged layout gets to repaint before a screenshot. */
 const SHOT_SETTLE_MS = 500;
@@ -502,7 +517,12 @@ describe("cross-cutting items", () => {
     // The macOS network or permission prompt part of the UAT wording cannot appear in a page
     // screenshot; the absence of any new process above stands in for it.
     // The selected row's detail pane is still open for the screenshot.
-    const labels = [await shot(20, "task-detail")];
+    const labels = [
+      await shot(20, "task-detail", {
+        selector: `section.${TASKS_CLASSES.taskDetail}`,
+        block: "start",
+      }),
+    ];
     recordLookPending({ runRoot: context.runRoot, item: 20, labels });
   });
 
@@ -574,7 +594,7 @@ describe("cross-cutting items", () => {
       deny = await pressTabUntil((r) => r.name.startsWith(DENY_LABEL), 6, sequence);
     }
     opened.push(deny.name);
-    labels.push(await shot(22, "deny-focused"));
+    labels.push(await shot(22, "deny-focused", FOCUSED));
     const approve = await pressTabUntil((r) => r.name.startsWith(APPROVE_LABEL), 4, sequence);
     opened.push(approve.name);
     await browser.keys([Key.Shift, Key.Tab]);
@@ -648,12 +668,12 @@ describe("cross-cutting items", () => {
     );
     const chip = await pressTabUntil((r) => r.name.includes("task"), 10, sequence);
     expect(chip.focusVisible).toBe(true);
-    labels.push(await shot(22, "tasks-chip-focused"));
+    labels.push(await shot(22, "tasks-chip-focused", FOCUSED));
     await browser.keys(Key.ArrowRight);
     await pressTabUntil((r) => r.classes.includes("ccc-task-title"), 12, sequence);
     await browser.keys(Key.Enter);
     await pressTabUntil((r) => r.classes.includes("ccc-text-input"), 40, sequence);
-    labels.push(await shot(22, "task-detail-field-focused"));
+    labels.push(await shot(22, "task-detail-field-focused", FOCUSED));
     await runPluginCommand(asDriver(), commandId("create-task"));
     await pollUntil(
       () =>

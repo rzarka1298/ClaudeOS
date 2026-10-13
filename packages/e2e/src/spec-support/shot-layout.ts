@@ -39,18 +39,36 @@ export function readAvailableScreen(): { width: number; height: number } {
   return { width: screen?.availWidth ?? 0, height: screen?.availHeight ?? 0 };
 }
 
+/** What the enlarged layout measured, so a spec can refuse a shot that would be clipped. */
+export interface ShotLayoutResult extends ShotLayoutState {
+  innerWidth: number;
+  rightEdge: number | null;
+  /** The right sidebar's right edge is inside the window (or the command center is not in it). */
+  fits: boolean;
+}
+
 /**
  * Collapses the left sidebar and, when the command center is not in it, the right one too; when it
- * is in the right sidebar that sidebar is expanded and widened to the space the window has. Returns
- * what to put back.
+ * is in the right sidebar that sidebar is expanded and widened to what the window's inner width
+ * leaves after the ribbon, then narrowed until its right edge is inside the window (a width taken
+ * from the display clipped the view in run 18). Returns what to put back and what was measured.
  */
-export function maximizeCommandCenter(viewType: string, targetWidth: number): ShotLayoutState {
-  const app = (globalThis as { app?: { workspace?: WorkspaceLite } }).app;
-  const workspace = app?.workspace;
+export function maximizeCommandCenter(viewType: string): ShotLayoutResult {
+  const g = globalThis as {
+    app?: { workspace?: WorkspaceLite };
+    innerWidth?: number;
+    document?: {
+      querySelector?: (
+        selector: string,
+      ) => { getBoundingClientRect?: () => { width: number } } | null;
+    };
+  };
+  const workspace = g.app?.workspace;
   const left = workspace?.leftSplit;
   const right = workspace?.rightSplit;
   const leaves = workspace?.getLeavesOfType?.(viewType) ?? [];
   const centerInRight = leaves.some((leaf) => leaf.getRoot?.() === right);
+  const innerWidth = g.innerWidth ?? 0;
   const state: ShotLayoutState = {
     leftCollapsed: left?.collapsed === true,
     rightCollapsed: right?.collapsed === true,
@@ -58,20 +76,73 @@ export function maximizeCommandCenter(viewType: string, targetWidth: number): Sh
     centerInRight,
   };
   left?.collapse?.();
-  if (centerInRight) {
-    right?.expand?.();
-    if (typeof right?.setSize === "function") right.setSize(targetWidth);
-    else if (right !== undefined) {
-      right.size = targetWidth;
-      if (right.containerEl?.style !== undefined)
-        right.containerEl.style.width = `${targetWidth}px`;
+  let rightEdge: number | null = null;
+  if (centerInRight && right !== undefined) {
+    right.expand?.();
+    const ribbon = g.document?.querySelector?.(".workspace-ribbon.mod-left");
+    let target = Math.max(300, innerWidth - (ribbon?.getBoundingClientRect?.().width ?? 0) - 4);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (typeof right.setSize === "function") right.setSize(target);
+      else {
+        right.size = target;
+        if (right.containerEl?.style !== undefined) right.containerEl.style.width = `${target}px`;
+      }
+      workspace?.requestResize?.();
+      const box = right.containerEl?.getBoundingClientRect?.() as
+        | { width: number; right?: number }
+        | undefined;
+      rightEdge = box?.right ?? null;
+      if (rightEdge === null || rightEdge <= innerWidth) break;
+      target = Math.max(300, target - (rightEdge - innerWidth) - 2);
     }
   } else {
     right?.collapse?.();
   }
   workspace?.requestResize?.();
   workspace?.trigger?.("resize");
-  return state;
+  return {
+    ...state,
+    innerWidth,
+    rightEdge,
+    fits: rightEdge === null || rightEdge <= innerWidth,
+  };
+}
+
+/** What a shot is of, after the layout change: scrolled into view and checked to be on screen. */
+export interface SubjectCheck {
+  found: boolean;
+  inView: boolean;
+}
+
+/**
+ * Scrolls the subject into view and says whether it is on screen. `:focus` names the focused
+ * element. `block` is `center` for a control and `start` for a pane taller than the window.
+ */
+export function bringSubjectIntoView(selector: string, block: "center" | "start"): SubjectCheck {
+  const d = (globalThis as { document?: { querySelector?: (s: string) => unknown } }).document;
+  const element = (
+    selector === ":focus"
+      ? (d as { activeElement?: unknown } | undefined)?.activeElement
+      : d?.querySelector?.(selector)
+  ) as
+    | {
+        scrollIntoView?: (options: { block: string; inline: string }) => void;
+        getBoundingClientRect?: () => { top: number; bottom: number; left: number; right: number };
+      }
+    | null
+    | undefined;
+  if (element === null || element === undefined) return { found: false, inView: false };
+  element.scrollIntoView?.({ block, inline: "nearest" });
+  const rect = element.getBoundingClientRect?.();
+  const g = globalThis as { innerWidth?: number; innerHeight?: number };
+  if (rect === undefined) return { found: true, inView: false };
+  const width = g.innerWidth ?? 0;
+  const height = g.innerHeight ?? 0;
+  const inView =
+    block === "start"
+      ? rect.top >= 0 && rect.top < height && rect.left >= 0 && rect.left < width
+      : rect.top >= 0 && rect.bottom <= height && rect.left >= 0 && rect.right <= width;
+  return { found: true, inView };
 }
 
 /** Puts the sidebars back as {@link maximizeCommandCenter} found them. */
