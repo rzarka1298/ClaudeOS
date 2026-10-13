@@ -223,7 +223,6 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   }
   const cache = ports.verifyCache();
   if (!cache.ok) return refusal(`The Obsidian download cache check failed: ${cache.note}`);
-  ports.purgeShots(options.shotsDir);
 
   const startedAt = ports.now();
   let shotsDir: string | undefined;
@@ -231,6 +230,8 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   let outcome: SandboxOutcome<Produced>;
   try {
     outcome = await ports.runSandbox(async (sandbox): Promise<Produced> => {
+      // Only after the sandbox started (so a run refused as busy purges nothing, Codex finding 4).
+      ports.purgeShots(options.shotsDir);
       await ports.generateVault(sandbox, "live", options.profile);
       if (options.profile === "full") await ports.generateVault(sandbox, "big", options.profile);
       ports.stageGeneratedPlugin(sandbox);

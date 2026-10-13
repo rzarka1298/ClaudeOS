@@ -147,7 +147,12 @@ export function createRunPorts(): RunPorts {
     },
     verifyCache: () => verifyObsidianCache(decisions, realCacheFiles(OBSIDIAN_CACHE_DIR)),
     purgeShots: (base) => {
-      purgeStaleShotDirs({ base: base ?? tmpdir(), keepRunIds: [] });
+      // Seven days: a finished run waiting for its look verdict must outlive later runs.
+      purgeStaleShotDirs({
+        base: base ?? tmpdir(),
+        keepRunIds: [],
+        maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      });
     },
     runSandbox: (body) => withSandbox({}, body),
     generateVault: async (sandbox, kind, profile) => {

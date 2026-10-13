@@ -289,8 +289,8 @@ describe("runUat order (Test 3)", () => {
     expect(order).toEqual([
       "checks",
       "verify-cache",
-      "purge-shots",
       "sandbox-start",
+      "purge-shots",
       "vault-live",
       "stage-plugin",
       "create-shots",
@@ -640,5 +640,18 @@ describe("runUat records run problems in the report (Wave 3 WR-01)", () => {
     await runUat(options(), h.ports);
     expect(h.reports).toHaveLength(1);
     expect(lastReport(h)).not.toContain("run-problems");
+  });
+});
+
+describe("runUat purges screenshots only after the sandbox started (Codex finding 4)", () => {
+  it("a run that is refused because another run is active purges nothing", async () => {
+    const h = harness({
+      runSandbox: async () => {
+        throw new Error("Another UAT run is active; wait for it to finish or stop it first.");
+      },
+    });
+    const outcome = await runUat(options(), h.ports);
+    expect(outcome.exitCode).toBe(2);
+    expect(h.calls).not.toContain("purge-shots");
   });
 });
