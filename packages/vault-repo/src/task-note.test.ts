@@ -686,7 +686,13 @@ describe("Test 10: the manifest and the lockfile", () => {
     const lock = readFileSync(join(repoRoot, "pnpm-lock.yaml"), "utf8");
     const entries = lock.split("\n").filter((line) => /^ {2}js-yaml@/.test(line));
     expect(entries.filter((line) => line.startsWith("  js-yaml@3.15.2:"))).toHaveLength(2);
-    expect(entries.every((line) => line.startsWith("  js-yaml@3.15.2:"))).toBe(true);
+    // The only other js-yaml is 4.3.2, pulled in transitively by the private @ccc/e2e test runner
+    // (mocha through the wdio packages, 05.2-01); the product packages stay on 3.15.2.
+    expect(
+      entries.every(
+        (line) => line.startsWith("  js-yaml@3.15.2:") || line.startsWith("  js-yaml@4.3.2:"),
+      ),
+    ).toBe(true);
     expect(lock).not.toMatch(/@types\/js-yaml/);
   });
 });

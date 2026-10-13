@@ -76,3 +76,29 @@ describe("check-privacy.sh read failures (judge-r1 finding 5)", () => {
     },
   );
 });
+
+// 05.2 review LOW-1: the root lockfile's email exemption covers only `deprecated:` lines.
+describe("check-privacy.sh lockfile email exemption (05.2 LOW-1)", () => {
+  const DEPRECATED = `    deprecated: Support may be purchased by contacting ${["maintainer", "example.invalid"].join("@")}\n`;
+  const OWNER_EMAIL = ["owner", "gmail.com"].join("@");
+
+  it("passes a third-party address on a deprecated line of the root lockfile", () => {
+    const result = repoWith({ "pnpm-lock.yaml": DEPRECATED }).run(SCRIPT);
+    expect(result.status).toBe(0);
+  });
+
+  it("flags the same line in a nested lockfile", () => {
+    const result = repoWith({ "nested/pnpm-lock.yaml": DEPRECATED }).run(SCRIPT);
+    expect(result.status).toBe(1);
+  });
+
+  it("flags a home path in the root lockfile", () => {
+    const result = repoWith({ "pnpm-lock.yaml": `${HOME_PATH}\n` }).run(SCRIPT);
+    expect(result.status).toBe(1);
+  });
+
+  it("flags an address on a non-deprecated line of the root lockfile", () => {
+    const result = repoWith({ "pnpm-lock.yaml": `    resolution: ${OWNER_EMAIL}\n` }).run(SCRIPT);
+    expect(result.status).toBe(1);
+  });
+});

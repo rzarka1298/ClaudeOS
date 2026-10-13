@@ -25,7 +25,8 @@
     "ci:test": "turbo run test",
     "ci:privacy": "sh scripts/check-privacy.sh",
     "ci:images": "turbo run build --filter=@ccc/plugin && sh scripts/check-images.sh",
-    "ci:visual": "turbo run harness:build --filter=@ccc/test-fixtures && playwright test"
+    "ci:visual": "turbo run harness:build --filter=@ccc/test-fixtures && playwright test",
+    "uat:auto": "turbo run build && pnpm --filter @ccc/e2e run uat"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
