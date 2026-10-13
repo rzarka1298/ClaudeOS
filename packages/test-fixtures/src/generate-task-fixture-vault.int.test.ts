@@ -22,7 +22,8 @@ import {
   type TaskListResponse,
   VAULT_SETUP_PATH,
 } from "@ccc/domain";
-import { parseTaskNote } from "@ccc/vault-repo";
+import { parseTaskContent, serializeTaskFrontmatter } from "@ccc/plugin";
+import { parseTaskNote, stringifyTaskNote } from "@ccc/vault-repo";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   authedRequest,
@@ -217,6 +218,28 @@ describe("live-check notes (Test 3)", () => {
       "utf8",
     );
     expect(text).toMatch(new RegExp(`^due: ${properties?.due}$`, "m"));
+
+    // U-6: completing the note changes only status, updated and completed; the
+    // unquoted due survives, and the plugin and service writers agree byte for byte.
+    const read = parseTaskContent(text);
+    if (read.kind !== "ok") throw new Error("live-check note unreadable");
+    const doneAt = "2026-10-13T10:00:00.000Z";
+    const done = { ...read.task.frontmatter, status: "done" as const, updated: doneAt, completed: doneAt };
+    const pluginBlock = serializeTaskFrontmatter(done, read.task.passthrough, read.task.plainDateKeys);
+    const service = parseTaskNote(text);
+    const serviceText = stringifyTaskNote(
+      { ...service.frontmatter, status: "done", updated: doneAt, completed: doneAt },
+      service.body,
+      service.passthrough,
+      service.plainDateKeys,
+    );
+    expect(serviceText).toBe(`---\n${pluginBlock}---\n${read.task.body}`);
+    const changed = serviceText
+      .split("\n")
+      .filter((line, i) => line !== text.split("\n")[i])
+      .map((line) => line.split(":")[0]);
+    expect(changed.sort()).toEqual(["completed", "status", "updated"]);
+    expect(serviceText).toMatch(new RegExp(`^due: ${properties?.due}$`, "m"));
     const sourced = readdirSync(join(live.out, "global", "tasks")).find((name) =>
       name.includes("source"),
     );
