@@ -139,6 +139,7 @@ function wired(
     appFocused: () => state.focused,
     focusWindow: () => calls.push("focus"),
     reveal: () => calls.push("reveal"),
+    trigger: (name, payload) => host.fireWorkspaceEvent(name, payload),
     log: (m) => logs.push(m),
     now: () => NOW,
     createNotification: (title, opts) => {
@@ -243,6 +244,50 @@ describe("Test 2: the notifier", () => {
       destination: "agent-runs",
       focusProposalId: fresh().proposalId,
     });
+  });
+
+  it("a banner made before a plugin reload still selects the request in the live instance, once", () => {
+    const host = new FakeObsidianHost();
+    const first = wired({ focused: false, host });
+    applyApprovalSummary(fresh());
+    const staleBanner = first.handles[0];
+
+    // Reload: the first instance unloads, a second loads on the same app.
+    first.registry.disposeAll();
+    resetApprovalsState();
+    const second = wired({ focused: false, host });
+    let navigations = 0;
+    const stop = navigationRequest.subscribe((value) => {
+      if (value !== null) navigations++;
+    });
+
+    staleBanner?.onclick?.();
+    stop();
+
+    expect(navigations).toBe(1);
+    expect(navigationRequest.value).toMatchObject({
+      destination: "agent-runs",
+      focusProposalId: fresh().proposalId,
+    });
+    expect(second.calls).toEqual(["reveal"]);
+    expect(first.calls.filter((call) => call === "reveal")).toEqual([]);
+  });
+
+  it("leaves no listener behind after repeated reloads and unload", () => {
+    const host = new FakeObsidianHost();
+    let last = wired({ host });
+    for (let cycle = 0; cycle < 5; cycle++) {
+      last.registry.disposeAll();
+      last = wired({ host });
+    }
+    host.fireWorkspaceEvent("claude-command-center:select-approval", VALID_ID);
+    expect(last.calls).toEqual(["reveal"]);
+
+    last.registry.disposeAll();
+    navigationRequest.value = null;
+    host.fireWorkspaceEvent("claude-command-center:select-approval", VALID_ID);
+    expect(navigationRequest.value).toBeNull();
+    expect(host.liveCounts().event).toBe(0);
   });
 
   it("clears the upsert hook at unload", () => {
