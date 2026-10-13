@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../domain" },
+    { "path": "../keychain" },
+    { "path": "../service-api-client" },
+    { "path": "../test-fixtures" }
+  ]
+}

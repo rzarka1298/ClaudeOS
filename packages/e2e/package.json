@@ -1,0 +1,39 @@
+{
+  "name": "@ccc/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b && tsc -p tsconfig.specs.json",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "uat": "node dist/cli.js run",
+    "uat:smoke": "wdio run ./wdio.smoke.conf.ts",
+    "uat:preflight": "node dist/cli.js preflight",
+    "uat:look": "node dist/cli.js look",
+    "uat:report": "node dist/cli.js report",
+    "uat:lint": "node dist/cli.js lint-tags"
+  },
+  "dependencies": {
+    "@ccc/domain": "workspace:*",
+    "@ccc/keychain": "workspace:*",
+    "@ccc/service-api-client": "workspace:*",
+    "@ccc/test-fixtures": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/mocha": "10.0.10",
+    "@types/node": "24.13.4",
+    "@wdio/cli": "9.32.0",
+    "@wdio/globals": "9.31.3",
+    "@wdio/local-runner": "9.32.0",
+    "@wdio/mocha-framework": "9.32.0",
+    "@wdio/spec-reporter": "9.32.0",
+    "expect-webdriverio": "6.0.9",
+    "mocha": "11.8.0",
+    "obsidian": "1.13.1",
+    "wdio-obsidian-reporter": "3.3.0",
+    "wdio-obsidian-service": "3.3.0",
+    "webdriverio": "9.32.0"
+  }
+}
