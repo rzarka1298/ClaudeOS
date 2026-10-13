@@ -1,4 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -338,4 +340,35 @@ describe("05.1-sec NEW-06: the doctor probe is disposable", () => {
     expect(Date.now() - began).toBeLessThan(2_000);
     if (pid !== undefined) expect(alive(pid)).toBe(false);
   });
+
+  it("resolves when the child has exited but its stdout never closes (a grandchild holds the pipe)", async () => {
+    const stdout = new PassThrough();
+    const fakeChild = Object.assign(new EventEmitter(), {
+      pid: 4_242_424,
+      stdin: new PassThrough(),
+      stdout,
+      kill: () => true,
+    });
+    let spawned = 0;
+    const spawn: SpawnFn = () => {
+      spawned += 1;
+      return fakeChild as unknown as ReturnType<SpawnFn>;
+    };
+    const probe = createDoctorProbe({
+      executablePath: () => "/nonexistent/codex",
+      spawn,
+      now: () => NOW_MS,
+    });
+    const pending = probe.run();
+    for (let i = 0; i < 200 && spawned === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(spawned).toBe(1);
+    fakeChild.emit("exit", 0, null);
+    const began = Date.now();
+    await probe.dispose();
+    expect(Date.now() - began).toBeLessThan(1_000);
+    expect((await pending).kind).toBe("unavailable");
+    expect(stdout.destroyed).toBe(true);
+  }, 10_000);
 });
