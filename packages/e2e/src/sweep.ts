@@ -199,6 +199,7 @@ export async function executeSweep(plan: SweepPlan, deps: SweepDeps): Promise<Sw
       }
     }
     let survivors = 0;
+    let accountFailed = false;
     if (signalled.length > 0) {
       await deps.wait(TERMINATE_WAIT_MS);
       const after = await deps.readTable();
@@ -221,10 +222,14 @@ export async function executeSweep(plan: SweepPlan, deps: SweepDeps): Promise<Sw
           )
         ) {
           accountsDeleted.push(action.account);
+        } else {
+          accountFailed = true;
         }
       }
     }
-    if (survivors > 0) continue; // keep the folders so the owner can find the leftovers
+    // Keep the folders (and the ledger) when a process survives, so the owner can find it, or
+    // when an account deletion failed, so the next start can retry it (Codex finding 5).
+    if (survivors > 0 || accountFailed) continue;
     for (const action of run.actions) {
       if (action.type === "remove-dir") {
         if (await attempt(`remove ${action.path}`, () => deps.removeDir(action.path))) {

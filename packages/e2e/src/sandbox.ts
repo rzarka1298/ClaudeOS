@@ -77,7 +77,7 @@ export interface SandboxOptions {
   readTable?: () => Promise<ProcessEntry[]>;
   deleteAccount?: (account: string) => Promise<CleanupResult>;
   /** The injected timer behind the 5 second stop deadline. */
-  wait?: (ms: number) => Promise<void>;
+  wait?: Wait;
   stopDeadlineMs?: number;
   sweep?: SweepFn;
   /** The pid-based TERM used for ledgered leftovers; defaults to the sweep's single signal. */
@@ -105,9 +105,30 @@ export interface SandboxOutcome<T> {
   sweep: SweepOutcome;
 }
 
-const realWait = (ms: number): Promise<void> =>
+/** A cancellable pause. Aborting resolves it at once and clears the timer. */
+export type Wait = (ms: number, signal?: AbortSignal) => Promise<void>;
+
+/**
+ * The real pause. The timer is REFERENCED: teardown awaits it, and an unreferenced timer let
+ * Node exit with the Keychain deletion, leak check and exit code still pending (Codex finding 1).
+ * Callers that race it against something else pass a signal and abort it when they are done, so
+ * no deadline timer outlives the cleanup.
+ */
+export const realWait: Wait = (ms, signal) =>
   new Promise((done) => {
-    setTimeout(done, ms).unref();
+    if (signal?.aborted === true) {
+      done();
+      return;
+    }
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        done();
+      },
+      { once: true },
+    );
   });
 
 const asError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)));
@@ -125,8 +146,22 @@ function isStrictlyInside(outer: string, inner: string): boolean {
  */
 export async function stopWithDeadline(
   handle: Stoppable,
-  wait: (ms: number) => Promise<void>,
+  wait: Wait,
   deadlineMs: number,
+): Promise<void> {
+  const controller = new AbortController();
+  try {
+    await stopOrKill(handle, wait, deadlineMs, controller.signal);
+  } finally {
+    controller.abort();
+  }
+}
+
+async function stopOrKill(
+  handle: Stoppable,
+  wait: Wait,
+  deadlineMs: number,
+  signal: AbortSignal,
 ): Promise<void> {
   const attempt = async (step: () => Promise<void>): Promise<boolean> => {
     try {
@@ -137,9 +172,9 @@ export async function stopWithDeadline(
     }
   };
   const stopped = attempt(() => handle.stop());
-  if (await Promise.race([stopped, wait(deadlineMs).then(() => false)])) return;
+  if (await Promise.race([stopped, wait(deadlineMs, signal).then(() => false)])) return;
   const killed = attempt(() => handle.kill());
-  if (!(await Promise.race([killed, wait(deadlineMs).then(() => false)]))) {
+  if (!(await Promise.race([killed, wait(deadlineMs, signal).then(() => false)]))) {
     throw new Error("A process did not exit after stop and kill; it is reported as a leak.");
   }
 }
@@ -253,6 +288,7 @@ export async function withSandbox<T>(
   let failed = false;
   let leaks: Leak[] = [];
   let runRootRemoved = false;
+  let accountCleanupFailed = false;
 
   const sendTerm = options.sendTerm ?? terminateByPid;
 
@@ -317,6 +353,7 @@ export async function withSandbox<T>(
         try {
           await deleteAccount(ledgered);
         } catch (err) {
+          accountCleanupFailed = true;
           cleanupErrors.push(asError(err));
         }
       }
@@ -334,7 +371,9 @@ export async function withSandbox<T>(
         cleanupErrors.push(asError(err));
       }
       try {
-        if (leaks.length === 0) {
+        // A leftover Keychain account keeps the ledger: the next start's sweep needs it to retry
+        // the deletion (Codex finding 5).
+        if (leaks.length === 0 && !accountCleanupFailed) {
           removeRunRoot(paths.root, { base, home: options.home });
           runRootRemoved = true;
         } else {
