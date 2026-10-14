@@ -211,6 +211,7 @@ function memoryIo(files: Record<string, string>, over: Partial<CliIo> = {}): Cli
     now: () => new Date("2026-10-12T08:00:00Z"),
     tmpDir: () => "/tmp",
     listFiles: () => [],
+    buildHash: () => "0123456789ab",
     ...over,
   };
 }
@@ -343,6 +344,18 @@ describe("ratify command (Test 8)", () => {
     expect(out).toContain("2026-10-12");
     expect(out).not.toContain("Owner ratifies it");
     expect(files["/r/report.md"]).toContain("ratified: Owner ratifies it (2026-10-12)");
+  });
+
+  it("refuses to ratify when the plugin build on disk differs from the run's build (review IN-01)", async () => {
+    const files = { "/r/report.md": reportText(allPass) };
+    const argv = ["ratify", "--run", "0123abcd", "--report", "/r/report.md", "--statement", "ok"];
+    const changed = await run(argv, memoryIo(files, { buildHash: () => "ffffffffffff" }));
+    expect(changed.code).toBe(1);
+    expect(changed.out).toMatch(/different build/);
+    expect(files["/r/report.md"]).not.toContain("ratified: ok");
+    const unhashable = await run(argv, memoryIo(files, { buildHash: () => null }));
+    expect(unhashable.code).toBe(1);
+    expect(unhashable.out).toMatch(/could not be hashed/);
   });
 
   it("writes pass - auto run results into the script only with --write-results", async () => {

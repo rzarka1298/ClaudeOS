@@ -84,6 +84,8 @@ export interface CliIo {
   now: () => Date;
   tmpDir: () => string;
   listFiles: (dir: string) => string[];
+  /** The hash of the plugin build on disk now; null when it cannot be hashed. */
+  buildHash: () => string | null;
 }
 
 export interface CliDeps {
@@ -267,6 +269,13 @@ const REAL_IO: CliIo = {
     readGitFacts({ cwd: REPO_ROOT, ...(since === undefined ? {} : { since }) }),
   now: () => new Date(),
   tmpDir: () => tmpdir(),
+  buildHash: () => {
+    try {
+      return buildHash(PLUGIN_BUILD_DIR);
+    } catch {
+      return null;
+    }
+  },
   listFiles: (dir) => {
     try {
       return readdirSync(dir);
@@ -346,6 +355,7 @@ const reportCommand: CommandHandler = async (argv, deps) => {
     currentHead: facts.head,
     changedFiles: facts.changedSince,
     currentClean: facts.clean,
+    currentBuildHash: io.buildHash(),
   });
   if (invalid.length > 0) {
     for (const reason of invalid) deps.write(`Refused: ${reason}.`);
@@ -383,6 +393,7 @@ const ratifyCommand: CommandHandler = async (argv, deps) => {
     currentHead: facts.head,
     changedFiles: facts.changedSince,
     currentClean: facts.clean,
+    currentBuildHash: io.buildHash(),
   });
   if (!result.ok) {
     for (const reason of result.reasons) deps.write(`Refused: ${reason}.`);

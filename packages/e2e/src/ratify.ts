@@ -21,6 +21,8 @@ export interface RatifyInput {
   changedFiles: string[] | null;
   /** Whether the tracked files match HEAD now; false or unknown refuses (Wave 2 MEDIUM-4). */
   currentClean: boolean | undefined;
+  /** The current plugin build hash; null (cannot be hashed) refuses, undefined skips the check. */
+  currentBuildHash?: string | null | undefined;
 }
 
 export type RatifyResult = { ok: true; text: string } | { ok: false; reasons: string[] };
@@ -42,6 +44,11 @@ interface RunValidityInput {
   currentHead: string;
   changedFiles: string[] | null;
   currentClean: boolean | undefined;
+  /**
+   * The hash of the plugin build as it is now: undefined skips the check (tests), null means the
+   * build could not be hashed and the run is refused.
+   */
+  currentBuildHash?: string | null | undefined;
 }
 
 /**
@@ -69,6 +76,16 @@ export function checkRunValidity(input: RunValidityInput): string[] {
   }
   if (front["run-problems"] !== undefined) {
     reasons.push("the run recorded problems (wdio failure, leak or cleanup error)");
+  }
+  if (input.currentBuildHash === null) {
+    reasons.push("the current plugin build could not be hashed");
+  } else if (
+    input.currentBuildHash !== undefined &&
+    front["build-hash"] !== undefined &&
+    front["build-hash"] !== "" &&
+    front["build-hash"] !== input.currentBuildHash
+  ) {
+    reasons.push("the run was made against a different build than the one on disk now");
   }
   if (front["item-mapping"] === "unavailable") {
     reasons.push("the run has no item mapping to a UAT script");
@@ -128,6 +145,7 @@ export function ratifyReport(text: string, input: RatifyInput): RatifyResult {
     currentHead: input.currentHead,
     changedFiles: input.changedFiles,
     currentClean: input.currentClean,
+    currentBuildHash: input.currentBuildHash,
   });
   if (reasons.length > 0) return { ok: false, reasons };
   return { ok: true, text: setRatified(text, input.statement, input.date) };

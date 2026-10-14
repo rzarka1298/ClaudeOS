@@ -52,6 +52,7 @@ function check(
     currentHead: string;
     changedFiles: string[] | null;
     currentClean: boolean | undefined;
+    currentBuildHash: string | null | undefined;
   }> = {},
 ) {
   const parsed: ParsedReport = parseReport(text);
@@ -61,8 +62,27 @@ function check(
     currentHead: over.currentHead ?? HEAD,
     changedFiles: over.changedFiles === undefined ? [] : over.changedFiles,
     currentClean: "currentClean" in over ? over.currentClean : true,
+    ...("currentBuildHash" in over ? { currentBuildHash: over.currentBuildHash } : {}),
   });
 }
+
+describe("the build hash is compared with the current build (review IN-01)", () => {
+  it("accepts a run whose recorded build hash equals the current build", () => {
+    expect(check(report(GOOD), { currentBuildHash: "0123456789ab" })).toEqual([]);
+  });
+
+  it("refuses a run recorded against a different build", () => {
+    expect(check(report(GOOD), { currentBuildHash: "ffffffffffff" }).join(" ")).toMatch(
+      /build.*differs|different build/,
+    );
+  });
+
+  it("refuses when the current build cannot be hashed", () => {
+    expect(check(report(GOOD), { currentBuildHash: null }).join(" ")).toMatch(
+      /could not be hashed/,
+    );
+  });
+});
 
 describe("checkRatifiable (Test 4)", () => {
   it("returns no reasons for an all-pass, clean, current run", () => {
