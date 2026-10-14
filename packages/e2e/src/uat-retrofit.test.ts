@@ -120,13 +120,15 @@ run("the owner's results are untouched (Test 3)", () => {
 });
 
 run("summary, intro and auto-result lines (Test 4)", () => {
-  it("keeps total 26 and the old five keys summing to 26, with the three new keys at 0", () => {
+  it("keeps total 26 and the old five keys summing to 26, with the ratified run's 18 auto passes recorded", () => {
     const { parsed } = load();
     const summary = parsed.summary;
     expect(summary.total).toBe("26");
     const keys = ["passed", "issues", "pending", "skipped", "blocked"];
     expect(keys.reduce((sum, key) => sum + Number(summary[key]), 0)).toBe(26);
-    for (const key of ["auto-passed", "auto-failed", "owner-pending"]) {
+    // Run ff68c437 (ratified): 18 auto items passed, none failed; the owner items carry their own results.
+    expect(summary["auto-passed"]).toBe("18");
+    for (const key of ["auto-failed", "owner-pending"]) {
       expect(summary[key], key).toBe("0");
     }
   });
@@ -141,10 +143,17 @@ run("summary, intro and auto-result lines (Test 4)", () => {
     expect(intro).toMatch(/owner-tagged/);
   });
 
-  it("holds no auto-result line before a run", () => {
+  it("holds an auto-result line from the ratified run on every auto and auto+look item, and none on an owner item", () => {
     const { text, parsed } = load();
-    expect(text).not.toMatch(/^auto-result:/m);
-    for (const item of parsed.items) expect(item.autoResult, `item ${item.number}`).toBeNull();
+    expect(text.match(/^auto-result:/gm)).toHaveLength(18);
+    for (const item of parsed.items) {
+      if (item.runValue === "owner") {
+        expect(item.autoResult, `item ${item.number}`).toBeNull();
+      } else {
+        expect(item.autoResult, `item ${item.number}`).not.toBeNull();
+      }
+    }
+    expect(text.match(/^auto-result: pass @ ff68c437 2026-10-14$/gm)).toHaveLength(18);
   });
 });
 
