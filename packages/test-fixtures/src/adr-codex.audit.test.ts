@@ -373,6 +373,15 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       /### Phase 05\.2:[\s\S]*?(?=\n### Phase )/,
       "PHASE-05.2",
     );
+    // Phase 7 planning/execution bookkeeping (plan list and progress row), edited as the phase runs.
+    roadmapRemainder = roadmapRemainder.replace(
+      /\n\nPlans:\n(?:- \[[ x]\] 07-\d\d-PLAN\.md[^\n]*\n)+/g,
+      "\n",
+    );
+    roadmapRemainder = roadmapRemainder.replace(
+      /^\| 7\. Cited Research Report[^\n]*$/m,
+      "| 7. Cited Research Report & Provenance | 0/TBD | Not started | - |",
+    );
     roadmapRemainder = roadmapRemainder.replace(/Phases (?:execute|merge) [^\n]+/gm, "MERGE-ORDER");
     roadmapRemainder = roadmapRemainder.replace(
       /\| 05\.1\. Codex Co-Work & Usage \(INSERTED\).*/gm,
