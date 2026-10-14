@@ -5,7 +5,7 @@
     "rootDir": "src"
   },
   "include": ["src"],
-  "exclude": ["src/approval", "src/executors"],
+  "exclude": ["src/approval", "src/executors", "src/untrusted"],
   "references": [
     { "path": "../collectors" },
     { "path": "../domain" },
@@ -14,6 +14,7 @@
     { "path": "../operational-store" },
     { "path": "../vault-repo" },
     { "path": "./src/approval" },
-    { "path": "./src/executors" }
+    { "path": "./src/executors" },
+    { "path": "./src/untrusted" }
   ]
 }
