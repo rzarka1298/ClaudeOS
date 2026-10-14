@@ -1,4 +1,16 @@
 import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import {
   buildThreadsSelect,
   type CanaryRow,
   classifyThreadSource,
@@ -56,7 +68,77 @@ export interface ReaderDatabase {
 
 export type OpenDatabase = (path: string, options: OpenDatabaseOptions) => ReaderDatabase;
 
-const defaultOpenDatabase: OpenDatabase = (path, options) => new Database(path, options);
+/** A store larger than this is not snapshotted: the poll reports unavailable instead of copying it. */
+export const MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Opens Codex's store without ever creating a file in the Codex home.
+ *
+ * SQLite attaches a WAL-mode database through "-wal" and "-shm" sidecar files,
+ * and a read-only connection to a WAL store that has none creates both beside
+ * the database. That would write into a directory the product only reads, and
+ * the better-sqlite3 build here has no URI support, so `immutable=1` is not
+ * available. So the open depends on whether a writer is attached:
+ *
+ *   - Both sidecars exist: Codex (or a crashed Codex's leftovers) holds the store
+ *     in WAL mode. A plain read-only open is the correct protocol under a
+ *     concurrent writer, it sees committed WAL content, and it creates nothing
+ *     because the sidecars already exist.
+ *   - A rollback-journal store (header bytes 18 and 19 are not 2) creates no sidecar on a
+ *     read-only open and honours SQLite's file locks, so it is opened directly.
+ *   - Otherwise a WAL store has no live writer attached and the database file alone (plus a
+ *     lone "-wal" when one is left) is the whole truth. It is copied into a
+ *     private temp folder and opened there, so SQLite's sidecars land in the
+ *     temp folder, which is removed on close. A writer that starts mid-copy at
+ *     worst yields a torn copy, which reads back as an error (unavailable for
+ *     one poll) and never as wrong rows, because the shape gate and SQLite's
+ *     own checksums run on the copy.
+ *
+ * A snapshot copy of a live WAL store is deliberately not used for the first
+ * case: the main file and the log are not copied atomically, and a checkpoint
+ * between the two copies would corrupt the snapshot.
+ */
+/** Bytes 18 and 19 of the SQLite header are 2 for a database in WAL mode. */
+function isWalFile(path: string): boolean {
+  const fd = openSync(path, "r");
+  try {
+    const header = Buffer.alloc(20);
+    readSync(fd, header, 0, 20, 0);
+    return header[18] === 2 && header[19] === 2;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export const defaultOpenDatabase: OpenDatabase = (path, options) => {
+  const wal = `${path}-wal`;
+  const shm = `${path}-shm`;
+  if ((existsSync(wal) && existsSync(shm)) || !isWalFile(path)) return new Database(path, options);
+
+  const size = statSync(path).size;
+  if (size > MAX_SNAPSHOT_BYTES) {
+    throw Object.assign(new Error("store too large to snapshot"), { code: "SQLITE_TOOBIG" });
+  }
+  const folder = mkdtempSync(join(tmpdir(), "ccc-codex-snapshot-"));
+  try {
+    const copy = join(folder, basename(path));
+    copyFileSync(path, copy);
+    if (existsSync(wal)) copyFileSync(wal, `${copy}-wal`);
+    const db = new Database(copy, options);
+    const close = db.close.bind(db);
+    db.close = () => {
+      try {
+        return close();
+      } finally {
+        rmSync(folder, { recursive: true, force: true });
+      }
+    };
+    return db;
+  } catch (error) {
+    rmSync(folder, { recursive: true, force: true });
+    throw error;
+  }
+};
 
 /** The busy timeout never exceeds this: a busy store is skipped for the poll. */
 export const MAX_BUSY_TIMEOUT_MS = 250;

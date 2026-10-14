@@ -1,8 +1,8 @@
 import { readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  assertOnlySidecarChanges,
   createFakeCodexHome,
   diffSnapshots,
   type FakeCodexHome,
@@ -487,16 +487,50 @@ describe("Test 7: newest cli version and hidden sources", () => {
 });
 
 describe("Test 8 (task 3): what a read leaves behind in the directory", () => {
-  it("creates at most the sidecars SQLite makes for a read-only open of a closed WAL store", () => {
+  it("creates nothing in the home, not even SQLite sidecars, when it reads a closed WAL store", () => {
     const fake = makeHome("current");
     const before = fake.snapshot();
     const reader = readerFor(fake);
-    reader.readThreads(BASE);
+    const first = reader.readThreads(BASE);
     reader.readThreads({ ...BASE, includePromptDerived: true });
+    expect(first.kind).toBe("ok");
+    expect(first.kind === "ok" && first.threads.map((row) => row.id)).toContain("thread-a");
+    expect(diffSnapshots(before, fake.snapshot())).toEqual({ added: [], removed: [], changed: [] });
+  });
+
+  it("reads committed WAL content of a live writer and adds no file beyond the writer's own sidecars", () => {
+    const fake = makeHome("current");
+    const writer = new Database(fake.dbPath);
+    writers.push(writer);
+    writer.pragma("journal_mode = WAL");
+    writer
+      .prepare(
+        "INSERT INTO threads (id, rollout_path, cwd, source, cli_version, archived, updated_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "thread-live",
+        "/x",
+        "/Users/USERNAME/repo",
+        "cli",
+        "0.159.2",
+        0,
+        NOW - MINUTE,
+        NOW - 2 * MINUTE,
+      );
+    const before = fake.snapshot();
+    const result = readerFor(fake).readThreads(BASE);
+    expect(result.kind === "ok" && result.threads.map((row) => row.id)).toContain("thread-live");
     const diff = diffSnapshots(before, fake.snapshot());
-    expect(() => assertOnlySidecarChanges(diff)).not.toThrow();
-    expect(diff.changed).toEqual([]);
+    expect(diff.added).toEqual([]);
     expect(diff.removed).toEqual([]);
+  });
+
+  it("leaves no snapshot folder behind in the temp directory", () => {
+    const fake = makeHome("current");
+    const names = () => readdirSync(tmpdir()).filter((n) => n.startsWith("ccc-codex-snapshot-"));
+    const before = names();
+    readerFor(fake).readThreads(BASE);
+    expect(names()).toEqual(before);
   });
 
   it("changes nothing at all when there is no database", () => {

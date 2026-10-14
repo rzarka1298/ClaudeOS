@@ -214,17 +214,20 @@ describe("Test 3 (real process): nothing is polled without a subscriber", () => 
         expect(signal.codex.reason).toBe("usage-unavailable");
         expect(entryNames(world.home.root)).toEqual(before);
 
-        // Subscribing starts the polls: the thread appears and the store was opened (its sidecars exist).
+        // The headroom answer may read the store once on demand, and that read must create nothing
+        // (no -shm / -wal) in the Codex home. Subscribing then starts the polls: a turn appended
+        // afterwards reaches the subscriber.
         const stream = collectEvents(socketPath, token);
         try {
+          markThreadRunning(world.home, Date.now());
           await stream.waitFor(
-            (event) => stateIn(event, world.home.threadId) === "completed",
+            (event) => stateIn(event, world.home.threadId) === "running",
             ROLLOUT_BUDGET_MS + 5000,
           );
         } finally {
           stream.close();
         }
-        expect(entryNames(world.home.root).length).toBeGreaterThan(before.length);
+        expect(entryNames(world.home.root)).toEqual(before);
       } finally {
         await service.stop();
       }
