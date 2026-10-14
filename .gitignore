@@ -13,3 +13,12 @@ coverage/
 
 # GSD local runtime state (isolation sentinels, never shared)
 .gsd/
+
+# Internal planning artifacts — never tracked in the public repo
+.planning/
+.claude/
+.obsidian/
+.gsd/
+CONTEXT.md
+claude-command-center-prd.md
+PRIVACY-GATE-REPORT.md
