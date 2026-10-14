@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ApprovalSummary, ApprovalsSnapshot, ProposalId } from "./approval.js";
 import { ApprovalUpsertedPayloadSchema } from "./approval.js";
@@ -16,6 +19,7 @@ import {
   SnapshotResponseSchema,
 } from "./events.js";
 import type { RunId } from "./ids.js";
+import { ResearchUpdatedPayloadSchema } from "./research-routes.js";
 import { SessionUpsertedPayloadSchema, type SessionView } from "./session.js";
 import { TasksChangedPayloadSchema } from "./tasks.js";
 
@@ -460,7 +464,7 @@ describe("Codex additions to the event contract (Phase 05.1 plan 06, Task 3)", (
   };
   const BASE = { serviceStartedAt: NOW, projects: EMPTY_PROJECTS_SNAPSHOT };
 
-  it("Test 1: keeps every existing entry in order and ends with the four Codex types", () => {
+  it("Test 1: keeps every existing entry in order and keeps the four Codex types before research.updated", () => {
     expect([...SERVICE_EVENT_TYPES].slice(0, 9)).toEqual([
       "service.heartbeat",
       "connection.state",
@@ -472,14 +476,15 @@ describe("Codex additions to the event contract (Phase 05.1 plan 06, Task 3)", (
       "approval.upserted",
       "tasks.changed",
     ]);
-    expect([...SERVICE_EVENT_TYPES].slice(-4)).toEqual([
+    // The four Codex types are followed by Phase 7's research.updated (appended last).
+    expect([...SERVICE_EVENT_TYPES].slice(-5, -1)).toEqual([
       "codex.sessions.updated",
       "codex.usage.updated",
       "codex.tokens.updated",
       "codex.integration.updated",
     ]);
-    expect(SERVICE_EVENT_TYPES).toHaveLength(13);
-    for (const type of SERVICE_EVENT_TYPES.slice(-4)) {
+    expect(SERVICE_EVENT_TYPES).toHaveLength(14);
+    for (const type of SERVICE_EVENT_TYPES.slice(-5, -1)) {
       expect(
         ServiceEventSchema.safeParse({ id: 1, type, occurredAt: NOW, payload: null }).success,
       ).toBe(true);
@@ -538,5 +543,46 @@ describe("Codex additions to the event contract (Phase 05.1 plan 06, Task 3)", (
       state: { ...BASE, codex: { headroom: { ...HEADROOM, recommendedAgent: "codex" } } },
     };
     expect(SnapshotResponseSchema.safeParse(wrongHeadroom).success).toBe(false);
+  });
+});
+
+describe("Phase 7 research.updated event (D-25)", () => {
+  it("is appended after codex.integration.updated without reordering any earlier entry", () => {
+    const types = [...SERVICE_EVENT_TYPES];
+    expect(types.at(-1)).toBe("research.updated");
+    expect(types.indexOf("research.updated")).toBe(types.indexOf("codex.integration.updated") + 1);
+    expect(types.slice(0, 13)).toEqual([
+      "service.heartbeat",
+      "connection.state",
+      "stream.resync",
+      "projects.updated",
+      "session.upserted",
+      "usage.updated",
+      "claude-integration.updated",
+      "approval.upserted",
+      "tasks.changed",
+      "codex.sessions.updated",
+      "codex.usage.updated",
+      "codex.tokens.updated",
+      "codex.integration.updated",
+    ]);
+    expect(types).toHaveLength(14);
+  });
+
+  it("is a valid envelope type with any payload, so an older consumer still parses the envelope", () => {
+    const event = {
+      id: 5,
+      type: "research.updated",
+      occurredAt: "2026-10-13T09:00:00Z",
+      payload: { runId: "zyxwvutsr9876543210fedcba", state: "running", future: true },
+    };
+    expect(ServiceEventSchema.safeParse(event).success).toBe(true);
+    expect(ResearchUpdatedPayloadSchema.safeParse(event.payload).success).toBe(true);
+  });
+
+  it("keeps the payload schema out of events.ts so the shared file gains one line per phase", () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "events.ts"), "utf8");
+    expect(source).not.toContain("ResearchUpdatedPayloadSchema");
+    expect(source).not.toContain("research-routes");
   });
 });

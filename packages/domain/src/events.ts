@@ -75,6 +75,8 @@ export const SERVICE_EVENT_TYPES = [
   "codex.usage.updated",
   "codex.tokens.updated",
   "codex.integration.updated",
+  // Phase 7 (append-only, D-25): a research run changed state.
+  "research.updated",
 ] as const;
 export type ServiceEventType = (typeof SERVICE_EVENT_TYPES)[number];
 
