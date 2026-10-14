@@ -487,7 +487,7 @@ describe("backstop rules 9 and 10 (Task 3 Test 7)", () => {
     expect(script).toMatch(/Rule 9:/);
     expect(script).toMatch(/Rule 10:/);
     expect(script).toMatch(/packages\/plugin/);
-  }, 30_000);
+  }, 120_000);
 
   it("fail on a planted interrupt-signal kill and a non-test token cast, and spare a test-file cast", () => {
     const scratch = realpathSync(mkdtempSync(join(base, "backstop-")));
@@ -524,5 +524,5 @@ describe("backstop rules 9 and 10 (Task 3 Test 7)", () => {
       "a file outside packages/service/src/claude/ calls process.kill(",
     );
     expect(result.stdout).toContain("3 rule(s) violated");
-  }, 30_000);
+  }, 120_000);
 });

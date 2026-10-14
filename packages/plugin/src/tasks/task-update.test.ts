@@ -10,6 +10,7 @@ import {
   VALID_HOSTILE_TASK_TITLES,
 } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
+import { serializeTaskFrontmatter } from "../frontmatter-serializer.js";
 import { FakeVault } from "../test-support/fake-obsidian-host.js";
 import {
   COMPLETED_NOTE,
@@ -45,6 +46,23 @@ describe("Test 2: updateTaskNote applies one edit and nothing else", () => {
       expect(result.content).toBe(COMPLETED_NOTE);
       expect(result.task.status).toBe("done");
     }
+  });
+
+  it("completing adds exactly one frontmatter key, `completed`, and drops none (TASK-08, D-37)", async () => {
+    const { vault, file } = setup();
+    await updateTaskNote(vault, file, OPEN_NOTE, {
+      now: NOW,
+      changes: { status: "done", completed: NOW },
+    });
+    const keysOf = (text: string): string[] =>
+      (/^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "")
+        .split("\n")
+        .map((line) => /^([A-Za-z0-9_-]+):/.exec(line)?.[1])
+        .filter((key): key is string => key !== undefined);
+    const before = keysOf(OPEN_NOTE);
+    const after = keysOf(vault.read(TASK_PATH));
+    expect(after.filter((key) => !before.includes(key))).toEqual(["completed"]);
+    expect(before.filter((key) => !after.includes(key))).toEqual([]);
   });
 
   it("replaces the body only when the edit carries a description", async () => {
@@ -178,9 +196,37 @@ describe("Test 8: dates stay strings", () => {
     const { vault, file } = setup();
     await updateTaskNote(vault, file, OPEN_NOTE, { now: NOW, changes: { status: "in-progress" } });
     const after = vault.read(TASK_PATH);
-    expect(after).toContain("due: '2026-10-09'\n");
+    expect(after).toContain("due: 2026-10-09\n");
     const reread = parseTaskContent(after);
     expect(reread.kind === "ok" && reread.task.frontmatter.due).toBe("2026-10-09");
+  });
+});
+
+describe("Test 8b: a date-only value keeps the quoting it had in the source", () => {
+  it("a quoted source date stays quoted and a non-date stays as the dumper writes it", async () => {
+    const quoted = OPEN_NOTE.replace("due: 2026-10-09", "due: '2026-10-09'").replace(
+      "zeta: 1",
+      "zeta: 2026-10-10T08:00:00Z\nplain: 2026-11-01",
+    );
+    const { vault, file } = setup(quoted);
+    await updateTaskNote(vault, file, quoted, { now: NOW, changes: { status: "in-progress" } });
+    const after = vault.read(TASK_PATH);
+    expect(after).toContain("due: '2026-10-09'\n");
+    expect(after).toContain("zeta: '2026-10-10T08:00:00Z'\n");
+    expect(after).toContain("plain: 2026-11-01\n");
+  });
+
+  it("serializeTaskFrontmatter writes only the named keys unquoted", () => {
+    const read = parseTaskContent(OPEN_NOTE);
+    if (read.kind !== "ok") throw new Error("fixture unreadable");
+    const withKeys = serializeTaskFrontmatter(
+      read.task.frontmatter,
+      read.task.passthrough,
+      new Set(["due"]),
+    );
+    const without = serializeTaskFrontmatter(read.task.frontmatter, read.task.passthrough);
+    expect(withKeys).toContain("due: 2026-10-09\n");
+    expect(without).toContain("due: '2026-10-09'\n");
   });
 });
 

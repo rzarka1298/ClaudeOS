@@ -13,6 +13,10 @@ import { describe, expect, it } from "vitest";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..", "..", "..", "..");
 const GUARD_MODULE = join(HERE, "services.ts");
+// The live-UAT runner's isolation module (plan 05.2-03) is the one other file that names the
+// override: it sets it for the throwaway service of the expiry spec group and scrubs it from
+// every other environment. Exact path, never a pattern; a static guard in @ccc/e2e pins it.
+const RUNNER_ENV_BUILDER = join(REPO, "packages", "e2e", "src", "isolation-guards.ts");
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -45,7 +49,7 @@ describe("the test-lifetime override is confined to its guard (Task 3, Test 6)",
 
   it("names CCC_APPROVAL_TEST_TTL_MS in no non-test file except the guard module", () => {
     const hits = files
-      .filter((file) => !isTest(file) && file !== GUARD_MODULE)
+      .filter((file) => !isTest(file) && file !== GUARD_MODULE && file !== RUNNER_ENV_BUILDER)
       .filter((file) => readFileSync(file, "utf8").includes("CCC_APPROVAL_TEST_TTL_MS"))
       .map((file) => relative(REPO, file));
     expect(hits).toEqual([]);

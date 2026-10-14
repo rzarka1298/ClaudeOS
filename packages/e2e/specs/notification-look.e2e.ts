@@ -1,0 +1,172 @@
+/**
+ * 06-UAT test 1 (05.2-08, E2E-04, E2E-05): the unfocused notification banner.
+ *
+ * What is asserted: with the window reported focused no native notification is created; with the
+ * window reported unfocused (and Finder, the one allowlisted app, brought to the front) the
+ * plugin creates exactly the generic notification (fixed title, generic body, no actions, a click
+ * handler, permission granted). That content check is the spy's part.
+ *
+ * What is looked at: the banner's appearance. Recorded spike decisions (05.2-RESEARCH.md): S1's
+ * re-run is pending, so `bannerAutomation` is spy-only and NO screen region is captured; the
+ * banner's appearance then stays with the owner. Only when the decision is changed to
+ * spy-and-region does this file take the small top-right region capture (once, then once a
+ * second later), into the private shots folder, viewed once and deleted, never committed (PRIV-04).
+ * This is the only spec allowed to reference the region capture (static guard).
+ *
+ * Authored and CI-checked only (D-15); the live run is the orchestrator's baseline in 05.2-09.
+ */
+import { createApprovalsClient, createAuthenticatedClient } from "@ccc/service-api-client";
+import { browser, expect } from "@wdio/globals";
+import {
+  assertSandboxConnected,
+  type DriverBrowser,
+  pollUntil,
+  runPluginCommand,
+} from "../src/driver.js";
+import {
+  installConsoleCapture,
+  installNotificationSpy,
+  readNotifications,
+  restoreDocumentHasFocus,
+  stubDocumentHasFocus,
+} from "../src/renderer-spies.js";
+import { installResultRecorder, type RecorderOptions } from "../src/results.js";
+import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
+import {
+  clearPending,
+  sendTestApproval as sendTestApprovalViaClient,
+} from "../src/spec-support/approvals-support.js";
+import { SYNTHETIC_MARKERS } from "../src/spec-support/cross-copy.js";
+import {
+  activateAllowlistedApp,
+  checkNoNotificationWhileFocused,
+  checkNotificationRecord,
+} from "../src/spec-support/synthetic-session.js";
+
+let context: RunContext;
+let fixture: ReturnType<typeof serviceFixtureFor> | undefined;
+const service = (): ReturnType<typeof serviceFixtureFor> => {
+  if (fixture === undefined) fixture = serviceFixtureFor(context);
+  return fixture;
+};
+
+/**
+ * Settles every pending request through the service API and waits until none is left, so the
+ * next "Send a test approval" is a NEW request: the service answers a second test request while
+ * one is pending with the same proposal, and the notifier skips proposal ids it has seen, so a
+ * reused request produces no fresh notification event (Codex finding 3).
+ */
+async function settlePendingRequests(): Promise<void> {
+  const approvals = createApprovalsClient(
+    createAuthenticatedClient({ socketPath: context.socketPath }),
+  );
+  await clearPending(approvals);
+  await pollUntil(async () => (await approvals.list()).pending.length === 0, {
+    timeoutMs: 15_000,
+    intervalMs: 250,
+    describe: "the earlier test request to be settled",
+  });
+}
+
+/** Presses Send a test approval in the plugin's settings and closes the dialog. */
+async function sendTestApproval(): Promise<void> {
+  // Through the service client (the settings dialog cannot be attached programmatically in this
+  // Obsidian, see item 13); the notification path under test starts at the plugin's upsert hook.
+  // Start from a clean slate: an earlier spec that failed mid-flow can leave its request pending,
+  // and the service then refuses a new test request ("already pending").
+  await settlePendingRequests();
+  await sendTestApprovalViaClient(
+    createApprovalsClient(createAuthenticatedClient({ socketPath: context.socketPath })),
+  );
+}
+
+const pendingRows = (): Promise<number> =>
+  browser.execute(() => document.querySelectorAll(".ccc-approval-row").length);
+
+before(async function startRun() {
+  context = loadRunContext();
+  installResultRecorder({
+    afterEach: afterEach as unknown as RecorderOptions["afterEach"],
+    resultsPath: context.paths.resultsPath,
+  });
+  await service().start({ kind: "normal" });
+  await assertSandboxConnected(browser as unknown as DriverBrowser, {
+    expectedSocketPath: context.socketPath,
+  });
+  await browser.execute(installConsoleCapture);
+  await browser.execute(installNotificationSpy);
+  // Nothing has opened the command center yet in this spec's fresh window, so open it first.
+  await runPluginCommand(
+    browser as unknown as DriverBrowser,
+    "claude-command-center:open-overview",
+  );
+  await pollUntil(
+    () => browser.execute(() => document.getElementById("ccc-tab-agent-runs") !== null),
+    {
+      timeoutMs: 15_000,
+      intervalMs: 250,
+      describe: "the Agent runs tab",
+    },
+  );
+  await browser.execute(() => {
+    (document.getElementById("ccc-tab-agent-runs") as HTMLElement).click();
+  });
+});
+
+after(async function stopRun() {
+  await browser.execute(restoreDocumentHasFocus);
+  await service().stop();
+});
+
+describe("notification banner", () => {
+  // Never leave Obsidian's settings dialog open between tests.
+  afterEach(async () => {
+    await browser.executeObsidian(({ app }) => {
+      (app as unknown as { setting?: { close(): void } }).setting?.close();
+    });
+  });
+
+  it("[06-UAT#01] An unfocused window gets one generic banner; a focused window gets none", async () => {
+    // Focused: the window reports focus, so the plugin must create no native notification.
+    await browser.execute(stubDocumentHasFocus, true);
+    await sendTestApproval();
+    await pollUntil(async () => (await pendingRows()) >= 1, {
+      timeoutMs: 30_000,
+      intervalMs: 500,
+      describe: "the first test request in Approvals",
+    });
+    const whileFocused = await browser.execute(readNotifications);
+    expect(checkNoNotificationWhileFocused(whileFocused.records)).toEqual({
+      ok: true,
+      problems: [],
+    });
+
+    // Unfocused: Finder (the only allowlisted app) comes to the front and the renderer reports no focus.
+    await activateAllowlistedApp("Finder");
+    await browser.execute(stubDocumentHasFocus, false);
+    await settlePendingRequests();
+    await sendTestApproval();
+    const seen = await pollUntil(
+      async () => {
+        const current = await browser.execute(readNotifications);
+        return current.records.length > 0 ? current : null;
+      },
+      {
+        timeoutMs: 30_000,
+        intervalMs: 500,
+        describe: "the notification of the second test request",
+      },
+    );
+    const record = seen.records[0];
+    expect(record).toBeDefined();
+    if (record === undefined) return;
+    const verdict = checkNotificationRecord(
+      { ...record, permission: seen.permission },
+      { forbidden: SYNTHETIC_MARKERS },
+    );
+    expect(verdict).toEqual({ ok: true, problems: [] });
+
+    // The banner's appearance is not captured (bannerAutomation is spy-only, S1 re-run pending):
+    // item 1 is owner-run and this test is its automated partial.
+  });
+});

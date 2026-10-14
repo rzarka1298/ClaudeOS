@@ -7,7 +7,7 @@ import {
   type FakeCodexHome,
   recordingFs,
 } from "../test-support/fake-codex-home.js";
-import { createCodexHomePort, MAX_ROLLOUT_LIST } from "./codex-home.js";
+import { createCodexHomePort, MAX_ROLLOUT_LIST, MAX_ROLLOUT_STATS } from "./codex-home.js";
 
 let home: FakeCodexHome | undefined;
 let outside: string | undefined;
@@ -86,5 +86,37 @@ describe("05.1-sec NEW-02: listNewestRolloutFiles limit and containment", () => 
       expect(listed.length, String(limit)).toBeLessThanOrEqual(MAX_ROLLOUT_LIST);
     }
     expect(port.listNewestRolloutFiles(range, 7)).toHaveLength(7);
+  });
+});
+
+describe("05.2-gap: listModifiedRolloutFiles bounds its synchronous stat work", () => {
+  it("stops statting once the stat budget is spent, however many old files a day holds", () => {
+    home = createFakeCodexHome();
+    const day = join(home.root, "sessions", "2026", "07", "01");
+    mkdirSync(day, { recursive: true });
+    const real = recordingFs().fs;
+    let rolloutStats = 0;
+    const synthetic = Array.from({ length: MAX_ROLLOUT_STATS + 500 }, (_, i) => ({
+      name: `rollout-2026-07-01T09-00-00-${String(i).padStart(6, "0")}.jsonl`,
+      isFile: true,
+    }));
+    const fs = {
+      ...real,
+      readDir: (path: string) => (path === day ? synthetic : real.readDir(path)),
+      stat: (path: string) => {
+        if (path.startsWith(day) && path.endsWith(".jsonl")) {
+          rolloutStats += 1;
+          return { isFile: true, size: 1, mtimeMs: 0 };
+        }
+        return real.stat(path);
+      },
+    };
+    const port = createCodexHomePort({ root: home.root, fs });
+    const listed = port.listModifiedRolloutFiles({
+      from: Date.parse("2026-09-09T12:00:00Z"),
+      to: Date.parse("2026-10-10T12:00:00Z"),
+    });
+    expect(listed).toEqual([]);
+    expect(rolloutStats).toBeLessThanOrEqual(MAX_ROLLOUT_STATS);
   });
 });

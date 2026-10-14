@@ -110,6 +110,8 @@ export const MAX_ROLLOUT_READ_BYTES = 1024 * 1024;
 /** Bounds on a listing. */
 export const MAX_ROLLOUT_LIST = 5000;
 export const MAX_ROLLOUT_LIST_DAYS = 400;
+/** Synchronous stat calls one modified-files walk may make; the rest of the home is left for the next poll. */
+export const MAX_ROLLOUT_STATS = 10_000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SESSIONS_DIR = "sessions";
@@ -509,6 +511,7 @@ export function createCodexHomePort(options: {
       };
       const found: RolloutRef[] = [];
       let visited = 0;
+      let statsLeft = MAX_ROLLOUT_STATS;
       for (const year of subdirs(join(root, SESSIONS_DIR), /^\d{4}$/)) {
         for (const month of subdirs(join(root, SESSIONS_DIR, year), /^\d{2}$/)) {
           for (const dom of subdirs(join(root, SESSIONS_DIR, year, month), /^\d{2}$/)) {
@@ -542,7 +545,8 @@ export function createCodexHomePort(options: {
               .sort()
               .reverse();
             for (const name of names) {
-              if (found.length >= MAX_ROLLOUT_LIST) return found;
+              if (found.length >= MAX_ROLLOUT_LIST || statsLeft <= 0) return found;
+              statsLeft -= 1;
               let mtimeMs: number;
               try {
                 mtimeMs = fs.stat(join(dir, name)).mtimeMs;

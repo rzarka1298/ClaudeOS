@@ -95,6 +95,9 @@ async function closed<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
+/** The workspace event a notification click or deep link fires to select a request. */
+export const APPROVAL_SELECT_EVENT = "claude-command-center:select-approval";
+
 export interface WireApprovalsDeps {
   /** The approvals client built from the authenticated connection (injected, never imported by value). */
   readonly client: ApprovalsClient;
@@ -108,6 +111,12 @@ export interface WireApprovalsDeps {
   readonly focusWindow?: (() => void) | undefined;
   /** Reveals the command center view. */
   readonly reveal: () => void;
+  /**
+   * Fires a named event on the app's workspace (`app.workspace.trigger`). The
+   * app outlives a plugin reload, so a notification created by an earlier load
+   * reaches the live instance through it rather than through its own module.
+   */
+  readonly trigger: (name: string, payload: string) => void;
   readonly log: (message: string) => void;
   readonly now: () => number;
   /** Builds a web notification; defaults to the guarded constructor wrapper. */
@@ -141,10 +150,18 @@ export function wireApprovals(registry: HostRegistry, deps: WireApprovalsDeps): 
   configureApprovalsApi(api);
   registry.cleanup(() => configureApprovalsApi(null));
 
-  /** The one navigation a notification click and the deep link share. */
-  const select = (proposalId: string): void => {
-    requestDestination("agent-runs", { focusProposalId: proposalId });
+  // The one navigation a notification click and the deep link share. A banner
+  // keeps the closure of the load that made it, and that load's module-level
+  // navigation signal is not the one a reloaded view reads; so the click only
+  // fires a workspace event, and the live instance's listener (the only one
+  // after an unload sweep) performs the single navigation.
+  registry.event(APPROVAL_SELECT_EVENT, (payload) => {
+    if (typeof payload !== "string") return;
+    requestDestination("agent-runs", { focusProposalId: payload });
     deps.reveal();
+  });
+  const select = (proposalId: string): void => {
+    deps.trigger(APPROVAL_SELECT_EVENT, proposalId);
   };
 
   setApprovalUpsertHook(

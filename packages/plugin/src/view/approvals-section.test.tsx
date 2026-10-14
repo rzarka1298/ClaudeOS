@@ -851,6 +851,27 @@ describe("Test 8 (deep links)", () => {
     expect(approvalDetailFocusRequested.value).toBe(false);
   });
 
+  it("takes focus again when the hand-off request names the request that is already selected and open", async () => {
+    const view = testApprovalView();
+    install({ detail: () => approvalDetail(view) });
+    hydrate([summaryOf(view)]);
+    const { container } = renderSection();
+    fireEvent.click(rowButtons(container)[0] as HTMLElement);
+    const heading = await screen.findByRole("heading", { level: 4 });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    // A banner click for the same request while focus sits elsewhere (the shell focuses the tab).
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+    expect(document.activeElement).toBe(outside);
+    await update(() => {
+      approvalDetailFocusRequested.value = true;
+    });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(approvalDetailFocusRequested.value).toBe(false);
+    outside.remove();
+  });
+
   it("presses Pending and focuses the Approvals heading for the palette request, selecting nothing", async () => {
     install();
     hydrate([summary(1)], { decided: [summary(2, "denied", 2)] });

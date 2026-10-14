@@ -137,6 +137,7 @@ function loadCycle(
     notifyEnabled: () => true,
     appFocused: () => true,
     reveal: () => {},
+    trigger: () => {},
     log: () => {},
     now: () => 0,
   });

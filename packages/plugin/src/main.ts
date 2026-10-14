@@ -12,7 +12,7 @@ import {
   refreshProjects,
   setTranscriptAnalysis,
 } from "@ccc/service-api-client";
-import { Notice, Plugin, TFolder, type WorkspaceLeaf } from "obsidian";
+import { type Events, Notice, Plugin, TFolder, type WorkspaceLeaf } from "obsidian";
 import { wireApprovals } from "./approvals/wiring.js";
 import { connectionState } from "./connection-state.js";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
@@ -195,6 +195,10 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       appFocused: () => activeDocument.hasFocus(),
       reveal: () => {
         void this.revealView();
+      },
+      // The app survives a reload, so a stale banner's closure still reaches the live listener.
+      trigger: (name, payload) => {
+        (this.app.workspace as Events).trigger(name, payload);
       },
       log: (message) => {
         console.warn(`[claude-command-center] ${message}`);

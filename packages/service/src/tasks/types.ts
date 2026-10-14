@@ -136,6 +136,11 @@ export interface TaskServiceHost extends TaskServices {
   createProposedTask(input: ProposedTaskInput): TaskResult<{ readonly task: TaskRow }>;
   /** The startup walk: same work as a rebuild, never rate-limited, safe to repeat. */
   startupWalk(): TaskResult<TaskRebuildResponse>;
+  /**
+   * The vault root was just set up (it did not exist at boot): walk now, whatever the minimum
+   * interval, so the tasks already in the vault are indexed and tasks.changed is announced.
+   */
+  vaultSetUp(): TaskResult<TaskRebuildResponse>;
   /** Cancels a pending deferred rescan (shutdown). */
   dispose(): void;
 }

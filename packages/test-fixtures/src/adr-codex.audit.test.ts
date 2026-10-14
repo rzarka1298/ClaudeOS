@@ -255,17 +255,25 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
     const plans = readdirSync(join(root, phase))
       .filter((name) => /^05\.1-\d+-PLAN\.md$/.test(name))
       .sort();
-    const entries = [...block.matchAll(/^- \[ \] (05\.1-\d+-PLAN\.md) \[wave (\d+)\] — (.+)$/gm)];
+    const entries = [
+      ...block.matchAll(/^- \[[ x]\] (05\.1-\d+-PLAN\.md) \[wave (\d+)\] — (.+)$/gm),
+    ];
     expect(entries.map((entry) => entry[1])).toEqual(plans);
     for (const entry of entries) {
       expect(frontmatter(read(`${phase}/${entry[1]}`))).toContain(`wave: ${entry[2]}`);
       expect(entry[3]?.trim().length).toBeGreaterThan(10);
     }
     const waves = Math.max(...entries.map((entry) => Number(entry[2])));
-    expect(block).toContain(`**Plans**: ${plans.length} plans, ${waves} waves`);
+    expect(block).toMatch(
+      new RegExp(
+        `\\*\\*Plans\\*\\*: (?:${plans.length} plans|${plans.length}/${plans.length} plans complete), ${waves} waves`,
+      ),
+    );
     expect(block).not.toContain("**Plans**: TBD");
-    expect(roadmap).toContain(
-      `| 05.1. Codex Co-Work & Usage (INSERTED) | ${plans.length}/${plans.length} | In Progress|  |`,
+    expect(roadmap).toMatch(
+      new RegExp(
+        `\\| 05\\.1\\. Codex Co-Work & Usage \\(INSERTED\\) \\| ${plans.length}/${plans.length} \\| (?:In Progress|Complete {4})\\|`,
+      ),
     );
     expect(roadmap).toContain(order);
     expect(roadmap).toContain(
@@ -305,7 +313,18 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
   it("preserves all existing PROJECT rows, glossary entries and unrelated ROADMAP sections", () => {
     const project = read(".planning/PROJECT.md")
       .split("\n")
-      .filter((line) => !line.startsWith("| The Antigravity terminal"))
+      .filter(
+        (line) =>
+          !line.startsWith("| The Antigravity terminal") &&
+          // 5aa22817 (05.2-10): the deliberate Phase 05.2 Key Decisions row.
+          !line.startsWith("| Automated live UAT runner:"),
+      )
+      .map((line) =>
+        // 5aa22817 also moved the footer date; map it back to the pinned 05.1-era text.
+        line.startsWith("*Last updated: 2026-10-12 after Phase 05.2")
+          ? "*Last updated: 2026-09-30 after inserting Phase 05.1 (Codex Co-Work & Usage, owner-approved scope change)*"
+          : line,
+      )
       .join("\n");
     expect(createHash("sha256").update(project).digest("hex")).toBe(
       "58debbc453883df848bbb45fd66f923e06eec8bdc4ae40f20d05d71e30a0c0f1",
@@ -337,12 +356,22 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
     );
     let roadmapRemainder = read(".planning/ROADMAP.md");
     roadmapRemainder = roadmapRemainder.replace(
-      /\*\*Plans\*\*: [^\n]+(?:\n\n- \[ \].*?(?=\n\*\*UI hint\*\*))?/gms,
+      /\*\*Plans\*\*: [^\n]+(?:\n\n- (?:\[ \]|\[x\] 05\.1-).*?(?=\n\*\*UI hint\*\*))?/gms,
       "PLAN-LIST",
     );
     roadmapRemainder = roadmapRemainder.replace(
       /Phase 05\.1 \(Codex Co-Work & Usage, inserted 2026-09-30\)[\s\S]*?(?=\n\n## ADR Placement)/gm,
       "ORDER-NOTE",
+    );
+    // Deliberate later edits, not part of the 05.1 reconciliation: the 05.1 completion mark
+    // (39986e8f) and the whole Phase 05.2 section (inserted 110261f9, planned 4e9aec51).
+    roadmapRemainder = roadmapRemainder.replace(
+      /^- \[[ x]\] \*\*Phase 05\.1:.*$/m,
+      "PHASE-05.1-LINE",
+    );
+    roadmapRemainder = roadmapRemainder.replace(
+      /### Phase 05\.2:[\s\S]*?(?=\n### Phase )/,
+      "PHASE-05.2",
     );
     roadmapRemainder = roadmapRemainder.replace(/Phases (?:execute|merge) [^\n]+/gm, "MERGE-ORDER");
     roadmapRemainder = roadmapRemainder.replace(
@@ -350,7 +379,7 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       "PROGRESS",
     );
     expect(createHash("sha256").update(roadmapRemainder).digest("hex")).toBe(
-      "c9476f3a1bed9fb5e57882710f9ba625444a98c34da6779df8ca3aab408d2c2b",
+      "c17c51059d206a81e90950abefa0f747757a456b86cabdbd0c7d95a2e5d44bb9",
     );
     let workflowRemainder = read(".planning/WORKFLOW.md");
     workflowRemainder = workflowRemainder.replace(
@@ -366,7 +395,7 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       "",
     );
     expect(createHash("sha256").update(workflowRemainder).digest("hex")).toBe(
-      "89d5fc918619c1af837caf10250b227dd47fb4142543db460f9c30a956bbbc82",
+      "98a6f4e09f62c77029f75a7039d1966677c1e5ecfb509cfb1a896e04bf06c87c",
     );
   });
 

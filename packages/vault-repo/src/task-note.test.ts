@@ -265,6 +265,35 @@ describe("Test 3: dates stay strings", () => {
   });
 });
 
+describe("Test 3b: a date-only value keeps the quoting it had in the source", () => {
+  const note = (due: string): string =>
+    stringifyTaskNote(frontmatterFor("Dated", { due: "2026-10-04" }), "").replace(
+      /^due: .*$/m,
+      `due: ${due}`,
+    ) + "";
+
+  test("parse reports the unquoted date-only keys, and stringify writes them unquoted", () => {
+    const parsed = parseTaskNote(note("2026-10-04"));
+    expect([...parsed.plainDateKeys]).toEqual(["due"]);
+    const text = stringifyTaskNote(
+      parsed.frontmatter,
+      parsed.body,
+      parsed.passthrough,
+      parsed.plainDateKeys,
+    );
+    expect(text).toMatch(/^due: 2026-10-04$/m);
+    expect(parseTaskNote(text).frontmatter.due).toBe("2026-10-04");
+  });
+
+  test("a quoted source date is not reported and stays quoted", () => {
+    const parsed = parseTaskNote(note("'2026-10-04'"));
+    expect(parsed.plainDateKeys.size).toBe(0);
+    expect(
+      stringifyTaskNote(parsed.frontmatter, "", parsed.passthrough, parsed.plainDateKeys),
+    ).toMatch(/^due: ['"]2026-10-04['"]$/m);
+  });
+});
+
 describe("Test 4: Obsidian-style YAML variants", () => {
   test("every shared variant gives the outcome the corpus names", () => {
     for (const variant of YAML_NOTE_VARIANTS) {
@@ -686,7 +715,13 @@ describe("Test 10: the manifest and the lockfile", () => {
     const lock = readFileSync(join(repoRoot, "pnpm-lock.yaml"), "utf8");
     const entries = lock.split("\n").filter((line) => /^ {2}js-yaml@/.test(line));
     expect(entries.filter((line) => line.startsWith("  js-yaml@3.15.2:"))).toHaveLength(2);
-    expect(entries.every((line) => line.startsWith("  js-yaml@3.15.2:"))).toBe(true);
+    // The only other js-yaml is 4.3.2, pulled in transitively by the private @ccc/e2e test runner
+    // (mocha through the wdio packages, 05.2-01); the product packages stay on 3.15.2.
+    expect(
+      entries.every(
+        (line) => line.startsWith("  js-yaml@3.15.2:") || line.startsWith("  js-yaml@4.3.2:"),
+      ),
+    ).toBe(true);
     expect(lock).not.toMatch(/@types\/js-yaml/);
   });
 });
