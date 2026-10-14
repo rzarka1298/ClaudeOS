@@ -136,15 +136,15 @@ run("PROJECT.md and REQUIREMENTS.md (Test 3)", () => {
     expect(flat(project.slice(project.lastIndexOf("*Last updated")))).toContain("05.2");
   });
 
-  it("lists E2E-01 to E2E-11 once each, with a Pending traceability row for Phase 05.2", () => {
+  it("lists E2E-01 to E2E-11 once each, ticked, with a Complete traceability row for Phase 05.2", () => {
     const requirements = read(".planning/REQUIREMENTS.md");
     expect(requirements).toMatch(/^### Automated Live UAT Runner/m);
     for (const id of E2E_IDS) {
-      const lines = requirements.split("\n").filter((line) => line.startsWith(`- [ ] **${id}**`));
+      const lines = requirements.split("\n").filter((line) => line.startsWith(`- [x] **${id}**`));
       expect(lines, id).toHaveLength(1);
       const rows = requirements
         .split("\n")
-        .filter((line) => line.startsWith(`| ${id} | Phase 05.2`) && line.endsWith("| Pending |"));
+        .filter((line) => line.startsWith(`| ${id} | Phase 05.2`) && line.endsWith("| Complete |"));
       expect(rows, id).toHaveLength(1);
     }
   });
