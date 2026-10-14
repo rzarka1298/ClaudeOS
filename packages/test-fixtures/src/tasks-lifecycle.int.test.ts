@@ -236,7 +236,8 @@ describe("edits made outside the dashboard (Task 3, Tests 3 and 4)", () => {
     );
     expect(done.kind).toBe("applied");
     const rewritten = read(vault, path);
-    expect(rewritten).toMatch(/^due: '2026-12-24'$/m);
+    expect(rewritten).toMatch(/^due: 2026-12-24$/m);
+    expect(rewritten).not.toMatch(/^due: ['"]/m);
     expect(rewritten).not.toMatch(/due: .*T/);
     const reread = parseTaskContent(rewritten);
     expect(reread.kind === "ok" ? reread.task.frontmatter.due : null).toBe("2026-12-24");
