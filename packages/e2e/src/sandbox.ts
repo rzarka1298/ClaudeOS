@@ -90,7 +90,12 @@ export interface SandboxOptions {
    * run root is removed, so a caller can keep what lives under it (the wdio logs). A throw is
    * recorded as a cleanup error and never stops the removal.
    */
-  beforeRemove?: (info: { root: string; wdioDir: string; runId: string }) => void;
+  beforeRemove?: (info: {
+    root: string;
+    wdioDir: string;
+    runtimeDir: string;
+    runId: string;
+  }) => void;
   /** Called with 128 + signal number after a signal-driven teardown; defaults to process.exit. */
   exit?: (code: number) => void;
 }
@@ -422,7 +427,12 @@ export async function withSandbox<T>(
         cleanupErrors.push(asError(err));
       }
       try {
-        options.beforeRemove?.({ root: paths.root, wdioDir: paths.wdioDir, runId: paths.runId });
+        options.beforeRemove?.({
+          root: paths.root,
+          wdioDir: paths.wdioDir,
+          runtimeDir: paths.runtimeDir,
+          runId: paths.runId,
+        });
       } catch (err) {
         cleanupErrors.push(asError(err));
       }

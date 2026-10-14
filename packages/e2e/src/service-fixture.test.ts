@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildServiceEnv, realRuntimeDir } from "./isolation-guards.js";
@@ -142,7 +150,7 @@ describe("service fixture stop, restart, reset (Test 6)", () => {
     expect(sandbox.registerService).toHaveBeenLastCalledWith(second, SERVICE_ENTRY);
   });
 
-  it("resetData stops the service and removes the store, logs and spool but never the runtime directory", async () => {
+  it("resetData stops the service, removes the store and spool and archives the logs, but never the runtime directory", async () => {
     const handle = fakeHandle(7105);
     const { fixture } = setup([handle]);
     await fixture.start({});
@@ -164,6 +172,10 @@ describe("service fixture stop, restart, reset (Test 6)", () => {
     ]) {
       expect(existsSync(join(paths.runtimeDir, name))).toBe(false);
     }
+    // The old service's log is archived, not deleted, so the runner can keep it.
+    const archived = readdirSync(join(paths.runtimeDir, "kept-logs"));
+    expect(archived).toHaveLength(1);
+    expect(archived[0]).toMatch(/-f$/);
     expect(existsSync(join(paths.runtimeDir, "keep.txt"))).toBe(true);
     expect(statSync(paths.runtimeDir).mode & 0o777).toBe(0o700);
     expect(fixture.isRunning()).toBe(false);

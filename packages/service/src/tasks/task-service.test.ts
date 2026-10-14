@@ -10,7 +10,7 @@ import {
   TaskCreateResponseSchema,
   VALID_HOSTILE_TASK_TITLES,
 } from "@ccc/domain";
-import { countTasks, getTask, queryTasks } from "@ccc/operational-store";
+import { countTasks, getTask, queryTasks, rebuildTaskIndex } from "@ccc/operational-store";
 import { parseTaskNote, type TaskAttention } from "@ccc/vault-repo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -741,5 +741,21 @@ describe("Task 3 Test 8 (proposed task)", () => {
   it("is a no-approval write: the services module imports nothing from the approval engine", () => {
     const source = readFileSync(join(import.meta.dirname, "task-service.ts"), "utf8");
     expect(source).not.toMatch(/from\s+"[^"]*approval/i);
+  });
+});
+
+describe("vaultSetUp (05.2 runs 18 and 22: a vault set up after boot was never indexed)", () => {
+  it("indexes the notes already in the vault once the root exists, and announces tasks.changed", () => {
+    createOk();
+    // A fresh service with the same vault but an empty index and no vault root at boot.
+    fx.setVaultRoot(null);
+    rebuildTaskIndex(fx.store.db, []);
+    const fresh = createTaskServices(fx.deps);
+    expect(fresh.startupWalk()).toEqual({ ok: false, code: "vault-not-set-up" });
+    fx.setVaultRoot(fx.vault.root);
+    const before = publishedGenerations(fx.bus).length;
+    const walked = fresh.vaultSetUp();
+    expect(walked.ok && walked.value.tasks).toBe(1);
+    expect(publishedGenerations(fx.bus).length).toBeGreaterThan(before);
   });
 });

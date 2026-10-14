@@ -47,6 +47,42 @@ describe("keepWdioLogs", () => {
     expect(readdirSync(planted)).toEqual([]);
   });
 
+  it("also keeps the service logs (live and archived) from the runtime directory, never following a link", () => {
+    const base = scratch();
+    const wdio = join(base, "wdio");
+    const rt = join(base, "rt");
+    mkdirSync(wdio);
+    mkdirSync(join(rt, "logs"), { recursive: true });
+    mkdirSync(join(rt, "kept-logs"));
+    writeFileSync(join(wdio, "wdio.log"), "w");
+    writeFileSync(join(rt, "logs", "service.log"), "live");
+    writeFileSync(join(rt, "kept-logs", "1-service.log"), "old");
+    const secret = join(base, "secret.txt");
+    writeFileSync(secret, "private");
+    symlinkSync(secret, join(rt, "logs", "evil.log"));
+    const dest = keepWdioLogs({ wdioDir: wdio, destBase: base, runId: "svc", runtimeDir: rt });
+    expect(readdirSync(dest as string).sort()).toEqual([
+      "service-kept-1-service.log",
+      "service-service.log",
+      "wdio.log",
+    ]);
+    expect(readFileSync(join(dest as string, "service-service.log"), "utf8")).toBe("live");
+  });
+
+  it("keeps service logs even when there is no wdio folder", () => {
+    const base = scratch();
+    const rt = join(base, "rt");
+    mkdirSync(join(rt, "logs"), { recursive: true });
+    writeFileSync(join(rt, "logs", "service.log"), "live");
+    const dest = keepWdioLogs({
+      wdioDir: join(base, "none"),
+      destBase: base,
+      runId: "x",
+      runtimeDir: rt,
+    });
+    expect(readdirSync(dest as string)).toEqual(["service-service.log"]);
+  });
+
   it("returns null when there is no wdio folder", () => {
     const base = scratch();
     expect(keepWdioLogs({ wdioDir: join(base, "none"), destBase: base, runId: "x" })).toBeNull();

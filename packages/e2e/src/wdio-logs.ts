@@ -22,21 +22,47 @@ export function keepWdioLogs(input: {
   wdioDir: string;
   destBase: string;
   runId: string;
+  /**
+   * The run's service runtime directory: its `logs` folder (the live service log) and `kept-logs`
+   * folder (the logs of earlier services in the run, archived by the fixture's reset) are kept
+   * too, as `service-*.log` and `service-kept-*.log`. Without it the service's own output is gone
+   * with the run root, which left runs 18 and 22 undiagnosable.
+   */
+  runtimeDir?: string;
 }): string | null {
-  let names: string[];
-  try {
-    if (!lstatSync(input.wdioDir).isDirectory()) return null;
-    names = readdirSync(input.wdioDir);
-  } catch {
-    return null;
+  const sources: Array<{ dir: string; prefix: string }> = [{ dir: input.wdioDir, prefix: "" }];
+  if (input.runtimeDir !== undefined) {
+    sources.push({ dir: join(input.runtimeDir, "logs"), prefix: "service-" });
+    sources.push({ dir: join(input.runtimeDir, "kept-logs"), prefix: "service-kept-" });
   }
+  const found: Array<{ from: string; name: string }> = [];
+  for (const source of sources) {
+    try {
+      if (!lstatSync(source.dir).isDirectory()) continue;
+      for (const name of readdirSync(source.dir)) {
+        if (name.endsWith(".log"))
+          found.push({ from: join(source.dir, name), name: source.prefix + name });
+      }
+    } catch {
+      // A source that is missing or unreadable contributes nothing.
+    }
+  }
+  let wdioPresent = false;
+  try {
+    wdioPresent = lstatSync(input.wdioDir).isDirectory();
+  } catch {
+    wdioPresent = false;
+  }
+  if (!wdioPresent && found.length === 0) return null;
   const dest = mkdtempSync(join(input.destBase, `ccc-uat-wdio-logs-${input.runId}-`));
   chmodSync(dest, 0o700);
-  for (const name of names) {
-    if (!name.endsWith(".log")) continue;
-    const from = join(input.wdioDir, name);
-    if (!lstatSync(from).isFile()) continue;
-    copyFileSync(from, join(dest, name), constants.COPYFILE_EXCL);
+  for (const { from, name } of found) {
+    try {
+      if (!lstatSync(from).isFile()) continue;
+      copyFileSync(from, join(dest, name), constants.COPYFILE_EXCL);
+    } catch {
+      // One unreadable or colliding log never stops the others being kept.
+    }
   }
   return dest;
 }

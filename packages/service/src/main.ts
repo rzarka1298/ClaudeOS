@@ -416,6 +416,17 @@ async function main(): Promise<void> {
     launchers,
     scan,
     approvals: approvals.services,
+    // A vault set up after boot has no startup walk: index it as soon as the response is out.
+    onVaultSetup: () => {
+      setImmediate(() => {
+        try {
+          const walked = taskHost.vaultSetUp();
+          if (!walked.ok) logger.warn({ code: walked.code }, "vault setup: task index not built");
+        } catch {
+          logger.error({ code: "task-setup-walk-threw" }, "vault setup: task index not built");
+        }
+      });
+    },
     tasks: {
       create: (request) => taskHost.create(request),
       list: (request) => taskHost.list(request),

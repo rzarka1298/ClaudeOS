@@ -187,7 +187,13 @@ export function createRunPorts(): RunPorts {
     deleteShots: (dir) => {
       deleteShotsDir(dir);
     },
-    saveWdioLogs: ({ wdioDir, runId }) => keepWdioLogs({ wdioDir, destBase: tmpdir(), runId }),
+    saveWdioLogs: ({ wdioDir, runtimeDir, runId }) =>
+      keepWdioLogs({
+        wdioDir,
+        destBase: tmpdir(),
+        runId,
+        ...(runtimeDir === undefined ? {} : { runtimeDir }),
+      }),
     spawnWdio: ({ sandbox, wdioEnv, extraArgs }) =>
       spawnWdio({
         sandbox,

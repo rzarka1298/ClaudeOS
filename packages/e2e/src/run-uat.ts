@@ -59,7 +59,12 @@ export interface RunOptions {
 
 /** What the runner asks of the sandbox's own teardown. */
 export interface SandboxHooks {
-  beforeRemove?: (info: { root: string; wdioDir: string; runId: string }) => void;
+  beforeRemove?: (info: {
+    root: string;
+    wdioDir: string;
+    runtimeDir: string;
+    runId: string;
+  }) => void;
 }
 
 export interface RunPorts {
@@ -90,7 +95,7 @@ export interface RunPorts {
    * Optional: keeps wdio's per-worker logs (hook errors land there, not on the console) before
    * the run root is torn down. Returns the folder it wrote, for the run log.
    */
-  saveWdioLogs?: (input: { wdioDir: string; runId: string }) => string | null;
+  saveWdioLogs?: (input: { wdioDir: string; runtimeDir?: string; runId: string }) => string | null;
   /**
    * Optional: the launch events (a relaunch, an app-exit timeout) wdio recorded in the run's wdio
    * folder; read before teardown, each becomes a run problem that ratify refuses.
@@ -418,9 +423,9 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
       {
         // Kept only after teardown has logged its kills and before the run root is removed, so the
         // kept folder holds runner-kills.log (a copy taken earlier never saw it).
-        beforeRemove: ({ wdioDir, runId }) => {
+        beforeRemove: ({ wdioDir, runtimeDir, runId }) => {
           try {
-            const saved = ports.saveWdioLogs?.({ wdioDir, runId });
+            const saved = ports.saveWdioLogs?.({ wdioDir, runtimeDir, runId });
             if (saved) ports.log(`wdio logs kept in ${saved}`);
           } catch {
             ports.log("The wdio logs could not be kept.");

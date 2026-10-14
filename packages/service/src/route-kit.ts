@@ -57,6 +57,12 @@ export interface RouteContext {
    * the optional `codex` member.
    */
   readonly codex?: CodexRouteDeps | undefined;
+  /**
+   * Called after a vault setup has succeeded and the root is persisted (also on an idempotent
+   * repeat). The task index is built from the vault root, which a fresh install does not have at
+   * boot, so the task services walk the vault now instead of waiting for a plugin change event.
+   */
+  readonly onVaultSetup?: (() => void) | undefined;
 }
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, ctx: RouteContext) => void;

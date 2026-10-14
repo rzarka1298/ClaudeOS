@@ -314,6 +314,12 @@ async function handleVaultSetup(
     sendJson(res, 200, body);
   } catch (err: unknown) {
     sendVaultSetupFailure(res, err, VAULT_SETUP_PATH);
+    return;
+  }
+  try {
+    ctx.onVaultSetup?.();
+  } catch {
+    logger.error({ route: VAULT_SETUP_PATH }, "vault setup follow-up failed");
   }
 }
 

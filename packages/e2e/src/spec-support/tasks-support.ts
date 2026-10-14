@@ -826,23 +826,10 @@ export async function waitForChipCounts(
 export async function runSetUpManagedVault(browser: TasksBrowser, minAll: number): Promise<void> {
   await openTasks(browser);
   await confirmManagedVaultSetup(browser);
-  const reached = (counts: Record<string, number | null>): boolean =>
-    (counts["all"] ?? 0) >= minAll;
-  const half = { ...WAIT.connect, timeoutMs: Math.floor(WAIT.connect.timeoutMs / 2) };
-  try {
-    await waitForChipCounts(browser, GLOBAL_ROOT, reached, {
-      ...half,
-      describe: `the Tasks destination to count at least ${minAll} tasks`,
-    });
-  } catch {
-    // Run 18: the plan was confirmed before the service could act on it and every chip stayed at
-    // 0 tasks for the full wait. The setup is idempotent, so it is confirmed once more.
-    await confirmManagedVaultSetup(browser);
-    await waitForChipCounts(browser, GLOBAL_ROOT, reached, {
-      ...half,
-      describe: `the Tasks destination to count at least ${minAll} tasks (second setup)`,
-    });
-  }
+  await waitForChipCounts(browser, GLOBAL_ROOT, (counts) => (counts["all"] ?? 0) >= minAll, {
+    ...WAIT.connect,
+    describe: `the Tasks destination to count at least ${minAll} tasks`,
+  });
 }
 
 /** Runs the Set up managed vault command and presses Confirm on its plan; waits for nothing else. */

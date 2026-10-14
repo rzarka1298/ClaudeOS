@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { startServiceForTest } from "@ccc/test-fixtures";
 import { buildServiceEnv, refuseRealPaths, type ServiceKind } from "./isolation-guards.js";
@@ -73,6 +73,29 @@ function handleFromError(err: unknown): Stoppable | undefined {
   return undefined;
 }
 
+let archiveSequence = 0;
+
+/**
+ * Moves the stopped service's log files to `kept-logs` (named by time, pid and sequence, so workers never collide) instead of deleting
+ * them, so the runner can keep every service's log of the run. A new service starts a fresh log.
+ */
+function archiveServiceLogs(runtimeDir: string): void {
+  const logs = join(runtimeDir, "logs");
+  try {
+    for (const name of readdirSync(logs)) {
+      const from = join(logs, name);
+      if (!lstatSync(from).isFile()) continue;
+      const kept = join(runtimeDir, "kept-logs");
+      mkdirSync(kept, { recursive: true, mode: 0o700 });
+      archiveSequence += 1;
+      renameSync(from, join(kept, `${Date.now()}-${process.pid}-${archiveSequence}-${name}`));
+    }
+  } catch {
+    // No logs folder, or one that cannot be read: nothing to keep.
+  }
+  rmSync(logs, { recursive: true, force: true });
+}
+
 export function createServiceFixture(
   sandbox: FixtureSandbox,
   deps: ServiceFixtureDeps = {},
@@ -136,9 +159,8 @@ export function createServiceFixture(
       for (const name of [paths.dbPath, `${paths.dbPath}-wal`, `${paths.dbPath}-shm`]) {
         rmSync(name, { force: true });
       }
-      for (const name of ["logs", "spool"]) {
-        rmSync(join(paths.runtimeDir, name), { recursive: true, force: true });
-      }
+      archiveServiceLogs(paths.runtimeDir);
+      rmSync(join(paths.runtimeDir, "spool"), { recursive: true, force: true });
       mkdirSync(paths.runtimeDir, { recursive: true, mode: 0o700 });
       chmodSync(paths.runtimeDir, 0o700);
     },

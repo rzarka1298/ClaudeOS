@@ -9,6 +9,7 @@ import {
   type RunOptions,
   type RunPorts,
   runUat,
+  type SandboxHooks,
 } from "./run-uat.js";
 import type { SandboxHandle, SandboxOutcome } from "./sandbox.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
@@ -141,10 +142,7 @@ function harness(
     purgeShots: () => {
       calls.push("purge-shots");
     },
-    runSandbox: async <T>(
-      body: (box: SandboxHandle) => Promise<T>,
-      hooks?: { beforeRemove?: (info: { root: string; wdioDir: string; runId: string }) => void },
-    ) => {
+    runSandbox: async <T>(body: (box: SandboxHandle) => Promise<T>, hooks?: SandboxHooks) => {
       calls.push("sandbox-start");
       let value: T | undefined;
       let error: unknown;
@@ -156,7 +154,12 @@ function harness(
         error = err;
       }
       calls.push("teardown", "delete-account", "leak-check");
-      hooks?.beforeRemove?.({ root: ROOT, wdioDir: sandbox.paths.wdioDir, runId: RUN_ID });
+      hooks?.beforeRemove?.({
+        root: ROOT,
+        wdioDir: sandbox.paths.wdioDir,
+        runtimeDir: sandbox.paths.runtimeDir,
+        runId: RUN_ID,
+      });
       const leaks = Array.from({ length: setup.leaks ?? 0 }, (_unused, index) => ({
         pid: 900 + index,
       }));
@@ -348,8 +351,10 @@ describe("runUat failure still tears down (Test 4)", () => {
   it("keeps the wdio logs after wdio ran, and a failing copy does not fail the run", async () => {
     const seen: string[] = [];
     const h = harness({});
-    h.ports.saveWdioLogs = ({ wdioDir }) => {
+    h.ports.saveWdioLogs = ({ wdioDir, runtimeDir }) => {
       seen.push(wdioDir);
+      // The service's runtime folder rides along, so its log is kept too.
+      expect(runtimeDir).toMatch(/rt$/);
       h.calls.push("save-wdio-logs");
       return "/tmp/ccc-uat-wdio-logs-x";
     };

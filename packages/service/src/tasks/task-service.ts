@@ -486,6 +486,7 @@ export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
     rebuild: reindexer.rebuild,
     createProposedTask,
     startupWalk: reindexer.walk,
+    vaultSetUp: reindexer.walk,
     dispose: reindexer.dispose,
   };
 }
