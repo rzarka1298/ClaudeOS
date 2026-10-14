@@ -860,8 +860,9 @@ describe("Test 8 (deep links)", () => {
     const heading = await screen.findByRole("heading", { level: 4 });
     await waitFor(() => expect(document.activeElement).toBe(heading));
     // A banner click for the same request while focus sits elsewhere (the shell focuses the tab).
-    const outside = document.createElement("button");
-    document.body.appendChild(outside);
+    const outside = render(<button type="button">outside</button>).getByRole("button", {
+      name: "outside",
+    });
     outside.focus();
     expect(document.activeElement).toBe(outside);
     await update(() => {
