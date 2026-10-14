@@ -1,0 +1,3 @@
+# Synthetic base64 fixture in a sanitiser unit test (decodes to "foobarBaz1234567890abcdefGHIJ"); the literal was
+# removed from the source in the following commit, this pins the historic finding only.
+22417c37fec7458b5bf1551eca0a9785478b2ea3:packages/e2e/src/sanitize.test.ts:generic-api-key:38
