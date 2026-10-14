@@ -670,6 +670,30 @@ describe("runUat records run problems in the report (Wave 3 WR-01)", () => {
     );
   });
 
+  it("a relaunched window is recorded as a launch-retry run problem that ratify refuses (WR-02)", async () => {
+    const h = harness(
+      { readLaunchEvents: () => ["launch-retry"] },
+      { results: allPass, looks: [] },
+    );
+    const outcome = await runUat(options(), h.ports);
+    expect(h.reports[0]?.text).toContain("run-problems: launch-retry,teardown-pending");
+    expect(lastReport(h)).toContain("run-problems: launch-retry");
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.message).toContain("launch-retry");
+    expect(refusalReasons(lastReport(h)).some((reason) => /recorded problems/.test(reason))).toBe(
+      true,
+    );
+  });
+
+  it("an app-exit timeout is recorded as a run problem too (IN-04)", async () => {
+    const h = harness(
+      { readLaunchEvents: () => ["app-exit-timeout"] },
+      { results: allPass, looks: [] },
+    );
+    await runUat(options(), h.ports);
+    expect(lastReport(h)).toContain("run-problems: app-exit-timeout");
+  });
+
   it("a cleanup error is added to the written report after teardown", async () => {
     const h = harness({}, { results: allPass, looks: [], cleanupErrors: 1 });
     await runUat(options(), h.ports);

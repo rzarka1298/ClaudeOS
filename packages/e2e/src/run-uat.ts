@@ -91,6 +91,11 @@ export interface RunPorts {
    * the run root is torn down. Returns the folder it wrote, for the run log.
    */
   saveWdioLogs?: (input: { wdioDir: string; runId: string }) => string | null;
+  /**
+   * Optional: the launch events (a relaunch, an app-exit timeout) wdio recorded in the run's wdio
+   * folder; read before teardown, each becomes a run problem that ratify refuses.
+   */
+  readLaunchEvents?: (wdioDir: string) => readonly string[];
   /** The tagged test titles of the spec files, for the expected-title check. */
   readSpecTitles: (phasePrefix: string) => SpecTitle[];
   readResults: (path: string) => ResultRecord[];
@@ -176,6 +181,8 @@ interface Produced {
   baseReport: string;
   /** The run-problems words already written into the report from inside the body. */
   writtenProblems: string[];
+  /** Launch events recorded by wdio (a relaunch, an app-exit timeout). */
+  launchEvents: string[];
 }
 
 /** One row per script item (D-09), or one per recorded test when there is no script. */
@@ -286,7 +293,9 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   let handoffFailed = false;
   // Kept outside the sandbox callback so the final report is written even if the callback fails
   // after rendering it (for example when the screenshot handoff throws).
-  let captured: { reportPath: string | null; baseReport: string; wdioFailed: boolean } | undefined;
+  let captured:
+    | { reportPath: string | null; baseReport: string; wdioFailed: boolean; launchEvents: string[] }
+    | undefined;
   let outcome: SandboxOutcome<Produced>;
   try {
     outcome = await ports.runSandbox(
@@ -311,6 +320,7 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
         } catch {
           wdioFailed = true;
         }
+        const launchEvents = [...(ports.readLaunchEvents?.(sandbox.paths.wdioDir) ?? [])];
         // Results are read even after a wdio failure: a partial report beats none.
         const results = ports.readResults(sandbox.paths.resultsPath);
         const scriptText = options.script === undefined ? null : ports.readScript(options.script);
@@ -371,11 +381,15 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
         const baseReport = text;
         // `teardown-pending` stays in the report until teardown finished and the final outcome was
         // written; a run that dies in between can never be ratified (Codex finding 2).
-        const writtenProblems = [...(wdioFailed ? ["wdio-failed"] : []), "teardown-pending"];
+        const writtenProblems = [
+          ...(wdioFailed ? ["wdio-failed"] : []),
+          ...launchEvents,
+          "teardown-pending",
+        ];
         if (writtenProblems.length > 0) {
           text = addFrontMatterNote(text, "run-problems", writtenProblems.join(","));
         }
-        captured = { reportPath, baseReport, wdioFailed };
+        captured = { reportPath, baseReport, wdioFailed, launchEvents };
         // A stdout-only report is printed once, after teardown, with the final outcome: printing a
         // provisional one first would leave two reports on the screen. A file report is written now
         // (marked teardown-pending) so a crash leaves something, and finalised below.
@@ -398,6 +412,7 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
           counts,
           baseReport,
           writtenProblems,
+          launchEvents,
         };
       },
       {
@@ -439,6 +454,7 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   }
   if (produced?.wdioFailed === true) problems.push("wdio failed");
   if (handoffFailed) problems.push("the screenshot handoff failed");
+  for (const event of produced?.launchEvents ?? []) problems.push(`launch trouble (${event})`);
   if ((produced?.versionProblems.length ?? 0) > 0) {
     problems.push(`version mismatch (${produced?.versionProblems.join(", ")})`);
   }
@@ -450,6 +466,7 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   if (captured !== undefined) {
     const final = [
       ...(captured.wdioFailed ? ["wdio-failed"] : []),
+      ...captured.launchEvents,
       ...(handoffFailed ? ["handoff-error"] : []),
       ...(outcome.leaks.length > 0 ? ["leak"] : []),
       ...(outcome.cleanupErrors.length > 0 ? ["cleanup-error"] : []),

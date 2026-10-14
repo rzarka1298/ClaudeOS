@@ -1,10 +1,12 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { waitForAppExit } from "./app-exit.js";
 import { assertRunRootShape } from "./isolation-guards.js";
+import { type LaunchEventKind, recordLaunchEvent } from "./launch-log.js";
 import { buildLaunchCapabilities, type LaunchCapability, type LaunchFs } from "./launch-options.js";
 import { ensureLaunched } from "./launch-retry.js";
+import type { ProcessEntry } from "./ledger.js";
 import { readProcessTable } from "./process-table.js";
 import { parseProfile } from "./profile.js";
 import { INSTALLED_OBSIDIAN_BINARY, REPO_ROOT } from "./repo-paths.js";
@@ -86,6 +88,19 @@ export interface WdioConfigOptions {
   versionsIo?: VersionsIo | undefined;
   /** Tests only: where the vault plugin data is written; defaults to the real filesystem. */
   pluginDataFs?: PluginDataFs | undefined;
+  /** Tests only: where launch events (a relaunch, an app-exit timeout) are recorded. */
+  recordLaunchEvent?:
+    | ((wdioDir: string, kind: LaunchEventKind, message: string) => void)
+    | undefined;
+  /** Tests only: the process table, clock and deadline of the wait between apps. */
+  settle?:
+    | {
+        readTable: () => Promise<readonly ProcessEntry[]>;
+        sleep: (ms: number) => Promise<void>;
+        now: () => number;
+        timeoutMs: number;
+      }
+    | undefined;
 }
 
 const NOT_RUNNER =
@@ -166,23 +181,35 @@ function versionSuiteHook(
 /** Milliseconds macOS gets after the previous Obsidian is gone before the next one launches. */
 export const APP_SETTLE_MS = 3_000;
 
-function settleBetweenApps(runRoot: string): () => Promise<void> {
+function settleBetweenApps(
+  runRoot: string,
+  wdioDir: string,
+  record: (wdioDir: string, kind: LaunchEventKind, message: string) => void,
+  injected: WdioConfigOptions["settle"],
+): () => Promise<void> {
   return async () => {
-    const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+    const sleep =
+      injected?.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
     try {
-      await waitForAppExit({
-        readTable: () => readProcessTable(),
+      const waited = await waitForAppExit({
+        readTable: injected?.readTable ?? (() => readProcessTable()),
         appBinary: INSTALLED_OBSIDIAN_BINARY,
         runRoot,
         sleep,
-        now: () => Date.now(),
-        timeoutMs: 20_000,
+        now: injected?.now ?? (() => Date.now()),
+        timeoutMs: injected?.timeoutMs ?? 20_000,
         intervalMs: 500,
       });
+      if (!waited.exited) {
+        // The race this wait exists to prevent may now happen; leave a trace the report reads.
+        const message = "the previous Obsidian was still running when the exit wait timed out";
+        console.warn(`run-problem warning: ${message}`);
+        record(wdioDir, "app-exit-timeout", message);
+      }
     } catch {
       // waiting is best effort; the next spec's launch is the real test
     }
-    await sleep(APP_SETTLE_MS);
+    await sleep(injected === undefined ? APP_SETTLE_MS : 0);
   };
 }
 
@@ -193,38 +220,30 @@ interface RetryBrowser {
 }
 
 /**
- * The suite hook with the single bounded launch retry in front: a window that already closed
- * before the first test is relaunched once (see launch-retry.ts) and the warning is kept in the
- * wdio folder. Only the first suite of a session is probed.
+ * The before hook with the single bounded launch retry in front. wdio runs it after the session
+ * exists and before the framework loads the spec, so a relaunch (see launch-retry.ts) happens
+ * before any spec-level hook installs renderer state and the spec never continues on a swapped,
+ * uninstrumented window. The relaunch is also recorded as a launch-retry event, which the runner
+ * turns into a run problem that ratify refuses.
  */
-function launchRetrySuiteHook(
-  next: NonNullable<WdioRunConfig["beforeSuite"]>,
+function launchRetryBeforeHook(
+  next: NonNullable<WdioRunConfig["before"]>,
   wdioDir: string,
-): NonNullable<WdioRunConfig["beforeSuite"]> {
-  const probed = new Set<string>();
-  return async (suite) => {
-    const live = (globalThis as { browser?: RetryBrowser }).browser;
-    const key = `${live?.sessionId}`;
-    if (live !== undefined && typeof live.reloadObsidian === "function" && !probed.has(key)) {
-      probed.add(key);
+  record: (wdioDir: string, kind: LaunchEventKind, message: string) => void,
+): NonNullable<WdioRunConfig["before"]> {
+  return async (capabilities, specs, browser) => {
+    const live = browser as unknown as RetryBrowser | undefined;
+    if (live !== undefined && typeof live.reloadObsidian === "function") {
       await ensureLaunched({
         probe: () => live.execute(() => 1),
         relaunch: () => live.reloadObsidian(),
         warn: (message) => {
           console.warn(message);
-          try {
-            mkdirSync(wdioDir, { recursive: true });
-            appendFileSync(
-              join(wdioDir, "launch-retries.log"),
-              `${new Date().toISOString()} ${message}\n`,
-            );
-          } catch {
-            // the console line above is the record when the folder cannot be written
-          }
+          record(wdioDir, "launch-retry", message);
         },
       });
     }
-    await next(suite);
+    await next(capabilities, specs, browser);
   };
 }
 
@@ -271,6 +290,7 @@ export function buildWdioConfig(
   // Obsidian's own output: Chromium appends every spec's launch to one file in the kept wdio
   // folder, so a window that closes under the driver leaves a trace (the service sets no logging).
   const wdioDir = join(runRoot, "wdio");
+  const recordEvent = options.recordLaunchEvent ?? recordLaunchEvent;
   const obsidianLog = join(wdioDir, "obsidian.log");
   const chromeOptions = { args: ["--enable-logging=file", `--log-file=${obsidianLog}`] };
   // chromedriver's verbose log carries the DevTools events (target detached, crashed) that say why a
@@ -325,23 +345,24 @@ export function buildWdioConfig(
     // D-11: a failed look or assertion is a result, never something to retry away.
     specFileRetries: 0,
     waitforTimeout: 10_000,
-    before: versionHook(
-      join(runRoot, "versions.json"),
-      decisions,
-      options.versionsIo ?? REAL_VERSIONS_IO,
-    ),
-    // Run 13: the launches that died at once were the ones started within about a second of the
-    // previous app's exit. Wait for the previous app's processes to be gone and then let macOS
-    // settle, before a session ends and again before the next one starts.
-    afterSession: settleBetweenApps(runRoot),
-    beforeSession: settleBetweenApps(runRoot),
-    beforeSuite: launchRetrySuiteHook(
-      versionSuiteHook(
+    before: launchRetryBeforeHook(
+      versionHook(
         join(runRoot, "versions.json"),
         decisions,
         options.versionsIo ?? REAL_VERSIONS_IO,
       ),
       wdioDir,
+      recordEvent,
+    ),
+    // Run 13: the launches that died at once were the ones started within about a second of the
+    // previous app's exit. Wait for the previous app's processes to be gone and then let macOS
+    // settle, before a session ends and again before the next one starts.
+    afterSession: settleBetweenApps(runRoot, wdioDir, recordEvent, options.settle),
+    beforeSession: settleBetweenApps(runRoot, wdioDir, recordEvent, options.settle),
+    beforeSuite: versionSuiteHook(
+      join(runRoot, "versions.json"),
+      decisions,
+      options.versionsIo ?? REAL_VERSIONS_IO,
     ),
   };
 }

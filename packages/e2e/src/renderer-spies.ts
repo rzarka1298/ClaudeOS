@@ -77,20 +77,19 @@ export function installNotificationSpy(): boolean {
   // bound to a name: esbuild `keepNames` (wdio's tsx loader) rewrites a named function
   // expression to `__name(function ...)`, a helper that does not exist in the renderer.
   // biome-ignore lint/complexity/useArrowFunction: the wrapper is called with `new`, so it must be a constructible function, not an arrow.
-  const Wrapper = (() =>
-    function (title: string, options?: { body?: string; tag?: string }) {
-      // The real constructor is never called: a native banner during an automated run is noise at
-      // best (owner-run item 1 covers its appearance) and the windows that showed one died in
-      // runs 6 to 10. The instance only retains the click handler.
-      const instance: { onclick?: unknown } = { onclick: null };
-      kept.push({
-        instance,
-        title: String(title),
-        body: typeof options?.body === "string" ? options.body : null,
-        tag: typeof options?.tag === "string" ? options.tag : null,
-      });
-      return instance;
-    })() as unknown as typeof Original;
+  const Wrapper = (() => (title: string, options?: { body?: string; tag?: string }) => {
+    // The real constructor is never called: a native banner during an automated run is noise at
+    // best (owner-run item 1 covers its appearance) and the windows that showed one died in
+    // runs 6 to 10. The instance only retains the click handler.
+    const instance: { onclick?: unknown } = { onclick: null };
+    kept.push({
+      instance,
+      title: String(title),
+      body: typeof options?.body === "string" ? options.body : null,
+      tag: typeof options?.tag === "string" ? options.tag : null,
+    });
+    return instance;
+  })() as unknown as typeof Original;
   Wrapper.prototype = Original.prototype;
   // Array elements are not a naming context, so esbuild keepNames leaves these arrows alone.
   const accessors = [

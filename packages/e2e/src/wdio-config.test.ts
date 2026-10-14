@@ -392,3 +392,87 @@ describe("the config enforces the isolation guards before it builds capabilities
     }
   });
 });
+
+describe("the launch probe runs before any spec hook (review WR-02)", () => {
+  const DEATH = new Error(
+    "invalid session id: session deleted as the browser has closed the connection",
+  );
+  const browserWith = (executes: Array<Error | null>) => {
+    const calls: string[] = [];
+    return {
+      calls,
+      browser: {
+        sessionId: "s1",
+        getObsidianVersion: () => "1.14.4",
+        getObsidianInstallerVersion: () => "1.13.7",
+        execute: async () => {
+          calls.push("probe");
+          const next = executes.shift();
+          if (next) throw next;
+          return 1;
+        },
+        reloadObsidian: async () => {
+          calls.push("relaunch");
+        },
+      },
+    };
+  };
+
+  it("relaunches inside the before hook, records a launch-retry event, then records versions", async () => {
+    const events: Array<{ kind: string; message: string }> = [];
+    const order: string[] = [];
+    const config = buildWdioConfig(env(), {
+      ...opts,
+      versionsIo: { read: () => null, write: () => void order.push("versions") },
+      recordLaunchEvent: (_dir, kind, message) => void events.push({ kind, message }),
+    });
+    const t = browserWith([DEATH, null]);
+    await config.before?.([], [], t.browser as never);
+    expect(t.calls).toEqual(["probe", "relaunch", "probe"]);
+    expect(events.map((event) => event.kind)).toEqual(["launch-retry"]);
+    expect(order).toEqual(["versions"]);
+  });
+
+  it("leaves beforeSuite without a probe or relaunch", async () => {
+    const config = buildWdioConfig(env(), {
+      ...opts,
+      versionsIo: { read: () => null, write: () => {} },
+      recordLaunchEvent: () => {},
+    });
+    const t = browserWith([DEATH]);
+    const holder = globalThis as { browser?: unknown };
+    const previous = holder.browser;
+    try {
+      holder.browser = t.browser;
+      await config.beforeSuite?.({});
+    } finally {
+      holder.browser = previous;
+    }
+    expect(t.calls).toEqual([]);
+  });
+
+  it("records an app-exit-timeout event when the previous app is still running at the deadline", async () => {
+    const events: string[] = [];
+    let clock = 0;
+    const config = buildWdioConfig(env(), {
+      ...opts,
+      recordLaunchEvent: (_dir, kind) => void events.push(kind),
+      settle: {
+        readTable: async () => [
+          {
+            pid: 1,
+            start: "s",
+            command: `/Applications/Obsidian.app/Contents/MacOS/Obsidian --user-data-dir=${ROOT}/x`,
+          },
+        ],
+        sleep: async (ms: number) => {
+          clock += ms;
+        },
+        now: () => clock,
+        timeoutMs: 1000,
+      },
+    });
+    await (config.afterSession as unknown as () => Promise<void>)();
+    expect(events).toEqual(["app-exit-timeout"]);
+  });
+});

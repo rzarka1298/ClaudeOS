@@ -27,6 +27,7 @@ import {
 } from "./cli-args.js";
 import { type GitFacts, readGitFacts } from "./git-facts.js";
 import { assertInstallerVersionMatches, readInstalledInstallerVersion } from "./installed-app.js";
+import { readLaunchEvents } from "./launch-log.js";
 import { lintTagsCommand } from "./lint-command.js";
 import { listPending, recordVerdict, writeLookHandoff } from "./look.js";
 import { PLUGIN_STAGE_FILES, stagePlugin } from "./plugin-data.js";
@@ -204,6 +205,7 @@ export function createRunPorts(): RunPorts {
       const text = readText(path);
       return text === null ? [] : parseResultsFile(text);
     },
+    readLaunchEvents: (wdioDir) => readLaunchEvents(wdioDir),
     readLookPending: (path): LookPendingItem[] => {
       const text = readText(path);
       return text === null ? [] : parseLookPendingLines(text);

@@ -1,8 +1,11 @@
 /**
  * One bounded relaunch for an Obsidian window that closed under the driver before a spec's first
  * test (live runs 6 to 9: "invalid session id: session deleted as the browser has closed the
- * connection"). Only that error is retried, only once per session, and every retry is recorded as
- * a run-problem warning; any other failure, or a second death, propagates unchanged.
+ * connection"). Only that error is retried, only once per session, and the wdio `before` hook runs
+ * it ahead of every spec-level hook so the spec's own setup lands on the relaunched window. Every
+ * retry goes to the console and to the launch event log in the kept wdio folder; the runner reads
+ * that log and records a `launch-retry` run problem, so ratify refuses a run that relaunched. Any
+ * other failure, or a second death, propagates unchanged.
  */
 
 const LAUNCH_DEATH = /session deleted as the browser has closed the connection/i;
@@ -17,7 +20,7 @@ export interface LaunchRetryPorts {
   probe: () => Promise<unknown>;
   /** Starts a fresh Obsidian session for the same spec. */
   relaunch: () => Promise<void>;
-  /** Records the warning (console and the kept wdio folder). */
+  /** Records the warning (console and the launch event log in the kept wdio folder). */
   warn: (message: string) => void;
 }
 
