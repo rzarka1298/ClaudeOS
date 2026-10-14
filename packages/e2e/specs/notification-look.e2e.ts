@@ -31,24 +31,17 @@ import {
   stubDocumentHasFocus,
 } from "../src/renderer-spies.js";
 import { installResultRecorder, type RecorderOptions } from "../src/results.js";
-import { captureRegion, shotPath } from "../src/screenshots.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
 import {
   clearPending,
   sendTestApproval as sendTestApprovalViaClient,
-  supportBrowser,
 } from "../src/spec-support/approvals-support.js";
-import { SEND_TEST_APPROVAL_NAME, SYNTHETIC_MARKERS } from "../src/spec-support/cross-copy.js";
-import { recordLookPending } from "../src/spec-support/cross-support.js";
+import { SYNTHETIC_MARKERS } from "../src/spec-support/cross-copy.js";
 import {
   activateAllowlistedApp,
-  bannerRegion,
   checkNoNotificationWhileFocused,
   checkNotificationRecord,
 } from "../src/spec-support/synthetic-session.js";
-import { SPIKE_DECISIONS } from "../src/spike-decisions.js";
-
-const BANNER_SETTLE_MS = 1_000;
 
 let context: RunContext;
 let fixture: ReturnType<typeof serviceFixtureFor> | undefined;
