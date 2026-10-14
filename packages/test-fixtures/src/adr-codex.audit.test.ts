@@ -395,7 +395,7 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       "",
     );
     expect(createHash("sha256").update(workflowRemainder).digest("hex")).toBe(
-      "89d5fc918619c1af837caf10250b227dd47fb4142543db460f9c30a956bbbc82",
+      "98a6f4e09f62c77029f75a7039d1966677c1e5ecfb509cfb1a896e04bf06c87c",
     );
   });
 
