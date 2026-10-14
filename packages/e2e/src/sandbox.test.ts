@@ -267,7 +267,7 @@ describe("withSandbox tracer (Test 9)", () => {
       table.push({
         pid: 6205,
         start: START,
-        command: `/Users/me/.cache/chromedriver/chromedriver --port=9515 --log-path=${root}/wdio/cd.log`,
+        command: `/Users/USERNAME/.cache/chromedriver/chromedriver --port=9515 --log-path=${root}/wdio/cd.log`,
       });
     });
     expect(sent).toEqual([6205]);
