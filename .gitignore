@@ -39,3 +39,12 @@ PRIVACY-GATE-REPORT.md
 # scripts/check-privacy.sh rule 4 fails the gate if either is ever tracked.
 packages/plugin/data.json
 packages/plugin/layout.json
+
+# Internal planning artifacts — never tracked in the public repo
+.planning/
+.claude/
+.obsidian/
+.gsd/
+CONTEXT.md
+claude-command-center-prd.md
+PRIVACY-GATE-REPORT.md
