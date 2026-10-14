@@ -17,6 +17,7 @@ afterEach(() => {
 
 const NEVER = (): Promise<void> => new Promise<void>(() => undefined);
 const START = "Sun Oct 11 10:00:01 2026";
+const OBSIDIAN_EXE = "/Applications/Obsidian.app/Contents/MacOS/Obsidian";
 
 interface FakeService {
   pid: number;
@@ -225,13 +226,53 @@ describe("withSandbox tracer (Test 9)", () => {
       table.push({
         pid: 6001,
         start: START,
-        command: `/Applications/Obsidian.app --user-data-dir=${root}/wdio/x`,
+        command: `${OBSIDIAN_EXE} --user-data-dir=${root}/wdio/x`,
       });
       table.push({ pid: 99990, start: START, command: `node runner ${root}` });
     });
     expect(outcome.leaks.map((leak) => leak.pid)).toEqual([6001]);
     expect(outcome.ok).toBe(false);
     expect(existsSync(root)).toBe(true);
+  });
+
+  it("never signals an observer that only names the run root; it stays a reported leak", async () => {
+    const table: ProcessEntry[] = [];
+    const sent: number[] = [];
+    const options = baseOptions(table, {
+      sendTerm: (pid: number) => {
+        sent.push(pid);
+        return Promise.resolve();
+      },
+      wait: () => Promise.resolve(),
+    });
+    const outcome = await withSandbox(options, async (sandbox) => {
+      const root = sandbox.paths.root;
+      table.push({ pid: 6201, start: START, command: `tail -f ${root}/wdio/obsidian.log` });
+      table.push({
+        pid: 6202,
+        start: START,
+        command: `/bin/zsh -c until [ -f ${root}/report ]; do sleep 1; done`,
+      });
+      // Obsidian from another run root is not this run's either.
+      table.push({
+        pid: 6203,
+        start: START,
+        command: `${OBSIDIAN_EXE} --user-data-dir=/tmp/ccc-uat.other/wdio/x ${root}`,
+      });
+      table.push({
+        pid: 6204,
+        start: START,
+        command: `/opt/other/Obsidian --user-data-dir=${root}/wdio/x`,
+      });
+      table.push({
+        pid: 6205,
+        start: START,
+        command: `/Users/me/.cache/chromedriver/chromedriver --port=9515 --log-path=${root}/wdio/cd.log`,
+      });
+    });
+    expect(sent).toEqual([6205]);
+    expect(outcome.leaks.map((leak) => leak.pid).sort()).toEqual([6201, 6202, 6203, 6204, 6205]);
+    expect(outcome.ok).toBe(false);
   });
 
   it("logs every signal it sends (pid, role, start, reason) to a log the kept wdio folder carries", async () => {
@@ -250,7 +291,7 @@ describe("withSandbox tracer (Test 9)", () => {
       table.push({
         pid: 6101,
         start: START,
-        command: `/Applications/Obsidian.app --user-data-dir=${root}/wdio/x`,
+        command: `${OBSIDIAN_EXE} --user-data-dir=${root}/wdio/x`,
       });
     });
     expect(sent).toEqual([6101]);
@@ -258,7 +299,7 @@ describe("withSandbox tracer (Test 9)", () => {
     expect(log).toContain("pid=6101");
     expect(log).toContain("role=leftover");
     expect(log).toContain(`start=${START}`);
-    expect(log).toContain("reason=teardown-ledgered-identity");
+    expect(log).toContain("reason=teardown-run-root-leftover");
   });
 
   it("records a cleanup failure without hiding the body's own error", async () => {

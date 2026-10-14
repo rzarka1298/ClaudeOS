@@ -140,6 +140,28 @@ export const realWait: Wait = (ms, signal) =>
 
 const asError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)));
 
+const OBSIDIAN_APP_PREFIX = "/Applications/Obsidian.app/Contents/";
+
+/**
+ * True only for a process the sandbox itself launched: the installed Obsidian (or one of its
+ * helpers) started with this run's own `--user-data-dir`, or a chromedriver whose command line
+ * names this run root. A process that merely mentions the run root (an observer's `tail -f`, a
+ * watcher loop, an editor) is not the runner's to signal.
+ */
+export function isSandboxLaunched(command: string, runRoot: string): boolean {
+  const names = (flag: string): boolean => {
+    for (let at = command.indexOf(flag); at >= 0; at = command.indexOf(flag, at + 1)) {
+      const after = command.slice(at + flag.length);
+      if (after.startsWith(runRoot) && /^(?:$|[\s/])/.test(after.slice(runRoot.length)))
+        return true;
+    }
+    return false;
+  };
+  if (command.startsWith(OBSIDIAN_APP_PREFIX)) return names("--user-data-dir=");
+  const executable = command.split(/\s/)[0] ?? "";
+  return executable.split("/").pop() === "chromedriver" && names("=");
+}
+
 function isStrictlyInside(outer: string, inner: string): boolean {
   const a = resolve(outer);
   const b = resolve(inner);
@@ -300,17 +322,19 @@ export async function withSandbox<T>(
   const sendTerm = options.sendTerm ?? terminateByPid;
 
   /**
-   * Ledgered leftovers: first record every process still naming the run root (Obsidian and its
-   * helpers are launched by the wdio service and never ledgered) with its start time, then
+   * Ledgered leftovers: first record every sandbox-launched process still naming the run root
+   * (Obsidian, its helpers and chromedriver are launched by the wdio service and never ledgered) with its start time, then
    * TERM only the ledgered pids whose pid, start time and marker still match a fresh table.
    * Never the runner itself. No uncatchable signal is sent by pid; a survivor stays a leak.
    */
   function logKill(pid: number, role: string, start: string): void {
+    const reason =
+      role === "leftover" ? "teardown-run-root-leftover" : "teardown-ledgered-identity";
     try {
       mkdirSync(paths.wdioDir, { recursive: true });
       appendFileSync(
         join(paths.wdioDir, "runner-kills.log"),
-        `${new Date().toISOString()} pid=${pid} role=${role} start=${start} reason=teardown-ledgered-identity\n`,
+        `${new Date().toISOString()} pid=${pid} role=${role} start=${start} reason=${reason}\n`,
         { mode: 0o600 },
       );
     } catch {
@@ -324,6 +348,10 @@ export async function withSandbox<T>(
     for (const row of findRunRootProcesses(table, paths.root, ownerPid)) {
       const full = table.find((candidate) => candidate.pid === row.pid);
       if (full === undefined || full.start === "") continue;
+      // Only processes the sandbox itself launched are adopted. Anything else that merely names
+      // the run root (an observer's `tail -f`, an until-loop, an editor) stays a reported leak
+      // and is never signalled (the same policy as the stale sweep's "manual" list).
+      if (!isSandboxLaunched(full.command, paths.root)) continue;
       const already = known.some(
         (entry) => entry.kind === "pid" && entry.pid === full.pid && entry.start === full.start,
       );
