@@ -14,7 +14,7 @@ import { defineConfig } from "vitest/config";
  * environment anyway, so the bug never surfaced. This plan's plugin
  * package needs `jsdom`, which is what exposed it (Rule 1 fix).
  *
- * Every one of the twelve `packages/*` directories is listed here AND
+ * Every one of the fourteen `packages/*` directories is listed here AND
  * carries its own `packages/<name>/vitest.config.ts`, even the five that
  * currently have zero test files (adapters, vault-repo, scheduler,
  * collectors, launchers). That second part matters more than it looks:
@@ -39,6 +39,7 @@ export default defineConfig({
       "packages/launchers",
       "packages/operational-store",
       "packages/plugin",
+      "packages/research",
       "packages/scheduler",
       "packages/service",
       "packages/service-api-client",

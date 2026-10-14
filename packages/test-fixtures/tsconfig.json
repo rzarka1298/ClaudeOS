@@ -11,6 +11,7 @@
     { "path": "../launchers" },
     { "path": "../operational-store" },
     { "path": "../plugin" },
+    { "path": "../research" },
     { "path": "../service" },
     { "path": "../service-api-client" },
     { "path": "../vault-repo" }

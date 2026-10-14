@@ -638,6 +638,7 @@ describe("element list and config shape (plan 06-02)", () => {
     "launchers",
     "operational-store",
     "plugin",
+    "research",
     "scheduler",
     "service",
     "service-api-client",
@@ -646,10 +647,18 @@ describe("element list and config shape (plan 06-02)", () => {
     "vault-repo",
   ];
 
-  test("the element descriptors cover exactly the seventeen asserted types", async () => {
+  test("the element descriptors cover exactly the eighteen asserted types", async () => {
     const elements = await loadDescriptors();
     expect([...new Set(elements.map((e) => e.type))].sort()).toEqual(EXPECTED_ELEMENT_TYPES);
-    expect(EXPECTED_ELEMENT_TYPES).toHaveLength(17);
+    expect(EXPECTED_ELEMENT_TYPES).toHaveLength(18);
+  });
+
+  test("research is a package element: its source and its node_modules link are both classified", async () => {
+    const patterns = (await loadDescriptors())
+      .filter((e) => e.type === "research")
+      .map((e) => e.pattern);
+    expect(patterns).toContain("packages/research");
+    expect(patterns).toContain("node_modules/@ccc/research");
   });
 
   test("e2e is a package element: its source and its node_modules link are both classified", async () => {
@@ -702,5 +711,63 @@ describe("element list and config shape (plan 06-02)", () => {
         .length;
     expect(ruleCount("boundaries/dependencies")).toBe(1);
     expect(ruleCount("no-restricted-syntax")).toBe(1);
+  });
+});
+
+// Plan 07-04 (D-08, research Pitfall 14): the pure research package is its own element
+// with a domain-only policy, and the plugin cannot reach it, so the HTML and XML parser
+// never enters the Obsidian bundle.
+describe("research element (plan 07-04, D-08)", () => {
+  const RESEARCH_IMPORTER = "packages/research/src/probe.ts";
+  const RESEARCH_TARGET = "../../research/src/index.js";
+
+  test("FIRES: a research file importing the operational store", async () => {
+    const messages = await boundariesFor(
+      RESEARCH_IMPORTER,
+      'import "../../operational-store/src/index.js";\n',
+    );
+    expect(messages.length).toBeGreaterThan(0);
+    expect(messages.map((m) => m.ruleId)).toContain("boundaries/dependencies");
+  });
+
+  test("quiet half: the same research file importing only a domain type", async () => {
+    expect(await boundariesFor(RESEARCH_IMPORTER, DOMAIN_TYPE_IMPORT)).toHaveLength(0);
+  });
+
+  test("QUIET: a research file importing @ccc/domain", async () => {
+    expect(await boundariesFor(RESEARCH_IMPORTER, 'import "@ccc/domain";\n')).toHaveLength(0);
+  });
+
+  test("FIRES: a research file importing the scheduler package", async () => {
+    const messages = await boundariesFor(
+      RESEARCH_IMPORTER,
+      'import "../../scheduler/src/index.js";\n',
+    );
+    expect(messages.length).toBeGreaterThan(0);
+  });
+
+  test("FIRES: a plugin file importing the research package", async () => {
+    const messages = await boundariesFor(
+      "packages/plugin/src/probe.ts",
+      `import "${RESEARCH_TARGET}";\n`,
+    );
+    expect(messages.length).toBeGreaterThan(0);
+    expect(messages.map((m) => m.ruleId)).toContain("boundaries/dependencies");
+  });
+
+  test("quiet half of the plugin case: a domain type import instead", async () => {
+    expect(await boundariesFor("packages/plugin/src/probe.ts", DOMAIN_TYPE_IMPORT)).toHaveLength(0);
+  });
+
+  test("QUIET: the service and the shared test package may import the research package", async () => {
+    expect(
+      await boundariesFor("packages/service/src/probe.ts", `import "${RESEARCH_TARGET}";\n`),
+    ).toHaveLength(0);
+    expect(
+      await boundariesFor(
+        "packages/test-fixtures/src/probe.ts",
+        'import "../../research/src/index.js";\n',
+      ),
+    ).toHaveLength(0);
   });
 });

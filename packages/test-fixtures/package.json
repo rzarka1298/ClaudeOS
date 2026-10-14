@@ -23,6 +23,7 @@
     "@ccc/domain": "workspace:*",
     "@ccc/launchers": "workspace:*",
     "@ccc/operational-store": "workspace:*",
+    "@ccc/research": "workspace:*",
     "@ccc/service": "workspace:*",
     "@ccc/service-api-client": "workspace:*",
     "@ccc/vault-repo": "workspace:*"

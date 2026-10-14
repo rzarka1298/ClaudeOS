@@ -22,9 +22,10 @@ import tsParser from "@typescript-eslint/parser";
 import boundaries from "eslint-plugin-boundaries";
 
 /**
- * Every element type this repository recognises. Exactly 17 -- one per
- * package (13: the 12 REPO-02 packages plus `e2e`, the Phase 05.2 live-UAT
- * runner package, D-01), plus four sub-package elements carved out of
+ * Every element type this repository recognises. Exactly 18 -- one per
+ * package (14: the 12 REPO-02 packages plus `e2e`, the Phase 05.2 live-UAT
+ * runner package, D-01, and `research`, the Phase 7 pure normaliser package,
+ * D-08), plus four sub-package elements carved out of
  * `service`: `untrusted` (ADR-0014) and the three Phase 6 elements
  * `approval` (the engine folder), `approval-minter` (the one file that can
  * mint a capability token) and `executors` (effect code), per D-01, D-03 and
@@ -40,6 +41,10 @@ const ELEMENT_TYPES = [
   "adapters",
   "vault-repo",
   "scheduler",
+  // The Phase 7 pure normalisers (D-08): HTML and feed to text, canonical URLs, the
+  // source delimiter. It parses attacker-controlled markup, so it is domain-only and
+  // the plugin may not import it: the parser never reaches the Obsidian bundle.
+  "research",
   "collectors",
   "launchers",
   "untrusted",
@@ -63,7 +68,7 @@ const ELEMENT_TYPES = [
 const SUBFOLDER_ELEMENT_TYPES = ["untrusted", "approval", "approval-minter", "executors"];
 
 /**
- * The 13 element types that are also real pnpm workspace packages (every
+ * The 14 element types that are also real pnpm workspace packages (every
  * `ELEMENT_TYPES` entry except the sub-package elements).
  */
 const PACKAGE_ELEMENT_TYPES = ELEMENT_TYPES.filter((t) => !SUBFOLDER_ELEMENT_TYPES.includes(t));
@@ -275,6 +280,9 @@ export default [
             { from: { element: { type: "adapters" } }, allow: allowElementTypes(["domain"]) },
             { from: { element: { type: "vault-repo" } }, allow: allowElementTypes(["domain"]) },
             { from: { element: { type: "scheduler" } }, allow: allowElementTypes(["domain"]) },
+            // research -- the pure Node-free normalisers (D-08). Domain only; nothing in the
+            // plugin policy below lists it, so the plugin cannot import it.
+            { from: { element: { type: "research" } }, allow: allowElementTypes(["domain"]) },
             { from: { element: { type: "launchers" } }, allow: allowElementTypes(["domain"]) },
             // collectors -- may import domain only. Explicitly NOT adapters:
             // a Collector is local and read-only, holds no credentials, and

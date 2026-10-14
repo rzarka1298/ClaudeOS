@@ -29,6 +29,7 @@
     { "path": "packages/adapters" },
     { "path": "packages/vault-repo" },
     { "path": "packages/scheduler" },
+    { "path": "packages/research" },
     { "path": "packages/collectors" },
     { "path": "packages/launchers" },
     { "path": "packages/keychain" },
