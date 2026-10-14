@@ -66,7 +66,7 @@ import { generateUatVault } from "./uat-vault.js";
 import { isolatePluginData } from "./vault-plugin-data.js";
 import { parseVersions } from "./versions.js";
 import { OBSIDIAN_CACHE_DIR } from "./wdio-config.js";
-import { keepWdioLogs } from "./wdio-logs.js";
+import { keepWdioLogs, purgeStaleWdioLogs } from "./wdio-logs.js";
 import { spawnWdio } from "./wdio-spawn.js";
 
 /**
@@ -155,6 +155,8 @@ export function createRunPorts(): RunPorts {
         keepRunIds: [],
         maxAgeMs: 7 * 24 * 60 * 60 * 1000,
       });
+      // The kept wdio log folders (chromedriver traffic) age out the same way.
+      purgeStaleWdioLogs({ base: tmpdir(), maxAgeMs: 7 * 24 * 60 * 60 * 1000 });
     },
     runSandbox: (body, hooks) =>
       withSandbox(

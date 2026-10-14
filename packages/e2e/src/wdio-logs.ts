@@ -1,4 +1,14 @@
-import { chmodSync, constants, copyFileSync, lstatSync, mkdtempSync, readdirSync } from "node:fs";
+import {
+  chmodSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+} from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -29,4 +39,35 @@ export function keepWdioLogs(input: {
     copyFileSync(from, join(dest, name), constants.COPYFILE_EXCL);
   }
   return dest;
+}
+
+export const WDIO_LOGS_PREFIX = "ccc-uat-wdio-logs-";
+
+/**
+ * Removes kept wdio log folders last modified longer than `maxAgeMs` ago, at the start of a run.
+ * Only names with the kept-logs prefix are touched; a link with such a name is unlinked, never
+ * followed. Returns the removed names.
+ */
+export function purgeStaleWdioLogs(input: {
+  base: string;
+  maxAgeMs: number;
+  now?: number;
+}): string[] {
+  if (!existsSync(input.base)) return [];
+  const now = input.now ?? Date.now();
+  const removed: string[] = [];
+  for (const name of readdirSync(input.base).sort()) {
+    if (!name.startsWith(WDIO_LOGS_PREFIX)) continue;
+    const path = join(input.base, name);
+    const stat = lstatSync(path);
+    if (now - stat.mtimeMs < input.maxAgeMs) continue;
+    if (stat.isSymbolicLink()) {
+      unlinkSync(path);
+      removed.push(name);
+    } else if (stat.isDirectory()) {
+      rmSync(path, { recursive: true, force: true });
+      removed.push(name);
+    }
+  }
+  return removed;
 }

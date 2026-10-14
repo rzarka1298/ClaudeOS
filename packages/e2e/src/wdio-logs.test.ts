@@ -5,12 +5,13 @@ import {
   readFileSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { keepWdioLogs } from "./wdio-logs.js";
+import { keepWdioLogs, purgeStaleWdioLogs } from "./wdio-logs.js";
 
 const scratch = () => mkdtempSync(join(tmpdir(), "ccc-wdio-logs-test-"));
 
@@ -49,5 +50,45 @@ describe("keepWdioLogs", () => {
   it("returns null when there is no wdio folder", () => {
     const base = scratch();
     expect(keepWdioLogs({ wdioDir: join(base, "none"), destBase: base, runId: "x" })).toBeNull();
+  });
+});
+
+describe("purgeStaleWdioLogs (review IN-02)", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const make = (base: string, name: string, ageMs: number, now: number): string => {
+    const dir = join(base, name);
+    mkdirSync(dir);
+    writeFileSync(join(dir, "wdio-0-0.log"), "x");
+    utimesSync(dir, (now - ageMs) / 1000, (now - ageMs) / 1000);
+    return dir;
+  };
+
+  it("removes only ccc-uat-wdio-logs folders older than the age limit, never other names", () => {
+    const base = scratch();
+    const now = Date.now();
+    make(base, "ccc-uat-wdio-logs-old-aaaaaa", 8 * DAY, now);
+    make(base, "ccc-uat-wdio-logs-new-bbbbbb", 1 * DAY, now);
+    make(base, "ccc-uat-shots-old", 30 * DAY, now);
+    make(base, "unrelated", 30 * DAY, now);
+    const removed = purgeStaleWdioLogs({ base, maxAgeMs: 7 * DAY, now });
+    expect(removed).toEqual(["ccc-uat-wdio-logs-old-aaaaaa"]);
+    expect(readdirSync(base).sort()).toEqual([
+      "ccc-uat-shots-old",
+      "ccc-uat-wdio-logs-new-bbbbbb",
+      "unrelated",
+    ]);
+  });
+
+  it("unlinks a symlink with a matching name without following it, and tolerates a missing base", () => {
+    const base = scratch();
+    const target = scratch();
+    writeFileSync(join(target, "keep.txt"), "keep");
+    symlinkSync(target, join(base, "ccc-uat-wdio-logs-link-cccccc"));
+    const now = Date.now() + 60_000;
+    expect(purgeStaleWdioLogs({ base, maxAgeMs: 0, now })).toEqual([
+      "ccc-uat-wdio-logs-link-cccccc",
+    ]);
+    expect(readFileSync(join(target, "keep.txt"), "utf8")).toBe("keep");
+    expect(purgeStaleWdioLogs({ base: join(base, "missing"), maxAgeMs: DAY, now })).toEqual([]);
   });
 });
