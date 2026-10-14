@@ -114,3 +114,68 @@ written by `stringifyNote`.
 - Adding a thirteenth key later means updating the schema, the key-order array,
   and the tests that assert their agreement — deliberately, so a key cannot be
   added without a decision about where it sorts on disk.
+
+## Amendment: research notes (Phase 7)
+
+Phase 7 writes three new kinds of managed note. None of them forks the schema
+above: each is `NoteFrontmatterSchema.extend({...})`, with the twelve provenance
+keys as a literal prefix of its key-order array (spread from
+`NOTE_FRONTMATTER_KEY_ORDER`), exactly as the task note does. The definitions
+live in `packages/domain/src/research-note-schema.ts` and
+`packages/domain/src/source-reference.ts`.
+
+**Item kinds map onto `claimType`.** A report carries `claimType: summary` at note
+level; each finding in `items[]` carries its own kind, a subset of `CLAIM_TYPES`:
+
+| Visible label | Kind (a `claimType` value) | Confidence |
+|---|---|---|
+| Reported fact | `source-fact` | `unverified` |
+| Source claim | `unverified-claim` | `unverified` |
+| Model inference | `inference` | `inferred` |
+
+`recommendation` is excluded in milestone 1 (PRD 7.9: no recommendations): it is not
+in the item-kind enum, so a report that carries one fails the strict parse. A
+reported fact and a source claim must cite at least one fetched source; a finding
+that cites none is an inference. The labels, glyphs and rule shapes are one exported
+map, `REPORT_ITEM_KIND_DISPLAY`, read by both the reader and the vault note writer,
+so the note body and the view show identical words (RSRCH-04 "both its rendering and
+its Markdown metadata").
+
+**The three extended schemas and their key orders.**
+
+- `ReportFrontmatterSchema` / `REPORT_FRONTMATTER_KEY_ORDER`: `type: report`,
+  `stage` of `deliverable` or `output`, `generatedBy.automation` equal to the job id,
+  then `topicLabel`, `generatedAt`, `jobRunId`, `summariser`, `partial`,
+  `sourceTotal`, `unavailableSources`, `sourceRefs`, `sourceHandling`, `items`.
+  `partial` is true exactly when `unavailableSources` is non-empty (ADR-0002:
+  partiality is a flag, never a fifth freshness value). Every cited id and every
+  handling entry names a source in `sourceRefs`.
+- `RawSourceFrontmatterSchema` / `RAW_SOURCE_FRONTMATTER_KEY_ORDER`: `type:
+  research-source`, `stage: raw`, the full `sourceRef`, the `sanitise` counts and an
+  optional `truncated` flag. The reference's `snapshotPath` must equal the note's own
+  path rule, `global/raw/<32 hex id>.<first 8 hash characters>.md`.
+- `WikiSourceFrontmatterSchema` / `WIKI_SOURCE_FRONTMATTER_KEY_ORDER`: `type:
+  research-wiki`, `stage: wiki`, `sourceId`, `latestSnapshotPath`, `lastRetrievedAt`.
+
+The nested orders (`REPORT_ITEM_KEY_ORDER`, `REPORT_UNAVAILABLE_SOURCE_KEY_ORDER`,
+`REPORT_HANDLING_KEY_ORDER`, `SOURCE_REFERENCE_KEY_ORDER`) are exported too, so a
+rewrite is byte-identical all the way down.
+
+**Why the report cap is 128 KiB.** The task note's 64 KiB frontmatter cap does not
+fit a report: 25 findings at the maximum text (600 characters) and quote (240
+characters) lengths in a three-byte script, plus twelve full references, is well
+over 64 KiB. `REPORT_FRONTMATTER_MAX_BYTES` is 128 KiB and
+`REPORT_FILE_MAX_BYTES` is 256 KiB; a raw source note is capped at 64 KiB of
+frontmatter and 1 MiB in all, because its body holds one sanitised snapshot. A
+worst-case test with real three-byte text pins the margin. Parsers enforce the caps
+before parsing (alias and size amplification).
+
+**Two different hashes, both called `contentHash`.** The note-level `contentHash`
+is stamped by the writer over the whole note body. `sourceRef.contentHash` is the
+SHA-256 of the canonical sanitised text before any Markdown escaping and without
+the untrusted-content banner, computed by the service; it is recomputable from a
+raw note body by removing the banner. They answer different questions (did this
+file change; is this the same source text), so neither can stand in for the other.
+
+**The schema, the order arrays and the tests change together**, as for tasks: a key
+added to one and not the others fails `research-note-schema.test.ts`.
