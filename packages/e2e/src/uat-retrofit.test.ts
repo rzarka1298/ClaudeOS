@@ -126,7 +126,7 @@ run("summary, intro and auto-result lines (Test 4)", () => {
     expect(summary.total).toBe("26");
     const keys = ["passed", "issues", "pending", "skipped", "blocked"];
     expect(keys.reduce((sum, key) => sum + Number(summary[key]), 0)).toBe(26);
-    // Run 4614e5ff (ratified): 18 auto items passed, none failed; the owner items carry their own results.
+    // Run 98a03adf (ratified): 18 auto items passed, none failed; the owner items carry their own results.
     expect(summary["auto-passed"]).toBe("18");
     for (const key of ["auto-failed", "owner-pending"]) {
       expect(summary[key], key).toBe("0");
@@ -153,7 +153,7 @@ run("summary, intro and auto-result lines (Test 4)", () => {
         expect(item.autoResult, `item ${item.number}`).not.toBeNull();
       }
     }
-    expect(text.match(/^auto-result: pass @ 4614e5ff 2026-10-14$/gm)).toHaveLength(18);
+    expect(text.match(/^auto-result: pass @ 98a03adf 2026-10-14$/gm)).toHaveLength(18);
   });
 });
 
