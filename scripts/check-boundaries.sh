@@ -65,6 +65,15 @@
 #      (D-26); test files, /test-support/ folders and packages/test-fixtures/
 #      are exempt, and the usage request parameter excludeResetCreditDetails
 #      is not a hit
+#  17. no non-test file under packages/service/src/untrusted/ names an I/O
+#      primitive -- a node: specifier, child_process, a fetch( or require(
+#      call, a dynamic import(, or the names process, globalThis, eval,
+#      Function, Reflect, XMLHttpRequest, WebSocket, EventSource, or a
+#      .constructor( call. The folder compiles with `types: []`, which
+#      removes fetch/process/require/timers/node: modules, but ES2022 still
+#      supplies globalThis, eval, Function, Reflect and a computed dynamic
+#      import, so this literal scan is the layer that catches those
+#      (ADR-0014, RSRCH-07, D-02); test files and comment lines are exempt
 #  Rules 11 to 14 scan non-test source files only and skip comment lines;
 #  every allow-list below is an anchored `^...` path match, never a substring.
 #
@@ -427,6 +436,36 @@ codex_notify_hits=$(grep_noncomment "$CODEX_NOTIFY_PATTERN" $CODEX_NOTIFY_FILES 
 report_rule \
   "a non-test source file names a Codex credential or config file, the reset-credit consume RPC, or writes Codex's notify setting (CODEX-09, CODEX-06; usage comes only from the app-server rate-limit read)" \
   "$(printf '%s\n%s\n%s\n%s\n' "$codex_credential_hits" "$codex_config_hits" "$codex_consume_hits" "$codex_notify_hits" | grep -v '^$' | sort -u || true)"
+
+# --- Rule 17: no non-test file under packages/service/src/untrusted/ names an
+# I/O primitive (ADR-0014, RSRCH-07, D-02, T-07-04). The summariser folder sees
+# hostile text, so it must not be able to act. Layer 1 is the eslint element
+# (domain-only imports); layer 2 is the nested `types: []` project, which makes
+# fetch, process, require, timers and every node: module not exist at compile
+# time; this rule is layer 3, for what the compiler still allows under ES2022:
+# globalThis, eval, Function, Reflect and a dynamic import with a computed
+# specifier. It scans NON_TEST_FILES (every module extension) anchored to the
+# folder with a trailing slash, so the look-alike `untrusted-extra/` is not in
+# scope. Alternatives, all written without a backslash:
+#   - a quoted `node:` specifier (a quote character directly before node:, so
+#     an object key named node is not a hit) and the bare child_process name;
+#   - a fetch( or require( call and a dynamic import( call, each with an
+#     identifier boundary before the name, so refetch( and reimport( are not;
+#   - the names process, globalThis, eval, Function, Reflect, XMLHttpRequest,
+#     WebSocket and EventSource with an identifier boundary on BOTH sides, so
+#     processed, processing, retrieval, evaluated, Functional and Reflector are
+#     not hits while `(0, eval)(...)` and `(0, Function)(...)` are;
+#   - a `.constructor(` call or a bracketed "constructor" access, which reaches
+#     the Function constructor without naming it. A class declaration's own
+#     `constructor(` has no leading dot and is not a hit.
+# Comment lines are skipped by grep_noncomment and test files by NON_TEST_FILES.
+UNTRUSTED_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep '^packages/service/src/untrusted/' || true)
+UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])(fetch|require)[[:space:]]*[(]|(^|[^A-Za-z0-9_])import[[:space:]]*[(]|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor[[:space:]]*[(]|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
+# shellcheck disable=SC2086
+check_rule \
+  "a non-test file under packages/service/src/untrusted/ names an I/O primitive (a node: specifier, child_process, fetch(, require(, a dynamic import(, process, globalThis, eval, Function, Reflect, XMLHttpRequest, WebSocket, EventSource or a .constructor( call; the summariser folder must hold no way to act, ADR-0014, RSRCH-07)" \
+  "$UNTRUSTED_IO_PATTERN" \
+  $UNTRUSTED_FILES
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: checked ${RULES} rules."
