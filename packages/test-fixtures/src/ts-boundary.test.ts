@@ -5,7 +5,8 @@
 // pair of fixture projects (violating and clean), checks the structure of the
 // real nested configs, and asserts the built layout the runtime depends on.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
@@ -23,16 +24,44 @@ interface TscResult {
 
 /** Runs the compiler on one project without emitting, returning its output
  * whatever the exit status (tsc exits non-zero on a diagnostic). */
-function runTsc(projectDir: string): TscResult {
+function runTsc(projectDir: string, extraArgs: readonly string[] = []): TscResult {
   try {
-    const out = execFileSync(TSC_BIN, ["-p", projectDir, "--noEmit", "--pretty", "false"], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-    });
+    const out = execFileSync(
+      TSC_BIN,
+      ["-p", projectDir, "--noEmit", "--pretty", "false", ...extraArgs],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+      },
+    );
     return { exitCode: 0, output: out };
   } catch (err) {
     const e = err as { status?: number; stdout?: string; stderr?: string };
     return { exitCode: e.status ?? 1, output: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+  }
+}
+
+/** The base tsconfig, used to compile an inline source in a throwaway project
+ * with exactly the untrusted configuration (types empty, no references). */
+const TSCONFIG_BASE = join(REPO_ROOT, "tsconfig.base.json");
+
+/** Compiles one inline source string as a `types: []` project and returns the
+ * compiler output. The throwaway folder is removed whatever the outcome. */
+function runTscOnInlineSource(source: string): TscResult {
+  const dir = mkdtempSync(join(tmpdir(), "ccc-untrusted-probe-"));
+  try {
+    writeFileSync(join(dir, "index.ts"), source);
+    writeFileSync(
+      join(dir, "tsconfig.json"),
+      JSON.stringify({
+        extends: TSCONFIG_BASE,
+        compilerOptions: { composite: true, rootDir: ".", outDir: "dist", noEmit: true, types: [] },
+        files: ["index.ts"],
+      }),
+    );
+    return runTsc(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -59,6 +88,84 @@ describe("nested composite project mechanism (fixtures)", () => {
     const result = runTsc(join(FIXTURES, "approval-shaped-clean"));
     expect(result.exitCode).toBe(0);
     expect(result.output.trim()).toBe("");
+  });
+});
+
+describe("untrusted folder: compiler layer (ADR-0014, D-01, D-02)", () => {
+  // Each forbidden name below is on its own line of the fire fixture, so the
+  // compiler must report exactly one diagnostic per name. The codes are what
+  // TypeScript 6 reports for an unknown global (TS2304) and for an unknown
+  // Node global or module specifier when no Node types are loaded (TS2591).
+  const FORBIDDEN: ReadonlyArray<{ readonly name: string; readonly code: "TS2304" | "TS2591" }> = [
+    { name: "fetch", code: "TS2304" },
+    { name: "process", code: "TS2591" },
+    { name: "require", code: "TS2591" },
+    { name: "setTimeout", code: "TS2304" },
+    { name: "node:fs", code: "TS2591" },
+    { name: "child_process", code: "TS2591" },
+  ];
+
+  test("the fire fixture reports one diagnostic for each I/O name it uses", () => {
+    const result = runTsc(join(FIXTURES, "untrusted-shaped"));
+    expect(result.exitCode).not.toBe(0);
+    for (const { name, code } of FORBIDDEN) {
+      const matching = result.output
+        .split("\n")
+        .filter((line) => line.includes(`error ${code}: Cannot find name '${name}'`));
+      expect(matching, `${name} should produce exactly one ${code} diagnostic`).toHaveLength(1);
+    }
+    const diagnostics = result.output.split("\n").filter((line) => line.includes(": error TS"));
+    expect(diagnostics).toHaveLength(FORBIDDEN.length);
+  });
+
+  test("the clean twin imports a domain type and compiles with no output, so domain's declarations bring no Node types in", () => {
+    const result = runTsc(join(FIXTURES, "untrusted-shaped-clean"), ["--listFiles"]);
+    expect(result.exitCode).toBe(0);
+    const files = result.output.split("\n").filter((line) => line.trim() !== "");
+    // The domain declarations were really part of the program ...
+    expect(files.some((f) => f.endsWith("/packages/domain/dist/index.d.ts"))).toBe(true);
+    // ... and nothing pulled the Node typings in behind them.
+    expect(files.filter((f) => f.includes("@types/node"))).toEqual([]);
+    expect(files.filter((f) => f.includes("error TS"))).toEqual([]);
+  });
+
+  test("the real untrusted project's program contains no Node typings", () => {
+    const result = runTsc(join(SERVICE_DIR, "src", "untrusted"), ["--listFiles"]);
+    expect(result.exitCode).toBe(0);
+    const files = result.output.split("\n").filter((line) => line.trim() !== "");
+    expect(files.filter((f) => f.includes("@types/node"))).toEqual([]);
+  });
+
+  test("known limit of this layer: globalThis access, eval, Function, Reflect and a computed dynamic import still compile; the backstop rule is the layer that catches them", () => {
+    const probe = [
+      'export const viaGlobal = (globalThis as Record<string, unknown>)["fetch"];',
+      'export const viaEval: unknown = eval("1");',
+      'export const viaFunction: unknown = new Function("return 1")();',
+      'export const viaReflect: unknown = Reflect.get({}, "k");',
+      "export async function viaImport(specifier: string): Promise<unknown> {",
+      "  return await import(specifier);",
+      "}",
+      "",
+    ].join("\n");
+    const result = runTscOnInlineSource(probe);
+    expect(result.output.trim()).toBe("");
+    expect(result.exitCode).toBe(0);
+    // These names are caught by the untrusted-folder rule in
+    // scripts/check-boundaries.sh, proven in check-boundaries-rules.test.ts.
+    // Never read this test as saying the compiler alone keeps I/O out of the
+    // folder.
+  });
+
+  test("the real nested config is types-free, references only domain, and is wired into the service project", () => {
+    const config = readTsConfig(join(SERVICE_DIR, "src", "untrusted", "tsconfig.json"));
+    expect(config.extends).toBe("../../../../tsconfig.base.json");
+    expect(config.compilerOptions?.["types"]).toEqual([]);
+    expect(config.compilerOptions?.composite).toBe(true);
+    expect(config.compilerOptions?.outDir).toBe("../../dist/untrusted");
+    expect(config.references).toEqual([{ path: "../../../domain" }]);
+    const service = readTsConfig(join(SERVICE_DIR, "tsconfig.json"));
+    expect(service.exclude).toContain("src/untrusted");
+    expect((service.references ?? []).map((r) => r.path)).toContain("./src/untrusted");
   });
 });
 
