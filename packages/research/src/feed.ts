@@ -213,16 +213,48 @@ const CONVENTIONAL_PREFIXES: Readonly<Record<string, string>> = {
   rdf: NS_RDF,
 };
 
-/** A namespace binding table: prefix (lower case, "" is the default namespace) to namespace. */
-type Bindings = ReadonlyMap<string, string>;
+/**
+ * A namespace binding table: prefix (lower case, "" is the default namespace) to namespace. Once
+ * any declaration of the feed was dropped for a cap (RegistryLosses.namespaces), an undeclared
+ * prefix is an unknown namespace rather than its conventional one: the feed fails closed.
+ */
+interface Bindings {
+  readonly map: ReadonlyMap<string, string>;
+}
 
-/** More declarations than this on the elements leading to an element are ignored. */
+/** More prefixes than this on the elements leading to an element are not bound. */
 const MAX_BINDINGS = 64;
+/** More xmlns declarations than this in one feed are not bound (the feed is counted). */
+const MAX_DECLARATIONS = 2_048;
+/** A namespace value longer than this is an unknown namespace: never trimmed or cut into a match. */
+const MAX_NAMESPACE_CHARS = 256;
+/** What a prefix is bound to when its value is over-long: equal to no real namespace. */
+const UNKNOWN_NAMESPACE = "#unknown-namespace";
+/** Fields kept per entry; later children of the entry are not read. */
+const MAX_FIELDS_PER_ENTRY = 64;
+/** An attribute the parser reads (type, href, rel) longer than this is dropped. */
+const MAX_ATTRIBUTE_CHARS = 4_096;
 
-const NO_BINDINGS: Bindings = new Map();
+const NO_BINDINGS: Bindings = { map: new Map() };
 
-/** The bindings in force inside an element with these attributes. */
-function bindingsFor(parent: Bindings, attribs: Readonly<Record<string, string>>): Bindings {
+/** What the registries refused to hold for this feed, counted once each in the report. */
+interface RegistryLosses {
+  namespaces: boolean;
+  fields: boolean;
+  attributes: boolean;
+  declarations: number;
+}
+
+/**
+ * The bindings in force inside an element with these attributes. The table is copied only when a
+ * declaration changes it, and never grows past MAX_BINDINGS entries; a declaration that is
+ * over-long, past the per-feed budget or past the table size is not bound and closes the scope.
+ */
+function bindingsFor(
+  parent: Bindings,
+  attribs: Readonly<Record<string, string>>,
+  losses: RegistryLosses,
+): Bindings {
   let next: Map<string, string> | null = null;
   for (const [name, value] of Object.entries(attribs)) {
     const lower = name.toLowerCase();
@@ -230,11 +262,36 @@ function bindingsFor(parent: Bindings, attribs: Readonly<Record<string, string>>
     if (lower === "xmlns") prefix = "";
     else if (lower.startsWith("xmlns:")) prefix = lower.slice(6);
     else continue;
-    next ??= new Map(parent);
-    if (next.size >= MAX_BINDINGS && !next.has(prefix)) continue;
-    next.set(prefix, value.trim());
+    losses.declarations += 1;
+    if (losses.declarations > MAX_DECLARATIONS) {
+      losses.namespaces = true;
+      continue;
+    }
+    const bound = value.length > MAX_NAMESPACE_CHARS ? UNKNOWN_NAMESPACE : value;
+    if (bound === UNKNOWN_NAMESPACE) losses.namespaces = true;
+    next ??= new Map(parent.map);
+    if (next.size >= MAX_BINDINGS && !next.has(prefix)) {
+      losses.namespaces = true;
+      continue;
+    }
+    next.set(prefix, bound);
   }
-  return next ?? parent;
+  return next === null ? parent : { map: next };
+}
+
+/** The attributes the parser reads, each capped; anything else is not kept. */
+function readAttributes(
+  attribs: Readonly<Record<string, string>>,
+  losses: RegistryLosses,
+): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const key of ["type", "href", "rel"]) {
+    const value = attribs[key];
+    if (value === undefined) continue;
+    if (value.length > MAX_ATTRIBUTE_CHARS) losses.attributes = true;
+    else kept[key] = value;
+  }
+  return kept;
 }
 
 /**
@@ -244,14 +301,14 @@ function bindingsFor(parent: Bindings, attribs: Readonly<Record<string, string>>
  * `dc:date` and `dc:creator`; the RDF root is `rdf:rdf`. Everything else is in some other
  * namespace and is ignored.
  */
-function canonicalName(rawName: string, bindings: Bindings): string {
+function canonicalName(rawName: string, bindings: Bindings, closed: boolean): string {
   const colon = rawName.indexOf(":");
   const local = (colon < 0 ? rawName : rawName.slice(colon + 1)).toLowerCase();
   const namespace =
     colon < 0
-      ? (bindings.get("") ?? "")
-      : (bindings.get(rawName.slice(0, colon).toLowerCase()) ??
-        CONVENTIONAL_PREFIXES[rawName.slice(0, colon).toLowerCase()]);
+      ? (bindings.map.get("") ?? "")
+      : (bindings.map.get(rawName.slice(0, colon).toLowerCase()) ??
+        (closed ? undefined : CONVENTIONAL_PREFIXES[rawName.slice(0, colon).toLowerCase()]));
   if (namespace === undefined) return "";
   if (namespace === "" || namespace === NS_ATOM || namespace === NS_RSS10) return local;
   if (namespace === NS_CONTENT && local === "encoded") return "content:encoded";
@@ -588,6 +645,12 @@ export function parseFeed(xml: string): ParsedFeed {
   const rawPath: string[] = [];
   const scopes: Bindings[] = [];
   let bindings: Bindings = NO_BINDINGS;
+  const losses: RegistryLosses = {
+    namespaces: false,
+    fields: false,
+    attributes: false,
+    declarations: 0,
+  };
   let overflow = 0;
   let format: ParsedFeed["format"] = "unknown";
   let current: RawEntry | null = null;
@@ -604,8 +667,8 @@ export function parseFeed(xml: string): ParsedFeed {
           return;
         }
         scopes.push(bindings);
-        bindings = bindingsFor(bindings, attribs);
-        const name = canonicalName(rawName, bindings);
+        bindings = bindingsFor(bindings, attribs, losses);
+        const name = canonicalName(rawName, bindings, losses.namespaces);
         path.push(name);
         rawPath.push(rawName);
         if (path.length === 1) {
@@ -620,12 +683,18 @@ export function parseFeed(xml: string): ParsedFeed {
           return;
         }
         const relative = path.length - entryDepth;
+        if (relative === 1 && current.fields.length >= MAX_FIELDS_PER_ENTRY) {
+          // Past the per-entry field cap: this child and everything under it is not read.
+          losses.fields = true;
+          field = null;
+          return;
+        }
         if (relative === 1) {
           const type = (attribs.type ?? "").trim().toLowerCase();
           const xhtml = type === "xhtml" || type === "application/xhtml+xml";
           field = {
             name,
-            attrs: { ...attribs },
+            attrs: readAttributes(attribs, losses),
             text: "",
             cut: false,
             nameText: "",
@@ -713,6 +782,10 @@ export function parseFeed(xml: string): ParsedFeed {
   const kept = newest(entries).map((raw) => toEntry(raw, format, report));
   // A cut input or a stopped parse is a dropped remainder, counted like the page sanitiser's.
   if (droppedRemainder) report.hiddenBlocks += 1;
+  // What the registries refused to hold is counted once per kind.
+  for (const lost of [losses.namespaces, losses.fields, losses.attributes]) {
+    if (lost) report.hiddenBlocks += 1;
+  }
   return { format, entries: kept, report };
 }
 
