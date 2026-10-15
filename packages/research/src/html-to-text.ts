@@ -1138,6 +1138,8 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   let preDepth = 0;
   let preferredDepth = 0;
   let preferredSeen = false;
+  // Text was emitted outside every main/article subtree (counted if a region is preferred).
+  let outsideSeen = false;
   let truncated = false;
   // Once set, nothing more is emitted or counted. Every "cannot decide" path ends here.
   let stopped = false;
@@ -1159,6 +1161,7 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
       preferred.push(piece);
       preferredLength += piece.length;
     }
+    if (preferredDepth === 0 && piece.trim() !== "") outsideSeen = true;
   }
 
   /** Stop emitting for good: the filter cannot say what a reader would see from here on. */
@@ -1441,7 +1444,10 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
 
     finish() {
       const preferredText = preferred.join("");
-      const chosen = preferredSeen && preferredText.trim() !== "" ? preferredText : all.join("");
+      const usePreferred = preferredSeen && preferredText.trim() !== "";
+      // Text outside the preferred region is dropped; it is counted as one hidden block.
+      if (usePreferred && outsideSeen) report.hiddenBlocks += 1;
+      const chosen = usePreferred ? preferredText : all.join("");
       let text = chosen
         .split("\n")
         .map((line) => line.replace(/[ \t]+/g, " ").trim())

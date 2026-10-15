@@ -8,6 +8,29 @@
  */
 const UNSAFE_CHARS = /(?![\t\n\r])[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/gu;
 
+/**
+ * Invisible characters outside the control/format categories that still split a token without
+ * showing: combining grapheme joiner, variation selectors, Hangul fillers and the blank braille
+ * cell. Removed from the view the delimiter scrub checks (and from what it wraps).
+ */
+const FILLER_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x034f, 0x034f],
+  [0xfe00, 0xfe0f],
+  [0x115f, 0x1160],
+  [0x3164, 0x3164],
+  [0xffa0, 0xffa0],
+  [0x2800, 0x2800],
+];
+const FILLER_CHARS = new RegExp(
+  `[${FILLER_RANGES.map(([from, to]) => `${String.fromCodePoint(from)}-${String.fromCodePoint(to)}`).join("")}]`,
+  "g",
+);
+
+/** Removes the filler characters above. */
+export function stripFillerChars(text: string): string {
+  return text.replace(FILLER_CHARS, "");
+}
+
 export interface StrippedText {
   readonly text: string;
   readonly removed: number;
@@ -87,7 +110,7 @@ export interface NeutralisedText {
  * what was checked.
  */
 export function neutraliseDelimiterTokens(text: string): NeutralisedText {
-  let current = text.normalize("NFKC");
+  let current = stripFillerChars(text.normalize("NFKC"));
   let count = 0;
   for (let pass = 0; pass < 8; pass += 1) {
     let found = 0;
@@ -97,7 +120,7 @@ export function neutraliseDelimiterTokens(text: string): NeutralisedText {
     });
     if (found === 0) return { text: current, count };
     count += found;
-    current = next;
+    current = stripFillerChars(next.normalize("NFKC"));
   }
   return { text: current, count };
 }

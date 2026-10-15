@@ -12,6 +12,8 @@
 //      is composed;
 //   2. the text is normalised: CR becomes LF, zero-width, bidi and control characters are removed,
 //      and the result is NFKC, so fullwidth and compatibility forms read as plain characters;
+//      the invisible fillers outside those categories (U+034F, U+FE00 to U+FE0F, U+115F,
+//      U+1160, U+3164, U+FFA0, U+2800) are removed too, after every normalisation;
 //   3. the NORMALISED text is scanned, on a length-preserving look-alike skeleton (Cyrillic and
 //      Greek letters, angle quotation marks, non-Latin digits), case-insensitively and with any
 //      whitespace between the brackets and the word, for `<<<SRC`, `<<<END` (with an adjacent
@@ -24,7 +26,7 @@
 // parseDelimitedBlocks takes no nonce: it reads it from the first header and accepts only blocks
 // that use the same one.
 
-import { MARKER_REPLACEMENT, stripUnsafeChars } from "./plain-text.js";
+import { MARKER_REPLACEMENT, stripFillerChars, stripUnsafeChars } from "./plain-text.js";
 
 export interface SourceText {
   readonly sourceId: string;
@@ -161,7 +163,9 @@ export function scrubSourceText(text: string, nonce: string): ScrubbedSourceText
   assertNonce(nonce);
   const stripped = stripUnsafeChars(text.replace(/\r\n?/g, "\n"));
   const pattern = new RegExp(`(?:${MARKER_SOURCE})|(${nonce})`, "gi");
-  let current = stripped.text.normalize("NFKC");
+  // NFKC can turn a compatibility filler into a plain one (U+3164 becomes U+1160), so the fillers
+  // are removed after every normalisation, and the first pass is on the filler-free view.
+  let current = stripFillerChars(stripped.text.normalize("NFKC"));
   let scrubbed = 0;
 
   for (let pass = 0; pass < MAX_PASSES; pass += 1) {
@@ -179,7 +183,7 @@ export function scrubSourceText(text: string, nonce: string): ScrubbedSourceText
     if (found === 0) return { text: current, scrubbed, invisibleRemoved: stripped.removed };
     out += current.slice(cursor);
     scrubbed += found;
-    current = out.normalize("NFKC");
+    current = stripFillerChars(out.normalize("NFKC"));
   }
   // Unreachable in practice: each pass removes at least one angle bracket run. If it is ever
   // reached, no angle bracket survives.
