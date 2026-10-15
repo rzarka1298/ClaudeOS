@@ -139,7 +139,9 @@ describe("Test 6 (feeds): RSS and Atom, newest five, caps and one sanitiser pass
   });
 
   it("keeps the first five in document order when no entry carries a date", () => {
-    const items = Array.from({ length: 7 }, (_, i) => `<item><title>N${i + 1}</title></item>`).join("");
+    const items = Array.from({ length: 7 }, (_, i) => `<item><title>N${i + 1}</title></item>`).join(
+      "",
+    );
     const parsed = parseFeed(RSS_TEMPLATE(items));
     expect(parsed.entries.map((e) => e.title)).toEqual(["N1", "N2", "N3", "N4", "N5"]);
     expect(parsed.entries.every((e) => e.updated === null)).toBe(true);
@@ -156,7 +158,9 @@ describe("Test 6 (feeds): RSS and Atom, newest five, caps and one sanitiser pass
 
   it("caps each entry's text at 4,000 characters at a character boundary", () => {
     const body = `${"a".repeat(3_999)}\uD83D\uDE00${"b".repeat(50)}`;
-    const parsed = parseFeed(RSS_TEMPLATE(`<item><title>T</title><description>${body}</description></item>`));
+    const parsed = parseFeed(
+      RSS_TEMPLATE(`<item><title>T</title><description>${body}</description></item>`),
+    );
     const text = parsed.entries[0]?.text ?? "";
     expect(text.length).toBeLessThanOrEqual(4_000);
     expect(text.startsWith("aaaa")).toBe(true);
@@ -174,7 +178,9 @@ describe("Test 6 (feeds): RSS and Atom, newest five, caps and one sanitiser pass
   });
 
   it("runs content declared type html through the sanitiser once and counts what it removes", () => {
-    const parsed = parseFeed(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>H</title><content type="html">&lt;p&gt;visible&lt;/p&gt;&lt;script&gt;STEAL()&lt;/script&gt;&lt;!-- HIDDEN_COMMENT --&gt;&lt;img src="x"&gt;</content></entry></feed>`);
+    const parsed = parseFeed(
+      `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>H</title><content type="html">&lt;p&gt;visible&lt;/p&gt;&lt;script&gt;STEAL()&lt;/script&gt;&lt;!-- HIDDEN_COMMENT --&gt;&lt;img src="x"&gt;</content></entry></feed>`,
+    );
     expect(parsed.entries[0]?.text).toBe("visible");
     expect(parsed.report.scripts).toBe(1);
     expect(parsed.report.comments).toBe(1);
@@ -182,7 +188,9 @@ describe("Test 6 (feeds): RSS and Atom, newest five, caps and one sanitiser pass
   });
 
   it("treats Atom content with no type, or type text, as literal text that is never re-parsed", () => {
-    const parsed = parseFeed(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>L</title><summary>&lt;script&gt;LITERAL_TEXT&lt;/script&gt;</summary></entry><entry><title>M</title><content type="text">&lt;b&gt;bold?&lt;/b&gt;</content></entry></feed>`);
+    const parsed = parseFeed(
+      `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>L</title><summary>&lt;script&gt;LITERAL_TEXT&lt;/script&gt;</summary></entry><entry><title>M</title><content type="text">&lt;b&gt;bold?&lt;/b&gt;</content></entry></feed>`,
+    );
     const texts = parsed.entries.map((e) => e.text);
     expect(texts).toContain("<script>LITERAL_TEXT</script>");
     expect(texts).toContain("<b>bold?</b>");
@@ -190,20 +198,28 @@ describe("Test 6 (feeds): RSS and Atom, newest five, caps and one sanitiser pass
   });
 
   it("does not decode a double-encoded entity a second time after the sanitiser", () => {
-    const parsed = parseFeed(RSS_TEMPLATE(`<item><title>D</title><description>&amp;lt;script&amp;gt;DOUBLE&amp;lt;/script&amp;gt;</description></item>`));
+    const parsed = parseFeed(
+      RSS_TEMPLATE(
+        `<item><title>D</title><description>&amp;lt;script&amp;gt;DOUBLE&amp;lt;/script&amp;gt;</description></item>`,
+      ),
+    );
     expect(parsed.entries[0]?.text).toBe("&lt;script&gt;DOUBLE&lt;/script&gt;");
     expect(parsed.report.scripts).toBe(0);
   });
 
   it("reads Atom xhtml content by re-serialising its elements through the sanitiser", () => {
-    const parsed = parseFeed(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>X</title><content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>shown</p><p style="display:none">HIDDEN_TEXT</p><script>STEAL()</script></div></content></entry></feed>`);
+    const parsed = parseFeed(
+      `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>X</title><content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>shown</p><p style="display:none">HIDDEN_TEXT</p><script>STEAL()</script></div></content></entry></feed>`,
+    );
     expect(parsed.entries[0]?.text).toBe("shown");
     expect(parsed.report.hiddenBlocks).toBe(1);
     expect(parsed.report.scripts).toBe(1);
   });
 
   it("sanitises a title declared html and strips control characters from plain titles", () => {
-    const parsed = parseFeed(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><title type="html">&lt;b&gt;Bold&lt;/b&gt; title</title></entry><entry><title>plain&#x202E;&#x200B; one</title></entry></feed>`);
+    const parsed = parseFeed(
+      `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title type="html">&lt;b&gt;Bold&lt;/b&gt; title</title></entry><entry><title>plain&#x202E;&#x200B; one</title></entry></feed>`,
+    );
     const titles = parsed.entries.map((e) => e.title);
     expect(titles).toContain("Bold title");
     expect(titles).toContain("plain one");
@@ -211,13 +227,20 @@ describe("Test 6 (feeds): RSS and Atom, newest five, caps and one sanitiser pass
   });
 
   it("returns an unknown format with no entries for a document that is not a feed", () => {
-    expect(parseFeed("<html><body>hi</body></html>")).toMatchObject({ format: "unknown", entries: [] });
+    expect(parseFeed("<html><body>hi</body></html>")).toMatchObject({
+      format: "unknown",
+      entries: [],
+    });
     expect(parseFeed("")).toMatchObject({ format: "unknown", entries: [] });
     expect(() => parseFeed("<feed><entry><title>unterminated")).not.toThrow();
   });
 
   it("rejects a date it cannot read instead of guessing", () => {
-    const parsed = parseFeed(RSS_TEMPLATE(`<item><title>B</title><pubDate>Item 5</pubDate></item><item><title>C</title><pubDate>2026-02-31T00:00:00Z</pubDate></item>`));
+    const parsed = parseFeed(
+      RSS_TEMPLATE(
+        `<item><title>B</title><pubDate>Item 5</pubDate></item><item><title>C</title><pubDate>2026-02-31T00:00:00Z</pubDate></item>`,
+      ),
+    );
     expect(parsed.entries.every((e) => e.updated === null)).toBe(true);
   });
 
@@ -233,7 +256,11 @@ describe("Test 6 (feeds): RSS and Atom, newest five, caps and one sanitiser pass
   });
 
   it("leaves the link out of the rendered text", () => {
-    const parsed = parseFeed(RSS_TEMPLATE(`<item><title>L</title><link>https://example.invalid/secret-path</link><description>body</description></item>`));
+    const parsed = parseFeed(
+      RSS_TEMPLATE(
+        `<item><title>L</title><link>https://example.invalid/secret-path</link><description>body</description></item>`,
+      ),
+    );
     expect(renderFeedText(parsed.entries)).toBe("L\nbody");
   });
 });

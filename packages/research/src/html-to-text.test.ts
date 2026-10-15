@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest";
 import { htmlToText, SANITISE_REPORT_KEYS } from "./html-to-text.js";
 
-const page = (body: string): string => `<html><head><title>T</title></head><body>${body}</body></html>`;
+const page = (body: string): string =>
+  `<html><head><title>T</title></head><body>${body}</body></html>`;
 
 describe("report shape", () => {
   it("lists exactly the eight keys, in a fixed order", () => {
@@ -70,7 +71,7 @@ describe("Test 1 (active content): script, style, template, noscript, textarea, 
   });
 
   it("counts a script nested inside a hidden block as a script as well", () => {
-    const result = htmlToText('<div hidden><script>x()</script>HIDDEN_TEXT</div><p>kept</p>');
+    const result = htmlToText("<div hidden><script>x()</script>HIDDEN_TEXT</div><p>kept</p>");
     expect(result.text).toBe("kept");
     expect(result.report.scripts).toBe(1);
     expect(result.report.hiddenBlocks).toBe(1);
@@ -83,7 +84,10 @@ describe("Test 2 (hidden content)", () => {
     ["aria-hidden true", '<div aria-hidden="true">HIDDEN_TEXT</div>'],
     ["aria-hidden True with spaces", '<div aria-hidden=" True ">HIDDEN_TEXT</div>'],
     ["display none", '<div style="display:none">HIDDEN_TEXT</div>'],
-    ["display none with spacing and case", '<div style="COLOR:red; Display : NONE !important">HIDDEN_TEXT</div>'],
+    [
+      "display none with spacing and case",
+      '<div style="COLOR:red; Display : NONE !important">HIDDEN_TEXT</div>',
+    ],
     ["visibility hidden", '<span style="visibility:hidden">HIDDEN_TEXT</span>'],
     ["opacity zero", '<div style="opacity:0">HIDDEN_TEXT</div>'],
     ["opacity 0.0", '<div style="opacity: 0.0;">HIDDEN_TEXT</div>'],
@@ -131,7 +135,7 @@ describe("Test 2 (hidden content)", () => {
   });
 
   it("keeps the text after a hidden inline element and does not glue it", () => {
-    const result = htmlToText('<p>before <span hidden>HIDDEN_TEXT</span> after</p>');
+    const result = htmlToText("<p>before <span hidden>HIDDEN_TEXT</span> after</p>");
     expect(result.text).toBe("before after");
   });
 });
@@ -328,7 +332,7 @@ describe("Test 5 (limits, characters and command-like lines)", () => {
   });
 
   it("does not throw on malformed markup", () => {
-    expect(() => htmlToText("<<<>>><div <p x=\"</div>&#xZZ;&bogus;<a href=")).not.toThrow();
+    expect(() => htmlToText('<<<>>><div <p x="</div>&#xZZ;&bogus;<a href=')).not.toThrow();
     expect(() => htmlToText("")).not.toThrow();
     expect(htmlToText("").text).toBe("");
   });
