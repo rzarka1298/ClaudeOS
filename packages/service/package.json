@@ -17,6 +17,10 @@
     "./research-fetch": {
       "types": "./dist/research/fetch/index.d.ts",
       "default": "./dist/research/fetch/index.js"
+    },
+    "./research-summariser": {
+      "types": "./dist/research/summariser-entry.d.ts",
+      "default": "./dist/research/summariser-entry.js"
     }
   },
   "scripts": {
