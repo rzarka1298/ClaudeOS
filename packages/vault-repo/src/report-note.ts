@@ -210,11 +210,13 @@ function renderUnavailable(report: ReportFields): string[] {
   const lines = [
     "## Unavailable sources",
     "",
-    `◈ Partial — ${report.unavailableSources.length} of ${report.sourceTotal} sources were unavailable, so this report covers only the rest.`,
+    `\u25c8 Partial \u2014 ${report.unavailableSources.length} of ${report.sourceTotal} sources were unavailable, so this report covers only the rest.`,
     "",
   ];
   for (const source of report.unavailableSources) {
-    lines.push(`- ✕ ${escapeMarkdownText(source.label)} — ${SOURCE_FAILURE_DISPLAY[source.code]}`);
+    lines.push(
+      `- \u2715 ${escapeMarkdownText(source.label)} \u2014 ${SOURCE_FAILURE_DISPLAY[source.code]}`,
+    );
   }
   lines.push("");
   return lines;
@@ -224,7 +226,7 @@ function renderLegend(): string[] {
   const lines = ["## How to read this report", ""];
   for (const kind of REPORT_ITEM_KINDS) {
     const display = REPORT_ITEM_KIND_DISPLAY[kind];
-    lines.push(`- ${display.glyph} **${display.label}** — ${display.meaning}`);
+    lines.push(`- ${display.glyph} **${display.label}** \u2014 ${display.meaning}`);
   }
   lines.push("");
   return lines;
@@ -300,7 +302,7 @@ export function renderReportBody(report: ReportFields, runNotePath?: string): st
     return plural(count, label);
   });
   const lines: string[] = [
-    `# ${escapeMarkdownText(report.topicLabel)} — ${formatDate(report.generatedAt)}`,
+    `# ${escapeMarkdownText(report.topicLabel)} \u2014 ${formatDate(report.generatedAt)}`,
     "",
     `AI-generated summary by ${summariserText(report.summariser)}. Not verified by a person.`,
     "",

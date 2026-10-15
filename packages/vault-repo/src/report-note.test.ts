@@ -304,13 +304,13 @@ describe("Test 3: the body carries the labels", () => {
   test("the title, the AI line, the partial notice and the failure phrase are present", () => {
     const written = writeReportNote(options());
     const body = bodyOf(readFileSync(written.absolutePath, "utf8"));
-    expect(body).toContain("# Daily tech — Oct 15, 2026");
+    expect(body).toContain("# Daily tech \u2014 Oct 15, 2026");
     expect(body).toContain(
       "AI-generated summary by ` claude-haiku-5-5 `. Not verified by a person.",
     );
     expect(body).toContain("## Unavailable sources");
     expect(body).toContain("1 of 3 sources were unavailable, so this report covers only the rest.");
-    expect(body).toContain(`Slow feed — ${SOURCE_FAILURE_DISPLAY.timeout}`);
+    expect(body).toContain(`Slow feed \u2014 ${SOURCE_FAILURE_DISPLAY.timeout}`);
     expect(body).toContain("## How to read this report");
     expect(body).toContain("## Findings");
     expect(body).toContain("## Sources");

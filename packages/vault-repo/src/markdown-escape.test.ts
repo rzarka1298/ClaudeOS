@@ -86,13 +86,13 @@ describe("escapeMarkdownText", () => {
   });
 
   test("newlines, tabs, separators and other whitespace collapse to single spaces", () => {
-    expect(escapeMarkdownText("a\nb\r\nc\td e f\u0085g h")).toBe("a b c d e f g h");
+    expect(escapeMarkdownText("a\nb\r\nc\td\u2028e\u2029f\u0085g\u00a0h")).toBe("a b c d e f g h");
     expect(escapeMarkdownText("  \n lead and trail \n  ")).toBe("lead and trail");
     expect(escapeMarkdownText("")).toBe("");
   });
 
   test("control, format and bidi characters are removed", () => {
-    expect(escapeMarkdownText("a\u0000b\u0007c‮d​e⁦f\u007fg")).toBe("abcdefg");
+    expect(escapeMarkdownText("a\u0000b\u0007c\u202ed\u200be\u2066f\u007fg")).toBe("abcdefg");
   });
 
   test("escaping an escaped text escapes its backslashes again, so nothing is decoded twice", () => {

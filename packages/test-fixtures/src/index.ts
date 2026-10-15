@@ -10,6 +10,8 @@ export {
   MODEL_ANSWER_ID_A,
   MODEL_ANSWER_ID_B,
 } from "./hostile-model-answers.js";
+export type { HostileReportText } from "./hostile-report-text.js";
+export { HOSTILE_REPORT_RAW_SPANS, HOSTILE_REPORT_TEXTS } from "./hostile-report-text.js";
 export type {
   HostileResearchCategory,
   HostileResearchEntry,
