@@ -13,6 +13,10 @@
     "./approval": {
       "types": "./dist/approval/index.d.ts",
       "default": "./dist/approval/index.js"
+    },
+    "./research-fetch": {
+      "types": "./dist/research/fetch/index.d.ts",
+      "default": "./dist/research/fetch/index.js"
     }
   },
   "scripts": {
