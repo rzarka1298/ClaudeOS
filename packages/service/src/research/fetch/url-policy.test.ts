@@ -31,6 +31,18 @@ const REFUSED_SOURCES: readonly (readonly [string, string])[] = [
   ["localhost upper", "https://LOCALHOST/"],
   ["localhost subdomain", "https://app.localhost/"],
   ["localhost trailing dot", "https://localhost./"],
+  ["mdns name", "https://printer.local/"],
+  ["mdns name upper", "https://PRINTER.LOCAL/"],
+  ["internal name", "https://metadata.internal/"],
+  ["internal deeper", "https://a.b.internal/"],
+  ["home.arpa name", "https://router.home.arpa/"],
+  ["single label", "https://intranet/"],
+  ["single label with path", "https://corp/feed.xml"],
+  ["teredo literal", "https://[2001::1]/"],
+  ["nat64 literal", "https://[64:ff9b::7f00:1]/"],
+  ["6to4 literal", "https://[2002:7f00:1::1]/"],
+  ["documentation literal", "https://192.0.2.1/"],
+  ["broadcast literal", "https://255.255.255.255/"],
 ];
 
 const UNPARSEABLE: readonly (readonly [string, string])[] = [
@@ -78,6 +90,13 @@ describe("Test 4 (URL policy): validateFetchUrl", () => {
   it("accepts a public IP literal (checked, then left to the certificate check)", () => {
     expect(validateFetchUrl("https://93.184.216.34/").ok).toBe(true);
     expect(validateFetchUrl("https://[2606:4700::1111]/").ok).toBe(true);
+  });
+
+  it("keeps names that merely contain a reserved word as a label", () => {
+    expect(validateFetchUrl("https://internal.example.com/").ok).toBe(true);
+    expect(validateFetchUrl("https://local.example.com/").ok).toBe(true);
+    expect(validateFetchUrl("https://home.arpa.example.com/").ok).toBe(true);
+    expect(validateFetchUrl("https://localhost.example.com/").ok).toBe(true);
   });
 
   it("does not refuse a name by how it looks: that is the lookup's job", () => {

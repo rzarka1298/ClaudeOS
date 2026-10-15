@@ -68,6 +68,9 @@ const BLOCKED: readonly string[] = [
   // site-local and discard
   "fec0::1",
   "100::1",
+  // Teredo (embeds an IPv4 target, obfuscated)
+  "2001::1",
+  "2001:0:4136:e378:8000:63bf:3fff:fdd2",
   // not a literal the connection layer would accept
   "fe80::1%eth0",
   "",
@@ -86,6 +89,7 @@ const ALLOWED: readonly string[] = [
   "::ffff:93.184.216.34",
   "::ffff:5db8:d822",
   "2a00:1450:4001:81b::200e",
+  "2001:4860:4860::8888",
 ];
 
 describe("Test 1 (address table): isBlockedAddress", () => {
