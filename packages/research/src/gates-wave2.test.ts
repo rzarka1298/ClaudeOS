@@ -148,6 +148,45 @@ describe("a document start tag after a stop discards everything, wherever it hid
   });
 });
 
+describe("noscript is raw text to a browser that runs scripts, markup to the parser", () => {
+  it("discards when a raw-text element inside noscript never ends", () => {
+    dropsDocument("<p>shown</p><noscript><title></noscript></html><html hidden>x");
+  });
+
+  it("discards when the raw-text body holds the noscript end tag", () => {
+    dropsDocument("<p>shown</p><noscript><style>a</noscript><p>b</style></noscript><p>after</p>");
+  });
+
+  it("discards when that end tag is split across two parser writes", () => {
+    const head = "<p>shown</p><noscript><style>";
+    const pad = "a".repeat(WRITE_CHUNK_CHARS - head.length - 5);
+    const html = `${head}${pad}</noscript></style></noscript><p>after</p>`;
+    expect(html.indexOf("</noscript")).toBe(WRITE_CHUNK_CHARS - 5);
+    dropsDocument(html);
+  });
+
+  it("keeps a noscript whose raw-text child ends before the noscript does", () => {
+    const result = htmlToText(
+      '<p>shown</p><noscript><iframe src="https://example.com/x"></iframe></noscript><p>after</p>',
+    );
+    expect(result.text).toBe("shown\nafter");
+    expect(result.truncated).toBe(false);
+  });
+});
+
+describe("a document tag swallowed as raw text after a stop still discards", () => {
+  it("finds an html tag inside a title the parser reads as raw text", () => {
+    const result = htmlToText("<p>shown</p><span hidden><div>y</span><title><html hidden>x");
+    expect(result.text).toBe("");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("finds a body tag inside a textarea after a stop", () => {
+    const result = htmlToText("<p>shown</p><b hidden>H<p>I</b><textarea><body hidden>");
+    expect(result.text).toBe("");
+  });
+});
+
 describe("closed details content is hidden until expanded", () => {
   it("drops everything but the first summary of a closed details, counted", () => {
     const result = htmlToText(

@@ -219,6 +219,72 @@ function generate(random: () => number): GeneratedDocument {
   return { html, markers: markers + 1 };
 }
 
+// The classes added by the second fix round: raw-text elements, frames, CDATA and other bogus
+// markup, and foreign content. Whole-document gates make most of these drop the page, so this
+// run asserts zero leaks only (no truncation bound).
+const RAW_AND_FRAME_TAGS = [
+  "style",
+  "script",
+  "xmp",
+  "iframe",
+  "noembed",
+  "noframes",
+  "title",
+  "plaintext",
+  "textarea",
+  "frameset",
+  "frame",
+  "annotation-xml",
+  "select",
+  "option",
+  "details",
+  "summary",
+] as const;
+
+const BOGUS_MARKUP = [
+  "<![CDATA[",
+  "]]>",
+  "<!-->",
+  "<!--->",
+  "<!x>",
+  "<?x>",
+  "<![endif]-->",
+  "&amp;",
+  "<",
+] as const;
+
+function generateWide(random: () => number): GeneratedDocument {
+  const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)] as T;
+  const base = generate(random);
+  // Splice a few of the new constructs into a document from the base generator.
+  let html = base.html;
+  let markers = base.markers;
+  const extras = 1 + Math.floor(random() * 4);
+  for (let index = 0; index < extras; index += 1) {
+    // Only at a boundary (before a tag, or at the end): never inside a marker such as " T12 ".
+    const boundaries = [html.length];
+    for (let position = 0; position < html.length; position += 1) {
+      if (html[position] === "<") boundaries.push(position);
+    }
+    const at = pick(boundaries);
+    let piece: string;
+    const roll = random();
+    if (roll < 0.45) {
+      const tag = pick(RAW_AND_FRAME_TAGS);
+      piece = random() < 0.3 ? `<${tag}${pick(HIDING_ATTRIBUTES)}>` : `<${tag}>`;
+    } else if (roll < 0.7) {
+      piece = pick(BOGUS_MARKUP);
+    } else if (roll < 0.85) {
+      piece = `</${pick(RAW_AND_FRAME_TAGS)}>`;
+    } else {
+      piece = ` T${markers} `;
+      markers += 1;
+    }
+    html = html.slice(0, at) + piece + html.slice(at);
+  }
+  return { html, markers };
+}
+
 interface Parse5Node {
   readonly nodeName: string;
   readonly value?: string;
@@ -243,9 +309,10 @@ function findParse5(): string | null {
   return existsSync(entry) ? entry : null;
 }
 
-/** The markers a browser keeps under a hidden ancestor. */
-function hiddenMarkers(root: Parse5Node): Set<string> {
+/** The markers a browser keeps under a hidden ancestor, and every marker present in its tree. */
+function treeMarkers(root: Parse5Node): { hidden: Set<string>; present: Set<string> } {
   const hidden = new Set<string>();
+  const present = new Set<string>();
   const walk = (node: Parse5Node, underHidden: boolean): void => {
     const own =
       node.attrs?.some(
@@ -255,13 +322,20 @@ function hiddenMarkers(root: Parse5Node): Set<string> {
           (attr.name === "style" && attr.value === "display:none"),
       ) === true;
     const hides = underHidden || own;
-    if (node.nodeName === "#text" && hides) {
-      for (const match of (node.value ?? "").matchAll(/T\d+/g)) hidden.add(match[0]);
+    if (node.nodeName === "#text") {
+      for (const match of (node.value ?? "").matchAll(/T\d+/g)) {
+        present.add(match[0]);
+        if (hides) hidden.add(match[0]);
+      }
     }
     for (const child of node.childNodes ?? []) walk(child, hides);
   };
   walk(root, false);
-  return hidden;
+  return { hidden, present };
+}
+
+function hiddenMarkers(root: Parse5Node): Set<string> {
+  return treeMarkers(root).hidden;
 }
 
 const PARSE5_PATH = findParse5();
@@ -293,6 +367,30 @@ describe.skipIf(PARSE5_PATH === null)("differential against a spec-compliant tre
     // give up on everything.
     expect(withHidden).toBeGreaterThan(1_000);
     expect(truncatedDocuments).toBeLessThan(documents * 0.25);
+  }, 60_000);
+
+  it("shows no marker a browser hides or discards, over raw text, frames, CDATA and foreign content", async () => {
+    const parse5 = (await import(pathToFileURL(PARSE5_PATH as string).href)) as Parse5Module;
+    const random = mulberry32(Number(process.env.DIFF_SEED ?? 20_261_015) + 7);
+    const failures: string[] = [];
+    const documents = Number(process.env.DIFF_DOCUMENTS ?? 4_000);
+    let withText = 0;
+    for (let index = 0; index < documents; index += 1) {
+      const document = generateWide(random);
+      const { hidden, present } = treeMarkers(parse5.parse(document.html));
+      const result = htmlToText(document.html);
+      if (result.text !== "") withText += 1;
+      for (const match of result.text.matchAll(/T\d+/g)) {
+        const marker = match[0];
+        if (hidden.has(marker) || !present.has(marker)) {
+          failures.push(`${marker} in ${document.html}`);
+          break;
+        }
+      }
+    }
+    expect(failures.slice(0, 10)).toEqual([]);
+    // Not vacuous: a good share of the documents still produce text.
+    expect(withText).toBeGreaterThan(documents * 0.2);
   }, 60_000);
 });
 

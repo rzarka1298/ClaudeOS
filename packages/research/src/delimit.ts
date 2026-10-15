@@ -143,15 +143,32 @@ const LOOK_ALIKES: Readonly<Record<string, string>> = {
   "\u06F9": "9",
 };
 
-const LOOK_ALIKE_CHARS = new RegExp(`[${Object.keys(LOOK_ALIKES).join("")}]`, "g");
+// Further look-alikes by code point (Cherokee, Lisu, Canadian syllabics, Armenian, ornament
+// brackets), so this source holds no raw character and no escape for them.
+const MORE_LOOK_ALIKES: ReadonlyArray<readonly [letter: string, codePoints: readonly number[]]> = [
+  ["E", [0x13ac, 0xa4f0, 0x15f4]],
+  ["N", [0x144e]],
+  ["D", [0x13a0, 0xa4d3, 0x15de]],
+  ["S", [0x13da, 0xa4e2, 0x054f, 0x1515]],
+  ["R", [0x13d2, 0xa4e3, 0x1587]],
+  ["C", [0x13df, 0xa4da, 0x1455]],
+  ["<", [0x1438, 0x276c, 0x2770]],
+  [">", [0x1433, 0x276d, 0x2771]],
+];
+const ALL_LOOK_ALIKES: Record<string, string> = { ...LOOK_ALIKES };
+for (const [letter, codePoints] of MORE_LOOK_ALIKES) {
+  for (const code of codePoints) ALL_LOOK_ALIKES[String.fromCharCode(code)] = letter;
+}
+
+const LOOK_ALIKE_CHARS = new RegExp(`[${Object.keys(ALL_LOOK_ALIKES).join("")}]`, "g");
 
 function skeleton(text: string): string {
-  return text.replace(LOOK_ALIKE_CHARS, (c) => LOOK_ALIKES[c] ?? c);
+  return text.replace(LOOK_ALIKE_CHARS, (c) => ALL_LOOK_ALIKES[c] ?? c);
 }
 
 // `<<<SRC` or `<<<END`, with any whitespace between the brackets and the word, optionally
 // followed by an adjacent `...>>>` tail on the same line (the header or footer remainder).
-const MARKER_SOURCE = "<\\s*<\\s*<\\s*(?:src|end)(?:[^\\n<>]{0,200}?>\\s*>\\s*>)?";
+const MARKER_SOURCE = "<\\s*<\\s*<\\s*(?:s\\s*r\\s*c|e\\s*n\\s*d)(?:[^\\n<>]{0,200}?>\\s*>\\s*>)?";
 
 const MAX_PASSES = 1_000;
 

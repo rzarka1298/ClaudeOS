@@ -1037,6 +1037,17 @@ function endTagPopsAlike(end: string, run: readonly ClosedFrame[]): boolean {
 
 const MAX_SCRIPT_TRACK = 100_000;
 
+/** True when a `<script` start follows a `<!--` in script text (linear: two indexOf scans). */
+function isDoubleEscaped(text: string): boolean {
+  const open = text.indexOf("<!--");
+  if (open < 0) return false;
+  for (let at = text.indexOf("<script", open + 4); at >= 0; at = text.indexOf("<script", at + 7)) {
+    const next = text.charAt(at + 7);
+    if (next === "/" || next === ">" || (next !== "" && /\s/.test(next))) return true;
+  }
+  return false;
+}
+
 export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   const xml = options.xml === true;
   const report = newReport();
@@ -1060,6 +1071,12 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   let runHidden = false;
   let formattingPending = false;
   let formPending = false;
+  // The whole document was wiped (and counted) already: a second discard counts nothing.
+  let discarded = false;
+  // A raw-text element opened inside noscript. A browser that runs scripts reads the whole
+  // noscript as raw text up to the first `</noscript>`; the parser reads it as markup, so the
+  // raw-text element's own body can swallow that end tag (or never end). Either discards.
+  let noscriptRaw: { readonly name: string; tail: string } | null = null;
   let scriptText = "";
   let nodes = 0;
 
@@ -1120,7 +1137,8 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
 
   /** Drop the whole document's text, count it once, flag it truncated. */
   function discardDocument(): void {
-    report.hiddenBlocks += 1;
+    if (!discarded) report.hiddenBlocks += 1;
+    discarded = true;
     wipeDocument();
   }
 
@@ -1182,6 +1200,14 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     if (stopped) {
       lateDocumentTag(rawName, attribs);
       return;
+    }
+    if (
+      !xml &&
+      noscriptRaw === null &&
+      RAW_TEXT_UNDER_SELECT.has(name) &&
+      frames.some((frame) => frame.name === "noscript")
+    ) {
+      noscriptRaw = { name, tail: "" };
     }
     // A browser closes an open paragraph, list item or definition at some start tags where the
     // parser does not (it only closes the element on top), popping the formatting elements
@@ -1253,7 +1279,8 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     }
     if ((name === "body" || name === "html") && hides && counted === "hiddenBlocks") {
       // A later body or html start tag merges its attributes into the first one: the whole
-      // document is hidden, including what was emitted before.
+      // document is hidden, including what was emitted before. (Counted above.)
+      discarded = true;
       wipeDocument();
       return;
     }
@@ -1286,6 +1313,7 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     const top = frames[frames.length - 1];
     if (top === undefined || top.name !== name) return;
     if (run.length === 0) runHidden = hiddenDepth > 0;
+    if (noscriptRaw !== null && noscriptRaw.name === top.name) noscriptRaw = null;
     // A trailing slash closes the element in XML and inside svg/math, except that an HTML tag
     // inside svg/math breaks out of it in a browser and the slash is then ignored.
     const selfClosed = implied && selfClosing && (xml || !FOREIGN_BREAKOUT.has(top.name));
@@ -1296,7 +1324,7 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     else if (CELL.has(top.name)) emit(" ");
     if (top.preferred) preferredDepth -= 1;
 
-    if (top.name === "script" && /<!--[\s\S]*?<script[\s/>]/.test(scriptText)) {
+    if (top.name === "script" && isDoubleEscaped(scriptText)) {
       // A double-escaped script ends only at its second end tag; the parser ended it at the first.
       failClosed();
       return;
@@ -1343,6 +1371,14 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
 
   function onText(data: string): void {
     settleRun("");
+    if (noscriptRaw !== null) {
+      const joined = noscriptRaw.tail + data.toLowerCase();
+      if (joined.includes("</noscript")) {
+        discardDocument();
+        return;
+      }
+      noscriptRaw.tail = joined.slice(-10);
+    }
     const top = frames[frames.length - 1];
     if (top?.closedDetails === true && hiddenDepth === 0) {
       // Text directly inside a closed details is hidden until it is expanded.
@@ -1395,6 +1431,7 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     },
 
     finish() {
+      if (noscriptRaw !== null) discardDocument();
       const preferredText = preferred.join("");
       const usePreferred = preferredSeen && preferredText.trim() !== "";
       // Text outside the preferred region is dropped; it is counted as one hidden block.
@@ -1458,6 +1495,12 @@ export function htmlToText(html: string): HtmlToTextResult {
   }
   let inCdata = false;
   let lastOpenStart = -1;
+  // Where in the input the sink stopped: what follows may hold a document tag the parser
+  // swallowed as raw text, so the scan for one starts here.
+  let stopIndex = -1;
+  const markStop = (): void => {
+    if (stopIndex < 0 && sink.done()) stopIndex = Math.max(0, parser.startIndex);
+  };
   // A browser-like HTML parse, not XML: entities decode once, tag and attribute names are
   // lowercased, a self-closing slash is ignored (`<script/>` opens a script), and the raw-text
   // elements (script, style, textarea, title, xmp, iframe, noembed, noframes) keep their content
@@ -1467,16 +1510,20 @@ export function htmlToText(html: string): HtmlToTextResult {
       onopentag(name, attribs) {
         lastOpenStart = parser.startIndex;
         sink.open(name, attribs);
+        markStop();
       },
       onclosetag(name, isImplied) {
         // A close that carries its own start tag's position came from a trailing slash.
         sink.close(name, isImplied, parser.startIndex === lastOpenStart);
+        markStop();
       },
       ontext(data) {
         if (!inCdata) sink.text(data);
+        markStop();
       },
       oncomment() {
         sink.comment();
+        markStop();
       },
       onprocessinginstruction(name) {
         if (name.toLowerCase() !== "!doctype") sink.comment();
@@ -1521,7 +1568,8 @@ export function htmlToText(html: string): HtmlToTextResult {
   // hidden>`) never completed. The scan starts at the last `<` before the boundary.
   if (sink.done() || written < html.length) {
     const tail = html.lastIndexOf("<", Math.max(0, written - 1));
-    const from = tail < 0 ? written : Math.min(tail, written);
+    const tailStart = tail < 0 ? written : Math.min(tail, written);
+    const from = stopIndex >= 0 ? Math.min(tailStart, stopIndex) : tailStart;
     if (DOCUMENT_TAG.test(html.slice(from))) sink.discard();
   }
   return sink.finish();

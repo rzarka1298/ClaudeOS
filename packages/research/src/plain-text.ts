@@ -97,7 +97,8 @@ export const MARKER_REPLACEMENT = "[delimiter removed]";
 
 // "<<<" then SRC or END, with any whitespace between the brackets and the word. The text is folded
 // to NFKC first so fullwidth and compatibility forms read as the plain characters.
-const DELIMITER_TOKEN = /<\s*<\s*<\s*(?:src|end)/gi;
+// The words may be spelled with whitespace between their letters (`E N D`).
+const DELIMITER_TOKEN = /<\s*<\s*<\s*(?:s\s*r\s*c|e\s*n\s*d)/gi;
 
 export interface NeutralisedText {
   readonly text: string;

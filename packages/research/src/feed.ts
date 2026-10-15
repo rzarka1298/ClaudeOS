@@ -269,7 +269,16 @@ interface RawField {
   nameText: string;
   /** Set for type="xhtml": the sanitiser sink the field's child events are fed to. */
   sink: MarkupSink | undefined;
+  /**
+   * True when a text field (title, summary, content, description) holds literal XML child
+   * elements. Their tags would be lost before the sanitiser sees the text, so the field is
+   * dropped and counted instead of being concatenated.
+   */
+  malformed: boolean;
 }
+
+/** Fields read as text (or entity-encoded HTML), where child elements are not allowed. */
+const TEXT_FIELDS = new Set(["title", "summary", "content", "content:encoded", "description"]);
 
 interface RawEntry {
   readonly fields: RawField[];
@@ -318,6 +327,7 @@ function candidatesFor(
       if (field.name !== name) continue;
       const mode = modeOf(field, htmlByDefault);
       if (mode === "ignore") continue;
+      if (field.malformed) continue;
       if (mode === "xhtml") {
         const sink = field.sink;
         if (sink !== undefined) out.push({ mode: "markup", run: () => sink.finish(), cut: false });
@@ -418,11 +428,82 @@ function pickLink(entry: RawEntry): string | null {
  */
 function withoutAddress(source: string): string {
   let text = source.normalize("NFKC").trim();
-  const specification = /^([^()]*@[^()]*?)\s*\(([^()]*)\)\s*$/.exec(text);
-  if (specification !== null) return (specification[2] ?? "").trim();
-  text = text.replace(/<[^<>\s]*@[^<>\s]*>/g, " ").trim();
-  if (/^[^\s@<>()]+@[^\s@<>()]+$/.test(text)) return "";
+  // "address (Name)": the last parenthesis group, with an at-sign before it and no other
+  // parentheses anywhere. Every step is an indexOf or a single pass: no pattern with nested or
+  // overlapping quantifiers touches this untrusted text (a feed may fill a field with 262,144
+  // at-signs).
+  if (text.endsWith(")")) {
+    const open = text.lastIndexOf("(");
+    const before = open < 0 ? "" : text.slice(0, open);
+    const inner = open < 0 ? "" : text.slice(open + 1, -1);
+    if (
+      open >= 0 &&
+      before.includes("@") &&
+      !before.includes(")") &&
+      !before.includes("(") &&
+      !inner.includes(")")
+    ) {
+      return inner.trim();
+    }
+  }
+  text = removeAngleAddresses(text).trim();
+  // A bare address: exactly one at-sign, something on both sides, none of the separator
+  // characters.
+  const at = text.indexOf("@");
+  if (at > 0 && at === text.lastIndexOf("@") && at < text.length - 1 && !hasSeparator(text)) {
+    return "";
+  }
   return text;
+}
+
+/** True when the text holds whitespace, an angle bracket or a parenthesis (single pass). */
+function hasSeparator(text: string): boolean {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (
+      code <= 32 ||
+      code === 0xa0 ||
+      code === 40 ||
+      code === 41 ||
+      code === 60 ||
+      code === 62 ||
+      (code >= 0x2000 && code <= 0x200a) ||
+      code === 0x2028 ||
+      code === 0x2029 ||
+      code === 0x3000 ||
+      code === 0xfeff
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Removes every `<name@host>` group (no whitespace or angle bracket inside) in one pass. */
+function removeAngleAddresses(text: string): string {
+  let out = "";
+  let position = 0;
+  while (position < text.length) {
+    const open = text.indexOf("<", position);
+    if (open < 0) break;
+    const close = text.indexOf(">", open + 1);
+    if (close < 0) break;
+    const next = text.indexOf("<", open + 1);
+    if (next >= 0 && next < close) {
+      // A later "<" starts the real group: keep everything before it as text.
+      out += text.slice(position, next);
+      position = next;
+      continue;
+    }
+    const inner = text.slice(open + 1, close);
+    if (inner.includes("@") && !hasSeparator(inner)) {
+      out += `${text.slice(position, open)} `;
+    } else {
+      out += text.slice(position, close + 1);
+    }
+    position = close + 1;
+  }
+  return out + text.slice(position);
 }
 
 function authorCandidates(entry: RawEntry): Candidate[] {
@@ -448,6 +529,11 @@ function toEntry(
   format: ParsedFeed["format"],
   report: MutableSanitiseReport,
 ): FeedEntry {
+  // A text field with literal child elements is dropped whole and counted once, whether or not
+  // another field ends up supplying the text.
+  for (const field of raw.fields) {
+    if (field.malformed && modeOf(field, true) !== "ignore") report.hiddenBlocks += 1;
+  }
   const title = sanitiseFirst(
     candidatesFor(raw, ["title"], false),
     "identity",
@@ -544,10 +630,14 @@ export function parseFeed(xml: string): ParsedFeed {
             cut: false,
             nameText: "",
             sink: xhtml ? createMarkupSink({ xml: true }) : undefined,
+            malformed: false,
           };
           current.fields.push(field);
         } else if (field !== null && field.sink !== undefined) {
           field.sink.open(rawName, attribs);
+        } else if (field !== null && TEXT_FIELDS.has(field.name)) {
+          // A child element inside a text field: its tags would vanish before the sanitiser.
+          field.malformed = true;
         }
       },
       ontext(data) {
