@@ -694,3 +694,112 @@ describe("Hardening (d): the stored quote is verified after neutralising and tru
     }
   });
 });
+
+// --- hardening round 2 (07-07 resume): a quote needs real words and whole-word edges ------------------
+// A run of punctuation is long enough and "words" apart, yet proves nothing; and a quote that starts
+// or stops inside a word can drop a negation ("known" read as "now"), so its edges must sit on word
+// boundaries of the source.
+
+describe("Hardening (a2): a quote needs real words, not punctuation runs", () => {
+  const RULE = "- - - - - - - - - - - - -";
+  const SRC = { [ID_E]: `Heading\n${RULE}\nBody text continues here for the reader.` };
+
+  function check(quote: string, sources: Record<string, string> = SRC) {
+    return ok(
+      validateSummariserOutput(answer([fact({ citedSourceIds: [ID_E], quote })]), { sources }),
+    );
+  }
+
+  it("downgrades a punctuation-only quote that is a perfect substring of a cited source", () => {
+    expect(RULE.length).toBeGreaterThanOrEqual(REPORT_ITEM_QUOTE_MIN_LENGTH);
+    const result = check(RULE);
+    expect(result.items[0]?.kind).toBe("inference");
+    expect(result.items[0]?.quote).toBeUndefined();
+    expect(result.counts.downgraded).toBe(1);
+  });
+
+  it("downgrades a quote of four tokens of which only one carries a letter or digit", () => {
+    const sources = {
+      [ID_E]: "Result: ok ---------- .......... ********** ########## end of notes.",
+    };
+    const quote = "ok ---------- .......... ********** ########## end";
+    expect(quote.length).toBeGreaterThanOrEqual(REPORT_ITEM_QUOTE_MIN_LENGTH);
+    expect(check(quote, sources).items[0]?.kind).toBe("inference");
+  });
+
+  it("still accepts four real words with punctuation in between", () => {
+    const sources = { [ID_E]: "Note: the fix, which shipped today, is stable for all users." };
+    expect(check("the fix, which shipped today, is stable", sources).items[0]?.kind).toBe(
+      "source-fact",
+    );
+  });
+});
+
+describe("Hardening (b2): a quote starts and stops on whole words of the source", () => {
+  it("downgrades a quote that begins inside a word", () => {
+    const result = quoted("he http2 stream reset is fixed in this release");
+    expect(result.ok && result.items[0]?.kind).toBe("inference");
+  });
+
+  it("downgrades a quote that stops inside a word", () => {
+    const result = quoted("the http2 stream reset is fixed in this releas");
+    expect(result.ok && result.items[0]?.kind).toBe("inference");
+  });
+
+  it("downgrades a quote that drops the negation's first letters", () => {
+    const sources = { [ID_E]: "The team does not fix the stream reset in this release at all." };
+    const result = ok(
+      validateSummariserOutput(
+        answer([
+          fact({ citedSourceIds: [ID_E], quote: "ot fix the stream reset in this release" }),
+        ]),
+        { sources },
+      ),
+    );
+    expect(result.items[0]?.kind).toBe("inference");
+  });
+
+  it("accepts a whole-word quote, one that starts at the source start and one that ends at its end", () => {
+    const sources = { [ID_E]: "stream reset fixed in this release" };
+    const result = ok(
+      validateSummariserOutput(
+        answer([fact({ citedSourceIds: [ID_E], quote: "stream reset fixed in this release" })]),
+        { sources },
+      ),
+    );
+    expect(result.items[0]?.kind).toBe("source-fact");
+  });
+
+  it("finds a whole-word occurrence after a mid-word one", () => {
+    const sources = {
+      [ID_E]: "unstream reset is fixed in this release. A stream reset is fixed in this release.",
+    };
+    const result = ok(
+      validateSummariserOutput(
+        answer([fact({ citedSourceIds: [ID_E], quote: "stream reset is fixed in this release" })]),
+        { sources },
+      ),
+    );
+    expect(result.items[0]?.kind).toBe("source-fact");
+  });
+
+  it("narrows ids by whole-word holders only", () => {
+    const sources = {
+      [ID_A]: "unstream reset is fixed in this release",
+      [ID_B]: "A stream reset is fixed in this release",
+    };
+    const result = ok(
+      validateSummariserOutput(
+        answer([
+          fact({
+            citedSourceIds: [ID_A, ID_B],
+            quote: "stream reset is fixed in this release",
+          }),
+        ]),
+        { sources },
+      ),
+    );
+    expect(result.items[0]?.citedSourceIds).toEqual([ID_B]);
+    expect(result.counts.narrowedIds).toBe(1);
+  });
+});
