@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, realpathSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import {
   type ClaimType,
@@ -24,6 +24,64 @@ export class TasksFolderWriteRefusedError extends Error {
     super("task notes are written with writeTaskNote, not writeNote");
     this.name = "TasksFolderWriteRefusedError";
   }
+}
+
+/** The `type` values that belong to the dedicated research writers (D-14). */
+const EXTENDED_NOTE_TYPES: ReadonlySet<string> = new Set([
+  "report",
+  "research-source",
+  "research-wiki",
+]);
+
+/**
+ * Thrown when the generic writer is asked to overwrite a research report, raw snapshot or wiki
+ * note, or to write a note that claims one of those types. Only `writeReportNote`,
+ * `writeRawSourceNote` and `writeWikiSourceNote` produce those shapes (D-14, T-07-20): a generic
+ * rewrite would drop their nested fields and break the reader's strict parse.
+ */
+export class ExtendedNoteWriteRefusedError extends Error {
+  constructor() {
+    super("research notes are written with their own writers, not writeNote");
+    this.name = "ExtendedNoteWriteRefusedError";
+  }
+}
+
+/** How much of an existing file is read to find its `type`; the key sits among the first twelve. */
+const TYPE_PROBE_BYTES = 16 * 1024;
+
+const EXTENDED_TYPE_LINE =
+  /^type:[ \t]*(["']?)(report|research-source|research-wiki)\1[ \t]*(?:#.*)?$/;
+
+/**
+ * True when the file at `target` opens with a frontmatter block whose top-level `type` is one of
+ * the research shapes. A textual probe over the first bytes, not a YAML parse: a hand-damaged
+ * report that no longer parses must still be protected, and nothing is loaded that could expand.
+ */
+function holdsExtendedNote(target: string): boolean {
+  if (!existsSync(target)) return false;
+  let head = "";
+  const fd = openSync(target, "r");
+  try {
+    const buffer = Buffer.alloc(TYPE_PROBE_BYTES);
+    const read = readSync(fd, buffer, 0, TYPE_PROBE_BYTES, 0);
+    head = buffer.toString("utf8", 0, read);
+  } finally {
+    closeSync(fd);
+  }
+  const text = head.charCodeAt(0) === 0xfeff ? head.slice(1) : head;
+  if (!text.startsWith("---")) return false;
+  const lines = text.split(/\r?\n/).slice(1);
+  for (const line of lines) {
+    if (line.startsWith("---")) break;
+    if (EXTENDED_TYPE_LINE.test(line)) return true;
+  }
+  return false;
+}
+
+/** True when a request's own passthrough keys claim a research type. */
+function claimsExtendedType(passthrough: Readonly<Record<string, unknown>> | undefined): boolean {
+  const type = passthrough?.type;
+  return typeof type === "string" && EXTENDED_NOTE_TYPES.has(type.trim().toLowerCase());
 }
 
 /**
@@ -54,6 +112,11 @@ export interface WriteNoteOptions {
   readonly created?: string;
   /** `null` records "never reviewed"; omit and it defaults to `null`. */
   readonly lastReviewed?: string | null;
+  /**
+   * Extra frontmatter keys the provenance schema does not own, written after the managed block.
+   * A schema-owned key here is ignored, and a `type` naming a research shape is refused.
+   */
+  readonly passthrough?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -100,6 +163,13 @@ export function writeNote(options: WriteNoteOptions): WrittenNote {
     throw new TasksFolderWriteRefusedError();
   }
 
+  // The same for the research shapes, which share `global/output` with ordinary notes, so the
+  // refusal keys on the note's own type rather than its folder (D-14). Still before any
+  // directory or file exists.
+  if (claimsExtendedType(options.passthrough) || holdsExtendedNote(target)) {
+    throw new ExtendedNoteWriteRefusedError();
+  }
+
   // Validated rather than asserted: the same schema that guards untrusted
   // on-disk YAML also guards what this package is about to put there, so a
   // caller cannot write a note that would fail to parse back.
@@ -135,7 +205,7 @@ export function writeNote(options: WriteNoteOptions): WrittenNote {
     throw new WorkspaceScopeViolationError(options.relativePath);
   }
   mkdirSync(folder, { recursive: true });
-  atomicWriteFileSync(target, stringifyNote(frontmatter, options.body));
+  atomicWriteFileSync(target, stringifyNote(frontmatter, options.body, options.passthrough));
 
   // The write is not finished until the folder's index reflects it. Doing
   // this synchronously — and as a full recompute rather than a patch — is

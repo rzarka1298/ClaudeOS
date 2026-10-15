@@ -126,4 +126,8 @@ export { scanTaskNotes } from "./task-scan.js";
 export { VAULT_CLAUDE_MD } from "./vault-claude-md.js";
 export { assertScopedWrite, WorkspaceScopeViolationError } from "./workspace-scope.js";
 export type { WriteNoteOptions, WrittenNote } from "./write-note.js";
-export { TasksFolderWriteRefusedError, writeNote } from "./write-note.js";
+export {
+  ExtendedNoteWriteRefusedError,
+  TasksFolderWriteRefusedError,
+  writeNote,
+} from "./write-note.js";
