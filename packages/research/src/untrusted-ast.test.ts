@@ -89,8 +89,14 @@ const BANNED_MEMBERS = new Set([
   "callee",
 ]);
 
-/** Built-ins whose statics are a shared surface: only construction or a call may name them. */
-const CONSTRUCTOR_ONLY = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "RegExp"]);
+/**
+ * Lib globals that may only appear as the object of an access, a callee, the right of
+ * `instanceof` or a class `extends`: held, passed or returned as a value, a built-in can be
+ * written through. `undefined`, `NaN` and `Infinity` are plain values and stay free.
+ */
+const OBJECT_ONLY = new Set(
+  [...ALLOWED_GLOBALS].filter((name) => !["undefined", "NaN", "Infinity"].includes(name)),
+);
 
 /** Object statics that change an object in place (a call on a built-in target is a write). */
 const MUTATORS = new Set([
@@ -450,16 +456,24 @@ export function findings(file: string, text: string): string[] {
       } else if (!isNameOnly(node) && !inTypePosition(node)) {
         const why = rejectName(node);
         if (why !== null) out.push(`${at(node)} ${why}`);
-        if (CONSTRUCTOR_ONLY.has(node.text)) {
+        if (OBJECT_ONLY.has(node.text)) {
+          const symbol = ts.isShorthandPropertyAssignment(node.parent)
+            ? checker.getShorthandAssignmentValueSymbol(node.parent)
+            : checker.getSymbolAtLocation(node);
           const parent = node.parent;
           const allowed =
+            ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+              parent.expression === node) ||
             ((ts.isNewExpression(parent) || ts.isCallExpression(parent)) &&
               parent.expression === node) ||
             (ts.isBinaryExpression(parent) &&
               parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
               parent.right === node) ||
             ts.isExpressionWithTypeArguments(parent);
-          if (!allowed) out.push(`${at(node)} ${node.text} is only for new, a call or instanceof`);
+          // A name the file binds itself (a local that shadows the global) is not the lib value.
+          if (!allowed && (symbol === undefined || inDefaultLibrary(symbol))) {
+            out.push(`${at(node)} built-in ${node.text} used as a value`);
+          }
         }
       }
     }
@@ -792,6 +806,25 @@ describe("the untrusted folder, read as a syntax tree against an allowlist", () 
     ["a local name exported that is a global off the list", "export { Intl };\n"],
     ["a renamed global off the list exported", "export { Int8Array as bytes };\n"],
     ["a name that resolves to nothing exported", "export { nowhere };\n"],
+    // Round 5 follow-up: a built-in may only be the object of an access, a callee, the right of
+    // instanceof or a class extends; passed or stored as a value it can be written through.
+    ["a built-in as a call argument", "function w(_t: unknown): void {}\nw(Array);\n"],
+    ["a built-in as a map callback", "export const n = [1].map(Number);\n"],
+    ["a built-in as an initializer", "export const A = Array;\n"],
+    ["a built-in assigned later", "let t: unknown;\nt = Math;\nexport { t };\n"],
+    ["a built-in as an array element", "export const l = [Set];\n"],
+    ["a built-in as an object property value", "export const o = { M: Map };\n"],
+    ["a shorthand property naming a built-in", "export const o = { Math };\n"],
+    ["a built-in as a return value", "export function r() { return Object; }\n"],
+    ["a built-in as a yield value", "export function* g() { yield JSON; }\n"],
+    ["a built-in spread into an object", "export const o = { ...Math };\n"],
+    [
+      "a built-in spread into a call",
+      "function w(..._t: unknown[]): void {}\nw(...(Array as never));\n",
+    ],
+    ["a built-in in a conditional", "export const c = Date ? Date : Object;\n"],
+    ["a built-in under typeof", "export const t = typeof Array;\n"],
+    ["a plain global function as a value", "export const f = parseInt;\n"],
   ];
   for (const [name, source, file] of FIRE) {
     it(`finds ${name}`, () => {
@@ -823,6 +856,10 @@ describe("the untrusted folder, read as a syntax tree against an allowlist", () 
       "export class Probe { readonly me = this; m() { return () => this; } get g() { return this; } static s = 1; }",
       "const own = { a: 1 }; own.a = 2; own.a += 1; own.a++; Object.assign(own, { b: 1 }); Object.freeze(own);",
       "let counter = 0; counter++; counter += 1;",
+      "export const plain = [undefined, NaN, Infinity];",
+      'export const parsed = parseInt("1", 10) + parseFloat("1") + (isNaN(1) ? 1 : 0) + (isFinite(1) ? 1 : 0);',
+      "export const made = [new Map(), new Set(), new WeakMap(), new WeakSet(), new Date()];",
+      "export const checks = [Array.isArray([]), Number.isNaN(1), String(1), Boolean(1), Symbol.iterator];",
       'export const named = fresh.name === "x" ? 1 : 2;',
       "export { total as renamedTotal };",
       "",

@@ -65,8 +65,10 @@ fails, and the eslint `untrusted` element also enables `boundaries/no-unknown-de
 (non-test files). The scan bans writes to shared built-ins (assignment, `delete`, `++`/`--`,
 `Object.assign`/`freeze`/`seal`/`preventExtensions` on a built-in target, and any use of those
 `Object` members other than as a direct call), `this` outside class members, the V8 `Error`
-statics, and every use of `Error` or `RegExp` except `new`, a call, `instanceof` or `extends`
-(this covers `RegExp.$1`, `lastMatch` and the other legacy statics). Test files may import only
+statics, and every use of an allowed lib global (`Error`, `RegExp`, `Array`, `Object`, `Math` and the rest, but
+not `undefined`, `NaN` or `Infinity`) except as the object of an access, a callee, the right of
+`instanceof` or a class `extends`, so a built-in cannot be held, passed or returned and then
+written through (this covers `RegExp.$1`, `lastMatch` and the other legacy statics). Test files may import only
 the named `describe`, `it` and `expect` from `vitest`. Rule 17 adds the legacy accessor methods,
 `.caller`, `.callee` and the three V8 `Error` statics. Carried to the phase judge (minor):
 thenables, getters and `extends Promise` or `extends RegExp`; the boundary validates the
