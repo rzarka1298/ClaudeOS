@@ -8,6 +8,7 @@ import {
   RUN_ID_PATTERN,
   type RunErrorCode,
   type RunId,
+  type RunState,
   SOURCE_FAILURE_CODES,
   SOURCE_ID_PATTERN,
   type SourceFailureCode,
@@ -374,4 +375,45 @@ export function finishJobRun(
       "UPDATE runs SET state = ?, ended_at = ?, last_activity_at = ? WHERE run_id = ?",
     ).run(state, input.endedAt, input.endedAt, jobRunId);
   }).immediate();
+}
+
+// ---------------------------------------------------------------------------
+// Reads (signature stubs: red step of plan 07-06 task 2)
+
+/** One job run as the status view and the list read it. */
+export interface JobRunRecord {
+  readonly jobRunId: RunId;
+  readonly jobKey: string;
+  readonly trigger: JobRunTrigger | null;
+  readonly state: RunState;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly outcome: JobRunOutcome | null;
+  readonly errorCode: RunErrorCode | null;
+  readonly reportNoteId: string | null;
+  readonly sourceCount: number | null;
+  readonly sourceTotal: number | null;
+  readonly unavailableSources: readonly UnavailableSource[];
+  readonly stageLog: readonly JobRunStageEntry[];
+  /** The stage of the last stage-log entry, or null before the first transition. */
+  readonly latestStage: ResearchStage | null;
+}
+
+export interface ResearchRunStatus {
+  readonly lastSuccess: JobRunRecord | null;
+  readonly lastFailure: JobRunRecord | null;
+  readonly inFlight: JobRunRecord | null;
+  readonly latestUnknown: JobRunRecord | null;
+}
+
+export function getResearchRunStatus(_db: Database.Database, _jobKey: string): ResearchRunStatus {
+  return { lastSuccess: null, lastFailure: null, inFlight: null, latestUnknown: null };
+}
+
+export function listJobRuns(
+  _db: Database.Database,
+  _jobKey: string,
+  _limit: number,
+): JobRunRecord[] {
+  return [];
 }

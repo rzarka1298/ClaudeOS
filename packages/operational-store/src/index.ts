@@ -52,8 +52,10 @@ export {
 } from "./codex-store.js";
 export type {
   FinishJobRunInput,
+  JobRunRecord,
   JobRunStageEntry,
   JobRunTrigger,
+  ResearchRunStatus,
   StartJobRunInput,
   StartJobRunResult,
   UnavailableSource,
@@ -61,7 +63,9 @@ export type {
 export {
   appendJobRunStage,
   finishJobRun,
+  getResearchRunStatus,
   JOB_RUN_TRIGGERS,
+  listJobRuns,
   startJobRun,
 } from "./job-run-store.js";
 export { applyMigrations, SchemaAheadOfCodeError } from "./migrate.js";

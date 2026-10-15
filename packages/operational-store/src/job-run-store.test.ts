@@ -8,6 +8,8 @@ import {
   appendJobRunStage,
   type FinishJobRunInput,
   finishJobRun,
+  getResearchRunStatus,
+  listJobRuns,
   type StartJobRunInput,
   startJobRun,
 } from "./job-run-store.js";
@@ -370,5 +372,196 @@ describe("Test 5: validation happens before any write", () => {
       appendJobRunStage(db, newRunId(), { stage: "raw", at: T2, noteIds: [] }),
     ).toThrow();
     expect(() => finishJobRun(db, newRunId(), finishInput())).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: the DIAG-05 status query and the run list
+
+function at(minutes: number): string {
+  return new Date(Date.parse(T0) + minutes * 60_000).toISOString();
+}
+
+/** Starts and finishes one run at `minute`, returning its id. */
+function finishedRun(
+  minute: number,
+  overrides: Partial<FinishJobRunInput> = {},
+  jobKey = JOB,
+): RunId {
+  const input = startInput({ jobKey, startedAt: at(minute) });
+  startJobRun(db, input);
+  finishJobRun(db, input.jobRunId, finishInput({ endedAt: at(minute + 1), ...overrides }));
+  return input.jobRunId;
+}
+
+function failedRun(minute: number, jobKey = JOB): RunId {
+  return finishedRun(
+    minute,
+    {
+      outcome: "failure",
+      errorCode: "all-sources-failed",
+      sourceCount: 0,
+      sourceTotal: 2,
+      reportNoteId: null,
+      unavailableSources: [{ sourceId: SRC_A, code: "timeout" }],
+    },
+    jobKey,
+  );
+}
+
+function runningRun(minute: number, jobKey = JOB): RunId {
+  const input = startInput({ jobKey, startedAt: at(minute) });
+  startJobRun(db, input);
+  return input.jobRunId;
+}
+
+/** Marks a run stale the way startup recovery does: the state only, no outcome and no end time. */
+function markStale(id: RunId): void {
+  db.prepare("UPDATE job_runs SET state = 'stale' WHERE job_run_id = ?").run(id);
+  db.prepare("UPDATE runs SET state = 'stale' WHERE run_id = ?").run(id);
+}
+
+describe("Task 2 Test 1: the last successful and the last failed run", () => {
+  it("lastSuccess is the newest of success or partial and lastFailure is the failure", () => {
+    const success = finishedRun(0);
+    const note = newNoteId();
+    const partial = finishedRun(10, {
+      outcome: "partial",
+      sourceCount: 2,
+      sourceTotal: 3,
+      reportNoteId: note,
+      unavailableSources: [{ sourceId: SRC_B, code: "http-status" }],
+    });
+    const failure = failedRun(20);
+
+    const status = getResearchRunStatus(db, JOB);
+    expect(status.lastSuccess).toMatchObject({
+      jobRunId: partial,
+      outcome: "partial",
+      state: "completed",
+      sourceCount: 2,
+      sourceTotal: 3,
+      reportNoteId: note,
+      endedAt: at(11),
+      unavailableSources: [{ sourceId: SRC_B, code: "http-status" }],
+    });
+    expect(status.lastSuccess?.jobRunId).not.toBe(success);
+    expect(status.lastFailure).toMatchObject({
+      jobRunId: failure,
+      outcome: "failure",
+      state: "failed",
+      errorCode: "all-sources-failed",
+      endedAt: at(21),
+    });
+    expect(status.inFlight).toBeNull();
+    expect(status.latestUnknown).toBeNull();
+  });
+
+  it("keeps the older success when a newer run failed", () => {
+    const success = finishedRun(0);
+    failedRun(10);
+    expect(getResearchRunStatus(db, JOB).lastSuccess?.jobRunId).toBe(success);
+  });
+
+  it("reads only the asked-for job key", () => {
+    finishedRun(0, {}, "research.other");
+    const status = getResearchRunStatus(db, JOB);
+    expect(status.lastSuccess).toBeNull();
+  });
+});
+
+describe("Task 2 Test 2: the in-flight run", () => {
+  it("appears as inFlight with its start and the stage of its last log entry only", () => {
+    const earlier = finishedRun(0);
+    const id = runningRun(10);
+    expect(getResearchRunStatus(db, JOB).inFlight).toMatchObject({
+      jobRunId: id,
+      startedAt: at(10),
+      latestStage: null,
+    });
+    appendJobRunStage(db, id, { stage: "capture", at: at(11), noteIds: [] });
+    appendJobRunStage(db, id, { stage: "raw", at: at(12), noteIds: [newNoteId()] });
+
+    const status = getResearchRunStatus(db, JOB);
+    expect(status.inFlight).toMatchObject({ jobRunId: id, startedAt: at(10), latestStage: "raw" });
+    expect(status.lastSuccess?.jobRunId).toBe(earlier);
+    expect(status.lastFailure).toBeNull();
+  });
+});
+
+describe("Task 2 Test 3: a stale run is its own row only while newest", () => {
+  it("shows a stale run newer than the last success and the last failure as latestUnknown", () => {
+    finishedRun(0);
+    failedRun(10);
+    const stale = runningRun(20);
+    markStale(stale);
+
+    const status = getResearchRunStatus(db, JOB);
+    expect(status.latestUnknown).toMatchObject({
+      jobRunId: stale,
+      state: "stale",
+      outcome: null,
+      endedAt: null,
+      startedAt: at(20),
+    });
+    expect(status.lastFailure?.jobRunId).not.toBe(stale);
+    expect(status.lastSuccess?.jobRunId).not.toBe(stale);
+    expect(status.inFlight).toBeNull();
+  });
+
+  it("does not show an older stale run", () => {
+    const stale = runningRun(0);
+    markStale(stale);
+    finishedRun(10);
+    expect(getResearchRunStatus(db, JOB).latestUnknown).toBeNull();
+  });
+
+  it("does not show a stale run once a newer run is in flight", () => {
+    const stale = runningRun(0);
+    markStale(stale);
+    const live = runningRun(10);
+    const status = getResearchRunStatus(db, JOB);
+    expect(status.latestUnknown).toBeNull();
+    expect(status.inFlight?.jobRunId).toBe(live);
+  });
+
+  it("never reports a stale run as a failure or a success", () => {
+    const stale = runningRun(0);
+    markStale(stale);
+    const status = getResearchRunStatus(db, JOB);
+    expect(status.lastFailure).toBeNull();
+    expect(status.lastSuccess).toBeNull();
+    expect(status.latestUnknown?.jobRunId).toBe(stale);
+  });
+});
+
+describe("Task 2 Test 4: no runs", () => {
+  it("returns an object whose four members are all null", () => {
+    expect(getResearchRunStatus(db, JOB)).toEqual({
+      lastSuccess: null,
+      lastFailure: null,
+      inFlight: null,
+      latestUnknown: null,
+    });
+  });
+});
+
+describe("Task 2 Test 5: the run list", () => {
+  it("returns the newest first, bounded by the limit, for one job key", () => {
+    const a = finishedRun(0);
+    const b = failedRun(10);
+    const c = finishedRun(20);
+    finishedRun(30, {}, "research.other");
+    expect(listJobRuns(db, JOB, 10).map((r) => r.jobRunId)).toEqual([c, b, a]);
+    expect(listJobRuns(db, JOB, 2).map((r) => r.jobRunId)).toEqual([c, b]);
+    expect(listJobRuns(db, JOB, 1)[0]).toMatchObject({ jobRunId: c, outcome: "success" });
+  });
+
+  it("returns an empty list for a job with no runs and refuses a bad limit", () => {
+    expect(listJobRuns(db, JOB, 5)).toEqual([]);
+    expect(() => listJobRuns(db, JOB, 0)).toThrow();
+    expect(() => listJobRuns(db, JOB, -1)).toThrow();
+    expect(() => listJobRuns(db, JOB, 1.5)).toThrow();
+    expect(() => listJobRuns(db, JOB, 10_000)).toThrow();
   });
 });
