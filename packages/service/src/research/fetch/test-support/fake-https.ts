@@ -27,13 +27,27 @@ export interface ScriptedResponse {
   readonly stallAfterChunks?: number;
   /** The address of the peer socket reported on the response. */
   readonly remoteAddress?: string;
+  /** Wait this long before the response arrives (global timer, so fake timers apply). */
+  readonly responseDelayMs?: number;
+  /** After this many chunks the body stream fails with a connection reset. */
+  readonly failAfterChunks?: number;
 }
 
 export interface ScriptedError {
   readonly error: Error;
 }
 
-export type Script = ScriptedResponse | ScriptedError;
+/** The connection or TLS handshake never completes: no response, no error. */
+export interface ScriptedHang {
+  readonly hang: true;
+}
+
+/** The socket reports its idle timeout (Node emits `timeout` on the request) and nothing else. */
+export interface ScriptedSocketTimeout {
+  readonly socketTimeout: true;
+}
+
+export type Script = ScriptedResponse | ScriptedError | ScriptedHang | ScriptedSocketTimeout;
 
 export interface RecordedCall {
   readonly options: SafeRequestOptions;
@@ -41,6 +55,12 @@ export interface RecordedCall {
   readonly url: string;
   /** The addresses the lookup handed back for the host, when it resolved a name. */
   resolved: readonly string[];
+  /** True once the fetcher destroyed the request or aborted its signal. */
+  requestDestroyed: boolean;
+  /** True once the fetcher destroyed the response (it must, on every path that stops reading). */
+  responseDestroyed: boolean;
+  /** Body bytes the fake handed to the fetcher. */
+  bytesDelivered: number;
 }
 
 export interface FakeHttps {
@@ -65,6 +85,9 @@ export function createFakeHttps(
       options,
       url: `https://${options.hostname}${options.path}`,
       resolved: [],
+      requestDestroyed: false,
+      responseDestroyed: false,
+      bytesDelivered: 0,
     };
     calls.push(call);
 
@@ -80,6 +103,7 @@ export function createFakeHttps(
     };
 
     options.signal.addEventListener("abort", () => {
+      call.requestDestroyed = true;
       emitError(Object.assign(new Error("aborted"), { name: "AbortError", code: "ABORT_ERR" }));
     });
 
@@ -105,12 +129,20 @@ export function createFakeHttps(
         }
       }
       const scripted = script(call);
+      if ("hang" in scripted) return;
+      if ("socketTimeout" in scripted) {
+        for (const listener of timeoutListeners) listener();
+        return;
+      }
       if ("error" in scripted) {
         emitError(scripted.error);
         return;
       }
+      if (scripted.responseDelayMs !== undefined && scripted.responseDelayMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, scripted.responseDelayMs));
+      }
       if (destroyed) return;
-      onResponse(buildResponse(scripted, call.resolved[0]));
+      onResponse(buildResponse(scripted, call.resolved[0], call));
     };
 
     const handle: RequestHandle = {
@@ -128,9 +160,9 @@ export function createFakeHttps(
       },
       destroy() {
         destroyed = true;
+        call.requestDestroyed = true;
       },
     };
-    void timeoutListeners;
     return handle;
   };
 
@@ -147,7 +179,11 @@ function chunksOf(body: ScriptedResponse["body"]): Uint8Array[] {
   return body.map(toBytes);
 }
 
-function buildResponse(scripted: ScriptedResponse, peer: string | undefined): ResponseStream {
+function buildResponse(
+  scripted: ScriptedResponse,
+  peer: string | undefined,
+  call: RecordedCall,
+): ResponseStream {
   let destroyed = false;
   let wake: (() => void) | undefined;
   const destroySignal = new Promise<void>((resolve) => {
@@ -163,6 +199,9 @@ function buildResponse(scripted: ScriptedResponse, peer: string | undefined): Re
         await destroySignal;
         return;
       }
+      if (scripted.failAfterChunks !== undefined && sent >= scripted.failAfterChunks) {
+        throw Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
+      }
       if (delay > 0) {
         await Promise.race([
           new Promise<void>((resolve) => setTimeout(resolve, delay)),
@@ -171,6 +210,7 @@ function buildResponse(scripted: ScriptedResponse, peer: string | undefined): Re
       }
       if (destroyed) return;
       sent += 1;
+      call.bytesDelivered += chunk.byteLength;
       yield chunk;
     }
     if (scripted.stallAfterChunks !== undefined && sent >= scripted.stallAfterChunks) {
@@ -184,6 +224,7 @@ function buildResponse(scripted: ScriptedResponse, peer: string | undefined): Re
     socket: { remoteAddress: scripted.remoteAddress ?? peer },
     destroy() {
       destroyed = true;
+      call.responseDestroyed = true;
       wake?.();
     },
     [Symbol.asyncIterator]: iterate,
