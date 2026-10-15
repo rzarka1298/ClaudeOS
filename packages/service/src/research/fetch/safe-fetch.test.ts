@@ -61,7 +61,7 @@ describe("Test 1 (tracer): one allowlisted feed is fetched with the address vali
       body: atomOfSize(200),
     }));
     await fetcher.fetchSource({ url: FEED_URL, kind: "feed" });
-    const agent = fake.calls[0]?.options.agent as Agent | undefined;
+    const agent = fake.calls[0]?.options.agent as (Agent & { keepAlive?: boolean }) | undefined;
     expect(agent?.keepAlive).toBe(false);
   });
 });

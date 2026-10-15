@@ -1,11 +1,11 @@
-import { isIP } from "node:net";
 import type { IncomingHttpHeaders } from "node:http";
+import { isIP } from "node:net";
 import { safeLookup } from "../address-policy.js";
 import type {
+  RequestFn,
   RequestHandle,
   ResponseStream,
   SafeRequestOptions,
-  RequestFn,
 } from "../safe-fetch.js";
 
 /**
