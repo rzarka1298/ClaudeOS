@@ -4,8 +4,27 @@
 //   <text>
 //   <<<END nonce=<nonce>>>>
 //
-// The nonce is chosen by the caller for each run. The hardening that makes a source unable
-// to close its own block (scrubbing, validation) is the next task's work.
+// The nonce is chosen by the caller for each run (16 to 64 lowercase hex characters). Source text
+// is attacker-controlled, so it is made unable to close, forge or reopen a block (security
+// finding 1):
+//
+//   1. validation first: ids and nonce are checked and a DelimitError is thrown before anything
+//      is composed;
+//   2. the text is normalised: CR becomes LF, zero-width, bidi and control characters are removed,
+//      and the result is NFKC, so fullwidth and compatibility forms read as plain characters;
+//   3. the NORMALISED text is scanned, on a length-preserving look-alike skeleton (Cyrillic and
+//      Greek letters, angle quotation marks, non-Latin digits), case-insensitively and with any
+//      whitespace between the brackets and the word, for `<<<SRC`, `<<<END` (with an adjacent
+//      `nonce=...>>>` tail when there is one) and for the nonce itself; every hit is replaced by
+//      a fixed visible marker that contains no angle bracket, in the normalised text, so what is
+//      wrapped is exactly what was checked and legitimate non-Latin text is left alone;
+//   4. steps 2 and 3 repeat until nothing is found, so a marker that re-forms across a scrubbed
+//      boundary is caught on the next pass.
+//
+// parseDelimitedBlocks takes no nonce: it reads it from the first header and accepts only blocks
+// that use the same one.
+
+import { MARKER_REPLACEMENT, stripUnsafeChars } from "./plain-text.js";
 
 export interface SourceText {
   readonly sourceId: string;
@@ -17,8 +36,7 @@ export interface DelimitedBlock {
   readonly text: string;
 }
 
-const HEADER = /^<<<SRC id=([0-9a-f]{32}) nonce=([0-9a-f]{16,64})>>>$/;
-
+/** What a scrubbed occurrence of the run nonce becomes. */
 export const NONCE_REPLACEMENT = "[nonce removed]";
 
 export type DelimitErrorCode = "invalid-source-id" | "invalid-nonce";
@@ -47,26 +65,158 @@ export interface DelimitedSources {
   readonly scrubbed: number;
 }
 
-// Signature stub: the scrub arrives with the tests that pin it.
-export function scrubSourceText(text: string, _nonce: string): ScrubbedSourceText {
-  return { text, scrubbed: 0, invisibleRemoved: 0 };
+const SOURCE_ID = /^[0-9a-f]{32}$/;
+const NONCE = /^[0-9a-f]{16,64}$/;
+const HEADER = /^<<<SRC id=([0-9a-f]{32}) nonce=([0-9a-f]{16,64})>>>$/;
+
+function assertNonce(nonce: string): void {
+  if (typeof nonce !== "string" || !NONCE.test(nonce)) {
+    throw new DelimitError("invalid-nonce", "the nonce must be 16 to 64 lowercase hex characters");
+  }
 }
 
+function assertSourceId(id: string): void {
+  if (typeof id !== "string" || !SOURCE_ID.test(id)) {
+    throw new DelimitError("invalid-source-id", "a source id must be 32 lowercase hex characters");
+  }
+}
+
+// --- look-alike skeleton -----------------------------------------------------------------------
+
+// One UTF-16 unit in, one out, so an index in the skeleton is the same index in the text.
+const LOOK_ALIKES: Readonly<Record<string, string>> = {
+  // angle brackets and quotation marks
+  "\u2039": "<",
+  "\u00AB": "<",
+  "\u27E8": "<",
+  "\u3008": "<",
+  "\u300A": "<",
+  "\u276E": "<",
+  "\u02C2": "<",
+  "\u203A": ">",
+  "\u00BB": ">",
+  "\u27E9": ">",
+  "\u3009": ">",
+  "\u300B": ">",
+  "\u276F": ">",
+  "\u02C3": ">",
+  // Cyrillic letters
+  \u0410: "A",
+  \u0412: "B",
+  \u0415: "E",
+  \u0405: "S",
+  \u0421: "C",
+  \u0430: "a",
+  \u0435: "e",
+  \u0441: "c",
+  \u0455: "s",
+  \u0501: "d",
+  // Greek letters
+  \u0391: "A",
+  \u0392: "B",
+  \u0395: "E",
+  \u039D: "N",
+  \u03A1: "P",
+  \u03BF: "o",
+  // Arabic-Indic and extended digits
+  "\u0660": "0",
+  "\u0661": "1",
+  "\u0662": "2",
+  "\u0663": "3",
+  "\u0664": "4",
+  "\u0665": "5",
+  "\u0666": "6",
+  "\u0667": "7",
+  "\u0668": "8",
+  "\u0669": "9",
+  "\u06F0": "0",
+  "\u06F1": "1",
+  "\u06F2": "2",
+  "\u06F3": "3",
+  "\u06F4": "4",
+  "\u06F5": "5",
+  "\u06F6": "6",
+  "\u06F7": "7",
+  "\u06F8": "8",
+  "\u06F9": "9",
+};
+
+const LOOK_ALIKE_CHARS = new RegExp(`[${Object.keys(LOOK_ALIKES).join("")}]`, "g");
+
+function skeleton(text: string): string {
+  return text.replace(LOOK_ALIKE_CHARS, (c) => LOOK_ALIKES[c] ?? c);
+}
+
+// `<<<SRC` or `<<<END`, with any whitespace between the brackets and the word, optionally
+// followed by an adjacent `...>>>` tail on the same line (the header or footer remainder).
+const MARKER_SOURCE = "<\\s*<\\s*<\\s*(?:src|end)(?:[^\\n<>]{0,200}?>\\s*>\\s*>)?";
+
+const MAX_PASSES = 1_000;
+
+/**
+ * Normalises source text and replaces every delimiter-like sequence and the nonce with a fixed
+ * visible marker, to a fixed point. The returned text is what gets wrapped.
+ */
+export function scrubSourceText(text: string, nonce: string): ScrubbedSourceText {
+  assertNonce(nonce);
+  const stripped = stripUnsafeChars(text.replace(/\r\n?/g, "\n"));
+  const pattern = new RegExp(`(?:${MARKER_SOURCE})|(${nonce})`, "gi");
+  let current = stripped.text.normalize("NFKC");
+  let scrubbed = 0;
+
+  for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+    const view = skeleton(current);
+    pattern.lastIndex = 0;
+    let out = "";
+    let cursor = 0;
+    let found = 0;
+    for (let match = pattern.exec(view); match !== null; match = pattern.exec(view)) {
+      out += current.slice(cursor, match.index);
+      out += match[1] === undefined ? MARKER_REPLACEMENT : NONCE_REPLACEMENT;
+      cursor = match.index + match[0].length;
+      found += 1;
+    }
+    if (found === 0) return { text: current, scrubbed, invisibleRemoved: stripped.removed };
+    out += current.slice(cursor);
+    scrubbed += found;
+    current = out.normalize("NFKC");
+  }
+  // Unreachable in practice: each pass removes at least one angle bracket run. If it is ever
+  // reached, no angle bracket survives.
+  return {
+    text: current.replace(/[<>]/g, " "),
+    scrubbed,
+    invisibleRemoved: stripped.removed,
+  };
+}
+
+/** Wraps each source in a block and reports how many marker-like sequences were scrubbed. */
 export function delimitSourcesWithReport(
   sources: readonly SourceText[],
   nonce: string,
 ): DelimitedSources {
-  return { composed: delimitSources(sources, nonce), scrubbed: 0 };
+  assertNonce(nonce);
+  for (const source of sources) assertSourceId(source.sourceId);
+  let scrubbed = 0;
+  const blocks = sources.map((source) => {
+    const result = scrubSourceText(source.text, nonce);
+    scrubbed += result.scrubbed;
+    return `<<<SRC id=${source.sourceId} nonce=${nonce}>>>\n${result.text}\n<<<END nonce=${nonce}>>>`;
+  });
+  return { composed: blocks.join("\n"), scrubbed };
 }
 
 export function delimitSources(sources: readonly SourceText[], nonce: string): string {
-  return sources
-    .map((s) => `<<<SRC id=${s.sourceId} nonce=${nonce}>>>\n${s.text}\n<<<END nonce=${nonce}>>>`)
-    .join("\n");
+  return delimitSourcesWithReport(sources, nonce).composed;
 }
 
+/**
+ * Recovers the blocks of a composed text. The nonce is read from the first header; a block with
+ * a different nonce is ignored, as is a header that is malformed or has no footer.
+ */
 export function parseDelimitedBlocks(composed: string): readonly DelimitedBlock[] {
   const blocks: DelimitedBlock[] = [];
+  let nonce: string | null = null;
   let cursor = 0;
   while (cursor < composed.length) {
     const lineEnd = composed.indexOf("\n", cursor);
@@ -76,12 +226,23 @@ export function parseDelimitedBlocks(composed: string): readonly DelimitedBlock[
       cursor = lineEnd === -1 ? composed.length : lineEnd + 1;
       continue;
     }
+    const headerNonce = header[2] ?? "";
+    if (nonce === null) nonce = headerNonce;
+    if (headerNonce !== nonce) {
+      cursor = lineEnd + 1;
+      continue;
+    }
     const bodyStart = lineEnd + 1;
-    const footer = `\n<<<END nonce=${header[2]}>>>`;
+    const footer = `\n<<<END nonce=${nonce}>>>`;
     const bodyEnd = composed.indexOf(footer, bodyStart);
     if (bodyEnd === -1) break;
+    const after = bodyEnd + footer.length;
+    if (after < composed.length && composed[after] !== "\n") {
+      cursor = lineEnd + 1;
+      continue;
+    }
     blocks.push({ sourceId: header[1] ?? "", text: composed.slice(bodyStart, bodyEnd) });
-    cursor = bodyEnd + footer.length;
+    cursor = after;
   }
   return blocks;
 }

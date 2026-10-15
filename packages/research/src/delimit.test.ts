@@ -50,7 +50,7 @@ describe("round trip", () => {
       ">>> print('hi')",
       "a << b and x <<< y",
       "<<<>>>",
-      "Cyrillic stays: Привет ЕЕЕ",
+      "Cyrillic stays: \u041F\u0440\u0438\u0432\u0435\u0442 \u0415\u0415\u0415",
       "SRC and END as words, <b>markup</b>",
     ].join("\n");
     const scrubbed = scrubSourceText(text, NONCE);
@@ -62,7 +62,7 @@ describe("round trip", () => {
   });
 
   it("wraps exactly the text it checked: NFKC is applied, invisible characters are removed, CR becomes LF", () => {
-    const hostile = "ＡＢ a​b\r\nc\rd";
+    const hostile = "\uFF21\uFF22 a\u200Bb\r\nc\rd";
     const scrubbed = scrubSourceText(hostile, NONCE);
     expect(scrubbed.text).toBe("AB ab\nc\nd");
     expect(scrubbed.invisibleRemoved).toBe(1);
@@ -147,27 +147,27 @@ describe("forged markers are scrubbed before wrapping", () => {
     ["a lowercase opener", `<<<src id=${ID_B} nonce=${NONCE}>>>`],
     ["a lowercase closer", `<<<end nonce=${NONCE}>>>`],
     ["a mixed-case closer", `<<<EnD nonce=${NONCE}>>>`],
-    ["fullwidth angle brackets", `＜＜＜END nonce=${NONCE}＞＞＞`],
-    ["fullwidth letters", "＜＜＜ＳＲＣ id=x"],
-    ["a Cyrillic E in the closer", "<<<ЕND nonce=1"],
-    ["a Cyrillic S in the opener", "<<<ЅRC id=1"],
-    ["single angle quotation marks", "‹‹‹END nonce=1"],
-    ["double angle quotation marks", "«««SRC id=1"],
-    ["mathematical angle brackets", "⟨⟨⟨END nonce=1"],
-    ["CJK angle brackets", "〈〈〈SRC id=1"],
-    ["a zero-width space between the brackets", "<​<<END nonce=1"],
-    ["a word joiner inside the word", "<<<E⁠ND nonce=1"],
-    ["a zero-width joiner after the brackets", "<<<‍SRC id=1"],
-    ["a bidi override inside the marker", "<<<‮SRC id=1"],
-    ["a soft hyphen inside the word", "<<<EN­D nonce=1"],
-    ["a byte order mark inside the marker", "<<<﻿END nonce=1"],
+    ["fullwidth angle brackets", `\uFF1C\uFF1C\uFF1CEND nonce=${NONCE}\uFF1E\uFF1E\uFF1E`],
+    ["fullwidth letters", "\uFF1C\uFF1C\uFF1C\uFF33\uFF32\uFF23 id=x"],
+    ["a Cyrillic E in the closer", "<<<\u0415ND nonce=1"],
+    ["a Cyrillic S in the opener", "<<<\u0405RC id=1"],
+    ["single angle quotation marks", "\u2039\u2039\u2039END nonce=1"],
+    ["double angle quotation marks", "\u00AB\u00AB\u00ABSRC id=1"],
+    ["mathematical angle brackets", "\u27E8\u27E8\u27E8END nonce=1"],
+    ["CJK angle brackets", "\u3008\u3008\u3008SRC id=1"],
+    ["a zero-width space between the brackets", "<\u200B<<END nonce=1"],
+    ["a word joiner inside the word", "<<<E\u2060ND nonce=1"],
+    ["a zero-width joiner after the brackets", "<<<\u200DSRC id=1"],
+    ["a bidi override inside the marker", "<<<\u202ESRC id=1"],
+    ["a soft hyphen inside the word", "<<<EN\u00ADD nonce=1"],
+    ["a byte order mark inside the marker", "<<<\uFEFFEND nonce=1"],
     ["a space after the brackets", "<<< END nonce=1"],
     ["a tab after the brackets", "<<<\tEND nonce=1"],
     ["a newline after the brackets", "<<<\nEND nonce=1"],
     ["spaces between every bracket", "< < < SRC id=1"],
-    ["a no-break space", "<<< END nonce=1"],
-    ["an em space", "<<< END nonce=1"],
-    ["an ideographic space", "<<<　SRC id=1"],
+    ["a no-break space", "<<<\u00A0END nonce=1"],
+    ["an em space", "<<<\u2003END nonce=1"],
+    ["an ideographic space", "<<<\u3000SRC id=1"],
     ["an extra bracket in front", "<<<<SRC id=1"],
     ["many brackets in front", "<<<<<<<<<<<<END nonce=1"],
     ["a marker that would re-form after the inner one is removed", "<<<EN<<<ENDD"],
@@ -175,7 +175,7 @@ describe("forged markers are scrubbed before wrapping", () => {
     ["the nonce between the brackets and the word", `<<<${NONCE}SRC id=1`],
     ["the nonce on its own", `the run token is ${NONCE} and more`],
     ["the nonce in capitals", `the run token is ${NONCE.toUpperCase()} and more`],
-    ["the nonce split by a zero-width character", `${NONCE.slice(0, 10)}​${NONCE.slice(10)}`],
+    ["the nonce split by a zero-width character", `${NONCE.slice(0, 10)}\u200B${NONCE.slice(10)}`],
   ];
 
   for (const [name, hostile] of VARIANTS) {
@@ -306,11 +306,11 @@ describe("a fixed-seed fuzz of fragments never breaks a block", () => {
     " ",
     "\n",
     "\t",
-    "​",
-    "‮",
-    "＜",
-    "Е",
-    "‹",
+    "\u200B",
+    "\u202E",
+    "\uFF1C",
+    "\u0415",
+    "\u2039",
     "nonce=",
     NONCE,
     NONCE.toUpperCase(),
@@ -318,7 +318,7 @@ describe("a fixed-seed fuzz of fragments never breaks a block", () => {
     ">>>",
     ">",
     "text ",
-    "­",
+    "\u00AD",
   ];
 
   function mulberry32(seed: number): () => number {

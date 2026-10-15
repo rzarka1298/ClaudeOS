@@ -52,7 +52,7 @@ describe("Test 7 (canonical URL): accepted forms", () => {
   });
 
   it("converts an internationalised host to punycode", () => {
-    expect(ok("https://BüCHER.example/")).toBe("https://xn--bcher-kva.example/");
+    expect(ok("https://B\u00FCCHER.example/")).toBe("https://xn--bcher-kva.example/");
   });
 
   it("normalises obfuscated IPv4 forms through the URL parser", () => {
@@ -113,8 +113,8 @@ describe("Test 7 (canonical URL): rejections carry a closed reason code and neve
   it("rejects input that contains a control, format or whitespace character", () => {
     expect(reason("https://exa\nmple.com/")).toBe("invalid-url");
     expect(reason("https://example.com/\u0000")).toBe("invalid-url");
-    expect(reason("https://example.com/a‮b")).toBe("invalid-url");
-    expect(reason("https://example.com/a​b")).toBe("invalid-url");
+    expect(reason("https://example.com/a\u202Eb")).toBe("invalid-url");
+    expect(reason("https://example.com/a\u200Bb")).toBe("invalid-url");
     expect(reason(" https://example.com/")).toBe("invalid-url");
   });
 

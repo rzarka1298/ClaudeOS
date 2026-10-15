@@ -63,7 +63,11 @@ describe("hostile research corpus sweep", () => {
       );
       const blocks = parseDelimitedBlocks(delimited.composed);
       const body = blocks[0]?.text ?? "";
-      const haystack = [body, ...processed.fields].join("\n").toLowerCase();
+      // A forged delimiter or nonce is expected in the pre-delimit text and is removed by the
+      // delimiter, so those entries are checked on the delimited body alone.
+      const haystack = (entry.delimiterPayload === true ? [body] : [body, ...processed.fields])
+        .join("\n")
+        .toLowerCase();
 
       it("is delimited: exactly one block with the source id, and the forged nonce is gone", () => {
         expect(blocks).toHaveLength(1);

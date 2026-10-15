@@ -81,9 +81,9 @@ describe("hostile research corpus shape", () => {
     );
     expect(long?.document.includes("A".repeat(5_000))).toBe(true);
     const bidi = HOSTILE_RESEARCH_CORPUS.find((e) => e.category === "bidi-override");
-    expect(bidi?.document).toContain("‮");
+    expect(bidi?.document).toContain("\u202E");
     const zero = HOSTILE_RESEARCH_CORPUS.find((e) => e.category === "zero-width");
-    expect(zero?.document).toContain("​");
+    expect(zero?.document).toContain("\u200B");
   });
 
   it("gives every entry an expectation the sweep can check", () => {
@@ -102,14 +102,14 @@ describe("hostile research corpus shape", () => {
   it("is written with escapes only: its source holds no non-ASCII character at all", () => {
     const source = readFileSync(new URL("./hostile-research-corpus.ts", import.meta.url), "utf8");
     const offenders = [...source].filter(
-      (c) => c.codePointAt(0)! > 0x7e || (c < " " && c !== "\n"),
+      (c) => (c.codePointAt(0) ?? 0) > 0x7e || (c < " " && c !== "\n"),
     );
     expect(offenders.map((c) => `U+${c.codePointAt(0)?.toString(16).toUpperCase()}`)).toEqual([]);
   });
 
   it("is synthetic: every address uses a reserved .invalid host", () => {
     for (const entry of HOSTILE_RESEARCH_CORPUS) {
-      for (const match of entry.document.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)) {
+      for (const match of entry.document.matchAll(/https?:\/\/(?:[^\s/@"<]*@)?([a-z0-9.-]+)/gi)) {
         const host = match[1] ?? "";
         expect(
           host.endsWith(".invalid") || host === "www.w3.org" || host === "purl.org",

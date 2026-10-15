@@ -10,7 +10,7 @@ describe("Test 8 (hash input): canonical form", () => {
   });
 
   it("trims trailing whitespace on every line and keeps leading whitespace", () => {
-    expect(canonicalHashInput("a  \n  b\t\t\nc  ")).toBe("a\n  b\nc\n");
+    expect(canonicalHashInput("a  \n  b\t\t\nc \u00A0")).toBe("a\n  b\nc\n");
   });
 
   it("ends with exactly one newline however many trailing blank lines there were", () => {
@@ -25,8 +25,8 @@ describe("Test 8 (hash input): canonical form", () => {
   });
 
   it("applies NFC", () => {
-    expect(canonicalHashInput("é")).toBe("é\n");
-    expect(canonicalHashInput("é")).toBe("é\n");
+    expect(canonicalHashInput("e\u0301")).toBe("\u00E9\n");
+    expect(canonicalHashInput("\u00E9")).toBe("\u00E9\n");
   });
 
   it("maps the empty string to a single newline", () => {
@@ -34,13 +34,15 @@ describe("Test 8 (hash input): canonical form", () => {
   });
 
   it("is idempotent", () => {
-    for (const input of ["", "a", "a  \r\n\r\nb́ \r\n\r\n", "x\n\n\n", "  lead\ttrail\t\n"]) {
+    for (const input of ["", "a", "a  \r\n\r\nb\u0301 \r\n\r\n", "x\n\n\n", "  lead\ttrail\t\n"]) {
       const once = canonicalHashInput(input);
       expect(canonicalHashInput(once)).toBe(once);
     }
   });
 
   it("gives equal output for texts that differ only in line endings, trailing space or composition", () => {
-    expect(canonicalHashInput("café \r\nbar\r\n")).toBe(canonicalHashInput("café\nbar   \n\n"));
+    expect(canonicalHashInput("caf\u00E9 \r\nbar\r\n")).toBe(
+      canonicalHashInput("cafe\u0301\nbar   \n\n"),
+    );
   });
 });

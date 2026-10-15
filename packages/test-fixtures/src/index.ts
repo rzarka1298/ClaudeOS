@@ -4,6 +4,16 @@ export {
   FakeSessionProjectLookup,
   FakeSessionTerminalLauncher,
 } from "./fake-ports.js";
+export type {
+  HostileResearchCategory,
+  HostileResearchEntry,
+} from "./hostile-research-corpus.js";
+export {
+  HOSTILE_RESEARCH_CATEGORIES,
+  HOSTILE_RESEARCH_CORPUS,
+  HOSTILE_RESEARCH_NONCE,
+  HOSTILE_RESEARCH_SOURCE_ID,
+} from "./hostile-research-corpus.js";
 export type { StartServiceForTestOptions, TestServiceHandle } from "./service-harness.js";
 export {
   requestOverSocket,
