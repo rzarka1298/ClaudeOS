@@ -723,3 +723,114 @@ describe("Task 3 Test 6: ADR cross references resolve", () => {
     expect(titles).toContain((back as RegExpExecArray)[1]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 07-05 Task 3 (ADR-09): the record that completes ADR 0013
+
+/** The ADR that satisfies ADR-09 and says it completes another record. */
+function jobRunAdr(): Adr {
+  return adrWhere(
+    (adr) =>
+      (adr.frontMatter.satisfies ?? "").startsWith("ADR-09") &&
+      (adr.frontMatter.satisfies ?? "").includes("completes"),
+    "satisfies ADR-09 and completes another record",
+  );
+}
+
+describe("07-05 Task 3 Test 1: ADR-09 is satisfied by the scope record and completed by the new one", () => {
+  it("exactly one ADR other than the scope record completes ADR-09, and it is accepted", () => {
+    const completing = jobRunAdr();
+    expect(completing.frontMatter.status).toBe("accepted");
+    expect(completing.file.startsWith("0013")).toBe(false);
+    expect(completing.file).toMatch(/^\d{4}-job-run-idempotency-and-missed-run-semantics\.md$/);
+  });
+
+  it("ADR 0013 still satisfies ADR-09 without saying completes", () => {
+    const scope = adrWhere((adr) => adr.file.startsWith("0013-"), "is ADR 0013");
+    expect(scope.frontMatter.satisfies ?? "").toMatch(/^ADR-09\b/);
+    expect(scope.frontMatter.satisfies ?? "").not.toContain("completes");
+  });
+});
+
+describe("07-05 Task 3 Test 2: the completing record states the decision", () => {
+  const checks: ReadonlyArray<readonly [string, RegExp]> = [
+    ["names the manual key form", /<jobId>:manual:<runId>/],
+    [
+      "names the scheduled key form with the IANA zone",
+      /<jobId>:<cadence>:<YYYY-MM-DD>@<IANA zone>/,
+    ],
+    ["gives the worked manual example", /research\.daily-tech:manual:0mfk1a2b3c4d5e6f7a8b9c0d2/],
+    [
+      "gives the worked scheduled example",
+      /research\.daily-tech:daily:2026-10-13@America\/New_York/,
+    ],
+    ["the zone sits inside the key", /zone[^.]*inside the (scheduled )?key/i],
+    ["a changed zone opens a new window", /new window/i],
+    ["one date may produce a duplicate run", /duplicate/i],
+    ["manual runs never consume a scheduled window", /never (consume|alter)[^.]*scheduled window/i],
+    ["outcome success", /\bsuccess\b/],
+    ["outcome partial", /\bpartial\b/],
+    ["outcome failure", /\bfailure\b/],
+    [
+      "skipped and missed are reserved",
+      /skipped[^.]*missed[^.]*reserved|reserved[^.]*skipped[^.]*missed/i,
+    ],
+    ["partial is a completed run with outcome partial", /completed[^.]*outcome partial/i],
+    ["outcome is null while running and for stale", /null while[^.]*running[^.]*stale/i],
+    ["recovery to stale in the run table", /`runs`[^.]*stale|stale[^.]*`runs`/i],
+    ["recovery to stale in the job run table", /`job_runs`[^.]*stale|stale[^.]*`job_runs`/i],
+    ["recovery happens in one transaction", /one transaction/i],
+    ["never an invented terminal state", /never an invented terminal state|invent/i],
+    ["the in-flight lock", /in-flight lock/i],
+    ["the partial unique index backstop", /partial unique index/i],
+    ["the index name", /job_runs_one_inflight_per_job/],
+    ["a second press returns the running run", /second press[^.]*running run/i],
+    ["scheduled_for is the start instant for manual runs", /`scheduled_for`[^.]*start instant/i],
+    ["raw snapshots are content-addressed", /content-addressed/i],
+    ["milestone 1 deletes no raw snapshot", /never deleted|deletes nothing|no deletion/i],
+    ["vault.delete is a reserved approval row", /`vault\.delete`[^.]*reserved/i],
+    ["the catch-up seam", /`decideCatchUp`/],
+    [
+      "catch-up is milestone-2 work",
+      /decideCatchUp[^.]*milestone[ -]2|milestone[ -]2[^.]*decideCatchUp/i,
+    ],
+    [
+      "the window functions are named",
+      /`windowDate`[\s\S]*`wallToInstant`|`wallToInstant`[\s\S]*`windowDate`/,
+    ],
+    ["DST windows use the local date", /local date/i],
+  ];
+  for (const [label, pattern] of checks) {
+    it(label, () => {
+      expect(flat(jobRunAdr().body)).toMatch(pattern);
+    });
+  }
+
+  it("names the scope record it completes by title", () => {
+    const scope = adrWhere((adr) => adr.file.startsWith("0013-"), "is ADR 0013");
+    expect(scope.title.length).toBeGreaterThan(10);
+    expect(flat(jobRunAdr().body)).toContain(scope.title);
+    expect(flat(jobRunAdr().body)).toMatch(/completes? .{0,60}(scope|half)/i);
+  });
+
+  it("uses placeholders only and every ADR number it mentions exists", () => {
+    const adr = jobRunAdr();
+    expect(adr.text).not.toMatch(HOME_PATH);
+    const existing = new Set(allAdrs().map((a) => a.file.slice(0, 4)));
+    for (const match of adr.text.matchAll(/ADR[- ](\d{4})\b/g)) {
+      expect(existing.has(match[1] as string), `mentions ADR ${match[1]}`).toBe(true);
+    }
+  });
+});
+
+describe("07-05 Task 3 Test 3: the requirement is ticked", () => {
+  const path = join(REPO_ROOT, ".planning", "REQUIREMENTS.md");
+  it.skipIf(!existsSync(path))(
+    "marks ADR-09 complete in the list and the traceability table",
+    () => {
+      const text = readFileSync(path, "utf8");
+      expect(text).toMatch(/^- \[x\] \*\*ADR-09\*\*/m);
+      expect(text).toMatch(/^\| ADR-09 \| Phase 7[^|]*\| Complete \|/m);
+    },
+  );
+});
