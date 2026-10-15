@@ -56,8 +56,8 @@ describe("allowlist: elements that are not known content drop their whole subtre
     expect(result.text).toBe("kept");
   });
 
-  it("drops an unknown element's content even when a later end tag names an outer element", () => {
-    expect(htmlToText("<div><blink>HID</div>HID_B").text).toBe("");
+  it("ends an unknown element at an enclosing end tag, as a browser does, and shows what follows", () => {
+    expect(htmlToText("<div><blink>HID</div>VIS").text).toBe("VIS");
   });
 
   it("drops unknown elements in feed html content and in xhtml content", () => {

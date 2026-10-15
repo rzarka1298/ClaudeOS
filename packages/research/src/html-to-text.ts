@@ -1,21 +1,33 @@
-// The streaming HTML sanitiser (D-06, D-26, RSRCH-08, research Pattern 2).
+// The streaming HTML sanitiser (D-06, D-26, RSRCH-08, research Pattern 2): an ALLOWLIST extractor.
 //
 // A callback pass over htmlparser2 that never builds a tree. A stack of frames mirrors the
-// parser's own element stack (implied closes arrive as onclosetag calls, void elements are never
-// pushed), and `hiddenDepth` counts the open frames that hide their content, so text is emitted
-// only while it is zero. Output is plain text: no attribute value is ever read into it (href,
-// src and alt are never emitted), block elements are separated by newlines on open and close, and
+// parser's own element stack, and `hiddenDepth` counts the open frames that drop their content, so
+// text is emitted only while it is zero. Text shows only when the element and EVERY ancestor is in
+// CONTENT_ELEMENTS (a fixed set of known content elements) and none carries a hiding signal. Any
+// other element (unknown, custom, legacy, raw-text, template, noscript, svg, math, media, form
+// controls) drops its whole subtree and is counted; an element left open at the end of the input
+// stays dropped. A frame closes only on its own end tag.
+//
+// Hiding signals: the `hidden`, `inert`, `popover` and `slot` attributes; `aria-hidden` with any
+// value other than `false`; the class tokens hidden, sr-only, invisible, d-none, display-none,
+// visually-hidden and screen-reader-text; `type=hidden` inputs; and an inline style that hides
+// (display none, visibility hidden, opacity 0, font-size 0, zero width, height or line height,
+// clip, clip-path, scale(0), an opacity(0) filter, content-visibility hidden, a transparent
+// colour, an off-screen offset) or cannot be read (a variable, calc, CSS escape, unknown keyword
+// or unit, or a value over 2 KiB). The head is dropped without a count. A main or article subtree
+// is preferred when one is visible. No attribute value is ever read into the output, block
+// elements are separated by newlines, control and format characters are removed and counted, and
 // every removal is counted into the eight keys of SANITISE_REPORT_KEYS.
 //
-// What is dropped: script, style, template, noscript, textarea, comments and CDATA; elements
-// hidden by the `hidden` or `aria-hidden` attributes, by `type=hidden` inputs or by an inline
-// style (display none, visibility hidden, opacity 0, font-size 0, an off-screen offset, a
-// transparent colour); media, embeds and form controls; the head. A main or article subtree is
-// preferred when one is visible. Control and format characters are removed from text and counted.
+// Every cap (depth 512, 100,000 elements, 1,000,000 input characters) drops the remainder and
+// counts it; the page text cap of 20,000 characters cuts output after filtering. A parse that
+// throws stops emitting. Where a browser and htmlparser2 build different trees the filter drops
+// more, never less (see the sink).
 //
-// Honest limit: CSS delivered by a stylesheet or a class cannot be evaluated without rendering,
-// so text hidden that way survives. The defence for that residue is the source delimiter and the
-// tool-less summariser, not detection.
+// Honest limit: CSS delivered by a stylesheet cannot be evaluated without rendering, so text
+// hidden that way survives unless the element also carries one of the recognised signals above
+// (a class alone proves nothing, so only the common hiding utilities are recognised by name). The
+// defence for that residue is the source delimiter and the tool-less summariser, not detection.
 //
 // The filter runs on the SAME parse whose text it emits. The sanitiser is an event sink
 // (`createMarkupSink`): htmlToText drives it from an HTML-mode parse, and the feed parser drives
@@ -89,8 +101,97 @@ export const MAX_STYLE_CHARS = 2_048;
 /** Collected text per bucket stops growing here, long before it could matter for memory. */
 const COLLECT_CAP = 100_000;
 
-/** Signature stub: the allowlist arrives with the tests that pin it. */
-export const CONTENT_ELEMENTS: ReadonlySet<string> = new Set();
+/**
+ * The allowlist: the only elements whose text is ever emitted. An element outside it (unknown,
+ * custom, legacy, raw-text, template, svg, math, media, form controls) drops its whole subtree.
+ * Void members (br, hr, wbr) only separate lines.
+ */
+export const CONTENT_ELEMENTS: ReadonlySet<string> = new Set([
+  "a",
+  "abbr",
+  "address",
+  "article",
+  "aside",
+  "b",
+  "bdi",
+  "bdo",
+  "big",
+  "blockquote",
+  "body",
+  "br",
+  "caption",
+  "center",
+  "cite",
+  "code",
+  "colgroup",
+  "data",
+  "dd",
+  "del",
+  "details",
+  "dfn",
+  "dir",
+  "div",
+  "dl",
+  "dt",
+  "em",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "font",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hgroup",
+  "hr",
+  "html",
+  "i",
+  "ins",
+  "kbd",
+  "label",
+  "legend",
+  "li",
+  "main",
+  "mark",
+  "menu",
+  "nav",
+  "nobr",
+  "ol",
+  "p",
+  "pre",
+  "q",
+  "rp",
+  "rt",
+  "ruby",
+  "s",
+  "samp",
+  "section",
+  "small",
+  "span",
+  "strike",
+  "strong",
+  "sub",
+  "summary",
+  "sup",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "time",
+  "tr",
+  "tt",
+  "u",
+  "ul",
+  "var",
+  "wbr",
+]);
 
 export const VOID_ELEMENTS: ReadonlySet<string> = new Set([
   "area",
@@ -282,6 +383,8 @@ const OFFSET_PROPERTIES = new Set([
   "margin-inline-start",
 ]);
 
+const ZERO_SIZE_PROPERTIES = new Set(["width", "height", "max-width", "max-height", "line-height"]);
+
 const LENGTH = /^([+-]?(?:\d+\.?\d*|\.\d+))([a-z%]*)$/;
 const NUMBER_OR_PERCENT = /^[+-]?(?:\d+\.?\d*|\.\d+)%?$/;
 
@@ -322,6 +425,25 @@ function transparentColour(value: string): boolean {
   );
 }
 
+function isZeroNumber(text: string): boolean {
+  return /^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(text) && Number.parseFloat(text) === 0;
+}
+
+/** A transform whose scale collapses the box: scale(0), scale(1, 0), scaleX(0), scale3d(0, 1, 1). */
+function scalesToZero(value: string): boolean {
+  for (const match of value.matchAll(/scale[xyz3d]*\(([^)]*)\)/g)) {
+    const args = (match[1] ?? "").split(/[\s,]+/).filter((part) => part !== "");
+    if (args.some(isZeroNumber)) return true;
+  }
+  return false;
+}
+
+/** The first size in a `font` shorthand (`0/0 serif`, `italic 0px serif`) is zero. */
+function shorthandFontSizeIsZero(value: string): boolean {
+  const match = /(?:^|\s)([+-]?(?:\d+\.?\d*|\.\d+))[a-z%]*(?=\/|\s|$)/.exec(value);
+  return match !== null && Number.parseFloat(match[1] ?? "") === 0;
+}
+
 /**
  * True when the style hides the element OR cannot be read. A value that is not plainly visible
  * (a variable, a calc, an unknown keyword or unit, a CSS escape) is treated as hidden: the cost
@@ -353,8 +475,21 @@ function styleHides(style: string): boolean {
       if (CSS_WIDE.has(value) || FONT_SIZE_KEYWORDS.has(value)) continue;
       const length = parseLength(value);
       if (length === null || length.size === 0) return true;
-    } else if (property === "color") {
+    } else if (property === "color" || property === "-webkit-text-fill-color") {
       if (transparentColour(value)) return true;
+    } else if (ZERO_SIZE_PROPERTIES.has(property)) {
+      const length = parseLength(value);
+      if (length !== null && length.size === 0) return true;
+    } else if (property === "clip" || property === "clip-path") {
+      if (!(value === "auto" || value === "none" || CSS_WIDE.has(value))) return true;
+    } else if (property === "transform") {
+      if (scalesToZero(value)) return true;
+    } else if (property === "filter") {
+      if (/opacity\(\s*0*\.?0*%?\s*\)/.test(value)) return true;
+    } else if (property === "content-visibility") {
+      if (value === "hidden") return true;
+    } else if (property === "font") {
+      if (shorthandFontSizeIsZero(value)) return true;
     } else if (OFFSET_PROPERTIES.has(property)) {
       if (CSS_WIDE.has(value) || value === "auto") continue;
       const length = parseLength(value);
@@ -369,11 +504,30 @@ function localName(name: string): string {
   return name.slice(name.lastIndexOf(":") + 1).toLowerCase();
 }
 
+const HIDING_CLASSES = new Set([
+  "hidden",
+  "sr-only",
+  "invisible",
+  "d-none",
+  "display-none",
+  "visually-hidden",
+  "screen-reader-text",
+]);
+
+/**
+ * Hiding signals. A stylesheet cannot be evaluated without rendering, so a class alone proves
+ * nothing; only the common hiding utilities are recognised by name.
+ */
 function hiddenByAttributes(attribs: Readonly<Record<string, string>>): boolean {
   for (const [rawName, value] of Object.entries(attribs)) {
     const name = localName(rawName);
-    if (name === "hidden") return true;
-    if (name === "aria-hidden" && value.trim().toLowerCase() === "true") return true;
+    if (name === "hidden" || name === "inert" || name === "popover" || name === "slot") return true;
+    if (name === "aria-hidden" && value.trim().toLowerCase() !== "false") return true;
+    if (name === "class") {
+      for (const token of value.toLowerCase().split(/\s+/)) {
+        if (HIDING_CLASSES.has(token)) return true;
+      }
+    }
     // A style too long to read is unreadable, and unreadable is hidden.
     if (name === "style" && (value.length > MAX_STYLE_CHARS || styleHides(value))) return true;
   }
@@ -570,6 +724,10 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     } else if (MEDIA.has(name)) {
       hides = true;
       counted = "mediaDropped";
+    } else if (!CONTENT_ELEMENTS.has(name)) {
+      // Not known content: the whole subtree is dropped (an unknown void element has none).
+      hides = true;
+      if (!isVoid) counted = "hiddenBlocks";
     } else if (name === "a" && attributeValue(attribs, "href") !== undefined) {
       counted = "linksDropped";
     }
