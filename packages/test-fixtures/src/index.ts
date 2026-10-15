@@ -37,6 +37,16 @@ export {
   HOSTILE_RESEARCH_NONCE,
   HOSTILE_RESEARCH_SOURCE_ID,
 } from "./hostile-research-corpus.js";
+export type {
+  HostileAnthropicReply,
+  HostileItemTextAnswer,
+} from "./hostile-summariser-replies.js";
+export {
+  HOSTILE_ANTHROPIC_REPLIES,
+  HOSTILE_ITEM_TEXT_ANSWERS,
+  ITEM_TEXT_ID_A,
+  ITEM_TEXT_ID_B,
+} from "./hostile-summariser-replies.js";
 export type { StartServiceForTestOptions, TestServiceHandle } from "./service-harness.js";
 export {
   requestOverSocket,
