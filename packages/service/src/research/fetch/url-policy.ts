@@ -77,3 +77,24 @@ export function validateFetchUrl(
   url.hash = "";
   return { ok: true, url };
 }
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the point is to find control characters
+const FORBIDDEN_LOCATION = /[\u0000-\u0020\u007f\\]/u;
+
+/**
+ * Resolve a `Location` header against the address that returned it and run the full policy on the
+ * result. The raw header is checked first: the WHATWG parser silently drops tabs and line breaks,
+ * which would let `https://ok.example/\r\nSet-Cookie: x` through as a clean address.
+ */
+export function resolveRedirectTarget(location: string, base: URL): FetchUrlVerdict {
+  const unsafe: FetchUrlVerdict = { ok: false, code: "unsafe-redirect" };
+  if (location.length === 0 || location.length > MAX_URL_LENGTH) return unsafe;
+  if (FORBIDDEN_LOCATION.test(location)) return unsafe;
+  let resolved: URL;
+  try {
+    resolved = new URL(location, base);
+  } catch {
+    return unsafe;
+  }
+  return validateFetchUrl(resolved.href, "redirect");
+}

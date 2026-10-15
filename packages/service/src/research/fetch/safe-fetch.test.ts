@@ -760,7 +760,7 @@ describe("Task 3 Test 4 (errors): one closed code, no remote text", () => {
   it("returns and logs nothing from the URL query, a header or the body", async () => {
     const target = rig(() => ({
       status: 500,
-      headers: { "x-leak": "SECRET-TOKEN", "set-cookie": "SECRET-TOKEN" },
+      headers: { "x-leak": "SECRET-TOKEN", "set-cookie": ["SECRET-TOKEN"] },
       body: "SECRET-TOKEN",
     }));
     const result = await run(target, "https://a.example.invalid/feed?token=SECRET-TOKEN");

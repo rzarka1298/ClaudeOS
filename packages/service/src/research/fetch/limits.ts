@@ -17,6 +17,8 @@ export const MAX_REDIRECTS = 3;
 export const FETCH_CONCURRENCY = 3;
 /** Longest address the fetcher will parse, for a source or a Location header. */
 export const MAX_URL_LENGTH = 2048;
+/** The most response-header bytes Node will parse (its own default, set explicitly). */
+export const MAX_HEADER_BYTES = 16 * 1024;
 /** The first bytes inspected for a meta charset (the HTML prescan window). */
 export const META_PRESCAN_BYTES = 1024;
 

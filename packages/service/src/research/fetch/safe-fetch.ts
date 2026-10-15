@@ -2,22 +2,42 @@ import type { IncomingHttpHeaders } from "node:http";
 import https from "node:https";
 import type net from "node:net";
 import type { SourceFailureCode } from "@ccc/domain";
-import { safeLookup } from "./address-policy.js";
+import { childLogger } from "../../logging.js";
+import { isBlockedAddress, REFUSED_ADDRESS_CODE, safeLookup } from "./address-policy.js";
+import { decodeBody } from "./decode-body.js";
 import {
   ACCEPT_BY_KIND,
+  BYTE_CAP_BY_KIND,
   CONTENT_TYPE_ALLOWLIST,
+  IDLE_TIMEOUT_MS,
+  MAX_HEADER_BYTES,
+  MAX_REDIRECTS,
   OCTET_STREAM,
+  REDIRECT_STATUSES,
+  RUN_BYTE_CAP,
   type SourceKind,
+  TOTAL_TIMEOUT_MS,
   USER_AGENT,
 } from "./limits.js";
-import { validateFetchUrl } from "./url-policy.js";
+import { envProxyRequested } from "./proxy-env.js";
+import { resolveRedirectTarget, validateFetchUrl } from "./url-policy.js";
 
 /**
- * The research fetcher: an HTTPS-only GET with the address validator on the connection, bounded
- * bytes and a closed failure code (D-09, D-10). Completed across the three tasks of plan 07-09.
+ * The research fetcher: an HTTPS-only GET with the address validator on the connection, manual
+ * re-validated redirects, bounded time and bytes, and a closed failure code (D-09, D-10).
  *
- * Every failure is one member of SOURCE_FAILURE_CODES; no remote string, header or body is ever
- * returned in a failure.
+ * - Every request carries `lookup` (the validator), so the address that was checked is the address
+ *   Node connects to: there is no second resolution between check and connect. IP literals never
+ *   call `lookup`, so the URL policy checks them first, on the source and on every redirect target.
+ *   The peer address of every response is checked as well, as a last line.
+ * - One dedicated keep-alive-free agent, a fixed User-Agent, no cookies, no credentials, no proxy:
+ *   when the environment asks Node for an environment proxy every source is refused.
+ * - Bytes are counted as they stream and the response is destroyed the moment a cap is crossed;
+ *   nothing is buffered and then checked. Only identity encoding is accepted, so nothing is ever
+ *   decompressed.
+ * - Every failure is one member of SOURCE_FAILURE_CODES. No remote string, header or body is ever
+ *   returned in a failure, logged, or thrown.
+ * - TLS certificate verification stays at Node's defaults.
  */
 
 export interface SafeRequestOptions {
@@ -30,7 +50,9 @@ export interface SafeRequestOptions {
   readonly lookup: net.LookupFunction;
   readonly agent: https.Agent;
   readonly signal: AbortSignal;
+  /** The socket idle timeout; Node emits `timeout` on the request when it elapses. */
   readonly timeout: number;
+  readonly maxHeaderSize: number;
 }
 
 /** What the fetcher reads of a response; `http.IncomingMessage` satisfies it. */
@@ -56,6 +78,12 @@ export type RequestFn = (
 
 const httpsRequest: RequestFn = (options, onResponse) => https.request(options, onResponse);
 
+/** A log entry is a fixed event name and a closed code, never a remote string. */
+export interface FetchLogEntry {
+  readonly event: string;
+  readonly code: string;
+}
+
 export interface SafeFetcherDeps {
   /** Default `https.request`. Tests inject a fake; no test opens a socket. */
   readonly request?: RequestFn;
@@ -65,17 +93,46 @@ export interface SafeFetcherDeps {
   readonly agentFactory?: () => https.Agent;
   readonly env?: NodeJS.ProcessEnv;
   readonly execArgv?: readonly string[];
+  /** Default: the service logger. */
+  readonly log?: (entry: FetchLogEntry) => void;
+}
+
+/** The bytes all sources of one run may hold together (RUN_BYTE_CAP). */
+export interface RunBudget {
+  remaining(): number;
+  /** Take bytes as they arrive; false (and the budget emptied) when they do not fit. */
+  take(bytes: number): boolean;
+}
+
+export function createRunBudget(total: number = RUN_BYTE_CAP): RunBudget {
+  let left = total;
+  return {
+    remaining: () => left,
+    take(bytes) {
+      if (bytes <= left) {
+        left -= bytes;
+        return true;
+      }
+      left = 0;
+      return false;
+    },
+  };
 }
 
 export interface FetchSourceInput {
   readonly url: string;
   readonly kind: SourceKind;
+  readonly budget?: RunBudget;
 }
 
 export type FetchSourceResult =
   | {
       readonly ok: true;
       readonly bytes: Uint8Array;
+      /** The bytes decoded the way a browser would, by BOM, then Content-Type, then meta. */
+      readonly text: string;
+      readonly charset: string;
+      /** The media type without parameters. */
       readonly contentType: string;
       readonly finalUrl: string;
     }
@@ -95,8 +152,7 @@ function headerText(headers: IncomingHttpHeaders, name: string): string | undefi
 }
 
 function mediaType(contentType: string | undefined): string | undefined {
-  if (contentType === undefined) return undefined;
-  const type = contentType.split(";")[0]?.trim().toLowerCase();
+  const type = contentType?.split(";")[0]?.trim().toLowerCase();
   return type === undefined || type === "" ? undefined : type;
 }
 
@@ -104,29 +160,176 @@ function startsLikeXml(bytes: Uint8Array): boolean {
   let start = 0;
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) start = 3;
   while (start < bytes.length && [0x20, 0x09, 0x0a, 0x0d].includes(bytes[start] ?? 0)) start += 1;
-  const head = new TextDecoder("latin1").decode(bytes.subarray(start, start + 12)).toLowerCase();
+  const head = Buffer.from(bytes.subarray(start, start + 12))
+    .toString("latin1")
+    .toLowerCase();
   return ["<?xml", "<feed", "<rss", "<rdf:rdf"].some((prefix) => head.startsWith(prefix));
 }
 
-export function createSafeFetcher(deps: SafeFetcherDeps = {}): SafeFetcher {
-  const request = deps.request ?? httpsRequest;
-  const lookup = deps.lookup ?? safeLookup;
-  const agent = (deps.agentFactory ?? (() => new https.Agent({ keepAlive: false })))();
+const TLS_CODES: ReadonlySet<string> = new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "HOSTNAME_MISMATCH",
+  "EPROTO",
+]);
+const DNS_CODES: ReadonlySet<string> = new Set([
+  "ENOTFOUND",
+  "ENODATA",
+  "EAI_AGAIN",
+  "EAI_FAIL",
+  "EAI_NODATA",
+  "EAI_NONAME",
+  "ESERVFAIL",
+]);
+const TIMEOUT_CODES: ReadonlySet<string> = new Set(["ETIMEDOUT", "ESOCKETTIMEDOUT"]);
 
-  async function fetchSource(input: FetchSourceInput): Promise<FetchSourceResult> {
-    const verdict = validateFetchUrl(input.url, "source");
-    if (!verdict.ok) return fail(verdict.code);
-    const url = verdict.url;
-    const controller = new AbortController();
+/** Map an error to a closed code by its machine code alone; the message is never read. */
+function codeForError(error: unknown): SourceFailureCode {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code: unknown }).code)
+      : "";
+  if (code === REFUSED_ADDRESS_CODE) return "refused-address";
+  if (DNS_CODES.has(code)) return "dns-failure";
+  if (TIMEOUT_CODES.has(code)) return "timeout";
+  if (
+    TLS_CODES.has(code) ||
+    code.startsWith("ERR_TLS_") ||
+    code.startsWith("ERR_SSL_") ||
+    code.startsWith("CERT_")
+  ) {
+    return "tls-failure";
+  }
+  return "network-error";
+}
 
-    return new Promise<FetchSourceResult>((resolve) => {
-      let settled = false;
-      const finish = (result: FetchSourceResult): void => {
-        if (settled) return;
-        settled = true;
-        resolve(result);
-      };
-      const req = request(
+type HopOutcome =
+  | { readonly type: "fail"; readonly code: SourceFailureCode }
+  | { readonly type: "redirect"; readonly location: string | undefined }
+  | {
+      readonly type: "final";
+      readonly headers: IncomingHttpHeaders;
+      readonly bytes: Uint8Array;
+    };
+
+interface HopContext {
+  readonly request: RequestFn;
+  readonly lookup: net.LookupFunction;
+  readonly agent: https.Agent;
+  readonly signal: AbortSignal;
+  readonly kind: SourceKind;
+  readonly budget: RunBudget | undefined;
+}
+
+function declaredLength(headers: IncomingHttpHeaders): number | undefined {
+  const text = headerText(headers, "content-length")?.trim();
+  if (text === undefined || !/^\d{1,15}$/.test(text)) return undefined;
+  return Number(text);
+}
+
+/** One request, one response, bounded in time and bytes. Never rejects. */
+function fetchHop(url: URL, context: HopContext): Promise<HopOutcome> {
+  return new Promise<HopOutcome>((resolve) => {
+    let settled = false;
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    let handle: RequestHandle | undefined;
+    let response: ResponseStream | undefined;
+
+    const onAbort = (): void => finish({ type: "fail", code: "timeout" });
+
+    function disarm(): void {
+      if (idle !== undefined) clearTimeout(idle);
+      idle = undefined;
+    }
+    function arm(): void {
+      disarm();
+      idle = setTimeout(() => finish({ type: "fail", code: "timeout" }), IDLE_TIMEOUT_MS);
+    }
+    function finish(outcome: HopOutcome): void {
+      if (settled) return;
+      settled = true;
+      disarm();
+      context.signal.removeEventListener("abort", onAbort);
+      if (outcome.type === "fail") {
+        response?.destroy();
+        handle?.destroy();
+      }
+      resolve(outcome);
+    }
+
+    const cap = BYTE_CAP_BY_KIND[context.kind];
+
+    async function consume(res: ResponseStream): Promise<void> {
+      const peer = res.socket?.remoteAddress;
+      if (peer !== undefined && isBlockedAddress(peer)) {
+        finish({ type: "fail", code: "refused-address" });
+        return;
+      }
+      const status = res.statusCode ?? 0;
+      if (REDIRECT_STATUSES.has(status)) {
+        const location = headerText(res.headers, "location");
+        res.destroy();
+        finish({ type: "redirect", location });
+        return;
+      }
+      if (status !== 200) {
+        finish({ type: "fail", code: "http-status" });
+        return;
+      }
+      const encoding = headerText(res.headers, "content-encoding")?.trim().toLowerCase();
+      if (encoding !== undefined && encoding !== "" && encoding !== "identity") {
+        finish({ type: "fail", code: "content-type" });
+        return;
+      }
+      const type = mediaType(headerText(res.headers, "content-type"));
+      const octet = type === OCTET_STREAM && context.kind === "feed";
+      if (type === undefined || (!CONTENT_TYPE_ALLOWLIST.has(type) && !octet)) {
+        finish({ type: "fail", code: "content-type" });
+        return;
+      }
+      const declared = declaredLength(res.headers);
+      const allowed = Math.min(cap, context.budget?.remaining() ?? cap);
+      if (declared !== undefined && declared > allowed) {
+        finish({ type: "fail", code: "oversize" });
+        return;
+      }
+
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      arm();
+      try {
+        for await (const chunk of res) {
+          if (settled) return;
+          total += chunk.byteLength;
+          if (total > cap || context.budget?.take(chunk.byteLength) === false) {
+            finish({ type: "fail", code: "oversize" });
+            return;
+          }
+          chunks.push(chunk);
+          arm();
+        }
+      } catch (error) {
+        finish({ type: "fail", code: codeForError(error) });
+        return;
+      }
+      if (settled) return;
+      const bytes = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      finish({ type: "final", headers: res.headers, bytes });
+    }
+
+    try {
+      // Registered before the request so a total-deadline abort is read as a timeout, not as the
+      // transport error the abort then raises.
+      context.signal.addEventListener("abort", onAbort);
+      handle = context.request(
         {
           protocol: "https:",
           hostname: url.hostname.replace(/^\[|\]$/g, ""),
@@ -134,63 +337,113 @@ export function createSafeFetcher(deps: SafeFetcherDeps = {}): SafeFetcher {
           path: `${url.pathname}${url.search}`,
           method: "GET",
           headers: {
-            accept: ACCEPT_BY_KIND[input.kind],
+            accept: ACCEPT_BY_KIND[context.kind],
             "accept-encoding": "identity",
             "user-agent": USER_AGENT,
           },
-          lookup,
-          agent,
-          signal: controller.signal,
-          timeout: 0,
+          lookup: context.lookup,
+          agent: context.agent,
+          signal: context.signal,
+          timeout: IDLE_TIMEOUT_MS,
+          maxHeaderSize: MAX_HEADER_BYTES,
         },
-        (response) => {
-          void handle(response, input.kind, url).then(finish);
+        (res) => {
+          response = res;
+          arm();
+          void consume(res).catch(() => finish({ type: "fail", code: "network-error" }));
         },
       );
-      req.on("error", () => finish(fail("network-error")));
-      req.end();
-    });
+      handle.on("error", (error) => finish({ type: "fail", code: codeForError(error) }));
+      handle.on("timeout", () => finish({ type: "fail", code: "timeout" }));
+      arm();
+      handle.end();
+    } catch {
+      finish({ type: "fail", code: "network-error" });
+    }
+  });
+}
+
+function defaultLog(entry: FetchLogEntry): void {
+  childLogger({ component: "research-fetch" }).warn(entry);
+}
+
+export function createSafeFetcher(deps: SafeFetcherDeps = {}): SafeFetcher {
+  const log = deps.log ?? defaultLog;
+  const env = deps.env ?? process.env;
+  const execArgv = deps.execArgv ?? process.execArgv;
+
+  // An environment proxy would receive the TCP connection, so the connect-time check would validate
+  // the proxy and not the target. Refuse every source instead of trusting the explicit agent.
+  if (envProxyRequested(env, execArgv)) {
+    log({ event: "research-fetch-proxy-refused", code: "network-error" });
+    return { fetchSource: async () => fail("network-error") };
+  }
+
+  const request = deps.request ?? httpsRequest;
+  const lookup = deps.lookup ?? safeLookup;
+  const agent = (deps.agentFactory ?? (() => new https.Agent({ keepAlive: false })))();
+
+  async function fetchInner(input: FetchSourceInput): Promise<FetchSourceResult> {
+    const first = validateFetchUrl(input.url, "source");
+    if (!first.ok) return fail(first.code);
+
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), TOTAL_TIMEOUT_MS);
+    const context: HopContext = {
+      request,
+      lookup,
+      agent,
+      signal: controller.signal,
+      kind: input.kind,
+      budget: input.budget,
+    };
+    try {
+      let current = first.url;
+      let redirects = 0;
+      for (;;) {
+        const outcome = await fetchHop(current, context);
+        if (outcome.type === "fail") return fail(outcome.code);
+        if (outcome.type === "redirect") {
+          if (redirects >= MAX_REDIRECTS) return fail("redirect-limit");
+          if (outcome.location === undefined) return fail("unsafe-redirect");
+          const next = resolveRedirectTarget(outcome.location, current);
+          if (!next.ok) return fail(next.code);
+          current = next.url;
+          redirects += 1;
+          continue;
+        }
+        if (outcome.bytes.byteLength === 0) return fail("empty-content");
+        const contentType = headerText(outcome.headers, "content-type");
+        const type = mediaType(contentType) ?? "";
+        if (type === OCTET_STREAM && !startsLikeXml(outcome.bytes)) return fail("content-type");
+        const decoded = decodeBody(outcome.bytes, contentType);
+        if (!decoded.ok) return fail("parse-failure");
+        return {
+          ok: true,
+          bytes: outcome.bytes,
+          text: decoded.text,
+          charset: decoded.charset,
+          contentType: type,
+          finalUrl: current.href,
+        };
+      }
+    } finally {
+      clearTimeout(deadline);
+      // Releases anything still open on every path; harmless after a clean finish.
+      controller.abort();
+    }
+  }
+
+  async function fetchSource(input: FetchSourceInput): Promise<FetchSourceResult> {
+    let result: FetchSourceResult;
+    try {
+      result = await fetchInner(input);
+    } catch {
+      result = fail("network-error");
+    }
+    if (!result.ok) log({ event: "research-fetch-failed", code: result.code });
+    return result;
   }
 
   return { fetchSource };
-}
-
-async function handle(
-  response: ResponseStream,
-  kind: SourceKind,
-  url: URL,
-): Promise<FetchSourceResult> {
-  if (response.statusCode !== 200) {
-    response.destroy();
-    return fail("http-status");
-  }
-  const encoding = headerText(response.headers, "content-encoding")?.trim().toLowerCase();
-  if (encoding !== undefined && encoding !== "" && encoding !== "identity") {
-    response.destroy();
-    return fail("content-type");
-  }
-  const type = mediaType(headerText(response.headers, "content-type"));
-  const octet = type === OCTET_STREAM && kind === "feed";
-  if (type === undefined || (!CONTENT_TYPE_ALLOWLIST.has(type) && !octet)) {
-    response.destroy();
-    return fail("content-type");
-  }
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for await (const chunk of response) {
-      chunks.push(chunk);
-      total += chunk.byteLength;
-    }
-  } catch {
-    return fail("network-error");
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  if (octet && !startsLikeXml(bytes)) return fail("content-type");
-  return { ok: true, bytes, contentType: type, finalUrl: url.href };
 }
