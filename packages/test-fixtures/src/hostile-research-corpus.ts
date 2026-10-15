@@ -384,6 +384,50 @@ const FEED_FIELDS: readonly FeedPayload[] = [
     keeps: ["Body kept"],
     counts: ["controlChars"],
   },
+  // Wave 1+2 review: an RSS description is entity-encoded HTML (plain or CDATA) and is sanitised.
+  {
+    name: "rss-description-escaped-html",
+    document: rss(
+      '<title>A</title><description>&lt;p&gt;Body kept&lt;/p&gt;&lt;script&gt;RD_SCRIPT()&lt;/script&gt;&lt;div style="display:none"&gt;RD_HIDDEN&lt;/div&gt;&lt;img src=x onerror=RD_ONERROR()&gt;</description>',
+    ),
+    forbidden: ["RD_SCRIPT", "RD_HIDDEN", "RD_ONERROR", "onerror", "<script"],
+    keeps: ["Body kept"],
+    counts: ["scripts", "hiddenBlocks", "mediaDropped"],
+  },
+  {
+    name: "rss-description-cdata-html",
+    document: rss(
+      "<title>A</title><description><![CDATA[<p>Body kept</p><script>RDC_SCRIPT()</script><p hidden>RDC_HIDDEN</p><img src=x onerror=RDC_ONERROR()>]]></description>",
+    ),
+    forbidden: ["RDC_SCRIPT", "RDC_HIDDEN", "RDC_ONERROR", "onerror", "<script"],
+    keeps: ["Body kept"],
+    counts: ["scripts", "hiddenBlocks", "mediaDropped"],
+  },
+  {
+    name: "rss-summary-without-type",
+    document: rss(
+      "<title>A</title><summary>&lt;p&gt;Body kept&lt;/p&gt;&lt;script&gt;RS_SCRIPT()&lt;/script&gt;</summary>",
+    ),
+    forbidden: ["RS_SCRIPT", "<script"],
+    keeps: ["Body kept"],
+    counts: ["scripts"],
+  },
+  // Wave 1+2 review: feed elements are matched by namespace, so a prefix proves nothing.
+  {
+    name: "atom-prefixed-foreign-namespace",
+    document:
+      '<atom:feed xmlns:atom="http://www.w3.org/2005/Atom"><atom:entry><atom:title>Prefixed</atom:title><x:summary xmlns:x="http://evil.invalid/ns">NS_INJECT</x:summary><atom:summary>Body kept</atom:summary></atom:entry></atom:feed>',
+    forbidden: ["NS_INJECT"],
+    keeps: ["Body kept"],
+  },
+  {
+    name: "rss-author-address",
+    document: rss(
+      "<title>A</title><author>victim@example.invalid (Dana)</author><description>Body kept</description>",
+    ),
+    forbidden: ["victim@example.invalid"],
+    keeps: ["Body kept", "Dana"],
+  },
   {
     name: "link-javascript",
     document: atom(

@@ -203,7 +203,8 @@ describe("Test 6 (feeds): RSS and Atom, newest five, caps and one sanitiser pass
         `<item><title>D</title><description>&amp;lt;script&amp;gt;DOUBLE&amp;lt;/script&amp;gt;</description></item>`,
       ),
     );
-    expect(parsed.entries[0]?.text).toBe("&lt;script&gt;DOUBLE&lt;/script&gt;");
+    // The description is HTML: the sanitiser decodes the XML-decoded text once and never parses it.
+    expect(parsed.entries[0]?.text).toBe("<script>DOUBLE</script>");
     expect(parsed.report.scripts).toBe(0);
   });
 
