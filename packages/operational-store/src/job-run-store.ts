@@ -46,6 +46,12 @@ export type JobRunTrigger = (typeof JOB_RUN_TRIGGERS)[number];
 /** The `job_runs.state` values that count as in flight; the partial unique index covers exactly these. */
 const IN_FLIGHT_STATES = ["queued", "starting", "running"] as const;
 
+/** The states recovery moves to stale: the in-flight three plus the Run state a waiting run would carry. */
+const NON_TERMINAL_JOB_RUN_STATES = [...IN_FLIGHT_STATES, "waiting-for-approval"] as const;
+
+/** Run ids bound per statement, well under SQLite's variable limit. */
+const RECOVERY_CHUNK = 500;
+
 export interface StartJobRunInput {
   readonly jobRunId: RunId;
   readonly jobKey: string;
@@ -539,6 +545,19 @@ export function listJobRuns(db: Database.Database, jobKey: string, limit: number
  * This writes exactly one state and never a terminal one. The caller moves the paired `runs`
  * rows in the same transaction.
  */
-export function recoverJobRunsToStale(_db: Database.Database, _runIds: readonly string[]): number {
-  return 0;
+export function recoverJobRunsToStale(db: Database.Database, runIds: readonly string[]): number {
+  const states = NON_TERMINAL_JOB_RUN_STATES.map(() => "?").join(", ");
+  let changed = 0;
+  db.transaction(() => {
+    for (let at = 0; at < runIds.length; at += RECOVERY_CHUNK) {
+      const chunk = runIds.slice(at, at + RECOVERY_CHUNK);
+      const marks = chunk.map(() => "?").join(", ");
+      changed += db
+        .prepare(
+          `UPDATE job_runs SET state = 'stale' WHERE job_run_id IN (${marks}) AND state IN (${states})`,
+        )
+        .run(...chunk, ...NON_TERMINAL_JOB_RUN_STATES).changes;
+    }
+  })();
+  return changed;
 }

@@ -590,12 +590,15 @@ describe("Task 3: recoverJobRunsToStale", () => {
     expect(jobRow(untouched)).toMatchObject({ state: "running" });
   });
 
-  it("is idempotent, accepts an empty list and refuses an id that is not a run id", () => {
+  it("is idempotent, accepts an empty list and treats an unknown or hostile id as bound data", () => {
     const id = runningRun(0);
     expect(recoverJobRunsToStale(db, [id])).toBe(1);
     expect(recoverJobRunsToStale(db, [id])).toBe(0);
     expect(recoverJobRunsToStale(db, [])).toBe(0);
-    expect(() => recoverJobRunsToStale(db, ["x'; DROP TABLE job_runs; --"])).toThrow();
+    expect(
+      recoverJobRunsToStale(db, ["x'; DROP TABLE job_runs; --", "run-without-a-job-run"]),
+    ).toBe(0);
+    expect(count("job_runs")).toBe(1);
   });
 
   it("handles more ids than one statement binds", () => {
