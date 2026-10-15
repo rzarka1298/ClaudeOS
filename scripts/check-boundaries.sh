@@ -116,15 +116,16 @@ list_source_files() {
 
 # Prints "file:line:content" for every non-comment line in the given files
 # matching the given extended regex. A "comment line" is one that holds only
-# comments: leading closed block comments (`/* ... */`, repeated) and a
-# leading `*/` (the end of a multi-line block) are stripped first, and what
-# remains is a comment when it is empty, starts a line comment `//`, opens a
-# block comment that this line does not close, or is a JSDoc continuation (`*`
-# followed by a space, tab, slash or the end of the line). Code that follows a
-# closed block comment on the same line is therefore still scanned (wave 1+2
-# review), and a generator method `*name()` is code, not a JSDoc line. When a
-# leading comment was stripped the pattern is matched against the code that
-# follows it, so a name that only the comment holds is not a hit.
+# comments: lines inside an open block comment (tracked across lines, opened by
+# a line that BEGINS with `/*` and does not close it), leading closed block
+# comments (`/* ... */`, repeated) are stripped first, and what remains is a
+# comment when it is empty, starts a line comment `//`, or opens a block
+# comment that this line does not close. Code that follows a closed block
+# comment on the same line is therefore still scanned (wave 1+2 review), a line
+# starting with `* ` OUTSIDE an open block is code (a continuation line such as
+# `* 0 || globalThis` is not a JSDoc line), and a generator method `*name()` is
+# code. When a leading comment was stripped the pattern is matched against the
+# code that follows it, so a name that only the comment holds is not a hit.
 grep_noncomment() {
   pattern="$1"
   shift
@@ -133,10 +134,18 @@ grep_noncomment() {
     awk -v pattern="$pattern" -v fname="$f" '
       {
         # Fast path: a line that does not match and holds no block-comment marker cannot be a hit.
-        if ($0 !~ pattern && index($0, "/*") == 0 && index($0, "*/") == 0) next
+        if (!inblock && $0 !~ pattern && index($0, "/*") == 0 && index($0, "*/") == 0) next
         rest = $0
-        sub(/^[ \t]+/, "", rest)
         stripped = 0
+        if (inblock) {
+          # Inside an open block comment: the line is a comment up to the first closing marker.
+          close_at = index(rest, "*/")
+          if (close_at == 0) next
+          rest = substr(rest, close_at + 2)
+          inblock = 0
+          stripped = 1
+        }
+        sub(/^[ \t]+/, "", rest)
         while (1) {
           if (rest ~ /^\/\*/) {
             close_at = index(substr(rest, 3), "*/")
@@ -144,15 +153,16 @@ grep_noncomment() {
             rest = substr(rest, 4 + close_at)
             sub(/^[ \t]+/, "", rest)
             stripped = 1
-          } else if (rest ~ /^\*\//) {
-            rest = substr(rest, 3)
-            sub(/^[ \t]+/, "", rest)
-            stripped = 1
           } else {
             break
           }
         }
-        is_comment = (rest == "") || (rest ~ /^\/\//) || (rest ~ /^\/\*/) || (rest ~ /^\*([ \t\/]|$)/)
+        # A line that opens a block comment and does not close it starts a comment; only a
+        # line that BEGINS with the opener is trusted to do so (a "/*" inside a string or a glob
+        # in the middle of code must not blank the lines after it).
+        opens = (rest ~ /^\/\*/)
+        if (opens) inblock = 1
+        is_comment = (rest == "") || (rest ~ /^\/\//) || opens
         target = stripped ? rest : $0
         if (!is_comment && target ~ pattern) {
           print fname ":" NR ":" $0
@@ -481,15 +491,17 @@ report_rule \
 #     WebSocket and EventSource with an identifier boundary on BOTH sides, so
 #     processed, processing, retrieval, evaluated, Functional and Reflector are
 #     not hits while `(0, eval)(...)` and `(0, Function)(...)` are;
-#   - a `.constructor` property read or call, or a bracketed "constructor"
-#     access, which reaches the Function constructor without naming it. A class
-#     declaration's own `constructor(` has no leading dot and is not a hit;
+#   - a `.constructor` property read or call, a destructured or shorthand
+#     `constructor` (`{ constructor: F }`), a bracketed "constructor" access, or a
+#     bracket holding a string concatenation (`["con" + "structor"]`), which reach
+#     the Function constructor without naming it. A class declaration's own
+#     `constructor(` has no leading dot or brace-colon and is not a hit;
 #   - an `import` that ends its line (the parenthesis is on the next one).
 # Comment lines are skipped by grep_noncomment. Test files of the folder are
 # scanned too (wave 1+2 review): nothing under it, tests included, needs an I/O
 # name, and a non-test module named like a test file must not escape the rule.
 UNTRUSTED_FILES=$(printf '%s\n%s\n' "$SRC_FILES" "$EXTRA_EXT_FILES" | grep '^packages/service/src/untrusted/' || true)
-UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])(fetch|require)[[:space:]]*[(]|(^|[^A-Za-z0-9_])import[[:space:]]*([(]|$)|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor([^A-Za-z0-9_]|$)|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
+UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])(fetch|require)[[:space:]]*[(]|(^|[^A-Za-z0-9_])import[[:space:]]*([(]|$)|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor([^A-Za-z0-9_]|$)|[{,][[:space:]]*constructor[[:space:]]*[:,}]|[[][[:space:]]*[\"'\`][^\"'\`]*[\"'\`][[:space:]]*[+]|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
 # shellcheck disable=SC2086
 check_rule \
   "a file under packages/service/src/untrusted/ names an I/O primitive (a node: specifier, child_process, fetch(, require(, a dynamic import(, process, globalThis, eval, Function, Reflect, XMLHttpRequest, WebSocket, EventSource or a .constructor access; the summariser folder must hold no way to act, ADR-0014, RSRCH-07)" \

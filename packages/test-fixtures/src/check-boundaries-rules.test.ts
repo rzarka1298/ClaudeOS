@@ -181,7 +181,9 @@ describe("check-boundaries.sh rule 17 (untrusted folder I/O names)", () => {
       [UNTRUSTED_PROBE]: [
         "// process node:fs fetch(x) require(y) globalThis eval(z) child_process",
         "/* Function( Reflect XMLHttpRequest WebSocket EventSource import( */",
+        "/**",
         " * process.env and globalThis are not available here",
+        " */",
         "export const ok = 1;",
         "",
       ].join("\n"),

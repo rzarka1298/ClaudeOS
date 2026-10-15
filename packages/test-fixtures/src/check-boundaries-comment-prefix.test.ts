@@ -153,3 +153,54 @@ describe("rule 17 minors", () => {
     expect(result.status).toBe(0);
   });
 });
+
+describe("rule 17 obfuscation shapes (second wave 1+2 round)", () => {
+  const PROBE = "packages/service/src/untrusted/probe.ts";
+  const FIRE: ReadonlyArray<readonly [name: string, source: string]> = [
+    [
+      "a destructured constructor",
+      'const { constructor: F } = () => 0;\nexport const g = F("return 1");\n',
+    ],
+    [
+      "a shorthand destructured constructor",
+      "const { constructor } = () => 0;\nexport const g = constructor;\n",
+    ],
+    [
+      "a computed key built by concatenation",
+      'export const k = (f as object)["con" + "structor"];\n',
+    ],
+    ["a continuation line that starts with a star", "export const n = 1\n  * 0 || globalThis;\n"],
+    [
+      "code after a string that contains a block-comment opener",
+      'const glob = "src/**/*.ts";\nexport const g = globalThis.fetch;\n',
+    ],
+    [
+      "code after a star-slash that starts a line",
+      "/* open\n   no stars here\n*/ export const g = globalThis.fetch;\n",
+    ],
+  ];
+  for (const [name, source] of FIRE) {
+    it(`fires on ${name}`, () => {
+      const result = backstop({ [PROBE]: source });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain("names an I/O primitive");
+    });
+  }
+
+  it("stays quiet for a real doc block and for class constructors", () => {
+    const result = backstop({
+      [PROBE]: [
+        "/**",
+        " * process and globalThis are not available here",
+        " * 0 || globalThis",
+        " */",
+        "export class Holder { constructor(readonly id: number) {} }",
+        "export class Other {",
+        "  constructor(readonly id: number) {}",
+        "}",
+        "",
+      ].join("\n"),
+    });
+    expect(result.status).toBe(0);
+  });
+});
