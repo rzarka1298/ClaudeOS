@@ -218,7 +218,7 @@ describe("07-04 truth 3: text a browser hides is not emitted", () => {
   ];
 
   for (const [name, html] of HIDDEN_PAYLOADS) {
-    it.skip(`does not emit text a browser keeps hidden: ${name}`, () => {
+    it(`does not emit text a browser keeps hidden: ${name}`, () => {
       const result = htmlToText(html);
       // Either the marker is dropped, or the filter says it stopped deciding.
       expect(result.text.includes("LEAK") && !result.truncated).toBe(false);
