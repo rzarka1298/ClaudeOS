@@ -29,8 +29,8 @@ import { escapeMarkdownText } from "./markdown-escape.js";
 import {
   finaliseReportNote,
   parseReportNote,
-  readReportNote,
   ReportNoteError,
+  readReportNote,
   reportNotePathFor,
   type WriteReportNoteOptions,
   writeReportNote,
@@ -327,7 +327,7 @@ describe("Test 3: the body carries the labels", () => {
     expect(sources.indexOf("1. ")).toBeLessThan(sources.indexOf("2. "));
     expect(sources).toContain(escapeMarkdownText(SOURCE_REFS[0]?.title ?? ""));
     expect(sources).toContain(escapeMarkdownText(SOURCE_REFS[1]?.title ?? ""));
-    expect(sources).toContain(`\`global/raw/${ID_A}.${HASH_A.slice(0, 8)}.md\``);
+    expect(sources).toContain(`\` global/raw/${ID_A}.${HASH_A.slice(0, 8)}.md \``);
     // Sanitise counts come from the structured handling entry.
     expect(sources).toContain("scripts 1");
     expect(sources).toContain("comments 2");
@@ -336,7 +336,7 @@ describe("Test 3: the body carries the labels", () => {
   test("the run note path appears as code, not as a link", () => {
     const written = writeReportNote(options());
     const body = bodyOf(readFileSync(written.absolutePath, "utf8"));
-    expect(body).toContain(`\`${`automation-runs/${RUN_ID}.md`}\``);
+    expect(body).toContain(`\` automation-runs/${RUN_ID}.md \``);
     expect(body).not.toContain("[[");
   });
 

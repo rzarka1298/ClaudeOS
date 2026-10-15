@@ -9,6 +9,8 @@ export interface VaultRepository {
 }
 
 export { AtomicWriteError, atomicWriteFileSync } from "./atomic-write.js";
+export type { ExtendedNoteReason } from "./extended-note.js";
+export { ExtendedNoteError } from "./extended-note.js";
 export type { ParsedNote } from "./frontmatter.js";
 export {
   InvalidNoteFrontmatterError,
@@ -28,6 +30,12 @@ export {
 } from "./index-generation.js";
 export type { TaskStatusCounts } from "./managed-folders.js";
 export { emptyTaskCounts, MANAGED_FOLDERS, WORKSPACE_LEAF_FOLDERS } from "./managed-folders.js";
+export {
+  escapeMarkdownText,
+  fenceUntrustedBlock,
+  inlineCode,
+  UNTRUSTED_FENCE_INFO,
+} from "./markdown-escape.js";
 export type {
   RepairedNote,
   RepairReport,
@@ -35,6 +43,23 @@ export type {
   RepairWarningKind,
 } from "./repair.js";
 export { repairVault } from "./repair.js";
+export type {
+  FinaliseReportNoteOptions,
+  ParsedReportNote,
+  ReadReportResult,
+  ReportNoteReason,
+  WriteReportNoteOptions,
+  WrittenReportNote,
+} from "./report-note.js";
+export {
+  finaliseReportNote,
+  parseReportNote,
+  ReportNoteError,
+  readReportNote,
+  renderReportBody,
+  reportNotePathFor,
+  writeReportNote,
+} from "./report-note.js";
 export type {
   CreatedWorkspace,
   VaultSetupEntry,
