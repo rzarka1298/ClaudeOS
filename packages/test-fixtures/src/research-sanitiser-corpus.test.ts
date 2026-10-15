@@ -32,12 +32,18 @@ interface Processed {
   readonly text: string;
   readonly fields: readonly string[];
   readonly report: SanitiseReport;
+  readonly truncated?: boolean;
 }
 
 function process(entry: HostileResearchEntry): Processed {
   if (entry.kind === "page") {
     const result = htmlToText(entry.document);
-    return { text: result.text, fields: [result.text], report: result.report };
+    return {
+      text: result.text,
+      fields: [result.text],
+      report: result.report,
+      truncated: result.truncated,
+    };
   }
   const feed = parseFeed(entry.document);
   const fields: string[] = [];
@@ -103,6 +109,12 @@ describe("hostile research corpus sweep", () => {
           expect(processed.report[key], `${entry.name} ${key}`).toBeGreaterThan(0);
         }
       });
+
+      if (entry.truncated !== undefined) {
+        it("reports truncation exactly when the entry says it is cut", () => {
+          expect(processed.truncated).toBe(entry.truncated);
+        });
+      }
 
       if (entry.delimiterPayload === true) {
         it("scrubs the forged delimiter or nonce and counts it", () => {

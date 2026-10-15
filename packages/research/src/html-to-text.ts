@@ -80,7 +80,11 @@ export function addReport(into: MutableSanitiseReport, from: SanitiseReport): vo
 export const MAX_DEPTH = 512;
 /** Page text is cut to this many characters. */
 export const MAX_PAGE_CHARS = 20_000;
-/** A style attribute longer than this is not pattern-matched. */
+/** Input longer than this many characters is cut; the remainder is dropped and counted. */
+export const MAX_INPUT_CHARS = 1_000_000;
+/** More open elements than this stops the parse; the remainder is dropped and counted. */
+export const MAX_NODES = 100_000;
+/** A style attribute longer than this is treated as unreadable (hidden), never as visible. */
 export const MAX_STYLE_CHARS = 2_048;
 /** Collected text per bucket stops growing here, long before it could matter for memory. */
 const COLLECT_CAP = 100_000;

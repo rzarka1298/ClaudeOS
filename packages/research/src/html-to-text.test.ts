@@ -243,11 +243,11 @@ describe("Test 4 (structure)", () => {
 });
 
 describe("Test 5 (limits, characters and command-like lines)", () => {
-  it("does not run the hidden-style test on a style value over 2 KiB", () => {
+  it("treats a style value over 2 KiB as unreadable: hidden and counted, never visible", () => {
     const long = `${"x".repeat(2100)};display:none`;
-    const result = htmlToText(`<div style="${long}">VISIBLE_AFTER_LONG_STYLE</div>`);
-    expect(result.text).toBe("VISIBLE_AFTER_LONG_STYLE");
-    expect(result.report.hiddenBlocks).toBe(0);
+    const result = htmlToText(`<div style="${long}">HIDDEN_AFTER_LONG_STYLE</div>`);
+    expect(result.text).toBe("");
+    expect(result.report.hiddenBlocks).toBe(1);
   });
 
   it("still tests a style value of exactly 2 KiB", () => {

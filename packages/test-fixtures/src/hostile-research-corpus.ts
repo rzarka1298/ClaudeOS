@@ -38,6 +38,7 @@ export const HOSTILE_RESEARCH_CATEGORIES = [
   "hidden-variants",
   "fail-closed",
   "parser-differential",
+  "resource-caps",
 ] as const;
 
 export type HostileResearchCategory = (typeof HOSTILE_RESEARCH_CATEGORIES)[number];
@@ -58,6 +59,8 @@ export interface HostileResearchEntry {
   readonly counts: readonly SanitiseReportKey[];
   /** True when the document forges a delimiter or the run nonce. */
   readonly delimiterPayload?: true;
+  /** For pages: whether the sanitiser reports the output as truncated. */
+  readonly truncated?: boolean;
   /** Bounds on the length of the sanitised text. */
   readonly outputLength?: { readonly min: number; readonly max: number };
 }
@@ -741,6 +744,118 @@ const PARSER_DIFFERENTIALS: readonly Payload[] = [
   },
 ];
 
+// --- resource caps (security finding 7): each cap at the cap and just over it ------------------------
+// A cap truncates output after filtering; it never turns filtering off. Documents here have no
+// html or body wrapper so the element counts are exact.
+
+const CAP_PAGE_CHARS = 20_000;
+const CAP_INPUT_CHARS = 1_000_000;
+const CAP_NODES = 100_000;
+
+function capPage(
+  name: string,
+  document: string,
+  rest: Partial<Omit<HostileResearchEntry, "name" | "category" | "kind" | "document">>,
+): HostileResearchEntry {
+  return {
+    category: "resource-caps",
+    kind: "page",
+    name: `cap-${name}`,
+    document,
+    forbidden: [],
+    keeps: [],
+    counts: [],
+    ...rest,
+  };
+}
+
+const CAP_STYLE_PAD = (length: number): string => `color:red;/*${"x".repeat(length - 13)}*/`;
+
+const CAP_ENTRIES: readonly HostileResearchEntry[] = [
+  capPage("depth-512", `${"<div>".repeat(512)}CAP_DEPTH_AT`, {
+    keeps: ["CAP_DEPTH_AT"],
+    truncated: false,
+  }),
+  capPage("depth-513", `${"<div>".repeat(513)}CAP_DEPTH_OVER`, {
+    forbidden: ["CAP_DEPTH_OVER"],
+    counts: ["hiddenBlocks"],
+    truncated: true,
+  }),
+  capPage("text-20000", `<p>${"A".repeat(CAP_PAGE_CHARS)}</p>`, {
+    keeps: ["A".repeat(100)],
+    outputLength: { min: CAP_PAGE_CHARS, max: CAP_PAGE_CHARS },
+    truncated: false,
+  }),
+  capPage("text-20001", `<p>${"A".repeat(CAP_PAGE_CHARS + 1)}</p>`, {
+    keeps: ["A".repeat(100)],
+    outputLength: { min: CAP_PAGE_CHARS, max: CAP_PAGE_CHARS },
+    truncated: true,
+  }),
+  capPage("style-2048", `<div style="${CAP_STYLE_PAD(2_048)}">CAP_STYLE_AT</div>`, {
+    keeps: ["CAP_STYLE_AT"],
+    truncated: false,
+  }),
+  capPage(
+    "style-2049",
+    `<p>Visible.</p><div style="${CAP_STYLE_PAD(2_049)}">CAP_STYLE_OVER</div>`,
+    {
+      forbidden: ["CAP_STYLE_OVER"],
+      keeps: ["Visible."],
+      counts: ["hiddenBlocks"],
+    },
+  ),
+  capPage("input-at-cap", `<!--${"a".repeat(CAP_INPUT_CHARS - 11)}-->CAP_TAIL`, {
+    keeps: ["CAP_TAIL"],
+    counts: ["comments"],
+    truncated: false,
+  }),
+  capPage("input-over-cap", `<!--${"a".repeat(CAP_INPUT_CHARS - 7)}-->CAP_TAIL`, {
+    forbidden: ["CAP_TAIL"],
+    counts: ["hiddenBlocks"],
+    truncated: true,
+  }),
+  capPage("nodes-at-cap", `${"<i></i>".repeat(CAP_NODES)}CAP_NODE_AT`, {
+    keeps: ["CAP_NODE_AT"],
+    truncated: false,
+  }),
+  capPage("nodes-over-cap", `${"<i></i>".repeat(CAP_NODES + 1)}CAP_NODE_OVER`, {
+    forbidden: ["CAP_NODE_OVER"],
+    counts: ["hiddenBlocks"],
+    truncated: true,
+  }),
+  {
+    category: "resource-caps",
+    kind: "feed",
+    name: "cap-entry-4000",
+    document: rss(`<title>E</title><description>${"B".repeat(4_000)}</description>`),
+    forbidden: [],
+    keeps: ["B".repeat(100)],
+    counts: [],
+    outputLength: { min: 4_002, max: 4_002 },
+  },
+  {
+    category: "resource-caps",
+    kind: "feed",
+    name: "cap-entry-4001",
+    document: rss(`<title>E</title><description>${"B".repeat(4_001)}</description>`),
+    forbidden: [],
+    keeps: ["B".repeat(100)],
+    counts: [],
+    outputLength: { min: 4_002, max: 4_002 },
+  },
+  {
+    category: "resource-caps",
+    kind: "feed",
+    name: "cap-style-2049-in-feed-content",
+    document: atomWithHtml(
+      `<p>Visible.</p><div style="${CAP_STYLE_PAD(2_049)}">CAP_FEED_STYLE_OVER</div>`,
+    ),
+    forbidden: ["CAP_FEED_STYLE_OVER"],
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks"],
+  },
+];
+
 export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
   ...D26.flatMap(expand),
   ...INJECTIONS.flatMap(([name, token]) =>
@@ -754,6 +869,7 @@ export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
   ),
   ...FAIL_CLOSED.flatMap(expand),
   ...PARSER_DIFFERENTIALS.flatMap(expand),
+  ...CAP_ENTRIES,
   ...SSRF_ENTRIES,
   ...HIDDEN_VARIANT_ENTRIES,
   ...XHTML_VARIANT_ENTRIES,
