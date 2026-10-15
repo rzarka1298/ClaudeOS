@@ -339,3 +339,60 @@ describe("Test 6: loading and failing (UI-SPEC E2 and E5 error rows)", () => {
     expect(reportRows.value).toHaveLength(1);
   });
 });
+
+describe("Test 7 (plan 07-11 task 2): failed runs and start failures use the closed copy", () => {
+  it("a pressed run that fails posts the failed sentence from the reason map, as line and Notice", async () => {
+    let started = false;
+    let finished = false;
+    const api = fakeResearchApi({
+      run: vi.fn(() => {
+        started = true;
+        return Promise.resolve(runResponse({ runId: RUN }));
+      }),
+      status: vi.fn(() =>
+        Promise.resolve(
+          finished
+            ? statusOf({
+                lastFailure: { runId: RUN, endedAt: iso(0), errorCode: "summariser-unconfigured" },
+              })
+            : started
+              ? statusOf({ inFlight: inFlight() })
+              : statusOf(),
+        ),
+      ),
+    });
+    const ports = fakeResearchPorts();
+    configureResearch({ api, ...ports });
+    await pressRunNow();
+    finished = true;
+    await onResearchUpdated({ runId: RUN, state: "failed", outcome: "failure" });
+    const sentence = "Research run failed: the summariser isn't set up.";
+    expect(statusLine.value).toBe(sentence);
+    expect(ports.notify).toHaveBeenCalledWith(sentence);
+    expect(activeRunId.value).toBeNull();
+  });
+
+  it("a press the service refuses says why in a fixed sentence and frees the button", async () => {
+    const api = fakeResearchApi({
+      run: vi.fn(() => Promise.reject(new ResearchApiError("service-disconnected"))),
+    });
+    const ports = fakeResearchPorts();
+    configureResearch({ api, ...ports });
+    await pressRunNow();
+    const sentence = "Couldn't start the run: the companion service isn't running.";
+    expect(statusLine.value).toBe(sentence);
+    expect(ports.notify).toHaveBeenCalledWith(sentence);
+    expect(pressPending.value).toBe(false);
+  });
+
+  it("an error that is not a research error never leaks its text into the line", async () => {
+    const api = fakeResearchApi({
+      run: vi.fn(() => Promise.reject(new Error("HTTP 500 at /Users/someone/key=abc"))),
+    });
+    configureResearch({ api, ...fakeResearchPorts() });
+    await pressRunNow();
+    expect(statusLine.value).toMatch(/^Couldn't start the run/);
+    expect(statusLine.value).not.toContain("Users");
+    expect(statusLine.value).not.toContain("key=");
+  });
+});
