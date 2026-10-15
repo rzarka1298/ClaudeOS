@@ -509,15 +509,20 @@ report_rule \
 #     defineProperties and __proto__, which reach the Function constructor through
 #     the prototype chain without ever writing it (the syntax-tree scan in
 #     packages/research/src/untrusted-ast.test.ts is the allowlist version of this);
+#   - the legacy accessor methods __lookupGetter__, __defineGetter__,
+#     __lookupSetter__ and __defineSetter__, the V8 Error statics
+#     prepareStackTrace, captureStackTrace and stackTraceLimit, and a `.caller` or
+#     `.callee` property read (false-positive cost accepted: a local variable named
+#     caller is fine, only the dotted read is a hit);
 #   - an `import` that ends its line (the parenthesis is on the next one).
 # Comment lines are skipped by grep_noncomment. Test files of the folder are
 # scanned too (wave 1+2 review): nothing under it, tests included, needs an I/O
 # name, and a non-test module named like a test file must not escape the rule.
 UNTRUSTED_FILES=$(printf '%s\n%s\n' "$SRC_FILES" "$EXTRA_EXT_FILES" | grep '^packages/service/src/untrusted/' || true)
-UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])fetch([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])require[[:space:]]*[(]|(^|[^A-Za-z0-9_])declare([^A-Za-z0-9_]|$)|\\\\u[0-9A-Fa-f{]|(^|[^A-Za-z0-9_])import[[:space:]]*([(]|$)|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor([^A-Za-z0-9_]|$)|[{,][[:space:]]*constructor[[:space:]]*[:,}]|getOwnProperty(Descriptors?|Names|Symbols)|[gs]etPrototypeOf|defineProperty|defineProperties|__proto__|[[][[:space:]]*[\"'\`][^\"'\`]*[\"'\`][[:space:]]*[+]|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
+UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])fetch([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])require[[:space:]]*[(]|(^|[^A-Za-z0-9_])declare([^A-Za-z0-9_]|$)|\\\\u[0-9A-Fa-f{]|(^|[^A-Za-z0-9_])import[[:space:]]*([(]|$)|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor([^A-Za-z0-9_]|$)|[{,][[:space:]]*constructor[[:space:]]*[:,}]|getOwnProperty(Descriptors?|Names|Symbols)|[gs]etPrototypeOf|defineProperty|defineProperties|__proto__|__(lookup|define)[GS]etter__|prepareStackTrace|captureStackTrace|stackTraceLimit|[.][[:space:]]*(caller|callee)([^A-Za-z0-9_]|$)|[[][[:space:]]*[\"'\`][^\"'\`]*[\"'\`][[:space:]]*[+]|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
 # shellcheck disable=SC2086
 check_rule \
-  "a file under packages/service/src/untrusted/ names an I/O primitive (a node: specifier, child_process, fetch(, require(, a dynamic import(, process, globalThis, eval, Function, Reflect, XMLHttpRequest, WebSocket, EventSource or a .constructor access; the summariser folder must hold no way to act, ADR-0014, RSRCH-07)" \
+  "a file under packages/service/src/untrusted/ names an I/O primitive (a node: specifier, child_process, fetch(, require(, a dynamic import(, process, globalThis, eval, Function, Reflect, XMLHttpRequest, WebSocket, EventSource, a .constructor, .caller or .callee access, a reflection or legacy accessor name or a V8 Error static; the summariser folder must hold no way to act, ADR-0014, RSRCH-07)" \
   "$UNTRUSTED_IO_PATTERN" \
   $UNTRUSTED_FILES
 

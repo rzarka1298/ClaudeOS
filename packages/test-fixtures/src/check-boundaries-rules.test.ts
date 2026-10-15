@@ -122,6 +122,17 @@ const RULE17_FIRE_CASES: ReadonlyArray<readonly [name: string, source: string]> 
   ["EventSource", "export const c = new EventSource(u);\n"],
   ["a .constructor( call", 'export const k = (() => 1).constructor("return 1")();\n'],
   ["a bracketed constructor access", 'export const k = (() => 1)["constructor"]("return 1");\n'],
+  // Round 5 (Opus gap review): legacy accessor methods, sloppy call-stack links, V8 Error statics.
+  ["__lookupGetter__", "export const g = o.__lookupGetter__;\n"],
+  ["__defineGetter__", "export const g = o.__defineGetter__;\n"],
+  ["__lookupSetter__", "export const g = o.__lookupSetter__;\n"],
+  ["__defineSetter__", "export const g = o.__defineSetter__;\n"],
+  ["a .caller read", "export const c = f.caller;\n"],
+  ["a .callee read", "export const c = arguments.callee;\n"],
+  ["a .caller read with a space after the dot", "export const c = f. caller;\n"],
+  ["prepareStackTrace", "Error.prepareStackTrace = undefined;\n"],
+  ["captureStackTrace", "Error.captureStackTrace(o);\n"],
+  ["stackTraceLimit", "export const l = Error.stackTraceLimit;\n"],
 ];
 
 describe("check-boundaries.sh rule 17 (untrusted folder I/O names)", () => {
@@ -166,6 +177,9 @@ describe("check-boundaries.sh rule 17 (untrusted folder I/O names)", () => {
         "const importer = 4;",
         "const required = 5;",
         "const subprocess = 6;",
+        "const caller = 7;",
+        "const calleeName = 8;",
+        "const stackSize = 9;",
         "const nodes: { node: number } = { node: 1 };",
         "export const constructorName = 7;",
         "export class Holder { constructor(readonly id: NoteId | null) {} }",
