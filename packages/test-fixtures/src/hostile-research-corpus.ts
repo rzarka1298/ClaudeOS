@@ -39,6 +39,7 @@ export const HOSTILE_RESEARCH_CATEGORIES = [
   "fail-closed",
   "parser-differential",
   "resource-caps",
+  "allowlist",
 ] as const;
 
 export type HostileResearchCategory = (typeof HOSTILE_RESEARCH_CATEGORIES)[number];
@@ -856,6 +857,43 @@ const CAP_ENTRIES: readonly HostileResearchEntry[] = [
   },
 ];
 
+// --- the allowlist extractor (final design) ------------------------------------------------------
+// Only known content elements without a hiding signal show their text. Everything else drops its
+// whole subtree, including an unknown element left open at the end of the input.
+
+const ALLOWLIST_PAYLOADS: readonly Payload[] = [
+  {
+    category: "allowlist",
+    name: "allowlist-unknown-and-signals",
+    html: [
+      "<p>Visible.</p>",
+      "<marquee>AL_1</marquee>",
+      "<my-widget>AL_2<b>AL_3</b></my-widget>",
+      "<div inert>AL_4</div>",
+      "<div popover>AL_5</div>",
+      '<div slot="x">AL_6</div>',
+      '<div aria-hidden="">AL_7</div>',
+      '<span class="sr-only">AL_8</span>',
+      '<div class="card visually-hidden">AL_9</div>',
+      '<div style="width:0">AL_10</div>',
+      '<div style="clip-path:inset(100%)">AL_11</div>',
+      '<div style="transform:scale(0)">AL_12</div>',
+      "<blink>AL_13<p>AL_14</p>",
+    ].join(""),
+    forbidden: Array.from({ length: 14 }, (_, i) => `AL_${i + 1}`),
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "allowlist",
+    name: "allowlist-known-elements-stay-visible",
+    html: '<article><h1>Allowlist title</h1><p>One <em>two</em> <a href="https://allow.invalid/x">three</a></p><ul><li>four</li></ul><table><tr><td>five</td></tr></table><div aria-hidden="false">six</div></article>',
+    forbidden: ["allow.invalid"],
+    keeps: ["Allowlist title", "One two three", "four", "five", "six"],
+    counts: ["linksDropped"],
+  },
+];
+
 export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
   ...D26.flatMap(expand),
   ...INJECTIONS.flatMap(([name, token]) =>
@@ -870,6 +908,7 @@ export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
   ...FAIL_CLOSED.flatMap(expand),
   ...PARSER_DIFFERENTIALS.flatMap(expand),
   ...CAP_ENTRIES,
+  ...ALLOWLIST_PAYLOADS.flatMap(expand),
   ...SSRF_ENTRIES,
   ...HIDDEN_VARIANT_ENTRIES,
   ...XHTML_VARIANT_ENTRIES,

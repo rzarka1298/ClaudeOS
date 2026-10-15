@@ -89,6 +89,9 @@ export const MAX_STYLE_CHARS = 2_048;
 /** Collected text per bucket stops growing here, long before it could matter for memory. */
 const COLLECT_CAP = 100_000;
 
+/** Signature stub: the allowlist arrives with the tests that pin it. */
+export const CONTENT_ELEMENTS: ReadonlySet<string> = new Set();
+
 export const VOID_ELEMENTS: ReadonlySet<string> = new Set([
   "area",
   "base",
