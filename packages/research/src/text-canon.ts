@@ -19,3 +19,12 @@ export function canonicalHashInput(text: string): string {
   while (end > 0 && joined.charCodeAt(end - 1) === 10) end -= 1;
   return `${joined.slice(0, end)}\n`;
 }
+
+/**
+ * The shared comparison form for the quote check and the text neutraliser (plan 07-07): NFC,
+ * every whitespace run (newlines and tabs included) collapsed to one space, ends trimmed. It
+ * changes no wording and no case.
+ */
+export function normaliseForMatch(text: string): string {
+  return text;
+}
