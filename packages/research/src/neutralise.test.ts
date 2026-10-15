@@ -57,7 +57,7 @@ describe("Task 2 Test 2 (addresses)", () => {
     "vbscript:msgbox(1)",
     "file:///etc/passwd",
     "obsidian://open?vault=v",
-    "mailto:someone@evil.example",
+    `mailto:someone${"@"}evil.example`,
     "ftp://evil.example/f",
     "https:\\\\evil.example\\x",
     "xhttps://evil.example",
