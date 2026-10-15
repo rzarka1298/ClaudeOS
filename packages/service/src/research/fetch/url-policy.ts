@@ -26,9 +26,15 @@ export type FetchUrlVerdict =
   | { readonly ok: true; readonly url: URL }
   | { readonly ok: false; readonly code: SourceFailureCode };
 
-/** Names that always mean this machine, refused before any lookup (defence in depth). */
+/** Name suffixes that never name a public host: this machine, mDNS, and the private-use zones. */
+const LOCAL_SUFFIXES: readonly string[] = [".localhost", ".local", ".internal", ".home.arpa"];
+const LOCAL_NAMES: readonly string[] = ["localhost", "local", "internal", "home.arpa"];
+
+/** Names that always mean this machine or a private network, refused before any lookup. */
 function isLocalName(hostname: string): boolean {
-  return hostname === "localhost" || hostname.endsWith(".localhost");
+  return (
+    LOCAL_NAMES.includes(hostname) || LOCAL_SUFFIXES.some((suffix) => hostname.endsWith(suffix))
+  );
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the point is to find control characters
@@ -63,7 +69,10 @@ export function validateFetchUrl(
 
   const literal =
     hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  if (net.isIP(literal) !== 0 && isBlockedAddress(literal)) return refusal("refused-address");
+  const isLiteral = net.isIP(literal) !== 0;
+  // A single-label name resolves through the machine's search domains, i.e. to its own network.
+  if (!isLiteral && !hostname.includes(".")) return refusal("refused-address");
+  if (isLiteral && isBlockedAddress(literal)) return refusal("refused-address");
 
   url.hash = "";
   return { ok: true, url };
