@@ -68,6 +68,12 @@ describe("hostile research corpus shape", () => {
     expect(bypass.every((e) => e.kind === "feed")).toBe(true);
   });
 
+  it("covers address parser differentials as feed links", () => {
+    const urls = HOSTILE_RESEARCH_CORPUS.filter((e) => e.category === "url-ssrf");
+    expect(urls.length).toBeGreaterThanOrEqual(15);
+    expect(urls.every((e) => e.kind === "feed" && e.counts.includes("linksDropped"))).toBe(true);
+  });
+
   it("forges the run nonce in the forged-delimiter and injection entries", () => {
     const forged = HOSTILE_RESEARCH_CORPUS.filter((e) => e.delimiterPayload === true);
     expect(forged.length).toBeGreaterThan(0);
@@ -109,6 +115,8 @@ describe("hostile research corpus shape", () => {
 
   it("is synthetic: every address uses a reserved .invalid host", () => {
     for (const entry of HOSTILE_RESEARCH_CORPUS) {
+      // The address-differential entries name IP literals on purpose.
+      if (entry.category === "url-ssrf") continue;
       for (const match of entry.document.matchAll(/https?:\/\/(?:[^\s/@"<]*@)?([a-z0-9.-]+)/gi)) {
         const host = match[1] ?? "";
         expect(

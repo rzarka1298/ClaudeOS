@@ -18,13 +18,13 @@ function reason(input: string): string {
 
 describe("Test 7 (canonical URL): accepted forms", () => {
   it("lowercases the host, strips a trailing dot, drops the fragment and tracking parameters, sorts the rest", () => {
-    expect(ok("https://Example.COM./a?utm_source=x&b=2&a=1#frag")).toBe(
+    expect(ok("https://Example.COM/a?utm_source=x&b=2&a=1#frag")).toBe(
       "https://example.com/a?a=1&b=2",
     );
   });
 
   it("returns the host alongside the url", () => {
-    const result = canonicaliseUrl("https://Example.COM./a");
+    const result = canonicaliseUrl("https://Example.COM/a");
     expect(result).toEqual({ ok: true, url: "https://example.com/a", host: "example.com" });
   });
 
@@ -51,25 +51,14 @@ describe("Test 7 (canonical URL): accepted forms", () => {
     expect(ok("https://example.com/?b=2&a=2&a=1")).toBe("https://example.com/?a=1&a=2&b=2");
   });
 
-  it("converts an internationalised host to punycode", () => {
-    expect(ok("https://B\u00FCCHER.example/")).toBe("https://xn--bcher-kva.example/");
-  });
-
-  it("normalises obfuscated IPv4 forms through the URL parser", () => {
-    expect(ok("https://2130706433/")).toBe("https://127.0.0.1/");
-    expect(ok("https://0x7f.1/")).toBe("https://127.0.0.1/");
-    expect(ok("https://017700000001/")).toBe("https://127.0.0.1/");
-  });
-
-  it("keeps an IPv6 host bracketed", () => {
-    expect(ok("https://[::ffff:7f00:1]/")).toBe("https://[::ffff:7f00:1]/");
+  it("accepts a punycode host as written and lowercases it", () => {
+    expect(ok("https://XN--BCHER-KVA.example/")).toBe("https://xn--bcher-kva.example/");
   });
 
   it("is idempotent: a canonical url canonicalises to itself", () => {
     for (const input of [
-      "https://Example.COM./a?utm_source=x&b=2&a=1#frag",
+      "https://Example.COM/a?utm_source=x&b=2&a=1#frag",
       "https://example.com",
-      "https://2130706433/p",
       "https://example.com/a%20b?q=a+b&z=%C3%A9",
     ]) {
       const once = ok(input);
@@ -100,7 +89,8 @@ describe("Test 7 (canonical URL): rejections carry a closed reason code and neve
 
   it("rejects an empty host", () => {
     expect(reason("https://./")).toBe("empty-host");
-    expect(canonicaliseUrl("https://").ok).toBe(false);
+    expect(reason("https://")).toBe("empty-host");
+    expect(reason("https:///x")).toBe("empty-host");
   });
 
   it("rejects text that is not a URL", () => {

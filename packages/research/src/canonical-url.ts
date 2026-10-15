@@ -14,6 +14,8 @@ export const URL_REJECT_REASONS = [
   "bad-port",
   "empty-host",
   "too-long",
+  "backslash",
+  "ambiguous-host",
 ] as const;
 
 export type UrlRejectReason = (typeof URL_REJECT_REASONS)[number];

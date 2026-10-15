@@ -34,6 +34,7 @@ export const HOSTILE_RESEARCH_CATEGORIES = [
   "long-string",
   "delimiter-injection",
   "feed-field-bypass",
+  "url-ssrf",
 ] as const;
 
 export type HostileResearchCategory = (typeof HOSTILE_RESEARCH_CATEGORIES)[number];
@@ -456,6 +457,44 @@ const FEED_FIELDS: readonly FeedPayload[] = [
   },
 ];
 
+// --- address parser differentials (security finding 3) ---------------------------------------------
+// Each is a feed whose only hostile part is its link. canonicaliseUrl must reject it, so the link
+// is dropped and counted and nothing of the address reaches the text or an entry field.
+
+const SSRF_LINKS: ReadonlyArray<readonly [string, string, readonly string[]]> = [
+  ["backslash-authority", "https://example.invalid\\@evil-a.invalid/", ["evil-a.invalid"]],
+  ["userinfo", "https://trusted.invalid@evil-b.invalid/", ["evil-b.invalid"]],
+  ["percent-encoded-host", "https://evil-c%2einvalid/", ["evil-c"]],
+  ["idn-look-alike-host", "https://\u0435vil-d.invalid/", ["vil-d.invalid"]],
+  ["ipv4-decimal", "https://2130706433/", ["2130706433", "127.0.0.1"]],
+  ["ipv4-octal", "https://017700000001/", ["017700000001", "127.0.0.1"]],
+  ["ipv4-hex", "https://0x7f000001/", ["0x7f000001", "127.0.0.1"]],
+  ["ipv4-short", "https://127.1/", ["127.1"]],
+  ["ipv4-metadata", "https://169.254.169.254/latest/meta-data/", ["169.254"]],
+  ["ipv6-mapped", "https://[::ffff:7f00:1]/", ["ffff"]],
+  ["ipv6-zone", "https://[fe80::1%25eth0]/", ["fe80"]],
+  ["trailing-dot-host", "https://evil-e.invalid./", ["evil-e"]],
+  ["uppercase-scheme", "HTTPS://evil-f.invalid/", ["evil-f"]],
+  ["triple-slash", "https:///evil-g.invalid/", ["evil-g"]],
+  ["tab-in-host", "https://evil-h&#9;.invalid/", ["evil-h"]],
+  ["newline-in-path", "https://evil-i.invalid/&#10;x", ["evil-i"]],
+  ["bidi-override", "https://evil-j.invalid/&#x202E;", ["evil-j"]],
+  ["non-default-port", "https://evil-k.invalid:8443/", ["evil-k"]],
+  ["plain-http", "http://evil-l.invalid/", ["evil-l"]],
+];
+
+const SSRF_ENTRIES: readonly HostileResearchEntry[] = SSRF_LINKS.map(
+  ([name, href, forbidden]): HostileResearchEntry => ({
+    category: "url-ssrf",
+    kind: "feed",
+    name: `url-ssrf-${name}`,
+    document: atom(`<title>SSRF</title>${STAMP}<link href="${href}"/><summary>Body kept</summary>`),
+    forbidden,
+    keeps: ["Body kept"],
+    counts: ["linksDropped"],
+  }),
+);
+
 export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
   ...D26.flatMap(expand),
   ...INJECTIONS.flatMap(([name, token]) =>
@@ -467,6 +506,7 @@ export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
       delimiterPayload: true,
     }),
   ),
+  ...SSRF_ENTRIES,
   ...FEED_FIELDS.map(
     (field): HostileResearchEntry => ({
       category: "feed-field-bypass",
