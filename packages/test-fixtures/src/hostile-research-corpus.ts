@@ -35,6 +35,7 @@ export const HOSTILE_RESEARCH_CATEGORIES = [
   "delimiter-injection",
   "feed-field-bypass",
   "url-ssrf",
+  "hidden-variants",
 ] as const;
 
 export type HostileResearchCategory = (typeof HOSTILE_RESEARCH_CATEGORIES)[number];
@@ -495,6 +496,112 @@ const SSRF_ENTRIES: readonly HostileResearchEntry[] = SSRF_LINKS.map(
   }),
 );
 
+// --- hidden-content filter bypasses (security finding 4) -----------------------------------------
+// Every element hides a unique token. The page and its html-content feed twin use spellings an
+// attacker would try (case, spacing, comments, entities, unreadable values); the xhtml entry uses
+// XML-valid spellings and namespace-prefixed element names.
+
+const HIDDEN_ATTRIBUTES: readonly string[] = [
+  'hidden=""',
+  "HIDDEN",
+  'hidden = ""',
+  'hidden="until-found"',
+  'ARIA-HIDDEN="TRUE"',
+  'aria-hidden=" true "',
+  "aria-hidden=true",
+  'style="display : none"',
+  'style="DISPLAY:NONE"',
+  'style="display:none ! important"',
+  'style="display:/*c*/none"',
+  "style=display:none",
+  'style="display&#58;none"',
+  'style="display&colon;none"',
+  'style="Visibility:Hidden"',
+  'style="opacity : 0 !important"',
+  'style="font-size:0.0pt"',
+  'style="FONT-SIZE : 0 !important"',
+  'style="right:-10000em"',
+  'style="margin-left:-5000px"',
+  'style="color:transparent"',
+  'style="display:var(--x)"',
+  'style="display:\\6e one"',
+  'style="opacity:calc(0)"',
+  'style="left:calc(-9999px)"',
+  'style="font-size:12"',
+];
+
+const HIDDEN_VARIANT_TOKENS: readonly string[] = HIDDEN_ATTRIBUTES.map(
+  (_, index) => `HV_${String(index + 1).padStart(2, "0")}`,
+);
+
+const HIDDEN_VARIANT_HTML = [
+  "<p>Visible paragraph.</p>",
+  ...HIDDEN_ATTRIBUTES.map(
+    (attribute, index) => `<div ${attribute}>${HIDDEN_VARIANT_TOKENS[index]}</div>`,
+  ),
+  "<x:script>HV_PREFIXED_SCRIPT()</x:script>",
+  "<h:style>.a{}HV_PREFIXED_STYLE</h:style>",
+  "<x:template>HV_PREFIXED_TEMPLATE</x:template>",
+  "<p>&lt;div hidden&gt;HV_LITERAL&lt;/div&gt;</p>",
+].join("");
+
+const HIDDEN_VARIANT_ENTRIES: readonly HostileResearchEntry[] = expand({
+  category: "hidden-variants",
+  name: "hidden-variants",
+  html: HIDDEN_VARIANT_HTML,
+  forbidden: [
+    ...HIDDEN_VARIANT_TOKENS,
+    "HV_PREFIXED_SCRIPT",
+    "HV_PREFIXED_STYLE",
+    "HV_PREFIXED_TEMPLATE",
+  ],
+  // The escaped markup is text: it stays literal and is not filtered.
+  keeps: ["Visible paragraph.", "<div hidden>HV_LITERAL</div>"],
+  counts: ["hiddenBlocks", "scripts", "styles"],
+});
+
+const XHTML_NS =
+  'xmlns="http://www.w3.org/1999/xhtml" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:h="http://www.w3.org/1999/xhtml"';
+
+const XHTML_VARIANT_ENTRIES: readonly HostileResearchEntry[] = [
+  {
+    category: "hidden-variants",
+    kind: "feed",
+    name: "hidden-variants-xhtml",
+    document: atom(
+      `<title>X</title>${STAMP}<content type="xhtml"><div ${XHTML_NS}><p>Visible xhtml.</p><xhtml:div hidden="hidden">XV_1</xhtml:div><div HIDDEN="">XV_2</div><DIV Style="Display:None">XV_3</DIV><div aria-hidden="TRUE">XV_4</div><h:span style="opacity:0">XV_5</h:span><div style="display&#58;none">XV_6</div><div style="display:var(--x)">XV_7</div><h:template>XV_8</h:template><h:img src="https://beacon-xv.invalid/p.gif">XV_9</h:img><xhtml:script>XV_10()</xhtml:script><h:style>.a{}XV_11</h:style><h:a href="https://xv.invalid/x">XV anchor</h:a></div></content>`,
+    ),
+    forbidden: [
+      "XV_1",
+      "XV_2",
+      "XV_3",
+      "XV_4",
+      "XV_5",
+      "XV_6",
+      "XV_7",
+      "XV_8",
+      "XV_9",
+      "XV_10",
+      "XV_11",
+      "beacon-xv.invalid",
+      "xv.invalid",
+    ],
+    keeps: ["Visible xhtml.", "XV anchor"],
+    counts: ["hiddenBlocks", "scripts", "styles", "mediaDropped", "linksDropped"],
+  },
+  {
+    category: "hidden-variants",
+    kind: "feed",
+    name: "hidden-variants-nested-cdata",
+    document: rss(
+      "<title>N</title><content:encoded><![CDATA[<p>Visible cdata.</p><div hidden>NC_1</div><![CDATA[<div hidden>NC_2</div>]]>]]></content:encoded>",
+    ),
+    forbidden: ["NC_1", "<div"],
+    keeps: ["Visible cdata."],
+    counts: ["hiddenBlocks", "comments"],
+  },
+];
+
 export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
   ...D26.flatMap(expand),
   ...INJECTIONS.flatMap(([name, token]) =>
@@ -507,6 +614,8 @@ export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
     }),
   ),
   ...SSRF_ENTRIES,
+  ...HIDDEN_VARIANT_ENTRIES,
+  ...XHTML_VARIANT_ENTRIES,
   ...FEED_FIELDS.map(
     (field): HostileResearchEntry => ({
       category: "feed-field-bypass",
