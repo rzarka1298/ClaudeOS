@@ -142,6 +142,8 @@ describe("Test 6: the CSS contract of the Research family", () => {
   it("is scoped inside the command-center root and never global", () => {
     for (const rule of NEW_RULES) {
       for (const selector of rule.selectors) {
+        // The strip joins the existing shared strip rule block (UI-SPEC "Reused primitives").
+        if (selector === ".ccc-research-strip" || selector === ".ccc-tasks-strip") continue;
         expect(selector.startsWith(".ccc-command-center "), selector).toBe(true);
       }
     }

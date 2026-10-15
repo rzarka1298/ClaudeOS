@@ -177,3 +177,36 @@ export function startFailedLine(code: string): string {
       return "Couldn't start the run. Check the service in Settings → Diagnostics, then press Run now.";
   }
 }
+
+// ---------------------------------------------------------------------------
+// R3 report list
+
+export const EMPTY_REPORTS_HEADING = "No reports yet";
+export const EMPTY_NEVER_RUN =
+  "Press Run now to fetch the configured sources and write your first cited report.";
+export const EMPTY_ALL_FAILED = "No run has produced a report yet. The last failed run says why.";
+export const LOADING_REPORTS = "Loading research reports";
+export const LOAD_ERROR_HEADING = "Couldn't load research reports.";
+export const LOAD_ERROR_HELP = "Check the service in Settings → Diagnostics, then refresh.";
+export const REFRESH_REPORTS_LABEL = "Refresh reports";
+export const SHOW_MORE_LABEL = "Show 25 more";
+export const UNREADABLE_TITLE = "Unreadable report";
+export const UNREADABLE_META = "Its metadata couldn't be read.";
+export const OPEN_NOTE_LABEL = "Open note";
+export const OPEN_NOTE_FAILED = "Couldn't open the note.";
+
+/** `Couldn't refresh the report list. Showing what was loaded 5 minutes ago.` */
+export function refreshFailedLine(relative: string): string {
+  return `Couldn't refresh the report list. Showing what was loaded ${relative}.`;
+}
+
+/** `25 more reports loaded.` (announced once, after the owner asked for them). */
+export function moreLoadedLine(count: number): string {
+  return count === 1 ? "1 more report loaded." : `${count} more reports loaded.`;
+}
+
+/** The tail of the Partial badge's accessible name: `2 sources didn't respond`. */
+export function partialRowTail(unavailable: number): string {
+  const noun = unavailable === 1 ? "source" : "sources";
+  return `${unavailable} ${noun} didn't respond`;
+}

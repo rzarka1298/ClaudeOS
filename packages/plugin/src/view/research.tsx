@@ -2,32 +2,40 @@ import { reportFreshness } from "@ccc/domain/research.js";
 import type { ResearchListRow } from "@ccc/domain/research-routes.js";
 import { resolvedZone } from "@ccc/domain/task-time.js";
 import type { ComponentChildren, VNode } from "preact";
-import { useEffect, useId, useRef } from "preact/hooks";
+import { useEffect, useId, useMemo, useRef } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { researchConfigured, researchPorts } from "../research/api.js";
 import {
+  clearFocusRequest,
+  focusRequest,
+  loadMoreReports,
   loadResearch,
   pressPending,
   refreshList,
   refreshStatus,
   reportRows,
+  reportsCursor,
   reportsFailure,
+  reportsGeneration,
   reportsLoaded,
+  reportsLoadingMore,
   researchStatus,
   resetResearchState,
   runInProgress,
   selectedNoteId,
   selectReport,
+  setStatusLine,
   statusFailure,
   statusLine,
 } from "../research/state.js";
-import { FRESHNESS_GLYPH, WidgetFooter } from "../widgets/footer.js";
+import { WidgetFooter } from "../widgets/footer.js";
 import type { FooterModel } from "../widgets/presentation.js";
-import { formatRelativeTime } from "../widgets/relative-time.js";
 import { UntrustedText } from "./approval-text.js";
+import { ReportList } from "./report-list.js";
 import {
   DISCONNECTED_REASON,
   NO_TOPIC_LABEL,
+  OPEN_NOTE_FAILED,
   REPORT_PLACEHOLDER,
   REPORTS_HEADING,
   RESEARCH_HEADING,
@@ -36,7 +44,7 @@ import {
   RUN_NOW_NAME,
   STRIP_SOURCE_LABEL,
 } from "./research-copy.js";
-import { countOf, itemsText, sourcesText } from "./research-format.js";
+import { countOf } from "./research-format.js";
 import { ResearchStatusSection } from "./research-status.js";
 
 /**
@@ -114,48 +122,11 @@ function PartialBadge(props: { readonly unavailable: number }): VNode {
   );
 }
 
-function ReportRows(props: {
-  readonly rows: readonly ResearchListRow[];
-  readonly now: number;
-}): VNode {
-  return (
-    <ul className="ccc-report-list">
-      {props.rows.map((row) => {
-        if (!row.readable) return null;
-        const freshness = reportFreshness(row.generatedAt, props.now);
-        const label = freshness === "stale" ? "Stale" : "Cached";
-        const sources =
-          row.partial && row.sourceTotal !== row.sourceCount
-            ? `${row.sourceCount} of ${row.sourceTotal} sources`
-            : sourcesText(row.sourceCount);
-        return (
-          <li className="ccc-report-row" key={row.noteId}>
-            <button
-              type="button"
-              className="ccc-report-row-button"
-              aria-current={selectedNoteId.value === row.noteId ? "true" : undefined}
-              onClick={() => selectReport(row.noteId)}
-            >
-              <span className="ccc-clamp-2" title={row.title}>
-                <UntrustedText text={row.title} />
-              </span>
-              <span className="ccc-report-row-meta">
-                {formatRelativeTime(row.generatedAt, props.now)}
-                {" · "}
-                <span className="ccc-badge" data-badge={freshness}>
-                  <span className="ccc-badge-glyph" aria-hidden="true">
-                    {FRESHNESS_GLYPH[freshness]}
-                  </span>
-                  <span className="ccc-badge-label">{label}</span>
-                </span>
-                {` · ${sources} · ${itemsText(row.itemCount)}`}
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
-  );
+/** Opens a vault-relative note through the host port; a note that will not open is said so once. */
+function openNote(path: string): void {
+  void Promise.resolve(researchPorts().openNote(path)).then((opened) => {
+    if (!opened) setStatusLine(OPEN_NOTE_FAILED);
+  });
 }
 
 export function ResearchDestination(props: ResearchDestinationProps): VNode {
@@ -174,7 +145,7 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
     !researchConfigured() ||
     statusFailure.value === "service-disconnected" ||
     reportsFailure.value === "service-disconnected";
-  const disabled = serviceAway || pending || awaitingRun;
+  const blocked = serviceAway || pending || awaitingRun;
   const reason = serviceAway
     ? DISCONNECTED_REASON
     : pending || !awaitingRun
@@ -182,6 +153,15 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
       : RUN_IN_PROGRESS_REASON;
   const selected = selectedNoteId.value;
   const zone = props.zone ?? resolvedZone();
+  const generation = reportsGeneration.value;
+  const nowRef = useRef(props.now);
+  nowRef.current = props.now;
+  const loadedAt = useRef<string | null>(null);
+  useMemo(() => {
+    if (generation > 0) loadedAt.current = new Date(nowRef.current).toISOString();
+  }, [generation]);
+  const allRunsFailed =
+    rows.length === 0 && status?.lastFailure != null && status.lastSuccess === null;
 
   useEffect(() => {
     void loadResearch();
@@ -227,10 +207,10 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
             data-variant="primary"
             aria-label={RUN_NOW_NAME}
             aria-busy={pending ? "true" : undefined}
-            aria-disabled={disabled ? "true" : undefined}
+            aria-disabled={blocked ? "true" : undefined}
             aria-describedby={reason === null ? undefined : reasonId}
             onClick={() => {
-              if (!disabled) researchPorts().requestRunNow();
+              if (!blocked) researchPorts().requestRunNow();
             }}
           >
             {RUN_NOW_LABEL}
@@ -250,7 +230,7 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
           model={footerModel(!serviceAway, newest, props.now)}
           panelTitle="research"
           now={props.now}
-          dimmed={serviceAway}
+          dimmed={false}
         />
         {newest?.partial && newest.unavailableCount > 0 ? (
           <PartialBadge unavailable={newest.unavailableCount} />
@@ -275,7 +255,30 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
           data-reader-open={selected === null ? "false" : "true"}
         >
           <div className="ccc-research-list-cell">
-            <ReportRows rows={rows} now={props.now} />
+            <ReportList
+              rows={rows}
+              loaded={reportsLoaded.value}
+              failure={reportsFailure.value}
+              hasMore={reportsCursor.value !== null}
+              loadingMore={reportsLoadingMore.value}
+              selectedNoteId={selected}
+              connected={!serviceAway}
+              allRunsFailed={allRunsFailed}
+              loadedAt={loadedAt.current}
+              now={props.now}
+              zone={zone}
+              focusRequest={focusRequest.value}
+              onFocusHandled={clearFocusRequest}
+              onSelect={selectReport}
+              onOpenNote={openNote}
+              onShowMore={() => {
+                void loadMoreReports();
+              }}
+              onRefresh={() => {
+                void refreshStatus();
+                void refreshList();
+              }}
+            />
           </div>
           <div className="ccc-research-reader-cell">
             {selected !== null && props.reader !== undefined ? (

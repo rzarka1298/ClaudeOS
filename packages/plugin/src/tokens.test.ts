@@ -354,6 +354,8 @@ describe("the disconnected dimming keeps text legible (A11Y-02; UI-SPEC disconne
       '.ccc-agent-runs [data-dimmed="true"]',
       '.ccc-card-body[data-dimmed="true"]',
       '.ccc-card-footer[data-dimmed="true"]',
+      // The Research destination's disconnected frame (07-11): the same audited token on the root.
+      '.ccc-command-center .ccc-research[data-dimmed="true"]',
       // The Tasks destination and the project tasks panel's disconnected lists (06-16).
       '.ccc-project-tasks [data-dimmed="true"]',
       '.ccc-tasks [data-dimmed="true"]',

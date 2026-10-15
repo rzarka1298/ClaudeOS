@@ -1989,7 +1989,8 @@
 }
 
 /* The provenance strip: the footer and the Partial chip sit on one wrapping row. */
-.ccc-tasks-strip {
+.ccc-tasks-strip,
+.ccc-research-strip {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2507,6 +2508,330 @@
   .ccc-tasks-select .ccc-text-input {
     width: 100%;
   }
+}
+
+/* ===========================================================================
+ * Phase 7 - Research destination (07-UI-SPEC.md R1 to R3; plan 07-11)
+ *
+ * The frame, Run now, the provenance strip, the Run status section, the report
+ * list and the list-and-reader grid. Every value is an existing token or a
+ * container threshold the file already uses (48rem, 34rem, 24rem); no new
+ * token, no new size or weight, no inline style, no animation. State reaches
+ * CSS through data-* attributes only. The accent is spent on focus rings only
+ * and the danger colour on the Failed state alone. The reader's .ccc-report-*
+ * classes arrive with plan 07-13.
+ * ========================================================================= */
+
+.ccc-command-center .ccc-research {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+  padding: var(--ccc-space-lg);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+  box-shadow: var(--ccc-shadow-card);
+}
+
+/* Disconnected: the whole destination dims through the one audited opacity token
+ * while the last-good values stay legible. */
+.ccc-command-center .ccc-research[data-dimmed="true"] {
+  opacity: var(--ccc-dim-opacity);
+}
+
+.ccc-command-center .ccc-research-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-research-header h2 {
+  margin: 0;
+  padding-inline: var(--ccc-space-xs);
+  overflow-wrap: break-word;
+  font-size: var(--ccc-text-heading);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-command-center .ccc-research-header h2:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* Run now and the visible reason under it. */
+.ccc-command-center .ccc-research-run {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ccc-space-xs);
+}
+
+.ccc-command-center .ccc-research-reason {
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+/* Below 34rem Run now wraps under the title; below 24rem it takes the full width. */
+@container (max-width: 34rem) {
+  .ccc-command-center .ccc-research-run {
+    flex-basis: 100%;
+  }
+}
+
+@container (max-width: 24rem) {
+  .ccc-command-center .ccc-research-run {
+    width: 100%;
+  }
+
+  .ccc-command-center .ccc-research-run .ccc-connect-button {
+    width: 100%;
+  }
+}
+
+.ccc-command-center .ccc-research-subline {
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-body);
+}
+
+/* The provenance strip shares the Tasks strip rule block (selector list above);
+ * the Partial chip beside the footer keeps the Label size. */
+.ccc-command-center .ccc-research-strip .ccc-badge {
+  font-size: var(--ccc-text-label);
+}
+
+/* The one polite status line. */
+.ccc-command-center .ccc-research-status {
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+/* The three button weights (UI-SPEC "Buttons"): primary is the stronger word and
+ * the ink border, secondary the plain pill, tertiary the quiet one. No colour
+ * carries the difference; the accent stays on focus. */
+.ccc-command-center .ccc-research [data-variant="primary"] {
+  border-color: var(--ccc-ink);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-command-center .ccc-research [data-variant="secondary"] {
+  border-color: var(--ccc-border);
+}
+
+.ccc-command-center .ccc-research [data-variant="tertiary"] {
+  border-color: transparent;
+  color: var(--ccc-ink-muted);
+}
+
+/* ---- Run status (R2) ---------------------------------------------------- */
+
+.ccc-command-center .ccc-research-run-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+  margin-block-end: var(--ccc-space-xl);
+}
+
+.ccc-command-center .ccc-research-run-status .ccc-detail-fields {
+  margin-top: 0;
+}
+
+.ccc-command-center .ccc-research-status-row {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.ccc-command-center .ccc-research-state {
+  white-space: nowrap;
+}
+
+/* The Failed state is the one place the danger colour appears outside an error line;
+ * the glyph and the word carry it as well, never colour alone. */
+.ccc-command-center .ccc-research-state[data-state="failed"] {
+  color: var(--ccc-danger);
+}
+
+.ccc-command-center .ccc-research-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.ccc-command-center .ccc-research-reason-text {
+  color: var(--ccc-ink-muted);
+}
+
+.ccc-command-center .ccc-research-next-step {
+  display: block;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-command-center .ccc-research-sources-config {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-research-sources-config ul {
+  margin: 0 0 var(--ccc-space-sm);
+  padding: 0;
+  list-style: none;
+}
+
+.ccc-command-center .ccc-research-sources-config li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ccc-space-sm);
+  overflow-wrap: break-word;
+  font-size: var(--ccc-text-body);
+}
+
+.ccc-command-center .ccc-research-callout-heading {
+  margin: 0 0 var(--ccc-space-xs);
+  font-weight: var(--ccc-weight-strong);
+}
+
+/* ---- Reports (R3) ------------------------------------------------------- */
+
+.ccc-command-center .ccc-research-layout {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ccc-space-lg);
+  margin-top: var(--ccc-space-sm);
+}
+
+/* List beside reader at 48rem and wider, the reader taking the wider share;
+ * below that an open report replaces the list and nothing open leaves no
+ * empty reader cell. */
+@container (min-width: 48rem) {
+  .ccc-command-center .ccc-research-layout {
+    grid-template-columns: minmax(14rem, 1fr) minmax(0, 2fr);
+  }
+}
+
+@container (max-width: 48rem) {
+  .ccc-command-center .ccc-research-layout[data-reader-open="true"] > .ccc-research-list-cell {
+    display: none;
+  }
+
+  .ccc-command-center .ccc-research-layout[data-reader-open="false"] > .ccc-research-reader-cell {
+    display: none;
+  }
+}
+
+.ccc-command-center .ccc-research-list-cell,
+.ccc-command-center .ccc-research-reader-cell {
+  min-width: 0;
+}
+
+.ccc-command-center .ccc-research-placeholder {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-body);
+}
+
+.ccc-command-center .ccc-report-list-region {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+  min-width: 0;
+  align-items: stretch;
+}
+
+.ccc-command-center .ccc-report-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ccc-command-center .ccc-report-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ccc-space-xs);
+  padding: var(--ccc-space-sm) 0;
+  border-bottom: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-command-center .ccc-report-row:last-child {
+  border-bottom: none;
+}
+
+/* The selected row: an inset bar, the opaque surface and weight 600 on the
+ * title, with aria-current carrying it for assistive technology. Never accent. */
+.ccc-command-center .ccc-report-row[data-selected="true"] {
+  background-color: var(--ccc-surface);
+  box-shadow: inset var(--ccc-focus-ring) 0 0 0 var(--ccc-ink);
+  padding-left: var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-report-row-button {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  width: 100%;
+  min-width: var(--ccc-space-lg);
+  min-height: var(--ccc-space-lg);
+  padding: 0;
+  overflow-wrap: break-word;
+  border: none;
+  background: transparent;
+  color: var(--ccc-ink);
+  font-family: inherit;
+  font-size: var(--ccc-text-body);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-command-center .ccc-report-row[data-selected="true"] .ccc-report-row-button {
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-command-center .ccc-report-row-button:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-command-center .ccc-report-row-meta {
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.ccc-command-center .ccc-report-title {
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+}
+
+.ccc-command-center .ccc-report-list-error,
+.ccc-command-center .ccc-report-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ccc-space-xs);
+}
+
+.ccc-command-center .ccc-report-list-error p,
+.ccc-command-center .ccc-report-list-empty p {
+  margin: 0;
+  overflow-wrap: break-word;
+}
+
+.ccc-command-center .ccc-report-empty-heading {
+  font-weight: var(--ccc-weight-strong);
 }
 
 /* ===========================================================================

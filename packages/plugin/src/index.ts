@@ -38,6 +38,9 @@ export type {
 } from "./projects/launch-status.js";
 export { launchStatus, launchStatusKey, resetLaunchStatus } from "./projects/launch-status.js";
 export { projectShortcutsStateFor } from "./projects/projects-state.js";
+export type { ResearchApi, ResearchHostPorts } from "./research/api.js";
+export { configureResearch, ResearchApiError } from "./research/api.js";
+export { onResearchUpdated, resetResearchState } from "./research/state.js";
 export { attachEventClient } from "./service-connection.js";
 export type { TaskActionResult, TaskSaveInput } from "./tasks/actions.js";
 export {
@@ -59,6 +62,7 @@ export { RECENT_PAGE_SIZE, selectedRunId } from "./view/agent-runs-state.js";
 export { approvalChip, approvalsMissedSync, resetApprovalsView } from "./view/approvals-state.js";
 export { DestinationTabs } from "./view/destination-tabs.js";
 export { ProjectTasksPanel } from "./view/project-tasks.js";
+export { ResearchDestination } from "./view/research.js";
 export { TasksDestination } from "./view/tasks.js";
 export { createTasksViewState } from "./view/tasks-view-state.js";
 // ===== Phase 05.1: Codex visual harness contract =====

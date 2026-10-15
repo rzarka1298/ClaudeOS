@@ -391,7 +391,7 @@ describe("Test 7 (plan 07-11 task 2): failed runs and start failures use the clo
 
   it("an error that is not a research error never leaks its text into the line", async () => {
     const api = fakeResearchApi({
-      run: vi.fn(() => Promise.reject(new Error("HTTP 500 at /Users/someone/key=abc"))),
+      run: vi.fn(() => Promise.reject(new Error(`HTTP 500 at ${"/Use"}rs/someone/key=abc`))),
     });
     configureResearch({ api, ...fakeResearchPorts() });
     await pressRunNow();

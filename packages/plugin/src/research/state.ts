@@ -8,6 +8,7 @@ import type {
 } from "@ccc/domain/research-routes.js";
 import { type Signal, signal } from "@preact/signals";
 import {
+  moreLoadedLine,
   REPORT_READY_UNTITLED,
   reportReadyLine,
   reportReadyWithGapsLine,
@@ -54,6 +55,14 @@ export const reportsFailure: Signal<ResearchErrorCode | null> = signal(null);
 /** Counts good list loads, so a container can stamp when the rows were last good. */
 export const reportsGeneration: Signal<number> = signal(0);
 
+/** True while the next page of the list is loading. */
+export const reportsLoadingMore: Signal<boolean> = signal(false);
+/**
+ * The index of the first newly loaded row after "Show 25 more", until the list has moved focus
+ * to it (UI-SPEC R3). A refresh from an event never sets it, so focus stays where it was.
+ */
+export const focusRequest: Signal<number | null> = signal(null);
+
 /** The one polite status line of the destination. */
 export const statusLine: Signal<string> = signal("");
 /** True from the press until the service has answered (or the timeout path has ended). */
@@ -77,6 +86,8 @@ export function resetResearchState(): void {
   reportsLoaded.value = false;
   reportsFailure.value = null;
   reportsGeneration.value = 0;
+  reportsLoadingMore.value = false;
+  focusRequest.value = null;
   statusLine.value = "";
   pressPending.value = false;
   activeRunId.value = null;
@@ -85,6 +96,16 @@ export function resetResearchState(): void {
   listSeq += 1;
   activeMisses = 0;
   activeRunIsOwn = false;
+}
+
+/** Sets the destination's one polite status line. */
+export function setStatusLine(message: string): void {
+  statusLine.value = message;
+}
+
+/** Called by the list once it has moved focus to the first newly loaded row. */
+export function clearFocusRequest(): void {
+  focusRequest.value = null;
 }
 
 export function selectReport(noteId: string | null): void {
@@ -161,6 +182,29 @@ export async function refreshList(): Promise<void> {
   } catch (error) {
     if (token !== listSeq) return;
     reportsFailure.value = codeOf(error);
+  }
+}
+
+/** Loads the next page and appends it; the rows already loaded and the cursor stay on a failure. */
+export async function loadMoreReports(): Promise<void> {
+  const cursor = reportsCursor.value;
+  if (cursor === null || reportsLoadingMore.value) return;
+  reportsLoadingMore.value = true;
+  const token = ++listSeq;
+  try {
+    const response = await researchApi().list(cursor);
+    if (token !== listSeq) return;
+    const start = reportRows.value.length;
+    applyList(response, true);
+    if (response.rows.length > 0) {
+      focusRequest.value = start;
+      statusLine.value = moreLoadedLine(response.rows.length);
+    }
+  } catch (error) {
+    if (token !== listSeq) return;
+    reportsFailure.value = codeOf(error);
+  } finally {
+    reportsLoadingMore.value = false;
   }
 }
 
