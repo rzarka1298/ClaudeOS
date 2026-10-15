@@ -4,7 +4,7 @@
 import { REPORT_ITEM_QUOTE_MAX_LENGTH, REPORT_ITEMS_MAX } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import { validateSummariserOutput } from "./claims.js";
-import { delimitSources } from "./delimit.js";
+import { delimitSources, parseDelimitedBlocks } from "./delimit.js";
 import { extractiveSummary } from "./extractive.js";
 import { normaliseForMatch } from "./text-canon.js";
 
@@ -106,8 +106,12 @@ describe("Task 3 Test 2 (round trip): every item survives the trusted stage", ()
       [ids(13)]: "A\u200BB zero width inside the first words of this source text here.",
       [ids(14)]: `${"long words here ".repeat(60)}end`,
     };
+    // The trusted stage sees the sanitised text, which is what the delimiter carries.
+    const sanitised = Object.fromEntries(
+      parseDelimitedBlocks(compose(awkward)).map((b) => [b.sourceId, b.text]),
+    );
     const result = validateSummariserOutput(extractiveSummary(compose(awkward)), {
-      sources: awkward,
+      sources: sanitised,
     });
     if (!result.ok) throw new Error("expected ok");
     expect(result.counts.downgraded).toBe(0);

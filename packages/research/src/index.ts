@@ -1,6 +1,7 @@
 export * from "./canonical-url.js";
 export * from "./claims.js";
 export * from "./delimit.js";
+export * from "./extractive.js";
 export * from "./feed.js";
 export * from "./html-to-text.js";
 export * from "./neutralise.js";
