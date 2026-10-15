@@ -24,8 +24,8 @@
 //     relative module, or vitest in a test file.
 //
 // Fixtures prove it fires on each shape, including the ones the line scan cannot see.
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -76,6 +76,31 @@ const BANNED_MEMBERS = new Set([
   "setPrototypeOf",
   "defineProperty",
   "defineProperties",
+  // V8 Error statics (a host-visible hook and a stack-shape probe), the legacy accessor methods
+  // that read or install getters and setters, and the sloppy-mode call-stack links.
+  "prepareStackTrace",
+  "captureStackTrace",
+  "stackTraceLimit",
+  "__lookupGetter__",
+  "__defineGetter__",
+  "__lookupSetter__",
+  "__defineSetter__",
+  "caller",
+  "callee",
+]);
+
+/** Built-ins whose statics are a shared surface: only construction or a call may name them. */
+const CONSTRUCTOR_ONLY = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "RegExp"]);
+
+/** Object statics that change an object in place (a call on a built-in target is a write). */
+const MUTATORS = new Set([
+  "assign",
+  "defineProperty",
+  "defineProperties",
+  "freeze",
+  "seal",
+  "preventExtensions",
+  "setPrototypeOf",
 ]);
 
 /** True when the identifier is only a name (a declaration, a property, a label), not a value. */
@@ -85,7 +110,13 @@ function isNameOnly(node: ts.Identifier): boolean {
   if (ts.isQualifiedName(parent)) return parent.right === node;
   if (ts.isPropertyAssignment(parent)) return parent.name === node;
   if (ts.isBindingElement(parent)) return parent.propertyName === node || parent.name === node;
-  if (ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent)) return true;
+  if (ts.isImportSpecifier(parent)) return true;
+  if (ts.isExportSpecifier(parent)) {
+    // A re-export (`export { x } from "m"`) names the other module's binding. A local export
+    // reads a local value: the local name (propertyName ?? name) is a reference, not a name.
+    if (parent.parent.parent.moduleSpecifier !== undefined) return true;
+    return (parent.propertyName ?? parent.name) !== node;
+  }
   if (
     ts.isVariableDeclaration(parent) ||
     ts.isParameter(parent) ||
@@ -177,7 +208,10 @@ const COMPILER_OPTIONS: ts.CompilerOptions = {
 const libraryFiles = new Map<string, ts.SourceFile>();
 
 /** A one-file program (the real folder's compiler options: ES2022, no ambient types). */
-function programFor(fileName: string, text: string): ts.Program {
+function programFor(
+  fileName: string,
+  text: string,
+): { program: ts.Program; host: ts.CompilerHost } {
   const base = ts.createCompilerHost(COMPILER_OPTIONS, true);
   const host: ts.CompilerHost = {
     ...base,
@@ -192,7 +226,101 @@ function programFor(fileName: string, text: string): ts.Program {
     fileExists: (name) => name === fileName || base.fileExists(name),
     readFile: (name) => (name === fileName ? text : base.readFile(name)),
   };
-  return ts.createProgram([fileName], COMPILER_OPTIONS, host);
+  return { program: ts.createProgram([fileName], COMPILER_OPTIONS, host), host };
+}
+
+/** How a relative specifier is resolved: the way the real build does (NodeNext, ESM importer). */
+const RESOLVE_OPTIONS: ts.CompilerOptions = {
+  target: ts.ScriptTarget.ES2022,
+  module: ts.ModuleKind.NodeNext,
+  moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  types: [],
+};
+
+const REAL_FOLDER = `${realpathSync(FOLDER)}${sep}`;
+
+function realOf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/** Why an import or export-from specifier is not acceptable, or null. */
+function specifierProblem(
+  name: string,
+  fileName: string,
+  host: ts.CompilerHost,
+  testFile: boolean,
+): string | null {
+  if (name === "@ccc/domain") return null;
+  if (name === "vitest") return testFile ? null : "import of vitest from a non-test file";
+  if (!name.startsWith("./") && !name.startsWith("../")) return `import of ${name}`;
+  if (!testFile && name.includes(".test.")) return `import of the test module ${name}`;
+  const resolved = ts.resolveModuleName(
+    name,
+    fileName,
+    RESOLVE_OPTIONS,
+    host,
+    undefined,
+    undefined,
+    ts.ModuleKind.ESNext,
+  ).resolvedModule;
+  if (resolved === undefined) return `import of ${name} does not resolve`;
+  const real = realOf(resolved.resolvedFileName);
+  if (resolved.isExternalLibraryImport === true || real.split(sep).includes("node_modules")) {
+    return `import of ${name} reaches node_modules`;
+  }
+  if (resolved.extension !== ts.Extension.Ts || real.endsWith(".d.ts")) {
+    return `import of ${name} resolves to a non-.ts file`;
+  }
+  if (!real.startsWith(REAL_FOLDER)) return `import of ${name} resolves outside the folder`;
+  if (!testFile && basename(real).includes(".test.")) return `import of the test module ${name}`;
+  return null;
+}
+
+function unwrap(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/** The member a property or element access names, when the key is a plain string. */
+function memberNameOf(node: ts.Node): string | undefined {
+  if (ts.isPropertyAccessExpression(node)) return node.name.text;
+  if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+    return node.argumentExpression.text;
+  }
+  return undefined;
+}
+
+/** True when `this` sits in a class member (arrows are transparent; any other function is not). */
+function thisInClassMember(node: ts.Node): boolean {
+  for (let current = node.parent; current !== undefined; current = current.parent) {
+    if (ts.isArrowFunction(current)) continue;
+    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current)) return false;
+    if (
+      ts.isConstructorDeclaration(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isGetAccessor(current) ||
+      ts.isSetAccessor(current) ||
+      ts.isPropertyDeclaration(current) ||
+      ts.isClassStaticBlockDeclaration(current)
+    ) {
+      return ts.isClassLike(current.parent);
+    }
+    if (ts.isSourceFile(current)) return false;
+  }
+  return false;
 }
 
 function isDeclare(node: ts.Node): boolean {
@@ -204,7 +332,7 @@ function isDeclare(node: ts.Node): boolean {
 
 export function findings(file: string, text: string): string[] {
   const fileName = resolve(file);
-  const program = programFor(fileName, text);
+  const { program, host } = programFor(fileName, text);
   const source = program.getSourceFile(fileName);
   if (source === undefined) return [`${file} could not be read`];
   const checker = program.getTypeChecker();
@@ -224,10 +352,14 @@ export function findings(file: string, text: string): string[] {
   /** Why a value name is not acceptable, or null when it resolves to something allowed. */
   const rejectName = (node: ts.Identifier): string | null => {
     const parent = node.parent;
-    const symbol =
-      ts.isShorthandPropertyAssignment(parent) && parent.name === node
-        ? checker.getShorthandAssignmentValueSymbol(parent)
-        : checker.getSymbolAtLocation(node);
+    let symbol: ts.Symbol | undefined;
+    if (ts.isShorthandPropertyAssignment(parent) && parent.name === node) {
+      symbol = checker.getShorthandAssignmentValueSymbol(parent);
+    } else if (ts.isExportSpecifier(parent)) {
+      symbol = checker.getExportSpecifierLocalTargetSymbol(parent);
+    } else {
+      symbol = checker.getSymbolAtLocation(node);
+    }
     const declarations = symbol?.declarations ?? [];
     if (symbol === undefined || declarations.length === 0) {
       return ALLOWED_GLOBALS.has(node.text) ? null : `name ${node.text} resolves to nothing`;
@@ -251,6 +383,60 @@ export function findings(file: string, text: string): string[] {
     return null;
   };
 
+  const inDefaultLibrary = (symbol: ts.Symbol | undefined): boolean =>
+    (symbol?.declarations ?? []).some((declaration) =>
+      program.isSourceFileDefaultLibrary(declaration.getSourceFile()),
+    );
+
+  /** True when an expression is the value of a built-in constructor or namespace (by its type). */
+  const isBuiltinValue = (expression: ts.Expression, pattern: RegExp): boolean => {
+    const symbol = checker.getTypeAtLocation(expression).getSymbol();
+    return symbol !== undefined && pattern.test(symbol.name) && inDefaultLibrary(symbol);
+  };
+
+  const BUILTIN_VALUE = /^(?:[A-Za-z]+Constructor|Math|JSON)$/;
+  const SHARED_CTOR =
+    /^(?:Error|TypeError|RangeError|SyntaxError|EvalError|ReferenceError|URIError|RegExp)Constructor$/;
+
+  /** True when an access chain starts at (or passes through) a built-in the folder may name. */
+  const touchesBuiltin = (target: ts.Expression): boolean => {
+    let current = unwrap(target);
+    for (;;) {
+      if (ts.isIdentifier(current) && ALLOWED_GLOBALS.has(current.text)) return true;
+      if (isBuiltinValue(current, BUILTIN_VALUE)) return true;
+      if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+        current = unwrap(current.expression);
+        continue;
+      }
+      return false;
+    }
+  };
+
+  /** The assignment targets inside a (possibly destructuring) left-hand side. */
+  const targetsOf = (left: ts.Expression): ts.Expression[] => {
+    const target = unwrap(left);
+    if (ts.isArrayLiteralExpression(target)) {
+      return target.elements.flatMap((element) =>
+        ts.isSpreadElement(element) ? targetsOf(element.expression) : targetsOf(element),
+      );
+    }
+    if (ts.isObjectLiteralExpression(target)) {
+      return target.properties.flatMap((property) => {
+        if (ts.isPropertyAssignment(property)) return targetsOf(property.initializer);
+        if (ts.isShorthandPropertyAssignment(property)) return [property.name];
+        if (ts.isSpreadAssignment(property)) return targetsOf(property.expression);
+        return [];
+      });
+    }
+    // `[a = 1] = ...`: the default-value assignment is visited as an assignment of its own.
+    if (ts.isBinaryExpression(target)) return [];
+    return [target];
+  };
+
+  const flagWrites = (node: ts.Node, targets: readonly ts.Expression[]): void => {
+    if (targets.some(touchesBuiltin)) out.push(`${at(node)} write to a shared built-in`);
+  };
+
   const visit = (node: ts.Node): void => {
     if (isDeclare(node)) out.push(`${at(node)} declare`);
     if (ts.isModuleDeclaration(node)) out.push(`${at(node)} module or namespace declaration`);
@@ -264,7 +450,61 @@ export function findings(file: string, text: string): string[] {
       } else if (!isNameOnly(node) && !inTypePosition(node)) {
         const why = rejectName(node);
         if (why !== null) out.push(`${at(node)} ${why}`);
+        if (CONSTRUCTOR_ONLY.has(node.text)) {
+          const parent = node.parent;
+          const allowed =
+            ((ts.isNewExpression(parent) || ts.isCallExpression(parent)) &&
+              parent.expression === node) ||
+            (ts.isBinaryExpression(parent) &&
+              parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+              parent.right === node) ||
+            ts.isExpressionWithTypeArguments(parent);
+          if (!allowed) out.push(`${at(node)} ${node.text} is only for new, a call or instanceof`);
+        }
       }
+    }
+    if (node.kind === ts.SyntaxKind.ThisKeyword && !thisInClassMember(node)) {
+      out.push(`${at(node)} this outside a class member`);
+    }
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      if (isBuiltinValue(node.expression, SHARED_CTOR)) {
+        out.push(`${at(node)} member of Error or RegExp`);
+      }
+      const member = memberNameOf(node);
+      const object = unwrap(node.expression);
+      if (
+        member !== undefined &&
+        MUTATORS.has(member) &&
+        ((ts.isIdentifier(object) && object.text === "Object") ||
+          isBuiltinValue(object, /^ObjectConstructor$/))
+      ) {
+        const callee = node.parent;
+        if (!(ts.isCallExpression(callee) && callee.expression === node)) {
+          out.push(`${at(node)} Object.${member} used other than as a direct call`);
+        } else if (callee.arguments[0] !== undefined && touchesBuiltin(callee.arguments[0])) {
+          out.push(`${at(node)} Object.${member} on a shared built-in`);
+        }
+      }
+    }
+    if (ts.isBinaryExpression(node)) {
+      const kind = node.operatorToken.kind;
+      if (kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment) {
+        flagWrites(node, targetsOf(node.left));
+      }
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      flagWrites(node, [node.operand]);
+    }
+    if (ts.isDeleteExpression(node)) flagWrites(node, [node.expression]);
+    if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer)
+    ) {
+      flagWrites(node, targetsOf(node.initializer));
     }
     if (ts.isStringLiteralLike(node) && BANNED_MEMBERS.has(node.text)) {
       out.push(`${at(node)} banned string ${node.text}`);
@@ -288,13 +528,22 @@ export function findings(file: string, text: string): string[] {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
       const specifier = node.moduleSpecifier;
       if (specifier !== undefined && ts.isStringLiteral(specifier)) {
-        const name = specifier.text;
-        const allowed =
-          name === "@ccc/domain" ||
-          name.startsWith("./") ||
-          name.startsWith("../") ||
-          (testFile && name === "vitest");
-        if (!allowed) out.push(`${at(node)} import of ${name}`);
+        const why = specifierProblem(specifier.text, fileName, host, testFile);
+        if (why !== null) out.push(`${at(node)} ${why}`);
+        if (specifier.text === "vitest" && testFile) {
+          // Only the named describe, it and expect: no vi, no namespace, no default, no re-export.
+          const clause = ts.isImportDeclaration(node) ? node.importClause : undefined;
+          const bindings = clause?.namedBindings;
+          const named =
+            clause !== undefined &&
+            clause.name === undefined &&
+            bindings !== undefined &&
+            ts.isNamedImports(bindings) &&
+            bindings.elements.every((element) =>
+              ["describe", "it", "expect"].includes((element.propertyName ?? element.name).text),
+            );
+          if (!named) out.push(`${at(node)} vitest import other than describe, it, expect`);
+        }
       }
     }
     if (ts.isImportEqualsDeclaration(node)) out.push(`${at(node)} import equals`);
@@ -304,25 +553,46 @@ export function findings(file: string, text: string): string[] {
   return out;
 }
 
+/** Every file under dir (any name, any extension); a symlink counts as a file, never followed. */
 function files(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...files(full));
-    else if (/\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/.test(entry)) out.push(full);
+    if (lstatSync(full).isDirectory()) out.push(...files(full));
+    else out.push(full);
   }
   return out.sort();
+}
+
+/** Why a file may not sit in the folder, or null: only plain *.ts (and the folder's tsconfig.json). */
+function fileProblem(full: string): string | null {
+  const name = basename(full);
+  try {
+    if (lstatSync(full).isSymbolicLink()) return `${full} is a symlink`;
+  } catch {
+    // a fixture name that is not on disk
+  }
+  if (name === "tsconfig.json") return null;
+  if (name.endsWith(".d.ts")) return `${full} is a declaration file`;
+  if (!/^[^/]+\.ts$/.test(name) || /\.[cm]ts$/.test(name)) return `${full} is not a plain .ts file`;
+  return null;
 }
 
 describe("the untrusted folder, read as a syntax tree against an allowlist", () => {
   it("uses only declared names, plain globals, no prototype machinery, no computed keys", () => {
     const scanned = files(FOLDER);
     expect(scanned.length).toBeGreaterThanOrEqual(3);
-    const all = scanned.flatMap((file) => findings(file, readFileSync(file, "utf8")));
+    expect(scanned.map(fileProblem).filter((problem) => problem !== null)).toEqual([]);
+    const all = scanned
+      .filter((file) => file.endsWith(".ts"))
+      .flatMap((file) => findings(file, readFileSync(file, "utf8")));
     expect(all).toEqual([]);
   });
 
-  const FIRE: ReadonlyArray<readonly [name: string, source: string]> = [
+  // Fixtures run as if they lived in the real folder, so a relative specifier resolves against it.
+  const PROBE = join(FOLDER, "probe.ts");
+  const PROBE_TEST = join(FOLDER, "probe.test.ts");
+  const FIRE: ReadonlyArray<readonly [name: string, source: string, file?: string]> = [
     ["a destructured constructor", 'const { constructor: F } = () => 0;\nF("return 1");\n'],
     ["a shorthand constructor binding", "const { constructor } = () => 0;\n"],
     [
@@ -409,17 +679,130 @@ describe("the untrusted folder, read as a syntax tree against an allowlist", () 
     ["a local function named fetch", "function fetch() { return 1; }\nexport const f = fetch();\n"],
     ["a reference directive", '/// <reference lib="dom" />\nexport const a = 1;\n'],
     ["an escaped identifier", "export const \\u0061 = 1;\n"],
+    // Round 5 (Opus gap review). Relative specifiers are resolved against the real folder.
+    ["a relative import that leaves the folder", 'export { a } from "../approval/index.js";\n'],
+    [
+      "a relative import of a sibling folder",
+      'import { a } from "../paths.js";\nexport const b = a;\n',
+    ],
+    [
+      "a relative import that does not resolve",
+      'import { a } from "./missing.js";\nexport const b = a;\n',
+    ],
+    ["a relative export-from that leaves the folder", 'export * from "../index.js";\n'],
+    [
+      "a relative import that climbs into node_modules",
+      'import "../../../node_modules/zod/index.js";\n',
+    ],
+    [
+      "a relative import of a test module from a non-test file",
+      'import { a } from "./index.test.js";\nexport const b = a;\n',
+    ],
+    ["Error.prepareStackTrace", "export const p = Error.prepareStackTrace;\n"],
+    [
+      "an Error.prepareStackTrace write",
+      "Error.prepareStackTrace = (_e: unknown, s: unknown) => s;\n",
+    ],
+    ["Error.captureStackTrace", "Error.captureStackTrace({});\n"],
+    ["Error.stackTraceLimit", "export const l = Error.stackTraceLimit;\n"],
+    ["a stackTraceLimit string", 'export const s = "stackTraceLimit";\n'],
+    ["an Error static that is not on the V8 list", "export const n = Error.name;\n"],
+    ["Error held in a variable", "const E = Error;\nexport const n = E;\n"],
+    ["Error element access", 'export const n = Error["name"];\n'],
+    ["RegExp.$1", 'export const m = /a(b)/.exec("ab") && RegExp.$1;\n'],
+    ["RegExp lastMatch", "export const m = RegExp.lastMatch;\n"],
+    ["RegExp input", "export const m = RegExp.input;\n"],
+    ["RegExp $& element access", 'export const m = RegExp["$&"];\n'],
+    ["RegExp $_ element access", 'export const m = RegExp["$_"];\n'],
+    ["RegExp destructured", "export const { $1 } = RegExp;\n"],
+    ["a write to Array", "Array.x = 1;\n"],
+    ["a write to Math", "Math.max = Math.min;\n"],
+    ["a compound write to Object", "Object.x += 1;\n"],
+    ["a logical write to JSON", "JSON.x ??= 1;\n"],
+    ["a delete on a built-in", "delete JSON.parse;\n"],
+    ["an increment of a built-in member", "Math.PI++;\n"],
+    ["a decrement of a built-in member", "--Math.E;\n"],
+    ["a write through a cast", "(Array as unknown as { x: number }).x = 1;\n"],
+    ["a nested write to a built-in", "Object.keys.x.y = 1;\n"],
+    ["a destructuring write to a built-in", "[Array.x] = [1];\n"],
+    ["an object destructuring write to a built-in", "({ a: Array.x } = { a: 1 });\n"],
+    ["a for-of write to a built-in", "for (Array.x of [1]) {}\n"],
+    ["a write through an alias of a built-in", "const A = Array;\nA.x = 1;\n"],
+    ["Object.assign onto a built-in", "Object.assign(Array, { x: 1 });\n"],
+    ["Object.freeze of a built-in", "Object.freeze(Map);\n"],
+    ["Object.seal of a built-in member", "Object.seal(Math.max);\n"],
+    ["Object.preventExtensions of a built-in", "Object.preventExtensions(Set);\n"],
+    ["Object.assign held in a variable", "const a = Object.assign;\na(Array, {});\n"],
+    ["Object.assign through call", "Object.assign.call(null, Array, {});\n"],
+    [
+      "Object[assign] element access held in a variable",
+      'const a = Object["freeze"];\na(Array);\n',
+    ],
+    [
+      "__lookupGetter__",
+      "export const g = ({} as { __lookupGetter__: unknown }).__lookupGetter__;\n",
+    ],
+    [
+      "__defineGetter__",
+      "export const g = ({} as { __defineGetter__: unknown }).__defineGetter__;\n",
+    ],
+    [
+      "__lookupSetter__",
+      "export const g = ({} as { __lookupSetter__: unknown }).__lookupSetter__;\n",
+    ],
+    [
+      "__defineSetter__",
+      "export const g = ({} as { __defineSetter__: unknown }).__defineSetter__;\n",
+    ],
+    [
+      "a caller read",
+      "export function f(): unknown { return (f as { caller?: unknown }).caller; }\n",
+    ],
+    [
+      "a callee read",
+      "export function f(): unknown { return (arguments as { callee?: unknown }).callee; }\n",
+    ],
+    [
+      "the vi helper from vitest",
+      'import { vi } from "vitest";\nexport const v = vi;\n',
+      PROBE_TEST,
+    ],
+    [
+      "a namespace import of vitest",
+      'import * as v from "vitest";\nexport const x = v;\n',
+      PROBE_TEST,
+    ],
+    ["a default import of vitest", 'import v from "vitest";\nexport const x = v;\n', PROBE_TEST],
+    ["a side-effect import of vitest", 'import "vitest";\n', PROBE_TEST],
+    ["a re-export from vitest", 'export { it } from "vitest";\n', PROBE_TEST],
+    [
+      "vitest beside describe, it and expect",
+      'import { describe, it, vi } from "vitest";\nexport const x = [describe, it, vi];\n',
+      PROBE_TEST,
+    ],
+    ["vitest from a non-test file", 'import { it } from "vitest";\nexport const x = it;\n'],
+    ["this in a function declaration", "export function f() { return this; }\n"],
+    ["this in an object method", "export const o = { m() { return this; } };\n"],
+    ["this at module level", "export const t = this;\n"],
+    ["this in a top-level arrow", "export const a = () => this;\n"],
+    [
+      "this in a function expression inside a method",
+      "export class A { m() { return function () { return this; }; } }\n",
+    ],
+    ["a local name exported that is a global off the list", "export { Intl };\n"],
+    ["a renamed global off the list exported", "export { Int8Array as bytes };\n"],
+    ["a name that resolves to nothing exported", "export { nowhere };\n"],
   ];
-  for (const [name, source] of FIRE) {
+  for (const [name, source, file] of FIRE) {
     it(`finds ${name}`, () => {
-      expect(findings("probe.ts", source).length, source).toBeGreaterThan(0);
+      expect(findings(file ?? PROBE, source).length, source).toBeGreaterThan(0);
     });
   }
 
   it("is quiet for ordinary domain code", () => {
     const quiet = [
       'import type { NoteId } from "@ccc/domain";',
-      'import { helper } from "./helper.js";',
+      'import { SUMMARISER_INSTRUCTIONS as helper } from "./instructions.js";',
       "const processed = 1;",
       'const text = "process globalThis eval( Function fetch(";',
       "// process globalThis eval( Function",
@@ -433,8 +816,46 @@ describe("the untrusted folder, read as a syntax tree against an allowlist", () 
       'export const lookup = new Map<string, number>([["a", 1]]);',
       "export async function run(): Promise<number> { return Math.max(1, 2); }",
       "export const total = JSON.parse('[1]') as number[];",
+      'export const fresh = new Error("x");',
+      'export const called = Error("y");',
+      'export const re = new RegExp("a", "u");',
+      "export const isErr = (value: unknown): boolean => value instanceof Error || value instanceof RegExp;",
+      "export class Probe { readonly me = this; m() { return () => this; } get g() { return this; } static s = 1; }",
+      "const own = { a: 1 }; own.a = 2; own.a += 1; own.a++; Object.assign(own, { b: 1 }); Object.freeze(own);",
+      "let counter = 0; counter++; counter += 1;",
+      'export const named = fresh.name === "x" ? 1 : 2;',
+      "export { total as renamedTotal };",
       "",
     ].join("\n");
-    expect(findings("quiet.ts", quiet)).toEqual([]);
+    expect(findings(join(FOLDER, "quiet.ts"), quiet)).toEqual([]);
+  });
+
+  it("is quiet for a test file importing describe, it and expect from vitest", () => {
+    const quiet = [
+      'import { describe, expect, it } from "vitest";',
+      'import { SUMMARISER_INSTRUCTIONS } from "./instructions.js";',
+      'describe("x", () => { it("y", () => { expect(SUMMARISER_INSTRUCTIONS).toBeDefined(); }); });',
+      "",
+    ].join("\n");
+    expect(findings(join(FOLDER, "quiet.test.ts"), quiet)).toEqual([]);
+  });
+
+  it("rejects an unexpected file in the folder (extension, declaration file, symlink)", () => {
+    for (const name of [
+      "a.js",
+      "a.mjs",
+      "a.d.ts",
+      "a.mts",
+      "a.cts",
+      "a.tsx",
+      "a.json",
+      "a.map",
+      "a",
+    ]) {
+      expect(fileProblem(join(FOLDER, name)), name).not.toBeNull();
+    }
+    for (const name of ["a.ts", "a.test.ts", "tsconfig.json"]) {
+      expect(fileProblem(join(FOLDER, name)), name).toBeNull();
+    }
   });
 });
