@@ -73,6 +73,7 @@ with the same class, status, lifetime, maximum approval age and retry policy.
 | `usage.transcript-analysis-toggle` | direct-gesture | - | - | - | - |
 | `usage.delete-analytics` | direct-gesture | - | - | - | - |
 | `connect.navigate` | direct-gesture | - | - | - | - |
+| `research.run-now` | direct-gesture | - | - | - | - |
 | `vault.write-note` | no-approval | - | - | - | - |
 | `vault.initialize` | no-approval | - | - | - | - |
 | `vault.repair-index` | no-approval | - | - | - | - |
@@ -82,6 +83,10 @@ with the same class, status, lifetime, maximum approval age and retry policy.
 | `notify.local` | no-approval | - | - | - | - |
 | `data.refresh` | no-approval | - | - | - | - |
 | `note.capture` | no-approval | - | - | - | - |
+| `research.fetch-sources` | no-approval | - | - | - | - |
+| `research.summarise` | no-approval | - | - | - | - |
+| `research.write-notes` | no-approval | - | - | - | - |
+| `automation-run.record` | no-approval | - | - | - | - |
 <!-- classification:end -->
 
 Enabling an operation in a later phase takes an operation definition and one row of this table. The persistent store

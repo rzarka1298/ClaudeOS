@@ -206,6 +206,13 @@ export const CLASSIFICATION = {
       "A connect control only navigates to the owner's own settings; it changes nothing by itself (D-05).",
   },
 
+  // Phase 7 (plan 07-05, D-17): the manual research trigger.
+  "research.run-now": {
+    class: "direct-gesture",
+    reason:
+      "The owner's click on Run now is the decision; one press is one run of public read-only fetches and managed notes in the owner's own vault (D-17, PRD 7.12).",
+  },
+
   // --- no-approval: allowed without a decision, with the reason ------------
   "vault.write-note": {
     class: "no-approval",
@@ -250,12 +257,54 @@ export const CLASSIFICATION = {
     reason:
       "Capturing a note writes to the owner's own inbox folder and overwrites nothing (D-05).",
   },
+
+  // Phase 7 (plan 07-05, D-17): every effect the research pipeline performs.
+  "research.fetch-sources": {
+    class: "no-approval",
+    reason:
+      "A public, read-only GET of an address on the owner's source allowlist: it sends no cookies or credentials, changes nothing remote, and refuses private and local addresses (D-07, D-17).",
+  },
+  "research.summarise": {
+    class: "no-approval",
+    reason:
+      "The summariser call carries no tools and has no write path: its request cannot express a tool, and its output is validated data that is never executed (ADR-0014, D-17).",
+  },
+  "research.write-notes": {
+    class: "no-approval",
+    reason:
+      "Managed raw, wiki and report notes are written atomically by dedicated writers inside the owner's own vault scope; nothing is deleted or published (D-13, D-17).",
+  },
+  "automation-run.record": {
+    class: "no-approval",
+    reason:
+      "The automation run record is the service's private run record plus a generated note in the owner's own vault; it describes the run and changes nothing outside this machine (D-17, RSRCH-06).",
+  },
 } as const satisfies ClassificationTable;
 
 export type OperationName = keyof typeof CLASSIFICATION;
 
-/** RED STUB (07-05 task 1): replaced by the real list in the green commit. */
-export const RESEARCH_PIPELINE_OPERATIONS: readonly string[] = [];
+/** The operations whose row is not approval-required: the only ones the research pipeline may name. */
+export type NonApprovalOperation = Exclude<OperationName, ApprovalRequiredOperation>;
+
+/**
+ * Every operation the research pipeline performs, trigger included (D-17,
+ * RSRCH-06). Each entry is a no-approval or direct-gesture row, and the
+ * `satisfies` clause makes that a compile-time fact: naming an
+ * approval-required operation here does not typecheck. A test repeats the
+ * check at run time against the table.
+ *
+ * Any future external write (publishing, Git) stays a reserved approval row
+ * (`publish`, `automation.git-write`) and must never join this list. It would
+ * first have to become an enabled approval row with its own executor, and the
+ * pipeline would then reach it only through the approval engine.
+ */
+export const RESEARCH_PIPELINE_OPERATIONS = [
+  "research.run-now",
+  "research.fetch-sources",
+  "research.summarise",
+  "research.write-notes",
+  "automation-run.record",
+] as const satisfies readonly NonApprovalOperation[];
 
 /** The operations whose row is approval-required: the only ones a {@link CapabilityToken} can name. */
 export type ApprovalRequiredOperation = {
@@ -303,6 +352,8 @@ export const CAPABILITY_OPERATION: Readonly<Record<string, OperationName>> = {
   "task:create": "task.write",
   "note:capture": "note.capture",
   "data:refresh": "data.refresh",
+  // Phase 7 (plan 07-05, D-17): the manual research trigger.
+  "research:run": "research.run-now",
 };
 
 /** Prefix families: `connect:<anything>` is a navigation to the owner's own settings. */
