@@ -65,7 +65,7 @@
 #      (D-26); test files, /test-support/ folders and packages/test-fixtures/
 #      are exempt, and the usage request parameter excludeResetCreditDetails
 #      is not a hit
-#  17. no non-test file under packages/service/src/untrusted/ names an I/O
+#  17. no file under packages/service/src/untrusted/ names an I/O
 #      primitive -- a node: specifier, child_process, a fetch( or require(
 #      call, a dynamic import(, or the names process, globalThis, eval,
 #      Function, Reflect, XMLHttpRequest, WebSocket, EventSource, or a
@@ -115,9 +115,16 @@ list_source_files() {
 }
 
 # Prints "file:line:content" for every non-comment line in the given files
-# matching the given extended regex. A "comment line" is one whose
-# leading (whitespace-trimmed) characters are `//`, `/*`, or `*` (single-line
-# comment, block-comment opener, or a JSDoc continuation line).
+# matching the given extended regex. A "comment line" is one that holds only
+# comments: leading closed block comments (`/* ... */`, repeated) and a
+# leading `*/` (the end of a multi-line block) are stripped first, and what
+# remains is a comment when it is empty, starts a line comment `//`, opens a
+# block comment that this line does not close, or is a JSDoc continuation (`*`
+# followed by a space, tab, slash or the end of the line). Code that follows a
+# closed block comment on the same line is therefore still scanned (wave 1+2
+# review), and a generator method `*name()` is code, not a JSDoc line. When a
+# leading comment was stripped the pattern is matched against the code that
+# follows it, so a name that only the comment holds is not a hit.
 grep_noncomment() {
   pattern="$1"
   shift
@@ -125,10 +132,29 @@ grep_noncomment() {
     [ -f "$f" ] || continue
     awk -v pattern="$pattern" -v fname="$f" '
       {
-        trimmed = $0
-        sub(/^[ \t]+/, "", trimmed)
-        is_comment = (trimmed ~ /^\/\//) || (trimmed ~ /^\/\*/) || (trimmed ~ /^\*/)
-        if (!is_comment && $0 ~ pattern) {
+        # Fast path: a line that does not match and holds no block-comment marker cannot be a hit.
+        if ($0 !~ pattern && index($0, "/*") == 0 && index($0, "*/") == 0) next
+        rest = $0
+        sub(/^[ \t]+/, "", rest)
+        stripped = 0
+        while (1) {
+          if (rest ~ /^\/\*/) {
+            close_at = index(substr(rest, 3), "*/")
+            if (close_at == 0) break
+            rest = substr(rest, 4 + close_at)
+            sub(/^[ \t]+/, "", rest)
+            stripped = 1
+          } else if (rest ~ /^\*\//) {
+            rest = substr(rest, 3)
+            sub(/^[ \t]+/, "", rest)
+            stripped = 1
+          } else {
+            break
+          }
+        }
+        is_comment = (rest == "") || (rest ~ /^\/\//) || (rest ~ /^\/\*/) || (rest ~ /^\*([ \t\/]|$)/)
+        target = stripped ? rest : $0
+        if (!is_comment && target ~ pattern) {
           print fname ":" NR ":" $0
         }
       }
@@ -437,7 +463,7 @@ report_rule \
   "a non-test source file names a Codex credential or config file, the reset-credit consume RPC, or writes Codex's notify setting (CODEX-09, CODEX-06; usage comes only from the app-server rate-limit read)" \
   "$(printf '%s\n%s\n%s\n%s\n' "$codex_credential_hits" "$codex_config_hits" "$codex_consume_hits" "$codex_notify_hits" | grep -v '^$' | sort -u || true)"
 
-# --- Rule 17: no non-test file under packages/service/src/untrusted/ names an
+# --- Rule 17: no file under packages/service/src/untrusted/ names an
 # I/O primitive (ADR-0014, RSRCH-07, D-02, T-07-04). The summariser folder sees
 # hostile text, so it must not be able to act. Layer 1 is the eslint element
 # (domain-only imports); layer 2 is the nested `types: []` project, which makes
@@ -455,15 +481,18 @@ report_rule \
 #     WebSocket and EventSource with an identifier boundary on BOTH sides, so
 #     processed, processing, retrieval, evaluated, Functional and Reflector are
 #     not hits while `(0, eval)(...)` and `(0, Function)(...)` are;
-#   - a `.constructor(` call or a bracketed "constructor" access, which reaches
-#     the Function constructor without naming it. A class declaration's own
-#     `constructor(` has no leading dot and is not a hit.
-# Comment lines are skipped by grep_noncomment and test files by NON_TEST_FILES.
-UNTRUSTED_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep '^packages/service/src/untrusted/' || true)
-UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])(fetch|require)[[:space:]]*[(]|(^|[^A-Za-z0-9_])import[[:space:]]*[(]|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor[[:space:]]*[(]|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
+#   - a `.constructor` property read or call, or a bracketed "constructor"
+#     access, which reaches the Function constructor without naming it. A class
+#     declaration's own `constructor(` has no leading dot and is not a hit;
+#   - an `import` that ends its line (the parenthesis is on the next one).
+# Comment lines are skipped by grep_noncomment. Test files of the folder are
+# scanned too (wave 1+2 review): nothing under it, tests included, needs an I/O
+# name, and a non-test module named like a test file must not escape the rule.
+UNTRUSTED_FILES=$(printf '%s\n%s\n' "$SRC_FILES" "$EXTRA_EXT_FILES" | grep '^packages/service/src/untrusted/' || true)
+UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])(fetch|require)[[:space:]]*[(]|(^|[^A-Za-z0-9_])import[[:space:]]*([(]|$)|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor([^A-Za-z0-9_]|$)|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
 # shellcheck disable=SC2086
 check_rule \
-  "a non-test file under packages/service/src/untrusted/ names an I/O primitive (a node: specifier, child_process, fetch(, require(, a dynamic import(, process, globalThis, eval, Function, Reflect, XMLHttpRequest, WebSocket, EventSource or a .constructor( call; the summariser folder must hold no way to act, ADR-0014, RSRCH-07)" \
+  "a file under packages/service/src/untrusted/ names an I/O primitive (a node: specifier, child_process, fetch(, require(, a dynamic import(, process, globalThis, eval, Function, Reflect, XMLHttpRequest, WebSocket, EventSource or a .constructor access; the summariser folder must hold no way to act, ADR-0014, RSRCH-07)" \
   "$UNTRUSTED_IO_PATTERN" \
   $UNTRUSTED_FILES
 
