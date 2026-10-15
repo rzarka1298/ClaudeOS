@@ -353,18 +353,18 @@ const FEED_FIELDS: readonly FeedPayload[] = [
   {
     name: "author-script-email-uri",
     document: atom(
-      `<title>A</title>${STAMP}<author><name>Dana &lt;script&gt;AUTHOR_STEAL()&lt;/script&gt;</name><email>dana@mail-evil.invalid</email><uri>javascript:AUTHOR_JS()</uri></author><summary>Body kept</summary>`,
+      `<title>A</title>${STAMP}<author><name>Dana &lt;script&gt;AUTHOR_STEAL()&lt;/script&gt;</name><email>dana@example.com</email><uri>javascript:AUTHOR_JS()</uri></author><summary>Body kept</summary>`,
     ),
-    forbidden: ["AUTHOR_STEAL", "AUTHOR_JS", "mail-evil.invalid", "javascript:"],
+    forbidden: ["AUTHOR_STEAL", "AUTHOR_JS", "@example.com", "javascript:"],
     keeps: ["Body kept"],
     counts: ["scripts"],
   },
   {
     name: "author-uri-only",
     document: atom(
-      `<title>A</title>${STAMP}<author><uri>javascript:AUTHOR_ONLY_JS()</uri><email>only@mail-evil.invalid</email></author><summary>Body kept</summary>`,
+      `<title>A</title>${STAMP}<author><uri>javascript:AUTHOR_ONLY_JS()</uri><email>only@example.com</email></author><summary>Body kept</summary>`,
     ),
-    forbidden: ["AUTHOR_ONLY_JS", "mail-evil.invalid", "javascript:"],
+    forbidden: ["AUTHOR_ONLY_JS", "@example.com", "javascript:"],
     keeps: ["Body kept"],
   },
   {
@@ -388,7 +388,7 @@ const FEED_FIELDS: readonly FeedPayload[] = [
   {
     name: "link-userinfo",
     document: atom(
-      `<title>A</title>${STAMP}<link href="https://admin:hunter2@links.invalid/x"/><summary>Body kept</summary>`,
+      `<title>A</title>${STAMP}<link href="https://admin:hunter2@example.net/x"/><summary>Body kept</summary>`,
     ),
     forbidden: ["hunter2", "admin"],
     keeps: ["Body kept"],
@@ -464,7 +464,7 @@ const FEED_FIELDS: readonly FeedPayload[] = [
 
 const SSRF_LINKS: ReadonlyArray<readonly [string, string, readonly string[]]> = [
   ["backslash-authority", "https://example.invalid\\@evil-a.invalid/", ["evil-a.invalid"]],
-  ["userinfo", "https://trusted.invalid@evil-b.invalid/", ["evil-b.invalid"]],
+  ["userinfo", "https://trusted@example.net/", ["example.net"]],
   ["percent-encoded-host", "https://evil-c%2einvalid/", ["evil-c"]],
   ["idn-look-alike-host", "https://\u0435vil-d.invalid/", ["vil-d.invalid"]],
   ["ipv4-decimal", "https://2130706433/", ["2130706433", "127.0.0.1"]],

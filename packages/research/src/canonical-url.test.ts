@@ -71,7 +71,7 @@ describe("Test 7 (canonical URL): rejections carry a closed reason code and neve
   it("rejects userinfo", () => {
     expect(reason("https://user:pw@example.com/")).toBe("userinfo");
     expect(reason("https://user@example.com/")).toBe("userinfo");
-    expect(reason("https://example.com@evil.invalid/")).toBe("userinfo");
+    expect(reason("https://example.com@example.net/")).toBe("userinfo");
   });
 
   it("rejects any scheme other than https", () => {

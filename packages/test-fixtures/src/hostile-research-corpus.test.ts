@@ -120,7 +120,10 @@ describe("hostile research corpus shape", () => {
       for (const match of entry.document.matchAll(/https?:\/\/(?:[^\s/@"<]*@)?([a-z0-9.-]+)/gi)) {
         const host = match[1] ?? "";
         expect(
-          host.endsWith(".invalid") || host === "www.w3.org" || host === "purl.org",
+          host.endsWith(".invalid") ||
+            /^example\.(com|org|net)$/.test(host) ||
+            host === "www.w3.org" ||
+            host === "purl.org",
           `${entry.name} ${host}`,
         ).toBe(true);
       }

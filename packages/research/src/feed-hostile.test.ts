@@ -118,7 +118,7 @@ describe("finding 2: links", () => {
   const BAD: ReadonlyArray<readonly [string, string]> = [
     ["a javascript: address", "javascript:alert(1)"],
     ["a plain http address", "http://insecure.invalid/x"],
-    ["an address with userinfo", "https://user:pw@host.invalid/x"],
+    ["an address with userinfo", "https://user:pw@example.net/x"],
     ["a data: address", "data:text/html,x"],
     ["an address with a bidi override", "https://host.invalid/\u202Ex"],
     ["an address on a non-default port", "https://host.invalid:8443/x"],
@@ -132,7 +132,7 @@ describe("finding 2: links", () => {
       expect(parsed.entries[0]?.link).toBeNull();
       expect(parsed.report.linksDropped).toBe(1);
       expect(JSON.stringify(parsed.entries)).not.toMatch(
-        /javascript|insecure|user:pw|host\.invalid/,
+        /javascript|insecure|user:pw|example\.net|host\.invalid/,
       );
       expect(renderFeedText(parsed.entries)).toBe("L\nbody");
     });
@@ -164,35 +164,35 @@ describe("finding 2: authors", () => {
   it("sanitises an Atom author name and ignores its email and uri children entirely", () => {
     const parsed = parseFeed(
       atom(
-        "<title>A</title><author><name>Da\u202En\u200Ba &lt;img src=x onerror=1&gt;</name><email>dana@evil.invalid</email><uri>javascript:alert(1)</uri></author>",
+        "<title>A</title><author><name>Da\u202En\u200Ba &lt;img src=x onerror=1&gt;</name><email>dana@example.com</email><uri>javascript:alert(1)</uri></author>",
       ),
     );
     expect(parsed.entries[0]?.author).toBe("Dana");
     expect(parsed.report.controlChars).toBe(2);
     expect(parsed.report.mediaDropped).toBe(1);
-    expect(JSON.stringify(parsed.entries)).not.toMatch(/evil\.invalid|javascript|onerror/);
+    expect(JSON.stringify(parsed.entries)).not.toMatch(/example\.com|javascript|onerror/);
   });
 
   it("gives no author when an Atom author has only an email or a uri", () => {
     const parsed = parseFeed(
       atom(
-        "<title>A</title><author><uri>javascript:alert(1)</uri><email>x@evil.invalid</email></author>",
+        "<title>A</title><author><uri>javascript:alert(1)</uri><email>x@example.com</email></author>",
       ),
     );
     expect(parsed.entries[0]?.author).toBeNull();
-    expect(JSON.stringify(parsed.entries)).not.toMatch(/evil\.invalid|javascript/);
+    expect(JSON.stringify(parsed.entries)).not.toMatch(/example\.com|javascript/);
   });
 
   it("sanitises dc:creator and an RSS author", () => {
     const parsed = parseFeed(
       rss(
         "<title>A</title><dc:creator>Ev\u200Bil &lt;script&gt;x()&lt;/script&gt;</dc:creator>",
-        "<title>B</title><author>a@b.invalid (Zed\u202E)</author>",
+        "<title>B</title><author>a@example.com (Zed\u202E)</author>",
       ),
     );
     const authors = parsed.entries.map((e) => e.author);
     expect(authors).toContain("Evil");
-    expect(authors).toContain("a@b.invalid (Zed)");
+    expect(authors).toContain("a@example.com (Zed)");
     expect(parsed.report.scripts).toBe(1);
     expect(parsed.report.controlChars).toBe(2);
     expectCleanOutput(parsed);

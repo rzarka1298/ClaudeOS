@@ -28,12 +28,12 @@ const REJECTED: ReadonlyArray<readonly [string, string, readonly string[]]> = [
     "userinfo",
     "userinfo",
     [
-      "https://a@b.invalid/",
+      "https://a@example.net/",
       "https://user:pw@example.com/",
       "https://@example.com/",
-      "https://example.com:443@evil.invalid/",
-      "https://example.com@evil.invalid:443/",
-      "https://a@b@c.invalid/",
+      "https://example.com:443@example.net/",
+      "https://example.com@example.net:443/",
+      "https://a@b@example.net/",
     ],
   ],
   [
