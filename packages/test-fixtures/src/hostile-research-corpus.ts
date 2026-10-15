@@ -430,9 +430,9 @@ const FEED_FIELDS: readonly FeedPayload[] = [
   {
     name: "rss-author-address",
     document: rss(
-      "<title>A</title><author>victim@example.invalid (Dana)</author><description>Body kept</description>",
+      "<title>A</title><author>victim@example.com (Dana)</author><description>Body kept</description>",
     ),
-    forbidden: ["victim@example.invalid"],
+    forbidden: ["victim@example.com"],
     keeps: ["Body kept"],
   },
   {

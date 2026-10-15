@@ -235,8 +235,8 @@ describe("minor: an RSS author that is an address keeps the name only", () => {
 
   it("never lets the address reach any entry field", () => {
     const parsed = parseFeed(
-      RSS("<author>secret@example.invalid (Joe)</author><description>d</description>"),
+      RSS("<author>reader@example.invalid (Joe)</author><description>d</description>"),
     );
-    expect(JSON.stringify(parsed)).not.toContain("secret@example.invalid");
+    expect(JSON.stringify(parsed)).not.toContain("reader@example.invalid");
   });
 });
