@@ -57,6 +57,21 @@ each and asserts it passes, so the gap is written down beside the proof rather
 than hidden. Rule 17 is the layer that closes it; its count and header listing
 are pinned in `check-boundaries-rules.test.ts` and `phase051-wiring.audit.test.ts`.
 
+Round 5 additions to the syntax-tree scan and to rule 17: the scan resolves every relative
+import and export-from specifier with `ts.resolveModuleName` and accepts only a plain `.ts`
+file inside the folder (or `@ccc/domain`); an import that leaves the folder, does not resolve,
+reaches `node_modules` or a declaration file, or names a `.test.` module from a non-test file
+fails, and the eslint `untrusted` element also enables `boundaries/no-unknown-dependencies`
+(non-test files). The scan bans writes to shared built-ins (assignment, `delete`, `++`/`--`,
+`Object.assign`/`freeze`/`seal`/`preventExtensions` on a built-in target, and any use of those
+`Object` members other than as a direct call), `this` outside class members, the V8 `Error`
+statics, and every use of `Error` or `RegExp` except `new`, a call, `instanceof` or `extends`
+(this covers `RegExp.$1`, `lastMatch` and the other legacy statics). Test files may import only
+the named `describe`, `it` and `expect` from `vitest`. Rule 17 adds the legacy accessor methods,
+`.caller`, `.callee` and the three V8 `Error` statics. Carried to the phase judge (minor):
+thenables, getters and `extends Promise` or `extends RegExp`; the boundary validates the
+transport return value as a string.
+
 Known limit that none of the layers addresses: text hidden by a stylesheet or by
 a class (not an inline `style`) cannot be recognised without rendering the page,
 so such hidden text survives sanitising and reaches the model. The residue is
