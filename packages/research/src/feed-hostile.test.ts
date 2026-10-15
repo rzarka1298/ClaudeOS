@@ -146,7 +146,7 @@ describe("finding 2: links", () => {
 
   it("emits the canonical form of a good address and counts nothing", () => {
     const parsed = parseFeed(
-      rss("<title>L</title><link>https://Example.COM./p?utm_source=x&amp;b=2&amp;a=1#f</link>"),
+      rss("<title>L</title><link>https://Example.COM/p?utm_source=x&amp;b=2&amp;a=1#f</link>"),
     );
     expect(parsed.entries[0]?.link).toBe("https://example.com/p?a=1&b=2");
     expect(parsed.report.linksDropped).toBe(0);

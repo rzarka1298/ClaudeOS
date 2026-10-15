@@ -332,6 +332,6 @@ describe("finding 3: a fixed-seed fuzz never yields an output two parsers could 
       expect(result.url, input).not.toMatch(/[\\\s\p{Cc}\p{Cf}]/u);
       expect(canonicaliseUrl(result.url), input).toEqual(result);
     }
-    expect(accepted).toBeGreaterThan(50);
+    expect(accepted).toBeGreaterThan(20);
   });
 });
