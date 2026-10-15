@@ -19,6 +19,46 @@ export interface DelimitedBlock {
 
 const HEADER = /^<<<SRC id=([0-9a-f]{32}) nonce=([0-9a-f]{16,64})>>>$/;
 
+export const NONCE_REPLACEMENT = "[nonce removed]";
+
+export type DelimitErrorCode = "invalid-source-id" | "invalid-nonce";
+
+/** Thrown before anything is composed when an id or the nonce has the wrong shape. */
+export class DelimitError extends Error {
+  readonly code: DelimitErrorCode;
+  constructor(code: DelimitErrorCode, message: string) {
+    super(message);
+    this.name = "DelimitError";
+    this.code = code;
+  }
+}
+
+export interface ScrubbedSourceText {
+  /** The text that is wrapped: normalised, with every marker-like sequence replaced. */
+  readonly text: string;
+  /** Marker-like sequences and nonce occurrences replaced. */
+  readonly scrubbed: number;
+  /** Zero-width, bidi and control characters removed first. */
+  readonly invisibleRemoved: number;
+}
+
+export interface DelimitedSources {
+  readonly composed: string;
+  readonly scrubbed: number;
+}
+
+// Signature stub: the scrub arrives with the tests that pin it.
+export function scrubSourceText(text: string, _nonce: string): ScrubbedSourceText {
+  return { text, scrubbed: 0, invisibleRemoved: 0 };
+}
+
+export function delimitSourcesWithReport(
+  sources: readonly SourceText[],
+  nonce: string,
+): DelimitedSources {
+  return { composed: delimitSources(sources, nonce), scrubbed: 0 };
+}
+
 export function delimitSources(sources: readonly SourceText[], nonce: string): string {
   return sources
     .map((s) => `<<<SRC id=${s.sourceId} nonce=${nonce}>>>\n${s.text}\n<<<END nonce=${nonce}>>>`)
