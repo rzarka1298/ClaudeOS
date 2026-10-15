@@ -67,3 +67,113 @@ export const STAGE_TEXT: Readonly<Record<ResearchStage, string>> = {
   deliverable: "Writing the report",
   output: "Writing the report",
 };
+
+// ---------------------------------------------------------------------------
+// R2 run status section
+
+export const RUN_STATUS_HEADING = "Run status";
+export const CURRENT_RUN_LABEL = "Current run";
+export const LAST_SUCCESS_LABEL = "Last successful run";
+export const LAST_FAILURE_LABEL = "Last failed run";
+export const UNKNOWN_RUN_LABEL = "Unknown run";
+export const NONE_YET = "None yet";
+export const NONE = "None";
+export const OPEN_REPORT_LABEL = "Open report";
+export const UNKNOWN_RUN_SENTENCE = "The app stopped during this run, so its result is unknown.";
+/** Follows a value cut to its display cap (UI-SPEC "Untrusted content rules" 4). */
+export const TEXT_SHORTENED = "Text shortened for display.";
+
+/** `Each run fetches the 6 configured sources and makes one summariser call.` */
+export function eachRunLine(count: number): string {
+  const noun = count === 1 ? "source" : "sources";
+  return `Each run fetches the ${count} configured ${noun} and makes one summariser call.`;
+}
+
+/** `Show configured sources (6)` while closed. */
+export function showSourcesLabel(count: number): string {
+  return `Show configured sources (${count})`;
+}
+export const HIDE_SOURCES_LABEL = "Hide configured sources";
+export const SOURCES_FOOTNOTE =
+  "The source list is edited in the companion service's research settings. A settings screen comes in a later phase.";
+
+// ---------------------------------------------------------------------------
+// The summariser setup callout (decided from the run record only, R-12)
+
+export const SETUP_HEADING = "The summariser isn't set up";
+export const SETUP_BODY =
+  "Research runs need an Anthropic API key in the macOS keychain. Store one with the research key setup script, then press Run now. macOS may ask once to allow keychain access.";
+
+// ---------------------------------------------------------------------------
+// Run failure reasons (closed error code to fixed copy; never a remote string)
+
+interface FailureCopy {
+  /** Mid-sentence reason, or null for a code that is not a failure. */
+  readonly reason: string | null;
+  readonly nextStep: string;
+}
+
+const UNKNOWN_FAILURE: FailureCopy = {
+  reason: "something went wrong",
+  nextStep: "Check the service in Settings → Diagnostics.",
+};
+
+const FAILURE_COPY: Readonly<Record<string, FailureCopy>> = {
+  "summariser-unconfigured": {
+    reason: "the summariser isn't set up",
+    nextStep:
+      "Store an Anthropic API key in the macOS keychain with the research key setup script, then press Run now.",
+  },
+  "summariser-failed": {
+    reason: "the summariser didn't return a complete answer",
+    nextStep: "Press Run now to try again. Nothing was added to the report list.",
+  },
+  "summariser-refused": {
+    reason: "the summariser declined to summarise these sources",
+    nextStep: "Press Run now to try again later. If it keeps happening, check the source list.",
+  },
+  "summariser-invalid-output": {
+    reason: "the summariser's answer wasn't in the expected form",
+    nextStep: "Press Run now to try again. Nothing was added to the report list.",
+  },
+  "all-sources-failed": {
+    reason: "no source could be fetched",
+    nextStep: "Check your network connection, then press Run now.",
+  },
+  "vault-write-failed": {
+    reason: "the report couldn't be written to the vault",
+    nextStep: "Check the vault in Settings → Diagnostics, then press Run now.",
+  },
+  interrupted: {
+    reason: null,
+    nextStep:
+      "The app stopped during this run, so its result is unknown. Press Run now for a new run.",
+  },
+};
+
+/** The reason and next step of a run error code; an unknown code gets the forward-compatible default. */
+export function failureCopy(code: string): FailureCopy {
+  return Object.hasOwn(FAILURE_COPY, code) ? (FAILURE_COPY[code] as FailureCopy) : UNKNOWN_FAILURE;
+}
+
+/** False for `interrupted`, which is an Unknown run and never a failure. */
+export function isFailureCode(code: string): boolean {
+  return failureCopy(code).reason !== null;
+}
+
+/** `Research run failed: the summariser isn't set up.` */
+export function runFailedLine(code: string): string {
+  return `Research run failed: ${failureCopy(code).reason ?? UNKNOWN_FAILURE.reason}.`;
+}
+
+/** Why a press the service refused did not start a run: fixed sentences by closed client code. */
+export function startFailedLine(code: string): string {
+  switch (code) {
+    case "service-disconnected":
+      return "Couldn't start the run: the companion service isn't running.";
+    case "vault-not-set-up":
+      return "Couldn't start the run: the vault isn't set up yet. Set it up in Settings, then press Run now.";
+    default:
+      return "Couldn't start the run. Check the service in Settings → Diagnostics, then press Run now.";
+  }
+}

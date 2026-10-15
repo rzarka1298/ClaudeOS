@@ -11,6 +11,7 @@ import {
   REPORT_READY_UNTITLED,
   reportReadyLine,
   reportReadyWithGapsLine,
+  runFailedLine,
   STATUS_ALREADY_RUNNING,
   STATUS_STARTED,
   STATUS_STARTING,
@@ -19,6 +20,7 @@ import {
   STATUS_TIMEOUT_NOTICE,
   STATUS_TIMEOUT_STARTED,
   STATUS_UNKNOWN_END,
+  startFailedLine,
 } from "../view/research-copy.js";
 import { ResearchApiError, researchApi, researchPorts } from "./api.js";
 
@@ -187,7 +189,14 @@ async function conclude(ended: EndedRun, status: ResearchStatusResponse): Promis
     statusLine.value = STATUS_UNKNOWN_END;
     return;
   }
-  if (ended.kind === "failure") return;
+  if (ended.kind === "failure") {
+    const failed = status.lastFailure;
+    if (failed === null) return;
+    const line = runFailedLine(failed.errorCode);
+    statusLine.value = line;
+    ports.notify(line);
+    return;
+  }
   const success = status.lastSuccess;
   if (success === null) return;
   await refreshList();
@@ -269,9 +278,11 @@ export async function pressRunNow(): Promise<void> {
       await afterStartUncertain();
       return;
     }
-    statusLine.value = "";
+    const code = codeOf(error);
+    const line = startFailedLine(code);
+    statusLine.value = line;
     pressPending.value = false;
-    statusFailure.value = codeOf(error);
+    researchPorts().notify(line);
     return;
   }
   if (response.alreadyRunning) {

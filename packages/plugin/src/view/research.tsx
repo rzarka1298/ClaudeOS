@@ -1,6 +1,6 @@
 import { reportFreshness } from "@ccc/domain/research.js";
 import type { ResearchListRow } from "@ccc/domain/research-routes.js";
-import { RUN_STATE_DISPLAY } from "@ccc/domain/session.js";
+import { resolvedZone } from "@ccc/domain/task-time.js";
 import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useId, useRef } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
@@ -34,10 +34,10 @@ import {
   RUN_IN_PROGRESS_REASON,
   RUN_NOW_LABEL,
   RUN_NOW_NAME,
-  STAGE_TEXT,
   STRIP_SOURCE_LABEL,
 } from "./research-copy.js";
 import { countOf, itemsText, sourcesText } from "./research-format.js";
+import { ResearchStatusSection } from "./research-status.js";
 
 /**
  * The Research destination (plan 07-11; UI-SPEC R1 to R3): the glass frame, Run
@@ -114,23 +114,6 @@ function PartialBadge(props: { readonly unavailable: number }): VNode {
   );
 }
 
-function CurrentRun(props: { readonly now: number }): VNode | null {
-  const inFlight = researchStatus.value?.inFlight ?? null;
-  if (inFlight === null) return null;
-  const display = RUN_STATE_DISPLAY.running;
-  const stage = inFlight.stage === null ? null : STAGE_TEXT[inFlight.stage];
-  return (
-    <dl className="ccc-detail-fields ccc-research-status-row">
-      <dt>Current run</dt>
-      <dd>
-        <span aria-hidden="true">{display.glyph}</span> <span>{display.label}</span>
-        {stage === null ? null : ` · ${stage}`}
-        {` · started ${formatRelativeTime(inFlight.startedAt, props.now)}`}
-      </dd>
-    </dl>
-  );
-}
-
 function ReportRows(props: {
   readonly rows: readonly ResearchListRow[];
   readonly now: number;
@@ -198,6 +181,7 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
       ? null
       : RUN_IN_PROGRESS_REASON;
   const selected = selectedNoteId.value;
+  const zone = props.zone ?? resolvedZone();
 
   useEffect(() => {
     void loadResearch();
@@ -268,14 +252,20 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
           now={props.now}
           dimmed={serviceAway}
         />
-        {newest !== null && newest.partial && newest.unavailableCount > 0 ? (
+        {newest?.partial && newest.unavailableCount > 0 ? (
           <PartialBadge unavailable={newest.unavailableCount} />
         ) : null}
       </div>
       <p className="ccc-research-status" role="status">
         {statusLine.value}
       </p>
-      <CurrentRun now={props.now} />
+      <ResearchStatusSection
+        status={status}
+        loadFailed={status === null && statusFailure.value !== null}
+        now={props.now}
+        zone={zone}
+        onOpenReport={selectReport}
+      />
       <section aria-labelledby={reportsId}>
         <h3 id={reportsId} className="ccc-section-label">
           {REPORTS_HEADING}

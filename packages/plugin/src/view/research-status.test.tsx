@@ -79,7 +79,10 @@ describe("Test 1: the rows (DIAG-05)", () => {
     expect(screen.getByRole("heading", { level: 3, name: "Run status" })).toBeTruthy();
     const ok = row("Last successful run");
     expect(ok.textContent).toContain("✓ Completed");
-    expect(ok.textContent).toContain("◈ Partial");
+    const badge = ok.querySelector('.ccc-badge[data-badge="partial"]');
+    expect(badge?.querySelector(".ccc-badge-glyph")?.textContent).toBe("◈");
+    expect(badge?.querySelector(".ccc-badge-label")?.textContent).toBe("Partial");
+    expect(badge?.textContent).toContain("1 source didn't respond");
     expect(ok.textContent).toContain("5 of 6 sources");
     const time = ok.querySelector("time");
     expect(time?.textContent).toBe("Oct 13, 9:02 AM");
