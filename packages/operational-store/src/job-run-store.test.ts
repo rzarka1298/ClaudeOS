@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { newNoteId, newRunId, type RunId } from "@ccc/domain";
@@ -10,6 +10,7 @@ import {
   finishJobRun,
   getResearchRunStatus,
   listJobRuns,
+  recoverJobRunsToStale,
   type StartJobRunInput,
   startJobRun,
 } from "./job-run-store.js";
@@ -563,5 +564,58 @@ describe("Task 2 Test 5: the run list", () => {
     expect(() => listJobRuns(db, JOB, -1)).toThrow();
     expect(() => listJobRuns(db, JOB, 1.5)).toThrow();
     expect(() => listJobRuns(db, JOB, 10_000)).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: recovery to stale
+
+describe("Task 3: recoverJobRunsToStale", () => {
+  it("moves in-flight job runs to stale, leaving outcome and ended_at null, and counts them", () => {
+    const running = runningRun(0, "research.one");
+    const other = runningRun(0, "research.two");
+    expect(recoverJobRunsToStale(db, [running, other])).toBe(2);
+    for (const id of [running, other]) {
+      expect(jobRow(id)).toMatchObject({ state: "stale", outcome: null, ended_at: null });
+    }
+  });
+
+  it("leaves finished runs and runs it was not asked about exactly as they were", () => {
+    const done = finishedRun(0, {}, "research.done");
+    const failed = failedRun(0, "research.failed");
+    const untouched = runningRun(0, "research.untouched");
+    const before = [done, failed].map((id) => jobRow(id));
+    expect(recoverJobRunsToStale(db, [done, failed])).toBe(0);
+    expect([done, failed].map((id) => jobRow(id))).toEqual(before);
+    expect(jobRow(untouched)).toMatchObject({ state: "running" });
+  });
+
+  it("is idempotent, accepts an empty list and refuses an id that is not a run id", () => {
+    const id = runningRun(0);
+    expect(recoverJobRunsToStale(db, [id])).toBe(1);
+    expect(recoverJobRunsToStale(db, [id])).toBe(0);
+    expect(recoverJobRunsToStale(db, [])).toBe(0);
+    expect(() => recoverJobRunsToStale(db, ["x'; DROP TABLE job_runs; --"])).toThrow();
+  });
+
+  it("handles more ids than one statement binds", () => {
+    const ids = Array.from({ length: 1200 }, () => newRunId());
+    const id = runningRun(0);
+    expect(recoverJobRunsToStale(db, [...ids, id])).toBe(1);
+  });
+
+  it("allows a new start for the same job key afterwards", () => {
+    const id = runningRun(0);
+    recoverJobRunsToStale(db, [id]);
+    expect(startJobRun(db, startInput({ startedAt: at(5) }))).toEqual({ started: true });
+  });
+
+  it("writes no terminal state: the function body names none", () => {
+    const source = readFileSync(join(import.meta.dirname, "job-run-store.ts"), "utf8");
+    const start = source.indexOf("export function recoverJobRunsToStale");
+    expect(start).toBeGreaterThan(0);
+    const body = source.slice(start, source.indexOf("\n}\n", start));
+    expect(body).toMatch(/stale/);
+    expect(body).not.toMatch(/["'`](completed|failed|cancelled)["'`]/);
   });
 });

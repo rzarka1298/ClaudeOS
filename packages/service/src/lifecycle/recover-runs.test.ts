@@ -1,12 +1,14 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RunId, RunState, SessionRun } from "@ccc/domain";
+import { newRunId, type RunId, type RunState, type SessionRun } from "@ccc/domain";
 import {
   applyMigrations,
   getRun,
   getSessionRun,
   insertRun,
+  listRevivableRuns,
+  startJobRun,
   upsertSessionRun,
 } from "@ccc/operational-store";
 import Database from "better-sqlite3";
@@ -165,3 +167,103 @@ function sessionRun(runId: RunId, state: RunState, revision: number): SessionRun
     promptSeenAt: null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Plan 07-06 task 3: a paired research job run recovers with its Run (research Pitfall 9)
+
+const JOB = "research.daily-tech";
+const STARTED = "2026-10-15T08:00:00.000Z";
+
+function startResearchRun(startedAt = STARTED): RunId {
+  const jobRunId = newRunId();
+  const result = startJobRun(db, {
+    jobRunId,
+    jobKey: JOB,
+    idempotencyKey: `${JOB}:manual:${jobRunId}`,
+    trigger: "manual",
+    startedAt,
+  });
+  expect(result).toEqual({ started: true });
+  return jobRunId;
+}
+
+function jobRunRow(id: string): Record<string, unknown> {
+  return db.prepare("SELECT * FROM job_runs WHERE job_run_id = ?").get(id) as Record<
+    string,
+    unknown
+  >;
+}
+
+describe("recoverInterruptedRuns with a research job run", () => {
+  it("Test 1: moves both the run and its paired job run to stale, with no outcome and no end time", () => {
+    const id = startResearchRun();
+    recoverInterruptedRuns(db, createLogger(logPath));
+    expect(jobRunRow(id)).toMatchObject({ state: "stale", outcome: null, ended_at: null });
+    expect(getRun(db, id)).toMatchObject({ state: "stale", endedAt: null });
+  });
+
+  it("moves the job run and the Run together or not at all", () => {
+    const id = startResearchRun();
+    db.exec(
+      "CREATE TRIGGER sabotage_job_runs BEFORE UPDATE ON job_runs BEGIN SELECT RAISE(ABORT, 'sabotaged'); END",
+    );
+    expect(() => recoverInterruptedRuns(db, createLogger(logPath))).toThrow(/sabotaged/);
+    expect(getRun(db, id)?.state).toBe("running");
+    expect(jobRunRow(id).state).toBe("running");
+  });
+
+  it("Test 2: lets a new run start for the same job key afterwards", () => {
+    const first = startResearchRun();
+    expect(
+      startJobRun(db, {
+        jobRunId: newRunId(),
+        jobKey: JOB,
+        idempotencyKey: "k-blocked",
+        trigger: "manual",
+        startedAt: "2026-10-15T08:00:05.000Z",
+      }),
+    ).toEqual({ started: false, inFlightRunId: first });
+
+    recoverInterruptedRuns(db, createLogger(logPath));
+
+    expect(startResearchRun("2026-10-15T09:00:00.000Z")).not.toBe(first);
+  });
+
+  it("Test 3: a second recovery changes nothing and reports zero", () => {
+    const id = startResearchRun();
+    const logger = createLogger(logPath);
+    expect(recoverInterruptedRuns(db, logger)).toBe(1);
+    const jobAfterFirst = jobRunRow(id);
+    const runAfterFirst = getRun(db, id);
+    expect(recoverInterruptedRuns(db, logger)).toBe(0);
+    expect(jobRunRow(id)).toEqual(jobAfterFirst);
+    expect(getRun(db, id)).toEqual(runAfterFirst);
+  });
+
+  it("recovers a session Run and a research run in the same call and leaves a finished job run alone", () => {
+    seedRun("run-session-like", "running");
+    const id = startResearchRun();
+    db.prepare(
+      "INSERT INTO job_runs (job_run_id, job_key, scheduled_for, state, idempotency_key, outcome, ended_at) VALUES ('done', 'research.done', ?, 'completed', 'k-done', 'success', ?)",
+    ).run(STARTED, STARTED);
+    expect(recoverInterruptedRuns(db, createLogger(logPath))).toBe(2);
+    expect(getRun(db, "run-session-like" as RunId)?.state).toBe("stale");
+    expect(jobRunRow(id).state).toBe("stale");
+    expect(jobRunRow("done")).toMatchObject({ state: "completed", outcome: "success" });
+  });
+
+  it("Test 4: no recovery code path writes completed, failed or cancelled", () => {
+    const source = readFileSync(join(import.meta.dirname, "recover-runs.ts"), "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).toContain("recoverJobRunsToStale");
+    expect(code).not.toMatch(/["'`](completed|failed|cancelled)["'`]/);
+  });
+
+  it("Test 5: the liveness sweep never revives a recovered automation run", () => {
+    const id = startResearchRun();
+    recoverInterruptedRuns(db, createLogger(logPath));
+    const revivable = listRevivableRuns(db, "2026-10-15T08:30:00.000Z");
+    expect(revivable.map((run) => run.runId)).not.toContain(id);
+    expect(getRun(db, id)).toMatchObject({ kind: "automation", state: "stale" });
+  });
+});

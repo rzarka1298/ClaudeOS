@@ -66,6 +66,7 @@ export {
   getResearchRunStatus,
   JOB_RUN_TRIGGERS,
   listJobRuns,
+  recoverJobRunsToStale,
   startJobRun,
 } from "./job-run-store.js";
 export { applyMigrations, SchemaAheadOfCodeError } from "./migrate.js";

@@ -530,3 +530,15 @@ export function listJobRuns(db: Database.Database, jobKey: string, limit: number
     .all(jobKey, limit) as JobRunRow[];
   return rows.map(rowToRecord);
 }
+
+/**
+ * Startup recovery's job-run write (SVC-11, D-18, research Pitfall 9): moves each named job run
+ * that is still queued, starting, running or waiting to `stale`, leaving `outcome` and
+ * `ended_at` exactly as they were (null, since the ending was never observed). Returns how many
+ * rows changed; a run already stale or finished is not touched, so a second call changes nothing.
+ * This writes exactly one state and never a terminal one. The caller moves the paired `runs`
+ * rows in the same transaction.
+ */
+export function recoverJobRunsToStale(_db: Database.Database, _runIds: readonly string[]): number {
+  return 0;
+}
