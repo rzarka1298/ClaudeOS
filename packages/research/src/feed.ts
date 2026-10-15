@@ -190,6 +190,8 @@ interface RawField {
   readonly name: string;
   readonly attrs: Readonly<Record<string, string>>;
   text: string;
+  /** True when the raw text hit RAW_FIELD_CAP and the rest was dropped. */
+  cut: boolean;
   nameText: string;
   /** Set for type="xhtml": the sanitiser sink the field's child events are fed to. */
   sink: MarkupSink | undefined;
@@ -221,8 +223,8 @@ function modeOf(field: RawField): BodyMode {
 }
 
 type Candidate =
-  | { readonly mode: "text"; readonly source: string }
-  | { readonly mode: "markup"; readonly run: () => HtmlToTextResult };
+  | { readonly mode: "text"; readonly source: string; readonly cut: boolean }
+  | { readonly mode: "markup"; readonly run: () => HtmlToTextResult; readonly cut: boolean };
 
 function candidatesFor(entry: RawEntry, names: readonly string[]): Candidate[] {
   const out: Candidate[] = [];
@@ -233,11 +235,12 @@ function candidatesFor(entry: RawEntry, names: readonly string[]): Candidate[] {
       if (mode === "ignore") continue;
       if (mode === "xhtml") {
         const sink = field.sink;
-        if (sink !== undefined) out.push({ mode: "markup", run: () => sink.finish() });
+        if (sink !== undefined) out.push({ mode: "markup", run: () => sink.finish(), cut: false });
       } else if (field.text.trim() !== "") {
         const source = field.text;
-        if (mode === "html") out.push({ mode: "markup", run: () => htmlToText(source) });
-        else out.push({ mode: "text", source });
+        if (mode === "html")
+          out.push({ mode: "markup", run: () => htmlToText(source), cut: field.cut });
+        else out.push({ mode: "text", source, cut: field.cut });
       }
     }
   }
@@ -283,6 +286,8 @@ function sanitiseFirst(
   report: MutableSanitiseReport,
 ): string {
   for (const candidate of candidates) {
+    // A field cut at the raw cap lost its tail: count it, as any dropped remainder is counted.
+    if (candidate.cut) report.hiddenBlocks += 1;
     const raw =
       candidate.mode === "text"
         ? sanitisePlain(candidate.source, kind, report)
@@ -328,11 +333,11 @@ function authorCandidates(entry: RawEntry): Candidate[] {
     // The name child of an Atom author, else the direct text of an RSS author. Email and uri
     // children were never collected.
     const source = field.nameText.trim() !== "" ? field.nameText : field.text;
-    if (source.trim() !== "") out.push({ mode: "text", source });
+    if (source.trim() !== "") out.push({ mode: "text", source, cut: false });
   }
   for (const field of entry.fields) {
     if (field.name === "dc:creator" && field.text.trim() !== "") {
-      out.push({ mode: "text", source: field.text });
+      out.push({ mode: "text", source: field.text, cut: false });
     }
   }
   return out;
@@ -413,6 +418,7 @@ export function parseFeed(xml: string): ParsedFeed {
             name,
             attrs: { ...attribs },
             text: "",
+            cut: false,
             nameText: "",
             sink: xhtml ? createMarkupSink({ xml: true }) : undefined,
           };
@@ -436,6 +442,7 @@ export function parseFeed(xml: string): ParsedFeed {
           }
           return;
         }
+        if (field.text.length + data.length > RAW_FIELD_CAP) field.cut = true;
         field.text = append(field.text, data);
       },
       oncomment() {

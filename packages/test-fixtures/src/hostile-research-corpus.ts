@@ -769,7 +769,7 @@ function capPage(
   };
 }
 
-const CAP_STYLE_PAD = (length: number): string => `color:red;/*${"x".repeat(length - 13)}*/`;
+const CAP_STYLE_PAD = (length: number): string => `color:red;/*${"x".repeat(length - 14)}*/`;
 
 const CAP_ENTRIES: readonly HostileResearchEntry[] = [
   capPage("depth-512", `${"<div>".repeat(512)}CAP_DEPTH_AT`, {
@@ -804,7 +804,7 @@ const CAP_ENTRIES: readonly HostileResearchEntry[] = [
       counts: ["hiddenBlocks"],
     },
   ),
-  capPage("input-at-cap", `<!--${"a".repeat(CAP_INPUT_CHARS - 11)}-->CAP_TAIL`, {
+  capPage("input-at-cap", `<!--${"a".repeat(CAP_INPUT_CHARS - 15)}-->CAP_TAIL`, {
     keeps: ["CAP_TAIL"],
     counts: ["comments"],
     truncated: false,

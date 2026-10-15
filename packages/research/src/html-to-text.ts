@@ -371,7 +371,8 @@ function hiddenByAttributes(attribs: Readonly<Record<string, string>>): boolean 
     const name = localName(rawName);
     if (name === "hidden") return true;
     if (name === "aria-hidden" && value.trim().toLowerCase() === "true") return true;
-    if (name === "style" && value.length <= MAX_STYLE_CHARS && styleHides(value)) return true;
+    // A style too long to read is unreadable, and unreadable is hidden.
+    if (name === "style" && (value.length > MAX_STYLE_CHARS || styleHides(value))) return true;
   }
   return false;
 }
@@ -403,6 +404,8 @@ export interface MarkupSink {
   comment(): void;
   /** The caller could not finish its parse: stop emitting, keep what was already decided. */
   abort(): void;
+  /** The caller cut the input short: the remainder is dropped and counted as a hidden block. */
+  dropRemainder(): void;
   finish(): HtmlToTextResult;
 }
 
@@ -481,6 +484,7 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   let crossedBoundary = false;
   let closedHidden = false;
   let scriptText = "";
+  let nodes = 0;
 
   function emit(piece: string): void {
     if (allLength < COLLECT_CAP) {
@@ -497,6 +501,13 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   function failClosed(): void {
     stopped = true;
     truncated = true;
+  }
+
+  /** A cap was reached: drop everything from here on, count it once, and say the output is cut. */
+  function dropRemainder(): void {
+    if (stopped) return;
+    report.hiddenBlocks += 1;
+    failClosed();
   }
 
   function guard(action: () => void): void {
@@ -519,8 +530,9 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   function onOpen(rawName: string, attribs: Readonly<Record<string, string>>): void {
     const name = localName(rawName);
     const isVoid = !xml && VOID_ELEMENTS.has(name);
-    if (!isVoid && frames.length >= MAX_DEPTH) {
-      failClosed();
+    nodes += 1;
+    if ((!isVoid && frames.length >= MAX_DEPTH) || nodes > MAX_NODES) {
+      dropRemainder();
       return;
     }
     crossedBoundary = false;
@@ -645,6 +657,13 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
         report.comments += 1;
       }),
     abort: failClosed,
+    dropRemainder: () => {
+      try {
+        dropRemainder();
+      } catch {
+        failClosed();
+      }
+    },
 
     finish() {
       const preferredText = preferred.join("");
@@ -706,12 +725,15 @@ export function htmlToText(html: string): HtmlToTextResult {
       recognizeCDATA: false,
     },
   );
+  // An input past the cap is cut here, before any parsing; the cut-off remainder is counted.
+  const input = html.length > MAX_INPUT_CHARS ? truncateAtBoundary(html, MAX_INPUT_CHARS) : html;
   try {
-    parser.write(html);
+    parser.write(input);
     parser.end();
   } catch {
     // Half a parse is not a decision: keep what was already decided and say it was cut.
     sink.abort();
   }
+  if (input.length < html.length) sink.dropRemainder();
   return sink.finish();
 }
