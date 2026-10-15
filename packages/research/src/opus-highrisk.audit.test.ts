@@ -22,17 +22,17 @@ describe("opus wave 2: browser-hidden text emitted by htmlToText", () => {
   // browser reads it as a bogus comment that ends at the FIRST `>`. Markup between the two is
   // live in the browser and invisible to the filter, so a hidden ancestor opened there is never
   // seen. truncated stays false and nothing is counted.
-  it.skip("BLOCKER: a CDATA section in HTML content hides an open hidden element", () => {
+  it("BLOCKER: a CDATA section in HTML content hides an open hidden element", () => {
     expect(shows("<p>shown</p><![CDATA[><div hidden>]]>LEAK</div>")).toBe(false);
   });
-  it.skip("BLOCKER: a CDATA section in HTML content hides a document-wide html hidden", () => {
+  it("BLOCKER: a CDATA section in HTML content hides a document-wide html hidden", () => {
     expect(shows("LEAK <![CDATA[><html hidden>]]>")).toBe(false);
   });
 
   // BLOCKER. A frameset start tag (while the frameset-ok flag holds, i.e. before any text) makes
   // a browser drop every later character token and every element other than frame/noframes:
   // the page renders as an empty frameset. The filter emits the text after `</frameset>`.
-  it.skip("BLOCKER: text after a frameset is discarded by a browser but emitted", () => {
+  it("BLOCKER: text after a frameset is discarded by a browser but emitted", () => {
     expect(shows("<frameset></frameset>LEAK")).toBe(false);
     expect(shows("<div hidden></div><frameset></frameset> LEAK")).toBe(false);
   });
@@ -40,7 +40,7 @@ describe("opus wave 2: browser-hidden text emitted by htmlToText", () => {
   // MAJOR. In the select insertion mode a browser ignores style, xmp, iframe, noembed, noframes,
   // title and plaintext start tags, so what follows is markup; htmlparser2 still switches to raw
   // text and swallows it (an end tag, a hidden start tag, a document-level html tag).
-  it.skip("MAJOR: a raw-text start tag inside select hides markup from the filter", () => {
+  it("MAJOR: a raw-text start tag inside select hides markup from the filter", () => {
     for (const raw of ["style", "xmp", "iframe", "noembed", "noframes", "title"]) {
       expect(shows(`<p>shown</p><select><${raw}></select><div hidden></${raw}></select>LEAK`)).toBe(
         false,
@@ -53,7 +53,7 @@ describe("opus wave 2: browser-hidden text emitted by htmlToText", () => {
   // MAJOR. htmlparser2 treats annotation-xml as an HTML integration point always; a browser only
   // with encoding="text/html" or "application/xhtml+xml". Without it a style inside is a MathML
   // element, a `<p>` breaks out of foreign content, and the html tag then hides the document.
-  it.skip("MAJOR: raw text inside annotation-xml hides a document-wide html hidden", () => {
+  it("MAJOR: raw text inside annotation-xml hides a document-wide html hidden", () => {
     expect(shows("LEAK <math><annotation-xml><style><p><html hidden>")).toBe(false);
     expect(shows("LEAK <math><annotation-xml><style><p><body hidden>")).toBe(false);
   });
@@ -61,7 +61,7 @@ describe("opus wave 2: browser-hidden text emitted by htmlToText", () => {
   // MINOR. After a stop, htmlToText scans only the never-written remainder for a body or html
   // start tag. A tag that straddles the 4 KiB write boundary is buffered by the tokenizer and cut
   // in the remainder (`<bo` | `dy hidden>`), so the document-wide wipe never happens.
-  it.skip("MINOR: a body hidden tag straddling the write boundary after a stop", () => {
+  it("MINOR: a body hidden tag straddling the write boundary after a stop", () => {
     const head = "LEAK <span hidden><div>x</span>";
     const pad = "y".repeat(WRITE_CHUNK_CHARS - head.length - 3);
     const html = `${head + pad}<body hidden> tail `;
@@ -71,7 +71,7 @@ describe("opus wave 2: browser-hidden text emitted by htmlToText", () => {
 
   // MINOR (design decision). A details element without `open` renders only its first summary;
   // the rest is hidden until the reader expands it, like hidden="until-found", which IS dropped.
-  it.skip("MINOR: closed details content is emitted", () => {
+  it("MINOR: closed details content is emitted", () => {
     expect(shows("<details><summary>shown</summary>LEAK</details>")).toBe(false);
   });
 });
@@ -103,11 +103,11 @@ describe("opus wave 2: inline styles that hide but are read as visible", () => {
     "color:rgb(255,255,255);background:white",
   ] as const;
   for (const style of HIDING) {
-    it.skip(`MAJOR: style ${style} is read as visible`, () => {
+    it(`MAJOR: style ${style} is read as visible`, () => {
       expect(shows(`<p>shown</p><div style="${style}">LEAK</div>`)).toBe(false);
     });
   }
-  it.skip("MAJOR: opacity compounds across ancestors (0.1 three times is 0.001)", () => {
+  it("MAJOR: opacity compounds across ancestors (0.1 three times is 0.001)", () => {
     const open = '<div style="opacity:0.1">'.repeat(3);
     expect(shows(`<p>shown</p>${open}LEAK`)).toBe(false);
   });
@@ -132,7 +132,7 @@ describe("opus wave 2: feed fields whose markup is stripped before the sanitiser
     ["Atom type=html", ATOM_HTML],
     ["RSS title", TITLE],
   ] as const) {
-    it.skip(`BLOCKER: child elements of ${name} reach the text unsanitised`, () => {
+    it(`BLOCKER: child elements of ${name} reach the text unsanitised`, () => {
       const text = renderFeedText(parseFeed(feed).entries);
       expect(text).not.toContain("LEAK");
       expect(text).not.toContain("EVIL");
@@ -151,7 +151,7 @@ describe("opus wave 2: delimiter look-alikes outside the skeleton table", () => 
     "<<<E N D nonce=a>>>", // spaced word
   ] as const;
   for (const text of LOOK_ALIKES) {
-    it.skip(`MINOR: ${JSON.stringify(text)} is scrubbed`, () => {
+    it(`MINOR: ${JSON.stringify(text)} is scrubbed`, () => {
       expect(scrubSourceText(text, NONCE).scrubbed).toBeGreaterThan(0);
     });
   }
