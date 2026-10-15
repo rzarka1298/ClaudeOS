@@ -1,7 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureResearch } from "../research/api.js";
-import { onResearchUpdated, pressRunNow, resetResearchState } from "../research/state.js";
+import { configureResearch, ResearchApiError } from "../research/api.js";
+import {
+  onResearchUpdated,
+  pressRunNow,
+  refreshList,
+  resetResearchState,
+} from "../research/state.js";
 import { fakeResearchApi, fakeResearchPorts } from "../test-support/research-api-fake.js";
 import {
   CONFIGURED_SOURCES,
@@ -14,6 +19,7 @@ import {
   reportRow,
   runResponse,
   statusOf,
+  unreadableRow,
 } from "../test-support/research-view-fixtures.js";
 import { ResearchDestination } from "./research.js";
 
@@ -316,5 +322,233 @@ describe("the frame (UI-SPEC R1)", () => {
       const strip = document.querySelector(".ccc-research-strip");
       expect(strip?.textContent).toContain("Unavailable");
     });
+  });
+});
+
+describe("Test 4 (plan 07-11 task 3): the destination states", () => {
+  it("loading: the header and Run now render first, the section is busy and the list is skeletons", async () => {
+    const api = fakeResearchApi({
+      status: vi.fn(() => new Promise<ReturnType<typeof statusOf>>(() => undefined)),
+      list: vi.fn(() => new Promise<ReturnType<typeof listOf>>(() => undefined)),
+    });
+    mount(api);
+    expect(screen.getByRole("heading", { level: 2, name: "Research" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Run now/ })).toBeTruthy();
+    const root = document.querySelector(".ccc-research");
+    expect(root?.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("Loading research reports")).toBeTruthy();
+    expect(document.querySelectorAll(".ccc-report-list-region .ccc-skeleton-line")).toHaveLength(3);
+  });
+
+  it("empty, never run: None yet, None and the first-report next step", async () => {
+    mount(fakeResearchApi());
+    expect(await screen.findByText("No reports yet")).toBeTruthy();
+    expect(screen.getByText("None yet")).toBeTruthy();
+    expect(screen.getByText("None")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Press Run now to fetch the configured sources and write your first cited report.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("empty, every run failed: the variant that points at the last failed run", async () => {
+    const api = fakeResearchApi({
+      status: vi.fn(() =>
+        Promise.resolve(
+          statusOf({
+            lastFailure: { runId: RUN, endedAt: iso(-30), errorCode: "all-sources-failed" },
+          }),
+        ),
+      ),
+    });
+    mount(api);
+    expect(
+      await screen.findByText("No run has produced a report yet. The last failed run says why."),
+    ).toBeTruthy();
+  });
+
+  it("running: Current run shows, Run now is aria-disabled with its reason and the rows stay", async () => {
+    const api = fakeResearchApi({
+      status: vi.fn(() => Promise.resolve(inFlightStatus())),
+      list: vi.fn(() => Promise.resolve(listOf([reportRow(0)]))),
+    });
+    mount(api);
+    await screen.findByText(reportRow(0).title);
+    const button = screen.getByRole("button", { name: /^Run now/ });
+    await waitFor(() => expect(button.getAttribute("aria-disabled")).toBe("true"));
+    expect(screen.getByText("A run is in progress.")).toBeTruthy();
+    expect(screen.getByText("Current run")).toBeTruthy();
+  });
+
+  it("stale list refresh: last-good rows stay with the Couldn't refresh line and Refresh reports", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(listOf([reportRow(0)]))
+      .mockRejectedValueOnce(new ResearchApiError("timeout"))
+      .mockResolvedValue(listOf([reportRow(0)]));
+    const api = fakeResearchApi({ list });
+    mount(api);
+    await screen.findByText(reportRow(0).title);
+    await act(async () => {
+      await refreshList();
+    });
+    expect(screen.getByText(reportRow(0).title)).toBeTruthy();
+    expect(
+      screen.getByText(/Couldn't refresh the report list\. Showing what was loaded/),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh reports" }));
+    await waitFor(() => expect(screen.queryByText(/Couldn't refresh/)).toBeNull());
+  });
+
+  it("first-load error: the destination error with Refresh reports and no invented empty state", async () => {
+    const api = fakeResearchApi({
+      list: vi.fn(() => Promise.reject(new ResearchApiError("timeout"))),
+      status: vi.fn(() => Promise.reject(new ResearchApiError("timeout"))),
+    });
+    mount(api);
+    expect(await screen.findByText("Couldn't load research reports.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh reports" })).toBeTruthy();
+    expect(screen.queryByText("No reports yet")).toBeNull();
+    expect(screen.queryByText("None yet")).toBeNull();
+  });
+
+  it("disconnected: dimmed, Run now aria-disabled with the reason, the strip Unavailable, Open note enabled", async () => {
+    const api = fakeResearchApi({
+      list: vi.fn(() => Promise.resolve(listOf([unreadableRow("broken-report.md")]))),
+    });
+    const { ports } = mount(api, { connected: false });
+    expect(document.querySelector(".ccc-research")?.getAttribute("data-dimmed")).toBe("true");
+    const button = screen.getByRole("button", { name: /^Run now/ });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText("The companion service isn't running.")).toBeTruthy();
+    expect(document.querySelector(".ccc-research-strip")?.textContent).toContain("Unavailable");
+    const open = await screen.findByRole("button", { name: "Open note" });
+    expect(open.getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(open);
+    expect(ports.openNote).toHaveBeenCalledWith("global/output/broken-report.md");
+  });
+
+  it("a note that will not open says so in the status line", async () => {
+    const api = fakeResearchApi({
+      list: vi.fn(() => Promise.resolve(listOf([unreadableRow("broken-report.md")]))),
+    });
+    const { ports } = mount(api);
+    ports.openNote.mockReturnValue(false);
+    fireEvent.click(await screen.findByRole("button", { name: "Open note" }));
+    await waitFor(() =>
+      expect(document.querySelector('.ccc-research-status[role="status"]')?.textContent).toBe(
+        "Couldn't open the note.",
+      ),
+    );
+  });
+});
+
+describe("Test 5 (plan 07-11 task 3): list refreshes through events", () => {
+  it("inserts a new report at the top without moving focus and without announcing it", async () => {
+    let rows = [reportRow(1), reportRow(2)];
+    const api = fakeResearchApi({ list: vi.fn(() => Promise.resolve(listOf(rows))) });
+    mount(api);
+    await screen.findByText(reportRow(1).title);
+    const second = screen.getByText(reportRow(2).title).closest("button") as HTMLElement;
+    second.focus();
+    rows = [reportRow(0), ...rows];
+    await act(async () => {
+      await onResearchUpdated({ runId: RUN, state: "completed", outcome: "success" });
+    });
+    const buttons = document.querySelectorAll("button.ccc-report-row-button");
+    expect(buttons).toHaveLength(3);
+    expect(buttons[0]?.textContent).toContain(reportRow(0).title);
+    expect(document.activeElement).toBe(second);
+    expect(document.querySelector('.ccc-research-status[role="status"]')?.textContent).toBe("");
+  });
+
+  it("Show 25 more loads the next page, focuses its first row and announces it", async () => {
+    const page1 = Array.from({ length: 25 }, (_, index) => reportRow(index));
+    const page2 = Array.from({ length: 25 }, (_, index) => reportRow(index + 25));
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(listOf(page1, "cursor_2"))
+      .mockResolvedValueOnce(listOf(page2, null));
+    const api = fakeResearchApi({ list });
+    mount(api);
+    const more = await screen.findByRole("button", { name: "Show 25 more" });
+    fireEvent.click(more);
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith("cursor_2"));
+    await waitFor(() =>
+      expect(document.querySelectorAll("button.ccc-report-row-button")).toHaveLength(50),
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        document.querySelectorAll("button.ccc-report-row-button")[25],
+      ),
+    );
+    expect(document.querySelector('.ccc-research-status[role="status"]')?.textContent).toBe(
+      "25 more reports loaded.",
+    );
+    expect(screen.queryByRole("button", { name: "Show 25 more" })).toBeNull();
+  });
+});
+
+describe("opening a report", () => {
+  it("opens the reader slot for the chosen row, with a way back", async () => {
+    const row = reportRow(0);
+    const api = fakeResearchApi({ list: vi.fn(() => Promise.resolve(listOf([row]))) });
+    configureResearch({ api, ...fakeResearchPorts() });
+    render(
+      <ResearchDestination
+        connection={{ kind: "live" }}
+        now={RESEARCH_NOW_MS}
+        zone={RESEARCH_ZONE}
+        reader={({ noteId, onBack }) => (
+          <div data-testid="reader">
+            <span>{`reader for ${noteId}`}</span>
+            <button type="button" onClick={onBack}>
+              Back to reports
+            </button>
+          </div>
+        )}
+      />,
+    );
+    fireEvent.click(await screen.findByText(row.title));
+    expect(await screen.findByText(`reader for ${row.noteId}`)).toBeTruthy();
+    expect(document.querySelector(".ccc-research-layout")?.getAttribute("data-reader-open")).toBe(
+      "true",
+    );
+    expect(document.querySelector('button[aria-current="true"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to reports" }));
+    expect(screen.getByText("Select a report to read it.")).toBeTruthy();
+  });
+
+  it("opens the last successful report from the Run status row", async () => {
+    const row = reportRow(0);
+    const api = fakeResearchApi({
+      status: vi.fn(() =>
+        Promise.resolve(
+          statusOf({
+            lastSuccess: {
+              runId: RUN,
+              endedAt: iso(-60),
+              outcome: "success",
+              sourceCount: 3,
+              sourceTotal: 3,
+              reportNoteId: row.noteId,
+            },
+          }),
+        ),
+      ),
+      list: vi.fn(() => Promise.resolve(listOf([row]))),
+    });
+    configureResearch({ api, ...fakeResearchPorts() });
+    render(
+      <ResearchDestination
+        connection={{ kind: "live" }}
+        now={RESEARCH_NOW_MS}
+        zone={RESEARCH_ZONE}
+        reader={({ noteId }) => <span>{`reader for ${noteId}`}</span>}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Open report" }));
+    expect(await screen.findByText(`reader for ${row.noteId}`)).toBeTruthy();
   });
 });

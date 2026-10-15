@@ -13,6 +13,8 @@ import {
 import { configureResearch, ResearchApiError } from "./api.js";
 import {
   activeRunId,
+  focusRequest,
+  loadMoreReports,
   loadResearch,
   onResearchUpdated,
   pressPending,
@@ -20,8 +22,10 @@ import {
   refreshList,
   refreshStatus,
   reportRows,
+  reportsCursor,
   reportsFailure,
   reportsLoaded,
+  reportsLoadingMore,
   researchStatus,
   resetResearchState,
   statusFailure,
@@ -394,5 +398,58 @@ describe("Test 7 (plan 07-11 task 2): failed runs and start failures use the clo
     expect(statusLine.value).toMatch(/^Couldn't start the run/);
     expect(statusLine.value).not.toContain("Users");
     expect(statusLine.value).not.toContain("key=");
+  });
+});
+
+describe("Test 8 (plan 07-11 task 3): paging the report list", () => {
+  it("loadMoreReports appends the next page, announces it and asks for focus on the first new row", async () => {
+    const first = Array.from({ length: 25 }, (_, index) => reportRow(index));
+    const second = Array.from({ length: 25 }, (_, index) => reportRow(index + 25));
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(listOf(first, "cursor_2"))
+      .mockResolvedValueOnce(listOf(second, null));
+    configureResearch({ api: fakeResearchApi({ list }), ...fakeResearchPorts() });
+    await refreshList();
+    expect(reportsCursor.value).toBe("cursor_2");
+    await loadMoreReports();
+    expect(list).toHaveBeenLastCalledWith("cursor_2");
+    expect(reportRows.value).toHaveLength(50);
+    expect(reportsCursor.value).toBeNull();
+    expect(statusLine.value).toBe("25 more reports loaded.");
+    expect(focusRequest.value).toBe(25);
+    expect(reportsLoadingMore.value).toBe(false);
+  });
+
+  it("says 1 more report loaded for a single new row", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(listOf([reportRow(0)], "cursor_2"))
+      .mockResolvedValueOnce(listOf([reportRow(1)], null));
+    configureResearch({ api: fakeResearchApi({ list }), ...fakeResearchPorts() });
+    await refreshList();
+    await loadMoreReports();
+    expect(statusLine.value).toBe("1 more report loaded.");
+  });
+
+  it("a failed page keeps the rows, the cursor and records the closed code", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(listOf([reportRow(0)], "cursor_2"))
+      .mockRejectedValueOnce(new ResearchApiError("timeout"));
+    configureResearch({ api: fakeResearchApi({ list }), ...fakeResearchPorts() });
+    await refreshList();
+    await loadMoreReports();
+    expect(reportRows.value).toHaveLength(1);
+    expect(reportsCursor.value).toBe("cursor_2");
+    expect(reportsFailure.value).toBe("timeout");
+    expect(reportsLoadingMore.value).toBe(false);
+  });
+
+  it("does nothing without a cursor or while a page is already loading", async () => {
+    const api = fakeResearchApi();
+    configureResearch({ api, ...fakeResearchPorts() });
+    await loadMoreReports();
+    expect(api.list).not.toHaveBeenCalled();
   });
 });
