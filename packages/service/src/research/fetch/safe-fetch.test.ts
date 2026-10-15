@@ -877,8 +877,9 @@ describe("Task 3 Test 7 (concurrency): a run fetches at most three sources at on
     await vi.advanceTimersByTimeAsync(100);
     expect(target.fake.calls).toHaveLength(6);
     await vi.advanceTimersByTimeAsync(100);
-    const results = await pending;
     expect(target.fake.calls).toHaveLength(7);
+    await vi.advanceTimersByTimeAsync(100);
+    const results = await pending;
     expect(results).toHaveLength(7);
     expect(results.every((result) => result.ok)).toBe(true);
     expect(results.map((result) => result.ok && result.finalUrl)).toEqual(

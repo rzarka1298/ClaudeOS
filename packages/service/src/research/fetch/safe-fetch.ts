@@ -9,6 +9,7 @@ import {
   ACCEPT_BY_KIND,
   BYTE_CAP_BY_KIND,
   CONTENT_TYPE_ALLOWLIST,
+  FETCH_CONCURRENCY,
   IDLE_TIMEOUT_MS,
   MAX_HEADER_BYTES,
   MAX_REDIRECTS,
@@ -140,6 +141,14 @@ export type FetchSourceResult =
 
 export interface SafeFetcher {
   fetchSource(input: FetchSourceInput): Promise<FetchSourceResult>;
+  /**
+   * Fetch a list with at most FETCH_CONCURRENCY requests in flight, one shared run byte budget
+   * (a fresh RUN_BYTE_CAP unless one is passed), one result per input in input order. Never rejects.
+   */
+  fetchSources(
+    inputs: readonly FetchSourceInput[],
+    budget?: RunBudget,
+  ): Promise<FetchSourceResult[]>;
 }
 
 function fail(code: SourceFailureCode): FetchSourceResult {
@@ -376,7 +385,11 @@ export function createSafeFetcher(deps: SafeFetcherDeps = {}): SafeFetcher {
   // the proxy and not the target. Refuse every source instead of trusting the explicit agent.
   if (envProxyRequested(env, execArgv)) {
     log({ event: "research-fetch-proxy-refused", code: "network-error" });
-    return { fetchSource: async () => fail("network-error") };
+    const refuse = async (): Promise<FetchSourceResult> => fail("network-error");
+    return {
+      fetchSource: refuse,
+      fetchSources: async (inputs) => Promise.all(inputs.map(refuse)),
+    };
   }
 
   const request = deps.request ?? httpsRequest;
@@ -445,5 +458,26 @@ export function createSafeFetcher(deps: SafeFetcherDeps = {}): SafeFetcher {
     return result;
   }
 
-  return { fetchSource };
+  async function fetchSources(
+    inputs: readonly FetchSourceInput[],
+    budget: RunBudget = createRunBudget(),
+  ): Promise<FetchSourceResult[]> {
+    const results: FetchSourceResult[] = inputs.map(() => fail("network-error"));
+    let next = 0;
+    async function worker(): Promise<void> {
+      for (;;) {
+        const index = next;
+        next += 1;
+        const input = inputs[index];
+        if (input === undefined) return;
+        results[index] = await fetchSource(
+          input.budget === undefined ? { ...input, budget } : input,
+        );
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, inputs.length) }, worker));
+    return results;
+  }
+
+  return { fetchSource, fetchSources };
 }
