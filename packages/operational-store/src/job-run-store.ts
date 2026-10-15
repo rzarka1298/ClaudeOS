@@ -378,7 +378,7 @@ export function finishJobRun(
 }
 
 // ---------------------------------------------------------------------------
-// Reads (signature stubs: red step of plan 07-06 task 2)
+// Reads (DIAG-05, UI-SPEC R2, R-05, R-06)
 
 /** One job run as the status view and the list read it. */
 export interface JobRunRecord {
@@ -406,14 +406,127 @@ export interface ResearchRunStatus {
   readonly latestUnknown: JobRunRecord | null;
 }
 
-export function getResearchRunStatus(_db: Database.Database, _jobKey: string): ResearchRunStatus {
-  return { lastSuccess: null, lastFailure: null, inFlight: null, latestUnknown: null };
+/** The largest page `listJobRuns` serves; the Research view pages beyond it with a cursor in a later plan. */
+export const MAX_JOB_RUN_LIST_LIMIT = 200;
+
+interface JobRunRow {
+  job_run_id: string;
+  job_key: string;
+  started_at: string | null;
+  state: string;
+  ended_at: string | null;
+  outcome: string | null;
+  unavailable_sources: string | null;
+  report_note_id: string | null;
+  error_code: string | null;
+  stage_log: string | null;
+  source_count: number | null;
+  source_total: number | null;
+  run_trigger: string | null;
 }
 
-export function listJobRuns(
-  _db: Database.Database,
-  _jobKey: string,
-  _limit: number,
-): JobRunRecord[] {
-  return [];
+function parseArray(text: string | null): unknown[] {
+  if (text === null) return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Stored JSON is read back through the same shape checks the writers apply. A value that
+ * fails them reads as empty rather than being passed on: the table holds nothing an
+ * attacker chose, so this only matters for a hand-edited or corrupted file, and an empty
+ * list is the honest "not recorded" answer (a stage is never invented).
+ */
+function readUnavailableSources(text: string | null): UnavailableSource[] {
+  try {
+    return checkUnavailableSources(parseArray(text) as UnavailableSource[]);
+  } catch {
+    return [];
+  }
+}
+
+function readStageLog(text: string | null): JobRunStageEntry[] {
+  try {
+    return parseArray(text).map((entry) => checkStageEntry(entry as JobRunStageEntry));
+  } catch {
+    return [];
+  }
+}
+
+function rowToRecord(row: JobRunRow): JobRunRecord {
+  const stageLog = readStageLog(row.stage_log);
+  return {
+    jobRunId: row.job_run_id as RunId,
+    jobKey: row.job_key,
+    trigger: isMember(JOB_RUN_TRIGGERS, row.run_trigger) ? row.run_trigger : null,
+    state: row.state as RunState,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    outcome: isMember(JOB_RUN_OUTCOMES, row.outcome) ? row.outcome : null,
+    errorCode: isMember(RUN_ERROR_CODES, row.error_code) ? row.error_code : null,
+    reportNoteId:
+      row.report_note_id !== null && NOTE_ID_PATTERN.test(row.report_note_id)
+        ? row.report_note_id
+        : null,
+    sourceCount: row.source_count,
+    sourceTotal: row.source_total,
+    unavailableSources: readUnavailableSources(row.unavailable_sources),
+    stageLog,
+    latestStage: stageLog.at(-1)?.stage ?? null,
+  };
+}
+
+const NEWEST_FIRST = "ORDER BY started_at DESC, rowid DESC";
+
+function newestWhere(
+  db: Database.Database,
+  jobKey: string,
+  condition: string,
+): JobRunRecord | null {
+  const row = db
+    .prepare(`SELECT * FROM job_runs WHERE job_key = ? AND ${condition} ${NEWEST_FIRST} LIMIT 1`)
+    .get(jobKey) as JobRunRow | undefined;
+  return row ? rowToRecord(row) : null;
+}
+
+/**
+ * The DIAG-05 status query for one job:
+ *
+ * - `lastSuccess`: the newest run that completed with outcome success or partial (R-05).
+ * - `lastFailure`: the newest run that failed with outcome failure. A stale run is never one.
+ * - `inFlight`: the queued, starting or running run, with the stage of its last log entry.
+ * - `latestUnknown`: the newest run of all, when it is stale (R-06). A stale run stops being
+ *   a row of its own as soon as any later run exists, finished or running.
+ *
+ * "Newest" is by start time: the one-in-flight rule makes runs of one job strictly
+ * sequential, so start order is end order. Each member is an object or null.
+ */
+export function getResearchRunStatus(db: Database.Database, jobKey: string): ResearchRunStatus {
+  const inFlightList = IN_FLIGHT_STATES.map((state) => `'${state}'`).join(", ");
+  const newest = newestWhere(db, jobKey, "1 = 1");
+  return {
+    lastSuccess: newestWhere(
+      db,
+      jobKey,
+      "state = 'completed' AND outcome IN ('success', 'partial')",
+    ),
+    lastFailure: newestWhere(db, jobKey, "state = 'failed' AND outcome = 'failure'"),
+    inFlight: newestWhere(db, jobKey, `state IN (${inFlightList})`),
+    latestUnknown: newest !== null && newest.state === "stale" ? newest : null,
+  };
+}
+
+/** The most recent runs of one job, newest first. `limit` is an integer from 1 to {@link MAX_JOB_RUN_LIST_LIMIT}. */
+export function listJobRuns(db: Database.Database, jobKey: string, limit: number): JobRunRecord[] {
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_JOB_RUN_LIST_LIMIT) {
+    fail(`limit must be an integer from 1 to ${MAX_JOB_RUN_LIST_LIMIT}`);
+  }
+  const rows = db
+    .prepare(`SELECT * FROM job_runs WHERE job_key = ? ${NEWEST_FIRST} LIMIT ?`)
+    .all(jobKey, limit) as JobRunRow[];
+  return rows.map(rowToRecord);
 }
