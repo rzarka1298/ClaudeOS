@@ -34,6 +34,7 @@ import {
   type MutableSanitiseReport,
   newReport,
   type SanitiseReport,
+  writeInChunks,
 } from "./html-to-text.js";
 import {
   collapseLines,
@@ -72,6 +73,8 @@ const TEXT_CAP = 4_000;
 const IDENTITY_CAP = 200;
 /** Raw characters collected per field before sanitising. */
 const RAW_FIELD_CAP = 262_144;
+/** A feed longer than this many characters is cut; the remainder is dropped and counted. */
+export const MAX_FEED_INPUT_CHARS = 1_048_576;
 
 const MONTHS: Readonly<Record<string, number>> = {
   jan: 1,
@@ -381,6 +384,11 @@ function newest(entries: readonly RawEntry[]): RawEntry[] {
     .map((item) => item.entry);
 }
 
+function cutInput(text: string, limit: number): string {
+  const last = text.charCodeAt(limit - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? limit - 1 : limit);
+}
+
 export function parseFeed(xml: string): ParsedFeed {
   const entries: RawEntry[] = [];
   const path: string[] = [];
@@ -389,10 +397,12 @@ export function parseFeed(xml: string): ParsedFeed {
   let current: RawEntry | null = null;
   let entryDepth = 0;
   let field: RawField | null = null;
+  let lastOpenStart = -1;
 
   const parser = new Parser(
     {
       onopentag(rawName, attribs) {
+        lastOpenStart = parser.startIndex;
         if (overflow > 0 || path.length >= MAX_FEED_DEPTH) {
           overflow += 1;
           return;
@@ -450,7 +460,7 @@ export function parseFeed(xml: string): ParsedFeed {
         // Counted by the sanitiser; the comment's own text is never read.
         field.sink?.comment();
       },
-      onclosetag() {
+      onclosetag(_name, implied) {
         if (overflow > 0) {
           overflow -= 1;
           return;
@@ -458,7 +468,11 @@ export function parseFeed(xml: string): ParsedFeed {
         if (current !== null) {
           const relative = path.length - entryDepth;
           if (field !== null && field.sink !== undefined && relative >= 2) {
-            field.sink.close(path[path.length - 1] ?? "");
+            field.sink.close(
+              path[path.length - 1] ?? "",
+              implied,
+              parser.startIndex === lastOpenStart,
+            );
           }
           if (relative === 1) field = null;
           if (relative === 0) {
@@ -472,9 +486,19 @@ export function parseFeed(xml: string): ParsedFeed {
     },
     { xmlMode: true },
   );
+  // An input past the cap is cut before any parsing, and the remainder is counted. The parser is
+  // fed in small pieces and not fed any more once the element depth cap tripped: it would only
+  // keep growing its stack (quadratic) for elements nobody reads.
+  const input = xml.length > MAX_FEED_INPUT_CHARS ? cutInput(xml, MAX_FEED_INPUT_CHARS) : xml;
+  let droppedRemainder = input.length < xml.length;
   try {
-    parser.write(xml);
-    parser.end();
+    const written = writeInChunks(
+      (chunk) => parser.write(chunk),
+      input,
+      () => overflow > 0,
+    );
+    if (written === input.length && overflow === 0) parser.end();
+    else droppedRemainder = true;
   } catch {
     // A failed parse keeps the entries that were completed before it and drops the one in
     // progress: half an entry is not a decision.
@@ -482,6 +506,8 @@ export function parseFeed(xml: string): ParsedFeed {
 
   const report = newReport();
   const kept = newest(entries).map((raw) => toEntry(raw, report));
+  // A cut input or a stopped parse is a dropped remainder, counted like the page sanitiser's.
+  if (droppedRemainder) report.hiddenBlocks += 1;
   return { format, entries: kept, report };
 }
 

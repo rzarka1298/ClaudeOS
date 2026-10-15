@@ -55,7 +55,6 @@ describe("BLOCKER 1: an implicit close of a hidden frame never releases hidden t
       "<span hidden><p>x<table></table></span>LEAK",
     ],
     ["button in a hidden paragraph", "<p hidden>x<button>y</p>LEAK"],
-    ["hidden heading closed by an end tag of another heading", "<h1 hidden>x<h2>y</h1>LEAK"],
     ["dropped unknown element closed by an outer end tag", "<span hidden><x-foo><div>a</span>LEAK"],
   ];
 
@@ -95,6 +94,7 @@ describe("BLOCKER 1: an implicit close of a hidden frame never releases hidden t
       ["a hidden list item closed by the next list item", "<ul><li hidden>x<li>VIS</ul>", "VIS"],
       ["unclosed options in a select", "<select><option>a<option>b</select>VIS", "VIS"],
       ["a head that is never closed", "<head><title>T</title><body>VIS", "VIS"],
+      ["a hidden heading closed by the next heading", "<h1 hidden>x<h2>VIS</h1>", "VIS"],
       ["a hidden div with an unclosed paragraph", "<div hidden><p>x</div>VIS", "VIS"],
       [
         "a hidden span with a hidden-free link",
@@ -102,11 +102,7 @@ describe("BLOCKER 1: an implicit close of a hidden frame never releases hidden t
         "VIS",
       ],
       ["a hidden formatting element closed by its own end tag", "<b hidden>x</b>VIS", "VIS"],
-      [
-        "a hidden table row with an unclosed cell",
-        "<table><tr hidden><td>x</tr></table>VIS",
-        "VIS",
-      ],
+      ["a hidden table row", "<table><tr hidden><td>x</td></tr></table>VIS", "VIS"],
     ];
     for (const [name, html, visible] of BENIGN) {
       it(`keeps the text after: ${name}`, () => {
@@ -140,24 +136,53 @@ const TAGS = [
   "a",
   "font",
   "em",
+  "strong",
+  "nobr",
   "li",
   "ul",
   "ol",
   "dl",
   "dd",
+  "dt",
   "form",
   "table",
+  "caption",
+  "thead",
   "tbody",
   "tr",
   "td",
+  "th",
   "select",
   "option",
+  "optgroup",
   "label",
   "section",
+  "h1",
   "h2",
+  "center",
+  "pre",
+  "blockquote",
   "button",
   "x-foo",
+  "svg",
+  "math",
+  "textarea",
+  "noscript",
+  "template",
+  "body",
+  "head",
+  "html",
+  "marquee",
+  "object",
+  "details",
+  "summary",
+  "ruby",
+  "rt",
 ] as const;
+
+const VOID_TAGS = ["br", "hr", "img", "input", "wbr"] as const;
+
+const HIDING_ATTRIBUTES = [' hidden=""', ' aria-hidden="true"', ' style="display:none"'] as const;
 
 interface GeneratedDocument {
   readonly html: string;
@@ -174,8 +199,10 @@ function generate(random: () => number): GeneratedDocument {
     const roll = random();
     if (roll < 0.4) {
       const tag = pick(TAGS);
-      html += random() < 0.3 ? `<${tag} hidden>` : `<${tag}>`;
+      html += random() < 0.3 ? `<${tag}${pick(HIDING_ATTRIBUTES)}>` : `<${tag}>`;
       open.push(tag);
+    } else if (roll < 0.45) {
+      html += `<${pick(VOID_TAGS)}${random() < 0.2 ? ` hidden` : ""}>`;
     } else if (roll < 0.7) {
       // Mostly the element on top, sometimes any other name: the misnested end tags.
       const top = open[open.length - 1];
@@ -195,7 +222,7 @@ function generate(random: () => number): GeneratedDocument {
 interface Parse5Node {
   readonly nodeName: string;
   readonly value?: string;
-  readonly attrs?: ReadonlyArray<{ readonly name: string }>;
+  readonly attrs?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
   readonly childNodes?: readonly Parse5Node[];
 }
 
@@ -220,7 +247,13 @@ function findParse5(): string | null {
 function hiddenMarkers(root: Parse5Node): Set<string> {
   const hidden = new Set<string>();
   const walk = (node: Parse5Node, underHidden: boolean): void => {
-    const own = node.attrs?.some((attr) => attr.name === "hidden") === true;
+    const own =
+      node.attrs?.some(
+        (attr) =>
+          attr.name === "hidden" ||
+          (attr.name === "aria-hidden" && attr.value === "true") ||
+          (attr.name === "style" && attr.value === "display:none"),
+      ) === true;
     const hides = underHidden || own;
     if (node.nodeName === "#text" && hides) {
       for (const match of (node.value ?? "").matchAll(/T\d+/g)) hidden.add(match[0]);
@@ -236,11 +269,12 @@ const PARSE5_PATH = findParse5();
 describe.skipIf(PARSE5_PATH === null)("differential against a spec-compliant tree builder", () => {
   it("never emits a marker that the browser tree keeps under a hidden ancestor", async () => {
     const parse5 = (await import(pathToFileURL(PARSE5_PATH as string).href)) as Parse5Module;
-    const random = mulberry32(20_261_014);
+    // DIFF_SEED and DIFF_DOCUMENTS widen the run locally; the committed run is fixed.
+    const random = mulberry32(Number(process.env.DIFF_SEED ?? 20_261_014));
     const failures: string[] = [];
     let withHidden = 0;
     let truncatedDocuments = 0;
-    const documents = 4_000;
+    const documents = Number(process.env.DIFF_DOCUMENTS ?? 4_000);
     for (let index = 0; index < documents; index += 1) {
       const document = generate(random);
       const hidden = hiddenMarkers(parse5.parse(document.html));
@@ -258,7 +292,7 @@ describe.skipIf(PARSE5_PATH === null)("differential against a spec-compliant tre
     // The run is not vacuous: many documents have hidden text, and the filter does not simply
     // give up on everything.
     expect(withHidden).toBeGreaterThan(1_000);
-    expect(truncatedDocuments).toBeLessThan(documents * 0.6);
+    expect(truncatedDocuments).toBeLessThan(documents * 0.25);
   }, 60_000);
 });
 

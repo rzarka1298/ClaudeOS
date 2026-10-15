@@ -555,14 +555,26 @@ interface Frame {
 /** The sanitiser as an event sink: feed it open, close, text and comment events, then finish. */
 export interface MarkupSink {
   open(name: string, attribs: Readonly<Record<string, string>>): void;
-  /** `implied` is true when the parser closed the element because another tag or the end of input did. */
-  close(name: string, implied?: boolean): void;
+  /**
+   * `implied` is true when the parser closed the element because another tag or the end of input
+   * did (or because of a trailing slash, which `selfClosing` says: the close came straight from
+   * the element's own start tag).
+   */
+  close(name: string, implied?: boolean, selfClosing?: boolean): void;
   text(data: string): void;
   comment(): void;
   /** The caller could not finish its parse: stop emitting, keep what was already decided. */
   abort(): void;
+  /** True once the sink has stopped deciding: a caller can stop writing input. */
+  done(): boolean;
   /** The caller cut the input short: the remainder is dropped and counted as a hidden block. */
   dropRemainder(): void;
+  /**
+   * The remainder the caller did not parse holds a second body or html start tag, which in a
+   * browser merges its attributes into the document element: nothing already read can be
+   * trusted, so everything is discarded, counted, and the output is flagged truncated.
+   */
+  discard(): void;
   finish(): HtmlToTextResult;
 }
 
@@ -574,32 +586,176 @@ export interface MarkupSinkOptions {
   readonly xml?: boolean;
 }
 
-// Elements an end tag cannot reach across: when the browser meets `</div>` with one of these
-// between the current node and the div, it ignores the end tag, but htmlparser2 closes them all.
-const SCOPE_BOUNDARY = new Set([
+// --- implicit closes: where the parser's stack and a browser's may differ ---------------------------
+//
+// htmlparser2 keeps one stack of open elements and closes through it. A browser's tree builder
+// differs in more ways than a list can name (formatting elements are re-opened, an end tag is
+// ignored behind a special element or outside its scope, a form control or a table part has its
+// own insertion mode, a quirks-mode table does not close a paragraph). So the filter does not
+// try to model the browser. It records every frame closed implicitly (a run, ending at the next
+// event) and then decides, conservatively, whether parser and browser certainly agree:
+//
+//   - a run ended by an END TAG for an outer element (the end tag popped through the run);
+//   - a run ended by a START TAG (the new element closed what was open).
+//
+// If anything hidden is involved (a hidden element is open before the run, which includes the
+// run's own frames and the element the end tag names) and the pair is not on the short list below
+// where both trees are known to agree, the filter drops the remainder of the document and counts
+// it. Dropping too much is a counted loss; showing what a reader never sees is the defect.
+
+/** Elements a browser's end tag cannot reach across, or whose insertion mode ignores end tags. */
+const NEVER_POPPED = new Set([
+  "annotation-xml",
   "applet",
-  "caption",
+  "body",
+  "button",
+  "datalist",
+  "desc",
+  "form",
+  "foreignobject",
+  "frame",
+  "frameset",
+  "head",
   "html",
   "marquee",
+  "math",
+  "mi",
+  "mn",
+  "mo",
+  "ms",
+  "mtext",
+  "noscript",
   "object",
+  "optgroup",
+  "option",
+  "select",
+  "svg",
   "table",
-  "td",
   "template",
-  "th",
+  "textarea",
 ]);
 
-/** Table structure elements are closed by their own scoping rules, not the generic one. */
-const TABLE_STRUCTURE = new Set([
+/** Table parts: closed by the table rules, not the generic ones. */
+const TABLE_PARTS = new Set(["caption", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"]);
+
+/**
+ * End tags whose browser rule is "pop until this element", for elements that no start tag ever
+ * closes in a browser. The others (a paragraph, a list item, a heading, a table part, a form
+ * control) can be closed earlier by a start tag that htmlparser2 does not treat as closing, so
+ * parser and browser may disagree on whether the end tag still has anything to close.
+ */
+const STABLE_POP_UNTIL_END_TAGS = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "center",
+  "details",
+  "dialog",
+  "dir",
+  "div",
+  "dl",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "header",
+  "hgroup",
+  "main",
+  "menu",
+  "nav",
+  "ol",
+  "pre",
+  "section",
+  "summary",
+  "ul",
+]);
+
+/** The HTML "special" category: an ordinary end tag is ignored when one lies between. */
+const SPECIAL = new Set([
+  "address",
+  "applet",
+  "area",
+  "article",
+  "aside",
+  "base",
+  "basefont",
+  "bgsound",
+  "blockquote",
+  "body",
+  "br",
+  "button",
   "caption",
+  "center",
   "col",
   "colgroup",
+  "dd",
+  "details",
+  "dir",
+  "div",
+  "dl",
+  "dt",
+  "embed",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "frame",
+  "frameset",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "head",
+  "header",
+  "hgroup",
+  "hr",
+  "html",
+  "iframe",
+  "img",
+  "input",
+  "keygen",
+  "li",
+  "link",
+  "listing",
+  "main",
+  "marquee",
+  "menu",
+  "meta",
+  "nav",
+  "noembed",
+  "noframes",
+  "noscript",
+  "object",
+  "ol",
+  "p",
+  "param",
+  "plaintext",
+  "pre",
+  "script",
+  "search",
+  "section",
+  "select",
+  "source",
+  "style",
+  "summary",
   "table",
   "tbody",
   "td",
+  "template",
+  "textarea",
   "tfoot",
   "th",
   "thead",
+  "title",
   "tr",
+  "track",
+  "ul",
+  "wbr",
+  "xmp",
 ]);
 
 /** Elements the browser's adoption-agency algorithm re-opens after a misnested end tag. */
@@ -620,6 +776,197 @@ const FORMATTING = new Set([
   "u",
 ]);
 
+/** Start tags that close an open paragraph in parser and browser alike (not a quirks-mode table). */
+const PARAGRAPH_CLOSERS = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "details",
+  "div",
+  "dl",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "main",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "ul",
+]);
+
+/**
+ * HTML start tags that break out of svg or math content in a browser: the foreign element is
+ * popped and the tag opens in HTML. So an HTML element inside svg that parser reports as closed
+ * by the end of its svg may still be open in the browser, and a trailing slash does not close it.
+ */
+const FOREIGN_BREAKOUT = new Set([
+  "b",
+  "big",
+  "blockquote",
+  "body",
+  "br",
+  "center",
+  "code",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "em",
+  "embed",
+  "font",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "head",
+  "hr",
+  "i",
+  "img",
+  "li",
+  "listing",
+  "menu",
+  "meta",
+  "nobr",
+  "ol",
+  "p",
+  "pre",
+  "ruby",
+  "s",
+  "small",
+  "span",
+  "strike",
+  "strong",
+  "sub",
+  "sup",
+  "table",
+  "tt",
+  "u",
+  "ul",
+  "var",
+]);
+
+/** Start tags that make a browser close an open paragraph, and with it the formatting inside. */
+const BROWSER_PARAGRAPH_CLOSERS = new Set([
+  ...PARAGRAPH_CLOSERS,
+  "center",
+  "dd",
+  "dir",
+  "dt",
+  "li",
+  "listing",
+  "menu",
+  "plaintext",
+  "summary",
+  "table",
+  "xmp",
+]);
+
+const HEADINGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+
+/** Insertion modes other than "in body": a table, a template or foreign content is open. */
+const MODE_TRIGGERS = new Set([
+  "colgroup",
+  "math",
+  "svg",
+  "table",
+  "tbody",
+  "template",
+  "tfoot",
+  "thead",
+  "tr",
+]);
+
+/** Inside these the insertion mode is back to the body rules (a cell, a caption). */
+const MODE_RESETS = new Set(["applet", "caption", "marquee", "object", "td", "th"]);
+
+type InsertionMode = "body" | "select" | "other";
+
+/**
+ * The innermost insertion mode that is not the body's. A start tag or an end tag then means
+ * something else (a form or a paragraph start tag inside a table does not close what the body
+ * rules say, and a select ignores nearly everything). `names` run from the innermost frame out.
+ */
+function insertionMode(names: Iterable<string>): InsertionMode {
+  for (const name of names) {
+    if (MODE_RESETS.has(name)) return "body";
+    if (name === "select") return "select";
+    if (MODE_TRIGGERS.has(name)) return "other";
+  }
+  return "body";
+}
+
+interface ClosedFrame {
+  readonly name: string;
+  readonly hides: boolean;
+}
+
+/**
+ * A frame the parser closed because a start tag opened. True only for pairs where the browser
+ * closes the same element: the same sibling kind, a block closing a paragraph, a body closing the
+ * head. Anything else is not known to agree.
+ */
+function startTagClosesAlike(closed: string, opened: string): boolean {
+  if (closed === "p") return PARAGRAPH_CLOSERS.has(opened);
+  if (closed === "li") return opened === "li";
+  if (closed === "dd" || closed === "dt") return opened === "dd" || opened === "dt";
+  // Outside a select only an option is closed by an option or optgroup start tag.
+  if (closed === "option") return opened === "option" || opened === "optgroup";
+  if (closed === "head") return opened === "body";
+  if (HEADINGS.has(closed)) return HEADINGS.has(opened);
+  if (closed === "tr") return opened === "tr";
+  if (closed === "td" || closed === "th") {
+    return opened === "td" || opened === "th" || opened === "tr";
+  }
+  if (closed === "thead" || closed === "tbody") return opened === "tbody" || opened === "tfoot";
+  return false;
+}
+
+/**
+ * An end tag popped through `run` before closing `end`. True only when a browser pops exactly the
+ * same elements and re-opens none of them as hidden.
+ */
+function endTagPopsAlike(end: string, run: readonly ClosedFrame[]): boolean {
+  // The select insertion mode ignores most end tags, but its own end tag pops its options.
+  if (end === "select") return run.every((f) => f.name === "option" || f.name === "optgroup");
+  // `</body>` and `</html>` pop nothing in a browser; a paragraph, a list item, a heading, a table
+  // part, a form control or a formatting element may already be closed there, and a formatting
+  // end tag runs the adoption agency. None of these is known to agree with the parser.
+  if (
+    end === "body" ||
+    end === "html" ||
+    end === "table" ||
+    NEVER_POPPED.has(end) ||
+    TABLE_PARTS.has(end) ||
+    FORMATTING.has(end) ||
+    (SPECIAL.has(end) && !STABLE_POP_UNTIL_END_TAGS.has(end))
+  ) {
+    return false;
+  }
+  for (const frame of run) {
+    if (NEVER_POPPED.has(frame.name) || TABLE_PARTS.has(frame.name)) return false;
+    // A hidden formatting element popped by an end tag is re-opened, hidden, for the next text.
+    if (frame.hides && FORMATTING.has(frame.name)) return false;
+  }
+  if (STABLE_POP_UNTIL_END_TAGS.has(end)) return true;
+  // The generic end tag (span, label, an unknown element) is ignored behind a special element.
+  return run.every((f) => !SPECIAL.has(f.name));
+}
+
 const MAX_SCRIPT_TRACK = 100_000;
 
 export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
@@ -637,9 +984,12 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   let truncated = false;
   // Once set, nothing more is emitted or counted. Every "cannot decide" path ends here.
   let stopped = false;
-  // Implied closes since the last open or explicit close, for the browser/parser differentials.
-  let crossedBoundary = false;
-  let closedHidden = false;
+  // Frames closed implicitly since the last event that was not an implied close, and whether
+  // anything hidden was open before the first of them (see startTagClosesAlike).
+  let run: ClosedFrame[] = [];
+  let runHidden = false;
+  let formattingPending = false;
+  let formPending = false;
   let scriptText = "";
   let nodes = 0;
 
@@ -676,6 +1026,20 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     }
   }
 
+  /** After a stop: a body or html start tag that hides still hides everything read before. */
+  function lateDocumentTag(rawName: string, attribs: Readonly<Record<string, string>>): void {
+    try {
+      const name = localName(rawName);
+      if ((name === "body" || name === "html") && hiddenByAttributes(attribs)) {
+        report.hiddenBlocks += 1;
+        truncated = true;
+        wipeDocument();
+      }
+    } catch {
+      // Already stopped: nothing more to decide.
+    }
+  }
+
   function wipeDocument(): void {
     all.length = 0;
     preferred.length = 0;
@@ -684,16 +1048,66 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     stopped = true;
   }
 
+  /** True when `targets` is open with a formatting element above it (a browser closes both). */
+  function holdsFormattingUnder(targets: readonly string[]): boolean {
+    let formattingSeen = false;
+    for (let at = frames.length - 1; at >= 0; at -= 1) {
+      const name = frames[at]?.name ?? "";
+      if (targets.includes(name)) return formattingSeen;
+      if (FORMATTING.has(name)) formattingSeen = true;
+    }
+    return false;
+  }
+
+  /** A start tag ended the run of implied closes: do parser and browser close the same things? */
+  function settleRun(opened: string): void {
+    if (run.length === 0) return;
+    const closed = run;
+    run = [];
+    if (!runHidden) return;
+    const names = [...closed.map((f) => f.name), ...frames.map((f) => f.name).reverse()];
+    // A formatting element re-opened inside the hidden frame is what the browser would be
+    // looking at (not the frame itself), and a form start tag is ignored while a form closed
+    // implicitly still counts as the browser's current form: neither is modelled, so neither is
+    // trusted.
+    const mode = insertionMode(names);
+    const selectPair =
+      mode === "select" &&
+      closed.every((f) => f.name === "option") &&
+      (opened === "option" || opened === "optgroup");
+    if (
+      formattingPending ||
+      (opened === "form" && formPending) ||
+      mode === "other" ||
+      (mode === "select" && !selectPair) ||
+      !closed.every((f) => startTagClosesAlike(f.name, opened))
+    ) {
+      dropRemainder();
+    }
+  }
+
   function onOpen(rawName: string, attribs: Readonly<Record<string, string>>): void {
     const name = localName(rawName);
+    settleRun(name);
+    if (stopped) {
+      lateDocumentTag(rawName, attribs);
+      return;
+    }
+    // A browser closes an open paragraph, list item or definition at some start tags where the
+    // parser does not (it only closes the element on top), popping the formatting elements
+    // between; those stay in the active formatting list and are re-opened by the next text.
+    if (BROWSER_PARAGRAPH_CLOSERS.has(name) && holdsFormattingUnder(["p"]))
+      formattingPending = true;
+    if (name === "li" && holdsFormattingUnder(["li"])) formattingPending = true;
+    if ((name === "dd" || name === "dt") && holdsFormattingUnder(["dd", "dt"])) {
+      formattingPending = true;
+    }
     const isVoid = !xml && VOID_ELEMENTS.has(name);
     nodes += 1;
     if ((!isVoid && frames.length >= MAX_DEPTH) || nodes > MAX_NODES) {
       dropRemainder();
       return;
     }
-    crossedBoundary = false;
-    closedHidden = false;
 
     let hides = false;
     let counted: "hiddenBlocks" | "mediaDropped" | "linksDropped" | null = null;
@@ -758,12 +1172,16 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     }
   }
 
-  function onClose(rawName: string, implied: boolean): void {
+  function onClose(rawName: string, implied: boolean, selfClosing: boolean): void {
     const name = localName(rawName);
     if (!xml && VOID_ELEMENTS.has(name)) return;
     // Only the frame on top can be closed, and only by its own name. A stray close is ignored.
     const top = frames[frames.length - 1];
     if (top === undefined || top.name !== name) return;
+    if (run.length === 0) runHidden = hiddenDepth > 0;
+    // A trailing slash closes the element in XML and inside svg/math, except that an HTML tag
+    // inside svg/math breaks out of it in a browser and the slash is then ignored.
+    const selfClosed = implied && selfClosing && (xml || !FOREIGN_BREAKOUT.has(top.name));
     frames.pop();
     if (top.hides) hiddenDepth -= 1;
     if (top.name === "pre") preDepth -= 1;
@@ -776,30 +1194,54 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
       failClosed();
       return;
     }
-    if (implied) {
-      if (SCOPE_BOUNDARY.has(top.name)) crossedBoundary = true;
-      if (top.hides) closedHidden = true;
+    if (implied && !selfClosed) {
+      // A formatting element closed this way stays in a browser's list of active formatting
+      // elements and is re-opened by the next text.
+      if (FORMATTING.has(top.name)) formattingPending = true;
+      if (top.name === "form") formPending = true;
+      run.push({ name: top.name, hides: top.hides });
       return;
     }
-    // An explicit end tag that, in a browser, would be ignored (it reaches across a scope
-    // boundary) or would re-open a formatting element leaves hidden content open there but
-    // closed here. If hiding is involved, nothing more can be decided.
-    const crossing = crossedBoundary && !TABLE_STRUCTURE.has(top.name);
-    const reopening = FORMATTING.has(top.name) && closedHidden;
-    if ((crossing || reopening) && (top.hides || hiddenDepth > 0 || closedHidden)) failClosed();
-    crossedBoundary = false;
-    closedHidden = false;
+    // An explicit end tag that popped through other frames: a browser may ignore it, pop less,
+    // or re-open what it popped. If anything hidden is involved and the two are not known to
+    // agree, nothing more can be decided.
+    const popped = run;
+    run = [];
+    if (popped.length > 0 && runHidden) {
+      const names = [
+        ...popped.map((f) => f.name),
+        top.name,
+        ...frames.map((f) => f.name).reverse(),
+      ];
+      const mode = insertionMode(names);
+      const selectPair =
+        top.name === "select" && popped.every((f) => f.name === "option" || f.name === "optgroup");
+      if (
+        mode === "other" ||
+        (mode === "select" && !selectPair) ||
+        !endTagPopsAlike(top.name, popped)
+      ) {
+        dropRemainder();
+      }
+    }
+    // `</form>` removes the form from the browser's stack without closing what it holds. A
+    // formatting element closed earlier is re-opened inside the form by the next text and stays
+    // open after it, so the form's hiding would outlive the end tag there.
+    if (top.name === "form" && top.hides && formattingPending) dropRemainder();
+    // A formatting end tag is consumed by the nearest entry of that name in the browser's list of
+    // active formatting elements, which may be one that was closed earlier; the element that
+    // hides then stays open there.
+    if (FORMATTING.has(top.name) && top.hides && formattingPending) dropRemainder();
   }
 
   function onText(data: string): void {
+    settleRun("");
     if (hiddenDepth > 0) {
       if (frames[frames.length - 1]?.name === "script" && scriptText.length < MAX_SCRIPT_TRACK) {
         scriptText += data.toLowerCase();
       }
       return;
     }
-    crossedBoundary = false;
-    closedHidden = false;
     const stripped = stripUnsafeChars(data);
     report.controlChars += stripped.removed;
     const piece =
@@ -810,14 +1252,28 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   }
 
   return {
-    open: (name, attribs) => guard(() => onOpen(name, attribs)),
-    close: (name, implied = false) => guard(() => onClose(name, implied)),
+    open: (name, attribs) => {
+      if (stopped) {
+        lateDocumentTag(name, attribs);
+        return;
+      }
+      guard(() => onOpen(name, attribs));
+    },
+    close: (name, implied = false, selfClosing = false) =>
+      guard(() => onClose(name, implied, selfClosing)),
     text: (data) => guard(() => onText(data)),
     comment: () =>
       guard(() => {
+        settleRun("");
         report.comments += 1;
       }),
     abort: failClosed,
+    done: () => stopped,
+    discard() {
+      report.hiddenBlocks += 1;
+      truncated = true;
+      wipeDocument();
+    },
     dropRemainder: () => {
       try {
         dropRemainder();
@@ -845,9 +1301,36 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   };
 }
 
+/** Input is handed to a parser in pieces of about this many characters. */
+export const WRITE_CHUNK_CHARS = 4_096;
+
+/**
+ * Hands `input` to `write` in pieces of about WRITE_CHUNK_CHARS characters (never splitting a
+ * surrogate pair) and stops as soon as `stop()` is true. Returns how many characters were written.
+ */
+export function writeInChunks(
+  write: (chunk: string) => void,
+  input: string,
+  stop: () => boolean,
+): number {
+  let at = 0;
+  while (at < input.length && !stop()) {
+    let end = Math.min(at + WRITE_CHUNK_CHARS, input.length);
+    const last = input.charCodeAt(end - 1);
+    if (end < input.length && last >= 0xd800 && last <= 0xdbff) end += 1;
+    write(input.slice(at, end));
+    at = end;
+  }
+  return at;
+}
+
+/** A body or html start tag (case-insensitive), as the HTML tokenizer would see it. */
+const DOCUMENT_TAG = /<(?:body|html)(?=[\s/>]|$)/i;
+
 export function htmlToText(html: string): HtmlToTextResult {
   const sink = createMarkupSink();
   let inCdata = false;
+  let lastOpenStart = -1;
   // A browser-like HTML parse, not XML: entities decode once, tag and attribute names are
   // lowercased, a self-closing slash is ignored (`<script/>` opens a script), and the raw-text
   // elements (script, style, textarea, title, xmp, iframe, noembed, noframes) keep their content
@@ -855,10 +1338,12 @@ export function htmlToText(html: string): HtmlToTextResult {
   const parser = new Parser(
     {
       onopentag(name, attribs) {
+        lastOpenStart = parser.startIndex;
         sink.open(name, attribs);
       },
       onclosetag(name, isImplied) {
-        sink.close(name, isImplied);
+        // A close that carries its own start tag's position came from a trailing slash.
+        sink.close(name, isImplied, parser.startIndex === lastOpenStart);
       },
       ontext(data) {
         if (!inCdata) sink.text(data);
@@ -888,13 +1373,24 @@ export function htmlToText(html: string): HtmlToTextResult {
   );
   // An input past the cap is cut here, before any parsing; the cut-off remainder is counted.
   const input = html.length > MAX_INPUT_CHARS ? truncateAtBoundary(html, MAX_INPUT_CHARS) : html;
+  let written = 0;
   try {
-    parser.write(input);
-    parser.end();
+    // Small pieces, and no more once the sink has stopped: htmlparser2 keeps building its element
+    // stack for whatever it is given, at a cost that grows with the square of the depth, so the
+    // parser must not be handed input nobody will read.
+    written = writeInChunks(
+      (chunk) => parser.write(chunk),
+      input,
+      () => sink.done(),
+    );
+    if (written === input.length && !sink.done()) parser.end();
   } catch {
     // Half a parse is not a decision: keep what was already decided and say it was cut.
     sink.abort();
   }
   if (input.length < html.length) sink.dropRemainder();
+  // What was never parsed (a cap, or the sink stopped) may still carry a document-level tag.
+  const unparsed = html.slice(written);
+  if (unparsed !== "" && DOCUMENT_TAG.test(unparsed)) sink.discard();
   return sink.finish();
 }
