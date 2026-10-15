@@ -614,6 +614,35 @@ const HIDDEN_VARIANT_ENTRIES: readonly HostileResearchEntry[] = expand({
   counts: ["hiddenBlocks", "scripts", "styles"],
 });
 
+// Wave 1+2 review: inline styles that a browser renders invisible or off-screen (Codex 2).
+const HIDDEN_STYLE_ENTRIES: readonly HostileResearchEntry[] = expand({
+  category: "hidden-variants",
+  name: "hidden-variants-inline-styles",
+  html: '<p>Visible paragraph.</p><span style="opacity:-1">SV_01</span><span style="opacity:-10%">SV_02</span><span style="opacity:0.0">SV_03</span><span style="opacity:0%">SV_04</span><span style="color:#0000">SV_05</span><span style="color:#ffffff00">SV_06</span><span style="color:rgba(255,255,255,0)">SV_07</span><span style="color:hsla(0,0%,100%,0)">SV_08</span><span style="color:rgb(0 0 0 / 0)">SV_09</span><span style="color:#fff;background-color:#ffffff">SV_10</span><span style="font-size:1px">SV_11</span><span style="text-indent:-9999px">SV_12</span><span style="position:absolute;left:-9999px">SV_13</span><span style="transform:translateX(-200%)">SV_14</span><span style="margin-right:-9999px">SV_15</span><span style="inset:-9999px">SV_16</span><span style="clip:rect(0,0,0,0)">SV_17</span><span style="height:0;overflow:hidden">SV_18</span>',
+  forbidden: [
+    "SV_01",
+    "SV_02",
+    "SV_03",
+    "SV_04",
+    "SV_05",
+    "SV_06",
+    "SV_07",
+    "SV_08",
+    "SV_09",
+    "SV_10",
+    "SV_11",
+    "SV_12",
+    "SV_13",
+    "SV_14",
+    "SV_15",
+    "SV_16",
+    "SV_17",
+    "SV_18",
+  ],
+  keeps: ["Visible paragraph."],
+  counts: ["hiddenBlocks"],
+});
+
 const XHTML_NS =
   'xmlns="http://www.w3.org/1999/xhtml" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:h="http://www.w3.org/1999/xhtml"';
 
@@ -1081,6 +1110,7 @@ export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
   ...ALLOWLIST_PAYLOADS.flatMap(expand),
   ...SSRF_ENTRIES,
   ...HIDDEN_VARIANT_ENTRIES,
+  ...HIDDEN_STYLE_ENTRIES,
   ...XHTML_VARIANT_ENTRIES,
   ...FEED_FIELDS.map(
     (field): HostileResearchEntry => ({

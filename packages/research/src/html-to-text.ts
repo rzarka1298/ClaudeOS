@@ -11,23 +11,43 @@
 // Hiding signals: the `hidden`, `inert`, `popover` and `slot` attributes; `aria-hidden` with any
 // value other than `false`; the class tokens hidden, sr-only, invisible, d-none, display-none,
 // visually-hidden and screen-reader-text; `type=hidden` inputs; and an inline style that hides
-// (display none, visibility hidden, opacity 0, font-size 0, zero width, height or line height,
-// clip, clip-path, scale(0), an opacity(0) filter, content-visibility hidden, a transparent
-// colour, an off-screen offset) or cannot be read (a variable, calc, CSS escape, unknown keyword
-// or unit, or a value over 2 KiB). The head is dropped without a count. A main or article subtree
-// is preferred when one is visible. No attribute value is ever read into the output, block
-// elements are separated by newlines, control and format characters are removed and counted, and
-// every removal is counted into the eight keys of SANITISE_REPORT_KEYS.
+// or cannot be read. A style hides when it sets display none, visibility hidden, opacity zero or
+// below, font-size zero or about two pixels or less, a zero or tiny box with hidden overflow, a
+// zero or negative line height, clip, clip-path, a zero scale or any translation, content-
+// visibility hidden, a colour with alpha zero (keyword, hex, rgb, hsl and the other colour
+// functions), a text colour equal to the background colour, a text indent, margin or inset of
+// minus 100 units or more, an absolute or fixed position with any non-zero offset, or an
+// off-screen offset; or when it holds a variable, calc, CSS escape, unknown keyword or unit, or
+// is over 2 KiB. This set is deliberately conservative: a false hit costs a counted, dropped
+// block. The head is dropped without a count. A main or article subtree is preferred when one is
+// visible (text outside it is dropped and counted as one hidden block). No attribute value is
+// ever read into the output, block elements are separated by newlines, control and format
+// characters are removed and counted, and every removal is counted into the eight keys of
+// SANITISE_REPORT_KEYS.
 //
 // Every cap (depth 512, 100,000 elements, 1,000,000 input characters) drops the remainder and
-// counts it; the page text cap of 20,000 characters cuts output after filtering. A parse that
-// throws stops emitting. Where a browser and htmlparser2 build different trees the filter drops
-// more, never less (see the sink).
+// counts it; the page text cap of 20,000 characters cuts output after filtering. The parser is
+// handed the input in 4 KiB pieces and no more once the sink has stopped, so the parser's own
+// cost is bounded too. A parse that throws stops emitting.
 //
-// Honest limit: CSS delivered by a stylesheet cannot be evaluated without rendering, so text
+// Where a browser and htmlparser2 build different trees the filter drops more, never less. It
+// does not model the browser's tree builder. It records every frame the parser closed implicitly
+// (by an end tag for an outer element, by a start tag, or by the end of the input) and, when
+// anything hidden is open and parser and browser are not KNOWN to agree (misnested formatting
+// elements and the adoption agency, an end tag ignored behind a special element or outside its
+// scope, a list item or form end tag, tables and their foster parenting, select, template, svg,
+// math and noscript content, a stale list of formatting elements or form pointer, a second body
+// or html start tag, plaintext), it drops the remainder of the document, counts it, and sets
+// `truncated`. A body or html start tag after a stop still wipes what was read. Visible markup
+// that merely misnests is not dropped: there is nothing a browser could hide from a reader.
+// The seeded differential in html-implied-close.test.ts compares the filter with parse5 on
+// generated documents.
+//
+// Honest limits: CSS delivered by a stylesheet cannot be evaluated without rendering, so text
 // hidden that way survives unless the element also carries one of the recognised signals above
-// (a class alone proves nothing, so only the common hiding utilities are recognised by name). The
-// defence for that residue is the source delimiter and the tool-less summariser, not detection.
+// (a class alone proves nothing, so only the common hiding utilities are recognised by name);
+// text hidden by a colour that merely matches an unknown background survives too. The defence for
+// that residue is the source delimiter and the tool-less summariser, not detection.
 //
 // The filter runs on the SAME parse whose text it emits. The sanitiser is an event sink
 // (`createMarkupSink`): htmlToText drives it from an HTML-mode parse, and the feed parser drives
@@ -383,6 +403,50 @@ const OFFSET_PROPERTIES = new Set([
   "margin-inline-start",
 ]);
 
+/** Offsets that place a positioned box; a non-zero one on an absolute or fixed box hides it. */
+const POSITION_OFFSETS = new Set([
+  "left",
+  "right",
+  "top",
+  "bottom",
+  "inset",
+  "inset-inline",
+  "inset-inline-start",
+  "inset-inline-end",
+  "inset-block",
+  "inset-block-start",
+  "inset-block-end",
+]);
+
+/** Margins and insets: any side pulled back by this many units (of any kind) moves the box away. */
+const PULLBACK_PROPERTIES = new Set([
+  "margin",
+  "margin-left",
+  "margin-right",
+  "margin-top",
+  "margin-bottom",
+  "margin-inline",
+  "margin-inline-start",
+  "margin-inline-end",
+  "margin-block",
+  "margin-block-start",
+  "margin-block-end",
+  "inset",
+  "inset-inline",
+  "inset-inline-start",
+  "inset-inline-end",
+  "inset-block",
+  "inset-block-start",
+  "inset-block-end",
+  "text-indent",
+]);
+
+/** A negative offset this large moves a box off the page whatever the unit. */
+const PULLBACK_LIMIT = -100;
+
+/** Width and height properties that collapse a box when they are about zero. */
+const BOX_SIZE_PROPERTIES = new Set(["width", "height", "max-width", "max-height"]);
+
 const ZERO_SIZE_PROPERTIES = new Set(["width", "height", "max-width", "max-height", "line-height"]);
 
 const LENGTH = /^([+-]?(?:\d+\.?\d*|\.\d+))([a-z%]*)$/;
@@ -411,18 +475,61 @@ function farOffScreen(length: Length): boolean {
   return distance >= threshold;
 }
 
+/** An alpha value that is zero or below (browsers clamp a negative alpha to zero). */
+function alphaIsZero(text: string | undefined): boolean {
+  const alpha = (text ?? "").trim();
+  return NUMBER_OR_PERCENT.test(alpha) && Number.parseFloat(alpha) <= 0;
+}
+
+/** A colour whose alpha is zero: the keyword, a hex form with alpha 00, or a colour function. */
 function transparentColour(value: string): boolean {
   if (value === "transparent") return true;
-  const match = /^(?:rgba?|hsla?)\((.*)\)$/.exec(value);
+  const hex = /^#(?:([0-9a-f]{4})|([0-9a-f]{8}))$/.exec(value);
+  if (hex !== null)
+    return hex[1] !== undefined ? hex[1].endsWith("0") : (hex[2] ?? "").endsWith("00");
+  const match = /^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\((.*)\)$/.exec(value);
   if (match === null) return false;
-  const args = (match[1] ?? "").split(/[\s,/]+/).filter((part) => part !== "");
-  const alpha = args[3];
-  return (
-    args.length === 4 &&
-    alpha !== undefined &&
-    NUMBER_OR_PERCENT.test(alpha) &&
-    Number.parseFloat(alpha) === 0
-  );
+  const body = match[2] ?? "";
+  const slash = body.lastIndexOf("/");
+  if (slash >= 0) return alphaIsZero(body.slice(slash + 1));
+  if ((match[1] ?? "").endsWith("a")) {
+    const args = body.split(/[\s,]+/).filter((part) => part !== "");
+    return args.length === 4 && alphaIsZero(args[3]);
+  }
+  return false;
+}
+
+/** A hex colour in its long form, so `#fff` and `#ffffff` compare equal. */
+function colourKey(value: string): string {
+  const hex = /^#([0-9a-f])([0-9a-f])([0-9a-f])([0-9a-f])?$/.exec(value);
+  if (hex === null) return value;
+  return `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}${hex[4] === undefined ? "" : `${hex[4]}${hex[4]}`}`;
+}
+
+/** True when a font size is too small to read: about two pixels or less. */
+function tinyFontSize(length: Length): boolean {
+  const size = Math.abs(length.size);
+  switch (length.unit) {
+    case "px":
+      return size <= 2;
+    case "pt":
+      return size <= 1.5;
+    case "pc":
+      return size <= 0.125;
+    case "in":
+      return size <= 0.02;
+    case "cm":
+      return size <= 0.05;
+    case "mm":
+      return size <= 0.5;
+    case "q":
+      return size <= 2;
+    case "%":
+      return size <= 15;
+    default:
+      // em, rem, ex, ch, viewport and other relative units: a fraction of a line.
+      return size <= 0.15;
+  }
 }
 
 function isZeroNumber(text: string): boolean {
@@ -453,6 +560,7 @@ function styleHides(style: string): boolean {
   // CSS escapes (\6e for n) cannot be evaluated without a CSS parser.
   if (style.includes("\\")) return true;
   const cleaned = style.replace(/\/\*[\s\S]*?\*\//g, "").toLowerCase();
+  const declared = new Map<string, string[]>();
   for (const declaration of cleaned.split(";")) {
     const colon = declaration.indexOf(":");
     if (colon < 0) continue;
@@ -470,11 +578,11 @@ function styleHides(style: string): boolean {
       if (!(value === "visible" || CSS_WIDE.has(value))) return true;
     } else if (property === "opacity") {
       if (CSS_WIDE.has(value)) continue;
-      if (!NUMBER_OR_PERCENT.test(value) || Number.parseFloat(value) === 0) return true;
+      if (!NUMBER_OR_PERCENT.test(value) || Number.parseFloat(value) <= 0) return true;
     } else if (property === "font-size") {
       if (CSS_WIDE.has(value) || FONT_SIZE_KEYWORDS.has(value)) continue;
       const length = parseLength(value);
-      if (length === null || length.size === 0) return true;
+      if (length === null || length.size === 0 || tinyFontSize(length)) return true;
     } else if (property === "color" || property === "-webkit-text-fill-color") {
       if (transparentColour(value)) return true;
     } else if (ZERO_SIZE_PROPERTIES.has(property)) {
@@ -483,7 +591,11 @@ function styleHides(style: string): boolean {
     } else if (property === "clip" || property === "clip-path") {
       if (!(value === "auto" || value === "none" || CSS_WIDE.has(value))) return true;
     } else if (property === "transform") {
-      if (scalesToZero(value)) return true;
+      if (scalesToZero(value) || /translate/.test(value)) return true;
+    } else if (property === "translate") {
+      if (!(value === "none" || CSS_WIDE.has(value))) return true;
+    } else if (property === "scale") {
+      if (value.split(/\s+/).some(isZeroNumber)) return true;
     } else if (property === "filter") {
       if (/opacity\(\s*0*\.?0*%?\s*\)/.test(value)) return true;
     } else if (property === "content-visibility") {
@@ -495,6 +607,51 @@ function styleHides(style: string): boolean {
       const length = parseLength(value);
       if (length === null || farOffScreen(length)) return true;
     }
+    if (PULLBACK_PROPERTIES.has(property)) {
+      for (const token of value.split(/\s+/)) {
+        const length = parseLength(token);
+        if (length !== null && length.size <= PULLBACK_LIMIT) return true;
+      }
+    }
+    const list = declared.get(property);
+    if (list === undefined) declared.set(property, [value]);
+    else list.push(value);
+  }
+  return declaredStylesHide(declared);
+}
+
+/** Rules that need two declarations: positioned with an offset, a clipped box, text on its own colour. */
+function declaredStylesHide(declared: ReadonlyMap<string, readonly string[]>): boolean {
+  const positioned = (declared.get("position") ?? []).some(
+    (value) => value === "absolute" || value === "fixed",
+  );
+  if (positioned) {
+    for (const property of POSITION_OFFSETS) {
+      for (const value of declared.get(property) ?? []) {
+        if (CSS_WIDE.has(value) || value === "auto") continue;
+        // Anything but a plain zero moves the box (and a value we cannot read is not trusted).
+        if (value.split(/\s+/).some((token) => parseLength(token)?.size !== 0)) return true;
+      }
+    }
+  }
+  const clipped = ["overflow", "overflow-x", "overflow-y"].some((property) =>
+    (declared.get(property) ?? []).some((value) => /\b(?:hidden|clip)\b/.test(value)),
+  );
+  if (clipped) {
+    for (const property of BOX_SIZE_PROPERTIES) {
+      for (const value of declared.get(property) ?? []) {
+        const length = parseLength(value);
+        if (length !== null && length.unit !== "%" && Math.abs(length.size) <= 1) return true;
+      }
+    }
+  }
+  const colours = (declared.get("color") ?? []).map(colourKey);
+  if (colours.length > 0) {
+    const backgrounds = [
+      ...(declared.get("background-color") ?? []),
+      ...(declared.get("background") ?? []).flatMap((value) => value.split(/\s+/)),
+    ].map(colourKey);
+    if (colours.some((colour) => backgrounds.includes(colour))) return true;
   }
   return false;
 }
