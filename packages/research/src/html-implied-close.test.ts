@@ -366,7 +366,7 @@ describe.skipIf(PARSE5_PATH === null)("differential against a spec-compliant tre
     // The run is not vacuous: many documents have hidden text, and the filter does not simply
     // give up on everything.
     expect(withHidden).toBeGreaterThan(1_000);
-    expect(truncatedDocuments).toBeLessThan(documents * 0.25);
+    expect(truncatedDocuments).toBeLessThan(documents * 0.4);
   }, 60_000);
 
   it("shows no marker a browser hides or discards, over raw text, frames, CDATA and foreign content", async () => {

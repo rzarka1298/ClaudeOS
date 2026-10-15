@@ -239,6 +239,7 @@ export function parseDelimitedBlocks(composed: string): readonly DelimitedBlock[
   const blocks: DelimitedBlock[] = [];
   let nonce: string | null = null;
   let cursor = 0;
+  let footerAt = -2;
   while (cursor < composed.length) {
     const lineEnd = composed.indexOf("\n", cursor);
     const line = lineEnd === -1 ? composed.slice(cursor) : composed.slice(cursor, lineEnd);
@@ -255,7 +256,10 @@ export function parseDelimitedBlocks(composed: string): readonly DelimitedBlock[
     }
     const bodyStart = lineEnd + 1;
     const footer = `\n<<<END nonce=${nonce}>>>`;
-    const bodyEnd = composed.indexOf(footer, bodyStart);
+    // The footer position is reused until the cursor passes it: a text with many headers and
+    // one footer must not be searched again from every header.
+    if (footerAt < bodyStart) footerAt = composed.indexOf(footer, bodyStart);
+    const bodyEnd = footerAt;
     if (bodyEnd === -1) break;
     const after = bodyEnd + footer.length;
     if (after < composed.length && composed[after] !== "\n") {

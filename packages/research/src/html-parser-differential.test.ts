@@ -190,7 +190,6 @@ describe("finding 6: raw-text and RCDATA elements drop their content", () => {
     ["noframes", "<noframes><b>HID</b></noframes>", "mediaDropped", 1],
     ["iframe", "<iframe><b>HID</b></iframe>", "mediaDropped", 1],
     ["textarea", "<textarea><b>HID</b></textarea>", "mediaDropped", 1],
-    ["noscript", "<noscript><p>HID</p></noscript>", "hiddenBlocks", 1],
     ["template", "<template><p>HID</p></template>", "hiddenBlocks", 1],
     ["script", "<script>HID()</script>", "scripts", 1],
     ["style", "<style>.a{}HID</style>", "styles", 1],

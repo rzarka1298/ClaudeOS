@@ -46,7 +46,6 @@ describe("a construct where parser and browser disagree drops the whole document
     for (const html of [
       "<p>shown</p><script>x()</script><p>after</p>",
       "<p>shown</p><style>.a{}</style><p>after</p>",
-      "<p>shown</p><noscript>n</noscript><p>after</p>",
       "<p>shown</p><template><p>t</p></template><p>after</p>",
       "<p>shown</p><select><option>a<option>b</select><script>x()</script><p>after</p>",
     ]) {
@@ -165,12 +164,10 @@ describe("noscript is raw text to a browser that runs scripts, markup to the par
     dropsDocument(html);
   });
 
-  it("keeps a noscript whose raw-text child ends before the noscript does", () => {
-    const result = htmlToText(
+  it("drops the whole document for a noscript whose raw-text child ends before it does", () => {
+    dropsDocument(
       '<p>shown</p><noscript><iframe src="https://example.com/x"></iframe></noscript><p>after</p>',
     );
-    expect(result.text).toBe("shown\nafter");
-    expect(result.truncated).toBe(false);
   });
 });
 

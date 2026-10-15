@@ -220,6 +220,12 @@ const CONVENTIONAL_PREFIXES: Readonly<Record<string, string>> = {
  */
 interface Bindings {
   readonly map: ReadonlyMap<string, string>;
+  /**
+   * True in an element that dropped a declaration (budget, full table, over-long value) and in
+   * everything below it: every name there is unknown, so a discarded redeclaration cannot leave
+   * the parent's binding in force.
+   */
+  readonly poisoned: boolean;
 }
 
 /** More prefixes than this on the elements leading to an element are not bound. */
@@ -228,14 +234,12 @@ const MAX_BINDINGS = 64;
 const MAX_DECLARATIONS = 2_048;
 /** A namespace value longer than this is an unknown namespace: never trimmed or cut into a match. */
 const MAX_NAMESPACE_CHARS = 256;
-/** What a prefix is bound to when its value is over-long: equal to no real namespace. */
-const UNKNOWN_NAMESPACE = "#unknown-namespace";
 /** Fields kept per entry; later children of the entry are not read. */
 const MAX_FIELDS_PER_ENTRY = 64;
 /** An attribute the parser reads (type, href, rel) longer than this is dropped. */
 const MAX_ATTRIBUTE_CHARS = 4_096;
 
-const NO_BINDINGS: Bindings = { map: new Map() };
+const NO_BINDINGS: Bindings = { map: new Map(), poisoned: false };
 
 /** What the registries refused to hold for this feed, counted once each in the report. */
 interface RegistryLosses {
@@ -256,6 +260,7 @@ function bindingsFor(
   losses: RegistryLosses,
 ): Bindings {
   let next: Map<string, string> | null = null;
+  let poisoned = parent.poisoned;
   for (const [name, value] of Object.entries(attribs)) {
     const lower = name.toLowerCase();
     let prefix: string;
@@ -263,33 +268,41 @@ function bindingsFor(
     else if (lower.startsWith("xmlns:")) prefix = lower.slice(6);
     else continue;
     losses.declarations += 1;
-    if (losses.declarations > MAX_DECLARATIONS) {
+    if (losses.declarations > MAX_DECLARATIONS || value.length > MAX_NAMESPACE_CHARS) {
       losses.namespaces = true;
+      poisoned = true;
       continue;
     }
-    const bound = value.length > MAX_NAMESPACE_CHARS ? UNKNOWN_NAMESPACE : value;
-    if (bound === UNKNOWN_NAMESPACE) losses.namespaces = true;
     next ??= new Map(parent.map);
     if (next.size >= MAX_BINDINGS && !next.has(prefix)) {
       losses.namespaces = true;
+      poisoned = true;
       continue;
     }
-    next.set(prefix, bound);
+    next.set(prefix, value);
   }
-  return next === null ? parent : { map: next };
+  if (next === null && poisoned === parent.poisoned) return parent;
+  return { map: next ?? parent.map, poisoned };
 }
 
-/** The attributes the parser reads, each capped; anything else is not kept. */
+/**
+ * The attributes the parser reads, each capped; anything else is not kept. Null when the `type`
+ * discriminator is over the cap: the field is rejected, never defaulted to text.
+ */
 function readAttributes(
   attribs: Readonly<Record<string, string>>,
   losses: RegistryLosses,
-): Record<string, string> {
+): Record<string, string> | null {
   const kept: Record<string, string> = {};
   for (const key of ["type", "href", "rel"]) {
     const value = attribs[key];
     if (value === undefined) continue;
-    if (value.length > MAX_ATTRIBUTE_CHARS) losses.attributes = true;
-    else kept[key] = value;
+    if (value.length > MAX_ATTRIBUTE_CHARS) {
+      losses.attributes = true;
+      if (key === "type") return null;
+    } else {
+      kept[key] = value;
+    }
   }
   return kept;
 }
@@ -309,7 +322,7 @@ function canonicalName(rawName: string, bindings: Bindings, closed: boolean): st
       ? (bindings.map.get("") ?? "")
       : (bindings.map.get(rawName.slice(0, colon).toLowerCase()) ??
         (closed ? undefined : CONVENTIONAL_PREFIXES[rawName.slice(0, colon).toLowerCase()]));
-  if (namespace === undefined) return "";
+  if (bindings.poisoned || namespace === undefined) return "";
   if (namespace === "" || namespace === NS_ATOM || namespace === NS_RSS10) return local;
   if (namespace === NS_CONTENT && local === "encoded") return "content:encoded";
   if (namespace === NS_DC && (local === "date" || local === "creator")) return `dc:${local}`;
@@ -540,11 +553,16 @@ function hasSeparator(text: string): boolean {
 function removeAngleAddresses(text: string): string {
   let out = "";
   let position = 0;
+  // The position of the first ">" at or after the scan point is remembered and reused until the
+  // scan passes it, so a run of "<" before one ">" costs one search, not one per "<".
+  let close = -1;
   while (position < text.length) {
     const open = text.indexOf("<", position);
     if (open < 0) break;
-    const close = text.indexOf(">", open + 1);
-    if (close < 0) break;
+    if (close <= open) {
+      close = text.indexOf(">", open + 1);
+      if (close < 0) break;
+    }
     const next = text.indexOf("<", open + 1);
     if (next >= 0 && next < close) {
       // A later "<" starts the real group: keep everything before it as text.
@@ -689,12 +707,18 @@ export function parseFeed(xml: string): ParsedFeed {
           field = null;
           return;
         }
+        const readAttribs = relative === 1 ? readAttributes(attribs, losses) : {};
+        if (relative === 1 && readAttribs === null) {
+          // A type discriminator over the cap: the field is rejected, not defaulted to text.
+          field = null;
+          return;
+        }
         if (relative === 1) {
           const type = (attribs.type ?? "").trim().toLowerCase();
           const xhtml = type === "xhtml" || type === "application/xhtml+xml";
           field = {
             name,
-            attrs: readAttributes(attribs, losses),
+            attrs: readAttribs ?? {},
             text: "",
             cut: false,
             nameText: "",

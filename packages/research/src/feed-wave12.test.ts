@@ -201,7 +201,9 @@ describe("Codex 4: elements are matched by namespace and local name", () => {
     const parsed = parseFeed(
       `<feed xmlns="${ATOM_NS}" ${declarations.join(" ")}><entry><title>T</title><p1999:title>X</p1999:title></entry></feed>`,
     );
-    expect(parsed.entries[0]?.title).toBe("T");
+    // The root's prefix table overflowed: everything below it is unknown (fail closed).
+    expect(parsed.entries).toEqual([]);
+    expect(parsed.report.hiddenBlocks).toBe(1);
   });
 });
 

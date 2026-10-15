@@ -29,7 +29,7 @@ describe("report shape", () => {
   });
 });
 
-describe("Test 1 (active content): script, style, template, noscript, textarea, comments and CDATA", () => {
+describe("Test 1 (active content): script, style, template, textarea, comments and CDATA", () => {
   it("never emits script text and counts each script", () => {
     const result = htmlToText(
       page("<p>kept</p><script>STEAL_COOKIES()</script><script>second()</script>"),
@@ -47,11 +47,12 @@ describe("Test 1 (active content): script, style, template, noscript, textarea, 
   it("drops template, noscript and textarea content", () => {
     const result = htmlToText(
       page(
-        "<p>kept</p><template><b>TEMPLATE_TEXT</b></template><noscript>NOSCRIPT_TEXT</noscript><textarea>TEXTAREA_TEXT</textarea>",
+        "<p>kept</p><template><b>TEMPLATE_TEXT</b></template><textarea>TEXTAREA_TEXT</textarea>",
       ),
     );
     expect(result.text).toBe("kept");
-    expect(result.report.hiddenBlocks).toBe(2);
+    // (noscript now drops the whole document: gates-wave3.test.ts)
+    expect(result.report.hiddenBlocks).toBe(1);
     expect(result.report.mediaDropped).toBe(1);
   });
 

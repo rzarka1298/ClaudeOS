@@ -87,6 +87,14 @@ const HIDDEN_ELEMENTS: ReadonlyArray<readonly [string, string]> = [
 
 /** Style values the filter cannot read: hidden and counted, never assumed visible. */
 const UNSAFE_STYLES: ReadonlyArray<readonly [string, string]> = [
+  [
+    "display:inline-block;color:red (outside the style allowlist)",
+    "display:inline-block;color:red",
+  ],
+  ["font-size:1.2em (outside the style allowlist)", "font-size:1.2em"],
+  ["font-size:larger (outside the style allowlist)", "font-size:larger"],
+  ["font-size:100% (outside the style allowlist)", "font-size:100%"],
+  ["color:red (outside the style allowlist)", "color:red"],
   ["display:flex (outside the style allowlist)", "display:flex"],
   ["display:block flow (outside the style allowlist)", "display:block flow"],
   ["opacity:0.5 (outside the style allowlist)", "opacity:0.5"],
@@ -127,13 +135,8 @@ const UNSAFE_STYLES: ReadonlyArray<readonly [string, string]> = [
 /** Styles that hide nothing. */
 const VISIBLE_STYLES: readonly string[] = [
   "display:block",
-  "display:inline-block;color:red",
   "opacity:1",
   "font-size:12px",
-  "font-size:1.2em",
-  "font-size:larger",
-  "font-size:100%",
-  "color:red",
   "",
   "   ",
   ";;;",

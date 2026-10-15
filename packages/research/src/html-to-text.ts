@@ -354,6 +354,7 @@ const KEYWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
     "none",
   ]),
   "white-space": new Set(["normal", "nowrap", "pre", "pre-wrap", "pre-line", "break-spaces"]),
+  // table-column and table-column-group are NOT here: their children are not rendered at all.
   display: new Set([
     "block",
     "inline",
@@ -366,8 +367,6 @@ const KEYWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
     "table-row-group",
     "table-header-group",
     "table-footer-group",
-    "table-column",
-    "table-column-group",
     "table-caption",
   ]),
 };
@@ -384,6 +383,7 @@ const DECORATION_WORDS = new Set([
   "wavy",
 ]);
 
+/** Absolute type keywords only: smaller and larger are relative and compound down the tree. */
 const FONT_SIZE_WORDS = new Set([
   "xx-small",
   "x-small",
@@ -392,110 +392,71 @@ const FONT_SIZE_WORDS = new Set([
   "large",
   "x-large",
   "xx-large",
-  "xxx-large",
-  "smaller",
-  "larger",
-]);
-
-const NOT_A_COLOUR = new Set([
-  "transparent",
-  "currentcolor",
-  "inherit",
-  "initial",
-  "unset",
-  "revert",
-  "revert-layer",
-  "default",
-  "none",
 ]);
 
 const SIDES = new Set(["", "-top", "-right", "-bottom", "-left"]);
 
+/** Padding, margin and border lengths are px only and at most this many. */
+const MAX_OFFSET_PX = 200;
+/**
+ * The padding, margin and border pixels summed over an element and all its ancestors may not pass
+ * this: nested offsets add up and would move the text out of view.
+ */
+export const MAX_STYLE_LOAD = 4_000;
+
 const NUMBER = /^[0-9]+(?:\.[0-9]+)?$|^\.[0-9]+$/;
-const LENGTH = /^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)(px|pt|pc|em|rem|%)$/;
+const PIXELS = /^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)px$/;
 
-interface Measure {
-  readonly size: number;
-  readonly unit: string;
+/** A length in pixels, or null for anything else (a relative unit, a keyword, a calc). */
+function pixels(token: string): number | null {
+  if (token === "0") return 0;
+  const match = PIXELS.exec(token);
+  return match === null ? null : Number.parseFloat(match[1] ?? "");
 }
 
-function measure(token: string): Measure | null {
-  const match = LENGTH.exec(token);
-  if (match === null) return null;
-  return { size: Number.parseFloat(match[1] ?? ""), unit: match[2] ?? "" };
-}
-
-/** A non-negative offset (padding, margin) smaller than 100 pixels or the like. */
+/** A non-negative offset (padding, margin) of at most MAX_OFFSET_PX pixels. */
 function smallOffset(token: string, allowAuto: boolean): boolean {
-  if (token === "0") return true;
   if (token === "auto") return allowAuto;
-  const length = measure(token);
-  if (length === null) return false;
-  switch (length.unit) {
-    case "px":
-      return length.size < 100;
-    case "pt":
-      return length.size < 75;
-    case "pc":
-      return length.size < 6;
-    case "%":
-      return length.size < 100;
-    default:
-      return length.size < 7;
-  }
+  const size = pixels(token);
+  return size !== null && size <= MAX_OFFSET_PX;
 }
 
-/** A box size that is not about zero. */
+/** A box size that is not about zero: auto, none (max-width), a percentage above 0 or 1px and more. */
 function usableSize(token: string, allowNone: boolean): boolean {
   if (token === "auto") return true;
   if (token === "none") return allowNone;
-  const length = measure(token);
-  if (length === null) return false;
-  switch (length.unit) {
-    case "px":
-    case "pt":
-    case "pc":
-    case "%":
-      return length.size >= 1;
-    default:
-      return length.size >= 0.1;
-  }
+  const percent = /^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)%$/.exec(token);
+  if (percent !== null) return Number.parseFloat(percent[1] ?? "") >= 1;
+  const size = pixels(token);
+  return size !== null && size >= 1;
 }
 
-/** Type a reader can read: a keyword, or a size above about 8 pixels. */
+/** Absolute type a reader can read: a small keyword set, or 8 to 72 pixels. */
 function readableFontSize(token: string): boolean {
   if (FONT_SIZE_WORDS.has(token)) return true;
-  const length = measure(token);
-  if (length === null) return false;
-  switch (length.unit) {
-    case "px":
-      return length.size >= 8;
-    case "pt":
-      return length.size >= 6;
-    case "pc":
-      return length.size >= 0.5;
-    case "%":
-      return length.size >= 60;
-    default:
-      return length.size >= 0.6;
-  }
-}
-
-/** A literal opaque colour: a name, #rgb, #rrggbb, or rgb()/hsl() with three plain components. */
-function opaqueColour(value: string): boolean {
-  if (/^[a-z]+$/.test(value)) return !NOT_A_COLOUR.has(value);
-  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/.test(value)) return true;
-  const functional = /^(?:rgb|hsl)\(([^()/]*)\)$/.exec(value);
-  if (functional === null) return false;
-  const args = (functional[1] ?? "").split(/[\s,]+/).filter((part) => part !== "");
-  return args.length === 3 && args.every((part) => /^[-+]?[0-9.]+(?:%|deg)?$/.test(part));
+  const size = pixels(token);
+  return size !== null && size >= 8 && size <= 72;
 }
 
 function lineHeightOk(value: string): boolean {
   if (value === "normal") return true;
-  if (NUMBER.test(value)) return Number.parseFloat(value) > 0;
-  const length = measure(value);
-  return length !== null && length.size > 0;
+  if (NUMBER.test(value)) {
+    const number = Number.parseFloat(value);
+    return number >= 0.8 && number <= 5;
+  }
+  const size = pixels(value);
+  return size !== null && size >= 8 && size <= MAX_OFFSET_PX;
+}
+
+/** A border value: lengths in px (at most 200), 0, plain words and #hex colours; nothing else. */
+function borderOk(value: string): boolean {
+  return value.split(" ").every((token) => {
+    if (/^[a-z]+(?:-[a-z]+)*$/.test(token) || /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/.test(token)) {
+      return true;
+    }
+    const size = pixels(token);
+    return size !== null && size <= MAX_OFFSET_PX;
+  });
 }
 
 function declarationOk(property: string, value: string): boolean {
@@ -512,10 +473,9 @@ function declarationOk(property: string, value: string): boolean {
   if (property === "font-size") return readableFontSize(value);
   if (property === "font-family") return /^[a-z0-9 ,'"_.-]+$/.test(value);
   if (property === "opacity") return value === "1" || value === "1.0" || value === "100%";
-  if (property === "color" || property === "background-color") return opaqueColour(value);
   if (property === "width" || property === "height") return usableSize(value, false);
   if (property === "max-width") return usableSize(value, true);
-  if (property.startsWith("border")) return /^[a-z0-9 .,%#()+-]*$/.test(value);
+  if (property.startsWith("border")) return borderOk(value);
   for (const base of ["padding", "margin"]) {
     if (property.startsWith(base) && SIDES.has(property.slice(base.length))) {
       const tokens = value.split(" ");
@@ -529,31 +489,52 @@ function declarationOk(property: string, value: string): boolean {
   return false;
 }
 
+/** The pixels a declaration adds to the nested load (padding, margin, border lengths). */
+function declarationLoad(property: string, value: string): number {
+  if (
+    !(
+      property.startsWith("border") ||
+      property.startsWith("padding") ||
+      property.startsWith("margin")
+    )
+  ) {
+    return 0;
+  }
+  let sum = 0;
+  for (const token of value.split(" ")) sum += pixels(token) ?? 0;
+  return sum;
+}
+
 /**
- * True when the style is entirely in the allowlist and cannot hide the element. False means the
- * element is dropped: a property outside the set, a value that cannot be read, or a colour pair.
+ * The nested load of a style attribute (pixels of padding, margin and border), or null when the
+ * style is not entirely in the allowlist and cannot hide the element. Null means the element is
+ * dropped: a property outside the set (colours are outside it), a value that cannot be read, or a
+ * value out of range.
  */
-function styleIsHarmless(style: string): boolean {
+function styleLoad(style: string): number | null {
   const lower = style.toLowerCase();
-  if (UNREADABLE_VALUE.test(lower.replace(/!\s*important\s*(?=;|$)/g, ""))) return false;
-  let colour = false;
-  let background = false;
-  for (const declaration of lower.replace(/!\s*important\s*(?=;|$)/g, "").split(";")) {
+  const stripped = lower.replace(/!\s*important\s*(?=;|$)/g, "");
+  if (UNREADABLE_VALUE.test(stripped)) return null;
+  let load = 0;
+  for (const declaration of stripped.split(";")) {
     if (declaration.trim() === "") continue;
     const colon = declaration.indexOf(":");
-    if (colon < 0) return false;
+    if (colon < 0) return null;
     const property = declaration.slice(0, colon).trim();
     const value = declaration
       .slice(colon + 1)
       .trim()
       .replace(/\s+/g, " ");
-    if (property === "" || value === "") return false;
-    if (CSS_WIDE.has(value)) return false;
-    if (!declarationOk(property, value)) return false;
-    if (property === "color") colour = true;
-    if (property === "background-color") background = true;
+    if (property === "" || value === "") return null;
+    if (CSS_WIDE.has(value)) return null;
+    if (!declarationOk(property, value)) return null;
+    load += declarationLoad(property, value);
   }
-  return !(colour && background);
+  return load;
+}
+
+function styleIsHarmless(style: string): boolean {
+  return styleLoad(style) !== null;
 }
 
 /** The lowercase local part of an element or attribute name: `XHTML:Script` becomes `script`. */
@@ -608,6 +589,8 @@ interface Frame {
   readonly name: string;
   readonly hides: boolean;
   readonly preferred: boolean;
+  /** Padding, margin and border pixels summed over this element and its ancestors. */
+  readonly load: number;
   /** A details element without `open`: only its first summary shows. */
   readonly closedDetails?: boolean;
   summarySeen?: boolean;
@@ -1078,12 +1061,11 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   let runHidden = false;
   let formattingPending = false;
   let formPending = false;
+  // Open closed-details frames: content a browser keeps hidden until it is expanded, so a run of
+  // implied closes inside one is hidden context for the misnest gates.
+  let closedDetailsDepth = 0;
   // The whole document was wiped (and counted) already: a second discard counts nothing.
   let discarded = false;
-  // A raw-text element opened inside noscript. A browser that runs scripts reads the whole
-  // noscript as raw text up to the first `</noscript>`; the parser reads it as markup, so the
-  // raw-text element's own body can swallow that end tag (or never end). Either discards.
-  let noscriptRaw: { readonly name: string; tail: string } | null = null;
   let scriptText = "";
   let nodes = 0;
 
@@ -1208,14 +1190,6 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
       lateDocumentTag(rawName, attribs);
       return;
     }
-    if (
-      !xml &&
-      noscriptRaw === null &&
-      RAW_TEXT_UNDER_SELECT.has(name) &&
-      frames.some((frame) => frame.name === "noscript")
-    ) {
-      noscriptRaw = { name, tail: "" };
-    }
     // A browser closes an open paragraph, list item or definition at some start tags where the
     // parser does not (it only closes the element on top), popping the formatting elements
     // between; those stay in the active formatting list and are re-opened by the next text.
@@ -1236,6 +1210,12 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     let counted: "hiddenBlocks" | "mediaDropped" | "linksDropped" | null = null;
     // Inside a closed details only the first summary shows until the reader expands it.
     const parent = frames[frames.length - 1];
+    // The padding, margin and border pixels of this element and everything above it.
+    const styleText = attributeValue(attribs, "style");
+    const ownLoad =
+      (parent?.load ?? 0) + (styleText === undefined ? 0 : (styleLoad(styleText) ?? 0));
+    // Only a body or html tag's OWN hiding attributes wipe the document, not hiding it inherits.
+    const ownHides = (name === "body" || name === "html") && hiddenByAttributes(attribs);
     let hiddenByDetails = false;
     if (parent?.closedDetails === true) {
       if (name === "summary" && parent.summarySeen !== true) parent.summarySeen = true;
@@ -1254,7 +1234,7 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
       // Everything after a plaintext start tag is its text: nothing more is decided.
       hides = true;
       counted = "hiddenBlocks";
-    } else if (hiddenByAttributes(attribs)) {
+    } else if (hiddenByAttributes(attribs) || ownLoad > MAX_STYLE_LOAD) {
       hides = true;
       counted = "hiddenBlocks";
     } else if (
@@ -1284,7 +1264,7 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
       stopped = true;
       return;
     }
-    if ((name === "body" || name === "html") && hides && counted === "hiddenBlocks") {
+    if (ownHides) {
       // A later body or html start tag merges its attributes into the first one: the whole
       // document is hidden, including what was emitted before. (Counted above.)
       discarded = true;
@@ -1300,11 +1280,15 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
       name,
       hides,
       preferred: isPreferred,
+      load: ownLoad,
       ...(name === "details" && attributeValue(attribs, "open") === undefined
         ? { closedDetails: true }
         : {}),
     });
     if (name === "script") scriptText = "";
+    if (name === "details" && attributeValue(attribs, "open") === undefined) {
+      closedDetailsDepth += 1;
+    }
     if (hides) hiddenDepth += 1;
     if (name === "pre") preDepth += 1;
     if (isPreferred) {
@@ -1319,8 +1303,8 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     // Only the frame on top can be closed, and only by its own name. A stray close is ignored.
     const top = frames[frames.length - 1];
     if (top === undefined || top.name !== name) return;
-    if (run.length === 0) runHidden = hiddenDepth > 0;
-    if (noscriptRaw !== null && noscriptRaw.name === top.name) noscriptRaw = null;
+    if (run.length === 0) runHidden = hiddenDepth > 0 || closedDetailsDepth > 0;
+    if (top.closedDetails === true) closedDetailsDepth -= 1;
     // A trailing slash closes the element in XML and inside svg/math, except that an HTML tag
     // inside svg/math breaks out of it in a browser and the slash is then ignored.
     const selfClosed = implied && selfClosing && (xml || !FOREIGN_BREAKOUT.has(top.name));
@@ -1378,14 +1362,6 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
 
   function onText(data: string): void {
     settleRun("");
-    if (noscriptRaw !== null) {
-      const joined = noscriptRaw.tail + data.toLowerCase();
-      if (joined.includes("</noscript")) {
-        discardDocument();
-        return;
-      }
-      noscriptRaw.tail = joined.slice(-10);
-    }
     const top = frames[frames.length - 1];
     if (top?.closedDetails === true && hiddenDepth === 0) {
       // Text directly inside a closed details is hidden until it is expanded.
@@ -1438,7 +1414,6 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     },
 
     finish() {
-      if (noscriptRaw !== null) discardDocument();
       const preferredText = preferred.join("");
       const usePreferred = preferredSeen && preferredText.trim() !== "";
       // Text outside the preferred region is dropped; it is counted as one hidden block.
@@ -1492,7 +1467,7 @@ const DOCUMENT_TAG = /<(?:body|html|frameset)/i;
  * holding one is not read at all: its text is empty, counted once, and flagged truncated. (Plain
  * script, style, noscript and template are handled by the sink and stay as they were.)
  */
-const WHOLE_DOCUMENT_GATE = /<!\[|<(?:frame|plaintext|xmp|math|svg)|annotation-xml/i;
+const WHOLE_DOCUMENT_GATE = /<!\[|<(?:frame|plaintext|xmp|math|svg|noscript)|annotation-xml/i;
 
 export function htmlToText(html: string): HtmlToTextResult {
   const sink = createMarkupSink();
@@ -1534,10 +1509,12 @@ export function htmlToText(html: string): HtmlToTextResult {
       },
       onprocessinginstruction(name) {
         if (name.toLowerCase() !== "!doctype") sink.comment();
+        markStop();
       },
       oncdatastart() {
         sink.comment();
         inCdata = true;
+        markStop();
       },
       oncdataend() {
         inCdata = false;

@@ -82,12 +82,17 @@ describe("a body or html tag wipes the document only for its own hiding attribut
     const result = htmlToText(
       "<p>before</p><details><summary>summary</summary><body></details><p>after</p>",
     );
-    expect(result.text).toBe("before\nsummary\nafter");
+    // The summary is read; the body token inside the closed details makes the end tag undecidable
+    // (a closed details is hidden context), so the remainder is dropped, not the whole page.
+    expect(result.text).toBe("before\nsummary");
+    expect(result.truncated).toBe(true);
   });
 
   it("does not wipe for a plain html token inside a hidden element", () => {
     const result = htmlToText("<p>before</p><div hidden><html></div><p>after</p>");
-    expect(result.text).toBe("before\nafter");
+    // Not wiped by inherited hiding; the undecidable end tag drops the remainder only.
+    expect(result.text).toBe("before");
+    expect(result.truncated).toBe(true);
   });
 
   it("still wipes for a body that carries its own hiding attribute, even inside a details", () => {

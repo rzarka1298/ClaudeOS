@@ -12,6 +12,10 @@ function run(style: string): ReturnType<typeof htmlToText> {
 }
 
 const HIDING: ReadonlyArray<readonly [name: string, style: string]> = [
+  ["plain colour (allowlist)", "color:red"],
+  ["black (allowlist)", "color:#000"],
+  ["small type in em (allowlist)", "font-size:0.9em"],
+  ["percentage type (allowlist)", "font-size:90%"],
   // Moved here by the second fix round: outside the style allowlist, so the element is dropped.
   ["half opacity (allowlist)", "opacity:0.5"],
   ["half opacity percent (allowlist)", "opacity:50%"],
@@ -82,12 +86,8 @@ const HIDING: ReadonlyArray<readonly [name: string, style: string]> = [
 ];
 
 const VISIBLE: ReadonlyArray<readonly [name: string, style: string]> = [
-  ["plain colour", "color:red"],
   ["opacity one", "opacity:1"],
-  ["black", "color:#000"],
   ["body type", "font-size:14px"],
-  ["small type in em", "font-size:0.9em"],
-  ["percentage type", "font-size:90%"],
   ["auto margins", "margin:0 auto"],
   ["a thin rule box", "height:1px"],
   ["bold and centred", "font-weight:bold;text-align:center"],
