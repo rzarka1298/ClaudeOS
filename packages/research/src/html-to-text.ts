@@ -174,6 +174,8 @@ const MEDIA = new Set([
   "input",
   "map",
   "math",
+  "noembed",
+  "noframes",
   "object",
   "picture",
   "select",
@@ -182,6 +184,7 @@ const MEDIA = new Set([
   "textarea",
   "track",
   "video",
+  "xmp",
 ]);
 
 // --- inline style evaluation -------------------------------------------------------------------
@@ -390,9 +393,12 @@ interface Frame {
 /** The sanitiser as an event sink: feed it open, close, text and comment events, then finish. */
 export interface MarkupSink {
   open(name: string, attribs: Readonly<Record<string, string>>): void;
-  close(name: string): void;
+  /** `implied` is true when the parser closed the element because another tag or the end of input did. */
+  close(name: string, implied?: boolean): void;
   text(data: string): void;
   comment(): void;
+  /** The caller could not finish its parse: stop emitting, keep what was already decided. */
+  abort(): void;
   finish(): HtmlToTextResult;
 }
 
@@ -403,6 +409,54 @@ export interface MarkupSinkOptions {
    */
   readonly xml?: boolean;
 }
+
+// Elements an end tag cannot reach across: when the browser meets `</div>` with one of these
+// between the current node and the div, it ignores the end tag, but htmlparser2 closes them all.
+const SCOPE_BOUNDARY = new Set([
+  "applet",
+  "caption",
+  "html",
+  "marquee",
+  "object",
+  "table",
+  "td",
+  "template",
+  "th",
+]);
+
+/** Table structure elements are closed by their own scoping rules, not the generic one. */
+const TABLE_STRUCTURE = new Set([
+  "caption",
+  "col",
+  "colgroup",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+]);
+
+/** Elements the browser's adoption-agency algorithm re-opens after a misnested end tag. */
+const FORMATTING = new Set([
+  "a",
+  "b",
+  "big",
+  "code",
+  "em",
+  "font",
+  "i",
+  "nobr",
+  "s",
+  "small",
+  "strike",
+  "strong",
+  "tt",
+  "u",
+]);
+
+const MAX_SCRIPT_TRACK = 100_000;
 
 export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   const xml = options.xml === true;
@@ -417,7 +471,12 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
   let preferredDepth = 0;
   let preferredSeen = false;
   let truncated = false;
+  // Once set, nothing more is emitted or counted. Every "cannot decide" path ends here.
   let stopped = false;
+  // Implied closes since the last open or explicit close, for the browser/parser differentials.
+  let crossedBoundary = false;
+  let closedHidden = false;
+  let scriptText = "";
 
   function emit(piece: string): void {
     if (allLength < COLLECT_CAP) {
@@ -430,86 +489,158 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     }
   }
 
+  /** Stop emitting for good: the filter cannot say what a reader would see from here on. */
+  function failClosed(): void {
+    stopped = true;
+    truncated = true;
+  }
+
+  function guard(action: () => void): void {
+    if (stopped) return;
+    try {
+      action();
+    } catch {
+      failClosed();
+    }
+  }
+
+  function wipeDocument(): void {
+    all.length = 0;
+    preferred.length = 0;
+    allLength = 0;
+    preferredLength = 0;
+    stopped = true;
+  }
+
+  function onOpen(rawName: string, attribs: Readonly<Record<string, string>>): void {
+    const name = localName(rawName);
+    const isVoid = !xml && VOID_ELEMENTS.has(name);
+    if (!isVoid && frames.length >= MAX_DEPTH) {
+      failClosed();
+      return;
+    }
+    crossedBoundary = false;
+    closedHidden = false;
+
+    let hides = false;
+    let counted: "hiddenBlocks" | "mediaDropped" | "linksDropped" | null = null;
+    if (name === "script") {
+      report.scripts += 1;
+      hides = true;
+    } else if (name === "style") {
+      report.styles += 1;
+      hides = true;
+    } else if (name === "plaintext") {
+      // Everything after a plaintext start tag is its text: nothing more is decided.
+      hides = true;
+      counted = "hiddenBlocks";
+    } else if (hiddenByAttributes(attribs)) {
+      hides = true;
+      counted = "hiddenBlocks";
+    } else if (
+      name === "input" &&
+      (attributeValue(attribs, "type") ?? "").trim().toLowerCase() === "hidden"
+    ) {
+      hides = true;
+      counted = "hiddenBlocks";
+    } else if (SILENT_HIDDEN.has(name)) {
+      hides = true;
+    } else if (HIDDEN_CONTAINERS.has(name)) {
+      hides = true;
+      counted = "hiddenBlocks";
+    } else if (MEDIA.has(name)) {
+      hides = true;
+      counted = "mediaDropped";
+    } else if (name === "a" && attributeValue(attribs, "href") !== undefined) {
+      counted = "linksDropped";
+    }
+    if (counted !== null && hiddenDepth === 0) report[counted] += 1;
+
+    if (name === "plaintext") {
+      stopped = true;
+      return;
+    }
+    if ((name === "body" || name === "html") && hides && counted === "hiddenBlocks") {
+      // A later body or html start tag merges its attributes into the first one: the whole
+      // document is hidden, including what was emitted before.
+      wipeDocument();
+      return;
+    }
+
+    if (BLOCK.has(name)) emit("\n");
+    if (isVoid) return;
+
+    const isPreferred = (name === "main" || name === "article") && hiddenDepth === 0 && !hides;
+    frames.push({ name, hides, preferred: isPreferred });
+    if (name === "script") scriptText = "";
+    if (hides) hiddenDepth += 1;
+    if (name === "pre") preDepth += 1;
+    if (isPreferred) {
+      preferredDepth += 1;
+      preferredSeen = true;
+    }
+  }
+
+  function onClose(rawName: string, implied: boolean): void {
+    const name = localName(rawName);
+    if (!xml && VOID_ELEMENTS.has(name)) return;
+    // Only the frame on top can be closed, and only by its own name. A stray close is ignored.
+    const top = frames[frames.length - 1];
+    if (top === undefined || top.name !== name) return;
+    frames.pop();
+    if (top.hides) hiddenDepth -= 1;
+    if (top.name === "pre") preDepth -= 1;
+    if (BLOCK.has(top.name)) emit("\n");
+    else if (CELL.has(top.name)) emit(" ");
+    if (top.preferred) preferredDepth -= 1;
+
+    if (top.name === "script" && /<!--[\s\S]*?<script[\s/>]/.test(scriptText)) {
+      // A double-escaped script ends only at its second end tag; the parser ended it at the first.
+      failClosed();
+      return;
+    }
+    if (implied) {
+      if (SCOPE_BOUNDARY.has(top.name)) crossedBoundary = true;
+      if (top.hides) closedHidden = true;
+      return;
+    }
+    // An explicit end tag that, in a browser, would be ignored (it reaches across a scope
+    // boundary) or would re-open a formatting element leaves hidden content open there but
+    // closed here. If hiding is involved, nothing more can be decided.
+    const crossing = crossedBoundary && !TABLE_STRUCTURE.has(top.name);
+    const reopening = FORMATTING.has(top.name) && closedHidden;
+    if ((crossing || reopening) && (top.hides || hiddenDepth > 0 || closedHidden)) failClosed();
+    crossedBoundary = false;
+    closedHidden = false;
+  }
+
+  function onText(data: string): void {
+    if (hiddenDepth > 0) {
+      if (frames[frames.length - 1]?.name === "script" && scriptText.length < MAX_SCRIPT_TRACK) {
+        scriptText += data.toLowerCase();
+      }
+      return;
+    }
+    crossedBoundary = false;
+    closedHidden = false;
+    const stripped = stripUnsafeChars(data);
+    report.controlChars += stripped.removed;
+    const piece =
+      preDepth > 0
+        ? stripped.text.replace(/\r\n|\r/g, "\n").replace(/[^\S\n]+/g, " ")
+        : stripped.text.replace(/\s+/g, " ");
+    if (piece !== "") emit(piece);
+  }
+
   return {
-    open(rawName, attribs) {
-      if (stopped) return;
-      const name = localName(rawName);
-      const isVoid = !xml && VOID_ELEMENTS.has(name);
-      if (!isVoid && frames.length >= MAX_DEPTH) {
-        truncated = true;
-        stopped = true;
-        return;
-      }
-
-      let hides = false;
-      let counted: "hiddenBlocks" | "mediaDropped" | "linksDropped" | null = null;
-      if (name === "script") {
-        report.scripts += 1;
-        hides = true;
-      } else if (name === "style") {
-        report.styles += 1;
-        hides = true;
-      } else if (hiddenByAttributes(attribs)) {
-        hides = true;
-        counted = "hiddenBlocks";
-      } else if (
-        name === "input" &&
-        (attributeValue(attribs, "type") ?? "").trim().toLowerCase() === "hidden"
-      ) {
-        hides = true;
-        counted = "hiddenBlocks";
-      } else if (SILENT_HIDDEN.has(name)) {
-        hides = true;
-      } else if (HIDDEN_CONTAINERS.has(name)) {
-        hides = true;
-        counted = "hiddenBlocks";
-      } else if (MEDIA.has(name)) {
-        hides = true;
-        counted = "mediaDropped";
-      } else if (name === "a" && attributeValue(attribs, "href") !== undefined) {
-        counted = "linksDropped";
-      }
-      if (counted !== null && hiddenDepth === 0) report[counted] += 1;
-
-      if (BLOCK.has(name)) emit("\n");
-      if (isVoid) return;
-
-      const isPreferred = (name === "main" || name === "article") && hiddenDepth === 0 && !hides;
-      frames.push({ name, hides, preferred: isPreferred });
-      if (hides) hiddenDepth += 1;
-      if (name === "pre") preDepth += 1;
-      if (isPreferred) {
-        preferredDepth += 1;
-        preferredSeen = true;
-      }
-    },
-
-    close(rawName) {
-      if (stopped) return;
-      if (!xml && VOID_ELEMENTS.has(localName(rawName))) return;
-      const frame = frames.pop();
-      if (frame === undefined) return;
-      if (frame.hides) hiddenDepth -= 1;
-      if (frame.name === "pre") preDepth -= 1;
-      if (BLOCK.has(frame.name)) emit("\n");
-      else if (CELL.has(frame.name)) emit(" ");
-      if (frame.preferred) preferredDepth -= 1;
-    },
-
-    text(data) {
-      if (stopped || hiddenDepth > 0) return;
-      const stripped = stripUnsafeChars(data);
-      report.controlChars += stripped.removed;
-      const piece =
-        preDepth > 0
-          ? stripped.text.replace(/\r\n|\r/g, "\n").replace(/[^\S\n]+/g, " ")
-          : stripped.text.replace(/\s+/g, " ");
-      if (piece !== "") emit(piece);
-    },
-
-    comment() {
-      if (!stopped) report.comments += 1;
-    },
+    open: (name, attribs) => guard(() => onOpen(name, attribs)),
+    close: (name, implied = false) => guard(() => onClose(name, implied)),
+    text: (data) => guard(() => onText(data)),
+    comment: () =>
+      guard(() => {
+        report.comments += 1;
+      }),
+    abort: failClosed,
 
     finish() {
       const preferredText = preferred.join("");
@@ -533,28 +664,50 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
 export function htmlToText(html: string): HtmlToTextResult {
   const sink = createMarkupSink();
   let inCdata = false;
-  const parser = new Parser({
-    onopentag(name, attribs) {
-      sink.open(name, attribs);
+  // A browser-like HTML parse, not XML: entities decode once, tag and attribute names are
+  // lowercased, a self-closing slash is ignored (`<script/>` opens a script), and the raw-text
+  // elements (script, style, textarea, title, xmp, iframe, noembed, noframes) keep their content
+  // as text.
+  const parser = new Parser(
+    {
+      onopentag(name, attribs) {
+        sink.open(name, attribs);
+      },
+      onclosetag(name, isImplied) {
+        sink.close(name, isImplied);
+      },
+      ontext(data) {
+        if (!inCdata) sink.text(data);
+      },
+      oncomment() {
+        sink.comment();
+      },
+      onprocessinginstruction(name) {
+        if (name.toLowerCase() !== "!doctype") sink.comment();
+      },
+      oncdatastart() {
+        sink.comment();
+        inCdata = true;
+      },
+      oncdataend() {
+        inCdata = false;
+      },
     },
-    onclosetag(name) {
-      sink.close(name);
+    {
+      xmlMode: false,
+      decodeEntities: true,
+      lowerCaseTags: true,
+      lowerCaseAttributeNames: true,
+      recognizeSelfClosing: false,
+      recognizeCDATA: false,
     },
-    ontext(data) {
-      if (!inCdata) sink.text(data);
-    },
-    oncomment() {
-      sink.comment();
-    },
-    oncdatastart() {
-      sink.comment();
-      inCdata = true;
-    },
-    oncdataend() {
-      inCdata = false;
-    },
-  });
-  parser.write(html);
-  parser.end();
+  );
+  try {
+    parser.write(html);
+    parser.end();
+  } catch {
+    // Half a parse is not a decision: keep what was already decided and say it was cut.
+    sink.abort();
+  }
   return sink.finish();
 }

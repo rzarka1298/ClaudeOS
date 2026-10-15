@@ -465,8 +465,13 @@ export function parseFeed(xml: string): ParsedFeed {
     },
     { xmlMode: true },
   );
-  parser.write(xml);
-  parser.end();
+  try {
+    parser.write(xml);
+    parser.end();
+  } catch {
+    // A failed parse keeps the entries that were completed before it and drops the one in
+    // progress: half an entry is not a decision.
+  }
 
   const report = newReport();
   const kept = newest(entries).map((raw) => toEntry(raw, report));
