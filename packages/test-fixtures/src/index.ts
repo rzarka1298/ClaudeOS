@@ -4,6 +4,21 @@ export {
   FakeSessionProjectLookup,
   FakeSessionTerminalLauncher,
 } from "./fake-ports.js";
+export type {
+  HostileFetchHost,
+  HostileFetchLocation,
+  HostileFetchResponse,
+  HostileFetchUrl,
+  HostileFetchUrlCode,
+} from "./hostile-fetch-targets.js";
+export {
+  HOSTILE_FETCH_ADDRESSES,
+  HOSTILE_FETCH_HOSTS,
+  HOSTILE_FETCH_LOCATIONS,
+  HOSTILE_FETCH_RESPONSES,
+  HOSTILE_FETCH_URLS,
+  PUBLIC_FETCH_ADDRESSES,
+} from "./hostile-fetch-targets.js";
 export type { HostileModelAnswer } from "./hostile-model-answers.js";
 export {
   HOSTILE_MODEL_ANSWERS,

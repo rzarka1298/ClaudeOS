@@ -360,7 +360,7 @@ describe("Task 3 Test 1 (redirects): manual, re-validated, at most three", () =>
     ["localhost", "https://localhost/"],
     ["internal name", "https://metadata.internal/"],
     ["single label", "https://intranet/"],
-    ["userinfo", "https://user:pw@b.example.invalid/"],
+    ["userinfo", "https://user:pw@example.com/"],
     ["other port", "https://b.example.invalid:8443/"],
     ["trailing dot", "https://b.example.invalid./"],
     ["javascript", "javascript:alert(1)"],
