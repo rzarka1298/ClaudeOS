@@ -10,44 +10,51 @@
 //
 // Hiding signals: the `hidden`, `inert`, `popover` and `slot` attributes; `aria-hidden` with any
 // value other than `false`; the class tokens hidden, sr-only, invisible, d-none, display-none,
-// visually-hidden and screen-reader-text; `type=hidden` inputs; and an inline style that hides
-// or cannot be read. A style hides when it sets display none, visibility hidden, opacity zero or
-// below, font-size zero or about two pixels or less, a zero or tiny box with hidden overflow, a
-// zero or negative line height, clip, clip-path, a zero scale or any translation, content-
-// visibility hidden, a colour with alpha zero (keyword, hex, rgb, hsl and the other colour
-// functions), a text colour equal to the background colour, a text indent, margin or inset of
-// minus 100 units or more, an absolute or fixed position with any non-zero offset, or an
-// off-screen offset; or when it holds a variable, calc, CSS escape, unknown keyword or unit, or
-// is over 2 KiB. This set is deliberately conservative: a false hit costs a counted, dropped
-// block. The head is dropped without a count. A main or article subtree is preferred when one is
-// visible (text outside it is dropped and counted as one hidden block). No attribute value is
-// ever read into the output, block elements are separated by newlines, control and format
-// characters are removed and counted, and every removal is counted into the eight keys of
-// SANITISE_REPORT_KEYS.
+// visually-hidden and screen-reader-text; `type=hidden` inputs; and an inline style that is not
+// plainly harmless. The style check is an ALLOWLIST: a style attribute keeps its element visible
+// only if every declaration is in a small set (text-align, font-weight, font-style,
+// text-decoration, text-transform, list-style-type, white-space, line-height above zero,
+// readable font-size and font-family, border*, padding and margin of non-negative values under
+// 100 pixels, non-zero width, height and max-width, display block/inline/inline-block/list-item/
+// table*, opacity exactly 1, a literal opaque colour, and a background-color only when there is no
+// colour in the same style) with a value the filter can read. Any other property, variable, calc,
+// escape, comment, unparseable declaration, alpha channel or CSS-wide keyword, a colour together
+// with a background, or a style over 2 KiB, drops the element and counts it. A false hit costs a
+// counted, dropped block; there is no denylist to keep complete. The head is dropped without a
+// count. The content of a closed details (past its first summary) is dropped and counted. A main
+// or article subtree is preferred when one is visible (text outside it is dropped and counted as
+// one hidden block). No attribute value is ever read into the output, block elements are separated
+// by newlines, control and format characters are removed and counted, and every removal is counted
+// into the eight keys of SANITISE_REPORT_KEYS.
 //
 // Every cap (depth 512, 100,000 elements, 1,000,000 input characters) drops the remainder and
 // counts it; the page text cap of 20,000 characters cuts output after filtering. The parser is
 // handed the input in 4 KiB pieces and no more once the sink has stopped, so the parser's own
 // cost is bounded too. A parse that throws stops emitting.
 //
-// Where a browser and htmlparser2 build different trees the filter drops more, never less. It
-// does not model the browser's tree builder. It records every frame the parser closed implicitly
-// (by an end tag for an outer element, by a start tag, or by the end of the input) and, when
-// anything hidden is open and parser and browser are not KNOWN to agree (misnested formatting
-// elements and the adoption agency, an end tag ignored behind a special element or outside its
-// scope, a list item or form end tag, tables and their foster parenting, select, template, svg,
-// math and noscript content, a stale list of formatting elements or form pointer, a second body
-// or html start tag, plaintext), it drops the remainder of the document, counts it, and sets
-// `truncated`. A body or html start tag after a stop still wipes what was read. Visible markup
-// that merely misnests is not dropped: there is nothing a browser could hide from a reader.
-// The seeded differential in html-implied-close.test.ts compares the filter with parse5 on
-// generated documents.
+// Where a browser and htmlparser2 build different trees the filter drops more, never less, and it
+// prefers a coarse gate to emulating the browser. Whole-document gates: a marked section
+// (`<![CDATA[`), frames, plaintext, xmp, svg, math and annotation-xml anywhere in the input, and a
+// raw-text start tag (style, script, title, textarea, iframe, xmp, noembed, noframes, plaintext)
+// while a select is open, empty the page's text (counted once, `truncated`); a raw-text element
+// inside noscript whose body holds `</noscript>` (or never ends) does the same, because a browser
+// that runs scripts reads noscript as raw text. Partial gates: the filter records every frame the
+// parser closed implicitly and, when anything hidden is open and parser and browser are not KNOWN
+// to agree (misnested formatting and the adoption agency, an end tag ignored behind a special
+// element or outside its scope, a list item or form end tag, tables and their foster parenting,
+// template content, a stale list of formatting elements or form pointer), drops the remainder,
+// counts it and sets `truncated`. After any stop, a body, html or frameset start tag in what was
+// never parsed, in the tokenizer's unfinished tail (a tag cut by the 4 KiB boundary) or anywhere
+// after the stop position (raw text can swallow one) discards everything, and a later body or html
+// start tag that hides wipes what was read. Visible markup that merely misnests is not dropped:
+// there is nothing a browser could hide from a reader. The seeded differentials in
+// html-implied-close.test.ts compare the filter with parse5 on generated documents.
 //
 // Honest limits: CSS delivered by a stylesheet cannot be evaluated without rendering, so text
 // hidden that way survives unless the element also carries one of the recognised signals above
 // (a class alone proves nothing, so only the common hiding utilities are recognised by name);
-// text hidden by a colour that merely matches an unknown background survives too. The defence for
-// that residue is the source delimiter and the tool-less summariser, not detection.
+// text hidden by a colour that merely matches an unknown (stylesheet) background survives too. The
+// defence for that residue is the source delimiter and the tool-less summariser, not detection.
 //
 // The filter runs on the SAME parse whose text it emits. The sanitiser is an event sink
 // (`createMarkupSink`): htmlToText drives it from an HTML-mode parse, and the feed parser drives
