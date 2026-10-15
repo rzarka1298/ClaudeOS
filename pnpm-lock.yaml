@@ -236,6 +236,12 @@ importers:
       '@ccc/operational-store':
         specifier: workspace:*
         version: link:../operational-store
+      '@ccc/research':
+        specifier: workspace:*
+        version: link:../research
+      '@ccc/scheduler':
+        specifier: workspace:*
+        version: link:../scheduler
       '@ccc/vault-repo':
         specifier: workspace:*
         version: link:../vault-repo

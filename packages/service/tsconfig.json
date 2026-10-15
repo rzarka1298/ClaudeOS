@@ -12,6 +12,8 @@
     { "path": "../keychain" },
     { "path": "../launchers" },
     { "path": "../operational-store" },
+    { "path": "../research" },
+    { "path": "../scheduler" },
     { "path": "../vault-repo" },
     { "path": "./src/approval" },
     { "path": "./src/executors" },

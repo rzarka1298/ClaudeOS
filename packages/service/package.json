@@ -32,6 +32,8 @@
     "@ccc/keychain": "workspace:*",
     "@ccc/launchers": "workspace:*",
     "@ccc/operational-store": "workspace:*",
+    "@ccc/research": "workspace:*",
+    "@ccc/scheduler": "workspace:*",
     "@ccc/vault-repo": "workspace:*",
     "better-sqlite3": "13.0.3",
     "pino": "10.3.1",
