@@ -246,3 +246,44 @@ describe("logging redaction of Codex account and credential names (CODEX-09, T-0
     expect(raw).not.toContain("usedPercent");
   });
 });
+
+describe("logging redaction of the research API key (07-10, ADR-0017, T-07-25)", () => {
+  const CANARY = "canary-research-key-0000";
+  const NAMES = [
+    "apiKey",
+    "api_key",
+    "anthropicApiKey",
+    "anthropic_api_key",
+    "researchApiKey",
+    "research_api_key",
+    "xApiKey",
+    "x-api-key",
+  ];
+
+  it("censors each key field name at the top level", () => {
+    const logger = createLogger(logPath);
+    logger.info(Object.fromEntries(NAMES.map((name) => [name, CANARY])), "line");
+    const [line] = readLines();
+    expect(JSON.stringify(line)).not.toContain(CANARY);
+    for (const name of NAMES) expect(line?.[name]).toBe(REDACTION_MARKER);
+  });
+
+  it("censors each key field name one level down, and a request header bag", () => {
+    const logger = createLogger(logPath);
+    logger.info(
+      {
+        options: Object.fromEntries(NAMES.map((name) => [name, CANARY])),
+        headers: { "x-api-key": CANARY, "anthropic-version": "2023-06-01" },
+        req: { headers: { "x-api-key": CANARY } },
+        request: { headers: { "x-api-key": CANARY } },
+      },
+      "line",
+    );
+    const [line] = readLines();
+    expect(JSON.stringify(line)).not.toContain(CANARY);
+    const options = line?.options as Record<string, unknown>;
+    for (const name of NAMES) expect(options[name]).toBe(REDACTION_MARKER);
+    expect((line?.headers as Record<string, unknown>)["x-api-key"]).toBe(REDACTION_MARKER);
+    expect((line?.headers as Record<string, unknown>)["anthropic-version"]).toBe("2023-06-01");
+  });
+});

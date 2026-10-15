@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_TOKENS,
   MAX_TOKENS_LIMIT,
   MIN_TOKENS_LIMIT,
+  parseAnthropicResponse,
   SYSTEM_MAX_CHARS,
   THINKING_BY_MODEL,
   USER_CONTENT_MAX_CHARS,
@@ -221,5 +222,131 @@ describe("Test 3: bounds are checked before any request", () => {
       expect(failure.message).not.toContain("SECRET-INPUT");
       expect(JSON.stringify(failure)).not.toContain("SECRET-INPUT");
     }
+  });
+});
+
+describe("Task 2 Test 1: stop reasons", () => {
+  const text = [{ type: "text", text: "hello" }];
+  function reply(stopReason: unknown, content: unknown = text): unknown {
+    return { id: "m", type: "message", role: "assistant", content, stop_reason: stopReason };
+  }
+  function codeOf(value: unknown): string {
+    try {
+      parseAnthropicResponse(value);
+    } catch (error) {
+      if (error instanceof SummariserError) return error.code;
+      throw error;
+    }
+    return "ok";
+  }
+
+  it("end_turn with text is the only success", () => {
+    expect(parseAnthropicResponse(reply("end_turn"))).toBe("hello");
+  });
+
+  it("max_tokens is summariser-failed and refusal is summariser-refused", () => {
+    expect(codeOf(reply("max_tokens"))).toBe("summariser-failed");
+    expect(codeOf(reply("refusal", []))).toBe("summariser-refused");
+    expect(codeOf(reply("refusal"))).toBe("summariser-refused");
+  });
+
+  it("every other reason is summariser-invalid-output", () => {
+    for (const reason of [
+      "tool_use",
+      "pause_turn",
+      "stop_sequence",
+      "model_context_window_exceeded",
+      "something_new",
+      "",
+      null,
+      undefined,
+      5,
+      {},
+      ["end_turn"],
+      "END_TURN",
+    ]) {
+      expect(codeOf(reply(reason)), String(reason)).toBe("summariser-invalid-output");
+    }
+  });
+
+  it("a reply that is not an object with a content array is invalid", () => {
+    for (const value of [null, undefined, "x", 5, [], { stop_reason: "end_turn" }]) {
+      expect(codeOf(value)).toBe("summariser-invalid-output");
+    }
+    expect(codeOf({ stop_reason: "end_turn", content: "text" })).toBe("summariser-invalid-output");
+    expect(codeOf({ stop_reason: "end_turn", content: { 0: text[0], length: 1 } })).toBe(
+      "summariser-invalid-output",
+    );
+  });
+});
+
+describe("Task 2 Test 2: blocks", () => {
+  function codeOf(content: unknown, extra: Record<string, unknown> = {}): string {
+    try {
+      parseAnthropicResponse({ stop_reason: "end_turn", content, ...extra });
+    } catch (error) {
+      if (error instanceof SummariserError) return error.code;
+      throw error;
+    }
+    return "ok";
+  }
+
+  for (const type of [
+    "tool_use",
+    "server_tool_use",
+    "mcp_tool_use",
+    "mcp_tool_result",
+    "web_search_tool_result",
+    "code_execution_tool_result",
+    "thinking",
+    "redacted_thinking",
+    "fallback",
+    "image",
+    "Text",
+    "text ",
+    "",
+  ]) {
+    it(`a ${JSON.stringify(type)} block makes the reply invalid, alone or beside text`, () => {
+      const block = { type, text: "x", name: "web_search", input: {}, thinking: "x" };
+      expect(codeOf([block])).toBe("summariser-invalid-output");
+      expect(codeOf([{ type: "text", text: "fine" }, block])).toBe("summariser-invalid-output");
+      expect(codeOf([block, { type: "text", text: "fine" }])).toBe("summariser-invalid-output");
+    });
+  }
+
+  it("an empty content array, an empty text, a missing text and a non-string text are invalid", () => {
+    expect(codeOf([])).toBe("summariser-invalid-output");
+    expect(codeOf([{ type: "text", text: "" }])).toBe("summariser-invalid-output");
+    expect(codeOf([{ type: "text", text: "   \n" }])).toBe("summariser-invalid-output");
+    expect(codeOf([{ type: "text" }])).toBe("summariser-invalid-output");
+    expect(codeOf([{ type: "text", text: 5 }])).toBe("summariser-invalid-output");
+    expect(codeOf([null])).toBe("summariser-invalid-output");
+    expect(codeOf(["text"])).toBe("summariser-invalid-output");
+    expect(codeOf([[{ type: "text", text: "x" }]])).toBe("summariser-invalid-output");
+  });
+
+  it("extra keys on the message and on a text block are tolerated (A12)", () => {
+    expect(
+      parseAnthropicResponse({
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        stop_details: null,
+        usage: { input_tokens: 1 },
+        container: null,
+        content: [{ type: "text", text: "hello", citations: null }],
+      }),
+    ).toBe("hello");
+  });
+
+  it("several text blocks are joined in order", () => {
+    expect(
+      parseAnthropicResponse({
+        stop_reason: "end_turn",
+        content: [
+          { type: "text", text: '{"items":' },
+          { type: "text", text: "[]}" },
+        ],
+      }),
+    ).toBe('{"items":[]}');
   });
 });
