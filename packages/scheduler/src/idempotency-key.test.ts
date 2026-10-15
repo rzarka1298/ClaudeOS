@@ -107,3 +107,59 @@ describe("Test 5: a manual key can never equal or consume a scheduled key", () =
     expect(scheduled.includes(":manual:")).toBe(false);
   });
 });
+
+describe("Test 4: the scheduled key (Task 2)", () => {
+  it("is <jobId>:<cadence>:<YYYY-MM-DD>@<IANA zone>", () => {
+    expect(scheduledJobRunKey(JOB, "daily", "2026-10-13", "America/New_York")).toBe(
+      "research.daily-tech:daily:2026-10-13@America/New_York",
+    );
+  });
+
+  it("rejects an invalid date, an invalid zone and a cadence other than daily", () => {
+    expect(() => scheduledJobRunKey(JOB, "daily", "2026-02-30", "UTC")).toThrow();
+    expect(() => scheduledJobRunKey(JOB, "daily", "2026-13-01", "UTC")).toThrow();
+    expect(() => scheduledJobRunKey(JOB, "daily", "2026-00-10", "UTC")).toThrow();
+    expect(() => scheduledJobRunKey(JOB, "daily", "2026-1-3", "UTC")).toThrow();
+    expect(() => scheduledJobRunKey(JOB, "daily", "2026-10-13", "Mars/Olympus")).toThrow();
+    expect(() => scheduledJobRunKey(JOB, "daily", "2026-10-13", "")).toThrow();
+    expect(() => scheduledJobRunKey(JOB, "weekly", "2026-10-13", "UTC")).toThrow();
+    expect(() => scheduledJobRunKey(JOB, "manual", "2026-10-13", "UTC")).toThrow();
+    expect(() => scheduledJobRunKey("a:b", "daily", "2026-10-13", "UTC")).toThrow();
+  });
+
+  it("accepts a leap day and UTC", () => {
+    expect(scheduledJobRunKey(JOB, "daily", "2028-02-29", "UTC")).toBe(
+      `${JOB}:daily:2028-02-29@UTC`,
+    );
+    expect(() => scheduledJobRunKey(JOB, "daily", "2027-02-29", "UTC")).toThrow();
+  });
+
+  it("round-trips through parseJobRunKey with kind scheduled", () => {
+    const key = scheduledJobRunKey(JOB, "daily", "2026-10-13", "America/New_York");
+    expect(parseJobRunKey(key)).toEqual({
+      kind: "scheduled",
+      jobId: JOB,
+      cadence: "daily",
+      window: "2026-10-13",
+      zone: "America/New_York",
+    });
+  });
+
+  it("parses nothing from a scheduled-looking key with a bad date or zone", () => {
+    for (const bad of [
+      `${JOB}:daily:2026-02-30@UTC`,
+      `${JOB}:daily:2026-10-13@Mars/Olympus`,
+      `${JOB}:daily:2026-10-13@`,
+      `${JOB}:daily:2026-10-13`,
+      `${JOB}:daily:2026-10-13@UTC@UTC`,
+    ]) {
+      expect(parseJobRunKey(bad), bad).toBeNull();
+    }
+  });
+
+  it("a different zone is a different key for the same date (the zone is inside the key)", () => {
+    expect(scheduledJobRunKey(JOB, "daily", "2026-10-13", "UTC")).not.toBe(
+      scheduledJobRunKey(JOB, "daily", "2026-10-13", "Asia/Tokyo"),
+    );
+  });
+});
