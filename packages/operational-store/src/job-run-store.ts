@@ -1,17 +1,49 @@
-import type {
-  JobRunOutcome,
-  ResearchStage,
-  RunErrorCode,
-  RunId,
-  SourceFailureCode,
+import {
+  JOB_RUN_OUTCOMES,
+  type JobRunOutcome,
+  NOTE_ID_PATTERN,
+  RESEARCH_STAGES,
+  type ResearchStage,
+  RUN_ERROR_CODES,
+  RUN_ID_PATTERN,
+  type RunErrorCode,
+  type RunId,
+  SOURCE_FAILURE_CODES,
+  SOURCE_ID_PATTERN,
+  type SourceFailureCode,
 } from "@ccc/domain";
 import type Database from "better-sqlite3";
+import { insertRun } from "./run-store.js";
 
-// Signature stubs only (red step of TDD, plan 07-06 task 1). Nothing here works yet.
+/**
+ * The durable record of a research run (RSRCH-06, DIAG-05, D-18): one `job_runs`
+ * row paired with one `runs` row of kind `automation`, both keyed by the same run
+ * id and always written in one transaction.
+ *
+ * **The record is content-free (research Pitfall 8, T-07-15).** Every value this
+ * module writes is a run id, a note id, a source id, a member of a closed
+ * vocabulary, a small integer or an ISO instant. Each input is checked against
+ * those shapes before any statement runs, so fetched text, titles, URLs, model
+ * output and remote error strings cannot reach the table through this module;
+ * `migration-research.audit.test.ts` asserts it.
+ *
+ * **One run in flight per job key (D-19, T-07-16).** `startJobRun` looks for an
+ * in-flight row first and answers it, inside a BEGIN IMMEDIATE transaction so two
+ * connections cannot both pass the check. The partial unique index
+ * `job_runs_one_inflight_per_job` is the crash-safe backstop for a lookup that
+ * misses.
+ *
+ * **Interrupted work is stale, never failed (SVC-11).** Nothing here writes a
+ * terminal state except `finishJobRun`, which the pipeline calls with an outcome
+ * it observed. Startup recovery uses `recoverJobRunsToStale`.
+ */
 
 /** What started a job run. Mirrors `JOB_RUN_TRIGGERS` in `@ccc/scheduler`, which this package may not import. */
 export const JOB_RUN_TRIGGERS = ["manual", "scheduled"] as const;
 export type JobRunTrigger = (typeof JOB_RUN_TRIGGERS)[number];
+
+/** The `job_runs.state` values that count as in flight; the partial unique index covers exactly these. */
+const IN_FLIGHT_STATES = ["queued", "starting", "running"] as const;
 
 export interface StartJobRunInput {
   readonly jobRunId: RunId;
@@ -19,6 +51,7 @@ export interface StartJobRunInput {
   readonly idempotencyKey: string;
   readonly trigger: JobRunTrigger;
   readonly startedAt: string;
+  /** Defaults to `startedAt`, which is what a manual run records (ADR 0029). */
   readonly scheduledFor?: string;
 }
 
@@ -30,6 +63,7 @@ export interface JobRunStageEntry {
   readonly stage: ResearchStage;
   readonly at: string;
   readonly noteIds: readonly string[];
+  /** Integers only, for example items by kind. */
   readonly counts?: Readonly<Record<string, number>>;
 }
 
@@ -48,22 +82,296 @@ export interface FinishJobRunInput {
   readonly errorCode: RunErrorCode | null;
 }
 
-export function startJobRun(_db: Database.Database, _input: StartJobRunInput): StartJobRunResult {
-  throw new Error("not implemented");
+/** Thrown before any write when an input is outside the content-free shapes this module accepts. */
+export class JobRunValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "JobRunValidationError";
+  }
 }
 
+/** Thrown when a stage or finish names a job run that does not exist. */
+export class JobRunNotFoundError extends Error {
+  constructor(jobRunId: string) {
+    super(`no job run ${jobRunId}`);
+    this.name = "JobRunNotFoundError";
+  }
+}
+
+/** Thrown when a stage or finish targets a job run that is no longer in flight (finished, failed or stale). */
+export class JobRunNotInFlightError extends Error {
+  constructor(jobRunId: string, state: string) {
+    super(`job run ${jobRunId} is ${state}, not in flight`);
+    this.name = "JobRunNotInFlightError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Validation (every shape is a closed pattern or vocabulary)
+
+const JOB_KEY_PATTERN = /^[a-z][a-z0-9.-]{0,63}$/;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:@/+-]{1,200}$/;
+const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+const COUNT_KEY_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** Bounds that keep one record small: the pipeline has six stages and a handful of sources. */
+export const MAX_STAGE_LOG_ENTRIES = 64;
+export const MAX_NOTE_IDS_PER_STAGE = 200;
+export const MAX_COUNT_KEYS_PER_STAGE = 16;
+export const MAX_UNAVAILABLE_SOURCES = 100;
+const MAX_COUNT = 1_000_000;
+
+function fail(message: string): never {
+  throw new JobRunValidationError(message);
+}
+
+function assertRunId(value: unknown, label: string): asserts value is RunId {
+  if (typeof value !== "string" || !RUN_ID_PATTERN.test(value)) fail(`${label} is not a run id`);
+}
+
+function assertInstant(value: unknown, label: string): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    !ISO_INSTANT_PATTERN.test(value) ||
+    Number.isNaN(Date.parse(value))
+  ) {
+    fail(`${label} is not an ISO instant`);
+  }
+}
+
+function assertCount(value: unknown, label: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > MAX_COUNT) {
+    fail(`${label} is not a small non-negative integer`);
+  }
+}
+
+function assertNoteId(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || !NOTE_ID_PATTERN.test(value)) fail(`${label} is not a note id`);
+}
+
+function isMember<T extends string>(vocabulary: readonly T[], value: unknown): value is T {
+  return typeof value === "string" && (vocabulary as readonly string[]).includes(value);
+}
+
+/** Validates a stage log entry and returns the plain object that is stored. */
+function checkStageEntry(entry: JobRunStageEntry): JobRunStageEntry {
+  if (!isMember(RESEARCH_STAGES, entry.stage)) fail("stage is not a research stage");
+  assertInstant(entry.at, "stage time");
+  if (!Array.isArray(entry.noteIds) || entry.noteIds.length > MAX_NOTE_IDS_PER_STAGE) {
+    fail("noteIds is not a bounded array");
+  }
+  for (const id of entry.noteIds) assertNoteId(id, "noteIds entry");
+  const stored: {
+    stage: ResearchStage;
+    at: string;
+    noteIds: string[];
+    counts?: Record<string, number>;
+  } = { stage: entry.stage, at: entry.at, noteIds: [...entry.noteIds] };
+  if (entry.counts !== undefined) {
+    if (typeof entry.counts !== "object" || entry.counts === null || Array.isArray(entry.counts)) {
+      fail("counts is not a record");
+    }
+    const keys = Object.keys(entry.counts);
+    if (keys.length > MAX_COUNT_KEYS_PER_STAGE) fail("counts has too many keys");
+    const counts: Record<string, number> = {};
+    for (const key of keys) {
+      if (!COUNT_KEY_PATTERN.test(key)) fail("counts key is not a plain token");
+      const value = entry.counts[key];
+      assertCount(value, `counts.${key}`);
+      counts[key] = value;
+    }
+    stored.counts = counts;
+  }
+  return stored;
+}
+
+function checkUnavailableSources(list: readonly UnavailableSource[]): UnavailableSource[] {
+  if (!Array.isArray(list) || list.length > MAX_UNAVAILABLE_SOURCES) {
+    fail("unavailableSources is not a bounded array");
+  }
+  return list.map((item) => {
+    if (typeof item?.sourceId !== "string" || !SOURCE_ID_PATTERN.test(item.sourceId)) {
+      fail("unavailable source id is not a source id");
+    }
+    if (!isMember(SOURCE_FAILURE_CODES, item.code)) fail("unavailable source code is not closed");
+    return { sourceId: item.sourceId, code: item.code };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Writes
+
+function selectInFlightRunId(db: Database.Database, jobKey: string): RunId | null {
+  const placeholders = IN_FLIGHT_STATES.map(() => "?").join(", ");
+  const row = db
+    .prepare(
+      `SELECT job_run_id FROM job_runs WHERE job_key = ? AND state IN (${placeholders}) ORDER BY started_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(jobKey, ...IN_FLIGHT_STATES) as { job_run_id: string } | undefined;
+  return row ? (row.job_run_id as RunId) : null;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "SQLITE_CONSTRAINT_UNIQUE"
+  );
+}
+
+/**
+ * Starts a job run: inserts its `job_runs` row (state running) and the paired
+ * `runs` row (kind automation, state running, same id) in one immediate
+ * transaction. When a run for the same job key is already in flight, nothing is
+ * inserted and that run's id is returned (D-19).
+ */
+export function startJobRun(db: Database.Database, input: StartJobRunInput): StartJobRunResult {
+  assertRunId(input.jobRunId, "jobRunId");
+  if (typeof input.jobKey !== "string" || !JOB_KEY_PATTERN.test(input.jobKey)) {
+    fail("jobKey is not a plain job id");
+  }
+  if (
+    typeof input.idempotencyKey !== "string" ||
+    !IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey)
+  ) {
+    fail("idempotencyKey is not a plain key");
+  }
+  if (!isMember(JOB_RUN_TRIGGERS, input.trigger)) fail("trigger is not a job run trigger");
+  assertInstant(input.startedAt, "startedAt");
+  const scheduledFor = input.scheduledFor ?? input.startedAt;
+  assertInstant(scheduledFor, "scheduledFor");
+
+  const start = db.transaction((): StartJobRunResult => {
+    const inFlight = selectInFlightRunId(db, input.jobKey);
+    if (inFlight !== null) return { started: false, inFlightRunId: inFlight };
+    db.prepare(
+      `INSERT INTO job_runs (job_run_id, job_key, scheduled_for, started_at, state, idempotency_key, run_trigger)
+       VALUES (?, ?, ?, ?, 'running', ?, ?)`,
+    ).run(
+      input.jobRunId,
+      input.jobKey,
+      scheduledFor,
+      input.startedAt,
+      input.idempotencyKey,
+      input.trigger,
+    );
+    insertRun(db, {
+      runId: input.jobRunId,
+      kind: "automation",
+      projectId: null,
+      claudeSessionId: null,
+      state: "running",
+      startedAt: input.startedAt,
+      lastActivityAt: null,
+      endedAt: null,
+    });
+    return { started: true };
+  });
+
+  try {
+    return start.immediate();
+  } catch (error) {
+    // The select-first lookup missed a row a concurrent writer committed: the partial unique
+    // index refused the insert. Answer the in-flight run. Any other constraint failure (a reused
+    // idempotency key, say) is a real error and propagates.
+    if (isUniqueViolation(error)) {
+      const inFlight = selectInFlightRunId(db, input.jobKey);
+      if (inFlight !== null) return { started: false, inFlightRunId: inFlight };
+    }
+    throw error;
+  }
+}
+
+function readState(
+  db: Database.Database,
+  jobRunId: RunId,
+): { state: string; stage_log: string | null } {
+  const row = db
+    .prepare("SELECT state, stage_log FROM job_runs WHERE job_run_id = ?")
+    .get(jobRunId) as { state: string; stage_log: string | null } | undefined;
+  if (!row) throw new JobRunNotFoundError(jobRunId);
+  if (!(IN_FLIGHT_STATES as readonly string[]).includes(row.state)) {
+    throw new JobRunNotInFlightError(jobRunId, row.state);
+  }
+  return row;
+}
+
+/**
+ * Appends one stage transition to the run's `stage_log` and records the time as the
+ * paired Run's last activity. The run must be in flight: appending to a finished or
+ * stale run would falsify its history.
+ */
 export function appendJobRunStage(
-  _db: Database.Database,
-  _jobRunId: RunId,
-  _entry: JobRunStageEntry,
+  db: Database.Database,
+  jobRunId: RunId,
+  entry: JobRunStageEntry,
 ): void {
-  throw new Error("not implemented");
+  assertRunId(jobRunId, "jobRunId");
+  const stored = checkStageEntry(entry);
+  db.transaction(() => {
+    const row = readState(db, jobRunId);
+    let log: unknown[] = [];
+    if (row.stage_log !== null) {
+      const parsed: unknown = JSON.parse(row.stage_log);
+      if (!Array.isArray(parsed)) fail("stored stage_log is not an array");
+      log = parsed;
+    }
+    if (log.length >= MAX_STAGE_LOG_ENTRIES) fail("stage_log is full");
+    log.push(stored);
+    db.prepare("UPDATE job_runs SET stage_log = ? WHERE job_run_id = ?").run(
+      JSON.stringify(log),
+      jobRunId,
+    );
+    db.prepare("UPDATE runs SET last_activity_at = ? WHERE run_id = ?").run(stored.at, jobRunId);
+  }).immediate();
 }
 
+/**
+ * Finishes a run: `job_runs` becomes completed (outcome success or partial) or failed
+ * (outcome failure) with the counts, source ids with codes and report note id, and the
+ * paired `runs` row follows with its `ended_at`, all in one transaction (D-12, D-18).
+ */
 export function finishJobRun(
-  _db: Database.Database,
-  _jobRunId: RunId,
-  _input: FinishJobRunInput,
+  db: Database.Database,
+  jobRunId: RunId,
+  input: FinishJobRunInput,
 ): void {
-  throw new Error("not implemented");
+  assertRunId(jobRunId, "jobRunId");
+  if (!isMember(JOB_RUN_OUTCOMES, input.outcome)) fail("outcome is not a job run outcome");
+  assertInstant(input.endedAt, "endedAt");
+  assertCount(input.sourceCount, "sourceCount");
+  assertCount(input.sourceTotal, "sourceTotal");
+  if (input.sourceCount > input.sourceTotal) fail("sourceCount exceeds sourceTotal");
+  if (input.errorCode !== null && !isMember(RUN_ERROR_CODES, input.errorCode)) {
+    fail("errorCode is not a run error code");
+  }
+  if (input.outcome === "failure" && input.errorCode === null) fail("a failure needs an errorCode");
+  if (input.outcome === "success" && input.errorCode !== null) {
+    fail("a success carries no errorCode");
+  }
+  if (input.reportNoteId !== null) assertNoteId(input.reportNoteId, "reportNoteId");
+  const unavailable = checkUnavailableSources(input.unavailableSources);
+  const state = input.outcome === "failure" ? "failed" : "completed";
+
+  db.transaction(() => {
+    readState(db, jobRunId);
+    db.prepare(
+      `UPDATE job_runs SET state = ?, ended_at = ?, outcome = ?, error_code = ?, report_note_id = ?,
+         source_count = ?, source_total = ?, unavailable_sources = ?
+       WHERE job_run_id = ?`,
+    ).run(
+      state,
+      input.endedAt,
+      input.outcome,
+      input.errorCode,
+      input.reportNoteId,
+      input.sourceCount,
+      input.sourceTotal,
+      JSON.stringify(unavailable),
+      jobRunId,
+    );
+    db.prepare(
+      "UPDATE runs SET state = ?, ended_at = ?, last_activity_at = ? WHERE run_id = ?",
+    ).run(state, input.endedAt, input.endedAt, jobRunId);
+  }).immediate();
 }

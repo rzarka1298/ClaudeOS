@@ -6,10 +6,10 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendJobRunStage,
-  finishJobRun,
   type FinishJobRunInput,
-  startJobRun,
+  finishJobRun,
   type StartJobRunInput,
+  startJobRun,
 } from "./job-run-store.js";
 import { openMigratedFileDb } from "./test-support/migration-helper.js";
 
@@ -217,17 +217,24 @@ describe("Test 3: one in flight per job key", () => {
     expect(count("job_runs")).toBe(1);
   });
 
-  it("a racing connection holding the write lock cannot produce a second run", () => {
+  it("a racing connection cannot start a second run while the first start is uncommitted", () => {
+    const first = startInput();
     const other = new Database(dbPath, { timeout: 0 });
     try {
-      other.exec("BEGIN IMMEDIATE");
-      expect(() => startJobRun(db, startInput())).toThrow(/busy|locked/i);
-      other.exec("ROLLBACK");
+      db.exec("BEGIN IMMEDIATE");
+      expect(startJobRun(db, first)).toEqual({ started: true });
+      // The write lock is held by the uncommitted first start: the second start is refused, not run.
+      expect(() => startJobRun(other, startInput())).toThrow(/busy|locked/i);
+      db.exec("COMMIT");
+      expect(startJobRun(other, startInput())).toEqual({
+        started: false,
+        inFlightRunId: first.jobRunId,
+      });
     } finally {
       other.close();
     }
-    expect(count("job_runs")).toBe(0);
-    expect(count("runs")).toBe(0);
+    expect(count("job_runs")).toBe(1);
+    expect(count("runs")).toBe(1);
   });
 
   it("the partial unique index is the crash-safe backstop when the select-first misses", () => {

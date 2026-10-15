@@ -90,8 +90,12 @@ describe("the Codex activity migration in place on the previous head", () => {
   it("Test 2: a store migrated only to the previous head upgrades and keeps every existing row", () => {
     const previousDir = mkdtempSync(join(tmpdir(), "ccc-codex-previous-"));
     try {
-      const previousFiles = SQL_FILES.filter((n) => n !== CODEX_FILE);
-      expect(previousFiles).toHaveLength(SQL_FILES.length - 1);
+      // The previous head is every file before the Codex migration; later migrations (Phase 7 and
+      // after) are applied by the upgrade below like any other.
+      const codexIndex = SQL_FILES.indexOf(CODEX_FILE ?? "");
+      expect(codexIndex).toBeGreaterThan(0);
+      const previousFiles = SQL_FILES.slice(0, codexIndex);
+      expect(previousFiles).toHaveLength(codexIndex);
       for (const f of previousFiles) copyFileSync(join(MIGRATIONS, f), join(previousDir, f));
 
       applyMigrations(db, previousDir);
@@ -137,18 +141,18 @@ describe("drizzle journal and snapshot chain for the Codex migration", () => {
     entries: { idx: number; tag: string }[];
   };
 
-  it("Test 3: the file is last by sorted name and the journal ends with its tag, one entry per file", () => {
+  it("Test 3: the file keeps position 0009 and the journal has its tag there, one entry per file", () => {
     expect(CODEX_FILE).toBeDefined();
-    expect(SQL_FILES.at(-1)).toBe(CODEX_FILE);
+    expect(SQL_FILES.indexOf(CODEX_FILE ?? "")).toBe(9);
     expect(journal.entries.map((e) => e.tag)).toEqual(
       SQL_FILES.map((n) => n.replace(/\.sql$/, "")),
     );
-    expect(journal.entries.at(-1)?.tag).toBe(CODEX_FILE?.replace(/\.sql$/, ""));
+    expect(journal.entries[9]?.tag).toBe(CODEX_FILE?.replace(/\.sql$/, ""));
     expect(journal.entries.map((e) => e.idx)).toEqual(SQL_FILES.map((_, i) => i));
   });
 
-  it("the last snapshot chains to the one before it and declares the Codex tables", () => {
-    const last = SQL_FILES.length - 1;
+  it("the Codex snapshot chains to the one before it and declares the Codex tables", () => {
+    const last = SQL_FILES.indexOf(CODEX_FILE ?? "");
     const read = (i: number) =>
       JSON.parse(
         readFileSync(join(META, `${String(i).padStart(4, "0")}_snapshot.json`), "utf8"),

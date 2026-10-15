@@ -166,6 +166,31 @@ export const jobRuns = sqliteTable("job_runs", {
   startedAt: text("started_at"),
   state: text("state").notNull(),
   idempotencyKey: text("idempotency_key").notNull().unique(),
+  /**
+   * Phase 7 research run record (D-18, RSRCH-06, migration `research_job_runs`).
+   * Every column below is nullable and content-free: run ids, note ids, source
+   * ids, closed codes, counts and ISO instants only. No fetched text, title, URL,
+   * model output or remote error string may be stored here, and none may be added
+   * (research Pitfall 8); `migration-research.audit.test.ts` walks the columns and
+   * the stored JSON. `unavailable_sources` is a JSON array of `{sourceId, code}`;
+   * `stage_log` is a JSON array of `{stage, at, noteIds, counts?}`. The two source
+   * counts are integers because the status view compares them numerically.
+   * `run_trigger` is not called `trigger`, which is an SQL keyword.
+   *
+   * At most one queued, starting or running row may exist per `job_key`: the
+   * partial unique index `job_runs_one_inflight_per_job` is written by hand in the
+   * migration (drizzle-kit does not generate partial indexes) and is the crash-safe
+   * backstop for the select-first check in `startJobRun`.
+   */
+  endedAt: text("ended_at"),
+  outcome: text("outcome"),
+  unavailableSources: text("unavailable_sources"),
+  reportNoteId: text("report_note_id"),
+  errorCode: text("error_code"),
+  stageLog: text("stage_log"),
+  sourceCount: integer("source_count"),
+  sourceTotal: integer("source_total"),
+  runTrigger: text("run_trigger"),
 });
 
 /**
