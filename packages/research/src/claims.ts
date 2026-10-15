@@ -6,11 +6,15 @@
 //   1. the item schema (kind, text, citedSourceIds, optional quote; no other key): a failure, or
 //      a kind outside the three report kinds (a recommendation included), drops the item;
 //   2. cited ids that were not fetched in this run are dropped;
-//   3. a source-fact or an unverified-claim keeps its kind only when it still cites a fetched
-//      source and carries a quote found verbatim, after the shared normalisation, in a cited
-//      source's sanitised text; otherwise it becomes inference with its surviving ids;
+//   3. a source-fact or an unverified-claim keeps its kind only when it carries a quote of at
+//      least the domain minimum (characters and words, after normalisation) that is found
+//      verbatim, after the shared normalisation, in a cited source's sanitised text; it then
+//      cites only the sources whose text holds the quote. Otherwise it becomes inference with
+//      its surviving ids;
 //   4. an item with no ids is inference;
-//   5. text and quote are neutralised (the quote check ran on the model's original quote);
+//   5. the quote that is stored is the SOURCE's own text, neutralised and cut, and it is checked
+//      against the sources again afterwards: an address marker or a cut must not leave a quote
+//      the source does not hold (the item is then inference). Text is neutralised too;
 //   6. the domain item schema has the last word.
 //
 // A stored quote is always a verified quote: an item that fails the check loses its quote.
@@ -21,6 +25,8 @@ import {
   REPORT_CITED_IDS_MAX,
   REPORT_ITEM_KINDS,
   REPORT_ITEM_QUOTE_MAX_LENGTH,
+  REPORT_ITEM_QUOTE_MIN_LENGTH,
+  REPORT_ITEM_QUOTE_MIN_WORDS,
   REPORT_ITEM_TEXT_MAX_LENGTH,
   REPORT_ITEMS_MAX,
   type ReportItem,
@@ -106,6 +112,12 @@ function readRawItem(candidate: unknown): RawItem | null {
   return { kind: kind as ReportItem["kind"], text, citedSourceIds, quote };
 }
 
+/** Long enough, and with enough words, to verify anything (the minimums live in the domain). */
+function isSubstantialQuote(normalised: string): boolean {
+  if (normalised.length < REPORT_ITEM_QUOTE_MIN_LENGTH) return false;
+  return normalised.split(" ").length >= REPORT_ITEM_QUOTE_MIN_WORDS;
+}
+
 /** Removes at most one surrounding code fence. Anything else around the JSON is left to fail the parse. */
 function stripFence(answer: string): string {
   const trimmed = answer.trim();
@@ -151,6 +163,7 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
 
   let droppedItems = 0;
   let droppedIds = 0;
+  let narrowedIds = 0;
   let downgraded = 0;
   let addressesRemoved = 0;
   let controlCharsRemoved = 0;
@@ -171,39 +184,52 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
       else surviving.push(id);
     }
 
-    // The quote is checked as the model wrote it, so verbatim matching stays exact.
-    const needle = quote === undefined ? "" : normaliseForMatch(quote);
-    const verified =
-      needle !== "" && surviving.some((id) => (sourceText(id) ?? "").includes(needle));
-
-    let kind = claimedKind;
-    if (kind !== "inference" && !verified) {
-      kind = "inference";
-      downgraded += 1;
-    }
-
     const cleanText = neutraliseUntrustedSpan(text, REPORT_ITEM_TEXT_MAX_LENGTH);
-    const cleanQuote =
-      verified && quote !== undefined
-        ? neutraliseUntrustedSpan(quote, REPORT_ITEM_QUOTE_MAX_LENGTH)
-        : null;
-    addressesRemoved += cleanText.addressesRemoved + (cleanQuote?.addressesRemoved ?? 0);
-    controlCharsRemoved += cleanText.controlCharsRemoved + (cleanQuote?.controlCharsRemoved ?? 0);
+    addressesRemoved += cleanText.addressesRemoved;
+    controlCharsRemoved += cleanText.controlCharsRemoved;
     if (cleanText.truncated) truncated += 1;
-    if (cleanQuote?.truncated === true) truncated += 1;
-
     if (cleanText.text === "") {
       droppedItems += 1;
       continue;
     }
-    const storedQuote = cleanQuote !== null && cleanQuote.text !== "" ? cleanQuote.text : undefined;
+
+    const holders = (candidateQuote: string): string[] =>
+      surviving.filter((id) => (sourceText(id) ?? "").includes(candidateQuote));
+
+    // The quote is checked as the model wrote it (after the shared normalisation), then the
+    // SOURCE's own text is stored, neutralised and cut, and that stored form is checked again:
+    // an address marker or a cut must not leave a quote the source does not hold.
+    let kind = claimedKind;
+    let ids: readonly string[] = surviving;
+    let storedQuote: string | undefined;
+    const needle = quote === undefined ? "" : normaliseForMatch(quote);
+    const firstHolder = isSubstantialQuote(needle) ? holders(needle)[0] : undefined;
+    if (firstHolder !== undefined) {
+      const source = sourceText(firstHolder) ?? "";
+      const at = source.indexOf(needle);
+      const clean = neutraliseUntrustedSpan(
+        source.slice(at, at + needle.length),
+        REPORT_ITEM_QUOTE_MAX_LENGTH,
+      );
+      addressesRemoved += clean.addressesRemoved;
+      controlCharsRemoved += clean.controlCharsRemoved;
+      if (clean.truncated) truncated += 1;
+      const stillHeld = isSubstantialQuote(clean.text) ? holders(clean.text) : [];
+      if (stillHeld.length > 0) {
+        storedQuote = clean.text;
+        if (kind !== "inference") {
+          narrowedIds += surviving.length - stillHeld.length;
+          ids = stillHeld;
+        }
+      }
+    }
     if (kind !== "inference" && storedQuote === undefined) {
       kind = "inference";
       downgraded += 1;
     }
     const item: Record<string, unknown> = { kind, text: cleanText.text };
     if (storedQuote !== undefined) item.quote = storedQuote;
-    item.citedSourceIds = surviving;
+    item.citedSourceIds = ids;
     const checked = ReportItemSchema.safeParse(item);
     if (!checked.success) {
       droppedItems += 1;
@@ -218,7 +244,7 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
     counts: {
       droppedItems,
       droppedIds,
-      narrowedIds: 0,
+      narrowedIds,
       downgraded,
       addressesRemoved,
       controlCharsRemoved,
