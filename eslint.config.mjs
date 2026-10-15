@@ -572,8 +572,11 @@ export default [
   {
     // Round 5 (Opus gap review, ADR-0014): a relative import from the summariser folder that lands
     // on a file no element descriptor claims is refused, not skipped. The plugin is declared by
-    // the block above, which applies to the same files.
+    // the block above, which applies to the same files. Test files are left out: their `vitest`
+    // import lives in node_modules, which this config counts as local and unclassified; the
+    // syntax-tree scan (packages/research/src/untrusted-ast.test.ts) resolves their imports.
     files: ["packages/service/src/untrusted/**/*.ts"],
+    ignores: ["packages/service/src/untrusted/**/*.test.ts"],
     rules: {
       "boundaries/no-unknown-dependencies": ["error", { require: "element" }],
     },
