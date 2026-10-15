@@ -202,3 +202,22 @@ to the approval folder; confinement of executor imports to the executors folder 
 rule that the approval public entry file never mentions the minter. They scan non-test source and skip comment lines.
 Known blind spots, left to the lint and the compiler: a bare `kill` taken by destructuring, a computed `process["kill"]`,
 and an executor reached through a re-export barrel that does not name the folder.
+
+## Addendum: the `research` element in Phase 7
+
+Added in Phase 7 (plan 07-04); the earlier text is unchanged.
+
+**One new element, and the count.** `research` is the Phase 7 pure-normaliser package (`packages/research`: HTML and feed to
+text, canonical URLs, the content-hash input, the source delimiter). It parses attacker-controlled markup, so it is its own
+element with a domain-only policy: it may import `domain` and nothing else among the repository's elements (its one
+third-party runtime dependency, `htmlparser2`, is not an element). The plugin policy is unchanged and does not list it, so
+the parser can never reach the Obsidian bundle. The test-fixtures element may import it, as it may import every element
+except the minter. Eighteen element types now exist: the sixteen above plus `e2e` (the Phase 05.2 live-UAT runner, a leaf)
+and `research`. The count is asserted in `packages/test-fixtures/src/boundary-lint.test.ts`, and the header comment of
+`eslint.config.mjs` states the same number.
+
+**Proofs.** Three cases fire (a research file importing the operational store, a research file importing the scheduler
+package, a plugin file importing research) and one stays quiet (a research file importing `domain`). The package is also
+held pure by a source-scan test inside it: no non-test file names a `node:` module, `process`, `fetch(` or `require(`, or
+imports dynamically. The grep backstop was re-run with the package tracked and stays at zero violations; it has no
+research-specific rule, because the lint element and the scan test already cover the same property from two sides.
