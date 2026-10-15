@@ -459,6 +459,34 @@ const FEED_FIELDS: readonly FeedPayload[] = [
     keeps: ["Body kept"],
     counts: ["hiddenBlocks"],
   },
+  // Security finding "security-registry-fanout": registries of the feed parser are bounded.
+  {
+    name: "namespace-over-long",
+    document: `<feed xmlns="http://www.w3.org/2005/Atom/${"a".repeat(300)}"><entry><title>REG_1</title><summary>REG_2</summary></entry></feed>`,
+    forbidden: ["REG_1", "REG_2"],
+    keeps: [],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    name: "namespace-declaration-fan-out",
+    document: `<feed xmlns="http://www.w3.org/2005/Atom">${Array.from(
+      { length: 3_000 },
+      (_, i) => `<x xmlns:p${i}="http://example.invalid/${i}"/>`,
+    ).join("")}<entry><title>Registry kept</title><summary>Body kept</summary></entry></feed>`,
+    forbidden: ["REG_3"],
+    keeps: ["Body kept"],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    name: "entry-field-fan-out",
+    document: `<feed xmlns="http://www.w3.org/2005/Atom"><entry>${Array.from(
+      { length: 150 },
+      (_, i) => `<custom${i}>REG_4</custom${i}>`,
+    ).join("")}<title>REG_5</title><summary>Body kept</summary></entry></feed>`,
+    forbidden: ["REG_4", "REG_5"],
+    keeps: [],
+    counts: ["hiddenBlocks"],
+  },
   {
     name: "link-javascript",
     document: atom(
