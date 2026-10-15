@@ -922,8 +922,9 @@ const PARSER_DIFFERENTIALS: readonly Payload[] = [
     category: "parser-differential",
     name: "differential-browser-noscript-content",
     html: "<p>Visible.</p><span hidden><noscript>NS_1</span>NS_2</noscript>NS_3",
-    forbidden: ["NS_1", "NS_2"],
-    keeps: ["Visible."],
+    // Any noscript drops the whole document (third wave 1+2 round): nothing is kept.
+    forbidden: ["NS_1", "NS_2", "NS_3", "Visible."],
+    keeps: [],
     counts: ["hiddenBlocks"],
   },
   {
@@ -1024,6 +1025,30 @@ const PARSER_DIFFERENTIALS: readonly Payload[] = [
   },
   {
     category: "parser-differential",
+    name: "gate-noscript-comment-end",
+    html: "<p>Visible.</p><noscript><!-- </noscript><div hidden> --></noscript> NC_1",
+    forbidden: ["NC_1", "Visible."],
+    keeps: [],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
+    name: "gate-noscript-attribute-end",
+    html: 'NC_2 <noscript><p title="</noscript><body hidden>"></noscript>',
+    forbidden: ["NC_2", "Visible."],
+    keeps: [],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
+    name: "gate-noscript-tag-manager",
+    html: '<p>Visible.</p><noscript><iframe src="https://example.invalid/x"></iframe></noscript><p>NC_3</p>',
+    forbidden: ["NC_3", "Visible."],
+    keeps: [],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
     name: "differential-second-body",
     html: "<p>PD_14</p><body hidden>PD_15</body>",
     forbidden: ["PD_14", "PD_15"],
@@ -1041,7 +1066,7 @@ const PARSER_DIFFERENTIALS: readonly Payload[] = [
   {
     category: "parser-differential",
     name: "differential-raw-text-elements",
-    html: "<p>Visible.</p><noembed>PD_20</noembed><noframes>PD_21</noframes><iframe>PD_22</iframe><textarea>PD_23</textarea><noscript><p>PD_24</p></noscript><template>PD_25</template>",
+    html: "<p>Visible.</p><noembed>PD_20</noembed><noframes>PD_21</noframes><iframe>PD_22</iframe><textarea>PD_23</textarea><template>PD_25</template>",
     forbidden: ["PD_20", "PD_21", "PD_22", "PD_23", "PD_24", "PD_25"],
     keeps: ["Visible."],
     counts: ["mediaDropped", "hiddenBlocks"],

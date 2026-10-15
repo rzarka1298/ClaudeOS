@@ -496,12 +496,17 @@ report_rule \
 #     bracket holding a string concatenation (`["con" + "structor"]`), which reach
 #     the Function constructor without naming it. A class declaration's own
 #     `constructor(` has no leading dot or brace-colon and is not a hit;
+#   - the reflection names getOwnPropertyDescriptor(s), getOwnPropertyNames,
+#     getOwnPropertySymbols, getPrototypeOf, setPrototypeOf, defineProperty,
+#     defineProperties and __proto__, which reach the Function constructor through
+#     the prototype chain without ever writing it (the syntax-tree scan in
+#     packages/research/src/untrusted-ast.test.ts is the allowlist version of this);
 #   - an `import` that ends its line (the parenthesis is on the next one).
 # Comment lines are skipped by grep_noncomment. Test files of the folder are
 # scanned too (wave 1+2 review): nothing under it, tests included, needs an I/O
 # name, and a non-test module named like a test file must not escape the rule.
 UNTRUSTED_FILES=$(printf '%s\n%s\n' "$SRC_FILES" "$EXTRA_EXT_FILES" | grep '^packages/service/src/untrusted/' || true)
-UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])(fetch|require)[[:space:]]*[(]|(^|[^A-Za-z0-9_])import[[:space:]]*([(]|$)|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor([^A-Za-z0-9_]|$)|[{,][[:space:]]*constructor[[:space:]]*[:,}]|[[][[:space:]]*[\"'\`][^\"'\`]*[\"'\`][[:space:]]*[+]|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
+UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])(fetch|require)[[:space:]]*[(]|(^|[^A-Za-z0-9_])import[[:space:]]*([(]|$)|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor([^A-Za-z0-9_]|$)|[{,][[:space:]]*constructor[[:space:]]*[:,}]|getOwnProperty(Descriptors?|Names|Symbols)|[gs]etPrototypeOf|defineProperty|defineProperties|__proto__|[[][[:space:]]*[\"'\`][^\"'\`]*[\"'\`][[:space:]]*[+]|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
 # shellcheck disable=SC2086
 check_rule \
   "a file under packages/service/src/untrusted/ names an I/O primitive (a node: specifier, child_process, fetch(, require(, a dynamic import(, process, globalThis, eval, Function, Reflect, XMLHttpRequest, WebSocket, EventSource or a .constructor access; the summariser folder must hold no way to act, ADR-0014, RSRCH-07)" \

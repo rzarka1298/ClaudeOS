@@ -170,6 +170,12 @@ describe("rule 17 obfuscation shapes (second wave 1+2 round)", () => {
       'export const k = (f as object)["con" + "structor"];\n',
     ],
     ["a continuation line that starts with a star", "export const n = 1\n  * 0 || globalThis;\n"],
+    ["getOwnPropertyDescriptor", "export const d = Object.getOwnPropertyDescriptor({}, 'a');\n"],
+    ["getPrototypeOf", "export const p = Object.getPrototypeOf(() => 0);\n"],
+    ["getOwnPropertyNames", "export const n = Object.getOwnPropertyNames({});\n"],
+    ["setPrototypeOf", "export const s = Object.setPrototypeOf({}, null);\n"],
+    ["defineProperty", "export const d = Object.defineProperty({}, 'a', { value: 1 });\n"],
+    ["__proto__", "export const p = ({} as { __proto__: object }).__proto__;\n"],
     [
       "code after a string that contains a block-comment opener",
       'const glob = "src/**/*.ts";\nexport const g = globalThis.fetch;\n',

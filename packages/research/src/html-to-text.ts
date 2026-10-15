@@ -13,15 +13,16 @@
 // visually-hidden and screen-reader-text; `type=hidden` inputs; and an inline style that is not
 // plainly harmless. The style check is an ALLOWLIST: a style attribute keeps its element visible
 // only if every declaration is in a small set (text-align, font-weight, font-style,
-// text-decoration, text-transform, list-style-type, white-space, line-height above zero,
-// readable font-size and font-family, border*, padding and margin of non-negative values under
-// 100 pixels, non-zero width, height and max-width, display block/inline/inline-block/list-item/
-// table*, opacity exactly 1, a literal opaque colour, and a background-color only when there is no
-// colour in the same style) with a value the filter can read. Any other property, variable, calc,
-// escape, comment, unparseable declaration, alpha channel or CSS-wide keyword, a colour together
-// with a background, or a style over 2 KiB, drops the element and counts it. A false hit costs a
-// counted, dropped block; there is no denylist to keep complete. The head is dropped without a
-// count. The content of a closed details (past its first summary) is dropped and counted. A main
+// text-decoration, text-transform, list-style-type, white-space, line-height 0.8 to 5 or 8 to 200
+// px, font-size 8 to 72 px or an absolute keyword, font-family, border*, padding and margin in
+// plain px up to 200 with a running total of 4,000 px down the nesting, non-zero width, height and
+// max-width, display block/inline/inline-block/list-item/table*, opacity exactly 1) with a value
+// the filter can read. Colours are NOT in the set: the page's default colours are known, so a
+// colour or a background alone can already make text unreadable. Any other property, variable,
+// calc, escape, comment, unparseable declaration, alpha channel, relative size or CSS-wide
+// keyword, or a style over 2 KiB, drops the element and counts it. A false hit costs a counted,
+// dropped block; there is no denylist to keep complete. The head is dropped without a count. The
+// content of a closed details (past its first summary) is dropped and counted. A main
 // or article subtree is preferred when one is visible (text outside it is dropped and counted as
 // one hidden block). No attribute value is ever read into the output, block elements are separated
 // by newlines, control and format characters are removed and counted, and every removal is counted
@@ -34,19 +35,24 @@
 //
 // Where a browser and htmlparser2 build different trees the filter drops more, never less, and it
 // prefers a coarse gate to emulating the browser. Whole-document gates: a marked section
-// (`<![CDATA[`), frames, plaintext, xmp, svg, math and annotation-xml anywhere in the input, and a
-// raw-text start tag (style, script, title, textarea, iframe, xmp, noembed, noframes, plaintext)
-// while a select is open, empty the page's text (counted once, `truncated`); a raw-text element
-// inside noscript whose body holds `</noscript>` (or never ends) does the same, because a browser
-// that runs scripts reads noscript as raw text. Partial gates: the filter records every frame the
-// parser closed implicitly and, when anything hidden is open and parser and browser are not KNOWN
-// to agree (misnested formatting and the adoption agency, an end tag ignored behind a special
-// element or outside its scope, a list item or form end tag, tables and their foster parenting,
-// template content, a stale list of formatting elements or form pointer), drops the remainder,
-// counts it and sets `truncated`. After any stop, a body, html or frameset start tag in what was
-// never parsed, in the tokenizer's unfinished tail (a tag cut by the 4 KiB boundary) or anywhere
-// after the stop position (raw text can swallow one) discards everything, and a later body or html
-// start tag that hides wipes what was read. Visible markup that merely misnests is not dropped:
+// (`<![CDATA[`), frames, plaintext, xmp, svg, math, annotation-xml and ANY noscript anywhere in the
+// input (a browser that runs scripts ends a noscript at the first literal `</noscript`, wherever
+// it sits), and a raw-text start tag (style, script, title, textarea, iframe, xmp, noembed,
+// noframes, plaintext) while a select is open, empty the page's text (counted once, `truncated`).
+// Known cost, carried to the phase judge as lossy by design: the gate reads the raw input, so a
+// page with an inline svg icon, a tag-manager noscript iframe, or the `<![CDATA[` that WordPress
+// writes inside an inline script yields no text at all. Narrowing is one regular expression
+// (`WHOLE_DOCUMENT_GATE`) and an owner decision.
+//
+// Partial gates: the filter records every frame the parser closed implicitly and, when anything
+// hidden (or a closed details) is open and parser and browser are not KNOWN to agree (misnested
+// formatting and the adoption agency, an end tag ignored behind a special element or outside its
+// scope, a list item or form end tag, tables and their foster parenting, template content, a stale
+// list of formatting elements or form pointer), drops the remainder, counts it and sets
+// `truncated`. After any stop, a body, html or frameset start tag in what was never parsed, in the
+// tokenizer's unfinished tail (a tag cut by the 4 KiB boundary) or anywhere after the stop position
+// (raw text can swallow one) discards everything, and a later body or html start tag that hides
+// by its OWN attributes wipes what was read. Visible markup that merely misnests is not dropped:
 // there is nothing a browser could hide from a reader. The seeded differentials in
 // html-implied-close.test.ts compare the filter with parse5 on generated documents.
 //
