@@ -36,6 +36,8 @@ export const HOSTILE_RESEARCH_CATEGORIES = [
   "feed-field-bypass",
   "url-ssrf",
   "hidden-variants",
+  "fail-closed",
+  "parser-differential",
 ] as const;
 
 export type HostileResearchCategory = (typeof HOSTILE_RESEARCH_CATEGORIES)[number];
@@ -602,6 +604,143 @@ const XHTML_VARIANT_ENTRIES: readonly HostileResearchEntry[] = [
   },
 ];
 
+// --- fail-closed paths (security finding 5) ------------------------------------------------------
+// Markup the filter cannot fully decide. Whatever it cannot decide is dropped, never emitted.
+
+const FAIL_CLOSED: readonly Payload[] = [
+  {
+    category: "fail-closed",
+    name: "fail-closed-unknown-elements",
+    html: '<p>Visible.</p><unknown-widget style="display:none">FC_1</unknown-widget><custom-element hidden>FC_2</custom-element><q:thing style="visibility:hidden">FC_3</q:thing><blink-me style="opacity:var(--o)">FC_4</blink-me>',
+    forbidden: ["FC_1", "FC_2", "FC_3", "FC_4"],
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "fail-closed",
+    name: "fail-closed-unclosed-hidden",
+    html: "<p>Visible.</p><div hidden>FC_5<p>FC_6<span>FC_7</span></span></b></em>FC_8",
+    forbidden: ["FC_5", "FC_6", "FC_7", "FC_8"],
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "fail-closed",
+    name: "fail-closed-stray-end-tags",
+    html: "<p>Visible.</p><div hidden>FC_9</span>FC_10</b>FC_11</div></div></div><p>Also visible.</p>",
+    forbidden: ["FC_9", "FC_10", "FC_11"],
+    keeps: ["Visible.", "Also visible."],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "fail-closed",
+    name: "fail-closed-unterminated-tag",
+    html: '<p>Visible.</p><div hidden style="FC_12',
+    forbidden: ["FC_12", "style="],
+    keeps: ["Visible."],
+  },
+  {
+    category: "fail-closed",
+    name: "fail-closed-depth-cap",
+    html: `<p>Visible.</p><div hidden>FC_13${"<div>".repeat(600)}FC_14</div></div>FC_15`,
+    forbidden: ["FC_13", "FC_14", "FC_15"],
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks"],
+  },
+];
+
+// --- parser differentials (security finding 6) ----------------------------------------------------
+// Constructs where htmlparser2 and a browser build different trees, or where HTML has a rule that
+// is easy to get wrong. The filter must never show what the browser would hide.
+
+const PARSER_DIFFERENTIALS: readonly Payload[] = [
+  {
+    category: "parser-differential",
+    name: "differential-comments",
+    html: "<p>Visible.</p><!-- PD_1 --><!x PD_2><?x PD_3><!-- x -- > PD_4 --><!--[if IE]>PD_5<![endif]-->",
+    forbidden: ["PD_1", "PD_2", "PD_3", "PD_4", "PD_5"],
+    keeps: ["Visible."],
+    counts: ["comments"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-bogus-end-tag",
+    html: "<p>Visible.</p><p hidden>PD_6</ p>PD_7</p>",
+    forbidden: ["PD_6", "PD_7"],
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks", "comments"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-end-tag-spellings",
+    html: "<p>Visible.</p><p hidden>PD_8</p ><p hidden>PD_9</P><p hidden>PD_10</p foo=bar><p>Also visible.</p>",
+    forbidden: ["PD_8", "PD_9", "PD_10"],
+    keeps: ["Visible.", "Also visible."],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-table-scope",
+    html: "<p>Visible.</p><div hidden><table><tr><td></div>PD_11</td></tr></table></div>",
+    forbidden: ["PD_11"],
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-formatting-element",
+    html: "<p>Visible.</p><b><p hidden>PD_12</b>PD_13</p>",
+    forbidden: ["PD_12", "PD_13"],
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-second-body",
+    html: "<p>PD_14</p><body hidden>PD_15</body>",
+    forbidden: ["PD_14", "PD_15"],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-plaintext",
+    html: "<p>Visible.</p><plaintext>PD_16</plaintext>PD_17<b>PD_18</b>",
+    forbidden: ["PD_16", "PD_17", "PD_18"],
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-raw-text-elements",
+    html: "<p>Visible.</p><xmp><b>PD_19</b></xmp><noembed>PD_20</noembed><noframes>PD_21</noframes><iframe>PD_22</iframe><textarea>PD_23</textarea><noscript><p>PD_24</p></noscript><template>PD_25</template>",
+    forbidden: ["PD_19", "PD_20", "PD_21", "PD_22", "PD_23", "PD_24", "PD_25"],
+    keeps: ["Visible."],
+    counts: ["mediaDropped", "hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-script-spellings",
+    html: "<p>Visible.</p><script/>PD_26()</script><script><!--<script>PD_27()</script>PD_28</script>",
+    forbidden: ["PD_26", "PD_27", "PD_28"],
+    keeps: ["Visible."],
+    counts: ["scripts"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-attribute-spellings",
+    html: `<p>Visible.</p><div\thidden>PD_29</div><div style = 'display:none' >PD_30</div><div ARIA-hidden = "true" >PD_31</div><div style="display:none"title=x>PD_32</div><div data-a=">" hidden>PD_33</div><div hidden="x" hidden="y">PD_34</div>`,
+    forbidden: ["PD_29", "PD_30", "PD_31", "PD_32", "PD_33", "PD_34"],
+    keeps: ["Visible."],
+    counts: ["hiddenBlocks"],
+  },
+  {
+    category: "parser-differential",
+    name: "differential-encoded-tags",
+    html: "<p>Visible.</p><p>&lt;div hidden&gt;PD_LIT&lt;/div&gt; &#60;script&#62;PD_LIT2&#60;/script&#62;</p>",
+    keeps: ["Visible.", "<div hidden>PD_LIT</div>", "<script>PD_LIT2</script>"],
+  },
+];
+
 export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
   ...D26.flatMap(expand),
   ...INJECTIONS.flatMap(([name, token]) =>
@@ -613,6 +752,8 @@ export const HOSTILE_RESEARCH_CORPUS: readonly HostileResearchEntry[] = [
       delimiterPayload: true,
     }),
   ),
+  ...FAIL_CLOSED.flatMap(expand),
+  ...PARSER_DIFFERENTIALS.flatMap(expand),
   ...SSRF_ENTRIES,
   ...HIDDEN_VARIANT_ENTRIES,
   ...XHTML_VARIANT_ENTRIES,
