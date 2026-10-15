@@ -17,6 +17,13 @@
 // so text hidden that way survives. The defence for that residue is the source delimiter and the
 // tool-less summariser, not detection.
 //
+// The filter runs on the SAME parse whose text it emits. The sanitiser is an event sink
+// (`createMarkupSink`): htmlToText drives it from an HTML-mode parse, and the feed parser drives
+// it directly from its own XML events for xhtml content, so nothing is ever re-serialised and
+// parsed a second time. Element and attribute names are compared by their lowercase local name
+// (`xhtml:script` is a script, `HIDDEN` is hidden), attribute values arrive entity-decoded, and
+// a style value the filter cannot read is treated as hidden and counted.
+//
 // Untrusted text passes through this function exactly once. Callers must not feed its output back
 // in: a decoded `&lt;script&gt;` is literal text here and stays literal.
 
@@ -179,12 +186,80 @@ const MEDIA = new Set([
 
 // --- inline style evaluation -------------------------------------------------------------------
 
-const ZERO_NUMBER = /^([+-]?(?:\d+\.?\d*|\.\d+))([a-z%]*)$/;
+const CSS_WIDE = new Set(["inherit", "initial", "unset", "revert", "revert-layer"]);
 
-function isZero(value: string): boolean {
-  const match = ZERO_NUMBER.exec(value);
-  return match !== null && Number.parseFloat(match[1] ?? "") === 0;
-}
+const DISPLAY_VISIBLE = new Set([
+  "block",
+  "inline",
+  "inline-block",
+  "flex",
+  "inline-flex",
+  "grid",
+  "inline-grid",
+  "table",
+  "inline-table",
+  "table-row",
+  "table-cell",
+  "table-row-group",
+  "table-header-group",
+  "table-footer-group",
+  "table-column",
+  "table-column-group",
+  "table-caption",
+  "list-item",
+  "contents",
+  "flow",
+  "flow-root",
+  "run-in",
+  "ruby",
+  "ruby-base",
+  "ruby-text",
+  "ruby-base-container",
+  "ruby-text-container",
+]);
+
+const FONT_SIZE_KEYWORDS = new Set([
+  "xx-small",
+  "x-small",
+  "small",
+  "medium",
+  "large",
+  "x-large",
+  "xx-large",
+  "xxx-large",
+  "smaller",
+  "larger",
+  "math",
+]);
+
+const LENGTH_UNITS = new Set([
+  "px",
+  "em",
+  "rem",
+  "pt",
+  "pc",
+  "cm",
+  "mm",
+  "in",
+  "q",
+  "ex",
+  "ch",
+  "vw",
+  "vh",
+  "vmin",
+  "vmax",
+  "%",
+  "lh",
+  "rlh",
+  "cap",
+  "ic",
+  "svw",
+  "svh",
+  "lvw",
+  "lvh",
+  "dvw",
+  "dvh",
+]);
 
 const OFFSET_PROPERTIES = new Set([
   "left",
@@ -197,17 +272,54 @@ const OFFSET_PROPERTIES = new Set([
   "margin-inline-start",
 ]);
 
-/** A large negative offset that puts the box far outside the viewport. */
-function isOffScreen(value: string): boolean {
-  const match = /^-\s*(\d+\.?\d*|\.\d+)\s*([a-z%]*)$/.exec(value);
-  if (match === null) return false;
-  const size = Number.parseFloat(match[1] ?? "");
-  const unit = match[2] ?? "";
-  const threshold = unit === "em" || unit === "rem" || unit === "vw" || unit === "vh" ? 100 : 1_000;
-  return size >= threshold;
+const LENGTH = /^([+-]?(?:\d+\.?\d*|\.\d+))([a-z%]*)$/;
+const NUMBER_OR_PERCENT = /^[+-]?(?:\d+\.?\d*|\.\d+)%?$/;
+
+interface Length {
+  readonly size: number;
+  readonly unit: string;
 }
 
+/** A length the filter can read: a number with a known unit, or a bare zero. Otherwise null. */
+function parseLength(value: string): Length | null {
+  const match = LENGTH.exec(value);
+  if (match === null) return null;
+  const size = Number.parseFloat(match[1] ?? "");
+  const unit = match[2] ?? "";
+  if (unit === "") return size === 0 ? { size, unit } : null;
+  return LENGTH_UNITS.has(unit) ? { size, unit } : null;
+}
+
+/** A large negative offset that puts the box far outside the viewport. */
+function farOffScreen(length: Length): boolean {
+  if (length.size >= 0) return false;
+  const distance = -length.size;
+  const threshold = ["em", "rem", "vw", "vh", "%"].includes(length.unit) ? 100 : 1_000;
+  return distance >= threshold;
+}
+
+function transparentColour(value: string): boolean {
+  if (value === "transparent") return true;
+  const match = /^(?:rgba?|hsla?)\((.*)\)$/.exec(value);
+  if (match === null) return false;
+  const args = (match[1] ?? "").split(/[\s,/]+/).filter((part) => part !== "");
+  const alpha = args[3];
+  return (
+    args.length === 4 &&
+    alpha !== undefined &&
+    NUMBER_OR_PERCENT.test(alpha) &&
+    Number.parseFloat(alpha) === 0
+  );
+}
+
+/**
+ * True when the style hides the element OR cannot be read. A value that is not plainly visible
+ * (a variable, a calc, an unknown keyword or unit, a CSS escape) is treated as hidden: the cost
+ * of a wrong guess is a dropped, counted block, not a hidden instruction reaching the model.
+ */
 function styleHides(style: string): boolean {
+  // CSS escapes (\6e for n) cannot be evaluated without a CSS parser.
+  if (style.includes("\\")) return true;
   const cleaned = style.replace(/\/\*[\s\S]*?\*\//g, "").toLowerCase();
   for (const declaration of cleaned.split(";")) {
     const colon = declaration.indexOf(":");
@@ -217,22 +329,54 @@ function styleHides(style: string): boolean {
       .slice(colon + 1)
       .replace(/!\s*important/g, "")
       .trim();
-    if (property === "display" && value === "none") return true;
-    if (property === "visibility" && (value === "hidden" || value === "collapse")) return true;
-    if (property === "opacity" && isZero(value)) return true;
-    if (property === "font-size" && isZero(value)) return true;
-    if (property === "color" && value === "transparent") return true;
-    if (OFFSET_PROPERTIES.has(property) && isOffScreen(value)) return true;
+    if (value === "") continue;
+    if (property === "display") {
+      if (value === "none") return true;
+      const tokens = value.split(/\s+/);
+      if (!tokens.every((token) => DISPLAY_VISIBLE.has(token) || CSS_WIDE.has(token))) return true;
+    } else if (property === "visibility") {
+      if (!(value === "visible" || CSS_WIDE.has(value))) return true;
+    } else if (property === "opacity") {
+      if (CSS_WIDE.has(value)) continue;
+      if (!NUMBER_OR_PERCENT.test(value) || Number.parseFloat(value) === 0) return true;
+    } else if (property === "font-size") {
+      if (CSS_WIDE.has(value) || FONT_SIZE_KEYWORDS.has(value)) continue;
+      const length = parseLength(value);
+      if (length === null || length.size === 0) return true;
+    } else if (property === "color") {
+      if (transparentColour(value)) return true;
+    } else if (OFFSET_PROPERTIES.has(property)) {
+      if (CSS_WIDE.has(value) || value === "auto") continue;
+      const length = parseLength(value);
+      if (length === null || farOffScreen(length)) return true;
+    }
   }
   return false;
 }
 
+/** The lowercase local part of an element or attribute name: `XHTML:Script` becomes `script`. */
+function localName(name: string): string {
+  return name.slice(name.lastIndexOf(":") + 1).toLowerCase();
+}
+
 function hiddenByAttributes(attribs: Readonly<Record<string, string>>): boolean {
-  if (attribs.hidden !== undefined) return true;
-  const aria = attribs["aria-hidden"];
-  if (aria !== undefined && aria.trim().toLowerCase() === "true") return true;
-  const style = attribs.style;
-  return style !== undefined && style.length <= MAX_STYLE_CHARS && styleHides(style);
+  for (const [rawName, value] of Object.entries(attribs)) {
+    const name = localName(rawName);
+    if (name === "hidden") return true;
+    if (name === "aria-hidden" && value.trim().toLowerCase() === "true") return true;
+    if (name === "style" && value.length <= MAX_STYLE_CHARS && styleHides(value)) return true;
+  }
+  return false;
+}
+
+function attributeValue(
+  attribs: Readonly<Record<string, string>>,
+  wanted: string,
+): string | undefined {
+  for (const [rawName, value] of Object.entries(attribs)) {
+    if (localName(rawName) === wanted) return value;
+  }
+  return undefined;
 }
 
 // --- the sanitiser -----------------------------------------------------------------------------
@@ -243,7 +387,25 @@ interface Frame {
   readonly preferred: boolean;
 }
 
-export function htmlToText(html: string): HtmlToTextResult {
+/** The sanitiser as an event sink: feed it open, close, text and comment events, then finish. */
+export interface MarkupSink {
+  open(name: string, attribs: Readonly<Record<string, string>>): void;
+  close(name: string): void;
+  text(data: string): void;
+  comment(): void;
+  finish(): HtmlToTextResult;
+}
+
+export interface MarkupSinkOptions {
+  /**
+   * XML events: every element has an explicit close and none is void, so `<img>text</img>`
+   * hides its child text. HTML mode (the default) knows the void elements.
+   */
+  readonly xml?: boolean;
+}
+
+export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
+  const xml = options.xml === true;
   const report = newReport();
   const frames: Frame[] = [];
   const all: string[] = [];
@@ -256,7 +418,6 @@ export function htmlToText(html: string): HtmlToTextResult {
   let preferredSeen = false;
   let truncated = false;
   let stopped = false;
-  let inCdata = false;
 
   function emit(piece: string): void {
     if (allLength < COLLECT_CAP) {
@@ -269,10 +430,11 @@ export function htmlToText(html: string): HtmlToTextResult {
     }
   }
 
-  const parser = new Parser({
-    onopentag(name, attribs) {
+  return {
+    open(rawName, attribs) {
       if (stopped) return;
-      const isVoid = VOID_ELEMENTS.has(name);
+      const name = localName(rawName);
+      const isVoid = !xml && VOID_ELEMENTS.has(name);
       if (!isVoid && frames.length >= MAX_DEPTH) {
         truncated = true;
         stopped = true;
@@ -290,7 +452,10 @@ export function htmlToText(html: string): HtmlToTextResult {
       } else if (hiddenByAttributes(attribs)) {
         hides = true;
         counted = "hiddenBlocks";
-      } else if (name === "input" && (attribs.type ?? "").trim().toLowerCase() === "hidden") {
+      } else if (
+        name === "input" &&
+        (attributeValue(attribs, "type") ?? "").trim().toLowerCase() === "hidden"
+      ) {
         hides = true;
         counted = "hiddenBlocks";
       } else if (SILENT_HIDDEN.has(name)) {
@@ -301,7 +466,7 @@ export function htmlToText(html: string): HtmlToTextResult {
       } else if (MEDIA.has(name)) {
         hides = true;
         counted = "mediaDropped";
-      } else if (name === "a" && attribs.href !== undefined) {
+      } else if (name === "a" && attributeValue(attribs, "href") !== undefined) {
         counted = "linksDropped";
       }
       if (counted !== null && hiddenDepth === 0) report[counted] += 1;
@@ -319,8 +484,9 @@ export function htmlToText(html: string): HtmlToTextResult {
       }
     },
 
-    onclosetag(name) {
-      if (stopped || VOID_ELEMENTS.has(name)) return;
+    close(rawName) {
+      if (stopped) return;
+      if (!xml && VOID_ELEMENTS.has(localName(rawName))) return;
       const frame = frames.pop();
       if (frame === undefined) return;
       if (frame.hides) hiddenDepth -= 1;
@@ -330,8 +496,8 @@ export function htmlToText(html: string): HtmlToTextResult {
       if (frame.preferred) preferredDepth -= 1;
     },
 
-    ontext(data) {
-      if (stopped || inCdata || hiddenDepth > 0) return;
+    text(data) {
+      if (stopped || hiddenDepth > 0) return;
       const stripped = stripUnsafeChars(data);
       report.controlChars += stripped.removed;
       const piece =
@@ -341,34 +507,54 @@ export function htmlToText(html: string): HtmlToTextResult {
       if (piece !== "") emit(piece);
     },
 
-    oncomment() {
+    comment() {
       if (!stopped) report.comments += 1;
     },
 
+    finish() {
+      const preferredText = preferred.join("");
+      const chosen = preferredSeen && preferredText.trim() !== "" ? preferredText : all.join("");
+      let text = chosen
+        .split("\n")
+        .map((line) => line.replace(/[ \t]+/g, " ").trim())
+        .filter((line) => line !== "")
+        .join("\n");
+      let cut = truncated;
+      if (text.length > MAX_PAGE_CHARS) {
+        text = truncateAtBoundary(text, MAX_PAGE_CHARS).trimEnd();
+        cut = true;
+      }
+      report.commandLikeLines = countCommandLikeLines(text);
+      return { text, report, truncated: cut };
+    },
+  };
+}
+
+export function htmlToText(html: string): HtmlToTextResult {
+  const sink = createMarkupSink();
+  let inCdata = false;
+  const parser = new Parser({
+    onopentag(name, attribs) {
+      sink.open(name, attribs);
+    },
+    onclosetag(name) {
+      sink.close(name);
+    },
+    ontext(data) {
+      if (!inCdata) sink.text(data);
+    },
+    oncomment() {
+      sink.comment();
+    },
     oncdatastart() {
-      if (stopped) return;
-      report.comments += 1;
+      sink.comment();
       inCdata = true;
     },
-
     oncdataend() {
       inCdata = false;
     },
   });
   parser.write(html);
   parser.end();
-
-  const preferredText = preferred.join("");
-  const chosen = preferredSeen && preferredText.trim() !== "" ? preferredText : all.join("");
-  let text = chosen
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+/g, " ").trim())
-    .filter((line) => line !== "")
-    .join("\n");
-  if (text.length > MAX_PAGE_CHARS) {
-    text = truncateAtBoundary(text, MAX_PAGE_CHARS).trimEnd();
-    truncated = true;
-  }
-  report.commandLikeLines = countCommandLikeLines(text);
-  return { text, report, truncated };
+  return sink.finish();
 }

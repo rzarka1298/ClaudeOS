@@ -9,9 +9,9 @@
 // XML parser has decoded its entities (security finding 2). Nothing reaches a FeedEntry raw:
 //
 //   - a body or title declared html (Atom type="html", RSS content:encoded) goes through
-//     htmlToText once; xhtml content is re-serialised with every text node escaped and goes
-//     through htmlToText once; the output is never parsed again, so a decoded `&lt;script&gt;`
-//     stays literal text;
+//     htmlToText once; xhtml content is filtered from this parser's own XML events by a
+//     sanitiser sink (single parse: no re-serialising, no second parse); the output is never
+//     parsed again, so a decoded `&lt;script&gt;` stays literal text;
 //   - plain text (no type, type text, RSS description) is stripped of control, format and bidi
 //     characters, whitespace-normalised and kept literal (counted for command-like lines);
 //   - titles and authors are identity fields: when decoded text still carries a tag it goes
@@ -27,11 +27,13 @@ import { Parser } from "htmlparser2";
 import { canonicaliseUrl } from "./canonical-url.js";
 import {
   addReport,
+  createMarkupSink,
+  type HtmlToTextResult,
   htmlToText,
+  type MarkupSink,
   type MutableSanitiseReport,
   newReport,
   type SanitiseReport,
-  VOID_ELEMENTS,
 } from "./html-to-text.js";
 import {
   collapseLines,
@@ -70,8 +72,6 @@ const TEXT_CAP = 4_000;
 const IDENTITY_CAP = 200;
 /** Raw characters collected per field before sanitising. */
 const RAW_FIELD_CAP = 262_144;
-/** Attribute values re-serialised from xhtml content are cut here. */
-const ATTRIBUTE_CAP = 4_096;
 
 const MONTHS: Readonly<Record<string, number>> = {
   jan: 1,
@@ -191,8 +191,8 @@ interface RawField {
   readonly attrs: Readonly<Record<string, string>>;
   text: string;
   nameText: string;
-  /** Set for type="xhtml": the re-serialised child markup, text nodes escaped. */
-  xhtml: string | undefined;
+  /** Set for type="xhtml": the sanitiser sink the field's child events are fed to. */
+  sink: MarkupSink | undefined;
 }
 
 interface RawEntry {
@@ -209,31 +209,6 @@ function append(current: string, addition: string): string {
   return current + (addition.length > room ? addition.slice(0, room) : addition);
 }
 
-function escapeText(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function escapeAttribute(value: string): string {
-  return escapeText(value.slice(0, ATTRIBUTE_CAP)).replace(/"/g, "&quot;");
-}
-
-const ELEMENT_NAME = /^[A-Za-z][A-Za-z0-9:_.-]*$/;
-const ATTRIBUTE_NAME = /^[A-Za-z_:][A-Za-z0-9_:.-]*$/;
-
-function serialiseOpen(name: string, attribs: Readonly<Record<string, string>>): string {
-  if (!ELEMENT_NAME.test(name)) return "";
-  let out = `<${name}`;
-  for (const [key, value] of Object.entries(attribs)) {
-    if (ATTRIBUTE_NAME.test(key)) out += ` ${key}="${escapeAttribute(value)}"`;
-  }
-  return `${out}>`;
-}
-
-function serialiseClose(name: string): string {
-  if (!ELEMENT_NAME.test(name) || VOID_ELEMENTS.has(name)) return "";
-  return `</${name}>`;
-}
-
 type BodyMode = "html" | "xhtml" | "text" | "ignore";
 
 function modeOf(field: RawField): BodyMode {
@@ -245,10 +220,9 @@ function modeOf(field: RawField): BodyMode {
   return "ignore";
 }
 
-interface Candidate {
-  readonly mode: BodyMode;
-  readonly source: string;
-}
+type Candidate =
+  | { readonly mode: "text"; readonly source: string }
+  | { readonly mode: "markup"; readonly run: () => HtmlToTextResult };
 
 function candidatesFor(entry: RawEntry, names: readonly string[]): Candidate[] {
   const out: Candidate[] = [];
@@ -257,8 +231,14 @@ function candidatesFor(entry: RawEntry, names: readonly string[]): Candidate[] {
       if (field.name !== name) continue;
       const mode = modeOf(field);
       if (mode === "ignore") continue;
-      const source = mode === "xhtml" ? (field.xhtml ?? "") : field.text;
-      if (source.trim() !== "") out.push({ mode, source });
+      if (mode === "xhtml") {
+        const sink = field.sink;
+        if (sink !== undefined) out.push({ mode: "markup", run: () => sink.finish() });
+      } else if (field.text.trim() !== "") {
+        const source = field.text;
+        if (mode === "html") out.push({ mode: "markup", run: () => htmlToText(source) });
+        else out.push({ mode: "text", source });
+      }
     }
   }
   return out;
@@ -282,9 +262,12 @@ function sanitisePlain(source: string, kind: FieldKind, report: MutableSanitiseR
   return kind === "identity" ? collapseToOneLine(text) : collapseLines(text);
 }
 
-/** The one sanitise-and-neutralise step for a markup-typed field. */
-function sanitiseMarkup(source: string, kind: FieldKind, report: MutableSanitiseReport): string {
-  const result = htmlToText(source);
+/** The one sanitise-and-neutralise step for a markup-typed field (already filtered once). */
+function sanitiseMarkup(
+  result: HtmlToTextResult,
+  kind: FieldKind,
+  report: MutableSanitiseReport,
+): string {
   addReport(report, result.report);
   return kind === "identity" ? collapseToOneLine(result.text) : result.text;
 }
@@ -303,7 +286,7 @@ function sanitiseFirst(
     const raw =
       candidate.mode === "text"
         ? sanitisePlain(candidate.source, kind, report)
-        : sanitiseMarkup(candidate.source, kind, report);
+        : sanitiseMarkup(candidate.run(), kind, report);
     const neutralised = neutraliseDelimiterTokens(raw);
     const text = truncateAtBoundary(neutralised.text, cap).trim();
     if (text === "") continue;
@@ -431,17 +414,20 @@ export function parseFeed(xml: string): ParsedFeed {
             attrs: { ...attribs },
             text: "",
             nameText: "",
-            xhtml: xhtml ? "" : undefined,
+            sink: xhtml ? createMarkupSink({ xml: true }) : undefined,
           };
           current.fields.push(field);
-        } else if (field !== null && field.xhtml !== undefined) {
-          field.xhtml = append(field.xhtml, serialiseOpen(name, attribs));
+        } else if (field !== null && field.sink !== undefined) {
+          field.sink.open(rawName, attribs);
         }
       },
       ontext(data) {
         if (overflow > 0 || current === null || field === null) return;
         const relative = path.length - entryDepth;
-        if (field.xhtml !== undefined) field.xhtml = append(field.xhtml, escapeText(data));
+        if (field.sink !== undefined) {
+          field.sink.text(data);
+          return;
+        }
         if (field.name === "author") {
           if (relative === 2 && path[path.length - 1] === "name") {
             field.nameText = append(field.nameText, data);
@@ -454,9 +440,8 @@ export function parseFeed(xml: string): ParsedFeed {
       },
       oncomment() {
         if (overflow > 0 || current === null || field === null) return;
-        // Counted by the sanitiser, which sees an empty comment. The comment's own text is never
-        // copied: a comment body can end early under the HTML rules.
-        if (field.xhtml !== undefined) field.xhtml = append(field.xhtml, "<!---->");
+        // Counted by the sanitiser; the comment's own text is never read.
+        field.sink?.comment();
       },
       onclosetag() {
         if (overflow > 0) {
@@ -465,8 +450,8 @@ export function parseFeed(xml: string): ParsedFeed {
         }
         if (current !== null) {
           const relative = path.length - entryDepth;
-          if (field !== null && field.xhtml !== undefined && relative >= 2) {
-            field.xhtml = append(field.xhtml, serialiseClose(path[path.length - 1] ?? ""));
+          if (field !== null && field.sink !== undefined && relative >= 2) {
+            field.sink.close(path[path.length - 1] ?? "");
           }
           if (relative === 1) field = null;
           if (relative === 0) {
