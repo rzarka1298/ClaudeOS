@@ -515,7 +515,7 @@ describe("Task 2 Test 4: the canary key reaches no error and no log line", () =>
       } catch (error) {
         const failure = error as SummariserError;
         outputs.push(String(failure.stack), failure.message, JSON.stringify(failure));
-        expect(Object.keys(failure).sort()).toEqual(["code"]);
+        expect(Object.keys(failure).sort()).toEqual(["code", "name"]);
       }
     }
     expect(JSON.stringify(entries)).not.toContain(CANARY_KEY);
@@ -573,5 +573,32 @@ describe("Task 2 Test 4: the canary key reaches no error and no log line", () =>
     expect(typeof log.logger.info).toBe("function");
     expect(runtimeLog).not.toContain(CANARY_KEY);
     expect(runtimeLog).toContain("research-summariser");
+  });
+});
+
+describe("the production files hold no key source and no second way out", () => {
+  const files = ["anthropic-request.ts", "anthropic-transport.ts", "summariser-error.ts"];
+  const read = (name: string): string =>
+    readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
+
+  it("never read the key from the environment, a file or module state, and never call fetch", () => {
+    for (const name of files) {
+      const text = read(name);
+      expect(text, name).not.toMatch(/process\.env(\.|\[)/);
+      expect(text, name).not.toMatch(/ANTHROPIC_API_KEY|API_KEY\b/);
+      expect(text, name).not.toMatch(/\bfetch\(/);
+      expect(text, name).not.toMatch(/readFile|writeFile|node:fs/);
+      expect(text, name).not.toMatch(/rejectUnauthorized|NODE_TLS/);
+    }
+  });
+
+  it("declare no tool-shaped request key outside comments and the schema's refusal list", () => {
+    const code = read("anthropic-request.ts")
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join("\n");
+    for (const word of ["tools", "tool_choice", "mcp_servers", "container", "betas", "fallbacks"]) {
+      expect(new RegExp(`\\b${word}\\b`).test(code), word).toBe(false);
+    }
   });
 });

@@ -84,26 +84,33 @@ export function buildAnthropicRequest(input: BuildAnthropicRequestInput): Anthro
 }
 
 /**
- * Turns a parsed Messages API reply into its text. Accepts only a normal end of turn whose content
- * is a non-empty array of text blocks; every other shape is a closed failure.
+ * Turns a parsed Messages API reply into its text. A refusal is an ordinary HTTP 200, so the stop
+ * reason is read before the content. Accepts only a normal end of turn whose content is a
+ * non-empty array of text blocks; every other shape is one closed failure code and never carries
+ * any of the reply (research Pattern 3, T-07-27). Extra keys on the message and on a text block
+ * (`citations: null`, `usage`, `container`) are tolerated (A12); extra block TYPES are not.
  */
 export function parseAnthropicResponse(value: unknown): string {
-  if (typeof value !== "object" || value === null) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new SummariserError("summariser-invalid-output");
   }
   const message = value as { stop_reason?: unknown; content?: unknown };
-  if (message.stop_reason !== "end_turn" || !Array.isArray(message.content)) {
+  const reason = message.stop_reason;
+  if (reason === "refusal") throw new SummariserError("summariser-refused");
+  if (reason === "max_tokens") throw new SummariserError("summariser-failed");
+  if (reason !== "end_turn" || !Array.isArray(message.content)) {
     throw new SummariserError("summariser-invalid-output");
   }
   const blocks: unknown[] = message.content;
   if (blocks.length === 0) throw new SummariserError("summariser-invalid-output");
   let text = "";
   for (const block of blocks) {
-    const candidate = block as { type?: unknown; text?: unknown } | null;
-    if (candidate === null || typeof candidate !== "object" || candidate.type !== "text") {
+    if (typeof block !== "object" || block === null || Array.isArray(block)) {
       throw new SummariserError("summariser-invalid-output");
     }
-    if (typeof candidate.text !== "string" || candidate.text.length === 0) {
+    const candidate = block as { type?: unknown; text?: unknown };
+    if (candidate.type !== "text") throw new SummariserError("summariser-invalid-output");
+    if (typeof candidate.text !== "string" || candidate.text.trim().length === 0) {
       throw new SummariserError("summariser-invalid-output");
     }
     text += candidate.text;

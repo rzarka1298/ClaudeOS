@@ -283,7 +283,8 @@ describe("logging redaction of the research API key (07-10, ADR-0017, T-07-25)",
     expect(JSON.stringify(line)).not.toContain(CANARY);
     const options = line?.options as Record<string, unknown>;
     for (const name of NAMES) expect(options[name]).toBe(REDACTION_MARKER);
-    expect((line?.headers as Record<string, unknown>)["x-api-key"]).toBe(REDACTION_MARKER);
-    expect((line?.headers as Record<string, unknown>)["anthropic-version"]).toBe("2023-06-01");
+    const headers = line?.headers as Record<string, unknown>;
+    expect(headers["x-api-key"]).toBe(REDACTION_MARKER);
+    expect(headers["anthropic-version"]).toBe("2023-06-01");
   });
 });

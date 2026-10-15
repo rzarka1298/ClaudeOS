@@ -1,13 +1,14 @@
 import https from "node:https";
 import type { SummariserModel } from "@ccc/domain";
+import { childLogger } from "../logging.js";
 import type { TextTransport } from "../untrusted/index.js";
 import {
   buildAnthropicRequest,
   DEFAULT_MAX_TOKENS,
   parseAnthropicResponse,
 } from "./anthropic-request.js";
-import { type ResponseStream, safeLookup } from "./fetch/index.js";
-import { SummariserError } from "./summariser-error.js";
+import { envProxyRequested, type ResponseStream, safeLookup } from "./fetch/index.js";
+import { SummariserError, type SummariserErrorCode } from "./summariser-error.js";
 
 /**
  * The live summariser transport (D-04, OD-1, ADR-0014, ADR-0017): a hand-owned POST to the
@@ -22,6 +23,10 @@ export const ANTHROPIC_PATH = "/v1/messages";
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const REQUEST_TIMEOUT_MS = 120_000;
 export const MAX_HEADER_BYTES = 16 * 1024;
+/** The most response bytes read; anything longer ends the call (T-07-28). */
+export const RESPONSE_BYTE_CAP = 2 * 1024 * 1024;
+/** What a key may look like: the keychain package's own safe alphabet, so a header value is inert. */
+const KEY_PATTERN = /^[A-Za-z0-9+/=_-]{1,512}$/;
 
 export interface AnthropicRequestOptions {
   readonly protocol: "https:";
@@ -70,67 +75,171 @@ export interface AnthropicTransportDeps {
   readonly maxTokens?: number;
   readonly timeoutMs?: number;
   readonly agentFactory?: () => https.Agent;
+  /** Default: the service logger, as a fixed `{ event, code }` entry. */
   readonly log?: (entry: AnthropicLogEntry) => void;
+  /** Default `process.env` and `process.execArgv`; tests inject them. */
+  readonly env?: NodeJS.ProcessEnv;
+  readonly execArgv?: readonly string[];
 }
 
-async function collect(response: AnthropicResponseStream): Promise<string> {
+function defaultLog(entry: AnthropicLogEntry): void {
+  childLogger({ component: "research-summariser" }).warn(entry);
+}
+
+/** Closes over one call: its request, its response and its timer, so every path can release them. */
+interface CallState {
+  handle: AnthropicRequestHandle | undefined;
+  response: AnthropicResponseStream | undefined;
+}
+
+function declaredLength(response: AnthropicResponseStream): number | undefined {
+  const raw = response.headers["content-length"];
+  if (typeof raw !== "string") return undefined;
+  return /^\d{1,15}$/.test(raw) ? Number(raw) : Number.POSITIVE_INFINITY;
+}
+
+async function readText(response: AnthropicResponseStream): Promise<string> {
   const chunks: Uint8Array[] = [];
-  for await (const chunk of response) chunks.push(chunk);
+  let total = 0;
+  for await (const chunk of response) {
+    total += chunk.byteLength;
+    if (total > RESPONSE_BYTE_CAP) {
+      response.destroy();
+      throw new SummariserError("summariser-failed");
+    }
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * The exchange itself: one request, one response. Throws only SummariserError. An HTTP 401 or 403
+ * is the key being refused (unconfigured); any other non-200 status is a failure. Error bodies are
+ * never read, so nothing of them can reach an error or a log.
+ */
+async function exchange(
+  state: CallState,
+  request: AnthropicRequestFn,
+  options: AnthropicRequestOptions,
+  body: string,
+): Promise<string> {
+  const response = await new Promise<AnthropicResponseStream>((resolve, reject) => {
+    const handle = request(options, resolve);
+    state.handle = handle;
+    handle.on("error", () => reject(new SummariserError("summariser-failed")));
+    handle.on("timeout", () => reject(new SummariserError("summariser-failed")));
+    handle.end(body);
+  });
+  state.response = response;
+  const status = response.statusCode;
+  if (status === 401 || status === 403) throw new SummariserError("summariser-unconfigured");
+  if (status !== 200) throw new SummariserError("summariser-failed");
+  const encoding = response.headers["content-encoding"];
+  if (encoding !== undefined && String(encoding).trim().toLowerCase() !== "identity") {
+    throw new SummariserError("summariser-failed");
+  }
+  const length = declaredLength(response);
+  if (length !== undefined && length > RESPONSE_BYTE_CAP) {
+    throw new SummariserError("summariser-failed");
+  }
+  const text = await readText(response);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new SummariserError("summariser-failed");
+  }
+  return parseAnthropicResponse(parsed);
 }
 
 export function createAnthropicTransport(deps: AnthropicTransportDeps): TextTransport {
   const request = deps.request ?? httpsRequest;
   const timeoutMs = deps.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const log = deps.log ?? defaultLog;
+
+  const fail = (code: SummariserErrorCode): SummariserError => {
+    try {
+      log({ event: "research-summariser-failed", code });
+    } catch {
+      // A broken log sink never changes the outcome of the call.
+    }
+    return new SummariserError(code);
+  };
+
   return {
     async complete({ instructions, input }) {
-      const body = JSON.stringify(
-        buildAnthropicRequest({
-          model: deps.model,
-          instructions,
-          input,
-          maxTokens: deps.maxTokens ?? DEFAULT_MAX_TOKENS,
-        }),
-      );
-      const key = await deps.readApiKey();
-      if (key === null || key.length === 0) throw new SummariserError("summariser-unconfigured");
+      let body: string;
+      try {
+        body = JSON.stringify(
+          buildAnthropicRequest({
+            model: deps.model,
+            instructions,
+            input,
+            maxTokens: deps.maxTokens ?? DEFAULT_MAX_TOKENS,
+          }),
+        );
+      } catch {
+        throw fail("summariser-failed");
+      }
+      if (envProxyRequested(deps.env ?? process.env, deps.execArgv ?? process.execArgv)) {
+        throw fail("summariser-failed");
+      }
+      let key: string | null;
+      try {
+        key = await deps.readApiKey();
+      } catch {
+        throw fail("summariser-failed");
+      }
+      if (typeof key !== "string" || !KEY_PATTERN.test(key)) {
+        throw fail("summariser-unconfigured");
+      }
+
       const controller = new AbortController();
       const agent = deps.agentFactory?.() ?? new https.Agent({ keepAlive: false });
-      const reply = await new Promise<AnthropicResponseStream>((resolve, reject) => {
-        const handle = request(
-          {
-            protocol: "https:",
-            hostname: ANTHROPIC_HOST,
-            port: 443,
-            path: ANTHROPIC_PATH,
-            method: "POST",
-            headers: {
-              accept: "application/json",
-              "accept-encoding": "identity",
-              "anthropic-version": ANTHROPIC_VERSION,
-              "content-length": String(Buffer.byteLength(body, "utf8")),
-              "content-type": "application/json",
-              "x-api-key": key,
-            },
-            lookup: safeLookup,
-            agent,
-            signal: controller.signal,
-            timeout: timeoutMs,
-            maxHeaderSize: MAX_HEADER_BYTES,
-          },
-          resolve,
-        );
-        handle.on("error", () => reject(new SummariserError("summariser-failed")));
-        handle.end(body);
+      const state: CallState = { handle: undefined, response: undefined };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new SummariserError("summariser-failed")), timeoutMs);
       });
-      const text = await collect(reply);
-      let parsed: unknown;
+      const work = exchange(
+        state,
+        request,
+        {
+          protocol: "https:",
+          hostname: ANTHROPIC_HOST,
+          port: 443,
+          path: ANTHROPIC_PATH,
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "accept-encoding": "identity",
+            "anthropic-version": ANTHROPIC_VERSION,
+            "content-length": String(Buffer.byteLength(body, "utf8")),
+            "content-type": "application/json",
+            "x-api-key": key,
+          },
+          lookup: safeLookup,
+          agent,
+          signal: controller.signal,
+          timeout: timeoutMs,
+          maxHeaderSize: MAX_HEADER_BYTES,
+        },
+        body,
+      );
+      // Once the deadline wins, `work` may still settle later; its outcome is dropped.
+      work.catch(() => undefined);
       try {
-        parsed = JSON.parse(text);
-      } catch {
-        throw new SummariserError("summariser-failed");
+        return await Promise.race([work, deadline]);
+      } catch (error) {
+        throw fail(error instanceof SummariserError ? error.code : "summariser-failed");
+      } finally {
+        clearTimeout(timer);
+        deadline.catch(() => undefined);
+        controller.abort();
+        state.response?.destroy();
+        state.handle?.destroy();
+        agent.destroy();
       }
-      return parseAnthropicResponse(parsed);
     },
   };
 }

@@ -49,6 +49,30 @@ const CODEX_ACCOUNT_KEYS = [
 const CODEX_ACCOUNT_PATHS = CODEX_ACCOUNT_KEYS.flatMap((key) => [key, `*.${key}`]);
 
 /**
+ * The research summariser's API key (plan 07-10, ADR-0017, T-07-25): every field name the key
+ * could be logged under, as an option, a header or a settings value, at depth zero to three. The
+ * transport logs only fixed event names and error codes and never an options or header object, so
+ * this is the net behind that structure. Hyphenated names need pino's bracket form.
+ */
+const RESEARCH_KEY_NAMES = [
+  "apiKey",
+  "api_key",
+  "anthropicApiKey",
+  "anthropic_api_key",
+  "researchApiKey",
+  "research_api_key",
+  "xApiKey",
+];
+const RESEARCH_KEY_HEADER = '["x-api-key"]';
+const RESEARCH_KEY_PATHS = [
+  ...RESEARCH_KEY_NAMES.flatMap((key) => [key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`]),
+  RESEARCH_KEY_HEADER,
+  `*${RESEARCH_KEY_HEADER}`,
+  `*.*${RESEARCH_KEY_HEADER}`,
+  `*.*.*${RESEARCH_KEY_HEADER}`,
+];
+
+/**
  * Every path a credential could reach this logger through, at the top
  * level and one level of nesting (SVC-10 / ADR-0017). `req.headers.
  * authorization` is named explicitly because pino's own HTTP request
@@ -72,6 +96,7 @@ const REDACT_PATHS = [
   "*.refreshToken",
   ...APPROVAL_CONTENT_PATHS,
   ...CODEX_ACCOUNT_PATHS,
+  ...RESEARCH_KEY_PATHS,
 ];
 
 /**
