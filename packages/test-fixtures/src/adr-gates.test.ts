@@ -789,7 +789,7 @@ describe("07-05 Task 3 Test 2: the completing record states the decision", () =>
     ["raw snapshots are content-addressed", /content-addressed/i],
     ["milestone 1 deletes no raw snapshot", /never deleted|deletes nothing|no deletion/i],
     ["vault.delete is a reserved approval row", /`vault\.delete`[^.]*reserved/i],
-    ["the catch-up seam", /`decideCatchUp`/],
+    ["the catch-up seam", /`decideCatchUp\(/],
     [
       "catch-up is milestone-2 work",
       /decideCatchUp[^.]*milestone[ -]2|milestone[ -]2[^.]*decideCatchUp/i,
