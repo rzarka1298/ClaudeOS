@@ -569,4 +569,13 @@ export default [
       ],
     },
   },
+  {
+    // Round 5 (Opus gap review, ADR-0014): a relative import from the summariser folder that lands
+    // on a file no element descriptor claims is refused, not skipped. The plugin is declared by
+    // the block above, which applies to the same files.
+    files: ["packages/service/src/untrusted/**/*.ts"],
+    rules: {
+      "boundaries/no-unknown-dependencies": ["error", { require: "element" }],
+    },
+  },
 ];

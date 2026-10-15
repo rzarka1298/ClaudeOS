@@ -228,6 +228,14 @@ describe("boundary classification and resolver (research C-1, defects A and B)",
     ).toHaveLength(0);
   });
 
+  test("an untrusted file importing a local file no element claims fires (no-unknown-dependencies, round 5)", async () => {
+    const messages = await boundariesFor(
+      "packages/service/src/untrusted/probe.ts",
+      'import "../../../../playwright.config.js";\n',
+    );
+    expect(messages.map((m) => m.ruleId)).toContain("boundaries/no-unknown-dependencies");
+  });
+
   test("a plain service file importing a sibling .js is quiet (service may import service)", async () => {
     expect(
       await boundariesFor(
