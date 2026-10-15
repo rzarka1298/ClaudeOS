@@ -144,7 +144,7 @@ describe("07-02 truth 4 (three layers): third-party packages and the compensatin
   // planted globalThis access behind a one-line comment passes the gate. Fix: strip a leading
   // closed block comment from the line before the comment test, or treat only lines that begin a
   // comment AND do not close it before more code as comments.
-  it.skip("fires on a name that follows a block comment on the same line", () => {
+  it("fires on a name that follows a block comment on the same line", () => {
     const result = gate("/* note */ export const g = globalThis.fetch;\n");
     expect(result.status).toBe(1);
     expect(result.out).toContain(RULE17);

@@ -200,12 +200,12 @@ describe("check-boundaries.sh rule 17 (untrusted folder I/O names)", () => {
     expect(result.out).not.toContain(RULE17);
   });
 
-  it("exempts test files of the folder, as the other rules do", () => {
+  it("scans test files of the folder too (wave 1+2 review: a module named x.test.ts must not escape)", () => {
     const result = backstop({
       "packages/service/src/untrusted/probe.test.ts":
         "export const e = process.env.X;\nawait import(spec);\n",
     });
-    expect(result.status).toBe(0);
-    expect(result.out).not.toContain(RULE17);
+    expect(result.status).toBe(1);
+    expect(result.out).toContain(RULE17);
   });
 });
