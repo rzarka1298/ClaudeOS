@@ -192,7 +192,8 @@ describe("finding 2: authors", () => {
     );
     const authors = parsed.entries.map((e) => e.author);
     expect(authors).toContain("Evil");
-    expect(authors).toContain("a@example.com (Zed)");
+    // The address form keeps the name only (wave 1+2 review): the address is never stored.
+    expect(authors).toContain("Zed");
     expect(parsed.report.scripts).toBe(1);
     expect(parsed.report.controlChars).toBe(2);
     expectCleanOutput(parsed);

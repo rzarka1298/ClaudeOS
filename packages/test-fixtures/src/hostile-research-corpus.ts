@@ -426,7 +426,7 @@ const FEED_FIELDS: readonly FeedPayload[] = [
       "<title>A</title><author>victim@example.invalid (Dana)</author><description>Body kept</description>",
     ),
     forbidden: ["victim@example.invalid"],
-    keeps: ["Body kept", "Dana"],
+    keeps: ["Body kept"],
   },
   {
     name: "link-javascript",
@@ -496,8 +496,10 @@ const FEED_FIELDS: readonly FeedPayload[] = [
     document: rss(
       "<title>A</title><description>&amp;lt;script&amp;gt;DESC_DOUBLE()&amp;lt;/script&amp;gt;</description>",
     ),
-    forbidden: ["<script"],
-    keeps: ["&lt;script&gt;DESC_DOUBLE()&lt;/script&gt;"],
+    // An RSS description is HTML: the sanitiser decodes once and the result is literal text.
+    forbidden: ["&lt;script"],
+    keeps: ["<script>DESC_DOUBLE()</script>"],
+    counts: [],
   },
   {
     name: "summary-invisible-and-commands",

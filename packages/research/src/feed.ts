@@ -19,7 +19,14 @@
 //   - every field then has delimiter-like tokens neutralised and is capped;
 //   - links are validated by canonicaliseUrl and replaced by the canonical form, or dropped and
 //     counted in linksDropped; they are never put in text;
-//   - an Atom author contributes its name only: email and uri children are never read.
+//   - an Atom author contributes its name only: email and uri children are never read, and an
+//     RSS author written as an address keeps the name part and drops the address;
+//   - an RSS body (description, summary, content without a type) is entity-encoded HTML by
+//     specification: it is sanitised once, after XML decoding. Only an Atom text construct (no
+//     type, or type text) is literal text, and it is never re-parsed;
+//   - elements are matched by namespace and local name after resolving xmlns bindings, so
+//     `atom:entry` is an entry whatever prefix the feed picked, and an element in a namespace this
+//     parser does not know (or a field nested under one) is ignored.
 //
 // The report adds up the counts of every field of every KEPT entry.
 
@@ -189,6 +196,70 @@ export function parseFeedInstant(raw: string): string | null {
   return null;
 }
 
+const NS_ATOM = "http://www.w3.org/2005/Atom";
+const NS_RSS10 = "http://purl.org/rss/1.0/";
+const NS_CONTENT = "http://purl.org/rss/1.0/modules/content/";
+const NS_DC = "http://purl.org/dc/elements/1.1/";
+const NS_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+
+/**
+ * Prefixes that are taken at their conventional binding when a feed uses them without declaring
+ * them (a common mistake in real feeds). Any other undeclared prefix is an unknown namespace.
+ */
+const CONVENTIONAL_PREFIXES: Readonly<Record<string, string>> = {
+  atom: NS_ATOM,
+  content: NS_CONTENT,
+  dc: NS_DC,
+  rdf: NS_RDF,
+};
+
+/** A namespace binding table: prefix (lower case, "" is the default namespace) to namespace. */
+type Bindings = ReadonlyMap<string, string>;
+
+/** More declarations than this on the elements leading to an element are ignored. */
+const MAX_BINDINGS = 64;
+
+const NO_BINDINGS: Bindings = new Map();
+
+/** The bindings in force inside an element with these attributes. */
+function bindingsFor(parent: Bindings, attribs: Readonly<Record<string, string>>): Bindings {
+  let next: Map<string, string> | null = null;
+  for (const [name, value] of Object.entries(attribs)) {
+    const lower = name.toLowerCase();
+    let prefix: string;
+    if (lower === "xmlns") prefix = "";
+    else if (lower.startsWith("xmlns:")) prefix = lower.slice(6);
+    else continue;
+    next ??= new Map(parent);
+    if (next.size >= MAX_BINDINGS && !next.has(prefix)) continue;
+    next.set(prefix, value.trim());
+  }
+  return next ?? parent;
+}
+
+/**
+ * The field name the rest of this module uses for an element, or "" when the element is not one
+ * it knows. Atom and unqualified (RSS 2.0) elements keep their local name; the content module's
+ * `encoded` and the Dublin Core `date` and `creator` keep the names `content:encoded`,
+ * `dc:date` and `dc:creator`; the RDF root is `rdf:rdf`. Everything else is in some other
+ * namespace and is ignored.
+ */
+function canonicalName(rawName: string, bindings: Bindings): string {
+  const colon = rawName.indexOf(":");
+  const local = (colon < 0 ? rawName : rawName.slice(colon + 1)).toLowerCase();
+  const namespace =
+    colon < 0
+      ? (bindings.get("") ?? "")
+      : (bindings.get(rawName.slice(0, colon).toLowerCase()) ??
+        CONVENTIONAL_PREFIXES[rawName.slice(0, colon).toLowerCase()]);
+  if (namespace === undefined) return "";
+  if (namespace === "" || namespace === NS_ATOM || namespace === NS_RSS10) return local;
+  if (namespace === NS_CONTENT && local === "encoded") return "content:encoded";
+  if (namespace === NS_DC && (local === "date" || local === "creator")) return `dc:${local}`;
+  if (namespace === NS_RDF && local === "rdf") return "rdf:rdf";
+  return "";
+}
+
 interface RawField {
   readonly name: string;
   readonly attrs: Readonly<Record<string, string>>;
@@ -216,12 +287,19 @@ function append(current: string, addition: string): string {
 
 type BodyMode = "html" | "xhtml" | "text" | "ignore";
 
-function modeOf(field: RawField): BodyMode {
+/**
+ * How a field's decoded text is read. `htmlByDefault` is true for the body of any feed that is not
+ * Atom: an RSS description, summary or content is HTML whatever its (non-standard) `type` says,
+ * because that is how every RSS reader shows it. An Atom text construct is literal.
+ */
+function modeOf(field: RawField, htmlByDefault: boolean): BodyMode {
   if (field.name === "content:encoded") return "html";
   const type = (field.attrs.type ?? "").trim().toLowerCase();
-  if (type === "" || type === "text" || type === "text/plain") return "text";
-  if (type === "html" || type === "text/html") return "html";
   if (type === "xhtml" || type === "application/xhtml+xml") return "xhtml";
+  if (type === "html" || type === "text/html") return "html";
+  if (type === "" || type === "text" || type === "text/plain") {
+    return htmlByDefault ? "html" : "text";
+  }
   return "ignore";
 }
 
@@ -229,12 +307,16 @@ type Candidate =
   | { readonly mode: "text"; readonly source: string; readonly cut: boolean }
   | { readonly mode: "markup"; readonly run: () => HtmlToTextResult; readonly cut: boolean };
 
-function candidatesFor(entry: RawEntry, names: readonly string[]): Candidate[] {
+function candidatesFor(
+  entry: RawEntry,
+  names: readonly string[],
+  htmlByDefault: boolean,
+): Candidate[] {
   const out: Candidate[] = [];
   for (const name of names) {
     for (const field of entry.fields) {
       if (field.name !== name) continue;
-      const mode = modeOf(field);
+      const mode = modeOf(field, htmlByDefault);
       if (mode === "ignore") continue;
       if (mode === "xhtml") {
         const sink = field.sink;
@@ -329,28 +411,52 @@ function pickLink(entry: RawEntry): string | null {
   return value === "" ? null : value;
 }
 
+/**
+ * The name of an author written as an address. RSS defines `author` as an e-mail address,
+ * `joe@example.com (Joe)`; the name is the part in parentheses, and a bare address has none. The
+ * address itself is never kept, as with the Atom path, which never reads `email`.
+ */
+function withoutAddress(source: string): string {
+  let text = source.normalize("NFKC").trim();
+  const specification = /^([^()]*@[^()]*?)\s*\(([^()]*)\)\s*$/.exec(text);
+  if (specification !== null) return (specification[2] ?? "").trim();
+  text = text.replace(/<[^<>\s]*@[^<>\s]*>/g, " ").trim();
+  if (/^[^\s@<>()]+@[^\s@<>()]+$/.test(text)) return "";
+  return text;
+}
+
 function authorCandidates(entry: RawEntry): Candidate[] {
   const out: Candidate[] = [];
+  const add = (raw: string): void => {
+    const source = withoutAddress(raw);
+    if (source.trim() !== "") out.push({ mode: "text", source, cut: false });
+  };
   for (const field of entry.fields) {
     if (field.name !== "author") continue;
     // The name child of an Atom author, else the direct text of an RSS author. Email and uri
     // children were never collected.
-    const source = field.nameText.trim() !== "" ? field.nameText : field.text;
-    if (source.trim() !== "") out.push({ mode: "text", source, cut: false });
+    add(field.nameText.trim() !== "" ? field.nameText : field.text);
   }
   for (const field of entry.fields) {
-    if (field.name === "dc:creator" && field.text.trim() !== "") {
-      out.push({ mode: "text", source: field.text, cut: false });
-    }
+    if (field.name === "dc:creator") add(field.text);
   }
   return out;
 }
 
-function toEntry(raw: RawEntry, report: MutableSanitiseReport): FeedEntry {
-  const title = sanitiseFirst(candidatesFor(raw, ["title"]), "identity", IDENTITY_CAP, report);
+function toEntry(
+  raw: RawEntry,
+  format: ParsedFeed["format"],
+  report: MutableSanitiseReport,
+): FeedEntry {
+  const title = sanitiseFirst(
+    candidatesFor(raw, ["title"], false),
+    "identity",
+    IDENTITY_CAP,
+    report,
+  );
   const author = sanitiseFirst(authorCandidates(raw), "identity", IDENTITY_CAP, report);
   const text = sanitiseFirst(
-    candidatesFor(raw, ["content:encoded", "content", "summary", "description"]),
+    candidatesFor(raw, ["content:encoded", "content", "summary", "description"], format !== "atom"),
     "body",
     TEXT_CAP,
     report,
@@ -392,6 +498,10 @@ function cutInput(text: string, limit: number): string {
 export function parseFeed(xml: string): ParsedFeed {
   const entries: RawEntry[] = [];
   const path: string[] = [];
+  // The names as the feed wrote them, for the xhtml sink, which matches by local name itself.
+  const rawPath: string[] = [];
+  const scopes: Bindings[] = [];
+  let bindings: Bindings = NO_BINDINGS;
   let overflow = 0;
   let format: ParsedFeed["format"] = "unknown";
   let current: RawEntry | null = null;
@@ -407,11 +517,14 @@ export function parseFeed(xml: string): ParsedFeed {
           overflow += 1;
           return;
         }
-        const name = rawName.toLowerCase();
+        scopes.push(bindings);
+        bindings = bindingsFor(bindings, attribs);
+        const name = canonicalName(rawName, bindings);
         path.push(name);
+        rawPath.push(rawName);
         if (path.length === 1) {
           if (name === "feed") format = "atom";
-          else if (name === "rss" || name === "rdf:rdf" || name === "rdf") format = "rss";
+          else if (name === "rss" || name === "rdf:rdf") format = "rss";
         }
         if (current === null) {
           if (name === "entry" || name === "item") {
@@ -469,7 +582,7 @@ export function parseFeed(xml: string): ParsedFeed {
           const relative = path.length - entryDepth;
           if (field !== null && field.sink !== undefined && relative >= 2) {
             field.sink.close(
-              path[path.length - 1] ?? "",
+              rawPath[rawPath.length - 1] ?? "",
               implied,
               parser.startIndex === lastOpenStart,
             );
@@ -482,6 +595,8 @@ export function parseFeed(xml: string): ParsedFeed {
           }
         }
         path.pop();
+        rawPath.pop();
+        bindings = scopes.pop() ?? NO_BINDINGS;
       },
     },
     { xmlMode: true },
@@ -505,7 +620,7 @@ export function parseFeed(xml: string): ParsedFeed {
   }
 
   const report = newReport();
-  const kept = newest(entries).map((raw) => toEntry(raw, report));
+  const kept = newest(entries).map((raw) => toEntry(raw, format, report));
   // A cut input or a stopped parse is a dropped remainder, counted like the page sanitiser's.
   if (droppedRemainder) report.hiddenBlocks += 1;
   return { format, entries: kept, report };
