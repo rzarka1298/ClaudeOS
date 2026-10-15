@@ -170,6 +170,14 @@ describe("rule 17 obfuscation shapes (second wave 1+2 round)", () => {
       'export const k = (f as object)["con" + "structor"];\n',
     ],
     ["a continuation line that starts with a star", "export const n = 1\n  * 0 || globalThis;\n"],
+    [
+      "an ambient declaration of fetch",
+      "declare const fetch: (u: string) => Promise<unknown>;\nexport const s = fetch;\n",
+    ],
+    ["the bare word fetch as a value", "export const send = fetch;\n"],
+    ["the word declare", "declare const x: number;\nexport const y = x;\n"],
+    ["a unicode escape in an identifier", "export const glob\\u0061lThis = 1;\n"],
+    ["a braced unicode escape", "export const \\u{61} = 1;\n"],
     ["getOwnPropertyDescriptor", "export const d = Object.getOwnPropertyDescriptor({}, 'a');\n"],
     ["getPrototypeOf", "export const p = Object.getPrototypeOf(() => 0);\n"],
     ["getOwnPropertyNames", "export const n = Object.getOwnPropertyNames({});\n"],
@@ -192,6 +200,14 @@ describe("rule 17 obfuscation shapes (second wave 1+2 round)", () => {
       expect(result.out).toContain("names an I/O primitive");
     });
   }
+
+  it("stays quiet for names that merely contain fetch or declare", () => {
+    const result = backstop({
+      "packages/service/src/untrusted/probe.ts":
+        "export const fetcher = 1;\nexport const prefetch = 2;\nexport const declared = 3;\nexport const redeclare = 4;\n",
+    });
+    expect(result.status).toBe(0);
+  });
 
   it("stays quiet for a real doc block and for class constructors", () => {
     const result = backstop({

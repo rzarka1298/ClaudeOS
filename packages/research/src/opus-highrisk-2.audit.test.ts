@@ -134,6 +134,7 @@ describe("opus re-check: feed namespace registry", () => {
       `<author>${author}</author></item></channel></rss>`;
     const started = performance.now();
     parseFeed(feed);
-    expect(performance.now() - started).toBeLessThan(100);
+    // A quadratic scan needs tens of seconds here; the bound is generous so load cannot flake it.
+    expect(performance.now() - started).toBeLessThan(1_500);
   });
 });

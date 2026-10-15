@@ -251,3 +251,28 @@ describe("author address removal is linear on decoded runs of angle brackets (Co
     expect(parsed.entries[0]?.author).toBe("Joe Writer");
   });
 });
+
+describe("xmlns prefixes are case-sensitive, as XML is", () => {
+  it("does not let xmlns:X overwrite xmlns:x", () => {
+    const feed = `<feed xmlns="${ATOM}"><entry><title>t</title><x:summary xmlns:x="urn:x:other" xmlns:X="${ATOM}">LEAK</x:summary></entry></feed>`;
+    expect(JSON.stringify(parseFeed(feed).entries)).not.toContain("LEAK");
+  });
+
+  it("resolves a prefix only against the declaration with the same case", () => {
+    const feed = `<A:feed xmlns:A="${ATOM}"><A:entry><A:title>exact</A:title></A:entry></A:feed>`;
+    expect(parseFeed(feed).entries[0]?.title).toBe("exact");
+    const mismatched = `<a:feed xmlns:A="${ATOM}"><a:entry><a:title>mismatch</a:title></a:entry></a:feed>`;
+    expect(parseFeed(mismatched).entries).toEqual([]);
+  });
+
+  it("does not read XMLNS:x as a declaration", () => {
+    const feed = `<feed xmlns="${ATOM}"><entry><title>t</title><x:summary XMLNS:x="${ATOM}">LEAK</x:summary></entry></feed>`;
+    expect(JSON.stringify(parseFeed(feed).entries)).not.toContain("LEAK");
+  });
+
+  it("still reads the conventional prefixes written in lower case without a declaration", () => {
+    const feed =
+      '<rss version="2.0"><channel><item><title>t</title><content:encoded>&lt;p&gt;ok&lt;/p&gt;</content:encoded></item></channel></rss>';
+    expect(parseFeed(feed).entries[0]?.text).toBe("ok");
+  });
+});

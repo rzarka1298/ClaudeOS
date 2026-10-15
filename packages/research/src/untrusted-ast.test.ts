@@ -292,6 +292,36 @@ describe("the untrusted folder, read as a syntax tree against an allowlist", () 
     ["Buffer", 'export const b = Buffer.from("x");\n'],
     ["structuredClone", "export const c = structuredClone({});\n"],
     ["globalThis", "export const g = globalThis;\n"],
+    [
+      "an ambient declaration of fetch used through an alias",
+      "declare const fetch: (url: string) => Promise<unknown>;\nexport const send = fetch;\nexport const go = (url: string) => send(url);\n",
+    ],
+    ["declare global", "declare global { interface Window { x: number } }\nexport {};\n"],
+    ["a module augmentation", 'declare module "x" { export const y: number; }\n'],
+    ["a namespace", "namespace N { export const a = 1; }\nexport { N };\n"],
+    [
+      "an escaped Function with an unrelated parameter (Codex)",
+      'export function harmless(Funct\\u0069on: unknown) { return 0; }\nexport const escape = Funct\\u0069on("return this")();\n',
+    ],
+    [
+      "an escaped globalThis with an unrelated parameter",
+      "export function shadow(glob\\u0061lThis: number): number { return glob\\u0061lThis + 1; }\nexport const host = glob\\u0061lThis;\n",
+    ],
+    [
+      "a plain parameter named Function elsewhere in the file",
+      'export function harmless(Function: unknown) { return Function; }\nexport const f = (0, Function)("return 1");\n',
+    ],
+    [
+      "a parameter named globalThis elsewhere in the file",
+      "export function shadow(globalThis: number) { return globalThis; }\nexport const g = globalThis;\n",
+    ],
+    [
+      "a local declaration named process",
+      "const process = { env: 1 };\nexport const e = process.env;\n",
+    ],
+    ["a local function named fetch", "function fetch() { return 1; }\nexport const f = fetch();\n"],
+    ["a reference directive", '/// <reference lib="dom" />\nexport const a = 1;\n'],
+    ["an escaped identifier", "export const \\u0061 = 1;\n"],
   ];
   for (const [name, source] of FIRE) {
     it(`finds ${name}`, () => {

@@ -21,7 +21,7 @@ describe("opus final re-check: the untrusted-folder syntax-tree allowlist", () =
   // it on Node 24). Fix: ban ambient declarations (`declare`, `declare global`, module
   // augmentation) in the folder and resolve identifiers with the TypeChecker, so a name must be
   // bound in the file by a non-ambient declaration or be an allowlisted lib global.
-  it.skip("BLOCKER: an ambient declaration hands the folder the real fetch", () => {
+  it("BLOCKER: an ambient declaration hands the folder the real fetch", () => {
     const source =
       "declare const fetch: (url: string) => Promise<unknown>;\n" +
       "export function go(url: string): Promise<unknown> {\n" +
@@ -35,7 +35,7 @@ describe("opus final re-check: the untrusted-folder syntax-tree allowlist", () =
   // anywhere in the file allows the real global everywhere else in it. Spelled with a unicode
   // escape (an identifier, not a string) neither scan sees the plain name: the shell rule has 0
   // hits, the syntax tree decodes the escape, and `reach()` returns the live process.env.
-  it.skip("MAJOR: a same-named parameter elsewhere in the file allows the global", () => {
+  it("MAJOR: a same-named parameter elsewhere in the file allows the global", () => {
     const g = "glob\\u0061lThis";
     const p = "proc\\u0065ss";
     const source =
@@ -53,7 +53,7 @@ describe("opus final re-check: closed details and a re-opened formatting element
   // element under it; the next text re-opens that element INSIDE the details, so the following
   // summary is a child of the re-opened <b>, not of the details: it is not the details' summary
   // and stays hidden. The parser makes it the first summary and emits it.
-  it.skip("MINOR: a summary under a reconstructed formatting element is read as visible", () => {
+  it("MINOR: a summary under a reconstructed formatting element is read as visible", () => {
     expect(shows("<p><b><details>x<summary>LEAK</summary></details>")).toBe(false);
   });
 });
@@ -63,7 +63,7 @@ describe("opus final re-check: feed namespace prefixes are case-folded", () => {
   // them, so `xmlns:X` (Atom) overwrites `xmlns:x` (foreign) and a summary a namespace-aware
   // reader places in urn:x:other is read as the entry text. Fail-closed fix: keep prefixes
   // exactly as written (or treat a case-only collision as poisoning the scope).
-  it.skip("MINOR: an upper-case prefix declaration rebinds a foreign lower-case prefix", () => {
+  it("MINOR: an upper-case prefix declaration rebinds a foreign lower-case prefix", () => {
     const feed =
       '<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>t</title>' +
       '<x:summary xmlns:x="urn:x:other" xmlns:X="http://www.w3.org/2005/Atom">LEAK</x:summary>' +
@@ -75,7 +75,7 @@ describe("opus final re-check: feed namespace prefixes are case-folded", () => {
 describe("opus final re-check: width has no upper bound", () => {
   // MINOR (the earlier unbounded-sizes finding, closed for font-size, line-height, border,
   // padding and margin but not for width and height). The text sits 100,000 px to the right.
-  it.skip("MINOR: a huge width with right alignment moves the text out of view", () => {
+  it("MINOR: a huge width with right alignment moves the text out of view", () => {
     expect(shows('<p style="width:100000px;text-align:right">LEAK</p>')).toBe(false);
   });
 });
