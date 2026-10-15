@@ -436,6 +436,10 @@ describe("table-driven over every R-CAPS descriptor string (plan 06-10, Test 3)"
     "launch:claude-codex-pair": { kind: "launch-requested", action: "claude-codex-pair" },
     "codex:open-transcript": { kind: "session-action-requested" },
     "codex:follow-log": { kind: "session-action-requested" },
+    // Phase 7 (plan 07-05, D-17): the manual research trigger is a direct-gesture
+    // row. The dispatcher has no route for it, so it answers unavailable until the
+    // Research view wires Run now (plan 07-11) through its own handler.
+    "research:run": { kind: "unavailable" },
   };
 
   /** The connect family is matched by prefix; every R-CAPS example resolves the same way. */
