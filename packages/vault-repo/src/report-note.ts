@@ -96,7 +96,8 @@ const NESTED = {
 const STRINGIFY_SPEC = { keyOrder: REPORT_FRONTMATTER_KEY_ORDER, nested: NESTED };
 
 /** The only shape a report path may have: `global/output/research-<date>-<run id>.md`. */
-const REPORT_PATH_PATTERN = /^global\/output\/research-\d{4}-\d{2}-\d{2}-[0-9a-z]{25}\.md$/;
+export const REPORT_NOTE_PATH_PATTERN =
+  /^global\/output\/research-\d{4}-\d{2}-\d{2}-[0-9a-z]{25}\.md$/;
 
 /** The only shape a run note path may have: a plain file directly in `automation-runs`. */
 const RUN_NOTE_PATH_PATTERN = /^automation-runs\/[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.md$/;
@@ -170,7 +171,7 @@ export type ReadReportResult =
  */
 export function readReportNote(vaultRoot: string, path: string): ReadReportResult {
   try {
-    const target = resolveGlobalNotePath(vaultRoot, path, REPORT_PATH_PATTERN, failReport);
+    const target = resolveGlobalNotePath(vaultRoot, path, REPORT_NOTE_PATH_PATTERN, failReport);
     const raw = readBoundedFile(target, REPORT_FILE_MAX_BYTES, failReport);
     const parsed = parseReportNote(raw);
     return { readable: true, frontmatter: parsed.frontmatter, body: parsed.body };
@@ -425,7 +426,12 @@ export function writeReportNote(options: WriteReportNoteOptions): WrittenReportN
     throw new ReportNoteError("invalid-path");
   }
   const path = reportNotePathFor(options.generatedAt, options.jobRunId);
-  const target = resolveGlobalNotePath(options.vaultRoot, path, REPORT_PATH_PATTERN, failReport);
+  const target = resolveGlobalNotePath(
+    options.vaultRoot,
+    path,
+    REPORT_NOTE_PATH_PATTERN,
+    failReport,
+  );
   const existing = readExisting(target);
 
   const now = (options.now ?? new Date()).toISOString();
@@ -490,7 +496,7 @@ export function finaliseReportNote(options: FinaliseReportNoteOptions): WrittenR
   const target = resolveGlobalNotePath(
     options.vaultRoot,
     options.path,
-    REPORT_PATH_PATTERN,
+    REPORT_NOTE_PATH_PATTERN,
     failReport,
   );
   const raw = readBoundedFile(target, REPORT_FILE_MAX_BYTES, failReport);

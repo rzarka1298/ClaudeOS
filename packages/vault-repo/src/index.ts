@@ -54,6 +54,7 @@ export type {
 export {
   finaliseReportNote,
   parseReportNote,
+  REPORT_NOTE_PATH_PATTERN,
   ReportNoteError,
   readReportNote,
   renderReportBody,
@@ -74,6 +75,29 @@ export {
   planVaultSetup,
   VaultRootMissingError,
 } from "./setup.js";
+export type {
+  ParsedRawSourceNote,
+  ParsedWikiSourceNote,
+  ReadRawSourceResult,
+  ReadWikiSourceResult,
+  SourceNoteReason,
+  WikiCitingItem,
+  WriteRawSourceNoteOptions,
+  WriteWikiSourceNoteOptions,
+  WrittenRawSourceNote,
+  WrittenWikiSourceNote,
+} from "./source-note.js";
+export {
+  extractRawSnapshotText,
+  parseRawSourceNote,
+  parseWikiSourceNote,
+  RAW_SOURCE_BANNER,
+  readRawSourceNote,
+  readWikiSourceNote,
+  SourceNoteError,
+  writeRawSourceNote,
+  writeWikiSourceNote,
+} from "./source-note.js";
 export type {
   ParsedTaskNote,
   TaskNoteReason,
