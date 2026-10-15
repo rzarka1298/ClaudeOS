@@ -87,7 +87,7 @@ describe("BLOCKER 2: an RSS description is HTML, sanitised once after XML decodi
 describe("Codex 4: elements are matched by namespace and local name", () => {
   it("reads a fully prefixed Atom feed", () => {
     const parsed = parseFeed(
-      `<atom:feed xmlns:atom="${ATOM_NS}"><atom:title>Feed</atom:title><atom:entry><atom:title>Prefixed title</atom:title><atom:link rel="alternate" href="https://example.invalid/p"/><atom:updated>2026-10-02T10:00:00Z</atom:updated><atom:author><atom:name>Prefixed Author</atom:name><atom:email>a@example.invalid</atom:email></atom:author><atom:summary>Prefixed summary</atom:summary></atom:entry></atom:feed>`,
+      `<atom:feed xmlns:atom="${ATOM_NS}"><atom:title>Feed</atom:title><atom:entry><atom:title>Prefixed title</atom:title><atom:link rel="alternate" href="https://example.invalid/p"/><atom:updated>2026-10-02T10:00:00Z</atom:updated><atom:author><atom:name>Prefixed Author</atom:name><atom:email>a@example.com</atom:email></atom:author><atom:summary>Prefixed summary</atom:summary></atom:entry></atom:feed>`,
     );
     expect(parsed.format).toBe("atom");
     expect(parsed.entries).toEqual([
@@ -210,16 +210,16 @@ describe("minor: an RSS author that is an address keeps the name only", () => {
     parseFeed(RSS(`<${tag}>${value}</${tag}><description>d</description>`)).entries[0]?.author;
 
   it("keeps the parenthesised name of the specification form", () => {
-    expect(author("joe@example.invalid (Joe Writer)")).toBe("Joe Writer");
+    expect(author("joe@example.com (Joe Writer)")).toBe("Joe Writer");
   });
 
   it("keeps the name of the angle-bracket form", () => {
-    expect(author("Joe Writer &lt;joe@example.invalid&gt;")).toBe("Joe Writer");
+    expect(author("Joe Writer &lt;joe@example.com&gt;")).toBe("Joe Writer");
   });
 
   it("stores nothing for a bare address", () => {
-    expect(author("joe@example.invalid")).toBeNull();
-    expect(author("joe@example.invalid ()")).toBeNull();
+    expect(author("joe@example.com")).toBeNull();
+    expect(author("joe@example.com ()")).toBeNull();
   });
 
   it("leaves a plain name alone", () => {
@@ -228,15 +228,15 @@ describe("minor: an RSS author that is an address keeps the name only", () => {
 
   it("applies to Dublin Core creators too", () => {
     const parsed = parseFeed(
-      `<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel><item><title>T</title><dc:creator>joe@example.invalid (Joe)</dc:creator><description>d</description></item></channel></rss>`,
+      `<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel><item><title>T</title><dc:creator>joe@example.com (Joe)</dc:creator><description>d</description></item></channel></rss>`,
     );
     expect(parsed.entries[0]?.author).toBe("Joe");
   });
 
   it("never lets the address reach any entry field", () => {
     const parsed = parseFeed(
-      RSS("<author>reader@example.invalid (Joe)</author><description>d</description>"),
+      RSS("<author>reader@example.com (Joe)</author><description>d</description>"),
     );
-    expect(JSON.stringify(parsed)).not.toContain("reader@example.invalid");
+    expect(JSON.stringify(parsed)).not.toContain("reader@example.com");
   });
 });
