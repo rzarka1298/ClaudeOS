@@ -26,7 +26,7 @@ import {
   type ReportItem,
   ReportItemSchema,
 } from "@ccc/domain";
-import { truncateAtBoundary } from "./plain-text.js";
+import { neutraliseUntrustedSpan } from "./neutralise.js";
 import { normaliseForMatch } from "./text-canon.js";
 
 export interface ClaimCounts {
@@ -112,25 +112,6 @@ function stripFence(answer: string): string {
   return match === null ? trimmed : (match[1] ?? "").trim();
 }
 
-interface Span {
-  readonly text: string;
-  readonly addressesRemoved: number;
-  readonly controlCharsRemoved: number;
-  readonly truncated: boolean;
-}
-
-/** Plain-text clean-up of one span. Task 2 replaces this with the full neutraliser. */
-function cleanSpan(text: string, max: number): Span {
-  const normalised = normaliseForMatch(text);
-  const cut = truncateAtBoundary(normalised, max).trimEnd();
-  return {
-    text: cut,
-    addressesRemoved: 0,
-    controlCharsRemoved: 0,
-    truncated: cut.length < normalised.length,
-  };
-}
-
 export function validateSummariserOutput(
   answer: string,
   options: ValidateSummariserOptions,
@@ -199,9 +180,11 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
       downgraded += 1;
     }
 
-    const cleanText = cleanSpan(text, REPORT_ITEM_TEXT_MAX_LENGTH);
+    const cleanText = neutraliseUntrustedSpan(text, REPORT_ITEM_TEXT_MAX_LENGTH);
     const cleanQuote =
-      verified && quote !== undefined ? cleanSpan(quote, REPORT_ITEM_QUOTE_MAX_LENGTH) : null;
+      verified && quote !== undefined
+        ? neutraliseUntrustedSpan(quote, REPORT_ITEM_QUOTE_MAX_LENGTH)
+        : null;
     addressesRemoved += cleanText.addressesRemoved + (cleanQuote?.addressesRemoved ?? 0);
     controlCharsRemoved += cleanText.controlCharsRemoved + (cleanQuote?.controlCharsRemoved ?? 0);
     if (cleanText.truncated) truncated += 1;

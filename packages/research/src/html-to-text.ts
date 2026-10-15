@@ -72,20 +72,16 @@
 // Untrusted text passes through this function exactly once. Callers must not feed its output back
 // in: a decoded `&lt;script&gt;` is literal text here and stays literal.
 
+import { SANITISE_COUNT_KEYS } from "@ccc/domain";
 import { Parser } from "htmlparser2";
 import { countCommandLikeLines, stripUnsafeChars, truncateAtBoundary } from "./plain-text.js";
 
-/** The eight counters that describe what the sanitiser removed (SC4 "described"). */
-export const SANITISE_REPORT_KEYS = [
-  "scripts",
-  "styles",
-  "comments",
-  "hiddenBlocks",
-  "mediaDropped",
-  "linksDropped",
-  "controlChars",
-  "commandLikeLines",
-] as const;
+/**
+ * The eight counters that describe what the sanitiser removed (SC4 "described"). The list is the
+ * domain's SANITISE_COUNT_KEYS, so the store, the notes and the view count the same eight things;
+ * this name stays as an alias for the callers that already import it.
+ */
+export const SANITISE_REPORT_KEYS = SANITISE_COUNT_KEYS;
 
 export type SanitiseReportKey = (typeof SANITISE_REPORT_KEYS)[number];
 export type SanitiseReport = Readonly<Record<SanitiseReportKey, number>>;
