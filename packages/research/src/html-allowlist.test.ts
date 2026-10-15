@@ -28,7 +28,7 @@ describe("allowlist: elements that are not known content drop their whole subtre
     "slot",
     "search",
     "foreignobject",
-    "annotation-xml",
+    // annotation-xml now drops the whole document (gates-wave2.test.ts)
   ];
   for (const tag of UNKNOWN) {
     it(`drops <${tag}> with its children and counts one hidden block`, () => {
@@ -170,7 +170,7 @@ describe("allowlist: known content elements show their text", () => {
     "blockquote",
     "figure",
     "figcaption",
-    "details",
+    // details: closed details content is hidden (gates-wave2.test.ts)
     "summary",
     "label",
     "font",
@@ -203,6 +203,18 @@ describe("allowlist: known content elements show their text", () => {
 
 describe("allowlist: hiding signals drop the subtree", () => {
   const SIGNALS: ReadonlyArray<readonly [string, string]> = [
+    [
+      "clip:auto;clip-path:none (outside the style allowlist)",
+      '<div style="clip:auto;clip-path:none">HID</div>',
+    ],
+    [
+      "transform:rotate(3deg) (outside the style allowlist)",
+      '<div style="transform:rotate(3deg)">HID</div>',
+    ],
+    [
+      "content-visibility:auto (outside the style allowlist)",
+      '<div style="content-visibility:auto">HID</div>',
+    ],
     ["inert", "<div inert>HID</div>"],
     ["inert with a value", '<div inert="">HID</div>'],
     ["popover", "<div popover>HID</div>"],
@@ -248,10 +260,7 @@ describe("allowlist: hiding signals drop the subtree", () => {
     '<div class="not-hidden card">SHOWN</div>',
     '<div class="visible">SHOWN</div>',
     '<div style="height:20px;width:50%">SHOWN</div>',
-    '<div style="clip:auto;clip-path:none">SHOWN</div>',
-    '<div style="transform:rotate(3deg)">SHOWN</div>',
     '<div style="line-height:1.5">SHOWN</div>',
-    '<div style="content-visibility:auto">SHOWN</div>',
     '<div lang="en" dir="ltr" id="x" title="t" data-a="1">SHOWN</div>',
   ];
   for (const markup of HARMLESS) {

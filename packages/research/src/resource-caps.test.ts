@@ -71,7 +71,9 @@ describe("style cap: 2,048 characters", () => {
     `${prefix}${"x".repeat(length - prefix.length - 2)}*/`;
 
   it("reads a benign style of exactly 2,048 characters and keeps the text", () => {
-    const value = style(2_048);
+    // Harmless declarations padded with spaces: a comment is unreadable under the allowlist.
+    const unit = "font-weight:bold;";
+    const value = unit + " ".repeat(2_048 - unit.length);
     expect(value).toHaveLength(2_048);
     const result = htmlToText(`<div style="${value}">SHOWN</div>`);
     expect(result.text).toBe("SHOWN");

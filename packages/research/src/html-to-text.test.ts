@@ -55,13 +55,10 @@ describe("Test 1 (active content): script, style, template, noscript, textarea, 
     expect(result.report.mediaDropped).toBe(1);
   });
 
-  it("drops comments and CDATA and counts both as comments", () => {
-    const result = htmlToText(
-      page("<p>kept</p><!-- COMMENT_TEXT --><![CDATA[CDATA_TEXT]]><!--another-->"),
-    );
+  it("drops comments and counts them (a CDATA section now drops the whole document: gates-wave2.test.ts)", () => {
+    const result = htmlToText(page("<p>kept</p><!-- COMMENT_TEXT --><!--another-->"));
     expect(result.text).toBe("kept");
-    expect(result.text).not.toContain("CDATA_TEXT");
-    expect(result.report.comments).toBe(3);
+    expect(result.report.comments).toBe(2);
   });
 
   it("does not count a doctype as a comment", () => {
@@ -107,7 +104,7 @@ describe("Test 2 (hidden content)", () => {
 
   it("does not treat a visible opacity, font size or offset as hidden", () => {
     const result = htmlToText(
-      '<div style="opacity:0.5">a</div><div style="font-size:10px">b</div><div style="left:-5px">c</div><div style="display:block">d</div>',
+      '<div style="opacity:1">a</div><div style="font-size:10px">b</div><div style="margin-left:5px">c</div><div style="display:block">d</div>',
     );
     expect(result.text).toBe("a\nb\nc\nd");
     expect(result.report.hiddenBlocks).toBe(0);
@@ -144,7 +141,6 @@ describe("Test 3 (media and links)", () => {
   it("drops media, embeds and form controls and counts each", () => {
     const body = [
       '<img src="https://e.invalid/a.png" alt="ALT_TEXT">',
-      "<svg><title>SVG_TITLE</title><text>SVG_TEXT</text></svg>",
       '<iframe src="https://e.invalid/f">IFRAME_TEXT</iframe>',
       '<object data="x">OBJECT_TEXT</object>',
       '<embed src="x">',
@@ -158,7 +154,7 @@ describe("Test 3 (media and links)", () => {
     ].join("");
     const result = htmlToText(page(body));
     expect(result.text).toBe("kept");
-    expect(result.report.mediaDropped).toBe(11);
+    expect(result.report.mediaDropped).toBe(10);
   });
 
   it("keeps anchor text, emits no href, src or alt value, and counts each anchor with an href", () => {

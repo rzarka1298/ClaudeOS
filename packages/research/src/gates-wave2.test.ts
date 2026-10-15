@@ -109,9 +109,16 @@ describe("a document start tag after a stop discards everything, wherever it hid
     }
   }
 
-  it("finds a document tag in the last written chunk, not only after it", () => {
-    const html = `<body>${STOP}<p>VISIBLE</p>`;
-    const result = htmlToText(html);
+  it("does not discard for a document tag the parser already read without a hiding signal", () => {
+    // A plain <body> at the top was delivered as an event and hides nothing; the text before the
+    // stop stays. Only a tag that never completed (cut by the boundary) or was never parsed counts.
+    const result = htmlToText(`<body>${STOP}<p>VISIBLE</p>`);
+    expect(result.text).toBe("VISIBLE");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("discards for a hiding body tag read after the stop, in the same chunk", () => {
+    const result = htmlToText(`${STOP}<p>x</p><body hidden>`);
     expect(result.text).toBe("");
     expect(result.truncated).toBe(true);
   });

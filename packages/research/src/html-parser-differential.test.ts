@@ -29,7 +29,6 @@ describe("finding 6: comment variants follow the HTML rules", () => {
     ["an unterminated comment", "a<!-- HID <p>HID2</p>", "a"],
     ["a bogus comment <!x", "a<!x HID>b", "ab"],
     ["a bogus comment <?x", "a<?x HID>b", "ab"],
-    ["a conditional comment", "a<!--[if IE]>HID<![endif]-->b", "ab"],
     ["a comment holding markup", "a<!-- <div>HID</div> -->b", "ab"],
     ["a comment holding a script", "a<!-- <script>HID()</script> -->b", "ab"],
   ];
@@ -187,7 +186,6 @@ describe("finding 6: a second body or html start tag merges its attributes into 
 
 describe("finding 6: raw-text and RCDATA elements drop their content", () => {
   const RAW: ReadonlyArray<readonly [string, string, string, number]> = [
-    ["xmp", "<xmp><b>HID</b> HID_B</xmp>", "mediaDropped", 1],
     ["noembed", "<noembed><b>HID</b></noembed>", "mediaDropped", 1],
     ["noframes", "<noframes><b>HID</b></noframes>", "mediaDropped", 1],
     ["iframe", "<iframe><b>HID</b></iframe>", "mediaDropped", 1],
@@ -197,7 +195,6 @@ describe("finding 6: raw-text and RCDATA elements drop their content", () => {
     ["script", "<script>HID()</script>", "scripts", 1],
     ["style", "<style>.a{}HID</style>", "styles", 1],
     ["title outside the head", "<title><b>HID</b></title>", "mediaDropped", 0],
-    ["XMP in capitals", "<XMP>HID</XMP>", "mediaDropped", 1],
     ["IFRAME with a space in its end tag", "<iframe>HID</iframe >", "mediaDropped", 1],
   ];
   for (const [name, markup, key, count] of RAW) {
@@ -225,13 +222,15 @@ describe("finding 6: raw-text and RCDATA elements drop their content", () => {
   });
 
   it("swallows the rest of the document after a plaintext element", () => {
+    // plaintext (like xmp, svg, math, CDATA and frames) now drops the whole document: see
+    // gates-wave2.test.ts.
     const result = htmlToText(`${KEPT}<plaintext>HID</plaintext>HID_B<b>HID_C</b><p>HID_D`);
-    expect(result.text).toBe("kept");
+    expect(result.text).toBe("");
     expect(result.report.hiddenBlocks).toBe(1);
   });
 
   it("swallows the rest of the document after PLAINTEXT in capitals", () => {
-    expect(htmlToText(`${KEPT}<PLAINTEXT>HID<script>x()</script>`).text).toBe("kept");
+    expect(htmlToText(`${KEPT}<PLAINTEXT>HID<script>x()</script>`).text).toBe("");
   });
 
   it("drops the content of a double-escaped script, which ends only at the second end tag", () => {

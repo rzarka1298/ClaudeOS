@@ -12,6 +12,19 @@ function run(style: string): ReturnType<typeof htmlToText> {
 }
 
 const HIDING: ReadonlyArray<readonly [name: string, style: string]> = [
+  // Moved here by the second fix round: outside the style allowlist, so the element is dropped.
+  ["half opacity (allowlist)", "opacity:0.5"],
+  ["half opacity percent (allowlist)", "opacity:50%"],
+  ["semi-transparent colour (allowlist)", "color:rgba(0,0,0,0.5)"],
+  ["eight-digit hex with alpha (allowlist)", "color:#00000080"],
+  ["text on a different background (allowlist)", "color:#ffffff;background-color:#000000"],
+  ["a hanging indent (allowlist)", "text-indent:-1em"],
+  ["a positive indent (allowlist)", "text-indent:2em"],
+  ["relative position with an offset (allowlist)", "position:relative;left:10px"],
+  ["absolute position with zero offsets (allowlist)", "position:absolute;top:0;left:0"],
+  ["rotation (allowlist)", "transform:rotate(3deg)"],
+  ["scaling up (allowlist)", "transform:scale(1.2)"],
+  ["a small negative margin (allowlist)", "margin-left:-10px"],
   // opacity at or below zero (browsers clamp to zero)
   ["negative opacity", "opacity:-1"],
   ["negative percentage opacity", "opacity:-10%"],
@@ -71,22 +84,10 @@ const HIDING: ReadonlyArray<readonly [name: string, style: string]> = [
 const VISIBLE: ReadonlyArray<readonly [name: string, style: string]> = [
   ["plain colour", "color:red"],
   ["opacity one", "opacity:1"],
-  ["half opacity", "opacity:0.5"],
-  ["half opacity percent", "opacity:50%"],
-  ["semi-transparent colour", "color:rgba(0,0,0,0.5)"],
-  ["eight-digit hex with alpha", "color:#00000080"],
   ["black", "color:#000"],
-  ["text on a different background", "color:#ffffff;background-color:#000000"],
   ["body type", "font-size:14px"],
   ["small type in em", "font-size:0.9em"],
   ["percentage type", "font-size:90%"],
-  ["a hanging indent", "text-indent:-1em"],
-  ["a positive indent", "text-indent:2em"],
-  ["relative position with an offset", "position:relative;left:10px"],
-  ["absolute position with zero offsets", "position:absolute;top:0;left:0"],
-  ["rotation", "transform:rotate(3deg)"],
-  ["scaling up", "transform:scale(1.2)"],
-  ["a small negative margin", "margin-left:-10px"],
   ["auto margins", "margin:0 auto"],
   ["a thin rule box", "height:1px"],
   ["bold and centred", "font-weight:bold;text-align:center"],

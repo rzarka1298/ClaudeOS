@@ -87,6 +87,28 @@ const HIDDEN_ELEMENTS: ReadonlyArray<readonly [string, string]> = [
 
 /** Style values the filter cannot read: hidden and counted, never assumed visible. */
 const UNSAFE_STYLES: ReadonlyArray<readonly [string, string]> = [
+  ["display:flex (outside the style allowlist)", "display:flex"],
+  ["display:block flow (outside the style allowlist)", "display:block flow"],
+  ["opacity:0.5 (outside the style allowlist)", "opacity:0.5"],
+  ["opacity:50% (outside the style allowlist)", "opacity:50%"],
+  ["opacity:inherit (outside the style allowlist)", "opacity:inherit"],
+  ["visibility:visible (outside the style allowlist)", "visibility:visible"],
+  ["left:-5px (outside the style allowlist)", "left:-5px"],
+  ["left:-999px (outside the style allowlist)", "left:-999px"],
+  ["left:auto (outside the style allowlist)", "left:auto"],
+  ["margin-left:-20px (outside the style allowlist)", "margin-left:-20px"],
+  ["text-indent:2em (outside the style allowlist)", "text-indent:2em"],
+  ["color:rgba(0,0,0,0.5) (outside the style allowlist)", "color:rgba(0,0,0,0.5)"],
+  ["width:calc(100% - 4px) (outside the style allowlist)", "width:calc(100% - 4px)"],
+  [
+    "position:absolute;top:0;left:0 (outside the style allowlist)",
+    "position:absolute;top:0;left:0",
+  ],
+  [
+    "font-weight:bold;background:url(x.png) (outside the style allowlist)",
+    "font-weight:bold;background:url(x.png)",
+  ],
+  ["not a declaration at all (outside the style allowlist)", "not a declaration at all"],
   ["a variable in display", "display:var(--x)"],
   ["an unknown display keyword", "display:foo"],
   ["a css escape in a keyword", "display:\\6e one"],
@@ -106,31 +128,15 @@ const UNSAFE_STYLES: ReadonlyArray<readonly [string, string]> = [
 const VISIBLE_STYLES: readonly string[] = [
   "display:block",
   "display:inline-block;color:red",
-  "display:flex",
-  "display:block flow",
   "opacity:1",
-  "opacity:0.5",
-  "opacity:50%",
-  "opacity:inherit",
-  "visibility:visible",
   "font-size:12px",
   "font-size:1.2em",
   "font-size:larger",
   "font-size:100%",
-  "left:-5px",
-  "left:-999px",
-  "left:auto",
-  "margin-left:-20px",
-  "text-indent:2em",
   "color:red",
-  "color:rgba(0,0,0,0.5)",
-  "width:calc(100% - 4px)",
-  "position:absolute;top:0;left:0",
-  "font-weight:bold;background:url(x.png)",
   "",
   "   ",
   ";;;",
-  "not a declaration at all",
 ];
 
 describe("finding 4: hidden elements in page markup", () => {
@@ -185,7 +191,6 @@ describe("finding 4: namespace-prefixed element names in page markup", () => {
     ["a prefixed noscript", "<x:noscript>HID</x:noscript>", { hiddenBlocks: 1 }],
     ["a prefixed textarea", "<x:textarea>HID</x:textarea>", { mediaDropped: 1 }],
     ["a prefixed iframe", "<x:iframe>HID</x:iframe>", { mediaDropped: 1 }],
-    ["a prefixed svg", "<svg:svg><svg:text>HID</svg:text></svg:svg>", { mediaDropped: 1 }],
     ["a prefixed head", "<x:head><x:title>HID</x:title></x:head>", {}],
     ["a prefixed hidden div", "<xhtml:div hidden>HID</xhtml:div>", { hiddenBlocks: 1 }],
     [
@@ -256,7 +261,9 @@ describe("finding 4: hidden content in feed html content", () => {
     );
     const text = parsed.entries[0]?.text ?? "";
     expect(text).not.toContain("HID_A");
-    expect(text).toContain("kept");
+    // A CDATA section in HTML content is read differently by a browser: the whole field is
+    // dropped (second wave 1+2 fix round) instead of keeping "kept".
+    expect(text).toBe("");
     expect(parsed.report.hiddenBlocks).toBeGreaterThanOrEqual(1);
     expect(text).not.toContain("<div");
   });
