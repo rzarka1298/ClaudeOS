@@ -1,7 +1,7 @@
 /**
  * The research fetcher's public surface (plan 07-09). The research pipeline imports the fetcher
  * from here; `@ccc/test-fixtures` imports it as `@ccc/service/research-fetch` to sweep the hostile
- * corpus. The test-support fake is deliberately not exported.
+ * corpus. The test fake of the transport is deliberately not exported.
  */
 export {
   createSafeLookup,

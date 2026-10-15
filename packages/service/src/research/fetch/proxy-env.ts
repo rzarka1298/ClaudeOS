@@ -7,7 +7,7 @@
  *
  * Only `NODE_USE_ENV_PROXY=0` and an empty or unset value count as "off"; any other value is treated
  * as "on", because refusing by mistake costs a report and trusting by mistake costs the check. The
- * proxy variables alone (`HTTPS_PROXY`, `NO_PROXY`) change nothing in Node without the flag, and the
+ * conventional proxy variables alone change nothing in Node without the flag, and the
  * fetcher never reads them.
  */
 export function envProxyRequested(

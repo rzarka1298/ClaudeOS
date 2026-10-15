@@ -4,6 +4,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { createSafeLookup, safeLookup } from "./address-policy.js";
 import {
   ACCEPT_BY_KIND,
+  FETCH_CONCURRENCY,
   IDLE_TIMEOUT_MS,
   MAX_HEADER_BYTES,
   RUN_BYTE_CAP,
@@ -855,5 +856,64 @@ describe("Task 3 Test 6 (decoding): bytes are read the way a browser reads them,
     }));
     const feedResult = await run(feed, PAGE_URL_LOCAL, "feed");
     expect(feedResult.ok && feedResult.charset).toBe("utf-8");
+  });
+});
+
+describe("Task 3 Test 7 (concurrency): a run fetches at most three sources at once", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("starts three requests, then one more as each finishes, and returns results in input order", async () => {
+    vi.useFakeTimers();
+    const target = rig(() => ({ headers: HTML, body: "<p>ok</p>", responseDelayMs: 100 }));
+    const inputs = Array.from({ length: 7 }, (_, index) => ({
+      url: `https://s${index}.example.invalid/`,
+      kind: "page" as const,
+    }));
+    const pending = target.fetcher.fetchSources(inputs);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(target.fake.calls).toHaveLength(FETCH_CONCURRENCY);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(target.fake.calls).toHaveLength(6);
+    await vi.advanceTimersByTimeAsync(100);
+    const results = await pending;
+    expect(target.fake.calls).toHaveLength(7);
+    expect(results).toHaveLength(7);
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(results.map((result) => result.ok && result.finalUrl)).toEqual(
+      inputs.map((input) => input.url),
+    );
+  });
+
+  it("shares one run total across the sources", async () => {
+    const target = rig(() => ({ headers: HTML, body: "a".repeat(40 * 1024) }));
+    const inputs = Array.from({ length: 4 }, (_, index) => ({
+      url: `https://s${index}.example.invalid/`,
+      kind: "page" as const,
+    }));
+    const budget = createRunBudget(100 * 1024);
+    const results = await target.fetcher.fetchSources(inputs, budget);
+    expect(results.filter((result) => result.ok)).toHaveLength(2);
+    expect(results.filter((result) => !result.ok && result.code === "oversize")).toHaveLength(2);
+  });
+
+  it("returns one result per input and never rejects, whatever fails", async () => {
+    const target = rig(
+      routed({
+        "ok.example.invalid/": OK_PAGE,
+        "bad.example.invalid/": { status: 500 },
+      }),
+    );
+    const results = await target.fetcher.fetchSources([
+      { url: "https://ok.example.invalid/", kind: "page" },
+      { url: "https://bad.example.invalid/", kind: "page" },
+      { url: "https://127.0.0.1/", kind: "page" },
+    ]);
+    expect(results.map((result) => (result.ok ? "ok" : result.code))).toEqual([
+      "ok",
+      "http-status",
+      "refused-address",
+    ]);
   });
 });
