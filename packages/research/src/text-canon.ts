@@ -26,5 +26,5 @@ export function canonicalHashInput(text: string): string {
  * changes no wording and no case.
  */
 export function normaliseForMatch(text: string): string {
-  return text;
+  return text.normalize("NFC").replace(/\s+/g, " ").trim();
 }

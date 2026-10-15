@@ -186,13 +186,14 @@ describe("Task 1 Test 4 (quote check): a reported fact is a machine-verified quo
     expect(result.items[0]?.kind).toBe("inference");
   });
 
-  it("does not look in a source whose id was dropped as unfetched", () => {
+  it("does not take a quote from a source the item does not cite, even when another is cited", () => {
     const result = ok(
-      validateSummariserOutput(answer([fact({ citedSourceIds: [ID_UNFETCHED] })]), {
-        sources: { ...SOURCES, [ID_UNFETCHED.replace(/d/g, "e")]: SOURCES[ID_A] },
+      validateSummariserOutput(answer([fact({ citedSourceIds: [ID_UNFETCHED, ID_B] })]), {
+        sources: SOURCES,
       }),
     );
-    expect(result.items[0]?.kind).toBe("inference");
+    expect(result.items[0]).toMatchObject({ kind: "inference", citedSourceIds: [ID_B] });
+    expect(result.counts).toMatchObject({ droppedIds: 1, downgraded: 1 });
   });
 
   it("ignores whitespace differences and Unicode normalisation form but not wording", () => {
