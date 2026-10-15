@@ -228,7 +228,7 @@ export const HOSTILE_ITEM_TEXT_ANSWERS: readonly HostileItemTextAnswer[] = [
   { name: "link-data-url", text: "[click](data:text/html;base64,AAAA)" },
   { name: "link-obsidian-uri", text: "[open](obsidian://open?vault=Private&file=Secrets)" },
   { name: "link-mailto", text: `Write to mailto:someone${"@"}evil.invalid now` },
-  { name: "link-file-uri", text: "[x](file:///Users/someone/.ssh/id_ed25519)" },
+  { name: "link-file-uri", text: "[x](file:///etc/passwd)" },
   { name: "link-protocol-relative", text: "[x](//evil.invalid/x) and //evil.invalid/y" },
   { name: "link-ipv6-literal", text: "https://[::1]:8080/admin and http://127.0.0.1/" },
   { name: "wikilink", text: "See [[Private Note]] and [[Private Note|alias]]" },
