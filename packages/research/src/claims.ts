@@ -7,8 +7,9 @@
 //      a kind outside the three report kinds (a recommendation included), drops the item;
 //   2. cited ids that were not fetched in this run are dropped;
 //   3. a source-fact or an unverified-claim keeps its kind only when it carries a quote of at
-//      least the domain minimum (characters and words, after normalisation) that is found
-//      verbatim, after the shared normalisation, in a cited source's sanitised text; it then
+//      least the domain minimum (characters, and words that carry a letter or digit, after
+//      normalisation) that is found verbatim, after the shared normalisation, on whole words
+//      (it may not start or stop inside a word) in a cited source's sanitised text; it then
 //      cites only the sources whose text holds the quote. Otherwise it becomes inference with
 //      its surviving ids;
 //   4. an item with no ids is inference;
@@ -112,10 +113,39 @@ function readRawItem(candidate: unknown): RawItem | null {
   return { kind: kind as ReportItem["kind"], text, citedSourceIds, quote };
 }
 
-/** Long enough, and with enough words, to verify anything (the minimums live in the domain). */
+const HAS_LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+const WORD_CHARACTER = /[\p{L}\p{N}\p{M}]/u;
+
+/**
+ * Long enough, and with enough real words, to verify anything (the minimums live in the domain).
+ * A token counts as a word only when it carries a letter or a digit, so a run of punctuation never
+ * verifies.
+ */
 function isSubstantialQuote(normalised: string): boolean {
   if (normalised.length < REPORT_ITEM_QUOTE_MIN_LENGTH) return false;
-  return normalised.split(" ").length >= REPORT_ITEM_QUOTE_MIN_WORDS;
+  let words = 0;
+  for (const token of normalised.split(" ")) {
+    if (HAS_LETTER_OR_DIGIT.test(token)) words += 1;
+  }
+  return words >= REPORT_ITEM_QUOTE_MIN_WORDS;
+}
+
+/**
+ * The index of the first occurrence of the needle in the source whose edges sit on word
+ * boundaries (a quote may not start or stop inside a word, which could drop a negation), or -1.
+ */
+function findWholeWord(source: string, needle: string): number {
+  const first = needle.charAt(0);
+  const last = needle.charAt(needle.length - 1);
+  for (let at = source.indexOf(needle); at !== -1; at = source.indexOf(needle, at + 1)) {
+    const before = at === 0 ? "" : (Array.from(source.slice(Math.max(0, at - 2), at)).pop() ?? "");
+    const after = source.charAt(at + needle.length);
+    const startsMidWord =
+      before !== "" && WORD_CHARACTER.test(before) && WORD_CHARACTER.test(first);
+    const stopsMidWord = after !== "" && WORD_CHARACTER.test(after) && WORD_CHARACTER.test(last);
+    if (!startsMidWord && !stopsMidWord) return at;
+  }
+  return -1;
 }
 
 /** Removes at most one surrounding code fence. Anything else around the JSON is left to fail the parse. */
@@ -194,7 +224,7 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
     }
 
     const holders = (candidateQuote: string): string[] =>
-      surviving.filter((id) => (sourceText(id) ?? "").includes(candidateQuote));
+      surviving.filter((id) => findWholeWord(sourceText(id) ?? "", candidateQuote) !== -1);
 
     // The quote is checked as the model wrote it (after the shared normalisation), then the
     // SOURCE's own text is stored, neutralised and cut, and that stored form is checked again:
@@ -203,10 +233,11 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
     let ids: readonly string[] = surviving;
     let storedQuote: string | undefined;
     const needle = quote === undefined ? "" : normaliseForMatch(quote);
-    const firstHolder = isSubstantialQuote(needle) ? holders(needle)[0] : undefined;
+    const wholeWordHolders = isSubstantialQuote(needle) ? holders(needle) : [];
+    const firstHolder = isSubstantialQuote(needle) ? wholeWordHolders[0] : undefined;
     if (firstHolder !== undefined) {
       const source = sourceText(firstHolder) ?? "";
-      const at = source.indexOf(needle);
+      const at = findWholeWord(source, needle);
       const clean = neutraliseUntrustedSpan(
         source.slice(at, at + needle.length),
         REPORT_ITEM_QUOTE_MAX_LENGTH,
@@ -214,7 +245,9 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
       addressesRemoved += clean.addressesRemoved;
       controlCharsRemoved += clean.controlCharsRemoved;
       if (clean.truncated) truncated += 1;
-      const stillHeld = isSubstantialQuote(clean.text) ? holders(clean.text) : [];
+      const stillHeld = isSubstantialQuote(clean.text)
+        ? wholeWordHolders.filter((id) => (sourceText(id) ?? "").includes(clean.text))
+        : [];
       if (stillHeld.length > 0) {
         storedQuote = clean.text;
         if (kind !== "inference") {
