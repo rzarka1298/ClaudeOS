@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fakeResearchApi, fakeResearchPorts } from "../test-support/research-api-fake.js";
 import {
   configureResearch,
@@ -41,7 +41,16 @@ describe("the research port holder (plan 07-11, D-23 transport rule)", () => {
   });
 
   it("routes the four API calls and the four host ports to what configureResearch installed", async () => {
-    const api = fakeResearchApi();
+    const api = fakeResearchApi({
+      report: vi.fn(() =>
+        Promise.resolve({
+          page: "sources" as const,
+          sources: [],
+          nextCursor: null,
+          truncated: false,
+        }),
+      ),
+    });
     const ports = fakeResearchPorts();
     configureResearch({ api, ...ports });
     expect(researchConfigured()).toBe(true);

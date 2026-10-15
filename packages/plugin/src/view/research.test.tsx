@@ -60,9 +60,13 @@ function mount(
 describe("Test 1 (tracer): press Run now, see the running stage, then the listed report", () => {
   it("is busy synchronously, shows the running stage, then lists the finished report", async () => {
     let finished = false;
+    let started = false;
     const row = reportRow(0);
     const api = fakeResearchApi({
-      run: vi.fn(() => Promise.resolve(runResponse({ runId: RUN }))),
+      run: vi.fn(() => {
+        started = true;
+        return Promise.resolve(runResponse({ runId: RUN }));
+      }),
       status: vi.fn(() =>
         Promise.resolve(
           finished
@@ -78,7 +82,9 @@ describe("Test 1 (tracer): press Run now, see the running stage, then the listed
                 topicLabel: RESEARCH_TOPIC,
                 configuredSources: [...CONFIGURED_SOURCES],
               })
-            : inFlightStatus(),
+            : started
+              ? inFlightStatus()
+              : statusOf({ topicLabel: RESEARCH_TOPIC }),
         ),
       ),
       list: vi.fn(() => Promise.resolve(listOf(finished ? [row] : []))),
@@ -134,6 +140,7 @@ describe("Test 1 (tracer): press Run now, see the running stage, then the listed
 
 describe("Test 2: a duplicate press is ignored", () => {
   it("never calls run twice for two activations and says a run is already in progress", async () => {
+    let running = false;
     let resolveRun: (value: ReturnType<typeof runResponse>) => void = () => undefined;
     const api = fakeResearchApi({
       run: vi.fn(
@@ -142,7 +149,7 @@ describe("Test 2: a duplicate press is ignored", () => {
             resolveRun = resolve;
           }),
       ),
-      status: vi.fn(() => Promise.resolve(inFlightStatus())),
+      status: vi.fn(() => Promise.resolve(running ? inFlightStatus() : statusOf())),
     });
     mount(api);
     const button = await screen.findByRole("button", { name: /^Run now/ });
@@ -151,6 +158,7 @@ describe("Test 2: a duplicate press is ignored", () => {
     fireEvent.click(button);
     expect(api.run).toHaveBeenCalledTimes(1);
     await act(async () => {
+      running = true;
       resolveRun(runResponse({ runId: RUN, alreadyRunning: true }));
     });
     const line = document.querySelector('.ccc-research-status[role="status"]');
@@ -202,8 +210,12 @@ describe("Test 4: Notices only for runs started by a press in this session", () 
   it("posts the outcome sentence as a Notice for a pressed run", async () => {
     const row = reportRow(0);
     let finished = false;
+    let started = false;
     const api = fakeResearchApi({
-      run: vi.fn(() => Promise.resolve(runResponse({ runId: RUN }))),
+      run: vi.fn(() => {
+        started = true;
+        return Promise.resolve(runResponse({ runId: RUN }));
+      }),
       status: vi.fn(() =>
         Promise.resolve(
           finished
@@ -217,7 +229,9 @@ describe("Test 4: Notices only for runs started by a press in this session", () 
                   reportNoteId: row.noteId,
                 },
               })
-            : inFlightStatus(),
+            : started
+              ? inFlightStatus()
+              : statusOf(),
         ),
       ),
       list: vi.fn(() => Promise.resolve(listOf(finished ? [row] : []))),

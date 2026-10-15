@@ -1,3 +1,4 @@
+import type { ResearchRunResponse } from "@ccc/domain/research-routes.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeResearchApi, fakeResearchPorts } from "../test-support/research-api-fake.js";
 import {
@@ -28,6 +29,10 @@ import {
 } from "./state.js";
 
 const RUN = id25("run1");
+
+function neverResolves(): Promise<ResearchRunResponse> {
+  return new Promise<ResearchRunResponse>(() => undefined);
+}
 
 function inFlight(stage: "capture" | "synthesis" | null = "synthesis") {
   return { runId: RUN, startedAt: iso(-1), stage };
@@ -64,7 +69,7 @@ afterEach(() => {
 
 describe("Test 1: pressing Run now is busy before any await (UI-SPEC R2, Non-Negotiable 6)", () => {
   it("sets the pending flag and the starting line synchronously, before run() resolves", async () => {
-    const api = fakeResearchApi({ run: vi.fn(() => new Promise(() => undefined)) });
+    const api = fakeResearchApi({ run: vi.fn(neverResolves) });
     configureResearch({ api, ...fakeResearchPorts() });
     void pressRunNow();
     expect(pressPending.value).toBe(true);
@@ -127,7 +132,7 @@ describe("Test 3: the 5-second transport timeout reports, refetches and ends hon
   it("says it started when the refetched status shows the run", async () => {
     vi.useFakeTimers();
     const api = fakeResearchApi({
-      run: vi.fn(() => new Promise(() => undefined)),
+      run: vi.fn(neverResolves),
       status: vi.fn(() => Promise.resolve(statusOf({ inFlight: inFlight() }))),
     });
     const ports = fakeResearchPorts();
@@ -148,7 +153,7 @@ describe("Test 3: the 5-second transport timeout reports, refetches and ends hon
 
   it("says it did not start when the refetched status shows nothing in flight", async () => {
     vi.useFakeTimers();
-    const api = fakeResearchApi({ run: vi.fn(() => new Promise(() => undefined)) });
+    const api = fakeResearchApi({ run: vi.fn(neverResolves) });
     configureResearch({ api, ...fakeResearchPorts() });
     const pressed = pressRunNow();
     await vi.advanceTimersByTimeAsync(5000);
@@ -162,7 +167,7 @@ describe("Test 3: the 5-second transport timeout reports, refetches and ends hon
     vi.useFakeTimers();
     let resolveStatus: (value: ReturnType<typeof statusOf>) => void = () => undefined;
     const api = fakeResearchApi({
-      run: vi.fn(() => new Promise(() => undefined)),
+      run: vi.fn(neverResolves),
       status: vi.fn(
         () =>
           new Promise<ReturnType<typeof statusOf>>((resolve) => {
