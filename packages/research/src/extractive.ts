@@ -28,6 +28,7 @@ import {
 } from "@ccc/domain";
 import { validateSummariserOutput } from "./claims.js";
 import { parseDelimitedBlocks } from "./delimit.js";
+import { cutAtWord } from "./quote-match.js";
 import { normaliseForMatch } from "./text-canon.js";
 
 type ExtractedKind = "source-fact" | "unverified-claim";
@@ -49,13 +50,6 @@ function units(text: string): string[] {
   const tail = normaliseForMatch(text.slice(start));
   if (tail !== "") out.push(tail);
   return out;
-}
-
-/** Cuts a normalised string at the last word boundary within the limit. */
-function cutAtWord(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  const space = text.lastIndexOf(" ", limit);
-  return space > 0 ? text.slice(0, space) : text.slice(0, limit);
 }
 
 /** The first sentence, extended unit by unit (and then word by word) to the minimum, within the cap. */

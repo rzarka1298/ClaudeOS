@@ -4,7 +4,7 @@
 // writes nothing and reaches no network.
 import { readFileSync } from "node:fs";
 import { REPORT_ITEM_QUOTE_MIN_LENGTH, REPORT_ITEMS_MAX, ReportItemSchema } from "@ccc/domain";
-import { normaliseForMatch, validateSummariserOutput } from "@ccc/research";
+import { quoteInSource, validateSummariserOutput } from "@ccc/research";
 import { describe, expect, it } from "vitest";
 import { HOSTILE_MODEL_ANSWERS } from "./hostile-model-answers.js";
 
@@ -57,7 +57,7 @@ describe("hostile model answers: the trusted stage holds", () => {
         if (item.quote !== undefined) {
           expect(item.quote.length).toBeGreaterThanOrEqual(REPORT_ITEM_QUOTE_MIN_LENGTH);
           const holders = item.citedSourceIds.filter((id) =>
-            normaliseForMatch(entry.sources[id] ?? "").includes(item.quote ?? ""),
+            quoteInSource(entry.sources[id] ?? "", item.quote ?? ""),
           );
           // A fact or claim cites only sources that hold its quote; an inference at least one.
           if (item.kind === "inference") expect(holders.length).toBeGreaterThan(0);

@@ -26,14 +26,13 @@ import {
   REPORT_CITED_IDS_MAX,
   REPORT_ITEM_KINDS,
   REPORT_ITEM_QUOTE_MAX_LENGTH,
-  REPORT_ITEM_QUOTE_MIN_LENGTH,
-  REPORT_ITEM_QUOTE_MIN_WORDS,
   REPORT_ITEM_TEXT_MAX_LENGTH,
   REPORT_ITEMS_MAX,
   type ReportItem,
   ReportItemSchema,
 } from "@ccc/domain";
 import { neutraliseUntrustedSpan } from "./neutralise.js";
+import { cutAtWord, quoteInNormalisedSource } from "./quote-match.js";
 import { normaliseForMatch } from "./text-canon.js";
 
 export interface ClaimCounts {
@@ -113,47 +112,64 @@ function readRawItem(candidate: unknown): RawItem | null {
   return { kind: kind as ReportItem["kind"], text, citedSourceIds, quote };
 }
 
-const HAS_LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
-const WORD_CHARACTER = /[\p{L}\p{N}\p{M}]/u;
-
 /**
- * Long enough, and with enough real words, to verify anything (the minimums live in the domain).
- * A token counts as a word only when it carries a letter or a digit, so a run of punctuation never
- * verifies.
+ * Removes one surrounding code fence, or none. A fence must be the whole answer: text before it,
+ * text after it, a second fence or an unterminated fence returns null (invalid output) instead
+ * of a partly parsed answer.
  */
-function isSubstantialQuote(normalised: string): boolean {
-  if (normalised.length < REPORT_ITEM_QUOTE_MIN_LENGTH) return false;
-  let words = 0;
-  for (const token of normalised.split(" ")) {
-    if (HAS_LETTER_OR_DIGIT.test(token)) words += 1;
-  }
-  return words >= REPORT_ITEM_QUOTE_MIN_WORDS;
-}
-
-/**
- * The index of the first occurrence of the needle in the source whose edges sit on word
- * boundaries (a quote may not start or stop inside a word, which could drop a negation), or -1.
- */
-function findWholeWord(source: string, needle: string): number {
-  const first = needle.charAt(0);
-  const last = needle.charAt(needle.length - 1);
-  for (let at = source.indexOf(needle); at !== -1; at = source.indexOf(needle, at + 1)) {
-    const before = at === 0 ? "" : (Array.from(source.slice(Math.max(0, at - 2), at)).pop() ?? "");
-    const after = source.charAt(at + needle.length);
-    const startsMidWord =
-      before !== "" && WORD_CHARACTER.test(before) && WORD_CHARACTER.test(first);
-    const stopsMidWord = after !== "" && WORD_CHARACTER.test(after) && WORD_CHARACTER.test(last);
-    if (!startsMidWord && !stopsMidWord) return at;
-  }
-  return -1;
-}
-
-/** Removes at most one surrounding code fence. Anything else around the JSON is left to fail the parse. */
-function stripFence(answer: string): string {
+function stripFence(answer: string): string | null {
   const trimmed = answer.trim();
   if (!trimmed.startsWith("```")) return trimmed;
   const match = FENCE.exec(trimmed);
-  return match === null ? trimmed : (match[1] ?? "").trim();
+  if (match === null) return null;
+  const body = (match[1] ?? "").trim();
+  return /^```|\n```/.test(body) ? null : body;
+}
+
+/** Keys that could reach an object's prototype; they are refused wherever they appear. */
+const FORBIDDEN_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * True when the JSON text (already known to parse) has a duplicate key in any one object, at any
+ * depth, or a forbidden key. JSON.parse keeps the LAST of a duplicated key, so a duplicate could
+ * flip a field after the shape check read the first. Keys are compared after decoding, so an
+ * escaped spelling of a key counts as that key. The scan is iterative and linear.
+ */
+function hasDuplicateOrForbiddenKey(json: string): boolean {
+  interface Frame {
+    readonly object: boolean;
+    readonly keys: Set<string>;
+    expectKey: boolean;
+  }
+  const stack: Frame[] = [];
+  let i = 0;
+  while (i < json.length) {
+    const ch = json.charAt(i);
+    if (ch === "{") {
+      stack.push({ object: true, keys: new Set(), expectKey: true });
+    } else if (ch === "[") {
+      stack.push({ object: false, keys: new Set(), expectKey: false });
+    } else if (ch === "}" || ch === "]") {
+      stack.pop();
+    } else if (ch === ",") {
+      const top = stack[stack.length - 1];
+      if (top?.object === true) top.expectKey = true;
+    } else if (ch === '"') {
+      let end = i + 1;
+      while (end < json.length && json.charAt(end) !== '"')
+        end += json.charAt(end) === "\\" ? 2 : 1;
+      const top = stack[stack.length - 1];
+      if (top?.object === true && top.expectKey) {
+        const key: unknown = JSON.parse(json.slice(i, end + 1));
+        if (typeof key !== "string" || FORBIDDEN_KEYS.has(key) || top.keys.has(key)) return true;
+        top.keys.add(key);
+        top.expectKey = false;
+      }
+      i = end;
+    }
+    i += 1;
+  }
+  return false;
 }
 
 export function validateSummariserOutput(
@@ -169,12 +185,15 @@ export function validateSummariserOutput(
 
 function validate(answer: string, options: ValidateSummariserOptions): SummariserValidation {
   if (typeof answer !== "string" || answer.length > SUMMARISER_ANSWER_MAX_CHARS) return INVALID;
+  const json = stripFence(answer);
+  if (json === null) return INVALID;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(stripFence(answer));
+    parsed = JSON.parse(json);
   } catch {
     return INVALID;
   }
+  if (hasDuplicateOrForbiddenKey(json)) return INVALID;
   if (!isPlainRecord(parsed) || !hasOnlyKeys(parsed, ["items"], [])) return INVALID;
   const candidates = parsed.items;
   if (!Array.isArray(candidates) || candidates.length > REPORT_ITEMS_MAX) return INVALID;
@@ -223,31 +242,23 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
       continue;
     }
 
-    const holders = (candidateQuote: string): string[] =>
-      surviving.filter((id) => findWholeWord(sourceText(id) ?? "", candidateQuote) !== -1);
-
-    // The quote is checked as the model wrote it (after the shared normalisation), then the
-    // SOURCE's own text is stored, neutralised and cut, and that stored form is checked again:
-    // an address marker or a cut must not leave a quote the source does not hold.
+    // The model's quote is put in the comparison form and cut at a word boundary at the cap (a
+    // cut inside a word would not re-verify), then verified by the ONE shared predicate. The text
+    // that is stored is that verified source text, neutralised, and it is verified again by the
+    // same predicate: an address marker must not leave a quote the source does not hold.
+    const holders = (candidate: string): string[] =>
+      surviving.filter((id) => quoteInNormalisedSource(sourceText(id) ?? "", candidate));
     let kind = claimedKind;
     let ids: readonly string[] = surviving;
     let storedQuote: string | undefined;
-    const needle = quote === undefined ? "" : normaliseForMatch(quote);
-    const wholeWordHolders = isSubstantialQuote(needle) ? holders(needle) : [];
-    const firstHolder = isSubstantialQuote(needle) ? wholeWordHolders[0] : undefined;
-    if (firstHolder !== undefined) {
-      const source = sourceText(firstHolder) ?? "";
-      const at = findWholeWord(source, needle);
-      const clean = neutraliseUntrustedSpan(
-        source.slice(at, at + needle.length),
-        REPORT_ITEM_QUOTE_MAX_LENGTH,
-      );
+    const wanted = quote === undefined ? "" : normaliseForMatch(quote);
+    const capped = cutAtWord(wanted, REPORT_ITEM_QUOTE_MAX_LENGTH);
+    if (holders(capped).length > 0) {
+      const clean = neutraliseUntrustedSpan(capped, REPORT_ITEM_QUOTE_MAX_LENGTH);
       addressesRemoved += clean.addressesRemoved;
       controlCharsRemoved += clean.controlCharsRemoved;
-      if (clean.truncated) truncated += 1;
-      const stillHeld = isSubstantialQuote(clean.text)
-        ? wholeWordHolders.filter((id) => (sourceText(id) ?? "").includes(clean.text))
-        : [];
+      if (clean.truncated || capped.length < wanted.length) truncated += 1;
+      const stillHeld = holders(clean.text);
       if (stillHeld.length > 0) {
         storedQuote = clean.text;
         if (kind !== "inference") {

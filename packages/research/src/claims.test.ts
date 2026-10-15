@@ -11,6 +11,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { validateSummariserOutput } from "./claims.js";
 import { ADDRESS_REMOVED_MARKER } from "./neutralise.js";
+import { quoteInSource } from "./quote-match.js";
 import { normaliseForMatch } from "./text-canon.js";
 
 const ID_A = "a".repeat(32);
@@ -441,7 +442,9 @@ describe("Task 2 (neutralised items): no address, markup or invisible character 
       ),
     );
     expect(result.items[0]?.text).toHaveLength(600);
-    expect(result.items[1]?.quote).toHaveLength(240);
+    // The quote is cut at a word boundary, so it still re-verifies (blocker 2).
+    expect(result.items[1]?.quote?.length).toBeLessThanOrEqual(240);
+    expect(result.items[1]?.quote?.endsWith("abcdef")).toBe(true);
     expect(result.items[1]?.kind).toBe("source-fact");
     expect(result.counts.truncated).toBe(2);
     for (const item of result.items) expect(ReportItemSchema.safeParse(item).success).toBe(true);
