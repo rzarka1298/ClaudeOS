@@ -24,6 +24,7 @@ import {
   classifyCapability,
   classifyOperation,
   DEFAULT_TTL_MS,
+  RESEARCH_PIPELINE_OPERATIONS,
   resolveTtlMs,
   TTL_CEILING_MS,
 } from "./classification.js";
@@ -74,6 +75,8 @@ const R_CAPS_DESCRIPTOR_STRINGS = [
   "task:create",
   "note:capture",
   "data:refresh",
+  // Phase 7 (plan 07-05, D-17): the manual research trigger.
+  "research:run",
 ];
 
 describe("classification table shape (Test 1)", () => {
@@ -234,7 +237,7 @@ describe("exhaustiveness over descriptor capability strings (Test 3)", () => {
 
 /** A double-quoted `<prefix>:<name>` capability descriptor literal. Template literals are not matched. */
 const CAPABILITY_LITERAL =
-  /"((?:launch|session|usage|skill|task|note|data|switcher|connect|codex):[a-z][a-z-]*)"/g;
+  /"((?:launch|session|usage|skill|task|note|data|switcher|connect|codex|research):[a-z][a-z-]*)"/g;
 
 describe("source scan exclusion of test-only directories", () => {
   it("skips test-support/ but still scans product paths (a planted literal is caught)", () => {
@@ -524,6 +527,85 @@ describe("Phase 05.1 capabilities (D-31, assumption A10)", () => {
         ...(Object.hasOwn(copy, "codex.hooks.install") ? [] : ["codex.hooks.install"]),
       ];
       expect(unresolved, removed).not.toEqual([]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 7 (plan 07-05, D-17, PRD 7.12, APPR-02): the research pipeline rows
+
+const RESEARCH_EFFECT_ROWS = [
+  "research.fetch-sources",
+  "research.summarise",
+  "research.write-notes",
+  "automation-run.record",
+] as const;
+
+/** Names in a candidate pipeline list that are not a known no-approval or direct-gesture row. */
+function offenders(list: readonly string[]): string[] {
+  return list.filter((name) => {
+    const hit = classifyOperation(name);
+    return hit === undefined || hit.row.class === "approval-required";
+  });
+}
+
+describe("research classification (07-05 Task 1 Tests 1 to 3)", () => {
+  it("Test 1: research:run is the direct-gesture row research.run-now, with a reason", () => {
+    const hit = classifyCapability("research:run");
+    expect(hit?.operation).toBe("research.run-now");
+    expect(hit?.row.class).toBe("direct-gesture");
+    if (hit?.row.class !== "direct-gesture") throw new Error("unreachable");
+    expect(hit.row.reason.trim().length).toBeGreaterThan(20);
+    expect(hit.row.reason).toMatch(/click/i);
+    expect(hit.row.reason).toMatch(/one (press|run)/i);
+  });
+
+  it("Test 2: the four effect rows are no-approval and each reason names what makes it safe", () => {
+    const expected: Readonly<Record<(typeof RESEARCH_EFFECT_ROWS)[number], RegExp[]>> = {
+      "research.fetch-sources": [/public/i, /read-only/i, /get/i],
+      "research.summarise": [/no tools/i, /no write path/i, /ADR-0014/],
+      "research.write-notes": [/managed/i, /atomic/i, /own vault/i],
+      "automation-run.record": [/private/i, /run record/i],
+    };
+    for (const name of RESEARCH_EFFECT_ROWS) {
+      const hit = classifyOperation(name);
+      expect(hit?.row.class, name).toBe("no-approval");
+      if (hit?.row.class !== "no-approval") throw new Error("unreachable");
+      for (const pattern of expected[name]) {
+        expect(hit.row.reason, `${name} reason ${pattern}`).toMatch(pattern);
+      }
+    }
+  });
+
+  it("Test 3: RESEARCH_PIPELINE_OPERATIONS is the four effect rows plus the trigger, all safe classes", () => {
+    expect([...RESEARCH_PIPELINE_OPERATIONS].sort()).toEqual(
+      [...RESEARCH_EFFECT_ROWS, "research.run-now"].sort(),
+    );
+    expect(new Set(RESEARCH_PIPELINE_OPERATIONS).size).toBe(RESEARCH_PIPELINE_OPERATIONS.length);
+    expect(offenders(RESEARCH_PIPELINE_OPERATIONS)).toEqual([]);
+  });
+
+  it("Test 3: the check fails for any approval-required row, reserved or enabled, and for an unknown name", () => {
+    expect(offenders([...RESEARCH_PIPELINE_OPERATIONS, "publish"])).toEqual(["publish"]);
+    expect(offenders([...RESEARCH_PIPELINE_OPERATIONS, "automation.git-write"])).toEqual([
+      "automation.git-write",
+    ]);
+    expect(offenders([...RESEARCH_PIPELINE_OPERATIONS, "vault.delete"])).toEqual(["vault.delete"]);
+    expect(offenders([...RESEARCH_PIPELINE_OPERATIONS, "diagnostic.test"])).toEqual([
+      "diagnostic.test",
+    ]);
+    expect(offenders([...RESEARCH_PIPELINE_OPERATIONS, "research.publish"])).toEqual([
+      "research.publish",
+    ]);
+  });
+
+  it("introduces no approval-required research row (no executor is added here)", () => {
+    const researchRows = Object.entries(CLASSIFICATION).filter(
+      ([name]) => name.startsWith("research.") || name.startsWith("automation-run."),
+    );
+    expect(researchRows.length).toBe(5);
+    for (const [name, row] of researchRows) {
+      expect(row.class, name).not.toBe("approval-required");
     }
   });
 });

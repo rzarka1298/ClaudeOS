@@ -254,6 +254,9 @@ export const CLASSIFICATION = {
 
 export type OperationName = keyof typeof CLASSIFICATION;
 
+/** RED STUB (07-05 task 1): replaced by the real list in the green commit. */
+export const RESEARCH_PIPELINE_OPERATIONS: readonly string[] = [];
+
 /** The operations whose row is approval-required: the only ones a {@link CapabilityToken} can name. */
 export type ApprovalRequiredOperation = {
   [K in OperationName]: (typeof CLASSIFICATION)[K]["class"] extends "approval-required" ? K : never;
