@@ -14,9 +14,15 @@
 // therefore never equal a scheduled key, and parsing a manual key never yields
 // a window (PRD 9.7: a manual run never consumes or alters a scheduled window).
 //
+// The zone sits inside the scheduled key on purpose: changing the machine zone
+// opens a new window deliberately, and one local date can therefore produce a
+// second run if the zone changes between two runs (the ADR records this; a
+// same-date guard is milestone-2 work).
+//
 // This file is pure and Node-free.
 
 import { RUN_ID_PATTERN } from "@ccc/domain";
+import { isValidTimeZone } from "./window.js";
 
 /** Cadences a scheduled key may carry. Only `daily` exists in milestone 1. */
 export const JOB_CADENCES = ["daily"] as const;
@@ -28,8 +34,25 @@ const JOB_ID_MAX = 64;
 
 /** The shape of a window date. Calendar validity is checked separately. */
 const WINDOW_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-/** The characters an IANA zone name uses. Whether Intl accepts it is checked separately. */
+/** The characters an IANA zone name uses. */
 const ZONE_SHAPE_PATTERN = /^[A-Za-z0-9_+/-]{1,64}$/;
+
+/** True for a real calendar date written `YYYY-MM-DD` (2026-02-30 is not one). */
+function isCalendarDate(value: string): boolean {
+  if (!WINDOW_DATE_PATTERN.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  if (year < 1000) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+function isZone(value: string): boolean {
+  return ZONE_SHAPE_PATTERN.test(value) && isValidTimeZone(value);
+}
 
 export type ParsedJobRunKey =
   | { readonly kind: "manual"; readonly jobId: string; readonly runId: string }
@@ -78,8 +101,8 @@ export function scheduledJobRunKey(
 ): string {
   if (!isValidJobId(jobId)) throw new JobRunKeyError("jobId");
   if (!isCadence(cadence)) throw new JobRunKeyError("cadence");
-  if (!WINDOW_DATE_PATTERN.test(window)) throw new JobRunKeyError("window");
-  if (!ZONE_SHAPE_PATTERN.test(zone)) throw new JobRunKeyError("zone");
+  if (!isCalendarDate(window)) throw new JobRunKeyError("window");
+  if (!isZone(zone)) throw new JobRunKeyError("zone");
   return `${jobId}:${cadence}:${window}@${zone}`;
 }
 
@@ -98,7 +121,7 @@ export function parseJobRunKey(key: string): ParsedJobRunKey | null {
     const window = rest.slice(0, at);
     const zone = rest.slice(at + 1);
     if (!isValidJobId(jobId) || !isCadence(cadence)) return null;
-    if (!WINDOW_DATE_PATTERN.test(window) || !ZONE_SHAPE_PATTERN.test(zone)) return null;
+    if (!isCalendarDate(window) || !isZone(zone)) return null;
     return { kind: "scheduled", jobId, cadence, window, zone };
   }
   return null;

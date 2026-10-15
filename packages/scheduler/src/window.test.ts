@@ -97,6 +97,12 @@ describe("Test 3: isValidTimeZone", () => {
     }
   });
 
+  it("rejects a case variant of a zone and an offset string, so one zone has one spelling", () => {
+    for (const zone of ["utc", "america/new_york", "AMERICA/NEW_YORK", "+01:00", "-05:00", "Z"]) {
+      expect(isValidTimeZone(zone), zone).toBe(false);
+    }
+  });
+
   it("rejects a non-string without throwing", () => {
     expect(isValidTimeZone(undefined as unknown as string)).toBe(false);
     expect(isValidTimeZone(null as unknown as string)).toBe(false);
