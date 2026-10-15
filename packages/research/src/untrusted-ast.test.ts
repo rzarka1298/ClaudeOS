@@ -3,11 +3,18 @@
 // constructor from it (a destructured or concatenated key, a continuation line, a template-literal
 // line, a reflection chain through property descriptors). This scan reads the tree instead.
 //
-// Rules, for every file of the folder (test files included):
-//   - an identifier that is used as a value must be declared in the file (a binding, a parameter,
-//     a function, a class, an import) or be on the short list of plain language globals below.
-//     Everything else (process, globalThis, eval, Function, Reflect, fetch, require, window,
-//     console, setTimeout, Buffer, structuredClone, ...) is a finding without being named;
+// Rules, for every file of the folder (test files included). Identifiers are resolved with the
+// TypeChecker, never by text alone:
+//   - a name used as a value must resolve to a REAL declaration in the same file (a binding, a
+//     parameter, a function, a class, an import: not an ambient `declare`), or to a standard-library
+//     symbol whose name is on the short list of plain language globals below;
+//   - a list of host and reflection names (process, globalThis, eval, Function, Reflect, Proxy,
+//     fetch, require, window, console, setTimeout, Buffer, structuredClone, ...) is rejected
+//     unconditionally by name, wherever it appears and whatever the file declares: an unrelated
+//     parameter named like a global exempts nothing;
+//   - no `declare` (ambient declarations, `declare global`), no module or namespace declaration
+//     (augmentation), no triple-slash reference, no import type, and no unicode escape in an
+//     identifier (the decoded name would hide from a text match);
 //   - no member or string that reaches the prototype machinery: constructor, __proto__, prototype,
 //     getOwnPropertyDescriptor(s), getPrototypeOf, getOwnPropertyNames, getOwnPropertySymbols,
 //     setPrototypeOf, defineProperty, defineProperties;
@@ -18,7 +25,7 @@
 //
 // Fixtures prove it fires on each shape, including the ones the line scan cannot see.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -70,41 +77,6 @@ const BANNED_MEMBERS = new Set([
   "defineProperty",
   "defineProperties",
 ]);
-
-function bindingNames(name: ts.BindingName, into: Set<string>): void {
-  if (ts.isIdentifier(name)) {
-    into.add(name.text);
-    return;
-  }
-  for (const element of name.elements) {
-    if (ts.isBindingElement(element)) bindingNames(element.name, into);
-  }
-}
-
-function declaredNames(source: ts.SourceFile): Set<string> {
-  const names = new Set<string>();
-  const visit = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) bindingNames(node.name, names);
-    if (
-      (ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isClassDeclaration(node) ||
-        ts.isClassExpression(node) ||
-        ts.isEnumDeclaration(node)) &&
-      node.name !== undefined
-    ) {
-      names.add(node.name.text);
-    }
-    if (ts.isImportClause(node) && node.name !== undefined) names.add(node.name.text);
-    if (ts.isImportSpecifier(node) || ts.isNamespaceImport(node)) names.add(node.name.text);
-    if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {
-      bindingNames(node.variableDeclaration.name, names);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return names;
-}
 
 /** True when the identifier is only a name (a declaration, a property, a label), not a value. */
 function isNameOnly(node: ts.Identifier): boolean {
@@ -159,24 +131,139 @@ function inTypePosition(node: ts.Node): boolean {
   return false;
 }
 
-export function findings(fileName: string, text: string): string[] {
-  const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.ES2022, true);
-  const declared = declaredNames(source);
+/** Host, reflection and loader names: rejected by name wherever they appear. */
+const FORBIDDEN_NAMES = new Set([
+  "process",
+  "globalThis",
+  "eval",
+  "Function",
+  "Reflect",
+  "Proxy",
+  "fetch",
+  "require",
+  "XMLHttpRequest",
+  "WebSocket",
+  "EventSource",
+  "window",
+  "self",
+  "global",
+  "Buffer",
+  "console",
+  "setTimeout",
+  "setInterval",
+  "setImmediate",
+  "queueMicrotask",
+  "structuredClone",
+  "Atomics",
+  "SharedArrayBuffer",
+  "WebAssembly",
+  "importScripts",
+  "module",
+  "exports",
+  "__dirname",
+  "__filename",
+]);
+
+const COMPILER_OPTIONS: ts.CompilerOptions = {
+  target: ts.ScriptTarget.ES2022,
+  module: ts.ModuleKind.ESNext,
+  lib: ["lib.es2022.d.ts"],
+  types: [],
+  noResolve: true,
+  noEmit: true,
+  skipLibCheck: true,
+};
+
+const libraryFiles = new Map<string, ts.SourceFile>();
+
+/** A one-file program (the real folder's compiler options: ES2022, no ambient types). */
+function programFor(fileName: string, text: string): ts.Program {
+  const base = ts.createCompilerHost(COMPILER_OPTIONS, true);
+  const host: ts.CompilerHost = {
+    ...base,
+    getSourceFile(name, languageVersion, onError) {
+      if (name === fileName) return ts.createSourceFile(name, text, languageVersion, true);
+      const cached = libraryFiles.get(name);
+      if (cached !== undefined) return cached;
+      const loaded = base.getSourceFile(name, languageVersion, onError);
+      if (loaded !== undefined) libraryFiles.set(name, loaded);
+      return loaded;
+    },
+    fileExists: (name) => name === fileName || base.fileExists(name),
+    readFile: (name) => (name === fileName ? text : base.readFile(name)),
+  };
+  return ts.createProgram([fileName], COMPILER_OPTIONS, host);
+}
+
+function isDeclare(node: ts.Node): boolean {
+  return (
+    ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
+  );
+}
+
+export function findings(file: string, text: string): string[] {
+  const fileName = resolve(file);
+  const program = programFor(fileName, text);
+  const source = program.getSourceFile(fileName);
+  if (source === undefined) return [`${file} could not be read`];
+  const checker = program.getTypeChecker();
   const testFile = /\.test\.[cm]?[jt]sx?$/.test(fileName);
   const out: string[] = [];
   const at = (node: ts.Node): string =>
-    `${fileName}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+    `${file}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+
+  if (
+    source.referencedFiles.length > 0 ||
+    source.typeReferenceDirectives.length > 0 ||
+    source.libReferenceDirectives.length > 0
+  ) {
+    out.push(`${file}:1 triple-slash reference`);
+  }
+
+  /** Why a value name is not acceptable, or null when it resolves to something allowed. */
+  const rejectName = (node: ts.Identifier): string | null => {
+    const parent = node.parent;
+    const symbol =
+      ts.isShorthandPropertyAssignment(parent) && parent.name === node
+        ? checker.getShorthandAssignmentValueSymbol(parent)
+        : checker.getSymbolAtLocation(node);
+    const declarations = symbol?.declarations ?? [];
+    if (symbol === undefined || declarations.length === 0) {
+      return ALLOWED_GLOBALS.has(node.text) ? null : `name ${node.text} resolves to nothing`;
+    }
+    for (const declaration of declarations) {
+      const declaredIn = declaration.getSourceFile();
+      if (declaredIn === source) {
+        if (
+          (ts.getCombinedModifierFlags(declaration as ts.Declaration) &
+            ts.ModifierFlags.Ambient) !==
+          0
+        ) {
+          return `name ${node.text} is only declared ambiently`;
+        }
+      } else if (program.isSourceFileDefaultLibrary(declaredIn)) {
+        if (!ALLOWED_GLOBALS.has(node.text)) return `global ${node.text} is not on the allowlist`;
+      } else {
+        return `name ${node.text} comes from outside the file`;
+      }
+    }
+    return null;
+  };
+
   const visit = (node: ts.Node): void => {
+    if (isDeclare(node)) out.push(`${at(node)} declare`);
+    if (ts.isModuleDeclaration(node)) out.push(`${at(node)} module or namespace declaration`);
+    if (ts.isImportTypeNode(node)) out.push(`${at(node)} import type expression`);
     if (ts.isIdentifier(node)) {
-      if (BANNED_MEMBERS.has(node.text) && !ts.isConstructorDeclaration(node.parent)) {
+      if (node.getText(source).includes("\\")) out.push(`${at(node)} escaped identifier`);
+      if (FORBIDDEN_NAMES.has(node.text)) {
+        out.push(`${at(node)} forbidden name ${node.text}`);
+      } else if (BANNED_MEMBERS.has(node.text) && !ts.isConstructorDeclaration(node.parent)) {
         out.push(`${at(node)} banned name ${node.text}`);
-      } else if (
-        !isNameOnly(node) &&
-        !inTypePosition(node) &&
-        !declared.has(node.text) &&
-        !ALLOWED_GLOBALS.has(node.text)
-      ) {
-        out.push(`${at(node)} global ${node.text} is not on the allowlist`);
+      } else if (!isNameOnly(node) && !inTypePosition(node)) {
+        const why = rejectName(node);
+        if (why !== null) out.push(`${at(node)} ${why}`);
       }
     }
     if (ts.isStringLiteralLike(node) && BANNED_MEMBERS.has(node.text)) {

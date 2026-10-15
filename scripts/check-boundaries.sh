@@ -131,7 +131,9 @@ grep_noncomment() {
   shift
   for f in "$@"; do
     [ -f "$f" ] || continue
-    awk -v pattern="$pattern" -v fname="$f" '
+    GREP_NONCOMMENT_PATTERN="$pattern" awk -v fname="$f" '
+      # The pattern comes through the environment, not -v: awk -v would process backslash escapes.
+      BEGIN { pattern = ENVIRON["GREP_NONCOMMENT_PATTERN"] }
       {
         # Fast path: a line that does not match and holds no block-comment marker cannot be a hit.
         if (!inblock && $0 !~ pattern && index($0, "/*") == 0 && index($0, "*/") == 0) next
@@ -485,8 +487,14 @@ report_rule \
 # scope. Alternatives, all written without a backslash:
 #   - a quoted `node:` specifier (a quote character directly before node:, so
 #     an object key named node is not a hit) and the bare child_process name;
-#   - a fetch( or require( call and a dynamic import( call, each with an
-#     identifier boundary before the name, so refetch( and reimport( are not;
+#   - the bare word fetch (a boundary on both sides, so fetcher and prefetch are
+#     not hits; `const send = fetch` has no parenthesis), a require( call and a
+#     dynamic import( call, each with an identifier boundary before the name;
+#   - the word declare (an ambient `declare const fetch: ...` hands the folder the
+#     real global without naming it in a call) and a backslash-u escape anywhere
+#     (it can spell any name above inside an identifier). False-positive cost,
+#     accepted: the folder may not write the word declare in code or a unicode
+#     escape in a string; use the character itself or String.fromCodePoint;
 #   - the names process, globalThis, eval, Function, Reflect, XMLHttpRequest,
 #     WebSocket and EventSource with an identifier boundary on BOTH sides, so
 #     processed, processing, retrieval, evaluated, Functional and Reflector are
@@ -506,7 +514,7 @@ report_rule \
 # scanned too (wave 1+2 review): nothing under it, tests included, needs an I/O
 # name, and a non-test module named like a test file must not escape the rule.
 UNTRUSTED_FILES=$(printf '%s\n%s\n' "$SRC_FILES" "$EXTRA_EXT_FILES" | grep '^packages/service/src/untrusted/' || true)
-UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])(fetch|require)[[:space:]]*[(]|(^|[^A-Za-z0-9_])import[[:space:]]*([(]|$)|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor([^A-Za-z0-9_]|$)|[{,][[:space:]]*constructor[[:space:]]*[:,}]|getOwnProperty(Descriptors?|Names|Symbols)|[gs]etPrototypeOf|defineProperty|defineProperties|__proto__|[[][[:space:]]*[\"'\`][^\"'\`]*[\"'\`][[:space:]]*[+]|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
+UNTRUSTED_IO_PATTERN="[\"'\`]node:|child_process|(^|[^A-Za-z0-9_])fetch([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])require[[:space:]]*[(]|(^|[^A-Za-z0-9_])declare([^A-Za-z0-9_]|$)|\\\\u[0-9A-Fa-f{]|(^|[^A-Za-z0-9_])import[[:space:]]*([(]|$)|(^|[^A-Za-z0-9_])(process|globalThis|eval|Function|Reflect|XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|[.][[:space:]]*constructor([^A-Za-z0-9_]|$)|[{,][[:space:]]*constructor[[:space:]]*[:,}]|getOwnProperty(Descriptors?|Names|Symbols)|[gs]etPrototypeOf|defineProperty|defineProperties|__proto__|[[][[:space:]]*[\"'\`][^\"'\`]*[\"'\`][[:space:]]*[+]|[[][[:space:]]*[\"'\`]constructor[\"'\`][[:space:]]*[]]"
 # shellcheck disable=SC2086
 check_rule \
   "a file under packages/service/src/untrusted/ names an I/O primitive (a node: specifier, child_process, fetch(, require(, a dynamic import(, process, globalThis, eval, Function, Reflect, XMLHttpRequest, WebSocket, EventSource or a .constructor access; the summariser folder must hold no way to act, ADR-0014, RSRCH-07)" \

@@ -206,12 +206,12 @@ const NS_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
  * Prefixes that are taken at their conventional binding when a feed uses them without declaring
  * them (a common mistake in real feeds). Any other undeclared prefix is an unknown namespace.
  */
-const CONVENTIONAL_PREFIXES: Readonly<Record<string, string>> = {
-  atom: NS_ATOM,
-  content: NS_CONTENT,
-  dc: NS_DC,
-  rdf: NS_RDF,
-};
+const CONVENTIONAL_PREFIXES: ReadonlyMap<string, string> = new Map([
+  ["atom", NS_ATOM],
+  ["content", NS_CONTENT],
+  ["dc", NS_DC],
+  ["rdf", NS_RDF],
+]);
 
 /**
  * A namespace binding table: prefix (lower case, "" is the default namespace) to namespace. Once
@@ -262,10 +262,11 @@ function bindingsFor(
   let next: Map<string, string> | null = null;
   let poisoned = parent.poisoned;
   for (const [name, value] of Object.entries(attribs)) {
-    const lower = name.toLowerCase();
+    // XML is case-sensitive: `xmlns` and the prefix are taken exactly as written, so `xmlns:X`
+    // never rebinds `x` and `XMLNS:x` is not a declaration at all.
     let prefix: string;
-    if (lower === "xmlns") prefix = "";
-    else if (lower.startsWith("xmlns:")) prefix = lower.slice(6);
+    if (name === "xmlns") prefix = "";
+    else if (name.startsWith("xmlns:")) prefix = name.slice(6);
     else continue;
     losses.declarations += 1;
     if (losses.declarations > MAX_DECLARATIONS || value.length > MAX_NAMESPACE_CHARS) {
@@ -320,8 +321,8 @@ function canonicalName(rawName: string, bindings: Bindings, closed: boolean): st
   const namespace =
     colon < 0
       ? (bindings.map.get("") ?? "")
-      : (bindings.map.get(rawName.slice(0, colon).toLowerCase()) ??
-        (closed ? undefined : CONVENTIONAL_PREFIXES[rawName.slice(0, colon).toLowerCase()]));
+      : (bindings.map.get(rawName.slice(0, colon)) ??
+        (closed ? undefined : CONVENTIONAL_PREFIXES.get(rawName.slice(0, colon))));
   if (bindings.poisoned || namespace === undefined) return "";
   if (namespace === "" || namespace === NS_ATOM || namespace === NS_RSS10) return local;
   if (namespace === NS_CONTENT && local === "encoded") return "content:encoded";

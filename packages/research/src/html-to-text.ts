@@ -402,6 +402,8 @@ const FONT_SIZE_WORDS = new Set([
 
 const SIDES = new Set(["", "-top", "-right", "-bottom", "-left"]);
 
+/** A width, height or max-width in px is between 1 and this many. */
+const MAX_BOX_PX = 2_000;
 /** Padding, margin and border lengths are px only and at most this many. */
 const MAX_OFFSET_PX = 200;
 /**
@@ -427,14 +429,17 @@ function smallOffset(token: string, allowAuto: boolean): boolean {
   return size !== null && size <= MAX_OFFSET_PX;
 }
 
-/** A box size that is not about zero: auto, none (max-width), a percentage above 0 or 1px and more. */
+/** A box size that is not about zero or huge: auto, none (max-width), 1 to 100 percent, 1 to 2,000 px. */
 function usableSize(token: string, allowNone: boolean): boolean {
   if (token === "auto") return true;
   if (token === "none") return allowNone;
   const percent = /^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)%$/.exec(token);
-  if (percent !== null) return Number.parseFloat(percent[1] ?? "") >= 1;
+  if (percent !== null) {
+    const value = Number.parseFloat(percent[1] ?? "");
+    return value >= 1 && value <= 100;
+  }
   const size = pixels(token);
-  return size !== null && size >= 1;
+  return size !== null && size >= 1 && size <= MAX_BOX_PX;
 }
 
 /** Absolute type a reader can read: a small keyword set, or 8 to 72 pixels. */
@@ -1224,8 +1229,13 @@ export function createMarkupSink(options: MarkupSinkOptions = {}): MarkupSink {
     const ownHides = (name === "body" || name === "html") && hiddenByAttributes(attribs);
     let hiddenByDetails = false;
     if (parent?.closedDetails === true) {
-      if (name === "summary" && parent.summarySeen !== true) parent.summarySeen = true;
-      else hiddenByDetails = true;
+      // While a formatting element is pending reconstruction a browser may have re-opened it
+      // inside the details, so this summary is not the details' own first summary.
+      if (name === "summary" && parent.summarySeen !== true && !formattingPending) {
+        parent.summarySeen = true;
+      } else {
+        hiddenByDetails = true;
+      }
     }
     if (hiddenByDetails) {
       hides = true;
