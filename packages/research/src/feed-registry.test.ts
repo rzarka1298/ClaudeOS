@@ -46,7 +46,7 @@ describe("namespace values are exact and bounded", () => {
     const long = `http://example.com/${"a".repeat(300)}`;
     const declared = Array.from({ length: 20 }, (_, i) => `xmlns:p${i}="${long}${i}"`).join(" ");
     const parsed = parseFeed(
-      `<feed xmlns="${ATOM}" ${declared}><entry><title>t</title></entry></feed>`,
+      `<feed xmlns="${ATOM}"><x ${declared}/><entry><title>t</title></entry></feed>`,
     );
     expect(parsed.entries).toHaveLength(1);
     expect(parsed.report.hiddenBlocks).toBe(1);
@@ -148,5 +148,106 @@ describe("a crafted 1 MiB feed stays cheap", () => {
     const { value, ms } = timed(() => parseFeed(xml));
     expect(ms).toBeLessThan(2_000);
     expect(value.entries).toHaveLength(1);
+  });
+});
+
+describe("a scope that dropped a declaration reads every name below it as unknown", () => {
+  const pad = `<x:pad xmlns:x="urn:pad"${Array.from(
+    { length: 2_100 },
+    (_, i) => ` xmlns:p${i}="urn:p${i}"`,
+  ).join("")}/>`;
+  const entry = (inner: string, attributes = ""): string =>
+    `<entry${attributes}><title>ok</title><link href="https://example.com/a"/>${inner}</entry>`;
+
+  it("ignores an element that redeclares the default namespace past the budget (opus)", () => {
+    const feed = `<feed xmlns="${ATOM}"><title>f</title>${pad}${entry('<summary xmlns="urn:x:other">LEAK</summary>')}</feed>`;
+    expect(JSON.stringify(parseFeed(feed).entries)).not.toContain("LEAK");
+  });
+
+  it("ignores an element that redeclares a prefix past the budget (opus)", () => {
+    const feed = `<feed xmlns="${ATOM}" xmlns:a="${ATOM}"><title>f</title>${pad}${entry('<a:summary xmlns:a="urn:x:other">LEAK</a:summary>')}</feed>`;
+    expect(JSON.stringify(parseFeed(feed).entries)).not.toContain("LEAK");
+  });
+
+  it("ignores an entry whose own declaration was dropped (Codex 2)", () => {
+    const siblings = Array.from({ length: 2_047 }, () => '<x xmlns:q="urn:q"/>').join("");
+    const feed = `<feed xmlns="${ATOM}">${siblings}${entry("<summary>LEAK</summary>", ' xmlns="urn:untrusted"')}</feed>`;
+    const parsed = parseFeed(feed);
+    expect(parsed.entries).toEqual([]);
+    expect(parsed.report.hiddenBlocks).toBe(1);
+  });
+
+  it("ignores everything below an element whose prefix table is full", () => {
+    const declared = Array.from({ length: 70 }, (_, i) => ` xmlns:p${i}="urn:p${i}"`).join("");
+    const feed = `<feed xmlns="${ATOM}"><wrap${declared}>${entry("<summary>LEAK</summary>")}</wrap>${entry("<summary>kept</summary>")}</feed>`;
+    const parsed = parseFeed(feed);
+    expect(JSON.stringify(parsed.entries)).not.toContain("LEAK");
+    expect(parsed.entries.map((e) => e.text)).toContain("kept");
+  });
+
+  it("ignores everything below an element with an over-long namespace value", () => {
+    const long = `urn:${"a".repeat(300)}`;
+    const feed = `<feed xmlns="${ATOM}"><wrap xmlns:q="${long}">${entry("<summary>LEAK</summary>")}</wrap>${entry("<summary>kept</summary>")}</feed>`;
+    const parsed = parseFeed(feed);
+    expect(JSON.stringify(parsed.entries)).not.toContain("LEAK");
+    expect(parsed.entries.map((e) => e.text)).toContain("kept");
+  });
+});
+
+describe("a field whose type discriminator is over the cap is rejected (Codex 1)", () => {
+  it("does not default an over-long type to text", () => {
+    const pad = " ".repeat(5_000);
+    const feed = `<feed xmlns="${ATOM}"><entry><title>t</title><content type="${pad}html">&lt;div hidden&gt;LEAK&lt;/div&gt;</content><summary>fallback</summary></entry></feed>`;
+    const parsed = parseFeed(feed);
+    expect(parsed.entries[0]?.text).toBe("fallback");
+    expect(JSON.stringify(parsed.entries)).not.toContain("LEAK");
+    expect(parsed.report.hiddenBlocks).toBe(1);
+  });
+
+  it("rejects an over-long type on an RSS body too", () => {
+    const pad = "x".repeat(5_000);
+    const feed = `<rss version="2.0"><channel><item><title>t</title><description type="${pad}">&lt;script&gt;EVIL()&lt;/script&gt;ok</description></item></channel></rss>`;
+    const parsed = parseFeed(feed);
+    expect(JSON.stringify(parsed.entries)).not.toContain("EVIL");
+  });
+});
+
+describe("author address removal is linear on decoded runs of angle brackets (Codex 3)", () => {
+  const authorFeed = (count: number): string =>
+    `<rss version="2.0"><channel><item><title>t</title><author><![CDATA[${"<".repeat(count)}>]]></author></item></channel></rss>`;
+
+  it("handles 262,143 angle brackets and a closer in CDATA", () => {
+    const started = performance.now();
+    parseFeed(authorFeed(262_143));
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  it("handles the same run written as escaped XML", () => {
+    const xml = `<rss version="2.0"><channel><item><title>t</title><author>${"&lt;".repeat(65_000)}&gt;</author></item></channel></rss>`;
+    const started = performance.now();
+    parseFeed(xml);
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  it("grows linearly: doubling the run does not quadruple the time", () => {
+    const best = (count: number): number => {
+      let fastest = Number.POSITIVE_INFINITY;
+      for (let run = 0; run < 3; run += 1) {
+        const started = performance.now();
+        parseFeed(authorFeed(count));
+        fastest = Math.min(fastest, performance.now() - started);
+      }
+      return fastest;
+    };
+    const small = Math.max(best(65_000), 1);
+    const large = best(260_000);
+    expect(large / small).toBeLessThan(10);
+  });
+
+  it("still removes a bracketed address inside a longer name", () => {
+    const parsed = parseFeed(
+      '<rss version="2.0"><channel><item><title>t</title><author>Joe &lt;joe@example.com&gt; Writer</author></item></channel></rss>',
+    );
+    expect(parsed.entries[0]?.author).toBe("Joe Writer");
   });
 });

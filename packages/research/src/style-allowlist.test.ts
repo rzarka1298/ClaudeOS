@@ -36,15 +36,8 @@ const KEPT: ReadonlyArray<readonly [name: string, style: string]> = [
   ["display inline-block", "display:inline-block"],
   ["display table-cell", "display:table-cell"],
   ["display list-item", "display:list-item"],
-  ["a literal colour", "color:red"],
-  ["a hex colour", "color:#333"],
-  ["a long hex colour", "color:#336699"],
-  ["an rgb colour", "color:rgb(10,20,30)"],
-  ["a background colour alone", "background-color:#eee"],
   ["opacity exactly one", "opacity:1"],
   ["body type", "font-size:14px"],
-  ["small type in em", "font-size:0.9em"],
-  ["percentage type", "font-size:90%"],
   ["a type keyword", "font-size:large"],
   ["a font family", "font-family:Georgia, 'Times New Roman', serif"],
   ["several harmless declarations", "font-weight:bold;text-align:left;padding:2px"],
@@ -80,6 +73,38 @@ const DROPPED: ReadonlyArray<readonly [name: string, style: string]> = [
   ["a declaration without a colon", "bold"],
   ["a declaration without a property", ":bold"],
   ["a value over the style cap", `font-weight:bold;${"a".repeat(2_100)}`],
+  // colours are outside the allowlist entirely (second wave 3 round)
+  ["a literal colour", "color:red"],
+  ["a hex colour", "color:#333"],
+  ["an rgb colour", "color:rgb(10,20,30)"],
+  ["a background colour alone", "background-color:#eee"],
+  ["a dark background alone", "background-color:black"],
+  ["a system colour", "color:canvas"],
+  ["a system background", "background-color:canvastext"],
+  ["a light colour alone", "color:#fff"],
+  // display values that hide their children
+  ["display table-column", "display:table-column"],
+  ["display table-column-group", "display:table-column-group"],
+  // relative or out-of-range type and line height
+  ["type in em", "font-size:0.9em"],
+  ["type in rem", "font-size:1.2rem"],
+  ["type as a percentage", "font-size:90%"],
+  ["a relative type keyword", "font-size:smaller"],
+  ["a relative type keyword, larger", "font-size:larger"],
+  ["type under 8 pixels", "font-size:7px"],
+  ["type over 72 pixels", "font-size:73px"],
+  ["huge type", "font-size:99999px"],
+  ["a line height under 0.8", "line-height:0.5"],
+  ["a tiny line height", "line-height:0.0001"],
+  ["a line height over 5", "line-height:50"],
+  ["a line height in em", "line-height:1.5em"],
+  // sizes with an upper bound
+  ["a huge border", "border-top:100000px solid"],
+  ["a border of 201 pixels", "border:201px solid"],
+  ["padding of 201 pixels", "padding:201px"],
+  ["margin of 300 pixels", "margin:0 300px"],
+  ["margin in em", "margin-left:2em"],
+  ["padding as a percentage", "padding:10%"],
   // values that hide
   ["display none", "display:none"],
   ["display flex", "display:flex"],
@@ -155,6 +180,21 @@ describe("compounding and nesting", () => {
   it("drops three nested opacity 0.1 elements", () => {
     const open = '<div style="opacity:0.1">'.repeat(3);
     expect(htmlToText(`<p>shown</p>${open}LEAK`).text).toBe("shown");
+  });
+
+  it("drops ten nested relative font sizes", () => {
+    const nest = (style: string, depth: number): string =>
+      `${`<span style="${style}">`.repeat(depth)}LEAK${"</span>".repeat(depth)}`;
+    for (const style of ["font-size:60%", "font-size:0.6em", "font-size:smaller"]) {
+      expect(htmlToText(`<p>shown</p>${nest(style, 10)}`).text, style).toBe("shown");
+    }
+  });
+
+  it("drops text once nested margins and padding add up past the budget", () => {
+    const nest = (depth: number): string =>
+      `${'<div style="margin-left:100px;padding-left:100px">'.repeat(depth)}LEAK${"</div>".repeat(depth)}`;
+    expect(htmlToText(`<p>shown</p>${nest(5)}`).text).toContain("LEAK");
+    expect(htmlToText(`<p>shown</p>${nest(40)}`).text).toBe("shown");
   });
 
   it("keeps a nest of harmless styles", () => {
