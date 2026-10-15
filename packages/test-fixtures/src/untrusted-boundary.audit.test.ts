@@ -6,7 +6,8 @@
 //   - the compensating control for third-party packages (the eslint element only knows workspace
 //     packages), shown by compiling an import of a package whose declarations pull Node's types in;
 //   - ADR-0014's "Phase 7 enforcement" section against the files and names it cites (SC4);
-//   - a known hole in the shared comment-line skip, committed skipped with its finding.
+//   - the shared comment-line skip: code after a closed block comment on the same line (fixed in the
+//     wave 1+2 review round; the test was committed skipped with its finding).
 //
 // Pure ASCII source by design.
 import { execFileSync } from "node:child_process";

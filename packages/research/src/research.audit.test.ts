@@ -7,8 +7,8 @@
 //   2. the hidden-content filter follows htmlparser2's tree, which differs from a browser's tree in
 //      ways that are not all failed closed, so text a browser hides is emitted.
 //
-// The defect tests are committed skipped, each with its finding in a comment. Un-skip them when the
-// implementation is fixed. Pure ASCII source by design.
+// The defect tests were committed skipped, each with its finding in a comment, and were un-skipped
+// by the wave 1+2 review fixes (plan 07-04 summary). Pure ASCII source by design.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
