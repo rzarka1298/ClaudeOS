@@ -232,7 +232,8 @@ export function ResearchStatusSection(props: ResearchStatusSectionProps): VNode 
             )
           ) : (
             <>
-              <StateWord state="failed" /> {" · "}
+              <StateWord state="failed" />
+              {" · "}
               <RunTime iso={failure.endedAt} now={now} zone={zone} />
               <span className="ccc-research-reason-text">
                 {` — ${failureCopy(failure.errorCode).reason}`}

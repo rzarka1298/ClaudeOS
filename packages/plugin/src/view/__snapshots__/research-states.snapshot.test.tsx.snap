@@ -1,0 +1,624 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the Research destination states, as markup > disconnected: dimmed with last-good values, Run now blocked with its reason 1`] = `
+"<section class="ccc-research" aria-labelledby="ID" data-dimmed="true">
+  <div class="ccc-research-header">
+    <h2 id="ID" tabindex="-1">Research</h2>
+    <div class="ccc-research-run">
+      <button type="button" class="ccc-connect-button" data-variant="primary" aria-label="Run now: fetch the sources and write a research report" aria-disabled="true" aria-describedby="ID">Run now</button>
+      <span id="ID" class="ccc-research-reason">The companion service isn't running.</span>
+    </div>
+  </div>
+  <p class="ccc-research-subline">Research sources</p>
+  <div class="ccc-research-strip">
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time" datetime="2026-10-14T11:00:00.000Z" title="FOOTER-TIME" aria-describedby="ID-absolute-time" tabindex="0">1 hour ago</time>
+      <span id="ID-absolute-time" class="ccc-visually-hidden">FOOTER-TIME</span>
+      <span class="ccc-badge" data-badge="unavailable">
+        <span class="ccc-badge-glyph" aria-hidden="true">○</span>
+        <span class="ccc-visually-hidden">Freshness: </span>
+        <span class="ccc-badge-label">Unavailable</span>
+      </span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="ID-source-panel">Source</button>
+      <div id="ID-source-panel" class="ccc-source-panel" hidden="">
+        <p class="ccc-visually-hidden">Sources for research</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Research reports — disconnected</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+  <p class="ccc-research-status" role="status">
+  </p>
+  <section class="ccc-research-run-status" aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Run status</h3>
+    <dl class="ccc-detail-fields">
+      <dt class="ccc-research-status-row">Last successful run</dt>
+      <dd class="ccc-research-status-row">None yet</dd>
+      <dt class="ccc-research-status-row">Last failed run</dt>
+      <dd class="ccc-research-status-row">None</dd>
+    </dl>
+  </section>
+  <section aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false">
+      <div class="ccc-research-list-cell">
+        <div class="ccc-report-list-region" data-dimmed="true">
+          <ul class="ccc-report-list">
+            <li class="ccc-report-row">
+              <button type="button" class="ccc-report-row-button">
+                <span class="ccc-clamp-2" title="Developer tooling and open-source releases — Oct 14, 2026">Developer tooling and open-source releases — Oct 14, 2026</span>
+                <span class="ccc-report-row-meta">
+                  <time datetime="2026-10-14T11:00:00.000Z" title="Oct 14, 11:00 AM" aria-describedby="ID" class="ccc-research-time">1 hour ago</time>
+                  <span id="ID" class="ccc-visually-hidden">Oct 14, 11:00 AM</span> · <span class="ccc-badge" data-badge="cached">
+                  <span class="ccc-badge-glyph" aria-hidden="true">◐</span>
+                  <span class="ccc-visually-hidden">Freshness: </span>
+                  <span class="ccc-badge-label">Cached</span>
+                </span> · 3 sources · 12 items</span>
+              </button>
+            </li>
+            <li class="ccc-report-row" data-unreadable="true">
+              <p class="ccc-report-title">
+                <span class="ccc-error-glyph" aria-hidden="true">▲</span>Unreadable report</p>
+                <p class="ccc-report-row-meta" id="ID">
+                  <span class="ccc-mono">broken-report.md</span> · Its metadata couldn't be read.</p>
+                  <button type="button" class="ccc-row-action" aria-describedby="ID">Open note</button>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <div class="ccc-research-reader-cell">
+            <p class="ccc-research-placeholder">Select a report to read it.</p>
+          </div>
+        </div>
+      </section>
+    </section>"
+`;
+
+exports[`the Research destination states, as markup > empty: every run failed, with the setup callout 1`] = `
+"<section class="ccc-research" aria-labelledby="ID">
+  <div class="ccc-research-header">
+    <h2 id="ID" tabindex="-1">Research</h2>
+    <div class="ccc-research-run">
+      <button type="button" class="ccc-connect-button" data-variant="primary" aria-label="Run now: fetch the sources and write a research report">Run now</button>
+    </div>
+  </div>
+  <p class="ccc-research-subline">Developer tooling and open-source releases · 3 sources configured</p>
+  <div class="ccc-research-strip">
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time">—</time>
+      <span class="ccc-badge" data-badge="unavailable">
+        <span class="ccc-badge-glyph" aria-hidden="true">○</span>
+        <span class="ccc-visually-hidden">Freshness: </span>
+        <span class="ccc-badge-label">Unavailable</span>
+      </span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="ID-source-panel">Source</button>
+      <div id="ID-source-panel" class="ccc-source-panel" hidden="">
+        <p class="ccc-visually-hidden">Sources for research</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Research reports — no source yet</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+  <p class="ccc-research-status" role="status">
+  </p>
+  <section class="ccc-research-run-status" aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Run status</h3>
+    <dl class="ccc-detail-fields">
+      <dt class="ccc-research-status-row">Last successful run</dt>
+      <dd class="ccc-research-status-row">None yet</dd>
+      <dt class="ccc-research-status-row">Last failed run</dt>
+      <dd class="ccc-research-status-row">
+        <span class="ccc-research-state" data-state="failed">
+          <span aria-hidden="true">✕</span> <span>Failed</span>
+        </span> · <time datetime="2026-10-13T20:58:00.000Z" title="15 hours ago" aria-describedby="ID" class="ccc-research-time">Oct 13, 8:58 PM</time>
+        <span id="ID" class="ccc-visually-hidden">15 hours ago</span>
+        <span class="ccc-research-reason-text"> — the summariser isn't set up</span>
+      </dd>
+    </dl>
+    <p class="ccc-field-help">Each run fetches the 3 configured sources and makes one summariser call.</p>
+    <div class="ccc-research-sources-config">
+      <button type="button" class="ccc-connect-button" data-variant="tertiary" aria-expanded="false" aria-controls="ID">Show configured sources (3)</button>
+      <div id="ID" hidden="">
+        <ul>
+          <li>Example tools changelog <span class="ccc-mono">changelog.example.invalid</span>
+        </li>
+        <li>Sample runtime releases <span class="ccc-mono">releases.sample.invalid</span>
+      </li>
+      <li>Demo language blog <span class="ccc-mono">blog.demo.invalid</span>
+    </li>
+  </ul>
+  <p class="ccc-field-help">The source list is edited in the companion service's research settings. A settings screen comes in a later phase.</p>
+</div>
+</div>
+<div class="ccc-setup-callout" role="note">
+  <p class="ccc-research-callout-heading">The summariser isn't set up</p>
+  <p>Research runs need an Anthropic API key in the macOS keychain. Store one with the research key setup script, then press Run now. macOS may ask once to allow keychain access.</p>
+</div>
+</section>
+<section aria-labelledby="ID">
+  <h3 id="ID" class="ccc-section-label">Reports</h3>
+  <div class="ccc-research-layout" data-reader-open="false">
+    <div class="ccc-research-list-cell">
+      <div class="ccc-report-list-region">
+        <div class="ccc-report-list-empty">
+          <p class="ccc-report-empty-heading">No reports yet</p>
+          <p class="ccc-research-subline">No run has produced a report yet. The last failed run says why.</p>
+        </div>
+      </div>
+    </div>
+    <div class="ccc-research-reader-cell">
+      <p class="ccc-research-placeholder">Select a report to read it.</p>
+    </div>
+  </div>
+</section>
+</section>"
+`;
+
+exports[`the Research destination states, as markup > empty: never run 1`] = `
+"<section class="ccc-research" aria-labelledby="ID">
+  <div class="ccc-research-header">
+    <h2 id="ID" tabindex="-1">Research</h2>
+    <div class="ccc-research-run">
+      <button type="button" class="ccc-connect-button" data-variant="primary" aria-label="Run now: fetch the sources and write a research report">Run now</button>
+    </div>
+  </div>
+  <p class="ccc-research-subline">Research sources</p>
+  <div class="ccc-research-strip">
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time">—</time>
+      <span class="ccc-badge" data-badge="unavailable">
+        <span class="ccc-badge-glyph" aria-hidden="true">○</span>
+        <span class="ccc-visually-hidden">Freshness: </span>
+        <span class="ccc-badge-label">Unavailable</span>
+      </span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="ID-source-panel">Source</button>
+      <div id="ID-source-panel" class="ccc-source-panel" hidden="">
+        <p class="ccc-visually-hidden">Sources for research</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Research reports — no source yet</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+  <p class="ccc-research-status" role="status">
+  </p>
+  <section class="ccc-research-run-status" aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Run status</h3>
+    <dl class="ccc-detail-fields">
+      <dt class="ccc-research-status-row">Last successful run</dt>
+      <dd class="ccc-research-status-row">None yet</dd>
+      <dt class="ccc-research-status-row">Last failed run</dt>
+      <dd class="ccc-research-status-row">None</dd>
+    </dl>
+  </section>
+  <section aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false">
+      <div class="ccc-research-list-cell">
+        <div class="ccc-report-list-region">
+          <div class="ccc-report-list-empty">
+            <p class="ccc-report-empty-heading">No reports yet</p>
+            <p class="ccc-research-subline">Press Run now to fetch the configured sources and write your first cited report.</p>
+          </div>
+        </div>
+      </div>
+      <div class="ccc-research-reader-cell">
+        <p class="ccc-research-placeholder">Select a report to read it.</p>
+      </div>
+    </div>
+  </section>
+</section>"
+`;
+
+exports[`the Research destination states, as markup > first-load error 1`] = `
+"<section class="ccc-research" aria-labelledby="ID">
+  <div class="ccc-research-header">
+    <h2 id="ID" tabindex="-1">Research</h2>
+    <div class="ccc-research-run">
+      <button type="button" class="ccc-connect-button" data-variant="primary" aria-label="Run now: fetch the sources and write a research report">Run now</button>
+    </div>
+  </div>
+  <p class="ccc-research-subline">Research sources</p>
+  <div class="ccc-research-strip">
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time">—</time>
+      <span class="ccc-badge" data-badge="unavailable">
+        <span class="ccc-badge-glyph" aria-hidden="true">○</span>
+        <span class="ccc-visually-hidden">Freshness: </span>
+        <span class="ccc-badge-label">Unavailable</span>
+      </span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="ID-source-panel">Source</button>
+      <div id="ID-source-panel" class="ccc-source-panel" hidden="">
+        <p class="ccc-visually-hidden">Sources for research</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Research reports — no source yet</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+  <p class="ccc-research-status" role="status">
+  </p>
+  <section class="ccc-research-run-status" aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Run status</h3>
+    <dl class="ccc-detail-fields">
+      <dt class="ccc-research-status-row">Last successful run</dt>
+      <dd class="ccc-research-status-row">
+      </dd>
+      <dt class="ccc-research-status-row">Last failed run</dt>
+      <dd class="ccc-research-status-row">
+      </dd>
+    </dl>
+  </section>
+  <section aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false">
+      <div class="ccc-research-list-cell">
+        <div class="ccc-report-list-region">
+          <div class="ccc-report-list-error">
+            <p>
+            <span class="ccc-error-glyph" aria-hidden="true">▲</span>Couldn't load research reports.</p>
+            <p class="ccc-field-help">Check the service in Settings → Diagnostics, then refresh.</p>
+            <button type="button" class="ccc-connect-button" data-variant="tertiary">Refresh reports</button>
+          </div>
+        </div>
+      </div>
+      <div class="ccc-research-reader-cell">
+        <p class="ccc-research-placeholder">Select a report to read it.</p>
+      </div>
+    </div>
+  </section>
+</section>"
+`;
+
+exports[`the Research destination states, as markup > loading: skeletons under real labels, busy, with the hidden loading text 1`] = `
+"<section class="ccc-research" aria-labelledby="ID" aria-busy="true">
+  <div class="ccc-research-header">
+    <h2 id="ID" tabindex="-1">Research</h2>
+    <div class="ccc-research-run">
+      <button type="button" class="ccc-connect-button" data-variant="primary" aria-label="Run now: fetch the sources and write a research report">Run now</button>
+    </div>
+  </div>
+  <p class="ccc-research-subline">Research sources</p>
+  <div class="ccc-research-strip">
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time">—</time>
+      <span class="ccc-badge" data-badge="unavailable">
+        <span class="ccc-badge-glyph" aria-hidden="true">○</span>
+        <span class="ccc-visually-hidden">Freshness: </span>
+        <span class="ccc-badge-label">Unavailable</span>
+      </span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="ID-source-panel">Source</button>
+      <div id="ID-source-panel" class="ccc-source-panel" hidden="">
+        <p class="ccc-visually-hidden">Sources for research</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Research reports — no source yet</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+  <p class="ccc-research-status" role="status">
+  </p>
+  <section class="ccc-research-run-status" aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Run status</h3>
+    <dl class="ccc-detail-fields">
+      <dt class="ccc-research-status-row">Last successful run</dt>
+      <dd class="ccc-research-status-row">
+        <span class="ccc-skeleton-line" aria-hidden="true">
+        </span>
+      </dd>
+      <dt class="ccc-research-status-row">Last failed run</dt>
+      <dd class="ccc-research-status-row">
+        <span class="ccc-skeleton-line" aria-hidden="true">
+        </span>
+      </dd>
+    </dl>
+  </section>
+  <section aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false">
+      <div class="ccc-research-list-cell">
+        <div class="ccc-report-list-region" aria-busy="true">
+          <span class="ccc-visually-hidden">Loading research reports</span>
+          <span class="ccc-skeleton-line" aria-hidden="true">
+          </span>
+          <span class="ccc-skeleton-line" aria-hidden="true">
+          </span>
+          <span class="ccc-skeleton-line" aria-hidden="true">
+          </span>
+        </div>
+      </div>
+      <div class="ccc-research-reader-cell">
+        <p class="ccc-research-placeholder">Select a report to read it.</p>
+      </div>
+    </div>
+  </section>
+</section>"
+`;
+
+exports[`the Research destination states, as markup > populated: fresh, stale and partial reports, an unreadable one and a partial last success 1`] = `
+"<section class="ccc-research" aria-labelledby="ID">
+  <div class="ccc-research-header">
+    <h2 id="ID" tabindex="-1">Research</h2>
+    <div class="ccc-research-run">
+      <button type="button" class="ccc-connect-button" data-variant="primary" aria-label="Run now: fetch the sources and write a research report">Run now</button>
+    </div>
+  </div>
+  <p class="ccc-research-subline">Developer tooling and open-source releases · 3 sources configured</p>
+  <div class="ccc-research-strip">
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time" datetime="2026-10-14T11:00:00.000Z" title="FOOTER-TIME" aria-describedby="ID-absolute-time" tabindex="0">1 hour ago</time>
+      <span id="ID-absolute-time" class="ccc-visually-hidden">FOOTER-TIME</span>
+      <span class="ccc-badge" data-badge="cached">
+        <span class="ccc-badge-glyph" aria-hidden="true">◐</span>
+        <span class="ccc-visually-hidden">Freshness: </span>
+        <span class="ccc-badge-label">Cached</span>
+      </span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="ID-source-panel">Source</button>
+      <div id="ID-source-panel" class="ccc-source-panel" hidden="">
+        <p class="ccc-visually-hidden">Sources for research</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Research reports — ok</li>
+        </ul>
+      </div>
+    </footer>
+    <span class="ccc-badge" data-badge="partial">
+      <span class="ccc-badge-glyph" aria-hidden="true">◈</span>
+      <span class="ccc-badge-label">Partial</span>
+      <span class="ccc-visually-hidden"> — 1 source didn't respond</span>
+    </span>
+  </div>
+  <p class="ccc-research-status" role="status">
+  </p>
+  <section class="ccc-research-run-status" aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Run status</h3>
+    <dl class="ccc-detail-fields">
+      <dt class="ccc-research-status-row">Last successful run</dt>
+      <dd class="ccc-research-status-row">
+        <span class="ccc-research-state" data-state="completed">
+          <span aria-hidden="true">✓</span> <span>Completed</span>
+        </span> · <span class="ccc-badge" data-badge="partial">
+        <span class="ccc-badge-glyph" aria-hidden="true">◈</span>
+        <span class="ccc-badge-label">Partial</span>
+        <span class="ccc-visually-hidden"> — 1 source didn't respond</span>
+      </span> · <time datetime="2026-10-14T09:02:00.000Z" title="2 hours ago" aria-describedby="ID" class="ccc-research-time">Oct 14, 9:02 AM</time>
+      <span id="ID" class="ccc-visually-hidden">2 hours ago</span> · 2 of 3 sources · <button type="button" class="ccc-connect-button" data-variant="tertiary">Open report</button>
+    </dd>
+    <dt class="ccc-research-status-row">Last failed run</dt>
+    <dd class="ccc-research-status-row">
+      <span class="ccc-research-state" data-state="failed">
+        <span aria-hidden="true">✕</span> <span>Failed</span>
+      </span> · <time datetime="2026-10-12T20:58:00.000Z" title="yesterday" aria-describedby="ID" class="ccc-research-time">Oct 12, 8:58 PM</time>
+      <span id="ID" class="ccc-visually-hidden">yesterday</span>
+      <span class="ccc-research-reason-text"> — no source could be fetched</span>
+      <span class="ccc-research-next-step">Check your network connection, then press Run now.</span>
+    </dd>
+  </dl>
+  <p class="ccc-field-help">Each run fetches the 3 configured sources and makes one summariser call.</p>
+  <div class="ccc-research-sources-config">
+    <button type="button" class="ccc-connect-button" data-variant="tertiary" aria-expanded="false" aria-controls="ID">Show configured sources (3)</button>
+    <div id="ID" hidden="">
+      <ul>
+        <li>Example tools changelog <span class="ccc-mono">changelog.example.invalid</span>
+      </li>
+      <li>Sample runtime releases <span class="ccc-mono">releases.sample.invalid</span>
+    </li>
+    <li>Demo language blog <span class="ccc-mono">blog.demo.invalid</span>
+  </li>
+</ul>
+<p class="ccc-field-help">The source list is edited in the companion service's research settings. A settings screen comes in a later phase.</p>
+</div>
+</div>
+</section>
+<section aria-labelledby="ID">
+  <h3 id="ID" class="ccc-section-label">Reports</h3>
+  <div class="ccc-research-layout" data-reader-open="false">
+    <div class="ccc-research-list-cell">
+      <div class="ccc-report-list-region">
+        <ul class="ccc-report-list">
+          <li class="ccc-report-row">
+            <button type="button" class="ccc-report-row-button">
+              <span class="ccc-clamp-2" title="Developer tooling and open-source releases — Oct 14, 2026">Developer tooling and open-source releases — Oct 14, 2026</span>
+              <span class="ccc-report-row-meta">
+                <time datetime="2026-10-14T11:00:00.000Z" title="Oct 14, 11:00 AM" aria-describedby="ID" class="ccc-research-time">1 hour ago</time>
+                <span id="ID" class="ccc-visually-hidden">Oct 14, 11:00 AM</span> · <span class="ccc-badge" data-badge="cached">
+                <span class="ccc-badge-glyph" aria-hidden="true">◐</span>
+                <span class="ccc-visually-hidden">Freshness: </span>
+                <span class="ccc-badge-label">Cached</span>
+              </span> · <span class="ccc-badge" data-badge="partial">
+              <span class="ccc-badge-glyph" aria-hidden="true">◈</span>
+              <span class="ccc-badge-label">Partial</span>
+              <span class="ccc-visually-hidden"> — 1 source didn't respond</span>
+            </span> · 2 of 3 sources · 12 items</span>
+          </button>
+        </li>
+        <li class="ccc-report-row">
+          <button type="button" class="ccc-report-row-button">
+            <span class="ccc-clamp-2" title="Developer tooling and open-source releases — Oct 13, 2026">Developer tooling and open-source releases — Oct 13, 2026</span>
+            <span class="ccc-report-row-meta">
+              <time datetime="2026-10-12T20:00:00.000Z" title="Oct 12, 8:00 PM" aria-describedby="ID" class="ccc-research-time">yesterday</time>
+              <span id="ID" class="ccc-visually-hidden">Oct 12, 8:00 PM</span> · <span class="ccc-badge" data-badge="stale">
+              <span class="ccc-badge-glyph" aria-hidden="true">◷</span>
+              <span class="ccc-visually-hidden">Freshness: </span>
+              <span class="ccc-badge-label">Stale</span>
+            </span> · 3 sources · 12 items</span>
+          </button>
+        </li>
+        <li class="ccc-report-row" data-unreadable="true">
+          <p class="ccc-report-title">
+            <span class="ccc-error-glyph" aria-hidden="true">▲</span>Unreadable report</p>
+            <p class="ccc-report-row-meta" id="ID">
+              <span class="ccc-mono">broken-report.md</span> · Its metadata couldn't be read.</p>
+              <button type="button" class="ccc-row-action" aria-describedby="ID">Open note</button>
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div class="ccc-research-reader-cell">
+        <p class="ccc-research-placeholder">Select a report to read it.</p>
+      </div>
+    </div>
+  </section>
+</section>"
+`;
+
+exports[`the Research destination states, as markup > running: the Current run row and Run now waiting on its reason 1`] = `
+"<section class="ccc-research" aria-labelledby="ID">
+  <div class="ccc-research-header">
+    <h2 id="ID" tabindex="-1">Research</h2>
+    <div class="ccc-research-run">
+      <button type="button" class="ccc-connect-button" data-variant="primary" aria-label="Run now: fetch the sources and write a research report" aria-disabled="true" aria-describedby="ID">Run now</button>
+      <span id="ID" class="ccc-research-reason">A run is in progress.</span>
+    </div>
+  </div>
+  <p class="ccc-research-subline">Developer tooling and open-source releases · 3 sources configured</p>
+  <div class="ccc-research-strip">
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time" datetime="2026-10-14T11:00:00.000Z" title="FOOTER-TIME" aria-describedby="ID-absolute-time" tabindex="0">1 hour ago</time>
+      <span id="ID-absolute-time" class="ccc-visually-hidden">FOOTER-TIME</span>
+      <span class="ccc-badge" data-badge="cached">
+        <span class="ccc-badge-glyph" aria-hidden="true">◐</span>
+        <span class="ccc-visually-hidden">Freshness: </span>
+        <span class="ccc-badge-label">Cached</span>
+      </span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="ID-source-panel">Source</button>
+      <div id="ID-source-panel" class="ccc-source-panel" hidden="">
+        <p class="ccc-visually-hidden">Sources for research</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Research reports — ok</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+  <p class="ccc-research-status" role="status">
+  </p>
+  <section class="ccc-research-run-status" aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Run status</h3>
+    <dl class="ccc-detail-fields">
+      <dt class="ccc-research-status-row">Current run</dt>
+      <dd class="ccc-research-status-row">
+        <span class="ccc-research-state" data-state="running">
+          <span aria-hidden="true">▸</span> <span>Running</span>
+        </span> · Summarising · started 2 minutes ago</dd>
+        <dt class="ccc-research-status-row">Last successful run</dt>
+        <dd class="ccc-research-status-row">None yet</dd>
+        <dt class="ccc-research-status-row">Last failed run</dt>
+        <dd class="ccc-research-status-row">None</dd>
+      </dl>
+      <p class="ccc-field-help">Each run fetches the 3 configured sources and makes one summariser call.</p>
+      <div class="ccc-research-sources-config">
+        <button type="button" class="ccc-connect-button" data-variant="tertiary" aria-expanded="false" aria-controls="ID">Show configured sources (3)</button>
+        <div id="ID" hidden="">
+          <ul>
+            <li>Example tools changelog <span class="ccc-mono">changelog.example.invalid</span>
+          </li>
+          <li>Sample runtime releases <span class="ccc-mono">releases.sample.invalid</span>
+        </li>
+        <li>Demo language blog <span class="ccc-mono">blog.demo.invalid</span>
+      </li>
+    </ul>
+    <p class="ccc-field-help">The source list is edited in the companion service's research settings. A settings screen comes in a later phase.</p>
+  </div>
+</div>
+</section>
+<section aria-labelledby="ID">
+  <h3 id="ID" class="ccc-section-label">Reports</h3>
+  <div class="ccc-research-layout" data-reader-open="false">
+    <div class="ccc-research-list-cell">
+      <div class="ccc-report-list-region">
+        <ul class="ccc-report-list">
+          <li class="ccc-report-row">
+            <button type="button" class="ccc-report-row-button">
+              <span class="ccc-clamp-2" title="Developer tooling and open-source releases — Oct 14, 2026">Developer tooling and open-source releases — Oct 14, 2026</span>
+              <span class="ccc-report-row-meta">
+                <time datetime="2026-10-14T11:00:00.000Z" title="Oct 14, 11:00 AM" aria-describedby="ID" class="ccc-research-time">1 hour ago</time>
+                <span id="ID" class="ccc-visually-hidden">Oct 14, 11:00 AM</span> · <span class="ccc-badge" data-badge="cached">
+                <span class="ccc-badge-glyph" aria-hidden="true">◐</span>
+                <span class="ccc-visually-hidden">Freshness: </span>
+                <span class="ccc-badge-label">Cached</span>
+              </span> · 3 sources · 12 items</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+    </div>
+    <div class="ccc-research-reader-cell">
+      <p class="ccc-research-placeholder">Select a report to read it.</p>
+    </div>
+  </div>
+</section>
+</section>"
+`;
+
+exports[`the Research destination states, as markup > stale list refresh keeps the rows and says so 1`] = `
+"<section class="ccc-research" aria-labelledby="ID">
+  <div class="ccc-research-header">
+    <h2 id="ID" tabindex="-1">Research</h2>
+    <div class="ccc-research-run">
+      <button type="button" class="ccc-connect-button" data-variant="primary" aria-label="Run now: fetch the sources and write a research report">Run now</button>
+    </div>
+  </div>
+  <p class="ccc-research-subline">Research sources</p>
+  <div class="ccc-research-strip">
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time" datetime="2026-10-14T11:00:00.000Z" title="FOOTER-TIME" aria-describedby="ID-absolute-time" tabindex="0">1 hour ago</time>
+      <span id="ID-absolute-time" class="ccc-visually-hidden">FOOTER-TIME</span>
+      <span class="ccc-badge" data-badge="cached">
+        <span class="ccc-badge-glyph" aria-hidden="true">◐</span>
+        <span class="ccc-visually-hidden">Freshness: </span>
+        <span class="ccc-badge-label">Cached</span>
+      </span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="ID-source-panel">Source</button>
+      <div id="ID-source-panel" class="ccc-source-panel" hidden="">
+        <p class="ccc-visually-hidden">Sources for research</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Research reports — ok</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+  <p class="ccc-research-status" role="status">
+  </p>
+  <section class="ccc-research-run-status" aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Run status</h3>
+    <dl class="ccc-detail-fields">
+      <dt class="ccc-research-status-row">Last successful run</dt>
+      <dd class="ccc-research-status-row">None yet</dd>
+      <dt class="ccc-research-status-row">Last failed run</dt>
+      <dd class="ccc-research-status-row">None</dd>
+    </dl>
+  </section>
+  <section aria-labelledby="ID">
+    <h3 id="ID" class="ccc-section-label">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false">
+      <div class="ccc-research-list-cell">
+        <div class="ccc-report-list-region">
+          <div class="ccc-report-list-error">
+            <p>
+            <span class="ccc-error-glyph" aria-hidden="true">▲</span>Couldn't refresh the report list. Showing what was loaded just now.</p>
+            <button type="button" class="ccc-connect-button" data-variant="tertiary">Refresh reports</button>
+          </div>
+          <ul class="ccc-report-list">
+            <li class="ccc-report-row">
+              <button type="button" class="ccc-report-row-button">
+                <span class="ccc-clamp-2" title="Developer tooling and open-source releases — Oct 14, 2026">Developer tooling and open-source releases — Oct 14, 2026</span>
+                <span class="ccc-report-row-meta">
+                  <time datetime="2026-10-14T11:00:00.000Z" title="Oct 14, 11:00 AM" aria-describedby="ID" class="ccc-research-time">1 hour ago</time>
+                  <span id="ID" class="ccc-visually-hidden">Oct 14, 11:00 AM</span> · <span class="ccc-badge" data-badge="cached">
+                  <span class="ccc-badge-glyph" aria-hidden="true">◐</span>
+                  <span class="ccc-visually-hidden">Freshness: </span>
+                  <span class="ccc-badge-label">Cached</span>
+                </span> · 3 sources · 12 items</span>
+              </button>
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div class="ccc-research-reader-cell">
+        <p class="ccc-research-placeholder">Select a report to read it.</p>
+      </div>
+    </div>
+  </section>
+</section>"
+`;

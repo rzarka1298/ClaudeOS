@@ -437,8 +437,10 @@ describe("table-driven over every R-CAPS descriptor string (plan 06-10, Test 3)"
     "codex:open-transcript": { kind: "session-action-requested" },
     "codex:follow-log": { kind: "session-action-requested" },
     // Phase 7 (plan 07-05, D-17): the manual research trigger is a direct-gesture
-    // row. The dispatcher has no route for it, so it answers unavailable until the
-    // Research view wires Run now (plan 07-11) through its own handler.
+    // row. The dispatcher has no route for it yet, so it answers unavailable. The
+    // Research view (plan 07-11) calls its injected `requestRunNow` host port and
+    // nothing else; plan 07-15 adds the `research:run` branch and the optional
+    // `runResearch` context member here, classification first, and updates this row.
     "research:run": { kind: "unavailable" },
   };
 
