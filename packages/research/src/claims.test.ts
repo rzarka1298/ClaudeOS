@@ -2,7 +2,12 @@
 // The answer is data: it is parsed strictly, each item is checked on its own, cited ids must have
 // been fetched in this run, and a fact or a claim keeps its kind only when its quote is found
 // verbatim (after the shared normalisation) in a cited source.
-import { ReportItemSchema } from "@ccc/domain";
+import {
+  REPORT_ITEM_QUOTE_MAX_LENGTH,
+  REPORT_ITEM_QUOTE_MIN_LENGTH,
+  REPORT_ITEM_QUOTE_MIN_WORDS,
+  ReportItemSchema,
+} from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import { validateSummariserOutput } from "./claims.js";
 import { ADDRESS_REMOVED_MARKER } from "./neutralise.js";
@@ -13,6 +18,7 @@ const ID_B = "b".repeat(32);
 const ID_C = "c".repeat(32);
 const ID_UNFETCHED = "d".repeat(32);
 const ID_E = "e".repeat(32);
+const LONG_QUOTE = "abcdef ".repeat(80).trim();
 
 const SOURCES = {
   [ID_A]: "Node 24.21 fixes a stream reset in http2. It also updates npm.",
@@ -213,8 +219,8 @@ describe("Task 1 Test 4 (quote check): a reported fact is a machine-verified quo
     expect(spaced.items[0]?.kind).toBe("source-fact");
 
     const decomposed = ok(
-      validateSummariserOutput(answer([fact({ quote: "cafe\u0301" })]), {
-        sources: { [ID_A]: "A caf\u00E9 near the station." },
+      validateSummariserOutput(answer([fact({ quote: "a cafe\u0301 near the station today" })]), {
+        sources: { [ID_A]: "Visit a caf\u00E9 near the station today." },
       }),
     );
     expect(decomposed.items[0]?.kind).toBe("source-fact");
@@ -367,24 +373,21 @@ describe("Task 1 never throws", () => {
 describe("Task 2 (neutralised items): no address, markup or invisible character reaches a stored item", () => {
   const MARKER = ADDRESS_REMOVED_MARKER;
 
-  it("replaces addresses in text and quote, counts them, and keeps the kind", () => {
+  it("replaces addresses in the text and counts them, keeping the kind", () => {
     const result = ok(
       validateSummariserOutput(
         answer([
           fact({
             text: "Details at https://evil.example/p?d=1 and www.evil.example/x here.",
-            citedSourceIds: [ID_E],
-            quote: "see https://example.org/a for details",
           }),
         ]),
-        { sources: { [ID_E]: "Please see https://example.org/a for details." } },
+        { sources: SOURCES },
       ),
     );
     const item = result.items[0];
     expect(item?.kind).toBe("source-fact");
     expect(item?.text).toBe(`Details at ${MARKER} and ${MARKER} here.`);
-    expect(item?.quote).toBe(`see ${MARKER} for details`);
-    expect(result.counts.addressesRemoved).toBe(3);
+    expect(result.counts.addressesRemoved).toBe(2);
     expect(result.counts.downgraded).toBe(0);
   });
 
@@ -431,10 +434,10 @@ describe("Task 2 (neutralised items): no address, markup or invisible character 
           fact({ text: "x".repeat(900), quote: longQuote }),
           fact({
             citedSourceIds: [ID_E],
-            quote: "q".repeat(500),
+            quote: LONG_QUOTE,
           }),
         ]),
-        { sources: { ...SOURCES, [ID_E]: `${"q".repeat(500)} end` } },
+        { sources: { ...SOURCES, [ID_E]: `${LONG_QUOTE} end` } },
       ),
     );
     expect(result.items[0]?.text).toHaveLength(600);
@@ -442,15 +445,6 @@ describe("Task 2 (neutralised items): no address, markup or invisible character 
     expect(result.items[1]?.kind).toBe("source-fact");
     expect(result.counts.truncated).toBe(2);
     for (const item of result.items) expect(ReportItemSchema.safeParse(item).success).toBe(true);
-  });
-
-  it("keeps the kind for a very short verified quote (a known limit: the quote does not bind the text)", () => {
-    const result = ok(
-      validateSummariserOutput(answer([fact({ quote: "x", citedSourceIds: [ID_E] })]), {
-        sources: { [ID_E]: "x" },
-      }),
-    );
-    expect(result.items[0]?.kind).toBe("source-fact");
   });
 
   it("leaves no usable address anywhere in a hostile answer", () => {
@@ -476,5 +470,227 @@ describe("Task 2 (neutralised items): no address, markup or invisible character 
     }
     expect(result.items[1]?.text).toBe("[[Secret Plans]] ![[image.png]]");
     expect(result.items[4]?.text).toBe("<img src=x onerror=y> **bold**");
+  });
+});
+
+// --- coordinator hardening (security review of 3638f339) -----------------------------------------
+// (a) a minimum quote, (b) folding must not widen a match, (c) a fact cites only the sources that
+// hold its quote, (d) the stored quote is verified after neutralising and truncating.
+
+const SENTENCE = "The maintainers confirmed that the http2 stream reset is fixed in this release.";
+const HARD_SOURCES = {
+  [ID_A]: `${SENTENCE} Other text follows here.`,
+  [ID_B]: "Unrelated notes: http2-stream-reset-fixed and released today for everyone.",
+  [ID_C]: `Mirror copy. ${SENTENCE}`,
+} as const;
+
+function quoted(quote: string, overrides: Record<string, unknown> = {}) {
+  return validateSummariserOutput(answer([fact({ quote, ...overrides })]), {
+    sources: HARD_SOURCES,
+  });
+}
+
+describe("Hardening (a): the quote has a minimum", () => {
+  it("exports the minimums next to the maximum", () => {
+    expect(REPORT_ITEM_QUOTE_MIN_LENGTH).toBe(24);
+    expect(REPORT_ITEM_QUOTE_MIN_WORDS).toBe(4);
+    expect(REPORT_ITEM_QUOTE_MIN_LENGTH).toBeLessThan(REPORT_ITEM_QUOTE_MAX_LENGTH);
+  });
+
+  it("downgrades a short quote that is a perfect substring", () => {
+    for (const quote of ["http2", "stream reset", "the", "fixed in this", "a", "e"]) {
+      expect(ok(quoted(quote)).items[0]?.kind, quote).toBe("inference");
+    }
+  });
+
+  it("accepts exactly 24 characters and 4 words, and refuses one character less", () => {
+    const edge = "stream reset is fixed in";
+    expect(edge).toHaveLength(24);
+    expect(ok(quoted(edge)).items[0]?.kind).toBe("source-fact");
+    expect(ok(quoted(edge.slice(1))).items[0]?.kind).toBe("inference");
+  });
+
+  it("counts words as well as characters", () => {
+    const threeWords = "http2-stream-reset-fixed and released";
+    expect(threeWords.length).toBeGreaterThanOrEqual(24);
+    expect(ok(quoted(threeWords, { citedSourceIds: [ID_B] })).items[0]?.kind).toBe("inference");
+    const fourWords = "http2-stream-reset-fixed and released today";
+    expect(ok(quoted(fourWords, { citedSourceIds: [ID_B] })).items[0]?.kind).toBe("source-fact");
+  });
+
+  it("measures the minimum after normalising, so padding does not count", () => {
+    expect(ok(quoted(`http2${" ".repeat(60)}`)).items[0]?.kind).toBe("inference");
+    expect(ok(quoted(`   stream reset${"\n".repeat(30)}`)).items[0]?.kind).toBe("inference");
+  });
+
+  it("applies the minimum to an unverified-claim and drops the quote of an inference", () => {
+    const claim = ok(quoted("http2", { kind: "unverified-claim" }));
+    expect(claim.items[0]?.kind).toBe("inference");
+    expect(claim.items[0]?.quote).toBeUndefined();
+  });
+});
+
+describe("Hardening (b): folding never widens a match", () => {
+  const exact = "stream reset is fixed in this release";
+
+  it("verifies the exact text", () => {
+    expect(ok(quoted(exact)).items[0]?.kind).toBe("source-fact");
+  });
+
+  it("does not fold case, punctuation, zero-width characters, a BOM or homoglyphs", () => {
+    const variants: Record<string, string> = {
+      case: "Stream reset is fixed in this release",
+      punctuation: "stream-reset is fixed in this release",
+      "zero-width space": "stream reset is\u200B fixed in this release",
+      "zero-width joiner": "stream reset is fixed\u200D in this release",
+      "byte order mark as a space": "stream\uFEFFreset is fixed in this release",
+      "soft hyphen": "stream re\u00ADset is fixed in this release",
+      "cyrillic a": "stre\u0430m reset is fixed in this release",
+      "cyrillic i": "stream reset \u0456s fixed in this release",
+      "fullwidth letters": "\uFF53tream reset is fixed in this release",
+      "dotless i": "stream reset \u0131s fixed in this release",
+      "braille blank": "stream reset is fixed\u2800in this release",
+      "hangul filler": "stream reset is fixed\u3164in this release",
+      "hyphen for space": "stream-reset-is-fixed-in-this-release",
+      reordered: "reset stream is fixed in this release",
+      "extra word": "stream reset is not fixed in this release",
+      "dropped word": "stream reset fixed in this release",
+    };
+    for (const [name, quote] of Object.entries(variants)) {
+      const result = ok(quoted(quote));
+      expect(result.items[0]?.kind, name).toBe("inference");
+      expect(result.items[0]?.quote, name).toBeUndefined();
+    }
+  });
+
+  it("folds only whitespace and normalisation form", () => {
+    for (const quote of [
+      "stream   reset\tis\nfixed  in this release",
+      "stream\u00A0reset\u2003is fixed in this release",
+      "stream reset is fixed in this release  ",
+    ]) {
+      expect(ok(quoted(quote)).items[0]?.kind, JSON.stringify(quote)).toBe("source-fact");
+    }
+  });
+
+  it("stores the source's text, never the model's variant", () => {
+    const result = ok(quoted("stream   reset\tis\nfixed  in this release"));
+    expect(result.items[0]?.quote).toBe(exact);
+    const nbsp = ok(quoted("stream\u00A0reset\u2003is fixed in this release"));
+    expect(nbsp.items[0]?.quote).toBe(exact);
+    const decomposed = ok(
+      validateSummariserOutput(answer([fact({ quote: "a cafe\u0301 near the station today" })]), {
+        sources: { [ID_A]: "Visit a caf\u00E9 near the station today." },
+      }),
+    );
+    expect(decomposed.items[0]?.quote).toBe("a caf\u00E9 near the station today");
+  });
+});
+
+describe("Hardening (c): a fact cites only the sources that hold its quote", () => {
+  it("keeps only the id whose text contains the quote and counts the narrowing", () => {
+    const result = ok(
+      quoted("stream reset is fixed in this release", { citedSourceIds: [ID_A, ID_B] }),
+    );
+    expect(result.items[0]?.citedSourceIds).toEqual([ID_A]);
+    expect(result.counts.narrowedIds).toBe(1);
+  });
+
+  it("keeps every id whose text contains the quote", () => {
+    const result = ok(
+      quoted("stream reset is fixed in this release", { citedSourceIds: [ID_A, ID_B, ID_C] }),
+    );
+    expect(result.items[0]?.citedSourceIds).toEqual([ID_A, ID_C]);
+    expect(result.counts.narrowedIds).toBe(1);
+  });
+
+  it("narrows an unverified-claim the same way", () => {
+    const result = ok(
+      quoted("stream reset is fixed in this release", {
+        kind: "unverified-claim",
+        citedSourceIds: [ID_B, ID_A],
+      }),
+    );
+    expect(result.items[0]).toMatchObject({ kind: "unverified-claim", citedSourceIds: [ID_A] });
+  });
+
+  it("keeps all surviving ids on a downgraded item and on an inference", () => {
+    const downgraded = ok(
+      quoted("not in any source at all here", { citedSourceIds: [ID_A, ID_B] }),
+    );
+    expect(downgraded.items[0]).toMatchObject({ kind: "inference", citedSourceIds: [ID_A, ID_B] });
+    expect(downgraded.counts.narrowedIds).toBe(0);
+    const inference = ok(
+      quoted("stream reset is fixed in this release", {
+        kind: "inference",
+        citedSourceIds: [ID_A, ID_B],
+      }),
+    );
+    expect(inference.items[0]).toMatchObject({ kind: "inference", citedSourceIds: [ID_A, ID_B] });
+  });
+});
+
+describe("Hardening (d): the stored quote is verified after neutralising and truncating", () => {
+  const LONG_SENTENCE = `${"alpha beta gamma delta ".repeat(30)}end of the long passage`;
+
+  it("stores a truncated quote that is still a substring of the cited source", () => {
+    const result = ok(
+      validateSummariserOutput(answer([fact({ citedSourceIds: [ID_E], quote: LONG_SENTENCE })]), {
+        sources: { [ID_E]: `Intro. ${LONG_SENTENCE} Outro.` },
+      }),
+    );
+    const stored = result.items[0]?.quote ?? "";
+    expect(result.items[0]?.kind).toBe("source-fact");
+    expect(stored.length).toBeLessThanOrEqual(REPORT_ITEM_QUOTE_MAX_LENGTH);
+    expect(stored.length).toBeGreaterThan(200);
+    expect(`Intro. ${LONG_SENTENCE} Outro.`.includes(stored)).toBe(true);
+    expect(result.counts.truncated).toBe(1);
+  });
+
+  it("downgrades a fact whose verified quote held an address, since the marker breaks the match", () => {
+    const text = "Please read the guide at https://docs.example.org/guide before upgrading.";
+    const result = ok(
+      validateSummariserOutput(
+        answer([
+          fact({
+            citedSourceIds: [ID_E],
+            quote: "read the guide at https://docs.example.org/guide before",
+          }),
+        ]),
+        { sources: { [ID_E]: text } },
+      ),
+    );
+    expect(result.items[0]?.kind).toBe("inference");
+    expect(result.items[0]?.quote).toBeUndefined();
+    expect(result.items[0]?.citedSourceIds).toEqual([ID_E]);
+    expect(result.counts).toMatchObject({ downgraded: 1, addressesRemoved: 1 });
+    expect(JSON.stringify(result.items)).not.toContain("docs.example.org");
+  });
+
+  it("checks every stored quote against its stored ids", () => {
+    const sources: Record<string, string> = { ...HARD_SOURCES, [ID_E]: LONG_SENTENCE };
+    const result = ok(
+      validateSummariserOutput(
+        answer([
+          fact({
+            quote: "stream reset is fixed in this release",
+            citedSourceIds: [ID_A, ID_B, ID_C],
+          }),
+          fact({ quote: LONG_SENTENCE, citedSourceIds: [ID_E, ID_A] }),
+          fact({
+            quote: "http2-stream-reset-fixed and released today",
+            citedSourceIds: [ID_B, ID_A],
+          }),
+        ]),
+        { sources },
+      ),
+    );
+    for (const item of result.items) {
+      if (item.quote === undefined) continue;
+      for (const id of item.citedSourceIds) {
+        const source = (sources[id] ?? "").replace(/\s+/g, " ");
+        if (item.kind !== "inference") expect(source.includes(item.quote)).toBe(true);
+      }
+    }
   });
 });

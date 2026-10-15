@@ -34,6 +34,8 @@ export interface ClaimCounts {
   readonly droppedItems: number;
   /** Cited ids dropped because they were not fetched in this run. */
   readonly droppedIds: number;
+  /** Cited ids a fact or claim lost because their text does not hold its quote. */
+  readonly narrowedIds: number;
   /** Facts and claims turned into inference. */
   readonly downgraded: number;
   readonly addressesRemoved: number;
@@ -216,6 +218,7 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
     counts: {
       droppedItems,
       droppedIds,
+      narrowedIds: 0,
       downgraded,
       addressesRemoved,
       controlCharsRemoved,

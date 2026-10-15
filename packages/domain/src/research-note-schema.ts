@@ -66,6 +66,15 @@ export const REPORT_ITEMS_MAX = 25;
 export const REPORT_ITEM_TEXT_MAX_LENGTH = 600;
 /** The longest quoted passage, in characters. */
 export const REPORT_ITEM_QUOTE_MAX_LENGTH = 240;
+/**
+ * The shortest quoted passage that can verify a reported fact or a source claim, measured after
+ * the trusted stage's normalisation (NFC, whitespace collapsed): at least this many characters
+ * and at least {@link REPORT_ITEM_QUOTE_MIN_WORDS} whitespace-separated words. Below it a quote
+ * proves nothing (one common word matches almost any source), so the item is inference.
+ */
+export const REPORT_ITEM_QUOTE_MIN_LENGTH = 24;
+/** The fewest words a verifying quote may have; see {@link REPORT_ITEM_QUOTE_MIN_LENGTH}. */
+export const REPORT_ITEM_QUOTE_MIN_WORDS = 4;
 /** The most sources one finding may cite. */
 export const REPORT_CITED_IDS_MAX = 8;
 
