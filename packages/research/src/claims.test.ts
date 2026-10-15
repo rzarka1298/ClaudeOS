@@ -803,3 +803,141 @@ describe("Hardening (b2): a quote starts and stops on whole words of the source"
     expect(result.counts.narrowedIds).toBe(1);
   });
 });
+
+// --- coordinator blocker 2 (parser differentials) --------------------------------------------------
+// (1) JSON.parse keeps the LAST of a duplicated key, so a duplicate could flip a kind after the shape
+// check; any duplicate key at any depth, and the keys __proto__ and constructor, refuse the answer.
+// (2)+(3) one exported match predicate everywhere. (4) a fence must be the whole answer.
+
+describe("Blocker 2 (1): duplicate and forbidden JSON keys refuse the whole answer", () => {
+  const QUOTE_OK = "stream reset is fixed in this release";
+  const body = (kindPair: string) =>
+    `{"items":[{${kindPair},"text":"x y z","citedSourceIds":["${ID_A}"],"quote":"${QUOTE_OK}"}]}`;
+  const options = { sources: HARD_SOURCES };
+
+  it("accepts the same answer without a duplicate", () => {
+    const result = validateSummariserOutput(body('"kind":"inference"'), options);
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses a duplicate kind inside an item, whichever comes last", () => {
+    for (const pair of [
+      '"kind":"inference","kind":"source-fact"',
+      '"kind":"source-fact","kind":"inference"',
+    ]) {
+      expect(validateSummariserOutput(body(pair), options)).toEqual({
+        ok: false,
+        code: "summariser-invalid-output",
+      });
+    }
+  });
+
+  it("refuses a duplicate whose first key is spelled with an escape", () => {
+    const result = validateSummariserOutput(
+      body('"\\u006bind":"inference","kind":"source-fact"'),
+      options,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("refuses a duplicate top-level items key and a duplicate in a later item", () => {
+    expect(validateSummariserOutput('{"items":[],"items":[]}', options).ok).toBe(false);
+    const later = `{"items":[${answerItemJson()},{"kind":"inference","text":"a b c","text":"d e f","citedSourceIds":[]}]}`;
+    expect(validateSummariserOutput(later, options).ok).toBe(false);
+  });
+
+  it("refuses __proto__, constructor and prototype keys at any depth", () => {
+    for (const key of ["__proto__", "constructor", "prototype"]) {
+      const inItem = `{"items":[{"kind":"inference","text":"a b c","citedSourceIds":[],"${key}":1}]}`;
+      expect(validateSummariserOutput(inItem, options).ok, key).toBe(false);
+      const top = `{"items":[],"${key}":{}}`;
+      expect(validateSummariserOutput(top, options).ok, key).toBe(false);
+    }
+  });
+
+  it("does not mistake those words in a value, or the same key in different objects, for a duplicate", () => {
+    const text = "the constructor and __proto__ and prototype words are only text";
+    const two = `{"items":[{"kind":"inference","text":"${text}","citedSourceIds":[]},{"kind":"inference","text":"${text}","citedSourceIds":[]}]}`;
+    const result = validateSummariserOutput(two, options);
+    expect(result.ok && result.items).toHaveLength(2);
+  });
+
+  function answerItemJson(): string {
+    return JSON.stringify({ kind: "inference", text: "a b c", citedSourceIds: [] });
+  }
+});
+
+describe("Blocker 2 (4): a fence is the whole answer or nothing", () => {
+  const good = JSON.stringify({ items: [] });
+  const options = { sources: HARD_SOURCES };
+
+  it("refuses text after a fence, text before it, a second fence and an unterminated fence", () => {
+    const refused = [
+      `\`\`\`json\n${good}\n\`\`\`\nThanks!`,
+      `Here you go:\n\`\`\`json\n${good}\n\`\`\``,
+      `\`\`\`json\n${good}\n\`\`\`\n\`\`\`json\n${good}\n\`\`\``,
+      `\`\`\`json\n${good}\n\`\`\`\n\`\`\``,
+      `\`\`\`json\n${good}`,
+      `\`\`\`json\n${good}\n\`\`\` \`\`\``,
+    ];
+    for (const text of refused) {
+      expect(validateSummariserOutput(text, options).ok, text).toBe(false);
+    }
+  });
+
+  it("accepts one fence, with or without the language tag, and triple backticks inside a string", () => {
+    const withTicks = JSON.stringify({
+      items: [{ kind: "inference", text: "uses ``` fences in text", citedSourceIds: [] }],
+    });
+    for (const text of [
+      `\`\`\`json\n${good}\n\`\`\``,
+      `\`\`\`\n${good}\n\`\`\``,
+      `\`\`\`json\n${withTicks}\n\`\`\``,
+    ]) {
+      expect(validateSummariserOutput(text, options).ok, text).toBe(true);
+    }
+  });
+});
+
+describe("Blocker 2 (2)(3): one exported predicate decides every quote check", () => {
+  it("exports the predicate and applies the minimum, the words and the whole-word edges", () => {
+    const source =
+      "Intro. The maintainers confirmed that the http2 stream reset is fixed in this release.";
+    expect(quoteInSource(source, "stream reset is fixed in this release")).toBe(true);
+    expect(quoteInSource(source, "stream   reset\nis fixed in this  release")).toBe(true);
+    expect(quoteInSource(source, "tream reset is fixed in this release")).toBe(false);
+    expect(quoteInSource(source, "stream reset is fixed in this releas")).toBe(false);
+    expect(quoteInSource(source, "http2")).toBe(false);
+    expect(quoteInSource(source, "- - - - - - - - - - - - -")).toBe(false);
+  });
+
+  it("re-verifies every stored quote, truncated ones included, through the exported predicate", () => {
+    const words = "abcdef ".repeat(80).trim();
+    const sources: Record<string, string> = { [ID_E]: `Intro. ${words} Outro.`, ...HARD_SOURCES };
+    const result = ok(
+      validateSummariserOutput(
+        answer([
+          fact({ citedSourceIds: [ID_E], quote: words }),
+          fact({
+            quote: "stream reset is fixed in this release",
+            citedSourceIds: [ID_A, ID_B, ID_C],
+          }),
+          fact({ quote: "Mirror copy. The maintainers", citedSourceIds: [ID_A, ID_C] }),
+        ]),
+        { sources },
+      ),
+    );
+    expect(result.items.map((i) => i.kind)).toEqual(["source-fact", "source-fact", "source-fact"]);
+    const truncated = result.items[0]?.quote ?? "";
+    expect(truncated.length).toBeLessThanOrEqual(REPORT_ITEM_QUOTE_MAX_LENGTH);
+    expect(truncated.endsWith("abcdef")).toBe(true);
+    expect(result.counts.truncated).toBe(1);
+    for (const item of result.items) {
+      for (const id of item.citedSourceIds) {
+        expect(quoteInSource(sources[id] ?? "", item.quote ?? ""), `${item.quote} in ${id}`).toBe(
+          true,
+        );
+      }
+    }
+  });
+});
