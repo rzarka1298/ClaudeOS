@@ -8,7 +8,8 @@ import { normaliseForMatch, validateSummariserOutput } from "@ccc/research";
 import { describe, expect, it } from "vitest";
 import { HOSTILE_MODEL_ANSWERS } from "./hostile-model-answers.js";
 
-const ADDRESS = /(?:[a-z][a-z0-9+.-]*:[/\\]|\bwww\.|\b(?:javascript|data|vbscript|file|obsidian):)/i;
+const ADDRESS =
+  /(?:[a-z][a-z0-9+.-]*:[/\\]|\bwww\.|\b(?:javascript|data|vbscript|file|obsidian):)/i;
 const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/u;
 
 describe("hostile model answers: shape of the set", () => {

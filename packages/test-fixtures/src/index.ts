@@ -4,6 +4,12 @@ export {
   FakeSessionProjectLookup,
   FakeSessionTerminalLauncher,
 } from "./fake-ports.js";
+export type { HostileModelAnswer } from "./hostile-model-answers.js";
+export {
+  HOSTILE_MODEL_ANSWERS,
+  MODEL_ANSWER_ID_A,
+  MODEL_ANSWER_ID_B,
+} from "./hostile-model-answers.js";
 export type {
   HostileResearchCategory,
   HostileResearchEntry,
