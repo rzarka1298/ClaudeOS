@@ -50,6 +50,20 @@ export {
   writeCodexCursor,
   writeCumulativeBaseline,
 } from "./codex-store.js";
+export type {
+  FinishJobRunInput,
+  JobRunStageEntry,
+  JobRunTrigger,
+  StartJobRunInput,
+  StartJobRunResult,
+  UnavailableSource,
+} from "./job-run-store.js";
+export {
+  appendJobRunStage,
+  finishJobRun,
+  JOB_RUN_TRIGGERS,
+  startJobRun,
+} from "./job-run-store.js";
 export { applyMigrations, SchemaAheadOfCodeError } from "./migrate.js";
 export type { OperationalStore } from "./open-store.js";
 export { openStore } from "./open-store.js";
