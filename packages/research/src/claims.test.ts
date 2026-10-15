@@ -5,12 +5,14 @@
 import { ReportItemSchema } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import { validateSummariserOutput } from "./claims.js";
+import { ADDRESS_REMOVED_MARKER } from "./neutralise.js";
 import { normaliseForMatch } from "./text-canon.js";
 
 const ID_A = "a".repeat(32);
 const ID_B = "b".repeat(32);
 const ID_C = "c".repeat(32);
 const ID_UNFETCHED = "d".repeat(32);
+const ID_E = "e".repeat(32);
 
 const SOURCES = {
   [ID_A]: "Node 24.21 fixes a stream reset in http2. It also updates npm.",
@@ -39,13 +41,13 @@ function ok(result: ReturnType<typeof validateSummariserOutput>) {
 describe("normaliseForMatch", () => {
   it("applies NFC and collapses every whitespace run to one space, trimming the ends", () => {
     expect(normaliseForMatch("  a \t\n b\r\n\r\nc  ")).toBe("a b c");
-    expect(normaliseForMatch("é")).toBe("é");
-    expect(normaliseForMatch("a  b")).toBe("a b");
+    expect(normaliseForMatch("e\u0301")).toBe("\u00E9");
+    expect(normaliseForMatch("a\u00A0\u2003b")).toBe("a b");
   });
 
   it("keeps wording and case, and is idempotent", () => {
     expect(normaliseForMatch("Stream Reset")).toBe("Stream Reset");
-    const once = normaliseForMatch(" x \n ý ");
+    const once = normaliseForMatch(" x \n y\u0301 ");
     expect(normaliseForMatch(once)).toBe(once);
   });
 });
@@ -211,8 +213,8 @@ describe("Task 1 Test 4 (quote check): a reported fact is a machine-verified quo
     expect(spaced.items[0]?.kind).toBe("source-fact");
 
     const decomposed = ok(
-      validateSummariserOutput(answer([fact({ quote: "café" })]), {
-        sources: { [ID_A]: "A café near the station." },
+      validateSummariserOutput(answer([fact({ quote: "cafe\u0301" })]), {
+        sources: { [ID_A]: "A caf\u00E9 near the station." },
       }),
     );
     expect(decomposed.items[0]?.kind).toBe("source-fact");
@@ -341,7 +343,7 @@ describe("Task 1 never throws", () => {
       seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
       return seed;
     };
-    const alphabet = '{}[]",:\\ \n`json items kind text 0123456789abcdef\u0000‮\ud800';
+    const alphabet = '{}[]",:\\ \n`json items kind text 0123456789abcdef\u0000\u202E\ud800';
     for (let i = 0; i < 2000; i += 1) {
       const length = next() % 80;
       let text = "";
@@ -359,5 +361,120 @@ describe("Task 1 never throws", () => {
       const result = validateSummariserOutput(odd as unknown as string, { sources: SOURCES });
       expect(result).toEqual({ ok: false, code: "summariser-invalid-output" });
     }
+  });
+});
+
+describe("Task 2 (neutralised items): no address, markup or invisible character reaches a stored item", () => {
+  const MARKER = ADDRESS_REMOVED_MARKER;
+
+  it("replaces addresses in text and quote, counts them, and keeps the kind", () => {
+    const result = ok(
+      validateSummariserOutput(
+        answer([
+          fact({
+            text: "Details at https://evil.example/p?d=1 and www.evil.example/x here.",
+            citedSourceIds: [ID_E],
+            quote: "see https://example.org/a for details",
+          }),
+        ]),
+        { sources: { [ID_E]: "Please see https://example.org/a for details." } },
+      ),
+    );
+    const item = result.items[0];
+    expect(item?.kind).toBe("source-fact");
+    expect(item?.text).toBe(`Details at ${MARKER} and ${MARKER} here.`);
+    expect(item?.quote).toBe(`see ${MARKER} for details`);
+    expect(result.counts.addressesRemoved).toBe(3);
+    expect(result.counts.downgraded).toBe(0);
+  });
+
+  it("checks the quote as the model wrote it, before neutralising", () => {
+    // A zero-width character inside the quote would be removed by neutralising; the check must
+    // still see the original and refuse it.
+    const result = ok(
+      validateSummariserOutput(answer([fact({ quote: "fixes a stream\u200B reset in http2" })]), {
+        sources: SOURCES,
+      }),
+    );
+    expect(result.items[0]?.kind).toBe("inference");
+    expect(result.counts.downgraded).toBe(1);
+  });
+
+  it("strips invisible characters from stored text and counts them", () => {
+    const result = ok(
+      validateSummariserOutput(
+        answer([fact({ text: "Fixes\u202E a\u200D reset.\nSecond\tline." })]),
+        {
+          sources: SOURCES,
+        },
+      ),
+    );
+    expect(result.items[0]?.text).toBe("Fixes a reset. Second line.");
+    expect(result.counts.controlCharsRemoved).toBe(2);
+  });
+
+  it("drops an item whose text is empty after neutralising", () => {
+    const result = ok(
+      validateSummariserOutput(answer([fact({ text: "\u200B\u202E  \n" }), fact()]), {
+        sources: SOURCES,
+      }),
+    );
+    expect(result.items).toHaveLength(1);
+    expect(result.counts.droppedItems).toBe(1);
+  });
+
+  it("cuts a long text and quote after neutralising and counts, never rejecting", () => {
+    const longQuote = "fixes a stream reset in http2";
+    const result = ok(
+      validateSummariserOutput(
+        answer([
+          fact({ text: "x".repeat(900), quote: longQuote }),
+          fact({
+            citedSourceIds: [ID_E],
+            quote: "q".repeat(500),
+          }),
+        ]),
+        { sources: { ...SOURCES, [ID_E]: `${"q".repeat(500)} end` } },
+      ),
+    );
+    expect(result.items[0]?.text).toHaveLength(600);
+    expect(result.items[1]?.quote).toHaveLength(240);
+    expect(result.items[1]?.kind).toBe("source-fact");
+    expect(result.counts.truncated).toBe(2);
+    for (const item of result.items) expect(ReportItemSchema.safeParse(item).success).toBe(true);
+  });
+
+  it("keeps the kind for a very short verified quote (a known limit: the quote does not bind the text)", () => {
+    const result = ok(
+      validateSummariserOutput(answer([fact({ quote: "x", citedSourceIds: [ID_E] })]), {
+        sources: { [ID_E]: "x" },
+      }),
+    );
+    expect(result.items[0]?.kind).toBe("source-fact");
+  });
+
+  it("leaves no usable address anywhere in a hostile answer", () => {
+    const hostile = [
+      "![t](https://beacon.example/p.gif)",
+      "[[Secret Plans]] ![[image.png]]",
+      "javascript:alert(1) and data:text/html,x and obsidian://open?vault=v",
+      "ht\u200Btps://evil.example/x and www.evil.example",
+      "<img src=x onerror=y> **bold**",
+    ];
+    const items = hostile.map((text) => ({
+      kind: "inference",
+      text,
+      citedSourceIds: [ID_A],
+      quote: text,
+    }));
+    const result = ok(validateSummariserOutput(answer(items), { sources: SOURCES }));
+    expect(result.items).toHaveLength(hostile.length);
+    for (const item of result.items) {
+      expect(`${item.text} ${item.quote ?? ""}`).not.toMatch(
+        /https?:|www\.|javascript:|data:|obsidian:|:\/\//i,
+      );
+    }
+    expect(result.items[1]?.text).toBe("[[Secret Plans]] ![[image.png]]");
+    expect(result.items[4]?.text).toBe("<img src=x onerror=y> **bold**");
   });
 });
