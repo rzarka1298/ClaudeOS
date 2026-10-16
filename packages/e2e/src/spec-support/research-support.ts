@@ -643,9 +643,28 @@ export interface ScenarioRun {
   readonly notBefore: number;
 }
 
+/** The newest run that has ended, success or failure, as the service reports it (null: none yet). */
+export function latestEndedRun(
+  status: Pick<Awaited<ReturnType<ResearchClient["status"]>>, "lastSuccess" | "lastFailure">,
+): { readonly runId: string; readonly ok: boolean } | null {
+  const success = status.lastSuccess;
+  const failure = status.lastFailure;
+  if (success !== null && (failure === null || success.endedAt >= failure.endedAt)) {
+    return { runId: success.runId, ok: true };
+  }
+  return failure === null ? null : { runId: failure.runId, ok: false };
+}
+
 /**
  * Selects the scenario's sources, makes sure the destination is open, presses Run now and waits
- * until the status line says how the run ended; then asks the service which run that was.
+ * until the run it started has ended; then reads the destination as the status line says how it
+ * ended.
+ *
+ * The run is followed through the service, not through the page: the id of the newest ended run is
+ * read before the press, and the press is done when the service names another one. A page-only
+ * wait (the status line leaving the previous run's sentence) cannot tell two consecutive runs apart
+ * when both end with the very same sentence and the second is over before the first poll (07-UAT
+ * items 8 then 22), which left such a wait to time out or to read the previous run (07-FIX7).
  */
 export async function runScenario(
   browser: ResearchBrowser,
@@ -653,26 +672,30 @@ export async function runScenario(
   scenario: Parameters<ResearchUatPrepared["select"]>[0],
 ): Promise<ScenarioRun> {
   env.prepared.select(scenario);
-  const opened = await openResearch(browser);
+  await openResearch(browser);
+  const previous = latestEndedRun(await env.research.status());
   const notBefore = Date.now();
   if (!(await pressRunNow(browser))) throw new Error("The Run now button could not be pressed.");
-  // Wait for the press to register (the status line leaves the previous run's sentence).
-  await pollUntil(
+  // The press has registered, and the run is over, once the service names a run it did not name
+  // before the press.
+  const ended = await pollUntil(
     async () => {
-      const read = await readResearch(browser);
-      return read.status !== opened.status || read.runNow.busy ? read : null;
+      const latest = latestEndedRun(await env.research.status());
+      return latest !== null && latest.runId !== previous?.runId ? latest : null;
     },
-    { ...WAIT.short, describe: "the press to register" },
+    { timeoutMs: 120_000, intervalMs: 250, describe: "the service to report the new run as ended" },
   );
-  const read = await waitForRunEnd(browser);
-  const status = await env.research.status();
-  const success = status.lastSuccess;
-  const failure = status.lastFailure;
-  const latest =
-    success !== null && (failure === null || success.endedAt >= failure.endedAt)
-      ? { runId: success.runId, ok: true }
-      : { runId: failure?.runId ?? "", ok: false };
-  return { read, runId: latest.runId, ok: latest.ok, notBefore };
+  // Then the page: its status line says how the run ended, and the button is free again.
+  const read = await pollUntil(
+    async () => {
+      const current = await readResearch(browser);
+      return current.mounted && !current.runNow.busy && isRunEndLine(current.status)
+        ? current
+        : null;
+    },
+    { timeoutMs: 60_000, intervalMs: 250, describe: "the status line to say how the run ended" },
+  );
+  return { read, runId: ended.runId, ok: ended.ok, notBefore };
 }
 
 // ---------------------------------------------------------------------------
