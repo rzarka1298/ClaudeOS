@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as quickActions from "../widgets/quick-actions.js";
 import { configureResearch } from "./api.js";
 import { createRunNowRequester, RESEARCH_RUN_DESCRIPTOR } from "./run-now.js";
-import { pressPending, resetResearchState } from "./state.js";
+import { resetResearchState } from "./state.js";
 
 /**
  * The Run now host port (plan 07-15, D-17): the port the Research view's button calls is the
@@ -40,10 +40,9 @@ describe("createRunNowRequester", () => {
     expect(ctx?.runSessionAction).toBeUndefined();
     expect(ctx?.openSwitcher).toBeUndefined();
     expect(ctx?.requestTaskForm).toBeUndefined();
-    ctx?.navigate("settings");
-    ctx?.requestLaunch(null, "finder");
-    // Neither of the two inert members did anything observable.
-    expect(pressPending.value).toBe(false);
+    // The two inert members return nothing and do nothing.
+    expect(ctx?.navigate("settings")).toBeUndefined();
+    expect(ctx?.requestLaunch(null, "finder")).toBeUndefined();
   });
 
   it("posts the unavailable Notice through the notify it was given when the trigger is not wired", () => {
@@ -51,6 +50,7 @@ describe("createRunNowRequester", () => {
     // A requester whose dispatch answers unavailable is the dispatcher's own behaviour;
     // here the requester must hand its notify to the context unchanged.
     createRunNowRequester(notify)();
-    expect(spy.mock.calls[0]?.[1].notify).toBe(notify);
+    const ctx = spy.mock.calls[0]?.[1];
+    expect(ctx).toMatchObject({ notify });
   });
 });

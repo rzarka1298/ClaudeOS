@@ -123,7 +123,12 @@ describe("Test 1 (client): request shapes", () => {
   });
 
   it("the four paths are distinct, fixed and carry no parameter", () => {
-    const paths = [RESEARCH_RUN_PATH, RESEARCH_LIST_PATH, RESEARCH_REPORT_PATH, RESEARCH_STATUS_PATH];
+    const paths = [
+      RESEARCH_RUN_PATH,
+      RESEARCH_LIST_PATH,
+      RESEARCH_REPORT_PATH,
+      RESEARCH_STATUS_PATH,
+    ];
     expect(new Set(paths).size).toBe(4);
     for (const path of paths) expect(path).toMatch(/^\/[a-z0-9/-]+$/);
   });
@@ -142,7 +147,8 @@ describe("Test 1 (client): outgoing validation (T-07-32)", () => {
       () => research.report({ noteId: "short", page: "items" }),
       () => research.report({ noteId: "../../etc/passwd", page: "items" } as never),
       () => research.report({ noteId: NOTE_ID, page: "everything" } as never),
-      () => research.report({ noteId: NOTE_ID, page: "items", path: "global/output/a.md" } as never),
+      () =>
+        research.report({ noteId: NOTE_ID, page: "items", path: "global/output/a.md" } as never),
       () => research.report({} as never),
     ];
     for (const run of bad) {

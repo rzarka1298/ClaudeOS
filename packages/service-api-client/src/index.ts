@@ -71,6 +71,8 @@ export {
   setGithubLink,
   testLauncher,
 } from "./projects-api.js";
+export type { ResearchClient } from "./research-client.js";
+export { createResearchClient, ResearchRequestError } from "./research-client.js";
 export type {
   SocketApiClient,
   SocketApiClientOptions,

@@ -16,7 +16,9 @@ import type { QuickActionDescriptor } from "./contract.js";
  * nothing could yet be approved. It now has five outcomes of its own:
  * navigated, unavailable, launch-requested, switcher-opened and
  * `proposal-requested` (plus the Phase 5 `session-action-requested`, which only
- * hands a descriptor to the session runner). The rule it replaces is equally
+ * hands a descriptor to the session runner, and the Phase 7
+ * `research-run-requested`, which only hands the manual research trigger to the
+ * host's `runResearch`, plan 07-15). The rule it replaces is equally
  * strict in a different way: the dispatcher asks the domain classification
  * table what a capability IS before any direct branch, and then
  *
@@ -71,6 +73,12 @@ export interface QuickActionContext {
    * (D-37). Absent, `task:create` still navigates to Tasks.
    */
   readonly requestTaskForm?: (() => void) | undefined;
+  /**
+   * Starts a research run now (plan 07-15, D-17). The `research:run` capability is a direct
+   * gesture, classified before this member is reached; the host's trigger is the Research
+   * view's press. Absent, `research:run` answers like any unavailable action.
+   */
+  readonly runResearch?: (() => void) | undefined;
 }
 
 export type QuickActionResult =
@@ -80,7 +88,9 @@ export type QuickActionResult =
   | { readonly kind: "switcher-opened" }
   | { readonly kind: "session-action-requested"; readonly capability: string }
   /** Executes nothing: the descriptor was handed to `ctx.requestProposal` (D-06). */
-  | { readonly kind: "proposal-requested"; readonly operation: string };
+  | { readonly kind: "proposal-requested"; readonly operation: string }
+  /** The manual research trigger was handed to `ctx.runResearch` (plan 07-15, D-17). */
+  | { readonly kind: "research-run-requested" };
 
 /** Where a connector is configured once its phase lands. */
 const SETTINGS: DestinationId = "settings";
@@ -139,6 +149,13 @@ export function dispatchQuickAction(
     ctx.navigate(TASKS);
     ctx.requestTaskForm?.();
     return { kind: "navigated", destination: TASKS };
+  }
+
+  if (descriptor.capability === "research:run" && ctx.runResearch !== undefined) {
+    // A direct gesture (the classification above found no approval row for it): the owner's own
+    // press starts the run, and the service's run route stays the authority (D-17, T-07-42).
+    ctx.runResearch();
+    return { kind: "research-run-requested" };
   }
 
   if (descriptor.capability === "connect:claude-hooks") {

@@ -25,7 +25,7 @@ export const DESTINATIONS = [
   {
     id: "research",
     label: "Research",
-    description: "Cited reports and the knowledge lifecycle. Filled in a later phase.",
+    description: "Cited research reports, their sources and the latest automation runs.",
   },
   {
     id: "tasks",

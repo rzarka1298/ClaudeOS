@@ -16,6 +16,7 @@ import type { ProjectLaunchActionId } from "../projects/launch-status.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
+import { pressRunNow } from "../research/state.js";
 import { globalTasksContext } from "../tasks/contexts.js";
 import { nowTick } from "../widgets/clock.js";
 import type {
@@ -38,6 +39,7 @@ import { createLaunchersSession, type LaunchersSession } from "./launchers-setti
 import { navigationRequest, taskFormRequested } from "./navigation-request.js";
 import { Overview } from "./overview.js";
 import { ProjectsView } from "./projects-view.js";
+import { ResearchDestination } from "./research.js";
 import {
   runSessionAction,
   type SessionActionDeps,
@@ -257,6 +259,8 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
     />
   ),
   tasks: ({ connection, now }) => <TasksDestination connection={connection} now={now} />,
+  // Plan 07-15 (D-22, UI-SPEC R1): the report list, the reader, Run now and the run status.
+  research: ({ connection, now }) => <ResearchDestination connection={connection} now={now} />,
   "agent-runs": ({ now, onQuickAction, loadSessionUsage }) => (
     <AgentRuns now={now} onQuickAction={onQuickAction} loadSessionUsage={loadSessionUsage} />
   ),
@@ -269,6 +273,15 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
     />
   ),
 };
+
+/**
+ * Destinations whose view renders its own level-2 heading (UI-SPEC R1, "Heading structure": h2
+ * Research, then h3 sections). The shell leaves its generic heading out for these, so the page
+ * never carries two level-2 headings with the same name.
+ */
+const DESTINATIONS_WITH_OWN_HEADING: ReadonlySet<DestinationId> = new Set<DestinationId>([
+  "research",
+]);
 
 function connectionStatusText(state: ConnectionState): string {
   switch (state.kind) {
@@ -373,6 +386,11 @@ export function Shell({
       openSwitcher,
       requestTaskForm: () => {
         taskFormRequested.value = true;
+      },
+      // Plan 07-15 (D-17): the manual research trigger, reached only after the dispatcher has
+      // classified `research:run`. `pressRunNow` takes the claim the Research button already made.
+      runResearch: () => {
+        void pressRunNow();
       },
       runSessionAction:
         sessionActions === undefined
@@ -499,7 +517,7 @@ export function Shell({
           // biome-ignore lint/a11y/noNoninteractiveTabindex: the WAI-ARIA tabs pattern requires the tabpanel to be focusable (A11Y-01) — Biome doesn't know role="tabpanel" makes this interactive.
           tabIndex={0}
         >
-          <h2>{active.label}</h2>
+          {DESTINATIONS_WITH_OWN_HEADING.has(active.id) ? null : <h2>{active.label}</h2>}
           {(() => {
             const DestinationView = DESTINATION_VIEWS[active.id];
             return DestinationView ? (

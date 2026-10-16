@@ -12,6 +12,11 @@ import { createResearchApi, type ResearchClientLike } from "./client-api.js";
 
 const NOTE_ID = "0mfk1a2b3c4d5e6f7a8b9c001";
 
+/** A client whose members all resolve; `overrides` swap individual members. */
+function clientWith(overrides: Partial<ResearchClientLike>): ResearchClientLike {
+  return { ...fakeClient(), ...overrides } as ResearchClientLike;
+}
+
 function fakeClient(overrides: Partial<ResearchClientLike> = {}): {
   [K in keyof ResearchClientLike]: ReturnType<typeof vi.fn>;
 } {
@@ -61,20 +66,18 @@ describe("Test 2 (adapter): createResearchApi implements the ResearchApi port", 
 
   it("returns exactly what the client returned", async () => {
     const response = { runId: NOTE_ID, alreadyRunning: true, state: "running" };
-    const client = fakeClient({ run: vi.fn(() => Promise.resolve(response)) as never });
-    await expect(createResearchApi(client as unknown as ResearchClientLike).run()).resolves.toBe(
-      response,
-    );
+    const client = clientWith({ run: () => Promise.resolve(response as never) });
+    await expect(createResearchApi(client).run()).resolves.toBe(response);
   });
 
   it("rejects with ResearchApiError carrying the same closed code, for every code", async () => {
     for (const code of RESEARCH_ERROR_CODES) {
-      const client = fakeClient({
-        status: vi.fn(() =>
-          Promise.reject(Object.assign(new Error(code), { name: "ResearchRequestError", code })),
-        ) as never,
+      const client = clientWith({
+        status: () => {
+          throw Object.assign(new Error(code), { name: "ResearchRequestError", code });
+        },
       });
-      const error = await createResearchApi(client as unknown as ResearchClientLike)
+      const error = await createResearchApi(client)
         .status()
         .catch((e: unknown) => e);
       expect(error).toBeInstanceOf(ResearchApiError);
@@ -93,8 +96,13 @@ describe("Test 2 (adapter): createResearchApi implements the ResearchApi port", 
       undefined,
     ];
     for (const failure of hostile) {
-      const client = fakeClient({ list: vi.fn(() => Promise.reject(failure)) as never });
-      const error = (await createResearchApi(client as unknown as ResearchClientLike)
+      const client = clientWith({
+        list: () => {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- a non-Error failure is the point of this test
+          throw failure;
+        },
+      });
+      const error = (await createResearchApi(client)
         .list()
         .catch((e: unknown) => e)) as ResearchApiError;
       expect(error).toBeInstanceOf(ResearchApiError);
@@ -104,12 +112,12 @@ describe("Test 2 (adapter): createResearchApi implements the ResearchApi port", 
   });
 
   it("does not throw synchronously: a client that throws becomes a rejected promise", async () => {
-    const client = fakeClient({
-      report: vi.fn(() => {
+    const client = clientWith({
+      report: () => {
         throw new Error("boom");
-      }) as never,
+      },
     });
-    const api = createResearchApi(client as unknown as ResearchClientLike);
+    const api = createResearchApi(client);
     const pending = api.report(NOTE_ID, "items");
     await expect(pending).rejects.toMatchObject({ code: "unrecognised-response" });
   });

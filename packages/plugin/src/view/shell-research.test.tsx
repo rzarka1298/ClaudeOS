@@ -125,7 +125,7 @@ describe("Test 3 (dispatch, tracer): Run now reaches the socket through the one 
 
     const line = document.querySelector('.ccc-research-status[role="status"]');
     await waitFor(() => expect(line?.textContent).toBe("Research run started."));
-    await screen.findByText("Capturing", { exact: false });
+    await screen.findByText("Reading the source list", { exact: false });
   });
 
   it("with no runResearch member the descriptor answers unavailable and no route is posted", () => {
