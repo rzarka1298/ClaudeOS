@@ -25,8 +25,8 @@ import { buildReportItemsPage, buildReportSourcesPage, findReport } from "./view
  * the report's on id, kind, address, hash, path and access class. The title and the address that
  * are shown come from the raw note's reference, never from the report's editable copy.
  *
- * (A reader with write access to the vault can still forge both files; recording bindings in the
- * operational store at raw-write time is an owner decision, recorded in 07-FIX5-SUMMARY.md.)
+ * (A party with write access to the vault can still forge both files; that half is closed by the
+ * operational store's record of each source, see view-model-store-trust.test.ts and ADR 0030.)
  */
 
 let vault: ReportVault;
