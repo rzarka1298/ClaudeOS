@@ -246,6 +246,18 @@ export const HOSTILE_MODEL_ANSWERS: readonly HostileModelAnswer[] = [
     ["source-fact"],
   ),
   valid(
+    "inference-quote-held-by-one-source-narrows-ids",
+    [
+      item({
+        kind: "inference",
+        citedSourceIds: [A, B],
+        quote: "does not fix the cache bug in this release",
+      }),
+    ],
+    ["inference"],
+    [[A]],
+  ),
+  valid(
     "item-inference-keeps-no-unverified-quote",
     [item({ kind: "inference", quote: "never in any source at all really" })],
     ["inference"],

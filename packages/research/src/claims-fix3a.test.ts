@@ -59,3 +59,44 @@ describe("F1: a quote longer than the cap is not stored as a prefix", () => {
     expect(result.counts.truncated).toBe(0);
   });
 });
+
+describe("F2: citations are narrowed to the quote holders for every kind that stores a quote", () => {
+  const SOURCE_A = "Intro. The team does not fix the cache bug in this release at all.";
+  const SOURCE_B = "Unrelated notes about something else entirely.";
+  const QUOTE = "does not fix the cache bug in this release";
+
+  for (const kind of ["inference", "source-fact", "unverified-claim"] as const) {
+    it(`narrows a ${kind} that cites a source which does not hold its quote`, () => {
+      const result = ok(
+        validateSummariserOutput(
+          answer([
+            { kind, text: "The cache bug stays.", citedSourceIds: [ID_A, ID_B], quote: QUOTE },
+          ]),
+          { sources: { [ID_A]: SOURCE_A, [ID_B]: SOURCE_B } },
+        ),
+      );
+      expect(result.items[0]?.kind).toBe(kind);
+      expect(result.items[0]?.quote).toBe(QUOTE);
+      expect(result.items[0]?.citedSourceIds).toEqual([ID_A]);
+      expect(result.counts.narrowedIds).toBe(1);
+    });
+  }
+
+  it("keeps an inference's ids when it carries no verified quote", () => {
+    const result = ok(
+      validateSummariserOutput(
+        answer([
+          {
+            kind: "inference",
+            text: "Probably stays.",
+            citedSourceIds: [ID_A, ID_B],
+            quote: "never in any source at all really",
+          },
+        ]),
+        { sources: { [ID_A]: SOURCE_A, [ID_B]: SOURCE_B } },
+      ),
+    );
+    expect(result.items[0]?.quote).toBeUndefined();
+    expect(result.items[0]?.citedSourceIds).toEqual([ID_A, ID_B]);
+  });
+});

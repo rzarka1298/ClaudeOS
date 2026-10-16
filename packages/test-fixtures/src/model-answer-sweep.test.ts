@@ -59,9 +59,8 @@ describe("hostile model answers: the trusted stage holds", () => {
           const holders = item.citedSourceIds.filter((id) =>
             quoteInSource(entry.sources[id] ?? "", item.quote ?? ""),
           );
-          // A fact or claim cites only sources that hold its quote; an inference at least one.
-          if (item.kind === "inference") expect(holders.length).toBeGreaterThan(0);
-          else expect(holders).toEqual([...item.citedSourceIds]);
+          // Every kind that stores a quote cites only the sources that hold it (07-FIX3A F2).
+          expect(holders).toEqual([...item.citedSourceIds]);
         }
         if (item.kind !== "inference") expect(item.quote).toBeDefined();
       }
