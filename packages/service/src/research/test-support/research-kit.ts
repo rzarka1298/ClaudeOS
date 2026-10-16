@@ -17,7 +17,11 @@ import type {
   RunBudget,
   SafeFetcher,
 } from "../fetch/index.js";
-import { createResearchServices, type ResearchServices } from "../services.js";
+import {
+  createResearchServices,
+  type ResearchServices,
+  type ResearchServicesDeps,
+} from "../services.js";
 
 /**
  * A temporary vault, a file-backed temporary store, a scripted fetcher and the real research
@@ -83,6 +87,8 @@ export interface KitOptions {
   readonly publishThrows?: boolean;
   /** True throws a plain Error from the chooser; an Error instance throws that. */
   readonly chooseThrows?: boolean | Error;
+  /** Replaces the chooser entirely (it may be asynchronous). */
+  readonly chooseSummariser?: ResearchServicesDeps["chooseSummariser"];
   /** Called with each classified effect, right after it is recorded (before its work happens). */
   readonly onEffect?: (operation: string) => void;
   /** Every log call throws (a broken sink). */
@@ -172,15 +178,17 @@ export function createKit(options: KitOptions = {}): Kit {
       },
     },
     fetcher,
-    chooseSummariser: () => {
-      if (options.chooseThrows instanceof Error) throw options.chooseThrows;
-      if (options.chooseThrows === true) throw new Error("no summariser");
-      return {
-        transport,
-        id: options.summariserId ?? "extractive",
-        ...(options.maxInputChars === undefined ? {} : { maxInputChars: options.maxInputChars }),
-      };
-    },
+    chooseSummariser:
+      options.chooseSummariser ??
+      (() => {
+        if (options.chooseThrows instanceof Error) throw options.chooseThrows;
+        if (options.chooseThrows === true) throw new Error("no summariser");
+        return {
+          transport,
+          id: options.summariserId ?? "extractive",
+          ...(options.maxInputChars === undefined ? {} : { maxInputChars: options.maxInputChars }),
+        };
+      }),
     audit: (operation) => {
       effects.push(operation);
       options.onEffect?.(operation);

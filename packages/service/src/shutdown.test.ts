@@ -286,3 +286,81 @@ describe("graceful shutdown with the Codex services (plan 05.1-28)", () => {
     }
   });
 });
+
+describe("research stop (plan 07-14, D-18)", () => {
+  function researchHarness(stopResearch: () => Promise<void>, deadline: number) {
+    const events: string[] = [];
+    let serverDone: () => void = () => undefined;
+    const deps: ShutdownDeps = {
+      stopApprovals: async () => {
+        events.push("approvals");
+      },
+      stopCodex: async () => {
+        events.push("codex");
+      },
+      stopResearch,
+      researchStopDeadlineMs: deadline,
+      onResearchStopTimeout: (reason) => events.push(`timeout:${reason}`),
+      stopUsage: async () => {
+        events.push("usage");
+      },
+      stopClaude: async () => {
+        events.push("claude");
+      },
+      stopIntake: () => events.push("intake"),
+      closeServer: (done) => {
+        serverDone = done;
+      },
+      closeResources: () => events.push("store-closed"),
+      exit: (code) => events.push(`exit-${code}`),
+      onError: () => events.push("error"),
+      keepAlive: { start: () => 1, stop: () => undefined },
+    };
+    return { events, deps, closeServer: () => serverDone() };
+  }
+
+  it("waits for a run that finishes in time, between the Codex and usage services", async () => {
+    const h = researchHarness(async () => {
+      h.events.push("research");
+    }, 1000);
+    createShutdown(h.deps)();
+    h.closeServer();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.events).toEqual([
+      "intake",
+      "approvals",
+      "codex",
+      "research",
+      "usage",
+      "claude",
+      "store-closed",
+      "exit-0",
+    ]);
+  });
+
+  it("moves on after the deadline when a run never ends, and says so by code", async () => {
+    const h = researchHarness(() => new Promise<void>(() => undefined), 30);
+    createShutdown(h.deps)();
+    h.closeServer();
+    await new Promise((r) => setTimeout(r, 120));
+    expect(h.events).toEqual([
+      "intake",
+      "approvals",
+      "codex",
+      "timeout:research-stop-timeout",
+      "usage",
+      "claude",
+      "store-closed",
+      "exit-0",
+    ]);
+  });
+
+  it("moves on when the wait itself fails", async () => {
+    const h = researchHarness(() => Promise.reject(new Error("boom")), 1000);
+    createShutdown(h.deps)();
+    h.closeServer();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.events).toContain("error");
+    expect(h.events.slice(-2)).toEqual(["store-closed", "exit-0"]);
+  });
+});

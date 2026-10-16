@@ -16,6 +16,9 @@ describe("main.ts startup order (D-22)", () => {
   const STEPS = [
     "await claimSocketPath(socketPath)",
     "sweepStaleScripts(scriptDir",
+    // Plan 07-14: the research test overrides are resolved (and an unusable one refuses) before
+    // the store is touched.
+    "resolveResearchTestOverrides(process.env",
     "openStore(dbPath)",
     "recoverInterruptedRuns(store.db",
     "recomputeApprovedRoots(store)",
@@ -31,8 +34,13 @@ describe("main.ts startup order (D-22)", () => {
     "taskHost.startupWalk()",
     // Phase 05.1: after the usage services and the task block, before the listener (D-14).
     "await startCodexServices(",
+    // Plan 07-14: the listener holds a late-bound research slot; the research services are built
+    // only after the socket is bound (an instance that lost the bind must never sweep a live run).
+    "createResearchRouteSlot()",
     "createRequestListener({",
     "await startSocketServer({",
+    "createResearchServices({",
+    "researchSlot.bind(",
     // The timers of both start only once the socket is open.
     "usageServices.start()",
     "codexServices.start()",
@@ -146,5 +154,51 @@ describe("main.ts Phase 05.1 blocks", () => {
       /onIntegrationRefresh: \(\) => codexSlot\.current\?\.onIntegrationRefresh\(\)/,
     );
     expect(src).toMatch(/codexSlot\.current\?\.onLaunchersChanged\(\)/);
+  });
+});
+
+/**
+ * Audit (plan 07-14, wave 4 review): the research services are constructed exactly once per
+ * process, after the migrations, the run recovery and the socket bind; the key is read through a
+ * closure; shutdown waits a bounded time for a run in flight between the Codex and usage services.
+ */
+describe("main.ts research wiring (plan 07-14)", () => {
+  const src = readFileSync(fileURLToPath(new URL("./main.ts", import.meta.url)), "utf8");
+
+  it("constructs the research services after recovery and the bound socket, never in the listener literal", () => {
+    const at = src.indexOf("createResearchServices({");
+    expect(at).toBeGreaterThan(src.indexOf("recoverInterruptedRuns(store.db"));
+    expect(at).toBeGreaterThan(src.indexOf("await startSocketServer({"));
+    const listener = src.slice(
+      src.indexOf("createRequestListener({"),
+      src.indexOf("await startSocketServer({"),
+    );
+    expect(listener).not.toContain("createResearchServices");
+    expect(listener).toContain("research: researchSlot.services");
+  });
+
+  it("hands the research services a key-reading closure, the safe fetcher and an injected chooser", () => {
+    const start = src.indexOf("createResearchServices({");
+    const block = src.slice(start, src.indexOf("researchSlot.bind(", start));
+    expect(block).toContain("readApiKey: () => secretStore.get(researchKeyAccount)");
+    expect(block).toContain("researchOverrides.fetcher ?? createSafeFetcher()");
+    expect(block).toContain("createChooseSummariser({");
+    expect(src).toContain("researchOverrides.keyAccount ?? RESEARCH_API_KEY_ACCOUNT");
+    // No key string is ever held in main.ts: the account is a name, the read is a closure.
+    expect(src).not.toMatch(/apiKey\s*=|const key\b/);
+  });
+
+  it("binds the route slot once and waits for a run in the shutdown chain", () => {
+    expect(src.match(/researchSlot\.bind\(/g)).toHaveLength(1);
+    const shutdownAt = src.indexOf("const shutdown = ");
+    const body = src.slice(shutdownAt);
+    const order = [
+      body.search(/codexServices\.stop\(\)/),
+      body.search(/stopResearch: \(\) => research\.idle\(\)/),
+      body.search(/usageServices\.stop\(\)/),
+    ];
+    expect(order[0]).toBeGreaterThan(-1);
+    expect(order[1]).toBeGreaterThan(order[0] as number);
+    expect(order[2]).toBeGreaterThan(order[1] as number);
   });
 });
