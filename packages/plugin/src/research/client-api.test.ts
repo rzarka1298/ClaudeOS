@@ -12,6 +12,11 @@ import { createResearchApi, type ResearchClientLike } from "./client-api.js";
 
 const NOTE_ID = "0mfk1a2b3c4d5e6f7a8b9c001";
 
+/** Throws exactly what it is given, an Error or not (the cast only satisfies the type of `throw`). */
+function throwsRaw(value: unknown): never {
+  throw value as Error;
+}
+
 /** A client whose members all resolve; `overrides` swap individual members. */
 function clientWith(overrides: Partial<ResearchClientLike>): ResearchClientLike {
   return { ...fakeClient(), ...overrides } as ResearchClientLike;
@@ -97,10 +102,7 @@ describe("Test 2 (adapter): createResearchApi implements the ResearchApi port", 
     ];
     for (const failure of hostile) {
       const client = clientWith({
-        list: () => {
-          // eslint-disable-next-line @typescript-eslint/only-throw-error -- a non-Error failure is the point of this test
-          throw failure;
-        },
+        list: () => throwsRaw(failure),
       });
       const error = (await createResearchApi(client)
         .list()
