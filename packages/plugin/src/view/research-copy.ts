@@ -1,4 +1,6 @@
-import type { ResearchStage } from "@ccc/domain/research.js";
+import type { ResearchStage, SanitiseCountKey, SanitiseCounts } from "@ccc/domain/research.js";
+import { SANITISE_COUNT_KEYS } from "@ccc/domain/research.js";
+import { countOf } from "./research-format.js";
 
 /**
  * The locked strings and message builders of the Research destination
@@ -224,6 +226,11 @@ export const QUOTE_TEXT_MAX = 240;
 /** A citation button shows at most this much of the source title (the full title is in `title`). */
 export const CITATION_TITLE_MAX = 60;
 
+/** An author is capped at the schema cap. */
+export const AUTHOR_MAX = 120;
+/** An unavailable-source label is capped at the allowlist label cap. */
+export const UNAVAILABLE_LABEL_MAX = 80;
+
 export const CITATIONS_LABEL = "Sources:";
 export const NO_SOURCE_CITED = "No source cited";
 
@@ -249,3 +256,124 @@ export function backToFindingLabel(index: number): string {
 
 /** A source title is capped at the schema cap. */
 export const SOURCE_TITLE_MAX = 200;
+
+// ---------------------------------------------------------------------------
+// R4 report reader: section headings, header lines, source fields, states
+
+export const READER_LEGEND_HEADING = "How to read this report";
+export const READER_FINDINGS_HEADING = "Findings";
+export const READER_UNAVAILABLE_HEADING = "Unavailable sources";
+export const READER_SOURCES_HEADING = "Sources";
+export const READER_RUN_HEADING = "Run record";
+
+export const BACK_TO_REPORTS_LABEL = "Back to reports";
+export const OPEN_RUN_NOTE_LABEL = "Open run note";
+export const OPEN_RUN_NOTE_FAILED = "Couldn't open the run note.";
+export const TRY_AGAIN_LABEL = "Try again";
+export const LOAD_REST_LABEL = "Load the rest of the report";
+export const LOAD_REST_ERROR = "Couldn't load the rest of this report.";
+
+export const READER_LOADING = "Loading report";
+export const READER_ERROR = "Couldn't load this report.";
+export const NOT_FOUND_HEADING = "That report isn't in the vault any more.";
+export const NOT_FOUND_BODY = "It may have been moved or deleted. The list has been refreshed.";
+export const UNREADABLE_HEADING = "This report's metadata couldn't be read.";
+export const UNREADABLE_BODY = "It may have been edited by hand. Open the note to check it.";
+export const NO_FINDINGS =
+  "This report has no findings. Nothing in the summariser's answer could be kept.";
+export const SECTION_NOT_LOADED_OFFLINE =
+  "This section couldn't be loaded while the companion service isn't running.";
+/** A citation was activated before its source's page landed. */
+export const SOURCE_NOT_LOADED = "That source isn't loaded yet.";
+/** The service trimmed a page to stay under the socket cap. */
+export const TRUNCATED_ITEMS =
+  "Some items were too long to show here. Open the note to read them in full.";
+
+export const NOT_PROVIDED = "Not provided";
+/** The run store no longer holds a value (a missing value is said, never invented). */
+export const NOT_RECORDED = "Not recorded";
+
+// The AI line (ADR-0020 `aiGenerated`, `confidence: unverified`).
+export const AI_LINE_LEAD = "AI-generated summary by ";
+export const AI_LINE_TAIL = ". Not verified by a person.";
+export const EXTRACTIVE_SUMMARISER_TEXT = "the extractive summariser (no model)";
+
+/** The stale line; the hours come from the shared stale-threshold constant. */
+export function staleLine(hours: number): string {
+  return `This report is more than ${hours} hours old. Press Run now for a fresh one.`;
+}
+
+/** `Partial — 2 of 6 sources were unavailable, so this report covers only the rest.` */
+export function partialIntro(unavailable: number, total: number): string {
+  const verb = unavailable === 1 ? "was" : "were";
+  return `Partial \u2014 ${unavailable} of ${total} sources ${verb} unavailable, so this report covers only the rest.`;
+}
+
+/** `1 reported fact · 2 source claims · 0 model inferences`: zero segments are kept. */
+export function kindCountsText(counts: {
+  readonly "source-fact": number;
+  readonly "unverified-claim": number;
+  readonly inference: number;
+}): string {
+  return [
+    countOf(counts["source-fact"], "reported fact", "reported facts"),
+    countOf(counts["unverified-claim"], "source claim", "source claims"),
+    countOf(counts.inference, "model inference", "model inferences"),
+  ].join(" \u00b7 ");
+}
+
+// Source entries (RSRCH-03, R-10, R-11).
+export const COPY_ADDRESS_LABEL = "Copy address";
+export const OPEN_SNAPSHOT_LABEL = "Open snapshot";
+export const ADDRESS_COPIED = "Address copied.";
+export const ADDRESS_COPY_FAILED = "Couldn't copy the address.";
+export const REMOVED_BEFORE_SUMMARISING = "Removed before summarising";
+export const NOTHING_REMOVED = "Nothing removed";
+
+/** The `dt` terms of a source entry, in the contracted order. */
+export const SOURCE_FIELD_LABELS = {
+  type: "Type",
+  access: "Access",
+  address: "Address",
+  author: "Author",
+  published: "Published",
+  retrieved: "Retrieved",
+  contentHash: "Content hash",
+  stableId: "Stable ID",
+  snapshot: "Snapshot",
+  removed: REMOVED_BEFORE_SUMMARISING,
+} as const;
+
+/** The `dt` terms of the run record. */
+export const RUN_FIELD_LABELS = {
+  run: "Run",
+  started: "Started",
+  finished: "Finished",
+  outcome: "Outcome",
+  summariser: "Summariser",
+} as const;
+
+const REMOVED_NOUNS: Readonly<Record<SanitiseCountKey, readonly [string, string]>> = {
+  scripts: ["script", "scripts"],
+  styles: ["style block", "style blocks"],
+  comments: ["comment", "comments"],
+  hiddenBlocks: ["hidden block", "hidden blocks"],
+  mediaDropped: ["media item", "media items"],
+  linksDropped: ["link", "links"],
+  controlChars: ["control character", "control characters"],
+  commandLikeLines: ["command-like line", "command-like lines"],
+};
+
+/**
+ * What the sanitiser removed from a source, as one sentence in a fixed order with zero counts
+ * left out: `2 scripts, 1 hidden block, 3 links, 1 command-like line`; `Nothing removed` when
+ * every count is zero (SC4 "described").
+ */
+export function removedSentence(counts: SanitiseCounts): string {
+  const parts: string[] = [];
+  for (const key of SANITISE_COUNT_KEYS) {
+    const count = counts[key];
+    if (count > 0) parts.push(countOf(count, REMOVED_NOUNS[key][0], REMOVED_NOUNS[key][1]));
+  }
+  return parts.length === 0 ? NOTHING_REMOVED : parts.join(", ");
+}

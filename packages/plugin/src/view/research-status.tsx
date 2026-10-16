@@ -25,7 +25,7 @@ import {
   UNKNOWN_RUN_LABEL,
   UNKNOWN_RUN_SENTENCE,
 } from "./research-copy.js";
-import { formatRunTime, sourcesText } from "./research-format.js";
+import { capText, formatRunTime, sourcesText } from "./research-format.js";
 
 /**
  * The Run status section (plan 07-11; UI-SPEC R2, DIAG-05): the current run, the
@@ -147,12 +147,6 @@ function Segments(props: { readonly parts: readonly ComponentChildren[] }): VNod
 
 function Skeleton(): VNode {
   return <span className="ccc-skeleton-line" aria-hidden="true" />;
-}
-
-function capped(text: string, max: number): { text: string; shortened: boolean } {
-  return text.length > max
-    ? { text: text.slice(0, max), shortened: true }
-    : { text, shortened: false };
 }
 
 export function ResearchStatusSection(props: ResearchStatusSectionProps): VNode {
@@ -277,10 +271,11 @@ export function ResearchStatusSection(props: ResearchStatusSectionProps): VNode 
           <div id={panelId} hidden={!open}>
             {sources.length === 0 ? null : (
               <ul>
-                {sources.map((source) => {
-                  const label = capped(source.label, SOURCE_LABEL_MAX);
+                {sources.map((source, index) => {
+                  const label = capText(source.label, SOURCE_LABEL_MAX);
                   return (
-                    <li key={`${source.host}|${source.label}`}>
+                    // The position keeps the key unique when two sources share a label and host.
+                    <li key={`${index}|${source.host}|${source.label}`}>
                       <UntrustedText text={label.text} />
                       {label.shortened ? (
                         <span className="ccc-field-help">{` ${TEXT_SHORTENED}`}</span>

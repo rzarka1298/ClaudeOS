@@ -2,7 +2,7 @@ import { reportFreshness } from "@ccc/domain/research.js";
 import type { ResearchListRow } from "@ccc/domain/research-routes.js";
 import { resolvedZone } from "@ccc/domain/task-time.js";
 import type { ComponentChildren, VNode } from "preact";
-import { useEffect, useId, useMemo, useRef } from "preact/hooks";
+import { useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { researchConfigured, researchPorts } from "../research/api.js";
 import {
@@ -46,8 +46,9 @@ import {
   RUN_NOW_LABEL,
   RUN_NOW_NAME,
   STRIP_SOURCE_LABEL,
+  TEXT_SHORTENED,
 } from "./research-copy.js";
-import { countOf } from "./research-format.js";
+import { capText, countOf } from "./research-format.js";
 import { ResearchStatusSection } from "./research-status.js";
 
 /**
@@ -65,6 +66,9 @@ import { ResearchStatusSection } from "./research-status.js";
 
 /** The longest topic label shown (UI-SPEC "Display caps"). */
 const TOPIC_LABEL_MAX = 80;
+
+/** At this container width and below the list and the reader stack in one column (UI-SPEC R1). */
+const STACK_AT_REM = 48;
 
 export interface ResearchReaderSlotProps {
   readonly noteId: string;
@@ -184,10 +188,51 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
     previousKind.current = props.connection.kind;
   }, [props.connection.kind]);
 
+  // The layout element reports whether the list and the reader share a row or stack, through a
+  // data attribute (never inline style). A width of 0 means "not laid out yet": the last answer
+  // stands. The same fact tells the reader whether Back to reports and Escape apply.
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+  const [stacked, setStacked] = useState(false);
+  useEffect(() => {
+    const element = layoutRef.current;
+    if (element === null) return;
+    const view = element.ownerDocument.defaultView;
+    const apply = (width: number): void => {
+      if (!(width > 0)) return;
+      const rem =
+        Number.parseFloat(
+          view?.getComputedStyle(element.ownerDocument.documentElement).fontSize ?? "",
+        ) || 16;
+      setStacked(width <= STACK_AT_REM * rem);
+    };
+    apply(element.clientWidth);
+    const Observer = view?.ResizeObserver ?? window.ResizeObserver;
+    if (Observer === undefined) return;
+    const observer = new Observer((entries) => {
+      const last = entries[entries.length - 1];
+      if (last !== undefined) apply(last.contentRect.width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  // Back to reports and Escape: focus returns to the row the owner came from, or to the Reports
+  // heading when that row has left the list (UI-SPEC "Focus rules").
+  const reportsHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  function closeReaderView(): void {
+    const origin = selectedNoteId.value;
+    selectReport(null);
+    const listed =
+      origin !== null && reportRows.value.some((row) => row.readable && row.noteId === origin);
+    if (listed) focusRequest.value = { kind: "report", noteId: origin };
+    else reportsHeadingRef.current?.focus();
+  }
+
   const topic = status?.topicLabel ?? null;
+  const topicCapped = topic === null ? null : capText(topic, TOPIC_LABEL_MAX);
   const configured = status?.configuredSources ?? null;
   const subline = [
-    topic === null ? NO_TOPIC_LABEL : topic.slice(0, TOPIC_LABEL_MAX),
+    topicCapped === null ? NO_TOPIC_LABEL : topicCapped.text,
     configured === null ? null : `${countOf(configured.length, "source", "sources")} configured`,
   ]
     .filter((part): part is string => part !== null)
@@ -236,6 +281,9 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
       </div>
       <p className="ccc-research-subline">
         <UntrustedText text={subline} />
+        {topicCapped?.shortened ? (
+          <span className="ccc-field-help">{` ${TEXT_SHORTENED}`}</span>
+        ) : null}
       </p>
       <div className="ccc-research-strip">
         <WidgetFooter
@@ -259,12 +307,14 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
         onOpenReport={selectReport}
       />
       <section aria-labelledby={reportsId}>
-        <h3 id={reportsId} className="ccc-section-label">
+        <h3 id={reportsId} className="ccc-section-label" tabIndex={-1} ref={reportsHeadingRef}>
           {REPORTS_HEADING}
         </h3>
         <div
           className="ccc-research-layout"
           data-reader-open={selected === null ? "false" : "true"}
+          data-layout={stacked ? "stacked" : "side"}
+          ref={layoutRef}
         >
           <div className="ccc-research-list-cell">
             <ReportList
@@ -296,13 +346,15 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
             {selected === null ? (
               <p className="ccc-research-placeholder">{REPORT_PLACEHOLDER}</p>
             ) : props.reader !== undefined ? (
-              props.reader({ noteId: selected, onBack: () => selectReport(null) })
+              props.reader({ noteId: selected, onBack: closeReaderView })
             ) : (
               <ReportReader
                 noteId={selected}
-                onBack={() => selectReport(null)}
+                onBack={closeReaderView}
                 now={props.now}
                 zone={zone}
+                stacked={stacked}
+                connected={!serviceAway}
               />
             )}
           </div>

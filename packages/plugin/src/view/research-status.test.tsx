@@ -349,7 +349,12 @@ describe("A16: two configured sources with the same label and host both stay lis
 
   it("builds each list key from the position as well, so a repeated label and host cannot collide", async () => {
     const { readFileSync } = await import("node:fs");
-    const source = readFileSync(new URL("./research-status.tsx", import.meta.url), "utf8");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "research-status.tsx"),
+      "utf8",
+    );
     expect(source).toMatch(/key=\{`\$\{index\}\|/);
   });
 });

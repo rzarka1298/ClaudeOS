@@ -40,8 +40,8 @@ exports[`the Research destination states, as markup > disconnected: dimmed with 
     </dl>
   </section>
   <section aria-labelledby="ID">
-    <h3 id="ID" class="ccc-section-label">Reports</h3>
-    <div class="ccc-research-layout" data-reader-open="false">
+    <h3 id="ID" class="ccc-section-label" tabindex="-1">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false" data-layout="side">
       <div class="ccc-research-list-cell">
         <div class="ccc-report-list-region" data-dimmed="true">
           <ul class="ccc-report-list">
@@ -138,8 +138,8 @@ exports[`the Research destination states, as markup > empty: every run failed, w
 </div>
 </section>
 <section aria-labelledby="ID">
-  <h3 id="ID" class="ccc-section-label">Reports</h3>
-  <div class="ccc-research-layout" data-reader-open="false">
+  <h3 id="ID" class="ccc-section-label" tabindex="-1">Reports</h3>
+  <div class="ccc-research-layout" data-reader-open="false" data-layout="side">
     <div class="ccc-research-list-cell">
       <div class="ccc-report-list-region">
         <div class="ccc-report-list-empty">
@@ -194,8 +194,8 @@ exports[`the Research destination states, as markup > empty: never run 1`] = `
     </dl>
   </section>
   <section aria-labelledby="ID">
-    <h3 id="ID" class="ccc-section-label">Reports</h3>
-    <div class="ccc-research-layout" data-reader-open="false">
+    <h3 id="ID" class="ccc-section-label" tabindex="-1">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false" data-layout="side">
       <div class="ccc-research-list-cell">
         <div class="ccc-report-list-region">
           <div class="ccc-report-list-empty">
@@ -252,8 +252,8 @@ exports[`the Research destination states, as markup > first-load error 1`] = `
     </dl>
   </section>
   <section aria-labelledby="ID">
-    <h3 id="ID" class="ccc-section-label">Reports</h3>
-    <div class="ccc-research-layout" data-reader-open="false">
+    <h3 id="ID" class="ccc-section-label" tabindex="-1">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false" data-layout="side">
       <div class="ccc-research-list-cell">
         <div class="ccc-report-list-region">
           <div class="ccc-report-list-error">
@@ -316,8 +316,8 @@ exports[`the Research destination states, as markup > loading: skeletons under r
     </dl>
   </section>
   <section aria-labelledby="ID">
-    <h3 id="ID" class="ccc-section-label">Reports</h3>
-    <div class="ccc-research-layout" data-reader-open="false">
+    <h3 id="ID" class="ccc-section-label" tabindex="-1">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false" data-layout="side">
       <div class="ccc-research-list-cell">
         <div class="ccc-report-list-region" aria-busy="true">
           <span class="ccc-visually-hidden">Loading research reports</span>
@@ -412,8 +412,8 @@ exports[`the Research destination states, as markup > populated: fresh, stale an
 </div>
 </section>
 <section aria-labelledby="ID">
-  <h3 id="ID" class="ccc-section-label">Reports</h3>
-  <div class="ccc-research-layout" data-reader-open="false">
+  <h3 id="ID" class="ccc-section-label" tabindex="-1">Reports</h3>
+  <div class="ccc-research-layout" data-reader-open="false" data-layout="side">
     <div class="ccc-research-list-cell">
       <div class="ccc-report-list-region">
         <ul class="ccc-report-list">
@@ -523,8 +523,8 @@ exports[`the Research destination states, as markup > running: the Current run r
 </div>
 </section>
 <section aria-labelledby="ID">
-  <h3 id="ID" class="ccc-section-label">Reports</h3>
-  <div class="ccc-research-layout" data-reader-open="false">
+  <h3 id="ID" class="ccc-section-label" tabindex="-1">Reports</h3>
+  <div class="ccc-research-layout" data-reader-open="false" data-layout="side">
     <div class="ccc-research-list-cell">
       <div class="ccc-report-list-region">
         <ul class="ccc-report-list">
@@ -590,8 +590,8 @@ exports[`the Research destination states, as markup > stale list refresh keeps t
     </dl>
   </section>
   <section aria-labelledby="ID">
-    <h3 id="ID" class="ccc-section-label">Reports</h3>
-    <div class="ccc-research-layout" data-reader-open="false">
+    <h3 id="ID" class="ccc-section-label" tabindex="-1">Reports</h3>
+    <div class="ccc-research-layout" data-reader-open="false" data-layout="side">
       <div class="ccc-research-list-cell">
         <div class="ccc-report-list-region">
           <div class="ccc-report-list-error">

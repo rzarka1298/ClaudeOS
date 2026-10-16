@@ -785,8 +785,10 @@ describe("Task 2: display caps", () => {
     expect(entry.querySelector("h5")?.textContent).toBe(
       `1. ${"x".repeat(200)} Text shortened for display.`,
     );
-    expect(entry.textContent).toContain("x".repeat(120));
-    expect(entry.textContent).not.toContain("x".repeat(121));
+    const authorTerm = [...entry.querySelectorAll("dt")].find((dt) => dt.textContent === "Author");
+    expect(authorTerm?.nextElementSibling?.textContent).toBe(
+      `${"x".repeat(120)} Text shortened for display.`,
+    );
   });
 });
 
