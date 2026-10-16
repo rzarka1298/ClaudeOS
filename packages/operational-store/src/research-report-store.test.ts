@@ -89,6 +89,19 @@ describe("recording and reading a research report", () => {
     expect(getResearchReportRecord(db, run)).toEqual(record(run));
   });
 
+  it("refuses a run in flight that belongs to another job, with a typed error and no write (07-FIX7)", () => {
+    const other = newRunId();
+    startJobRun(db, {
+      jobRunId: other,
+      jobKey: "daily.other",
+      idempotencyKey: `daily.other:manual:${other}`,
+      trigger: "manual",
+      startedAt: T0,
+    });
+    expect(() => recordResearchReport(db, record(other))).toThrow(JobRunNotFoundError);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM research_report_records").get()).toEqual({ n: 0 });
+  });
+
   it("refuses a run that does not exist, and a run that has ended, with no write", () => {
     expect(() => recordResearchReport(db, record(newRunId()))).toThrow(JobRunNotFoundError);
     const run = startRun();

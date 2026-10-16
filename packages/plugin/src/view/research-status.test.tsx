@@ -125,8 +125,9 @@ describe("Test 1: the rows (DIAG-05)", () => {
     );
   });
 
-  it("shows the Current run row with the stage and never a spinner", () => {
-    mount(statusOf({ inFlight: { runId: id25("run1"), startedAt: iso(-1), stage: "synthesis" } }));
+  it("shows the Current run row with what is happening now and never a spinner", () => {
+    // The stage is the last one the run has finished logging; fetching is done, so it summarises.
+    mount(statusOf({ inFlight: { runId: id25("run1"), startedAt: iso(-1), stage: "raw" } }));
     const current = row("Current run");
     expect(current.textContent).toContain("▸ Running");
     expect(current.textContent).toContain("Summarising");
@@ -134,11 +135,37 @@ describe("Test 1: the rows (DIAG-05)", () => {
     expect(document.querySelector("progress, [role='progressbar']")).toBeNull();
   });
 
-  it("shows only Running before the first stage transition", () => {
+  it("names the first activity before any stage is logged, and never a later one", () => {
     mount(statusOf({ inFlight: { runId: id25("run1"), startedAt: iso(-1), stage: null } }));
     const current = row("Current run");
     expect(current.textContent).toContain("▸ Running");
+    expect(current.textContent).toContain("Reading the source list");
     expect(current.textContent).not.toContain("Summarising");
+  });
+
+  // 07-FIX7 (sonnet MAJOR-1): the service sends the LAST stage the run finished logging. The row
+  // must name what is happening now, which is the activity after that stage.
+  it.each([
+    [null, "Reading the source list"],
+    ["capture", "Fetching sources"],
+    ["raw", "Summarising"],
+    ["synthesis", "Updating source notes"],
+    ["wiki", "Writing the report"],
+    ["deliverable", "Writing the report"],
+    ["output", "Writing the report"],
+  ] as const)("after the %s stage has finished the Current run row reads %s", (stage, word) => {
+    mount(statusOf({ inFlight: { runId: id25("run1"), startedAt: iso(-1), stage } }));
+    const text = row("Current run").textContent ?? "";
+    expect(text).toContain(word);
+    for (const other of [
+      "Reading the source list",
+      "Fetching sources",
+      "Summarising",
+      "Updating source notes",
+      "Writing the report",
+    ]) {
+      if (other !== word) expect(text, `${stage}: ${other}`).not.toContain(other);
+    }
   });
 
   it("has no Current run row when nothing is in flight", () => {

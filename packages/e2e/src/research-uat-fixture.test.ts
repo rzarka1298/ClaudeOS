@@ -28,10 +28,14 @@ afterEach(() => {
   for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
+/** The allowed parent of run roots in these tests (the real runner uses /tmp). */
+const BASE = tmpdir();
+
+/** The runtime directory of a run root the way the runner builds one: `<base>/ccc-uat.XXXXXX/rt`. */
 function runtimeDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "ccc-uat-fixture-"));
-  made.push(dir);
-  return dir;
+  const root = mkdtempSync(join(BASE, "ccc-uat."));
+  made.push(root);
+  return join(root, "rt");
 }
 
 const INSTALL_ACCOUNT = "ccc-uat-0123abcd";
@@ -45,7 +49,7 @@ function parsedSources(dir: string) {
 describe("prepareResearchUat writes the allowlist, the fixture directory and the guard environment", () => {
   it("writes research-sources.json with the three synthetic sources and the UAT topic", () => {
     const dir = runtimeDir();
-    prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     const config = parsedSources(dir);
     expect(config.topicLabel).toBe("Developer tooling and open-source releases");
     expect(config.sources).toHaveLength(3);
@@ -58,7 +62,7 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
 
   it("creates a fixture directory inside the runtime directory with a manifest naming real files", () => {
     const dir = runtimeDir();
-    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     expect(prepared.fixtureDir.startsWith(`${dir}/`)).toBe(true);
     const manifest = JSON.parse(
       readFileSync(join(prepared.fixtureDir, "manifest.json"), "utf8"),
@@ -77,7 +81,7 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
 
   it("returns exactly the guard variables, with the extractive summariser and the test key account", () => {
     const dir = runtimeDir();
-    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     expect({ ...prepared.guardEnv }).toEqual({
       CCC_ENABLE_TEST_OVERRIDES: "1",
       [RESEARCH_TEST_ENV.fixtureDir]: prepared.fixtureDir,
@@ -89,7 +93,7 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
 
   it("returns a variant without the summariser override for the unconfigured item", () => {
     const dir = runtimeDir();
-    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     expect({ ...prepared.guardEnvWithoutSummariser }).toEqual({
       CCC_ENABLE_TEST_OVERRIDES: "1",
       [RESEARCH_TEST_ENV.fixtureDir]: prepared.fixtureDir,
@@ -99,8 +103,11 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
   });
 
   it("uses a unique test key account in the ccc-uat family that is never the install secret account", () => {
-    const first = prepareResearchUat(runtimeDir(), { installAccount: INSTALL_ACCOUNT });
-    const second = prepareResearchUat(runtimeDir(), { installAccount: "ccc-uat-feedbeef" });
+    const first = prepareResearchUat(runtimeDir(), { installAccount: INSTALL_ACCOUNT, base: BASE });
+    const second = prepareResearchUat(runtimeDir(), {
+      installAccount: "ccc-uat-feedbeef",
+      base: BASE,
+    });
     expect(first.keyAccount.startsWith(UAT_ACCOUNT_PREFIX)).toBe(true);
     expect(first.keyAccount).toMatch(/^[A-Za-z0-9._-]{1,64}$/);
     expect(first.keyAccount).not.toBe(INSTALL_ACCOUNT);
@@ -109,15 +116,17 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
   });
 
   it("refuses an install account outside the ccc-uat family", () => {
-    expect(() => prepareResearchUat(runtimeDir(), { installAccount: "install-secret" })).toThrow();
     expect(() =>
-      prepareResearchUat(runtimeDir(), { installAccount: "anthropic-api-key" }),
+      prepareResearchUat(runtimeDir(), { installAccount: "install-secret", base: BASE }),
+    ).toThrow();
+    expect(() =>
+      prepareResearchUat(runtimeDir(), { installAccount: "anthropic-api-key", base: BASE }),
     ).toThrow();
   });
 
   it("selects a scenario by rewriting the allowlist only, and refuses an unknown scenario", () => {
     const dir = runtimeDir();
-    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     const before = readdirSync(prepared.fixtureDir).sort();
     for (const scenario of RESEARCH_SCENARIOS) {
       prepared.select(scenario);
@@ -131,7 +140,7 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
 
   it("scenario sizes: base 3, partial 3, all-failing 3, slow 3, long 12, hostile within 12", () => {
     const dir = runtimeDir();
-    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     const size = (name: (typeof RESEARCH_SCENARIOS)[number]) => {
       prepared.select(name);
       return parsedSources(dir).sources.length;
@@ -147,7 +156,7 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
 
   it("gives the partial scenario exactly one failing source and the all-failing scenario three", () => {
     const dir = runtimeDir();
-    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     const manifest = JSON.parse(
       readFileSync(join(prepared.fixtureDir, "manifest.json"), "utf8"),
     ) as {
@@ -167,7 +176,7 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
 
   it("holds every source of the slow scenario long enough to stop the service mid-fetch, and no other scenario that long", () => {
     const dir = runtimeDir();
-    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     const manifest = JSON.parse(
       readFileSync(join(prepared.fixtureDir, "manifest.json"), "utf8"),
     ) as {
@@ -189,11 +198,13 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
 
   it("refuses a runtime directory inside the repository, creating nothing", () => {
     const inside = join(REPO_ROOT, "packages", "e2e", `uat-fixture-refused-${process.pid}`);
-    expect(() => prepareResearchUat(inside, { installAccount: INSTALL_ACCOUNT })).toThrow(
-      /repository/i,
-    );
+    expect(() =>
+      prepareResearchUat(inside, { installAccount: INSTALL_ACCOUNT, base: BASE }),
+    ).toThrow(/repository/i);
     expect(existsSync(inside)).toBe(false);
-    expect(() => prepareResearchUat(REPO_ROOT, { installAccount: INSTALL_ACCOUNT })).toThrow();
+    expect(() =>
+      prepareResearchUat(REPO_ROOT, { installAccount: INSTALL_ACCOUNT, base: BASE }),
+    ).toThrow();
   });
 
   it("refuses the owner's real runtime directory and a relative one", () => {
@@ -210,7 +221,53 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
         installAccount: INSTALL_ACCOUNT,
       }),
     ).toThrow(/runtime directory/i);
-    expect(() => prepareResearchUat("relative/dir", { installAccount: INSTALL_ACCOUNT })).toThrow();
+    expect(() =>
+      prepareResearchUat("relative/dir", { installAccount: INSTALL_ACCOUNT, base: BASE }),
+    ).toThrow();
+  });
+});
+
+describe("07-FIX7: prepareResearchUat enforces the run root shape itself", () => {
+  function listing(dir: string): string[] {
+    return readdirSync(dir).sort();
+  }
+
+  it("accepts the runtime directory of a ccc-uat.XXXXXX run root under the allowed base, mode 0700", () => {
+    const dir = runtimeDir();
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
+    expect(prepared.runtimeDir).toBe(dir);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it("refuses the home directory, an ancestor of the owner's real runtime directory, creating nothing", () => {
+    const home = mkdtempSync(join(BASE, "ccc-uat-home-"));
+    made.push(home);
+    expect(() =>
+      prepareResearchUat(home, { installAccount: INSTALL_ACCOUNT, base: BASE, home }),
+    ).toThrow(/run root|runtime directory/i);
+    expect(listing(home)).toEqual([]);
+  });
+
+  it("refuses a directory that is not <run root>/rt, creating nothing", () => {
+    const scratch = mkdtempSync(join(BASE, "ccc-uat-scratch-"));
+    made.push(scratch);
+    const root = mkdtempSync(join(BASE, "ccc-uat."));
+    made.push(root);
+    const refused = [
+      join(scratch, "rt"), // the parent is not named like a run root
+      join(scratch, "ccc-uat.abc123", "rt"), // right name, not directly under the allowed base
+      root, // the run root itself, not its runtime directory
+      join(root, "vaults"), // another folder of the run root
+      join(root, "rt", "nested"), // below the runtime directory
+    ];
+    for (const target of refused) {
+      expect(
+        () => prepareResearchUat(target, { installAccount: INSTALL_ACCOUNT, base: BASE }),
+        target,
+      ).toThrow(/run root/i);
+    }
+    expect(listing(scratch)).toEqual([]);
+    expect(listing(root)).toEqual([]);
   });
 });
 
@@ -229,7 +286,7 @@ describe("the hostile scenario's sources", () => {
 
   it("matches the labels the hostile scenario writes into the allowlist", () => {
     const dir = runtimeDir();
-    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     prepared.select("hostile");
     expect(parsedSources(dir).sources.map((source) => source.label)).toEqual(
       hostileSources().map((entry) => entry.label),
@@ -240,7 +297,8 @@ describe("the hostile scenario's sources", () => {
     const manifest = JSON.parse(
       readFileSync(
         join(
-          prepareResearchUat(runtimeDir(), { installAccount: INSTALL_ACCOUNT }).fixtureDir,
+          prepareResearchUat(runtimeDir(), { installAccount: INSTALL_ACCOUNT, base: BASE })
+            .fixtureDir,
           "manifest.json",
         ),
         "utf8",
@@ -280,7 +338,7 @@ describe("the guard environment reaches the service fixture only through the bra
   it("merges the guard variables into the service environment", async () => {
     const calls: { env: Record<string, string> }[] = [];
     const dir = runtimeDir();
-    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
     const fixture = createServiceFixture(
       {
         paths: paths as never,

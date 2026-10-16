@@ -458,6 +458,7 @@ describe("the transcript, spies, clicks and focus readers", () => {
         "ccc-report-text",
         "ccc-report-quote",
         "ccc-report-unavailable",
+        "ccc-visually-hidden",
       ).found,
     ).toBe(false);
     const layout = inPage<{ found: boolean; list: unknown; backToReportsVisible: boolean }>(
@@ -604,5 +605,78 @@ describe("the lifecycle and keyboard helpers", () => {
     expect(values.length).toBeGreaterThanOrEqual(4);
     expect(values).toContain("smooth");
     expect(inPage<string[]>(target, "rendererReadScrollBehaviour")("#missing")).toEqual([]);
+  });
+});
+
+describe("07-FIX7: the truncation scan ignores intentionally hidden accessibility text and still finds real truncation", () => {
+  const READER = [
+    "ccc-report-reader",
+    "ccc-report-item",
+    "ccc-report-items",
+    "ccc-report-text",
+    "ccc-report-quote",
+    "ccc-report-unavailable",
+  ];
+
+  /** The plugin's own rule for the visually hidden class, so the fake cascade is the real one. */
+  function hiddenRule(): string {
+    const css = readFileSync(join(REPO_ROOT, "packages", "plugin", "src", "styles.css"), "utf8");
+    const match = /\n\.ccc-visually-hidden \{[^}]*\}/.exec(css);
+    if (match === null) throw new Error("the plugin styles have no .ccc-visually-hidden rule");
+    return match[0];
+  }
+
+  /** The populated reader with the plugin's rule applied and a fake box model (jsdom has no layout). */
+  function laidOut(): { target: Page; hidden: number } {
+    const target = page(`<style>${hiddenRule()}</style>${fixture("populated")}`);
+    const doc = target.window.document as unknown as Doc;
+    let hidden = 0;
+    for (const node of doc.querySelectorAll("article.ccc-report-reader .ccc-visually-hidden")) {
+      // A 1px box holding a line of text: its content is taller than the box and the box clips it.
+      Object.defineProperty(node, "scrollHeight", { value: 18 });
+      Object.defineProperty(node, "clientHeight", { value: 1 });
+      hidden += 1;
+    }
+    return { target, hidden };
+  }
+
+  const readArticle = (target: Page) =>
+    inPage<{ found: boolean; findingCount: number; clamped: string[] }>(
+      target,
+      "rendererReadArticle",
+    )(...READER, "ccc-visually-hidden");
+
+  it("has visually hidden text inside the dumped reader (the fake is not vacuous)", () => {
+    const { hidden } = laidOut();
+    expect(hidden).toBeGreaterThan(0);
+  });
+
+  it("reports nothing clamped for a correct report whose hidden text is clipped by design", () => {
+    const { target } = laidOut();
+    const facts = readArticle(target);
+    expect(facts.found).toBe(true);
+    expect(facts.findingCount).toBeGreaterThan(0);
+    expect(facts.clamped).toEqual([]);
+  });
+
+  it("still finds a finding text cut off by overflow hidden, beside the hidden text", () => {
+    const { target } = laidOut();
+    const doc = target.window.document as unknown as Doc;
+    const text = doc.querySelector("article.ccc-report-reader .ccc-report-text") as Elem;
+    (text as unknown as { style: { overflow: string } }).style.overflow = "hidden";
+    Object.defineProperty(text, "scrollHeight", { value: 80 });
+    Object.defineProperty(text, "clientHeight", { value: 40 });
+    const facts = readArticle(target);
+    expect(facts.clamped).toHaveLength(1);
+    expect(facts.clamped[0]).toContain("ccc-report-text");
+  });
+
+  it("still finds an ellipsis cut off, and a hidden-text wrapper does not hide a truncated child", () => {
+    const { target } = laidOut();
+    const doc = target.window.document as unknown as Doc;
+    const quote = doc.querySelector("article.ccc-report-reader blockquote") as Elem;
+    (quote as unknown as { style: { textOverflow: string } }).style.textOverflow = "ellipsis";
+    const facts = readArticle(target);
+    expect(facts.clamped.some((entry) => entry.startsWith("blockquote"))).toBe(true);
   });
 });

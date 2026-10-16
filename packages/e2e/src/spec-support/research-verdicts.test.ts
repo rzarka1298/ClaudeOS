@@ -58,13 +58,13 @@ const GOOD: TranscriptRecord[] = [
   record(0, "", null),
   record(5, STARTING, null),
   record(40, STARTED, null),
-  record(60, STARTED, "▸ Running · Reading the source list · started just now"),
+  record(60, STARTED, "▸ Running · Fetching sources · started just now"),
   record(1400, STARTED, "▸ Running · Writing the report · started just now"),
   record(1500, READY, null),
 ];
 
 describe("checkRunTranscript (07-UAT item 2)", () => {
-  it("accepts the status line sequence and a Running row that names the held stage, then goes", () => {
+  it("accepts the status line sequence and a Running row that names the held fetch, then goes", () => {
     expect(checkRunTranscript(GOOD)).toEqual([]);
     // Only the held stage observed, as a fast fixture usually shows.
     expect(checkRunTranscript(GOOD.filter((entry) => !entry.current?.includes("Writing")))).toEqual(
@@ -91,19 +91,34 @@ describe("checkRunTranscript (07-UAT item 2)", () => {
     );
   });
 
-  it("accepts a first Running row that has no stage word yet, and names a run that never named a stage", () => {
+  // 07-FIX7 (sonnet MAJOR-1): the row names what is happening NOW. Before the first stage is
+  // logged that is reading the source list; while the fetch is held it is fetching.
+  it("accepts a first Running row that reads the source list before the fetch is named", () => {
     const early = [
+      GOOD[0],
+      GOOD[1],
+      GOOD[2],
+      record(50, STARTED, "▸ Running · Reading the source list · started just now"),
+      ...GOOD.slice(3),
+    ] as TranscriptRecord[];
+    expect(checkRunTranscript(early)).toEqual([]);
+  });
+
+  it("names a Running row with no stage word at all, which the row never shows once the run has started", () => {
+    const none = GOOD.map((entry) =>
+      entry.current === null ? entry : { ...entry, current: "▸ Running · started just now" },
+    );
+    expect(checkRunTranscript(none)).toContain("the Current run row never named a stage");
+    const mixed = [
       GOOD[0],
       GOOD[1],
       GOOD[2],
       record(50, STARTED, "▸ Running · started just now"),
       ...GOOD.slice(3),
     ] as TranscriptRecord[];
-    expect(checkRunTranscript(early)).toEqual([]);
-    const none = GOOD.map((entry) =>
-      entry.current === null ? entry : { ...entry, current: "▸ Running · started just now" },
+    expect(checkRunTranscript(mixed)).toContain(
+      "the Current run row showed Running with no stage word",
     );
-    expect(checkRunTranscript(none)).toContain("the Current run row never named a stage");
   });
 
   it("names a run that never showed the Running row, and a stage word outside the closed set", () => {
@@ -117,10 +132,21 @@ describe("checkRunTranscript (07-UAT item 2)", () => {
     );
   });
 
-  it("names a Running row that first names a later stage than the held one", () => {
-    const later = GOOD.filter((entry) => !entry.current?.includes("Reading"));
+  it("names a Running row that first names a later activity than the held fetch", () => {
+    const later = GOOD.filter((entry) => !entry.current?.includes("Fetching"));
     expect(checkRunTranscript(later)).toContain(
       "the Current run row did not first name the held fetch stage",
+    );
+  });
+
+  it("names a run whose row read the source list and then never named the fetch", () => {
+    const skipped = GOOD.map((entry) =>
+      entry.current?.includes("Fetching") === true
+        ? { ...entry, current: "▸ Running · Reading the source list · started just now" }
+        : entry,
+    );
+    expect(checkRunTranscript(skipped)).toContain(
+      "the Current run row never named the held fetch stage",
     );
   });
 

@@ -164,7 +164,7 @@ describe("the Research destination states, as markup", () => {
         status: vi.fn(() =>
           Promise.resolve(
             statusOf({
-              inFlight: { runId: RUN, startedAt: iso(-2), stage: "synthesis" },
+              inFlight: { runId: RUN, startedAt: iso(-2), stage: "raw" },
               topicLabel: RESEARCH_TOPIC,
               configuredSources: [...CONFIGURED_SOURCES],
             }),

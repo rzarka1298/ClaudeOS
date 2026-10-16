@@ -291,7 +291,7 @@ describe("Test 4 (notices): only a press in this session posts the outcome Notic
               })
             : phase === "running"
               ? statusOf({
-                  inFlight: { runId: RUN, startedAt: iso(-1), stage: "synthesis" },
+                  inFlight: { runId: RUN, startedAt: iso(-1), stage: "raw" },
                   topicLabel: RESEARCH_TOPIC,
                 })
               : statusOf({ topicLabel: RESEARCH_TOPIC }),

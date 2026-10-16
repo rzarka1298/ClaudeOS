@@ -317,3 +317,78 @@ describe("07-FIX6b: a store fault while recording a source ends the run as a vau
     expect(reportNames(kit)).toEqual([]);
   });
 });
+
+describe("07-FIX7: the recorded digest is the pipeline's own report, never the vault's read-back", () => {
+  /** Rewrites the report file at the third write-notes effect (raw, report and wiki, finalise): after the wiki notes, before finalising. */
+  function kitTamperedAtFinalise(edit: (text: string) => string): {
+    kit: Kit;
+    edits: () => number;
+  } {
+    let writes = 0;
+    let edits = 0;
+    const holder: { kit?: Kit } = {};
+    const made = createKit({
+      onEffect: (operation) => {
+        if (operation !== "research.write-notes") return;
+        writes += 1;
+        if (writes !== 3 || holder.kit === undefined) return;
+        const name = reportNames(holder.kit)[0];
+        if (name === undefined) return;
+        const file = join(holder.kit.vaultRoot, "global/output", name);
+        const before = readFileSync(file, "utf8");
+        const after = edit(before);
+        if (after !== before) {
+          writeFileSync(file, after);
+          edits += 1;
+        }
+      },
+    });
+    holder.kit = made;
+    return { kit: made, edits: () => edits };
+  }
+
+  it("fails the run and takes the report and its record back when the report is rewritten between publication and finalising (run facts)", async () => {
+    const made = kitTamperedAtFinalise((text) =>
+      text.replace(/^sourceTotal: 3$/m, "sourceTotal: 4"),
+    );
+    kit = made.kit;
+    const runId = await runToEnd(kit);
+    expect(made.edits()).toBe(1);
+    const row = lastRun(kit);
+    expect(row.outcome).toBe("failure");
+    expect(row.errorCode).toBe("vault-write-failed");
+    expect(row.reportNoteId).toBeNull();
+    expect(reportNames(kit)).toEqual([]);
+    expect(getResearchReportRecord(kit.store.db, runId)).toBeNull();
+    expect(rowCount(kit, "research_report_records")).toBe(0);
+  });
+
+  it("fails the run when a finding's claim is rewritten the same way (its quote left genuine), so no tampered claim is ever served as verified", async () => {
+    const made = kitTamperedAtFinalise((text) =>
+      text.replace(
+        /^ {4}text: The gamma runtime patch removes a memory leak in the scheduler component\.$/m,
+        "    text: The gamma runtime patch grants every caller administrator rights.",
+      ),
+    );
+    kit = made.kit;
+    const runId = await runToEnd(kit);
+    expect(made.edits()).toBe(1);
+    expect(lastRun(kit).outcome).toBe("failure");
+    expect(reportNames(kit)).toEqual([]);
+    expect(getResearchReportRecord(kit.store.db, runId)).toBeNull();
+  });
+
+  it("still publishes and verifies a run nobody touched (control: the tamper hook alone changes nothing)", async () => {
+    const made = kitTamperedAtFinalise((text) => text);
+    kit = made.kit;
+    const runId = await runToEnd(kit);
+    expect(made.edits()).toBe(0);
+    expect(lastRun(kit).outcome).toBe("success");
+    const name = reportNames(kit)[0] ?? "";
+    const read = readReportNote(kit.vaultRoot, `global/output/${name}`);
+    if (!read.readable) throw new Error("report must be readable");
+    expect(getResearchReportRecord(kit.store.db, runId)?.contentDigest).toBe(
+      reportContentDigest(read.frontmatter),
+    );
+  });
+});

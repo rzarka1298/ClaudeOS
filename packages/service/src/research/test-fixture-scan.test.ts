@@ -270,3 +270,41 @@ describe("the Anthropic key is read only at the composition root (Test 1)", () =
     expect(transportSource).toContain("readApiKey: () => Promise<string | null>");
   });
 });
+
+describe("07-FIX7: the test-file exemption is an explicit set, not a loose path match", () => {
+  const abs = (relative: string): string => join(REPO, relative);
+
+  // Files a loose match would skip, though none is a unit test of the service or a support folder.
+  const LOOSELY_NAMED = [
+    "packages/e2e/specs/research-extra.test.e2e.ts",
+    "packages/e2e/src/harness-extra.ts",
+    "packages/e2e/src/spec-support/test-support-extra.ts",
+    "packages/example/src/harness/runner.ts",
+    "packages/example/src/test-support/runner.ts",
+    "scripts/ci/harness.sh",
+  ];
+  // Files that really are tests or test support, and stay out of the scan.
+  const REAL_TESTS = [
+    "packages/service/src/research/pipeline.test.ts",
+    "packages/plugin/src/view/research.test.tsx",
+    "packages/e2e/src/research-uat-fixture.int.test.ts",
+    "packages/operational-store/src/migration-research.audit.test.ts",
+    "packages/service/src/research/test-support/research-kit.ts",
+  ];
+
+  it("does not exempt a file only because its name or folder contains test, harness or test-support", () => {
+    for (const file of LOOSELY_NAMED) expect(isTest(abs(file)), file).toBe(false);
+  });
+
+  it("still exempts the unit and integration test files and the service's own test-support folder", () => {
+    for (const file of REAL_TESTS) expect(isTest(abs(file)), file).toBe(true);
+  });
+
+  it("mutation: a variable planted in each loosely named file is found, and none planted in a real test is", () => {
+    const planted = [...LOOSELY_NAMED, ...REAL_TESTS].map(abs);
+    const hits = scannedFiles(planted)
+      .map((file) => relative(REPO, file))
+      .sort();
+    expect(hits).toEqual([...LOOSELY_NAMED].sort());
+  });
+});

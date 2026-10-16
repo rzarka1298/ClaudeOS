@@ -28,7 +28,7 @@ const RUN = id25("run1");
 
 function inFlightStatus() {
   return statusOf({
-    inFlight: { runId: RUN, startedAt: iso(-1), stage: "synthesis" },
+    inFlight: { runId: RUN, startedAt: iso(-1), stage: "raw" },
     configuredSources: [...CONFIGURED_SOURCES],
     topicLabel: RESEARCH_TOPIC,
   });

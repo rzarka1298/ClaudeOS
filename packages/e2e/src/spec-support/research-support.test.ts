@@ -3,14 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RESEARCH_CLASSES } from "./research-copy.js";
+import { rendererClickNth, rendererReadResearch } from "./research-dom.js";
 import {
   clearResearchNotes,
   DOM_CONFIG,
   isRunEndLine,
   type PluginDataPage,
+  type ResearchBrowser,
+  type ResearchEnvironment,
   readVaultNotes,
   rendererCloseNotes,
   rendererOpenNotePaths,
+  runScenario,
   setReducedMotion,
 } from "./research-support.js";
 
@@ -178,4 +182,97 @@ describe("the open-note readers", () => {
     expect(rendererCloseNotes(fake.value)).toBe(2);
     expect(fake.detached).toEqual([0, 1]);
   });
+});
+
+describe("07-FIX7: runScenario follows the run through the service, not through a transient DOM state", () => {
+  const FAILED_LINE = "Research run failed: the summariser isn't set up.";
+
+  interface Fake {
+    browser: ResearchBrowser;
+    env: ResearchEnvironment;
+    presses: () => number;
+    selected: () => string[];
+  }
+
+  /**
+   * A destination whose status line never leaves `statusLine` (a second run that ends with the same
+   * sentence as the first), and a service whose answer to status() comes from `answers`, one per call.
+   */
+  function fake(statusLine: string, answers: Array<ReturnType<typeof status>>): Fake {
+    let pressed = 0;
+    const chosen: string[] = [];
+    let call = 0;
+    const read = {
+      mounted: true,
+      busy: false,
+      dimmed: false,
+      status: statusLine,
+      runNow: {
+        present: true,
+        disabled: false,
+        busy: false,
+        label: "Run now",
+        name: "",
+        reason: null,
+      },
+      list: { rows: [] },
+      reader: null,
+      runStatus: { rows: [] },
+    };
+    const browser = {
+      executeObsidianCommand: async () => undefined,
+      executeObsidian: async () => true,
+      execute: async (fn: unknown) => {
+        if (fn === rendererReadResearch) return read;
+        if (fn === rendererClickNth) {
+          pressed += 1;
+          return true;
+        }
+        throw new Error("the fake destination does not know this reader");
+      },
+    } as unknown as ResearchBrowser;
+    const env = {
+      prepared: { select: (scenario: string) => chosen.push(scenario) },
+      research: {
+        status: async () => {
+          const answer = answers[Math.min(call, answers.length - 1)];
+          call += 1;
+          return answer;
+        },
+      },
+    } as unknown as ResearchEnvironment;
+    return { browser, env, presses: () => pressed, selected: () => chosen };
+  }
+
+  function status(failure: { runId: string; endedAt: string } | null) {
+    return { lastSuccess: null, lastFailure: failure, inFlight: null };
+  }
+
+  const FIRST = { runId: "run-one", endedAt: "2026-10-16T10:00:00.000Z" };
+  const SECOND = { runId: "run-two", endedAt: "2026-10-16T10:00:05.000Z" };
+
+  it("returns the second run when it ended with the first run's very sentence before the first poll", async () => {
+    // Item 8's run is already over (the previous answer); the press starts item 22's run, which
+    // fails with the same sentence and has ended by the time anything looks.
+    const world = fake(FAILED_LINE, [status(FIRST), status(SECOND)]);
+    const run = await runScenario(world.browser, world.env, "base");
+    expect(world.presses()).toBe(1);
+    expect(world.selected()).toEqual(["base"]);
+    expect(run.runId).toBe("run-two");
+    expect(run.ok).toBe(false);
+    expect(run.read.status).toBe(FAILED_LINE);
+  }, 30_000);
+
+  it("waits for the service to name a new run instead of returning the previous one", async () => {
+    // The service still answers with the first run twice (the new run is working), then the second.
+    const world = fake(FAILED_LINE, [status(FIRST), status(FIRST), status(FIRST), status(SECOND)]);
+    const run = await runScenario(world.browser, world.env, "base");
+    expect(run.runId).toBe("run-two");
+  }, 30_000);
+
+  it("handles the very first run, when the service has ended none before", async () => {
+    const world = fake(FAILED_LINE, [status(null), status(FIRST)]);
+    const run = await runScenario(world.browser, world.env, "base");
+    expect(run.runId).toBe("run-one");
+  }, 30_000);
 });

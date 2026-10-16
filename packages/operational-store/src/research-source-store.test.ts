@@ -210,6 +210,23 @@ describe("(07-FIX6b) a record is made only for a run that exists and is still wo
     expect(db.prepare("SELECT COUNT(*) AS n FROM research_source_records").get()).toEqual({ n: 0 });
   });
 
+  // 07-FIX7 (5c): the provenance of a research run is for research runs. A run of another job that
+  // is in flight is not a run that fetched and summarised sources.
+  it("refuses a run in flight that belongs to another job, with a typed error and no write", () => {
+    const other = newRunId();
+    startJobRun(db, {
+      jobRunId: other,
+      jobKey: "daily.other",
+      idempotencyKey: `daily.other:manual:${other}`,
+      trigger: "manual",
+      startedAt: T0,
+    });
+    expect(() => recordResearchSource(db, record({ jobRunId: other }))).toThrow(
+      JobRunNotFoundError,
+    );
+    expect(db.prepare("SELECT COUNT(*) AS n FROM research_source_records").get()).toEqual({ n: 0 });
+  });
+
   it("does not let a repeat of an earlier record through once the run has ended", () => {
     const input = record();
     recordResearchSource(db, input);

@@ -96,6 +96,95 @@ function section(source: string, heading: string): string {
   return rest.split(/^## /m)[0] as string;
 }
 
+/**
+ * The titles a test file declares, as vitest would run them (07-FIX7, MINOR f). A title counts
+ * when it is the first argument of a `describe`, `it` or `test` call (or the `run` alias this
+ * folder uses for a conditional describe) that is not skipped, nor inside a skipped describe. A
+ * describe counts only when it holds at least one such live `it` or `test`. Text in a comment, a
+ * string that is not a call's title and a template title are never matched.
+ */
+function liveTitles(source: string): Set<string> {
+  const calls: {
+    kind: "suite" | "case";
+    title: string;
+    skipped: boolean;
+    start: number;
+    end: number;
+  }[] = [];
+  const pattern =
+    /\b(describe|it|test|run)((?:\.\w+)*)\s*(?:\([^()]*\))?\s*\(\s*(["'])((?:\\.|(?!\3)[^\\\n])*)\3/g;
+  for (const match of source.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    // Skip a match inside a line comment, or inside a string literal that began earlier on its line.
+    const lineStart = source.lastIndexOf("\n", start) + 1;
+    const before = source.slice(lineStart, start);
+    if (/^\s*(\/\/|\*|\/\*)/.test(before)) continue;
+    const quotes = (mark: string): number => before.replace(/\\./g, "").split(mark).length - 1;
+    if (quotes('"') % 2 === 1 || quotes("'") % 2 === 1) continue;
+    const suite = match[1] === "describe" || match[1] === "run";
+    let end = source.length;
+    if (suite) {
+      const open = source.indexOf("{", start + match[0].length);
+      end = open < 0 ? start : closingBrace(source, open);
+    }
+    calls.push({
+      kind: suite ? "suite" : "case",
+      title: (match[4] ?? "").replace(/\\(["'\\])/g, "$1"),
+      skipped: /\.(skip|todo)\b/.test(match[2] ?? ""),
+      start,
+      end,
+    });
+  }
+  const live = (call: (typeof calls)[number]): boolean =>
+    !call.skipped &&
+    !calls.some(
+      (other) =>
+        other.kind === "suite" &&
+        other.skipped &&
+        other.start < call.start &&
+        call.start < other.end,
+    );
+  const titles = new Set<string>();
+  for (const call of calls) {
+    if (!live(call)) continue;
+    if (call.kind === "case") titles.add(call.title);
+    else if (
+      calls.some(
+        (inner) =>
+          inner.kind === "case" &&
+          live(inner) &&
+          inner.start > call.start &&
+          inner.start < call.end,
+      )
+    ) {
+      titles.add(call.title);
+    }
+  }
+  return titles;
+}
+
+/** Index of the brace that closes the one at `open`; strings, templates and comments are skipped. */
+function closingBrace(source: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      i += 1;
+      while (i < source.length && source[i] !== ch) i += source[i] === "\\" ? 2 : 1;
+    } else if (ch === "/" && source[i + 1] === "/") {
+      while (i < source.length && source[i] !== "\n") i += 1;
+    } else if (ch === "/" && source[i + 1] === "*") {
+      i = source.indexOf("*/", i + 2);
+      if (i < 0) return source.length;
+    } else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return source.length;
+}
+
 run("completeness and shape (Tests 1 and 2 of Task 2)", () => {
   it("has a row for exactly the declared threat ids, including the supply-chain and provenance ids", () => {
     const declared = planThreatIds();
@@ -131,6 +220,84 @@ run("evidence is real (Tests 3 and 4)", () => {
       }
     }
     expect(checked).toBeGreaterThan(100);
+  });
+
+  it("cites, in every test file, a title that is a live test or a describe that holds one (07-FIX7)", () => {
+    let checked = 0;
+    for (const row of rows()) {
+      for (const cite of row.cites) {
+        if (!/\.test\.tsx?$/.test(cite.file)) continue;
+        const titles = liveTitles(readFileSync(join(REPO_ROOT, cite.file), "utf8"));
+        expect(titles.has(cite.quote), `${row.id} ${cite.file} "${cite.quote}"`).toBe(true);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it("names a specific test for the three rows that used to cite only the whole gate (T-07-01, 43, 47)", () => {
+    for (const id of ["T-07-01", "T-07-43", "T-07-47"]) {
+      const row = rows().find((r) => r.id === id);
+      const privacy = (row?.cites ?? []).filter((c) => c.file.endsWith("check-privacy.test.ts"));
+      expect(privacy.length, id).toBeGreaterThan(0);
+      for (const cite of privacy) expect(cite.quote, id).not.toBe("check-privacy");
+    }
+  });
+
+  describe("liveTitles (control: the check can fail)", () => {
+    const sample = [
+      '// it("only in a comment", () => {});',
+      'describe("a suite", () => {',
+      '  it("a live case", () => {});',
+      '  it.skip("a skipped case", () => {});',
+      '  it.todo("a todo case");',
+      '  it.skipIf(process.platform === "none")("a conditional case", () => {});',
+      "  it(",
+      '    "a case with its title on the next line",',
+      "    () => {},",
+      "  );",
+      "  const note = \"it('a string, not a call')\";",
+      "});",
+      'describe.skip("a skipped suite", () => {',
+      '  it("a case in a skipped suite", () => {});',
+      "});",
+      'describe("a suite with nothing live", () => {',
+      '  it.skip("only a skipped case", () => {});',
+      "});",
+      'describe("a suite with a brace in a string", () => {',
+      '  it("a case after the brace", () => { const x = "}"; });',
+      "});",
+    ].join("\n");
+    const titles = liveTitles(sample);
+
+    it("accepts live cases, conditionally skipped cases, wrapped titles and suites that hold a live case", () => {
+      for (const title of [
+        "a suite",
+        "a live case",
+        "a conditional case",
+        "a case with its title on the next line",
+        "a suite with a brace in a string",
+        "a case after the brace",
+      ]) {
+        expect(titles.has(title), title).toBe(true);
+      }
+    });
+
+    it("refuses skipped and todo cases, a case inside a skipped suite, a suite with nothing live and text that is not a title", () => {
+      for (const title of [
+        "only in a comment",
+        "a skipped case",
+        "a todo case",
+        "a skipped suite",
+        "a case in a skipped suite",
+        "a suite with nothing live",
+        "only a skipped case",
+        "a string, not a call",
+        "check-privacy",
+      ]) {
+        expect(titles.has(title), title).toBe(false);
+      }
+    });
   });
 
   it("makes document rows cite docs, the coverage record or a planning record", () => {
@@ -548,21 +715,22 @@ run("validation map (Task 3, Test 4)", () => {
     expect(checked).toBeGreaterThan(30);
   });
 
-  it("flips nyquist_compliant and wave_0_complete only when no reference is MISSING", () => {
+  it("sets wave_0_complete only when no reference is MISSING, and nyquist_compliant only when nothing is still a merge gate", () => {
     const missing =
       /\bMISSING\b/.test(mapSection) ||
       /\bMISSING\b/.test(section(validation, "Wave 0 Requirements"));
+    const open = mapRows().filter((row) => row.status !== statuses[0]);
     const nyquist = /^nyquist_compliant: (true|false)$/m.exec(front)?.[1];
     const wave0 = /^wave_0_complete: (true|false)$/m.exec(front)?.[1];
     expect(["true", "false"]).toContain(nyquist);
     expect(["true", "false"]).toContain(wave0);
-    if (missing) {
-      expect(nyquist).toBe("false");
-      expect(wave0).toBe("false");
-    } else {
-      expect(nyquist).toBe("true");
-      expect(wave0).toBe("true");
-    }
+    // Wave 0 is about files that must exist before work: a MISSING one is the only thing against it.
+    expect(wave0).toBe(missing ? "false" : "true");
+    // Nyquist compliance means every task has an automated check that has passed. A row that still
+    // reads "merge gate" has not passed one yet, so the flag stays false until the runner reports
+    // (07-FIX7, MINOR e).
+    expect(nyquist).toBe(missing || open.length > 0 ? "false" : "true");
+    if (open.length > 0) expect(nyquist, "rows still read merge gate").toBe("false");
   });
 
   it("fills every Wave 0 gap with files that exist", () => {
