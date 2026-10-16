@@ -547,6 +547,15 @@ describe("Task 3 Test 1: article typography from existing tokens (RSRCH-10, D-24
     }
   });
 
+  it("gives the run status skeleton a block box and a width, so it shows under its label (E2 loading)", () => {
+    // The shared skeleton is an inline span: inside a definition it would collapse to nothing and
+    // leave the labels bare. Found by the plan 07-16 loading baseline.
+    const selector = ".ccc-research-status-row .ccc-skeleton-line";
+    expect(ruleValue(selector, "display")).toBe("block");
+    expect(ruleValue(selector, "width")).toMatch(/^min\(100%, \d+rem\)$/);
+    expect(ruleValue(selector, "margin-bottom")).toBe("0");
+  });
+
   it("does not dim the reader a second time: the destination root already carries the dim", () => {
     for (const rule of NEW_RULES) {
       if (!rule.selectors.some((selector) => selector.includes("ccc-report-reader"))) continue;
