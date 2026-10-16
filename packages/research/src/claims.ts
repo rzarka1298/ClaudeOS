@@ -40,7 +40,7 @@ export interface ClaimCounts {
   readonly droppedItems: number;
   /** Cited ids dropped because they were not fetched in this run. */
   readonly droppedIds: number;
-  /** Cited ids a fact or claim lost because their text does not hold its quote. */
+  /** Cited ids an item lost because their text does not hold its stored quote. */
   readonly narrowedIds: number;
   /** Facts and claims turned into inference. */
   readonly downgraded: number;
@@ -263,10 +263,9 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
       const stillHeld = clean.truncated ? [] : holders(clean.text);
       if (stillHeld.length > 0) {
         storedQuote = clean.text;
-        if (kind !== "inference") {
-          narrowedIds += surviving.length - stillHeld.length;
-          ids = stillHeld;
-        }
+        // Every kind that stores a quote cites only the sources that hold it.
+        narrowedIds += surviving.length - stillHeld.length;
+        ids = stillHeld;
       }
     }
     if (kind !== "inference" && storedQuote === undefined) {

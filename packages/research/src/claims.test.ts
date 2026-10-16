@@ -616,7 +616,7 @@ describe("Hardening (c): a fact cites only the sources that hold its quote", () 
     expect(result.items[0]).toMatchObject({ kind: "unverified-claim", citedSourceIds: [ID_A] });
   });
 
-  it("keeps all surviving ids on a downgraded item and on an inference", () => {
+  it("keeps all surviving ids on a downgraded item; an inference with a stored quote is narrowed", () => {
     const downgraded = ok(
       quoted("not in any source at all here", { citedSourceIds: [ID_A, ID_B] }),
     );
@@ -628,7 +628,8 @@ describe("Hardening (c): a fact cites only the sources that hold its quote", () 
         citedSourceIds: [ID_A, ID_B],
       }),
     );
-    expect(inference.items[0]).toMatchObject({ kind: "inference", citedSourceIds: [ID_A, ID_B] });
+    // 07-FIX3A F2: the quote is stored, so only the source that holds it stays cited.
+    expect(inference.items[0]).toMatchObject({ kind: "inference", citedSourceIds: [ID_A] });
   });
 });
 

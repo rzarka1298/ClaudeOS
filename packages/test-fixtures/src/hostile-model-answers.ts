@@ -196,9 +196,9 @@ export const HOSTILE_MODEL_ANSWERS: readonly HostileModelAnswer[] = [
     ["inference"],
   ),
   valid(
-    "quote-over-the-cap-is-cut-and-still-held",
+    "quote-over-the-cap-downgrades-instead-of-a-cut-prefix",
     [item({ citedSourceIds: [B], quote: "chunk of text ".repeat(40).trim() })],
-    ["source-fact"],
+    ["inference"],
     [[B]],
     { [B]: `Start. ${"chunk of text ".repeat(40).trim()} End.` },
   ),
