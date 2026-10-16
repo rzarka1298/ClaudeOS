@@ -9,6 +9,7 @@ import {
   reportRow,
   runResponse,
   statusOf,
+  unreadableRow,
 } from "../test-support/research-view-fixtures.js";
 import { configureResearch, ResearchApiError } from "./api.js";
 import {
@@ -199,6 +200,73 @@ describe("Test 3: the 5-second transport timeout reports, refetches and ends hon
     await pressRunNow();
     expect(statusLine.value).toBe("It didn't start. You can press Run now again.");
     expect(ports.notify).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("G3: a timeout whose follow-up status cannot be reconciled stays unknown", () => {
+  const UNKNOWN_LINE =
+    "Couldn't confirm whether the run started. The status will update when the service answers.";
+
+  async function timeoutThen(status: () => Promise<ReturnType<typeof statusOf>>) {
+    vi.useFakeTimers();
+    const api = fakeResearchApi({ run: vi.fn(neverResolves), status: vi.fn(status) });
+    const ports = fakeResearchPorts();
+    configureResearch({ api, ...ports });
+    const pressed = pressRunNow();
+    await vi.advanceTimersByTimeAsync(5000);
+    await pressed;
+    return { api, ports };
+  }
+
+  it("a follow-up that fails with service-disconnected does not claim the run did not start", async () => {
+    await timeoutThen(() => Promise.reject(new ResearchApiError("service-disconnected")));
+    expect(statusLine.value).toBe(UNKNOWN_LINE);
+    expect(statusLine.value).not.toContain("didn't start");
+    expect(statusFailure.value).toBe("service-disconnected");
+    expect(activeRunId.value).toBeNull();
+    expect(pressPending.value).toBe(false);
+  });
+
+  it("a terminal record at or after the press means it cannot be concluded that nothing started", async () => {
+    for (const record of ["lastFailure", "lastSuccess", "latestUnknown"] as const) {
+      resetResearchState();
+      const later = new Date(Date.now() + 2000).toISOString();
+      const body =
+        record === "lastFailure"
+          ? { lastFailure: { runId: id25("late"), endedAt: later, errorCode: "summariser-failed" } }
+          : record === "lastSuccess"
+            ? {
+                lastSuccess: {
+                  runId: id25("late"),
+                  endedAt: later,
+                  outcome: "success",
+                  sourceCount: 3,
+                  sourceTotal: 3,
+                  reportNoteId: reportRow(0).noteId,
+                },
+              }
+            : { latestUnknown: { runId: id25("late"), startedAt: later } };
+      await timeoutThen(() =>
+        Promise.resolve(statusOf(body as Partial<ReturnType<typeof statusOf>>)),
+      );
+      expect(statusLine.value, record).toBe(UNKNOWN_LINE);
+      expect(activeRunId.value, record).toBeNull();
+      expect(pressPending.value, record).toBe(false);
+      vi.useRealTimers();
+    }
+  });
+
+  it("an older terminal record does not stop the honest did-not-start sentence", async () => {
+    const earlier = new Date(Date.now() - 3_600_000).toISOString();
+    await timeoutThen(() =>
+      Promise.resolve(
+        statusOf({
+          lastFailure: { runId: id25("old"), endedAt: earlier, errorCode: "summariser-failed" },
+          latestUnknown: { runId: id25("older"), startedAt: earlier },
+        }),
+      ),
+    );
+    expect(statusLine.value).toBe("It didn't start. You can press Run now again.");
   });
 });
 
@@ -417,8 +485,21 @@ describe("Test 8 (plan 07-11 task 3): paging the report list", () => {
     expect(reportRows.value).toHaveLength(50);
     expect(reportsCursor.value).toBeNull();
     expect(statusLine.value).toBe("25 more reports loaded.");
-    expect(focusRequest.value).toBe(25);
+    expect(focusRequest.value).toEqual({ kind: "report", noteId: second[0]?.noteId });
     expect(reportsLoadingMore.value).toBe(false);
+  });
+
+  it("G4: the focus request names the first new row, whether readable or not", async () => {
+    const firstPage = [reportRow(0), unreadableRow("old.md"), reportRow(2)];
+    const broken = unreadableRow("new-first.md");
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(listOf(firstPage, "cursor_2"))
+      .mockResolvedValueOnce(listOf([broken, reportRow(4)], null));
+    configureResearch({ api: fakeResearchApi({ list }), ...fakeResearchPorts() });
+    await refreshList();
+    await loadMoreReports();
+    expect(focusRequest.value).toEqual({ kind: "unreadable", notePath: broken.notePath });
   });
 
   it("says 1 more report loaded for a single new row", async () => {

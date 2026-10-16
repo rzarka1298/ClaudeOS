@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureResearch, ResearchApiError } from "../research/api.js";
 import {
   onResearchUpdated,
+  pressPending,
   pressRunNow,
   refreshList,
   resetResearchState,
@@ -209,6 +210,68 @@ describe("Test 3: ports only", () => {
     fireEvent.click(button);
     expect(ports.requestRunNow).not.toHaveBeenCalled();
     expect(screen.getByText("The companion service isn't running.")).toBeTruthy();
+  });
+});
+
+describe("G5: Run now is claimed synchronously in the click, even with an async host port", () => {
+  function mountAsync(api: ReturnType<typeof fakeResearchApi>) {
+    const ports = fakeResearchPorts({
+      requestRunNow: vi.fn(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await pressRunNow();
+      }),
+    });
+    configureResearch({ api, ...ports });
+    const result = render(
+      <ResearchDestination
+        connection={{ kind: "live" }}
+        now={RESEARCH_NOW_MS}
+        zone={RESEARCH_ZONE}
+      />,
+    );
+    return { ports, ...result };
+  }
+
+  it("a double click starts one press: the port is asked once and run() is called once", async () => {
+    const api = fakeResearchApi({
+      run: vi.fn(() => Promise.resolve(runResponse({ runId: RUN }))),
+    });
+    const { ports } = mountAsync(api);
+    const button = await screen.findByRole("button", { name: /^Run now/ });
+    fireEvent.click(button);
+    expect(pressPending.value).toBe(true);
+    fireEvent.click(button);
+    await waitFor(() => expect(api.run).toHaveBeenCalledTimes(1));
+    expect(ports.requestRunNow).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the button busy in the same tick as the click", async () => {
+    const api = fakeResearchApi({ run: vi.fn(() => new Promise<never>(() => undefined)) });
+    mountAsync(api);
+    const button = await screen.findByRole("button", { name: /^Run now/ });
+    fireEvent.click(button);
+    await waitFor(() => expect(button.getAttribute("aria-busy")).toBe("true"));
+  });
+
+  it("a host port that rejects releases the claim so the button works again", async () => {
+    const api = fakeResearchApi();
+    const ports = fakeResearchPorts({
+      requestRunNow: vi.fn(() => Promise.reject(new Error("host"))),
+    });
+    configureResearch({ api, ...ports });
+    render(
+      <ResearchDestination
+        connection={{ kind: "live" }}
+        now={RESEARCH_NOW_MS}
+        zone={RESEARCH_ZONE}
+      />,
+    );
+    const button = await screen.findByRole("button", { name: /^Run now/ });
+    fireEvent.click(button);
+    await waitFor(() => expect(pressPending.value).toBe(false));
+    fireEvent.click(button);
+    expect(ports.requestRunNow).toHaveBeenCalledTimes(2);
   });
 });
 

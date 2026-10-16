@@ -200,10 +200,84 @@ describe("Test 2: keyboard and paging", () => {
       <ReportList {...props({ rows: rowsOf(25), hasMore: true, onFocusHandled: handled })} />,
     );
     rerender(
-      <ReportList {...props({ rows: rowsOf(50), focusRequest: 25, onFocusHandled: handled })} />,
+      <ReportList
+        {...props({
+          rows: rowsOf(50),
+          focusRequest: { kind: "report", noteId: reportRow(25).noteId },
+          onFocusHandled: handled,
+        })}
+      />,
     );
     expect(document.activeElement).toBe(buttons()[25]);
     expect(handled).toHaveBeenCalledTimes(1);
+  });
+
+  describe("G4: the focus request names a row, so unreadable rows cannot shift it", () => {
+    function named(index: number): ResearchListRow {
+      return reportRow(index, { title: `Named report ${index}` });
+    }
+    function focusedItem(): HTMLElement | null {
+      return document.activeElement?.closest("li.ccc-report-row") ?? null;
+    }
+
+    it("focuses the named readable row on a mixed page with an unreadable row among the old 25", () => {
+      const handled = vi.fn();
+      const before: ResearchListRow[] = Array.from({ length: 25 }, (_, index) =>
+        index === 3 ? unreadableRow("old-broken.md") : named(index),
+      );
+      const after = [...before, ...Array.from({ length: 25 }, (_, index) => named(index + 25))];
+      const { rerender } = render(
+        <ReportList {...props({ rows: before, hasMore: true, onFocusHandled: handled })} />,
+      );
+      rerender(
+        <ReportList
+          {...props({
+            rows: after,
+            focusRequest: { kind: "report", noteId: reportRow(25).noteId },
+            onFocusHandled: handled,
+          })}
+        />,
+      );
+      expect(focusedItem()?.textContent).toContain("Named report 25");
+      expect(handled).toHaveBeenCalledTimes(1);
+    });
+
+    it("focuses the Open note button when the first new row is unreadable", () => {
+      const handled = vi.fn();
+      const before = Array.from({ length: 25 }, (_, index) => named(index));
+      const broken = unreadableRow("new-broken.md");
+      const after = [...before, broken, named(26)];
+      const { rerender } = render(
+        <ReportList {...props({ rows: before, hasMore: true, onFocusHandled: handled })} />,
+      );
+      rerender(
+        <ReportList
+          {...props({
+            rows: after,
+            focusRequest: { kind: "unreadable", notePath: broken.notePath },
+            onFocusHandled: handled,
+          })}
+        />,
+      );
+      expect(document.activeElement?.textContent).toBe("Open note");
+      expect(focusedItem()?.textContent).toContain("new-broken.md");
+      expect(handled).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears a request that names no row in the list, and leaves focus alone", () => {
+      const handled = vi.fn();
+      render(
+        <ReportList
+          {...props({
+            rows: [named(0), unreadableRow()],
+            focusRequest: { kind: "report", noteId: reportRow(40).noteId },
+            onFocusHandled: handled,
+          })}
+        />,
+      );
+      expect(handled).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(document.body);
+    });
   });
 
   it("keeps a focused row where it is when a new report arrives at the top", () => {
