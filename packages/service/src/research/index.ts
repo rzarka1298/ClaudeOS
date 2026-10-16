@@ -5,6 +5,7 @@
  */
 
 export type { TextTransport } from "../untrusted/index.js";
+export { DEFAULT_RESEARCH_CONFIG } from "./default-sources.js";
 export { createExtractiveTransport } from "./extractive-transport.js";
 export type {
   FetchSourceInput,
@@ -43,5 +44,9 @@ export {
   RESEARCH_WATCHDOG_MS,
   recoverStuckResearchRuns,
 } from "./services.js";
-export type { LoadSourcesResult, ResearchSourcesFs } from "./sources-config.js";
-export { loadResearchSources, RESEARCH_SOURCES_FILE } from "./sources-config.js";
+export type { LoadSourcesResult, ResearchSourcesFs, SourcesRefusal } from "./sources-config.js";
+export {
+  loadResearchSources,
+  RESEARCH_SOURCES_FILE,
+  RESEARCH_SOURCES_MAX_BYTES,
+} from "./sources-config.js";

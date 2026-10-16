@@ -89,6 +89,11 @@ export interface SummariserChoice {
   readonly transport: TextTransport;
   /** What the report records as its summariser: a model id or the extractive double. */
   readonly id: SummariserId;
+  /**
+   * The most characters the transport accepts as input. The pipeline trims whole sources to it
+   * before the model call. Default: the live transport's cap, USER_CONTENT_MAX_CHARS.
+   */
+  readonly maxInputChars?: number;
 }
 
 export interface ResearchPipelineDeps {
@@ -269,7 +274,7 @@ export async function summariseSources(
 // ---------------------------------------------------------------------------
 // Preparing sources
 
-interface PreparedSource {
+export interface PreparedSource {
   readonly index: number;
   readonly entry: ResearchSourceEntry;
   readonly sourceId: string;
@@ -456,6 +461,10 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   appendStage(deps, trace, "capture", [], { sources: config.sources.length });
   if (config.sources.length === 0) throw new StageFailure("all-sources-failed");
 
+  // The summariser is chosen before anything is fetched: a run that cannot summarise fetches nothing.
+  trace.phase = "summarise";
+  const choice = deps.chooseSummariser(config);
+
   // fetch
   trace.phase = "fetch";
   let fetched: Awaited<ReturnType<SafeFetcher["fetchSources"]>>;
@@ -481,7 +490,11 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     return prepare(index, entry, result, retrievedAt, nonce);
   });
   const ready = outcomes.flatMap((outcome) => (outcome.ok ? [outcome.source] : []));
-  const { kept, dropped } = trimToInputCap(ready, nonce);
+  const { kept, dropped } = trimToInputCap(
+    ready,
+    nonce,
+    choice.maxInputChars ?? USER_CONTENT_MAX_CHARS,
+  );
   recordSources(trace, config, outcomes, new Set(dropped.map((source) => source.index)));
   if (kept.length === 0) throw new StageFailure("all-sources-failed");
 
@@ -529,7 +542,6 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   // synthesis
   trace.phase = "summarise";
   assertLive(trace);
-  const choice = deps.chooseSummariser(config);
   const sourceIds = kept.map((source) => source.sourceId);
   const delimited = delimitSourcesWithReport(
     kept.map((source) => ({ sourceId: source.sourceId, text: source.evidence })),
