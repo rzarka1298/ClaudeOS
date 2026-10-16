@@ -183,12 +183,17 @@ for (const { researchCase, width, motion } of CELLS) {
     `research - ${researchCase} - ${label}`,
     `${researchCase}-${width}${suffix}.png`,
     async (page, snapshotName) => {
+      // The long and narrow cells are several thousand pixels tall and the amd64 container is
+      // emulated on a loaded Mac: allow the capture time, never a looser pixel comparison.
+      test.setTimeout(90_000);
       await page.goto(harnessUrl({ view: "research", case: researchCase, width, motion }));
       await page.locator("html[data-harness-ready=true]").waitFor({ state: "attached" });
       await fitViewportToContent(page);
       await resetScroll(page);
       await ASSERTIONS[`${researchCase}-${width}${suffix}`]?.(page);
-      await expect(page.locator("[data-harness-width]")).toHaveScreenshot(snapshotName);
+      await expect(page.locator("[data-harness-width]")).toHaveScreenshot(snapshotName, {
+        timeout: 45_000,
+      });
     },
   );
 }
