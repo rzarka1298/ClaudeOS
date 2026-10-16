@@ -248,6 +248,14 @@ export interface WriteRawSourceNoteOptions {
    * body (07-FIX3A F3). This package cannot import `@ccc/research`, so it does not compute it.
    */
   readonly text: string;
+  /**
+   * Recomputes the content hash from the stored text: the lowercase hex SHA-256 of the canonical
+   * form of `text` (`canonicalHashInput` in `@ccc/research`, which this package cannot import,
+   * so the caller injects it). The writer never trusts `sourceRef.contentHash`: the hash that
+   * names the file and that a report cites must be the hash of the bytes that are stored
+   * (wave 3 review A4). A mismatch, a throw or an answer that is not a SHA-256 refuses the write.
+   */
+  readonly canonicalHash: (text: string) => string;
   readonly truncated?: boolean;
   readonly now?: Date;
 }
@@ -263,6 +271,25 @@ export interface WrittenRawSourceNote {
   readonly frontmatter: RawSourceFrontmatter;
 }
 
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** The reference's hash must equal the injected function's hash of the stored text. */
+function assertHashMatchesText(options: WriteRawSourceNoteOptions): void {
+  let recomputed: unknown;
+  try {
+    recomputed = options.canonicalHash(options.text);
+  } catch {
+    throw new SourceNoteError("invalid-field");
+  }
+  if (
+    typeof recomputed !== "string" ||
+    !SHA256_HEX.test(recomputed) ||
+    recomputed !== options.sourceRef.contentHash
+  ) {
+    throw new SourceNoteError("invalid-field");
+  }
+}
+
 /**
  * Writes one raw snapshot, or finds the one already there. The frontmatter (including that the
  * snapshot path matches the id and hash) is validated before anything is written, and scope and
@@ -270,7 +297,8 @@ export interface WrittenRawSourceNote {
  * back; a readable one for the same content hash is the answer and nothing is written, and one
  * that cannot be read back is never overwritten.
  *
- * @throws {SourceNoteError} for an oversized snapshot or an unreadable existing file.
+ * @throws {SourceNoteError} for an oversized snapshot, a content hash that is not the hash of the
+ *   stored text, or an unreadable existing file.
  * @throws {ZodError} when the reference, counts or path do not satisfy the raw schema.
  * @throws {WorkspaceScopeViolationError} when the target resolves outside the global scope.
  */
@@ -278,6 +306,7 @@ export function writeRawSourceNote(options: WriteRawSourceNoteOptions): WrittenR
   if (Buffer.byteLength(options.text, "utf8") > RAW_SOURCE_FILE_MAX_BYTES) {
     throw new SourceNoteError("too-large");
   }
+  assertHashMatchesText(options);
   const now = (options.now ?? new Date()).toISOString();
   const body = `${RAW_SOURCE_BANNER}\n\n${fenceUntrustedBlock(options.text)}`;
   const validated = RawSourceFrontmatterSchema.parse({

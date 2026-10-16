@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { newRunId, RESEARCH_STAGES } from "@ccc/domain";
-import { parseNote } from "@ccc/vault-repo";
+import { inlineCode, parseNote } from "@ccc/vault-repo";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type RunNoteInput, renderRunNote, runNotePathFor, writeRunNote } from "./run-note.js";
 
@@ -44,7 +44,7 @@ describe("Test 2 (trace): the run note lists every stage with its instant and th
     const body = renderRunNote(input());
     let last = -1;
     for (const stage of RESEARCH_STAGES) {
-      const at = body.indexOf(`\`${stage}\``);
+      const at = body.indexOf(inlineCode(stage));
       expect(at, stage).toBeGreaterThan(last);
       last = at;
     }
@@ -58,7 +58,7 @@ describe("Test 2 (trace): the run note lists every stage with its instant and th
       input({ outcome: "failure", errorCode: "summariser-failed", reportPath: null }),
     );
     expect(body).toContain("Outcome: Failure");
-    expect(body).toContain("`summariser-failed`");
+    expect(body).toContain(inlineCode("summariser-failed"));
   });
 
   it("says Running with no end instant while a run is in flight", () => {
@@ -84,7 +84,7 @@ describe("Test 5 (run note template): only engine text, codes, ids, instants and
   it("marks an unavailable source with its closed code only", () => {
     const body = renderRunNote(input());
     expect(body).toContain("Rust blog");
-    expect(body).toContain("`timeout`");
+    expect(body).toContain(inlineCode("timeout"));
   });
 });
 

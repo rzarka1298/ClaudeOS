@@ -21,6 +21,10 @@
     "./research-summariser": {
       "types": "./dist/research/summariser-entry.d.ts",
       "default": "./dist/research/summariser-entry.js"
+    },
+    "./research": {
+      "types": "./dist/research/index.d.ts",
+      "default": "./dist/research/index.js"
     }
   },
   "scripts": {

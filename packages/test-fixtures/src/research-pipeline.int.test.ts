@@ -11,6 +11,7 @@ import {
 } from "@ccc/service/research";
 import {
   extractRawSnapshotText,
+  inlineCode,
   parseNote,
   readRawSourceNote,
   readReportNote,
@@ -141,7 +142,7 @@ describe("Test 2 (trace): the run note and the job run row trace the run end to 
     );
     let last = -1;
     for (const stage of RESEARCH_STAGES) {
-      const at = note.body.indexOf(`\`${stage}\``);
+      const at = note.body.indexOf(inlineCode(stage));
       expect(at, stage).toBeGreaterThan(last);
       last = at;
     }
