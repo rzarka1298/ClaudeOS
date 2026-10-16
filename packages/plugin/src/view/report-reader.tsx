@@ -50,6 +50,7 @@ import {
   READER_RUN_HEADING,
   READER_SOURCES_HEADING,
   READER_UNAVAILABLE_HEADING,
+  REPORT_TITLE_MAX,
   RUN_FIELD_LABELS,
   SECTION_NOT_LOADED_OFFLINE,
   SOURCE_NOT_LOADED,
@@ -75,7 +76,8 @@ import { capText, formatRunTime, itemsText } from "./research-format.js";
  * read the report, the findings, the sources, the run record. Partiality comes before the findings
  * so the owner reads the gap before the content.
  *
- * Focus moves to the title once it renders; a citation moves focus to the cited source's heading
+ * Focus moves to the title once it renders, and to the heading of a report that did not open
+ * (the heading is described by its explanation, so one focus announces both); a citation moves focus to the cited source's heading
  * (an instant scroll, never smooth) and that entry offers the way back to the citation. The host
  * ports (copy, open) are reached through the port holder; both are local actions that stay enabled
  * while the service is away.
@@ -91,6 +93,11 @@ export interface ReportReaderProps {
   readonly stacked?: boolean | undefined;
   /** False while the companion service is away; last-good content stays readable. */
   readonly connected?: boolean | undefined;
+  /**
+   * The report's vault-relative path from the list row the owner opened. It is what lets a report
+   * whose metadata cannot be read still offer Open note: there is no header to take it from.
+   */
+  readonly notePath?: string | undefined;
 }
 
 interface CiteOrigin {
@@ -387,6 +394,7 @@ function RunRecord(props: {
 
 export function ReportReader(props: ReportReaderProps): VNode {
   const titleId = useId();
+  const bodyId = useId();
   const findingsId = useId();
   const sourcesId = useId();
   const rootRef = useRef<HTMLElement | null>(null);
@@ -410,14 +418,17 @@ export function ReportReader(props: ReportReaderProps): VNode {
   const header = state?.header ?? null;
   const firstFailure = state?.firstFailure ?? null;
 
-  // Focus moves to the title once it renders, and to the heading of a gone report; once per report.
+  // Focus moves to the title once it renders and to the heading of a report that did not open (the
+  // heading names the problem and is described by its explanation). Once per report and per state,
+  // so a retry that succeeds moves focus to the title again.
+  const focusKey = header !== null ? "loaded" : firstFailure;
   useEffect(() => {
-    if (focusedFor.current === noteId) return;
-    if (header !== null || firstFailure === "not-found") {
-      focusedFor.current = noteId;
-      titleRef.current?.focus();
-    }
-  }, [header, firstFailure, noteId]);
+    if (focusKey === null) return;
+    const key = `${noteId}|${focusKey}`;
+    if (focusedFor.current === key) return;
+    focusedFor.current = key;
+    titleRef.current?.focus();
+  }, [focusKey, noteId]);
 
   // A report that is gone or damaged means the list is stale: ask for it once.
   useEffect(() => {
@@ -476,15 +487,27 @@ export function ReportReader(props: ReportReaderProps): VNode {
         onKeyDown={onKeyDown}
       >
         {backButton}
-        <h3 id={titleId} tabIndex={-1} ref={titleRef}>
+        <h3 id={titleId} tabIndex={-1} ref={titleRef} aria-describedby={bodyId}>
           {gone || unreadable ? null : <ErrorGlyph />}
           {heading}
         </h3>
-        {gone ? <p>{NOT_FOUND_BODY}</p> : null}
-        {unreadable ? <p>{UNREADABLE_BODY}</p> : null}
+        {gone ? <p id={bodyId}>{NOT_FOUND_BODY}</p> : null}
+        {unreadable ? <p id={bodyId}>{UNREADABLE_BODY}</p> : null}
+        {unreadable && props.notePath !== undefined ? (
+          <button
+            type="button"
+            className="ccc-connect-button"
+            data-variant="secondary"
+            onClick={() => openVaultNote(props.notePath as string, OPEN_NOTE_FAILED)}
+          >
+            {OPEN_NOTE_LABEL}
+          </button>
+        ) : null}
         {gone || unreadable ? null : (
           <>
-            <p className="ccc-field-help">{LOAD_ERROR_HELP}</p>
+            <p id={bodyId} className="ccc-field-help">
+              {LOAD_ERROR_HELP}
+            </p>
             <button
               type="button"
               className="ccc-connect-button"
@@ -532,6 +555,7 @@ export function ReportReader(props: ReportReaderProps): VNode {
   const itemsFailed = laterFailed && !state.itemsLoaded;
   const sourcesFailed = laterFailed && state.itemsLoaded;
   const stale = reportFreshness(header.generatedAt, props.now) === "stale";
+  const title = capText(header.title, REPORT_TITLE_MAX);
   const retry = (): void => {
     void retryReader();
   };
@@ -547,7 +571,8 @@ export function ReportReader(props: ReportReaderProps): VNode {
       {backButton}
       <header className="ccc-report-header">
         <h3 id={titleId} tabIndex={-1} ref={titleRef}>
-          <UntrustedText text={header.title} />
+          <UntrustedText text={title.text} />
+          {title.shortened ? <Shortened /> : null}
         </h3>
         <Header header={header} now={props.now} zone={props.zone} />
         <div className="ccc-report-actions">
@@ -602,14 +627,14 @@ export function ReportReader(props: ReportReaderProps): VNode {
           />
         )}
         {state.sourcesTruncated ? <p className="ccc-field-help">{TRUNCATED_ITEMS}</p> : null}
-        {state.sources === null ? (
+        {state.sourcesLoaded ? null : (
           <SectionGap
             connected={connected}
             failed={sourcesFailed}
             loading={!laterFailed}
             onRetry={retry}
           />
-        ) : null}
+        )}
       </section>
       <RunRecord header={header} now={props.now} zone={props.zone} />
     </article>

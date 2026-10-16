@@ -34,6 +34,7 @@ export function reportRow(index: number, overrides: Partial<ReadableRow> = {}): 
   return {
     readable: true,
     noteId: id25(`note${index}`),
+    notePath: `global/output/research-2026-10-${14 - Math.min(index, 13)}-report${index}.md`,
     title: `${RESEARCH_TOPIC} — Oct ${14 - Math.min(index, 13)}, 2026`,
     generatedAt: iso(-60 * (index + 1)),
     partial: false,

@@ -88,6 +88,7 @@ async function runCase(entry) {
   const row = {
     readable: true,
     noteId: id25("note0"),
+    notePath: "global/output/research-2026-10-14-report0.md",
     title: entry.text,
     generatedAt: "2026-10-14T11:00:00.000Z",
     partial: false,

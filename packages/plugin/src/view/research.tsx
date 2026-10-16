@@ -74,6 +74,8 @@ export interface ResearchReaderSlotProps {
   readonly noteId: string;
   /** Closes the reader and returns to the list (the one-column layout's Back to reports). */
   readonly onBack: () => void;
+  /** The report's vault-relative path from the row that was opened, when the list had it. */
+  readonly notePath?: string | undefined;
 }
 
 export interface ResearchDestinationProps {
@@ -160,6 +162,19 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
       ? null
       : RUN_IN_PROGRESS_REASON;
   const selected = selectedNoteId.value;
+  // The path of the opened report, kept from the row the owner clicked: when the report's metadata
+  // later fails to parse, the refreshed list no longer has that readable row, and the reader still
+  // needs a path to offer Open note.
+  const openedPath = useRef<{ readonly noteId: string; readonly notePath: string } | null>(null);
+  if (selected === null) openedPath.current = null;
+  else {
+    const row = reportRows.value.find(
+      (candidate) => candidate.readable && candidate.noteId === selected,
+    );
+    if (row?.readable) openedPath.current = { noteId: selected, notePath: row.notePath };
+  }
+  const selectedPath =
+    openedPath.current?.noteId === selected ? openedPath.current.notePath : undefined;
   const zone = props.zone ?? resolvedZone();
   const generation = reportsGeneration.value;
   const nowRef = useRef(props.now);
@@ -346,7 +361,7 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
             {selected === null ? (
               <p className="ccc-research-placeholder">{REPORT_PLACEHOLDER}</p>
             ) : props.reader !== undefined ? (
-              props.reader({ noteId: selected, onBack: closeReaderView })
+              props.reader({ noteId: selected, onBack: closeReaderView, notePath: selectedPath })
             ) : (
               <ReportReader
                 noteId={selected}
@@ -355,6 +370,7 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
                 zone={zone}
                 stacked={stacked}
                 connected={!serviceAway}
+                notePath={selectedPath}
               />
             )}
           </div>

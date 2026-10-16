@@ -142,7 +142,7 @@ function shown(text: string, max: number): string {
  * surrogates, and the invisible fillers and variation selectors. Written here, not imported.
  */
 const HIDDEN_RAW =
-  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Cs}]|[^\S ]|\u034f|[\u115f\u1160\u2800\u3164\uffa0\u17b4\u17b5\ufe00-\ufe0f\u180b-\u180f]/u;
+  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Cs}]|[^\S ]|\u034f|[\u115f\u1160\u2800\u3164\uffa0\u17b4\u17b5\p{Variation_Selector}]/u;
 
 /**
  * What the element shows for `text` capped at `max`. Text with nothing hidden in it shows exactly
@@ -157,7 +157,10 @@ function expectShown(element: Element, text: string, max: number, name: string, 
   }
   expect(HIDDEN_RAW.test(visible), `${name}: a hidden character reached the DOM raw`).toBe(false);
   expect(visible.startsWith(prefix), name).toBe(true);
-  const at = [...text].findIndex((char) => HIDDEN_RAW.test(char));
+  // A line break becomes a space, not a token, so it is not one of the characters looked for here.
+  const at = [...text].findIndex(
+    (char) => HIDDEN_RAW.test(char) && !/[\n\r\u2028\u2029\u0085]/.test(char),
+  );
   if (at >= 0 && at + 12 < max) {
     expect(element.querySelector(".ccc-control-token"), `${name}: no visible token`).not.toBeNull();
   }

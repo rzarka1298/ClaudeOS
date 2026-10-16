@@ -192,6 +192,11 @@ export type ResearchListRequest = z.infer<typeof ResearchListRequestSchema>;
 const readableRowSchema = z.strictObject({
   readable: z.literal(true),
   noteId: NoteIdSchema,
+  /**
+   * The report's vault-relative path, so the reader can offer Open note even when the report's
+   * metadata later fails to parse (the reader then has no header to take the path from).
+   */
+  notePath: ReportNotePathSchema,
   title: plainLineText(200),
   generatedAt: z.iso.datetime(),
   partial: z.boolean(),

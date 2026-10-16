@@ -37,6 +37,8 @@ export interface ReaderState {
   readonly sources: readonly ResearchReportSource[] | null;
   /** True when the service trimmed a sources page. */
   readonly sourcesTruncated: boolean;
+  /** True once the last sources page has landed (or the sources ended at a trimmed page). */
+  readonly sourcesLoaded: boolean;
   /** The closed code of a failed FIRST page (the report did not open), or null. */
   readonly firstFailure: ResearchErrorCode | null;
   /** The closed code of a failed LATER page (the findings read so far stay), or null. */
@@ -145,6 +147,7 @@ async function pump(token: number, noteId: string): Promise<void> {
       update(token, {
         sources: mergeBy(current.sources ?? [], response.sources, (source) => source.number),
         sourcesTruncated: current.sourcesTruncated || response.truncated,
+        sourcesLoaded: ends,
         laterFailure: null,
       });
       if (ends) cursor = { section: "done", next: undefined, last: undefined, pages: 0 };
@@ -162,6 +165,7 @@ function freshState(noteId: string): ReaderState {
     itemsLoaded: false,
     sources: null,
     sourcesTruncated: false,
+    sourcesLoaded: false,
     firstFailure: null,
     laterFailure: null,
   };

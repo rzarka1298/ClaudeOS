@@ -785,7 +785,11 @@ describe("Task 2: display caps", () => {
       `${"x".repeat(240)} Text shortened for display.`,
     );
     expect(item.querySelector("button[data-cite]")?.textContent).toBe(`[1] ${"x".repeat(60)}`);
-    expect(item.querySelector("button[data-cite]")?.getAttribute("title")).toBe(long);
+    // The tooltip and the accessible name carry the capped title too (07-FIX4 j), never the full one.
+    expect(item.querySelector("button[data-cite]")?.getAttribute("title")).toBe("x".repeat(60));
+    expect(item.querySelector("button[data-cite]")?.getAttribute("aria-label")).toBe(
+      `Source 1: ${"x".repeat(60)}`,
+    );
     const entry = article().querySelector("li.ccc-report-source") as HTMLElement;
     expect(entry.querySelector("h5")?.textContent).toBe(
       `1. ${"x".repeat(200)} Text shortened for display.`,

@@ -75,8 +75,8 @@ export function ReportFinding(props: ReportFindingProps): VNode {
                 className="ccc-connect-button"
                 data-variant="tertiary"
                 data-cite={`${item.index}-${citation.number}`}
-                aria-label={citationName(citation.number, citation.title)}
-                title={citation.title}
+                aria-label={citationName(citation.number, title.text)}
+                title={title.text}
                 onClick={() => props.onCite(citation.number, item.index)}
               >
                 {`[${citation.number}] `}

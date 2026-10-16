@@ -231,6 +231,9 @@ export const AUTHOR_MAX = 120;
 /** An unavailable-source label is capped at the allowlist label cap. */
 export const UNAVAILABLE_LABEL_MAX = 80;
 
+/** The most characters of a report's title the reader shows (the schema's own cap). */
+export const REPORT_TITLE_MAX = 200;
+
 export const CITATIONS_LABEL = "Sources:";
 export const NO_SOURCE_CITED = "No source cited";
 
