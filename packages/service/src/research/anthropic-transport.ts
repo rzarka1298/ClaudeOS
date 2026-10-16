@@ -116,8 +116,9 @@ async function readText(response: AnthropicResponseStream): Promise<string> {
 }
 
 /**
- * The exchange itself: one request, one response. Throws only SummariserError. An HTTP 401 or 403
- * is the key being refused (unconfigured); any other non-200 status is a failure. Error bodies are
+ * The exchange itself: one request, one response. Throws only SummariserError. An HTTP 401
+ * is the key being refused (unconfigured); any other non-200 status, 403 included (a permission or
+ * region block, not a bad key), is a failure. Error bodies are
  * never read, so nothing of them can reach an error or a log.
  */
 async function exchange(
@@ -135,7 +136,7 @@ async function exchange(
   });
   state.response = response;
   const status = response.statusCode;
-  if (status === 401 || status === 403) throw new SummariserError("summariser-unconfigured");
+  if (status === 401) throw new SummariserError("summariser-unconfigured");
   if (status !== 200) throw new SummariserError("summariser-failed");
   const encoding = response.headers["content-encoding"];
   if (encoding !== undefined && String(encoding).trim().toLowerCase() !== "identity") {
