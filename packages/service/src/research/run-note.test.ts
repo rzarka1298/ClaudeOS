@@ -114,3 +114,27 @@ describe("writeRunNote", () => {
     );
   });
 });
+
+describe("07-FIX4: a source that neither contributed nor failed says what it is", () => {
+  it("words each state apart, and never calls an unjudged source unavailable", () => {
+    const body = renderRunNote(
+      input({
+        outcome: "failure",
+        errorCode: "interrupted",
+        reportPath: null,
+        sources: [
+          { label: "Read", contributed: false, code: null, status: "fetched" },
+          { label: "Unjudged", contributed: false, code: null, status: "pending" },
+          { label: "Failed", contributed: false, code: "timeout" },
+          { label: "Used", contributed: true, code: null },
+          { label: "Old shape", contributed: false, code: null },
+        ],
+      }),
+    );
+    expect(body).toContain("- Read: fetched, no report");
+    expect(body).toContain("- Unjudged: not finished");
+    expect(body).toContain("- Failed: unavailable ` timeout `");
+    expect(body).toContain("- Used: contributed");
+    expect(body).toContain("- Old shape: unavailable\n");
+  });
+});

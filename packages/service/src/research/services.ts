@@ -113,7 +113,13 @@ export function recoverStuckResearchRuns(db: Database.Database, log: PipelineLog
     return recoverJobRunsToStale(db, [stuck.jobRunId]);
   });
   const changed = sweep.immediate();
-  if (changed > 0) log.warn({ event: "research-stuck-runs-recovered", count: changed });
+  if (changed > 0) {
+    try {
+      log.warn({ event: "research-stuck-runs-recovered", count: changed });
+    } catch {
+      // A broken log sink never stops a run from starting.
+    }
+  }
   return changed;
 }
 
@@ -141,32 +147,40 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
   function launch(pipelineDeps: ResearchPipelineDeps, runId: RunId, startedAt: string): void {
     const trace = createRunTrace(runId, startedAt);
     current = { runId };
-    // The owner's press is the trigger effect: one press, one run.
-    nameEffect(pipelineDeps.audit, PIPELINE_EFFECTS.trigger);
+    // If anything before the run is tracked throws, the lock must not stay set: a dead run id
+    // would otherwise answer every later press (the row left in flight is swept on the next press).
+    let launched = false;
     try {
-      publish({ runId, state: "running" });
-    } catch {
-      // A broken event bus never stops a run.
-    }
-    recordRunNote(pipelineDeps, trace, null, null);
-    const promise: Promise<void> = Promise.resolve()
-      .then(() => executeResearchRun(pipelineDeps, trace, watchdog))
-      .catch(() => {
-        // executeResearchRun does not reject; if it ever did, the run still must not stay in flight.
-        finishRun(pipelineDeps, trace, {
-          outcome: "failure",
-          errorCode: "summariser-failed",
-          sourceCount: 0,
-          sourceTotal: trace.sourceTotal,
-          reportNoteId: null,
-          unavailable: [],
+      // The owner's press is the trigger effect: one press, one run.
+      nameEffect(pipelineDeps.audit, PIPELINE_EFFECTS.trigger);
+      try {
+        publish({ runId, state: "running" });
+      } catch {
+        // A broken event bus never stops a run.
+      }
+      recordRunNote(pipelineDeps, trace, null, null);
+      const promise: Promise<void> = Promise.resolve()
+        .then(() => executeResearchRun(pipelineDeps, trace, watchdog))
+        .catch(() => {
+          // executeResearchRun does not reject; if it ever did, the run still must not stay in flight.
+          finishRun(pipelineDeps, trace, {
+            outcome: "failure",
+            errorCode: "interrupted",
+            sourceCount: 0,
+            sourceTotal: trace.sourceTotal,
+            reportNoteId: null,
+            unavailable: [],
+          });
+        })
+        .finally(() => {
+          if (current?.runId === runId) current = null;
+          tracked.delete(promise);
         });
-      })
-      .finally(() => {
-        if (current?.runId === runId) current = null;
-        tracked.delete(promise);
-      });
-    tracked.add(promise);
+      tracked.add(promise);
+      launched = true;
+    } finally {
+      if (!launched && current?.runId === runId) current = null;
+    }
   }
 
   function runNow(): ResearchResult<RunNowValue> {

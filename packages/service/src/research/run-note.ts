@@ -32,6 +32,12 @@ export interface RunNoteSource {
   readonly contributed: boolean;
   /** The closed failure code of an unavailable source. */
   readonly code: SourceFailureCode | null;
+  /**
+   * For a source that neither contributed nor failed with a code: `fetched` when it was read but
+   * the run ended without a report to use it in, `pending` when the run ended (or is still going)
+   * before the source was judged. Absent keeps the older wording, "unavailable".
+   */
+  readonly status?: "fetched" | "pending";
 }
 
 export interface RunNoteInput {
@@ -56,6 +62,14 @@ const OUTCOME_WORD: Readonly<Record<JobRunOutcome, string>> = {
 export function runNotePathFor(runId: string): string {
   if (!RUN_ID_PATTERN.test(runId)) throw new RangeError("a run note path needs a run id");
   return `automation-runs/${runId}.md`;
+}
+
+function sourceWords(source: RunNoteSource): string {
+  if (source.contributed) return "contributed";
+  if (source.code !== null) return `unavailable ${inlineCode(source.code)}`;
+  if (source.status === "fetched") return "fetched, no report";
+  if (source.status === "pending") return "not finished";
+  return "unavailable";
 }
 
 /** The body of the run note. Deterministic: the same input gives the same bytes. */
@@ -92,11 +106,7 @@ export function renderRunNote(input: RunNoteInput): string {
   } else {
     for (const source of input.sources) {
       const label = escapeMarkdownText(source.label);
-      lines.push(
-        source.contributed
-          ? `- ${label}: contributed`
-          : `- ${label}: unavailable ${source.code === null ? "" : inlineCode(source.code)}`.trimEnd(),
-      );
+      lines.push(`- ${label}: ${sourceWords(source)}`);
     }
   }
   lines.push("");

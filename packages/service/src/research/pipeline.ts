@@ -28,9 +28,13 @@ import {
 } from "@ccc/research";
 import { deriveOutcome } from "@ccc/scheduler";
 import {
+  captureWikiSourceNote,
   finaliseReportNote,
   readRawSourceNote,
+  removeReportNote,
   reportNotePathFor,
+  SourceNoteError,
+  type WikiSourceSnapshot,
   writeRawSourceNote,
   writeReportNote,
   writeWikiSourceNote,
@@ -63,7 +67,14 @@ import { SummariserError, type SummariserErrorCode } from "./summariser-error.js
  *
  * Failure routing (research Pattern 1): any source success plus any failure is a partial report;
  * zero successes, zero surviving items, a summariser failure, a vault write failure and a hung
- * run (the watchdog) are failed runs with a code from the closed set, never an invented state.
+ * run (the watchdog, code `interrupted`) are failed runs with a code from the closed set, never
+ * an invented state. A raw snapshot that was edited or damaged since it was written is ONE
+ * source's failure (`parse-failure`), never the run's.
+ *
+ * Publication is all or nothing (07-FIX4 b): the report is written first, then the wiki notes, then
+ * the report is finalised; if anything after the first report write fails, the report is taken
+ * back out of the vault and every wiki note is put back as it was, so a failed run leaves no
+ * exposed report and no wiki note that cites one.
  * No remote string reaches the store, the run note or a log line: only codes, ids, counts,
  * instants and the owner's own labels.
  */
@@ -71,7 +82,7 @@ import { SummariserError, type SummariserErrorCode } from "./summariser-error.js
 /** The stages of a run as they are recorded; `phase` is finer and only picks a failure code. */
 type Phase = "capture" | "fetch" | "prepare" | "write" | "summarise";
 
-/** Which code a failure or a hang in a phase ends the run with. */
+/** Which code an unexpected failure in a phase ends the run with (a hang is `interrupted`). */
 const PHASE_ERROR_CODE: Readonly<Record<Phase, RunErrorCode>> = {
   capture: "all-sources-failed",
   fetch: "all-sources-failed",
@@ -148,6 +159,8 @@ export interface RunTrace {
   phase: Phase;
   /** Set by the watchdog: a late completion may not write or record anything after this. */
   cancelled: boolean;
+  /** Takes the published report back and restores the wiki notes; null until a report is written. */
+  rollbackPublication: (() => void) | null;
   finished: boolean;
   runNote: WrittenRunNote | null;
 }
@@ -165,6 +178,7 @@ export function createRunTrace(runId: RunId, startedAt: string): RunTrace {
     reportPath: null,
     phase: "capture",
     cancelled: false,
+    rollbackPublication: null,
     finished: false,
     runNote: null,
   };
@@ -192,6 +206,27 @@ function assertLive(trace: RunTrace): void {
   if (trace.cancelled) throw new RunCancelled();
 }
 
+/** A log call that can never change what a run did: a throwing sink is ignored. */
+function logWarn(deps: ResearchPipelineDeps, fields: Readonly<Record<string, unknown>>): void {
+  try {
+    deps.log.warn(fields);
+  } catch {
+    // A broken log sink never changes the outcome.
+  }
+}
+
+function logError(deps: ResearchPipelineDeps, fields: Readonly<Record<string, unknown>>): void {
+  try {
+    deps.log.error(fields);
+  } catch {
+    // A broken log sink never changes the outcome.
+  }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 function emit(deps: ResearchPipelineDeps, payload: ResearchUpdatedPayload): void {
   try {
     deps.publish(payload);
@@ -210,12 +245,18 @@ function appendStage(
   assertLive(trace);
   nameEffect(deps.audit, PIPELINE_EFFECTS.recordRun);
   const at = deps.now().toISOString();
-  appendJobRunStage(deps.db, trace.runId, {
-    stage,
-    at,
-    noteIds,
-    ...(counts === undefined ? {} : { counts }),
-  });
+  try {
+    appendJobRunStage(deps.db, trace.runId, {
+      stage,
+      at,
+      noteIds,
+      ...(counts === undefined ? {} : { counts }),
+    });
+  } catch (error) {
+    // The run record could not take the stage: the run is cut short. It is not a vault failure.
+    logError(deps, { event: "research-stage-record-failed", stage, errorName: errorName(error) });
+    throw new StageFailure("interrupted");
+  }
   trace.stages.push({ stage, at, noteIds });
   emit(deps, { runId: trace.runId, state: "running", stage });
 }
@@ -327,9 +368,12 @@ function prepare(
       text = renderFeedText(parsed.entries);
       counts = { ...parsed.report };
       author = parsed.entries.find((candidate) => candidate.author !== null)?.author ?? null;
+      const retrievedMs = Date.parse(retrievedAt);
       for (const candidate of parsed.entries) {
+        // An instant later than the retrieval is a feed's mistake, not a publication date.
         if (
           candidate.updated !== null &&
+          Date.parse(candidate.updated) <= retrievedMs &&
           (publishedAt === null || candidate.updated > publishedAt)
         ) {
           publishedAt = candidate.updated;
@@ -358,13 +402,24 @@ function prepare(
       snapshotPath: rawSnapshotPathFor(sourceId, contentHash),
       accessClass: "public" as const,
     };
-    let ref = SourceReferenceSchema.safeParse({ ...base, author });
-    // A feed author the schema refuses is dropped rather than failing the whole source.
-    if (!ref.success) ref = SourceReferenceSchema.safeParse({ ...base, author: null });
-    if (!ref.success) return { ok: false, code: "parse-failure", sourceId };
+    // A feed author or date the schema refuses is dropped rather than failing the whole source.
+    let ref: SourceReference | null = null;
+    for (const variant of [
+      { author, publishedAt },
+      { author: null, publishedAt },
+      { author, publishedAt: null },
+      { author: null, publishedAt: null },
+    ]) {
+      const parsedRef = SourceReferenceSchema.safeParse({ ...base, ...variant });
+      if (parsedRef.success) {
+        ref = parsedRef.data;
+        break;
+      }
+    }
+    if (ref === null) return { ok: false, code: "parse-failure", sourceId };
     return {
       ok: true,
-      source: { index, entry, sourceId, evidence, counts, truncated, ref: ref.data },
+      source: { index, entry, sourceId, evidence, counts, truncated, ref },
     };
   } catch {
     return { ok: false, code: "parse-failure", sourceId: fallbackId };
@@ -408,19 +463,26 @@ function failureResult(trace: RunTrace, code: RunErrorCode): PipelineResult {
   return {
     outcome: "failure",
     errorCode: code,
-    sourceCount: trace.sourceCount,
+    // A failed run produced no report, so no source contributed to one.
+    sourceCount: 0,
     sourceTotal: trace.sourceTotal,
     reportNoteId: null,
     unavailable: trace.unavailable,
   };
 }
 
-/** Records which sources contributed and which did not, in allowlist order. */
+/**
+ * Records which sources failed, which were read, and (only once a report is published) which
+ * contributed, in allowlist order. `contributed` is false until the whole publication succeeded,
+ * so a run that fails never says a source contributed.
+ */
 function recordSources(
   trace: RunTrace,
   config: ResearchSourcesConfig,
   outcomes: readonly Prepared[],
   dropped: ReadonlySet<number>,
+  refused: ReadonlySet<number>,
+  contributed: boolean,
 ): void {
   trace.sources = [];
   trace.unavailable = [];
@@ -436,15 +498,39 @@ function recordSources(
     } else {
       sourceId = outcome.source.sourceId;
       if (dropped.has(index)) code = "oversize";
+      else if (refused.has(index)) code = "parse-failure";
     }
-    if (code === null) {
+    if (code !== null) {
+      trace.sources.push({ label: entry.label, contributed: false, code });
+      trace.unavailable.push({ sourceId, label: entry.label, code });
+    } else if (contributed) {
       trace.sourceCount += 1;
       trace.sources.push({ label: entry.label, contributed: true, code: null });
     } else {
-      trace.sources.push({ label: entry.label, contributed: false, code });
-      trace.unavailable.push({ sourceId, label: entry.label, code });
+      trace.sources.push({ label: entry.label, contributed: false, code: null, status: "fetched" });
     }
   });
+}
+
+/** Thrown inside the raw loop when a stored snapshot is not the one this run's evidence names. */
+class RawSnapshotRefused extends Error {
+  constructor() {
+    super("raw snapshot refused");
+    this.name = "RawSnapshotRefused";
+  }
+}
+
+/**
+ * True for a failure that belongs to ONE source's raw snapshot: the file at the content-addressed
+ * path was edited, rewritten or damaged since it was written (or shares the hash prefix of other
+ * content), so it is not the evidence this run holds. Any other failure (a folder that cannot be
+ * written, a store fault) is the run's.
+ */
+function isRawSnapshotRefusal(error: unknown): boolean {
+  return (
+    error instanceof RawSnapshotRefused ||
+    (error instanceof SourceNoteError && error.reason === "existing-unreadable")
+  );
 }
 
 async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<PipelineResult> {
@@ -452,7 +538,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   trace.phase = "capture";
   const loaded = loadResearchSources(deps.runtimeDir, deps.sourcesFs);
   if (!loaded.ok) {
-    deps.log.warn({ event: "research-sources-unusable", code: loaded.code });
+    logWarn(deps, { event: "research-sources-unusable", code: loaded.code });
     throw new StageFailure("all-sources-failed");
   }
   const config = loaded.config;
@@ -461,13 +547,21 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     label: entry.label,
     contributed: false,
     code: null,
+    status: "pending" as const,
   }));
   appendStage(deps, trace, "capture", [], { sources: config.sources.length });
   if (config.sources.length === 0) throw new StageFailure("all-sources-failed");
 
   // The summariser is chosen before anything is fetched: a run that cannot summarise fetches nothing.
+  // Its refusal keeps its own code (for example `summariser-unconfigured`).
   trace.phase = "summarise";
-  const choice = deps.chooseSummariser(config);
+  let choice: SummariserChoice;
+  try {
+    choice = deps.chooseSummariser(config);
+  } catch (error) {
+    if (error instanceof SummariserError) throw new StageFailure(error.code);
+    throw error;
+  }
 
   // fetch
   trace.phase = "fetch";
@@ -479,7 +573,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
       createRunBudget(),
     );
   } catch {
-    deps.log.warn({ event: "research-fetch-threw", code: "network-error" });
+    logWarn(deps, { event: "research-fetch-threw", code: "network-error" });
     fetched = [];
   }
   assertLive(trace);
@@ -500,7 +594,9 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     nonce,
     choice.maxInputChars ?? USER_CONTENT_MAX_CHARS,
   );
-  recordSources(trace, config, outcomes, new Set(dropped.map((source) => source.index)));
+  const droppedIndexes = new Set(dropped.map((source) => source.index));
+  const refused = new Set<number>();
+  recordSources(trace, config, outcomes, droppedIndexes, refused, false);
   if (kept.length === 0) throw new StageFailure("all-sources-failed");
 
   // raw
@@ -512,27 +608,35 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   try {
     for (const source of kept) {
       assertLive(trace);
-      const written = writeRawSourceNote({
-        vaultRoot: deps.vaultRoot,
-        sourceRef: source.ref,
-        sanitise: source.counts,
-        // The evidence text, byte for byte: what the model sees and what a quote is checked against.
-        text: source.evidence,
-        canonicalHash: contentHashFor,
-        ...(source.truncated ? { truncated: true } : {}),
-        now: deps.now(),
-      });
-      rawIds.push(written.id);
-      // Read it back: the hash is recomputed from the stored body, not trusted.
-      const snapshot = readRawSourceNote(deps.vaultRoot, source.ref.snapshotPath);
-      if (
-        !snapshot.readable ||
-        snapshot.text === null ||
-        contentHashFor(snapshot.text) !== source.ref.contentHash
-      ) {
-        throw new StageFailure("vault-write-failed");
+      try {
+        const written = writeRawSourceNote({
+          vaultRoot: deps.vaultRoot,
+          sourceRef: source.ref,
+          sanitise: source.counts,
+          // The evidence text, byte for byte: what the model sees and what a quote is checked against.
+          text: source.evidence,
+          canonicalHash: contentHashFor,
+          ...(source.truncated ? { truncated: true } : {}),
+          now: deps.now(),
+        });
+        // Read it back: the hash is recomputed from the stored body, never trusted. An existing
+        // file at this content-addressed path may have been edited since it was written.
+        const snapshot = readRawSourceNote(deps.vaultRoot, source.ref.snapshotPath);
+        if (
+          !snapshot.readable ||
+          snapshot.text === null ||
+          contentHashFor(snapshot.text) !== source.ref.contentHash
+        ) {
+          throw new RawSnapshotRefused();
+        }
+        stored.set(source.sourceId, snapshot.text);
+        rawIds.push(written.id);
+      } catch (error) {
+        if (!isRawSnapshotRefusal(error)) throw error;
+        // This source cannot be cited: it fails alone, the file is left for the owner.
+        refused.add(source.index);
+        logWarn(deps, { event: "research-raw-snapshot-refused", code: "parse-failure" });
       }
-      stored.set(source.sourceId, snapshot.text);
     }
   } finally {
     // Raw notes already written stay listed in the run record, whatever stopped the loop.
@@ -544,13 +648,16 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
       }
     }
   }
+  const usable = kept.filter((source) => !refused.has(source.index));
+  recordSources(trace, config, outcomes, droppedIndexes, refused, false);
+  if (usable.length === 0) throw new StageFailure("all-sources-failed");
 
   // synthesis
   trace.phase = "summarise";
   assertLive(trace);
-  const sourceIds = kept.map((source) => source.sourceId);
+  const sourceIds = usable.map((source) => source.sourceId);
   const delimited = delimitSourcesWithReport(
-    kept.map((source) => ({ sourceId: source.sourceId, text: source.evidence })),
+    usable.map((source) => ({ sourceId: source.sourceId, text: source.evidence })),
     nonce,
   );
   nameEffect(deps.audit, PIPELINE_EFFECTS.summarise);
@@ -561,7 +668,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   assertLive(trace);
   if (!answer.ok) throw new StageFailure(answer.code);
   const validation = validateSummariserOutput(answer.text, {
-    sources: Object.fromEntries(kept.map((source) => [source.sourceId, source.evidence])),
+    sources: Object.fromEntries(usable.map((source) => [source.sourceId, source.evidence])),
     nonce,
   });
   if (!validation.ok) throw new StageFailure(validation.code);
@@ -577,67 +684,96 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   for (const item of items) kindCounts[item.kind] = (kindCounts[item.kind] ?? 0) + 1;
   appendStage(deps, trace, "synthesis", [], kindCounts);
 
-  // wiki
+  // Publication, all or nothing: the report first (so no wiki note ever cites a report that does
+  // not exist), then the wiki notes, then the finalise. Any failure from the first report write
+  // on takes the report back out and puts every wiki note back as it was.
   trace.phase = "write";
   assertLive(trace);
   const generatedAt = deps.now().toISOString();
   const reportPath = reportNotePathFor(generatedAt, trace.runId);
-  const wikiIds: string[] = [];
+  const wikiSnapshots: WikiSourceSnapshot[] = [];
+  trace.rollbackPublication = () => {
+    for (const snapshot of [...wikiSnapshots].reverse()) {
+      try {
+        snapshot.restore();
+      } catch (error) {
+        logWarn(deps, { event: "research-wiki-restore-failed", errorName: errorName(error) });
+      }
+    }
+    try {
+      removeReportNote({ vaultRoot: deps.vaultRoot, path: reportPath });
+    } catch (error) {
+      logWarn(deps, { event: "research-report-removal-failed", errorName: errorName(error) });
+    }
+    trace.reportPath = null;
+    trace.reportNoteId = null;
+  };
   nameEffect(deps.audit, PIPELINE_EFFECTS.writeNotes);
-  for (const source of kept) {
-    assertLive(trace);
-    const wiki = writeWikiSourceNote({
+  let reportId: string;
+  try {
+    const report = writeReportNote({
       vaultRoot: deps.vaultRoot,
-      sourceId: source.sourceId,
-      title: source.entry.label,
-      canonicalUrl: source.ref.canonicalUrl ?? "",
-      latestSnapshotPath: source.ref.snapshotPath,
-      lastRetrievedAt: source.ref.retrievedAt,
-      citingItems: items
-        .filter((item) => item.citedSourceIds.includes(source.sourceId))
-        .map((item) => ({ kind: item.kind, text: item.text, reportPath })),
+      topicLabel: config.topicLabel,
+      generatedAt,
+      jobRunId: trace.runId,
+      summariser: choice.id,
+      sourceTotal: config.sources.length,
+      unavailableSources: trace.unavailable.map((entry) => ({
+        label: entry.label,
+        code: entry.code,
+      })),
+      sourceRefs: usable.map((source) => source.ref),
+      sourceHandling: usable.map((source) => ({
+        sourceId: source.sourceId,
+        counts: source.counts,
+      })),
+      items,
+      runNotePath: `automation-runs/${trace.runId}.md`,
       now: deps.now(),
     });
-    wikiIds.push(wiki.id);
-  }
-  appendStage(deps, trace, "wiki", wikiIds, { sources: wikiIds.length });
+    reportId = report.id;
+    trace.reportPath = report.path;
 
-  // deliverable, then output
-  assertLive(trace);
-  const report = writeReportNote({
-    vaultRoot: deps.vaultRoot,
-    topicLabel: config.topicLabel,
-    generatedAt,
-    jobRunId: trace.runId,
-    summariser: choice.id,
-    sourceTotal: config.sources.length,
-    unavailableSources: trace.unavailable.map((entry) => ({
-      label: entry.label,
-      code: entry.code,
-    })),
-    sourceRefs: kept.map((source) => source.ref),
-    sourceHandling: kept.map((source) => ({ sourceId: source.sourceId, counts: source.counts })),
-    items,
-    runNotePath: `automation-runs/${trace.runId}.md`,
-    now: deps.now(),
-  });
-  trace.reportPath = report.path;
-  appendStage(deps, trace, "deliverable", [report.id], { items: items.length });
-  assertLive(trace);
-  finaliseReportNote({ vaultRoot: deps.vaultRoot, path: report.path, now: deps.now() });
-  appendStage(deps, trace, "output", [report.id], { items: items.length });
-  trace.reportNoteId = report.id;
+    const wikiIds: string[] = [];
+    for (const source of usable) {
+      assertLive(trace);
+      wikiSnapshots.push(captureWikiSourceNote(deps.vaultRoot, source.sourceId));
+      const wiki = writeWikiSourceNote({
+        vaultRoot: deps.vaultRoot,
+        sourceId: source.sourceId,
+        title: source.entry.label,
+        canonicalUrl: source.ref.canonicalUrl ?? "",
+        latestSnapshotPath: source.ref.snapshotPath,
+        lastRetrievedAt: source.ref.retrievedAt,
+        citingItems: items
+          .filter((item) => item.citedSourceIds.includes(source.sourceId))
+          .map((item) => ({ kind: item.kind, text: item.text, reportPath })),
+        now: deps.now(),
+      });
+      wikiIds.push(wiki.id);
+    }
+    appendStage(deps, trace, "wiki", wikiIds, { sources: wikiIds.length });
+    appendStage(deps, trace, "deliverable", [report.id], { items: items.length });
+    assertLive(trace);
+    finaliseReportNote({ vaultRoot: deps.vaultRoot, path: report.path, now: deps.now() });
+    appendStage(deps, trace, "output", [report.id], { items: items.length });
+  } catch (error) {
+    trace.rollbackPublication();
+    throw error;
+  }
+  trace.reportNoteId = reportId;
+  recordSources(trace, config, outcomes, droppedIndexes, refused, true);
 
   return {
     outcome: deriveOutcome({
-      succeeded: kept.length,
+      succeeded: usable.length,
       failed: trace.unavailable.length,
       stageError: null,
     }),
     errorCode: null,
-    sourceCount: kept.length,
+    sourceCount: usable.length,
     sourceTotal: config.sources.length,
-    reportNoteId: report.id,
+    reportNoteId: reportId,
     unavailable: trace.unavailable,
   };
 }
@@ -656,15 +792,11 @@ export async function runResearchPipeline(
   } catch (error) {
     if (error instanceof StageFailure) return failureResult(trace, error.code);
     if (!(error instanceof RunCancelled)) {
-      try {
-        deps.log.warn({
-          event: "research-pipeline-error",
-          phase: trace.phase,
-          errorName: error instanceof Error ? error.name : typeof error,
-        });
-      } catch {
-        // A broken log sink never changes the outcome.
-      }
+      logWarn(deps, {
+        event: "research-pipeline-error",
+        phase: trace.phase,
+        errorName: errorName(error),
+      });
     }
     return failureResult(trace, PHASE_ERROR_CODE[trace.phase]);
   }
@@ -701,11 +833,17 @@ export function recordRunNote(
       ...(trace.runNote === null ? {} : { prior: trace.runNote }),
     });
   } catch (error) {
-    deps.log.warn({
-      event: "research-run-note-failed",
-      errorName: error instanceof Error ? error.name : typeof error,
-    });
+    logWarn(deps, { event: "research-run-note-failed", errorName: errorName(error) });
   }
+}
+
+/** A failed run records no source as contributed: what was fetched stays "fetched, no report". */
+function demoteSources(trace: RunTrace): void {
+  trace.sources = trace.sources.map((source) =>
+    source.contributed
+      ? { label: source.label, contributed: false, code: null, status: "fetched" as const }
+      : source,
+  );
 }
 
 /**
@@ -734,13 +872,14 @@ export function finishRun(
       errorCode: result.errorCode,
     });
   } catch (error) {
-    deps.log.error({
-      event: "research-finish-failed",
-      errorName: error instanceof Error ? error.name : typeof error,
-    });
+    logError(deps, { event: "research-finish-failed", errorName: errorName(error) });
+    // The run could not record what it computed, so it is recorded as cut short. The vault writes
+    // may all have succeeded, so this is not a vault failure; and a published report would now sit
+    // beside a failed run, so it is taken back.
+    trace.rollbackPublication?.();
     recorded = {
       outcome: "failure",
-      errorCode: result.errorCode ?? PHASE_ERROR_CODE[trace.phase],
+      errorCode: result.errorCode ?? "interrupted",
       sourceCount: 0,
       sourceTotal: result.sourceTotal,
       reportNoteId: null,
@@ -757,12 +896,10 @@ export function finishRun(
         errorCode: recorded.errorCode,
       });
     } catch (second) {
-      deps.log.error({
-        event: "research-finish-fallback-failed",
-        errorName: second instanceof Error ? second.name : typeof second,
-      });
+      logError(deps, { event: "research-finish-fallback-failed", errorName: errorName(second) });
     }
   }
+  if (recorded.outcome === "failure") demoteSources(trace);
   recordRunNote(deps, trace, recorded, endedAt);
   emit(deps, {
     runId: trace.runId,
@@ -780,7 +917,7 @@ export interface Watchdog {
 
 /**
  * Runs the pipeline under the watchdog and always finishes the job run. A pipeline that does not
- * settle in time ends as a failed run whose code is that of the phase it was in; whatever it does
+ * settle in time ends as a failed run with the code `interrupted`; whatever it does
  * later is discarded (`trace.cancelled` stops every write and record). Never rejects.
  */
 export async function executeResearchRun(
@@ -794,12 +931,10 @@ export async function executeResearchRun(
     const hung = new Promise<PipelineResult>((resolve) => {
       cancel = watchdog.schedule(() => {
         trace.cancelled = true;
-        try {
-          deps.log.warn({ event: "research-watchdog-fired", phase: trace.phase });
-        } catch {
-          // ignored
-        }
-        resolve(failureResult(trace, PHASE_ERROR_CODE[trace.phase]));
+        logWarn(deps, { event: "research-watchdog-fired", phase: trace.phase });
+        // A run cut off by the watchdog is `interrupted`: it is not recorded as a failure of the
+        // phase it happened to be in, and sources that were never judged are not listed as failing.
+        resolve(failureResult(trace, "interrupted"));
       }, watchdog.ms);
     });
     result = await Promise.race([runResearchPipeline(deps, trace), hung]);
