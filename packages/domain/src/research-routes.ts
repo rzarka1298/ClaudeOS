@@ -421,6 +421,9 @@ export const RESEARCH_ERROR_CODES = [
   "service-disconnected",
   "timeout",
   "unrecognised-response",
+  // The service's own fault (a throw behind a route): a closed code at status 500, so the plugin
+  // can tell a service fault from a response it does not recognise (wave 5 review, opus m4).
+  "internal",
 ] as const;
 export type ResearchErrorCode = (typeof RESEARCH_ERROR_CODES)[number];
 export const ResearchErrorCodeSchema = z.enum(RESEARCH_ERROR_CODES);

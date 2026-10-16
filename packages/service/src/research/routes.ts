@@ -13,7 +13,7 @@ import {
 } from "@ccc/domain";
 import { logger } from "../logging.js";
 import { type BodyParser, readJsonBody } from "../request-body.js";
-import { type Handler, INTERNAL_ERROR_BODY, sendJson, withAuth } from "../route-kit.js";
+import { type Handler, sendJson, withAuth } from "../route-kit.js";
 import type { ResearchRouteResult, ResearchRouteServices } from "./types.js";
 
 /**
@@ -37,20 +37,21 @@ const STATUS_OF: Readonly<Record<ResearchErrorCode, number>> = {
   "service-disconnected": 503,
   timeout: 504,
   "unrecognised-response": 500,
+  internal: 500,
 };
 
 function errorBody(code: ResearchErrorCode): ResearchErrorBody {
   return { error: code };
 }
 
-/** Logs an unexpected failure by route and error class only, then answers the constant 500. */
+/** Logs an unexpected failure by route and error class only, then answers the closed `internal` code. */
 function sendInternalError(res: ServerResponse, route: string, err: unknown): void {
   logger.error(
     { route, errorName: err instanceof Error ? err.name : typeof err },
     "research route failed",
   );
   if (res.headersSent) return;
-  sendJson(res, 500, INTERNAL_ERROR_BODY);
+  sendJson(res, STATUS_OF.internal, errorBody("internal"));
 }
 
 /** Sends a service result: the value as 200, or the closed code with its status. */
