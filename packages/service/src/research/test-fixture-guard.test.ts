@@ -1,9 +1,15 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ResearchOverrideError } from "./override-error.js";
-import { type OverrideLog, resolveResearchTestOverrides } from "./test-fixture-guard.js";
+import {
+  type OverrideLog,
+  RESEARCH_TEST_ACCOUNT_PREFIX,
+  type ResolveOverridesOptions,
+  resolveResearchTestOverrides as resolveWith,
+} from "./test-fixture-guard.js";
 
 /**
  * Plan 07-14 Task 3, Tests 2 and 3 (D-27, research Pitfall 15, T-07-34): the guard returns no
@@ -15,6 +21,17 @@ const FLAG = "CCC_ENABLE_TEST_OVERRIDES";
 const FIXTURE_DIR = "CCC_RESEARCH_TEST_FIXTURE_DIR";
 const SUMMARISER = "CCC_RESEARCH_TEST_SUMMARISER";
 const KEY_ACCOUNT = "CCC_RESEARCH_KEY_ACCOUNT";
+
+/** The guard with a temporary runtime directory, as every test but the default-directory ones needs. */
+function resolveResearchTestOverrides(
+  env: NodeJS.ProcessEnv,
+  log: OverrideLog,
+  options: Partial<ResolveOverridesOptions> = {},
+) {
+  return resolveWith(env, log, { runtimeDir: join(dir, "runtime"), ...options });
+}
+
+const KEY_ACCOUNT_OK = "ccc-uat-research-key";
 
 let dir: string;
 let logs: { level: string; fields: Record<string, unknown> }[];
@@ -37,7 +54,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const ALL = (): NodeJS.ProcessEnv => ({
   [FIXTURE_DIR]: dir,
   [SUMMARISER]: "extractive",
-  [KEY_ACCOUNT]: "research-key-test-account",
+  [KEY_ACCOUNT]: KEY_ACCOUNT_OK,
 });
 
 describe("without the enabling flag nothing is overridden", () => {
@@ -71,16 +88,34 @@ describe("with the flag set it returns only what each variable asks for", () => 
 
   it("returns the test key account alone for the account variable", () => {
     const result = resolveResearchTestOverrides(
-      { [FLAG]: "1", [KEY_ACCOUNT]: "research-key-test-account" },
+      { [FLAG]: "1", [KEY_ACCOUNT]: KEY_ACCOUNT_OK },
       log,
     );
-    expect(result).toEqual({ keyAccount: "research-key-test-account" });
+    expect(result).toEqual({ keyAccount: KEY_ACCOUNT_OK });
   });
 
-  it("returns all three together and says so by code", () => {
+  it("returns all three together and says so by code, naming which overrides are active", () => {
     const result = resolveResearchTestOverrides({ ...ALL(), [FLAG]: "1" }, log);
     expect(Object.keys(result).sort()).toEqual(["fetcher", "keyAccount", "transport"]);
-    expect(logs).toEqual([{ level: "warn", fields: { code: "research-test-overrides-active" } }]);
+    expect(logs).toEqual([
+      {
+        level: "warn",
+        fields: {
+          code: "research-test-overrides-active",
+          overrides: ["fixture-fetcher", "extractive-summariser", "key-account"],
+        },
+      },
+    ]);
+  });
+
+  it("names only the overrides that are on", () => {
+    resolveResearchTestOverrides({ [FLAG]: "1", [SUMMARISER]: "extractive" }, log);
+    expect(logs).toEqual([
+      {
+        level: "warn",
+        fields: { code: "research-test-overrides-active", overrides: ["extractive-summariser"] },
+      },
+    ]);
   });
 
   it("returns nothing when the flag is set and no variable is", () => {
@@ -145,5 +180,140 @@ describe("a bad value is refused at startup with a code-only log line", () => {
       expect(error).toBeInstanceOf(ResearchOverrideError);
       expect((error as Error).message).toBe("research test override refused: unknown-summariser");
     }
+  });
+});
+
+describe("the key account is a test account, never one the service uses (wave 5, MAJOR-2, opus m6)", () => {
+  it("pins the prefix to the one the end-to-end isolation guards define", () => {
+    const source = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "..",
+        "..",
+        "e2e",
+        "src",
+        "isolation-guards.ts",
+      ),
+      "utf8",
+    );
+    const defined = /export const UAT_ACCOUNT_PREFIX = "([^"]+)";/.exec(source)?.[1];
+    expect(defined).toBe(RESEARCH_TEST_ACCOUNT_PREFIX);
+    expect(RESEARCH_TEST_ACCOUNT_PREFIX).toBe("ccc-uat-");
+  });
+
+  it("refuses the owner's research key account and the install secret, by their real names", () => {
+    for (const value of ["anthropic-api-key", "install-secret"]) {
+      logs = [];
+      expect(() =>
+        resolveResearchTestOverrides({ [FLAG]: "1", [KEY_ACCOUNT]: value }, log),
+      ).toThrow(ResearchOverrideError);
+      expect(logs).toEqual([
+        { level: "error", fields: { code: "research-test-override-invalid-key-account" } },
+      ]);
+    }
+  });
+
+  it("refuses a name without the test prefix, even a harmless-looking one", () => {
+    for (const value of [
+      "research-key-test-account",
+      "ccc-uat",
+      "CCC-UAT-x",
+      "xccc-uat-x",
+      "uat-ccc-",
+    ]) {
+      expect(() =>
+        resolveResearchTestOverrides({ [FLAG]: "1", [KEY_ACCOUNT]: value }, log),
+      ).toThrow(ResearchOverrideError);
+    }
+  });
+
+  it("refuses the account the running service keeps its install secret in, whatever it is called", () => {
+    const sameAsInstall = "ccc-uat-install-secret-run-1";
+    expect(() =>
+      resolveResearchTestOverrides(
+        { [FLAG]: "1", [KEY_ACCOUNT]: sameAsInstall, CCC_INSTALL_SECRET_ACCOUNT: sameAsInstall },
+        log,
+      ),
+    ).toThrow(ResearchOverrideError);
+    // A different test account is fine next to a test install-secret account.
+    expect(
+      resolveResearchTestOverrides(
+        {
+          [FLAG]: "1",
+          [KEY_ACCOUNT]: "ccc-uat-research-key-run-1",
+          CCC_INSTALL_SECRET_ACCOUNT: sameAsInstall,
+        },
+        log,
+      ),
+    ).toEqual({ keyAccount: "ccc-uat-research-key-run-1" });
+  });
+});
+
+describe("overrides are refused when the runtime directory is the owner's default one", () => {
+  const HOME = "/ccc-test-home-does-not-exist";
+  const DEFAULT_DIR = `${HOME}/.claude-command-center`;
+
+  it("refuses every kind of override, with a code-only log line", () => {
+    for (const env of [
+      { [FLAG]: "1", [KEY_ACCOUNT]: KEY_ACCOUNT_OK },
+      { [FLAG]: "1", [SUMMARISER]: "extractive" },
+      { [FLAG]: "1", [FIXTURE_DIR]: dir },
+    ]) {
+      logs = [];
+      expect(() =>
+        resolveResearchTestOverrides(env, log, { runtimeDir: DEFAULT_DIR, home: HOME }),
+      ).toThrow(ResearchOverrideError);
+      expect(logs).toEqual([
+        { level: "error", fields: { code: "research-test-override-default-runtime-dir" } },
+      ]);
+    }
+  });
+
+  it("recognises the default directory however the path is written", () => {
+    for (const written of [
+      `${DEFAULT_DIR}/`,
+      `${HOME}/./.claude-command-center`,
+      `${HOME}//.claude-command-center`,
+      `${HOME}/x/../.claude-command-center`,
+    ]) {
+      expect(() =>
+        resolveResearchTestOverrides({ [FLAG]: "1", [SUMMARISER]: "extractive" }, log, {
+          runtimeDir: written,
+          home: HOME,
+        }),
+      ).toThrow(ResearchOverrideError);
+    }
+  });
+
+  it("uses the real home directory when none is injected, without creating anything", () => {
+    expect(() =>
+      resolveResearchTestOverrides({ [FLAG]: "1", [SUMMARISER]: "extractive" }, log, {
+        runtimeDir: join(homedir(), ".claude-command-center"),
+      }),
+    ).toThrow(ResearchOverrideError);
+  });
+
+  it("allows a temporary runtime directory, and sets nothing when no override is asked for", () => {
+    expect(
+      resolveResearchTestOverrides({ [FLAG]: "1", [SUMMARISER]: "extractive" }, log, {
+        runtimeDir: join(dir, "runtime"),
+        home: HOME,
+      }).transport,
+    ).toBeDefined();
+    logs = [];
+    expect(
+      resolveResearchTestOverrides({ [FLAG]: "1" }, log, { runtimeDir: DEFAULT_DIR, home: HOME }),
+    ).toEqual({});
+    expect(logs).toEqual([]);
+  });
+
+  it("does not refuse without the flag: the variables are ignored, as before", () => {
+    expect(
+      resolveResearchTestOverrides({ [SUMMARISER]: "extractive" }, log, {
+        runtimeDir: DEFAULT_DIR,
+        home: HOME,
+      }),
+    ).toEqual({});
   });
 });
