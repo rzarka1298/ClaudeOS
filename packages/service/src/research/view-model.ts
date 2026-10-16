@@ -16,10 +16,13 @@ import {
   type ResearchReportSource,
   type ResearchReportSourcesPage,
   type ResearchStatusResponse,
+  type SourceReference,
 } from "@ccc/domain";
 import { getResearchRunStatus, listJobRuns } from "@ccc/operational-store";
-import { readReportNote, reportTitleText } from "@ccc/vault-repo";
+import { quoteInSource } from "@ccc/research";
+import { readRawSourceNote, readReportNote, reportTitleText } from "@ccc/vault-repo";
 import type Database from "better-sqlite3";
+import { contentHashFor } from "./hash.js";
 import type { ConfiguredSources } from "./services.js";
 import type { ResearchRouteResult } from "./types.js";
 
@@ -288,22 +291,54 @@ export function findReport(vaultRoot: string, noteId: string): ReportLookup {
 // ---------------------------------------------------------------------------
 // The reader pages
 
-function itemsOf(report: ReportFrontmatter): ResearchReportItem[] {
+/**
+ * The evidence text of a cited source, read back from its raw note: the stored snapshot text
+ * (`evidenceText(sanitised, nonce)`, byte for byte), but only when its hash is the one the report
+ * cites. A missing, reshaped or edited raw note has no evidence (null).
+ */
+function evidenceOf(vaultRoot: string, ref: SourceReference): string | null {
+  const snapshot = readRawSourceNote(vaultRoot, ref.snapshotPath);
+  if (!snapshot.readable || snapshot.text === null) return null;
+  return contentHashFor(snapshot.text) === ref.contentHash ? snapshot.text : null;
+}
+
+/**
+ * The findings as the reader gets them. Provenance (wave 3 A2/M3, plan 07-14): a finding that
+ * carries a quote keeps it only if the exported predicate `quoteInSource` finds it in the evidence
+ * text of EVERY source the finding cites, the same check the pipeline made before it wrote the
+ * report. Otherwise the quote is not shown as evidence and the finding is served as the model's
+ * inference (no quote, same text and citations): a hand-edited report or a changed snapshot can
+ * never present words as a source's that the stored source does not hold.
+ */
+function itemsOf(vaultRoot: string, report: ReportFrontmatter): ResearchReportItem[] {
+  const refs = new Map(report.sourceRefs.map((ref) => [ref.id, ref]));
   const numbers = new Map(report.sourceRefs.map((ref, index) => [ref.id, index + 1]));
-  const titles = new Map(report.sourceRefs.map((ref) => [ref.id, ref.title]));
+  const evidence = new Map<string, string | null>();
+  const evidenceFor = (ref: SourceReference): string | null => {
+    if (!evidence.has(ref.id)) evidence.set(ref.id, evidenceOf(vaultRoot, ref));
+    return evidence.get(ref.id) ?? null;
+  };
   return report.items.map((item, index) => {
     const cited = [...new Set(item.citedSourceIds)]
-      .map((id) => ({ number: numbers.get(id) ?? 0, title: titles.get(id) ?? "" }))
+      .map((id) => ({ number: numbers.get(id) ?? 0, title: refs.get(id)?.title ?? "" }))
       .filter((citation) => citation.number > 0)
       .sort((a, b) => a.number - b.number);
     const first = cited[0];
-    const hasQuote = item.quote !== undefined && first !== undefined;
+    const quote = item.quote;
+    const verified =
+      quote !== undefined &&
+      first !== undefined &&
+      [...new Set(item.citedSourceIds)].every((id) => {
+        const ref = refs.get(id);
+        const text = ref === undefined ? null : evidenceFor(ref);
+        return text !== null && quoteInSource(text, quote);
+      });
     return {
       index: index + 1,
-      kind: item.kind,
+      kind: quote === undefined || verified ? item.kind : "inference",
       text: item.text,
-      quote: hasQuote ? (item.quote ?? null) : null,
-      quoteSourceNumber: hasQuote ? first.number : null,
+      quote: verified ? quote : null,
+      quoteSourceNumber: verified ? first.number : null,
       citations: cited,
     };
   });
@@ -380,7 +415,7 @@ export function buildReportItemsPage(
   entry: ReportEntry,
   cursor?: string,
 ): ResearchRouteResult<ResearchReportItemsPage> {
-  const all = itemsOf(entry.frontmatter);
+  const all = itemsOf(vaultRoot, entry.frontmatter);
   let start = 0;
   if (cursor !== undefined) {
     const offset = decodeOffset(cursor, "i", all.length);
