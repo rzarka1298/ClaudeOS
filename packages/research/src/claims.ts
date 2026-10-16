@@ -32,7 +32,7 @@ import {
   ReportItemSchema,
 } from "@ccc/domain";
 import { neutraliseUntrustedSpan } from "./neutralise.js";
-import { cutAtWord, quoteInNormalisedSource } from "./quote-match.js";
+import { quoteInNormalisedSource } from "./quote-match.js";
 import { normaliseForMatch } from "./text-canon.js";
 
 export interface ClaimCounts {
@@ -242,8 +242,7 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
       continue;
     }
 
-    // The model's quote is put in the comparison form and cut at a word boundary at the cap (a
-    // cut inside a word would not re-verify), then verified by the ONE shared predicate. The text
+    // The model's quote is put in the comparison form and verified by the ONE shared predicate. The text
     // that is stored is that verified source text, neutralised, and it is verified again by the
     // same predicate: an address marker must not leave a quote the source does not hold.
     const holders = (candidate: string): string[] =>
@@ -252,13 +251,16 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
     let ids: readonly string[] = surviving;
     let storedQuote: string | undefined;
     const wanted = quote === undefined ? "" : normaliseForMatch(quote);
-    const capped = cutAtWord(wanted, REPORT_ITEM_QUOTE_MAX_LENGTH);
-    if (holders(capped).length > 0) {
-      const clean = neutraliseUntrustedSpan(capped, REPORT_ITEM_QUOTE_MAX_LENGTH);
+    // A quote over the cap is never stored as a prefix: the cut could drop a trailing qualifier
+    // ("... except when the cache is cold"). It counts as truncated and the item loses its quote.
+    if (wanted.length > REPORT_ITEM_QUOTE_MAX_LENGTH) {
+      truncated += 1;
+    } else if (holders(wanted).length > 0) {
+      const clean = neutraliseUntrustedSpan(wanted, REPORT_ITEM_QUOTE_MAX_LENGTH);
       addressesRemoved += clean.addressesRemoved;
       controlCharsRemoved += clean.controlCharsRemoved;
-      if (clean.truncated || capped.length < wanted.length) truncated += 1;
-      const stillHeld = holders(clean.text);
+      if (clean.truncated) truncated += 1;
+      const stillHeld = clean.truncated ? [] : holders(clean.text);
       if (stillHeld.length > 0) {
         storedQuote = clean.text;
         if (kind !== "inference") {

@@ -442,10 +442,9 @@ describe("Task 2 (neutralised items): no address, markup or invisible character 
       ),
     );
     expect(result.items[0]?.text).toHaveLength(600);
-    // The quote is cut at a word boundary, so it still re-verifies (blocker 2).
-    expect(result.items[1]?.quote?.length).toBeLessThanOrEqual(240);
-    expect(result.items[1]?.quote?.endsWith("abcdef")).toBe(true);
-    expect(result.items[1]?.kind).toBe("source-fact");
+    // A quote over the cap is not stored as a prefix (07-FIX3A F1): the item becomes inference.
+    expect(result.items[1]?.quote).toBeUndefined();
+    expect(result.items[1]?.kind).toBe("inference");
     expect(result.counts.truncated).toBe(2);
     for (const item of result.items) expect(ReportItemSchema.safeParse(item).success).toBe(true);
   });
@@ -636,17 +635,14 @@ describe("Hardening (c): a fact cites only the sources that hold its quote", () 
 describe("Hardening (d): the stored quote is verified after neutralising and truncating", () => {
   const LONG_SENTENCE = `${"alpha beta gamma delta ".repeat(30)}end of the long passage`;
 
-  it("stores a truncated quote that is still a substring of the cited source", () => {
+  it("downgrades a fact whose quote is over the cap instead of storing a cut prefix", () => {
     const result = ok(
       validateSummariserOutput(answer([fact({ citedSourceIds: [ID_E], quote: LONG_SENTENCE })]), {
         sources: { [ID_E]: `Intro. ${LONG_SENTENCE} Outro.` },
       }),
     );
-    const stored = result.items[0]?.quote ?? "";
-    expect(result.items[0]?.kind).toBe("source-fact");
-    expect(stored.length).toBeLessThanOrEqual(REPORT_ITEM_QUOTE_MAX_LENGTH);
-    expect(stored.length).toBeGreaterThan(200);
-    expect(`Intro. ${LONG_SENTENCE} Outro.`.includes(stored)).toBe(true);
+    expect(result.items[0]?.kind).toBe("inference");
+    expect(result.items[0]?.quote).toBeUndefined();
     expect(result.counts.truncated).toBe(1);
   });
 
@@ -914,7 +910,7 @@ describe("Blocker 2 (2)(3): one exported predicate decides every quote check", (
     expect(quoteInSource(source, "- - - - - - - - - - - - -")).toBe(false);
   });
 
-  it("re-verifies every stored quote, truncated ones included, through the exported predicate", () => {
+  it("re-verifies every stored quote through the exported predicate; an over-cap quote is not stored", () => {
     const words = "abcdef ".repeat(80).trim();
     const sources: Record<string, string> = { [ID_E]: `Intro. ${words} Outro.`, ...HARD_SOURCES };
     const result = ok(
@@ -930,12 +926,11 @@ describe("Blocker 2 (2)(3): one exported predicate decides every quote check", (
         { sources },
       ),
     );
-    expect(result.items.map((i) => i.kind)).toEqual(["source-fact", "source-fact", "source-fact"]);
-    const truncated = result.items[0]?.quote ?? "";
-    expect(truncated.length).toBeLessThanOrEqual(REPORT_ITEM_QUOTE_MAX_LENGTH);
-    expect(truncated.endsWith("abcdef")).toBe(true);
+    expect(result.items.map((i) => i.kind)).toEqual(["inference", "source-fact", "source-fact"]);
+    expect(result.items[0]?.quote).toBeUndefined();
     expect(result.counts.truncated).toBe(1);
     for (const item of result.items) {
+      if (item.quote === undefined) continue;
       for (const id of item.citedSourceIds) {
         expect(quoteInSource(sources[id] ?? "", item.quote ?? ""), `${item.quote} in ${id}`).toBe(
           true,
