@@ -47,6 +47,26 @@ export {
   ITEM_TEXT_ID_A,
   ITEM_TEXT_ID_B,
 } from "./hostile-summariser-replies.js";
+export type {
+  FixtureManifestEntry,
+  ResearchFixtureDir,
+  ResearchFixtureDirOptions,
+} from "./research-fixture-dir.js";
+export {
+  buildResearchFixtureDir,
+  defaultManifestEntries,
+  FIXTURE_ATOM,
+  FIXTURE_ATOM_LABEL,
+  FIXTURE_ATOM_URL,
+  FIXTURE_PAGE,
+  FIXTURE_PAGE_LABEL,
+  FIXTURE_PAGE_URL,
+  FIXTURE_RSS,
+  FIXTURE_RSS_LABEL,
+  FIXTURE_RSS_URL,
+  FIXTURE_SOURCES,
+  writeResearchSourcesFile,
+} from "./research-fixture-dir.js";
 export type { StartServiceForTestOptions, TestServiceHandle } from "./service-harness.js";
 export {
   requestOverSocket,
