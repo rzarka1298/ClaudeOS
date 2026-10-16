@@ -64,14 +64,35 @@ export function reportReadyWithGapsLine(unavailable: number, total: number): str
 // ---------------------------------------------------------------------------
 // Run stage line (shown only while running)
 
-export const STAGE_TEXT: Readonly<Record<ResearchStage, string>> = {
-  capture: "Reading the source list",
-  raw: "Fetching sources",
-  synthesis: "Summarising",
-  wiki: "Updating source notes",
+/**
+ * What the run is doing now, named by the LAST stage it has finished logging (07-FIX7).
+ *
+ * The pipeline logs a stage after it has finished that stage, and the service sends the last logged
+ * stage as the run's `stage`. So the stage names what is DONE, and the row has to say what comes
+ * next: once `capture` is logged the run is fetching, once `raw` is logged it is summarising, and so
+ * on. Reading the table by the stage's own word would be one stage behind.
+ *
+ * `deliverable` is followed by the finalising of the report and `output` by the end of the run, so
+ * both still read "Writing the report", the last activity of the sequence.
+ */
+export const ACTIVITY_AFTER_STAGE: Readonly<Record<ResearchStage, string>> = {
+  capture: "Fetching sources",
+  raw: "Summarising",
+  synthesis: "Updating source notes",
+  wiki: "Writing the report",
   deliverable: "Writing the report",
   output: "Writing the report",
 };
+
+/** The run has started and logged no stage yet: it is reading the source list. */
+export const ACTIVITY_BEFORE_ANY_STAGE = "Reading the source list";
+
+/** The words for what a run in flight is doing, given the last stage it logged (null: none yet). */
+export function runActivityText(lastLoggedStage: ResearchStage | null): string {
+  return lastLoggedStage === null
+    ? ACTIVITY_BEFORE_ANY_STAGE
+    : ACTIVITY_AFTER_STAGE[lastLoggedStage];
+}
 
 // ---------------------------------------------------------------------------
 // R2 run status section

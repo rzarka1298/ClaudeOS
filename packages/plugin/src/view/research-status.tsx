@@ -16,10 +16,10 @@ import {
   NONE_YET,
   OPEN_REPORT_LABEL,
   RUN_STATUS_HEADING,
+  runActivityText,
   SETUP_BODY,
   SETUP_HEADING,
   SOURCES_FOOTNOTE,
-  STAGE_TEXT,
   showSourcesLabel,
   TEXT_SHORTENED,
   UNKNOWN_RUN_LABEL,
@@ -174,7 +174,7 @@ export function ResearchStatusSection(props: ResearchStatusSectionProps): VNode 
               <Segments
                 parts={[
                   <StateWord key="state" state="running" />,
-                  inFlight.stage === null ? null : STAGE_TEXT[inFlight.stage],
+                  runActivityText(inFlight.stage),
                   `started ${formatRelativeTime(inFlight.startedAt, now)}`,
                 ].filter((part) => part !== null)}
               />

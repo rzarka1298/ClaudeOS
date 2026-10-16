@@ -42,7 +42,10 @@ import type { AutomationRunRow, JobRunRow, VaultNotes } from "./research-support
 
 const RUNNING_WORD = "▸ Running";
 
-/** The closed set of stage words the Current run row may read (the plugin's STAGE_TEXT). */
+/**
+ * The closed set of words the Current run row may read for what the run is doing now (the plugin's
+ * ACTIVITY_AFTER_STAGE and ACTIVITY_BEFORE_ANY_STAGE).
+ */
 const STAGE_WORDS = [
   RESEARCH_TEXT.stageCapture,
   RESEARCH_TEXT.stageRaw,
@@ -54,11 +57,16 @@ const STAGE_WORDS = [
 /**
  * The status line and the Current run row over one run (record order is time order): the status
  * line reads the starting sentence, then the started sentence, then that a report is ready; the
- * Current run row shows `▸ Running` with a stage word from the closed set, the first one being
- * the stage the fixture holds the run in (`Reading the source list`: the row names the last
- * stage the run has logged, and the fetch happens before `raw` is logged), and is gone when the
- * run has ended. A fixture answers in milliseconds after that hold, so the later stage words
- * are shown only if a status fetch lands in between; seeing them is not required.
+ * Current run row shows `▸ Running` with a word from the closed set, and is gone when the run has
+ * ended.
+ *
+ * The row names what the run is doing NOW (07-FIX7): the service sends the last stage the run has
+ * logged, and the pipeline logs a stage when it is finished, so before any stage is logged the row
+ * reads `Reading the source list` and, once the source list is read and while the sources are
+ * fetched, `Fetching sources`. The fixture holds the run in its fetch, so `Fetching sources` must
+ * be shown, and shown first unless the short-lived earlier state `Reading the source list` was caught.
+ * A fixture answers in milliseconds after that hold, so the later words are shown only if a status
+ * fetch lands in between; seeing them is not required.
  */
 export function checkRunTranscript(records: readonly TranscriptRecord[]): string[] {
   const problems: string[] = [];
@@ -75,20 +83,27 @@ export function checkRunTranscript(records: readonly TranscriptRecord[]): string
   }
   const running = records.filter((entry) => entry.current?.includes(RUNNING_WORD) === true);
   if (running.length === 0) problems.push("the Current run row never showed Running");
-  // `▸ Running · {stage} · started {time}`; a run whose first stage is not logged yet reads
-  // `▸ Running · started {time}` and has no stage word.
-  const words = running
-    .map((entry) => (entry.current ?? "").split(" · "))
-    .filter((parts) => parts.length >= 3)
-    .map((parts) => parts[1] ?? "");
+  // `▸ Running · {words} · started {time}`: the row always names what the run is doing, so a row
+  // with no word between Running and started is a defect, not an early state.
+  const parts = running.map((entry) => (entry.current ?? "").split(" · "));
+  const words = parts.filter((entry) => entry.length >= 3).map((entry) => entry[1] ?? "");
   if (running.length > 0 && words.length === 0) {
     problems.push("the Current run row never named a stage");
+  } else if (parts.some((entry) => entry.length < 3)) {
+    problems.push("the Current run row showed Running with no stage word");
   }
   if (words.some((word) => !(STAGE_WORDS as readonly string[]).includes(word))) {
     problems.push("the Current run row showed a stage word outside the closed set");
   }
-  if (words.length > 0 && words[0] !== RESEARCH_TEXT.stageCapture) {
+  const first = words[0];
+  if (
+    first !== undefined &&
+    first !== RESEARCH_TEXT.stageCapture &&
+    first !== RESEARCH_TEXT.stageRaw
+  ) {
     problems.push("the Current run row did not first name the held fetch stage");
+  } else if (words.length > 0 && !words.includes(RESEARCH_TEXT.stageRaw)) {
+    problems.push("the Current run row never named the held fetch stage");
   }
   const last = records[records.length - 1];
   if (last !== undefined && last.current !== null) {

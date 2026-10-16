@@ -242,7 +242,7 @@
       "inFlight": {
         "runId": "3d98000009b83000620ca0404",
         "startedAt": "2026-10-14T11:59:00.000Z",
-        "stage": "synthesis"
+        "stage": "raw"
       },
       "latestUnknown": null,
       "configuredSources": [
