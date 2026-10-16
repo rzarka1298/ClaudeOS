@@ -14,7 +14,12 @@ import {
   SourceReferenceSchema,
   type SummariserId,
 } from "@ccc/domain";
-import { appendJobRunStage, finishJobRun, recordResearchSource } from "@ccc/operational-store";
+import {
+  appendJobRunStage,
+  finishJobRun,
+  type ResearchSourceRecord,
+  recordResearchSource,
+} from "@ccc/operational-store";
 import {
   canonicaliseUrl,
   delimitSourcesWithReport,
@@ -432,6 +437,26 @@ function prepare(
   }
 }
 
+/**
+ * The provenance record of one prepared source (07-FIX6, ADR-0030): what the store keeps of a raw
+ * note this run wrote and read back.
+ */
+export function sourceRecordFor(
+  source: Pick<PreparedSource, "sourceId" | "ref">,
+  jobRunId: string,
+  recordedAt: string,
+): ResearchSourceRecord | null {
+  return {
+    jobRunId,
+    sourceId: source.sourceId,
+    canonicalUrl: source.ref.canonicalUrl ?? "",
+    contentHash: source.ref.contentHash,
+    snapshotPath: source.ref.snapshotPath,
+    label: source.ref.title,
+    recordedAt,
+  };
+}
+
 const IDS_LABEL = "\nSource IDs: ";
 
 /**
@@ -666,15 +691,9 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
         // The raw note is written and read back: record it in the operational store. That row, not
         // the vault, is what lets the reader call a quote verified (07-FIX6, ADR-0030). A source
         // that fails above has no row, so a report can never cite it as evidence.
-        recordResearchSource(deps.db, {
-          jobRunId: trace.runId,
-          sourceId: source.sourceId,
-          canonicalUrl: source.ref.canonicalUrl ?? "",
-          contentHash: source.ref.contentHash,
-          snapshotPath: source.ref.snapshotPath,
-          label: source.ref.title,
-          recordedAt: deps.now().toISOString(),
-        });
+        const record = sourceRecordFor(source, trace.runId, deps.now().toISOString());
+        if (record === null) throw new RawSnapshotRefused();
+        recordResearchSource(deps.db, record);
         stored.set(source.sourceId, snapshot.text);
         rawIds.push(written.id);
       } catch (error) {

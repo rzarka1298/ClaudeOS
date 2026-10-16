@@ -41,6 +41,7 @@ export {
 } from "./pipeline.js";
 export type { PipelineEffect } from "./pipeline-effects.js";
 export { PIPELINE_EFFECTS } from "./pipeline-effects.js";
+export { reportContentDigest } from "./report-digest.js";
 export type { RunNoteInput, WrittenRunNote } from "./run-note.js";
 export { renderRunNote, runNotePathFor, writeRunNote } from "./run-note.js";
 export type {

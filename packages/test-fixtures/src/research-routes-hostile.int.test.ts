@@ -21,10 +21,21 @@ import {
   type SourceReference,
   VAULT_SETUP_PATH,
 } from "@ccc/domain";
-import { finishJobRun, openStore, recordResearchSource, startJobRun } from "@ccc/operational-store";
+import {
+  finishJobRun,
+  openStore,
+  recordResearchReport,
+  recordResearchSource,
+  startJobRun,
+} from "@ccc/operational-store";
 import { evidenceText } from "@ccc/research";
-import { contentHashFor, sourceIdFor } from "@ccc/service/research";
-import { finaliseReportNote, writeRawSourceNote, writeReportNote } from "@ccc/vault-repo";
+import { contentHashFor, reportContentDigest, sourceIdFor } from "@ccc/service/research";
+import {
+  finaliseReportNote,
+  readReportNote,
+  writeRawSourceNote,
+  writeReportNote,
+} from "@ccc/vault-repo";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   authedRequest,
@@ -309,7 +320,11 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
    * - forged-run-no-rows: the run exists but never recorded this source;
    * - unknown-run-rows: a record exists under the run id but the run itself does not;
    * - hash-mismatch: the run recorded the source with another hash (the body was rewritten);
-   * - wrong-report: the run finished naming some other report.
+   * - wrong-report: the run finished naming some other report;
+   * - edited-in-place (07-FIX6b): a genuine run, then the report file itself rewritten in place
+   *   (the run id and note id kept, every raw note and source record untouched): the digest the
+   *   run recorded no longer matches;
+   * - no-digest: the run and the source record are genuine but no report record exists.
    */
   type Provenance =
     | "genuine"
@@ -317,7 +332,9 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
     | "forged-run-no-rows"
     | "unknown-run-rows"
     | "hash-mismatch"
-    | "wrong-report";
+    | "wrong-report"
+    | "edited-in-place"
+    | "no-digest";
   const FORGED: readonly Provenance[] = [
     "forged-no-run",
     "forged-run-no-rows",
@@ -325,6 +342,12 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
     "hash-mismatch",
     "wrong-report",
   ];
+  /**
+   * The report-binding variants (07-FIX6b) are applied to EVERY hostile text, not cycled with the
+   * rest: only a text that is a substantial whole-word run verifies, so a cycle could pair them
+   * with texts that never verified in the first place and prove nothing.
+   */
+  const REPORT_BINDING_FORGED: readonly Provenance[] = ["edited-in-place", "no-digest"];
 
   /** Writes one finalised report whose every text field is `text`, backed by real raw notes. */
   function craftReport(
@@ -381,7 +404,24 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
       path: written.path,
       now: new Date("2026-10-14T10:00:00.000Z"),
     });
-    recordInStore(dir, provenance, { runId, ref, noteId: written.id, index });
+    const readBack = readReportNote(vaultRoot, written.path);
+    if (!readBack.readable) throw new Error("the crafted report must be readable");
+    recordInStore(dir, provenance, {
+      runId,
+      ref,
+      noteId: written.id,
+      index,
+      digest: reportContentDigest(readBack.frontmatter),
+    });
+    if (provenance === "edited-in-place") {
+      // The forger keeps the report's id and run id and rewrites the report itself: here the run
+      // facts. The raw notes and the source record are untouched.
+      const file = join(vaultRoot, written.path);
+      const before = readFileSync(file, "utf8");
+      const after = before.replace(/^sourceTotal: 1$/m, "sourceTotal: 2");
+      if (after === before) throw new Error("the crafted report has no sourceTotal line to edit");
+      writeFileSync(file, after);
+    }
     return { noteId: written.id, path: written.path };
   }
 
@@ -389,14 +429,14 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
   function recordInStore(
     dir: string,
     provenance: Provenance,
-    input: { runId: string; ref: SourceReference; noteId: string; index: number },
+    input: { runId: string; ref: SourceReference; noteId: string; index: number; digest: string },
   ): void {
     const store = openStore(join(dir, "operational.db"));
     try {
       const runExists = provenance !== "forged-no-run" && provenance !== "unknown-run-rows";
+      const at = (n: number) =>
+        new Date(Date.UTC(2026, 0, 1) + (input.index * 2 + n) * 1000).toISOString();
       if (runExists) {
-        const at = (n: number) =>
-          new Date(Date.UTC(2026, 0, 1) + (input.index * 2 + n) * 1000).toISOString();
         startJobRun(store.db, {
           jobRunId: input.runId as RunId,
           jobKey: RESEARCH_JOB_ID,
@@ -404,6 +444,33 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
           trigger: "manual",
           startedAt: at(0),
         });
+      }
+      const recordsSource = provenance !== "forged-no-run" && provenance !== "forged-run-no-rows";
+      const recordedHash =
+        provenance === "hash-mismatch" ? contentHashFor("the genuine body") : input.ref.contentHash;
+      const source = {
+        jobRunId: input.runId,
+        sourceId: input.ref.id,
+        canonicalUrl: input.ref.canonicalUrl ?? "",
+        contentHash: recordedHash,
+        snapshotPath: rawSnapshotPathFor(input.ref.id, recordedHash),
+        label: input.ref.title,
+        recordedAt: "2026-10-14T10:00:00.000Z",
+      };
+      const report = {
+        jobRunId: input.runId,
+        reportNoteId: input.noteId,
+        contentDigest: input.digest,
+        recordedAt: "2026-10-14T10:00:00.000Z",
+      };
+      const recordsReport =
+        provenance !== "forged-no-run" &&
+        provenance !== "forged-run-no-rows" &&
+        provenance !== "no-digest";
+      if (runExists) {
+        // The store's own writers, while the run is still in flight, as the pipeline calls them.
+        if (recordsSource) recordResearchSource(store.db, source);
+        if (recordsReport) recordResearchReport(store.db, report);
         finishJobRun(store.db, input.runId as RunId, {
           outcome: "success",
           endedAt: at(1),
@@ -413,19 +480,30 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
           unavailableSources: [],
           errorCode: null,
         });
+      } else if (recordsSource) {
+        // Rows under a run id the store never saw: written the way a forger with the file would.
+        store.db
+          .prepare(
+            `INSERT INTO research_source_records
+               (job_run_id, source_id, canonical_url, content_hash, snapshot_path, label, recorded_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            source.jobRunId,
+            source.sourceId,
+            source.canonicalUrl,
+            source.contentHash,
+            source.snapshotPath,
+            source.label,
+            source.recordedAt,
+          );
+        store.db
+          .prepare(
+            `INSERT INTO research_report_records (job_run_id, report_note_id, content_digest, recorded_at)
+             VALUES (?, ?, ?, ?)`,
+          )
+          .run(report.jobRunId, report.reportNoteId, report.contentDigest, report.recordedAt);
       }
-      if (provenance === "forged-no-run" || provenance === "forged-run-no-rows") return;
-      const recordedHash =
-        provenance === "hash-mismatch" ? contentHashFor("the genuine body") : input.ref.contentHash;
-      recordResearchSource(store.db, {
-        jobRunId: input.runId,
-        sourceId: input.ref.id,
-        canonicalUrl: input.ref.canonicalUrl ?? "",
-        contentHash: recordedHash,
-        snapshotPath: rawSnapshotPathFor(input.ref.id, recordedHash),
-        label: input.ref.title,
-        recordedAt: "2026-10-14T10:00:00.000Z",
-      });
     } finally {
       store.close();
     }
@@ -511,6 +589,19 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
         hostile,
         ...craftReport(vaultRoot, dir, hostile.text, offset + index, "genuine"),
       }));
+      const bound = HOSTILE_REPORT_TEXTS.flatMap((hostile, index) =>
+        REPORT_BINDING_FORGED.map((provenance, variant) => ({
+          hostile,
+          provenance,
+          ...craftReport(
+            vaultRoot,
+            dir,
+            hostile.text,
+            offset * 2 + index * REPORT_BINDING_FORGED.length + variant,
+            provenance,
+          ),
+        })),
+      );
       for (const { hostile, provenance, noteId } of forged) {
         const reply = await call(RESEARCH_REPORT_PATH, { noteId, page: "items" });
         expect(reply.status, `${hostile.name} ${provenance}`).toBe(200);
@@ -524,6 +615,16 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
         expect(sources.status, hostile.name).toBe(200);
         ResearchReportSourcesPageSchema.parse(sources.body);
       }
+      // A genuine run's report that was then edited in place (or has no report record) is not the
+      // run's report: no quote of it is shown as verified, whatever the text.
+      for (const { hostile, provenance, noteId } of bound) {
+        const reply = await call(RESEARCH_REPORT_PATH, { noteId, page: "items" });
+        expect(reply.status, `${hostile.name} ${provenance}`).toBe(200);
+        const item = ResearchReportItemsPageSchema.parse(reply.body).items[0];
+        expect(item?.quote, `${hostile.name} ${provenance}`).toBeNull();
+        expect(item?.kind, `${hostile.name} ${provenance}`).toBe("inference");
+        expect(item?.quoteUnverified, `${hostile.name} ${provenance}`).toBe(true);
+      }
       // The control: the same texts recorded by a genuine run still verify where they did before.
       let verified = 0;
       for (const { hostile, noteId } of genuine) {
@@ -535,6 +636,9 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
         }
       }
       expect(verified).toBeGreaterThan(0);
+      // Vacuity guard: the report-binding variants were applied to texts that DO verify when the
+      // report is genuine (the control above), so the null quotes above mean something.
+      expect(bound.length).toBe(HOSTILE_REPORT_TEXTS.length * REPORT_BINDING_FORGED.length);
     });
   }, 300_000);
 });

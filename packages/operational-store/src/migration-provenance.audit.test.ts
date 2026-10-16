@@ -5,12 +5,14 @@ import { join } from "node:path";
 import {
   CONTENT_HASH_PATTERN,
   newRunId,
+  RESEARCH_JOB_ID,
   RUN_ID_PATTERN,
   rawSnapshotPathFor,
   SOURCE_ID_PATTERN,
 } from "@ccc/domain";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { startJobRun } from "./job-run-store.js";
 import { applyMigrations } from "./migrate.js";
 import { recordResearchSource } from "./research-source-store.js";
 
@@ -89,8 +91,16 @@ describe("the provenance migration on a fresh store", () => {
     applyMigrations(db, MIGRATIONS);
     const sourceId = "c".repeat(32);
     const hash = createHash("sha256").update("evidence").digest("hex");
+    const jobRunId = newRunId();
+    startJobRun(db, {
+      jobRunId,
+      jobKey: RESEARCH_JOB_ID,
+      idempotencyKey: `${RESEARCH_JOB_ID}:manual:${jobRunId}`,
+      trigger: "manual",
+      startedAt: T0,
+    });
     recordResearchSource(db, {
-      jobRunId: newRunId(),
+      jobRunId,
       sourceId,
       canonicalUrl: "https://one.example.invalid/feed.atom",
       contentHash: hash,

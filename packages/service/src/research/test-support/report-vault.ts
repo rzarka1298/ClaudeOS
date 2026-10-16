@@ -11,22 +11,27 @@ import {
   type SummariserId,
 } from "@ccc/domain";
 import {
+  appendJobRunStage,
   applyMigrations,
   finishJobRun,
   type OperationalStore,
   openStore,
   type ResearchSourceRecord,
+  recordResearchReport,
   recordResearchSource,
+  recoverJobRunsToStale,
   startJobRun,
 } from "@ccc/operational-store";
 import { evidenceText } from "@ccc/research";
 import {
   finaliseReportNote,
   initializeVault,
+  readReportNote,
   writeRawSourceNote,
   writeReportNote,
 } from "@ccc/vault-repo";
 import { contentHashFor, sourceIdFor } from "../hash.js";
+import { reportContentDigest } from "../report-digest.js";
 
 /**
  * Builds reports in a temporary vault for the research view model and route tests (plan 07-14):
@@ -34,8 +39,9 @@ import { contentHashFor, sourceIdFor } from "../hash.js";
  * finalised report written through the vault-repo writers. Test code only.
  *
  * Provenance (07-FIX6, ADR-0030): a genuine report also has what a real run leaves in the
- * operational store: the job run (started and finished with this report's note id) and one
- * `research_source_records` row per raw note it wrote. A reader only counts a quote as evidence
+ * operational store: the job run (started and finished with this report's note id), one
+ * `research_source_records` row per raw note it wrote and the `research_report_records` row with
+ * the digest of the report as finalised (07-FIX6b). A reader only counts a quote as evidence
  * when those exist, so a test that wants a forged or tampered report says so through
  * {@link ProvenanceSpec}; the default is a genuine run.
  */
@@ -80,6 +86,22 @@ export interface ProvenanceSpec {
   readonly recordSources?: readonly number[] | "none";
   /** Changes a record before it is stored (for example a hash that does not match the raw note). */
   readonly edit?: (record: ResearchSourceRecord, index: number) => ResearchSourceRecord;
+  /**
+   * How the report's run ends. Default `success` (finished, naming this report). The others leave
+   * the run in the state a failed, cut-off or still-working run would be in:
+   * `success-no-report` finishes with no report note id; `failure` fails with no report;
+   * `stale` is a run startup recovery gave up on; `in-flight` has not logged an output stage;
+   * `in-flight-output` is still running but has logged the output stage naming this report.
+   */
+  readonly runEnd?:
+    | "success"
+    | "success-no-report"
+    | "failure"
+    | "stale"
+    | "in-flight"
+    | "in-flight-output";
+  /** `"none"` leaves out the report record; a 64-hex string records that digest instead of the real one. */
+  readonly reportRecord?: "none" | string;
 }
 
 export interface ReportSpec {
@@ -93,11 +115,12 @@ export interface ReportSpec {
   readonly summariser?: SummariserId;
   /** Leaves the report as `deliverable` (not finalised). */
   readonly unfinalised?: boolean;
+  /** What the operational store is told about the report (default: a genuine, finished run). */
+  readonly provenance?: ProvenanceSpec;
   /**
    * Edits the references the REPORT cites after the raw notes were written, as a hand edit of the
    * report would. The ids stay (findings cite them); everything else may change.
    */
-  readonly provenance?: ProvenanceSpec;
   readonly editCitedRefs?: (refs: readonly SourceReference[]) => SourceReference[];
 }
 
@@ -117,9 +140,12 @@ export interface ReportVault {
 }
 
 /**
- * Leaves in the operational store what a real run leaves for a report: the finished job run and a
- * record for each source whose raw note it wrote. The run starts a minute before the report and
- * ends thirty seconds after it.
+ * Leaves in the operational store what a real run leaves for a report: the job run, a record for
+ * each source whose raw note it wrote, the report record (the digest of the report as finalised)
+ * and the run's end. The run starts a minute before the report and ends thirty seconds after it.
+ * The records are written while the run is still in flight, as the pipeline writes them. A forged
+ * report (`registerRun: false`) has rows written straight into the tables, because the store's
+ * own writers refuse a run that does not exist.
  */
 export function recordProvenance(
   store: OperationalStore,
@@ -129,11 +155,14 @@ export function recordProvenance(
     readonly noteId: string;
     readonly refs: readonly SourceReference[];
     readonly provenance: ProvenanceSpec;
+    /** The digest of the report as it was finalised (see `reportContentDigest`). */
+    readonly reportDigest: string;
   },
 ): void {
   const { runId, generatedAt, provenance } = input;
   const at = Date.parse(generatedAt);
-  if (provenance.registerRun !== false) {
+  const registered = provenance.registerRun !== false;
+  if (registered) {
     startJobRun(store.db, {
       jobRunId: runId as RunId,
       jobKey: RESEARCH_JOB_ID,
@@ -141,35 +170,121 @@ export function recordProvenance(
       trigger: "manual",
       startedAt: new Date(at - 60_000).toISOString(),
     });
-    finishJobRun(store.db, runId as RunId, {
-      outcome: "success",
-      endedAt: new Date(at + 30_000).toISOString(),
-      sourceCount: input.refs.length,
-      sourceTotal: input.refs.length,
-      reportNoteId: provenance.runReportNoteId ?? input.noteId,
-      unavailableSources: [],
-      errorCode: null,
-    });
   }
   const recorded = provenance.recordSources ?? input.refs.map((_, index) => index);
-  if (recorded === "none") return;
-  for (const index of recorded) {
-    const ref = input.refs[index];
-    if (ref === undefined || ref.canonicalUrl === undefined) continue;
-    const record: ResearchSourceRecord = {
+  if (recorded !== "none") {
+    for (const index of recorded) {
+      const ref = input.refs[index];
+      if (ref === undefined || ref.canonicalUrl === undefined) continue;
+      const base: ResearchSourceRecord = {
+        jobRunId: runId,
+        sourceId: ref.id,
+        canonicalUrl: ref.canonicalUrl,
+        contentHash: ref.contentHash,
+        snapshotPath: ref.snapshotPath,
+        label: ref.title,
+        recordedAt: generatedAt,
+      };
+      const record = provenance.edit === undefined ? base : provenance.edit(base, index);
+      if (registered) recordResearchSource(store.db, record);
+      else insertSourceRecordRaw(store, record);
+    }
+  }
+  if (provenance.reportRecord !== "none") {
+    const report = {
       jobRunId: runId,
-      sourceId: ref.id,
-      canonicalUrl: ref.canonicalUrl,
-      contentHash: ref.contentHash,
-      snapshotPath: ref.snapshotPath,
-      label: ref.title,
+      reportNoteId: input.noteId,
+      contentDigest: provenance.reportRecord ?? input.reportDigest,
       recordedAt: generatedAt,
     };
-    recordResearchSource(
-      store.db,
-      provenance.edit === undefined ? record : provenance.edit(record, index),
-    );
+    if (registered) recordResearchReport(store.db, report);
+    else insertReportRecordRaw(store, report);
   }
+  if (!registered) return;
+  const endedAt = new Date(at + 30_000).toISOString();
+  switch (provenance.runEnd ?? "success") {
+    case "success":
+      finishJobRun(store.db, runId as RunId, {
+        outcome: "success",
+        endedAt,
+        sourceCount: input.refs.length,
+        sourceTotal: input.refs.length,
+        reportNoteId: provenance.runReportNoteId ?? input.noteId,
+        unavailableSources: [],
+        errorCode: null,
+      });
+      break;
+    case "success-no-report":
+      finishJobRun(store.db, runId as RunId, {
+        outcome: "success",
+        endedAt,
+        sourceCount: input.refs.length,
+        sourceTotal: input.refs.length,
+        reportNoteId: null,
+        unavailableSources: [],
+        errorCode: null,
+      });
+      break;
+    case "failure":
+      finishJobRun(store.db, runId as RunId, {
+        outcome: "failure",
+        endedAt,
+        sourceCount: 0,
+        sourceTotal: input.refs.length,
+        reportNoteId: null,
+        unavailableSources: [],
+        errorCode: "vault-write-failed",
+      });
+      break;
+    case "stale":
+      recoverJobRunsToStale(store.db, [runId]);
+      break;
+    case "in-flight":
+      break;
+    case "in-flight-output":
+      appendJobRunStage(store.db, runId as RunId, {
+        stage: "output",
+        at: endedAt,
+        noteIds: [provenance.runReportNoteId ?? input.noteId],
+      });
+      break;
+  }
+}
+
+/** Writes a source record the way a forger with the database file would: no run required. */
+function insertSourceRecordRaw(store: OperationalStore, record: ResearchSourceRecord): void {
+  store.db
+    .prepare(
+      `INSERT INTO research_source_records
+         (job_run_id, source_id, canonical_url, content_hash, snapshot_path, label, recorded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      record.jobRunId,
+      record.sourceId,
+      record.canonicalUrl,
+      record.contentHash,
+      record.snapshotPath,
+      record.label,
+      record.recordedAt,
+    );
+}
+
+function insertReportRecordRaw(
+  store: OperationalStore,
+  record: {
+    readonly jobRunId: string;
+    readonly reportNoteId: string;
+    readonly contentDigest: string;
+    readonly recordedAt: string;
+  },
+): void {
+  store.db
+    .prepare(
+      `INSERT INTO research_report_records (job_run_id, report_note_id, content_digest, recorded_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(record.jobRunId, record.reportNoteId, record.contentDigest, record.recordedAt);
 }
 
 let counter = 0;
@@ -257,12 +372,15 @@ export function createReportVault(): ReportVault {
     if (spec.unfinalised !== true) {
       finaliseReportNote({ vaultRoot: root, path: written.path, now: new Date(generatedAt) });
     }
+    const readBack = readReportNote(root, written.path);
+    if (!readBack.readable) throw new Error("the report just written must be readable");
     recordProvenance(store, {
       runId,
       generatedAt,
       noteId: written.id,
       refs,
       provenance: spec.provenance ?? {},
+      reportDigest: reportContentDigest(readBack.frontmatter),
     });
     return { noteId: written.id, path: written.path, runId, sourceRefs: refs, rawPaths };
   }
