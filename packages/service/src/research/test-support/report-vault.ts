@@ -65,6 +65,11 @@ export interface ReportSpec {
   readonly summariser?: SummariserId;
   /** Leaves the report as `deliverable` (not finalised). */
   readonly unfinalised?: boolean;
+  /**
+   * Edits the references the REPORT cites after the raw notes were written, as a hand edit of the
+   * report would. The ids stay (findings cite them); everything else may change.
+   */
+  readonly editCitedRefs?: (refs: readonly SourceReference[]) => SourceReference[];
 }
 
 export interface BuiltReport {
@@ -159,7 +164,7 @@ export function createReportVault(): ReportVault {
       summariser: spec.summariser ?? "extractive",
       sourceTotal: spec.sourceTotal ?? sources.length + (spec.unavailable?.length ?? 0),
       unavailableSources: [...(spec.unavailable ?? [])],
-      sourceRefs: refs,
+      sourceRefs: spec.editCitedRefs === undefined ? refs : spec.editCitedRefs(refs),
       sourceHandling: refs.map((ref) => ({ sourceId: ref.id, counts: ZERO_COUNTS })),
       items: reportItems,
       now: new Date(generatedAt),
