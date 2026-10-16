@@ -6,6 +6,7 @@ import {
   RUN_STATE_DISPLAY,
   SOURCE_TYPE_DISPLAY,
 } from "@ccc/domain";
+import { RESEARCH_UAT_TOPIC } from "../research-uat-fixture.js";
 import { allMotionOff, anyMotionOn, focusRingVisible, type MotionSample } from "./cross-support.js";
 import { RAW_BANNER, RESEARCH_CLASSES, RESEARCH_TEXT } from "./research-copy.js";
 import type {
@@ -28,7 +29,6 @@ import {
   scalarOf,
 } from "./research-notes.js";
 import type { AutomationRunRow, JobRunRow, VaultNotes } from "./research-support.js";
-import { RESEARCH_UAT_TOPIC } from "../research-uat-fixture.js";
 
 /**
  * Pure verdicts over what the Research destination showed (plan 07-17). Each returns the list of

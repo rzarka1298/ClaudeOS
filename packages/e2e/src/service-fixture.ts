@@ -2,8 +2,8 @@ import { chmodSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync } from
 import { join } from "node:path";
 import { startServiceForTest } from "@ccc/test-fixtures";
 import { buildServiceEnv, refuseRealPaths, type ServiceKind } from "./isolation-guards.js";
-import { isResearchGuardEnv, type ResearchGuardEnv } from "./research-uat-fixture.js";
 import { SERVICE_ENTRY } from "./repo-paths.js";
+import { isResearchGuardEnv, type ResearchGuardEnv } from "./research-uat-fixture.js";
 import type { RunRootPaths } from "./run-root.js";
 import {
   realWait,

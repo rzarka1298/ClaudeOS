@@ -13,7 +13,7 @@ import { assertSandboxConnected, pollUntil } from "../src/driver.js";
 import { scenarioSources } from "../src/research-uat-fixture.js";
 import { loadRunContext } from "../src/spec-context.js";
 import { APPROVALS_COPY } from "../src/spec-support/approvals-copy.js";
-import { sampleMotionInRenderer, recordLookPending } from "../src/spec-support/cross-support.js";
+import { recordLookPending, sampleMotionInRenderer } from "../src/spec-support/cross-support.js";
 import { RESEARCH_CLASSES, RESEARCH_TEXT } from "../src/spec-support/research-copy.js";
 import {
   type ResearchFocus,
@@ -40,12 +40,12 @@ import {
   focusRunNow,
   openReport,
   openResearch,
+  type ResearchEnvironment,
   readArticle,
   readLayout,
   readResearch,
   readSourcesPage,
   readVaultNotes,
-  type ResearchEnvironment,
   runScenario,
   setReducedMotion,
   startResearchEnvironment,

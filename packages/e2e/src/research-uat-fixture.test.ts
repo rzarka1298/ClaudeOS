@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { realRuntimeDir, UAT_ACCOUNT_PREFIX } from "./isolation-guards.js";
 import { REPO_ROOT } from "./repo-paths.js";
 import {
+  hostileSources,
   isResearchGuardEnv,
   prepareResearchUat,
-  RESEARCH_SCENARIOS,
-  hostileSources,
   privacyMarkers,
   REFETCH_MARKER_NAME,
+  RESEARCH_SCENARIOS,
   RESEARCH_TEST_ENV,
   SLOW_FETCH_MS,
 } from "./research-uat-fixture.js";

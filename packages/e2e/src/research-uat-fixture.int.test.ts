@@ -11,11 +11,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { uatAccountFor } from "./isolation-guards.js";
 import { deleteUatAccount } from "./keychain-cleanup.js";
 import { SERVICE_ENTRY } from "./repo-paths.js";
-import { checkHostileRaw, checkLogPrivacy } from "./spec-support/research-verdicts.js";
 import {
   hostileSources,
-  privacyMarkers,
   prepareResearchUat,
+  privacyMarkers,
   QUERY_SOURCE_URL,
   REFETCH_MARKER_NAME,
   type ResearchScenario,
@@ -40,6 +39,7 @@ import {
   JOB_RUNS_SQL,
   type JobRunRow,
 } from "./spec-support/research-support.js";
+import { checkHostileRaw, checkLogPrivacy } from "./spec-support/research-verdicts.js";
 import { copyStore, queryStore } from "./store-copy.js";
 
 /**

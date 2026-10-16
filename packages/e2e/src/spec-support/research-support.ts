@@ -13,17 +13,18 @@ import {
   type ResearchClient,
 } from "@ccc/service-api-client";
 import { type DriverBrowser, pollUntil } from "../driver.js";
+import { readLedger } from "../ledger.js";
+import { assertPluginDataKeys, PLUGIN_ID } from "../plugin-data.js";
+import { readProcessTable } from "../process-table.js";
+import { INSTALLED_OBSIDIAN_BINARY } from "../repo-paths.js";
 import {
   prepareResearchUat,
   type ResearchGuardEnv,
   type ResearchUatPrepared,
 } from "../research-uat-fixture.js";
-import { readLedger } from "../ledger.js";
-import { assertPluginDataKeys, PLUGIN_ID } from "../plugin-data.js";
-import { readProcessTable } from "../process-table.js";
-import { INSTALLED_OBSIDIAN_BINARY } from "../repo-paths.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../spec-context.js";
 import { copyStore, queryStore } from "../store-copy.js";
+import { diffNewDescendants, type ProcessNode, readProcessTree } from "./cross-support.js";
 import { RESEARCH_CLASSES, RESEARCH_TEXT } from "./research-copy.js";
 import {
   type ArticleFacts,
@@ -43,7 +44,6 @@ import {
   rendererStartTranscript,
   type TranscriptRecord,
 } from "./research-dom.js";
-import { type ProcessNode, diffNewDescendants, readProcessTree } from "./cross-support.js";
 import { RESEARCH_FOLDERS, readFolderNotes, scalarOf } from "./research-notes.js";
 import type { NotesSnapshot } from "./research-verdicts.js";
 import {

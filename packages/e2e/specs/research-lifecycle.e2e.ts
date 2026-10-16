@@ -17,6 +17,7 @@ import {
   scenarioSources,
 } from "../src/research-uat-fixture.js";
 import { loadRunContext } from "../src/spec-context.js";
+import { checkPluginDataKeys } from "../src/spec-support/cross-support.js";
 import { RESEARCH_CLASSES, RESEARCH_TEXT } from "../src/spec-support/research-copy.js";
 import {
   rendererClickByText,
@@ -37,19 +38,19 @@ import {
   openResearch,
   pluginDataPath,
   pressRunNow,
+  type ResearchEnvironment,
   readAllServiceLogs,
   readNoteInReadingView,
   readResearch,
   readResearchStore,
   readVaultNotes,
-  type ResearchEnvironment,
   runScenario,
   runViaApi,
   startResearchEnvironment,
   VAULT_TASKS_AT_LEAST,
-  waitForNoteOpen,
   waitForConnected,
   waitForIdle,
+  waitForNoteOpen,
   waitForRunEnd,
 } from "../src/spec-support/research-support.js";
 import {
@@ -59,7 +60,6 @@ import {
   checkReuse,
   checkUnknownRun,
 } from "../src/spec-support/research-verdicts.js";
-import { checkPluginDataKeys } from "../src/spec-support/cross-support.js";
 import {
   asTasksBrowser,
   recordResults,

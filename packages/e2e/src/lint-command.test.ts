@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { lintTagsCommand } from "./lint-command.js";
 import { UsageError } from "./cli-args.js";
+import { lintTagsCommand } from "./lint-command.js";
 import { specMapForPhase, UAT_ITEM_PLAN } from "./spec-map.js";
 
 const SPEC_DIR = "/work/specs";
