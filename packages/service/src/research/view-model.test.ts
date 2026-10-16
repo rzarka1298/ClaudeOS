@@ -216,6 +216,33 @@ describe("Test 2 (list): newest first, paged, unreadable rows by file name", () 
   });
 });
 
+describe("a report file that is a link leaving the vault (T-07-07)", () => {
+  it("is listed as unreadable with its vault-relative path only, and is never found or served", () => {
+    const built = vault.addReport({ generatedAt: "2026-10-10T10:00:00.000Z" });
+    const outside = join(homedir(), ".ccc-test", `outside-${testRunId()}`);
+    mkdirSync(outside, { recursive: true });
+    try {
+      const name = `research-2026-10-21-${testRunId()}.md`;
+      writeFileSync(join(outside, name), readFileSync(join(vault.root, built.path), "utf8"));
+      symlinkSync(join(outside, name), join(vault.root, "global", "output", name));
+      const rows = list().rows;
+      const linked = rows.find((row) => !row.readable);
+      expect(linked).toEqual({
+        readable: false,
+        fileName: name,
+        notePath: `global/output/${name}`,
+      });
+      expect(JSON.stringify(rows).includes(outside)).toBe(false);
+      // The linked copy carries the same note id; it is not served (the real report is).
+      const lookup = findReport(vault.root, built.noteId);
+      expect(lookup.kind).toBe("found");
+      if (lookup.kind === "found") expect(lookup.entry.name).not.toBe(name);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Test 3 (reader pages)", () => {
   it("carries the header fields and numbers citations by source order", () => {
     const built = vault.addReport({

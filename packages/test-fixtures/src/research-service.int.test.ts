@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  RESEARCH_JOB_ID,
   RESEARCH_LIST_PATH,
   RESEARCH_REPORT_PATH,
   RESEARCH_RUN_PATH,
@@ -14,6 +15,7 @@ import {
   ResearchStatusResponseSchema,
   VAULT_SETUP_PATH,
 } from "@ccc/domain";
+import { openStore } from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   authedRequest,
@@ -291,6 +293,116 @@ describe("Test 3 (no vault)", () => {
       expect(parsed.lastFailure).toBeNull();
       expect(parsed.inFlight).toBeNull();
       expect(parsed.latestUnknown).toBeNull();
+    });
+  }, 120_000);
+});
+
+describe("Test 4 (the durable record of a run, wave 4 test audit)", () => {
+  it("records the manual key, the paired run row, the stages with item counts and every reference field", async () => {
+    await withResearchService({ vault: true }, async ({ socketPath, dir, token }) => {
+      const events = collectEvents(socketPath, token);
+      try {
+        const run = await authedRequest<unknown>(socketPath, token, {
+          method: "POST",
+          path: RESEARCH_RUN_PATH,
+          body: {},
+        });
+        const { runId } = ResearchRunResponseSchema.parse(run.body);
+        await events.waitFor(
+          (event) =>
+            event.type === "research.updated" &&
+            (event.payload as { runId?: string; outcome?: string }).runId === runId &&
+            (event.payload as { outcome?: string }).outcome !== undefined,
+          WAIT_MS,
+        );
+
+        // Every PRD 10.1 reference field is on the sources page, for every source.
+        const list = await authedRequest<unknown>(socketPath, token, {
+          method: "POST",
+          path: RESEARCH_LIST_PATH,
+          body: {},
+        });
+        const row = ResearchListResponseSchema.parse(list.body).rows[0];
+        if (row === undefined || !row.readable) throw new Error("expected a readable row");
+        const sourcesRes = await authedRequest<unknown>(socketPath, token, {
+          method: "POST",
+          path: RESEARCH_REPORT_PATH,
+          body: { noteId: row.noteId, page: "sources" },
+        });
+        const sources = ResearchReportSourcesPageSchema.parse(sourcesRes.body);
+        for (const source of sources.sources) {
+          for (const field of [
+            "sourceType",
+            "id",
+            "title",
+            "author",
+            "publishedAt",
+            "retrievedAt",
+            "contentHash",
+            "snapshotPath",
+            "accessClass",
+          ] as const) {
+            expect(field in source, `${source.number} ${field}`).toBe(true);
+          }
+          expect(source.canonicalUrl).toMatch(/^https:\/\/[a-z]+\.example\.invalid\//);
+          expect(source.contentHash).toMatch(/^[0-9a-f]{64}$/);
+          expect(source.snapshotPath).toMatch(/^global\/raw\/[0-9a-f]{32}\.[0-9a-f]{8}\.md$/);
+          expect(source.accessClass).toBe("public");
+        }
+        await started[started.length - 1]?.kill();
+        // The service has ended: read its store file, the durable record of the run.
+        const store = openStore(join(dir, "operational.db"));
+        const db = store.db;
+        try {
+          const job = db
+            .prepare("SELECT * FROM job_runs WHERE job_run_id = ?")
+            .get(runId) as Record<string, unknown>;
+          expect(job.idempotency_key).toBe(`${RESEARCH_JOB_ID}:manual:${runId}`);
+          expect(job.run_trigger).toBe("manual");
+          expect(job.state).toBe("completed");
+          expect(job.outcome).toBe("success");
+          expect(job.source_count).toBe(3);
+          expect(job.source_total).toBe(3);
+          expect(job.error_code).toBeNull();
+          expect(typeof job.ended_at).toBe("string");
+
+          // The paired run row ended with the job run, never invented.
+          const paired = db
+            .prepare("SELECT kind, state, ended_at FROM runs WHERE run_id = ?")
+            .get(runId) as {
+            kind: string;
+            state: string;
+            ended_at: string | null;
+          };
+          expect(paired).toMatchObject({ kind: "automation", state: "completed" });
+          expect(paired.ended_at).toBe(job.ended_at);
+
+          // Every stage, in order, and the synthesis entry holds the items by kind.
+          const log = JSON.parse(String(job.stage_log)) as {
+            stage: string;
+            counts?: Record<string, number>;
+          }[];
+          expect(log.map((entry) => entry.stage)).toEqual([
+            "capture",
+            "raw",
+            "synthesis",
+            "wiki",
+            "deliverable",
+            "output",
+          ]);
+          const synthesis = log.find((entry) => entry.stage === "synthesis");
+          expect(synthesis?.counts).toBeDefined();
+          const total = Object.values(synthesis?.counts ?? {}).reduce((a, b) => a + b, 0);
+          expect(total).toBeGreaterThan(0);
+          for (const kind of Object.keys(synthesis?.counts ?? {})) {
+            expect(["source-fact", "unverified-claim", "inference"]).toContain(kind);
+          }
+        } finally {
+          store.close();
+        }
+      } finally {
+        events.close();
+      }
     });
   }, 120_000);
 });
