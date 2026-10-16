@@ -388,6 +388,29 @@ describe("Test 3 (responses)", () => {
       expect(parses({ ...itemsPage, items: [{ ...itemRow, quote: null }] })).toBe(false);
     });
 
+    it("carries an optional quoteUnverified marker only on a finding that has no quote (plan 07-15)", () => {
+      const withdrawn = {
+        ...itemRow,
+        kind: "inference",
+        quote: null,
+        quoteSourceNumber: null,
+        quoteUnverified: true,
+      };
+      expect(parses({ ...itemsPage, items: [withdrawn] })).toBe(true);
+      // An item without the key still parses, so an older service stays readable.
+      expect(parses({ ...itemsPage, items: [itemRow] })).toBe(true);
+      // The marker says a quote was withheld, so a finding that still shows one cannot carry it.
+      expect(parses({ ...itemsPage, items: [{ ...itemRow, quoteUnverified: true }] })).toBe(false);
+      // Only the literal true is a marker.
+      for (const value of [false, "true", 1, null, {}]) {
+        expect(parses({ ...itemsPage, items: [{ ...withdrawn, quoteUnverified: value }] })).toBe(
+          false,
+        );
+      }
+      // Only an inference can carry it: that is what a withheld quote becomes.
+      expect(parses({ ...itemsPage, items: [{ ...withdrawn, kind: "source-fact" }] })).toBe(false);
+    });
+
     it("holds a page to at most 10 findings, 8 citations and 12 sources", () => {
       expect(parses({ ...itemsPage, items: Array.from({ length: 10 }, () => itemRow) })).toBe(true);
       expect(parses({ ...itemsPage, items: Array.from({ length: 11 }, () => itemRow) })).toBe(

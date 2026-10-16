@@ -104,7 +104,7 @@ describe("Test 1 (tracer): the items page, then the sources page, automatically"
   });
 });
 
-describe("Test 2 (paging): findings pages in order, then sources; a truncated page ends the findings", () => {
+describe("Test 2 (paging): findings pages in order, then sources; a trimmed page is followed by its cursor", () => {
   it("loads three items pages for a report of 25 findings, one at a time, before the sources", async () => {
     const all = Array.from({ length: 25 }, (_, i) => reportItem(i + 1));
     const header = reportHeader({
@@ -148,11 +148,33 @@ describe("Test 2 (paging): findings pages in order, then sources; a truncated pa
     expect(readerState.value?.sources?.map((source) => source.number)).toEqual([1, 2]);
   });
 
-  it("ends the findings at a truncated page and does not follow its cursor", async () => {
+  it("follows the cursor of a trimmed findings page, so the dropped findings are still read (plan 07-15)", async () => {
+    const all = Array.from({ length: 4 }, (_, i) => reportItem(i + 1));
+    const { calls } = installApi((_id, page, cursor) => {
+      if (page === "sources") return Promise.resolve(sourcesPage(threeSources()));
+      if (cursor === undefined) {
+        return Promise.resolve(itemsPage(all.slice(0, 2), { nextCursor: "i2", truncated: true }));
+      }
+      return Promise.resolve(itemsPage(all.slice(2)));
+    });
+    await openReader(REPORT_NOTE_ID);
+    expect(calls()).toEqual([
+      [REPORT_NOTE_ID, "items", undefined],
+      [REPORT_NOTE_ID, "items", "i2"],
+      [REPORT_NOTE_ID, "sources", undefined],
+    ]);
+    expect(readerState.value?.items.map((item) => item.index)).toEqual([1, 2, 3, 4]);
+    // Nothing was left out, so the reader has nothing to apologise for.
+    expect(readerState.value?.itemsTruncated).toBe(false);
+    expect(readerState.value?.itemsLoaded).toBe(true);
+    expect(readerState.value?.sources).toHaveLength(3);
+  });
+
+  it("ends the findings at a trimmed page that names no cursor, and says some were left out", async () => {
     const { calls } = installApi((_id, page) =>
       Promise.resolve(
         page === "items"
-          ? itemsPage([reportItem(1), reportItem(2)], { nextCursor: "c1", truncated: true })
+          ? itemsPage([reportItem(1), reportItem(2)], { nextCursor: null, truncated: true })
           : sourcesPage(threeSources()),
       ),
     );
@@ -164,6 +186,19 @@ describe("Test 2 (paging): findings pages in order, then sources; a truncated pa
     expect(readerState.value?.itemsTruncated).toBe(true);
     expect(readerState.value?.itemsLoaded).toBe(true);
     expect(readerState.value?.sources).toHaveLength(3);
+  });
+
+  it("a trimmed page that repeats its own cursor is a loop, not an answer", async () => {
+    installApi((_id, page) =>
+      Promise.resolve(
+        page === "items"
+          ? itemsPage([reportItem(1)], { nextCursor: "same", truncated: true })
+          : sourcesPage(threeSources()),
+      ),
+    );
+    await openReader(REPORT_NOTE_ID);
+    expect(readerState.value?.laterFailure).toBe("unrecognised-response");
+    expect(readerState.value?.items).toHaveLength(1);
   });
 
   it("keeps one finding and one source for a repeated index or number", async () => {
@@ -324,12 +359,28 @@ describe("07-FIX4 h: a later sources page that fails keeps what is loaded and ca
     ).toEqual([undefined, "s1", "s1"]);
   });
 
-  it("marks sources loaded once the last page lands, and also at a trimmed page", async () => {
+  it("follows the cursor of a trimmed sources page, and marks the sources loaded at the end (plan 07-15)", async () => {
+    const { calls } = installApi((_id, page, cursor) => {
+      if (page === "items") return Promise.resolve(itemsPage([reportItem(1)]));
+      return Promise.resolve(
+        cursor === undefined
+          ? sourcesPage([reportSource(1)], { nextCursor: "s1", truncated: true })
+          : sourcesPage([reportSource(2)]),
+      );
+    });
+    await openReader(REPORT_NOTE_ID);
+    expect(calls().map((call) => call[2])).toEqual([undefined, undefined, "s1"]);
+    expect(readerState.value?.sources?.map((source) => source.number)).toEqual([1, 2]);
+    expect(readerState.value?.sourcesLoaded).toBe(true);
+    expect(readerState.value?.sourcesTruncated).toBe(false);
+  });
+
+  it("marks sources loaded and trimmed at a trimmed page that names no cursor", async () => {
     installApi((_id, page) =>
       Promise.resolve(
         page === "items"
           ? itemsPage([reportItem(1)])
-          : sourcesPage([reportSource(1)], { nextCursor: "s1", truncated: true }),
+          : sourcesPage([reportSource(1)], { nextCursor: null, truncated: true }),
       ),
     );
     await openReader(REPORT_NOTE_ID);

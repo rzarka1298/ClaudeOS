@@ -373,10 +373,13 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
           // Not a substantial whole-word quote of the stored snapshot: not shown as evidence.
           expect(item.kind, hostile.name).toBe("inference");
           expect(item.quoteSourceNumber).toBeNull();
+          // Plan 07-15: the downgrade is said on the wire, never silent.
+          expect(item.quoteUnverified, hostile.name).toBe(true);
           downgraded += 1;
         } else {
           expect(item?.quote, hostile.name).toBe(hostile.text);
           expect(item?.kind, hostile.name).toBe("source-fact");
+          expect("quoteUnverified" in (item ?? {}), hostile.name).toBe(false);
           verified += 1;
         }
         const sources = await call(RESEARCH_REPORT_PATH, { noteId, page: "sources" });

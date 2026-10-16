@@ -87,6 +87,7 @@ describe("quotes are re-verified against the stored evidence text", () => {
       kind: "inference",
       quote: null,
       quoteSourceNumber: null,
+      quoteUnverified: true,
     });
     expect(page.items[0]?.citations).toEqual([{ number: 1, title: "One" }]);
     expect(page.items[1]).toMatchObject({ kind: "source-fact", quote: QUOTE_A });
@@ -103,7 +104,11 @@ describe("quotes are re-verified against the stored evidence text", () => {
         items: [{ kind: "source-fact", text: "Two sources.", quote: QUOTE_A, cites: [0, 1] }],
       }),
     );
-    expect(serve(built).items[0]).toMatchObject({ kind: "inference", quote: null });
+    expect(serve(built).items[0]).toMatchObject({
+      kind: "inference",
+      quote: null,
+      quoteUnverified: true,
+    });
   });
 
   it("does not accept a quote that only the raw note's banner holds", () => {
@@ -116,7 +121,11 @@ describe("quotes are re-verified against the stored evidence text", () => {
         items: [{ kind: "source-fact", text: "From the banner.", quote: bannerQuote, cites: [0] }],
       }),
     );
-    expect(serve(built).items[0]).toMatchObject({ kind: "inference", quote: null });
+    expect(serve(built).items[0]).toMatchObject({
+      kind: "inference",
+      quote: null,
+      quoteUnverified: true,
+    });
   });
 
   it("does not trust a raw note whose text was edited after the report was written", () => {
@@ -127,7 +136,7 @@ describe("quotes are re-verified against the stored evidence text", () => {
     const page = serve(built);
     // The edited snapshot is not the one the report cites: its quote is not shown as evidence,
     // while the untouched second source still verifies.
-    expect(page.items[0]).toMatchObject({ kind: "inference", quote: null });
+    expect(page.items[0]).toMatchObject({ kind: "inference", quote: null, quoteUnverified: true });
     expect(page.items[1]).toMatchObject({ kind: "unverified-claim", quote: QUOTE_B });
   });
 
@@ -136,7 +145,7 @@ describe("quotes are re-verified against the stored evidence text", () => {
     rmSync(join(vault.root, built.rawPaths[1] ?? ""));
     const page = serve(built);
     expect(page.items[0]).toMatchObject({ kind: "source-fact", quote: QUOTE_A });
-    expect(page.items[1]).toMatchObject({ kind: "inference", quote: null });
+    expect(page.items[1]).toMatchObject({ kind: "inference", quote: null, quoteUnverified: true });
   });
 
   it("does not show a quote whose raw note is no longer the written shape", () => {
@@ -171,5 +180,83 @@ describe("quotes are re-verified against the stored evidence text", () => {
     }
     // The text it checks against is what the raw note read-back returns.
     expect(code).toMatch(/readRawSourceNote\(/);
+  });
+});
+
+describe("the downgrade marker (plan 07-15): a withheld quote is said, never silent", () => {
+  it("marks exactly the findings whose stored quote failed re-verification", () => {
+    const built = vault.addReport(
+      twoSources({
+        items: [
+          {
+            kind: "source-fact",
+            text: "Planted.",
+            quote: "never in any source at all",
+            cites: [0],
+          },
+          { kind: "source-fact", text: "Real.", quote: QUOTE_A, cites: [0] },
+          { kind: "unverified-claim", text: "Real claim.", quote: QUOTE_B, cites: [1] },
+          { kind: "inference", text: "Authored inference.", cites: [0, 1] },
+        ],
+      }),
+    );
+    const page = serve(built);
+    expect(page.items.map((item) => item.quoteUnverified === true)).toEqual([
+      true,
+      false,
+      false,
+      false,
+    ]);
+    // The key is absent on every other finding, not present as false or undefined.
+    for (const item of page.items.slice(1)) expect("quoteUnverified" in item).toBe(false);
+  });
+
+  it("survives the wire: the key is in the JSON of a downgraded finding only", () => {
+    const built = vault.addReport(
+      twoSources({
+        items: [
+          {
+            kind: "source-fact",
+            text: "Planted.",
+            quote: "never in any source at all",
+            cites: [0],
+          },
+          { kind: "inference", text: "Authored inference.", cites: [0, 1] },
+        ],
+      }),
+    );
+    const wire = JSON.parse(JSON.stringify(serve(built))) as {
+      items: Record<string, unknown>[];
+    };
+    expect(wire.items[0]?.quoteUnverified).toBe(true);
+    expect("quoteUnverified" in (wire.items[1] ?? {})).toBe(false);
+  });
+
+  it("an edited raw note marks the finding whose snapshot changed, and no other", () => {
+    const built = vault.addReport(twoSources());
+    const rawPath = join(vault.root, built.rawPaths[0] ?? "");
+    writeFileSync(
+      rawPath,
+      readFileSync(rawPath, "utf8").replace("twice as fast", "three times as fast"),
+    );
+    const page = serve(built);
+    expect(page.items.map((item) => item.quoteUnverified === true)).toEqual([true, false, false]);
+  });
+
+  it("leaves kindCounts following what is served, marker included", () => {
+    const built = vault.addReport(
+      twoSources({
+        items: [
+          { kind: "source-fact", text: "Planted.", quote: "never in any source", cites: [0] },
+        ],
+      }),
+    );
+    const page = serve(built);
+    expect(page.header.kindCounts).toEqual({
+      "source-fact": 0,
+      "unverified-claim": 0,
+      inference: 1,
+    });
+    expect(page.items[0]?.quoteUnverified).toBe(true);
   });
 });
