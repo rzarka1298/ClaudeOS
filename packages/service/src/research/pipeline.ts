@@ -586,6 +586,9 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     if (error instanceof SummariserError) throw new StageFailure(error.code);
     throw error;
   }
+  // The choice may have waited minutes (a Keychain prompt): a run the watchdog already ended must
+  // not start the fetch effect, or it would reach the network alongside its replacement.
+  assertLive(trace);
 
   // fetch
   trace.phase = "fetch";
