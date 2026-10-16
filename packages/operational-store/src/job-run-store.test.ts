@@ -287,6 +287,44 @@ describe("Test 3: one in flight per job key", () => {
   });
 });
 
+describe("G6: a reused idempotency key is a typed result, not a raw constraint error", () => {
+  it("answers duplicate-key for a finished run's key and inserts nothing", () => {
+    const first = startInput({ idempotencyKey: `${JOB}:scheduled:2026-10-15T08:00:00.000Z` });
+    startJobRun(db, first);
+    finishJobRun(db, first.jobRunId, finishInput());
+    const jobRows = count("job_runs");
+    const runRows = count("runs");
+
+    const again = startInput({ idempotencyKey: first.idempotencyKey, trigger: "scheduled" });
+    expect(startJobRun(db, again)).toEqual({ started: false, reason: "duplicate-key" });
+    expect(count("job_runs")).toBe(jobRows);
+    expect(count("runs")).toBe(runRows);
+  });
+
+  it("answers duplicate-key for a stale run's key", () => {
+    const first = startInput({ idempotencyKey: `${JOB}:scheduled:stale-slot` });
+    startJobRun(db, first);
+    recoverJobRunsToStale(db, [first.jobRunId]);
+    const again = startInput({ idempotencyKey: first.idempotencyKey, trigger: "scheduled" });
+    expect(startJobRun(db, again)).toEqual({ started: false, reason: "duplicate-key" });
+  });
+
+  it("still answers the in-flight run first when the same key is used while it runs", () => {
+    const first = startInput({ idempotencyKey: `${JOB}:scheduled:slot-1` });
+    startJobRun(db, first);
+    const again = startInput({ idempotencyKey: first.idempotencyKey, trigger: "scheduled" });
+    expect(startJobRun(db, again)).toEqual({ started: false, inFlightRunId: first.jobRunId });
+  });
+
+  it("a reused run id is still a real error, not a duplicate key", () => {
+    const first = startInput();
+    startJobRun(db, first);
+    finishJobRun(db, first.jobRunId, finishInput());
+    const clash = startInput({ jobRunId: first.jobRunId, idempotencyKey: `${JOB}:manual:other` });
+    expect(() => startJobRun(db, clash)).toThrow();
+  });
+});
+
 describe("Test 4: atomicity", () => {
   it("leaves no job_runs row when the paired runs insert throws", () => {
     const input = startInput();
