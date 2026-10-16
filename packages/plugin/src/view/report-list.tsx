@@ -54,14 +54,19 @@ export interface ReportListProps {
   readonly loadedAt: string | null;
   readonly now: number;
   readonly zone: string;
-  /** The index of the row to focus after "Show 25 more"; null otherwise. */
-  readonly focusRequest: number | null;
+  /** The row to focus after "Show 25 more", by note id or note path; null otherwise. */
+  readonly focusRequest: ReportFocusTarget | null;
   readonly onFocusHandled: () => void;
   readonly onSelect: (noteId: string) => void;
   readonly onOpenNote: (path: string) => void;
   readonly onShowMore: () => void;
   readonly onRefresh: () => void;
 }
+
+/** A row named by what identifies it, so unreadable rows (which have no row button) cannot shift it. */
+export type ReportFocusTarget =
+  | { readonly kind: "report"; readonly noteId: string }
+  | { readonly kind: "unreadable"; readonly notePath: string };
 
 type ReadableRow = Extract<ResearchListRow, { readable: true }>;
 type UnreadableRow = Extract<ResearchListRow, { readable: false }>;
@@ -211,15 +216,22 @@ export function ReportList(props: ReportListProps): VNode {
   const listRef = useRef<HTMLUListElement | null>(null);
   const { focusRequest, onFocusHandled } = props;
 
-  // After "Show 25 more", focus lands on the first newly loaded row, once.
+  // After "Show 25 more", focus lands on the named row's own action, once. The request is always
+  // handled, so one that names no row (gone, or the list not drawn) can never stay set.
   useEffect(() => {
     if (focusRequest === null) return;
-    const buttons = listRef.current?.querySelectorAll<HTMLElement>("button.ccc-report-row-button");
-    const target = buttons?.[focusRequest];
-    if (target === undefined) return;
-    target.focus();
+    const index = props.rows.findIndex((row) =>
+      row.readable
+        ? focusRequest.kind === "report" && row.noteId === focusRequest.noteId
+        : focusRequest.kind === "unreadable" && row.notePath === focusRequest.notePath,
+    );
+    const item = index < 0 ? undefined : listRef.current?.children[index];
+    const target = item?.querySelector<HTMLElement>(
+      "button.ccc-report-row-button, button.ccc-row-action",
+    );
+    target?.focus();
     onFocusHandled();
-  }, [focusRequest, props.rows.length, onFocusHandled]);
+  }, [focusRequest, props.rows, onFocusHandled]);
 
   const loading = !props.loaded && props.failure === null;
   const firstLoadFailed = !props.loaded && props.failure !== null;

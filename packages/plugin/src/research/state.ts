@@ -20,6 +20,7 @@ import {
   STATUS_TIMEOUT_NOT_STARTED,
   STATUS_TIMEOUT_NOTICE,
   STATUS_TIMEOUT_STARTED,
+  STATUS_TIMEOUT_UNKNOWN,
   STATUS_UNKNOWN_END,
   startFailedLine,
 } from "../view/research-copy.js";
@@ -58,10 +59,24 @@ export const reportsGeneration: Signal<number> = signal(0);
 /** True while the next page of the list is loading. */
 export const reportsLoadingMore: Signal<boolean> = signal(false);
 /**
- * The index of the first newly loaded row after "Show 25 more", until the list has moved focus
- * to it (UI-SPEC R3). A refresh from an event never sets it, so focus stays where it was.
+ * The row to focus: a readable row by note id, an unreadable one by note path. Named rather than
+ * counted, so unreadable rows (which have no row button) cannot shift which row is meant.
  */
-export const focusRequest: Signal<number | null> = signal(null);
+export type ReportFocusTarget =
+  | { readonly kind: "report"; readonly noteId: string }
+  | { readonly kind: "unreadable"; readonly notePath: string };
+
+/**
+ * The first newly loaded row after "Show 25 more", until the list has handled the request
+ * (UI-SPEC R3). A refresh from an event never sets it, so focus stays where it was.
+ */
+export const focusRequest: Signal<ReportFocusTarget | null> = signal(null);
+
+function focusTargetOf(row: ResearchListRow): ReportFocusTarget {
+  return row.readable
+    ? { kind: "report", noteId: row.noteId }
+    : { kind: "unreadable", notePath: row.notePath };
+}
 
 /** The one polite status line of the destination. */
 export const statusLine: Signal<string> = signal("");
@@ -96,6 +111,7 @@ export function resetResearchState(): void {
   listSeq += 1;
   activeMisses = 0;
   activeRunIsOwn = false;
+  clearClaim();
 }
 
 /** Sets the destination's one polite status line. */
@@ -103,7 +119,7 @@ export function setStatusLine(message: string): void {
   statusLine.value = message;
 }
 
-/** Called by the list once it has moved focus to the first newly loaded row. */
+/** Called by the list once it has handled the request (focused the row, or found none to focus). */
 export function clearFocusRequest(): void {
   focusRequest.value = null;
 }
@@ -150,18 +166,27 @@ export function runInProgress(): boolean {
 // ---------------------------------------------------------------------------
 // Loading
 
-export async function refreshStatus(): Promise<void> {
+/** How a status refresh ended: its answer was applied, it failed, or a newer refresh replaced it. */
+type StatusRefresh = "applied" | "failed" | "superseded";
+
+async function reconcileStatus(): Promise<StatusRefresh> {
   const token = ++statusSeq;
   try {
     const status = await researchApi().status();
-    if (token !== statusSeq) return;
+    if (token !== statusSeq) return "superseded";
     researchStatus.value = status;
     statusFailure.value = null;
     await settleActiveRun(status);
+    return "applied";
   } catch (error) {
-    if (token !== statusSeq) return;
+    if (token !== statusSeq) return "superseded";
     statusFailure.value = codeOf(error);
+    return "failed";
   }
+}
+
+export async function refreshStatus(): Promise<void> {
+  await reconcileStatus();
 }
 
 function applyList(response: ResearchListResponse, append: boolean): void {
@@ -194,10 +219,10 @@ export async function loadMoreReports(): Promise<void> {
   try {
     const response = await researchApi().list(cursor);
     if (token !== listSeq) return;
-    const start = reportRows.value.length;
     applyList(response, true);
-    if (response.rows.length > 0) {
-      focusRequest.value = start;
+    const firstNew = response.rows[0];
+    if (firstNew !== undefined) {
+      focusRequest.value = focusTargetOf(firstNew);
       statusLine.value = moreLoadedLine(response.rows.length);
     }
   } catch (error) {
@@ -291,35 +316,97 @@ function startedRun(runId: string): void {
   activeMisses = 0;
 }
 
-async function afterStartUncertain(): Promise<void> {
+/** The run ids of the terminal records a status holds, in a fixed order. */
+function recordIds(status: ResearchStatusResponse): readonly string[] {
+  return [status.lastSuccess?.runId, status.lastFailure?.runId, status.latestUnknown?.runId].filter(
+    (id): id is string => id !== undefined,
+  );
+}
+
+/**
+ * True when the status holds a terminal record the status known at the press did not: a run began
+ * and ended meanwhile, so "it didn't start" cannot be said. With no status known at the press
+ * (never loaded) every record counts as new. No clock is read: the comparison is by run id.
+ */
+function newRecordSince(
+  status: ResearchStatusResponse,
+  known: ResearchStatusResponse | null,
+): boolean {
+  const before = new Set(known === null ? [] : recordIds(known));
+  return recordIds(status).some((id) => !before.has(id));
+}
+
+/**
+ * The start request timed out: ask the service what happened. "It didn't start" is said only when
+ * the status was fetched, shows nothing in flight and holds no terminal record the status known at the
+ * press lacked. When the status cannot be reconciled, the outcome stays unknown and nothing is claimed.
+ */
+async function afterStartUncertain(knownAtPress: ResearchStatusResponse | null): Promise<void> {
   statusLine.value = STATUS_TIMEOUT_CHECKING;
-  await refreshStatus();
-  const inFlight = researchStatus.value?.inFlight ?? null;
+  const refresh = await reconcileStatus();
+  const status = researchStatus.value;
+  const inFlight = status?.inFlight ?? null;
   if (inFlight !== null) {
     startedRun(inFlight.runId);
     statusLine.value = STATUS_TIMEOUT_STARTED;
-  } else {
+  } else if (refresh === "applied" && status !== null && !newRecordSince(status, knownAtPress)) {
     statusLine.value = STATUS_TIMEOUT_NOT_STARTED;
+  } else {
+    statusLine.value = STATUS_TIMEOUT_UNKNOWN;
   }
   pressPending.value = false;
 }
 
+/** The timer that releases a view-side claim the host never turned into a press. */
+let claimWatchdog: number | undefined;
+
+function clearClaim(): boolean {
+  if (claimWatchdog === undefined) return false;
+  window.clearTimeout(claimWatchdog);
+  claimWatchdog = undefined;
+  return true;
+}
+
 /**
- * Presses Run now. Busy state is set before any await; a second activation
- * while pending or running is ignored (D-19); the 5-second transport timeout
+ * Claims the Run now press synchronously, in the click itself, before the host port is asked: the
+ * button is busy and a second activation is refused even when the port answers later (D-19, G5).
+ * Returns false when a press or a run is already under way. `pressRunNow` consumes the claim; a
+ * claim the host never consumes is released when the port settles badly or after the start timeout.
+ */
+export function claimRunNowPress(): boolean {
+  if (pressPending.value || runInProgress()) return false;
+  pressPending.value = true;
+  statusLine.value = STATUS_STARTING;
+  claimWatchdog = window.setTimeout(releaseRunNowClaim, RUN_START_TIMEOUT_MS);
+  return true;
+}
+
+/** Gives back a claim that no press consumed; a claim already consumed is left alone. */
+export function releaseRunNowClaim(): void {
+  if (!clearClaim()) return;
+  pressPending.value = false;
+  if (statusLine.value === STATUS_STARTING) statusLine.value = "";
+}
+
+/**
+ * Presses Run now. Busy state is set before any await (here, or earlier by `claimRunNowPress`); a
+ * second activation while pending or running is ignored (D-19); the 5-second transport timeout
  * reports, refetches the status and ends in an honest sentence (UI-SPEC E1).
  */
 export async function pressRunNow(): Promise<void> {
-  if (pressPending.value || runInProgress()) return;
-  pressPending.value = true;
-  statusLine.value = STATUS_STARTING;
+  if (!clearClaim()) {
+    if (pressPending.value || runInProgress()) return;
+    pressPending.value = true;
+    statusLine.value = STATUS_STARTING;
+  }
+  const knownAtPress = researchStatus.value;
   let response: ResearchRunResponse;
   try {
     response = await raceTimeout(researchApi().run(), RUN_START_TIMEOUT_MS);
   } catch (error) {
     if (error instanceof StartTimeout || codeOf(error) === "timeout") {
       researchPorts().notify(STATUS_TIMEOUT_NOTICE);
-      await afterStartUncertain();
+      await afterStartUncertain(knownAtPress);
       return;
     }
     const code = codeOf(error);

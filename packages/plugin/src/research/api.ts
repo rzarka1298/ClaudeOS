@@ -44,9 +44,10 @@ export interface ResearchHostPorts {
   /**
    * Asks the host to run research now. The shell routes this through
    * `dispatchQuickAction` with the `research:run` descriptor (UI-SPEC R2); the
-   * Run now button calls this and nothing else.
+   * Run now button calls this and nothing else. The button has already claimed the press, so a
+   * port that answers later cannot start a second press; a rejection releases the claim.
    */
-  requestRunNow: () => void;
+  requestRunNow: () => void | Promise<void>;
 }
 
 /** What `configureResearch` installs: the API and the four host ports. */

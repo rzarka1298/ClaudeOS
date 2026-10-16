@@ -42,6 +42,9 @@ export const STATUS_TIMEOUT_NOTICE =
 export const STATUS_TIMEOUT_CHECKING = `${STATUS_TIMEOUT_NOTICE} Checking whether it started…`;
 export const STATUS_TIMEOUT_STARTED = "It started. Showing it here.";
 export const STATUS_TIMEOUT_NOT_STARTED = "It didn't start. You can press Run now again.";
+/** The follow-up status could not settle whether the run started, so nothing is claimed either way. */
+export const STATUS_TIMEOUT_UNKNOWN =
+  "Couldn't confirm whether the run started. The status will update when the service answers.";
 
 /** `Research report ready: {title}.` */
 export function reportReadyLine(title: string): string {

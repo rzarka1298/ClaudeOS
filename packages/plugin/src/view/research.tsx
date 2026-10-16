@@ -6,6 +6,7 @@ import { useEffect, useId, useMemo, useRef } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { researchConfigured, researchPorts } from "../research/api.js";
 import {
+  claimRunNowPress,
   clearFocusRequest,
   focusRequest,
   loadMoreReports,
@@ -13,6 +14,7 @@ import {
   pressPending,
   refreshList,
   refreshStatus,
+  releaseRunNowClaim,
   reportRows,
   reportsCursor,
   reportsFailure,
@@ -210,7 +212,15 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
             aria-disabled={blocked ? "true" : undefined}
             aria-describedby={reason === null ? undefined : reasonId}
             onClick={() => {
-              if (!blocked) researchPorts().requestRunNow();
+              // Claimed in the click, before the host port is asked, so an async port cannot let a
+              // second activation start a second press.
+              if (serviceAway || !claimRunNowPress()) return;
+              try {
+                const asked: unknown = researchPorts().requestRunNow();
+                if (asked instanceof Promise) asked.then(releaseRunNowClaim, releaseRunNowClaim);
+              } catch {
+                releaseRunNowClaim();
+              }
             }}
           >
             {RUN_NOW_LABEL}

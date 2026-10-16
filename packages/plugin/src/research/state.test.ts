@@ -207,11 +207,17 @@ describe("G3: a timeout whose follow-up status cannot be reconciled stays unknow
   const UNKNOWN_LINE =
     "Couldn't confirm whether the run started. The status will update when the service answers.";
 
-  async function timeoutThen(status: () => Promise<ReturnType<typeof statusOf>>) {
+  /** `known` is the status the view holds when the press happens; `status` answers the follow-up. */
+  async function timeoutThen(
+    status: () => Promise<ReturnType<typeof statusOf>>,
+    known: ReturnType<typeof statusOf> = statusOf(),
+  ) {
     vi.useFakeTimers();
-    const api = fakeResearchApi({ run: vi.fn(neverResolves), status: vi.fn(status) });
+    const statusFn = vi.fn(status).mockResolvedValueOnce(known);
+    const api = fakeResearchApi({ run: vi.fn(neverResolves), status: statusFn });
     const ports = fakeResearchPorts();
     configureResearch({ api, ...ports });
+    await refreshStatus();
     const pressed = pressRunNow();
     await vi.advanceTimersByTimeAsync(5000);
     await pressed;
@@ -227,10 +233,10 @@ describe("G3: a timeout whose follow-up status cannot be reconciled stays unknow
     expect(pressPending.value).toBe(false);
   });
 
-  it("a terminal record at or after the press means it cannot be concluded that nothing started", async () => {
+  it("a terminal record the view did not hold at the press means it cannot be concluded that nothing started", async () => {
     for (const record of ["lastFailure", "lastSuccess", "latestUnknown"] as const) {
       resetResearchState();
-      const later = new Date(Date.now() + 2000).toISOString();
+      const later = new Date(Date.now() + 2000).toISOString(); // any valid instant
       const body =
         record === "lastFailure"
           ? { lastFailure: { runId: id25("late"), endedAt: later, errorCode: "summariser-failed" } }
@@ -256,16 +262,13 @@ describe("G3: a timeout whose follow-up status cannot be reconciled stays unknow
     }
   });
 
-  it("an older terminal record does not stop the honest did-not-start sentence", async () => {
+  it("a terminal record the view already held does not stop the honest did-not-start sentence", async () => {
     const earlier = new Date(Date.now() - 3_600_000).toISOString();
-    await timeoutThen(() =>
-      Promise.resolve(
-        statusOf({
-          lastFailure: { runId: id25("old"), endedAt: earlier, errorCode: "summariser-failed" },
-          latestUnknown: { runId: id25("older"), startedAt: earlier },
-        }),
-      ),
-    );
+    const held = statusOf({
+      lastFailure: { runId: id25("old"), endedAt: earlier, errorCode: "summariser-failed" },
+      latestUnknown: { runId: id25("older"), startedAt: earlier },
+    });
+    await timeoutThen(() => Promise.resolve(held), held);
     expect(statusLine.value).toBe("It didn't start. You can press Run now again.");
   });
 });
