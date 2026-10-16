@@ -118,7 +118,9 @@ export function createFixtureFetcher(options: FixtureFetcherOptions): SafeFetche
   let manifest: z.infer<typeof ManifestSchema>;
   try {
     const manifestPath = join(root, FIXTURE_MANIFEST_FILE);
-    if (fs.statSync(manifestPath).size > FIXTURE_MANIFEST_MAX_BYTES) {
+    // A special file (a FIFO would block the read) is not a manifest; stat never blocks.
+    const manifestStat = fs.statSync(manifestPath);
+    if (!manifestStat.isFile() || manifestStat.size > FIXTURE_MANIFEST_MAX_BYTES) {
       throw new ResearchOverrideError("invalid-fixture-manifest");
     }
     const parsed = ManifestSchema.safeParse(

@@ -30,7 +30,7 @@ afterEach(() => {
   scratch = undefined;
 });
 
-const FIFO_REPORT = "research-2026-10-16-r0000000000special00000000.md";
+const FIFO_REPORT = "research-2026-10-16-r0000000special0000000000.md";
 
 describe("the view model", () => {
   it("lists a FIFO named like a report as an unreadable row without waiting", () => {

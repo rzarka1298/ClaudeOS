@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { GENERATED_BY_KEY_ORDER, type GeneratedBy } from "@ccc/domain";
 import yaml from "js-yaml";
@@ -188,34 +188,65 @@ export function parseExtendedNote<T>(raw: string, spec: ParseSpec<T>): ParsedExt
   };
 }
 
+const READ_CHUNK_BYTES = 64 * 1024;
+
 /**
- * Reads a vault file after checking its size with `stat`, so a file over the cap is refused
- * without being read into memory.
+ * Reads a vault file through one descriptor, so nothing here can block on a special file or be
+ * redirected between the check and the read. The file is opened without following a link at the
+ * final component and without waiting for a writer (a FIFO opens at once instead of hanging the
+ * process); the descriptor must be a regular file; the cap is enforced on the bytes actually read,
+ * so a file that grew after the size check is still refused.
  *
  * @throws the module's own error: `missing` when the file is not there, `too-large` over the cap,
- *   `existing-unreadable` for any other failure to read it.
+ *   `existing-unreadable` for a special file, a link, or any other failure to read it.
  */
 export function readBoundedFile(
   absolutePath: string,
   fileMaxBytes: number,
   fail: ExtendedNoteFail,
 ): string {
-  let size: number;
+  let fd: number;
   try {
-    size = statSync(absolutePath).size;
+    fd = openSync(absolutePath, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
   } catch (error) {
     throw fail(
       (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "existing-unreadable",
     );
   }
-  if (size > fileMaxBytes) throw fail("too-large");
+  let outcome: { text: string } | { reason: ExtendedNoteReason };
   try {
-    return readFileSync(absolutePath, "utf8");
-  } catch (error) {
-    throw fail(
-      (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "existing-unreadable",
-    );
+    outcome = readDescriptor(fd, fileMaxBytes);
+  } catch {
+    outcome = { reason: "existing-unreadable" };
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      // A descriptor that cannot be closed changes nothing the caller can act on.
+    }
   }
+  if ("reason" in outcome) throw fail(outcome.reason);
+  return outcome.text;
+}
+
+function readDescriptor(
+  fd: number,
+  fileMaxBytes: number,
+): { text: string } | { reason: ExtendedNoteReason } {
+  const stat = fstatSync(fd);
+  if (!stat.isFile()) return { reason: "existing-unreadable" };
+  if (stat.size > fileMaxBytes) return { reason: "too-large" };
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const buffer = Buffer.alloc(READ_CHUNK_BYTES);
+  for (;;) {
+    const read = readSync(fd, buffer, 0, READ_CHUNK_BYTES, null);
+    if (read === 0) break;
+    total += read;
+    if (total > fileMaxBytes) return { reason: "too-large" };
+    chunks.push(Buffer.from(buffer.subarray(0, read)));
+  }
+  return { text: Buffer.concat(chunks).toString("utf8") };
 }
 
 /**
