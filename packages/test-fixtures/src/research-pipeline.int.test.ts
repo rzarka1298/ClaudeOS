@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { JOB_RUN_OUTCOMES, RESEARCH_JOB_ID, RESEARCH_STAGES, RUN_ERROR_CODES } from "@ccc/domain";
 import { listJobRuns } from "@ccc/operational-store";
@@ -275,5 +275,112 @@ describe("transport", () => {
     expect(row?.outcome).toBe("failure");
     expect(row?.errorCode).toBe("summariser-failed");
     expect(JSON.stringify(harness.logLines)).not.toContain("secret");
+  });
+});
+
+describe("Task 2 (partial): one unavailable source makes an honestly labelled partial report", () => {
+  it("lists the unavailable source in the report, the run note, the row and the final event", async () => {
+    harness = createResearchHarness({
+      responses: { ...defaultResponses(), [SOURCE_TWO]: { ok: false, code: "timeout" } },
+    });
+    const runId = await runOnce(harness);
+    const report = readReportNote(harness.vaultRoot, onlyReport(harness));
+    if (!report.readable) throw new Error("report must be readable");
+    expect(report.frontmatter.partial).toBe(true);
+    expect(report.frontmatter.unavailableSources).toEqual([
+      { label: "Beta releases", code: "timeout" },
+    ]);
+    expect(report.frontmatter.sourceTotal).toBe(3);
+    expect(report.frontmatter.sourceRefs).toHaveLength(2);
+    const row = listJobRuns(harness.db, RESEARCH_JOB_ID, 1)[0];
+    expect(row?.outcome).toBe("partial");
+    expect(row?.unavailableSources.map((entry) => entry.code)).toEqual(["timeout"]);
+    const note = readFileSync(join(harness.vaultRoot, "automation-runs", `${runId}.md`), "utf8");
+    expect(note).toContain("Outcome: Partial");
+    expect(note).toContain("Beta releases");
+    expect(harness.events.at(-1)?.payload).toMatchObject({
+      state: "completed",
+      outcome: "partial",
+    });
+  });
+});
+
+describe("Task 2 (failure): zero successes writes no note and records the code", () => {
+  it("fails with all-sources-failed and leaves raw, wiki and output empty", async () => {
+    harness = createResearchHarness({ responses: {} });
+    const runId = await runOnce(harness);
+    const row = listJobRuns(harness.db, RESEARCH_JOB_ID, 1)[0];
+    expect(row).toMatchObject({
+      outcome: "failure",
+      errorCode: "all-sources-failed",
+      state: "failed",
+    });
+    for (const folder of ["global/raw", "global/wiki", "global/output"]) {
+      expect(harness.list(folder)).toEqual([]);
+    }
+    expect(harness.transportInputs).toHaveLength(0);
+    expect(
+      readFileSync(join(harness.vaultRoot, "automation-runs", `${runId}.md`), "utf8"),
+    ).toContain("all-sources-failed");
+    expect(harness.events.at(-1)?.payload).toMatchObject({ state: "failed", outcome: "failure" });
+  });
+});
+
+describe("Task 2 (lock): one run at a time and no vault means no run", () => {
+  it("answers the running run to a second press and starts nothing", async () => {
+    harness = createResearchHarness();
+    const first = harness.services.runNow();
+    const second = harness.services.runNow();
+    if (!first.ok || !second.ok) throw new Error("refused");
+    expect(second.value).toEqual({
+      runId: first.value.runId,
+      alreadyRunning: true,
+      state: "running",
+    });
+    await harness.services.idle();
+    expect(listJobRuns(harness.db, RESEARCH_JOB_ID, 10)).toHaveLength(1);
+  });
+
+  it("refuses with vault-not-set-up and creates no job run", () => {
+    harness = createResearchHarness({ vault: false });
+    expect(harness.services.runNow()).toEqual({ ok: false, code: "vault-not-set-up" });
+    expect(listJobRuns(harness.db, RESEARCH_JOB_ID, 10)).toEqual([]);
+  });
+});
+
+describe("Task 2 (allowlist file): the file in the runtime directory decides what is fetched", () => {
+  it("seeds the defaults with mode 600 when absent and fetches exactly the file's sources", async () => {
+    harness = createResearchHarness({ writeConfig: false, responses: {} });
+    await runOnce(harness);
+    const stat = statSync(harness.sourcesPath);
+    expect(stat.mode & 0o777).toBe(0o600);
+    const seeded = JSON.parse(readFileSync(harness.sourcesPath, "utf8")) as {
+      sources: { url: string }[];
+    };
+    expect(seeded.sources.length).toBeGreaterThanOrEqual(3);
+    expect(harness.fetches).toHaveLength(1);
+    expect(harness.fetches[0]?.urls).toEqual(seeded.sources.map((source) => source.url));
+  });
+
+  it("never reads a sources list from the vault", async () => {
+    harness = createResearchHarness();
+    writeFileSync(
+      join(harness.vaultRoot, "inbox", "research-sources.json"),
+      JSON.stringify({ topicLabel: "Injected", summariserModel: "claude-haiku-5-5", sources: [] }),
+    );
+    await runOnce(harness);
+    expect(harness.fetches[0]?.urls).toEqual([SOURCE_ONE, SOURCE_TWO, SOURCE_THREE]);
+  });
+
+  it("repairs a file other accounts can read and refuses a corrupt one without touching it", async () => {
+    harness = createResearchHarness();
+    chmodSync(harness.sourcesPath, 0o644);
+    await runOnce(harness);
+    expect(statSync(harness.sourcesPath).mode & 0o777).toBe(0o600);
+
+    writeFileSync(harness.sourcesPath, "{ broken", { mode: 0o600 });
+    await runOnce(harness);
+    expect(readFileSync(harness.sourcesPath, "utf8")).toBe("{ broken");
+    expect(listJobRuns(harness.db, RESEARCH_JOB_ID, 1)[0]?.errorCode).toBe("all-sources-failed");
   });
 });

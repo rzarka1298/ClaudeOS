@@ -82,6 +82,9 @@ export interface KitOptions {
   readonly scheduleTimeout?: (fire: () => void, ms: number) => () => void;
   readonly publishThrows?: boolean;
   readonly chooseThrows?: boolean;
+  readonly maxInputChars?: number;
+  /** Runs on the migrated database before the services are created (to leave a stuck row behind). */
+  readonly beforeServices?: (db: ReturnType<typeof openStore>["db"]) => void;
 }
 
 export interface Kit {
@@ -147,6 +150,8 @@ export function createKit(options: KitOptions = {}): Kit {
     },
   };
 
+  options.beforeServices?.(store.db);
+
   const services = createResearchServices({
     db: store.db,
     getVaultRoot: () => (options.vault === false ? null : vaultRoot),
@@ -161,7 +166,11 @@ export function createKit(options: KitOptions = {}): Kit {
     fetcher,
     chooseSummariser: () => {
       if (options.chooseThrows === true) throw new Error("no summariser");
-      return { transport, id: options.summariserId ?? "extractive" };
+      return {
+        transport,
+        id: options.summariserId ?? "extractive",
+        ...(options.maxInputChars === undefined ? {} : { maxInputChars: options.maxInputChars }),
+      };
     },
     now: options.now ?? (() => new Date("2026-10-15T09:00:00.000Z")),
     log: {
