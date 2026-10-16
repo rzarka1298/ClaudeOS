@@ -309,11 +309,15 @@ export function startJobRun(db: Database.Database, input: StartJobRunInput): Sta
 function readState(
   db: Database.Database,
   jobRunId: RunId,
+  jobKey?: string,
 ): { state: string; stage_log: string | null } {
   const row = db
-    .prepare("SELECT state, stage_log FROM job_runs WHERE job_run_id = ?")
-    .get(jobRunId) as { state: string; stage_log: string | null } | undefined;
-  if (!row) throw new JobRunNotFoundError(jobRunId);
+    .prepare("SELECT state, stage_log, job_key FROM job_runs WHERE job_run_id = ?")
+    .get(jobRunId) as { state: string; stage_log: string | null; job_key: string } | undefined;
+  // A run of another job is, for a caller that asks about one job, a run that does not exist.
+  if (!row || (jobKey !== undefined && row.job_key !== jobKey)) {
+    throw new JobRunNotFoundError(jobRunId);
+  }
   if (!(IN_FLIGHT_STATES as readonly string[]).includes(row.state)) {
     throw new JobRunNotInFlightError(jobRunId, row.state);
   }
@@ -321,14 +325,19 @@ function readState(
 }
 
 /**
- * Throws {@link JobRunNotFoundError} when the run does not exist and {@link JobRunNotInFlightError}
- * when it is finished, failed or stale. For writers (the research provenance records) that may
- * only leave a trace for a run that is still working: a record for a finished or unknown run would
- * be a record nobody produced.
+ * Throws {@link JobRunNotFoundError} when no run of the job `jobKey` has this id (a run of another
+ * job counts as absent) and {@link JobRunNotInFlightError} when it is finished, failed or stale. For
+ * writers (the research provenance records) that may only leave a trace for a run of their own job
+ * that is still working: a record for a finished, unknown or foreign run would be a record nobody
+ * produced. The job key is required so no caller can ask about a run without saying whose it is.
  */
-export function assertJobRunInFlight(db: Database.Database, jobRunId: string): void {
+export function assertJobRunInFlight(
+  db: Database.Database,
+  jobRunId: string,
+  jobKey: string,
+): void {
   assertRunId(jobRunId, "jobRunId");
-  readState(db, jobRunId);
+  readState(db, jobRunId, jobKey);
 }
 
 /**

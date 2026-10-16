@@ -2,6 +2,7 @@ import {
   CONTENT_HASH_PATTERN,
   HttpsUrlSchema,
   plainLineText,
+  RESEARCH_JOB_ID,
   RUN_ID_PATTERN,
   rawSnapshotPathFor,
   SOURCE_ID_PATTERN,
@@ -136,7 +137,7 @@ function sameBinding(a: ResearchSourceRecord, b: ResearchSourceRecord): boolean 
 }
 
 /**
- * Records that a run wrote and read back the raw note of one source. The run must exist and still
+ * Records that a run wrote and read back the raw note of one source. The run must be a research run, exist and still
  * be in flight ({@link JobRunNotFoundError} or {@link JobRunNotInFlightError} otherwise, nothing
  * written). Idempotent for the same values (the original `recordedAt` is kept); a different record
  * for the same run and source throws {@link ResearchSourceRecordConflictError} and changes nothing.
@@ -144,7 +145,7 @@ function sameBinding(a: ResearchSourceRecord, b: ResearchSourceRecord): boolean 
 export function recordResearchSource(db: Database.Database, input: ResearchSourceRecord): void {
   const record = checkRecord(input);
   db.transaction(() => {
-    assertJobRunInFlight(db, record.jobRunId);
+    assertJobRunInFlight(db, record.jobRunId, RESEARCH_JOB_ID);
     const existing = getResearchSourceRecord(db, record.jobRunId, record.sourceId);
     if (existing !== null) {
       if (!sameBinding(existing, record)) throw new ResearchSourceRecordConflictError();

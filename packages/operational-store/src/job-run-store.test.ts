@@ -6,10 +6,13 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendJobRunStage,
+  assertJobRunInFlight,
   type FinishJobRunInput,
   finishJobRun,
   getJobRun,
   getResearchRunStatus,
+  JobRunNotFoundError,
+  JobRunNotInFlightError,
   listJobRuns,
   recoverJobRunsToStale,
   type StartJobRunInput,
@@ -685,5 +688,31 @@ describe("getJobRun (wave 5 fix round, Codex 4)", () => {
     startJobRun(db, first);
     expect(getJobRun(db, "other.job", first.jobRunId)).toBeNull();
     expect(getJobRun(db, JOB, newRunId())).toBeNull();
+  });
+});
+
+describe("assertJobRunInFlight is scoped to one job (07-FIX7)", () => {
+  it("accepts a run of that job that is in flight", () => {
+    const run = startInput();
+    startJobRun(db, run);
+    expect(() => assertJobRunInFlight(db, run.jobRunId, JOB)).not.toThrow();
+  });
+
+  it("treats a run of another job as absent, and says not found rather than not in flight", () => {
+    const other = startInput({
+      jobKey: "other.job",
+      idempotencyKey: "other.job:manual:1",
+    });
+    startJobRun(db, other);
+    expect(() => assertJobRunInFlight(db, other.jobRunId, JOB)).toThrow(JobRunNotFoundError);
+    expect(() => assertJobRunInFlight(db, other.jobRunId, "other.job")).not.toThrow();
+  });
+
+  it("still tells an unknown run from a finished one of the right job", () => {
+    const run = startInput();
+    startJobRun(db, run);
+    finishJobRun(db, run.jobRunId, finishInput({ endedAt: T2 }));
+    expect(() => assertJobRunInFlight(db, run.jobRunId, JOB)).toThrow(JobRunNotInFlightError);
+    expect(() => assertJobRunInFlight(db, newRunId(), JOB)).toThrow(JobRunNotFoundError);
   });
 });

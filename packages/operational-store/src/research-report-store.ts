@@ -1,4 +1,9 @@
-import { CONTENT_HASH_PATTERN, NOTE_ID_PATTERN, RUN_ID_PATTERN } from "@ccc/domain";
+import {
+  CONTENT_HASH_PATTERN,
+  NOTE_ID_PATTERN,
+  RESEARCH_JOB_ID,
+  RUN_ID_PATTERN,
+} from "@ccc/domain";
 import type Database from "better-sqlite3";
 import { assertJobRunInFlight } from "./job-run-store.js";
 
@@ -94,7 +99,7 @@ interface Row {
 export function recordResearchReport(db: Database.Database, input: ResearchReportRecord): void {
   const record = checkRecord(input);
   db.transaction(() => {
-    assertJobRunInFlight(db, record.jobRunId);
+    assertJobRunInFlight(db, record.jobRunId, RESEARCH_JOB_ID);
     const existing = getResearchReportRecord(db, record.jobRunId);
     if (existing !== null) {
       if (
