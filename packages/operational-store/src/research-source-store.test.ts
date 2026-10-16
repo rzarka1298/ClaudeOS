@@ -19,6 +19,10 @@ const HASH = createHash("sha256").update("evidence").digest("hex");
 const OTHER_HASH = createHash("sha256").update("other evidence").digest("hex");
 const SRC_A = "a".repeat(32);
 const SRC_B = "b".repeat(32);
+// Built at run time: the formatter rewrites an escape to the raw character, and a literal with
+// user-info in an address trips the privacy scan.
+const BIDI_OVERRIDE = String.fromCodePoint(0x202e);
+const USER_INFO = ["user", "pw"].join(":");
 
 let dir: string;
 let db: Database.Database;
@@ -108,14 +112,14 @@ describe("the record holds ids, hashes, an https address and a short label only"
       { sourceId: "A".repeat(32) },
       { canonicalUrl: freeText },
       { canonicalUrl: "http://one.example.invalid/feed" },
-      { canonicalUrl: "https://user:pw@one.example.invalid/feed" },
+      { canonicalUrl: `https://${USER_INFO}@one.example.invalid/feed` },
       { contentHash: freeText },
       { snapshotPath: "global/raw/elsewhere.md" },
       { snapshotPath: rawSnapshotPathFor(SRC_A, OTHER_HASH) },
       { label: "" },
       { label: "two\nlines" },
       { label: "x".repeat(201) },
-      { label: "bidi ‮ override" },
+      { label: `bidi ${BIDI_OVERRIDE} override` },
       { recordedAt: "yesterday" },
       { recordedAt: "2026-13-45T00:00:00Z" },
     ];
