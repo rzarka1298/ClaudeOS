@@ -29,6 +29,27 @@ export const RESPONSE_BYTE_CAP = 2 * 1024 * 1024;
 /** What a key may look like: the keychain package's own safe alphabet, so a header value is inert. */
 const KEY_PATTERN = /^[A-Za-z0-9+/=_-]{1,512}$/;
 
+/**
+ * True when a stored key can be sent as a header value: a non-empty string without surrounding
+ * whitespace, of header-safe characters, within the length cap. The one definition, used by the
+ * transport at call time and by the summariser choice before a run fetches anything, so the two
+ * can never disagree about whether a run is able to summarise (wave 5 review, opus m1).
+ */
+export function isUsableApiKey(key: unknown): key is string {
+  return typeof key === "string" && key.trim() !== "" && KEY_PATTERN.test(key);
+}
+
+/**
+ * True when the environment forbids the key-carrying request: an outbound proxy was asked for, or
+ * the TLS trust was widened. The one definition, shared the same way as {@link isUsableApiKey}.
+ */
+export function liveCallRefusedByEnvironment(
+  env: Readonly<Record<string, string | undefined>>,
+  execArgv: readonly string[],
+): boolean {
+  return envProxyRequested(env, execArgv) || tlsTrustOverrideRequested(env);
+}
+
 export interface AnthropicRequestOptions {
   readonly protocol: "https:";
   readonly hostname: typeof ANTHROPIC_HOST;
@@ -185,11 +206,10 @@ export function createAnthropicTransport(deps: AnthropicTransportDeps): TextTran
       } catch {
         throw fail("summariser-failed");
       }
-      if (envProxyRequested(deps.env ?? process.env, deps.execArgv ?? process.execArgv)) {
-        throw fail("summariser-failed");
-      }
       // The environment must not widen who may read the key: refused before the key is read.
-      if (tlsTrustOverrideRequested(deps.env ?? process.env)) {
+      if (
+        liveCallRefusedByEnvironment(deps.env ?? process.env, deps.execArgv ?? process.execArgv)
+      ) {
         throw fail("summariser-failed");
       }
       let key: string | null;
@@ -198,7 +218,7 @@ export function createAnthropicTransport(deps: AnthropicTransportDeps): TextTran
       } catch {
         throw fail("summariser-failed");
       }
-      if (typeof key !== "string" || !KEY_PATTERN.test(key)) {
+      if (!isUsableApiKey(key)) {
         throw fail("summariser-unconfigured");
       }
 
