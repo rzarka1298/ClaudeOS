@@ -340,11 +340,21 @@ export const HOSTILE_FETCH_RESPONSES: readonly HostileFetchResponse[] = [
     body: Buffer.from("<p>a\u0000b</p>", "latin1"),
     expect: { refused: true },
   },
+  // Since 07-fix G2 (decode-body.ts): XML with no mark, no header charset and no encoding
+  // declaration is UTF-8, the default the XML specification gives it. It used to be refused. An
+  // octet-stream body and XHTML keep the page rules, and a decoded NUL is still refused (below).
   {
     name: "feed-without-declaration",
     contentType: "application/atom+xml",
     kind: "feed",
     body: Buffer.from("<feed></feed>", "latin1"),
+    expect: { text: "<feed></feed>" },
+  },
+  {
+    name: "feed-without-declaration-with-nul",
+    contentType: "application/atom+xml",
+    kind: "feed",
+    body: Buffer.from("<feed>\u0000</feed>", "latin1"),
     expect: { refused: true },
   },
   {

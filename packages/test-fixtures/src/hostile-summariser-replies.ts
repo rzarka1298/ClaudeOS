@@ -167,7 +167,10 @@ export const HOSTILE_ANTHROPIC_REPLIES: readonly HostileAnthropicReply[] = [
 
   // --- HTTP statuses (the body is never read) ---
   reply("http-401", "summariser-unconfigured", { type: "error" }, 401),
-  reply("http-403", "summariser-unconfigured", { type: "error" }, 403),
+  // 403 is a permission or region block, not a bad key, so it is a failure (07-fix wave 3, see
+  // anthropic-transport.ts). Only 401, the key being refused, is "unconfigured". It used to be
+  // "unconfigured".
+  reply("http-403", "summariser-failed", { type: "error" }, 403),
   reply("http-400", "summariser-failed", { type: "error" }, 400),
   reply("http-404", "summariser-failed", { type: "error" }, 404),
   reply("http-408", "summariser-failed", "", 408),
