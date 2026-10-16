@@ -464,6 +464,70 @@ describe("Task 2 Test 3: HTTP and transport failures", () => {
   });
 });
 
+describe("G1: the TLS settings of the environment cannot weaken the key-carrying request", () => {
+  it("pins certificate verification on explicitly in the request options", async () => {
+    const fake = createFakeAnthropic(() => textReply("ok"));
+    const transport = createAnthropicTransport({
+      readApiKey: async () => CANARY_KEY,
+      model: "claude-haiku-5-5",
+      request: fake.request,
+      env: {},
+      execArgv: [],
+      log: () => undefined,
+    });
+    await transport.complete({ instructions: "i", input: "x" });
+    const options = fake.calls[0]?.options as unknown as Record<string, unknown>;
+    expect(options.rejectUnauthorized).toBe(true);
+  });
+
+  for (const [label, env] of [
+    ["NODE_TLS_REJECT_UNAUTHORIZED=0", { NODE_TLS_REJECT_UNAUTHORIZED: "0" }],
+    ["NODE_EXTRA_CA_CERTS set", { NODE_EXTRA_CA_CERTS: "/somewhere/ca.pem" }],
+  ] as const) {
+    it(`${label} makes the call fail before the key is read or any request is made`, async () => {
+      const fake = createFakeAnthropic(() => textReply("ok"));
+      let reads = 0;
+      const logs: { event: string; code: string }[] = [];
+      const transport = createAnthropicTransport({
+        readApiKey: async () => {
+          reads += 1;
+          return CANARY_KEY;
+        },
+        model: "claude-haiku-5-5",
+        request: fake.request,
+        env,
+        execArgv: [],
+        log: (entry) => logs.push(entry),
+      });
+      await expect(transport.complete({ instructions: "i", input: "x" })).rejects.toMatchObject({
+        code: "summariser-failed",
+      });
+      expect(fake.calls).toHaveLength(0);
+      expect(reads).toBe(0);
+      expect(JSON.stringify(logs)).not.toContain("ca.pem");
+    });
+  }
+
+  it("a verifying value (1, empty) or an empty CA variable does not refuse the call", async () => {
+    for (const env of [
+      { NODE_TLS_REJECT_UNAUTHORIZED: "1" },
+      { NODE_TLS_REJECT_UNAUTHORIZED: "" },
+      { NODE_EXTRA_CA_CERTS: "" },
+    ]) {
+      const fake = createFakeAnthropic(() => textReply("ok"));
+      const transport = createAnthropicTransport({
+        readApiKey: async () => CANARY_KEY,
+        model: "claude-haiku-5-5",
+        request: fake.request,
+        env,
+        execArgv: [],
+        log: () => undefined,
+      });
+      await expect(transport.complete({ instructions: "i", input: "x" })).resolves.toBe("ok");
+    }
+  });
+});
+
 describe("Task 2: the key", () => {
   it("a key reader that throws is summariser-failed and its message is not carried", async () => {
     const result = await codeOfCall(textReply("ok"), {
@@ -588,7 +652,10 @@ describe("the production files hold no key source and no second way out", () => 
       expect(text, name).not.toMatch(/ANTHROPIC_API_KEY|API_KEY\b/);
       expect(text, name).not.toMatch(/\bfetch\(/);
       expect(text, name).not.toMatch(/readFile|writeFile|node:fs/);
-      expect(text, name).not.toMatch(/rejectUnauthorized|NODE_TLS/);
+      // The one permitted mention: the explicit, strict request option. Nothing weaker.
+      expect(text.replace(/rejectUnauthorized: true\b/g, ""), name).not.toMatch(
+        /rejectUnauthorized|NODE_TLS/,
+      );
     }
   });
 

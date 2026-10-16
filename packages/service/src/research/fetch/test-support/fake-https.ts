@@ -27,6 +27,8 @@ export interface ScriptedResponse {
   readonly stallAfterChunks?: number;
   /** The address of the peer socket reported on the response. */
   readonly remoteAddress?: string;
+  /** The response reports no peer socket address at all (a destroyed or exotic socket). */
+  readonly noPeer?: true;
   /** Wait this long before the response arrives (global timer, so fake timers apply). */
   readonly responseDelayMs?: number;
   /** After this many chunks the body stream fails with a connection reset. */
@@ -221,7 +223,7 @@ function buildResponse(
   return {
     statusCode: scripted.status ?? 200,
     headers: scripted.headers ?? {},
-    socket: { remoteAddress: scripted.remoteAddress ?? peer },
+    socket: scripted.noPeer === true ? {} : { remoteAddress: scripted.remoteAddress ?? peer },
     destroy() {
       destroyed = true;
       call.responseDestroyed = true;

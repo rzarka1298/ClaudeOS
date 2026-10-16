@@ -450,6 +450,22 @@ describe("Task 3 Test 1b (resolved addresses): a name is allowed only by what it
     }
   });
 
+  it("pins certificate verification on in every request, whatever the environment says", async () => {
+    const target = rig(() => OK_PAGE, {}, { NODE_TLS_REJECT_UNAUTHORIZED: "0" });
+    await run(target, "https://a.example.invalid/");
+    const options = target.fake.calls[0]?.options as unknown as Record<string, unknown>;
+    expect(options.rejectUnauthorized).toBe(true);
+  });
+
+  it("fails closed when the response reports no peer address", async () => {
+    const target = rig(() => ({ headers: HTML, body: "<p>x</p>", noPeer: true }));
+    expect(await run(target, "https://a.example.invalid/")).toEqual({
+      ok: false,
+      code: "refused-address",
+    });
+    expect(target.fake.calls[0]?.responseDestroyed).toBe(true);
+  });
+
   it("connects to the address it validated: the lookup is the only resolution", async () => {
     const target = rig(() => OK_PAGE);
     await run(target, "https://a.example.invalid/");

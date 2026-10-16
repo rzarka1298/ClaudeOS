@@ -11,9 +11,10 @@ function productionFiles(): string[] {
     .map((name) => join(DIR, name));
 }
 
+const REJECT = ["reject", "Unauthorized"].join("");
+
 /** Words assembled at run time so this file does not contain them itself. */
 const FORBIDDEN: readonly string[] = [
-  ["reject", "Unauthorized"].join(""),
   ["NODE_TLS_", "REJECT_UNAUTHORIZED"].join(""),
   ["insecure", "HTTPParser"].join(""),
   ["check", "ServerIdentity"].join(""),
@@ -28,7 +29,10 @@ describe("the production fetcher files", () => {
     const files = productionFiles();
     expect(files.length).toBeGreaterThan(5);
     for (const file of files) {
-      const text = readFileSync(file, "utf8");
+      const raw = readFileSync(file, "utf8");
+      // The one permitted mention: the explicit, strict request option. Nothing weaker.
+      const text = raw.replace(new RegExp(`${REJECT}: true\\b`, "g"), "");
+      expect(text.includes(REJECT), `${file} weakens or mentions ${REJECT}`).toBe(false);
       for (const word of FORBIDDEN) {
         expect(text.includes(word), `${file} contains ${word}`).toBe(false);
       }
