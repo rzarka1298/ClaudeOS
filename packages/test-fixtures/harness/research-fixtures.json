@@ -8,6 +8,58 @@
       "list": "three",
       "open": "2931ac00348e6c004d8c2c004",
       "connection": "live"
+    },
+    "research-report-partial": {
+      "status": "partial",
+      "list": "partial",
+      "open": "7dca6c0044182c0063b2ec007",
+      "connection": "live"
+    },
+    "research-report-long": {
+      "status": "long",
+      "list": "long",
+      "open": "526328003a6838006f7008004",
+      "connection": "live"
+    },
+    "research-report-stale": {
+      "status": "stale",
+      "list": "stale",
+      "open": "26fbe80049f1f8000596c8000",
+      "connection": "live"
+    },
+    "research-running": {
+      "status": "running",
+      "list": "three",
+      "connection": "live"
+    },
+    "research-unconfigured": {
+      "status": "unconfigured",
+      "list": "none",
+      "connection": "live"
+    },
+    "research-empty": {
+      "status": "empty",
+      "list": "none",
+      "connection": "live"
+    },
+    "research-loading": {
+      "behaviour": "loading",
+      "connection": "live"
+    },
+    "research-error": {
+      "behaviour": "error",
+      "errorCode": "timeout",
+      "connection": "live"
+    },
+    "research-disconnected": {
+      "status": "success",
+      "list": "three",
+      "connection": "disconnected"
+    },
+    "research-unreadable-row": {
+      "status": "success",
+      "list": "unreadable",
+      "connection": "live"
     }
   },
   "statuses": {
@@ -20,6 +72,240 @@
         "sourceTotal": 6,
         "reportNoteId": "2931ac00348e6c004d8c2c004"
       },
+      "lastFailure": null,
+      "inFlight": null,
+      "latestUnknown": null,
+      "configuredSources": [
+        {
+          "label": "Example tools changelog",
+          "host": "changelog.example.invalid"
+        },
+        {
+          "label": "Sample runtime releases",
+          "host": "releases.sample.invalid"
+        },
+        {
+          "label": "Demo language blog",
+          "host": "blog.demo.invalid"
+        },
+        {
+          "label": "Example editor news",
+          "host": "editor.example.invalid"
+        },
+        {
+          "label": "Sample package registry",
+          "host": "registry.sample.invalid"
+        },
+        {
+          "label": "Demo build tool releases",
+          "host": "build.demo.invalid"
+        }
+      ],
+      "topicLabel": "Developer tooling and open-source releases"
+    },
+    "partial": {
+      "lastSuccess": {
+        "runId": "039f800023e9b038018148003",
+        "endedAt": "2026-10-14T10:59:00.000Z",
+        "outcome": "partial",
+        "sourceCount": 4,
+        "sourceTotal": 6,
+        "reportNoteId": "7dca6c0044182c0063b2ec007"
+      },
+      "lastFailure": null,
+      "inFlight": null,
+      "latestUnknown": null,
+      "configuredSources": [
+        {
+          "label": "Example tools changelog",
+          "host": "changelog.example.invalid"
+        },
+        {
+          "label": "Sample runtime releases",
+          "host": "releases.sample.invalid"
+        },
+        {
+          "label": "Demo language blog",
+          "host": "blog.demo.invalid"
+        },
+        {
+          "label": "Example editor news",
+          "host": "editor.example.invalid"
+        },
+        {
+          "label": "Sample package registry",
+          "host": "registry.sample.invalid"
+        },
+        {
+          "label": "Demo build tool releases",
+          "host": "build.demo.invalid"
+        }
+      ],
+      "topicLabel": "Developer tooling and open-source releases"
+    },
+    "long": {
+      "lastSuccess": {
+        "runId": "583800001fd830000daca0002",
+        "endedAt": "2026-10-14T10:59:00.000Z",
+        "outcome": "success",
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "reportNoteId": "526328003a6838006f7008004"
+      },
+      "lastFailure": null,
+      "inFlight": null,
+      "latestUnknown": null,
+      "configuredSources": [
+        {
+          "label": "Example tools changelog",
+          "host": "changelog.example.invalid"
+        },
+        {
+          "label": "Sample runtime releases",
+          "host": "releases.sample.invalid"
+        },
+        {
+          "label": "Demo language blog",
+          "host": "blog.demo.invalid"
+        },
+        {
+          "label": "Example editor news",
+          "host": "editor.example.invalid"
+        },
+        {
+          "label": "Sample package registry",
+          "host": "registry.sample.invalid"
+        },
+        {
+          "label": "Demo build tool releases",
+          "host": "build.demo.invalid"
+        }
+      ],
+      "topicLabel": "Developer tooling and open-source releases"
+    },
+    "stale": {
+      "lastSuccess": {
+        "runId": "2cd1000042fd30004a6da0005",
+        "endedAt": "2026-10-12T09:59:00.000Z",
+        "outcome": "success",
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "reportNoteId": "26fbe80049f1f8000596c8000"
+      },
+      "lastFailure": null,
+      "inFlight": null,
+      "latestUnknown": null,
+      "configuredSources": [
+        {
+          "label": "Example tools changelog",
+          "host": "changelog.example.invalid"
+        },
+        {
+          "label": "Sample runtime releases",
+          "host": "releases.sample.invalid"
+        },
+        {
+          "label": "Demo language blog",
+          "host": "blog.demo.invalid"
+        },
+        {
+          "label": "Example editor news",
+          "host": "editor.example.invalid"
+        },
+        {
+          "label": "Sample package registry",
+          "host": "registry.sample.invalid"
+        },
+        {
+          "label": "Demo build tool releases",
+          "host": "build.demo.invalid"
+        }
+      ],
+      "topicLabel": "Developer tooling and open-source releases"
+    },
+    "running": {
+      "lastSuccess": {
+        "runId": "2f06800000c4b000615f20381",
+        "endedAt": "2026-10-14T10:59:00.000Z",
+        "outcome": "success",
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "reportNoteId": "2931ac00348e6c004d8c2c004"
+      },
+      "lastFailure": null,
+      "inFlight": {
+        "runId": "3d98000009b83000620ca0404",
+        "startedAt": "2026-10-14T11:59:00.000Z",
+        "stage": "synthesis"
+      },
+      "latestUnknown": null,
+      "configuredSources": [
+        {
+          "label": "Example tools changelog",
+          "host": "changelog.example.invalid"
+        },
+        {
+          "label": "Sample runtime releases",
+          "host": "releases.sample.invalid"
+        },
+        {
+          "label": "Demo language blog",
+          "host": "blog.demo.invalid"
+        },
+        {
+          "label": "Example editor news",
+          "host": "editor.example.invalid"
+        },
+        {
+          "label": "Sample package registry",
+          "host": "registry.sample.invalid"
+        },
+        {
+          "label": "Demo build tool releases",
+          "host": "build.demo.invalid"
+        }
+      ],
+      "topicLabel": "Developer tooling and open-source releases"
+    },
+    "unconfigured": {
+      "lastSuccess": null,
+      "lastFailure": {
+        "runId": "123000005e70304075f83b007",
+        "endedAt": "2026-10-14T11:40:00.000Z",
+        "errorCode": "summariser-unconfigured"
+      },
+      "inFlight": null,
+      "latestUnknown": null,
+      "configuredSources": [
+        {
+          "label": "Example tools changelog",
+          "host": "changelog.example.invalid"
+        },
+        {
+          "label": "Sample runtime releases",
+          "host": "releases.sample.invalid"
+        },
+        {
+          "label": "Demo language blog",
+          "host": "blog.demo.invalid"
+        },
+        {
+          "label": "Example editor news",
+          "host": "editor.example.invalid"
+        },
+        {
+          "label": "Sample package registry",
+          "host": "registry.sample.invalid"
+        },
+        {
+          "label": "Demo build tool releases",
+          "host": "build.demo.invalid"
+        }
+      ],
+      "topicLabel": "Developer tooling and open-source releases"
+    },
+    "empty": {
+      "lastSuccess": null,
       "lastFailure": null,
       "inFlight": null,
       "latestUnknown": null,
@@ -90,6 +376,152 @@
         "itemCount": 11,
         "unavailableCount": 0
       }
+    ],
+    "partial": [
+      {
+        "readable": true,
+        "noteId": "7dca6c0044182c0063b2ec007",
+        "notePath": "global/output/research-2026-10-14-039f800023e9b038018148003.md",
+        "title": "Developer tooling and open-source releases - Oct 14, 2026",
+        "generatedAt": "2026-10-14T11:00:00.000Z",
+        "partial": true,
+        "sourceCount": 4,
+        "sourceTotal": 6,
+        "itemCount": 8,
+        "unavailableCount": 2
+      },
+      {
+        "readable": true,
+        "noteId": "4c300000107030004e64a0403",
+        "notePath": "global/output/research-2026-10-13-408600004d0e300041aaa0003.md",
+        "title": "Developer tooling and open-source releases - Oct 13, 2026",
+        "generatedAt": "2026-10-13T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 11,
+        "unavailableCount": 0
+      },
+      {
+        "readable": true,
+        "noteId": "20ca000002023000258ea0381",
+        "notePath": "global/output/research-2026-10-12-151e000021c6304055963b005.md",
+        "title": "Developer tooling and open-source releases - Oct 12, 2026",
+        "generatedAt": "2026-10-12T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 11,
+        "unavailableCount": 0
+      }
+    ],
+    "long": [
+      {
+        "readable": true,
+        "noteId": "526328003a6838006f7008004",
+        "notePath": "global/output/research-2026-10-14-583800001fd830000daca0002.md",
+        "title": "Developer tooling and open-source releases - Oct 14, 2026",
+        "generatedAt": "2026-10-14T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 25,
+        "unavailableCount": 0
+      },
+      {
+        "readable": true,
+        "noteId": "4c300000107030004e64a0403",
+        "notePath": "global/output/research-2026-10-13-408600004d0e300041aaa0003.md",
+        "title": "Developer tooling and open-source releases - Oct 13, 2026",
+        "generatedAt": "2026-10-13T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 11,
+        "unavailableCount": 0
+      },
+      {
+        "readable": true,
+        "noteId": "20ca000002023000258ea0381",
+        "notePath": "global/output/research-2026-10-12-151e000021c6304055963b005.md",
+        "title": "Developer tooling and open-source releases - Oct 12, 2026",
+        "generatedAt": "2026-10-12T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 11,
+        "unavailableCount": 0
+      }
+    ],
+    "stale": [
+      {
+        "readable": true,
+        "noteId": "26fbe80049f1f8000596c8000",
+        "notePath": "global/output/research-2026-10-14-2cd1000042fd30004a6da0005.md",
+        "title": "Developer tooling and open-source releases - Oct 14, 2026",
+        "generatedAt": "2026-10-12T10:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 12,
+        "unavailableCount": 0
+      },
+      {
+        "readable": true,
+        "noteId": "20ca000002023000258ea0381",
+        "notePath": "global/output/research-2026-10-12-151e000021c6304055963b005.md",
+        "title": "Developer tooling and open-source releases - Oct 12, 2026",
+        "generatedAt": "2026-10-11T10:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 11,
+        "unavailableCount": 0
+      },
+      {
+        "readable": true,
+        "noteId": "7562000056ba300047e6a0002",
+        "notePath": "global/output/research-2026-10-11-69b80000135830003b2ca0407.md",
+        "title": "Developer tooling and open-source releases - Oct 11, 2026",
+        "generatedAt": "2026-10-10T10:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 11,
+        "unavailableCount": 0
+      }
+    ],
+    "none": [],
+    "unreadable": [
+      {
+        "readable": true,
+        "noteId": "2931ac00348e6c004d8c2c004",
+        "notePath": "global/output/research-2026-10-14-2f06800000c4b000615f20381.md",
+        "title": "Developer tooling and open-source releases - Oct 14, 2026",
+        "generatedAt": "2026-10-14T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 12,
+        "unavailableCount": 0
+      },
+      {
+        "readable": false,
+        "fileName": "research-2026-10-13-broken.md",
+        "notePath": "global/output/research-2026-10-13-broken.md"
+      },
+      {
+        "readable": true,
+        "noteId": "20ca000002023000258ea0381",
+        "notePath": "global/output/research-2026-10-12-151e000021c6304055963b005.md",
+        "title": "Developer tooling and open-source releases - Oct 12, 2026",
+        "generatedAt": "2026-10-12T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 11,
+        "unavailableCount": 0
+      }
     ]
   },
   "reports": {
@@ -114,6 +546,1092 @@
         "runEndedAt": "2026-10-14T10:59:00.000Z",
         "runOutcome": "success",
         "runNotePath": "automation-runs/research-run-2f06800000c4b000615f20381.md"
+      },
+      "items": [
+        {
+          "index": 1,
+          "kind": "source-fact",
+          "text": "Sample runtime 4.2 adds a built-in test runner.",
+          "quote": "The new test runner ships enabled by default",
+          "quoteSourceNumber": 2,
+          "citations": [
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "source-fact",
+          "text": "Example tools 9.1 removes the deprecated configuration loader.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "kind": "source-fact",
+          "text": "Demo language 3.0 stabilises the pattern matching syntax.",
+          "quote": "pattern matching is now a stable feature",
+          "quoteSourceNumber": 3,
+          "citations": [
+            {
+              "number": 3,
+              "title": "Demo language blog"
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "kind": "unverified-claim",
+          "text": "The Example editor team says extension start-up is now twice as fast.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 4,
+              "title": "Example editor news"
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "kind": "source-fact",
+          "text": "Sample package registry now requires provenance statements for new packages.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 5,
+              "title": "Sample package registry"
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "kind": "inference",
+          "text": "Taken together, the sources suggest release cadences are shortening across runtimes and build tools.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            },
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            },
+            {
+              "number": 6,
+              "title": "Demo build tool releases"
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "kind": "unverified-claim",
+          "text": "A Demo build tool maintainer expects incremental builds to double in speed.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 6,
+              "title": "Demo build tool releases"
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "kind": "source-fact",
+          "text": "Demo build tool 2.8 changes the default cache location.",
+          "quote": "the cache now lives under the user cache directory",
+          "quoteSourceNumber": 6,
+          "citations": [
+            {
+              "number": 6,
+              "title": "Demo build tool releases"
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "kind": "unverified-claim",
+          "text": "Example tools announced a hosted preview of its dependency graph viewer.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "kind": "inference",
+          "text": "Several projects are moving test tooling into the runtime itself, which may reduce separate test dependencies.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            },
+            {
+              "number": 3,
+              "title": "Demo language blog"
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "kind": "source-fact",
+          "text": "Demo language blog documents a new formatting default for imports.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 3,
+              "title": "Demo language blog"
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "kind": "unverified-claim",
+          "text": "Example editor news suggests a settings sync overhaul is planned for next quarter.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 4,
+              "title": "Example editor news"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "number": 1,
+          "sourceType": "feed-entry",
+          "id": "2931ac00348e6c004d8c2c004216ec00",
+          "title": "Example tools changelog",
+          "canonicalUrl": "https://changelog.example.invalid/feed/1",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:50:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "34dc000009ac300034f0a0400cc7eb001cb93f4057a59e805ecfac002cd46c00",
+          "snapshotPath": "global/raw/2931ac00348e6c004d8c2c004216ec00.34dc0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 2,
+          "sourceType": "feed-entry",
+          "id": "7dca6c0044182c0063b2ec007f16ac00",
+          "title": "Sample runtime releases",
+          "canonicalUrl": "https://releases.sample.invalid/feed/2",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:40:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "097500002cd1304063453b007e744f006197d400483d7400338294002fb13400",
+          "snapshotPath": "global/raw/7dca6c0044182c0063b2ec007f16ac00.09750000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 2,
+            "styles": 1,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 3,
+            "linksDropped": 7,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 3,
+          "sourceType": "feed-entry",
+          "id": "526328003a6838006f70080045239800",
+          "title": "Demo language blog",
+          "canonicalUrl": "https://blog.demo.invalid/feed/3",
+          "author": null,
+          "publishedAt": "2026-10-14T06:30:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "5e0d0000018930001409a0381a3a78004b7548407e737300763228000b8b3800",
+          "snapshotPath": "global/raw/526328003a6838006f70080045239800.5e0d0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 4,
+          "sourceType": "web-page",
+          "id": "26fbe80049f1f8000596c80002235840",
+          "title": "Example editor news",
+          "canonicalUrl": "https://editor.example.invalid/feed/4",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:20:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "32a6000024ae300050caa0006306500076104000386b700061dee00054259000",
+          "snapshotPath": "global/raw/26fbe80049f1f8000596c80002235840.32a60000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 5,
+          "sourceType": "feed-entry",
+          "id": "7b94a800597bb8001bbd88003f231840",
+          "title": "Sample package registry",
+          "canonicalUrl": "https://registry.sample.invalid/feed/5",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:10:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "073f000047d330407f1f3b0046465000385040006dab70000e1ee0002b659040",
+          "snapshotPath": "global/raw/7b94a800597bb8001bbd88003f231840.073f0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 4,
+            "hiddenBlocks": 1,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 2
+          }
+        },
+        {
+          "number": 6,
+          "sourceType": "feed-entry",
+          "id": "502d6000369210001d1100000e3d3040",
+          "title": "Demo build tool releases",
+          "canonicalUrl": "https://build.demo.invalid/feed/6",
+          "author": null,
+          "publishedAt": "2026-10-14T06:00:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "5bd800006af830004a4ca0003b605000006240001955703916a85680570804c0",
+          "snapshotPath": "global/raw/502d6000369210001d1100000e3d3040.5bd80000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        }
+      ]
+    },
+    "partial": {
+      "header": {
+        "title": "Developer tooling and open-source releases - Oct 14, 2026",
+        "noteId": "7dca6c0044182c0063b2ec007",
+        "notePath": "global/output/research-2026-10-14-039f800023e9b038018148003.md",
+        "generatedAt": "2026-10-14T11:00:00.000Z",
+        "partial": true,
+        "unavailableSources": [
+          {
+            "label": "Demo build tool releases",
+            "code": "timeout"
+          },
+          {
+            "label": "Sample package registry",
+            "code": "http-status"
+          }
+        ],
+        "sourceCount": 4,
+        "sourceTotal": 6,
+        "kindCounts": {
+          "source-fact": 4,
+          "unverified-claim": 2,
+          "inference": 2
+        },
+        "summariser": "extractive",
+        "jobRunId": "039f800023e9b038018148003",
+        "runStartedAt": "2026-10-14T10:58:00.000Z",
+        "runEndedAt": "2026-10-14T10:59:00.000Z",
+        "runOutcome": "partial",
+        "runNotePath": "automation-runs/research-run-039f800023e9b038018148003.md"
+      },
+      "items": [
+        {
+          "index": 1,
+          "kind": "source-fact",
+          "text": "Sample runtime 4.2 adds a built-in test runner.",
+          "quote": "The new test runner ships enabled by default",
+          "quoteSourceNumber": 2,
+          "citations": [
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "source-fact",
+          "text": "Example tools 9.1 removes the deprecated configuration loader.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "kind": "source-fact",
+          "text": "Demo language 3.0 stabilises the pattern matching syntax.",
+          "quote": "pattern matching is now a stable feature",
+          "quoteSourceNumber": 3,
+          "citations": [
+            {
+              "number": 3,
+              "title": "Demo language blog"
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "kind": "unverified-claim",
+          "text": "The Example editor team says extension start-up is now twice as fast.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 4,
+              "title": "Example editor news"
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "kind": "unverified-claim",
+          "text": "Example tools announced a hosted preview of its dependency graph viewer.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "kind": "inference",
+          "text": "Taken together, the available sources suggest release cadences are shortening.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            },
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "kind": "source-fact",
+          "text": "Demo language blog documents a new formatting default for imports.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 3,
+              "title": "Demo language blog"
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "kind": "inference",
+          "text": "Two sources that did not respond may have covered the build tool changes, so this picture is incomplete.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": []
+        }
+      ],
+      "sources": [
+        {
+          "number": 1,
+          "sourceType": "feed-entry",
+          "id": "2931ac00348e6c004d8c2c004216ec00",
+          "title": "Example tools changelog",
+          "canonicalUrl": "https://changelog.example.invalid/feed/1",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:50:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "34dc000009ac300034f0a0400cc7eb001cb93f4057a59e805ecfac002cd46c00",
+          "snapshotPath": "global/raw/2931ac00348e6c004d8c2c004216ec00.34dc0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 2,
+          "sourceType": "feed-entry",
+          "id": "7dca6c0044182c0063b2ec007f16ac00",
+          "title": "Sample runtime releases",
+          "canonicalUrl": "https://releases.sample.invalid/feed/2",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:40:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "097500002cd1304063453b007e744f006197d400483d7400338294002fb13400",
+          "snapshotPath": "global/raw/7dca6c0044182c0063b2ec007f16ac00.09750000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 2,
+            "styles": 1,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 3,
+            "linksDropped": 7,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 3,
+          "sourceType": "feed-entry",
+          "id": "526328003a6838006f70080045239800",
+          "title": "Demo language blog",
+          "canonicalUrl": "https://blog.demo.invalid/feed/3",
+          "author": null,
+          "publishedAt": "2026-10-14T06:30:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "5e0d0000018930001409a0381a3a78004b7548407e737300763228000b8b3800",
+          "snapshotPath": "global/raw/526328003a6838006f70080045239800.5e0d0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 4,
+          "sourceType": "web-page",
+          "id": "26fbe80049f1f8000596c80002235840",
+          "title": "Example editor news",
+          "canonicalUrl": "https://editor.example.invalid/feed/4",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:20:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "32a6000024ae300050caa0006306500076104000386b700061dee00054259000",
+          "snapshotPath": "global/raw/26fbe80049f1f8000596c80002235840.32a60000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        }
+      ]
+    },
+    "long": {
+      "header": {
+        "title": "Developer tooling and open-source releases - Oct 14, 2026",
+        "noteId": "526328003a6838006f7008004",
+        "notePath": "global/output/research-2026-10-14-583800001fd830000daca0002.md",
+        "generatedAt": "2026-10-14T11:00:00.000Z",
+        "partial": false,
+        "unavailableSources": [],
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "kindCounts": {
+          "source-fact": 9,
+          "unverified-claim": 8,
+          "inference": 8
+        },
+        "summariser": "extractive",
+        "jobRunId": "583800001fd830000daca0002",
+        "runStartedAt": "2026-10-14T10:58:00.000Z",
+        "runEndedAt": "2026-10-14T10:59:00.000Z",
+        "runOutcome": "success",
+        "runNotePath": "automation-runs/research-run-583800001fd830000daca0002.md"
+      },
+      "items": [
+        {
+          "index": 1,
+          "kind": "source-fact",
+          "text": "A section on compatibility explains which operating systems and architectures receive prebuilt binaries. The authors say the change was prompted by repeated requests from teams that maintain large monorepos. Benchmarks in the announcement compare cold and warm builds across small, medium and large projects. The release notes also describe a fix for a rare crash that occurred when a watch process was restarted. Documentation for the feature has been rewritten and now includes worked examples for common setups.",
+          "quote": "the release is focused on startup time and memory use",
+          "quoteSourceNumber": 1,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "unverified-claim",
+          "text": "The team notes that feedback during the preview period shaped the final naming of two options. Several smaller improvements to error messages are listed at the end of the notes without further comment. The maintainers of the sample runtime describe the release as focused on startup time and memory use. According to the changelog, the package manager now verifies signatures before it unpacks an archive. The announcement lists three breaking changes and links each one to a migration note on the project site.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "kind": "inference",
+          "text": "Contributors report that the new scheduler reduces tail latency for workloads with many short tasks. The post adds that the previous behaviour remains available behind a flag until the next major version. A section on compatibility explains which operating systems and architectures receive prebuilt binaries. The authors say the change was prompted by repeated requests from teams that maintain large monorepos. Benchmarks in the announcement compare cold and warm builds across small, medium and large projects.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 3,
+              "title": "Demo language blog"
+            },
+            {
+              "number": 5,
+              "title": "Sample package registry"
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "kind": "source-fact",
+          "text": "The release notes also describe a fix for a rare crash that occurred when a watch process was restarted. Documentation for the feature has been rewritten and now includes worked examples for common setups. The team notes that feedback during the preview period shaped the final naming of two options. Several smaller improvements to error messages are listed at the end of the notes without further comment. The maintainers of the sample runtime describe the release as focused on startup time and memory use.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 4,
+              "title": "Example editor news"
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "kind": "unverified-claim",
+          "text": "According to the changelog, the package manager now verifies signatures before it unpacks an archive. The announcement lists three breaking changes and links each one to a migration note on the project site. Contributors report that the new scheduler reduces tail latency for workloads with many short tasks. The post adds that the previous behaviour remains available behind a flag until the next major version. A section on compatibility explains which operating systems and architectures receive prebuilt binaries.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 5,
+              "title": "Sample package registry"
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "kind": "inference",
+          "text": "The authors say the change was prompted by repeated requests from teams that maintain large monorepos. Benchmarks in the announcement compare cold and warm builds across small, medium and large projects. The release notes also describe a fix for a rare crash that occurred when a watch process was restarted. Documentation for the feature has been rewritten and now includes worked examples for common setups. The team notes that feedback during the preview period shaped the final naming of two options.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 6,
+              "title": "Demo build tool releases"
+            },
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "kind": "source-fact",
+          "text": "Several smaller improvements to error messages are listed at the end of the notes without further comment. The maintainers of the sample runtime describe the release as focused on startup time and memory use. According to the changelog, the package manager now verifies signatures before it unpacks an archive. The announcement lists three breaking changes and links each one to a migration note on the project site. Contributors report that the new scheduler reduces tail latency for workloads with many short tasks.",
+          "quote": "the release is focused on startup time and memory use",
+          "quoteSourceNumber": 1,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "kind": "unverified-claim",
+          "text": "The post adds that the previous behaviour remains available behind a flag until the next major version. A section on compatibility explains which operating systems and architectures receive prebuilt binaries. The authors say the change was prompted by repeated requests from teams that maintain large monorepos. Benchmarks in the announcement compare cold and warm builds across small, medium and large projects. The release notes also describe a fix for a rare crash that occurred when a watch process was restarted.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "kind": "inference",
+          "text": "Documentation for the feature has been rewritten and now includes worked examples for common setups. The team notes that feedback during the preview period shaped the final naming of two options. Several smaller improvements to error messages are listed at the end of the notes without further comment. The maintainers of the sample runtime describe the release as focused on startup time and memory use. According to the changelog, the package manager now verifies signatures before it unpacks an archive.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 3,
+              "title": "Demo language blog"
+            },
+            {
+              "number": 5,
+              "title": "Sample package registry"
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "kind": "source-fact",
+          "text": "The announcement lists three breaking changes and links each one to a migration note on the project site. Contributors report that the new scheduler reduces tail latency for workloads with many short tasks. The post adds that the previous behaviour remains available behind a flag until the next major version. A section on compatibility explains which operating systems and architectures receive prebuilt binaries. The authors say the change was prompted by repeated requests from teams that maintain large monorepos.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 4,
+              "title": "Example editor news"
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "kind": "unverified-claim",
+          "text": "Benchmarks in the announcement compare cold and warm builds across small, medium and large projects. The release notes also describe a fix for a rare crash that occurred when a watch process was restarted. Documentation for the feature has been rewritten and now includes worked examples for common setups. The team notes that feedback during the preview period shaped the final naming of two options. Several smaller improvements to error messages are listed at the end of the notes without further comment.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 5,
+              "title": "Sample package registry"
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "kind": "inference",
+          "text": "The maintainers of the sample runtime describe the release as focused on startup time and memory use. According to the changelog, the package manager now verifies signatures before it unpacks an archive. The announcement lists three breaking changes and links each one to a migration note on the project site. Contributors report that the new scheduler reduces tail latency for workloads with many short tasks. The post adds that the previous behaviour remains available behind a flag until the next major version.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 6,
+              "title": "Demo build tool releases"
+            },
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "kind": "source-fact",
+          "text": "A section on compatibility explains which operating systems and architectures receive prebuilt binaries. The authors say the change was prompted by repeated requests from teams that maintain large monorepos. Benchmarks in the announcement compare cold and warm builds across small, medium and large projects. The release notes also describe a fix for a rare crash that occurred when a watch process was restarted. Documentation for the feature has been rewritten and now includes worked examples for common setups.",
+          "quote": "the release is focused on startup time and memory use",
+          "quoteSourceNumber": 1,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "kind": "unverified-claim",
+          "text": "The team notes that feedback during the preview period shaped the final naming of two options. Several smaller improvements to error messages are listed at the end of the notes without further comment. The maintainers of the sample runtime describe the release as focused on startup time and memory use. According to the changelog, the package manager now verifies signatures before it unpacks an archive. The announcement lists three breaking changes and links each one to a migration note on the project site.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 15,
+          "kind": "inference",
+          "text": "Contributors report that the new scheduler reduces tail latency for workloads with many short tasks. The post adds that the previous behaviour remains available behind a flag until the next major version. A section on compatibility explains which operating systems and architectures receive prebuilt binaries. The authors say the change was prompted by repeated requests from teams that maintain large monorepos. Benchmarks in the announcement compare cold and warm builds across small, medium and large projects.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 3,
+              "title": "Demo language blog"
+            },
+            {
+              "number": 5,
+              "title": "Sample package registry"
+            }
+          ]
+        },
+        {
+          "index": 16,
+          "kind": "source-fact",
+          "text": "The release notes also describe a fix for a rare crash that occurred when a watch process was restarted. Documentation for the feature has been rewritten and now includes worked examples for common setups. The team notes that feedback during the preview period shaped the final naming of two options. Several smaller improvements to error messages are listed at the end of the notes without further comment. The maintainers of the sample runtime describe the release as focused on startup time and memory use.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 4,
+              "title": "Example editor news"
+            }
+          ]
+        },
+        {
+          "index": 17,
+          "kind": "unverified-claim",
+          "text": "According to the changelog, the package manager now verifies signatures before it unpacks an archive. The announcement lists three breaking changes and links each one to a migration note on the project site. Contributors report that the new scheduler reduces tail latency for workloads with many short tasks. The post adds that the previous behaviour remains available behind a flag until the next major version. A section on compatibility explains which operating systems and architectures receive prebuilt binaries.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 5,
+              "title": "Sample package registry"
+            }
+          ]
+        },
+        {
+          "index": 18,
+          "kind": "inference",
+          "text": "The authors say the change was prompted by repeated requests from teams that maintain large monorepos. Benchmarks in the announcement compare cold and warm builds across small, medium and large projects. The release notes also describe a fix for a rare crash that occurred when a watch process was restarted. Documentation for the feature has been rewritten and now includes worked examples for common setups. The team notes that feedback during the preview period shaped the final naming of two options.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 6,
+              "title": "Demo build tool releases"
+            },
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 19,
+          "kind": "source-fact",
+          "text": "Several smaller improvements to error messages are listed at the end of the notes without further comment. The maintainers of the sample runtime describe the release as focused on startup time and memory use. According to the changelog, the package manager now verifies signatures before it unpacks an archive. The announcement lists three breaking changes and links each one to a migration note on the project site. Contributors report that the new scheduler reduces tail latency for workloads with many short tasks.",
+          "quote": "the release is focused on startup time and memory use",
+          "quoteSourceNumber": 1,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            }
+          ]
+        },
+        {
+          "index": 20,
+          "kind": "unverified-claim",
+          "text": "The post adds that the previous behaviour remains available behind a flag until the next major version. A section on compatibility explains which operating systems and architectures receive prebuilt binaries. The authors say the change was prompted by repeated requests from teams that maintain large monorepos. Benchmarks in the announcement compare cold and warm builds across small, medium and large projects. The release notes also describe a fix for a rare crash that occurred when a watch process was restarted.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 21,
+          "kind": "inference",
+          "text": "Documentation for the feature has been rewritten and now includes worked examples for common setups. The team notes that feedback during the preview period shaped the final naming of two options. Several smaller improvements to error messages are listed at the end of the notes without further comment. The maintainers of the sample runtime describe the release as focused on startup time and memory use. According to the changelog, the package manager now verifies signatures before it unpacks an archive.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 3,
+              "title": "Demo language blog"
+            },
+            {
+              "number": 5,
+              "title": "Sample package registry"
+            }
+          ]
+        },
+        {
+          "index": 22,
+          "kind": "source-fact",
+          "text": "The announcement lists three breaking changes and links each one to a migration note on the project site. Contributors report that the new scheduler reduces tail latency for workloads with many short tasks. The post adds that the previous behaviour remains available behind a flag until the next major version. A section on compatibility explains which operating systems and architectures receive prebuilt binaries. The authors say the change was prompted by repeated requests from teams that maintain large monorepos.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 4,
+              "title": "Example editor news"
+            }
+          ]
+        },
+        {
+          "index": 23,
+          "kind": "unverified-claim",
+          "text": "Benchmarks in the announcement compare cold and warm builds across small, medium and large projects. The release notes also describe a fix for a rare crash that occurred when a watch process was restarted. Documentation for the feature has been rewritten and now includes worked examples for common setups. The team notes that feedback during the preview period shaped the final naming of two options. Several smaller improvements to error messages are listed at the end of the notes without further comment.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 5,
+              "title": "Sample package registry"
+            }
+          ]
+        },
+        {
+          "index": 24,
+          "kind": "inference",
+          "text": "The maintainers of the sample runtime describe the release as focused on startup time and memory use. According to the changelog, the package manager now verifies signatures before it unpacks an archive. The announcement lists three breaking changes and links each one to a migration note on the project site. Contributors report that the new scheduler reduces tail latency for workloads with many short tasks. The post adds that the previous behaviour remains available behind a flag until the next major version.",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 6,
+              "title": "Demo build tool releases"
+            },
+            {
+              "number": 2,
+              "title": "Sample runtime releases"
+            }
+          ]
+        },
+        {
+          "index": 25,
+          "kind": "source-fact",
+          "text": "A section on compatibility explains which operating systems and architectures receive prebuilt binaries. The authors say the change was prompted by repeated requests from teams that maintain large monorepos. Benchmarks in the announcement compare cold and warm builds across small, medium and large projects. The release notes also describe a fix for a rare crash that occurred when a watch process was restarted. Documentation for the feature has been rewritten and now includes worked examples for common setups.",
+          "quote": "the release is focused on startup time and memory use",
+          "quoteSourceNumber": 1,
+          "citations": [
+            {
+              "number": 1,
+              "title": "Example tools changelog"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "number": 1,
+          "sourceType": "feed-entry",
+          "id": "2931ac00348e6c004d8c2c004216ec00",
+          "title": "Example tools changelog",
+          "canonicalUrl": "https://changelog.example.invalid/feed/1",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:50:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "34dc000009ac300034f0a0400cc7eb001cb93f4057a59e805ecfac002cd46c00",
+          "snapshotPath": "global/raw/2931ac00348e6c004d8c2c004216ec00.34dc0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 2,
+          "sourceType": "feed-entry",
+          "id": "7dca6c0044182c0063b2ec007f16ac00",
+          "title": "Sample runtime releases",
+          "canonicalUrl": "https://releases.sample.invalid/feed/2",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:40:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "097500002cd1304063453b007e744f006197d400483d7400338294002fb13400",
+          "snapshotPath": "global/raw/7dca6c0044182c0063b2ec007f16ac00.09750000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 2,
+            "styles": 1,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 3,
+            "linksDropped": 7,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 3,
+          "sourceType": "feed-entry",
+          "id": "526328003a6838006f70080045239800",
+          "title": "Demo language blog",
+          "canonicalUrl": "https://blog.demo.invalid/feed/3",
+          "author": null,
+          "publishedAt": "2026-10-14T06:30:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "5e0d0000018930001409a0381a3a78004b7548407e737300763228000b8b3800",
+          "snapshotPath": "global/raw/526328003a6838006f70080045239800.5e0d0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 4,
+          "sourceType": "web-page",
+          "id": "26fbe80049f1f8000596c80002235840",
+          "title": "Example editor news",
+          "canonicalUrl": "https://editor.example.invalid/feed/4",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:20:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "32a6000024ae300050caa0006306500076104000386b700061dee00054259000",
+          "snapshotPath": "global/raw/26fbe80049f1f8000596c80002235840.32a60000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 5,
+          "sourceType": "feed-entry",
+          "id": "7b94a800597bb8001bbd88003f231840",
+          "title": "Sample package registry",
+          "canonicalUrl": "https://registry.sample.invalid/feed/5",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:10:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "073f000047d330407f1f3b0046465000385040006dab70000e1ee0002b659040",
+          "snapshotPath": "global/raw/7b94a800597bb8001bbd88003f231840.073f0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 4,
+            "hiddenBlocks": 1,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 2
+          }
+        },
+        {
+          "number": 6,
+          "sourceType": "feed-entry",
+          "id": "502d6000369210001d1100000e3d3040",
+          "title": "Demo build tool releases",
+          "canonicalUrl": "https://build.demo.invalid/feed/6",
+          "author": null,
+          "publishedAt": "2026-10-14T06:00:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "5bd800006af830004a4ca0003b605000006240001955703916a85680570804c0",
+          "snapshotPath": "global/raw/502d6000369210001d1100000e3d3040.5bd80000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        }
+      ]
+    },
+    "stale": {
+      "header": {
+        "title": "Developer tooling and open-source releases - Oct 14, 2026",
+        "noteId": "26fbe80049f1f8000596c8000",
+        "notePath": "global/output/research-2026-10-14-2cd1000042fd30004a6da0005.md",
+        "generatedAt": "2026-10-12T10:00:00.000Z",
+        "partial": false,
+        "unavailableSources": [],
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "kindCounts": {
+          "source-fact": 6,
+          "unverified-claim": 4,
+          "inference": 2
+        },
+        "summariser": "extractive",
+        "jobRunId": "2cd1000042fd30004a6da0005",
+        "runStartedAt": "2026-10-12T09:58:00.000Z",
+        "runEndedAt": "2026-10-12T09:59:00.000Z",
+        "runOutcome": "success",
+        "runNotePath": "automation-runs/research-run-2cd1000042fd30004a6da0005.md"
       },
       "items": [
         {
