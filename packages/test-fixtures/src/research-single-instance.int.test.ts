@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,6 +141,10 @@ describe("a second instance never sweeps the live instance's run", () => {
           },
           stdio: "ignore",
         });
+        // Whatever the second process prints is drained, so a full pipe cannot hold it up.
+        const printed: string[] = [];
+        second.stdout?.on("data", (chunk: Buffer) => printed.push(chunk.toString("utf8")));
+        second.stderr?.on("data", (chunk: Buffer) => printed.push(chunk.toString("utf8")));
         const code = await new Promise<number | null>((resolve) => {
           const timer = setTimeout(() => {
             second.kill("SIGKILL");
@@ -152,6 +156,20 @@ describe("a second instance never sweeps the live instance's run", () => {
           });
         });
         expect(code).toBe(1);
+        // WHY it exited: the socket-claim refusal, logged by code (one log file serves both
+        // processes, as they share the runtime directory). An exit for any other reason (a crash, a
+        // missing file, a refused override) would also be a 1 and must not pass for this.
+        const logLines = readFileSync(join(dir, "logs", "service.log"), "utf8")
+          .split("\n")
+          .filter((line) => line.startsWith("{"))
+          .map((line) => JSON.parse(line) as { code?: string; msg?: string });
+        const refusals = logLines.filter((line) => line.code === "SOCKET_IN_USE");
+        expect(refusals).toHaveLength(1);
+        expect(refusals[0]?.msg).toBe(
+          "startup refused: another service instance is already listening on the socket",
+        );
+        expect(logLines.some((line) => line.msg === "fatal startup error")).toBe(false);
+        expect(printed.join("")).not.toContain(dir);
 
         // The live run was not swept: it is still in flight, then it finishes as a success.
         const during = await statusOf(socketPath, token);
