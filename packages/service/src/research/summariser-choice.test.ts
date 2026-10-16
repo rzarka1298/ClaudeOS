@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TextTransport } from "../untrusted/index.js";
-import type { AnthropicTransportDeps } from "./anthropic-transport.js";
+import { type AnthropicTransportDeps, createAnthropicTransport } from "./anthropic-transport.js";
 import { DEFAULT_RESEARCH_CONFIG } from "./default-sources.js";
 import { createExtractiveTransport } from "./extractive-transport.js";
 import { createChooseSummariser } from "./summariser-choice.js";
@@ -102,6 +102,98 @@ describe("createChooseSummariser", () => {
     const choice = await choose(CONFIG);
     expect(choice).toEqual({ transport: override, id: "extractive" });
     expect(reads).toBe(0);
+  });
+});
+
+describe("one key-usable check for the chooser and the transport (wave 5 fix round, opus m1)", () => {
+  // The keys the transport refuses as unusable: each must also refuse the choice, so a run that
+  // cannot summarise fetches nothing and writes no raw note.
+  const UNUSABLE = [
+    "",
+    "   ",
+    `${KEY}\r\nx-evil: 1`,
+    `${KEY}\n`,
+    "k y",
+    `k${String.fromCodePoint(0xe9)}y`,
+  ];
+
+  it("refuses an unusable stored key up front, as unconfigured, without building a transport", async () => {
+    for (const key of UNUSABLE) {
+      let built = 0;
+      const choose = createChooseSummariser({
+        readApiKey: async () => key,
+        createTransport: () => {
+          built += 1;
+          return FAKE;
+        },
+      });
+      await expect(choose(CONFIG), JSON.stringify(key)).rejects.toMatchObject({
+        code: "summariser-unconfigured",
+      });
+      expect(built).toBe(0);
+    }
+  });
+
+  it("agrees with the transport on every one of those keys", async () => {
+    for (const key of UNUSABLE) {
+      const transport = createAnthropicTransport({
+        readApiKey: async () => key,
+        model: "claude-haiku-5-5",
+        env: {},
+        execArgv: [],
+      });
+      const error = await transport
+        .complete({ instructions: "x", input: "y" })
+        .catch((caught: unknown) => caught);
+      expect((error as SummariserError).code).toBe("summariser-unconfigured");
+    }
+  });
+
+  it("refuses when the environment widens TLS trust, before reading the key", async () => {
+    let reads = 0;
+    const choose = createChooseSummariser({
+      readApiKey: async () => {
+        reads += 1;
+        return KEY;
+      },
+      createTransport: () => FAKE,
+      env: { NODE_EXTRA_CA_CERTS: "/somewhere/extra.pem" },
+      execArgv: [],
+    });
+    await expect(choose(CONFIG)).rejects.toMatchObject({ code: "summariser-failed" });
+    expect(reads).toBe(0);
+  });
+
+  it("refuses when TLS verification is switched off", async () => {
+    const choose = createChooseSummariser({
+      readApiKey: async () => KEY,
+      createTransport: () => FAKE,
+      env: { NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      execArgv: [],
+    });
+    await expect(choose(CONFIG)).rejects.toMatchObject({ code: "summariser-failed" });
+  });
+
+  it("makes a run with an empty Keychain string fetch nothing and fail as unconfigured", async () => {
+    const kit = createKit({
+      chooseSummariser: createChooseSummariser({
+        readApiKey: async () => "",
+        createTransport: () => FAKE,
+        env: {},
+        execArgv: [],
+      }),
+    });
+    try {
+      kit.services.runNow();
+      await kit.services.idle();
+      expect(kit.fetchCalls).toEqual([]);
+      const row = kit.store.db
+        .prepare("SELECT error_code FROM job_runs ORDER BY started_at DESC LIMIT 1")
+        .get() as { error_code: string };
+      expect(row.error_code).toBe("summariser-unconfigured");
+    } finally {
+      kit.close();
+    }
   });
 });
 
