@@ -5,6 +5,7 @@
 export type ResearchOverrideCode =
   | "unknown-summariser"
   | "invalid-key-account"
+  | "default-runtime-dir"
   | "invalid-fixture-dir"
   | "invalid-fixture-manifest"
   | "fixture-path-outside";

@@ -99,7 +99,7 @@ async function main(): Promise<void> {
   // Research test overrides (plan 07-14, D-27): resolved before anything is changed, so an
   // unusable value stops the service at startup with a code-only log line. With the enabling flag
   // absent (the installed service) this returns nothing.
-  const researchOverrides = resolveResearchTestOverrides(process.env, logger);
+  const researchOverrides = resolveResearchTestOverrides(process.env, logger, { runtimeDir });
 
   const store = openStore(dbPath);
   // ADR-0018: migrations apply before anything else touches the store, so
