@@ -55,6 +55,7 @@ const CELLS: readonly ResearchCell[] = [
   { researchCase: "research-report-partial", width: "narrow", motion: "full" },
   { researchCase: "research-report-long", width: "full", motion: "full" },
   { researchCase: "research-report-stale", width: "full", motion: "full" },
+  { researchCase: "research-report-hostile", width: "full", motion: "full" },
   { researchCase: "research-running", width: "full", motion: "full" },
   { researchCase: "research-running", width: "narrow", motion: "full" },
   { researchCase: "research-unconfigured", width: "full", motion: "full" },
@@ -64,6 +65,7 @@ const CELLS: readonly ResearchCell[] = [
   { researchCase: "research-error", width: "full", motion: "full" },
   { researchCase: "research-disconnected", width: "full", motion: "full" },
   { researchCase: "research-unreadable-row", width: "full", motion: "full" },
+  { researchCase: "research-report-full", width: "full", motion: "reduced" },
 ];
 
 /**
@@ -167,6 +169,61 @@ async function expectNoHorizontalScroll(page: Page): Promise<void> {
   expect(widths.boxScroll).toBe(widths.boxClient);
 }
 
+/**
+ * Hostile source and model text is inert (ADR-0014, D-06): every string renders as
+ * literal text, the control character shows as a visible token, and the reader holds no
+ * link, image, frame or script element.
+ */
+async function expectInertHostileReader(page: Page): Promise<void> {
+  const reader = page.locator(".ccc-report-reader");
+  await expect(reader).toHaveCount(1);
+  for (const selector of ["a[href]", "a", "img", "iframe", "script", "style", "form", "svg"]) {
+    await expect(reader.locator(selector)).toHaveCount(0);
+  }
+  // The hostile text is on screen as characters, not as an element made from it.
+  await expect(reader).toContainText("<script>alert(1)</script>");
+  await expect(reader).toContainText("![x](https://evil.invalid/p.png)");
+  await expect(reader).toContainText("[[Private|shown]]");
+  // The bidi override is a visible token, never a reordering character.
+  await expect(reader).toContainText("[U+202E]");
+  expect(await reader.evaluate((node) => (node.textContent ?? "").includes("\u202e"))).toBe(false);
+  // The over-long finding is shortened for display, and says so.
+  await expect(reader).toContainText("Text shortened for display.");
+}
+
+/** Under data-motion="reduced" nothing animates and no scroll is smooth (A11Y-03). */
+async function expectNoMotion(page: Page): Promise<void> {
+  await expect(page.locator(".ccc-command-center")).toHaveAttribute("data-motion", "reduced");
+  const facts = await page.evaluate(() => {
+    const root = document.querySelector(".ccc-research");
+    const running = document.getAnimations().filter((animation) => {
+      const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
+      return (
+        animation.playState === "running" && target !== null && (root?.contains(target) ?? false)
+      );
+    }).length;
+    let smooth = 0;
+    let animated = 0;
+    for (const node of root?.querySelectorAll("*") ?? []) {
+      const style = getComputedStyle(node);
+      if (style.scrollBehavior === "smooth") smooth += 1;
+      if (style.animationName !== "none" && Number.parseFloat(style.animationDuration) > 0) {
+        animated += 1;
+      }
+    }
+    return {
+      running,
+      smooth,
+      animated,
+      rootSmooth: getComputedStyle(document.documentElement).scrollBehavior,
+    };
+  });
+  expect(facts.running).toBe(0);
+  expect(facts.animated).toBe(0);
+  expect(facts.smooth).toBe(0);
+  expect(facts.rootSmooth).not.toBe("smooth");
+}
+
 /** Per-cell assertions, run before the screenshot. */
 const ASSERTIONS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "research-report-long-full": expectArticleMeasure,
@@ -174,6 +231,8 @@ const ASSERTIONS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "research-report-partial-narrow": expectNarrowReader,
   "research-running-narrow": expectNoHorizontalScroll,
   "research-empty-narrow": expectNoHorizontalScroll,
+  "research-report-hostile-full": expectInertHostileReader,
+  "research-report-full-full-reduced": expectNoMotion,
 };
 
 for (const { researchCase, width, motion } of CELLS) {
