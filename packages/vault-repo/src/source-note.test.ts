@@ -27,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { escapeMarkdownText } from "./markdown-escape.js";
 import { initializeVault } from "./setup.js";
 import {
+  captureWikiSourceNote,
   extractRawSnapshotText,
   parseRawSourceNote,
   parseWikiSourceNote,
@@ -439,6 +440,135 @@ describe("Test 5: wiki notes", () => {
       readable: false,
       reason: "missing",
     });
+  });
+});
+
+describe("07-FIX4 c: the wiki 'Cited by' list accumulates across runs", () => {
+  const REPORT_ONE = "global/output/research-2026-10-14-r0123456789abcdefghijklmn.md";
+  const REPORT_TWO = "global/output/research-2026-10-15-r0123456789abcdefghijklmm.md";
+  const input = (extra: Record<string, unknown> = {}) => ({
+    vaultRoot,
+    sourceId: ID,
+    title: "A source",
+    canonicalUrl: "https://news.example/a",
+    latestSnapshotPath: refFor(SNAPSHOT).snapshotPath,
+    lastRetrievedAt: "2026-10-15T08:59:00.000Z",
+    citingItems: [
+      { kind: "source-fact" as const, text: "First run finding.", reportPath: REPORT_ONE },
+    ],
+    now: NOW,
+    ...extra,
+  });
+  const bodyAt = (path: string) => parseWikiSourceNote(readFileSync(path, "utf8")).body;
+
+  test("a later run that cites the source again keeps the earlier citation", () => {
+    writeWikiSourceNote(input());
+    const second = writeWikiSourceNote(
+      input({
+        now: LATER,
+        citingItems: [{ kind: "inference", text: "Second run finding.", reportPath: REPORT_TWO }],
+      }),
+    );
+    const body = bodyAt(second.absolutePath);
+    expect(body).toContain("First run finding.");
+    expect(body).toContain(REPORT_ONE);
+    expect(body).toContain("Second run finding.");
+    expect(body).toContain(REPORT_TWO);
+    // Newest first.
+    expect(body.indexOf("Second run finding.")).toBeLessThan(body.indexOf("First run finding."));
+  });
+
+  test("a later run that does not cite the source does not erase the earlier citation", () => {
+    writeWikiSourceNote(input());
+    const second = writeWikiSourceNote(input({ now: LATER, citingItems: [] }));
+    const body = bodyAt(second.absolutePath);
+    expect(body).toContain("First run finding.");
+    expect(body).not.toContain("No report cites this source yet.");
+  });
+
+  test("a note nothing ever cited still says so", () => {
+    const written = writeWikiSourceNote(input({ citingItems: [] }));
+    expect(bodyAt(written.absolutePath)).toContain("No report cites this source yet.");
+  });
+
+  test("writing the same report again replaces its lines instead of duplicating them", () => {
+    writeWikiSourceNote(input());
+    const again = writeWikiSourceNote(
+      input({
+        now: LATER,
+        citingItems: [{ kind: "inference", text: "Edited finding.", reportPath: REPORT_ONE }],
+      }),
+    );
+    const body = bodyAt(again.absolutePath);
+    expect(body).toContain("Edited finding.");
+    expect(body).not.toContain("First run finding.");
+  });
+
+  test("the accumulated list stays capped across runs and counts what it does not list", () => {
+    const many = (count: number, reportPath: string) =>
+      Array.from({ length: count }, (_, i) => ({
+        kind: "inference" as const,
+        text: `Finding ${reportPath.slice(-4, -3)}${i}`,
+        reportPath,
+      }));
+    writeWikiSourceNote(input({ citingItems: many(80, REPORT_ONE) }));
+    const second = writeWikiSourceNote(input({ now: LATER, citingItems: many(40, REPORT_TWO) }));
+    const body = bodyAt(second.absolutePath);
+    expect(body.match(/^- /gm)).toHaveLength(100);
+    expect(body).toContain("20 more findings are not listed.");
+    const third = writeWikiSourceNote(
+      input({
+        now: LATER,
+        citingItems: [
+          {
+            kind: "inference",
+            text: "Third.",
+            reportPath: `global/output/research-2026-10-16-r0123456789abcdefghijklmk.md`,
+          },
+        ],
+      }),
+    );
+    expect(bodyAt(third.absolutePath)).toContain("21 more findings are not listed.");
+  });
+
+  test("lines in the note that are not generated citation lines are not carried forward", () => {
+    const first = writeWikiSourceNote(input());
+    const edited = `${readFileSync(first.absolutePath, "utf8")}- [[Private]] ![x](https://evil.example/x.png)\n`;
+    writeFileSync(first.absolutePath, edited);
+    const second = writeWikiSourceNote(
+      input({
+        now: LATER,
+        citingItems: [{ kind: "inference", text: "Second.", reportPath: REPORT_TWO }],
+      }),
+    );
+    const body = bodyAt(second.absolutePath);
+    expect(body).not.toContain("evil.example");
+    expect(body).toContain("First run finding.");
+  });
+
+  test("captureWikiSourceNote restores an existing note byte for byte and removes a new one", () => {
+    const first = writeWikiSourceNote(input());
+    const before = readFileSync(first.absolutePath, "utf8");
+    const snapshot = captureWikiSourceNote(vaultRoot, ID);
+    writeWikiSourceNote(
+      input({
+        now: LATER,
+        citingItems: [{ kind: "inference", text: "Second run finding.", reportPath: REPORT_TWO }],
+      }),
+    );
+    expect(readFileSync(first.absolutePath, "utf8")).not.toBe(before);
+    snapshot.restore();
+    expect(readFileSync(first.absolutePath, "utf8")).toBe(before);
+
+    const other = "f".repeat(32);
+    const fresh = captureWikiSourceNote(vaultRoot, other);
+    const created = writeWikiSourceNote(input({ sourceId: other }));
+    expect(existsSync(created.absolutePath)).toBe(true);
+    fresh.restore();
+    expect(existsSync(created.absolutePath)).toBe(false);
+    expect(readFileSync(join(vaultRoot, "global/wiki/index.md"), "utf8")).not.toContain(
+      created.frontmatter.id,
+    );
   });
 });
 

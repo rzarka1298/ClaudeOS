@@ -31,6 +31,7 @@ import {
   parseReportNote,
   ReportNoteError,
   readReportNote,
+  removeReportNote,
   reportNotePathFor,
   type WriteReportNoteOptions,
   writeReportNote,
@@ -607,5 +608,39 @@ describe("Test 6: scope and index", () => {
     finaliseReportNote({ vaultRoot, path: written.path, now: LATER });
     const names = readdirSync(join(vaultRoot, "global/output"));
     expect(names.sort()).toEqual(["index.md", `research-2026-10-15-${RUN_ID}.md`]);
+  });
+});
+
+describe("07-FIX4 b: a report can be taken back", () => {
+  test("removeReportNote deletes the file and drops it from the folder index", () => {
+    const written = writeReportNote(options());
+    finaliseReportNote({ vaultRoot, path: written.path, now: LATER });
+    expect(readFileSync(join(vaultRoot, "global/output/index.md"), "utf8")).toContain(
+      written.frontmatter.id,
+    );
+    removeReportNote({ vaultRoot, path: written.path });
+    expect(existsSync(join(vaultRoot, written.path))).toBe(false);
+    expect(readFileSync(join(vaultRoot, "global/output/index.md"), "utf8")).not.toContain(
+      written.frontmatter.id,
+    );
+  });
+
+  test("removeReportNote on a report that is not there does nothing", () => {
+    const path = reportNotePathFor("2026-10-15T08:59:30.000Z", RUN_ID);
+    expect(() => removeReportNote({ vaultRoot, path })).not.toThrow();
+  });
+
+  test("removeReportNote still removes the file when the index cannot be rebuilt", () => {
+    const written = writeReportNote(options());
+    rmSync(join(vaultRoot, "global/output/index.md"));
+    mkdirSync(join(vaultRoot, "global/output/index.md"));
+    expect(() => removeReportNote({ vaultRoot, path: written.path })).toThrow();
+    expect(existsSync(join(vaultRoot, written.path))).toBe(false);
+  });
+
+  test("removeReportNote only accepts a path of the report file shape", () => {
+    for (const bad of ["global/wiki/x.md", "../outside.md", "global/output/other.md"]) {
+      expect(() => removeReportNote({ vaultRoot, path: bad })).toThrow(ReportNoteError);
+    }
   });
 });
