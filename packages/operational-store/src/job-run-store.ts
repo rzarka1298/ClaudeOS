@@ -555,6 +555,22 @@ export function listJobRuns(db: Database.Database, jobKey: string, limit: number
 }
 
 /**
+ * One job run by its job key and its id, however old it is, or null. Not bounded by a recent-run
+ * window: a report from months ago still gets its run record. The key is part of the lookup, so an
+ * id that belongs to another job is not found.
+ */
+export function getJobRun(
+  db: Database.Database,
+  jobKey: string,
+  jobRunId: string,
+): JobRunRecord | null {
+  const row = db
+    .prepare("SELECT * FROM job_runs WHERE job_key = ? AND job_run_id = ?")
+    .get(jobKey, jobRunId) as JobRunRow | undefined;
+  return row ? rowToRecord(row) : null;
+}
+
+/**
  * Startup recovery's job-run write (SVC-11, D-18, research Pitfall 9): moves each named job run
  * that is still queued, starting, running or waiting to `stale`, leaving `outcome` and
  * `ended_at` exactly as they were (null, since the ending was never observed). Returns how many

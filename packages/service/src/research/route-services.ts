@@ -45,7 +45,7 @@ export function createResearchRouteServices(
       if (request.page === "items") {
         return buildReportItemsPage(vaultRoot, deps.db, lookup.entry, request.cursor);
       }
-      return buildReportSourcesPage(lookup.entry, request.cursor);
+      return buildReportSourcesPage(vaultRoot, lookup.entry, request.cursor);
     },
     status() {
       return {

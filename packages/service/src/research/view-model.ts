@@ -1,4 +1,13 @@
-import { closeSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readSync,
+  realpathSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   type JobRunOutcome,
@@ -16,13 +25,14 @@ import {
   type ResearchReportSource,
   type ResearchReportSourcesPage,
   type ResearchStatusResponse,
+  rawSnapshotPathFor,
   type SourceReference,
 } from "@ccc/domain";
-import { getResearchRunStatus, listJobRuns } from "@ccc/operational-store";
-import { quoteInSource } from "@ccc/research";
+import { getJobRun, getResearchRunStatus } from "@ccc/operational-store";
+import { normaliseForQuoteMatch, quoteInNormalisedSource } from "@ccc/research";
 import { readRawSourceNote, readReportNote, reportTitleText } from "@ccc/vault-repo";
 import type Database from "better-sqlite3";
-import { contentHashFor } from "./hash.js";
+import { contentHashFor, sourceIdFor } from "./hash.js";
 import type { ConfiguredSources } from "./services.js";
 import type { ResearchRouteResult } from "./types.js";
 
@@ -49,7 +59,6 @@ export const RESEARCH_RESPONSE_BUDGET_BYTES = 57344;
 
 const OUTPUT_DIR = "global/output";
 const REPORT_FILE_NAME = /^research-(\d{4}-\d{2}-\d{2})-([0-9a-z]{25})\.md$/;
-const RUN_HISTORY_LIMIT = 200;
 /** The most report files one listing or lookup considers; a folder beyond it is not walked further. */
 const MAX_REPORT_FILES = 2000;
 /** How much of an unreadable report is read to find its note id. */
@@ -156,12 +165,24 @@ interface ListCandidate {
   readonly position: ListPosition;
 }
 
+/**
+ * True when a report's file name says what the file says: the date in the name is the day the
+ * report was generated (UTC) and the 25 characters after it are the report's own run id. The
+ * writer builds every name this way, so a file under another name was moved or planted.
+ */
+function nameMatchesContent(name: string, report: ReportFrontmatter): boolean {
+  const match = REPORT_FILE_NAME.exec(name);
+  return (
+    match !== null && match[1] === report.generatedAt.slice(0, 10) && match[2] === report.jobRunId
+  );
+}
+
 /** One file as a list candidate, or null for a draft (never listed). */
 function candidateOf(vaultRoot: string, name: string): ListCandidate | null {
   const date = REPORT_FILE_NAME.exec(name)?.[1] ?? "";
   const path = reportPathOf(name);
   const read = readReportNote(vaultRoot, path);
-  if (!read.readable) {
+  if (!read.readable || !nameMatchesContent(name, read.frontmatter)) {
     return {
       row: { readable: false, fileName: name, notePath: path },
       position: { date, generatedAt: "", name },
@@ -246,15 +267,18 @@ export type ReportLookup =
   | { readonly kind: "unreadable" }
   | { readonly kind: "missing" };
 
-/** The note id named on the `id:` line of a report's frontmatter, read without parsing it. */
+/**
+ * The note id named on the `id:` line of a report's frontmatter, read without parsing it. The file
+ * is opened without following a link and without waiting for a writer, and must be a regular file.
+ */
 function peekNoteId(vaultRoot: string, name: string): string | null {
   const folder = outputFolder(vaultRoot);
   if (folder === null) return null;
   const target = join(folder, name);
   let fd: number | null = null;
   try {
-    if (!lstatSync(target).isFile()) return null;
-    fd = openSync(target, "r");
+    fd = openSync(target, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+    if (!fstatSync(fd).isFile()) return null;
     const buffer = Buffer.alloc(PEEK_BYTES);
     const read = readSync(fd, buffer, 0, PEEK_BYTES, 0);
     const head = buffer.subarray(0, read).toString("utf8");
@@ -270,43 +294,133 @@ function peekNoteId(vaultRoot: string, name: string): string | null {
 }
 
 /**
- * Finds the report with this note id. A finalised, readable report is `found`; a report whose id
- * is on its `id:` line but whose frontmatter fails the strict parse is `unreadable` (never served);
- * anything else, a draft included, is `missing`.
+ * Finds the report with this note id. A finalised, readable report whose name matches what it
+ * says is `found`; a report whose id is on its `id:` line but whose frontmatter fails the strict
+ * parse (or whose name does not match it) is `unreadable` (never served); more than one file
+ * claiming the id is `unreadable` too, because nothing says which is the real one; anything else,
+ * a draft included, is `missing`. Only the files that name the id are read in full.
  */
 export function findReport(vaultRoot: string, noteId: string): ReportLookup {
-  for (const name of listReportFileNames(vaultRoot)) {
-    const path = reportPathOf(name);
-    const read = readReportNote(vaultRoot, path);
-    if (read.readable) {
-      if (read.frontmatter.id !== noteId) continue;
-      if (read.frontmatter.stage !== "output") return { kind: "missing" };
-      return { kind: "found", entry: { name, path, frontmatter: read.frontmatter } };
-    }
-    if (peekNoteId(vaultRoot, name) === noteId) return { kind: "unreadable" };
+  const claimants = listReportFileNames(vaultRoot).filter(
+    (name) => peekNoteId(vaultRoot, name) === noteId,
+  );
+  const name = claimants[0];
+  if (name === undefined) return { kind: "missing" };
+  if (claimants.length > 1) return { kind: "unreadable" };
+  const path = reportPathOf(name);
+  const read = readReportNote(vaultRoot, path);
+  if (!read.readable) return { kind: "unreadable" };
+  if (read.frontmatter.id !== noteId || !nameMatchesContent(name, read.frontmatter)) {
+    return { kind: "unreadable" };
   }
-  return { kind: "missing" };
+  if (read.frontmatter.stage !== "output") return { kind: "missing" };
+  return { kind: "found", entry: { name, path, frontmatter: read.frontmatter } };
 }
 
 // ---------------------------------------------------------------------------
 // The reader pages
 
 /**
- * The evidence text of a cited source, read back from its raw note: the stored snapshot text
- * (`evidenceText(sanitised, nonce)`, byte for byte), but only when its hash is the one the report
- * cites. A missing, reshaped or edited raw note has no evidence (null).
+ * A cited source as the reader gets it: the reference the raw note was written with (its title and
+ * its address are what is shown, never the report's editable copy) and, only when the report's
+ * citation is bound to that note, the evidence text of the snapshot, normalised once for quote
+ * matching (null when there is no evidence).
  */
-function evidenceOf(vaultRoot: string, ref: SourceReference): string | null {
-  const snapshot = readRawSourceNote(vaultRoot, ref.snapshotPath);
+interface ResolvedSource {
+  readonly served: SourceReference;
+  readonly evidence: string | null;
+}
+
+/**
+ * The raw note a citation points at, read back from the path derived from the cited id and hash
+ * (the cited path is not trusted for the read). It counts only when its body hashes to the cited
+ * hash and its own reference names the same id and hash; the stored evidence text is returned
+ * byte for byte.
+ */
+function snapshotOf(
+  vaultRoot: string,
+  cited: SourceReference,
+): { readonly own: SourceReference; readonly text: string } | null {
+  let path: string;
+  try {
+    path = rawSnapshotPathFor(cited.id, cited.contentHash);
+  } catch {
+    return null;
+  }
+  const snapshot = readRawSourceNote(vaultRoot, path);
   if (!snapshot.readable || snapshot.text === null) return null;
-  return contentHashFor(snapshot.text) === ref.contentHash ? snapshot.text : null;
+  const own = snapshot.frontmatter.sourceRef;
+  if (own.id !== cited.id || own.contentHash !== cited.contentHash) return null;
+  if (contentHashFor(snapshot.text) !== cited.contentHash) return null;
+  return { own, text: snapshot.text };
+}
+
+/**
+ * True when the report's citation and the raw note's own reference name one source: the id is the
+ * hash of the address, the snapshot path is the one derived from the id and the hash, and the two
+ * agree on kind, address, snapshot path and access class (the title and the retrieval time are
+ * the run's own and may differ, as the pipeline's reuse check allows). The same binding the
+ * pipeline requires of a stored note before it cites it.
+ */
+function isBound(cited: SourceReference, own: SourceReference): boolean {
+  return (
+    cited.canonicalUrl !== undefined &&
+    cited.id === sourceIdFor(cited.canonicalUrl) &&
+    cited.snapshotPath === rawSnapshotPathFor(cited.id, cited.contentHash) &&
+    own.sourceType === cited.sourceType &&
+    own.canonicalUrl === cited.canonicalUrl &&
+    own.deepLink === cited.deepLink &&
+    own.snapshotPath === cited.snapshotPath &&
+    own.accessClass === cited.accessClass
+  );
+}
+
+/** The citation with the raw note's own title and address in place of the report's copy. */
+function servedFrom(cited: SourceReference, own: SourceReference): SourceReference {
+  return {
+    sourceType: cited.sourceType,
+    id: cited.id,
+    title: own.title,
+    ...(own.canonicalUrl === undefined ? {} : { canonicalUrl: own.canonicalUrl }),
+    ...(own.deepLink === undefined ? {} : { deepLink: own.deepLink }),
+    author: cited.author,
+    publishedAt: cited.publishedAt,
+    retrievedAt: cited.retrievedAt,
+    contentHash: cited.contentHash,
+    snapshotPath: cited.snapshotPath,
+    accessClass: cited.accessClass,
+  };
+}
+
+function resolveSource(vaultRoot: string, cited: SourceReference): ResolvedSource {
+  const snapshot = snapshotOf(vaultRoot, cited);
+  if (snapshot === null) return { served: cited, evidence: null };
+  return {
+    served: servedFrom(cited, snapshot.own),
+    evidence: isBound(cited, snapshot.own) ? normaliseForQuoteMatch(snapshot.text) : null,
+  };
+}
+
+/** Resolves each cited source at most once per request. */
+function sourceResolver(vaultRoot: string): (ref: SourceReference) => ResolvedSource {
+  const cache = new Map<string, ResolvedSource>();
+  return (ref) => {
+    const cached = cache.get(ref.id);
+    if (cached !== undefined) return cached;
+    const resolved = resolveSource(vaultRoot, ref);
+    cache.set(ref.id, resolved);
+    return resolved;
+  };
 }
 
 /**
  * The findings as the reader gets them. Provenance (wave 3 A2/M3, plan 07-14): a finding that
- * carries a quote keeps it only if the exported predicate `quoteInSource` finds it in the evidence
- * text of EVERY source the finding cites, the same check the pipeline made before it wrote the
- * report. Otherwise the quote is not shown as evidence and the finding is served as the model's
+ * carries a quote keeps it only if the exported predicate finds it in the evidence text of EVERY
+ * source the finding cites, the same check the pipeline made before it wrote the report, and only
+ * when each citation is bound to its snapshot (see {@link isBound}). Each source's text is put in
+ * the comparison form once per request, and the quote once per finding, and
+ * `quoteInNormalisedSource` is `quoteInSource` on text already in that form: the predicate is the
+ * same. Otherwise the quote is not shown as evidence and the finding is served as the model's
  * inference (no quote, same text and citations) carrying `quoteUnverified: true`, so the reader
  * can say the quote was withheld: a hand-edited report or a changed snapshot can never present
  * words as a source's that the stored source does not hold, and never does so silently.
@@ -314,25 +428,29 @@ function evidenceOf(vaultRoot: string, ref: SourceReference): string | null {
 function itemsOf(vaultRoot: string, report: ReportFrontmatter): ResearchReportItem[] {
   const refs = new Map(report.sourceRefs.map((ref) => [ref.id, ref]));
   const numbers = new Map(report.sourceRefs.map((ref, index) => [ref.id, index + 1]));
-  const evidence = new Map<string, string | null>();
-  const evidenceFor = (ref: SourceReference): string | null => {
-    if (!evidence.has(ref.id)) evidence.set(ref.id, evidenceOf(vaultRoot, ref));
-    return evidence.get(ref.id) ?? null;
-  };
+  const resolve = sourceResolver(vaultRoot);
   return report.items.map((item, index) => {
-    const cited = [...new Set(item.citedSourceIds)]
-      .map((id) => ({ number: numbers.get(id) ?? 0, title: refs.get(id)?.title ?? "" }))
+    const ids = [...new Set(item.citedSourceIds)];
+    const cited = ids
+      .map((id) => {
+        const ref = refs.get(id);
+        return {
+          number: numbers.get(id) ?? 0,
+          title: ref === undefined ? "" : resolve(ref).served.title,
+        };
+      })
       .filter((citation) => citation.number > 0)
       .sort((a, b) => a.number - b.number);
     const first = cited[0];
     const quote = item.quote;
+    const normalisedQuote = quote === undefined ? "" : normaliseForQuoteMatch(quote);
     const verified =
       quote !== undefined &&
       first !== undefined &&
-      [...new Set(item.citedSourceIds)].every((id) => {
+      ids.every((id) => {
         const ref = refs.get(id);
-        const text = ref === undefined ? null : evidenceFor(ref);
-        return text !== null && quoteInSource(text, quote);
+        const evidence = ref === undefined ? null : resolve(ref).evidence;
+        return evidence !== null && quoteInNormalisedSource(evidence, normalisedQuote);
       });
     // A stored quote that did not verify is withheld, and the owner is told: the key is present
     // (as true) only then, and absent on every other finding (plan 07-15).
@@ -365,9 +483,7 @@ function headerOf(
   items: readonly ResearchReportItem[],
 ): ResearchReportHeader {
   const report = entry.frontmatter;
-  const run = listJobRuns(db, RESEARCH_JOB_ID, RUN_HISTORY_LIMIT).find(
-    (candidate) => candidate.jobRunId === report.jobRunId,
-  );
+  const run = getJobRun(db, RESEARCH_JOB_ID, report.jobRunId);
   const kindCounts = { "source-fact": 0, "unverified-claim": 0, inference: 0 };
   for (const item of items) kindCounts[item.kind] += 1;
   return {
@@ -445,14 +561,16 @@ export function buildReportItemsPage(
 }
 
 export function buildReportSourcesPage(
+  vaultRoot: string,
   entry: ReportEntry,
   cursor?: string,
 ): ResearchRouteResult<ResearchReportSourcesPage> {
   const report = entry.frontmatter;
   const handling = new Map(report.sourceHandling.map((item) => [item.sourceId, item.counts]));
+  const resolve = sourceResolver(vaultRoot);
   const all: ResearchReportSource[] = report.sourceRefs.map((ref, index) => ({
     number: index + 1,
-    ...ref,
+    ...resolve(ref).served,
     counts: handling.get(ref.id) ?? null,
   }));
   let start = 0;

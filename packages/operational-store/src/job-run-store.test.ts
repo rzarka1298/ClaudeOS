@@ -8,6 +8,7 @@ import {
   appendJobRunStage,
   type FinishJobRunInput,
   finishJobRun,
+  getJobRun,
   getResearchRunStatus,
   listJobRuns,
   recoverJobRunsToStale,
@@ -658,5 +659,31 @@ describe("Task 3: recoverJobRunsToStale", () => {
     const body = source.slice(start, source.indexOf("\n}\n", start));
     expect(body).toMatch(/stale/);
     expect(body).not.toMatch(/["'`](completed|failed|cancelled)["'`]/);
+  });
+});
+
+describe("getJobRun (wave 5 fix round, Codex 4)", () => {
+  it("finds a run by key and id, however many runs came after it", () => {
+    const first = startInput({ startedAt: T0 });
+    startJobRun(db, first);
+    finishJobRun(db, first.jobRunId, finishInput());
+    for (let n = 0; n < 205; n += 1) {
+      const next = startInput({
+        startedAt: `2026-10-16T08:${String(n % 60).padStart(2, "0")}:00.000Z`,
+      });
+      startJobRun(db, next);
+      finishJobRun(db, next.jobRunId, finishInput({ endedAt: T2 }));
+    }
+    expect(getJobRun(db, JOB, first.jobRunId)).toMatchObject({
+      jobRunId: first.jobRunId,
+      startedAt: T0,
+    });
+  });
+
+  it("does not find a run under another job key, or an unknown id", () => {
+    const first = startInput();
+    startJobRun(db, first);
+    expect(getJobRun(db, "other.job", first.jobRunId)).toBeNull();
+    expect(getJobRun(db, JOB, newRunId())).toBeNull();
   });
 });

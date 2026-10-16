@@ -63,6 +63,7 @@ export type {
 export {
   appendJobRunStage,
   finishJobRun,
+  getJobRun,
   getResearchRunStatus,
   JOB_RUN_TRIGGERS,
   listJobRuns,

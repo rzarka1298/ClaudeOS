@@ -1,8 +1,8 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { type ResearchReportItemsPage, ResearchReportItemsPageSchema } from "@ccc/domain";
-import { RAW_SOURCE_BANNER } from "@ccc/vault-repo";
+import { quoteInSource } from "@ccc/research";
+import { RAW_SOURCE_BANNER, readRawSourceNote } from "@ccc/vault-repo";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type BuiltReport,
@@ -155,32 +155,72 @@ describe("quotes are re-verified against the stored evidence text", () => {
     writeFileSync(rawPath, original.replace(RAW_SOURCE_BANNER, "Changed banner"));
     expect(serve(built).items[0]).toMatchObject({ kind: "inference", quote: null });
   });
+});
 
-  it("uses the exported predicate and no second matcher", () => {
-    const source = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "view-model.ts"),
-      "utf8",
-    );
-    const code = source
-      .split("\n")
-      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
-      .join("\n");
-    expect(code).toMatch(/import \{[^}]*\bquoteInSource\b[^}]*\} from "@ccc\/research"/);
-    expect(code.match(/quoteInSource\(/g)).toHaveLength(1);
-    // No normaliser, whole-word search or substring test of its own.
-    for (const forbidden of [
-      "normaliseForQuoteMatch",
-      "findWholeWord",
-      "quoteInNormalisedSource",
-      "isSubstantialQuote",
-      ".includes(item.quote",
-      ".indexOf(item.quote",
-    ]) {
-      expect(code, forbidden).not.toContain(forbidden);
-    }
-    // The text it checks against is what the raw note read-back returns.
-    expect(code).toMatch(/readRawSourceNote\(/);
+describe("the one predicate decides, not a substring test (behaviour, wave 5 fix round)", () => {
+  // Text with irregular whitespace and a decomposed letter, as a page can hold it.
+  const MESSY =
+    "The   maintainers confirmed\tthat the alpha parser is now twice as fast in this release; " +
+    "the cafe\u0301 build is also faster.";
+
+  function messy(quote: string) {
+    return serve(
+      vault.addReport({
+        sources: [{ url: "https://one.example.invalid/a", title: "One", text: MESSY }],
+        items: [{ kind: "source-fact", text: "A finding.", quote, cites: [0] }],
+      }),
+    ).items[0];
+  }
+
+  it("keeps a quote that differs from the stored text only in whitespace or composition", () => {
+    expect(messy("confirmed that the alpha parser is now twice as fast")).toMatchObject({
+      kind: "source-fact",
+      quote: "confirmed that the alpha parser is now twice as fast",
+    });
+    expect(messy("the caf\u00e9 build is also faster")).toMatchObject({ kind: "source-fact" });
   });
+
+  it("withholds a quote that starts inside a word although the text contains it", () => {
+    const quote = "lpha parser is now twice as fast";
+    expect(MESSY.includes(quote)).toBe(true);
+    expect(messy(quote)).toMatchObject({ kind: "inference", quote: null, quoteUnverified: true });
+  });
+
+  it("withholds a quote that stops inside a word although the text contains it", () => {
+    const quote = "the alpha parser is now twice as fa";
+    expect(MESSY.includes(quote)).toBe(true);
+    expect(messy(quote)).toMatchObject({ kind: "inference", quote: null, quoteUnverified: true });
+  });
+
+  it("withholds a quote too short to verify anything although the text contains it", () => {
+    const quote = "alpha parser";
+    expect(MESSY.includes(quote)).toBe(true);
+    expect(messy(quote)).toMatchObject({ kind: "inference", quote: null, quoteUnverified: true });
+  });
+
+  it("gives the same verdict as the exported predicate for every case", () => {
+    const text = serveEvidence();
+    for (const quote of [
+      "confirmed that the alpha parser is now twice as fast",
+      "lpha parser is now twice as fast",
+      "the alpha parser is now twice as fa",
+      "alpha parser",
+      "the caf\u00e9 build is also faster",
+      "The Alpha Parser is now TWICE as fast",
+    ]) {
+      expect(messy(quote)?.quote === null, quote).toBe(!quoteInSource(text, quote));
+    }
+  });
+
+  function serveEvidence(): string {
+    const built = vault.addReport({
+      sources: [{ url: "https://one.example.invalid/a", title: "One", text: MESSY }],
+      items: [{ kind: "inference", text: "A finding.", cites: [0] }],
+    });
+    const raw = readRawSourceNote(vault.root, built.rawPaths[0] ?? "");
+    if (!raw.readable || raw.text === null) throw new Error("expected the raw note");
+    return raw.text;
+  }
 });
 
 describe("the downgrade marker (plan 07-15): a withheld quote is said, never silent", () => {
