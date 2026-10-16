@@ -111,9 +111,16 @@ function liveTitles(source: string): Set<string> {
     start: number;
     end: number;
   }[] = [];
+  // A call whose title is a string or a template, and a test call whose title is computed (a case
+  // made in a loop): the second kind has no title to cite but is a live case all the same.
   const pattern =
-    /\b(describe|it|test|run)((?:\.\w+)*)\s*(?:\([^()]*\))?\s*\(\s*(["'])((?:\\.|(?!\3)[^\\\n])*)\3/g;
-  for (const match of source.matchAll(pattern)) {
+    /(?<![.\w$])(describe|it|test|run)((?:\.\w+)*)\s*(?:\([^()]*\))?\s*\(\s*(["'`])((?:\\.|(?!\3)[^\\\n])*)\3/g;
+  const computed = /(?<![.\w$])(it|test)((?:\.\w+)*)\s*(?:\([^()]*\))?\s*\(\s*(?=[A-Za-z_$])/g;
+  const matches = [
+    ...[...source.matchAll(pattern)].map((match) => ({ match, title: match[4] ?? "" })),
+    ...[...source.matchAll(computed)].map((match) => ({ match, title: "\u0000computed" })),
+  ];
+  for (const { match, title } of matches) {
     const start = match.index ?? 0;
     // Skip a match inside a line comment, or inside a string literal that began earlier on its line.
     const lineStart = source.lastIndexOf("\n", start) + 1;
@@ -122,14 +129,22 @@ function liveTitles(source: string): Set<string> {
     const quotes = (mark: string): number => before.replace(/\\./g, "").split(mark).length - 1;
     if (quotes('"') % 2 === 1 || quotes("'") % 2 === 1) continue;
     const suite = match[1] === "describe" || match[1] === "run";
+    // A suite runs from its own line to the next suite at the same or a shallower indentation (or
+    // the end of the file). Indentation, not braces: regular expressions and strings in a body hold
+    // quotes and braces that a light scan cannot tell from code.
     let end = source.length;
     if (suite) {
-      const open = source.indexOf("{", start + match[0].length);
-      end = open < 0 ? start : closingBrace(source, open);
+      const indent = (/^[ \t]*/.exec(source.slice(lineStart))?.[0] ?? "").length;
+      const next = [
+        ...source.matchAll(/^([ \t]*)(?:describe|run)(?:\.\w+)*\s*(?:\([^()]*\))?\s*\(/gm),
+      ].find(
+        (candidate) => (candidate.index ?? 0) > start && (candidate[1] ?? "").length <= indent,
+      );
+      end = next?.index ?? source.length;
     }
     calls.push({
       kind: suite ? "suite" : "case",
-      title: (match[4] ?? "").replace(/\\(["'\\])/g, "$1"),
+      title: title.replace(/\\(["'`\\])/g, "$1"),
       skipped: /\.(skip|todo)\b/.test(match[2] ?? ""),
       start,
       end,
@@ -161,28 +176,6 @@ function liveTitles(source: string): Set<string> {
     }
   }
   return titles;
-}
-
-/** Index of the brace that closes the one at `open`; strings, templates and comments are skipped. */
-function closingBrace(source: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < source.length; i += 1) {
-    const ch = source[i];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      i += 1;
-      while (i < source.length && source[i] !== ch) i += source[i] === "\\" ? 2 : 1;
-    } else if (ch === "/" && source[i + 1] === "/") {
-      while (i < source.length && source[i] !== "\n") i += 1;
-    } else if (ch === "/" && source[i + 1] === "*") {
-      i = source.indexOf("*/", i + 2);
-      if (i < 0) return source.length;
-    } else if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return i;
-    }
-  }
-  return source.length;
 }
 
 run("completeness and shape (Tests 1 and 2 of Task 2)", () => {
