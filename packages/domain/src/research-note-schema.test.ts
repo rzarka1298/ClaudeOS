@@ -233,6 +233,16 @@ describe("Test 2 (items)", () => {
     }
   });
 
+  it("requires a reported fact and a source claim to carry a quote (07-FIX3A F4)", () => {
+    const quote = "a quoted passage from the source";
+    for (const kind of ["source-fact", "unverified-claim"]) {
+      expect(withItems([item(0, { kind })]), `${kind} without a quote`).toBe(false);
+      expect(withItems([item(0, { kind, quote })]), `${kind} with a quote`).toBe(true);
+    }
+    expect(withItems([item(0, { kind: "inference" })])).toBe(true);
+    expect(withItems([item(0, { kind: "inference", quote })])).toBe(true);
+  });
+
   it("requires a reported fact and a source claim to cite at least one source", () => {
     expect(withItems([item(0, { kind: "source-fact", citedSourceIds: [] })])).toBe(false);
     expect(withItems([item(0, { kind: "unverified-claim", citedSourceIds: [] })])).toBe(false);

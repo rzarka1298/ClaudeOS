@@ -261,6 +261,17 @@ describe("Test 1 (tracer): deliverable, then output, then read back", () => {
 });
 
 describe("Test 2: determinism", () => {
+  test("writing the report again after it was finalised keeps stage output (07-FIX3A F4)", () => {
+    const written = writeReportNote(options());
+    finaliseReportNote({ vaultRoot, path: written.path, now: LATER });
+    const again = writeReportNote(options({ now: new Date("2026-10-15T09:00:10.000Z") }));
+    expect(again.frontmatter.stage).toBe("output");
+    expect(readReportNote(vaultRoot, written.path)).toMatchObject({
+      readable: true,
+      frontmatter: { stage: "output", id: written.id },
+    });
+  });
+
   test("writing the same report twice with the same clock produces byte-identical files", () => {
     const first = writeReportNote(options());
     const bytesOne = readFileSync(first.absolutePath, "utf8");
