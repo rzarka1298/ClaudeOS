@@ -64,7 +64,9 @@ export interface StartJobRunInput {
 
 export type StartJobRunResult =
   | { readonly started: true }
-  | { readonly started: false; readonly inFlightRunId: RunId };
+  | { readonly started: false; readonly inFlightRunId: RunId }
+  /** The idempotency key belongs to an earlier, finished or stale run: this slot already ran. */
+  | { readonly started: false; readonly reason: "duplicate-key" };
 
 export interface JobRunStageEntry {
   readonly stage: ResearchStage;
@@ -226,11 +228,20 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
+function idempotencyKeyUsed(db: Database.Database, idempotencyKey: string): boolean {
+  return (
+    db
+      .prepare("SELECT 1 AS used FROM job_runs WHERE idempotency_key = ? LIMIT 1")
+      .get(idempotencyKey) !== undefined
+  );
+}
+
 /**
  * Starts a job run: inserts its `job_runs` row (state running) and the paired
  * `runs` row (kind automation, state running, same id) in one immediate
  * transaction. When a run for the same job key is already in flight, nothing is
- * inserted and that run's id is returned (D-19).
+ * inserted and that run's id is returned (D-19). When the idempotency key already belongs to an
+ * earlier run (finished or stale), nothing is inserted and `reason: "duplicate-key"` is returned.
  */
 export function startJobRun(db: Database.Database, input: StartJobRunInput): StartJobRunResult {
   assertRunId(input.jobRunId, "jobRunId");
@@ -251,6 +262,9 @@ export function startJobRun(db: Database.Database, input: StartJobRunInput): Sta
   const start = db.transaction((): StartJobRunResult => {
     const inFlight = selectInFlightRunId(db, input.jobKey);
     if (inFlight !== null) return { started: false, inFlightRunId: inFlight };
+    if (idempotencyKeyUsed(db, input.idempotencyKey)) {
+      return { started: false, reason: "duplicate-key" };
+    }
     db.prepare(
       `INSERT INTO job_runs (job_run_id, job_key, scheduled_for, started_at, state, idempotency_key, run_trigger)
        VALUES (?, ?, ?, ?, 'running', ?, ?)`,
@@ -279,11 +293,14 @@ export function startJobRun(db: Database.Database, input: StartJobRunInput): Sta
     return start.immediate();
   } catch (error) {
     // The select-first lookup missed a row a concurrent writer committed: the partial unique
-    // index refused the insert. Answer the in-flight run. Any other constraint failure (a reused
-    // idempotency key, say) is a real error and propagates.
+    // index (or the idempotency key's unique constraint) refused the insert. Answer what the
+    // winner left. Any other constraint failure (a reused run id, say) is a real error.
     if (isUniqueViolation(error)) {
       const inFlight = selectInFlightRunId(db, input.jobKey);
       if (inFlight !== null) return { started: false, inFlightRunId: inFlight };
+      if (idempotencyKeyUsed(db, input.idempotencyKey)) {
+        return { started: false, reason: "duplicate-key" };
+      }
     }
     throw error;
   }
