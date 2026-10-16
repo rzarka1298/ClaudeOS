@@ -722,6 +722,7 @@ export async function readArticle(browser: ResearchBrowser): Promise<ArticleFact
     RESEARCH_CLASSES.itemText,
     RESEARCH_CLASSES.quote,
     RESEARCH_CLASSES.readerUnavailable,
+    RESEARCH_CLASSES.hidden,
   );
 }
 

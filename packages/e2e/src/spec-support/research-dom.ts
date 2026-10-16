@@ -914,7 +914,7 @@ export interface ArticleFacts {
   spaceXlPx: number;
   /** Margin above each `h4` section heading outside the unavailable notice, in px. */
   headingMarginTopPx: number[];
-  /** Truncation: any element in the reader that clamps lines, ellipsises or hides overflow. */
+  /** Truncation: any element in the reader that clamps lines, ellipsises or hides overflow (text hidden on purpose for assistive technology is not truncation). */
   clamped: string[];
   /** The widest the reader or a descendant is beyond the reader's own width. */
   overflowX: number;
@@ -927,6 +927,7 @@ export function rendererReadArticle(
   textClass: string,
   quoteClass: string,
   unavailableClass: string,
+  hiddenClass: string,
 ): ArticleFacts {
   const none: ArticleFacts = {
     found: false,
@@ -979,6 +980,9 @@ export function rendererReadArticle(
   const everything = article.querySelectorAll("*");
   for (let i = 0; i < everything.length; i += 1) {
     const node = everything[i] as RNode;
+    // Text that is hidden on purpose for assistive technology (a 1px box with overflow hidden) is
+    // clipped by design, so it is not truncation of what a reader sees (07-FIX7).
+    if (node.closest(`.${hiddenClass}`) !== null) continue;
     const cs = getComputedStyle(node);
     const clamp = cs.getPropertyValue("-webkit-line-clamp");
     const hidesOverflow = cs.overflow === "hidden" && node.scrollHeight > node.clientHeight + 1;
