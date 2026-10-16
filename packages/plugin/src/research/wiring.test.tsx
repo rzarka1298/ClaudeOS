@@ -181,7 +181,7 @@ describe("Test 1 (wiring): wireResearch configures the ports and returns a dispo
 
   it("requestRunNow goes through dispatchQuickAction as research:run, and starts the run", async () => {
     const { client, registry } = setup();
-    researchPorts().requestRunNow();
+    void researchPorts().requestRunNow();
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
     expect((dispatchSpy.mock.calls[0]?.[0] as { capability: string }).capability).toBe(
       "research:run",

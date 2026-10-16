@@ -4,6 +4,7 @@ import {
   createApprovalsClient,
   createAuthenticatedClient,
   createEventClient,
+  createResearchClient,
   createSocketApiClient,
   createTasksClient,
   deleteUsageAnalytics,
@@ -19,6 +20,7 @@ import { createHostRegistry, createObsidianHost, type HostRegistry } from "./hos
 import { attachOsMotionPreference } from "./motion.js";
 import { registerSetUpLaunchersCommand } from "./projects/commands.js";
 import { createPluginLauncher, type RequestLaunch } from "./projects/plugin-launcher.js";
+import { wireResearch } from "./research/wiring.js";
 import {
   combineOnLive,
   refreshProjectsOnConnect,
@@ -242,6 +244,23 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       log: (className) => {
         console.warn(`[claude-command-center] task watcher flush failed: ${className}`);
       },
+    });
+    // Research (plan 07-15): the client adapter, the host ports (Notice, open note, clipboard,
+    // Run now through the dispatcher) and the single research.updated handler, released through
+    // the registry. The destination refetches itself on reconnect, so no connect hook is added.
+    wireResearch(this.hostRegistry, {
+      client: createResearchClient(this.client),
+      notice: (message) => {
+        new Notice(message);
+      },
+      // An exact-path lookup, never link-text parsing: a path that names no file opens nothing.
+      openFile: async (path) => {
+        const file = this.app.vault.getFileByPath(path);
+        if (file === null) return false;
+        await this.app.workspace.getLeaf(false).openFile(file);
+        return true;
+      },
+      copyText: (text) => navigator.clipboard.writeText(text),
     });
     this.onServiceLive = combineOnLive(
       refreshProjectsOnConnect(() => refreshProjects(this.client)),
