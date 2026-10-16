@@ -98,6 +98,8 @@ export interface Kit {
   readonly fetchCalls: { urls: string[]; budget: RunBudget | undefined }[];
   readonly transportInputs: string[];
   readonly logs: Record<string, unknown>[];
+  /** The classified effects the pipeline reported, in order. */
+  readonly effects: string[];
   close(): void;
 }
 
@@ -127,6 +129,7 @@ export function createKit(options: KitOptions = {}): Kit {
   const fetchCalls: Kit["fetchCalls"] = [];
   const transportInputs: string[] = [];
   const logs: Record<string, unknown>[] = [];
+  const effects: string[] = [];
 
   const fetcher: Pick<SafeFetcher, "fetchSources"> = options.fetcher ?? {
     async fetchSources(inputs, budget) {
@@ -172,6 +175,7 @@ export function createKit(options: KitOptions = {}): Kit {
         ...(options.maxInputChars === undefined ? {} : { maxInputChars: options.maxInputChars }),
       };
     },
+    audit: (operation) => effects.push(operation),
     now: options.now ?? (() => new Date("2026-10-15T09:00:00.000Z")),
     log: {
       warn: (fields) => logs.push({ level: "warn", ...fields }),
@@ -192,6 +196,7 @@ export function createKit(options: KitOptions = {}): Kit {
     fetchCalls,
     transportInputs,
     logs,
+    effects,
     close() {
       store.close();
       rmSync(dir, { recursive: true, force: true });

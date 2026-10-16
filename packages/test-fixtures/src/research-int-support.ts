@@ -154,6 +154,8 @@ export interface ResearchHarness {
   readonly fetches: RecordedFetch[];
   readonly transportInputs: string[];
   readonly logLines: LoggedLine[];
+  /** The classified effects the pipeline reported, in order. */
+  readonly effects: string[];
   /** The files (not index.md) directly in a vault folder, sorted. */
   list(folder: string): string[];
   writeSources(config: unknown): void;
@@ -197,6 +199,7 @@ export function createResearchHarness(options: ResearchHarnessOptions = {}): Res
   const fetches: RecordedFetch[] = [];
   const transportInputs: string[] = [];
   const logLines: LoggedLine[] = [];
+  const effects: string[] = [];
 
   const answer = async (input: FetchSourceInput): Promise<FetchSourceResult> => {
     if (options.respond !== undefined) return options.respond(input);
@@ -253,6 +256,7 @@ export function createResearchHarness(options: ResearchHarnessOptions = {}): Res
       transport,
       id: options.summariserId ?? "extractive",
     }),
+    audit: (operation) => effects.push(operation),
     now: options.now ?? tickingClock(),
     log: {
       warn: (fields) => logLines.push({ level: "warn", fields: { ...fields } }),
@@ -272,6 +276,7 @@ export function createResearchHarness(options: ResearchHarnessOptions = {}): Res
     fetches,
     transportInputs,
     logLines,
+    effects,
     list(folder) {
       try {
         return readdirSync(join(vaultRoot, folder))
