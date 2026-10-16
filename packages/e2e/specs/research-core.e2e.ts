@@ -37,6 +37,7 @@ import {
   openReport,
   openResearch,
   pressRunNow,
+  provenanceOf,
   type ResearchEnvironment,
   readResearch,
   readResearchStore,
@@ -56,6 +57,7 @@ import {
   checkFailedView,
   checkFirstOpen,
   checkKindsView,
+  checkNoWorkBeforeFailure,
   checkPartialView,
   checkReportRow,
   checkRunRecords,
@@ -80,6 +82,35 @@ describe("research core", () => {
   recordResults(loadRunContext(), (hook) => afterEach(hook as Mocha.Func));
 
   const vaultNotes = () => readVaultNotes(obsidianPage.getVaultPath(), env.context.runRoot);
+
+  /** How many research notes the vault holds in each managed folder right now. */
+  const noteCounts = () => {
+    const notes = vaultNotes();
+    return { raw: notes.raw.length, wiki: notes.wiki.length, output: notes.output.length };
+  };
+
+  /**
+   * What one failed run left behind, for \`checkNoWorkBeforeFailure\`: its stored stages, the notes
+   * written since \`before\` and its own rows in the two provenance tables.
+   */
+  const leftBehind = (
+    runId: string,
+    store: Awaited<ReturnType<typeof readResearchStore>>,
+    before: ReturnType<typeof noteCounts>,
+  ) => {
+    const after = noteCounts();
+    const provenance = provenanceOf(store.provenance, runId);
+    return {
+      stages: (
+        parseStageLog(store.jobs.find((entry) => entry.job_run_id === runId)?.stage_log) ?? []
+      ).map((entry) => entry.stage),
+      rawNotes: after.raw - before.raw,
+      wikiNotes: after.wiki - before.wiki,
+      reportNotes: after.output - before.output,
+      sourceRecords: provenance.sources,
+      reportRecords: provenance.reports,
+    };
+  };
 
   /** The report note of a run, from the vault. */
   const reportOf = (jobRunId: string) => {
@@ -286,15 +317,14 @@ describe("research core", () => {
 
   it("[07-UAT#08] The summariser is not set up", async () => {
     await restartWithoutSummariser();
-    const rawBefore = vaultNotes().raw.length;
+    const before = noteCounts();
     const run = await runScenario(rb, env, "base");
     expect(run.ok).toBe(false);
     expect(checkUnconfiguredView(run.read)).toEqual([]);
-    // The service log shows no connection to the summariser host, and the service started without
-    // the summariser override (only the fixture fetcher and the test key account were on).
+    // The service started without the summariser override (only the fixture fetcher and the test
+    // key account were on), and its log says which overrides were active.
     const log = readServiceLogSince(env.context, restartMark);
     expect(log.length).toBeGreaterThan(0);
-    expect(log).not.toContain("anthropic.com");
     expect(log).toContain("research-test-overrides-active");
     expect(log).toContain("key-account");
     expect(log).toContain("fixture-fetcher");
@@ -304,26 +334,25 @@ describe("research core", () => {
       outcome: "failure",
       error_code: "summariser-unconfigured",
     });
-    expect(vaultNotes().raw).toHaveLength(rawBefore);
+    // The run stopped before it fetched: it left no stage past capture, no note and no store record.
+    expect(checkNoWorkBeforeFailure(leftBehind(run.runId, store, before))).toEqual([]);
   });
 
   it("[07-UAT#22] With an empty key account the run fails as summariser-unconfigured before any network call", async () => {
     // Automated part of the owner's live run: the service is still started without the summariser
     // override and with its empty test key account, so the run must stop before it fetches.
     await restartWithoutSummariser();
-    const mark = serviceLogMark(env.context);
-    const rawBefore = vaultNotes().raw.length;
+    const before = noteCounts();
     const run = await runScenario(rb, env, "base");
     expect(run.ok).toBe(false);
     expect(checkUnconfiguredView(run.read)).toEqual([]);
     const store = await readResearchStore(env.context);
     const job = store.jobs.find((entry) => entry.job_run_id === run.runId);
     expect(job).toMatchObject({ outcome: "failure", error_code: "summariser-unconfigured" });
-    // Before any fetch: the stage log never reached the raw stage, and no source note was written.
-    const stages = parseStageLog(job?.stage_log) ?? [];
-    expect(stages.map((entry) => entry.stage)).not.toContain("raw");
-    expect(vaultNotes().raw).toHaveLength(rawBefore);
-    expect(readServiceLogSince(env.context, mark)).not.toContain("anthropic.com");
+    // Before any fetch (T-07-45): the stage log never went past capture, no raw, wiki or report
+    // note was written and the store holds no source or report record for the run. These are what a
+    // fetch or a summariser call would have left; a search of the log for a host proves nothing.
+    expect(checkNoWorkBeforeFailure(leftBehind(run.runId, store, before))).toEqual([]);
   });
 
   /** Closes an open report in the one-column layout so the list is what the next run is judged by. */

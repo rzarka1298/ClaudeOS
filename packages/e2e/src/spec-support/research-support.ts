@@ -227,6 +227,28 @@ export const JOB_RUNS_SQL =
 export const AUTOMATION_RUNS_SQL =
   "select run_id, kind, state from runs where kind = 'automation' order by started_at, run_id;";
 
+/** The rows each run holds in the two provenance tables (a source record per source written, one report record). */
+export const PROVENANCE_SQL =
+  "select job_run_id, 'source' as kind, count(*) as n from research_source_records group by job_run_id union all select job_run_id, 'report' as kind, count(*) as n from research_report_records group by job_run_id;";
+
+export interface ProvenanceRow {
+  job_run_id: string;
+  kind: string;
+  n: number;
+}
+
+/** How many source records and report records one run left in the store. */
+export function provenanceOf(
+  rows: readonly ProvenanceRow[],
+  jobRunId: string,
+): { sources: number; reports: number } {
+  const count = (kind: string): number =>
+    rows
+      .filter((row) => row.job_run_id === jobRunId && row.kind === kind)
+      .reduce((total, row) => total + row.n, 0);
+  return { sources: count("source"), reports: count("report") };
+}
+
 export interface JobRunRow {
   job_run_id: string;
   state: string;
@@ -250,7 +272,7 @@ export interface AutomationRunRow {
 /** Copies the operational store and reads the job runs and their paired runs from the copy. */
 export async function readResearchStore(
   context: RunContext,
-): Promise<{ jobs: JobRunRow[]; runs: AutomationRunRow[] }> {
+): Promise<{ jobs: JobRunRow[]; runs: AutomationRunRow[]; provenance: ProvenanceRow[] }> {
   const destDir = join(context.paths.tmpDir, "research-store-copy");
   mkdirSync(destDir, { recursive: true, mode: 0o700 });
   const { copyPath } = copyStore({
@@ -268,7 +290,12 @@ export async function readResearchStore(
     sql: AUTOMATION_RUNS_SQL,
     runRoot: context.runRoot,
   })) as unknown as AutomationRunRow[];
-  return { jobs, runs };
+  const provenance = (await queryStore({
+    copyPath,
+    sql: PROVENANCE_SQL,
+    runRoot: context.runRoot,
+  })) as unknown as ProvenanceRow[];
+  return { jobs, runs, provenance };
 }
 
 // ---------------------------------------------------------------------------

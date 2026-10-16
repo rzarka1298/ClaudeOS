@@ -27,6 +27,7 @@ import {
   checkLayouts,
   checkLogPrivacy,
   checkMotion,
+  checkNoWorkBeforeFailure,
   checkOverviewCards,
   checkPartialView,
   checkReadingFacts,
@@ -1713,5 +1714,42 @@ describe("checkLogPrivacy (07-UAT item 21)", () => {
     expect(checkLogPrivacy([{ label: "the service log", text: "" }], markers)).toContain(
       "the service log is empty, so there is nothing to check",
     );
+  });
+});
+
+describe("checkNoWorkBeforeFailure (07-UAT items 8 and 22, T-07-45)", () => {
+  const CLEAN = {
+    stages: [],
+    rawNotes: 0,
+    wikiNotes: 0,
+    reportNotes: 0,
+    sourceRecords: 0,
+    reportRecords: 0,
+  };
+
+  it("accepts a run that left nothing behind, with or without the capture stage", () => {
+    expect(checkNoWorkBeforeFailure(CLEAN)).toEqual([]);
+    expect(checkNoWorkBeforeFailure({ ...CLEAN, stages: ["capture"] })).toEqual([]);
+  });
+
+  it("names each kind of work a failed run must not have done", () => {
+    expect(checkNoWorkBeforeFailure({ ...CLEAN, stages: ["capture", "raw"] })).toEqual([
+      "the stage log went past the capture stage (raw)",
+    ]);
+    expect(checkNoWorkBeforeFailure({ ...CLEAN, rawNotes: 1 })).toEqual([
+      "the run wrote raw source notes",
+    ]);
+    expect(checkNoWorkBeforeFailure({ ...CLEAN, wikiNotes: 1 })).toEqual([
+      "the run wrote wiki notes",
+    ]);
+    expect(checkNoWorkBeforeFailure({ ...CLEAN, reportNotes: 1 })).toEqual([
+      "the run wrote a report",
+    ]);
+    expect(checkNoWorkBeforeFailure({ ...CLEAN, sourceRecords: 3 })).toEqual([
+      "the store holds source records for the run",
+    ]);
+    expect(checkNoWorkBeforeFailure({ ...CLEAN, reportRecords: 1 })).toEqual([
+      "the store holds a report record for the run",
+    ]);
   });
 });

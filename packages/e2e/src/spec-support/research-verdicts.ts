@@ -517,6 +517,41 @@ export function checkUnconfiguredView(read: RenderedResearch): string[] {
   return problems;
 }
 
+/** What a run that failed before it fetched anything leaves behind (07-UAT items 8 and 22). */
+export interface BeforeFetchEvidence {
+  /** The names of the stages in the run's stored stage log, in order. */
+  readonly stages: readonly string[];
+  /** Research notes the run left in the vault, by folder. */
+  readonly rawNotes: number;
+  readonly wikiNotes: number;
+  readonly reportNotes: number;
+  /** Rows the whole store holds in the two provenance tables (a run records one per source written). */
+  readonly sourceRecords: number;
+  readonly reportRecords: number;
+}
+
+/**
+ * The proof that a failed run never reached the network (T-07-45), from what it left behind rather
+ * than from what the log does not say: a run that stopped before its fetch has no stage past the
+ * capture stage (the raw stage is logged only after sources were fetched and written), wrote no
+ * raw, wiki or report note and recorded no source or report in the operational store. Nothing a
+ * fetch or a summariser call would have produced exists. A search of the log for a host name
+ * proves nothing (the log never names one), so none is made.
+ */
+export function checkNoWorkBeforeFailure(evidence: BeforeFetchEvidence): string[] {
+  const problems: string[] = [];
+  const past = evidence.stages.filter((stage) => stage !== "capture");
+  if (past.length > 0) {
+    problems.push(`the stage log went past the capture stage (${past.join(", ")})`);
+  }
+  if (evidence.rawNotes > 0) problems.push("the run wrote raw source notes");
+  if (evidence.wikiNotes > 0) problems.push("the run wrote wiki notes");
+  if (evidence.reportNotes > 0) problems.push("the run wrote a report");
+  if (evidence.sourceRecords > 0) problems.push("the store holds source records for the run");
+  if (evidence.reportRecords > 0) problems.push("the store holds a report record for the run");
+  return problems;
+}
+
 // ---------------------------------------------------------------------------
 // 07-UAT items 9 and 10: hostile content
 

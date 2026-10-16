@@ -38,8 +38,15 @@ import {
   AUTOMATION_RUNS_SQL,
   JOB_RUNS_SQL,
   type JobRunRow,
+  PROVENANCE_SQL,
+  type ProvenanceRow,
+  provenanceOf,
 } from "./spec-support/research-support.js";
-import { checkHostileRaw, checkLogPrivacy } from "./spec-support/research-verdicts.js";
+import {
+  checkHostileRaw,
+  checkLogPrivacy,
+  checkNoWorkBeforeFailure,
+} from "./spec-support/research-verdicts.js";
 import { copyStore, queryStore } from "./store-copy.js";
 
 /**
@@ -153,7 +160,12 @@ async function readStore(item: Started) {
     runRoot: item.root,
   })) as unknown as JobRunRow[];
   const runs = await queryStore({ copyPath, sql: AUTOMATION_RUNS_SQL, runRoot: item.root });
-  return { jobs, runs };
+  const provenance = (await queryStore({
+    copyPath,
+    sql: PROVENANCE_SQL,
+    runRoot: item.root,
+  })) as unknown as ProvenanceRow[];
+  return { jobs, runs, provenance };
 }
 
 function notesOf(item: Started) {
@@ -331,15 +343,28 @@ d("the research UAT fixture drives the real built service (plan 07-17)", () => {
     expect(ended.status.lastFailure).toMatchObject({ errorCode: "summariser-unconfigured" });
     const notes = notesOf(item);
     expect([notes.output, notes.raw, notes.wiki]).toEqual([[], [], []]);
+    // The service started with the guard variables (and no summariser double) and says so.
     const log = logText(item);
     expect(log.length).toBeGreaterThan(0);
-    expect(log).not.toContain("anthropic.com");
     expect(log).toContain("research-test-overrides-active");
     const store = await readStore(item);
     expect(store.jobs[0]).toMatchObject({
       outcome: "failure",
       error_code: "summariser-unconfigured",
     });
+    // The real proof that nothing was fetched or summarised: what a fetch or a summariser call
+    // would have left behind is not there (07-FIX7; a search of the log for a host proves nothing).
+    const provenance = provenanceOf(store.provenance, store.jobs[0]?.job_run_id ?? "");
+    expect(
+      checkNoWorkBeforeFailure({
+        stages: (parseStageLog(store.jobs[0]?.stage_log) ?? []).map((entry) => entry.stage),
+        rawNotes: notes.raw.length,
+        wikiNotes: notes.wiki.length,
+        reportNotes: notes.output.length,
+        sourceRecords: provenance.sources,
+        reportRecords: provenance.reports,
+      }),
+    ).toEqual([]);
   }, 60_000);
 
   it("long: the largest report the extractive double can write, 24 findings from 12 sources (items 15, 16)", async () => {
