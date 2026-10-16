@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RUN_BYTE_CAP } from "./fetch/limits.js";
 import { createSafeFetcher } from "./fetch/safe-fetch.js";
 import { createFakeHttps } from "./fetch/test-support/fake-https.js";
+import { sourceIdFor } from "./hash.js";
 import { SummariserError } from "./summariser-error.js";
 import {
   createKit,
@@ -477,7 +478,7 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     expect(condition()).toBe(true);
   }
 
-  it("ends a transport that never answers as summariser-failed and writes nothing afterwards", async () => {
+  it("ends a transport that never answers as interrupted and writes nothing afterwards", async () => {
     const timer = manualTimer();
     let release: (answer: string) => void = () => {};
     const hung = new Promise<string>((resolve) => {
@@ -499,7 +500,8 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     const row = lastRow(kit);
     expect(row?.outcome).toBe("failure");
     expect(row?.state).toBe("failed");
-    expect(row?.errorCode).toBe("summariser-failed");
+    // A cut-off run is `interrupted` (an existing closed code), never a failure it did not have.
+    expect(row?.errorCode).toBe("interrupted");
     expect(RUN_ERROR_CODES).toContain(row?.errorCode);
     expect(kit.events.at(-1)?.payload).toMatchObject({ state: "failed", outcome: "failure" });
 
@@ -516,7 +518,7 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     expect(next.ok && next.value.alreadyRunning).toBe(false);
   });
 
-  it("ends a fetcher that never answers as all-sources-failed and ignores its late answer", async () => {
+  it("ends a fetcher that never answers as interrupted and ignores its late answer", async () => {
     const timer = manualTimer();
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
@@ -536,8 +538,15 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     await kit.services.idle();
     const row = lastRow(kit);
     expect(row?.outcome).toBe("failure");
-    expect(row?.errorCode).toBe("all-sources-failed");
+    expect(row?.errorCode).toBe("interrupted");
     expect(row?.stageLog.map((e) => e.stage)).toEqual(["capture"]);
+    // No source was ever judged, so none is listed as failing for a code it did not have.
+    expect(row?.unavailableSources).toEqual([]);
+    expect(row?.sourceCount).toBe(0);
+    const note = runNoteOf(kit, started.value.runId);
+    expect(note).not.toContain("contributed");
+    expect(note).not.toContain("unavailable");
+    expect(note).toContain("Alpha releases: not finished");
 
     // The fetches finally answer with good feeds: nothing is written, called or announced.
     const eventsBefore = kit.events.length;
@@ -584,6 +593,17 @@ describe("a run cannot be left in flight by a startup or finish problem", () => 
     expect(row?.outcome).toBe("failure");
     expect(row?.errorCode).toBe("summariser-failed");
     expect(row?.state).toBe("failed");
+  });
+
+  it("keeps the code of a summariser error thrown while choosing, and fetches nothing", async () => {
+    kit = createKit({ chooseThrows: new SummariserError("summariser-unconfigured") });
+    await runToEnd(kit);
+    const row = lastRow(kit);
+    expect(row?.outcome).toBe("failure");
+    expect(row?.errorCode).toBe("summariser-unconfigured");
+    expect(row?.state).toBe("failed");
+    expect(kit.fetchCalls).toHaveLength(0);
+    expect(files(kit, "global/raw")).toEqual([]);
   });
 
   it("finishes as a failure when the fetcher throws", async () => {
@@ -668,5 +688,143 @@ describe("a job run stuck in flight is swept, never completed (wave 3 minor)", (
     const rows = listJobRuns(kit.store.db, RESEARCH_JOB_ID, 5);
     expect(rows.find((row) => row.jobRunId === stuck)?.state).toBe("stale");
     expect(rows.find((row) => row.jobRunId === started.value.runId)?.outcome).toBe("success");
+  });
+});
+
+describe("07-FIX4 a: a damaged or edited raw note fails one source, never the run", () => {
+  function rawFileFor(k: Kit, url: string): string {
+    const id = sourceIdFor(url);
+    const name = files(k, "global/raw").find((candidate) => candidate.startsWith(`${id}.`));
+    if (name === undefined) throw new Error("raw note missing");
+    return join(k.vaultRoot, "global/raw", name);
+  }
+
+  function reportOf(k: Kit, index: number) {
+    const reports = files(k, "global/output").filter((name) => name.startsWith("research-"));
+    const read = readReportNote(k.vaultRoot, `global/output/${reports[index]}`);
+    if (!read.readable) throw new Error("report must be readable");
+    return read;
+  }
+
+  it("a raw note whose body was edited (frontmatter intact) is refused, the others carry on, and no report cites it", async () => {
+    kit = createKit();
+    await runToEnd(kit);
+    const target = rawFileFor(kit, URL_ONE);
+    const original = readFileSync(target, "utf8");
+    const edited = original.replace("twice as fast", "twice as slow");
+    expect(edited).not.toBe(original);
+    writeFileSync(target, edited);
+    const inputsBefore = kit.transportInputs.length;
+
+    const runId = await runToEnd(kit);
+    const row = lastRow(kit);
+    expect(row?.errorCode).toBeNull();
+    expect(row?.outcome).toBe("partial");
+    expect(row?.state).toBe("completed");
+    expect(row?.sourceCount).toBe(2);
+    expect(row?.sourceTotal).toBe(3);
+    expect(row?.unavailableSources).toEqual([
+      { sourceId: sourceIdFor(URL_ONE), code: "parse-failure" },
+    ]);
+    // The edited file is the owner's: it is left exactly as it is.
+    expect(readFileSync(target, "utf8")).toBe(edited);
+    // Only the two good sources reached the model.
+    expect(kit.transportInputs.length).toBe(inputsBefore + 1);
+    const input = kit.transportInputs.at(-1) ?? "";
+    expect([...input.matchAll(/<<<SRC id=/g)]).toHaveLength(2);
+    expect(input).not.toContain(sourceIdFor(URL_ONE));
+    // No report of this run cites the damaged snapshot.
+    const second =
+      reportOf(kit, 1).frontmatter.jobRunId === runId ? reportOf(kit, 1) : reportOf(kit, 0);
+    expect(second.frontmatter.sourceRefs.map((ref) => ref.id)).not.toContain(sourceIdFor(URL_ONE));
+    expect(second.frontmatter.partial).toBe(true);
+    expect(second.frontmatter.unavailableSources).toEqual([
+      { label: "Alpha releases", code: "parse-failure" },
+    ]);
+    expect(
+      second.frontmatter.items.some((item) => item.citedSourceIds.includes(sourceIdFor(URL_ONE))),
+    ).toBe(false);
+    expect(runNoteOf(kit, runId)).toContain("Alpha releases: unavailable");
+  });
+
+  it("a raw note that no longer parses is refused the same way", async () => {
+    kit = createKit();
+    await runToEnd(kit);
+    writeFileSync(rawFileFor(kit, URL_TWO), "not a note any more\n");
+    await runToEnd(kit);
+    const row = lastRow(kit);
+    expect(row?.outcome).toBe("partial");
+    expect(row?.unavailableSources).toEqual([
+      { sourceId: sourceIdFor(URL_TWO), code: "parse-failure" },
+    ]);
+  });
+
+  it("when every source is damaged the run fails as all-sources-failed and calls no model", async () => {
+    kit = createKit();
+    await runToEnd(kit);
+    for (const url of [URL_ONE, URL_TWO, URL_THREE]) {
+      const target = rawFileFor(kit, url);
+      writeFileSync(target, readFileSync(target, "utf8").replace("The ", "Tha "));
+    }
+    const inputsBefore = kit.transportInputs.length;
+    await runToEnd(kit);
+    const row = lastRow(kit);
+    expect(row?.outcome).toBe("failure");
+    expect(row?.errorCode).toBe("all-sources-failed");
+    expect(row?.unavailableSources).toHaveLength(3);
+    expect(kit.transportInputs.length).toBe(inputsBefore);
+  });
+
+  it("a failed run does not call any source contributed", async () => {
+    kit = createKit({
+      transport: {
+        complete: async () => {
+          throw new SummariserError("summariser-failed");
+        },
+      },
+    });
+    const runId = await runToEnd(kit);
+    const row = lastRow(kit);
+    expect(row?.errorCode).toBe("summariser-failed");
+    expect(row?.sourceCount).toBe(0);
+    expect(row?.sourceTotal).toBe(3);
+    const note = runNoteOf(kit, runId);
+    expect(note).not.toContain("contributed");
+    expect(note).toContain("Alpha releases: fetched, no report");
+  });
+});
+
+describe("07-FIX4 m3: a broken log sink cannot leave the run lock set", () => {
+  it("still ends the run and lets the next press start another when every log call throws", async () => {
+    kit = createKit({ logThrows: true });
+    rmSync(join(kit.vaultRoot, "automation-runs"), { recursive: true });
+    writeFileSync(join(kit.vaultRoot, "automation-runs"), "a file where a folder belongs");
+    const first = kit.services.runNow();
+    if (!first.ok) throw new Error("refused");
+    await kit.services.idle();
+    expect(lastRow(kit)?.state).toBe("completed");
+    const next = kit.services.runNow();
+    expect(next.ok && next.value.alreadyRunning).toBe(false);
+    await kit.services.idle();
+  });
+});
+
+describe("07-FIX4 m6: one bad entry date does not fail a whole feed", () => {
+  it("falls back to no publication date and keeps the source", async () => {
+    const feed = `<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Release</title><updated>9999-12-31T23:30:00-14:00</updated><summary>The maintainers confirmed the change ships today in this release.</summary></entry></feed>`;
+    kit = createKit({
+      sources: [THREE[0]] as never,
+      responses: { [URL_ONE]: ok(URL_ONE, feed) },
+    });
+    await runToEnd(kit);
+    const row = lastRow(kit);
+    expect(row?.outcome).toBe("success");
+    expect(row?.sourceCount).toBe(1);
+    const read = readReportNote(
+      kit.vaultRoot,
+      `global/output/${files(kit, "global/output").find((name) => name.startsWith("research-"))}`,
+    );
+    if (!read.readable) throw new Error("report must be readable");
+    expect(read.frontmatter.sourceRefs[0]?.publishedAt).toBeNull();
   });
 });

@@ -81,7 +81,10 @@ export interface KitOptions {
   readonly watchdogMs?: number;
   readonly scheduleTimeout?: (fire: () => void, ms: number) => () => void;
   readonly publishThrows?: boolean;
-  readonly chooseThrows?: boolean;
+  /** True throws a plain Error from the chooser; an Error instance throws that. */
+  readonly chooseThrows?: boolean | Error;
+  /** Every log call throws (a broken sink). */
+  readonly logThrows?: boolean;
   readonly maxInputChars?: number;
   /** Runs on the migrated database before the services are created (to leave a stuck row behind). */
   readonly beforeServices?: (db: ReturnType<typeof openStore>["db"]) => void;
@@ -168,6 +171,7 @@ export function createKit(options: KitOptions = {}): Kit {
     },
     fetcher,
     chooseSummariser: () => {
+      if (options.chooseThrows instanceof Error) throw options.chooseThrows;
       if (options.chooseThrows === true) throw new Error("no summariser");
       return {
         transport,
@@ -178,8 +182,14 @@ export function createKit(options: KitOptions = {}): Kit {
     audit: (operation) => effects.push(operation),
     now: options.now ?? (() => new Date("2026-10-15T09:00:00.000Z")),
     log: {
-      warn: (fields) => logs.push({ level: "warn", ...fields }),
-      error: (fields) => logs.push({ level: "error", ...fields }),
+      warn: (fields) => {
+        logs.push({ level: "warn", ...fields });
+        if (options.logThrows === true) throw new Error("log sink down");
+      },
+      error: (fields) => {
+        logs.push({ level: "error", ...fields });
+        if (options.logThrows === true) throw new Error("log sink down");
+      },
     },
     ...(options.watchdogMs === undefined ? {} : { watchdogMs: options.watchdogMs }),
     ...(options.scheduleTimeout === undefined ? {} : { scheduleTimeout: options.scheduleTimeout }),
