@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APPROVAL_STATE_DISPLAY } from "@ccc/domain/approval-view.js";
+import { REPORT_ITEM_KIND_DISPLAY } from "@ccc/domain/research.js";
 import { RUN_STATE_DISPLAY } from "@ccc/domain/session.js";
 import { TASK_PRIORITY_DISPLAY, TASK_STATUS_DISPLAY } from "@ccc/domain/tasks.js";
 import { describe, expect, it } from "vitest";
@@ -47,6 +48,8 @@ const TASK_PRIORITY = Object.values(TASK_PRIORITY_DISPLAY)
   .map((entry) => entry.glyph)
   .filter((glyph): glyph is string => glyph !== null);
 
+const REPORT_KINDS = Object.values(REPORT_ITEM_KIND_DISPLAY).map((entry) => entry.glyph);
+
 const EXISTING = [...FRESHNESS, ...RUN_STATES, ...PHASE_4_GLYPHS];
 
 function shared(a: readonly string[], b: readonly string[]): string[] {
@@ -74,6 +77,7 @@ describe("Test 4: the glyph maps are disjoint", () => {
     ["approval", APPROVAL],
     ["task status", TASK_STATUS],
     ["task priority", TASK_PRIORITY],
+    ["report item kind", REPORT_KINDS],
   ])(
     "keeps the %s map disjoint from every existing map except the outcome glyphs",
     (_name, glyphs) => {
@@ -85,6 +89,9 @@ describe("Test 4: the glyph maps are disjoint", () => {
     ["approval and task status", APPROVAL, TASK_STATUS],
     ["approval and task priority", APPROVAL, TASK_PRIORITY],
     ["task status and task priority", TASK_STATUS, TASK_PRIORITY],
+    ["report item kind and approval", REPORT_KINDS, APPROVAL],
+    ["report item kind and task status", REPORT_KINDS, TASK_STATUS],
+    ["report item kind and task priority", REPORT_KINDS, TASK_PRIORITY],
   ])("keeps %s disjoint from each other except the outcome glyphs", (_name, a, b) => {
     expect(nonOutcome(shared(a, b))).toEqual([]);
   });
@@ -93,6 +100,7 @@ describe("Test 4: the glyph maps are disjoint", () => {
     ["approval", APPROVAL],
     ["task status", TASK_STATUS],
     ["task priority", TASK_PRIORITY],
+    ["report item kind", REPORT_KINDS],
   ])("uses no glyph twice inside the %s map unless it is an outcome glyph", (_name, glyphs) => {
     const counts = new Map<string, number>();
     for (const glyph of glyphs) counts.set(glyph, (counts.get(glyph) ?? 0) + 1);
@@ -109,9 +117,20 @@ describe("Test 4: the glyph maps are disjoint", () => {
   });
 
   it("uses no emoji-presentation code point anywhere", () => {
-    for (const glyph of [...EXISTING, ...APPROVAL, ...TASK_STATUS, ...TASK_PRIORITY]) {
+    for (const glyph of [
+      ...EXISTING,
+      ...APPROVAL,
+      ...TASK_STATUS,
+      ...TASK_PRIORITY,
+      ...REPORT_KINDS,
+    ]) {
       expect(/\p{Emoji_Presentation}/u.test(glyph), glyph).toBe(false);
     }
+  });
+
+  it("gives the three report item kinds three glyphs, none of them an outcome glyph", () => {
+    expect(REPORT_KINDS).toEqual(["\u2261", "\u201c", "\u2234"]);
+    expect(REPORT_KINDS.filter((glyph) => OUTCOME.has(glyph))).toEqual([]);
   });
 });
 
@@ -157,6 +176,21 @@ describe("Test 5: the display maps", () => {
       withdrawn: { label: "Withdrawn", glyph: "⊟" },
       lapsed: { label: "Lapsed", glyph: "⊞" },
       expired: { label: "Expired — denied automatically", glyph: "⊡" },
+    });
+  });
+
+  it("snapshots the report item kind map: label, glyph and rule shape", () => {
+    expect(
+      Object.fromEntries(
+        Object.entries(REPORT_ITEM_KIND_DISPLAY).map(([kind, entry]) => [
+          kind,
+          { label: entry.label, glyph: entry.glyph, rule: entry.rule },
+        ]),
+      ),
+    ).toEqual({
+      "source-fact": { label: "Reported fact", glyph: "\u2261", rule: "solid" },
+      "unverified-claim": { label: "Source claim", glyph: "\u201c", rule: "solid" },
+      inference: { label: "Model inference", glyph: "\u2234", rule: "dashed" },
     });
   });
 

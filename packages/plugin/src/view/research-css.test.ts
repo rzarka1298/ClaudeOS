@@ -8,8 +8,8 @@ import { describe, expect, it } from "vitest";
  * "Spacing Scale", "Motion", "Width behaviour", "New CSS classes",
  * Non-Negotiables 1 and 7), audited from the file on disk the way
  * `tasks-css.test.ts` audits the Tasks family: a rule that strays from the
- * design system fails here, at the commit that introduces it. The reader's
- * `.ccc-report-*` classes arrive with plan 07-13 and its own audit.
+ * design system fails here, at the commit that introduces it. Plan 07-13 extends
+ * the family with the reader's `.ccc-report-*` classes and the article typography.
  */
 
 const STYLESHEET = readFileSync(
@@ -66,8 +66,8 @@ function parseRules(source: string, atStack: readonly string[] = []): StyleRule[
 
 const ALL_RULES = parseRules(CODE);
 
-/** `.ccc-research*`, `.ccc-report-list*`, `.ccc-report-row*` and `.ccc-report-title`. */
-const FAMILY = /\.ccc-(research\b|research-|report-list|report-row|report-title)/;
+/** `.ccc-research*` and every `.ccc-report-*` class: the destination, the list and the reader. */
+const FAMILY = /\.ccc-(research\b|research-|report-)/;
 const NEW_RULES = ALL_RULES.filter((rule) =>
   rule.selectors.some((selector) => FAMILY.test(selector)),
 );
@@ -348,6 +348,207 @@ describe("Test 6: states reach CSS through data attributes, and none relies on c
     for (const rule of NEW_RULES) {
       expect(rule.body, rule.selectors.join(", ")).not.toMatch(/overflow-x:\s*(auto|scroll)/);
       expect(rule.body, rule.selectors.join(", ")).not.toMatch(/\b(min-|max-)?height:\s*\d/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 07-13 Task 3: the reader and the article typography (RSRCH-10, D-24, UI-SPEC R-01)
+
+/** The rule whose selector list holds exactly this one selector, inside the command-center root. */
+function ruleFor(selector: string): StyleRule | undefined {
+  return NEW_RULES.find((rule) => rule.selectors.includes(`.ccc-command-center ${selector}`));
+}
+
+function ruleValue(selector: string, property: string): string | undefined {
+  const rule = ruleFor(selector);
+  return rule === undefined
+    ? undefined
+    : declarations(rule).find((declaration) => declaration.property === property)?.value;
+}
+
+const READER_CLASSES = [
+  "ccc-report-reader",
+  "ccc-report-header",
+  "ccc-report-legend",
+  "ccc-report-items",
+  "ccc-report-item",
+  "ccc-report-kind",
+  "ccc-report-text",
+  "ccc-report-quote",
+  "ccc-report-citations",
+  "ccc-report-unavailable",
+  "ccc-report-sources",
+  "ccc-report-source",
+  "ccc-report-run",
+] as const;
+
+describe("Task 3 Test 1: the reader classes the UI-SPEC names all exist", () => {
+  it.each(READER_CLASSES)("has a rule for .%s", (className) => {
+    expect(
+      NEW_RULES.some((rule) => rule.selectors.some((selector) => names(selector, className))),
+      className,
+    ).toBe(true);
+  });
+});
+
+describe("Task 3 Test 1: article typography from existing tokens (RSRCH-10, D-24)", () => {
+  it("sets the prose column to 68ch, the prose leading and break-word wrapping on the reader", () => {
+    expect(ruleValue(".ccc-report-reader", "max-width")).toBe("68ch");
+    expect(ruleValue(".ccc-report-reader", "line-height")).toBe("var(--ccc-leading-prose)");
+    expect(ruleValue(".ccc-report-reader", "overflow-wrap")).toBe("break-word");
+    expect(ruleValue(".ccc-report-reader", "min-width")).toBe("0");
+  });
+
+  it("sets finding text at the body size, regular weight, ink, prose leading and normal white space", () => {
+    expect(ruleValue(".ccc-report-text", "font-size")).toBe("var(--ccc-text-body)");
+    expect(ruleValue(".ccc-report-text", "font-weight")).toBe("var(--ccc-weight-regular)");
+    expect(ruleValue(".ccc-report-text", "color")).toBe("var(--ccc-ink)");
+    expect(ruleValue(".ccc-report-text", "line-height")).toBe("var(--ccc-leading-prose)");
+    expect(ruleValue(".ccc-report-text", "white-space")).toBe("normal");
+    expect(ruleValue(".ccc-report-text", "overflow-wrap")).toBe("break-word");
+  });
+
+  it("separates findings by --ccc-space-lg and puts the kind tag --ccc-space-sm above the text", () => {
+    expect(ruleValue(".ccc-report-items", "gap")).toBe("var(--ccc-space-lg)");
+    expect(ruleValue(".ccc-report-item", "gap")).toBe("var(--ccc-space-sm)");
+    expect(ruleValue(".ccc-report-items", "list-style")).toBe("none");
+  });
+
+  it("puts --ccc-space-xl above each reader section heading and --ccc-space-sm below", () => {
+    expect(ruleValue(".ccc-report-reader h4", "margin-block-start")).toBe("var(--ccc-space-xl)");
+    expect(ruleValue(".ccc-report-reader h4", "margin-block-end")).toBe("var(--ccc-space-sm)");
+  });
+
+  it("makes the kind tag Label 600 uppercase with the label tracking in muted ink", () => {
+    expect(ruleValue(".ccc-report-kind", "font-size")).toBe("var(--ccc-text-label)");
+    expect(ruleValue(".ccc-report-kind", "font-weight")).toBe("var(--ccc-weight-strong)");
+    expect(ruleValue(".ccc-report-kind", "text-transform")).toBe("uppercase");
+    expect(ruleValue(".ccc-report-kind", "letter-spacing")).toBe("var(--ccc-tracking-label)");
+    expect(ruleValue(".ccc-report-kind", "color")).toBe("var(--ccc-ink-muted)");
+  });
+
+  it("gives a sourced finding a solid hairline start rule and a model inference a dashed one", () => {
+    const base = ruleValue(".ccc-report-item", "border-inline-start") ?? "";
+    expect(base).toBe("var(--ccc-border-hairline) solid var(--ccc-border)");
+    expect(ruleValue(".ccc-report-item", "padding-inline-start")).toBe("var(--ccc-space-md)");
+    expect(ruleValue('.ccc-report-item[data-kind="inference"]', "border-inline-start-style")).toBe(
+      "dashed",
+    );
+    // The two sourced kinds keep the base rule: nothing re-shapes them.
+    expect(ruleFor('.ccc-report-item[data-kind="source-fact"]')).toBeUndefined();
+    expect(ruleFor('.ccc-report-item[data-kind="unverified-claim"]')).toBeUndefined();
+  });
+
+  it("sets the quote in muted body type with a hairline start rule and --ccc-space-md padding", () => {
+    expect(ruleValue(".ccc-report-quote", "font-size")).toBe("var(--ccc-text-body)");
+    expect(ruleValue(".ccc-report-quote", "color")).toBe("var(--ccc-ink-muted)");
+    expect(ruleValue(".ccc-report-quote", "line-height")).toBe("var(--ccc-leading-prose)");
+    expect(ruleValue(".ccc-report-quote", "border-inline-start")).toBe(
+      "var(--ccc-border-hairline) solid var(--ccc-border)",
+    );
+    expect(ruleValue(".ccc-report-quote", "padding-inline-start")).toBe("var(--ccc-space-md)");
+  });
+
+  it("sets the report title at the heading size and weight with the heading leading", () => {
+    expect(ruleValue(".ccc-report-reader h3", "font-size")).toBe("var(--ccc-text-heading)");
+    expect(ruleValue(".ccc-report-reader h3", "font-weight")).toBe("var(--ccc-weight-strong)");
+    expect(ruleValue(".ccc-report-reader h3", "overflow-wrap")).toBe("break-word");
+  });
+
+  it("sets the source title at the body size and weight 600", () => {
+    expect(ruleValue(".ccc-report-source h5", "font-size")).toBe("var(--ccc-text-body)");
+    expect(ruleValue(".ccc-report-source h5", "font-weight")).toBe("var(--ccc-weight-strong)");
+  });
+
+  it("wraps mono values anywhere and prose at word boundaries", () => {
+    const mono = ALL_RULES.find((rule) => rule.selectors.includes(".ccc-mono"));
+    expect(mono && declarations(mono).find((d) => d.property === "overflow-wrap")?.value).toBe(
+      "anywhere",
+    );
+    for (const rule of NEW_RULES) {
+      for (const declaration of declarations(rule)) {
+        if (declaration.property !== "overflow-wrap") continue;
+        // A reader rule that says anywhere may only name a mono or detail value.
+        if (declaration.value === "anywhere") {
+          expect(rule.selectors.join(", ")).toMatch(/mono|detail|source dd|run dd/);
+        }
+      }
+    }
+  });
+
+  it("clamps, truncates and ellipsises nothing inside the reader", () => {
+    const readerRules = NEW_RULES.filter((rule) =>
+      rule.selectors.some((selector) =>
+        /ccc-report-(reader|header|item|kind|text|quote|citations|source|run|legend|unavailable)/.test(
+          selector,
+        ),
+      ),
+    );
+    expect(readerRules.length).toBeGreaterThan(10);
+    for (const rule of readerRules) {
+      expect(rule.body, rule.selectors.join(", ")).not.toMatch(
+        /line-clamp|text-overflow|-webkit-box|max-height|overflow:\s*hidden|overflow-y/,
+      );
+    }
+  });
+
+  it("uses no clamp class and no inline style in the reader components", () => {
+    for (const file of ["report-reader.tsx", "report-finding.tsx", "report-sources.tsx"]) {
+      const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), file), "utf8");
+      expect(source, file).not.toContain("ccc-clamp");
+      expect(source, file).not.toMatch(/\bstyle\s*=/);
+    }
+  });
+
+  it("collapses the legend to one column below 24rem", () => {
+    const narrow = NEW_RULES.find(
+      (rule) =>
+        rule.selectors.some((selector) => selector.endsWith(".ccc-report-legend")) &&
+        rule.atStack.some((at) => at.includes("max-width: 24rem")),
+    );
+    expect(narrow?.body).toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)|grid-template-columns:\s*1fr/,
+    );
+  });
+
+  it("gives every reader control a hit area of at least --ccc-space-lg through the shared control", () => {
+    const control = ALL_RULES.find((rule) => rule.selectors.includes(".ccc-connect-button"));
+    const all = ALL_RULES.filter((rule) => rule.selectors.includes(".ccc-connect-button"));
+    expect(control).toBeDefined();
+    const hasMin = (property: string) =>
+      all.some((rule) =>
+        declarations(rule).some(
+          (d) => d.property === property && d.value === "var(--ccc-space-lg)",
+        ),
+      );
+    expect(hasMin("min-width")).toBe(true);
+    expect(hasMin("min-height")).toBe(true);
+    for (const file of ["report-reader.tsx", "report-finding.tsx", "report-sources.tsx"]) {
+      const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), file), "utf8");
+      const buttons = [...source.matchAll(/<button\b[^>]*>/gs)].map((match) => match[0]);
+      for (const button of buttons)
+        expect(button, `${file}: ${button}`).toContain("ccc-connect-button");
+    }
+  });
+
+  it("gives the focus targets the heading and source headings a visible focus ring", () => {
+    for (const selector of [
+      ".ccc-report-reader h3:focus-visible",
+      ".ccc-report-source h5:focus-visible",
+    ]) {
+      const ring = ruleFor(selector);
+      expect(ring, selector).toBeDefined();
+      expect(ring?.body, selector).toContain(
+        "outline: var(--ccc-focus-ring) solid var(--ccc-accent)",
+      );
+    }
+  });
+
+  it("does not dim the reader a second time: the destination root already carries the dim", () => {
+    for (const rule of NEW_RULES) {
+      if (!rule.selectors.some((selector) => selector.includes("ccc-report-reader"))) continue;
+      expect(rule.body, rule.selectors.join(", ")).not.toContain("--ccc-dim-opacity");
     }
   });
 });
