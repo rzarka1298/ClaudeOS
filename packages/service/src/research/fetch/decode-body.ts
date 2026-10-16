@@ -4,7 +4,10 @@ import { META_PRESCAN_BYTES } from "./limits.js";
  * Decode fetched bytes the way a browser does, or refuse (plan 07-09, wave 2 review MAJOR 4).
  *
  * Order: byte-order mark, then the Content-Type charset, then a meta charset in the first 1,024
- * bytes (pages) or the XML declaration (feeds, the XML analogue of meta), otherwise REFUSE. A page
+ * bytes (pages) or the XML declaration (feeds, the XML analogue of meta). With none of those, an
+ * XML media type (application/xml, text/xml, +xml other than XHTML) is UTF-8, the default the XML
+ * specification gives a document with no mark and no encoding declaration; anything else is
+ * REFUSED. A page
  * with a UTF-16 byte-order mark is never read as UTF-8: read that way its markup would become
  * literal text with NULs between the letters and a hidden block would pass the sanitiser as
  * visible text. A decoded NUL is also refused outright, which catches UTF-16 or UTF-32 served under
@@ -113,6 +116,12 @@ export function decodeBody(bytes: Uint8Array, contentType: string | undefined): 
       // ASCII bytes that declare UTF-16 contradict themselves.
       if (name === undefined || isUtf16(name)) return REFUSED;
       return finish(bytes, name);
+    }
+    // XML with no mark, no header charset and no encoding declaration is UTF-8 by specification.
+    // A feed cannot be told apart from XHTML by media type alone, so XHTML keeps the page rules,
+    // and an octet-stream body has no XML type to default from. A decoded NUL is still refused.
+    if (type !== undefined && type !== "application/octet-stream" && !HTML_TYPES.has(type)) {
+      return finish(bytes, "utf-8");
     }
   }
   if (type !== undefined && HTML_TYPES.has(type)) {
