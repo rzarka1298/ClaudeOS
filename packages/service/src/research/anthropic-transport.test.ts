@@ -263,7 +263,7 @@ describe("Task 2 Test 2: blocks through the transport", () => {
 describe("Task 2 Test 3: HTTP and transport failures", () => {
   for (const [status, code] of [
     [401, "summariser-unconfigured"],
-    [403, "summariser-unconfigured"],
+    [403, "summariser-failed"],
     [400, "summariser-failed"],
     [404, "summariser-failed"],
     [429, "summariser-failed"],
