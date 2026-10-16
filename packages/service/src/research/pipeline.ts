@@ -40,6 +40,7 @@ import { summarizeUntrusted, type TextTransport, UntrustedInputError } from "../
 import { USER_CONTENT_MAX_CHARS } from "./anthropic-request.js";
 import { createRunBudget, type SafeFetcher } from "./fetch/index.js";
 import { contentHashFor, sourceIdFor } from "./hash.js";
+import { nameEffect, PIPELINE_EFFECTS, type PipelineEffect } from "./pipeline-effects.js";
 import {
   type RunNoteSource,
   type RunNoteStage,
@@ -111,6 +112,8 @@ export interface ResearchPipelineDeps {
   /** Announces a run state change (`research.updated`). A throw is swallowed. */
   readonly publish: (payload: ResearchUpdatedPayload) => void;
   readonly sourcesFs?: ResearchSourcesFs;
+  /** Observes each classified effect step as it happens (diagnostics and tests). */
+  readonly audit?: (operation: PipelineEffect) => void;
 }
 
 /** What a run ended with, before it is recorded. */
@@ -205,6 +208,7 @@ function appendStage(
   counts?: Readonly<Record<string, number>>,
 ): void {
   assertLive(trace);
+  nameEffect(deps.audit, PIPELINE_EFFECTS.recordRun);
   const at = deps.now().toISOString();
   appendJobRunStage(deps.db, trace.runId, {
     stage,
@@ -467,6 +471,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
 
   // fetch
   trace.phase = "fetch";
+  nameEffect(deps.audit, PIPELINE_EFFECTS.fetch);
   let fetched: Awaited<ReturnType<SafeFetcher["fetchSources"]>>;
   try {
     fetched = await deps.fetcher.fetchSources(
@@ -503,6 +508,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   assertLive(trace);
   const stored = new Map<string, string>();
   const rawIds: string[] = [];
+  nameEffect(deps.audit, PIPELINE_EFFECTS.writeNotes);
   try {
     for (const source of kept) {
       assertLive(trace);
@@ -547,6 +553,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     kept.map((source) => ({ sourceId: source.sourceId, text: source.evidence })),
     nonce,
   );
+  nameEffect(deps.audit, PIPELINE_EFFECTS.summarise);
   const answer = await summariseSources(
     { delimitedContent: delimited.composed, sourceIds },
     choice.transport,
@@ -576,6 +583,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   const generatedAt = deps.now().toISOString();
   const reportPath = reportNotePathFor(generatedAt, trace.runId);
   const wikiIds: string[] = [];
+  nameEffect(deps.audit, PIPELINE_EFFECTS.writeNotes);
   for (const source of kept) {
     assertLive(trace);
     const wiki = writeWikiSourceNote({
@@ -685,6 +693,7 @@ export function recordRunNote(
   result: PipelineResult | null,
   endedAt: string | null,
 ): void {
+  nameEffect(deps.audit, PIPELINE_EFFECTS.recordRun);
   try {
     trace.runNote = writeRunNote({
       vaultRoot: deps.vaultRoot,
@@ -711,6 +720,7 @@ export function finishRun(
 ): void {
   if (trace.finished) return;
   trace.finished = true;
+  nameEffect(deps.audit, PIPELINE_EFFECTS.recordRun);
   const endedAt = deps.now().toISOString();
   let recorded = result;
   try {

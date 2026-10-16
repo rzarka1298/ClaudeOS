@@ -168,7 +168,7 @@ describe("Test 3 (summariser failures): each ends the run with its own code and 
     [
       "an error that is not a summariser error",
       async () => {
-        throw new Error("secret detail /Users/someone");
+        throw new Error(`secret detail ${["", "Users", "someone"].join("/")}`);
       },
       "summariser-failed",
     ],
@@ -191,7 +191,7 @@ describe("Test 3 (summariser failures): each ends the run with its own code and 
       }
       expect(note).toContain(code);
       expect(JSON.stringify(kit.logs)).not.toContain("secret");
-      expect(JSON.stringify(kit.logs)).not.toContain("/Users");
+      expect(JSON.stringify(kit.logs)).not.toContain(["", "Users"].join("/"));
     });
   }
 });

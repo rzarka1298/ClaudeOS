@@ -27,6 +27,7 @@ import {
   type SummariserChoice,
   type Watchdog,
 } from "./pipeline.js";
+import { nameEffect, PIPELINE_EFFECTS, type PipelineEffect } from "./pipeline-effects.js";
 import { loadResearchSources, type ResearchSourcesFs } from "./sources-config.js";
 
 /**
@@ -77,6 +78,8 @@ export interface ResearchServicesDeps {
   /** Starts a timer and returns its cancel function. Default: a real, unref'd timer. */
   readonly scheduleTimeout?: Watchdog["schedule"];
   readonly sourcesFs?: ResearchSourcesFs;
+  /** Observes each classified effect step as it happens (diagnostics and tests). */
+  readonly audit?: (operation: PipelineEffect) => void;
 }
 
 export interface ResearchServices {
@@ -138,6 +141,8 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
   function launch(pipelineDeps: ResearchPipelineDeps, runId: RunId, startedAt: string): void {
     const trace = createRunTrace(runId, startedAt);
     current = { runId };
+    // The owner's press is the trigger effect: one press, one run.
+    nameEffect(pipelineDeps.audit, PIPELINE_EFFECTS.trigger);
     try {
       publish({ runId, state: "running" });
     } catch {
@@ -182,6 +187,7 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
       log: deps.log,
       publish,
       ...(deps.sourcesFs === undefined ? {} : { sourcesFs: deps.sourcesFs }),
+      ...(deps.audit === undefined ? {} : { audit: deps.audit }),
     };
 
     for (let attempt = 0; attempt < 2; attempt += 1) {

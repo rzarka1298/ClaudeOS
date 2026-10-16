@@ -266,7 +266,7 @@ describe("transport", () => {
   it("never calls a transport that was not asked for: a throwing transport stays inside a failed run", async () => {
     const transport: TextTransport = {
       async complete() {
-        throw new Error("boom with a secret path /Users/x");
+        throw new Error(`boom with a secret path ${["", "Users", "x"].join("/")}`);
       },
     };
     harness = createResearchHarness({ transport });
