@@ -32,6 +32,7 @@ import {
 import {
   asResearchBrowser,
   clearResearchNotes,
+  closeNotes,
   KIND_LABELS,
   openReport,
   openResearch,
@@ -47,7 +48,7 @@ import {
   startResearchEnvironment,
   startTranscript,
   VAULT_TASKS_AT_LEAST,
-  waitForActiveFile,
+  waitForNoteOpen,
   waitForConnected,
   waitForRunEnd,
 } from "../src/spec-support/research-support.js";
@@ -215,10 +216,11 @@ describe("research core", () => {
 
     // Open snapshot opens the raw note, whose banner marks it untrusted data.
     const snapshotPath = report.sourceRefs[Number(sourceNumber) - 1]?.snapshotPath ?? "";
+    await closeNotes(rb);
     expect(
       await browser.execute(rendererClickInSource, sourceNumber, RESEARCH_TEXT.openSnapshotLabel),
     ).toBe(true);
-    await waitForActiveFile(rb, snapshotPath);
+    await waitForNoteOpen(rb, snapshotPath);
     const raw = vaultNotes().raw.find((note) => note.path === snapshotPath);
     expect(parseRawNote(raw?.text ?? "").banner).toBe(RAW_BANNER);
   });

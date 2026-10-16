@@ -377,7 +377,8 @@ describe("the transcript, spies, clicks and focus readers", () => {
     )();
     expect(seen.clipboard).toEqual(["https://a.example.invalid/x"]);
     expect(seen.scrolls).toEqual([{ behavior: null }, { behavior: "smooth" }]);
-    expect(written).toEqual(["https://a.example.invalid/x"]);
+    // The real clipboard is never written.
+    expect(written).toEqual([]);
     expect(scrolled).toHaveLength(2);
     expect(inPage<boolean>(target, "rendererClearSpies")()).toBe(true);
     expect(inPage<{ clipboard: string[] }>(target, "rendererReadSpies")().clipboard).toEqual([]);

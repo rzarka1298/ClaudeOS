@@ -11,9 +11,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { uatAccountFor } from "./isolation-guards.js";
 import { deleteUatAccount } from "./keychain-cleanup.js";
 import { SERVICE_ENTRY } from "./repo-paths.js";
-import { checkHostileRaw } from "./spec-support/research-verdicts.js";
+import { checkHostileRaw, checkLogPrivacy } from "./spec-support/research-verdicts.js";
 import {
   hostileSources,
+  privacyMarkers,
   prepareResearchUat,
   QUERY_SOURCE_URL,
   REFETCH_MARKER_NAME,
@@ -376,6 +377,9 @@ d("the research UAT fixture drives the real built service (plan 07-17)", () => {
     }
     expect(removed).toBeGreaterThan(0);
     expect(logText(item)).not.toContain("Ignore all previous instructions");
+    expect(
+      checkLogPrivacy([{ label: "the service log", text: logText(item) }], privacyMarkers()),
+    ).toEqual([]);
   }, 90_000);
 
   it("reruns: unchanged sources reuse their raw notes, a changed one adds one, the old snapshot stays (item 13)", async () => {
@@ -422,6 +426,10 @@ d("the research UAT fixture drives the real built service (plan 07-17)", () => {
     expect(log).not.toContain("uatq-");
     expect(log).not.toContain("example.invalid");
     expect(log).not.toMatch(/sk-[A-Za-z0-9_-]{20,}/);
+    // The same verdict the live item applies.
+    expect(checkLogPrivacy([{ label: "the service log", text: log }], privacyMarkers())).toEqual(
+      [],
+    );
   }, 60_000);
 
   it("a file in the output folder that is not a report is listed as an unreadable row (item 14's refetch marker)", async () => {

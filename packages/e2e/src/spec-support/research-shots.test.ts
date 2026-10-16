@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { captureLook, type ShotBrowser } from "./research-shots.js";
+import {
+  captureLook,
+  rememberLayout,
+  type ShotBrowser,
+  withEnlargedLayout,
+} from "./research-shots.js";
 
 /**
  * The look capture of the research items (plan 07-17, D-11, 07-UAT items 15 and 16): the same
@@ -129,5 +134,53 @@ describe("captureLook", () => {
     await expect(captureLook(moved.browser, { ...base, shotsDir: "/tmp/s" })).rejects.toThrow(
       /Focus moved/,
     );
+  });
+});
+
+describe("withEnlargedLayout and rememberLayout", () => {
+  it("runs the body between enlarging and restoring, and restores when the body throws", async () => {
+    const { browser, calls } = fake();
+    const result = await withEnlargedLayout(browser, "v", async () => {
+      calls.push("body");
+      return 42;
+    });
+    expect(result).toBe(42);
+    const order = calls.filter((call) =>
+      ["execute:maximizeCommandCenter", "body", "execute:restoreLayout"].includes(call),
+    );
+    expect(order).toEqual(["execute:maximizeCommandCenter", "body", "execute:restoreLayout"]);
+    const failing = fake();
+    await expect(
+      withEnlargedLayout(failing.browser, "v", async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(failing.calls).toContain("execute:restoreLayout");
+  });
+
+  it("does not run the body when the layout would be clipped, and still restores", async () => {
+    const { browser, calls } = fake({ fits: false });
+    let ran = false;
+    await expect(
+      withEnlargedLayout(browser, "v", async () => {
+        ran = true;
+      }),
+    ).rejects.toThrow(/clipped/);
+    expect(ran).toBe(false);
+    expect(calls).toContain("execute:restoreLayout");
+  });
+
+  it("reads the layout as it is by enlarging and restoring at once, returning what it found", async () => {
+    const { browser, calls } = fake();
+    const state = await rememberLayout(browser, "v");
+    expect(state).toEqual({
+      leftCollapsed: false,
+      rightCollapsed: false,
+      rightWidth: 300,
+      centerInRight: true,
+    });
+    expect(
+      calls.filter((call) => call.startsWith("execute:m") || call.startsWith("execute:r")),
+    ).toEqual(["execute:maximizeCommandCenter", "execute:restoreLayout"]);
   });
 });

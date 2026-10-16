@@ -7,7 +7,11 @@ import {
   clearResearchNotes,
   DOM_CONFIG,
   isRunEndLine,
+  type PluginDataPage,
   readVaultNotes,
+  rendererCloseNotes,
+  rendererOpenNotePaths,
+  setReducedMotion,
 } from "./research-support.js";
 
 const made: string[] = [];
@@ -144,5 +148,34 @@ describe("setReducedMotion", () => {
     });
     await expect(setReducedMotion(fake, "reduced")).rejects.toThrow();
     expect(calls.filter((call) => call.startsWith("write"))).toEqual([]);
+  });
+});
+
+describe("the open-note readers", () => {
+  function ctx(paths: Array<string | undefined>) {
+    const detached: number[] = [];
+    const leaves = paths.map((path, index) => ({
+      view: { file: path === undefined ? null : { path } },
+      detach: () => {
+        detached.push(index);
+      },
+    }));
+    return {
+      detached,
+      value: { app: { workspace: { getLeavesOfType: () => leaves } } } as never,
+    };
+  }
+
+  it("lists the paths of the open Markdown tabs and skips a tab with no file", () => {
+    expect(rendererOpenNotePaths(ctx(["a.md", undefined, "global/raw/b.md"]).value)).toEqual([
+      "a.md",
+      "global/raw/b.md",
+    ]);
+  });
+
+  it("closes every Markdown tab and says how many", () => {
+    const fake = ctx(["a.md", "b.md"]);
+    expect(rendererCloseNotes(fake.value)).toBe(2);
+    expect(fake.detached).toEqual([0, 1]);
   });
 });

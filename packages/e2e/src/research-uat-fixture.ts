@@ -426,3 +426,25 @@ export function prepareResearchUat(
     restoreBaseFeed: () => writeFileSync(join(fixtureDir, "atom.xml"), FIXTURE_ATOM),
   };
 }
+
+/**
+ * Texts a service log or the settings file must never hold (07-UAT item 21): phrases from the
+ * synthetic sources the runs fetch (the base feeds and page, the long report's pages), the hostile
+ * corpus's kept strings, and the token in the query-string address.
+ */
+export function privacyMarkers(): string[] {
+  const markers = new Set<string>([
+    "alpha parser is now twice as fast",
+    "beta command line tool now reports progress",
+    "gamma runtime patch removes a memory leak",
+    "toolkit release notes for the long report",
+    "caches compiled templates between builds",
+    QUERY_TOKEN,
+  ]);
+  for (const entry of hostileSources()) {
+    for (const kept of entry.keeps) {
+      if (kept.length >= 12) markers.add(kept.slice(0, 40));
+    }
+  }
+  return [...markers];
+}

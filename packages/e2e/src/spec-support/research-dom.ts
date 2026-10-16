@@ -101,6 +101,7 @@ declare const window: {
   Element: { prototype: { scrollIntoView(options?: unknown): void } };
   innerWidth: number;
   performance: { now(): number };
+  setTimeout(callback: () => void, ms: number): unknown;
 };
 declare function getComputedStyle(node: RNode): RStyle;
 
@@ -620,9 +621,9 @@ export function rendererReadTranscript(): TranscriptRecord[] {
 // Clipboard and scroll spies
 
 /**
- * Wraps `navigator.clipboard.writeText` so each call is recorded (and still reaches the real
- * clipboard), and wraps `Element.prototype.scrollIntoView` so each call's `behavior` option is
- * recorded (and still scrolls). Installing twice changes nothing.
+ * Replaces `navigator.clipboard.writeText` with a recorder that resolves at once (the real
+ * clipboard is never written), and wraps `Element.prototype.scrollIntoView` so each call's
+ * `behavior` option is recorded (and still scrolls). Installing twice changes nothing.
  */
 export function rendererInstallSpies(): boolean {
   const state = window.__cccResearch ?? {};
@@ -634,12 +635,13 @@ export function rendererInstallSpies(): boolean {
   state.scrolls = scrolls;
   const originals: Record<string, unknown> = {};
   state.originals = originals;
-  const originalWrite = window.navigator.clipboard.writeText.bind(window.navigator.clipboard);
-  originals.writeText = originalWrite;
+  originals.writeText = window.navigator.clipboard.writeText;
+  // The write is recorded and answered, never passed on: an automated run must not overwrite the
+  // owner's clipboard, and a window that is not focused refuses a real write.
   const W = [
     (text: string): Promise<void> => {
       clipboard.push(String(text));
-      return originalWrite(text);
+      return Promise.resolve();
     },
   ];
   window.navigator.clipboard.writeText = W[0] as (text: string) => Promise<void>;
@@ -720,6 +722,62 @@ export function rendererClickInSource(sourceNumber: string, label: string): bool
     }
   }
   return false;
+}
+
+/** Clicks the first match twice, back to back; the number of clicks made (0 when nothing matches). */
+export function rendererClickTwice(selector: string): number {
+  const node = document.querySelector(selector);
+  if (node === null) return 0;
+  node.click();
+  node.click();
+  return 2;
+}
+
+/**
+ * Opens the destination from its tab and presses its Run now button the instant the button
+ * exists, before the destination's first status answer can arrive: the one way a press reaches the
+ * service while a run is already going on that this window has not been told about (07-UAT item
+ * 11). A button that is already aria-disabled is not pressed (the answer says so).
+ */
+export async function rendererMountAndPress(
+  tabSelector: string,
+  buttonSelector: string,
+  maxMs: number,
+): Promise<{ clicked: boolean; waitedMs: number; disabledAtSight: boolean }> {
+  const started = window.performance.now();
+  document.querySelector(tabSelector)?.click();
+  for (;;) {
+    const waitedMs = window.performance.now() - started;
+    const button = document.querySelector(buttonSelector);
+    if (button !== null) {
+      if (button.getAttribute("aria-disabled") === "true") {
+        return { clicked: false, waitedMs, disabledAtSight: true };
+      }
+      button.click();
+      return { clicked: true, waitedMs, disabledAtSight: false };
+    }
+    if (waitedMs > maxMs) return { clicked: false, waitedMs, disabledAtSight: false };
+    await new Promise<void>((done) => window.setTimeout(done, 0));
+  }
+}
+
+/** Puts focus on the Run now button of the header; false when there is none. */
+export function rendererFocusRunNow(runBoxClass: string): boolean {
+  const button = document.querySelector(`.${runBoxClass} button`);
+  if (button === null) return false;
+  button.focus();
+  return document.activeElement === button;
+}
+
+/** The computed `scroll-behavior` of an element and of every ancestor up to the document. */
+export function rendererReadScrollBehaviour(selector: string): string[] {
+  const values: string[] = [];
+  let node: RNode | null = document.querySelector(selector);
+  while (node !== null) {
+    values.push(getComputedStyle(node).getPropertyValue("scroll-behavior"));
+    node = node.parentElement;
+  }
+  return values;
 }
 
 /** The focused element as the keyboard items need it. */
@@ -838,6 +896,8 @@ export function rendererReadLayout(
 export interface ArticleFacts {
   found: boolean;
   findingCount: number;
+  /** The rendered width of the reader in px (its prose column). */
+  articleWidthPx: number;
   /** Computed `max-width` of the reader in px, and the width of a probe of exactly 68ch in it. */
   maxWidthPx: number;
   measure68chPx: number;
@@ -871,6 +931,7 @@ export function rendererReadArticle(
   const none: ArticleFacts = {
     found: false,
     findingCount: 0,
+    articleWidthPx: 0,
     maxWidthPx: 0,
     measure68chPx: 0,
     fontPx: 0,
@@ -936,6 +997,7 @@ export function rendererReadArticle(
   return {
     found: true,
     findingCount: article.querySelectorAll(`li.${itemClass}`).length,
+    articleWidthPx: article.getBoundingClientRect().width,
     maxWidthPx: Number.parseFloat(style.maxWidth),
     measure68chPx: px("68ch"),
     fontPx: Number.parseFloat(style.fontSize),

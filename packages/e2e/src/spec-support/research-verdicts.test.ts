@@ -91,6 +91,21 @@ describe("checkRunTranscript (07-UAT item 2)", () => {
     );
   });
 
+  it("accepts a first Running row that has no stage word yet, and names a run that never named a stage", () => {
+    const early = [
+      GOOD[0],
+      GOOD[1],
+      GOOD[2],
+      record(50, STARTED, "▸ Running · started just now"),
+      ...GOOD.slice(3),
+    ] as TranscriptRecord[];
+    expect(checkRunTranscript(early)).toEqual([]);
+    const none = GOOD.map((entry) =>
+      entry.current === null ? entry : { ...entry, current: "▸ Running · started just now" },
+    );
+    expect(checkRunTranscript(none)).toContain("the Current run row never named a stage");
+  });
+
   it("names a run that never showed the Running row, and a stage word outside the closed set", () => {
     const noCurrent = GOOD.map((entry) => ({ ...entry, current: null }));
     expect(checkRunTranscript(noCurrent)).toContain("the Current run row never showed Running");
@@ -1283,6 +1298,18 @@ describe("checkTabOrder (07-UAT item 17)", () => {
     );
   });
 
+  it("leaves the scripted first focus out of the ring check when asked to", () => {
+    const scripted = GOOD_WALK.map((entry, index) =>
+      index === 0
+        ? { ...entry, focusVisible: false, outlineStyle: "none", outlineWidth: "0px" }
+        : entry,
+    );
+    expect(checkTabOrder(scripted, { sourcesCount: 12 })).toContain(
+      "Run now: fetch the sources and write a research report shows no focus ring",
+    );
+    expect(checkTabOrder(scripted, { sourcesCount: 12, skipRingOnFirst: true })).toEqual([]);
+  });
+
   it("names a button that shows no focus ring", () => {
     const ringless = GOOD_WALK.map((entry, index) =>
       index === 7
@@ -1579,6 +1606,8 @@ describe("checkReuse (07-UAT item 13)", () => {
   });
 });
 
+type Card = { title: string; presentation: string | null; heading: string; body: string };
+
 describe("checkOverviewCards (07-UAT item 20)", () => {
   const cards = [
     {
@@ -1601,20 +1630,17 @@ describe("checkOverviewCards (07-UAT item 20)", () => {
 
   it("names a Today card that became ready, a missing card and a tech-intel card with data", () => {
     expect(
-      checkOverviewCards([{ ...(cards[0] as never), presentation: "ready" }, cards[1] as never]),
+      checkOverviewCards([{ ...(cards[0] as Card), presentation: "ready" }, cards[1] as Card]),
     ).toContain("the Today card is ready, not permission-required");
-    expect(checkOverviewCards([cards[1] as never])).toContain("there is no Today card");
-    expect(checkOverviewCards([cards[0] as never])).toContain(
+    expect(checkOverviewCards([cards[1] as Card])).toContain("there is no Today card");
+    expect(checkOverviewCards([cards[0] as Card])).toContain(
       "there is no technology and market intelligence card",
     );
     expect(
-      checkOverviewCards([cards[0] as never, { ...(cards[1] as never), presentation: "ready" }]),
+      checkOverviewCards([cards[0] as Card, { ...(cards[1] as Card), presentation: "ready" }]),
     ).toContain("the technology and market intelligence card is ready, not unavailable");
     expect(
-      checkOverviewCards([
-        { ...(cards[0] as never), heading: "Something else" },
-        cards[1] as never,
-      ]),
+      checkOverviewCards([{ ...(cards[0] as Card), heading: "Something else" }, cards[1] as Card]),
     ).toContain("the Today card does not name Google Calendar and Gmail");
   });
 });

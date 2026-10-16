@@ -3,15 +3,20 @@ import {
   REPORT_ITEM_KIND_DISPLAY,
   REPORT_ITEM_KINDS,
   type ReportItemKind,
+  RUN_STATE_DISPLAY,
   SOURCE_TYPE_DISPLAY,
 } from "@ccc/domain";
-import { RAW_BANNER, RESEARCH_TEXT } from "./research-copy.js";
+import { allMotionOff, anyMotionOn, focusRingVisible, type MotionSample } from "./cross-support.js";
+import { RAW_BANNER, RESEARCH_CLASSES, RESEARCH_TEXT } from "./research-copy.js";
 import type {
+  ArticleFacts,
   ReadingViewFacts,
   RenderedReader,
   RenderedResearch,
   RenderedRow,
   RenderedSource,
+  ResearchFocus,
+  ResearchLayoutFacts,
   TranscriptRecord,
 } from "./research-dom.js";
 import {
@@ -70,11 +75,19 @@ export function checkRunTranscript(records: readonly TranscriptRecord[]): string
   }
   const running = records.filter((entry) => entry.current?.includes(RUNNING_WORD) === true);
   if (running.length === 0) problems.push("the Current run row never showed Running");
-  const words = running.map((entry) => (entry.current ?? "").split(" · ")[1] ?? "");
+  // `▸ Running · {stage} · started {time}`; a run whose first stage is not logged yet reads
+  // `▸ Running · started {time}` and has no stage word.
+  const words = running
+    .map((entry) => (entry.current ?? "").split(" · "))
+    .filter((parts) => parts.length >= 3)
+    .map((parts) => parts[1] ?? "");
+  if (running.length > 0 && words.length === 0) {
+    problems.push("the Current run row never named a stage");
+  }
   if (words.some((word) => !(STAGE_WORDS as readonly string[]).includes(word))) {
     problems.push("the Current run row showed a stage word outside the closed set");
   }
-  if (running.length > 0 && words[0] !== RESEARCH_TEXT.stageCapture) {
+  if (words.length > 0 && words[0] !== RESEARCH_TEXT.stageCapture) {
     problems.push("the Current run row did not first name the held fetch stage");
   }
   const last = records[records.length - 1];
@@ -553,6 +566,426 @@ export function checkReadingFacts(
   const visible = collapse(facts.text);
   for (const text of expected.texts ?? []) {
     if (!visible.includes(collapse(text))) problems.push(`the rendered text lacks: ${text}`);
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 07-UAT items 15 and 23: the article
+
+const LEADING = 1.6;
+
+/**
+ * The reader as an article (RSRCH-10, D-24, UI-SPEC "Article typography"): the prose column is at
+ * most 68ch, finding text and quotes are body size and regular weight with the prose leading of
+ * 1.6, findings are one large step apart, section headings have the extra-large step above them,
+ * and nothing is clamped, ellipsised, hidden or past the reader's edge. Values are computed
+ * pixels read from the page, so the tolerance is a pixel.
+ */
+export function checkArticleFacts(
+  facts: ArticleFacts,
+  expected: { readonly findings: number },
+): string[] {
+  if (!facts.found) return ["the report did not render"];
+  const problems: string[] = [];
+  if (facts.findingCount !== expected.findings) {
+    problems.push(`the reader shows ${facts.findingCount} findings, expected ${expected.findings}`);
+  }
+  if (!(facts.measure68chPx > 0) || Math.abs(facts.maxWidthPx - facts.measure68chPx) > 1) {
+    problems.push("the reader's maximum width is not 68ch");
+  }
+  if (facts.articleWidthPx > facts.maxWidthPx + 1)
+    problems.push("the prose column is wider than 68ch");
+  if (Math.abs(facts.textLeadingPx - LEADING * facts.textFontPx) > 0.6) {
+    problems.push("the finding text does not have prose leading of 1.6");
+  }
+  if (Math.abs(facts.textFontPx - facts.rootFontPx) > 0.5) {
+    problems.push("the finding text is not body size");
+  }
+  if (facts.textWeight !== "400") problems.push("the finding text is not regular weight");
+  if (
+    facts.quoteLeadingPx > 0 &&
+    Math.abs(facts.quoteLeadingPx - LEADING * facts.textFontPx) > 0.6
+  ) {
+    problems.push("a quote does not have prose leading of 1.6");
+  }
+  if (!(facts.spaceLgPx > 0) || Math.abs(facts.itemGapPx - facts.spaceLgPx) > 1) {
+    problems.push("findings are not separated by the large spacing step");
+  }
+  if (facts.headingMarginTopPx.length < 2) {
+    problems.push("fewer than two section headings were measured");
+  } else if (
+    !(facts.spaceXlPx > 0) ||
+    facts.headingMarginTopPx.some((margin) => Math.abs(margin - facts.spaceXlPx) > 1)
+  ) {
+    problems.push("a section heading is not spaced by the extra-large step");
+  }
+  if (facts.clamped.length > 0) {
+    problems.push(`something is clamped or truncated: ${facts.clamped.join(", ")}`);
+  }
+  if (facts.overflowX > 1) problems.push("something runs past the reader's edge");
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 07-UAT item 16: the two layouts
+
+/** The grid switches at 48rem. */
+const STACK_AT_REM = 48;
+
+function sideways(facts: ResearchLayoutFacts): boolean {
+  return facts.overflowRoot > 1 || facts.overflowGrid > 1;
+}
+
+/**
+ * Width behaviour (UI-SPEC "Width behaviour"): at full width the list sits beside the reader; in a
+ * narrow pane an open report replaces the list and offers Back to reports; neither scrolls sideways.
+ */
+export function checkLayouts(input: {
+  readonly wide: ResearchLayoutFacts;
+  readonly narrow: ResearchLayoutFacts;
+}): string[] {
+  const problems: string[] = [];
+  const { wide, narrow } = input;
+  if (!wide.found) {
+    problems.push("full width: the Research layout was not found");
+  } else {
+    if (wide.gridWidth < STACK_AT_REM * wide.rootFontPx) {
+      problems.push("full width: the grid is narrower than 48rem");
+    }
+    if (wide.mode !== "side") problems.push("full width: the layout is stacked");
+    if (wide.list === null || wide.list.display === "none")
+      problems.push("full width: the list is not shown");
+    if (wide.reader === null || wide.reader.display === "none") {
+      problems.push("full width: the reader is not shown");
+    }
+    if (wide.list !== null && wide.reader !== null && wide.list.display !== "none") {
+      if (wide.list.right > wide.reader.left + 1)
+        problems.push("full width: the list is not beside the reader");
+      if (Math.abs(wide.list.top - wide.reader.top) > 4) {
+        problems.push("full width: the list and the reader do not start on the same row");
+      }
+    }
+    if (sideways(wide)) problems.push("full width: the destination scrolls sideways");
+  }
+  if (!narrow.found) {
+    problems.push("narrow pane: the Research layout was not found");
+  } else {
+    if (narrow.mode !== "stacked") problems.push("narrow pane: the layout is not stacked");
+    if (narrow.readerOpen !== "true") problems.push("narrow pane: no report is open");
+    if (narrow.gridWidth > STACK_AT_REM * narrow.rootFontPx) {
+      problems.push("narrow pane: the grid is wider than 48rem");
+    }
+    if (narrow.list !== null && narrow.list.display !== "none") {
+      problems.push("narrow pane: the open report does not replace the list");
+    }
+    if (!narrow.backToReportsVisible) problems.push("narrow pane: Back to reports is not shown");
+    if (sideways(narrow)) problems.push("narrow pane: the destination scrolls sideways");
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 07-UAT item 17: the keyboard
+
+const isButton = (entry: ResearchFocus): boolean => entry.tag === "button";
+
+/**
+ * The Tab walk from Run now to Open run note (UI-SPEC "Interaction and keyboard contract"): the
+ * landmarks come in order (Run now, the run status controls, a report row, then the reader's
+ * controls), and every button reached shows a focus ring.
+ */
+export function checkTabOrder(
+  records: readonly ResearchFocus[],
+  options: {
+    readonly sourcesCount: number;
+    /** The first record is where a spec put focus with a script (no ring is drawn for that). */
+    readonly skipRingOnFirst?: boolean;
+  },
+): string[] {
+  const landmarks: Array<{ label: string; match: (entry: ResearchFocus) => boolean }> = [
+    { label: "Run now", match: (entry) => entry.name.startsWith(RESEARCH_TEXT.runNowLabel) },
+    { label: "Open report", match: (entry) => entry.name === RESEARCH_TEXT.openReportLabel },
+    {
+      label: "Show configured sources",
+      match: (entry) => entry.name === `${RESEARCH_TEXT.showSourcesPrefix}${options.sourcesCount})`,
+    },
+    {
+      label: "a report row",
+      match: (entry) => entry.classes.split(/\s+/).includes(RESEARCH_CLASSES.rowButton),
+    },
+    {
+      label: "Open note",
+      match: (entry) => entry.inReader && entry.name === RESEARCH_TEXT.openNoteLabel,
+    },
+    { label: "a citation", match: (entry) => entry.cite !== null },
+    { label: "Copy address", match: (entry) => entry.name === RESEARCH_TEXT.copyAddressLabel },
+    { label: "Open snapshot", match: (entry) => entry.name === RESEARCH_TEXT.openSnapshotLabel },
+    { label: "Open run note", match: (entry) => entry.name === RESEARCH_TEXT.openRunNoteLabel },
+  ];
+  const problems: string[] = [];
+  const at = landmarks.map((landmark) => records.findIndex(landmark.match));
+  landmarks.forEach((landmark, index) => {
+    if ((at[index] as number) < 0) {
+      problems.push(`focus never reached ${landmark.label}`);
+      return;
+    }
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      if ((at[earlier] as number) >= 0 && (at[index] as number) < (at[earlier] as number)) {
+        problems.push(
+          `${landmark.label} came before ${(landmarks[earlier] as { label: string }).label}`,
+        );
+        return;
+      }
+    }
+  });
+  const reached = options.skipRingOnFirst === true ? records.slice(1) : records;
+  for (const entry of reached.filter(isButton)) {
+    if (!entry.focusVisible || !focusRingVisible(entry)) {
+      problems.push(`${entry.name} shows no focus ring`);
+    }
+  }
+  return problems;
+}
+
+/** A citation moves focus to its source entry's heading; Back to finding returns it (UI-SPEC focus rules). */
+export function checkCitationRoundTrip(input: {
+  readonly cite: ResearchFocus;
+  readonly source: ResearchFocus | null;
+  readonly next: ResearchFocus | null;
+  readonly returned: ResearchFocus | null;
+}): string[] {
+  const problems: string[] = [];
+  const [finding, source] = (input.cite.cite ?? "-").split("-");
+  if (input.source === null || input.source.tag !== "h5") {
+    problems.push("the citation did not move focus to a source entry");
+  } else if (input.source.sourceNumber !== source) {
+    problems.push(`focus moved to source ${input.source.sourceNumber}, not source ${source}`);
+  }
+  if (input.next === null || input.next.name !== `${RESEARCH_TEXT.backToFindingPrefix}${finding}`) {
+    problems.push(`the way back to finding ${finding} is not the next stop`);
+  }
+  if (input.returned === null || input.returned.cite !== input.cite.cite) {
+    problems.push("Back to finding did not return focus to the citation");
+  }
+  return problems;
+}
+
+/** Escape in the one-column layout closes the reader and returns focus to the originating row. */
+export function checkEscapeToRow(input: {
+  readonly readerClosed: boolean;
+  readonly focus: ResearchFocus | null;
+}): string[] {
+  const problems: string[] = [];
+  if (!input.readerClosed) problems.push("Escape did not close the reader");
+  if (
+    input.focus === null ||
+    !input.focus.inRow ||
+    !input.focus.classes.split(/\s+/).includes(RESEARCH_CLASSES.rowButton)
+  ) {
+    problems.push("focus did not return to the report row");
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 07-UAT item 18: reduced motion
+
+/**
+ * Reduced motion (A11Y-03, UI-SPEC "Motion"): a baseline taken with motion on must show motion
+ * (otherwise "all off" below would pass on nothing), the root is in reduced mode, nothing sampled
+ * moves, and a scroll to a cited source is instant.
+ */
+export function checkMotion(input: {
+  readonly baseline: readonly MotionSample[];
+  readonly reduced: readonly MotionSample[];
+  readonly reducedRoot: string | null;
+  readonly scrolls: readonly { readonly behavior: string | null }[];
+  readonly scrollBehaviours: readonly string[];
+}): string[] {
+  const problems: string[] = [];
+  if (!anyMotionOn(input.baseline)) {
+    problems.push("the full-motion baseline shows no motion, so the reduced run proves nothing");
+  }
+  if (input.reducedRoot !== "reduced")
+    problems.push("the command center root is not in reduced motion");
+  if (!allMotionOff(input.reduced)) problems.push("something still moves under reduced motion");
+  if (input.scrolls.length === 0) problems.push("following a citation scrolled nothing");
+  if (input.scrolls.some((entry) => entry.behavior === "smooth")) {
+    problems.push("a scroll to a source was smooth");
+  }
+  if (input.scrollBehaviours.includes("smooth")) {
+    problems.push("the reader sits inside a smooth-scrolling container");
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 07-UAT items 12 and 14: the service stops
+
+/** The service is away (UI-SPEC "Destination states"): dimmed, last-good content, Run now aria-disabled with its reason. */
+export function checkDisconnectedView(
+  read: RenderedResearch,
+  expected: { readonly rows: number; readonly findings: number },
+): string[] {
+  const problems: string[] = [];
+  if (!read.dimmed) problems.push("the destination is not dimmed");
+  if (!read.runNow.disabled) problems.push("Run now is not aria-disabled");
+  if (read.runNow.reason !== RESEARCH_TEXT.disconnectedReason) {
+    problems.push("Run now does not give the service-away reason");
+  }
+  if (
+    !read.strip.badges.some(
+      (entry) =>
+        entry.kind === "unavailable" && entry.glyph === "○" && entry.label === "Unavailable",
+    )
+  ) {
+    problems.push("the strip does not show Unavailable");
+  }
+  if (read.reader === null) problems.push("the open report is gone");
+  else if (read.reader.findings.length !== expected.findings) {
+    problems.push(
+      `the open report shows ${read.reader.findings.length} findings, expected ${expected.findings}`,
+    );
+  }
+  if (read.list.rows.length !== expected.rows) {
+    problems.push(`the list shows ${read.list.rows.length} rows, expected ${expected.rows}`);
+  }
+  return problems;
+}
+
+export function checkReconnectedView(read: RenderedResearch): string[] {
+  const problems: string[] = [];
+  if (read.dimmed) problems.push("the destination is still dimmed");
+  if (read.runNow.disabled) problems.push("Run now is still disabled");
+  return problems;
+}
+
+/** A run that ended without reporting is an Unknown run, never an invented outcome (DIAG-05). */
+export function checkUnknownRun(read: RenderedResearch): string[] {
+  const row = read.runStatus.rows.find((entry) => entry.label === RESEARCH_TEXT.unknownRunLabel);
+  if (row === undefined) return ["there is no Unknown run row"];
+  const stale = RUN_STATE_DISPLAY.stale;
+  const word = `${stale.glyph} ${stale.label}`;
+  return row.value.includes(word) ? [] : [`the Unknown run row does not read ${word}`];
+}
+
+// ---------------------------------------------------------------------------
+// 07-UAT item 13: reruns
+
+export interface NotesSnapshot {
+  /** The file names in `global/raw`. */
+  readonly raw: readonly string[];
+  /** The wiki notes: file name, note id and the instant the source was last retrieved. */
+  readonly wiki: readonly {
+    readonly name: string;
+    readonly id: string;
+    readonly retrievedAt: string;
+  }[];
+}
+
+/**
+ * Reruns reuse and update in place (RSRCH-02, RSRCH-03): an unchanged rerun adds no raw file and
+ * rewrites each wiki note with the same id; a changed source adds exactly one raw file and keeps
+ * the earlier ones (the first report's snapshot paths still open).
+ */
+export function checkReuse(input: {
+  readonly first: NotesSnapshot;
+  readonly second: NotesSnapshot;
+  readonly third: NotesSnapshot;
+}): string[] {
+  const problems: string[] = [];
+  const { first, second, third } = input;
+  const same = (a: readonly string[], b: readonly string[]) =>
+    a.length === b.length && [...a].sort().join("|") === [...b].sort().join("|");
+  if (!same(first.raw, second.raw)) problems.push("the unchanged rerun added a raw file");
+  for (const note of first.wiki) {
+    const again = second.wiki.find((entry) => entry.name === note.name);
+    if (again === undefined || again.id !== note.id) {
+      problems.push("a wiki note changed its id on the unchanged rerun");
+    } else if (again.retrievedAt === note.retrievedAt) {
+      problems.push("a wiki note was not rewritten on the unchanged rerun");
+    }
+  }
+  if (third.raw.length !== first.raw.length + 1) {
+    problems.push("the changed source did not add exactly one raw file");
+  }
+  if (first.raw.some((name) => !third.raw.includes(name))) {
+    problems.push("an earlier raw file disappeared");
+  }
+  for (const note of first.wiki) {
+    const later = third.wiki.find((entry) => entry.name === note.name);
+    if (later === undefined || later.id !== note.id) {
+      problems.push("a wiki note changed its id after the changed source");
+    }
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 07-UAT item 20: the Overview
+
+/** The Overview is unchanged (D-21 amended): Today stays the permission-required card, tech-intel unavailable. */
+export function checkOverviewCards(
+  cards: readonly {
+    readonly title: string;
+    readonly presentation: string | null;
+    readonly heading: string;
+  }[],
+): string[] {
+  const problems: string[] = [];
+  const today = cards.find((card) => card.title === RESEARCH_TEXT.todayTitle);
+  if (today === undefined) problems.push("there is no Today card");
+  else {
+    if (today.presentation !== "permission-required") {
+      problems.push(`the Today card is ${today.presentation}, not permission-required`);
+    }
+    if (!today.heading.includes(RESEARCH_TEXT.todaySource)) {
+      problems.push("the Today card does not name Google Calendar and Gmail");
+    }
+  }
+  const intel = cards.find((card) => card.title === RESEARCH_TEXT.techIntelTitle);
+  if (intel === undefined) problems.push("there is no technology and market intelligence card");
+  else if (intel.presentation !== "unavailable") {
+    problems.push(
+      `the technology and market intelligence card is ${intel.presentation}, not unavailable`,
+    );
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 07-UAT item 21: logs and settings
+
+const ADDRESS = /https?:\/\/[^\s"']+/;
+const ADDRESS_WITH_QUERY = /https?:\/\/[^\s"']+\?[^\s"']+/;
+const KEY_SHAPED = /sk-[A-Za-z0-9_-]{16,}/;
+const REMOTE_ERROR =
+  /ECONN\w*|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|certificate|HTTP\/\d|status code \d{3}/i;
+
+/**
+ * Only codes, ids and counts reach a log or the settings file (ADR-0017, PRIV-04): no source
+ * text, no address (and none with a query), no key-shaped string and no remote error text. An
+ * empty text proves nothing and is refused.
+ */
+export function checkLogPrivacy(
+  texts: readonly { readonly label: string; readonly text: string }[],
+  markers: readonly string[],
+): string[] {
+  const problems: string[] = [];
+  for (const { label, text } of texts) {
+    if (text.trim() === "") {
+      problems.push(`${label} is empty, so there is nothing to check`);
+      continue;
+    }
+    for (const marker of markers) {
+      if (text.includes(marker)) problems.push(`${label} holds source text (${marker})`);
+    }
+    if (ADDRESS_WITH_QUERY.test(text))
+      problems.push(`${label} holds an address with a query string`);
+    if (ADDRESS.test(text)) problems.push(`${label} holds an address`);
+    if (KEY_SHAPED.test(text)) problems.push(`${label} holds a key-shaped string`);
+    if (REMOTE_ERROR.test(text)) problems.push(`${label} holds remote error text`);
   }
   return problems;
 }

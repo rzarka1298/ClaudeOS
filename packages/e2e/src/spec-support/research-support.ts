@@ -19,18 +19,24 @@ import {
   type ResearchUatPrepared,
 } from "../research-uat-fixture.js";
 import { readLedger } from "../ledger.js";
+import { assertPluginDataKeys, PLUGIN_ID } from "../plugin-data.js";
 import { readProcessTable } from "../process-table.js";
 import { INSTALLED_OBSIDIAN_BINARY } from "../repo-paths.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../spec-context.js";
 import { copyStore, queryStore } from "../store-copy.js";
 import { RESEARCH_CLASSES, RESEARCH_TEXT } from "./research-copy.js";
 import {
+  type ArticleFacts,
   type ReadingViewFacts,
   type RenderedReader,
   type RenderedResearch,
   type ResearchDomConfig,
+  type ResearchLayoutFacts,
   rendererClickByText,
   rendererClickNth,
+  rendererFocusRunNow,
+  rendererReadArticle,
+  rendererReadLayout,
   rendererReadReadingView,
   rendererReadResearch,
   rendererReadTranscript,
@@ -38,7 +44,8 @@ import {
   type TranscriptRecord,
 } from "./research-dom.js";
 import { type ProcessNode, diffNewDescendants, readProcessTree } from "./cross-support.js";
-import { RESEARCH_FOLDERS, readFolderNotes } from "./research-notes.js";
+import { RESEARCH_FOLDERS, readFolderNotes, scalarOf } from "./research-notes.js";
+import type { NotesSnapshot } from "./research-verdicts.js";
 import {
   assertVaultInsideRunRoot,
   type NoteFile,
@@ -422,6 +429,9 @@ interface ObsidianLeaf {
 interface ObsidianCtx {
   app: {
     workspace: {
+      getLeavesOfType(
+        type: string,
+      ): Array<{ view: { file?: { path: string } | null }; detach(): void }>;
       getActiveFile(): { path: string } | null;
       getLeaf(mode: string): ObsidianLeaf;
       setActiveLeaf(leaf: ObsidianLeaf, options: { focus: boolean }): void;
@@ -447,6 +457,36 @@ export async function rendererOpenInReading({ app }: ObsidianCtx, path: string):
   });
   app.workspace.setActiveLeaf(leaf, { focus: true });
   return true;
+}
+
+/** The vault-relative paths of every note open in a Markdown tab. */
+export function rendererOpenNotePaths({ app }: ObsidianCtx): string[] {
+  const paths: string[] = [];
+  for (const leaf of app.workspace.getLeavesOfType("markdown")) {
+    const path = leaf.view.file?.path;
+    if (path !== undefined) paths.push(path);
+  }
+  return paths;
+}
+
+/** Closes every Markdown tab, so a note found open afterwards was opened since. */
+export function rendererCloseNotes({ app }: ObsidianCtx): number {
+  const leaves = app.workspace.getLeavesOfType("markdown");
+  for (const leaf of leaves) leaf.detach();
+  return leaves.length;
+}
+
+/** Closes the open notes (see {@link rendererCloseNotes}). */
+export async function closeNotes(browser: ResearchBrowser): Promise<void> {
+  await browser.executeObsidian(rendererCloseNotes);
+}
+
+/** Waits until `path` is open in a Markdown tab. Call {@link closeNotes} first to prove an open. */
+export async function waitForNoteOpen(browser: ResearchBrowser, path: string): Promise<void> {
+  await pollUntil(
+    async () => (await browser.executeObsidian(rendererOpenNotePaths)).includes(path),
+    { ...WAIT.short, describe: `${path} to be open in a tab` },
+  );
 }
 
 export async function readActiveFile(browser: ResearchBrowser): Promise<string | null> {
@@ -633,4 +673,109 @@ export async function runScenario(
       ? { runId: success.runId, ok: true }
       : { runId: failure?.runId ?? "", ok: false };
   return { read, runId: latest.runId, ok: latest.ok, notBefore };
+}
+
+// ---------------------------------------------------------------------------
+// The plugin's own settings (reduced motion)
+
+/** The slice of wdio-obsidian-service's page object the settings helpers use. */
+export interface PluginDataPage {
+  getConfigDir(): Promise<string>;
+  read(path: string): Promise<string>;
+  write(path: string, text: string): Promise<void>;
+  disablePlugin(id: string): Promise<void>;
+  enablePlugin(id: string): Promise<void>;
+}
+
+/** The plugin's `data.json` inside the sandbox vault's configuration folder. */
+export async function pluginDataPath(page: Pick<PluginDataPage, "getConfigDir">): Promise<string> {
+  return `${await page.getConfigDir()}/plugins/${PLUGIN_ID}/data.json`;
+}
+
+/**
+ * Writes the plugin's reducedMotion setting (the OS media query cannot be emulated in this
+ * Electron session, spike S5) and reloads the plugin so it takes effect. The caller opens the
+ * destination again. A data file with a key the plugin does not persist is refused unwritten.
+ */
+export async function setReducedMotion(
+  page: PluginDataPage,
+  value: "auto" | "reduced",
+): Promise<void> {
+  const file = await pluginDataPath(page);
+  const data = JSON.parse(await page.read(file)) as Record<string, unknown>;
+  data.reducedMotion = value;
+  assertPluginDataKeys(data);
+  await page.write(file, `${JSON.stringify(data, null, 2)}\n`);
+  await page.disablePlugin(PLUGIN_ID);
+  await page.enablePlugin(PLUGIN_ID);
+}
+
+// ---------------------------------------------------------------------------
+// Geometry, the keyboard and runs started without the window
+
+export async function readArticle(browser: ResearchBrowser): Promise<ArticleFacts> {
+  return browser.execute(
+    rendererReadArticle,
+    RESEARCH_CLASSES.reader,
+    RESEARCH_CLASSES.item,
+    RESEARCH_CLASSES.readerItems,
+    RESEARCH_CLASSES.itemText,
+    RESEARCH_CLASSES.quote,
+    RESEARCH_CLASSES.readerUnavailable,
+  );
+}
+
+export async function readLayout(browser: ResearchBrowser): Promise<ResearchLayoutFacts> {
+  return browser.execute(
+    rendererReadLayout,
+    RESEARCH_CLASSES.root,
+    RESEARCH_CLASSES.layout,
+    RESEARCH_CLASSES.listCell,
+    RESEARCH_CLASSES.readerCell,
+    RESEARCH_CLASSES.reader,
+  );
+}
+
+export async function focusRunNow(browser: ResearchBrowser): Promise<boolean> {
+  return browser.execute(rendererFocusRunNow, RESEARCH_CLASSES.runBox);
+}
+
+/**
+ * Starts a run through the service's typed client (not the window) and waits until the service
+ * says it ended; returns its id. For items that judge notes and the store, not the view.
+ */
+export async function runViaApi(env: ResearchEnvironment): Promise<string> {
+  const run = await env.research.run();
+  if (run.alreadyRunning) throw new Error("A run was already going on.");
+  await pollUntil(
+    async () => {
+      const status = await env.research.status();
+      const ended =
+        status.lastSuccess?.runId === run.runId || status.lastFailure?.runId === run.runId;
+      return status.inFlight === null && ended ? status : null;
+    },
+    { timeoutMs: 120_000, intervalMs: 250, describe: "the run to end" },
+  );
+  return run.runId;
+}
+
+/** Waits until the service has nothing running (a run another step started has ended). */
+export async function waitForIdle(env: ResearchEnvironment): Promise<void> {
+  await pollUntil(async () => (await env.research.status()).inFlight === null, {
+    timeoutMs: 120_000,
+    intervalMs: 500,
+    describe: "the service to have no run in flight",
+  });
+}
+
+/** The raw file names and the wiki notes (name, id, last retrieval) of the vault, for the rerun item. */
+export function notesSnapshot(notes: VaultNotes): NotesSnapshot {
+  return {
+    raw: notes.raw.map((note) => note.name),
+    wiki: notes.wiki.map((note) => ({
+      name: note.name,
+      id: scalarOf(note.text, "id") ?? "",
+      retrievedAt: scalarOf(note.text, "lastRetrievedAt") ?? "",
+    })),
+  };
 }
