@@ -60,6 +60,12 @@
       "status": "success",
       "list": "unreadable",
       "connection": "live"
+    },
+    "research-report-hostile": {
+      "status": "hostile",
+      "list": "hostile",
+      "open": "7b94a800597bb8001bbd88003",
+      "connection": "live"
     }
   },
   "statuses": {
@@ -336,6 +342,46 @@
         }
       ],
       "topicLabel": "Developer tooling and open-source releases"
+    },
+    "hostile": {
+      "lastSuccess": {
+        "runId": "016980003eebb0381d5b48007",
+        "endedAt": "2026-10-14T10:59:00.000Z",
+        "outcome": "success",
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "reportNoteId": "7b94a800597bb8001bbd88003"
+      },
+      "lastFailure": null,
+      "inFlight": null,
+      "latestUnknown": null,
+      "configuredSources": [
+        {
+          "label": "Example tools changelog",
+          "host": "changelog.example.invalid"
+        },
+        {
+          "label": "Sample runtime releases",
+          "host": "releases.sample.invalid"
+        },
+        {
+          "label": "Demo language blog",
+          "host": "blog.demo.invalid"
+        },
+        {
+          "label": "Example editor news",
+          "host": "editor.example.invalid"
+        },
+        {
+          "label": "Sample package registry",
+          "host": "registry.sample.invalid"
+        },
+        {
+          "label": "Demo build tool releases",
+          "host": "build.demo.invalid"
+        }
+      ],
+      "topicLabel": "Developer tooling and open-source releases"
     }
   },
   "lists": {
@@ -509,6 +555,44 @@
         "readable": false,
         "fileName": "research-2026-10-13-broken.md",
         "notePath": "global/output/research-2026-10-13-broken.md"
+      },
+      {
+        "readable": true,
+        "noteId": "20ca000002023000258ea0381",
+        "notePath": "global/output/research-2026-10-12-151e000021c6304055963b005.md",
+        "title": "Developer tooling and open-source releases - Oct 12, 2026",
+        "generatedAt": "2026-10-12T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 11,
+        "unavailableCount": 0
+      }
+    ],
+    "hostile": [
+      {
+        "readable": true,
+        "noteId": "7b94a800597bb8001bbd88003",
+        "notePath": "global/output/research-2026-10-14-016980003eebb0381d5b48007.md",
+        "title": "Developer tooling and open-source releases - Oct 14, 2026",
+        "generatedAt": "2026-10-14T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 14,
+        "unavailableCount": 0
+      },
+      {
+        "readable": true,
+        "noteId": "4c300000107030004e64a0403",
+        "notePath": "global/output/research-2026-10-13-408600004d0e300041aaa0003.md",
+        "title": "Developer tooling and open-source releases - Oct 13, 2026",
+        "generatedAt": "2026-10-13T11:00:00.000Z",
+        "partial": false,
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "itemCount": 11,
+        "unavailableCount": 0
       },
       {
         "readable": true,
@@ -1926,6 +2010,352 @@
           "title": "Demo build tool releases",
           "canonicalUrl": "https://build.demo.invalid/feed/6",
           "author": null,
+          "publishedAt": "2026-10-14T06:00:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "5bd800006af830004a4ca0003b605000006240001955703916a85680570804c0",
+          "snapshotPath": "global/raw/502d6000369210001d1100000e3d3040.5bd80000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        }
+      ]
+    },
+    "hostile": {
+      "header": {
+        "title": "Developer tooling and open-source releases - Oct 14, 2026",
+        "noteId": "7b94a800597bb8001bbd88003",
+        "notePath": "global/output/research-2026-10-14-016980003eebb0381d5b48007.md",
+        "generatedAt": "2026-10-14T11:00:00.000Z",
+        "partial": false,
+        "unavailableSources": [],
+        "sourceCount": 6,
+        "sourceTotal": 6,
+        "kindCounts": {
+          "source-fact": 5,
+          "unverified-claim": 5,
+          "inference": 4
+        },
+        "summariser": "extractive",
+        "jobRunId": "016980003eebb0381d5b48007",
+        "runStartedAt": "2026-10-14T10:58:00.000Z",
+        "runEndedAt": "2026-10-14T10:59:00.000Z",
+        "runOutcome": "success",
+        "runNotePath": "automation-runs/research-run-016980003eebb0381d5b48007.md"
+      },
+      "items": [
+        {
+          "index": 1,
+          "kind": "source-fact",
+          "text": "![x](https://evil.invalid/p.png)",
+          "quote": "[[Private|shown]]",
+          "quoteSourceNumber": 1,
+          "citations": [
+            {
+              "number": 1,
+              "title": "![x](https://evil.invalid/p.png)"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "unverified-claim",
+          "text": "[click](https://evil.invalid/)",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 2,
+              "title": "[[Private|shown]]"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "kind": "inference",
+          "text": "[click](javascript:alert(1))",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 3,
+              "title": "<script>alert(1)</script>"
+            },
+            {
+              "number": 4,
+              "title": "[click](javascript:alert(1))"
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "kind": "source-fact",
+          "text": "<img src=x onerror=alert(1)>",
+          "quote": "<script>alert(1)</script>",
+          "quoteSourceNumber": 4,
+          "citations": [
+            {
+              "number": 4,
+              "title": "[click](javascript:alert(1))"
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "kind": "unverified-claim",
+          "text": "<iframe src=\"https://evil.invalid/\"></iframe>",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 5,
+              "title": "<img src=x onerror=alert(1)>"
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "kind": "inference",
+          "text": "> [!warning] fold",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 6,
+              "title": "safe\u202etxet\u202c"
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "kind": "source-fact",
+          "text": "# Heading",
+          "quote": "`code` and ``double``",
+          "quoteSourceNumber": 1,
+          "citations": [
+            {
+              "number": 1,
+              "title": "![x](https://evil.invalid/p.png)"
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "kind": "unverified-claim",
+          "text": "<% tp.file.title %> {{variable}}",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 2,
+              "title": "[[Private|shown]]"
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "kind": "inference",
+          "text": "`= this.file.name` and `$= dv.pages()`",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": []
+        },
+        {
+          "index": 10,
+          "kind": "source-fact",
+          "text": "Mixed direction text: safe\u202etxet\u202c",
+          "quote": "safe\u202etxet\u202c",
+          "quoteSourceNumber": 3,
+          "citations": [
+            {
+              "number": 3,
+              "title": "<script>alert(1)</script>"
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "kind": "unverified-claim",
+          "text": "![[Private.png|100]]",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 4,
+              "title": "[click](javascript:alert(1))"
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "kind": "inference",
+          "text": "************************************************************",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 5,
+              "title": "<img src=x onerror=alert(1)>"
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "kind": "source-fact",
+          "text": "<https://evil.invalid/a>",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 6,
+              "title": "safe\u202etxet\u202c"
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "kind": "unverified-claim",
+          "text": "![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>alert(1)</script> ![x](https://evil.invalid/p.png) <script>ale",
+          "quote": null,
+          "quoteSourceNumber": null,
+          "citations": [
+            {
+              "number": 1,
+              "title": "![x](https://evil.invalid/p.png)"
+            }
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "number": 1,
+          "sourceType": "feed-entry",
+          "id": "2931ac00348e6c004d8c2c004216ec00",
+          "title": "![x](https://evil.invalid/p.png)",
+          "canonicalUrl": "https://changelog.example.invalid/feed/1",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:50:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "34dc000009ac300034f0a0400cc7eb001cb93f4057a59e805ecfac002cd46c00",
+          "snapshotPath": "global/raw/2931ac00348e6c004d8c2c004216ec00.34dc0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 2,
+          "sourceType": "feed-entry",
+          "id": "7dca6c0044182c0063b2ec007f16ac00",
+          "title": "[[Private|shown]]",
+          "canonicalUrl": "https://releases.sample.invalid/feed/2",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:40:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "097500002cd1304063453b007e744f006197d400483d7400338294002fb13400",
+          "snapshotPath": "global/raw/7dca6c0044182c0063b2ec007f16ac00.09750000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 2,
+            "styles": 1,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 3,
+            "linksDropped": 7,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 3,
+          "sourceType": "feed-entry",
+          "id": "526328003a6838006f70080045239800",
+          "title": "<script>alert(1)</script>",
+          "canonicalUrl": "https://blog.demo.invalid/feed/3",
+          "author": "<iframe src=\"https://evil.invalid/\"></iframe>",
+          "publishedAt": "2026-10-14T06:30:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "5e0d0000018930001409a0381a3a78004b7548407e737300763228000b8b3800",
+          "snapshotPath": "global/raw/526328003a6838006f70080045239800.5e0d0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 4,
+          "sourceType": "web-page",
+          "id": "26fbe80049f1f8000596c80002235840",
+          "title": "[click](javascript:alert(1))",
+          "canonicalUrl": "https://editor.example.invalid/feed/4",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:20:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "32a6000024ae300050caa0006306500076104000386b700061dee00054259000",
+          "snapshotPath": "global/raw/26fbe80049f1f8000596c80002235840.32a60000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 0,
+            "hiddenBlocks": 0,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 0
+          }
+        },
+        {
+          "number": 5,
+          "sourceType": "feed-entry",
+          "id": "7b94a800597bb8001bbd88003f231840",
+          "title": "<img src=x onerror=alert(1)>",
+          "canonicalUrl": "https://registry.sample.invalid/feed/5",
+          "author": "Example Author",
+          "publishedAt": "2026-10-14T06:10:00.000Z",
+          "retrievedAt": "2026-10-14T10:59:00.000Z",
+          "contentHash": "073f000047d330407f1f3b0046465000385040006dab70000e1ee0002b659040",
+          "snapshotPath": "global/raw/7b94a800597bb8001bbd88003f231840.073f0000.md",
+          "accessClass": "public",
+          "counts": {
+            "scripts": 0,
+            "styles": 0,
+            "comments": 4,
+            "hiddenBlocks": 1,
+            "mediaDropped": 0,
+            "linksDropped": 0,
+            "controlChars": 0,
+            "commandLikeLines": 2
+          }
+        },
+        {
+          "number": 6,
+          "sourceType": "feed-entry",
+          "id": "502d6000369210001d1100000e3d3040",
+          "title": "safe\u202etxet\u202c",
+          "canonicalUrl": "https://build.demo.invalid/feed/6",
+          "author": "Example Author",
           "publishedAt": "2026-10-14T06:00:00.000Z",
           "retrievedAt": "2026-10-14T10:59:00.000Z",
           "contentHash": "5bd800006af830004a4ca0003b605000006240001955703916a85680570804c0",
