@@ -107,6 +107,13 @@ export {
   touchLastOpened,
   touchScanned,
 } from "./project-store.js";
+export type { ResearchSourceRecord } from "./research-source-store.js";
+export {
+  getResearchSourceRecord,
+  ResearchSourceRecordConflictError,
+  ResearchSourceRecordError,
+  recordResearchSource,
+} from "./research-source-store.js";
 export type { RunKind, RunRecord } from "./run-store.js";
 export {
   getRun,

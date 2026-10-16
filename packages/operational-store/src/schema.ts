@@ -194,6 +194,33 @@ export const jobRuns = sqliteTable("job_runs", {
 });
 
 /**
+ * The research provenance record (Phase 7, plan 07-FIX6, decision D-A, ADR-0030): one row per
+ * source whose raw note a research run wrote and read back, keyed by the run and the source.
+ * It is the TRUST ROOT of "verified": the vault is writable by anyone who can reach the owner's
+ * files, so a report and its raw note can be forged together; this table cannot be reached from
+ * the vault. The view model counts a quote as evidence only when the raw note it reads back
+ * hashes to `content_hash` here, under the same run and source.
+ *
+ * Ids, hashes, an https address the owner's allowlist already named, a vault-relative snapshot
+ * path and the owner's short source label only. No fetched text, no title taken from a remote
+ * page and no model output column exists and none may be added; `migration-provenance.audit.test.ts`
+ * walks the column names and the stored values. Written once at raw-write time and never updated.
+ */
+export const researchSourceRecords = sqliteTable(
+  "research_source_records",
+  {
+    jobRunId: text("job_run_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    canonicalUrl: text("canonical_url").notNull(),
+    contentHash: text("content_hash").notNull(),
+    snapshotPath: text("snapshot_path").notNull(),
+    label: text("label").notNull(),
+    recordedAt: text("recorded_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.jobRunId, table.sourceId] })],
+);
+
+/**
  * The managed vault's note-metadata cache (PERF-06): one row per note,
  * holding exactly what a filter or list view reads, so search stays
  * responsive at 10,000 notes without re-parsing 10,000 files' frontmatter
