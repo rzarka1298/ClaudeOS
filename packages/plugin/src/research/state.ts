@@ -87,6 +87,18 @@ export const activeRunId: Signal<string | null> = signal(null);
 /** The report the owner opened, or null. There is no default selection. */
 export const selectedNoteId: Signal<string | null> = signal(null);
 
+let viewOpen = false;
+
+/** Marks the Research destination open or closed; the `research.updated` handler refreshes only while open. */
+export function setResearchViewOpen(open: boolean): void {
+  viewOpen = open;
+}
+
+/** True while the Research destination is mounted. */
+export function researchViewOpen(): boolean {
+  return viewOpen;
+}
+
 let statusSeq = 0;
 let listSeq = 0;
 let activeMisses = 0;

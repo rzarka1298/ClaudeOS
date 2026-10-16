@@ -30,8 +30,8 @@ function updated(payload: unknown, type: ServiceEvent["type"] = "research.update
 }
 
 async function settle(): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
 }
 
 beforeEach(() => {
@@ -228,7 +228,7 @@ describe("Test 3 (reconnect): a drop and a reconnect refetch the status and the 
     });
     configureResearch({ api, ...fakeResearchPorts() });
     const { client, push } = recordingClient();
-    attachEventClient(client as never, {});
+    attachEventClient(client, {});
     push({ kind: "live" });
 
     render(<Shell initialDestination="research" />);

@@ -1,6 +1,7 @@
 import type { ServiceEvent, ServiceEventType, SnapshotResponse } from "@ccc/domain";
 import { adoptApprovalsFromSnapshot, applyApprovalServiceEvent } from "./approvals/events.js";
 import { applyProjectsDelta, applyProjectsSnapshot } from "./projects/projects-state.js";
+import { applyResearchUpdated } from "./research/events.js";
 import { applyTasksChanged } from "./tasks/events.js";
 import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./widgets/claude-events.js";
 import { adoptCodexSnapshot, applyCodexServiceEvent } from "./widgets/codex-events.js";
@@ -24,6 +25,8 @@ export const EVENT_HANDLERS: Partial<Record<ServiceEventType, (event: ServiceEve
   "approval.upserted": applyApprovalServiceEvent,
   // Phase 6 (D-28): the task index changed; carries a generation.
   "tasks.changed": applyTasksChanged,
+  // Phase 7 (D-25): a research run changed state; "ask again", never a state write.
+  "research.updated": applyResearchUpdated,
   "codex.sessions.updated": applyCodexServiceEvent,
   "codex.usage.updated": applyCodexServiceEvent,
   "codex.tokens.updated": applyCodexServiceEvent,

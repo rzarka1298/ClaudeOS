@@ -26,6 +26,7 @@ import {
   runInProgress,
   selectedNoteId,
   selectReport,
+  setResearchViewOpen,
   setStatusLine,
   statusFailure,
   statusLine,
@@ -187,8 +188,11 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
     rows.length === 0 && status?.lastFailure != null && status.lastSuccess === null;
 
   useEffect(() => {
+    // While open, `research.updated` events refresh this state (plan 07-15, D-25).
+    setResearchViewOpen(true);
     void loadResearch();
     return () => {
+      setResearchViewOpen(false);
       resetResearchState();
     };
   }, []);
