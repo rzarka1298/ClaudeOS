@@ -12,6 +12,8 @@ import { extractiveSummary } from "@ccc/research";
 import { readReportNote } from "@ccc/vault-repo";
 import type Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
+import type { TextTransport } from "../untrusted/index.js";
+import { createExtractiveTransport } from "./extractive-transport.js";
 import { RUN_BYTE_CAP } from "./fetch/limits.js";
 import { createSafeFetcher } from "./fetch/safe-fetch.js";
 import { createFakeHttps } from "./fetch/test-support/fake-https.js";
@@ -558,6 +560,34 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     expect(kit.transportInputs).toHaveLength(0);
     expect(kit.events).toHaveLength(eventsBefore);
     expect(lastRow(kit)?.stageLog.map((e) => e.stage)).toEqual(["capture"]);
+  });
+
+  it("starts no fetch when the summariser is chosen after the watchdog already fired", async () => {
+    const timer = manualTimer();
+    let choose: (value: { transport: TextTransport; id: "extractive" }) => void = () => {};
+    const pending = new Promise<{ transport: TextTransport; id: "extractive" }>((resolve) => {
+      choose = resolve;
+    });
+    kit = createKit({
+      chooseSummariser: () => pending,
+      scheduleTimeout: (fire, ms) => timer.schedule(fire, ms),
+    });
+    const started = kit.services.runNow();
+    if (!started.ok) throw new Error("refused");
+    await until(() => timer.timers.length === 1);
+    // The watchdog fires while the Keychain prompt (the chooser) is still unanswered.
+    timer.timers[0]?.fire();
+    await kit.services.idle();
+    expect(lastRow(kit)?.errorCode).toBe("interrupted");
+    // The prompt is finally answered: the run is over, so nothing may be fetched for it.
+    choose({ transport: createExtractiveTransport(), id: "extractive" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(kit.fetchCalls).toHaveLength(0);
+    expect(kit.effects).not.toContain("research.fetch-sources");
+    expect(files(kit, "global/raw")).toEqual([]);
+    // The replacement run is free to start.
+    const next = kit.services.runNow();
+    expect(next.ok && next.value.alreadyRunning).toBe(false);
   });
 
   it("cancels the timer when the run ends by itself", async () => {
