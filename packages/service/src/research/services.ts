@@ -47,7 +47,7 @@ export const RESEARCH_WATCHDOG_MS = 5 * 60 * 1000;
 
 export type ResearchResult<T> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly code: "vault-not-set-up" };
+  | { readonly ok: false; readonly code: "vault-not-set-up" | "service-disconnected" };
 
 export interface RunNowValue {
   readonly runId: RunId;
@@ -86,6 +86,13 @@ export interface ResearchServicesDeps {
 
 export interface ResearchServices {
   runNow(): ResearchResult<RunNowValue>;
+  /**
+   * Shutdown has begun: from now on a press answers `service-disconnected` and starts nothing.
+   * Synchronous, so a request body that finishes reading after the signal cannot start a run the
+   * drain would not wait for. A run already in flight is left to finish. Mirrors the approvals'
+   * `beginShutdown`.
+   */
+  beginShutdown(): void;
   /** Resolves when no run is in flight in this process. */
   idle(): Promise<void>;
   /** The owner's configured topic and sources (host names only), or null when the file is unusable. */
@@ -138,6 +145,7 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
   };
   /** The run this process is executing, if any. */
   let current: { readonly runId: RunId } | null = null;
+  let stopping = false;
   const tracked = new Set<Promise<void>>();
 
   recoverStuckResearchRuns(deps.db, deps.log);
@@ -186,6 +194,7 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
   }
 
   function runNow(): ResearchResult<RunNowValue> {
+    if (stopping) return { ok: false, code: "service-disconnected" };
     const vaultRoot = deps.getVaultRoot();
     if (vaultRoot === null) return { ok: false, code: "vault-not-set-up" };
     if (current !== null) {
@@ -238,6 +247,9 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
 
   return {
     runNow,
+    beginShutdown() {
+      stopping = true;
+    },
     async idle() {
       while (tracked.size > 0) await Promise.allSettled([...tracked]);
     },

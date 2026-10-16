@@ -491,6 +491,9 @@ async function main(): Promise<void> {
   // against a closed store (wave 3 review).
   const shutdown = createShutdown({
     stopIntake: () => {
+      // Synchronously, before anything is awaited: a press whose body finishes reading after the
+      // signal must not start a run the drain would not wait for (wave 5 review, opus M3).
+      research.beginShutdown();
       clearInterval(heartbeatTimer);
       taskHost.dispose();
       projectsCollector.stop();
