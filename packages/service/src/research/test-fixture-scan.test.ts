@@ -58,13 +58,16 @@ function sourceFiles(): string[] {
       // a package without a src folder
     }
   }
-  // The wdio specs and the runner's wdio configuration run inside the live-UAT runner and are
-  // source for this purpose too (plan 07-17): a spec naming a variable fails here like a module.
+  // The wdio specs, smoke probes and the runner's wdio configuration run inside the live-UAT
+  // runner and are source for this purpose too (plan 07-17): a spec naming a variable fails here
+  // like a module.
   for (const pkg of readdirSync(join(REPO, "packages"))) {
-    try {
-      walk(join(REPO, "packages", pkg, "specs"), files);
-    } catch {
-      // a package without a specs folder
+    for (const folder of ["specs", "smoke"]) {
+      try {
+        walk(join(REPO, "packages", pkg, folder), files);
+      } catch {
+        // a package without this folder
+      }
     }
     try {
       for (const entry of readdirSync(join(REPO, "packages", pkg))) {
@@ -142,6 +145,13 @@ describe("the research test variables are confined to their guard (Test 2)", () 
       expect(codeOf(GUARD_MODULE).match(new RegExp(variable, "g"))).toHaveLength(1);
     });
   }
+
+  it("names each variable exactly once in the code of the runner's fixture module (its table of names)", () => {
+    const fixture = join(REPO, "packages", "e2e", "src", "research-uat-fixture.ts");
+    for (const variable of VARIABLES) {
+      expect(codeOf(fixture).match(new RegExp(variable, "g")), variable).toHaveLength(1);
+    }
+  });
 
   it("reads the enabling flag exactly once in the guard's code", () => {
     expect(codeOf(GUARD_MODULE).match(new RegExp(FLAG, "g"))).toHaveLength(1);
