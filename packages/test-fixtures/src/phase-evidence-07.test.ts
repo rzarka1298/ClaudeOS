@@ -382,7 +382,11 @@ run("merge-gate runbook (Task 3, Tests 1 to 3)", () => {
       const key = command.includes("-") ? `"${command}"` : command;
       expect(cli, `runner command ${command}`).toContain(key);
       for (const flag of line.match(/--[a-z][a-z-]*/g) ?? []) {
-        expect(cliArgs, `${command} ${flag}`).toContain(`"${flag.slice(2)}"`);
+        const name = flag.slice(2);
+        expect(
+          cliArgs.includes(`"${name}"`) || new RegExp(`\\b${name}: \\{ type:`).test(cliArgs),
+          `${command} ${flag}`,
+        ).toBe(true);
         checked += 1;
       }
     }
@@ -461,8 +465,8 @@ run("validation map (Task 3, Test 4)", () => {
       out.push({
         plan: id[1] as string,
         task: Number(id[2]),
-        commands: [...(cells[4] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1] as string),
-        status: cells[5] ?? "",
+        commands: [...(cells[5] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1] as string),
+        status: cells[6] ?? "",
       });
     }
     return out;
