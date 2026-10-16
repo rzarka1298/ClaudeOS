@@ -144,7 +144,7 @@ export function createFakeHttps(
         await new Promise<void>((resolve) => setTimeout(resolve, scripted.responseDelayMs));
       }
       if (destroyed) return;
-      onResponse(buildResponse(scripted, call.resolved[0], call));
+      onResponse(buildResponse(scripted, call.resolved[0] ?? DEFAULT_PEER, call));
     };
 
     const handle: RequestHandle = {
@@ -170,6 +170,9 @@ export function createFakeHttps(
 
   return { request, calls };
 }
+
+/** The peer a connection reports when no lookup ran: a public address, since the fetcher fails closed on none. */
+const DEFAULT_PEER = "8.8.8.8";
 
 function toBytes(piece: Uint8Array | string): Uint8Array {
   return typeof piece === "string" ? new TextEncoder().encode(piece) : piece;

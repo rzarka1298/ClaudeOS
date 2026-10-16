@@ -38,7 +38,8 @@ import { resolveRedirectTarget, validateFetchUrl } from "./url-policy.js";
  *   decompressed.
  * - Every failure is one member of SOURCE_FAILURE_CODES. No remote string, header or body is ever
  *   returned in a failure, logged, or thrown.
- * - TLS certificate verification stays at Node's defaults.
+ * - TLS certificate verification is pinned on in every request (`rejectUnauthorized: true`), so
+ *   an environment setting cannot turn it off.
  */
 
 export interface SafeRequestOptions {
@@ -49,6 +50,8 @@ export interface SafeRequestOptions {
   readonly method: "GET";
   readonly headers: Readonly<Record<string, string>>;
   readonly lookup: net.LookupFunction;
+  /** Certificate verification is pinned on, whatever the environment says. */
+  readonly rejectUnauthorized: true;
   readonly agent: https.Agent;
   readonly signal: AbortSignal;
   /** The socket idle timeout; Node emits `timeout` on the request when it elapses. */
@@ -272,8 +275,9 @@ function fetchHop(url: URL, context: HopContext): Promise<HopOutcome> {
     const cap = BYTE_CAP_BY_KIND[context.kind];
 
     async function consume(res: ResponseStream): Promise<void> {
+      // Fail closed: a response that cannot name its peer cannot be shown to be public.
       const peer = res.socket?.remoteAddress;
-      if (peer !== undefined && isBlockedAddress(peer)) {
+      if (peer === undefined || isBlockedAddress(peer)) {
         finish({ type: "fail", code: "refused-address" });
         return;
       }
@@ -351,6 +355,7 @@ function fetchHop(url: URL, context: HopContext): Promise<HopOutcome> {
             "user-agent": USER_AGENT,
           },
           lookup: context.lookup,
+          rejectUnauthorized: true,
           agent: context.agent,
           signal: context.signal,
           timeout: IDLE_TIMEOUT_MS,

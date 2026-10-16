@@ -9,6 +9,7 @@ import {
 } from "./anthropic-request.js";
 import { envProxyRequested, type ResponseStream, safeLookup } from "./fetch/index.js";
 import { SummariserError, type SummariserErrorCode } from "./summariser-error.js";
+import { tlsTrustOverrideRequested } from "./tls-env.js";
 
 /**
  * The live summariser transport (D-04, OD-1, ADR-0014, ADR-0017): a hand-owned POST to the
@@ -36,6 +37,8 @@ export interface AnthropicRequestOptions {
   readonly method: "POST";
   readonly headers: Readonly<Record<string, string>>;
   readonly lookup: typeof safeLookup;
+  /** Certificate verification is pinned on, whatever the environment says. */
+  readonly rejectUnauthorized: true;
   readonly agent: https.Agent;
   readonly signal: AbortSignal;
   readonly timeout: number;
@@ -184,6 +187,10 @@ export function createAnthropicTransport(deps: AnthropicTransportDeps): TextTran
       if (envProxyRequested(deps.env ?? process.env, deps.execArgv ?? process.execArgv)) {
         throw fail("summariser-failed");
       }
+      // The environment must not widen who may read the key: refused before the key is read.
+      if (tlsTrustOverrideRequested(deps.env ?? process.env)) {
+        throw fail("summariser-failed");
+      }
       let key: string | null;
       try {
         key = await deps.readApiKey();
@@ -219,6 +226,7 @@ export function createAnthropicTransport(deps: AnthropicTransportDeps): TextTran
             "x-api-key": key,
           },
           lookup: safeLookup,
+          rejectUnauthorized: true,
           agent,
           signal: controller.signal,
           timeout: timeoutMs,
