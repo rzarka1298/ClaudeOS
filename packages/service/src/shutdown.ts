@@ -15,6 +15,12 @@
 /** How long the shutdown waits for the Codex services to stop before it moves on (milliseconds). */
 export const CODEX_STOP_DEADLINE_MS = 5_000;
 
+/**
+ * How long the shutdown waits for a research run in flight before it moves on (milliseconds).
+ * The run is not cancelled: the process ends, and the next startup's recovery marks it stale.
+ */
+export const RESEARCH_STOP_DEADLINE_MS = 10_000;
+
 export interface ShutdownDeps {
   readonly stopApprovals: () => Promise<void>;
   /**
@@ -26,6 +32,15 @@ export interface ShutdownDeps {
   readonly codexStopDeadlineMs?: number;
   /** Reason-coded log line for a Codex stop that exceeded its deadline (never a raw error). */
   readonly onCodexStopTimeout?: (reason: string) => void;
+  /**
+   * Waits for a research run in flight (plan 07-14): after the Codex services, before the usage and
+   * Claude services and the store close. Bounded by {@link RESEARCH_STOP_DEADLINE_MS}. Optional.
+   */
+  readonly stopResearch?: () => Promise<void>;
+  /** The wait bound on `stopResearch`; defaults to {@link RESEARCH_STOP_DEADLINE_MS}. */
+  readonly researchStopDeadlineMs?: number;
+  /** Reason-coded log line for a research wait that exceeded its deadline. */
+  readonly onResearchStopTimeout?: (reason: string) => void;
   readonly stopUsage: () => Promise<void>;
   readonly stopClaude: () => Promise<void>;
   /** Stops intake: timers and collectors that must not run during the drain. */
@@ -81,6 +96,32 @@ async function boundedCodexStop(deps: ShutdownDeps): Promise<void> {
   }
 }
 
+/**
+ * Waits for `stopResearch` at most the deadline. A run still in flight at the deadline is left
+ * alone (its promise keeps running until the process ends) and recorded by the fixed reason code
+ * `research-stop-timeout`; startup recovery marks its job run stale (D-18).
+ */
+async function boundedResearchStop(deps: ShutdownDeps): Promise<void> {
+  if (deps.stopResearch === undefined) return;
+  const stopping = deps.stopResearch();
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(
+      () => resolve("timeout"),
+      deps.researchStopDeadlineMs ?? RESEARCH_STOP_DEADLINE_MS,
+    );
+  });
+  try {
+    const outcome = await Promise.race([stopping.then(() => "done" as const), timedOut]);
+    if (outcome === "timeout") {
+      stopping.catch(() => undefined);
+      deps.onResearchStopTimeout?.("research-stop-timeout");
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createShutdown(deps: ShutdownDeps): () => void {
   const keepAlive = deps.keepAlive ?? realKeepAlive;
   let shuttingDown = false;
@@ -97,6 +138,10 @@ export function createShutdown(deps: ShutdownDeps): () => void {
       .then(() => boundedCodexStop(deps))
       .catch((err: unknown) => {
         deps.onError("shutdown: codex services did not stop cleanly", err);
+      })
+      .then(() => boundedResearchStop(deps))
+      .catch((err: unknown) => {
+        deps.onError("shutdown: research did not stop cleanly", err);
       })
       .then(() => deps.stopUsage())
       .catch((err: unknown) => {

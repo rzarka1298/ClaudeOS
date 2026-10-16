@@ -13,7 +13,16 @@ export type {
   RunBudget,
   SafeFetcher,
 } from "./fetch/index.js";
+export type { FixtureFetcherOptions, FixtureFs } from "./fixture-fetcher.js";
+export {
+  createFixtureFetcher,
+  FIXTURE_DELAY_MAX_MS,
+  FIXTURE_MANIFEST_FILE,
+  FIXTURE_MANIFEST_MAX_BYTES,
+} from "./fixture-fetcher.js";
 export { contentHashFor, newNonce, sourceIdFor } from "./hash.js";
+export type { ResearchOverrideCode } from "./override-error.js";
+export { ResearchOverrideError } from "./override-error.js";
 export type {
   PipelineLog,
   PipelineResult,
@@ -52,3 +61,4 @@ export {
   RESEARCH_SOURCES_FILE,
   RESEARCH_SOURCES_MAX_BYTES,
 } from "./sources-config.js";
+export type { ResearchRouteResult, ResearchRouteServices } from "./types.js";

@@ -61,6 +61,7 @@ export {
   removeReportNote,
   renderReportBody,
   reportNotePathFor,
+  reportTitleText,
   writeReportNote,
 } from "./report-note.js";
 export type {

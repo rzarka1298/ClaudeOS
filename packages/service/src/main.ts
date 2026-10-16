@@ -48,6 +48,13 @@ import {
   sweepStaleScripts,
 } from "./projects/script-dir.js";
 import { createCommandSpawner } from "./projects/spawner.js";
+import { createSafeFetcher } from "./research/fetch/index.js";
+import { RESEARCH_API_KEY_ACCOUNT } from "./research/research-key.js";
+import { createResearchRouteServices } from "./research/route-services.js";
+import { createResearchRouteSlot } from "./research/route-slot.js";
+import { createResearchServices } from "./research/services.js";
+import { createChooseSummariser } from "./research/summariser-choice.js";
+import { resolveResearchTestOverrides } from "./research/test-fixture-guard.js";
 import { createRequestListener } from "./routes.js";
 import { createShutdown } from "./shutdown.js";
 import { claimSocketPath, logSocketClaimRefusal, startSocketServer } from "./socket-server.js";
@@ -88,6 +95,11 @@ async function main(): Promise<void> {
   if (sweptScripts > 0) {
     logger.info({ count: sweptScripts }, "startup: removed leftover launch scripts");
   }
+
+  // Research test overrides (plan 07-14, D-27): resolved before anything is changed, so an
+  // unusable value stops the service at startup with a code-only log line. With the enabling flag
+  // absent (the installed service) this returns nothing.
+  const researchOverrides = resolveResearchTestOverrides(process.env, logger);
 
   const store = openStore(dbPath);
   // ADR-0018: migrations apply before anything else touches the store, so
@@ -405,6 +417,11 @@ async function main(): Promise<void> {
   codexSlot.current = codexServices;
   // <<< Phase 05.1 (Codex services) end
 
+  // Research (plan 07-14): the route slot is handed to the listener now and bound only after the
+  // socket is bound (below), because constructing the research services sweeps any run still in
+  // flight to stale and an instance that lost the bind must never do that to a live run.
+  const researchSlot = createResearchRouteSlot();
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
@@ -427,6 +444,7 @@ async function main(): Promise<void> {
         }
       });
     },
+    research: researchSlot.services,
     tasks: {
       create: (request) => taskHost.create(request),
       list: (request) => taskHost.list(request),
@@ -441,6 +459,29 @@ async function main(): Promise<void> {
   const server = await startSocketServer({ socketPath, requestListener });
 
   logger.info({ socketPath }, "listening");
+
+  // Research services (plan 07-14): once per process, after the migrations, the run recovery and
+  // the socket bind. The Anthropic key is read here and nowhere else (D-04, ADR-0017): the
+  // transport receives a closure, never a key string. A test override (guarded) may replace the
+  // fetcher, the transport and the key account.
+  const researchKeyAccount = researchOverrides.keyAccount ?? RESEARCH_API_KEY_ACCOUNT;
+  const research = createResearchServices({
+    db: store.db,
+    getVaultRoot: readVaultRoot,
+    runtimeDir,
+    eventBus,
+    fetcher: researchOverrides.fetcher ?? createSafeFetcher(),
+    chooseSummariser: createChooseSummariser({
+      readApiKey: () => secretStore.get(researchKeyAccount),
+      overrideTransport: researchOverrides.transport,
+    }),
+    now: () => new Date(),
+    log: logger,
+  });
+  researchSlot.bind(
+    createResearchRouteServices({ db: store.db, getVaultRoot: readVaultRoot, services: research }),
+  );
+
   usageServices.start();
   codexServices.start();
 
@@ -464,6 +505,12 @@ async function main(): Promise<void> {
     stopCodex: () => codexServices.stop(),
     onCodexStopTimeout: (reason) => {
       logger.warn({ reason }, "shutdown: codex services did not stop in time");
+    },
+    // Plan 07-14 (D-18): a run in flight gets a bounded time to finish; past it the process
+    // leaves the run to the next startup, which marks it stale.
+    stopResearch: () => research.idle(),
+    onResearchStopTimeout: (reason) => {
+      logger.warn({ reason }, "shutdown: a research run was left to startup recovery");
     },
     stopUsage: () => usageServices.stop(),
     stopClaude: () => claudeServices.stop(),

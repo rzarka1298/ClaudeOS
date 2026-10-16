@@ -192,6 +192,15 @@ function formatDate(generatedAt: string): string {
   return `${month} ${Number(match?.[3] ?? "1")}, ${match?.[1] ?? "1970"}`;
 }
 
+/**
+ * The plain (unescaped) title of a report: the topic, an em dash and the generation date in the
+ * UTC calendar, exactly the words of the body's first heading. The research view model uses it for
+ * list rows and the reader header, so the note and the view show one title (RSRCH-04).
+ */
+export function reportTitleText(topicLabel: string, generatedAt: string): string {
+  return `${topicLabel} \u2014 ${formatDate(generatedAt)}`;
+}
+
 function plural(count: number, one: string): string {
   return `${count} ${count === 1 ? one : `${one}s`}`;
 }

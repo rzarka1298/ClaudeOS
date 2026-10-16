@@ -10,6 +10,7 @@ import type { LaunchService } from "./projects/launch-service.js";
 import type { LauncherServices } from "./projects/launcher-routes.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 import type { ScanService } from "./projects/scan.js";
+import type { ResearchRouteServices } from "./research/types.js";
 import type { TaskServices } from "./tasks/types.js";
 
 /**
@@ -51,6 +52,11 @@ export interface RouteContext {
   readonly approvals?: ApprovalServices | undefined;
   /** The task store services (Phase 6, D-28). Absent: its routes answer 503. */
   readonly tasks?: TaskServices | undefined;
+  /**
+   * The research route services (Phase 7, D-23), appended after the Codex members. Absent: every
+   * research route answers the closed 503 `service-disconnected` body.
+   */
+  readonly research?: ResearchRouteServices | undefined;
   /**
    * The Codex services (Phase 05.1, D-25), appended after the Phase 6 members.
    * Absent: every Codex route answers the constant 503 and the snapshot omits

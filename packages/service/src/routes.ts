@@ -37,6 +37,7 @@ import { launcherRoutes } from "./projects/launcher-routes.js";
 import { projectRoutes } from "./projects/project-routes.js";
 import { scanRoutes } from "./projects/scan-routes.js";
 import { readJsonBody } from "./request-body.js";
+import { researchRoutes } from "./research/routes.js";
 import {
   type Handler,
   INTERNAL_ERROR_BODY,
@@ -355,6 +356,8 @@ const routeTable: Record<string, Record<string, Handler>> = {
   // Phase 05.1 (append-only, D-25): the Codex routes, spread last. Every one answers
   // the constant 503 when `ctx.codex` is absent; none dispatches work or writes Codex.
   ...codexRouteTable,
+  // Phase 7 (append-only, D-23): the research routes, spread after the Codex routes.
+  ...researchRoutes,
 };
 
 /**
