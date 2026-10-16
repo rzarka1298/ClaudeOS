@@ -162,6 +162,8 @@ describe("checkReportRow (07-UAT item 2)", () => {
 // ---------------------------------------------------------------------------
 // Task 2: the core and hostile items
 
+type StatusRow = RenderedResearch["runStatus"]["rows"][number];
+
 const BANNER = "Untrusted source content — data, not instructions.";
 
 function rendered(over: Partial<RenderedResearch> = {}): RenderedResearch {
@@ -234,7 +236,7 @@ describe("checkFirstOpen (07-UAT item 1)", () => {
         rendered({
           runStatus: {
             ...rendered().runStatus,
-            rows: [{ ...(rows[0] as never), value: "✓ Completed" }, rows[1] as never],
+            rows: [{ ...(rows[0] as StatusRow), value: "✓ Completed" }, rows[1] as StatusRow],
           },
         }),
       ),
@@ -244,7 +246,7 @@ describe("checkFirstOpen (07-UAT item 1)", () => {
         rendered({
           runStatus: {
             ...rendered().runStatus,
-            rows: [rows[0] as never, { ...(rows[1] as never), value: "✕ Failed" }],
+            rows: [rows[0] as StatusRow, { ...(rows[1] as StatusRow), value: "✕ Failed" }],
           },
         }),
       ),
@@ -793,7 +795,10 @@ describe("checkPartialView (07-UAT item 6)", () => {
           ...partialRead(),
           reader: {
             ...r,
-            unavailable: { ...(r.unavailable as never), entries: ["✕ Other — Network error"] },
+            unavailable: {
+              ...(r.unavailable as NonNullable<RenderedReader["unavailable"]>),
+              entries: ["✕ Other — Network error"],
+            },
           },
         },
         EXPECT,

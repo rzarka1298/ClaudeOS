@@ -397,6 +397,28 @@ describe("the transcript, spies, clicks and focus readers", () => {
     expect(clicked).toEqual(["Run now", "Open note"]);
   });
 
+  it("clicks a button inside one source entry by its text", () => {
+    const target = page(fixture("populated"));
+    const doc = target.window.document as unknown as Doc;
+    const clicked: string[] = [];
+    let entryNumber = 0;
+    for (const entry of doc.querySelectorAll("li.ccc-report-source")) {
+      entryNumber += 1;
+      const n = entryNumber;
+      for (const button of (
+        entry as unknown as { querySelectorAll(s: string): Iterable<Elem> }
+      ).querySelectorAll("button")) {
+        button.addEventListener("click", () => clicked.push(`${n}:${button.textContent}`));
+      }
+    }
+    const click = inPage<boolean>(target, "rendererClickInSource");
+    expect(click("2", "Open snapshot")).toBe(true);
+    expect(click("3", "Copy address")).toBe(true);
+    expect(click("9", "Open snapshot")).toBe(false);
+    expect(click("1", "Open nothing")).toBe(false);
+    expect(clicked).toEqual(["2:Open snapshot", "3:Copy address"]);
+  });
+
   it("reads the focused element: its name, the source entry and the citation it is in", () => {
     const target = page(fixture("populated"));
     const doc = target.window.document as unknown as Doc;
@@ -473,8 +495,8 @@ describe("the transcript, spies, clicks and focus readers", () => {
 
   it("reads the rendered body of the active Reading view, and not the page around it", () => {
     const target = page(
-      `<div class="workspace-leaf mod-active"><div class="markdown-reading-view"><div class="markdown-preview-sizer"><p>Untrusted source content</p><pre><code>line one
-line two</code></pre><a href="https://x.example.invalid/">link</a><img src="x"></div></div></div><img src="chrome">`,
+      `<div class="workspace-leaf mod-active"><div class="markdown-reading-view"><div class="markdown-preview-sizer"><div class="mod-header"><div class="metadata-container"><a href="https://props.example.invalid/">p</a>Properties text</div></div><p>Untrusted source content</p><pre><code>line one
+line two</code><button class="copy-code-button">Copy</button></pre><a href="https://x.example.invalid/">link</a><img src="x"></div></div></div><img src="chrome">`,
     );
     const facts = inPage<{
       found: boolean;
@@ -482,10 +504,13 @@ line two</code></pre><a href="https://x.example.invalid/">link</a><img src="x"><
       anchors: Array<{ href: string; text: string }>;
       codeBlocks: string[];
       internalEmbeds: number;
+      text: string;
     }>(target, "rendererReadReadingView")();
     expect(facts).toMatchObject({ found: true, images: 1, internalEmbeds: 0 });
     expect(facts.anchors).toEqual([{ href: "https://x.example.invalid/", text: "link" }]);
     expect(facts.codeBlocks).toEqual(["line one\nline two"]);
+    // The Properties panel is not part of the body's text or links.
+    expect(facts.text).not.toContain("Properties text");
     expect(inPage<{ found: boolean }>(page("<p>x</p>"), "rendererReadReadingView")().found).toBe(
       false,
     );

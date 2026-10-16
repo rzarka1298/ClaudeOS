@@ -219,7 +219,8 @@ describe("the hostile scenario's sources", () => {
     expect(new Set(hostile.map((entry) => entry.label)).size).toBe(12);
     for (const entry of hostile) {
       expect(entry.label).toMatch(/^Hostile source \d+$/);
-      expect(entry.forbidden.length, entry.label).toBeGreaterThan(0);
+      // Every entry says what must go, what must stay, or both (the injected-instruction page keeps all its text).
+      expect(entry.forbidden.length + entry.keeps.length, entry.label).toBeGreaterThan(0);
       expect(entry.category.length).toBeGreaterThan(0);
     }
   });

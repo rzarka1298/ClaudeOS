@@ -217,6 +217,8 @@ export interface RenderedReader {
   hasOpenRunNote: boolean;
   /** The section headings in document order (unavailable sources come before the findings). */
   headings: string[];
+  /** Links, images, frames, scripts and embeds inside the reader: none may come from source text. */
+  activeElements: number;
 }
 
 export interface RenderedResearch {
@@ -508,6 +510,9 @@ export function rendererReadResearch(c: ResearchDomConfig): RenderedResearch {
       hasOpenRunNote:
         runNode?.querySelector("button") !== null && runNode?.querySelector("button") !== undefined,
       headings,
+      activeElements: article.querySelectorAll(
+        "a[href], img, iframe, script, embed, object, video, audio",
+      ).length,
     };
   }
 
@@ -695,6 +700,22 @@ export function rendererClickByText(selector: string, label: string): boolean {
     const node = found[i] as RNode;
     if ((node.textContent ?? "").replace(/\s+/g, " ").trim() === label) {
       node.click();
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Clicks the button with the exact text `label` inside the source entry numbered `sourceNumber`
+ * (`Open snapshot` and `Copy address` exist once per entry); false when there is none.
+ */
+export function rendererClickInSource(sourceNumber: string, label: string): boolean {
+  const buttons = document.querySelectorAll(`li[data-source="${sourceNumber}"] button`);
+  for (let i = 0; i < buttons.length; i += 1) {
+    const button = buttons[i] as RNode;
+    if ((button.textContent ?? "").replace(/\s+/g, " ").trim() === label) {
+      button.click();
       return true;
     }
   }
@@ -977,8 +998,10 @@ export interface ReadingViewFacts {
 }
 
 /**
- * The rendered body of the note in the active Reading view: what a reader would see. The
- * Properties panel (metadata container) is left out; only the Markdown body is read.
+ * The rendered body of the note in the active Reading view: what a reader would see. Images,
+ * frames, scripts and embeds are counted everywhere in the rendered note, the Properties panel
+ * included (none may exist anywhere); links, code blocks and the text come from the Markdown body
+ * alone, the Properties panel (the metadata container) left out.
  */
 export function rendererReadReadingView(): ReadingViewFacts {
   const view = document.querySelector(
@@ -997,8 +1020,11 @@ export function rendererReadReadingView(): ReadingViewFacts {
       text: "",
     };
   }
+  const body = view.cloneNode(true);
+  const panels = body.querySelectorAll(".metadata-container, .mod-header");
+  for (let i = 0; i < panels.length; i += 1) (panels[i] as RNode).remove();
   const anchors: Array<{ href: string; text: string }> = [];
-  const links = view.querySelectorAll("a");
+  const links = body.querySelectorAll("a");
   for (let i = 0; i < links.length; i += 1) {
     const link = links[i] as RNode;
     anchors.push({
@@ -1007,8 +1033,12 @@ export function rendererReadReadingView(): ReadingViewFacts {
     });
   }
   const blocks: string[] = [];
-  const pre = view.querySelectorAll("pre");
-  for (let i = 0; i < pre.length; i += 1) blocks.push((pre[i] as RNode).textContent ?? "");
+  const pre = body.querySelectorAll("pre");
+  for (let i = 0; i < pre.length; i += 1) {
+    // The Copy button of a code block sits inside the pre; the text is the code element's.
+    const block = pre[i] as RNode;
+    blocks.push((block.querySelector("code") ?? block).textContent ?? "");
+  }
   return {
     found: true,
     images: view.querySelectorAll("img").length,
@@ -1018,6 +1048,6 @@ export function rendererReadReadingView(): ReadingViewFacts {
     internalEmbeds: view.querySelectorAll(".internal-embed, .markdown-embed").length,
     anchors,
     codeBlocks: blocks,
-    text: view.textContent ?? "",
+    text: body.textContent ?? "",
   };
 }

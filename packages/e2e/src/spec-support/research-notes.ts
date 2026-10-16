@@ -392,6 +392,8 @@ export function missingSourceRefFields(entry: Readonly<Record<string, string>>):
 export interface ParsedRawNote {
   readonly stage: string | null;
   readonly type: string | null;
+  /** The source reference's title: the owner's label for the source. */
+  readonly title: string | null;
   readonly snapshotPath: string | null;
   readonly contentHash: string | null;
   /** The counts of the `sanitise` block. */
@@ -434,6 +436,7 @@ export function parseRawNote(text: string): ParsedRawNote {
   return {
     stage: scalarOf(text, "stage"),
     type: scalarOf(text, "type"),
+    title: refValue("title"),
     snapshotPath: refValue("snapshotPath"),
     contentHash: refValue("contentHash"),
     sanitise,

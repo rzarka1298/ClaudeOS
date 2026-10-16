@@ -210,6 +210,29 @@ const HOSTILE_SOURCES: readonly ResearchSourceEntry[] = hostileDocuments().map((
   source(`Hostile source ${index + 1}`, hostileUrl(index), entry.kind === "feed" ? "feed" : "page"),
 );
 
+export interface HostileSourceInfo {
+  readonly label: string;
+  readonly url: string;
+  readonly category: string;
+  readonly kind: "feed" | "page";
+  /** Strings that must not survive sanitising (case-insensitive), from the corpus entry. */
+  readonly forbidden: readonly string[];
+  /** Strings that must survive, from the corpus entry. */
+  readonly keeps: readonly string[];
+}
+
+/** The hostile scenario's sources, each paired with the corpus entry it serves. */
+export function hostileSources(): HostileSourceInfo[] {
+  return hostileDocuments().map(({ index, entry }) => ({
+    label: `Hostile source ${index + 1}`,
+    url: hostileUrl(index),
+    category: entry.category,
+    kind: entry.kind === "feed" ? "feed" : "page",
+    forbidden: entry.forbidden,
+    keeps: entry.keeps,
+  }));
+}
+
 const SCENARIO_SOURCES: Readonly<Record<ResearchScenario, readonly ResearchSourceEntry[]>> = {
   base: BASE_SOURCES,
   partial: PARTIAL_SOURCES,
