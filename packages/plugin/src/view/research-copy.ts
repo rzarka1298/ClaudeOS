@@ -213,3 +213,39 @@ export function partialRowTail(unavailable: number): string {
   const noun = unavailable === 1 ? "source" : "sources";
   return `${unavailable} ${noun} didn't respond`;
 }
+
+// ---------------------------------------------------------------------------
+// R4 report reader: display caps (UI-SPEC "Untrusted content rules" 4) and the finding strings
+
+/** A finding's text is capped at the schema cap. */
+export const FINDING_TEXT_MAX = 600;
+/** A quote is capped at the schema cap. */
+export const QUOTE_TEXT_MAX = 240;
+/** A citation button shows at most this much of the source title (the full title is in `title`). */
+export const CITATION_TITLE_MAX = 60;
+
+export const CITATIONS_LABEL = "Sources:";
+export const NO_SOURCE_CITED = "No source cited";
+
+/** The hidden prefix that names a finding's kind first: `Finding 2, Source claim:`. */
+export function findingPrefix(index: number, kindLabel: string): string {
+  return `Finding ${index}, ${kindLabel}:`;
+}
+
+/** The caption above a quote: `Quoted from source 2`. */
+export function quoteCaption(sourceNumber: number): string {
+  return `Quoted from source ${sourceNumber}`;
+}
+
+/** The accessible name of a citation button: `Source 2: Sample runtime releases`. */
+export function citationName(sourceNumber: number, title: string): string {
+  return `Source ${sourceNumber}: ${title}`;
+}
+
+/** The tertiary button on a cited source: `Back to finding 3`. */
+export function backToFindingLabel(index: number): string {
+  return `Back to finding ${index}`;
+}
+
+/** A source title is capped at the schema cap. */
+export const SOURCE_TITLE_MAX = 200;

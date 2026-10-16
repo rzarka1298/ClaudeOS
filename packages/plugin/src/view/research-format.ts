@@ -40,3 +40,16 @@ export function inferencesText(count: number): string {
 export function formatRunTime(iso: string, nowMs: number, zone: string): string {
   return formatTaskInstant(iso, nowMs, zone);
 }
+
+/**
+ * The first `max` UTF-16 code units of `text` (the unit the schema caps count in) without cutting a
+ * surrogate pair in half, and whether anything was left out. The caller says
+ * `Text shortened for display.` beside a shortened value.
+ */
+export function capText(text: string, max: number): { text: string; shortened: boolean } {
+  if (text.length <= max) return { text, shortened: false };
+  let end = max;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return { text: text.slice(0, end), shortened: true };
+}

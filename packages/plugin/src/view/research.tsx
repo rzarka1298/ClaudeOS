@@ -34,6 +34,7 @@ import { WidgetFooter } from "../widgets/footer.js";
 import type { FooterModel } from "../widgets/presentation.js";
 import { UntrustedText } from "./approval-text.js";
 import { ReportList } from "./report-list.js";
+import { ReportReader } from "./report-reader.js";
 import {
   DISCONNECTED_REASON,
   NO_TOPIC_LABEL,
@@ -57,7 +58,8 @@ import { ResearchStatusSection } from "./research-status.js";
  * its body executes nothing itself: Run now calls the `requestRunNow` host port
  * and nothing else.
  *
- * The reader (R4, plan 07-13) plugs in through the `reader` slot. Every string
+ * The reader (R4, plan 07-13) is the default occupant of the reader cell; the `reader` slot
+ * replaces it (the tests of the grid use that). Every string
  * the service derived from a source or a model is rendered as a text node.
  */
 
@@ -75,7 +77,7 @@ export interface ResearchDestinationProps {
   readonly now: number;
   /** The owner's IANA zone; defaults to the runtime's own. */
   readonly zone?: string | undefined;
-  /** The report reader (plan 07-13). Absent, the grid shows the placeholder. */
+  /** Replaces the report reader (plan 07-13). Absent, the grid shows the real reader. */
   readonly reader?: ((props: ResearchReaderSlotProps) => ComponentChildren) | undefined;
 }
 
@@ -291,10 +293,17 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
             />
           </div>
           <div className="ccc-research-reader-cell">
-            {selected !== null && props.reader !== undefined ? (
+            {selected === null ? (
+              <p className="ccc-research-placeholder">{REPORT_PLACEHOLDER}</p>
+            ) : props.reader !== undefined ? (
               props.reader({ noteId: selected, onBack: () => selectReport(null) })
             ) : (
-              <p className="ccc-research-placeholder">{REPORT_PLACEHOLDER}</p>
+              <ReportReader
+                noteId={selected}
+                onBack={() => selectReport(null)}
+                now={props.now}
+                zone={zone}
+              />
             )}
           </div>
         </div>
