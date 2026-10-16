@@ -21,6 +21,19 @@ describe("Test 4 (ids and hashes): ids, hashes and the nonce are computed in the
     expect(contentHashFor("line one\nline three")).not.toBe(contentHashFor(text));
   });
 
+  it("pins the limits ADR 0030 states: what the canonical hash form does not tell apart (and a leading byte-order mark it does)", () => {
+    const bom = String.fromCodePoint(0xfeff);
+    const base = contentHashFor("alpha beta\ngamma");
+    // The same hash: a byte-order mark at the end of a line, CRLF, NFC against NFD, trailing blanks.
+    expect(contentHashFor(`alpha beta${bom}\ngamma`)).toBe(base);
+    expect(contentHashFor("alpha beta\r\ngamma")).toBe(base);
+    expect(contentHashFor("alpha beta   \ngamma\n\n\n")).toBe(base);
+    expect(contentHashFor("caf\u00e9")).toBe(contentHashFor("cafe\u0301"));
+    // A different hash: a byte-order mark at the start, and any change of a word.
+    expect(contentHashFor(`${bom}alpha beta\ngamma`)).not.toBe(base);
+    expect(contentHashFor("alpha beta\ndelta")).not.toBe(base);
+  });
+
   it("mints a 32-character lowercase hex nonce from random bytes that differs between calls", () => {
     const seen = new Set<string>();
     for (let i = 0; i < 50; i += 1) {
