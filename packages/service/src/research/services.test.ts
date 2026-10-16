@@ -294,6 +294,37 @@ describe("Test 5 (in flight and no vault): one run at a time, refused without a 
   });
 });
 
+describe("wave 5 fix round (opus M3): no run starts once shutdown has begun", () => {
+  it("refuses a press with service-disconnected and starts nothing", () => {
+    kit = createKit();
+    kit.services.beginShutdown();
+    expect(kit.services.runNow()).toEqual({ ok: false, code: "service-disconnected" });
+    expect(listJobRuns(kit.store.db, RESEARCH_JOB_ID, 10)).toEqual([]);
+    expect(kit.fetchCalls).toHaveLength(0);
+    expect(kit.events).toEqual([]);
+  });
+
+  it("lets a run already in flight finish, and refuses the next press", async () => {
+    kit = createKit();
+    const started = kit.services.runNow();
+    if (!started.ok) throw new Error("refused");
+    kit.services.beginShutdown();
+    // Even a press that would only have joined the run in flight is refused: the caller is told
+    // the service is going away instead of being promised an outcome.
+    expect(kit.services.runNow()).toEqual({ ok: false, code: "service-disconnected" });
+    await kit.services.idle();
+    expect(lastRow(kit)?.outcome).toBe("success");
+    expect(kit.services.runNow()).toEqual({ ok: false, code: "service-disconnected" });
+    expect(listJobRuns(kit.store.db, RESEARCH_JOB_ID, 10)).toHaveLength(1);
+  });
+
+  it("checks the flag before the vault, so a press during shutdown never touches the store", () => {
+    kit = createKit({ vault: false });
+    kit.services.beginShutdown();
+    expect(kit.services.runNow()).toEqual({ ok: false, code: "service-disconnected" });
+  });
+});
+
 describe("Test 6 (allowlist file) as seen from a run", () => {
   it("fails the run as all-sources-failed with a code-only log line, and never overwrites the file", async () => {
     kit = createKit({ writeConfig: false });

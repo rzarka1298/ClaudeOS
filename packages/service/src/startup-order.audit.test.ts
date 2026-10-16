@@ -188,6 +188,12 @@ describe("main.ts research wiring (plan 07-14)", () => {
     expect(src).not.toMatch(/apiKey\s*=|const key\b/);
   });
 
+  it("stops research intake synchronously in stopIntake, before anything is awaited", () => {
+    const at = src.indexOf("stopIntake: () => {");
+    const block = src.slice(at, src.indexOf("},", at));
+    expect(block).toContain("research.beginShutdown()");
+  });
+
   it("binds the route slot once and waits for a run in the shutdown chain", () => {
     expect(src.match(/researchSlot\.bind\(/g)).toHaveLength(1);
     const shutdownAt = src.indexOf("const shutdown = ");
