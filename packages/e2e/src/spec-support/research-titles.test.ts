@@ -16,7 +16,8 @@ const SPEC_DIR = "packages/e2e/specs";
 
 /** The planned title numbers of each research spec (grown task by task). */
 const PLANNED = {
-  "research-core": [2],
+  "research-core": [1, 2, 3, 4, 5, 6, 7, 8, 22],
+  "research-hostile": [9, 10],
 } as const;
 type SpecName = keyof typeof PLANNED;
 

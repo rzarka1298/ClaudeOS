@@ -176,7 +176,8 @@ describe("parseReportNote", () => {
 describe("parseRawNote", () => {
   const raw = parseRawNote(RAW_NOTE);
 
-  it("reads the stage, the snapshot path and the hash", () => {
+  it("reads the stage, the snapshot path, the title and the hash", () => {
+    expect(raw.title).toBe("Hostile source 1");
     expect(raw.stage).toBe("raw");
     expect(raw.type).toBe("research-source");
     expect(raw.snapshotPath).toBe("global/raw/033d3a839d7999bfcc0f066d01f3e9d8.ccabc645.md");

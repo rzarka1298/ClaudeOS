@@ -161,6 +161,7 @@ describe("inline renderer functions in the specs and support modules", () => {
       "notification-look",
       "synthetic-session",
       "research-core",
+      "research-hostile",
       "tasks-core",
       "tasks-scale",
       "tasks-views",

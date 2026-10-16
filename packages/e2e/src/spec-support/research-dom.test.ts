@@ -155,6 +155,7 @@ describe("rendererReadResearch over the plugin's own markup", () => {
     if (reader === null) throw new Error("no reader");
     expect(reader.loading).toBe(false);
     expect(reader.failureHeading).toBeNull();
+    expect(reader.activeElements).toBe(0);
     expect(reader.title).toContain("Developer tooling");
     expect(reader.hasOpenNote).toBe(true);
     expect(reader.hasBackButton).toBe(false);
@@ -220,6 +221,21 @@ describe("rendererReadResearch over the plugin's own markup", () => {
       "Outcome",
       "Summariser",
     ]);
+  });
+
+  it("counts the links, images, frames and scripts inside the reader", () => {
+    const target = page(fixture("populated"));
+    const doc = target.window.document as unknown as Doc;
+    const find = (selector: string) => doc.querySelector(selector);
+    find("p.ccc-report-text")?.insertAdjacentHTML(
+      "beforeend",
+      '<a href="https://x.example.invalid/">x</a><img src="y"><iframe></iframe><script></script>',
+    );
+    const reader = inPage<{ reader: { activeElements: number } }>(
+      target,
+      "rendererReadResearch",
+    )(DOM_CONFIG).reader;
+    expect(reader.activeElements).toBe(4);
   });
 
   it("reads a partial report: the notice before the legend and the findings, the Partial badges", () => {

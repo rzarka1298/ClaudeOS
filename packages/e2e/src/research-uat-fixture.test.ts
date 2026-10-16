@@ -9,6 +9,7 @@ import {
   isResearchGuardEnv,
   prepareResearchUat,
   RESEARCH_SCENARIOS,
+  hostileSources,
   RESEARCH_TEST_ENV,
   SLOW_FETCH_MS,
 } from "./research-uat-fixture.js";
@@ -208,6 +209,43 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
       }),
     ).toThrow(/runtime directory/i);
     expect(() => prepareResearchUat("relative/dir", { installAccount: INSTALL_ACCOUNT })).toThrow();
+  });
+});
+
+describe("the hostile scenario's sources", () => {
+  it("pairs each source label with its corpus entry's forbidden and kept strings", () => {
+    const hostile = hostileSources();
+    expect(hostile).toHaveLength(12);
+    expect(new Set(hostile.map((entry) => entry.label)).size).toBe(12);
+    for (const entry of hostile) {
+      expect(entry.label).toMatch(/^Hostile source \d+$/);
+      expect(entry.forbidden.length, entry.label).toBeGreaterThan(0);
+      expect(entry.category.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("matches the labels the hostile scenario writes into the allowlist", () => {
+    const dir = runtimeDir();
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
+    prepared.select("hostile");
+    expect(parsedSources(dir).sources.map((source) => source.label)).toEqual(
+      hostileSources().map((entry) => entry.label),
+    );
+  });
+
+  it("keeps the base fetch hold shorter than the slow hold and longer than nothing", () => {
+    const manifest = JSON.parse(
+      readFileSync(
+        join(
+          prepareResearchUat(runtimeDir(), { installAccount: INSTALL_ACCOUNT }).fixtureDir,
+          "manifest.json",
+        ),
+        "utf8",
+      ),
+    ) as { entries: { url: string; delayMs?: number }[] };
+    const base = manifest.entries.find((entry) => entry.url.includes("atom.example.invalid"));
+    expect(base?.delayMs).toBeGreaterThan(0);
+    expect(base?.delayMs ?? 0).toBeLessThan(SLOW_FETCH_MS);
   });
 });
 
