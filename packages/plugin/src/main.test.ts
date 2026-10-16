@@ -21,6 +21,14 @@ describe("main.ts wires the Phase 6 modules once, through the registry (plan 06-
     expect(source.match(/wireTasks\(/g)).toHaveLength(1);
   });
 
+  it("builds the research client from the authenticated connection and calls wireResearch once (plan 07-15)", () => {
+    expect(source).toMatch(/createResearchClient\(this\.client\)/);
+    expect(source.match(/wireResearch\(/g)).toHaveLength(1);
+    // The open-note port finds the file by its exact vault-relative path; it never parses link text.
+    expect(source).toMatch(/getFileByPath\(path\)/);
+    expect(source).not.toMatch(/openLinkText\([^)]*research/i);
+  });
+
   it("registers nothing directly on the plugin", () => {
     expect(source).not.toMatch(
       /this\.(registerView|addRibbonIcon|addCommand|registerEvent|registerInterval|registerObsidianProtocolHandler)\(/,

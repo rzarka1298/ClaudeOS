@@ -8,6 +8,9 @@ import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
 import { registerSetUpLaunchersCommand, SET_UP_LAUNCHERS_COMMAND_ID } from "./projects/commands.js";
 import { resetLaunchStatus } from "./projects/launch-status.js";
+import { researchApi, researchConfigured } from "./research/api.js";
+import { researchEventHandlerInstalled } from "./research/events.js";
+import { wireResearch } from "./research/wiring.js";
 import { startServiceEventsOnLayoutReady } from "./service-connection.js";
 import { registerVaultSetupCommand, type VaultSetupUi } from "./setup-command.js";
 import { wireTasks } from "./tasks/wiring.js";
@@ -64,6 +67,13 @@ const NOOP_TASKS_CLIENT = {
   rebuild: () => Promise.reject(new Error("not called")),
   attention: () => Promise.reject(new Error("not called")),
   dueToday: () => Promise.reject(new Error("not called")),
+} as never;
+
+const NOOP_RESEARCH_CLIENT = {
+  run: () => Promise.reject(new Error("not called")),
+  list: () => Promise.reject(new Error("not called")),
+  report: () => Promise.reject(new Error("not called")),
+  status: () => Promise.reject(new Error("not called")),
 } as never;
 
 /** An event client that records subscriptions and never connects. */
@@ -156,6 +166,14 @@ function loadCycle(
     now: () => 0,
     listWorkspaces: () => Promise.resolve([]),
     log: () => {},
+  });
+  // The REAL research wiring (plan 07-15): the client adapter, the host ports and the single
+  // `research.updated` handler, all released through the registry's cleanup.
+  wireResearch(registry, {
+    client: NOOP_RESEARCH_CLIENT,
+    notice: () => {},
+    openFile: () => false,
+    copyText: () => Promise.resolve(),
   });
   // The REAL plugin-level switcher (wave-7 finding 2): its launch timers and
   // any open modal are released through the seam.
@@ -257,6 +275,27 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
       expect(next.liveCount()).toBe(0);
     }
     expect(host.liveCounts().protocolHandler).toBe(0);
+  });
+
+  it("the research wiring: twenty loads leave one handler and one configuration, an unload leaves none (plan 07-15, PLUG-04)", async () => {
+    let current: HostRegistry | undefined;
+    for (let i = 0; i < 20; i++) {
+      current?.disposeAll();
+      expect(researchEventHandlerInstalled()).toBe(false);
+      expect(researchConfigured()).toBe(false);
+      current = loadCycle(host, domTarget, () => {});
+      expect(researchEventHandlerInstalled()).toBe(true);
+      expect(researchConfigured()).toBe(true);
+    }
+    // The disposers are counted by the registry, so a missed one would show as a live registration.
+    const live = current?.liveCount() ?? 0;
+    expect(live).toBeGreaterThan(0);
+
+    current?.disposeAll();
+    expect(current?.liveCount()).toBe(0);
+    expect(researchEventHandlerInstalled()).toBe(false);
+    expect(researchConfigured()).toBe(false);
+    await expect(researchApi().status()).rejects.toMatchObject({ code: "service-disconnected" });
   });
 
   it("after twenty loads without a following unload, firing one workspace event invokes its handler exactly once", () => {
