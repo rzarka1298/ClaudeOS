@@ -1,11 +1,17 @@
 import type { ServiceEvent } from "@ccc/domain";
-import { cleanup, render, screen, waitFor } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { attachEventClient } from "../service-connection.js";
 import { EVENT_HANDLERS, routeServiceEvent } from "../service-event-router.js";
 import { fakeResearchApi, fakeResearchPorts } from "../test-support/research-api-fake.js";
-import { id25, listOf, reportRow, statusOf } from "../test-support/research-view-fixtures.js";
+import {
+  id25,
+  listOf,
+  reportRow,
+  runResponse,
+  statusOf,
+} from "../test-support/research-view-fixtures.js";
 import { Shell } from "../view/shell.js";
 import { configureResearch } from "./api.js";
 import {
@@ -14,7 +20,7 @@ import {
   installResearchEventHandler,
   researchEventHandlerInstalled,
 } from "./events.js";
-import { resetResearchState } from "./state.js";
+import { pressRunNow, resetResearchState } from "./state.js";
 
 /**
  * Plan 07-15, task 2: `research.updated` drives the view, and a reconnect refetches once (D-25,
@@ -203,6 +209,174 @@ describe("the destination being open gates the refresh", () => {
     } finally {
       dispose();
     }
+  });
+});
+
+describe("wave 5 fix round (Codex 3): the destination's lifetime is counted, not flagged", () => {
+  it("keeps handling events, and keeps the shared state, while a second leaf shows Research", async () => {
+    const row = reportRow(0);
+    const api = fakeResearchApi({
+      status: vi.fn(() => Promise.resolve(statusOf({ topicLabel: "Topic" }))),
+      list: vi.fn(() => Promise.resolve(listOf([row]))),
+    });
+    configureResearch({ api, ...fakeResearchPorts() });
+    const first = render(<Shell initialDestination="research" />);
+    const second = render(<Shell initialDestination="research" />);
+    await waitFor(() => expect(screen.getAllByText(row.title).length).toBe(2));
+
+    // One leaf closes. The other is still mounted: its state stays, and events still reach it.
+    first.unmount();
+    expect(screen.getAllByText(row.title).length).toBe(1);
+    const listBefore = api.list.mock.calls.length;
+    const dispose = installResearchEventHandler(createResearchEventHandler());
+    try {
+      routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
+      await waitFor(() => expect(api.list.mock.calls.length).toBe(listBefore + 1));
+      expect(screen.getAllByText(row.title).length).toBe(1);
+    } finally {
+      dispose();
+    }
+
+    // The last leaf closes: events fetch nothing again.
+    second.unmount();
+    const afterClose = api.list.mock.calls.length;
+    const disposeClosed = installResearchEventHandler(createResearchEventHandler());
+    try {
+      routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
+      await settle();
+      expect(api.list.mock.calls.length).toBe(afterClose);
+    } finally {
+      disposeClosed();
+    }
+  });
+});
+
+describe("wave 5 fix round (MAJOR-1): a run started here still ends with a Notice after the owner left", () => {
+  function endedStatus(outcome: "success" | "partial") {
+    return statusOf({
+      topicLabel: "Topic",
+      lastSuccess: {
+        runId: RUN,
+        endedAt: "2026-10-14T12:05:00.000Z",
+        outcome,
+        sourceCount: outcome === "partial" ? 2 : 3,
+        sourceTotal: 3,
+        reportNoteId: id25("note1"),
+      },
+    });
+  }
+
+  async function startRunThenLeave(statusAfter: () => ReturnType<typeof statusOf>) {
+    let started = false;
+    let ended = false;
+    const api = fakeResearchApi({
+      run: vi.fn(() => {
+        started = true;
+        return Promise.resolve(runResponse({ runId: RUN }));
+      }),
+      status: vi.fn(() =>
+        Promise.resolve(
+          ended
+            ? statusAfter()
+            : started
+              ? statusOf({
+                  topicLabel: "Topic",
+                  inFlight: { runId: RUN, startedAt: "2026-10-14T12:00:00.000Z", stage: "capture" },
+                })
+              : statusOf({ topicLabel: "Topic" }),
+        ),
+      ),
+      list: vi.fn(() => Promise.resolve(listOf([reportRow(0)]))),
+    });
+    const ports = fakeResearchPorts();
+    configureResearch({ api, ...ports });
+    render(<Shell initialDestination="research" />);
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await pressRunNow();
+    });
+    // The owner leaves Research for another destination while the run is still going.
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(document.querySelector(".ccc-research")).toBeNull();
+    const listAfterLeaving = api.list.mock.calls.length;
+    return {
+      api,
+      ports,
+      listAfterLeaving,
+      end() {
+        ended = true;
+      },
+    };
+  }
+
+  it("posts the Notice once when the run ends, without fetching the list", async () => {
+    const harness = await startRunThenLeave(() => endedStatus("success"));
+    harness.end();
+    const dispose = installResearchEventHandler(createResearchEventHandler());
+    try {
+      routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
+      await waitFor(() => expect(harness.ports.notify).toHaveBeenCalledTimes(1));
+      expect(harness.ports.notify).toHaveBeenCalledWith("Research report ready.");
+      // Status only: the list is not fetched for a view nobody is looking at.
+      expect(harness.api.list.mock.calls.length).toBe(harness.listAfterLeaving);
+      // The run is accounted for: a repeated event posts nothing more.
+      routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
+      await settle();
+      expect(harness.ports.notify).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("posts the failure Notice for a run that failed while the view was closed", async () => {
+    const harness = await startRunThenLeave(() =>
+      statusOf({
+        topicLabel: "Topic",
+        lastFailure: {
+          runId: RUN,
+          endedAt: "2026-10-14T12:05:00.000Z",
+          errorCode: "all-sources-failed",
+        },
+      }),
+    );
+    harness.end();
+    const dispose = installResearchEventHandler(createResearchEventHandler());
+    try {
+      routeServiceEvent(updated({ runId: RUN, state: "failed", outcome: "failure" }));
+      await waitFor(() => expect(harness.ports.notify).toHaveBeenCalledTimes(1));
+      expect(String(harness.ports.notify.mock.calls[0]?.[0])).toContain("Research run failed");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("says nothing for a run this session did not start", async () => {
+    const api = fakeResearchApi({
+      status: vi.fn(() => Promise.resolve(endedStatus("success"))),
+    });
+    const ports = fakeResearchPorts();
+    configureResearch({ api, ...ports });
+    render(<Shell initialDestination="research" />);
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    const statusBefore = api.status.mock.calls.length;
+    const dispose = installResearchEventHandler(createResearchEventHandler());
+    try {
+      routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
+      await settle();
+      expect(api.status.mock.calls.length).toBe(statusBefore);
+      expect(ports.notify).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("settles on remount when the run ended while the view was closed and no event arrived", async () => {
+    const harness = await startRunThenLeave(() => endedStatus("partial"));
+    harness.end();
+    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+    await waitFor(() => expect(harness.ports.notify).toHaveBeenCalledTimes(1));
+    expect(String(harness.ports.notify.mock.calls[0]?.[0])).toContain("ready with gaps");
   });
 });
 
