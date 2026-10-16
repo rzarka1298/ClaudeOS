@@ -256,3 +256,42 @@ for (const { researchCase, width, motion } of CELLS) {
     },
   );
 }
+
+/**
+ * A11Y-03 is not vacuous (wave 5 review). The reduced-motion baseline of a loaded report is
+ * byte-identical to the full-motion one because the Research destination holds nothing that
+ * animates once loaded, so that cell alone cannot go red if the reduced-motion rule is deleted.
+ * This cell compares what DOES change: the loading state's skeleton lines carry a transition on
+ * the slow motion token. At full motion that duration is positive; under `data-motion=reduced`
+ * the token is 0 and so is the transition. No baseline is written.
+ */
+test("research - the skeleton's transition runs at full motion and is off under reduced motion", async ({
+  page,
+}) => {
+  async function longestSkeletonTransitionMs(motion: "full" | "reduced"): Promise<number> {
+    await page.goto(
+      harnessUrl({ view: "research", case: "research-loading", width: "full", motion }),
+    );
+    await page.locator("html[data-harness-ready=true]").waitFor({ state: "attached" });
+    return page.evaluate(() => {
+      const lines = document.querySelectorAll(".ccc-research .ccc-skeleton-line");
+      let longest = 0;
+      for (const line of lines) {
+        for (const duration of getComputedStyle(line).transitionDuration.split(",")) {
+          const text = duration.trim();
+          const seconds = text.endsWith("ms")
+            ? Number.parseFloat(text) / 1000
+            : Number.parseFloat(text);
+          if (Number.isFinite(seconds)) longest = Math.max(longest, seconds * 1000);
+        }
+      }
+      return lines.length === 0 ? -1 : longest;
+    });
+  }
+
+  const full = await longestSkeletonTransitionMs("full");
+  const reduced = await longestSkeletonTransitionMs("reduced");
+  // -1 means the case drew no skeleton at all: the check would be vacuous again.
+  expect(full).toBeGreaterThan(0);
+  expect(reduced).toBe(0);
+});
