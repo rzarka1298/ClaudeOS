@@ -22,8 +22,8 @@ import {
   statusOf,
 } from "../test-support/research-view-fixtures.js";
 import { ResearchDestination } from "../view/research.js";
-import { widgetStateFor } from "../widgets/widget-data.js";
 import * as quickActions from "../widgets/quick-actions.js";
+import { widgetStateFor } from "../widgets/widget-data.js";
 import { researchApi, researchConfigured, researchPorts } from "./api.js";
 import { researchEventHandlerInstalled } from "./events.js";
 import { resetResearchState } from "./state.js";
@@ -166,9 +166,9 @@ describe("Test 1 (wiring): wireResearch configures the ports and returns a dispo
 
   it("the copy port writes through the host and answers whether it worked", async () => {
     const { copyText, registry } = setup();
-    await expect(Promise.resolve(researchPorts().copyText("https://example.invalid/a"))).resolves.toBe(
-      true,
-    );
+    await expect(
+      Promise.resolve(researchPorts().copyText("https://example.invalid/a")),
+    ).resolves.toBe(true);
     expect(copyText).toHaveBeenCalledWith("https://example.invalid/a");
     copyText.mockImplementationOnce(() => Promise.reject(new Error("denied")));
     await expect(Promise.resolve(researchPorts().copyText("x"))).resolves.toBe(false);
@@ -183,9 +183,8 @@ describe("Test 1 (wiring): wireResearch configures the ports and returns a dispo
     const { client, registry } = setup();
     void researchPorts().requestRunNow();
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
-    expect((dispatchSpy.mock.calls[0]?.[0] as { capability: string }).capability).toBe(
-      "research:run",
-    );
+    const descriptor = dispatchSpy.mock.calls[0]?.[0];
+    expect(descriptor?.capability).toBe("research:run");
     await waitFor(() => expect(client.run).toHaveBeenCalledTimes(1));
     registry.disposeAll();
   });
@@ -258,13 +257,16 @@ describe("Test 3 (Overview untouched): no research state reaches the Overview", 
     for (const file of ["../widgets/widget-data.ts", "../widgets/panels.tsx"]) {
       const source = readFileSync(join(SRC_DIR, file), "utf8");
       const imports = source.split("\n").filter((line) => /^\s*import\b|from "/.test(line));
-      expect(imports.filter((line) => /research/i.test(line)), file).toEqual([]);
+      expect(
+        imports.filter((line) => /research/i.test(line)),
+        file,
+      ).toEqual([]);
     }
   });
 });
 
 describe("Test 4 (notices): only a press in this session posts the outcome Notice", () => {
-  function runFlow(options: { press: boolean }) {
+  function runFlow() {
     const row = reportRow(0);
     let phase: "idle" | "running" | "done" = "idle";
     const client = fakeClient({
@@ -316,7 +318,7 @@ describe("Test 4 (notices): only a press in this session posts the outcome Notic
   }
 
   it("a press in this session posts a Notice with the outcome sentence", async () => {
-    const flow = runFlow({ press: true });
+    const flow = runFlow();
     const button = await screen.findByRole("button", { name: /^Run now/ });
     await waitFor(() => expect(flow.client.status).toHaveBeenCalled());
     fireEvent.click(button);
@@ -331,7 +333,7 @@ describe("Test 4 (notices): only a press in this session posts the outcome Notic
   });
 
   it("an outcome first seen through an event posts no Notice", async () => {
-    const flow = runFlow({ press: false });
+    const flow = runFlow();
     await waitFor(() => expect(flow.client.status).toHaveBeenCalledTimes(1));
     flow.finish();
     await waitFor(() => expect(flow.client.list.mock.calls.length).toBeGreaterThanOrEqual(2));
@@ -341,7 +343,7 @@ describe("Test 4 (notices): only a press in this session posts the outcome Notic
   });
 
   it("a hostile report title is capped and never reaches the Notice as a control or bidi character", async () => {
-    const flow = runFlow({ press: true });
+    const flow = runFlow();
     const { registry, notice } = flow;
     for (const entry of HOSTILE_CORPUS) {
       researchPorts().notify(`Research report ready: ${entry.text}.`);
