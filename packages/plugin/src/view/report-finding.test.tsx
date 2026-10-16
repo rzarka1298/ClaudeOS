@@ -39,7 +39,9 @@ describe("the marker for a finding whose quote was withheld", () => {
     const item = root.querySelector("li.ccc-report-item") as HTMLElement;
     expect(item.getAttribute("data-kind")).toBe("inference");
     expect(item.getAttribute("data-quote-unverified")).toBe("true");
-    expect(item.querySelector(".ccc-report-kind")?.textContent).toBe(`${String.fromCodePoint(0x2234)} Model inference`);
+    expect(item.querySelector(".ccc-report-kind")?.textContent).toBe(
+      `${String.fromCodePoint(0x2234)} Model inference`,
+    );
     expect(item.querySelector("blockquote")).toBeNull();
     expect(item.textContent).toContain(MARKER);
     const note = [...item.querySelectorAll("p")].find((p) => p.textContent === MARKER);
