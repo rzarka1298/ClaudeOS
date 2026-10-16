@@ -83,6 +83,8 @@ export interface KitOptions {
   readonly publishThrows?: boolean;
   /** True throws a plain Error from the chooser; an Error instance throws that. */
   readonly chooseThrows?: boolean | Error;
+  /** Called with each classified effect, right after it is recorded (before its work happens). */
+  readonly onEffect?: (operation: string) => void;
   /** Every log call throws (a broken sink). */
   readonly logThrows?: boolean;
   readonly maxInputChars?: number;
@@ -179,7 +181,10 @@ export function createKit(options: KitOptions = {}): Kit {
         ...(options.maxInputChars === undefined ? {} : { maxInputChars: options.maxInputChars }),
       };
     },
-    audit: (operation) => effects.push(operation),
+    audit: (operation) => {
+      effects.push(operation);
+      options.onEffect?.(operation);
+    },
     now: options.now ?? (() => new Date("2026-10-15T09:00:00.000Z")),
     log: {
       warn: (fields) => {

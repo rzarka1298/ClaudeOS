@@ -755,6 +755,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     appendStage(deps, trace, "wiki", wikiIds, { sources: wikiIds.length });
     appendStage(deps, trace, "deliverable", [report.id], { items: items.length });
     assertLive(trace);
+    nameEffect(deps.audit, PIPELINE_EFFECTS.writeNotes);
     finaliseReportNote({ vaultRoot: deps.vaultRoot, path: report.path, now: deps.now() });
     appendStage(deps, trace, "output", [report.id], { items: items.length });
   } catch (error) {
