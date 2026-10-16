@@ -18,6 +18,7 @@ import {
   loadMoreReports,
   loadResearch,
   onResearchUpdated,
+  openResearchView,
   pressPending,
   pressRunNow,
   refreshList,
@@ -62,12 +63,17 @@ function finishedSuccess(overrides: { outcome?: "success" | "partial"; count?: n
   };
 }
 
+// These tests drive the state as a mounted Research destination does: one mount is open.
+let releaseView: () => void = () => undefined;
+
 beforeEach(() => {
   resetResearchState();
+  releaseView = openResearchView();
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  releaseView();
   configureResearch(null);
   resetResearchState();
 });

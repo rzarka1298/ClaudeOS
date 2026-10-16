@@ -87,16 +87,30 @@ export const activeRunId: Signal<string | null> = signal(null);
 /** The report the owner opened, or null. There is no default selection. */
 export const selectedNoteId: Signal<string | null> = signal(null);
 
-let viewOpen = false;
+/** How many mounted Research destinations there are (two leaves may show Research at once). */
+let openMounts = 0;
 
-/** Marks the Research destination open or closed; the `research.updated` handler refreshes only while open. */
-export function setResearchViewOpen(open: boolean): void {
-  viewOpen = open;
+/**
+ * Registers one mounted Research destination and returns the function that unregisters it (safe
+ * to call twice). The `research.updated` handler refreshes while any mount is open; only when the
+ * last one closes is the shared state put back, so closing one leaf never blanks or deafens
+ * another (wave 5 review, Codex 3). The run this session started stays tracked across that reset,
+ * so its outcome can still be told to the owner who navigated away.
+ */
+export function openResearchView(): () => void {
+  openMounts += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    openMounts = Math.max(0, openMounts - 1);
+    if (openMounts === 0) resetResearchState({ keepOwnRun: true });
+  };
 }
 
-/** True while the Research destination is mounted. */
+/** True while at least one Research destination is mounted. */
 export function researchViewOpen(): boolean {
-  return viewOpen;
+  return openMounts > 0;
 }
 
 let statusSeq = 0;
@@ -104,8 +118,13 @@ let listSeq = 0;
 let activeMisses = 0;
 let activeRunIsOwn = false;
 
-/** Puts every signal back to what a fresh mount sees. */
-export function resetResearchState(): void {
+/**
+ * Puts every signal back to what a fresh mount sees. With `keepOwnRun`, a run this session started
+ * and is still waiting for keeps being tracked (its id, its misses and the fact that it is ours):
+ * the owner may have left the destination, and the run's end is still theirs to be told.
+ */
+export function resetResearchState(options: { readonly keepOwnRun?: boolean } = {}): void {
+  const keep = options.keepOwnRun === true && activeRunIsOwn && activeRunId.value !== null;
   researchStatus.value = null;
   statusFailure.value = null;
   reportRows.value = [];
@@ -117,13 +136,14 @@ export function resetResearchState(): void {
   focusRequest.value = null;
   statusLine.value = "";
   pressPending.value = false;
-  activeRunId.value = null;
   selectedNoteId.value = null;
   statusSeq += 1;
   listSeq += 1;
+  clearClaim();
+  if (keep) return;
+  activeRunId.value = null;
   activeMisses = 0;
   activeRunIsOwn = false;
-  clearClaim();
 }
 
 /** Sets the destination's one polite status line. */
@@ -264,34 +284,43 @@ function endedRun(status: ResearchStatusResponse, runId: string): EndedRun | und
   return undefined;
 }
 
+/**
+ * Tells the owner how their run ended: the status line and a Notice. With the destination closed
+ * the settle is status-only: the Notice is posted and nothing else is touched or fetched (no list,
+ * no status line, no focus), because nobody is looking at them and the next mount fetches afresh.
+ */
 async function conclude(ended: EndedRun, status: ResearchStatusResponse): Promise<void> {
   const ports = researchPorts();
+  const open = researchViewOpen();
+  const say = (line: string, notice: boolean): void => {
+    if (open) statusLine.value = line;
+    if (notice) ports.notify(line);
+  };
   if (ended.kind === "unknown") {
-    statusLine.value = STATUS_UNKNOWN_END;
+    say(STATUS_UNKNOWN_END, false);
     return;
   }
   if (ended.kind === "failure") {
     const failed = status.lastFailure;
     if (failed === null) return;
-    const line = runFailedLine(failed.errorCode);
-    statusLine.value = line;
-    ports.notify(line);
+    say(runFailedLine(failed.errorCode), true);
     return;
   }
   const success = status.lastSuccess;
   if (success === null) return;
-  await refreshList();
+  if (open) await refreshList();
   let line: string;
   if (success.outcome === "partial") {
     line = reportReadyWithGapsLine(success.sourceTotal - success.sourceCount, success.sourceTotal);
   } else {
-    const row = reportRows.value.find(
-      (candidate) => candidate.readable && candidate.noteId === success.reportNoteId,
-    );
+    const row = open
+      ? reportRows.value.find(
+          (candidate) => candidate.readable && candidate.noteId === success.reportNoteId,
+        )
+      : undefined;
     line = row?.readable === true ? reportReadyLine(row.title) : REPORT_READY_UNTITLED;
   }
-  statusLine.value = line;
-  ports.notify(line);
+  say(line, true);
 }
 
 async function settleActiveRun(status: ResearchStatusResponse): Promise<void> {
@@ -436,6 +465,24 @@ export async function pressRunNow(): Promise<void> {
   }
   pressPending.value = false;
   await refreshStatus();
+}
+
+/**
+ * A run ended while no Research destination is open: if this session started it, find out how it
+ * ended and tell the owner (a Notice), touching nothing else. Anything that is not a tracked own
+ * run fetches nothing. A mount that opens while the status is in flight supersedes this settle and
+ * does the telling itself, so the Notice is posted once either way.
+ */
+export async function settleOwnRunWhileClosed(): Promise<void> {
+  if (!activeRunIsOwn || activeRunId.value === null) return;
+  const token = ++statusSeq;
+  try {
+    const status = await researchApi().status();
+    if (token !== statusSeq) return;
+    await settleActiveRun(status);
+  } catch {
+    // The next event, or the next mount, asks again.
+  }
 }
 
 /**

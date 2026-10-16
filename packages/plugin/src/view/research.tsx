@@ -11,6 +11,7 @@ import {
   focusRequest,
   loadMoreReports,
   loadResearch,
+  openResearchView,
   pressPending,
   refreshList,
   refreshStatus,
@@ -22,11 +23,9 @@ import {
   reportsLoaded,
   reportsLoadingMore,
   researchStatus,
-  resetResearchState,
   runInProgress,
   selectedNoteId,
   selectReport,
-  setResearchViewOpen,
   setStatusLine,
   statusFailure,
   statusLine,
@@ -189,12 +188,9 @@ export function ResearchDestination(props: ResearchDestinationProps): VNode {
 
   useEffect(() => {
     // While open, `research.updated` events refresh this state (plan 07-15, D-25).
-    setResearchViewOpen(true);
+    const release = openResearchView();
     void loadResearch();
-    return () => {
-      setResearchViewOpen(false);
-      resetResearchState();
-    };
+    return release;
   }, []);
 
   // Coming back from a drop asks once more.

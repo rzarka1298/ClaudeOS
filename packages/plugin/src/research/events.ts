@@ -3,7 +3,7 @@ import {
   type ResearchUpdatedPayload,
   ResearchUpdatedPayloadSchema,
 } from "@ccc/domain/research-routes.js";
-import { onResearchUpdated, researchViewOpen } from "./state.js";
+import { onResearchUpdated, researchViewOpen, settleOwnRunWhileClosed } from "./state.js";
 
 /**
  * The one place `research.updated` events land (plan 07-15, D-25, UI-SPEC "Destination states",
@@ -34,15 +34,30 @@ export function researchEventHandlerInstalled(): boolean {
   return installed !== null;
 }
 
+/** True for a payload that says the run reached an end state. */
+function isTerminal(payload: ResearchUpdatedPayload): boolean {
+  return (
+    payload.state === "completed" ||
+    payload.state === "failed" ||
+    payload.state === "cancelled" ||
+    payload.state === "stale"
+  );
+}
+
 /**
- * The production handler: refreshes the Research state, but only while the destination is open.
- * With the destination closed an event fetches nothing, so no state is left behind for the next
- * mount to mistake for fresh data (the mount fetches on its own).
+ * The production handler: refreshes the Research state while any Research destination is open.
+ * With none open an event fetches nothing, so no state is left behind for the next mount to
+ * mistake for fresh data (the mount fetches on its own) - with one exception: when a run this
+ * session started ends, the owner who navigated away is still told (a status-only settle that
+ * posts the Notice and fetches no list).
  */
 export function createResearchEventHandler(): ResearchEventHandler {
   return async (payload) => {
-    if (!researchViewOpen()) return;
-    await onResearchUpdated(payload);
+    if (researchViewOpen()) {
+      await onResearchUpdated(payload);
+      return;
+    }
+    if (isTerminal(payload)) await settleOwnRunWhileClosed();
   };
 }
 
