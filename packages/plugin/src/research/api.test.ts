@@ -65,7 +65,7 @@ describe("the research port holder (plan 07-11, D-23 transport rule)", () => {
     expect(api.report).toHaveBeenCalledWith("n".repeat(25), "sources", "cursor_2");
 
     researchPorts().notify("hello");
-    researchPorts().requestRunNow();
+    void researchPorts().requestRunNow();
     await researchPorts().openNote("global/output/a.md");
     await researchPorts().copyText("text");
     expect(ports.notify).toHaveBeenCalledWith("hello");
