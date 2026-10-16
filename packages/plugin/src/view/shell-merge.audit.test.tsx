@@ -67,7 +67,7 @@ function description(id: DestinationId): string {
 }
 
 describe("DESTINATION_VIEWS after the merge", () => {
-  it.each(["overview", "projects", "settings", "agent-runs", "tasks"] as const)(
+  it.each(["overview", "projects", "settings", "agent-runs", "tasks", "research"] as const)(
     "%s renders a real view, not the placeholder description",
     (id) => {
       connectionState.value = { kind: "live" };
@@ -76,10 +76,10 @@ describe("DESTINATION_VIEWS after the merge", () => {
     },
   );
 
-  it("a destination without a view (research) still renders its placeholder, so the check above can fail", () => {
+  it("a destination without a view (skills) still renders its placeholder, so the check above can fail", () => {
     connectionState.value = { kind: "live" };
-    render(<Shell initialDestination="research" />);
-    expect(screen.getByText(description("research"))).toBeTruthy();
+    render(<Shell initialDestination="skills" />);
+    expect(screen.getByText(description("skills"))).toBeTruthy();
   });
 
   it("selecting a Run through the hero row opens Agent runs with that Run selected", () => {

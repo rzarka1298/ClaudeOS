@@ -160,9 +160,9 @@ describe("Shell", () => {
 
   it("renders the destination's own description when no entry exists in the view map (DESTINATION_VIEWS)", () => {
     render(<Shell />);
-    fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
     expect(
-      screen.getByText("Cited reports and the knowledge lifecycle. Filled in a later phase."),
+      screen.getByText("Reusable, user-invocable capabilities. Filled in a later phase."),
     ).toBeTruthy();
   });
 

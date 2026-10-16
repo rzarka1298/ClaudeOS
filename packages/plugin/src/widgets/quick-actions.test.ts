@@ -437,10 +437,9 @@ describe("table-driven over every R-CAPS descriptor string (plan 06-10, Test 3)"
     "codex:open-transcript": { kind: "session-action-requested" },
     "codex:follow-log": { kind: "session-action-requested" },
     // Phase 7 (plan 07-05, D-17): the manual research trigger is a direct-gesture
-    // row. The dispatcher has no route for it yet, so it answers unavailable. The
-    // Research view (plan 07-11) calls its injected `requestRunNow` host port and
-    // nothing else; plan 07-15 adds the `research:run` branch and the optional
-    // `runResearch` context member here, classification first, and updates this row.
+    // row. Plan 07-15 added its branch: with the optional `runResearch` context member
+    // present it is `research-run-requested`; this table's context has none, so it answers
+    // unavailable like any action the host has not wired (see "research:run" below).
     "research:run": { kind: "unavailable" },
   };
 
@@ -708,13 +707,14 @@ describe("the pair launch and the Codex branches (plan 05.1-17)", () => {
 describe("the dispatcher still has exactly its documented outcomes (plan 05.1-17, T-05.1-18)", () => {
   const CODE_ONLY = DISPATCHER_SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
-  it("returns only the six documented kinds and adds no seventh", () => {
+  it("returns only the seven documented kinds and adds no eighth", () => {
     const kinds = new Set([...CODE_ONLY.matchAll(/kind:\s*"([a-z-]+)"/g)].map((m) => m[1]));
     expect([...kinds].sort()).toEqual(
       [
         "launch-requested",
         "navigated",
         "proposal-requested",
+        "research-run-requested",
         "session-action-requested",
         "switcher-opened",
         "unavailable",
@@ -774,5 +774,74 @@ describe("a pair descriptor while the service is disconnected (UI-SPEC floor 12,
     connectionState.value = { kind: "connecting" };
     releaseView();
     resetLaunchStatus();
+  });
+});
+
+describe("research:run (plan 07-15, D-17, T-07-42)", () => {
+  const RUN_NOW: QuickActionDescriptor = {
+    id: "research-run-now",
+    label: "Run now",
+    capability: "research:run",
+  };
+
+  it("is a direct-gesture row in the domain table, not an approval", () => {
+    const classified = classifyCapability("research:run");
+    expect(classified?.operation).toBe("research.run-now");
+    expect(classified?.row.class).toBe("direct-gesture");
+  });
+
+  it("hands the descriptor's trigger to ctx.runResearch exactly once and executes nothing else", () => {
+    const runResearch = vi.fn();
+    const requestProposal = vi.fn();
+    const runSessionAction = vi.fn();
+    const ctx = { ...context(), runResearch, requestProposal, runSessionAction };
+
+    const result = dispatchQuickAction(RUN_NOW, ctx);
+
+    expect(result).toEqual({ kind: "research-run-requested" });
+    expect(runResearch).toHaveBeenCalledTimes(1);
+    expect(requestProposal).not.toHaveBeenCalled();
+    expect(runSessionAction).not.toHaveBeenCalled();
+    expect(ctx.requestLaunch).not.toHaveBeenCalled();
+    expect(ctx.navigate).not.toHaveBeenCalled();
+    expect(ctx.notify).not.toHaveBeenCalled();
+  });
+
+  it("answers unavailable, with the label's own Notice, when the host wired no runResearch", () => {
+    const ctx = context();
+    expect(dispatchQuickAction(RUN_NOW, ctx)).toEqual({ kind: "unavailable" });
+    expect(ctx.notify).toHaveBeenCalledTimes(1);
+    expect(ctx.notify).toHaveBeenCalledWith("Run now isn't available yet.");
+  });
+
+  it("an unknown research: capability fails closed at the classification step and never runs", () => {
+    const runResearch = vi.fn();
+    const ctx = { ...context(), runResearch };
+    for (const capability of ["research:run-now", "research:delete", "research:", "research:RUN"]) {
+      expect(dispatchQuickAction({ id: "x", label: "Run now", capability }, ctx)).toEqual({
+        kind: "unavailable",
+      });
+    }
+    expect(runResearch).not.toHaveBeenCalled();
+  });
+
+  it("classifies before the research branch (source order), as every branch does", () => {
+    const classify = DISPATCHER_SOURCE.indexOf("classifyCapability(descriptor.capability)");
+    const branch = DISPATCHER_SOURCE.indexOf('descriptor.capability === "research:run"');
+    expect(classify).toBeGreaterThan(-1);
+    expect(branch).toBeGreaterThan(classify);
+  });
+
+  it("never reaches a runResearch member for a capability that is not research:run", () => {
+    const runResearch = vi.fn();
+    const ctx = { ...context(), runResearch, requestTaskForm: vi.fn() };
+    for (const capability of Object.keys(CAPABILITY_OPERATION)) {
+      if (capability === "research:run") continue;
+      dispatchQuickAction(
+        { id: "x", label: "Thing", capability, target: { projectId: PROJECT_ID } },
+        ctx,
+      );
+    }
+    expect(runResearch).not.toHaveBeenCalled();
   });
 });

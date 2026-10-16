@@ -53,8 +53,12 @@ describe("destination descriptions after Phase 6 (Test 6)", () => {
   });
 
   it("leaves the other placeholder descriptions as they were", () => {
+    expect(DESTINATIONS.find((entry) => entry.id === "skills")?.description).toBe(
+      "Reusable, user-invocable capabilities. Filled in a later phase.",
+    );
+    // Plan 07-15 (D-22, UI-SPEC R6): Research is a live destination with its own sentence.
     expect(DESTINATIONS.find((entry) => entry.id === "research")?.description).toBe(
-      "Cited reports and the knowledge lifecycle. Filled in a later phase.",
+      "Cited research reports, their sources and the latest automation runs.",
     );
   });
 });
