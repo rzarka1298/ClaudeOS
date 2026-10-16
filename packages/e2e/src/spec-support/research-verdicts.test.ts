@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
+  ArticleFacts,
   ReadingViewFacts,
   RenderedBadge,
   RenderedField,
@@ -8,22 +9,36 @@ import type {
   RenderedResearch,
   RenderedRow,
   RenderedSource,
+  ResearchFocus,
+  ResearchLayoutFacts,
   TranscriptRecord,
 } from "./research-dom.js";
 import type { ParsedRawNote, ParsedReportNote } from "./research-notes.js";
 import type { JobRunRow } from "./research-support.js";
 import {
+  checkArticleFacts,
+  checkCitationRoundTrip,
+  checkDisconnectedView,
+  checkEscapeToRow,
   checkFailedView,
   checkFirstOpen,
   checkHostileRaw,
   checkKindsView,
+  checkLayouts,
+  checkLogPrivacy,
+  checkMotion,
+  checkOverviewCards,
   checkPartialView,
   checkReadingFacts,
+  checkReconnectedView,
   checkReportRow,
+  checkReuse,
   checkRunRecords,
   checkRunTranscript,
   checkSourceEntry,
+  checkTabOrder,
   checkUnconfiguredView,
+  checkUnknownRun,
   kindCountsPhrase,
   type TraceInput,
 } from "./research-verdicts.js";
@@ -1036,5 +1051,615 @@ describe("checkReadingFacts (07-UAT item 10)", () => {
     expect(
       checkReadingFacts(facts({ text: "plain\n   text here" }), { texts: ["plain text"] }),
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: lifecycle, view and privacy items
+
+function article(over: Partial<ArticleFacts> = {}): ArticleFacts {
+  return {
+    found: true,
+    findingCount: 24,
+    maxWidthPx: 612,
+    measure68chPx: 612,
+    articleWidthPx: 612,
+    fontPx: 16,
+    rootFontPx: 16,
+    textLeadingPx: 25.6,
+    textFontPx: 16,
+    textWeight: "400",
+    quoteLeadingPx: 25.6,
+    itemGapPx: 24,
+    spaceLgPx: 24,
+    spaceXlPx: 32,
+    headingMarginTopPx: [32, 32, 32],
+    clamped: [],
+    overflowX: 0,
+    ...over,
+  };
+}
+
+describe("checkArticleFacts (07-UAT items 15 and 23)", () => {
+  it("accepts a reader at the 68ch measure with prose leading, the rhythm and nothing clamped", () => {
+    expect(checkArticleFacts(article(), { findings: 24 })).toEqual([]);
+  });
+
+  it("accepts a reader narrower than the measure (a side pane)", () => {
+    expect(checkArticleFacts(article({ articleWidthPx: 300 }), { findings: 24 })).toEqual([]);
+  });
+
+  it("names a missing report, a wrong finding count, a wrong cap and a column wider than the cap", () => {
+    expect(checkArticleFacts(article({ found: false }), { findings: 24 })).toEqual([
+      "the report did not render",
+    ]);
+    expect(checkArticleFacts(article({ findingCount: 20 }), { findings: 24 })).toContain(
+      "the reader shows 20 findings, expected 24",
+    );
+    expect(checkArticleFacts(article({ maxWidthPx: 800 }), { findings: 24 })).toContain(
+      "the reader's maximum width is not 68ch",
+    );
+    expect(checkArticleFacts(article({ articleWidthPx: 700 }), { findings: 24 })).toContain(
+      "the prose column is wider than 68ch",
+    );
+  });
+
+  it("names tight leading, a wrong size or weight, and a quote with tight leading", () => {
+    expect(checkArticleFacts(article({ textLeadingPx: 20 }), { findings: 24 })).toContain(
+      "the finding text does not have prose leading of 1.6",
+    );
+    expect(checkArticleFacts(article({ textFontPx: 14 }), { findings: 24 })).toContain(
+      "the finding text is not body size",
+    );
+    expect(checkArticleFacts(article({ textWeight: "600" }), { findings: 24 })).toContain(
+      "the finding text is not regular weight",
+    );
+    expect(checkArticleFacts(article({ quoteLeadingPx: 18 }), { findings: 24 })).toContain(
+      "a quote does not have prose leading of 1.6",
+    );
+    expect(checkArticleFacts(article({ quoteLeadingPx: 0 }), { findings: 24 })).toEqual([]);
+  });
+
+  it("names spacing that is not the rhythm and headings that are not spaced", () => {
+    expect(checkArticleFacts(article({ itemGapPx: 8 }), { findings: 24 })).toContain(
+      "findings are not separated by the large spacing step",
+    );
+    expect(checkArticleFacts(article({ headingMarginTopPx: [32] }), { findings: 24 })).toContain(
+      "fewer than two section headings were measured",
+    );
+    expect(
+      checkArticleFacts(article({ headingMarginTopPx: [32, 4, 32] }), { findings: 24 }),
+    ).toContain("a section heading is not spaced by the extra-large step");
+  });
+
+  it("names anything clamped and anything that runs past the edge", () => {
+    expect(
+      checkArticleFacts(article({ clamped: ["p.ccc-report-text"] }), { findings: 24 }),
+    ).toContain("something is clamped or truncated: p.ccc-report-text");
+    expect(checkArticleFacts(article({ overflowX: 12 }), { findings: 24 })).toContain(
+      "something runs past the reader's edge",
+    );
+  });
+});
+
+function layout(over: Partial<ResearchLayoutFacts> = {}): ResearchLayoutFacts {
+  return {
+    found: true,
+    mode: "side",
+    readerOpen: "true",
+    gridWidth: 1000,
+    rootFontPx: 16,
+    list: { display: "block", left: 0, right: 300, top: 100, width: 300 },
+    reader: { display: "block", left: 316, right: 1000, top: 100, width: 684 },
+    overflowRoot: 0,
+    overflowGrid: 0,
+    backToReportsVisible: false,
+    ...over,
+  };
+}
+
+function narrow(over: Partial<ResearchLayoutFacts> = {}): ResearchLayoutFacts {
+  return layout({
+    mode: "stacked",
+    gridWidth: 320,
+    list: { display: "none", left: 0, right: 0, top: 0, width: 0 },
+    reader: { display: "block", left: 0, right: 320, top: 100, width: 320 },
+    backToReportsVisible: true,
+    ...over,
+  });
+}
+
+describe("checkLayouts (07-UAT item 16)", () => {
+  it("accepts the list beside the reader at full width and the reader replacing the list in a narrow pane", () => {
+    expect(checkLayouts({ wide: layout(), narrow: narrow() })).toEqual([]);
+  });
+
+  it("names a full-width grid that is too narrow, stacked, or with the list not beside the reader", () => {
+    expect(checkLayouts({ wide: layout({ gridWidth: 600 }), narrow: narrow() })).toContain(
+      "full width: the grid is narrower than 48rem",
+    );
+    expect(checkLayouts({ wide: layout({ mode: "stacked" }), narrow: narrow() })).toContain(
+      "full width: the layout is stacked",
+    );
+    expect(
+      checkLayouts({
+        wide: layout({ list: { display: "none", left: 0, right: 0, top: 0, width: 0 } }),
+        narrow: narrow(),
+      }),
+    ).toContain("full width: the list is not shown");
+    expect(
+      checkLayouts({
+        wide: layout({ list: { display: "block", left: 0, right: 500, top: 100, width: 500 } }),
+        narrow: narrow(),
+      }),
+    ).toContain("full width: the list is not beside the reader");
+  });
+
+  it("names a narrow pane that keeps the list, lacks Back to reports, or is not stacked", () => {
+    expect(
+      checkLayouts({
+        wide: layout(),
+        narrow: narrow({ list: { display: "block", left: 0, right: 300, top: 0, width: 300 } }),
+      }),
+    ).toContain("narrow pane: the open report does not replace the list");
+    expect(
+      checkLayouts({ wide: layout(), narrow: narrow({ backToReportsVisible: false }) }),
+    ).toContain("narrow pane: Back to reports is not shown");
+    expect(checkLayouts({ wide: layout(), narrow: narrow({ mode: "side" }) })).toContain(
+      "narrow pane: the layout is not stacked",
+    );
+  });
+
+  it("names horizontal scrolling in either layout", () => {
+    expect(checkLayouts({ wide: layout({ overflowGrid: 20 }), narrow: narrow() })).toContain(
+      "full width: the destination scrolls sideways",
+    );
+    expect(checkLayouts({ wide: layout(), narrow: narrow({ overflowRoot: 5 }) })).toContain(
+      "narrow pane: the destination scrolls sideways",
+    );
+  });
+
+  it("names a layout that was not found", () => {
+    expect(checkLayouts({ wide: layout({ found: false }), narrow: narrow() })).toContain(
+      "full width: the Research layout was not found",
+    );
+  });
+});
+
+function focus(over: Partial<ResearchFocus> = {}): ResearchFocus {
+  return {
+    tag: "button",
+    classes: "ccc-connect-button",
+    name: "x",
+    text: "x",
+    sourceNumber: null,
+    cite: null,
+    inReader: false,
+    inRow: false,
+    focusVisible: true,
+    outlineStyle: "solid",
+    outlineWidth: "2px",
+    boxShadow: "none",
+    ...over,
+  };
+}
+
+const GOOD_WALK: ResearchFocus[] = [
+  focus({ name: "Run now: fetch the sources and write a research report" }),
+  focus({ tag: "time", name: "1 minute ago" }),
+  focus({ name: "Source" }),
+  focus({ name: "Open report" }),
+  focus({ name: "Show configured sources (12)" }),
+  focus({ classes: "ccc-report-row-button", name: "Report row", inRow: true }),
+  focus({ name: "Open note", inReader: true }),
+  focus({ name: "Source 1: Anvil notes", cite: "1-1", inReader: true }),
+  focus({ name: "Copy address", inReader: true }),
+  focus({ name: "Open snapshot", inReader: true }),
+  focus({ name: "Open run note", inReader: true }),
+];
+
+describe("checkTabOrder (07-UAT item 17)", () => {
+  it("accepts Run now, the run status controls, the rows and the reader controls in that order, each with a ring", () => {
+    expect(checkTabOrder(GOOD_WALK, { sourcesCount: 12 })).toEqual([]);
+  });
+
+  it("names a control the keyboard never reached", () => {
+    expect(
+      checkTabOrder(
+        GOOD_WALK.filter((entry) => entry.name !== "Open snapshot"),
+        { sourcesCount: 12 },
+      ),
+    ).toContain("focus never reached Open snapshot");
+    expect(checkTabOrder(GOOD_WALK.slice(0, 5), { sourcesCount: 12 })).toContain(
+      "focus never reached a report row",
+    );
+  });
+
+  it("names controls reached in the wrong order", () => {
+    const swapped = [...GOOD_WALK];
+    [swapped[3], swapped[5]] = [swapped[5] as ResearchFocus, swapped[3] as ResearchFocus];
+    expect(checkTabOrder(swapped, { sourcesCount: 12 })).toContain(
+      "a report row came before Open report",
+    );
+  });
+
+  it("names a button that shows no focus ring", () => {
+    const ringless = GOOD_WALK.map((entry, index) =>
+      index === 7
+        ? { ...entry, focusVisible: false, outlineStyle: "none", outlineWidth: "0px" }
+        : entry,
+    );
+    expect(checkTabOrder(ringless, { sourcesCount: 12 })).toContain(
+      "Source 1: Anvil notes shows no focus ring",
+    );
+  });
+});
+
+describe("checkCitationRoundTrip and checkEscapeToRow (07-UAT item 17)", () => {
+  const cite = focus({ name: "Source 1: Anvil notes", cite: "3-1", inReader: true });
+  const heading = focus({
+    tag: "h5",
+    classes: "",
+    name: "1. Anvil notes",
+    sourceNumber: "1",
+    inReader: true,
+  });
+  const back = focus({ name: "Back to finding 3", sourceNumber: "1", inReader: true });
+
+  it("accepts a citation that moves focus to its source and Back to finding that returns it", () => {
+    expect(checkCitationRoundTrip({ cite, source: heading, next: back, returned: cite })).toEqual(
+      [],
+    );
+  });
+
+  it("names a citation that leaves focus elsewhere, a missing way back and a return to the wrong place", () => {
+    expect(checkCitationRoundTrip({ cite, source: null, next: back, returned: cite })).toContain(
+      "the citation did not move focus to a source entry",
+    );
+    expect(
+      checkCitationRoundTrip({
+        cite,
+        source: { ...heading, sourceNumber: "2" },
+        next: back,
+        returned: cite,
+      }),
+    ).toContain("focus moved to source 2, not source 1");
+    expect(
+      checkCitationRoundTrip({
+        cite,
+        source: heading,
+        next: focus({ name: "Copy address" }),
+        returned: cite,
+      }),
+    ).toContain("the way back to finding 3 is not the next stop");
+    expect(
+      checkCitationRoundTrip({
+        cite,
+        source: heading,
+        next: back,
+        returned: focus({ name: "Open note" }),
+      }),
+    ).toContain("Back to finding did not return focus to the citation");
+  });
+
+  it("accepts Escape that returns focus to the report row, and names focus left elsewhere", () => {
+    expect(
+      checkEscapeToRow({
+        readerClosed: true,
+        focus: focus({ classes: "ccc-report-row-button", inRow: true }),
+      }),
+    ).toEqual([]);
+    expect(
+      checkEscapeToRow({
+        readerClosed: false,
+        focus: focus({ classes: "ccc-report-row-button", inRow: true }),
+      }),
+    ).toContain("Escape did not close the reader");
+    expect(checkEscapeToRow({ readerClosed: true, focus: focus({ name: "Open note" }) })).toContain(
+      "focus did not return to the report row",
+    );
+    expect(checkEscapeToRow({ readerClosed: true, focus: null })).toContain(
+      "focus did not return to the report row",
+    );
+  });
+});
+
+const MOTION_ON = { transitionDuration: "0.12s", animationDuration: "0s", animationName: "none" };
+const MOTION_OFF = { transitionDuration: "0s", animationDuration: "0s", animationName: "none" };
+
+describe("checkMotion (07-UAT item 18)", () => {
+  const good = {
+    baseline: [MOTION_ON, MOTION_OFF],
+    baselineRoot: "full",
+    reduced: [MOTION_OFF, MOTION_OFF],
+    reducedRoot: "reduced",
+    scrolls: [{ behavior: null }],
+    scrollBehaviours: ["auto", "auto"],
+  };
+
+  it("accepts a full-motion baseline that moves, a reduced run that does not, and instant scrolling", () => {
+    expect(checkMotion(good)).toEqual([]);
+  });
+
+  it("names a baseline that shows no motion, so the reduced run would prove nothing", () => {
+    expect(checkMotion({ ...good, baseline: [MOTION_OFF] })).toContain(
+      "the full-motion baseline shows no motion, so the reduced run proves nothing",
+    );
+  });
+
+  it("names a root that is not reduced, motion that remains, and a smooth or missing scroll", () => {
+    expect(checkMotion({ ...good, reducedRoot: "full" })).toContain(
+      "the command center root is not in reduced motion",
+    );
+    expect(checkMotion({ ...good, reduced: [MOTION_ON] })).toContain(
+      "something still moves under reduced motion",
+    );
+    expect(checkMotion({ ...good, scrolls: [] })).toContain(
+      "following a citation scrolled nothing",
+    );
+    expect(checkMotion({ ...good, scrolls: [{ behavior: "smooth" }] })).toContain(
+      "a scroll to a source was smooth",
+    );
+    expect(checkMotion({ ...good, scrollBehaviours: ["auto", "smooth"] })).toContain(
+      "the reader sits inside a smooth-scrolling container",
+    );
+  });
+});
+
+describe("the disconnect drill verdicts (07-UAT items 12 and 14)", () => {
+  const down = (): RenderedResearch =>
+    rendered({
+      dimmed: true,
+      runNow: {
+        present: true,
+        label: "Run now",
+        name: "Run now: fetch the sources and write a research report",
+        disabled: true,
+        busy: false,
+        reason: "The companion service isn't running.",
+      },
+      strip: { text: "", badges: [{ kind: "unavailable", glyph: "○", label: "Unavailable" }] },
+      list: {
+        ...rendered().list,
+        emptyHeading: null,
+        emptyBody: null,
+        rows: [
+          { title: "T", meta: "", dateTime: null, badges: [], selected: true, unreadable: false },
+        ],
+      },
+      reader: reader({ findings: [finding("source-fact", "≡ Reported fact", "Reported fact")] }),
+    });
+
+  it("accepts a dimmed destination with last-good content, Run now disabled with its reason and an Unavailable strip", () => {
+    expect(checkDisconnectedView(down(), { rows: 1, findings: 1 })).toEqual([]);
+  });
+
+  it("names each part that is missing", () => {
+    expect(checkDisconnectedView({ ...down(), dimmed: false }, { rows: 1, findings: 1 })).toContain(
+      "the destination is not dimmed",
+    );
+    expect(
+      checkDisconnectedView(
+        { ...down(), runNow: { ...down().runNow, disabled: false } },
+        { rows: 1, findings: 1 },
+      ),
+    ).toContain("Run now is not aria-disabled");
+    expect(
+      checkDisconnectedView(
+        { ...down(), runNow: { ...down().runNow, reason: null } },
+        { rows: 1, findings: 1 },
+      ),
+    ).toContain("Run now does not give the service-away reason");
+    expect(
+      checkDisconnectedView(
+        { ...down(), strip: { text: "", badges: [] } },
+        { rows: 1, findings: 1 },
+      ),
+    ).toContain("the strip does not show Unavailable");
+    expect(checkDisconnectedView({ ...down(), reader: null }, { rows: 1, findings: 1 })).toContain(
+      "the open report is gone",
+    );
+    expect(checkDisconnectedView(down(), { rows: 2, findings: 1 })).toContain(
+      "the list shows 1 rows, expected 2",
+    );
+  });
+
+  it("accepts a reconnected destination and names one still dimmed or still disabled", () => {
+    expect(checkReconnectedView(rendered())).toEqual([]);
+    expect(checkReconnectedView(down())).toEqual([
+      "the destination is still dimmed",
+      "Run now is still disabled",
+    ]);
+  });
+
+  it("reads the Unknown run row", () => {
+    const row = {
+      label: "Unknown run",
+      value:
+        "? Unknown — ended without reporting · Oct 16, 11:00 AM · The app stopped during this run, so its result is unknown.",
+      badges: [],
+      buttons: [],
+    };
+    const withRow = rendered({
+      runStatus: { ...rendered().runStatus, rows: [...rendered().runStatus.rows, row] },
+    });
+    expect(checkUnknownRun(withRow)).toEqual([]);
+    expect(checkUnknownRun(rendered())).toContain("there is no Unknown run row");
+    expect(
+      checkUnknownRun(
+        rendered({ runStatus: { ...rendered().runStatus, rows: [{ ...row, value: "✕ Failed" }] } }),
+      ),
+    ).toContain("the Unknown run row does not read ? Unknown — ended without reporting");
+  });
+});
+
+describe("checkReuse (07-UAT item 13)", () => {
+  const snap = (raw: string[], wiki: Array<[string, string, string]>) => ({
+    raw,
+    wiki: wiki.map(([name, id, retrievedAt]) => ({ name, id, retrievedAt })),
+  });
+  const first = snap(
+    ["a.1.md", "b.2.md", "c.3.md"],
+    [
+      ["a.md", "id-a", "t1"],
+      ["b.md", "id-b", "t1"],
+      ["c.md", "id-c", "t1"],
+    ],
+  );
+  const second = snap(
+    ["a.1.md", "b.2.md", "c.3.md"],
+    [
+      ["a.md", "id-a", "t2"],
+      ["b.md", "id-b", "t2"],
+      ["c.md", "id-c", "t2"],
+    ],
+  );
+  const third = snap(
+    ["a.1.md", "b.2.md", "c.3.md", "a.4.md"],
+    [
+      ["a.md", "id-a", "t3"],
+      ["b.md", "id-b", "t3"],
+      ["c.md", "id-c", "t3"],
+    ],
+  );
+
+  it("accepts an unchanged rerun that adds no raw file, rewrites wiki notes in place, and a changed source that adds one", () => {
+    expect(checkReuse({ first, second, third })).toEqual([]);
+  });
+
+  it("names a raw file added by an unchanged rerun, and wiki notes that were recreated or not rewritten", () => {
+    expect(
+      checkReuse({
+        first,
+        second: snap(
+          [...second.raw, "d.9.md"],
+          second.wiki.map((w) => [w.name, w.id, w.retrievedAt]),
+        ),
+        third,
+      }),
+    ).toContain("the unchanged rerun added a raw file");
+    expect(
+      checkReuse({
+        first,
+        second: snap(second.raw, [
+          ["a.md", "new-id", "t2"],
+          ["b.md", "id-b", "t2"],
+          ["c.md", "id-c", "t2"],
+        ]),
+        third,
+      }),
+    ).toContain("a wiki note changed its id on the unchanged rerun");
+    expect(
+      checkReuse({
+        first,
+        second: snap(second.raw, [
+          ["a.md", "id-a", "t1"],
+          ["b.md", "id-b", "t2"],
+          ["c.md", "id-c", "t2"],
+        ]),
+        third,
+      }),
+    ).toContain("a wiki note was not rewritten on the unchanged rerun");
+  });
+
+  it("names a changed source that did not add exactly one raw file or dropped an old one", () => {
+    expect(checkReuse({ first, second, third: second })).toContain(
+      "the changed source did not add exactly one raw file",
+    );
+    expect(
+      checkReuse({
+        first,
+        second,
+        third: snap(
+          ["a.1.md", "b.2.md", "x.9.md", "y.8.md"],
+          third.wiki.map((w) => [w.name, w.id, w.retrievedAt]),
+        ),
+      }),
+    ).toContain("an earlier raw file disappeared");
+  });
+});
+
+describe("checkOverviewCards (07-UAT item 20)", () => {
+  const cards = [
+    {
+      title: "Today",
+      presentation: "permission-required",
+      heading: "Google Calendar and Gmail isn't connected",
+      body: "Connect Google Calendar and Gmail to see today here.",
+    },
+    {
+      title: "Technology and market intelligence",
+      presentation: "unavailable",
+      heading: "No source yet",
+      body: "",
+    },
+  ];
+
+  it("accepts the Today card as the permission-required card and tech-intel as unavailable", () => {
+    expect(checkOverviewCards(cards)).toEqual([]);
+  });
+
+  it("names a Today card that became ready, a missing card and a tech-intel card with data", () => {
+    expect(
+      checkOverviewCards([{ ...(cards[0] as never), presentation: "ready" }, cards[1] as never]),
+    ).toContain("the Today card is ready, not permission-required");
+    expect(checkOverviewCards([cards[1] as never])).toContain("there is no Today card");
+    expect(checkOverviewCards([cards[0] as never])).toContain(
+      "there is no technology and market intelligence card",
+    );
+    expect(
+      checkOverviewCards([cards[0] as never, { ...(cards[1] as never), presentation: "ready" }]),
+    ).toContain("the technology and market intelligence card is ready, not unavailable");
+    expect(
+      checkOverviewCards([
+        { ...(cards[0] as never), heading: "Something else" },
+        cards[1] as never,
+      ]),
+    ).toContain("the Today card does not name Google Calendar and Gmail");
+  });
+});
+
+describe("checkLogPrivacy (07-UAT item 21)", () => {
+  const markers = ["alpha parser is now twice as fast", "uatq-7f3a91c2"];
+
+  it("accepts logs and a data file with only codes, ids and counts", () => {
+    expect(
+      checkLogPrivacy(
+        [
+          {
+            label: "the service log",
+            text: '{"event":"research-stuck-runs-recovered","count":1}\n',
+          },
+        ],
+        markers,
+      ),
+    ).toEqual([]);
+  });
+
+  it("names source text, an address with a query, a key-shaped string and a remote error", () => {
+    expect(
+      checkLogPrivacy([{ label: "log", text: "the alpha parser is now twice as fast" }], markers),
+    ).toContain("log holds source text (alpha parser is now twice as fast)");
+    expect(
+      checkLogPrivacy([{ label: "log", text: "GET https://x.example.invalid/f?a=1&b=2" }], markers),
+    ).toContain("log holds an address with a query string");
+    expect(
+      checkLogPrivacy(
+        [{ label: "data", text: '{"k":"sk-ant-api03-abcdefghijklmnopqrstuvwx"}' }],
+        markers,
+      ),
+    ).toContain("data holds a key-shaped string");
+    expect(
+      checkLogPrivacy([{ label: "log", text: "connect ECONNREFUSED 127.0.0.1:443" }], markers),
+    ).toContain("log holds remote error text");
+    expect(
+      checkLogPrivacy([{ label: "log", text: "https://x.example.invalid/feed" }], markers),
+    ).toContain("log holds an address");
+  });
+
+  it("refuses an empty log, which would prove nothing", () => {
+    expect(checkLogPrivacy([{ label: "the service log", text: "" }], markers)).toContain(
+      "the service log is empty, so there is nothing to check",
+    );
   });
 });

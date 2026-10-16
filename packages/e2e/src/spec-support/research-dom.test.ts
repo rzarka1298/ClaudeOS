@@ -516,3 +516,92 @@ line two</code><button class="copy-code-button">Copy</button></pre><a href="http
     );
   });
 });
+
+describe("the lifecycle and keyboard helpers", () => {
+  it("clicks the first match twice in one go, and none when there is no match", () => {
+    const target = page(fixture("empty"));
+    const doc = target.window.document as unknown as Doc;
+    let clicks = 0;
+    doc.querySelector(".ccc-research-run button")?.addEventListener("click", () => {
+      clicks += 1;
+    });
+    expect(inPage<number>(target, "rendererClickTwice")(".ccc-research-run button")).toBe(2);
+    expect(clicks).toBe(2);
+    expect(inPage<number>(target, "rendererClickTwice")(".ccc-nothing")).toBe(0);
+  });
+
+  it("mounts the destination from its tab and presses Run now the moment it exists", async () => {
+    const target = page('<button id="ccc-tab-research">Research</button><div id="slot"></div>');
+    const doc = target.window.document as unknown as Doc;
+    const pressed: string[] = [];
+    doc.querySelector("#ccc-tab-research")?.addEventListener("click", () => {
+      setTimeout(() => {
+        doc
+          .querySelector("#slot")
+          ?.insertAdjacentHTML(
+            "beforeend",
+            '<div class="ccc-research-run"><button>Run now</button></div>',
+          );
+        doc.querySelector(".ccc-research-run button")?.addEventListener("click", () => {
+          pressed.push("pressed");
+        });
+      }, 15);
+    });
+    const result = await inPage<Promise<{ clicked: boolean; disabledAtSight: boolean }>>(
+      target,
+      "rendererMountAndPress",
+    )("#ccc-tab-research", ".ccc-research-run button", 2000);
+    expect(result.clicked).toBe(true);
+    expect(result.disabledAtSight).toBe(false);
+    expect(pressed).toEqual(["pressed"]);
+  });
+
+  it("does not press a Run now that is already aria-disabled, and says so", async () => {
+    const target = page(
+      '<button id="ccc-tab-research">Research</button><div class="ccc-research-run"><button aria-disabled="true">Run now</button></div>',
+    );
+    const doc = target.window.document as unknown as Doc;
+    let pressed = 0;
+    doc.querySelector(".ccc-research-run button")?.addEventListener("click", () => {
+      pressed += 1;
+    });
+    const result = await inPage<Promise<{ clicked: boolean; disabledAtSight: boolean }>>(
+      target,
+      "rendererMountAndPress",
+    )("#ccc-tab-research", ".ccc-research-run button", 2000);
+    expect(result).toMatchObject({ clicked: false, disabledAtSight: true });
+    expect(pressed).toBe(0);
+  });
+
+  it("gives up when the button never appears", async () => {
+    const target = page('<button id="ccc-tab-research">Research</button>');
+    const result = await inPage<Promise<{ clicked: boolean; disabledAtSight: boolean }>>(
+      target,
+      "rendererMountAndPress",
+    )("#ccc-tab-research", ".ccc-research-run button", 60);
+    expect(result).toMatchObject({ clicked: false, disabledAtSight: false });
+  });
+
+  it("focuses Run now", () => {
+    const target = page(fixture("empty"));
+    const doc = target.window.document as unknown as Doc & { activeElement: Elem | null };
+    expect(inPage<boolean>(target, "rendererFocusRunNow")("ccc-research-run")).toBe(true);
+    expect(doc.activeElement?.textContent).toBe("Run now");
+    expect(inPage<boolean>(page("<p>x</p>"), "rendererFocusRunNow")("ccc-research-run")).toBe(
+      false,
+    );
+  });
+
+  it("lists the scroll-behavior of an element and every ancestor", () => {
+    const target = page('<div id="a"><div id="b"><p id="c">x</p></div></div>');
+    const win = target.window as unknown as {
+      document: { querySelector(s: string): { style: { scrollBehavior: string } } | null };
+    };
+    const outer = win.document.querySelector("#a");
+    if (outer !== null) outer.style.scrollBehavior = "smooth";
+    const values = inPage<string[]>(target, "rendererReadScrollBehaviour")("#c");
+    expect(values.length).toBeGreaterThanOrEqual(4);
+    expect(values).toContain("smooth");
+    expect(inPage<string[]>(target, "rendererReadScrollBehaviour")("#missing")).toEqual([]);
+  });
+});

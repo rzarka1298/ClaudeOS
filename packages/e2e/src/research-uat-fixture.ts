@@ -56,6 +56,12 @@ export const RESEARCH_TEST_ENV = {
 const ALLOWLIST_FILE = "research-sources.json";
 const FIXTURE_DIR_NAME = "research-fixtures";
 
+/**
+ * The name of a file that is not a report but is named like one: the service lists it as an
+ * unreadable row, so a spec can show that the destination fetched the list again (07-UAT item 14).
+ */
+export const REFETCH_MARKER_NAME = "research-2026-10-16-zzzzzzzzzzzzzzzzzzzzzzzzz.md";
+
 /** The topic of 07-UAT item 1 ("Developer tooling and open-source releases"). */
 export const RESEARCH_UAT_TOPIC = "Developer tooling and open-source releases";
 const SUMMARISER_MODEL = "claude-haiku-5-5";

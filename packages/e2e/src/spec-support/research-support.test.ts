@@ -92,3 +92,57 @@ describe("the DOM reader configuration", () => {
     }
   });
 });
+
+describe("setReducedMotion", () => {
+  function page(initial: Record<string, unknown>) {
+    const calls: string[] = [];
+    let stored = JSON.stringify(initial);
+    const fake: PluginDataPage = {
+      async getConfigDir() {
+        return ".obsidian";
+      },
+      async read(path) {
+        calls.push(`read ${path}`);
+        return stored;
+      },
+      async write(path, text) {
+        calls.push(`write ${path}`);
+        stored = text;
+      },
+      async disablePlugin(id) {
+        calls.push(`disable ${id}`);
+      },
+      async enablePlugin(id) {
+        calls.push(`enable ${id}`);
+      },
+    };
+    return { fake, calls, stored: () => JSON.parse(stored) as Record<string, unknown> };
+  }
+
+  it("writes the setting into the plugin's data file and reloads the plugin, in that order", async () => {
+    const { fake, calls, stored } = page({
+      socketPathOverride: "/tmp/ccc-uat.AbCdEf/rt/svc.sock",
+      lastOpenedDestination: "overview",
+      reducedMotion: "auto",
+      notifyApprovals: true,
+    });
+    await setReducedMotion(fake, "reduced");
+    expect(stored()).toMatchObject({ reducedMotion: "reduced", notifyApprovals: true });
+    expect(calls).toEqual([
+      "read .obsidian/plugins/claude-command-center/data.json",
+      "write .obsidian/plugins/claude-command-center/data.json",
+      "disable claude-command-center",
+      "enable claude-command-center",
+    ]);
+  });
+
+  it("refuses a data file that holds a key the plugin does not persist, writing nothing", async () => {
+    const { fake, calls } = page({
+      socketPathOverride: "/x",
+      reducedMotion: "auto",
+      apiToken: "x",
+    });
+    await expect(setReducedMotion(fake, "reduced")).rejects.toThrow();
+    expect(calls.filter((call) => call.startsWith("write"))).toEqual([]);
+  });
+});

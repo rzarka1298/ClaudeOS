@@ -10,6 +10,8 @@ import {
   prepareResearchUat,
   RESEARCH_SCENARIOS,
   hostileSources,
+  privacyMarkers,
+  REFETCH_MARKER_NAME,
   RESEARCH_TEST_ENV,
   SLOW_FETCH_MS,
 } from "./research-uat-fixture.js";
@@ -247,6 +249,21 @@ describe("the hostile scenario's sources", () => {
     const base = manifest.entries.find((entry) => entry.url.includes("atom.example.invalid"));
     expect(base?.delayMs).toBeGreaterThan(0);
     expect(base?.delayMs ?? 0).toBeLessThan(SLOW_FETCH_MS);
+  });
+});
+
+describe("privacyMarkers and the refetch marker (07-UAT items 14 and 21)", () => {
+  it("lists source texts and the query token a log must never hold, none of them short", () => {
+    const markers = privacyMarkers();
+    expect(markers.length).toBeGreaterThanOrEqual(8);
+    for (const marker of markers) expect(marker.length, marker).toBeGreaterThanOrEqual(12);
+    expect(markers.some((marker) => marker.includes("alpha parser"))).toBe(true);
+    expect(markers).toContain("uatq-7f3a91c2");
+    expect(new Set(markers).size).toBe(markers.length);
+  });
+
+  it("names a refetch marker file the service lists as a report of the right shape", () => {
+    expect(REFETCH_MARKER_NAME).toMatch(/^research-\d{4}-\d{2}-\d{2}-[0-9a-z]{25}\.md$/);
   });
 });
 

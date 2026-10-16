@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   REPORT_ITEM_KIND_DISPLAY,
@@ -16,6 +16,7 @@ import {
   hostileSources,
   prepareResearchUat,
   QUERY_SOURCE_URL,
+  REFETCH_MARKER_NAME,
   type ResearchScenario,
   type ResearchUatPrepared,
 } from "./research-uat-fixture.js";
@@ -421,6 +422,19 @@ d("the research UAT fixture drives the real built service (plan 07-17)", () => {
     expect(log).not.toContain("uatq-");
     expect(log).not.toContain("example.invalid");
     expect(log).not.toMatch(/sk-[A-Za-z0-9_-]{20,}/);
+  }, 60_000);
+
+  it("a file in the output folder that is not a report is listed as an unreadable row (item 14's refetch marker)", async () => {
+    const item = await startRun();
+    await runToEnd(item);
+    expect((await item.api.list({})).rows).toHaveLength(1);
+    const marker = join(item.vault, "global", "output", REFETCH_MARKER_NAME);
+    writeFileSync(marker, "not a report\n");
+    const rows = (await item.api.list({})).rows;
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((row) => !row.readable)).toHaveLength(1);
+    rmSync(marker);
+    expect((await item.api.list({})).rows).toHaveLength(1);
   }, 60_000);
 
   it("slow: stopping the service mid-fetch leaves an Unknown run, and a new run completes (item 12)", async () => {

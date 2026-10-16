@@ -18,6 +18,8 @@ const SPEC_DIR = "packages/e2e/specs";
 const PLANNED = {
   "research-core": [1, 2, 3, 4, 5, 6, 7, 8, 22],
   "research-hostile": [9, 10],
+  "research-lifecycle": [11, 12, 13, 14, 21],
+  "research-views": [15, 16, 17, 18, 19, 20, 23],
 } as const;
 type SpecName = keyof typeof PLANNED;
 
@@ -48,5 +50,17 @@ describe("research spec titles", () => {
         );
       }
     }
+  });
+});
+
+describe("every Phase 7 item that names a spec file has a title in it", () => {
+  it("covers the items of the classification table that carry a spec (all but item 24)", () => {
+    const planned = Object.values(PLANNED)
+      .flat()
+      .sort((a, b) => a - b);
+    const plan = specMapForPhase("07")?.itemPlan ?? [];
+    const withSpec = plan.filter((entry) => entry.specFile !== null).map((entry) => entry.number);
+    expect(planned).toEqual(withSpec);
+    expect(withSpec).toHaveLength(23);
   });
 });

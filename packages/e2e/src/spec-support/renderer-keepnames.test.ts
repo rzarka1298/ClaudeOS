@@ -162,6 +162,8 @@ describe("inline renderer functions in the specs and support modules", () => {
       "synthetic-session",
       "research-core",
       "research-hostile",
+      "research-lifecycle",
+      "research-views",
       "tasks-core",
       "tasks-scale",
       "tasks-views",
