@@ -12,6 +12,8 @@ import { ResearchOverrideError } from "./override-error.js";
  * any fixture path that is not inside its directory.
  */
 
+/** Two non-ASCII characters, built at run time so this file stays ASCII. */
+const NON_ASCII = `caf${String.fromCodePoint(0xe9)} ${String.fromCodePoint(0x5b57)}`;
 const URL_A = "https://a.example.invalid/feed.xml";
 const URL_B = "https://b.example.invalid/page";
 const URL_C = "https://c.example.invalid/slow";
@@ -29,13 +31,13 @@ function manifest(entries: unknown[]): void {
 
 describe("results", () => {
   it("returns success with the fixture bytes and content type", async () => {
-    writeFileSync(join(dir, "a.xml"), "<feed>café 字</feed>");
+    writeFileSync(join(dir, "a.xml"), `<feed>${NON_ASCII}</feed>`);
     manifest([{ url: URL_A, file: "a.xml", contentType: "application/atom+xml; charset=utf-8" }]);
     const fetcher = createFixtureFetcher({ dir });
     const result = await fetcher.fetchSource({ url: URL_A, kind: "feed" });
     expect(result).toMatchObject({
       ok: true,
-      text: "<feed>café 字</feed>",
+      text: `<feed>${NON_ASCII}</feed>`,
       charset: "utf-8",
       contentType: "application/atom+xml",
       finalUrl: URL_A,

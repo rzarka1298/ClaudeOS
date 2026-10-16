@@ -107,7 +107,10 @@ describe("quotes are re-verified against the stored evidence text", () => {
   });
 
   it("does not accept a quote that only the raw note's banner holds", () => {
-    const bannerQuote = RAW_SOURCE_BANNER.replace(/\.$/, "").replace("— ", "");
+    const bannerQuote = RAW_SOURCE_BANNER.replace(/\.$/, "").replace(
+      `${String.fromCodePoint(0x2014)} `,
+      "",
+    );
     const built = vault.addReport(
       twoSources({
         items: [{ kind: "source-fact", text: "From the banner.", quote: bannerQuote, cites: [0] }],

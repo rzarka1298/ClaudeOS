@@ -106,7 +106,14 @@ describe("a bad value is refused at startup with a code-only log line", () => {
   });
 
   it("refuses a key account outside the keychain alphabet", () => {
-    for (const value of ["", "a b", "../x", `x${"y".repeat(80)}`, "acc;rm", "café"]) {
+    for (const value of [
+      "",
+      "a b",
+      "../x",
+      `x${"y".repeat(80)}`,
+      "acc;rm",
+      `caf${String.fromCodePoint(0xe9)}`,
+    ]) {
       logs = [];
       expect(() =>
         resolveResearchTestOverrides({ [FLAG]: "1", [KEY_ACCOUNT]: value }, log),
