@@ -165,6 +165,22 @@ describe("Test 3 (responses)", () => {
       );
     });
 
+    it("gives a readable row the vault-relative path of its report (07-FIX4 i)", () => {
+      const withPath = { ...readable, notePath: "global/output/research-2026-10-13-digest.md" };
+      expect(parses({ rows: [withPath], nextCursor: null })).toBe(true);
+      // The path is required, and held to the same shape as an unreadable row's.
+      expect(parses({ rows: [readable], nextCursor: null })).toBe(false);
+      for (const notePath of [
+        "/Users/USERNAME/x.md",
+        "global/output/../../x.md",
+        "global/wiki/x.md",
+      ]) {
+        expect(parses({ rows: [{ ...withPath, notePath }], nextCursor: null }), notePath).toBe(
+          false,
+        );
+      }
+    });
+
     it("never carries an absolute or traversing path", () => {
       for (const notePath of [
         "/Users/USERNAME/vault/global/output/x.md",

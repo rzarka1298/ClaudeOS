@@ -1,5 +1,4 @@
 import { HOSTILE_CORPUS } from "@ccc/domain/approval-corpus.js";
-import { neutraliseUntrustedText } from "@ccc/domain/approval-view.js";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureResearch } from "../research/api.js";
@@ -29,6 +28,9 @@ import { ResearchDestination } from "./research.js";
 // no element is made from the text, no attribute carries it, and a control character is a visible
 // token. This file is pure ASCII on purpose: every hostile character is an escape sequence, and the
 // angle brackets are assembled from their character codes.
+//
+// The strings go to the reader RAW (07-FIX4 j): this file does not call the domain neutraliser, so
+// the reader's own defence is what is under test, not a helper that stands in for the service.
 
 const LT = String.fromCharCode(0x3c);
 const GT = String.fromCharCode(0x3e);
@@ -69,30 +71,24 @@ afterEach(() => {
   resetResearchState();
 });
 
-/** What the service does before a string reaches the view: visible tokens, a length cap. */
-function served(text: string, max: number): string {
-  return neutraliseUntrustedText(text, { max, maxOutput: max * 12 }).text;
-}
-
 async function mountReader(text: string): Promise<HTMLElement> {
-  const longest = (max: number) => served(text, max);
   const items = [
     reportItem(1, {
       kind: "source-fact",
-      text: longest(5000),
-      quote: longest(5000),
+      text,
+      quote: text,
       quoteSourceNumber: 1,
-      citations: [{ number: 1, title: longest(5000) }],
+      citations: [{ number: 1, title: text }],
     }),
-    reportItem(2, { kind: "inference", text: longest(5000), citations: [] }),
+    reportItem(2, { kind: "inference", text, citations: [] }),
   ];
-  const sources = [reportSource(1, { title: longest(5000), author: longest(5000) })];
+  const sources = [reportSource(1, { title: text, author: text })];
   const header = reportHeader({
-    title: longest(200),
+    title: text,
     partial: true,
     sourceCount: 1,
     sourceTotal: 2,
-    unavailableSources: [{ label: longest(5000), code: "timeout" }],
+    unavailableSources: [{ label: text, code: "timeout" }],
   });
   const api = fakeResearchApi({
     list: vi.fn(() => Promise.resolve(listOf([reportRow(0, { noteId: REPORT_NOTE_ID })]))),
@@ -140,6 +136,33 @@ function shown(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)} Text shortened for display.`;
 }
 
+/**
+ * An independent statement of what must never reach the DOM raw: control, format and separator
+ * characters, other whitespace than a plain space, private-use and unassigned code points, lone
+ * surrogates, and the invisible fillers and variation selectors. Written here, not imported.
+ */
+const HIDDEN_RAW =
+  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Cs}]|[^\S ]|\u034f|[\u115f\u1160\u2800\u3164\uffa0\u17b4\u17b5\ufe00-\ufe0f\u180b-\u180f]/u;
+
+/**
+ * What the element shows for `text` capped at `max`. Text with nothing hidden in it shows exactly
+ * the capped text. Text with a hidden character shows no raw hidden character at all, and, when the
+ * character sits well inside the cap, shows it as a visible token.
+ */
+function expectShown(element: Element, text: string, max: number, name: string, prefix = ""): void {
+  const visible = visibleText(element);
+  if (!HIDDEN_RAW.test(text)) {
+    expect(visible, name).toBe(`${prefix}${shown(text, max)}`);
+    return;
+  }
+  expect(HIDDEN_RAW.test(visible), `${name}: a hidden character reached the DOM raw`).toBe(false);
+  expect(visible.startsWith(prefix), name).toBe(true);
+  const at = [...text].findIndex((char) => HIDDEN_RAW.test(char));
+  if (at >= 0 && at + 12 < max) {
+    expect(element.querySelector(".ccc-control-token"), `${name}: no visible token`).not.toBeNull();
+  }
+}
+
 describe("Test 3 (hostile): every hostile input renders as literal text and nothing else", () => {
   let baseline: string[] = [];
 
@@ -169,33 +192,45 @@ describe("Test 3 (hostile): every hostile input renders as literal text and noth
     // Nothing in the text became an element: the reader has the same shape as for plain words.
     expect(shape(reader), name).toEqual(baseline);
 
-    // The finding text is the served characters, capped, with no escape added and none removed.
+    // The finding text is the raw characters, capped; a hidden one is a visible token.
     const finding = reader.querySelector(".ccc-report-text") as HTMLElement;
-    expect(visibleText(finding), name).toBe(shown(served(text, 5000), 600));
+    expectShown(finding, text, 600, `${name} finding`);
     const quote = reader.querySelector("blockquote") as HTMLElement;
-    expect(visibleText(quote), name).toBe(shown(served(text, 5000), 240));
+    expectShown(quote, text, 240, `${name} quote`);
 
-    // The source title and its author are text too.
+    // The reader title, the source title and its author are text too.
+    expectShown(reader.querySelector("h3") as HTMLElement, text, 200, `${name} title`);
     const heading = reader.querySelector("li.ccc-report-source h5") as HTMLElement;
-    expect(visibleText(heading), name).toBe(`1. ${shown(served(text, 5000), 200)}`);
+    expectShown(heading, text, 200, `${name} source title`, "1. ");
 
     const authorTerm = [...reader.querySelectorAll("li.ccc-report-source dt")].find(
       (dt) => dt.textContent === "Author",
     );
-    expect(visibleText(authorTerm?.nextElementSibling as Element), name).toBe(
-      shown(served(text, 5000), 120),
-    );
+    expectShown(authorTerm?.nextElementSibling as Element, text, 120, `${name} author`);
 
     // The unavailable-source line carries the label and a fixed reason.
     const line = reader.querySelector(".ccc-report-unavailable li") as HTMLElement;
-    expect(visibleText(line), name).toContain(shown(served(text, 5000), 80));
-    expect(visibleText(line), name).toContain("Didn't respond in time");
+    const lineText = visibleText(line);
+    if (HIDDEN_RAW.test(text)) {
+      expect(HIDDEN_RAW.test(lineText), `${name}: a hidden character reached the label raw`).toBe(
+        false,
+      );
+    } else {
+      expect(lineText, name).toContain(shown(text, 80));
+    }
+    expect(lineText, name).toContain("Didn't respond in time");
 
     // The citation button names the source and still holds only text.
     const cite = reader.querySelector("button[data-cite]") as HTMLElement;
     expect(cite.children.length === 0 || cite.querySelector(FORBIDDEN_ELEMENTS) === null).toBe(
       true,
     );
+    // Its accessible name and tooltip carry the capped, neutralised title, never the raw one.
+    for (const attribute of ["aria-label", "title"]) {
+      const value = cite.getAttribute(attribute) ?? "";
+      expect(HIDDEN_RAW.test(value), `${name}: ${attribute} holds a hidden character`).toBe(false);
+      expect(value.length, `${name}: ${attribute} is not capped`).toBeLessThanOrEqual(80);
+    }
 
     // Every visible control token is announced as a control character first.
     for (const token of reader.querySelectorAll(".ccc-control-token")) {
@@ -210,6 +245,10 @@ describe("Test 3 (hostile): every hostile input renders as literal text and noth
     expect(reader.textContent).not.toContain("\u202e");
     expect(reader.textContent).toContain("[U+202E]");
     expect(reader.querySelector(".ccc-control-token")).not.toBeNull();
+    // The same holds in the attributes a screen reader and a tooltip read.
+    const cite = reader.querySelector("button[data-cite]") as HTMLElement;
+    expect(cite.getAttribute("aria-label")).toBe("Source 1: invoice[U+202E]gpj.exe");
+    expect(cite.getAttribute("title")).toBe("invoice[U+202E]gpj.exe");
   });
 
   it("shortens 5,000 characters at every display cap and says so", async () => {

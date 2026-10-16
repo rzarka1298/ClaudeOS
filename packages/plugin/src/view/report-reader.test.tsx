@@ -27,6 +27,7 @@ import {
   RESEARCH_NOW_MS,
   RESEARCH_ZONE,
   reportRow,
+  unreadableRow,
 } from "../test-support/research-view-fixtures.js";
 import { ResearchDestination } from "./research.js";
 
@@ -944,5 +945,159 @@ describe("Task 2 Test 7 (one column): Back to reports and Escape", () => {
     fireEvent.click(within(article()).getByRole("button", { name: "Back to reports" }));
     const heading = screen.getByRole("heading", { level: 3, name: "Reports" });
     await waitFor(() => expect(document.activeElement).toBe(heading));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 07-FIX4 h, i, j: recovery from a failed later sources page, Open note for a report whose metadata
+// cannot be read, and focus for the error states.
+
+describe("07-FIX4 h: a later sources page that fails shows its error and retry, keeping the sources", () => {
+  it("keeps the sources already loaded, says the rest could not be loaded and loads it on retry", async () => {
+    let failSecond = true;
+    const { api } = mountFull({
+      report: (_id, page, cursor) => {
+        if (page === "items") return Promise.resolve(itemsPage(threeKindItems()));
+        if (cursor === undefined) {
+          return Promise.resolve(
+            sourcesPage([reportSource(1), reportSource(2)], { nextCursor: "s1" }),
+          );
+        }
+        return failSecond
+          ? Promise.reject(new ResearchApiError("timeout"))
+          : Promise.resolve(sourcesPage([reportSource(3)]));
+      },
+    });
+    await openRow();
+    await screen.findByText("Couldn't load the rest of this report.");
+    expect(article().querySelectorAll("li.ccc-report-source")).toHaveLength(2);
+    // The error and the retry sit in the sources section, beside the entries that did load.
+    const section = article().querySelector(".ccc-report-sources-section") as HTMLElement;
+    expect(within(section).getByText("Couldn't load the rest of this report.")).toBeTruthy();
+    failSecond = false;
+    fireEvent.click(within(section).getByRole("button", { name: "Load the rest of the report" }));
+    await waitFor(() => expect(article().querySelectorAll("li.ccc-report-source")).toHaveLength(3));
+    expect(screen.queryByText("Couldn't load the rest of this report.")).toBeNull();
+    expect(api.report.mock.calls.filter((call) => call[1] === "items")).toHaveLength(1);
+  });
+
+  it("shows a skeleton under the entries while more sources are still arriving", async () => {
+    mountFull({
+      report: (_id, page, cursor) => {
+        if (page === "items") return Promise.resolve(itemsPage(threeKindItems()));
+        if (cursor === undefined) {
+          return Promise.resolve(sourcesPage([reportSource(1)], { nextCursor: "s1" }));
+        }
+        return new Promise(() => undefined);
+      },
+    });
+    await openRow();
+    await waitFor(() => expect(article().querySelectorAll("li.ccc-report-source")).toHaveLength(1));
+    const section = article().querySelector(".ccc-report-sources-section") as HTMLElement;
+    expect(section.querySelector(".ccc-skeleton-line")).not.toBeNull();
+  });
+});
+
+describe("07-FIX4 i: a report whose metadata cannot be read offers Open note", () => {
+  const PATH = "global/output/research-2026-10-14-broken.md";
+  const rejectUnreadable = () => Promise.reject(new ResearchApiError("unreadable-report"));
+
+  it("opens the note at the path of the row the owner opened", async () => {
+    const { ports } = mountFull({
+      report: rejectUnreadable,
+      rows: [reportRow(0, { noteId: REPORT_NOTE_ID, notePath: PATH })],
+    });
+    await openRow();
+    await screen.findByRole("heading", {
+      level: 3,
+      name: "This report's metadata couldn't be read.",
+    });
+    fireEvent.click(within(article()).getByRole("button", { name: "Open note" }));
+    expect(ports.openNote).toHaveBeenCalledWith(PATH);
+  });
+
+  it("keeps offering it after the refreshed list no longer has the readable row", async () => {
+    let lists = 0;
+    const { ports } = mountFull({
+      report: rejectUnreadable,
+      list: () => {
+        lists += 1;
+        return Promise.resolve(
+          listOf(
+            lists === 1
+              ? [reportRow(0, { noteId: REPORT_NOTE_ID, notePath: PATH })]
+              : [unreadableRow("research-2026-10-14-broken.md")],
+          ),
+        );
+      },
+    });
+    await openRow();
+    await screen.findByRole("heading", {
+      level: 3,
+      name: "This report's metadata couldn't be read.",
+    });
+    await waitFor(() => expect(lists).toBeGreaterThanOrEqual(2));
+    fireEvent.click(within(article()).getByRole("button", { name: "Open note" }));
+    expect(ports.openNote).toHaveBeenCalledWith(PATH);
+  });
+
+  it("says once when the note will not open", async () => {
+    mountFull({
+      report: rejectUnreadable,
+      rows: [reportRow(0, { noteId: REPORT_NOTE_ID, notePath: PATH })],
+      ports: { openNote: vi.fn(() => false) },
+    });
+    await openRow();
+    await screen.findByRole("heading", {
+      level: 3,
+      name: "This report's metadata couldn't be read.",
+    });
+    fireEvent.click(within(article()).getByRole("button", { name: "Open note" }));
+    await waitFor(() => expect(statusLine()).toBe("Couldn't open the note."));
+  });
+
+  it("offers no Open note to a report that is gone", async () => {
+    mountFull({ report: () => Promise.reject(new ResearchApiError("not-found")) });
+    await openRow();
+    await screen.findByRole("heading", { level: 3, name: /isn't in the vault any more/ });
+    expect(within(article()).queryByRole("button", { name: "Open note" })).toBeNull();
+  });
+});
+
+describe("07-FIX4 j: the error states take focus and read their explanation with the heading", () => {
+  it("moves focus to the heading of an unreadable report and describes it by its explanation", async () => {
+    mountFull({ report: () => Promise.reject(new ResearchApiError("unreadable-report")) });
+    await openRow();
+    const heading = await screen.findByRole("heading", {
+      level: 3,
+      name: "This report's metadata couldn't be read.",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    const describedBy = heading.getAttribute("aria-describedby");
+    expect(describedBy).not.toBeNull();
+    expect(document.getElementById(describedBy as string)?.textContent).toBe(
+      "It may have been edited by hand. Open the note to check it.",
+    );
+  });
+
+  it("moves focus to the heading of a load error, and again to the title after a retry succeeds", async () => {
+    let fail = true;
+    mountFull({
+      report: (id, page) =>
+        fail ? Promise.reject(new ResearchApiError("timeout")) : pages()(id, page),
+    });
+    await openRow();
+    const heading = await screen.findByRole("heading", {
+      level: 3,
+      name: /Couldn't load this report/,
+    });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(
+      document.getElementById(heading.getAttribute("aria-describedby") as string),
+    ).not.toBeNull();
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const title = await screen.findByRole("heading", { level: 3, name: /Developer tooling/ });
+    await waitFor(() => expect(document.activeElement).toBe(title));
   });
 });

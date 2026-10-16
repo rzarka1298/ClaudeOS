@@ -291,3 +291,78 @@ describe("failures", () => {
     expect(readerState.value?.firstFailure).toBe("unrecognised-response");
   });
 });
+
+describe("07-FIX4 h: a later sources page that fails keeps what is loaded and can be retried", () => {
+  it("keeps the first sources page, records the failure, says the sources are not all loaded, and continues at the failed page on retry", async () => {
+    let failSecond = true;
+    const { calls } = installApi((_id, page, cursor) => {
+      if (page === "items") return Promise.resolve(itemsPage([reportItem(1)]));
+      if (cursor === undefined) {
+        return Promise.resolve(
+          sourcesPage([reportSource(1), reportSource(2)], { nextCursor: "s1" }),
+        );
+      }
+      if (failSecond) return Promise.reject(new ResearchApiError("timeout"));
+      return Promise.resolve(sourcesPage([reportSource(3)]));
+    });
+    await openReader(REPORT_NOTE_ID);
+    expect(readerState.value?.sources?.map((source) => source.number)).toEqual([1, 2]);
+    expect(readerState.value?.laterFailure).toBe("timeout");
+    expect(readerState.value?.itemsLoaded).toBe(true);
+    expect(readerState.value?.sourcesLoaded).toBe(false);
+
+    failSecond = false;
+    await retryReader();
+    expect(readerState.value?.sources?.map((source) => source.number)).toEqual([1, 2, 3]);
+    expect(readerState.value?.laterFailure).toBeNull();
+    expect(readerState.value?.sourcesLoaded).toBe(true);
+    expect(calls().filter((call) => call[1] === "items")).toHaveLength(1);
+    expect(
+      calls()
+        .filter((call) => call[1] === "sources")
+        .map((call) => call[2]),
+    ).toEqual([undefined, "s1", "s1"]);
+  });
+
+  it("marks sources loaded once the last page lands, and also at a trimmed page", async () => {
+    installApi((_id, page) =>
+      Promise.resolve(
+        page === "items"
+          ? itemsPage([reportItem(1)])
+          : sourcesPage([reportSource(1)], { nextCursor: "s1", truncated: true }),
+      ),
+    );
+    await openReader(REPORT_NOTE_ID);
+    expect(readerState.value?.sourcesLoaded).toBe(true);
+    expect(readerState.value?.sourcesTruncated).toBe(true);
+  });
+});
+
+describe("07-FIX4 h: MAX_PAGES_PER_SECTION is a loop guard, not an answer", () => {
+  it("stops an endless run of distinct findings cursors after ten pages and keeps what it read", async () => {
+    const { calls } = installApi((_id, page, cursor) => {
+      if (page === "sources") return Promise.resolve(sourcesPage([reportSource(1)]));
+      const n = cursor === undefined ? 0 : Number(cursor.slice(1));
+      return Promise.resolve(itemsPage([reportItem(n + 1)], { nextCursor: `c${n + 1}` }));
+    });
+    await openReader(REPORT_NOTE_ID);
+    expect(calls().filter((call) => call[1] === "items")).toHaveLength(10);
+    expect(calls().some((call) => call[1] === "sources")).toBe(false);
+    expect(readerState.value?.items).toHaveLength(10);
+    expect(readerState.value?.laterFailure).toBe("unrecognised-response");
+    expect(readerState.value?.itemsLoaded).toBe(false);
+  });
+
+  it("stops an endless run of sources cursors the same way", async () => {
+    const { calls } = installApi((_id, page, cursor) => {
+      if (page === "items") return Promise.resolve(itemsPage([reportItem(1)]));
+      const n = cursor === undefined ? 0 : Number(cursor.slice(1));
+      return Promise.resolve(sourcesPage([reportSource(n + 1)], { nextCursor: `s${n + 1}` }));
+    });
+    await openReader(REPORT_NOTE_ID);
+    expect(calls().filter((call) => call[1] === "sources")).toHaveLength(10);
+    expect(readerState.value?.sources).toHaveLength(10);
+    expect(readerState.value?.laterFailure).toBe("unrecognised-response");
+    expect(readerState.value?.sourcesLoaded).toBe(false);
+  });
+});
