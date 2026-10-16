@@ -159,3 +159,32 @@ describe("the approval entries (plan 06-10, Test 7)", () => {
     }
   });
 });
+
+describe("the research entry (plan 07-15, Test 4)", () => {
+  it("has a research.updated handler beside every earlier entry", () => {
+    expect(EVENT_HANDLERS["research.updated"]).toBeTypeOf("function");
+    for (const type of [
+      "projects.updated",
+      "session.upserted",
+      "usage.updated",
+      "claude-integration.updated",
+      "approval.upserted",
+      "tasks.changed",
+    ] as const) {
+      expect(EVENT_HANDLERS[type]).toBeDefined();
+    }
+  });
+
+  it("routes research.updated without a handler installed as a no-op and does not throw on a bad payload", () => {
+    for (const payload of [null, {}, { runId: "x" }, "running"]) {
+      expect(() =>
+        routeServiceEvent({
+          id: 11,
+          type: "research.updated",
+          occurredAt: "2026-10-14T12:00:00.000Z",
+          payload,
+        }),
+      ).not.toThrow();
+    }
+  });
+});
