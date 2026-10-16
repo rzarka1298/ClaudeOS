@@ -514,6 +514,26 @@ function recordSources(
   });
 }
 
+/**
+ * True when a stored raw note names the same source this run's reference does. A raw note that
+ * already exists is reused (it is content-addressed), so what it says about WHERE the text came
+ * from must agree with what the report will cite: the address, the source kind, the access class,
+ * the hash and the snapshot path. The label and the retrieval time are this run's own (an earlier
+ * run may have named the source differently and fetched it earlier), so they may differ (07-14,
+ * opus m8).
+ */
+function sameBinding(stored: SourceReference, cited: SourceReference): boolean {
+  return (
+    stored.id === cited.id &&
+    stored.sourceType === cited.sourceType &&
+    stored.canonicalUrl === cited.canonicalUrl &&
+    stored.deepLink === cited.deepLink &&
+    stored.contentHash === cited.contentHash &&
+    stored.snapshotPath === cited.snapshotPath &&
+    stored.accessClass === cited.accessClass
+  );
+}
+
 /** Thrown inside the raw loop when a stored snapshot is not the one this run's evidence names. */
 class RawSnapshotRefused extends Error {
   constructor() {
@@ -538,7 +558,9 @@ function isRawSnapshotRefusal(error: unknown): boolean {
 async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<PipelineResult> {
   // capture
   trace.phase = "capture";
-  const loaded = loadResearchSources(deps.runtimeDir, deps.sourcesFs);
+  const loaded = loadResearchSources(deps.runtimeDir, deps.sourcesFs, {
+    vaultRoot: deps.vaultRoot,
+  });
   if (!loaded.ok) {
     logWarn(deps, { event: "research-sources-unusable", code: loaded.code });
     throw new StageFailure("all-sources-failed");
@@ -574,9 +596,11 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
       config.sources.map((entry) => ({ url: entry.url, kind: entry.kind })),
       createRunBudget(),
     );
-  } catch {
-    logWarn(deps, { event: "research-fetch-threw", code: "network-error" });
-    fetched = [];
+  } catch (error) {
+    // The fetcher itself broke (it never rejects for a source's failure). That is a fault of this
+    // process, not a network error of any source: no source is blamed (07-14, opus m9).
+    logWarn(deps, { event: "research-fetch-threw", errorName: errorName(error) });
+    throw new StageFailure("interrupted");
   }
   assertLive(trace);
 
@@ -627,7 +651,8 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
         if (
           !snapshot.readable ||
           snapshot.text === null ||
-          contentHashFor(snapshot.text) !== source.ref.contentHash
+          contentHashFor(snapshot.text) !== source.ref.contentHash ||
+          !sameBinding(snapshot.frontmatter.sourceRef, source.ref)
         ) {
           throw new RawSnapshotRefused();
         }

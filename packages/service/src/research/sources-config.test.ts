@@ -137,6 +137,7 @@ describe("Test 6 (allowlist file): seeding, permissions and refusal", () => {
     const spy = recordingFs(touched);
     loadResearchSources(dir, spy.fs);
     writeFileSync(file, JSON.stringify(VALID), { mode: 0o644 });
+    chmodSync(file, 0o644);
     touched.length = 0;
     spy.calls.length = 0;
     loadResearchSources(dir, spy.fs);

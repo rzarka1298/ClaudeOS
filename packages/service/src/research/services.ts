@@ -28,7 +28,7 @@ import {
   type Watchdog,
 } from "./pipeline.js";
 import { nameEffect, PIPELINE_EFFECTS, type PipelineEffect } from "./pipeline-effects.js";
-import { loadResearchSources, type ResearchSourcesFs } from "./sources-config.js";
+import { peekResearchSources, type ResearchSourcesFs } from "./sources-config.js";
 
 /**
  * The research run services (plan 07-12; D-18, D-19, D-25, RSRCH-06). `runNow` is the one entry
@@ -242,7 +242,10 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
       while (tracked.size > 0) await Promise.allSettled([...tracked]);
     },
     configuredSources() {
-      const loaded = loadResearchSources(deps.runtimeDir, deps.sourcesFs);
+      // A read for display: nothing is seeded, repaired or written (07-14, opus m9).
+      const loaded = peekResearchSources(deps.runtimeDir, deps.sourcesFs, {
+        vaultRoot: deps.getVaultRoot(),
+      });
       if (!loaded.ok) return null;
       return {
         topicLabel: loaded.config.topicLabel,

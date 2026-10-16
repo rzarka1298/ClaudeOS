@@ -58,6 +58,7 @@ export {
 export type { LoadSourcesResult, ResearchSourcesFs, SourcesRefusal } from "./sources-config.js";
 export {
   loadResearchSources,
+  peekResearchSources,
   RESEARCH_SOURCES_FILE,
   RESEARCH_SOURCES_MAX_BYTES,
 } from "./sources-config.js";
