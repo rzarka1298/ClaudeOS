@@ -24,6 +24,9 @@ export const FIXTURE_MANIFEST_FILE = "manifest.json";
 /** A manifest above this many bytes is refused before parsing. */
 export const FIXTURE_MANIFEST_MAX_BYTES = 64 * 1024;
 
+/** The most addresses a manifest lists: the hostile corpus is a few hundred. */
+export const FIXTURE_MANIFEST_MAX_ENTRIES = 1024;
+
 /** The longest simulated delay: a fixture may slow a run down, never stall it for minutes. */
 export const FIXTURE_DELAY_MAX_MS = 30_000;
 
@@ -39,7 +42,9 @@ const ManifestEntrySchema = z
     message: "an entry names a file or a failure",
   });
 
-const ManifestSchema = z.strictObject({ entries: z.array(ManifestEntrySchema).max(64) });
+const ManifestSchema = z.strictObject({
+  entries: z.array(ManifestEntrySchema).max(FIXTURE_MANIFEST_MAX_ENTRIES),
+});
 
 type ManifestEntry = z.infer<typeof ManifestEntrySchema>;
 

@@ -69,7 +69,9 @@ export interface ResearchServicesDeps {
   readonly runtimeDir: string;
   readonly eventBus: Pick<EventBus, "publish">;
   readonly fetcher: Pick<SafeFetcher, "fetchSources">;
-  readonly chooseSummariser: (config: ResearchSourcesConfig) => SummariserChoice;
+  readonly chooseSummariser: (
+    config: ResearchSourcesConfig,
+  ) => SummariserChoice | Promise<SummariserChoice>;
   readonly now: () => Date;
   readonly log: PipelineLog;
   readonly newNonce?: () => string;

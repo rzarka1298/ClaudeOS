@@ -115,7 +115,9 @@ export interface ResearchPipelineDeps {
   readonly runtimeDir: string;
   readonly fetcher: Pick<SafeFetcher, "fetchSources">;
   /** The summariser for a run, chosen from the allowlist file's model. */
-  readonly chooseSummariser: (config: ResearchSourcesConfig) => SummariserChoice;
+  readonly chooseSummariser: (
+    config: ResearchSourcesConfig,
+  ) => SummariserChoice | Promise<SummariserChoice>;
   readonly now: () => Date;
   /** A fresh run nonce (32 lowercase hex characters). */
   readonly newNonce: () => string;
@@ -557,7 +559,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   trace.phase = "summarise";
   let choice: SummariserChoice;
   try {
-    choice = deps.chooseSummariser(config);
+    choice = await deps.chooseSummariser(config);
   } catch (error) {
     if (error instanceof SummariserError) throw new StageFailure(error.code);
     throw error;
