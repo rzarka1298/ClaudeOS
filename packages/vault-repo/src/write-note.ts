@@ -12,6 +12,7 @@ import {
   type NoteScope,
   newNoteId,
 } from "@ccc/domain";
+import yaml from "js-yaml";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { stringifyNote } from "./frontmatter.js";
 import { regenerateIndex } from "./index-generation.js";
@@ -49,13 +50,43 @@ export class ExtendedNoteWriteRefusedError extends Error {
 /** How much of an existing file is read to find its `type`; the key sits among the first twelve. */
 const TYPE_PROBE_BYTES = 16 * 1024;
 
-const EXTENDED_TYPE_LINE =
-  /^type:[ \t]*(["']?)(report|research-source|research-wiki)\1[ \t]*(?:#.*)?$/;
+/** A research type named anywhere in a block, as a whole word: the conservative fallback scan. */
+const EXTENDED_TYPE_MENTION =
+  /(?<![A-Za-z0-9_-])(?:report|research-source|research-wiki)(?![A-Za-z0-9_-])/i;
+
+function isExtendedTypeValue(value: unknown): boolean {
+  return typeof value === "string" && EXTENDED_NOTE_TYPES.has(value.trim().toLowerCase());
+}
+
+/**
+ * True when the frontmatter block (the text between the delimiters, at most the probe size) is a
+ * YAML map whose top-level `type` is a research shape, in any valid YAML spelling (quoted key,
+ * space before the colon, a tag, an anchor, block or flow style). The block is loaded with the
+ * core schema: no custom tags and no merge keys, and an alias is never walked (only the one `type`
+ * entry is read), so a small block cannot expand. A block that does not load, or loads to
+ * something other than a map, is damaged: it is refused when it names a research type anywhere.
+ */
+function blockClaimsExtendedType(block: string): boolean {
+  let loaded: unknown;
+  try {
+    loaded = yaml.safeLoad(block, { schema: yaml.CORE_SCHEMA });
+  } catch {
+    return EXTENDED_TYPE_MENTION.test(block);
+  }
+  if (loaded === null || loaded === undefined) return false;
+  if (typeof loaded !== "object" || Array.isArray(loaded)) {
+    return EXTENDED_TYPE_MENTION.test(block);
+  }
+  const type = (loaded as Record<string, unknown>).type;
+  return Array.isArray(type) ? type.some(isExtendedTypeValue) : isExtendedTypeValue(type);
+}
 
 /**
  * True when the file at `target` opens with a frontmatter block whose top-level `type` is one of
- * the research shapes. A textual probe over the first bytes, not a YAML parse: a hand-damaged
- * report that no longer parses must still be protected, and nothing is loaded that could expand.
+ * the research shapes. Bounded: only the first bytes are read and parsed, with js-yaml's core
+ * schema. A hand-damaged report that no longer parses is still protected when it mentions a
+ * research type, and a block longer than the probe (no closing delimiter in view) is judged by
+ * the same fallback scan.
  */
 function holdsExtendedNote(target: string): boolean {
   if (!existsSync(target)) return false;
@@ -71,11 +102,9 @@ function holdsExtendedNote(target: string): boolean {
   const text = head.charCodeAt(0) === 0xfeff ? head.slice(1) : head;
   if (!text.startsWith("---")) return false;
   const lines = text.split(/\r?\n/).slice(1);
-  for (const line of lines) {
-    if (line.startsWith("---")) break;
-    if (EXTENDED_TYPE_LINE.test(line)) return true;
-  }
-  return false;
+  const closing = lines.findIndex((line) => line.startsWith("---"));
+  if (closing === -1) return EXTENDED_TYPE_MENTION.test(lines.join("\n"));
+  return blockClaimsExtendedType(lines.slice(0, closing).join("\n"));
 }
 
 /** True when a request's own passthrough keys claim a research type. */
