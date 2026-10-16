@@ -270,6 +270,7 @@ describe("hostile text: the raw snapshot writer", () => {
           sourceRef,
           sanitise: EMPTY_COUNTS,
           text: entry.text,
+          canonicalHash: () => hash,
           now: NOW,
         });
         const raw = readFileSync(written.absolutePath, "utf8");

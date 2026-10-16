@@ -90,7 +90,15 @@ function refFor(text: string, extra: Partial<SourceReference> = {}): SourceRefer
 }
 
 function rawInput(text: string, extra: Record<string, unknown> = {}) {
-  return { vaultRoot, sourceRef: refFor(text), sanitise: COUNTS, text, now: NOW, ...extra };
+  return {
+    vaultRoot,
+    sourceRef: refFor(text),
+    sanitise: COUNTS,
+    text,
+    canonicalHash: sha,
+    now: NOW,
+    ...extra,
+  };
 }
 
 function bodyOf(text: string): string {
@@ -108,6 +116,56 @@ function topLevelKeys(text: string): string[] {
 
 const SNAPSHOT =
   "Line one of the snapshot.\nLine two has a ![x](https://e.example/p.png) and [[Private]].\n";
+
+describe("Wave-3 A4: the raw contentHash is recomputed by an injected canonical hash, never trusted", () => {
+  test("a reference whose contentHash is not the hash of the stored text is refused and nothing is written", () => {
+    const wrong = refFor("some other text entirely\n");
+    const input = rawInput(SNAPSHOT, { sourceRef: { ...wrong, id: ID } });
+    expect(() => writeRawSourceNote(input)).toThrow(SourceNoteError);
+    try {
+      writeRawSourceNote(input);
+    } catch (error) {
+      expect((error as SourceNoteError).reason).toBe("invalid-field");
+    }
+    expect(existsSync(join(vaultRoot, wrong.snapshotPath))).toBe(false);
+    expect(existsSync(join(vaultRoot, refFor(SNAPSHOT).snapshotPath))).toBe(false);
+  });
+
+  test("the writer calls the injected function with the stored text and compares its answer", () => {
+    const seen: string[] = [];
+    const written = writeRawSourceNote(
+      rawInput(SNAPSHOT, {
+        canonicalHash: (text: string) => {
+          seen.push(text);
+          return sha(SNAPSHOT);
+        },
+      }),
+    );
+    expect(written.written).toBe(true);
+    expect(seen).toEqual([SNAPSHOT]);
+  });
+
+  test("a function that answers a different hash refuses a reference that would have matched the plain hash", () => {
+    expect(() =>
+      writeRawSourceNote(rawInput(SNAPSHOT, { canonicalHash: () => "f".repeat(64) })),
+    ).toThrow(SourceNoteError);
+  });
+
+  test("a function that throws, or answers something that is not a hash, refuses the write", () => {
+    expect(() =>
+      writeRawSourceNote(
+        rawInput(SNAPSHOT, {
+          canonicalHash: () => {
+            throw new Error("boom");
+          },
+        }),
+      ),
+    ).toThrow(SourceNoteError);
+    expect(() =>
+      writeRawSourceNote(rawInput(SNAPSHOT, { canonicalHash: () => "not a hash" })),
+    ).toThrow(SourceNoteError);
+  });
+});
 
 describe("Test 1: raw write", () => {
   test("writes global/raw/<id>.<hash8>.md as stage raw with the banner and a tilde fence", () => {

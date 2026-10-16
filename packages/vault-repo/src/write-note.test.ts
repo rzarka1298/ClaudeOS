@@ -102,9 +102,10 @@ describe("Test 1: refusal", () => {
         commandLikeLines: 0,
       },
       text: TEXT,
+      canonicalHash: () => HASH,
       now: NOW,
     });
-    // writeRawSourceNote computes no hash itself, so the file name follows the reference.
+    // The injected hash function answers the reference's hash, so the file name follows the reference.
     const wiki = writeWikiSourceNote({
       vaultRoot,
       sourceId: SOURCE_ID,
