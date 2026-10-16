@@ -321,6 +321,17 @@ function readState(
 }
 
 /**
+ * Throws {@link JobRunNotFoundError} when the run does not exist and {@link JobRunNotInFlightError}
+ * when it is finished, failed or stale. For writers (the research provenance records) that may
+ * only leave a trace for a run that is still working: a record for a finished or unknown run would
+ * be a record nobody produced.
+ */
+export function assertJobRunInFlight(db: Database.Database, jobRunId: string): void {
+  assertRunId(jobRunId, "jobRunId");
+  readState(db, jobRunId);
+}
+
+/**
  * Appends one stage transition to the run's `stage_log` and records the time as the
  * paired Run's last activity. The run must be in flight: appending to a finished or
  * stale run would falsify its history.

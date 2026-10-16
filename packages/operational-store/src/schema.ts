@@ -221,6 +221,27 @@ export const researchSourceRecords = sqliteTable(
 );
 
 /**
+ * The research report record (Phase 7, plan 07-FIX6b, ADR-0030): one row per research run that
+ * published a report, binding the run to the report's note id and to a SHA-256 digest of the
+ * report's served-relevant content (findings, their kinds, quotes and citations, the partial flag,
+ * the unavailable sources, the source total and the cited source references). The pipeline writes
+ * it when the report is finalised. The reader recomputes the digest from the report it parses
+ * from the vault and shows a quote as verified only when the two are equal, so a report edited in
+ * place after the run (a claim reworded, a kind flipped, a different real quote swapped in) is
+ * no longer the run's own report.
+ *
+ * Content-free: a run id, a note id, a SHA-256 and an ISO instant. No report text, no title and
+ * no model output column exists and none may be added; `migration-report-record.audit.test.ts`
+ * walks the column names and the stored values. Written once per run and never updated.
+ */
+export const researchReportRecords = sqliteTable("research_report_records", {
+  jobRunId: text("job_run_id").primaryKey(),
+  reportNoteId: text("report_note_id").notNull(),
+  contentDigest: text("content_digest").notNull(),
+  recordedAt: text("recorded_at").notNull(),
+});
+
+/**
  * The managed vault's note-metadata cache (PERF-06): one row per note,
  * holding exactly what a filter or list view reads, so search stays
  * responsive at 10,000 notes without re-parsing 10,000 files' frontmatter

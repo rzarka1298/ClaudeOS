@@ -62,10 +62,13 @@ export type {
 } from "./job-run-store.js";
 export {
   appendJobRunStage,
+  assertJobRunInFlight,
   finishJobRun,
   getJobRun,
   getResearchRunStatus,
   JOB_RUN_TRIGGERS,
+  JobRunNotFoundError,
+  JobRunNotInFlightError,
   listJobRuns,
   recoverJobRunsToStale,
   startJobRun,
@@ -107,6 +110,14 @@ export {
   touchLastOpened,
   touchScanned,
 } from "./project-store.js";
+export type { ResearchReportRecord } from "./research-report-store.js";
+export {
+  getResearchReportRecord,
+  ResearchReportRecordConflictError,
+  ResearchReportRecordError,
+  recordResearchReport,
+  removeResearchReportRecord,
+} from "./research-report-store.js";
 export type { ResearchSourceRecord } from "./research-source-store.js";
 export {
   getResearchSourceRecord,
