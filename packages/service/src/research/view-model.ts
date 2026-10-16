@@ -28,7 +28,12 @@ import {
   rawSnapshotPathFor,
   type SourceReference,
 } from "@ccc/domain";
-import { getJobRun, getResearchRunStatus } from "@ccc/operational-store";
+import {
+  getJobRun,
+  getResearchRunStatus,
+  getResearchSourceRecord,
+  type ResearchSourceRecord,
+} from "@ccc/operational-store";
 import { normaliseForQuoteMatch, quoteInNormalisedSource } from "@ccc/research";
 import { readRawSourceNote, readReportNote, reportTitleText } from "@ccc/vault-repo";
 import type Database from "better-sqlite3";
@@ -321,10 +326,11 @@ export function findReport(vaultRoot: string, noteId: string): ReportLookup {
 // The reader pages
 
 /**
- * A cited source as the reader gets it: the reference the raw note was written with (its title and
- * its address are what is shown, never the report's editable copy) and, only when the report's
- * citation is bound to that note, the evidence text of the snapshot, normalised once for quote
- * matching (null when there is no evidence).
+ * A cited source as the reader gets it: the reference as the run's store record has it (else as
+ * the raw note was written; the report's editable copy is the last resort) and, only when the
+ * store vouches for the run and the source and the report's citation is bound to the raw note, the
+ * evidence text of the snapshot, normalised once for quote matching (null when there is no
+ * evidence).
  */
 interface ResolvedSource {
   readonly served: SourceReference;
@@ -397,16 +403,85 @@ interface ResolveContext {
   readonly vaultRoot: string;
   readonly db: Database.Database;
   readonly report: ReportFrontmatter;
+  /** True when the store knows the report's run (and the run does not name another report). */
+  readonly runVouches: boolean;
 }
 
-function resolveSource(context: ResolveContext, cited: SourceReference): ResolvedSource {
-  const { vaultRoot } = context;
-  const snapshot = snapshotOf(vaultRoot, cited);
-  if (snapshot === null) return { served: cited, evidence: null };
+/**
+ * True when the store knows the report's run. The run must exist in the job-run store, and a run
+ * that already names the report it published must name THIS one (a run still in flight names none
+ * yet). A report that names a run id the store never saw, or a run that published another report,
+ * is not the work of that run.
+ */
+function runVouchesFor(db: Database.Database, report: ReportFrontmatter): boolean {
+  const run = getJobRun(db, RESEARCH_JOB_ID, report.jobRunId);
+  return run !== null && (run.reportNoteId === null || run.reportNoteId === report.id);
+}
+
+/**
+ * True when what the pipeline recorded for this run and source (07-FIX6, ADR-0030) agrees with
+ * what the report cites and with the raw note as it is NOW: the hash recomputed from the stored
+ * body equals the recorded one (the snapshot reader already required it to equal the cited one),
+ * and the recorded address and snapshot path are the cited ones. The vault alone can never supply
+ * this: the record is written by the service into the operational store.
+ */
+function recordVouches(
+  record: ResearchSourceRecord,
+  cited: SourceReference,
+  snapshotText: string,
+): boolean {
+  return (
+    record.sourceId === cited.id &&
+    record.contentHash === contentHashFor(snapshotText) &&
+    record.contentHash === cited.contentHash &&
+    record.canonicalUrl === cited.canonicalUrl &&
+    record.snapshotPath === cited.snapshotPath
+  );
+}
+
+/**
+ * The citation as the store recorded it where the schema permits: the owner's label for the title
+ * and the recorded address, hash and snapshot path. The rest (kind, access class, author, dates)
+ * the store does not hold and stays as the raw note or the report has it.
+ */
+function servedFromRecord(base: SourceReference, record: ResearchSourceRecord): SourceReference {
   return {
-    served: servedFrom(cited, snapshot.own),
-    evidence: isBound(cited, snapshot.own) ? normaliseForQuoteMatch(snapshot.text) : null,
+    sourceType: base.sourceType,
+    id: base.id,
+    title: record.label,
+    canonicalUrl: record.canonicalUrl,
+    author: base.author,
+    publishedAt: base.publishedAt,
+    retrievedAt: base.retrievedAt,
+    contentHash: record.contentHash,
+    snapshotPath: record.snapshotPath,
+    accessClass: base.accessClass,
   };
+}
+
+/**
+ * One cited source for this request. The record the run left in the store is the root of trust:
+ * the title and the address that are served come from it when it exists, and the evidence text is
+ * returned only when the run is known, the record exists and agrees (see {@link recordVouches}),
+ * and the vault-side binding of 07-FIX5 holds. Without all of those the source has no evidence:
+ * its quotes are not shown as evidence, whatever the vault says.
+ */
+function resolveSource(context: ResolveContext, cited: SourceReference): ResolvedSource {
+  const { vaultRoot, db, report } = context;
+  const record = getResearchSourceRecord(db, report.jobRunId, cited.id);
+  const snapshot = snapshotOf(vaultRoot, cited);
+  const fromVault = snapshot === null ? cited : servedFrom(cited, snapshot.own);
+  const served = record === null ? fromVault : servedFromRecord(fromVault, record);
+  if (
+    snapshot === null ||
+    record === null ||
+    !context.runVouches ||
+    !recordVouches(record, cited, snapshot.text) ||
+    !isBound(cited, snapshot.own)
+  ) {
+    return { served, evidence: null };
+  }
+  return { served, evidence: normaliseForQuoteMatch(snapshot.text) };
 }
 
 /** Resolves each cited source at most once per request. */
@@ -425,7 +500,10 @@ function sourceResolver(context: ResolveContext): (ref: SourceReference) => Reso
  * The findings as the reader gets them. Provenance (wave 3 A2/M3, plan 07-14): a finding that
  * carries a quote keeps it only if the exported predicate finds it in the evidence text of EVERY
  * source the finding cites, the same check the pipeline made before it wrote the report, and only
- * when each citation is bound to its snapshot (see {@link isBound}). Each source's text is put in
+ * when each citation is bound to its snapshot (see {@link isBound}) AND the operational store
+ * vouches for it: the report's run exists, the run recorded that source, and the raw note still
+ * hashes to the recorded hash (07-FIX6, ADR-0030; see {@link resolveSource}). The vault alone
+ * cannot make a quote verified, because a report and its raw note can be forged together. Each source's text is put in
  * the comparison form once per request, and the quote once per finding, and
  * `quoteInNormalisedSource` is `quoteInSource` on text already in that form: the predicate is the
  * same. Otherwise the quote is not shown as evidence and the finding is served as the model's
@@ -440,7 +518,7 @@ function itemsOf(
 ): ResearchReportItem[] {
   const refs = new Map(report.sourceRefs.map((ref) => [ref.id, ref]));
   const numbers = new Map(report.sourceRefs.map((ref, index) => [ref.id, index + 1]));
-  const resolve = sourceResolver({ vaultRoot, db, report });
+  const resolve = sourceResolver({ vaultRoot, db, report, runVouches: runVouchesFor(db, report) });
   return report.items.map((item, index) => {
     const ids = [...new Set(item.citedSourceIds)];
     const cited = ids
@@ -580,7 +658,7 @@ export function buildReportSourcesPage(
 ): ResearchRouteResult<ResearchReportSourcesPage> {
   const report = entry.frontmatter;
   const handling = new Map(report.sourceHandling.map((item) => [item.sourceId, item.counts]));
-  const resolve = sourceResolver({ vaultRoot, db, report });
+  const resolve = sourceResolver({ vaultRoot, db, report, runVouches: runVouchesFor(db, report) });
   const all: ResearchReportSource[] = report.sourceRefs.map((ref, index) => ({
     number: index + 1,
     ...resolve(ref).served,

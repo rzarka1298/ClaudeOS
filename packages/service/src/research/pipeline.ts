@@ -14,7 +14,7 @@ import {
   SourceReferenceSchema,
   type SummariserId,
 } from "@ccc/domain";
-import { appendJobRunStage, finishJobRun } from "@ccc/operational-store";
+import { appendJobRunStage, finishJobRun, recordResearchSource } from "@ccc/operational-store";
 import {
   canonicaliseUrl,
   delimitSourcesWithReport,
@@ -75,6 +75,10 @@ import { SummariserError, type SummariserErrorCode } from "./summariser-error.js
  * the report is finalised; if anything after the first report write fails, the report is taken
  * back out of the vault and every wiki note is put back as it was, so a failed run leaves no
  * exposed report and no wiki note that cites one.
+ * Provenance (07-FIX6, decision D-A, ADR-0030): when a source's raw note has been written and read
+ * back, the run records (run, source, address, hash, snapshot path, label) in the operational
+ * store. The vault can be forged; the store cannot be reached from it, so the reader counts a
+ * quote as evidence only for a source with such a row.
  * No remote string reaches the store, the run note or a log line: only codes, ids, counts,
  * instants and the owner's own labels.
  */
@@ -659,6 +663,18 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
         ) {
           throw new RawSnapshotRefused();
         }
+        // The raw note is written and read back: record it in the operational store. That row, not
+        // the vault, is what lets the reader call a quote verified (07-FIX6, ADR-0030). A source
+        // that fails above has no row, so a report can never cite it as evidence.
+        recordResearchSource(deps.db, {
+          jobRunId: trace.runId,
+          sourceId: source.sourceId,
+          canonicalUrl: source.ref.canonicalUrl ?? "",
+          contentHash: source.ref.contentHash,
+          snapshotPath: source.ref.snapshotPath,
+          label: source.ref.title,
+          recordedAt: deps.now().toISOString(),
+        });
         stored.set(source.sourceId, snapshot.text);
         rawIds.push(written.id);
       } catch (error) {
