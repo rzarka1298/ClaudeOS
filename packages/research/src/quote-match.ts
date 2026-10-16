@@ -1,9 +1,11 @@
 // The one quote-match predicate (plan 07-07, blocker 2, D-15, research Pattern 6).
 //
 // A quotation counts as found in a source only through `quoteInSource`: both sides are put in the
-// shared comparison form (`normaliseForMatch`), the quote must be substantial (the domain minimum
+// quote comparison form (`normaliseForQuoteMatch`: a line break stays a hard boundary, so a quote
+// never crosses a line or block), the quote must be substantial (the domain minimum
 // of characters and of real words, a word being a token with a letter or digit), and it must occur
-// with its first and last characters on word boundaries of the source. The trusted stage uses it
+// with its first and last characters on token boundaries of the source, and hold no control,
+// format or bidi character. The trusted stage uses it
 // to verify a model's quote and again to re-verify the stored one, and every later stage (provenance, plan 07-14)
 // calls the SAME function on the SAME evidence text, so no stage can accept a quote
 // another would refuse. The vault writer cannot import this package; the contract that a stored
@@ -12,10 +14,16 @@
 // Pure: no I/O, no clock, no node module.
 
 import { REPORT_ITEM_QUOTE_MIN_LENGTH, REPORT_ITEM_QUOTE_MIN_WORDS } from "@ccc/domain";
-import { normaliseForMatch } from "./text-canon.js";
+import { normaliseForQuoteMatch } from "./text-canon.js";
 
 const HAS_LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
-const WORD_CHARACTER = /[\p{L}\p{N}\p{M}]/u;
+// A token is made of letters, digits and marks, and of the invisible format characters (soft hyphen,
+// zero-width space, joiners, word joiner, byte order mark) and connector punctuation that bind or
+// hide inside it: a quote edge next to one of them is inside the token.
+const WORD_CHARACTER = /[\p{L}\p{N}\p{M}\p{Cf}\p{Pc}]/u;
+// What a verifying quote never holds: control, format, line and paragraph separator and surrogate
+// characters (bidi controls and zero-width characters among them) and a line break.
+const NEVER_IN_A_QUOTE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/u;
 
 /**
  * Long enough, and with enough real words, to verify anything (the minimums live in the domain).
@@ -137,7 +145,9 @@ export function quoteInNormalisedSource(
   normalisedQuote: string,
 ): boolean {
   return (
-    isSubstantialQuote(normalisedQuote) && findWholeWord(normalisedSource, normalisedQuote) !== -1
+    isSubstantialQuote(normalisedQuote) &&
+    !NEVER_IN_A_QUOTE.test(normalisedQuote) &&
+    findWholeWord(normalisedSource, normalisedQuote) !== -1
   );
 }
 
@@ -146,5 +156,5 @@ export function quoteInNormalisedSource(
  * shared normalisation. The only definition of "verified" in the pipeline.
  */
 export function quoteInSource(sourceText: string, quote: string): boolean {
-  return quoteInNormalisedSource(normaliseForMatch(sourceText), normaliseForMatch(quote));
+  return quoteInNormalisedSource(normaliseForQuoteMatch(sourceText), normaliseForQuoteMatch(quote));
 }

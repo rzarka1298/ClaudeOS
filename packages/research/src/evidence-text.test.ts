@@ -106,9 +106,15 @@ describe("the extractive double quotes the evidence text", () => {
     }
   });
 
-  it("extends a punctuation-only first line to a quote that really verifies", () => {
-    const text = "- - - - - - - - - - - - -\nThe real sentence has enough words in it today.";
+  it("extends a punctuation-only first sentence, on the same line, to a quote that verifies", () => {
+    const text = "- - - - - - - - - - - - - -. The real sentence has enough words in it today.";
     const summary = JSON.parse(extractiveSummary(input(text))) as { items: { kind: string }[] };
     expect(summary.items.map((i) => i.kind)).toEqual(["source-fact", "unverified-claim"]);
+  });
+
+  it("does not extend a punctuation-only line across the line break", () => {
+    const text = "- - - - - - - - - - - - -\nThe real sentence has enough words in it today.";
+    const summary = JSON.parse(extractiveSummary(input(text))) as { items: { kind: string }[] };
+    expect(summary.items.map((i) => i.kind)).toEqual(["source-fact"]);
   });
 });

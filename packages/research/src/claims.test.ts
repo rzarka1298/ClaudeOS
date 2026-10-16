@@ -214,7 +214,7 @@ describe("Task 1 Test 4 (quote check): a reported fact is a machine-verified quo
             quote: "release   notes list a new\tpermission flag",
           }),
         ]),
-        { sources: SOURCES },
+        { sources: { [ID_B]: "The release notes  list\ta new\u00A0permission   flag." } },
       ),
     );
     expect(spaced.items[0]?.kind).toBe("source-fact");
@@ -567,7 +567,7 @@ describe("Hardening (b): folding never widens a match", () => {
 
   it("folds only whitespace and normalisation form", () => {
     for (const quote of [
-      "stream   reset\tis\nfixed  in this release",
+      "stream   reset\tis fixed  in this release",
       "stream\u00A0reset\u2003is fixed in this release",
       "stream reset is fixed in this release  ",
     ]) {
@@ -576,7 +576,7 @@ describe("Hardening (b): folding never widens a match", () => {
   });
 
   it("stores the source's text, never the model's variant", () => {
-    const result = ok(quoted("stream   reset\tis\nfixed  in this release"));
+    const result = ok(quoted("stream   reset\tis fixed  in this release"));
     expect(result.items[0]?.quote).toBe(exact);
     const nbsp = ok(quoted("stream\u00A0reset\u2003is fixed in this release"));
     expect(nbsp.items[0]?.quote).toBe(exact);
@@ -904,7 +904,9 @@ describe("Blocker 2 (2)(3): one exported predicate decides every quote check", (
     const source =
       "Intro. The maintainers confirmed that the http2 stream reset is fixed in this release.";
     expect(quoteInSource(source, "stream reset is fixed in this release")).toBe(true);
-    expect(quoteInSource(source, "stream   reset\nis fixed in this  release")).toBe(true);
+    expect(quoteInSource(source, "stream   reset\tis fixed in this  release")).toBe(true);
+    // A line break is a hard boundary: a quote may not carry one (07-FIX3A).
+    expect(quoteInSource(source, "stream reset\nis fixed in this release")).toBe(false);
     expect(quoteInSource(source, "tream reset is fixed in this release")).toBe(false);
     expect(quoteInSource(source, "stream reset is fixed in this releas")).toBe(false);
     expect(quoteInSource(source, "http2")).toBe(false);

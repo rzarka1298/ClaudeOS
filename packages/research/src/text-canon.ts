@@ -41,3 +41,29 @@ export function normaliseForMatch(text: string): string {
     collapsed.length > start && collapsed.endsWith(" ") ? collapsed.length - 1 : collapsed.length;
   return collapsed.slice(start, end);
 }
+
+// The line and block breaks of the quote comparison form: LF, CR, VT, FF, NEL and the Unicode line
+// and paragraph separators. Everything else in MATCH_WHITESPACE is a plain space.
+const LINE_BREAK = /[\n\v\f\r\u0085\u2028\u2029]/;
+
+/**
+ * The comparison form for the quote check (07-FIX3A): NFC, a whitespace run that holds a line or
+ * block break collapsed to ONE newline, every other whitespace run to one space, ends trimmed. A
+ * newline stays a hard boundary, so a quote cannot join the end of one paragraph, list item or
+ * table cell to the start of the next. Idempotent. `normaliseForMatch` (everything on one line)
+ * stays the form of the text neutraliser.
+ */
+export function normaliseForQuoteMatch(text: string): string {
+  const collapsed = text
+    .normalize("NFC")
+    .replace(MATCH_WHITESPACE, (run) => (LINE_BREAK.test(run) ? "\n" : " "));
+  let start = 0;
+  let end = collapsed.length;
+  while (start < end && (collapsed.charAt(start) === " " || collapsed.charAt(start) === "\n")) {
+    start += 1;
+  }
+  while (end > start && (collapsed.charAt(end - 1) === " " || collapsed.charAt(end - 1) === "\n")) {
+    end -= 1;
+  }
+  return collapsed.slice(start, end);
+}

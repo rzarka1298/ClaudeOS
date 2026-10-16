@@ -186,7 +186,7 @@ export const HOSTILE_MODEL_ANSWERS: readonly HostileModelAnswer[] = [
   ),
   valid(
     "quote-whitespace-only-difference-is-fine",
-    [item({ quote: `stream   reset\nis\tfixed in this release` })],
+    [item({ quote: `stream   reset  is\tfixed in this release` })],
     ["source-fact"],
     [[A]],
   ),
@@ -256,6 +256,39 @@ export const HOSTILE_MODEL_ANSWERS: readonly HostileModelAnswer[] = [
     ],
     ["inference"],
     [[A]],
+  ),
+  valid(
+    "quote-crosses-a-line-break-downgrades",
+    [item({ quote: "Intro line. The maintainers confirmed that" })],
+    ["inference"],
+    [[A]],
+  ),
+  valid(
+    "quote-stops-inside-a-negation-token-downgrades",
+    [item({ quote: "We confirm that the vendor won" })],
+    ["inference"],
+    [[A]],
+    { [A]: "We confirm that the vendor won't fix this bug today." },
+  ),
+  valid(
+    "quote-starts-after-a-sign-downgrades",
+    [item({ quote: "40 degrees at night here" })],
+    ["inference"],
+    [[A]],
+    { [A]: "Winter lows reach -40 degrees at night here." },
+  ),
+  valid(
+    "quote-with-a-bidi-control-downgrades",
+    [item({ quote: "stream reset \u202E is fixed in this release" })],
+    ["inference"],
+    [[A]],
+  ),
+  valid(
+    "quote-edge-next-to-a-zero-width-space-downgrades",
+    [item({ quote: "safe checks are required before release" })],
+    ["inference"],
+    [[A]],
+    { [A]: "The update was un\u200Bsafe checks are required before release." },
   ),
   valid(
     "item-inference-keeps-no-unverified-quote",

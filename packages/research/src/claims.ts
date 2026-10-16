@@ -11,7 +11,8 @@
 //      normalisation) that is found verbatim, after the shared normalisation, on whole words
 //      (it may not start or stop inside a word) in a cited source's sanitised text; it then
 //      cites only the sources whose text holds the quote. Otherwise it becomes inference with
-//      its surviving ids. "A source's text" is its EVIDENCE TEXT (`evidenceText`): the exact
+//      its surviving ids. A quote may not cross a line or block boundary of the source, hold
+//      a control, format or bidi character, or start or stop inside a token. "A source's text" is its EVIDENCE TEXT (`evidenceText`): the exact
 //      NFKC-scrubbed string the summariser was shown, so a sources map holding the raw sanitised
 //      text and one holding the evidence text give the same verdict;
 //   4. an item with no ids is inference;
@@ -40,7 +41,7 @@ import {
 import { evidenceText } from "./delimit.js";
 import { neutraliseUntrustedSpan } from "./neutralise.js";
 import { quoteInNormalisedSource } from "./quote-match.js";
-import { normaliseForMatch } from "./text-canon.js";
+import { normaliseForQuoteMatch } from "./text-canon.js";
 
 export interface ClaimCounts {
   /** Items dropped: failed the item schema, an unknown kind, or empty after neutralising. */
@@ -216,7 +217,8 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
     let cached = normalisedSources.get(id);
     if (cached === undefined) {
       const raw = options.sources[id];
-      cached = typeof raw === "string" ? normaliseForMatch(evidenceText(raw, options.nonce)) : "";
+      cached =
+        typeof raw === "string" ? normaliseForQuoteMatch(evidenceText(raw, options.nonce)) : "";
       normalisedSources.set(id, cached);
     }
     return cached;
@@ -262,7 +264,7 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
     let kind = claimedKind;
     let ids: readonly string[] = surviving;
     let storedQuote: string | undefined;
-    const wanted = quote === undefined ? "" : normaliseForMatch(quote);
+    const wanted = quote === undefined ? "" : normaliseForQuoteMatch(quote);
     // A quote over the cap is never stored as a prefix: the cut could drop a trailing qualifier
     // ("... except when the cache is cold"). It counts as truncated and the item loses its quote.
     if (wanted.length > REPORT_ITEM_QUOTE_MAX_LENGTH) {
