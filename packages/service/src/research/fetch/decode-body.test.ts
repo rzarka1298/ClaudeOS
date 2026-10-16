@@ -163,8 +163,45 @@ describe("decodeBody: XML feeds use the XML declaration where a page uses meta",
     expect(decodeBody(ascii(single), "application/octet-stream").ok).toBe(true);
   });
 
-  it("refuses a feed with no BOM, no charset and no declaration", () => {
-    expect(decodeBody(ascii("<feed></feed>"), "application/atom+xml")).toEqual({ ok: false });
+  it("decodes a feed with no BOM, no charset and no declaration as UTF-8, the XML default", () => {
+    for (const type of [
+      "application/atom+xml",
+      "application/xml",
+      "text/xml",
+      "application/rss+xml",
+    ]) {
+      const bare = decodeBody(ascii("<feed><title>x</title></feed>"), type);
+      expect(bare.ok, type).toBe(true);
+    }
+    const bytes = new TextEncoder().encode("<feed><title>caf\u00e9 \u2014 x</title></feed>");
+    const result = decodeBody(bytes, "application/atom+xml");
+    expect(result).toEqual({
+      ok: true,
+      text: "<feed><title>caf\u00e9 \u2014 x</title></feed>",
+      charset: "utf-8",
+    });
+  });
+
+  it("decodes a feed whose declaration names no encoding as UTF-8", () => {
+    const feed = '<?xml version="1.0"?><feed><title>caf\u00e9</title></feed>';
+    const result = decodeBody(new TextEncoder().encode(feed), "application/xml");
+    expect(result).toEqual({ ok: true, text: feed, charset: "utf-8" });
+    const single = "<?xml version='1.0' standalone='yes'?><rss></rss>";
+    expect(decodeBody(ascii(single), "text/xml").ok).toBe(true);
+  });
+
+  it("still refuses a UTF-16 feed with no mark and no declaration, by its decoded NULs", () => {
+    const wide = Uint8Array.from(
+      [..."<feed></feed>"].flatMap((character) => [character.charCodeAt(0), 0]),
+    );
+    expect(decodeBody(wide, "application/atom+xml")).toEqual({ ok: false });
+  });
+
+  it("does not extend the UTF-8 default to a page, XHTML or an unknown type", () => {
+    expect(decodeBody(ascii("<p>x</p>"), "text/html")).toEqual({ ok: false });
+    expect(decodeBody(ascii("<p>x</p>"), "application/xhtml+xml")).toEqual({ ok: false });
+    expect(decodeBody(ascii("<feed></feed>"), "text/plain")).toEqual({ ok: false });
+    expect(decodeBody(ascii("<feed></feed>"), undefined)).toEqual({ ok: false });
   });
 
   it("refuses an ASCII feed that declares UTF-16", () => {
