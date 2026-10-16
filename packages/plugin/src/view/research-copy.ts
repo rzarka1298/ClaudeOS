@@ -237,6 +237,14 @@ export const REPORT_TITLE_MAX = 200;
 export const CITATIONS_LABEL = "Sources:";
 export const NO_SOURCE_CITED = "No source cited";
 
+/**
+ * The downgrade marker (plan 07-15): the report note stored a quote for this finding, but the
+ * service's check against the saved source did not confirm it, so the quote is withheld and the
+ * finding reads as the summariser's own inference. Fixed copy, never built from the finding.
+ */
+export const QUOTE_UNVERIFIED_NOTE =
+  "The saved quote couldn't be checked against its source, so it isn't shown.";
+
 /** The hidden prefix that names a finding's kind first: `Finding 2, Source claim:`. */
 export function findingPrefix(index: number, kindLabel: string): string {
   return `Finding ${index}, ${kindLabel}:`;

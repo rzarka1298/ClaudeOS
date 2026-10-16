@@ -10,6 +10,7 @@ import {
   findingPrefix,
   NO_SOURCE_CITED,
   QUOTE_TEXT_MAX,
+  QUOTE_UNVERIFIED_NOTE,
   quoteCaption,
   TEXT_SHORTENED,
 } from "./research-copy.js";
@@ -42,7 +43,11 @@ export function ReportFinding(props: ReportFindingProps): VNode {
   const text = capText(item.text, FINDING_TEXT_MAX);
   const quote = item.quote === null ? null : capText(item.quote, QUOTE_TEXT_MAX);
   return (
-    <li className="ccc-report-item" data-kind={item.kind}>
+    <li
+      className="ccc-report-item"
+      data-kind={item.kind}
+      data-quote-unverified={item.quoteUnverified === true ? "true" : undefined}
+    >
       <span className="ccc-visually-hidden">{findingPrefix(item.index, display.label)}</span>
       <p className="ccc-report-kind">
         <span aria-hidden="true">{display.glyph}</span> <span>{display.label}</span>
@@ -60,6 +65,9 @@ export function ReportFinding(props: ReportFindingProps): VNode {
           </blockquote>
         </>
       )}
+      {item.quoteUnverified === true ? (
+        <p className="ccc-field-help">{QUOTE_UNVERIFIED_NOTE}</p>
+      ) : null}
       {item.citations.length === 0 ? (
         <p className="ccc-report-citations">{NO_SOURCE_CITED}</p>
       ) : (

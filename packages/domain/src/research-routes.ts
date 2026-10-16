@@ -311,6 +311,12 @@ export type ResearchCitation = z.infer<typeof ResearchCitationSchema>;
 /**
  * One finding as the reader shows it. `index` counts from 1 across the whole
  * report. `quote` and `quoteSourceNumber` are present together or not at all.
+ *
+ * `quoteUnverified` (plan 07-15, additive and optional) is present, and `true`, only when the
+ * report note stored a quote for this finding and the service's read-time re-verification against
+ * the stored source snapshot did not confirm it. The quote is then withheld and the finding is
+ * served as an inference, so the marker only ever accompanies a null quote on an inference; it is
+ * absent (never `false`) on every other finding, which keeps an older service's payload valid.
  */
 export const ResearchReportItemSchema = z
   .strictObject({
@@ -319,12 +325,17 @@ export const ResearchReportItemSchema = z
     text: plainLineText(600),
     quote: plainLineText(240).nullable(),
     quoteSourceNumber: SourceNumber.nullable(),
+    quoteUnverified: z.literal(true).optional(),
     citations: z.array(ResearchCitationSchema).max(REPORT_CITED_IDS_MAX),
   })
   .refine((item) => (item.quote === null) === (item.quoteSourceNumber === null), {
     message: "a quote and its source number come together",
     path: ["quoteSourceNumber"],
-  });
+  })
+  .refine(
+    (item) => item.quoteUnverified !== true || (item.quote === null && item.kind === "inference"),
+    { message: "a withheld quote leaves a quote-less inference", path: ["quoteUnverified"] },
+  );
 export type ResearchReportItem = z.infer<typeof ResearchReportItemSchema>;
 
 /**

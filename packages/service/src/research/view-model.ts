@@ -307,8 +307,9 @@ function evidenceOf(vaultRoot: string, ref: SourceReference): string | null {
  * carries a quote keeps it only if the exported predicate `quoteInSource` finds it in the evidence
  * text of EVERY source the finding cites, the same check the pipeline made before it wrote the
  * report. Otherwise the quote is not shown as evidence and the finding is served as the model's
- * inference (no quote, same text and citations): a hand-edited report or a changed snapshot can
- * never present words as a source's that the stored source does not hold.
+ * inference (no quote, same text and citations) carrying `quoteUnverified: true`, so the reader
+ * can say the quote was withheld: a hand-edited report or a changed snapshot can never present
+ * words as a source's that the stored source does not hold, and never does so silently.
  */
 function itemsOf(vaultRoot: string, report: ReportFrontmatter): ResearchReportItem[] {
   const refs = new Map(report.sourceRefs.map((ref) => [ref.id, ref]));
@@ -333,12 +334,16 @@ function itemsOf(vaultRoot: string, report: ReportFrontmatter): ResearchReportIt
         const text = ref === undefined ? null : evidenceFor(ref);
         return text !== null && quoteInSource(text, quote);
       });
+    // A stored quote that did not verify is withheld, and the owner is told: the key is present
+    // (as true) only then, and absent on every other finding (plan 07-15).
+    const withheld = quote !== undefined && !verified;
     return {
       index: index + 1,
       kind: quote === undefined || verified ? item.kind : "inference",
       text: item.text,
       quote: verified ? quote : null,
       quoteSourceNumber: verified ? first.number : null,
+      ...(withheld ? { quoteUnverified: true as const } : {}),
       citations: cited,
     };
   });

@@ -29,13 +29,13 @@ export interface ReaderState {
   readonly header: ResearchReportHeader | null;
   /** The findings loaded so far, in report order, one per index. */
   readonly items: readonly ResearchReportItem[];
-  /** True when the service trimmed a findings page: the findings end there. */
+  /** True when the service trimmed the LAST findings page and named no cursor: items are unreachable. */
   readonly itemsTruncated: boolean;
-  /** True once the last findings page has landed (or the findings ended at a trimmed page). */
+  /** True once the last findings page has landed (or the findings ended at a trimmed page with no cursor). */
   readonly itemsLoaded: boolean;
   /** The sources loaded so far in source-number order; null until the first sources page lands. */
   readonly sources: readonly ResearchReportSource[] | null;
-  /** True when the service trimmed a sources page. */
+  /** True when the service trimmed the LAST sources page and named no cursor: sources are unreachable. */
   readonly sourcesTruncated: boolean;
   /** True once the last sources page has landed (or the sources ended at a trimmed page). */
   readonly sourcesLoaded: boolean;
@@ -127,13 +127,16 @@ async function pump(token: number, noteId: string): Promise<void> {
     if (response.page === "items") {
       const current = readerState.value;
       if (current === null) return;
-      // A trimmed page ends the findings: its cursor is not followed, so the line that says some
-      // items were left out stays true.
-      const ends = response.truncated || response.nextCursor === null;
+      // A trimmed page (the service dropped whole items to stay under the socket cap) names the
+      // first dropped item in its cursor, so the cursor is followed and nothing is lost. Only a
+      // trimmed page with no cursor leaves items unreachable: the findings end there, and the
+      // line that says some items were left out is then true (plan 07-15; before it, any trimmed
+      // page ended the findings).
+      const ends = response.nextCursor === null;
       update(token, {
         header: current.header ?? response.header,
         items: mergeBy(current.items, response.items, (item) => item.index),
-        itemsTruncated: current.itemsTruncated || response.truncated,
+        itemsTruncated: current.itemsTruncated || (response.truncated && ends),
         itemsLoaded: ends,
         firstFailure: null,
         laterFailure: null,
@@ -143,10 +146,10 @@ async function pump(token: number, noteId: string): Promise<void> {
     } else {
       const current = readerState.value;
       if (current === null) return;
-      const ends = response.truncated || response.nextCursor === null;
+      const ends = response.nextCursor === null;
       update(token, {
         sources: mergeBy(current.sources ?? [], response.sources, (source) => source.number),
-        sourcesTruncated: current.sourcesTruncated || response.truncated,
+        sourcesTruncated: current.sourcesTruncated || (response.truncated && ends),
         sourcesLoaded: ends,
         laterFailure: null,
       });
