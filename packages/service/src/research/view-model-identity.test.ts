@@ -79,23 +79,8 @@ describe("the run record of an old report", () => {
     const real = vault.addReport({ generatedAt: "2026-10-14T10:00:00.000Z" });
     const at = (n: number): string =>
       new Date(Date.UTC(2026, 9, 14, 11, 0, 0) + n * 1000).toISOString();
-    // The report's own run, then more runs than any bounded history window holds.
-    startJobRun(vault.store.db, {
-      jobRunId: real.runId as RunId,
-      jobKey: RESEARCH_JOB_ID,
-      idempotencyKey: `${RESEARCH_JOB_ID}:manual:${real.runId}`,
-      trigger: "manual",
-      startedAt: "2026-10-14T09:59:00.000Z",
-    });
-    finishJobRun(vault.store.db, real.runId as RunId, {
-      outcome: "success",
-      endedAt: "2026-10-14T10:00:30.000Z",
-      sourceCount: 1,
-      sourceTotal: 1,
-      reportNoteId: real.noteId,
-      unavailableSources: [],
-      errorCode: null,
-    });
+    // The report's own run is registered with the report (it started at 09:59:00 and ended at
+    // 10:00:30), then more runs than any bounded history window holds come after it.
     for (let n = 0; n < 210; n += 1) {
       const id = testRunId() as RunId;
       startJobRun(vault.store.db, {

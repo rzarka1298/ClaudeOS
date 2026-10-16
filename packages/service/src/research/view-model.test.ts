@@ -113,7 +113,7 @@ describe("Test 1 (budget): pages never reach the response budget and drop whole 
     const numbers: number[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < 12; page += 1) {
-      const result = buildReportSourcesPage(vault.root, lookup.entry, cursor);
+      const result = buildReportSourcesPage(vault.root, vault.store.db, lookup.entry, cursor);
       if (!result.ok) throw new Error(`refused: ${result.code}`);
       const parsed = ResearchReportSourcesPageSchema.parse(result.value);
       expect(bytes(parsed)).toBeLessThan(57344);
@@ -286,7 +286,8 @@ describe("Test 3 (reader pages)", () => {
     expect(page.header.noteId).toBe(built.noteId);
     expect(page.header.notePath).toBe(built.path);
     expect(page.header.runNotePath).toBe(`automation-runs/${built.runId}.md`);
-    expect(page.header.runOutcome).toBeNull();
+    // The report's run is recorded with the report (a genuine, finished run).
+    expect(page.header.runOutcome).toBe("success");
     expect(page.header.kindCounts).toEqual({
       "source-fact": 1,
       "unverified-claim": 1,
@@ -350,7 +351,7 @@ describe("Test 3 (reader pages)", () => {
     });
     const lookup = findReport(vault.root, built.noteId);
     if (lookup.kind !== "found") throw new Error("expected the report");
-    const result = buildReportSourcesPage(vault.root, lookup.entry);
+    const result = buildReportSourcesPage(vault.root, vault.store.db, lookup.entry);
     if (!result.ok) throw new Error("refused");
     const page = ResearchReportSourcesPageSchema.parse(result.value);
     const source = page.sources[0];
@@ -396,7 +397,7 @@ describe("Test 4 (errors)", () => {
     const responses = [
       buildReportList(vault.root, {}),
       buildReportItemsPage(vault.root, vault.store.db, lookup.entry),
-      buildReportSourcesPage(vault.root, lookup.entry),
+      buildReportSourcesPage(vault.root, vault.store.db, lookup.entry),
       { ok: true, value: buildResearchStatus(vault.store.db, null) },
     ];
     const text = JSON.stringify(responses);

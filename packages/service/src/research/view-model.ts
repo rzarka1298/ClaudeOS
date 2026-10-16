@@ -392,7 +392,15 @@ function servedFrom(cited: SourceReference, own: SourceReference): SourceReferen
   };
 }
 
-function resolveSource(vaultRoot: string, cited: SourceReference): ResolvedSource {
+/** What a request knows when it resolves a citation: the vault, the store and the report cited from. */
+interface ResolveContext {
+  readonly vaultRoot: string;
+  readonly db: Database.Database;
+  readonly report: ReportFrontmatter;
+}
+
+function resolveSource(context: ResolveContext, cited: SourceReference): ResolvedSource {
+  const { vaultRoot } = context;
   const snapshot = snapshotOf(vaultRoot, cited);
   if (snapshot === null) return { served: cited, evidence: null };
   return {
@@ -402,12 +410,12 @@ function resolveSource(vaultRoot: string, cited: SourceReference): ResolvedSourc
 }
 
 /** Resolves each cited source at most once per request. */
-function sourceResolver(vaultRoot: string): (ref: SourceReference) => ResolvedSource {
+function sourceResolver(context: ResolveContext): (ref: SourceReference) => ResolvedSource {
   const cache = new Map<string, ResolvedSource>();
   return (ref) => {
     const cached = cache.get(ref.id);
     if (cached !== undefined) return cached;
-    const resolved = resolveSource(vaultRoot, ref);
+    const resolved = resolveSource(context, ref);
     cache.set(ref.id, resolved);
     return resolved;
   };
@@ -425,10 +433,14 @@ function sourceResolver(vaultRoot: string): (ref: SourceReference) => ResolvedSo
  * can say the quote was withheld: a hand-edited report or a changed snapshot can never present
  * words as a source's that the stored source does not hold, and never does so silently.
  */
-function itemsOf(vaultRoot: string, report: ReportFrontmatter): ResearchReportItem[] {
+function itemsOf(
+  vaultRoot: string,
+  db: Database.Database,
+  report: ReportFrontmatter,
+): ResearchReportItem[] {
   const refs = new Map(report.sourceRefs.map((ref) => [ref.id, ref]));
   const numbers = new Map(report.sourceRefs.map((ref, index) => [ref.id, index + 1]));
-  const resolve = sourceResolver(vaultRoot);
+  const resolve = sourceResolver({ vaultRoot, db, report });
   return report.items.map((item, index) => {
     const ids = [...new Set(item.citedSourceIds)];
     const cited = ids
@@ -536,7 +548,7 @@ export function buildReportItemsPage(
   entry: ReportEntry,
   cursor?: string,
 ): ResearchRouteResult<ResearchReportItemsPage> {
-  const all = itemsOf(vaultRoot, entry.frontmatter);
+  const all = itemsOf(vaultRoot, db, entry.frontmatter);
   let start = 0;
   if (cursor !== undefined) {
     const offset = decodeOffset(cursor, "i", all.length);
@@ -562,12 +574,13 @@ export function buildReportItemsPage(
 
 export function buildReportSourcesPage(
   vaultRoot: string,
+  db: Database.Database,
   entry: ReportEntry,
   cursor?: string,
 ): ResearchRouteResult<ResearchReportSourcesPage> {
   const report = entry.frontmatter;
   const handling = new Map(report.sourceHandling.map((item) => [item.sourceId, item.counts]));
-  const resolve = sourceResolver(vaultRoot);
+  const resolve = sourceResolver({ vaultRoot, db, report });
   const all: ResearchReportSource[] = report.sourceRefs.map((ref, index) => ({
     number: index + 1,
     ...resolve(ref).served,

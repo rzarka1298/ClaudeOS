@@ -70,7 +70,7 @@ function items(built: BuiltReport): ResearchReportItemsPage {
 }
 
 function sources(built: BuiltReport) {
-  const result = buildReportSourcesPage(vault.root, lookup(built));
+  const result = buildReportSourcesPage(vault.root, vault.store.db, lookup(built));
   if (!result.ok) throw new Error(`refused: ${result.code}`);
   return ResearchReportSourcesPageSchema.parse(result.value);
 }

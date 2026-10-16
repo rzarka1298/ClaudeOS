@@ -2,13 +2,23 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  RESEARCH_JOB_ID,
   type ReportItem,
+  type RunId,
   rawSnapshotPathFor,
   type SanitiseCounts,
   type SourceReference,
   type SummariserId,
 } from "@ccc/domain";
-import { applyMigrations, type OperationalStore, openStore } from "@ccc/operational-store";
+import {
+  applyMigrations,
+  finishJobRun,
+  type OperationalStore,
+  openStore,
+  type ResearchSourceRecord,
+  recordResearchSource,
+  startJobRun,
+} from "@ccc/operational-store";
 import { evidenceText } from "@ccc/research";
 import {
   finaliseReportNote,
@@ -22,6 +32,12 @@ import { contentHashFor, sourceIdFor } from "../hash.js";
  * Builds reports in a temporary vault for the research view model and route tests (plan 07-14):
  * real raw source notes (the evidence text stored byte for byte, the hash recomputed) and a real
  * finalised report written through the vault-repo writers. Test code only.
+ *
+ * Provenance (07-FIX6, ADR-0030): a genuine report also has what a real run leaves in the
+ * operational store: the job run (started and finished with this report's note id) and one
+ * `research_source_records` row per raw note it wrote. A reader only counts a quote as evidence
+ * when those exist, so a test that wants a forged or tampered report says so through
+ * {@link ProvenanceSpec}; the default is a genuine run.
  */
 
 const TEST_BASE = join(homedir(), ".ccc-test");
@@ -54,6 +70,18 @@ export interface ReportItemSpec {
   readonly cites: readonly number[];
 }
 
+/** What the operational store is told about a report (default: a genuine, finished run). */
+export interface ProvenanceSpec {
+  /** False leaves the report's job run out of the store (a forged report, or an unknown run id). */
+  readonly registerRun?: boolean;
+  /** The report note id the finished run records. Default: the report's own id. */
+  readonly runReportNoteId?: string;
+  /** Which sources (indexes) get a record, or "none". Default: every source. */
+  readonly recordSources?: readonly number[] | "none";
+  /** Changes a record before it is stored (for example a hash that does not match the raw note). */
+  readonly edit?: (record: ResearchSourceRecord, index: number) => ResearchSourceRecord;
+}
+
 export interface ReportSpec {
   readonly sources?: readonly ReportSourceSpec[];
   readonly items?: readonly ReportItemSpec[];
@@ -69,6 +97,7 @@ export interface ReportSpec {
    * Edits the references the REPORT cites after the raw notes were written, as a hand edit of the
    * report would. The ids stay (findings cite them); everything else may change.
    */
+  readonly provenance?: ProvenanceSpec;
   readonly editCitedRefs?: (refs: readonly SourceReference[]) => SourceReference[];
 }
 
@@ -85,6 +114,62 @@ export interface ReportVault {
   readonly store: OperationalStore;
   addReport(spec?: ReportSpec): BuiltReport;
   cleanup(): void;
+}
+
+/**
+ * Leaves in the operational store what a real run leaves for a report: the finished job run and a
+ * record for each source whose raw note it wrote. The run starts a minute before the report and
+ * ends thirty seconds after it.
+ */
+export function recordProvenance(
+  store: OperationalStore,
+  input: {
+    readonly runId: string;
+    readonly generatedAt: string;
+    readonly noteId: string;
+    readonly refs: readonly SourceReference[];
+    readonly provenance: ProvenanceSpec;
+  },
+): void {
+  const { runId, generatedAt, provenance } = input;
+  const at = Date.parse(generatedAt);
+  if (provenance.registerRun !== false) {
+    startJobRun(store.db, {
+      jobRunId: runId as RunId,
+      jobKey: RESEARCH_JOB_ID,
+      idempotencyKey: `${RESEARCH_JOB_ID}:manual:${runId}`,
+      trigger: "manual",
+      startedAt: new Date(at - 60_000).toISOString(),
+    });
+    finishJobRun(store.db, runId as RunId, {
+      outcome: "success",
+      endedAt: new Date(at + 30_000).toISOString(),
+      sourceCount: input.refs.length,
+      sourceTotal: input.refs.length,
+      reportNoteId: provenance.runReportNoteId ?? input.noteId,
+      unavailableSources: [],
+      errorCode: null,
+    });
+  }
+  const recorded = provenance.recordSources ?? input.refs.map((_, index) => index);
+  if (recorded === "none") return;
+  for (const index of recorded) {
+    const ref = input.refs[index];
+    if (ref === undefined || ref.canonicalUrl === undefined) continue;
+    const record: ResearchSourceRecord = {
+      jobRunId: runId,
+      sourceId: ref.id,
+      canonicalUrl: ref.canonicalUrl,
+      contentHash: ref.contentHash,
+      snapshotPath: ref.snapshotPath,
+      label: ref.title,
+      recordedAt: generatedAt,
+    };
+    recordResearchSource(
+      store.db,
+      provenance.edit === undefined ? record : provenance.edit(record, index),
+    );
+  }
 }
 
 let counter = 0;
@@ -172,6 +257,13 @@ export function createReportVault(): ReportVault {
     if (spec.unfinalised !== true) {
       finaliseReportNote({ vaultRoot: root, path: written.path, now: new Date(generatedAt) });
     }
+    recordProvenance(store, {
+      runId,
+      generatedAt,
+      noteId: written.id,
+      refs,
+      provenance: spec.provenance ?? {},
+    });
     return { noteId: written.id, path: written.path, runId, sourceRefs: refs, rawPaths };
   }
 

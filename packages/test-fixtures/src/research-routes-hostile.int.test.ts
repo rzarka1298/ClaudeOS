@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  RESEARCH_JOB_ID,
   RESEARCH_LIST_PAGE_SIZE,
   RESEARCH_LIST_PATH,
   RESEARCH_REPORT_PATH,
@@ -14,11 +15,13 @@ import {
   ResearchReportSourcesPageSchema,
   ResearchRunResponseSchema,
   ResearchStatusResponseSchema,
+  type RunId,
   rawSnapshotPathFor,
   type SanitiseCounts,
   type SourceReference,
   VAULT_SETUP_PATH,
 } from "@ccc/domain";
+import { finishJobRun, openStore, recordResearchSource, startJobRun } from "@ccc/operational-store";
 import { evidenceText } from "@ccc/research";
 import { contentHashFor, sourceIdFor } from "@ccc/service/research";
 import { finaliseReportNote, writeRawSourceNote, writeReportNote } from "@ccc/vault-repo";
@@ -296,11 +299,40 @@ describe("Part 1: the hostile research corpus, through the real process and its 
 });
 
 describe("Part 2: hostile report texts, through provenance and the routes", () => {
+  /**
+   * How a crafted report relates to the operational store (07-FIX6, decision D-A, ADR-0030). The
+   * vault half is always the strongest forgery an attacker with write access can make: real
+   * writers, a body that hashes to the cited hash, a raw note that agrees with the report.
+   *
+   * - genuine: the run is finished in the store and recorded the source (what a real run leaves);
+   * - forged-no-run: nothing in the store (a report and raw note made up in the vault);
+   * - forged-run-no-rows: the run exists but never recorded this source;
+   * - unknown-run-rows: a record exists under the run id but the run itself does not;
+   * - hash-mismatch: the run recorded the source with another hash (the body was rewritten);
+   * - wrong-report: the run finished naming some other report.
+   */
+  type Provenance =
+    | "genuine"
+    | "forged-no-run"
+    | "forged-run-no-rows"
+    | "unknown-run-rows"
+    | "hash-mismatch"
+    | "wrong-report";
+  const FORGED: readonly Provenance[] = [
+    "forged-no-run",
+    "forged-run-no-rows",
+    "unknown-run-rows",
+    "hash-mismatch",
+    "wrong-report",
+  ];
+
   /** Writes one finalised report whose every text field is `text`, backed by real raw notes. */
   function craftReport(
     vaultRoot: string,
+    dir: string,
     text: string,
     index: number,
+    provenance: Provenance = "genuine",
   ): { noteId: string; path: string } {
     const url = `https://crafted${index}.example.invalid/feed.atom`;
     // The stored evidence is long enough to hold the hostile text as a substantial quote, so a
@@ -330,11 +362,12 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
     });
     const day = String(1 + (index % 28)).padStart(2, "0");
     const month = String(1 + Math.floor(index / 28)).padStart(2, "0");
+    const runId = `c${String(index).padStart(5, "0")}abcdefghijklmnopqrs`;
     const written = writeReportNote({
       vaultRoot,
       topicLabel: text,
       generatedAt: `2026-${month}-${day}T10:00:00.000Z`,
-      jobRunId: `c${String(index).padStart(5, "0")}abcdefghijklmnopqrs`,
+      jobRunId: runId,
       summariser: "extractive",
       sourceTotal: 1,
       unavailableSources: [],
@@ -348,14 +381,61 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
       path: written.path,
       now: new Date("2026-10-14T10:00:00.000Z"),
     });
+    recordInStore(dir, provenance, { runId, ref, noteId: written.id, index });
     return { noteId: written.id, path: written.path };
   }
 
+  /** What the operational store holds for a crafted report, written as the pipeline would. */
+  function recordInStore(
+    dir: string,
+    provenance: Provenance,
+    input: { runId: string; ref: SourceReference; noteId: string; index: number },
+  ): void {
+    const store = openStore(join(dir, "operational.db"));
+    try {
+      const runExists = provenance !== "forged-no-run" && provenance !== "unknown-run-rows";
+      if (runExists) {
+        const at = (n: number) =>
+          new Date(Date.UTC(2026, 0, 1) + (input.index * 2 + n) * 1000).toISOString();
+        startJobRun(store.db, {
+          jobRunId: input.runId as RunId,
+          jobKey: RESEARCH_JOB_ID,
+          idempotencyKey: `${RESEARCH_JOB_ID}:manual:${input.runId}`,
+          trigger: "manual",
+          startedAt: at(0),
+        });
+        finishJobRun(store.db, input.runId as RunId, {
+          outcome: "success",
+          endedAt: at(1),
+          sourceCount: 1,
+          sourceTotal: 1,
+          reportNoteId: provenance === "wrong-report" ? "z".repeat(25) : input.noteId,
+          unavailableSources: [],
+          errorCode: null,
+        });
+      }
+      if (provenance === "forged-no-run" || provenance === "forged-run-no-rows") return;
+      const recordedHash =
+        provenance === "hash-mismatch" ? contentHashFor("the genuine body") : input.ref.contentHash;
+      recordResearchSource(store.db, {
+        jobRunId: input.runId,
+        sourceId: input.ref.id,
+        canonicalUrl: input.ref.canonicalUrl ?? "",
+        contentHash: recordedHash,
+        snapshotPath: rawSnapshotPathFor(input.ref.id, recordedHash),
+        label: input.ref.title,
+        recordedAt: "2026-10-14T10:00:00.000Z",
+      });
+    } finally {
+      store.close();
+    }
+  }
+
   it("serves every hostile text as the same plain string, and downgrades a quote the snapshot does not hold", async () => {
-    await withCorpusService(async ({ vaultRoot, call }) => {
+    await withCorpusService(async ({ vaultRoot, dir, call }) => {
       const crafted = HOSTILE_REPORT_TEXTS.map((hostile, index) => ({
         hostile,
-        ...craftReport(vaultRoot, hostile.text, index),
+        ...craftReport(vaultRoot, dir, hostile.text, index),
       }));
       let verified = 0;
       let downgraded = 0;
@@ -410,6 +490,51 @@ describe("Part 2: hostile report texts, through provenance and the routes", () =
       }
       expect(new Set(seen).size).toBe(seen.length);
       expect([...seen].sort()).toEqual(crafted.map((entry) => entry.noteId).sort());
+    });
+  }, 300_000);
+
+  it("never serves a quote as evidence when the store does not vouch for the pair, and still does for a genuine run", async () => {
+    await withCorpusService(async ({ vaultRoot, dir, call }) => {
+      const forged = HOSTILE_REPORT_TEXTS.map((hostile, index) => ({
+        hostile,
+        provenance: FORGED[index % FORGED.length] ?? "forged-no-run",
+        ...craftReport(
+          vaultRoot,
+          dir,
+          hostile.text,
+          index,
+          FORGED[index % FORGED.length] ?? "forged-no-run",
+        ),
+      }));
+      const offset = HOSTILE_REPORT_TEXTS.length;
+      const genuine = HOSTILE_REPORT_TEXTS.map((hostile, index) => ({
+        hostile,
+        ...craftReport(vaultRoot, dir, hostile.text, offset + index, "genuine"),
+      }));
+      for (const { hostile, provenance, noteId } of forged) {
+        const reply = await call(RESEARCH_REPORT_PATH, { noteId, page: "items" });
+        expect(reply.status, `${hostile.name} ${provenance}`).toBe(200);
+        const item = ResearchReportItemsPageSchema.parse(reply.body).items[0];
+        // The vault half is consistent in every case. Only the store tells the forgery apart.
+        expect(item?.quote, `${hostile.name} ${provenance}`).toBeNull();
+        expect(item?.kind, `${hostile.name} ${provenance}`).toBe("inference");
+        expect(item?.quoteUnverified, `${hostile.name} ${provenance}`).toBe(true);
+        expect(item?.text, hostile.name).toBe(hostile.text);
+        const sources = await call(RESEARCH_REPORT_PATH, { noteId, page: "sources" });
+        expect(sources.status, hostile.name).toBe(200);
+        ResearchReportSourcesPageSchema.parse(sources.body);
+      }
+      // The control: the same texts recorded by a genuine run still verify where they did before.
+      let verified = 0;
+      for (const { hostile, noteId } of genuine) {
+        const reply = await call(RESEARCH_REPORT_PATH, { noteId, page: "items" });
+        const item = ResearchReportItemsPageSchema.parse(reply.body).items[0];
+        if (item?.quote !== null) {
+          expect(item?.quote, hostile.name).toBe(hostile.text);
+          verified += 1;
+        }
+      }
+      expect(verified).toBeGreaterThan(0);
     });
   }, 300_000);
 });
