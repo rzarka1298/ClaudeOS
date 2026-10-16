@@ -241,7 +241,12 @@ export interface WriteRawSourceNoteOptions {
   /** The full source reference; its `snapshotPath` is where the note goes. */
   readonly sourceRef: SourceReference;
   readonly sanitise: SanitiseCounts;
-  /** The canonical sanitised text whose hash is `sourceRef.contentHash`. */
+  /**
+   * The canonical text whose hash is `sourceRef.contentHash`. The caller passes the source's
+   * EVIDENCE TEXT (`evidenceText` in `@ccc/research`: the exact NFKC-scrubbed string the
+   * summariser was shown), stored byte for byte, so a stored quote re-verifies against this
+   * body (07-FIX3A F3). This package cannot import `@ccc/research`, so it does not compute it.
+   */
   readonly text: string;
   readonly truncated?: boolean;
   readonly now?: Date;

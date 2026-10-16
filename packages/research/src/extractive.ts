@@ -21,14 +21,12 @@
 
 import {
   REPORT_ITEM_QUOTE_MAX_LENGTH,
-  REPORT_ITEM_QUOTE_MIN_LENGTH,
-  REPORT_ITEM_QUOTE_MIN_WORDS,
   REPORT_ITEM_TEXT_MAX_LENGTH,
   REPORT_ITEMS_MAX,
 } from "@ccc/domain";
 import { validateSummariserOutput } from "./claims.js";
-import { parseDelimitedBlocks } from "./delimit.js";
-import { cutAtWord } from "./quote-match.js";
+import { evidenceText, parseDelimitedBlocks } from "./delimit.js";
+import { cutAtWord, isSubstantialQuote } from "./quote-match.js";
 import { normaliseForMatch } from "./text-canon.js";
 
 type ExtractedKind = "source-fact" | "unverified-claim";
@@ -56,7 +54,8 @@ function units(text: string): string[] {
 function factQuote(normalised: string, parts: readonly string[]): string | null {
   if (parts.length === 0) return null;
   let quote = parts[0] ?? "";
-  for (let i = 1; i < parts.length && !longEnough(quote); i += 1) quote = `${quote} ${parts[i]}`;
+  for (let i = 1; i < parts.length && !isSubstantialQuote(quote); i += 1)
+    quote = `${quote} ${parts[i]}`;
   return finish(normalised, quote);
 }
 
@@ -65,18 +64,11 @@ function claimQuote(normalised: string, firstLine: string): string | null {
   return finish(normalised, firstLine);
 }
 
-function longEnough(quote: string): boolean {
-  return (
-    quote.length >= REPORT_ITEM_QUOTE_MIN_LENGTH &&
-    quote.split(" ").length >= REPORT_ITEM_QUOTE_MIN_WORDS
-  );
-}
-
 /** Extends a prefix of the normalised text to the minimum, cuts it at the cap, checks it is a prefix. */
 function finish(normalised: string, start: string): string | null {
   if (!normalised.startsWith(start)) return null;
   let quote = start;
-  while (!longEnough(quote) && quote.length < normalised.length) {
+  while (!isSubstantialQuote(quote) && quote.length < normalised.length) {
     const next = normalised.indexOf(" ", quote.length + 1);
     quote = next === -1 ? normalised : normalised.slice(0, next);
   }
@@ -138,9 +130,12 @@ export function extractiveSummary(input: string): string {
   const items: { kind: string; text: string; citedSourceIds: string[]; quote: string }[] = [];
   try {
     for (const block of parseDelimitedBlocks(input)) {
-      for (const candidate of candidates(block.text)) {
+      // The evidence text (the string the model is shown, idempotent on a scrubbed block) is the
+      // one text every quote here is taken from and verified against.
+      const evidence = evidenceText(block.text);
+      for (const candidate of candidates(evidence)) {
         if (items.length >= REPORT_ITEMS_MAX) break;
-        if (!kept(block.sourceId, block.text, candidate)) continue;
+        if (!kept(block.sourceId, evidence, candidate)) continue;
         items.push({
           kind: candidate.kind,
           text: candidate.text,

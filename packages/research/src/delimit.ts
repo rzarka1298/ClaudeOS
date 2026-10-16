@@ -178,8 +178,43 @@ const MAX_PASSES = 1_000;
  */
 export function scrubSourceText(text: string, nonce: string): ScrubbedSourceText {
   assertNonce(nonce);
+  return scrub(text, nonce);
+}
+
+/**
+ * THE evidence text of a source (07-FIX3A, F3): exactly the string the summariser is shown inside
+ * the source's delimited block, which is `scrubSourceText(text, nonce).text` (invisible characters
+ * removed, NFKC, every marker-like sequence and the run nonce replaced). It is the only text a
+ * quote is verified against, through `quoteInSource` / `quoteInNormalisedSource`:
+ *
+ *   - the trusted stage (`validateSummariserOutput`) verifies each quote against the evidence
+ *     text of each cited source (it applies this function to the sources it is given);
+ *   - the extractive double quotes the evidence text of each block;
+ *   - the vault raw note stores the evidence text as the snapshot body (the service passes it to
+ *     `writeRawSourceNote`; vault-repo cannot import this package), so a stored quote re-verifies
+ *     against the stored snapshot;
+ *   - provenance (plan 07-14) re-verifies quotes against the raw note's body text.
+ *
+ * Verifying against any other form (the pre-NFKC text, say) would wrongly refuse a correct quote
+ * (a ligature shown as its plain letters) or accept one the model never saw.
+ *
+ * Idempotent: the evidence text of an evidence text is itself. The nonce is optional because a
+ * nonce only changes text that contains the run nonce, which a source that was already wrapped
+ * cannot; pass it wherever the run nonce is known.
+ *
+ * @throws {DelimitError} when a nonce is given and has the wrong shape.
+ */
+export function evidenceText(text: string, nonce?: string): string {
+  if (nonce !== undefined) assertNonce(nonce);
+  return scrub(text, nonce ?? null).text;
+}
+
+function scrub(text: string, nonce: string | null): ScrubbedSourceText {
   const stripped = stripUnsafeChars(text.replace(/\r\n?/g, "\n"));
-  const pattern = new RegExp(`(?:${MARKER_SOURCE})|(${nonce})`, "gi");
+  const pattern = new RegExp(
+    nonce === null ? `(?:${MARKER_SOURCE})` : `(?:${MARKER_SOURCE})|(${nonce})`,
+    "gi",
+  );
   // NFKC can turn a compatibility filler into a plain one (U+3164 becomes U+1160), so the fillers
   // are removed after every normalisation, and the first pass is on the filler-free view.
   let current = stripFillerChars(stripped.text.normalize("NFKC"));

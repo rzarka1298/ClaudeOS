@@ -11,11 +11,17 @@
 //      normalisation) that is found verbatim, after the shared normalisation, on whole words
 //      (it may not start or stop inside a word) in a cited source's sanitised text; it then
 //      cites only the sources whose text holds the quote. Otherwise it becomes inference with
-//      its surviving ids;
+//      its surviving ids. "A source's text" is its EVIDENCE TEXT (`evidenceText`): the exact
+//      NFKC-scrubbed string the summariser was shown, so a sources map holding the raw sanitised
+//      text and one holding the evidence text give the same verdict;
 //   4. an item with no ids is inference;
-//   5. the quote that is stored is the SOURCE's own text, neutralised and cut, and it is checked
-//      against the sources again afterwards: an address marker or a cut must not leave a quote
-//      the source does not hold (the item is then inference). Text is neutralised too;
+//   5. the quote that is stored is the model's own quote in the comparison form (NFC, whitespace
+//      collapsed), verified above as a substring of the evidence text, then neutralised; it is
+//      checked against the sources again afterwards, so an address marker must not leave a quote
+//      the source does not hold (the item is then inference). A quote over the length cap is
+//      never cut into a prefix (the cut could drop a trailing qualifier): the item loses its
+//      quote and becomes inference. Every kind that stores a quote cites only the sources that
+//      hold it. Text is neutralised too;
 //   6. the domain item schema has the last word.
 //
 // A stored quote is always a verified quote: an item that fails the check loses its quote.
@@ -31,6 +37,7 @@ import {
   type ReportItem,
   ReportItemSchema,
 } from "@ccc/domain";
+import { evidenceText } from "./delimit.js";
 import { neutraliseUntrustedSpan } from "./neutralise.js";
 import { quoteInNormalisedSource } from "./quote-match.js";
 import { normaliseForMatch } from "./text-canon.js";
@@ -51,8 +58,13 @@ export interface ClaimCounts {
 }
 
 export interface ValidateSummariserOptions {
-  /** Each fetched source id mapped to its sanitised text. */
+  /**
+   * Each fetched source id mapped to its text: the sanitised text or already its evidence text.
+   * Quotes are verified against `evidenceText` of it (idempotent), the string the model saw.
+   */
   readonly sources: Readonly<Record<string, string>>;
+  /** The run nonce, when known; see {@link evidenceText}. */
+  readonly nonce?: string;
 }
 
 export type SummariserValidation =
@@ -204,7 +216,7 @@ function validate(answer: string, options: ValidateSummariserOptions): Summarise
     let cached = normalisedSources.get(id);
     if (cached === undefined) {
       const raw = options.sources[id];
-      cached = typeof raw === "string" ? normaliseForMatch(raw) : "";
+      cached = typeof raw === "string" ? normaliseForMatch(evidenceText(raw, options.nonce)) : "";
       normalisedSources.set(id, cached);
     }
     return cached;
