@@ -151,12 +151,23 @@ async function withCorpusService<T>(fn: (running: Running) => Promise<T>): Promi
         body: { vaultRoot },
       });
       expect(setup.status).toBe(200);
+      /**
+       * Every call here is a read-only POST, so one retry on a connection the service already closed
+       * is safe. Node's server closes an idle keep-alive connection after five seconds, and a test
+       * that crafts hundreds of reports before its first call sits idle for longer than that: the
+       * pooled connection then fails with EPIPE or ECONNRESET on its first write.
+       */
+      const send = (path: string, body: unknown, withToken: string) =>
+        authedRequest<never>(socketPath, withToken, { method: "POST", path, body });
       const call: Running["call"] = async (path, body, withToken = token) => {
-        const reply = await authedRequest<never>(socketPath, withToken, {
-          method: "POST",
-          path,
-          body,
-        });
+        let reply: Awaited<ReturnType<typeof send>>;
+        try {
+          reply = await send(path, body, withToken);
+        } catch (error) {
+          const code = (error as { code?: unknown }).code;
+          if (code !== "EPIPE" && code !== "ECONNRESET") throw error;
+          reply = await send(path, body, withToken);
+        }
         return { status: reply.status, body: reply.body as never, raw: JSON.stringify(reply.body) };
       };
       return await fn({ socketPath, dir, token, vaultRoot, call });

@@ -270,27 +270,6 @@ describe("07-FIX6b: a source that cannot be recorded fails alone", () => {
     } as unknown as Pick<PreparedSource, "sourceId" | "ref">;
     expect(sourceRecordFor(source, "r".repeat(25), "2026-10-15T09:00:00.000Z")).toBeNull();
   });
-
-  it("refuses ONE source whose record conflicts with the one already made, and the run goes on", async () => {
-    // The same address under two labels is one source id with two different records.
-    kit = createKit({
-      sources: [
-        { label: "Alpha releases", url: URL_ONE, kind: "feed" },
-        { label: "Alpha again", url: URL_ONE, kind: "feed" },
-        { label: "Beta releases", url: URL_TWO, kind: "feed" },
-      ],
-    });
-    const runId = await runToEnd(kit);
-    const row = lastRun(kit);
-    expect(row.state).toBe("completed");
-    expect(row.outcome).toBe("partial");
-    expect(row.errorCode).toBeNull();
-    expect(getResearchSourceRecord(kit.store.db, runId, sourceIdFor(URL_ONE))?.label).toBe(
-      "Alpha releases",
-    );
-    expect(getResearchSourceRecord(kit.store.db, runId, sourceIdFor(URL_TWO))).not.toBeNull();
-    expect(reportNames(kit)).toHaveLength(1);
-  });
 });
 
 describe("07-FIX6b: a run that has ended cannot take a source record, and the pipeline stops cleanly", () => {

@@ -30,6 +30,7 @@ import {
 } from "@ccc/domain";
 import {
   getJobRun,
+  getResearchReportRecord,
   getResearchRunStatus,
   getResearchSourceRecord,
   type ResearchSourceRecord,
@@ -38,6 +39,7 @@ import { normaliseForQuoteMatch, quoteInNormalisedSource } from "@ccc/research";
 import { readRawSourceNote, readReportNote, reportTitleText } from "@ccc/vault-repo";
 import type Database from "better-sqlite3";
 import { contentHashFor, sourceIdFor } from "./hash.js";
+import { reportContentDigest } from "./report-digest.js";
 import type { ConfiguredSources } from "./services.js";
 import type { ResearchRouteResult } from "./types.js";
 
@@ -403,19 +405,61 @@ interface ResolveContext {
   readonly vaultRoot: string;
   readonly db: Database.Database;
   readonly report: ReportFrontmatter;
-  /** True when the store knows the report's run (and the run does not name another report). */
-  readonly runVouches: boolean;
+  /**
+   * True when the store vouches for the report itself: its run is the one that published it and
+   * the digest the run recorded equals the digest of the report as it is now (see
+   * {@link reportVouchesFor}).
+   */
+  readonly reportVouches: boolean;
 }
 
+/** The `job_runs.state` values of a run that is still working. */
+const RUN_IN_FLIGHT_STATES: readonly string[] = ["queued", "starting", "running"];
+
 /**
- * True when the store knows the report's run. The run must exist in the job-run store, and a run
- * that already names the report it published must name THIS one (a run still in flight names none
- * yet). A report that names a run id the store never saw, or a run that published another report,
- * is not the work of that run.
+ * True when the report's run is the run that published THIS report (07-FIX6b, ADR-0030):
+ *
+ * - a run that finished (completed, with outcome success or partial) must name this report;
+ * - a run still working vouches only once its stage log holds an `output` entry naming this
+ *   report, which the pipeline appends after it has finalised the report and recorded its digest
+ *   and before it finishes the run;
+ * - every other run does not: one that failed, was cut off or went stale (it keeps the sources it
+ *   recorded genuinely and a forged report could borrow them), one that finished naming no report
+ *   or another, one still working that has not yet reached its output stage, and a run the store
+ *   never saw.
  */
 function runVouchesFor(db: Database.Database, report: ReportFrontmatter): boolean {
   const run = getJobRun(db, RESEARCH_JOB_ID, report.jobRunId);
-  return run !== null && (run.reportNoteId === null || run.reportNoteId === report.id);
+  if (run === null) return false;
+  if (run.state === "completed") {
+    return (
+      (run.outcome === "success" || run.outcome === "partial") && run.reportNoteId === report.id
+    );
+  }
+  if (RUN_IN_FLIGHT_STATES.includes(run.state)) {
+    return run.stageLog.some(
+      (entry) => entry.stage === "output" && entry.noteIds.includes(report.id),
+    );
+  }
+  return false;
+}
+
+/**
+ * True when the store vouches for the report as a whole (07-FIX6b, ADR-0030): the run is the one
+ * that published it ({@link runVouchesFor}) AND the report record the run wrote when it finalised
+ * the report names this report and holds the digest of the report as it is now. A report edited in
+ * place after the run (a claim, a kind, a quote, the run facts) keeps its note id and run id but
+ * no longer matches, and a run with no report record (written before migration 0012, or by
+ * nobody) has nothing to match.
+ */
+function reportVouchesFor(db: Database.Database, report: ReportFrontmatter): boolean {
+  if (!runVouchesFor(db, report)) return false;
+  const record = getResearchReportRecord(db, report.jobRunId);
+  return (
+    record !== null &&
+    record.reportNoteId === report.id &&
+    record.contentDigest === reportContentDigest(report)
+  );
 }
 
 /**
@@ -475,7 +519,7 @@ function resolveSource(context: ResolveContext, cited: SourceReference): Resolve
   if (
     snapshot === null ||
     record === null ||
-    !context.runVouches ||
+    !context.reportVouches ||
     !recordVouches(record, cited, snapshot.text) ||
     !isBound(cited, snapshot.own)
   ) {
@@ -501,9 +545,12 @@ function sourceResolver(context: ResolveContext): (ref: SourceReference) => Reso
  * carries a quote keeps it only if the exported predicate finds it in the evidence text of EVERY
  * source the finding cites, the same check the pipeline made before it wrote the report, and only
  * when each citation is bound to its snapshot (see {@link isBound}) AND the operational store
- * vouches for it: the report's run exists, the run recorded that source, and the raw note still
- * hashes to the recorded hash (07-FIX6, ADR-0030; see {@link resolveSource}). The vault alone
- * cannot make a quote verified, because a report and its raw note can be forged together. Each source's text is put in
+ * vouches for it: the report's run is the run that published this report and the report still
+ * matches the digest that run recorded when it finalised it (07-FIX6b, see
+ * {@link reportVouchesFor}), the run recorded that source, and the raw note still hashes to the
+ * recorded hash (07-FIX6, ADR-0030; see {@link resolveSource}). The vault alone cannot make a
+ * quote verified, because a report and its raw note can be forged together, and a genuine report
+ * can be rewritten in place. Each source's text is put in
  * the comparison form once per request, and the quote once per finding, and
  * `quoteInNormalisedSource` is `quoteInSource` on text already in that form: the predicate is the
  * same. Otherwise the quote is not shown as evidence and the finding is served as the model's
@@ -518,7 +565,12 @@ function itemsOf(
 ): ResearchReportItem[] {
   const refs = new Map(report.sourceRefs.map((ref) => [ref.id, ref]));
   const numbers = new Map(report.sourceRefs.map((ref, index) => [ref.id, index + 1]));
-  const resolve = sourceResolver({ vaultRoot, db, report, runVouches: runVouchesFor(db, report) });
+  const resolve = sourceResolver({
+    vaultRoot,
+    db,
+    report,
+    reportVouches: reportVouchesFor(db, report),
+  });
   return report.items.map((item, index) => {
     const ids = [...new Set(item.citedSourceIds)];
     const cited = ids
@@ -658,7 +710,12 @@ export function buildReportSourcesPage(
 ): ResearchRouteResult<ResearchReportSourcesPage> {
   const report = entry.frontmatter;
   const handling = new Map(report.sourceHandling.map((item) => [item.sourceId, item.counts]));
-  const resolve = sourceResolver({ vaultRoot, db, report, runVouches: runVouchesFor(db, report) });
+  const resolve = sourceResolver({
+    vaultRoot,
+    db,
+    report,
+    reportVouches: reportVouchesFor(db, report),
+  });
   const all: ResearchReportSource[] = report.sourceRefs.map((ref, index) => ({
     number: index + 1,
     ...resolve(ref).served,

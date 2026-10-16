@@ -17,8 +17,14 @@ import {
 import {
   appendJobRunStage,
   finishJobRun,
+  JobRunNotFoundError,
+  JobRunNotInFlightError,
   type ResearchSourceRecord,
+  ResearchSourceRecordConflictError,
+  ResearchSourceRecordError,
+  recordResearchReport,
   recordResearchSource,
+  removeResearchReportRecord,
 } from "@ccc/operational-store";
 import {
   canonicaliseUrl,
@@ -36,6 +42,7 @@ import {
   captureWikiSourceNote,
   finaliseReportNote,
   readRawSourceNote,
+  readReportNote,
   removeReportNote,
   reportNotePathFor,
   SourceNoteError,
@@ -50,6 +57,7 @@ import { USER_CONTENT_MAX_CHARS } from "./anthropic-request.js";
 import { createRunBudget, type SafeFetcher } from "./fetch/index.js";
 import { contentHashFor, sourceIdFor } from "./hash.js";
 import { nameEffect, PIPELINE_EFFECTS, type PipelineEffect } from "./pipeline-effects.js";
+import { reportContentDigest } from "./report-digest.js";
 import {
   type RunNoteSource,
   type RunNoteStage,
@@ -83,7 +91,10 @@ import { SummariserError, type SummariserErrorCode } from "./summariser-error.js
  * Provenance (07-FIX6, decision D-A, ADR-0030): when a source's raw note has been written and read
  * back, the run records (run, source, address, hash, snapshot path, label) in the operational
  * store. The vault can be forged; the store cannot be reached from it, so the reader counts a
- * quote as evidence only for a source with such a row.
+ * quote as evidence only for a source with such a row. The report is bound the same way (07-FIX6b):
+ * once it is finalised and read back, the run records a digest of what it says, taken from the
+ * report as the vault holds it, before it logs the output stage and finishes. A report edited after
+ * that no longer matches its record, and a failed publication takes the record back with the report.
  * No remote string reaches the store, the run note or a log line: only codes, ids, counts,
  * instants and the owner's own labels.
  */
@@ -439,17 +450,20 @@ function prepare(
 
 /**
  * The provenance record of one prepared source (07-FIX6, ADR-0030): what the store keeps of a raw
- * note this run wrote and read back.
+ * note this run wrote and read back. Null when the reference has no https address to record (the
+ * pipeline builds every research reference with one, so this is a guard, not a path): the source
+ * is then refused alone, never recorded with an invented address.
  */
 export function sourceRecordFor(
   source: Pick<PreparedSource, "sourceId" | "ref">,
   jobRunId: string,
   recordedAt: string,
 ): ResearchSourceRecord | null {
+  if (source.ref.canonicalUrl === undefined) return null;
   return {
     jobRunId,
     sourceId: source.sourceId,
-    canonicalUrl: source.ref.canonicalUrl ?? "",
+    canonicalUrl: source.ref.canonicalUrl,
     contentHash: source.ref.contentHash,
     snapshotPath: source.ref.snapshotPath,
     label: source.ref.title,
@@ -572,16 +586,26 @@ class RawSnapshotRefused extends Error {
 }
 
 /**
- * True for a failure that belongs to ONE source's raw snapshot: the file at the content-addressed
- * path was edited, rewritten or damaged since it was written (or shares the hash prefix of other
- * content), so it is not the evidence this run holds. Any other failure (a folder that cannot be
- * written, a store fault) is the run's.
+ * True for a failure that belongs to ONE source's raw snapshot or record: the file at the
+ * content-addressed path was edited, rewritten or damaged since it was written (or shares the hash
+ * prefix of other content), so it is not the evidence this run holds; or the source's provenance
+ * record is refused for its own content (a value outside the closed shapes, or a different record
+ * for the same address already made in this run, as when the allowlist names one address twice
+ * under two labels). Any other failure (a folder that cannot be written, a store fault) is the
+ * run's.
  */
 function isRawSnapshotRefusal(error: unknown): boolean {
   return (
     error instanceof RawSnapshotRefused ||
+    error instanceof ResearchSourceRecordError ||
+    error instanceof ResearchSourceRecordConflictError ||
     (error instanceof SourceNoteError && error.reason === "existing-unreadable")
   );
+}
+
+/** True for a store refusal because the run itself is gone or has ended (not a fault of one source). */
+function isRunGone(error: unknown): boolean {
+  return error instanceof JobRunNotFoundError || error instanceof JobRunNotInFlightError;
 }
 
 async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<PipelineResult> {
@@ -697,10 +721,20 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
         stored.set(source.sourceId, snapshot.text);
         rawIds.push(written.id);
       } catch (error) {
+        if (isRunGone(error)) {
+          // The run was ended under this pipeline (cut off, recovered as stale): a clean stop, like
+          // a run record that cannot take a stage. Nothing more is recorded or written.
+          logWarn(deps, { event: "research-source-record-run-ended", errorName: errorName(error) });
+          throw new StageFailure("interrupted");
+        }
         if (!isRawSnapshotRefusal(error)) throw error;
         // This source cannot be cited: it fails alone, the file is left for the owner.
         refused.add(source.index);
-        logWarn(deps, { event: "research-raw-snapshot-refused", code: "parse-failure" });
+        logWarn(deps, {
+          event: "research-raw-snapshot-refused",
+          code: "parse-failure",
+          errorName: errorName(error),
+        });
       }
     }
   } finally {
@@ -770,6 +804,15 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     } catch (error) {
       logWarn(deps, { event: "research-report-removal-failed", errorName: errorName(error) });
     }
+    try {
+      // The record goes with the report it describes (a missing record only ever means unverified).
+      removeResearchReportRecord(deps.db, trace.runId);
+    } catch (error) {
+      logWarn(deps, {
+        event: "research-report-record-removal-failed",
+        errorName: errorName(error),
+      });
+    }
     trace.reportPath = null;
     trace.reportNoteId = null;
   };
@@ -822,6 +865,32 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     assertLive(trace);
     nameEffect(deps.audit, PIPELINE_EFFECTS.writeNotes);
     finaliseReportNote({ vaultRoot: deps.vaultRoot, path: report.path, now: deps.now() });
+    // Bind the report to this run in the operational store (07-FIX6b, ADR-0030): read the finalised
+    // report back from the vault, exactly as the reader will parse it, and record the digest of what
+    // it says. This comes before the output stage is logged, because a run still working vouches
+    // for its report only once that stage names it, and before the run is finished.
+    const finalised = readReportNote(deps.vaultRoot, report.path);
+    if (
+      !finalised.readable ||
+      finalised.frontmatter.id !== report.id ||
+      finalised.frontmatter.stage !== "output"
+    ) {
+      throw new Error("the finalised report cannot be read back");
+    }
+    try {
+      recordResearchReport(deps.db, {
+        jobRunId: trace.runId,
+        reportNoteId: report.id,
+        contentDigest: reportContentDigest(finalised.frontmatter),
+        recordedAt: deps.now().toISOString(),
+      });
+    } catch (error) {
+      if (isRunGone(error)) {
+        logWarn(deps, { event: "research-report-record-run-ended", errorName: errorName(error) });
+        throw new StageFailure("interrupted");
+      }
+      throw error;
+    }
     appendStage(deps, trace, "output", [report.id], { items: items.length });
   } catch (error) {
     trace.rollbackPublication();

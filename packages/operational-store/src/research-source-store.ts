@@ -7,6 +7,7 @@ import {
   SOURCE_ID_PATTERN,
 } from "@ccc/domain";
 import type Database from "better-sqlite3";
+import { assertJobRunInFlight } from "./job-run-store.js";
 
 /**
  * The research provenance record (07-FIX6, decision D-A, ADR-0030): what a research run wrote to
@@ -27,6 +28,10 @@ import type Database from "better-sqlite3";
  * **Write once.** A row is never updated. Recording the same values again is a no-op; recording a
  * different set of values for the same run and source throws, because a record that could be
  * rewritten would not be a root of trust.
+ *
+ * **Only for a run that is still working (07-FIX6b).** A run that does not exist, or has finished,
+ * failed or gone stale, cannot take a record: a source recorded for such a run was recorded by
+ * nobody. The writer throws the job-run store's typed errors and writes nothing.
  */
 
 export interface ResearchSourceRecord {
@@ -131,13 +136,15 @@ function sameBinding(a: ResearchSourceRecord, b: ResearchSourceRecord): boolean 
 }
 
 /**
- * Records that a run wrote and read back the raw note of one source. Idempotent for the same
- * values (the original `recordedAt` is kept); a different record for the same run and source
- * throws {@link ResearchSourceRecordConflictError} and changes nothing.
+ * Records that a run wrote and read back the raw note of one source. The run must exist and still
+ * be in flight ({@link JobRunNotFoundError} or {@link JobRunNotInFlightError} otherwise, nothing
+ * written). Idempotent for the same values (the original `recordedAt` is kept); a different record
+ * for the same run and source throws {@link ResearchSourceRecordConflictError} and changes nothing.
  */
 export function recordResearchSource(db: Database.Database, input: ResearchSourceRecord): void {
   const record = checkRecord(input);
   db.transaction(() => {
+    assertJobRunInFlight(db, record.jobRunId);
     const existing = getResearchSourceRecord(db, record.jobRunId, record.sourceId);
     if (existing !== null) {
       if (!sameBinding(existing, record)) throw new ResearchSourceRecordConflictError();
