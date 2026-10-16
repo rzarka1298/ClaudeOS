@@ -114,6 +114,8 @@ const CODEX_CELLS: readonly string[] = [
 /** The 121 cells the merged tree already had, and the Codex spec's final count (UI-SPEC "Visual regression"). */
 const MERGED_TREE_CELLS = 121;
 const CODEX_SPEC_CELLS = 47;
+/** The Research spec's cells (plan 07-16): one baseline each, in its own spec file. */
+const RESEARCH_SPEC_CELLS = 17;
 
 /** The titles `playwright test --list` prints for one spec file. */
 function titlesOf(listing: string, specFile: string): string[] {
@@ -126,7 +128,10 @@ function titlesOf(listing: string, specFile: string): string[] {
 describe("visual matrix (audit)", () => {
   it("lists the merged-tree 121 cells (9 widgets x 8 presentations + 5 motion + 4 Agent runs + 21 approvals + 19 tasks) plus the Codex spec's own", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
-    expect(out).toContain(`Total: ${MERGED_TREE_CELLS + CODEX_SPEC_CELLS} tests in 5 files`);
+    expect(out).toContain(
+      `Total: ${MERGED_TREE_CELLS + CODEX_SPEC_CELLS + RESEARCH_SPEC_CELLS} tests in 6 files`,
+    );
+    expect(titlesOf(out, "research.spec.ts")).toHaveLength(RESEARCH_SPEC_CELLS);
     expect(CODEX_CELLS).toHaveLength(CODEX_SPEC_CELLS);
     expect(titlesOf(out, "codex.spec.ts").sort()).toEqual([...CODEX_CELLS].sort());
     expect(APPROVALS_CELLS).toHaveLength(21);

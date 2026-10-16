@@ -222,6 +222,48 @@ async function expectNoMotion(page: Page): Promise<void> {
   expect(facts.animated).toBe(0);
   expect(facts.smooth).toBe(0);
   expect(facts.rootSmooth).not.toBe("smooth");
+  await expectMotionTokensCollapse(page);
+}
+
+/**
+ * Makes the reduced-motion cell non-vacuous (wave 5 review). A loaded report holds nothing that
+ * animates, so its reduced baseline is byte-identical to the full-motion one and "nothing
+ * animates" would stay true if the reduced-motion rule were deleted. A skeleton line carries a
+ * transition on the slow motion token: a probe line is added to the destination, its transition is
+ * read under reduced motion (must be 0) and again with the same shell switched to full motion
+ * (must be positive), then the probe is removed and reduced motion restored before the screenshot.
+ */
+async function expectMotionTokensCollapse(page: Page): Promise<void> {
+  const probe = await page.evaluate(() => {
+    const root = document.querySelector(".ccc-research");
+    const shell = document.querySelector(".ccc-command-center");
+    if (root === null || shell === null) return null;
+    const line = document.createElement("div");
+    line.className = "ccc-skeleton-line";
+    root.appendChild(line);
+    const longestMs = (): number => {
+      let longest = 0;
+      for (const part of getComputedStyle(line).transitionDuration.split(",")) {
+        const text = part.trim();
+        const seconds = text.endsWith("ms")
+          ? Number.parseFloat(text) / 1000
+          : Number.parseFloat(text);
+        if (Number.isFinite(seconds)) longest = Math.max(longest, seconds * 1000);
+      }
+      return longest;
+    };
+    const reduced = longestMs();
+    shell.setAttribute("data-motion", "full");
+    const full = longestMs();
+    shell.setAttribute("data-motion", "reduced");
+    line.remove();
+    return { reduced, full };
+  });
+  expect(probe).not.toBeNull();
+  // Under reduced motion the transition is off; the same element at full motion has one, so the
+  // zero above is the reduced-motion rule at work and not an element that never moved.
+  expect(probe?.full ?? 0).toBeGreaterThan(0);
+  expect(probe?.reduced ?? -1).toBe(0);
 }
 
 /** Per-cell assertions, run before the screenshot. */
@@ -256,42 +298,3 @@ for (const { researchCase, width, motion } of CELLS) {
     },
   );
 }
-
-/**
- * A11Y-03 is not vacuous (wave 5 review). The reduced-motion baseline of a loaded report is
- * byte-identical to the full-motion one because the Research destination holds nothing that
- * animates once loaded, so that cell alone cannot go red if the reduced-motion rule is deleted.
- * This cell compares what DOES change: the loading state's skeleton lines carry a transition on
- * the slow motion token. At full motion that duration is positive; under `data-motion=reduced`
- * the token is 0 and so is the transition. No baseline is written.
- */
-test("research - the skeleton's transition runs at full motion and is off under reduced motion", async ({
-  page,
-}) => {
-  async function longestSkeletonTransitionMs(motion: "full" | "reduced"): Promise<number> {
-    await page.goto(
-      harnessUrl({ view: "research", case: "research-loading", width: "full", motion }),
-    );
-    await page.locator("html[data-harness-ready=true]").waitFor({ state: "attached" });
-    return page.evaluate(() => {
-      const lines = document.querySelectorAll(".ccc-research .ccc-skeleton-line");
-      let longest = 0;
-      for (const line of lines) {
-        for (const duration of getComputedStyle(line).transitionDuration.split(",")) {
-          const text = duration.trim();
-          const seconds = text.endsWith("ms")
-            ? Number.parseFloat(text) / 1000
-            : Number.parseFloat(text);
-          if (Number.isFinite(seconds)) longest = Math.max(longest, seconds * 1000);
-        }
-      }
-      return lines.length === 0 ? -1 : longest;
-    });
-  }
-
-  const full = await longestSkeletonTransitionMs("full");
-  const reduced = await longestSkeletonTransitionMs("reduced");
-  // -1 means the case drew no skeleton at all: the check would be vacuous again.
-  expect(full).toBeGreaterThan(0);
-  expect(reduced).toBe(0);
-});
