@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ResearchSourceEntry, ResearchSourcesConfig } from "@ccc/domain";
 import {
   buildResearchFixtureDir,
@@ -17,6 +17,7 @@ import {
 } from "@ccc/test-fixtures";
 import { canonicalPath, isSameOrInside } from "./canonical-path.js";
 import {
+  assertRunRootShape,
   assertUatAccount,
   IsolationError,
   realRuntimeDir,
@@ -24,6 +25,7 @@ import {
   uatAccountFor,
 } from "./isolation-guards.js";
 import { REPO_ROOT } from "./repo-paths.js";
+import { pathsForRoot } from "./run-root.js";
 
 /**
  * The research fixture of the live-UAT runner (plan 07-17, D-27, OD-3, T-07-44, T-07-45): what an
@@ -334,6 +336,8 @@ export interface PrepareOptions {
   readonly installAccount?: string;
   /** Tests only: the home directory the owner's real runtime directory is computed from. */
   readonly home?: string;
+  /** Tests only: the allowed parent of run roots (the runner uses /tmp). */
+  readonly base?: string;
 }
 
 export interface ResearchUatPrepared {
@@ -356,16 +360,32 @@ export interface ResearchUatPrepared {
   restoreBaseFeed(): void;
 }
 
-function refuseRuntimeDir(runtimeDir: string, home: string): void {
+/**
+ * Refuses everything but the runtime directory of a live-UAT run root. The directory must be exactly
+ * `<base>/ccc-uat.XXXXXX/rt` (the shape `assertRunRootShape` accepts for the root and the runner's
+ * own layout for the folder), so a home directory, an ancestor of the repository or of the owner's
+ * real runtime directory, a temporary folder of any other name and a path inside the repository
+ * are all refused before anything is created (07-FIX7).
+ */
+function refuseRuntimeDir(runtimeDir: string, home: string, base: string | undefined): void {
   if (typeof runtimeDir !== "string" || !isAbsolute(runtimeDir)) {
     throw new IsolationError("Refusing a runtime directory that is not an absolute path.");
   }
   const target = canonicalPath(resolve(runtimeDir));
-  if (isSameOrInside(canonicalPath(REPO_ROOT), target)) {
-    throw new IsolationError("Refusing a runtime directory inside the repository.");
+  const repository = canonicalPath(REPO_ROOT);
+  if (isSameOrInside(repository, target) || isSameOrInside(target, repository)) {
+    throw new IsolationError("Refusing a runtime directory inside, or above, the repository.");
   }
-  if (isSameOrInside(canonicalPath(realRuntimeDir(home)), target)) {
-    throw new IsolationError("Refusing the owner's real runtime directory.");
+  const real = canonicalPath(realRuntimeDir(home));
+  if (isSameOrInside(real, target) || isSameOrInside(target, real)) {
+    throw new IsolationError("Refusing the owner's real runtime directory, or one above it.");
+  }
+  const root = dirname(resolve(runtimeDir));
+  assertRunRootShape(root, { home, base });
+  if (pathsForRoot(root, "00000000").runtimeDir !== resolve(runtimeDir)) {
+    throw new IsolationError(
+      "Refusing a runtime directory that is not the rt folder of its run root.",
+    );
   }
 }
 
@@ -384,7 +404,7 @@ export function prepareResearchUat(
   runtimeDir: string,
   options: PrepareOptions = {},
 ): ResearchUatPrepared {
-  refuseRuntimeDir(runtimeDir, options.home ?? homedir());
+  refuseRuntimeDir(runtimeDir, options.home ?? homedir(), options.base);
   const installAccount = options.installAccount ?? uatAccountFor(randomBytes(4).toString("hex"));
   assertUatAccount(installAccount);
   const keyAccount = `${installAccount}-research`;
