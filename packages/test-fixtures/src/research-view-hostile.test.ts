@@ -53,11 +53,24 @@ interface CaseResult {
   readonly subline: string;
   readonly sourceItemText: string;
   readonly sourceItemElements: number;
+  // The reader (plan 07-13): the same text as a finding, a quote, a citation, a source title and
+  // author, an unavailable-source label and the report title.
+  readonly readerForbiddenElements: readonly string[];
+  readonly readerForbiddenAttributes: readonly string[];
+  readonly readerTitleText: string;
+  readonly findingText: string;
+  readonly findingChildElements: number;
+  readonly quoteText: string;
+  readonly quoteChildElements: number;
+  readonly citationText: string;
+  readonly sourceHeadingText: string;
+  readonly authorText: string;
+  readonly unavailableText: string;
 }
 
 const ENTRY = `
 import { h, render } from "preact";
-import { configureResearch, ResearchDestination, resetResearchState } from "@ccc/plugin";
+import { configureResearch, ResearchDestination, resetReaderState, resetResearchState } from "@ccc/plugin";
 import { HOSTILE_REPORT_TEXTS } from "./hostile-report-text.ts";
 
 const NOW = Date.parse("2026-10-14T12:00:00.000Z");
@@ -96,7 +109,63 @@ async function runCase(entry) {
     run: () => Promise.reject(new Error("unused")),
     status: () => Promise.resolve(status),
     list: () => Promise.resolve({ rows: [row, unreadable], nextCursor: null }),
-    report: () => Promise.reject(new Error("unused")),
+    report: (noteId, page) =>
+      Promise.resolve(
+        page === "items"
+          ? {
+              page: "items",
+              header: {
+                title: entry.text,
+                noteId: row.noteId,
+                notePath: "global/output/research-2026-10-14-run1.md",
+                generatedAt: "2026-10-14T11:00:00.000Z",
+                partial: true,
+                unavailableSources: [{ label: entry.text, code: "timeout" }],
+                sourceCount: 1,
+                sourceTotal: 2,
+                kindCounts: { "source-fact": 1, "unverified-claim": 0, inference: 0 },
+                summariser: "extractive",
+                jobRunId: id25("run1"),
+                runStartedAt: null,
+                runEndedAt: null,
+                runOutcome: null,
+                runNotePath: null,
+              },
+              items: [
+                {
+                  index: 1,
+                  kind: "source-fact",
+                  text: entry.text,
+                  quote: entry.text,
+                  quoteSourceNumber: 1,
+                  citations: [{ number: 1, title: entry.text }],
+                },
+              ],
+              nextCursor: null,
+              truncated: false,
+            }
+          : {
+              page: "sources",
+              sources: [
+                {
+                  number: 1,
+                  sourceType: "feed-entry",
+                  id: "0123456789abcdef0123456789abcdef",
+                  title: entry.text,
+                  canonicalUrl: "https://changelog.example.invalid/feed/1",
+                  author: entry.text,
+                  publishedAt: null,
+                  retrievedAt: "2026-10-14T10:59:00.000Z",
+                  contentHash: "0".repeat(64),
+                  snapshotPath: "global/raw/0123456789abcdef0123456789abcdef.00000000.md",
+                  accessClass: "public",
+                  counts: null,
+                },
+              ],
+              nextCursor: null,
+              truncated: false,
+            },
+      ),
   };
   configureResearch({
     api,
@@ -141,11 +210,46 @@ async function runCase(entry) {
     sourceItemText: sourceItem ? sourceItem.textContent : "",
     sourceItemElements: sourceItem ? [...sourceItem.children].filter((c) => !c.classList.contains("ccc-mono") && !c.classList.contains("ccc-field-help")).length : -1,
   };
+  // Open the report: the same hostile text is now a finding, a quote, a citation, a source and more.
+  host.querySelector(".ccc-report-row-button").click();
+  const readerDeadline = Date.now() + 4000;
+  while (host.querySelectorAll("li.ccc-report-source").length === 0) {
+    if (Date.now() > readerDeadline) throw new Error("reader never rendered: " + entry.name);
+    await wait(5);
+  }
+  await wait(10);
+  const reader = host.querySelector("article.ccc-report-reader");
+  const authorTerm = [...reader.querySelectorAll("li.ccc-report-source dt")].find((dt) => dt.textContent === "Author");
+  const readerForbiddenAttributes = [];
+  for (const el of reader.querySelectorAll("*")) {
+    for (const attr of el.attributes) {
+      if (/^on/i.test(attr.name) || ["href", "src", "srcset", "action", "formaction", "style", "xlink:href"].includes(attr.name.toLowerCase())) {
+        readerForbiddenAttributes.push(el.tagName.toLowerCase() + "[" + attr.name + "]");
+      }
+    }
+  }
+  const finding = reader.querySelector(".ccc-report-text");
+  const quote = reader.querySelector("blockquote");
+  const readerResult = {
+    ...result,
+    readerForbiddenElements: [...reader.querySelectorAll(FORBIDDEN_ELEMENTS)].map((el) => el.tagName.toLowerCase()),
+    readerForbiddenAttributes,
+    readerTitleText: reader.querySelector("h3").textContent,
+    findingText: finding.textContent,
+    findingChildElements: finding.children.length,
+    quoteText: quote.textContent,
+    quoteChildElements: quote.children.length,
+    citationText: reader.querySelector("button[data-cite]").textContent,
+    sourceHeadingText: reader.querySelector("li.ccc-report-source h5").textContent,
+    authorText: authorTerm.nextElementSibling.textContent,
+    unavailableText: reader.querySelector(".ccc-report-unavailable li").textContent,
+  };
   render(null, host);
   host.remove();
   resetResearchState();
+  resetReaderState();
   configureResearch(null);
-  return result;
+  return readerResult;
 }
 
 (async () => {
@@ -247,6 +351,31 @@ describe("the Research destination renders every hostile report text as literal 
       expect(result?.subline.startsWith(text.slice(0, 80))).toBe(true);
       expect(result?.sourceItemText).toContain(text);
       expect(result?.sourceItemElements).toBe(0);
+    },
+  );
+
+  it.each(HOSTILE_REPORT_TEXTS.map((entry) => [entry.name, entry.text] as const))(
+    "%s: the opened reader holds no link, image, frame, script or address attribute",
+    (name) => {
+      const result = results.find((candidate) => candidate.name === name);
+      expect(result?.readerForbiddenElements).toEqual([]);
+      expect(result?.readerForbiddenAttributes).toEqual([]);
+    },
+  );
+
+  it.each(HOSTILE_REPORT_TEXTS.map((entry) => [entry.name, entry.text] as const))(
+    "%s: the reader's title, finding, quote, citation, source and unavailable label are the literal characters",
+    (name, text) => {
+      const result = results.find((candidate) => candidate.name === name);
+      expect(result?.readerTitleText).toBe(text);
+      expect(result?.findingText).toBe(text);
+      expect(result?.findingChildElements).toBe(0);
+      expect(result?.quoteText).toBe(text);
+      expect(result?.quoteChildElements).toBe(0);
+      expect(result?.citationText).toBe(`[1] ${text}`);
+      expect(result?.sourceHeadingText).toBe(`1. ${text}`);
+      expect(result?.authorText).toBe(text);
+      expect(result?.unavailableText).toContain(text);
     },
   );
 });

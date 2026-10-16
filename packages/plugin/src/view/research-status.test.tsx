@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ResearchStatusResponse } from "@ccc/domain/research-routes.js";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -347,10 +350,7 @@ describe("A16: two configured sources with the same label and host both stay lis
     ]);
   });
 
-  it("builds each list key from the position as well, so a repeated label and host cannot collide", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
+  it("builds each list key from the position as well, so a repeated label and host cannot collide", () => {
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "research-status.tsx"),
       "utf8",

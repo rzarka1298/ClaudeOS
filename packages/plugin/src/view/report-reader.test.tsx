@@ -42,8 +42,7 @@ beforeEach(() => {
   resetResearchState();
   resetReaderState();
   scrollIntoView.mockClear();
-  Element.prototype.scrollIntoView =
-    scrollIntoView as unknown as typeof Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scrollIntoView;
 });
 
 afterEach(() => {
@@ -188,7 +187,12 @@ describe("Test 2 (paging): findings pages in order, then sources; no Show more i
     const { api } = mountWith(report as never);
     await openRow();
     await waitFor(() => expect(article().querySelectorAll("li.ccc-report-source")).toHaveLength(3));
-    expect(api.report.mock.calls.map((call) => [call[1], call[2]])).toEqual([
+    expect(
+      (api.report.mock.calls as [string, string, string | undefined][]).map((call) => [
+        call[1],
+        call[2],
+      ]),
+    ).toEqual([
       ["items", undefined],
       ["items", "c1"],
       ["items", "c2"],
@@ -843,7 +847,7 @@ describe("Task 2 Test 7 (one column): Back to reports and Escape", () => {
     observers = [];
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
       configurable: true,
-      get() {
+      get(this: Element) {
         return widths.get(this) ?? 0;
       },
     });
@@ -866,7 +870,7 @@ describe("Task 2 Test 7 (one column): Back to reports and Escape", () => {
   function setLayoutWidth(px: number): void {
     const layout = document.querySelector(".ccc-research-layout") as HTMLElement;
     widths.set(layout, px);
-    act(() => {
+    void act(() => {
       for (const { callback, target } of observers) {
         if (target === layout) {
           callback(

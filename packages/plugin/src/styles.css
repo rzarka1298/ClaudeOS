@@ -2834,6 +2834,245 @@
   font-weight: var(--ccc-weight-strong);
 }
 
+/* ---- Report reader (R4; plan 07-13; RSRCH-10, D-24, UI-SPEC R-01) ------- */
+
+/* A long report reads as an article because of measure, rhythm and the absence of
+ * dashboard density, never a bigger type size: the existing four sizes and two weights,
+ * the 68ch prose measure, the prose leading set explicitly on the container, --ccc-space-lg
+ * between findings and --ccc-space-xl above each section heading. Nothing inside the
+ * reader is clamped, truncated or ellipsised. The destination root already carries the
+ * disconnected dim (--ccc-dim-opacity), so the reader adds none of its own. */
+.ccc-command-center .ccc-report-reader {
+  min-width: 0;
+  max-width: 68ch;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+  font-weight: var(--ccc-weight-regular);
+  line-height: var(--ccc-leading-prose);
+}
+
+.ccc-command-center .ccc-report-reader > * + * {
+  margin-top: var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-report-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-report-reader h3 {
+  margin: 0;
+  padding-inline: var(--ccc-space-xs);
+  overflow-wrap: break-word;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-heading);
+  font-weight: var(--ccc-weight-strong);
+  line-height: 1.25;
+}
+
+.ccc-command-center .ccc-report-reader h3:focus-visible,
+.ccc-command-center .ccc-report-source h5:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* Hierarchy by case, tracking and space: the heading size stays the Label size. */
+.ccc-command-center .ccc-report-reader h4 {
+  margin-block-start: var(--ccc-space-xl);
+  margin-block-end: var(--ccc-space-sm);
+  margin-inline: 0;
+}
+
+.ccc-command-center .ccc-report-meta,
+.ccc-command-center .ccc-report-counts,
+.ccc-command-center .ccc-report-ai,
+.ccc-command-center .ccc-report-stale,
+.ccc-command-center .ccc-report-quote-caption,
+.ccc-command-center .ccc-report-citations,
+.ccc-command-center .ccc-report-unavailable li {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-regular);
+  line-height: var(--ccc-leading-prose);
+  font-variant-numeric: tabular-nums;
+}
+
+.ccc-command-center .ccc-report-reader .ccc-badge {
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-command-center .ccc-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ccc-space-sm);
+}
+
+/* The partial notice reuses the banner and stacks its heading, intro and reasons. */
+.ccc-command-center .ccc-report-unavailable {
+  display: block;
+  padding: var(--ccc-space-md);
+}
+
+.ccc-command-center .ccc-report-unavailable h4 {
+  margin-block-start: 0;
+}
+
+.ccc-command-center .ccc-report-unavailable p {
+  margin: 0 0 var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-report-unavailable ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* How to read this report: a definition list of the three kinds. */
+.ccc-command-center .ccc-report-legend {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--ccc-space-xs) var(--ccc-space-md);
+  margin: 0;
+}
+
+.ccc-command-center .ccc-report-legend dt {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-command-center .ccc-report-legend dd {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+@container (max-width: 24rem) {
+  .ccc-command-center .ccc-report-legend {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Findings: an ordered list, one rhythm step apart. */
+.ccc-command-center .ccc-report-items,
+.ccc-command-center .ccc-report-sources {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-lg);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The start rule is the non-colour cue for the kind: solid for the two sourced kinds,
+ * dashed for the summariser's own reading. */
+.ccc-command-center .ccc-report-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+  min-width: 0;
+  padding-inline-start: var(--ccc-space-md);
+  border-inline-start: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-command-center .ccc-report-item[data-kind="inference"] {
+  border-inline-start-style: dashed;
+}
+
+.ccc-command-center .ccc-report-kind {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-command-center .ccc-report-text {
+  margin: 0;
+  overflow-wrap: break-word;
+  white-space: normal;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+  font-weight: var(--ccc-weight-regular);
+  line-height: var(--ccc-leading-prose);
+}
+
+.ccc-command-center .ccc-report-quote {
+  margin: 0;
+  padding-inline-start: var(--ccc-space-md);
+  border-inline-start: var(--ccc-border-hairline) solid var(--ccc-border);
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-body);
+  font-weight: var(--ccc-weight-regular);
+  line-height: var(--ccc-leading-prose);
+}
+
+.ccc-command-center .ccc-report-citations .ccc-connect-button {
+  margin-inline-end: var(--ccc-space-sm);
+  text-align: start;
+}
+
+.ccc-command-center .ccc-report-truncated,
+.ccc-command-center .ccc-report-load-error {
+  margin: 0;
+}
+
+.ccc-command-center .ccc-report-load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ccc-space-xs);
+}
+
+.ccc-command-center .ccc-report-load-error p {
+  margin: 0;
+}
+
+.ccc-command-center .ccc-report-skeleton-item {
+  margin-block-start: var(--ccc-space-lg);
+}
+
+/* Sources: one entry per reference; the values wrap as mono text. */
+.ccc-command-center .ccc-report-source {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ccc-space-sm);
+  min-width: 0;
+}
+
+.ccc-command-center .ccc-report-source h5 {
+  margin: 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-body);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-command-center .ccc-report-source .ccc-detail-fields,
+.ccc-command-center .ccc-report-run .ccc-detail-fields {
+  align-self: stretch;
+  margin-top: 0;
+}
+
+.ccc-command-center .ccc-report-source .ccc-detail-fields dd .ccc-connect-button {
+  margin-inline-start: var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-report-run {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ccc-space-sm);
+}
+
 /* ===========================================================================
  * Phase 4 — Projects & Launchers (04-UI-SPEC.md)
  *

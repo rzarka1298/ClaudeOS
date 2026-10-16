@@ -59,7 +59,7 @@ const FORBIDDEN_ATTRIBUTES = ["href", "src", "srcset", "srcdoc", "action", "form
 beforeEach(() => {
   resetResearchState();
   resetReaderState();
-  Element.prototype.scrollIntoView = vi.fn() as unknown as typeof Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {

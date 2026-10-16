@@ -34,7 +34,7 @@ import { ResearchDestination } from "./research.js";
 beforeEach(() => {
   resetResearchState();
   resetReaderState();
-  Element.prototype.scrollIntoView = vi.fn() as unknown as typeof Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {

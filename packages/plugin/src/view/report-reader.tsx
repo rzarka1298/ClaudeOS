@@ -545,21 +545,23 @@ export function ReportReader(props: ReportReaderProps): VNode {
       onKeyDown={onKeyDown}
     >
       {backButton}
-      <h3 id={titleId} tabIndex={-1} ref={titleRef}>
-        <UntrustedText text={header.title} />
-      </h3>
-      <Header header={header} now={props.now} zone={props.zone} />
-      <div className="ccc-report-actions">
-        <button
-          type="button"
-          className="ccc-connect-button"
-          data-variant="secondary"
-          onClick={() => openVaultNote(header.notePath, OPEN_NOTE_FAILED)}
-        >
-          {OPEN_NOTE_LABEL}
-        </button>
-      </div>
-      {stale ? <p className="ccc-report-stale">{staleLine(STALE_HOURS)}</p> : null}
+      <header className="ccc-report-header">
+        <h3 id={titleId} tabIndex={-1} ref={titleRef}>
+          <UntrustedText text={header.title} />
+        </h3>
+        <Header header={header} now={props.now} zone={props.zone} />
+        <div className="ccc-report-actions">
+          <button
+            type="button"
+            className="ccc-connect-button"
+            data-variant="secondary"
+            onClick={() => openVaultNote(header.notePath, OPEN_NOTE_FAILED)}
+          >
+            {OPEN_NOTE_LABEL}
+          </button>
+        </div>
+        {stale ? <p className="ccc-report-stale">{staleLine(STALE_HOURS)}</p> : null}
+      </header>
       {header.partial ? <Unavailable header={header} /> : null}
       <Legend />
       <section className="ccc-report-findings-section" aria-labelledby={findingsId}>

@@ -6,6 +6,19 @@
 export type { ApprovalSummary, ApprovalsSnapshot } from "@ccc/domain/approval.js";
 // Phase 05.1 (plan 27) harness contract: the pair action id the Codex visual cells key their status by.
 export { LAUNCH_PAIR_ACTION } from "@ccc/domain/launch.js";
+// Phase 7 (plan 13) harness contract: the research view models the visual cells build.
+export type {
+  ResearchListResponse,
+  ResearchListRow,
+  ResearchReportHeader,
+  ResearchReportItem,
+  ResearchReportItemsPage,
+  ResearchReportResponse,
+  ResearchReportSource,
+  ResearchReportSourcesPage,
+  ResearchRunResponse,
+  ResearchStatusResponse,
+} from "@ccc/domain/research-routes.js";
 export type { SessionView } from "@ccc/domain/session.js";
 export type { UsageSummary } from "@ccc/domain/usage.js";
 export type { ApprovalDetailResponse, ApprovalsApi } from "./approvals/api.js";
@@ -40,6 +53,7 @@ export { launchStatus, launchStatusKey, resetLaunchStatus } from "./projects/lau
 export { projectShortcutsStateFor } from "./projects/projects-state.js";
 export type { ResearchApi, ResearchHostPorts } from "./research/api.js";
 export { configureResearch, ResearchApiError } from "./research/api.js";
+export { resetReaderState } from "./research/reader-state.js";
 export { onResearchUpdated, resetResearchState } from "./research/state.js";
 export { attachEventClient } from "./service-connection.js";
 export type { TaskActionResult, TaskSaveInput } from "./tasks/actions.js";

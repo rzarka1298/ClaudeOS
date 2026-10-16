@@ -347,7 +347,9 @@ describe("Test 6: states reach CSS through data attributes, and none relies on c
   it("clamps nothing to a fixed pixel height and never scrolls the list horizontally", () => {
     for (const rule of NEW_RULES) {
       expect(rule.body, rule.selectors.join(", ")).not.toMatch(/overflow-x:\s*(auto|scroll)/);
-      expect(rule.body, rule.selectors.join(", ")).not.toMatch(/\b(min-|max-)?height:\s*\d/);
+      expect(rule.body, rule.selectors.join(", ")).not.toMatch(
+        /(?<![\w-])(min-|max-)?height:\s*\d/,
+      );
     }
   });
 });
