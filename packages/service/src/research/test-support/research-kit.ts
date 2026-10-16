@@ -94,6 +94,8 @@ export interface KitOptions {
   /** Every log call throws (a broken sink). */
   readonly logThrows?: boolean;
   readonly maxInputChars?: number;
+  /** Puts the runtime directory (and so the allowlist file) inside the vault. */
+  readonly runtimeInsideVault?: boolean;
   /** Runs on the migrated database before the services are created (to leave a stuck row behind). */
   readonly beforeServices?: (db: ReturnType<typeof openStore>["db"]) => void;
 }
@@ -118,10 +120,11 @@ export function createKit(options: KitOptions = {}): Kit {
   mkdirSync(TEST_BASE, { recursive: true });
   const dir = mkdtempSync(join(TEST_BASE, "k-"));
   const vaultRoot = join(dir, "vault");
-  const runtimeDir = join(dir, "runtime");
+  const runtimeDir =
+    options.runtimeInsideVault === true ? join(vaultRoot, "runtime") : join(dir, "runtime");
   mkdirSync(vaultRoot, { recursive: true });
-  mkdirSync(runtimeDir, { recursive: true });
   if (options.vault !== false) initializeVault(vaultRoot);
+  mkdirSync(runtimeDir, { recursive: true });
   const store = openStore(join(runtimeDir, "operational.db"));
   applyMigrations(store.db);
 

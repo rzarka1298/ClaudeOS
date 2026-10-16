@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   JOB_RUN_OUTCOMES,
@@ -606,18 +606,30 @@ describe("a run cannot be left in flight by a startup or finish problem", () => 
     expect(files(kit, "global/raw")).toEqual([]);
   });
 
-  it("finishes as a failure when the fetcher throws", async () => {
+  it("finishes as an interrupted run when the fetcher throws, and blames no source (07-14, opus m9)", async () => {
     kit = createKit({
       fetcher: {
         fetchSources: async () => {
-          throw new Error("boom");
+          throw new TypeError("a programming error in the fetcher");
         },
       },
     });
-    await runToEnd(kit);
+    const runId = await runToEnd(kit);
     const row = lastRow(kit);
     expect(row?.outcome).toBe("failure");
-    expect(row?.errorCode).toBe("all-sources-failed");
+    // Not `all-sources-failed`: no source failed, the fetcher itself broke.
+    expect(row?.errorCode).toBe("interrupted");
+    expect(row?.unavailableSources).toEqual([]);
+    expect(row?.sourceCount).toBe(0);
+    // No source is recorded as a network error it did not have.
+    const note = runNoteOf(kit, runId);
+    expect(note).not.toContain("network-error");
+    expect(note).toContain("Alpha releases: not finished");
+    expect(files(kit, "global/raw")).toEqual([]);
+    // The class name is logged, never the message.
+    const logged = kit.logs.find((line) => line.event === "research-fetch-threw");
+    expect(logged).toMatchObject({ errorName: "TypeError" });
+    expect(JSON.stringify(kit.logs)).not.toContain("programming error");
   });
 
   it("ends every run with an outcome from the closed set and, on failure, a closed code", async () => {
@@ -826,5 +838,121 @@ describe("07-FIX4 m6: one bad entry date does not fail a whole feed", () => {
     );
     if (!read.readable) throw new Error("report must be readable");
     expect(read.frontmatter.sourceRefs[0]?.publishedAt).toBeNull();
+  });
+});
+
+describe("07-14 hardening (opus m9): reading the configured sources has no side effect", () => {
+  it("shows the defaults and seeds nothing when the file is absent", () => {
+    kit = createKit({ writeConfig: false });
+    const configured = kit.services.configuredSources();
+    expect(configured?.sources.length).toBeGreaterThanOrEqual(3);
+    expect(configured?.sources.every((source) => /^[a-z0-9.-]+$/.test(source.host))).toBe(true);
+    expect(readdirSync(kit.runtimeDir).filter((name) => name === "research-sources.json")).toEqual(
+      [],
+    );
+  });
+
+  it("leaves a loose mode alone and answers null for an unusable file", () => {
+    kit = createKit();
+    chmodSync(kit.sourcesPath, 0o644);
+    expect(kit.services.configuredSources()?.topicLabel).toBe("Developer tooling");
+    expect(statSync(kit.sourcesPath).mode & 0o777).toBe(0o644);
+    writeFileSync(kit.sourcesPath, "not json", { mode: 0o600 });
+    expect(kit.services.configuredSources()).toBeNull();
+    expect(readFileSync(kit.sourcesPath, "utf8")).toBe("not json");
+  });
+
+  it("gives the host name only: no path, no query, no fragment", () => {
+    kit = createKit({
+      sources: [
+        {
+          label: "One",
+          url: "https://one.example.invalid:8443/a/b?token=SECRET#frag",
+          kind: "feed",
+        },
+      ],
+    });
+    const configured = kit.services.configuredSources();
+    expect(configured?.sources).toEqual([{ label: "One", host: "one.example.invalid" }]);
+    expect(JSON.stringify(configured)).not.toContain("SECRET");
+  });
+});
+
+describe("07-14 hardening (opus m1): the allowlist must not live in the vault", () => {
+  it("fails the run honestly, fetches nothing and seeds nothing when the runtime directory is in the vault", async () => {
+    kit = createKit({ runtimeInsideVault: true });
+    await runToEnd(kit);
+    const row = lastRow(kit);
+    expect(row?.outcome).toBe("failure");
+    expect(row?.errorCode).toBe("all-sources-failed");
+    expect(kit.fetchCalls).toEqual([]);
+    expect(kit.logs.some((line) => line.code === "inside-vault")).toBe(true);
+  });
+});
+
+describe("07-14 hardening (opus m8): a raw note that already exists must match what the report cites", () => {
+  const clock = () => {
+    let at = Date.parse("2026-10-15T09:00:00.000Z");
+    return () => {
+      at += 60_000;
+      return new Date(at);
+    };
+  };
+
+  function editRaw(k: Kit, change: (text: string) => string): string {
+    const name = files(k, "global/raw").find((candidate) =>
+      candidate.startsWith(sourceIdFor(URL_ONE)),
+    );
+    if (name === undefined) throw new Error("raw note of the first source missing");
+    const path = join(k.vaultRoot, "global/raw", name);
+    const before = readFileSync(path, "utf8");
+    const after = change(before);
+    expect(after).not.toBe(before);
+    writeFileSync(path, after);
+    return after;
+  }
+
+  function newestReport(k: Kit) {
+    const name = files(k, "global/output").sort().at(-1);
+    const read = readReportNote(k.vaultRoot, `global/output/${name}`);
+    if (!read.readable) throw new Error("report must be readable");
+    return read.frontmatter;
+  }
+
+  it("refuses to cite a source whose stored address was changed, and leaves the file alone", async () => {
+    kit = createKit({ now: clock() });
+    await runToEnd(kit);
+    const edited = editRaw(kit, (text) =>
+      text.replace("one.example.invalid", "evil.example.invalid"),
+    );
+    const runId = await runToEnd(kit);
+    const row = lastRow(kit);
+    expect(row?.outcome).toBe("partial");
+    expect(row?.unavailableSources.map((entry) => entry.code)).toEqual(["parse-failure"]);
+    const report = newestReport(kit);
+    expect(report.jobRunId).toBe(runId);
+    expect(report.sourceRefs.map((ref) => ref.canonicalUrl)).not.toContain(
+      "https://evil.example.invalid/releases.atom",
+    );
+    expect(report.sourceRefs).toHaveLength(2);
+    const name = files(kit, "global/raw").find((candidate) =>
+      candidate.startsWith(sourceIdFor(URL_ONE)),
+    );
+    expect(readFileSync(join(kit.vaultRoot, "global/raw", name ?? ""), "utf8")).toBe(edited);
+  });
+
+  it("still cites a source whose stored label or retrieval time differs: those are this run's own", async () => {
+    kit = createKit({ now: clock() });
+    await runToEnd(kit);
+    editRaw(kit, (text) => text.replace("title: Alpha releases", "title: An older label"));
+    await runToEnd(kit);
+    expect(lastRow(kit)?.outcome).toBe("success");
+    const first = newestReport(kit).sourceRefs.find(
+      (ref) =>
+        ref.canonicalUrl === URL_ONE ||
+        ref.canonicalUrl === "https://one.example.invalid/releases.atom",
+    );
+    // The report cites what THIS run fetched and named, not the older note's label.
+    expect(first?.title).toBe("Alpha releases");
   });
 });
