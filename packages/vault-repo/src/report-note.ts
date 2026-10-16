@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   ACCESS_CLASS_DISPLAY,
@@ -532,4 +532,32 @@ export function finaliseReportNote(options: FinaliseReportNoteOptions): WrittenR
     parsed.plainDateKeys,
   );
   return writeAndIndex(options.vaultRoot, options.path, target, frontmatter, text);
+}
+
+/** Everything needed to take a report back. */
+export interface RemoveReportNoteOptions {
+  readonly vaultRoot: string;
+  /** Vault-relative path of the report (the shape {@link reportNotePathFor} produces). */
+  readonly path: string;
+}
+
+/**
+ * Takes a report back out of the vault: the file is deleted, then the folder index is rebuilt.
+ * It exists so a run that fails after its report was written can leave no exposed report behind
+ * (07-FIX4 b). A report that is not there is not an error. The file is gone even when the index
+ * rebuild then throws; the throw tells the caller the index is stale.
+ *
+ * @throws {ReportNoteError} when the path is not a report path.
+ * @throws {WorkspaceScopeViolationError} when the target resolves outside the global scope.
+ */
+export function removeReportNote(options: RemoveReportNoteOptions): void {
+  const target = resolveGlobalNotePath(
+    options.vaultRoot,
+    options.path,
+    REPORT_NOTE_PATH_PATTERN,
+    failReport,
+  );
+  if (!existsSync(target)) return;
+  rmSync(target, { force: true });
+  regenerateIndex(dirname(target), { vaultRoot: options.vaultRoot });
 }

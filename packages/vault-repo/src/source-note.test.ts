@@ -454,7 +454,7 @@ describe("07-FIX4 c: the wiki 'Cited by' list accumulates across runs", () => {
     latestSnapshotPath: refFor(SNAPSHOT).snapshotPath,
     lastRetrievedAt: "2026-10-15T08:59:00.000Z",
     citingItems: [
-      { kind: "source-fact" as const, text: "First run finding.", reportPath: REPORT_ONE },
+      { kind: "source-fact" as const, text: "First run finding", reportPath: REPORT_ONE },
     ],
     now: NOW,
     ...extra,
@@ -466,23 +466,23 @@ describe("07-FIX4 c: the wiki 'Cited by' list accumulates across runs", () => {
     const second = writeWikiSourceNote(
       input({
         now: LATER,
-        citingItems: [{ kind: "inference", text: "Second run finding.", reportPath: REPORT_TWO }],
+        citingItems: [{ kind: "inference", text: "Second run finding", reportPath: REPORT_TWO }],
       }),
     );
     const body = bodyAt(second.absolutePath);
-    expect(body).toContain("First run finding.");
+    expect(body).toContain("First run finding");
     expect(body).toContain(REPORT_ONE);
-    expect(body).toContain("Second run finding.");
+    expect(body).toContain("Second run finding");
     expect(body).toContain(REPORT_TWO);
     // Newest first.
-    expect(body.indexOf("Second run finding.")).toBeLessThan(body.indexOf("First run finding."));
+    expect(body.indexOf("Second run finding")).toBeLessThan(body.indexOf("First run finding"));
   });
 
   test("a later run that does not cite the source does not erase the earlier citation", () => {
     writeWikiSourceNote(input());
     const second = writeWikiSourceNote(input({ now: LATER, citingItems: [] }));
     const body = bodyAt(second.absolutePath);
-    expect(body).toContain("First run finding.");
+    expect(body).toContain("First run finding");
     expect(body).not.toContain("No report cites this source yet.");
   });
 
@@ -496,12 +496,12 @@ describe("07-FIX4 c: the wiki 'Cited by' list accumulates across runs", () => {
     const again = writeWikiSourceNote(
       input({
         now: LATER,
-        citingItems: [{ kind: "inference", text: "Edited finding.", reportPath: REPORT_ONE }],
+        citingItems: [{ kind: "inference", text: "Edited finding", reportPath: REPORT_ONE }],
       }),
     );
     const body = bodyAt(again.absolutePath);
-    expect(body).toContain("Edited finding.");
-    expect(body).not.toContain("First run finding.");
+    expect(body).toContain("Edited finding");
+    expect(body).not.toContain("First run finding");
   });
 
   test("the accumulated list stays capped across runs and counts what it does not list", () => {
@@ -514,7 +514,7 @@ describe("07-FIX4 c: the wiki 'Cited by' list accumulates across runs", () => {
     writeWikiSourceNote(input({ citingItems: many(80, REPORT_ONE) }));
     const second = writeWikiSourceNote(input({ now: LATER, citingItems: many(40, REPORT_TWO) }));
     const body = bodyAt(second.absolutePath);
-    expect(body.match(/^- /gm)).toHaveLength(100);
+    expect(body.match(/^- .* \(` global\/output\//gm)).toHaveLength(100);
     expect(body).toContain("20 more findings are not listed.");
     const third = writeWikiSourceNote(
       input({
@@ -543,7 +543,7 @@ describe("07-FIX4 c: the wiki 'Cited by' list accumulates across runs", () => {
     );
     const body = bodyAt(second.absolutePath);
     expect(body).not.toContain("evil.example");
-    expect(body).toContain("First run finding.");
+    expect(body).toContain("First run finding");
   });
 
   test("captureWikiSourceNote restores an existing note byte for byte and removes a new one", () => {
@@ -553,7 +553,7 @@ describe("07-FIX4 c: the wiki 'Cited by' list accumulates across runs", () => {
     writeWikiSourceNote(
       input({
         now: LATER,
-        citingItems: [{ kind: "inference", text: "Second run finding.", reportPath: REPORT_TWO }],
+        citingItems: [{ kind: "inference", text: "Second run finding", reportPath: REPORT_TWO }],
       }),
     );
     expect(readFileSync(first.absolutePath, "utf8")).not.toBe(before);
@@ -562,7 +562,12 @@ describe("07-FIX4 c: the wiki 'Cited by' list accumulates across runs", () => {
 
     const other = "f".repeat(32);
     const fresh = captureWikiSourceNote(vaultRoot, other);
-    const created = writeWikiSourceNote(input({ sourceId: other }));
+    const created = writeWikiSourceNote(
+      input({
+        sourceId: other,
+        latestSnapshotPath: `global/raw/${other}.${sha(SNAPSHOT).slice(0, 8)}.md`,
+      }),
+    );
     expect(existsSync(created.absolutePath)).toBe(true);
     fresh.restore();
     expect(existsSync(created.absolutePath)).toBe(false);

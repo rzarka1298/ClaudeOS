@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   DeepLinkSchema,
   HttpsUrlSchema,
+  hasDisallowedTextCharacter,
   type NoteId,
   newNoteId,
   plainLineText,
@@ -407,8 +408,76 @@ export interface WrittenWikiSourceNote {
 /** The most citing findings a wiki note lists; the rest are counted, not listed. */
 const WIKI_CITING_ITEMS_MAX = 100;
 
-function renderWikiBody(options: WriteWikiSourceNoteOptions): string {
+const CITED_BY_HEADING = "## Cited by";
+const UNLISTED_LINE = /^(\d+) more findings are not listed\.$/;
+const CITATION_SUFFIX = /^(.*) \(` (global\/output\/[^ `]+\.md) `\)$/;
+const ASCII_PUNCTUATION = /[!-/:-@[-`{-~]/;
+
+/** One generated citation line, kept verbatim when a later run rewrites the note. */
+interface CitationLine {
+  readonly line: string;
+  readonly reportPath: string;
+}
+
+function citationLine(item: WikiCitingItem): CitationLine {
+  const display = REPORT_ITEM_KIND_DISPLAY[item.kind];
+  return {
+    line: `- ${display.glyph} **${display.label}** \u2014 ${escapeMarkdownText(item.text)} (${inlineCode(item.reportPath)})`,
+    reportPath: item.reportPath,
+  };
+}
+
+/** True when every ASCII punctuation character of `escaped` is backslash-escaped: it is inert. */
+function isInertEscapedText(escaped: string): boolean {
+  const stripped = escaped.replace(/\\[!-/:-@[-`{-~]/g, "");
+  for (const ch of stripped) {
+    if (ASCII_PUNCTUATION.test(ch) || hasDisallowedTextCharacter(ch)) return false;
+  }
+  return true;
+}
+
+/**
+ * The citation lines an earlier run wrote, recovered from the existing note so a later run does not
+ * erase them (07-FIX4 c). Only a line in exactly the generated shape is carried forward: a known
+ * kind prefix, text whose punctuation is all escaped, and a code-span report path of the report
+ * shape. Anything else in the section (a hand edit, a forged line) is dropped, never copied.
+ */
+function priorCitations(body: string): { lines: CitationLine[]; unlisted: number } {
+  const lines = body.split("\n");
+  const start = lines.indexOf(CITED_BY_HEADING);
+  const kept: CitationLine[] = [];
+  let unlisted = 0;
+  if (start === -1) return { lines: kept, unlisted };
+  const prefixes = REPORT_ITEM_KINDS.map((kind) => {
+    const display = REPORT_ITEM_KIND_DISPLAY[kind];
+    return `- ${display.glyph} **${display.label}** \u2014 `;
+  });
+  for (const line of lines.slice(start + 1)) {
+    if (line.startsWith("#")) break;
+    const count = UNLISTED_LINE.exec(line);
+    if (count?.[1] !== undefined) {
+      unlisted += Number(count[1]);
+      continue;
+    }
+    const prefix = prefixes.find((candidate) => line.startsWith(candidate));
+    if (prefix === undefined) continue;
+    const suffix = CITATION_SUFFIX.exec(line.slice(prefix.length));
+    const text = suffix?.[1];
+    const reportPath = suffix?.[2];
+    if (text === undefined || reportPath === undefined) continue;
+    if (!REPORT_NOTE_PATH_PATTERN.test(reportPath) || !isInertEscapedText(text)) continue;
+    kept.push({ line, reportPath });
+  }
+  return { lines: kept, unlisted };
+}
+
+function renderWikiBody(options: WriteWikiSourceNoteOptions, priorBody: string | null): string {
   const address = options.canonicalUrl ?? options.deepLink ?? "";
+  const fresh = options.citingItems.map(citationLine);
+  const freshPaths = new Set(fresh.map((entry) => entry.reportPath));
+  const prior = priorBody === null ? { lines: [], unlisted: 0 } : priorCitations(priorBody);
+  // Newest first. Lines of a report this run rewrites are replaced, never duplicated.
+  const all = [...fresh, ...prior.lines.filter((entry) => !freshPaths.has(entry.reportPath))];
   const lines = [
     `# ${escapeMarkdownText(options.title)}`,
     "",
@@ -418,19 +487,14 @@ function renderWikiBody(options: WriteWikiSourceNoteOptions): string {
     `- Latest snapshot: ${inlineCode(options.latestSnapshotPath)}`,
     `- Last retrieved: ${inlineCode(options.lastRetrievedAt)}`,
     "",
-    "## Cited by",
+    CITED_BY_HEADING,
     "",
   ];
-  if (options.citingItems.length === 0) {
+  const unlisted = Math.max(0, all.length - WIKI_CITING_ITEMS_MAX) + prior.unlisted;
+  if (all.length === 0 && unlisted === 0) {
     lines.push("No report cites this source yet.");
   } else {
-    for (const item of options.citingItems.slice(0, WIKI_CITING_ITEMS_MAX)) {
-      const display = REPORT_ITEM_KIND_DISPLAY[item.kind];
-      lines.push(
-        `- ${display.glyph} **${display.label}** \u2014 ${escapeMarkdownText(item.text)} (${inlineCode(item.reportPath)})`,
-      );
-    }
-    const unlisted = options.citingItems.length - WIKI_CITING_ITEMS_MAX;
+    for (const entry of all.slice(0, WIKI_CITING_ITEMS_MAX)) lines.push(entry.line);
     if (unlisted > 0) lines.push("", `${unlisted} more findings are not listed.`);
   }
   lines.push("");
@@ -481,7 +545,7 @@ export function writeWikiSourceNote(options: WriteWikiSourceNoteOptions): Writte
   }
 
   const now = (options.now ?? new Date()).toISOString();
-  const body = renderWikiBody(options);
+  const body = renderWikiBody(options, existing?.body ?? null);
   const frontmatter = WikiSourceFrontmatterSchema.parse({
     id: existing?.frontmatter.id ?? newNoteId(),
     scope: "global",
@@ -518,5 +582,51 @@ export function writeWikiSourceNote(options: WriteWikiSourceNoteOptions): Writte
     path,
     absolutePath: target,
     frontmatter,
+  };
+}
+
+/** A way back to what a wiki note was before a run touched it. */
+export interface WikiSourceSnapshot {
+  /**
+   * Puts the note back byte for byte, or removes it when it did not exist, then rebuilds the
+   * folder index. Meant for a run that failed after rewriting wiki notes (07-FIX4 b).
+   *
+   * @throws when the file or the index cannot be written; the caller treats that as best effort.
+   */
+  restore(): void;
+}
+
+/**
+ * Remembers a source's wiki note as it is now, so a failed run can put it back. A note that
+ * cannot be read is remembered as it is not: {@link writeWikiSourceNote} refuses to overwrite it,
+ * so there is nothing for the run to undo.
+ */
+export function captureWikiSourceNote(vaultRoot: string, sourceId: string): WikiSourceSnapshot {
+  const target = resolveGlobalNotePath(
+    vaultRoot,
+    `global/wiki/${sourceId}.md`,
+    WIKI_PATH_PATTERN,
+    failSource,
+  );
+  let prior: string | null = null;
+  let unreadable = false;
+  if (existsSync(target)) {
+    try {
+      prior = readFileSync(target, "utf8");
+    } catch {
+      unreadable = true;
+    }
+  }
+  return {
+    restore() {
+      if (unreadable) return;
+      if (prior === null) {
+        if (!existsSync(target)) return;
+        rmSync(target, { force: true });
+      } else {
+        atomicWriteFileSync(target, prior);
+      }
+      regenerateIndex(dirname(target), { vaultRoot });
+    },
   };
 }
