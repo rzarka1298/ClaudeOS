@@ -163,7 +163,7 @@ describe("run", () => {
 
   it("answers a thrown start with the constant 500 body and keeps serving", async () => {
     runNow = () => {
-      throw new Error("a secret path /Users/someone/vault failed");
+      throw new Error("a secret detail that must not leave the process");
     };
     const reply = await call(RESEARCH_RUN_PATH, { body: {} });
     expect(reply.status).toBe(500);

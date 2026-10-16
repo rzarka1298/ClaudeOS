@@ -31,20 +31,21 @@ export function createResearchRouteServices(
       if (!started.ok) return { ok: false, code: started.code };
       return { ok: true, value: started.value };
     },
-    list() {
+    list(request) {
       const vaultRoot = deps.getVaultRoot();
       if (vaultRoot === null) return { ok: false, code: "vault-not-set-up" };
-      return { ok: true, value: buildReportList(vaultRoot) };
+      return buildReportList(vaultRoot, request);
     },
     report(request) {
       const vaultRoot = deps.getVaultRoot();
       if (vaultRoot === null) return { ok: false, code: "vault-not-set-up" };
-      const entry = findReport(vaultRoot, request.noteId);
-      if (entry === null) return { ok: false, code: "not-found" };
+      const lookup = findReport(vaultRoot, request.noteId);
+      if (lookup.kind === "missing") return { ok: false, code: "not-found" };
+      if (lookup.kind === "unreadable") return { ok: false, code: "unreadable-report" };
       if (request.page === "items") {
-        return { ok: true, value: buildReportItemsPage(vaultRoot, deps.db, entry) };
+        return buildReportItemsPage(vaultRoot, deps.db, lookup.entry, request.cursor);
       }
-      return { ok: true, value: buildReportSourcesPage(entry) };
+      return buildReportSourcesPage(lookup.entry, request.cursor);
     },
     status() {
       return {

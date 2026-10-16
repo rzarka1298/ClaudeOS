@@ -113,7 +113,7 @@ describe("Test 1 (budget): pages never reach the response budget and drop whole 
     const numbers: number[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < 12; page += 1) {
-      const result = buildReportSourcesPage(vault.root, lookup.entry, cursor);
+      const result = buildReportSourcesPage(lookup.entry, cursor);
       if (!result.ok) throw new Error(`refused: ${result.code}`);
       const parsed = ResearchReportSourcesPageSchema.parse(result.value);
       expect(bytes(parsed)).toBeLessThan(57344);
@@ -323,7 +323,7 @@ describe("Test 3 (reader pages)", () => {
     });
     const lookup = findReport(vault.root, built.noteId);
     if (lookup.kind !== "found") throw new Error("expected the report");
-    const result = buildReportSourcesPage(vault.root, lookup.entry);
+    const result = buildReportSourcesPage(lookup.entry);
     if (!result.ok) throw new Error("refused");
     const page = ResearchReportSourcesPageSchema.parse(result.value);
     const source = page.sources[0];
@@ -369,7 +369,7 @@ describe("Test 4 (errors)", () => {
     const responses = [
       buildReportList(vault.root, {}),
       buildReportItemsPage(vault.root, vault.store.db, lookup.entry),
-      buildReportSourcesPage(vault.root, lookup.entry),
+      buildReportSourcesPage(lookup.entry),
       { ok: true, value: buildResearchStatus(vault.store.db, null) },
     ];
     const text = JSON.stringify(responses);
@@ -401,7 +401,8 @@ describe("Test 5 (status)", () => {
       sourceCount: outcome === "failure" ? 0 : 2,
       sourceTotal: 3,
       reportNoteId: outcome === "failure" ? null : (extra.reportNoteId ?? "n".repeat(25)),
-      unavailableSources: outcome === "partial" ? [{ label: "Slow feed", code: "timeout" }] : [],
+      unavailableSources:
+        outcome === "partial" ? [{ sourceId: "a".repeat(32), code: "timeout" }] : [],
       errorCode: outcome === "failure" ? "all-sources-failed" : null,
     });
     return runId;

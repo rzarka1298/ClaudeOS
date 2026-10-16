@@ -33,6 +33,7 @@ import {
   readReportNote,
   removeReportNote,
   reportNotePathFor,
+  reportTitleText,
   type WriteReportNoteOptions,
   writeReportNote,
 } from "./report-note.js";
@@ -642,5 +643,26 @@ describe("07-FIX4 b: a report can be taken back", () => {
     for (const bad of ["global/wiki/x.md", "../outside.md", "global/output/other.md"]) {
       expect(() => removeReportNote({ vaultRoot, path: bad })).toThrow(ReportNoteError);
     }
+  });
+});
+
+describe("reportTitleText", () => {
+  test("is the words of the body heading, unescaped, so the view and the note show one title", () => {
+    const written = writeReportNote(options({ topicLabel: "Daily tech" }));
+    const heading = (
+      readFileSync(join(vaultRoot, written.path), "utf8")
+        .split("\n")
+        .find((line) => line.startsWith("# ")) ?? ""
+    ).slice(2);
+    expect(reportTitleText("Daily tech", "2026-10-15T08:59:30.000Z")).toBe(heading);
+    expect(reportTitleText("Daily tech", "2026-10-15T08:59:30.000Z")).toBe(
+      "Daily tech \u2014 Oct 15, 2026",
+    );
+  });
+
+  test("does not escape the topic: the view renders it as text", () => {
+    expect(reportTitleText("A *b* [c]", "2026-01-02T00:00:00.000Z")).toBe(
+      "A *b* [c] \u2014 Jan 2, 2026",
+    );
   });
 });
