@@ -170,6 +170,66 @@ describe("Test 1: refusal", () => {
     expect(() => writeNote(request("global/output/other.md"))).not.toThrow();
   });
 
+  test("every valid YAML spelling of a research type is refused (07-FIX3A F5)", () => {
+    const path = writeReport();
+    const spellings = [
+      '"type": report',
+      "'type': report",
+      "type : report",
+      "type:\treport",
+      "type: !!str report",
+      "type: !!str 'research-source'",
+      "type:\n  report",
+      "type: >-\n  research-wiki",
+      "type: |-\n  report",
+      "type: REPORT",
+      '"t\\u0079pe": report',
+      "? type\n: report",
+      "type: &anchor report",
+    ];
+    for (const line of spellings) {
+      writeFileSync(join(vaultRoot, path), `---\nid: x\n${line}\ntitle: y\n---\nbody\n`);
+      expect(() => writeNote(request(path)), line).toThrow(ExtendedNoteWriteRefusedError);
+    }
+    for (const block of [
+      "{type: report, id: x}",
+      '{"type": "research-wiki"}',
+      "{ id: x, type: !!str report }",
+    ]) {
+      writeFileSync(join(vaultRoot, path), `---\n${block}\n---\nbody\n`);
+      expect(() => writeNote(request(path)), block).toThrow(ExtendedNoteWriteRefusedError);
+    }
+  });
+
+  test("a damaged frontmatter that mentions a research type anywhere is still refused", () => {
+    const path = writeReport();
+    for (const block of [
+      'key: [unclosed\n"type": report',
+      "{type: report",
+      "key: [unclosed\ntype : !!str research-source",
+      "- not\n- a map\n- report",
+    ]) {
+      writeFileSync(join(vaultRoot, path), `---\n${block}\n---\nbody\n`);
+      expect(() => writeNote(request(path)), block).toThrow(ExtendedNoteWriteRefusedError);
+    }
+  });
+
+  test("a frontmatter without a research type is not refused, whatever its spelling", () => {
+    const path = "global/output/spelled.md";
+    for (const block of [
+      '"type": note',
+      "type : !!str note",
+      "type: reports",
+      "title: a report on the cache\ntags: [report]",
+      "{type: note, id: x}",
+      "id: x\nmeta:\n  type: report",
+      "id: x\n# type: report",
+    ]) {
+      writeFileSync(join(vaultRoot, path), `---\n${block}\n---\nbody\n`);
+      expect(() => writeNote(request(path)), block).not.toThrow();
+    }
+  });
+
   test("the tasks folder refusal is unchanged", () => {
     expect(() => writeNote(request("global/tasks/x.md"))).toThrow(TasksFolderWriteRefusedError);
   });
