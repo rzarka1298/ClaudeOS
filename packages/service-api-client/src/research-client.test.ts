@@ -187,6 +187,12 @@ describe("Test 1 (client): failures map to closed codes", () => {
         status: 409,
       });
     }
+    // The service's own fault is a closed code at status 500, not a protocol mismatch.
+    const internal = recording(500, { error: "internal" });
+    await expect(createResearchClient(internal.client).status()).rejects.toMatchObject({
+      code: "internal",
+      status: 500,
+    });
     for (const body of [
       { error: "invalid request body" },
       { error: "internal error" },

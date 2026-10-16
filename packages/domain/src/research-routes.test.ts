@@ -454,7 +454,7 @@ describe("Test 3 (responses)", () => {
 });
 
 describe("Test 4 (errors)", () => {
-  it("is a closed enum of exactly the eight codes", () => {
+  it("is a closed enum of exactly the nine codes", () => {
     expect([...RESEARCH_ERROR_CODES]).toEqual([
       "vault-not-set-up",
       "not-found",
@@ -464,6 +464,7 @@ describe("Test 4 (errors)", () => {
       "service-disconnected",
       "timeout",
       "unrecognised-response",
+      "internal",
     ]);
     for (const error of RESEARCH_ERROR_CODES) {
       expect(ResearchErrorBodySchema.safeParse({ error }).success, error).toBe(true);

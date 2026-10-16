@@ -161,13 +161,13 @@ describe("run", () => {
     expect(reply.body).toEqual({ error: "vault-not-set-up" });
   });
 
-  it("answers a thrown start with the constant 500 body and keeps serving", async () => {
+  it("answers a thrown start with the closed internal code (500) and keeps serving", async () => {
     runNow = () => {
       throw new Error("a secret detail that must not leave the process");
     };
     const reply = await call(RESEARCH_RUN_PATH, { body: {} });
     expect(reply.status).toBe(500);
-    expect(reply.body).toEqual({ error: "internal error" });
+    expect(reply.body).toEqual({ error: "internal" });
     expect(reply.raw).not.toContain("secret");
     const after = await call(RESEARCH_STATUS_PATH, { body: {} });
     expect(after.status).toBe(200);
