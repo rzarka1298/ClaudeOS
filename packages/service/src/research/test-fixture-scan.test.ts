@@ -22,6 +22,23 @@ const VARIABLES = [
   "CCC_RESEARCH_KEY_ACCOUNT",
 ] as const;
 
+/**
+ * The exact files permitted to name the research test variables, each pinned to the variables it
+ * names (plan 07-17). Two files, no more: the guard that READS them, and the live-UAT runner's
+ * fixture module that SETS them for the throwaway service of an automated run (the runner is the
+ * one other party that must name them). Every entry is an exact repository-relative file path:
+ * no glob, no directory, no pattern. The scan below fails when a file outside this list names a
+ * variable, when a listed file no longer names the variable it is pinned to (a stale entry), when
+ * a listed path is not an existing regular file, and when an entry looks like a pattern or a
+ * directory. Widening this list is a reviewed change to this one table.
+ */
+export const RESEARCH_VARIABLE_FILES: Readonly<
+  Record<string, readonly (typeof VARIABLES)[number][]>
+> = {
+  "packages/service/src/research/test-fixture-guard.ts": [...VARIABLES],
+  "packages/e2e/src/research-uat-fixture.ts": [...VARIABLES],
+};
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === "node_modules" || entry === "dist" || entry.startsWith(".")) continue;
@@ -41,11 +58,63 @@ function sourceFiles(): string[] {
       // a package without a src folder
     }
   }
+  // The wdio specs and the runner's wdio configuration run inside the live-UAT runner and are
+  // source for this purpose too (plan 07-17): a spec naming a variable fails here like a module.
+  for (const pkg of readdirSync(join(REPO, "packages"))) {
+    try {
+      walk(join(REPO, "packages", pkg, "specs"), files);
+    } catch {
+      // a package without a specs folder
+    }
+    try {
+      for (const entry of readdirSync(join(REPO, "packages", pkg))) {
+        if (/^wdio[\w.-]*\.ts$/.test(entry)) files.push(join(REPO, "packages", pkg, entry));
+      }
+    } catch {
+      // not a directory
+    }
+  }
   files.push(...walk(join(REPO, "scripts")));
   return files.filter((file) => /\.(ts|tsx|mjs|js|sh|template|plist)$/.test(file));
 }
 
 const isTest = (file: string): boolean => /\.test\.|\.int\.test\.|test-support|harness/.test(file);
+
+const scannedFiles = (files: readonly string[]): string[] => files.filter((file) => !isTest(file));
+
+/** A pattern character, or a trailing separator: anything that is not one plain file path. */
+const NOT_A_PLAIN_FILE = /[*?[\]{}!()]|\/$|\\|^\.{0,2}\/|\.\.\/|^\//;
+
+/**
+ * Everything wrong with a pinned list, as short codes. Pure: the file system is a parameter, so
+ * the control tests below can show each problem is detected on an in-memory sample.
+ */
+function findListProblems(
+  list: Readonly<Record<string, readonly string[]>>,
+  io: {
+    readonly kindOf: (path: string) => "file" | "directory" | "missing";
+    readonly text: (path: string) => string;
+  },
+): string[] {
+  const problems: string[] = [];
+  for (const [path, names] of Object.entries(list)) {
+    if (NOT_A_PLAIN_FILE.test(path) || !/\.(ts|tsx|mjs)$/.test(path)) {
+      problems.push(`not-a-plain-file ${path}`);
+      continue;
+    }
+    const kind = io.kindOf(path);
+    if (kind !== "file") {
+      problems.push(`${kind === "directory" ? "directory" : "missing"} ${path}`);
+      continue;
+    }
+    if (names.length === 0) problems.push(`no-variable ${path}`);
+    const text = io.text(path);
+    for (const name of names) {
+      if (!text.includes(name)) problems.push(`stale ${path} ${name}`);
+    }
+  }
+  return problems;
+}
 
 const codeOf = (file: string): string =>
   readFileSync(file, "utf8")
@@ -57,12 +126,16 @@ describe("the research test variables are confined to their guard (Test 2)", () 
   const files = sourceFiles();
 
   for (const variable of VARIABLES) {
-    it(`names ${variable} in exactly one non-test source file, the guard module`, () => {
-      const hits = files
-        .filter((file) => !isTest(file))
+    it(`names ${variable} in exactly the pinned non-test source files`, () => {
+      const hits = scannedFiles(files)
         .filter((file) => readFileSync(file, "utf8").includes(variable))
-        .map((file) => relative(REPO, file));
-      expect(hits).toEqual(["packages/service/src/research/test-fixture-guard.ts"]);
+        .map((file) => relative(REPO, file))
+        .sort();
+      const pinned = Object.entries(RESEARCH_VARIABLE_FILES)
+        .filter(([, names]) => names.includes(variable))
+        .map(([path]) => path)
+        .sort();
+      expect(hits).toEqual(pinned);
     });
 
     it(`reads ${variable} exactly once in the guard's code`, () => {
@@ -72,6 +145,66 @@ describe("the research test variables are confined to their guard (Test 2)", () 
 
   it("reads the enabling flag exactly once in the guard's code", () => {
     expect(codeOf(GUARD_MODULE).match(new RegExp(FLAG, "g"))).toHaveLength(1);
+  });
+
+  it("keeps the pinned list exact: plain existing files that still name what they are pinned to", () => {
+    const real = {
+      kindOf: (path: string) => {
+        try {
+          const stat = statSync(join(REPO, path));
+          return stat.isDirectory() ? ("directory" as const) : ("file" as const);
+        } catch {
+          return "missing" as const;
+        }
+      },
+      text: (path: string) => readFileSync(join(REPO, path), "utf8"),
+    };
+    expect(findListProblems(RESEARCH_VARIABLE_FILES, real)).toEqual([]);
+  });
+
+  it("pins exactly the guard and the runner's fixture module, no third file", () => {
+    expect(Object.keys(RESEARCH_VARIABLE_FILES).sort()).toEqual([
+      "packages/e2e/src/research-uat-fixture.ts",
+      "packages/service/src/research/test-fixture-guard.ts",
+    ]);
+  });
+
+  it("scans the wdio specs and configuration too, so a spec cannot name a variable", () => {
+    const scanned = scannedFiles(files).map((file) => relative(REPO, file));
+    expect(scanned).toContain("packages/e2e/wdio.conf.ts");
+    expect(scanned.some((file) => file.startsWith("packages/e2e/specs/"))).toBe(true);
+    expect(scanned.some((file) => file.startsWith("packages/e2e/src/"))).toBe(true);
+  });
+
+  it("control: the list check flags a glob, a directory, a stale entry, a missing file and an empty pin", () => {
+    const io = {
+      kindOf: (path: string) =>
+        path === "packages/e2e/src"
+          ? ("directory" as const)
+          : path.endsWith("gone.ts")
+            ? ("missing" as const)
+            : ("file" as const),
+      text: (path: string) => (path.endsWith("stale.ts") ? "nothing here" : VARIABLES.join(" ")),
+    };
+    const sample = {
+      "packages/e2e/src/*.ts": [VARIABLES[0]],
+      "packages/e2e/src/": [VARIABLES[0]],
+      "packages/e2e/src": [VARIABLES[0]],
+      "packages/e2e/**/fixture.ts": [VARIABLES[0]],
+      "packages/e2e/src/gone.ts": [VARIABLES[0]],
+      "packages/e2e/src/stale.ts": [VARIABLES[0]],
+      "packages/e2e/src/empty.ts": [],
+      "packages/e2e/src/ok.ts": [VARIABLES[0]],
+    };
+    expect(findListProblems(sample, io)).toEqual([
+      "not-a-plain-file packages/e2e/src/*.ts",
+      "not-a-plain-file packages/e2e/src/",
+      "not-a-plain-file packages/e2e/src",
+      "not-a-plain-file packages/e2e/**/fixture.ts",
+      "missing packages/e2e/src/gone.ts",
+      `stale packages/e2e/src/stale.ts ${VARIABLES[0]}`,
+      "no-variable packages/e2e/src/empty.ts",
+    ]);
   });
 
   it("names none of the variables or the flag in any LaunchAgent installer file", () => {

@@ -846,3 +846,78 @@ describe("runUat marks looks unavailable when the handoff fails (Codex re-review
     expect(h.reports[h.reports.length - 1]?.text).toContain("inconclusive (look pending)");
   });
 });
+
+describe("runUat over a Phase 7 script (plan 07-17, D-28)", () => {
+  const SCRIPT_07 = [
+    "---",
+    "status: testing",
+    "phase: 07-cited-research-report-provenance",
+    "---",
+    "",
+    "## Tests",
+    "",
+    "### 2. Run now writes one cited report",
+    "run: auto",
+    "via: dom, store, fs",
+    "spec: packages/e2e/specs/research-core.e2e.ts::[07-UAT#02]",
+    "expected: |",
+    "  Press Run now.",
+    "result: [pending]",
+    "",
+    "### 21. Logs and settings stay private",
+    "run: auto",
+    "via: log, fs",
+    "spec: packages/e2e/specs/research-lifecycle.e2e.ts::[07-UAT#21]",
+    "expected: |",
+    "  Search the log.",
+    "result: [pending]",
+    "",
+    "## Summary",
+    "",
+    "total: 2",
+    "",
+  ].join("\n");
+
+  const titles07: SpecTitle[] = [
+    { file: "packages/e2e/specs/research-core.e2e.ts", title: "[07-UAT#02] report", only: false },
+    {
+      file: "packages/e2e/specs/research-lifecycle.e2e.ts",
+      title: "[07-UAT#21] privacy",
+      only: false,
+    },
+  ];
+
+  it("does not take item 21 for the full-profile scale item of Phase 6", async () => {
+    const h = harness(
+      {},
+      {
+        script: SCRIPT_07,
+        titles: titles07,
+        results: [record("[07-UAT#02] report", "passed"), record("[07-UAT#21] privacy", "passed")],
+        looks: [],
+      },
+    );
+    const outcome = await runUat(options({ script: "/work/07-UAT.md" }), h.ports);
+    const text = h.reports[0]?.text ?? "";
+    const row = (item: number) => text.split("\n").find((line) => line.startsWith(`| ${item} |`));
+    expect(row(2)).toContain("| pass |");
+    expect(row(21)).toContain("| pass |");
+    expect(row(21)).not.toContain("skipped-profile");
+    expect(outcome.exitCode).toBe(0);
+    expect(h.reports[0]?.path).toBe("/work/phase/07-UAT-AUTO-REPORT.md");
+  });
+
+  it("refuses a script of a phase the runner has no item plan for, starting nothing", async () => {
+    const unknown = SCRIPT_07.replace(
+      "phase: 07-cited-research-report-provenance",
+      "phase: 99-demo",
+    );
+    const h = harness({}, { script: unknown, titles: [] });
+    const outcome = await runUat(options({ script: "/work/99-UAT.md" }), h.ports);
+    expect(outcome.exitCode).toBe(2);
+    expect(outcome.message).toMatch(/phase/i);
+    expect(outcome.message).not.toContain("99-demo");
+    expect(h.calls).not.toContain("sandbox-start");
+    expect(h.calls).not.toContain("wdio");
+  });
+});

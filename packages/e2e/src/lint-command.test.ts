@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { lintTagsCommand } from "./lint-command.js";
-import { UAT_ITEM_PLAN } from "./spec-map.js";
+import { UsageError } from "./cli-args.js";
+import { specMapForPhase, UAT_ITEM_PLAN } from "./spec-map.js";
 
 const SPEC_DIR = "/work/specs";
 const SCRIPT_PATH = "/work/06-UAT.md";
@@ -129,5 +130,76 @@ describe("lintTagsCommand (Test 4)", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.lines.join("\n")).toContain("SCRIPT_UNREADABLE");
+  });
+});
+
+describe("lintTagsCommand over a Phase 7 script (plan 07-17, D-28)", () => {
+  const SCRIPT_07_PATH = "/work/07-UAT.md";
+  const plan07 = specMapForPhase("07")?.itemPlan ?? [];
+
+  function script07(mutate: (number: number, lines: string[]) => string[] = (_n, l) => l): string {
+    const out = ["---", "status: testing", "phase: 07-demo", "---", "", "## Tests", ""];
+    for (const entry of plan07) {
+      const lines = [`### ${entry.number}. Title ${entry.number}`, `run: ${entry.runClass}`];
+      if (entry.runClass !== "owner") lines.push(`via: ${entry.via.join(", ")}`);
+      if (entry.specFile !== null) {
+        lines.push(`spec: ${entry.specFile}::[07-UAT#${String(entry.number).padStart(2, "0")}]`);
+      }
+      if (entry.ownerWhy !== null) lines.push(`owner-why: ${entry.ownerWhy}`);
+      if (entry.autoPart !== null) lines.push(`auto-part: ${entry.autoPart}`);
+      lines.push("expected: |", "  Something.", "result: [pending]", "");
+      out.push(...mutate(entry.number, lines));
+    }
+    out.push("## Summary", "", "total: 24", "");
+    return out.join("\n");
+  }
+
+  function specs07(): Record<string, string> {
+    const sources: Record<string, string> = {};
+    for (const entry of plan07) {
+      if (entry.specFile === null) continue;
+      const name = entry.specFile.split("/").pop() as string;
+      sources[name] ??= "";
+      sources[name] += `it("[07-UAT#${String(entry.number).padStart(2, "0")}] title", () => {});\n`;
+    }
+    return sources;
+  }
+
+  function run07(text: string, specs: Record<string, string>) {
+    return lintTagsCommand({
+      scriptPath: SCRIPT_07_PATH,
+      specsDir: SPEC_DIR,
+      readFile: (path) =>
+        path === SCRIPT_07_PATH ? text : (specs[path.slice(SPEC_DIR.length + 1)] ?? null),
+      listFiles: () => Object.keys(specs),
+    });
+  }
+
+  it("is clean for a Phase 7 script that matches the Phase 7 plan and the specs", () => {
+    const result = run07(script07(), specs07());
+    expect(result.lines.filter((line) => /^[A-Z_]+/.test(line))).toEqual([]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("checks the script against the Phase 7 plan, naming a mismatching item", () => {
+    const changed = script07((number, lines) =>
+      number === 9 ? lines.map((line) => (line === "run: auto" ? "run: owner" : line)) : lines,
+    );
+    const result = run07(changed, specs07());
+    expect(result.lines).toContain("MAP_MISMATCH item 9");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("reports a missing Phase 7 spec file", () => {
+    const specs = specs07();
+    delete specs["research-hostile.e2e.ts"];
+    const result = run07(script07(), specs);
+    expect(result.lines).toContain("MAP_SPEC_FILE_MISSING research-hostile.e2e.ts");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("raises a usage error for a script of an unknown phase", () => {
+    const unknown = script07().replace("phase: 07-demo", "phase: 99-demo");
+    expect(() => run07(unknown, specs07())).toThrow(UsageError);
   });
 });
