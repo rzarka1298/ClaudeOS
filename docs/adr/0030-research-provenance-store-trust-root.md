@@ -65,8 +65,13 @@ order (the order is the citation numbering) and the per-source handling counts; 
 quote and cited source ids in order (`packages/service/src/research/report-digest.ts`). The stage is not covered, since
 finalising changes it.
 
-The pipeline writes the row when it has finalised the report: it reads the report back from the vault, parses it exactly
-as the reader will, records the digest, and only then logs the `output` stage and finishes the run. A report that is
+The digest the store records is the pipeline's own: it is taken from the in-memory report the pipeline validated and
+wrote (the stage is not covered, so the finalised form has the same digest), never from what the vault holds later
+(07-FIX7). When the pipeline has finalised the report it reads it back from the vault, parses it exactly as the reader
+will, and requires that digest to equal the one it computed from its own report. A mismatch means a vault-confined
+writer rewrote the report between its first publication and its finalising (the wiki writes happen in that window): the
+run fails as `vault-write-failed`, the report and any record are taken back, and nothing is verified. Only when the two
+agree does it record the digest, log the `output` stage and finish the run. A report that is
 taken back (a failed finalise, a store write that fails, a run that cannot record its success) takes its record back
 with it. A record can be made only for a run that is still in flight, and a store fault while recording ends the run as
 `vault-write-failed` with nothing published.

@@ -841,6 +841,13 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     });
     reportId = report.id;
     trace.reportPath = report.path;
+    // The digest the store will vouch for is the one of the report THIS pipeline produced, taken
+    // here from the in-memory frontmatter that was validated and written, never from what the vault
+    // holds later. The digest leaves the stage out (finalising changes only the stage), so it is
+    // also the digest the finalised form must have. A vault-confined writer who rewrites the report
+    // between this write and its finalising (during the wiki writes) cannot get the rewrite
+    // blessed: the read-back below has to equal this value (07-FIX7, ADR-0030).
+    const trustedDigest = reportContentDigest(report.frontmatter);
 
     const wikiIds: string[] = [];
     for (const source of usable) {
@@ -877,11 +884,18 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
     ) {
       throw new Error("the finalised report cannot be read back");
     }
+    // The vault is read back only to prove the finalised report is the one this run wrote. A
+    // report that changed in between is not published and no digest is recorded for it: the run
+    // fails, and the rollback below takes the report back out.
+    if (reportContentDigest(finalised.frontmatter) !== trustedDigest) {
+      logWarn(deps, { event: "research-report-changed-before-finalise" });
+      throw new Error("the report changed between its publication and its finalising");
+    }
     try {
       recordResearchReport(deps.db, {
         jobRunId: trace.runId,
         reportNoteId: report.id,
-        contentDigest: reportContentDigest(finalised.frontmatter),
+        contentDigest: trustedDigest,
         recordedAt: deps.now().toISOString(),
       });
     } catch (error) {
