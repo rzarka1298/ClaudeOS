@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -81,7 +81,41 @@ function sourceFiles(): string[] {
   return files.filter((file) => /\.(ts|tsx|mjs|js|sh|template|plist)$/.test(file));
 }
 
-const isTest = (file: string): boolean => /\.test\.|\.int\.test\.|test-support|harness/.test(file);
+/**
+ * The files the scan does not read, as an explicit set (07-FIX7). A name that merely contains
+ * `test`, `test-support` or `harness` exempts nothing: a wdio spec named `x.test.e2e.ts`, a
+ * `harness-x.ts` or a `harness/` folder anywhere is scanned like any other source.
+ *
+ * - a test file is a file whose name ends in `.test.ts` or `.test.tsx` (so `.int.test.ts` and
+ *   `.audit.test.ts` are included, `.test.e2e.ts` is not);
+ * - test support is one of these exact folders, or one of these exact files.
+ *
+ * Every entry is a plain repository-relative path, and a test below checks that each one exists, so
+ * a stale entry fails and a new support folder has to be added here, in review.
+ */
+export const TEST_FILE_SUFFIXES: readonly string[] = [".test.ts", ".test.tsx"];
+export const TEST_SUPPORT_FOLDERS: readonly string[] = [
+  "packages/collectors/src/test-support/",
+  "packages/operational-store/src/test-support/",
+  "packages/plugin/src/test-support/",
+  "packages/service/src/test-support/",
+  "packages/service/src/approval/test-support/",
+  "packages/service/src/executors/test-support/",
+  "packages/service/src/research/fetch/test-support/",
+  "packages/service/src/research/test-support/",
+];
+export const TEST_SUPPORT_FILES: readonly string[] = [
+  "packages/test-fixtures/src/service-harness.ts",
+];
+
+const isTest = (file: string): boolean => {
+  const path = relative(REPO, file).split(sep).join("/");
+  return (
+    TEST_FILE_SUFFIXES.some((suffix) => path.endsWith(suffix)) ||
+    TEST_SUPPORT_FOLDERS.some((folder) => path.startsWith(folder)) ||
+    TEST_SUPPORT_FILES.includes(path)
+  );
+};
 
 const scannedFiles = (files: readonly string[]): string[] => files.filter((file) => !isTest(file));
 
@@ -298,6 +332,19 @@ describe("07-FIX7: the test-file exemption is an explicit set, not a loose path 
 
   it("still exempts the unit and integration test files and the service's own test-support folder", () => {
     for (const file of REAL_TESTS) expect(isTest(abs(file)), file).toBe(true);
+  });
+
+  it("keeps the exempt set exact: every folder and file listed exists, and none is a pattern", () => {
+    for (const folder of TEST_SUPPORT_FOLDERS) {
+      expect(NOT_A_PLAIN_FILE.test(folder.replace(/\/$/, "")), folder).toBe(false);
+      expect(folder.endsWith("/"), folder).toBe(true);
+      expect(statSync(abs(folder)).isDirectory(), folder).toBe(true);
+    }
+    for (const file of TEST_SUPPORT_FILES) {
+      expect(NOT_A_PLAIN_FILE.test(file), file).toBe(false);
+      expect(statSync(abs(file)).isFile(), file).toBe(true);
+    }
+    expect([...TEST_FILE_SUFFIXES]).toEqual([".test.ts", ".test.tsx"]);
   });
 
   it("mutation: a variable planted in each loosely named file is found, and none planted in a real test is", () => {
