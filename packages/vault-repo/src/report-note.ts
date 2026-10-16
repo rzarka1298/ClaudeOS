@@ -239,6 +239,9 @@ function renderFindings(report: ReportFields): string[] {
     const numbers = sourceNumbers(item, report.sourceRefs);
     lines.push(`### Finding ${index + 1}`, "", `${display.glyph} **${display.label}**`, "");
     lines.push(escapeMarkdownText(item.text), "");
+    // The writer does not re-verify a quote (vault-repo cannot import @ccc/research): the domain
+    // schema requires one on every fact and claim, and the trusted stage (claims.ts) upholds that
+    // a stored quote is a whole-token substring of its cited sources' evidence text.
     if (item.quote !== undefined) {
       const caption = numbers.length === 1 ? "source" : "sources";
       lines.push(`Quoted from ${caption} ${numbers.join(", ")}:`, "");
@@ -357,6 +360,7 @@ export interface WrittenReportNote {
 
 interface Existing {
   readonly id: string;
+  readonly stage: ReportFrontmatter["stage"];
   readonly created: string;
   readonly passthrough: Record<string, unknown>;
   readonly plainDateKeys: ReadonlySet<string>;
@@ -370,6 +374,7 @@ function readExisting(target: string): Existing | null {
     const parsed = parseReportNote(raw);
     return {
       id: parsed.frontmatter.id,
+      stage: parsed.frontmatter.stage,
       created: parsed.frontmatter.created,
       passthrough: parsed.passthrough,
       plainDateKeys: parsed.plainDateKeys,
@@ -416,8 +421,9 @@ function writeAndIndex(
  * scope and containment are verified before any directory is created.
  *
  * Writing the same report again keeps the note id, the `created` stamp and any keys the owner
- * added, so with the same clock the file is byte-identical. A file that already exists but cannot
- * be read back is never overwritten.
+ * added, so with the same clock the file is byte-identical. A report that is already at stage
+ * `output` stays `output` (a retry never regresses a finalised report). A file that already exists
+ * but cannot be read back is never overwritten.
  *
  * @throws {ReportNoteError} for a bad run note path, an unreadable existing file or an oversized note.
  * @throws {ZodError} when the supplied fields do not satisfy the report schema.
@@ -440,7 +446,8 @@ export function writeReportNote(options: WriteReportNoteOptions): WrittenReportN
   const validated = ReportFrontmatterSchema.parse({
     id: existing?.id ?? newNoteId(),
     scope: "global",
-    stage: "deliverable",
+    // A retry never regresses a finalised report: an existing `output` stays `output`.
+    stage: existing?.stage === "output" ? "output" : "deliverable",
     created: existing?.created ?? now,
     updated: now,
     generatedBy: {

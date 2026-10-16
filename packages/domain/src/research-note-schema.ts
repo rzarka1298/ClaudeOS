@@ -113,6 +113,10 @@ export const ReportItemSchema = z
   .refine((item) => item.kind === "inference" || item.citedSourceIds.length > 0, {
     message: "a reported fact and a source claim cite at least one source",
     path: ["citedSourceIds"],
+  })
+  .refine((item) => item.kind === "inference" || item.quote !== undefined, {
+    message: "a reported fact and a source claim carry the quote that verified them",
+    path: ["quote"],
   });
 export type ReportItem = z.infer<typeof ReportItemSchema>;
 
