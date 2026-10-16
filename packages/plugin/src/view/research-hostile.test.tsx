@@ -142,7 +142,7 @@ function shown(text: string, max: number): string {
  * surrogates, and the invisible fillers and variation selectors. Written here, not imported.
  */
 const HIDDEN_RAW =
-  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Cs}]|[^\S ]|\u034f|[\u115f\u1160\u2800\u3164\uffa0\u17b4\u17b5\p{Variation_Selector}]/u;
+  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Cs}]|[^\S ]|\u034f|\u17b4|\u17b5|[\u115f\u1160\u2800\u3164\uffa0\p{Variation_Selector}]/u;
 
 /**
  * What the element shows for `text` capped at `max`. Text with nothing hidden in it shows exactly

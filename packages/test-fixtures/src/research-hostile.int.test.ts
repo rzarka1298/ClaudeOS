@@ -862,7 +862,13 @@ describe("the spies bite", () => {
   });
 
   it("records a WriteStream built directly", async () => {
-    const stream = new WriteStream(sibling());
+    // The legacy constructor takes a path; the type declarations only describe the options form.
+    const Legacy = WriteStream as unknown as new (
+      path: string,
+    ) => {
+      end(done: () => void): void;
+    };
+    const stream = new Legacy(sibling());
     expect(written("WriteStream")).toBe(true);
     await new Promise<void>((done) => stream.end(done));
     rmSync(sibling(), { force: true });
