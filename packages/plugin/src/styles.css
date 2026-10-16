@@ -2648,6 +2648,14 @@
   overflow-wrap: break-word;
 }
 
+/* The shared skeleton is an inline span; inside a definition value it needs its own box,
+ * or the loading state shows the labels with nothing under them (UI-SPEC E2 loading). */
+.ccc-command-center .ccc-research-status-row .ccc-skeleton-line {
+  display: block;
+  width: min(100%, 12rem);
+  margin-bottom: 0;
+}
+
 .ccc-command-center .ccc-research-state {
   white-space: nowrap;
 }
