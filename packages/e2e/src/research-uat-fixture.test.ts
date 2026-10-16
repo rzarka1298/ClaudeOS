@@ -10,6 +10,7 @@ import {
   prepareResearchUat,
   RESEARCH_SCENARIOS,
   RESEARCH_TEST_ENV,
+  SLOW_FETCH_MS,
 } from "./research-uat-fixture.js";
 import { createServiceFixture } from "./service-fixture.js";
 
@@ -161,7 +162,7 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
     expect(failing("all-failing")).toBe(3);
   });
 
-  it("gives the slow scenario a delay on every source and no other scenario any", () => {
+  it("holds every source of the slow scenario long enough to stop the service mid-fetch, and no other scenario that long", () => {
     const dir = runtimeDir();
     const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT });
     const manifest = JSON.parse(
@@ -172,7 +173,9 @@ describe("prepareResearchUat writes the allowlist, the fixture directory and the
     const delayed = (scenario: (typeof RESEARCH_SCENARIOS)[number]) => {
       prepared.select(scenario);
       return parsedSources(dir).sources.filter(
-        (source) => (manifest.entries.find((entry) => entry.url === source.url)?.delayMs ?? 0) > 0,
+        (source) =>
+          (manifest.entries.find((entry) => entry.url === source.url)?.delayMs ?? 0) >=
+          SLOW_FETCH_MS,
       ).length;
     };
     expect(delayed("slow")).toBe(3);

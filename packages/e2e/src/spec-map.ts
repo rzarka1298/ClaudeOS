@@ -1,10 +1,14 @@
+import { UsageError } from "./cli-args.js";
 import type { UatProfile } from "./profile.js";
+import { SPEC_FILES_07, UAT_ITEM_PLAN_07, UAT_PHASE_PREFIX_07 } from "./spec-map-07.js";
 import type { OwnerWhy, RunClass, ViaToken } from "./uat-tags.js";
 
 /**
- * The single source for which spec file proves which Phase 6 item (D-09, D-13, E2E-10):
- * auto 18, auto+look 4, owner 4. Plans 05.2-06 to 05.2-08 create the spec files; plan 05.2-09
- * verifies that they exist and match this table.
+ * The single source for which spec file proves which item of a phase's UAT script (D-09, D-13,
+ * E2E-10, and for Phase 7 D-28): the table below is Phase 6's (auto 18, auto+look 4, owner 4;
+ * plans 05.2-06 to 05.2-08 create its spec files and plan 05.2-09 verifies them against it), and
+ * {@link specMapForPhase} selects the table of the phase named in a script's front matter
+ * (plan 07-17, research Pitfall 13). The Phase 6 exports keep their names and values.
  */
 
 /** The phase number used in the mocha title prefix of the Phase 6 retrofit. */
@@ -35,8 +39,8 @@ export interface ItemPlan {
   readonly via: readonly ViaToken[];
   readonly ownerWhy: OwnerWhy | null;
   readonly autoPart: string | null;
-  /** One of SPEC_FILES, or null for an item with no spec. */
-  readonly specFile: SpecFile | null;
+  /** One of the phase's spec files, or null for an item with no spec. */
+  readonly specFile: string | null;
   /** `full` items run only in the full profile (D-13). */
   readonly profile: UatProfile;
 }
@@ -140,4 +144,31 @@ export function specsForProfile(profile: UatProfile): SpecFile[] {
       .filter((file): file is SpecFile => file !== null),
   );
   return SPEC_FILES.filter((file) => wanted.has(file));
+}
+
+/** The item plan and the spec files of one phase's UAT script. */
+export interface PhaseSpecMap {
+  /** The phase number used in the mocha title prefix, for example `06`. */
+  readonly prefix: string;
+  readonly itemPlan: readonly ItemPlan[];
+  readonly specFiles: readonly string[];
+}
+
+const PHASE_SPEC_MAPS: readonly PhaseSpecMap[] = [
+  { prefix: UAT_PHASE_PREFIX, itemPlan: UAT_ITEM_PLAN, specFiles: SPEC_FILES },
+  { prefix: UAT_PHASE_PREFIX_07, itemPlan: UAT_ITEM_PLAN_07, specFiles: SPEC_FILES_07 },
+];
+
+/** The map of the phase whose number prefixes a script's `phase:` line, or null when unknown. */
+export function specMapForPhase(prefix: string): PhaseSpecMap | null {
+  return PHASE_SPEC_MAPS.find((entry) => entry.prefix === prefix) ?? null;
+}
+
+/** {@link specMapForPhase}, as a usage error for an unknown phase. The value is never echoed. */
+export function requireSpecMapForPhase(prefix: string): PhaseSpecMap {
+  const map = specMapForPhase(prefix);
+  if (map === null) {
+    throw new UsageError("The script names a phase the runner has no item plan for.");
+  }
+  return map;
 }

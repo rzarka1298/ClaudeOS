@@ -22,6 +22,7 @@ const SUPPORT_FILES = [
   "cross-support.ts",
   "synthetic-session.ts",
   "shot-layout.ts",
+  "research-support.ts",
 ];
 
 interface EsbuildLike {
@@ -159,6 +160,7 @@ describe("inline renderer functions in the specs and support modules", () => {
       "cross-cutting",
       "notification-look",
       "synthetic-session",
+      "research-core",
       "tasks-core",
       "tasks-scale",
       "tasks-views",

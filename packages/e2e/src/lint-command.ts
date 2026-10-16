@@ -1,5 +1,10 @@
 import { join } from "node:path";
-import { SPEC_FILES, specsForProfile, UAT_ITEM_PLAN, UAT_PHASE_PREFIX } from "./spec-map.js";
+import {
+  requireSpecMapForPhase,
+  specsForProfile,
+  UAT_ITEM_PLAN,
+  UAT_PHASE_PREFIX,
+} from "./spec-map.js";
 import {
   checkMapAgainstScript,
   expectedTitlesByItem,
@@ -14,8 +19,9 @@ import { SCALE_SPEC } from "./wdio-config.js";
 /**
  * The tag-lint command (05.2-09, D-09, E2E-04, E2E-06): the strict 1:1 between tagged script
  * items and spec titles, the classification table, the existence of every spec file the table
- * names and the profile rule that the 10,000-task spec stays out of the standard run. Output is a
- * finding code and an item number per line, never script or spec text.
+ * names and the profile rule that the 10,000-task spec stays out of the standard run. The table is
+ * the one of the phase in the script's front matter (plan 07-17); an unknown phase is a usage
+ * error. Output is a finding code and an item number per line, never script or spec text.
  */
 
 export interface LintCommandInput {
@@ -51,6 +57,8 @@ export function lintTagsCommand(input: LintCommandInput): LintCommandResult {
 
   const parsed = parseUatScript(script);
   const phasePrefix = phasePrefixOf(parsed.frontMatter) ?? UAT_PHASE_PREFIX;
+  // The classification table of the script's own phase; an unknown phase is a usage error.
+  const phaseMap = requireSpecMapForPhase(phasePrefix);
   const present = new Set(
     input.listFiles(input.specsDir).filter((name) => name.endsWith(".e2e.ts")),
   );
@@ -75,11 +83,9 @@ export function lintTagsCommand(input: LintCommandInput): LintCommandResult {
   ];
 
   const extra: string[] = [];
-  if (phasePrefix === UAT_PHASE_PREFIX) {
-    found.push(...checkMapAgainstScript(parsed.items, UAT_ITEM_PLAN));
-    for (const file of SPEC_FILES) {
-      if (!present.has(fileName(file))) extra.push(`MAP_SPEC_FILE_MISSING ${fileName(file)}`);
-    }
+  found.push(...checkMapAgainstScript(parsed.items, phaseMap.itemPlan));
+  for (const file of phaseMap.specFiles) {
+    if (!present.has(fileName(file))) extra.push(`MAP_SPEC_FILE_MISSING ${fileName(file)}`);
   }
   // Items whose spec tag names a file the folder lacks are already SPEC_FILE_MISSING findings.
   const scale = UAT_ITEM_PLAN.find((entry) => entry.profile === "full")?.specFile ?? null;

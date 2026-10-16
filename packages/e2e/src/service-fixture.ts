@@ -2,6 +2,7 @@ import { chmodSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync } from
 import { join } from "node:path";
 import { startServiceForTest } from "@ccc/test-fixtures";
 import { buildServiceEnv, refuseRealPaths, type ServiceKind } from "./isolation-guards.js";
+import { isResearchGuardEnv, type ResearchGuardEnv } from "./research-uat-fixture.js";
 import { SERVICE_ENTRY } from "./repo-paths.js";
 import type { RunRootPaths } from "./run-root.js";
 import {
@@ -22,6 +23,11 @@ import {
 
 export interface StartOptions {
   kind?: ServiceKind;
+  /**
+   * The research guard variables of a Phase 7 item (plan 07-17). Accepted only when it is the
+   * environment `prepareResearchUat` made, and never together with the expiry kind.
+   */
+  researchEnv?: ResearchGuardEnv;
   /** 100 ms polls to wait for the socket; raise it for a vault with thousands of notes. */
   waitAttempts?: number;
 }
@@ -118,10 +124,22 @@ export function createServiceFixture(
       },
       { home: deps.home },
     );
+    if (options.researchEnv !== undefined) {
+      if (!isResearchGuardEnv(options.researchEnv)) {
+        throw new Error("Refusing a research environment that the runner did not prepare.");
+      }
+      if ((options.kind ?? "normal") !== "normal") {
+        throw new Error("The research environment is for the normal service kind only.");
+      }
+    }
     const args: StartServiceArgs = {
       socketPath: paths.socketPath,
       dbPath: paths.dbPath,
-      env: buildServiceEnv(paths, sandbox.account, options.kind ?? "normal"),
+      // The isolation variables come last, so a research variable can never replace one.
+      env: {
+        ...(options.researchEnv ?? {}),
+        ...buildServiceEnv(paths, sandbox.account, options.kind ?? "normal"),
+      },
     };
     if (options.waitAttempts !== undefined) args.waitAttempts = options.waitAttempts;
     const record = sandbox.recordSpawn;

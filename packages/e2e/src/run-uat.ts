@@ -6,7 +6,7 @@ import { addFrontMatterNote } from "./report-io.js";
 import { type ItemResolution, type ResultRecord, resolveItemStatus } from "./results.js";
 import type { SandboxHandle, SandboxOutcome } from "./sandbox.js";
 import { sanitizeText } from "./sanitize.js";
-import { UAT_ITEM_PLAN, UAT_PHASE_PREFIX } from "./spec-map.js";
+import { specMapForPhase, UAT_PHASE_PREFIX } from "./spec-map.js";
 import type { SpikeDecisions } from "./spike-decisions.js";
 import {
   expectedTitlesByItem,
@@ -130,6 +130,7 @@ const MSG = {
   ci: "The live UAT runner needs a GUI session and refuses to run under CI.",
   platform: "The live UAT runner runs on macOS only.",
   build: "Build output is missing; run pnpm exec turbo run build first.",
+  phase: "The script names a phase the runner has no item plan for.",
   decisions: "The spike decisions are not recorded; record them in spike-decisions.ts first.",
 } as const;
 
@@ -216,8 +217,11 @@ function rowsFrom(
   const phasePrefix = phasePrefixOf(parsed.frontMatter) ?? UAT_PHASE_PREFIX;
   // Every tagged spec test an item expects, so an item cannot pass while one left no record.
   const expected = expectedTitlesByItem(readSpecTitles(phasePrefix), phasePrefix);
+  // The item plan of THIS script's phase (plan 07-17): another phase's item of the same number
+  // is a different item (Phase 6 item 21 is the full-profile scale item; Phase 7 item 21 is not).
+  const itemPlan = specMapForPhase(phasePrefix)?.itemPlan ?? [];
   const rows = parsed.items.map((item): ReportRow => {
-    const plan = UAT_ITEM_PLAN.find((entry) => entry.number === item.number);
+    const plan = itemPlan.find((entry) => entry.number === item.number);
     const resolution = resolveItemStatus({
       item: {
         number: item.number,
@@ -285,6 +289,8 @@ export async function runUat(options: RunOptions, ports: RunPorts): Promise<RunO
   if (options.script !== undefined) {
     const early = ports.readScript(options.script);
     if (early !== null) {
+      const earlyPrefix = phasePrefixOf(parseUatScript(early).frontMatter) ?? UAT_PHASE_PREFIX;
+      if (specMapForPhase(earlyPrefix) === null) return refusal(MSG.phase);
       const findings = mappingFindings(early, ports.readSpecTitles);
       if (findings.length > 0) {
         return refusal(`The script and the specs do not map one to one: ${findings.join("; ")}.`);

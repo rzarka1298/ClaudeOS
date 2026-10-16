@@ -116,12 +116,12 @@ describe("the phase registry (Test 1)", () => {
   });
 
   it("does not echo the phase value it was asked about", () => {
-    const hostile = "99-<script>";
+    const hostile = "99-HOSTILEMARK";
     try {
       requireSpecMapForPhase(hostile);
       throw new Error("expected a usage error");
     } catch (error) {
-      expect((error as Error).message).not.toContain("script");
+      expect((error as Error).message).not.toContain("HOSTILEMARK");
     }
   });
 });
