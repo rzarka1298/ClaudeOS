@@ -615,3 +615,73 @@ describe("opening a report", () => {
     expect(await screen.findByText(`reader for ${row.noteId}`)).toBeTruthy();
   });
 });
+
+describe("the subline (UI-SPEC R1, E1 long text, E3 zero and one source)", () => {
+  async function sublineFor(status: ReturnType<typeof statusOf>): Promise<HTMLElement> {
+    const api = fakeResearchApi({ status: vi.fn(() => Promise.resolve(status)) });
+    mount(api);
+    await waitFor(() => expect(api.status).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(document.querySelector(".ccc-research-subline")?.textContent).not.toBe(
+        "Research sources",
+      ),
+    );
+    return document.querySelector(".ccc-research-subline") as HTMLElement;
+  }
+
+  it("cuts a topic label over 80 characters and says the text was shortened", async () => {
+    const subline = await sublineFor(
+      statusOf({ topicLabel: "T".repeat(200), configuredSources: [...CONFIGURED_SOURCES] }),
+    );
+    expect(subline.textContent).toContain(`${"T".repeat(80)} · 3 sources configured`);
+    expect(subline.textContent).not.toContain("T".repeat(81));
+    expect(subline.textContent).toContain("Text shortened for display.");
+  });
+
+  it("does not cut a label at exactly 80 characters", async () => {
+    const subline = await sublineFor(
+      statusOf({ topicLabel: "T".repeat(80), configuredSources: [...CONFIGURED_SOURCES] }),
+    );
+    expect(subline.textContent).toBe(`${"T".repeat(80)} · 3 sources configured`);
+  });
+
+  it("never cuts a surrogate pair in half", async () => {
+    const pair = "\u{1d11e}";
+    const subline = await sublineFor(
+      statusOf({ topicLabel: `${"a".repeat(79)}${pair}${pair}`, configuredSources: [] }),
+    );
+    expect(subline.textContent).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+    expect(subline.textContent).toContain("Text shortened for display.");
+  });
+
+  it("reads 0 sources configured when the allowlist is empty, with the topic", async () => {
+    const subline = await sublineFor(
+      statusOf({ topicLabel: RESEARCH_TOPIC, configuredSources: [] }),
+    );
+    expect(subline.textContent).toBe(`${RESEARCH_TOPIC} · 0 sources configured`);
+  });
+
+  it("reads 0 sources configured with the default label when there is no topic", async () => {
+    const api = fakeResearchApi({
+      status: vi.fn(() => Promise.resolve(statusOf({ configuredSources: [] }))),
+    });
+    mount(api);
+    await waitFor(() =>
+      expect(document.querySelector(".ccc-research-subline")?.textContent).toBe(
+        "Research sources · 0 sources configured",
+      ),
+    );
+  });
+
+  it("reads 1 source configured for one source", async () => {
+    const subline = await sublineFor(
+      statusOf({ topicLabel: RESEARCH_TOPIC, configuredSources: [CONFIGURED_SOURCES[0]] }),
+    );
+    expect(subline.textContent).toBe(`${RESEARCH_TOPIC} · 1 source configured`);
+  });
+
+  it("omits the count segment when the count is unknown", async () => {
+    const subline = await sublineFor(statusOf({ topicLabel: RESEARCH_TOPIC }));
+    expect(subline.textContent).toBe(RESEARCH_TOPIC);
+  });
+});

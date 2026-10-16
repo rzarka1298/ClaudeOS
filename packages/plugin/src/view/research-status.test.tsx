@@ -309,3 +309,47 @@ describe("Test 4: the configured sources disclosure (E3)", () => {
     expect(item?.textContent).toContain("Text shortened for display.");
   });
 });
+
+describe("A16: two configured sources with the same label and host both stay listed", () => {
+  it("keeps every entry as the list changes", () => {
+    const twin = { label: "Example tools changelog", host: "changelog.example.invalid" };
+    const { rerender } = render(
+      <ResearchStatusSection
+        status={statusOf({ configuredSources: [twin, { ...twin }] })}
+        loadFailed={false}
+        now={RESEARCH_NOW_MS}
+        zone={RESEARCH_ZONE}
+        onOpenReport={() => undefined}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Show configured sources/ }));
+    expect(document.querySelectorAll(".ccc-research-sources-config li")).toHaveLength(2);
+    rerender(
+      <ResearchStatusSection
+        status={statusOf({
+          configuredSources: [
+            twin,
+            { ...twin },
+            { label: "Demo language blog", host: "blog.demo.invalid" },
+          ],
+        })}
+        loadFailed={false}
+        now={RESEARCH_NOW_MS}
+        zone={RESEARCH_ZONE}
+        onOpenReport={() => undefined}
+      />,
+    );
+    const items = [...document.querySelectorAll(".ccc-research-sources-config li")];
+    expect(items.map((li) => li.textContent)).toEqual([
+      "Example tools changelog changelog.example.invalid",
+      "Example tools changelog changelog.example.invalid",
+      "Demo language blog blog.demo.invalid",
+    ]);
+  });
+
+  it("builds each list key from the position as well, so a repeated label and host cannot collide", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("./research-status.tsx", import.meta.url), "utf8");
+    expect(source).toMatch(/key=\{`\$\{index\}\|/);
+  });
+});

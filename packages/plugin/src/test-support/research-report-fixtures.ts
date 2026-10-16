@@ -165,3 +165,26 @@ export function sourcesPage(
     truncated: options.truncated ?? false,
   };
 }
+
+/** A private source: a deep link into the owner's own app, and no canonical address. */
+export function privateDeepLinkSource(number: number): ResearchReportSource {
+  const { canonicalUrl: _address, ...rest } = reportSource(number, {
+    sourceType: "note",
+    accessClass: "private",
+  });
+  return { ...rest, deepLink: "obsidian://open?vault=example&file=sample" };
+}
+
+/** A report that lost sources: the header of a partial run with two reasons. */
+export function partialHeader(): ResearchReportHeader {
+  return reportHeader({
+    partial: true,
+    sourceCount: 4,
+    sourceTotal: 6,
+    unavailableSources: [
+      { label: "Demo build tool releases", code: "timeout" },
+      { label: "Sample package registry", code: "http-status" },
+    ],
+    runOutcome: "partial",
+  });
+}
