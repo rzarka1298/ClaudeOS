@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readSync, realpathSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  realpathSync,
+} from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import {
   type ClaimType,
@@ -86,16 +95,30 @@ function blockClaimsExtendedType(block: string): boolean {
  * the research shapes. Bounded: only the first bytes are read and parsed, with js-yaml's core
  * schema. A hand-damaged report that no longer parses is still protected when it mentions a
  * research type, and a block longer than the probe (no closing delimiter in view) is judged by
- * the same fallback scan.
+ * the same fallback scan. A target that is a special file, a link at the final component or
+ * unreadable counts as one (07-FIX8): the writer will not replace what it cannot read.
  */
 function holdsExtendedNote(target: string): boolean {
   if (!existsSync(target)) return false;
   let head = "";
-  const fd = openSync(target, "r");
+  // Opened without blocking and without following a link at the final component (07-FIX8): a
+  // FIFO placed at the target would otherwise stall the service on the open, and a link would
+  // have the probe read some other file. A target that cannot be read as a plain file cannot be
+  // shown to be anything but a research note, so it is treated as one and the write is refused.
+  let fd: number;
   try {
+    fd = openSync(target, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return true;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) return true;
     const buffer = Buffer.alloc(TYPE_PROBE_BYTES);
     const read = readSync(fd, buffer, 0, TYPE_PROBE_BYTES, 0);
     head = buffer.toString("utf8", 0, read);
+  } catch {
+    return true;
   } finally {
     closeSync(fd);
   }

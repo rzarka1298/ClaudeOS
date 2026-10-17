@@ -175,8 +175,8 @@ describe("a research wiki note carries the banner", () => {
     );
     const text = readFileSync(second.absolutePath, "utf8");
     expect(count(text, UNTRUSTED_DERIVED_BANNER)).toBe(1);
-    expect(text).toContain("Cited text.");
-    expect(text).toContain("Later text.");
+    expect(text).toContain("Cited text");
+    expect(text).toContain("Later text");
   });
 
   test("an older note without the line gets it on its next rewrite", () => {

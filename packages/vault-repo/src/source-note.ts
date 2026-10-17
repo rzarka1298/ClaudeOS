@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   DeepLinkSchema,
@@ -44,7 +44,12 @@ import {
   stringifyExtendedNote,
 } from "./extended-note.js";
 import { regenerateIndex } from "./index-generation.js";
-import { escapeMarkdownText, fenceUntrustedBlock, inlineCode } from "./markdown-escape.js";
+import {
+  escapeMarkdownText,
+  fenceUntrustedBlock,
+  inlineCode,
+  UNTRUSTED_DERIVED_BANNER,
+} from "./markdown-escape.js";
 import { REPORT_NOTE_PATH_PATTERN } from "./report-note.js";
 
 /**
@@ -483,6 +488,9 @@ function renderWikiBody(options: WriteWikiSourceNoteOptions, priorBody: string |
     "",
     "Source note. It is updated in place whenever the source is fetched again.",
     "",
+    // The citing lines below are the summariser's output over this source: untrusted (07-FIX8).
+    UNTRUSTED_DERIVED_BANNER,
+    "",
     `- Address: ${inlineCode(address)}`,
     `- Latest snapshot: ${inlineCode(options.latestSnapshotPath)}`,
     `- Last retrieved: ${inlineCode(options.lastRetrievedAt)}`,
@@ -610,12 +618,13 @@ export function captureWikiSourceNote(vaultRoot: string, sourceId: string): Wiki
   );
   let prior: string | null = null;
   let unreadable = false;
-  if (existsSync(target)) {
-    try {
-      prior = readFileSync(target, "utf8");
-    } catch {
-      unreadable = true;
-    }
+  // The bounded reader (07-FIX8): a FIFO never blocks the event loop, a link at the final
+  // component is not followed and a note over the wiki cap is not read whole. Absent is a note
+  // that did not exist; every other failure is a note that cannot be read back.
+  try {
+    prior = readBoundedFile(target, WIKI_SOURCE_FILE_MAX_BYTES, failSource);
+  } catch (error) {
+    if (!(error instanceof SourceNoteError && error.reason === "missing")) unreadable = true;
   }
   return {
     restore() {

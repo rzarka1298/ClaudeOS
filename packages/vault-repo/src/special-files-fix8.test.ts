@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { WIKI_SOURCE_FILE_MAX_BYTES } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { INDEX_NOTE_READ_MAX_BYTES, regenerateIndex } from "./index-generation.js";
+import { writeReportNote } from "./report-note.js";
 import { initializeVault } from "./setup.js";
 import { captureWikiSourceNote } from "./source-note.js";
 import { ExtendedNoteWriteRefusedError, writeNote } from "./write-note.js";
@@ -135,14 +136,29 @@ describe("item 2: the generic writer probes an existing target without blocking 
     expect(value).toBe("refused");
   });
 
-  test("a link at the target is refused, whatever it points at", () => {
-    const real = join(vaultRoot, "global", "output", "plain-target.md");
-    writeFileSync(real, "just a plain file\n");
-    symlinkSync(real, join(vaultRoot, "global", "output", "a-link.md"));
+  test("a link to a research report is still refused and the report is untouched", () => {
+    // The writer resolves a link inside the vault to the file it would replace and probes that
+    // one, so a link alone is not a red case (recorded in 07-FIX8-SUMMARY.md); a link that leads
+    // to a research note must stay protected.
+    const report = writeReportNote({
+      vaultRoot,
+      topicLabel: "Daily tech",
+      generatedAt: "2026-10-15T08:59:30.000Z",
+      jobRunId: "r0123456789abcdefghijklmn",
+      summariser: "extractive",
+      sourceTotal: 0,
+      unavailableSources: [],
+      sourceRefs: [],
+      sourceHandling: [],
+      items: [],
+      now: new Date("2026-10-15T09:00:00.000Z"),
+    });
+    const before = readFileSync(join(vaultRoot, report.path), "utf8");
+    symlinkSync(join(vaultRoot, report.path), join(vaultRoot, "global", "output", "a-link.md"));
     expect(() => writeNote(noteRequest("global/output/a-link.md"))).toThrow(
       ExtendedNoteWriteRefusedError,
     );
-    expect(readFileSync(real, "utf8")).toBe("just a plain file\n");
+    expect(readFileSync(join(vaultRoot, report.path), "utf8")).toBe(before);
   });
 
   test("a plain existing note and a missing target are still written", () => {

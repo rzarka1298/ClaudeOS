@@ -44,7 +44,7 @@ import {
   stringifyExtendedNote,
 } from "./extended-note.js";
 import { regenerateIndex } from "./index-generation.js";
-import { escapeMarkdownText, inlineCode } from "./markdown-escape.js";
+import { escapeMarkdownText, inlineCode, UNTRUSTED_DERIVED_BANNER } from "./markdown-escape.js";
 
 /**
  * The research report note (plan 07-08; D-12, D-14, D-15, RSRCH-02/03/04, research Pattern 5).
@@ -304,7 +304,8 @@ function summariserText(summariser: SummariserId): string {
 
 /**
  * Renders the report body from validated structured fields, in the order the reader shows its
- * blocks (UI-SPEC R4): title, AI line, partial notice, legend, findings, sources, run record.
+ * blocks (UI-SPEC R4): title, AI line, untrusted-derived line, partial notice, legend, findings,
+ * sources, run record.
  * Deterministic: the same fields give the same bytes.
  */
 export function renderReportBody(report: ReportFields, runNotePath?: string): string {
@@ -317,6 +318,10 @@ export function renderReportBody(report: ReportFields, runNotePath?: string): st
     `# ${escapeMarkdownText(report.topicLabel)} \u2014 ${formatDate(report.generatedAt)}`,
     "",
     `AI-generated summary by ${summariserText(report.summariser)}. Not verified by a person.`,
+    "",
+    // Fixed text, outside every finding and quote: the body is the summariser's output over
+    // fetched pages, so a source can steer it (07-FIX8).
+    UNTRUSTED_DERIVED_BANNER,
     "",
     `Generated ${inlineCode(report.generatedAt)}. ${report.sourceRefs.length} of ${report.sourceTotal} sources contributed. ${plural(report.items.length, "finding")}: ${counts.join(", ")}.`,
     "",

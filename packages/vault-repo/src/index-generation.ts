@@ -1,8 +1,9 @@
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { checkPathContainment, TASK_STATUSES } from "@ccc/domain";
 import matter from "gray-matter";
 import { atomicWriteFileSync } from "./atomic-write.js";
+import { ExtendedNoteError, type ExtendedNoteReason, readBoundedFile } from "./extended-note.js";
 import { parseNote, parseUntrustedFrontmatter } from "./frontmatter.js";
 import { isTasksFolderPath, type TaskStatusCounts } from "./managed-folders.js";
 
@@ -14,6 +15,10 @@ const INDEX_FILENAME = "index.md";
  * over it is listed as unreadable rather than read whole. It is above every managed note cap.
  */
 export const INDEX_NOTE_READ_MAX_BYTES = 2 * 1024 * 1024;
+
+/** The refusal the bounded reader raises here; the generator reads only its reason. */
+const failBoundedRead = (reason: ExtendedNoteReason): ExtendedNoteError =>
+  new ExtendedNoteError(reason, `index read refused: ${reason}`);
 
 /** The managed root beneath which every workspace tree lives. */
 const WORKSPACES_FOLDER = "workspaces";
@@ -233,10 +238,13 @@ export class WorkspaceIdentityUnreadableError extends Error {
 function readIdentity(indexPath: string): IdentityRead {
   let raw: string;
   try {
-    raw = readFileSync(indexPath, "utf8");
-  } catch {
+    raw = readBoundedFile(indexPath, INDEX_NOTE_READ_MAX_BYTES, failBoundedRead);
+  } catch (error) {
     // No file at all — nothing was ever written here to preserve.
-    return { kind: "none" };
+    if (error instanceof ExtendedNoteError && error.reason === "missing") return { kind: "none" };
+    // Something is there that cannot be read as a plain, bounded file (a FIFO, a link, a file
+    // over the cap, or any I/O failure): it is read as unreadable, never waited on (07-FIX8).
+    return { kind: "unreadable", cause: error };
   }
   try {
     // NEVER `matter(raw)` here. An `index.md` is ordinary vault content —
@@ -416,7 +424,9 @@ export function regenerateIndex(
 
   for (const filename of listCandidateFiles(resolvedFolder)) {
     try {
-      const { frontmatter } = parseNote(readFileSync(join(resolvedFolder, filename), "utf8"));
+      const { frontmatter } = parseNote(
+        readBoundedFile(join(resolvedFolder, filename), INDEX_NOTE_READ_MAX_BYTES, failBoundedRead),
+      );
       rows.push({
         filename,
         basename: filename.slice(0, -".md".length),
