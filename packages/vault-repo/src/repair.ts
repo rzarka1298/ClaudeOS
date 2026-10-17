@@ -1,12 +1,17 @@
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { checkPathContainment, type NoteFrontmatter } from "@ccc/domain";
+import { ExtendedNoteError, type ExtendedNoteReason, readBoundedFile } from "./extended-note.js";
 import {
   InvalidNoteFrontmatterError,
   parseNote,
   parseUntrustedFrontmatter,
 } from "./frontmatter.js";
-import { regenerateIndex, WorkspaceIdentityUnreadableError } from "./index-generation.js";
+import {
+  INDEX_NOTE_READ_MAX_BYTES,
+  regenerateIndex,
+  WorkspaceIdentityUnreadableError,
+} from "./index-generation.js";
 import { emptyTaskCounts, isTasksFolderPath, WORKSPACE_LEAF_FOLDERS } from "./managed-folders.js";
 import { computeSetupEntries, VaultRootMissingError } from "./setup.js";
 import { parseTaskNote, TaskNoteError } from "./task-note.js";
@@ -233,11 +238,15 @@ function listNoteFiles(dir: string, vaultRoot: string): string[] {
     .sort(compareStrings);
 }
 
+/** The refusal the bounded reader raises here; repair treats any refusal as "not readable". */
+const failBoundedRead = (reason: ExtendedNoteReason): ExtendedNoteError =>
+  new ExtendedNoteError(reason, `repair read refused: ${reason}`);
+
 /** Every note id an existing index CLAIMS to list, in file order. */
 function readIndexNoteIds(indexPath: string): string[] {
   let raw: string;
   try {
-    raw = readFileSync(indexPath, "utf8");
+    raw = readBoundedFile(indexPath, INDEX_NOTE_READ_MAX_BYTES, failBoundedRead);
   } catch {
     return [];
   }
@@ -386,9 +395,9 @@ export function repairVault(vaultRoot: string): RepairReport {
       const notePath = toVaultRelative(vaultRoot, absolute);
       let raw: string;
       try {
-        raw = readFileSync(absolute, "utf8");
+        raw = readBoundedFile(absolute, INDEX_NOTE_READ_MAX_BYTES, failBoundedRead);
       } catch {
-        // Deleted between the listing and the read; not a note.
+        // Deleted, swapped for a special file or a link, or over the cap: not a note.
         continue;
       }
       try {
