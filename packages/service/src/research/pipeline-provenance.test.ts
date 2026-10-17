@@ -7,7 +7,7 @@ import {
   getResearchSourceRecord,
   listJobRuns,
 } from "@ccc/operational-store";
-import { readReportNote } from "@ccc/vault-repo";
+import { readReportNote, UNTRUSTED_DERIVED_BANNER } from "@ccc/vault-repo";
 import { afterEach, describe, expect, it } from "vitest";
 import { sourceIdFor } from "./hash.js";
 import { type PreparedSource, sourceRecordFor } from "./pipeline.js";
@@ -390,5 +390,48 @@ describe("07-FIX7: the recorded digest is the pipeline's own report, never the v
     expect(getResearchReportRecord(kit.store.db, runId)?.contentDigest).toBe(
       reportContentDigest(read.frontmatter),
     );
+  });
+});
+
+describe("07-FIX8 item 5: the notes a run writes open with the untrusted-derived line", () => {
+  const BANNER = UNTRUSTED_DERIVED_BANNER;
+  const count = (text: string): number => text.split(BANNER).length - 1;
+
+  it("puts it once in the report body and once in every wiki note, outside every verified item", async () => {
+    kit = createKit();
+    const runId = await runToEnd(kit);
+    const name = reportNames(kit)[0];
+    const text = readFileSync(join(kit.vaultRoot, "global/output", name ?? ""), "utf8");
+    expect(count(text)).toBe(1);
+    const read = readReportNote(kit.vaultRoot, `global/output/${name}`);
+    if (!read.readable) throw new Error("report must be readable");
+    // Never inside the frontmatter: no item text or quote carries it.
+    expect(JSON.stringify(read.frontmatter)).not.toContain(BANNER);
+    // The recorded digest still equals the digest of the report as read back.
+    expect(getResearchReportRecord(kit.store.db, runId)?.contentDigest).toBe(
+      reportContentDigest(read.frontmatter),
+    );
+    const wikiNames = readdirSync(join(kit.vaultRoot, "global/wiki")).filter(
+      (n) => n !== "index.md",
+    );
+    expect(wikiNames.length).toBeGreaterThan(0);
+    for (const wiki of wikiNames) {
+      expect(count(readFileSync(join(kit.vaultRoot, "global/wiki", wiki), "utf8"))).toBe(1);
+    }
+  });
+
+  it("leaves every quote verified for a real run", async () => {
+    kit = createKit();
+    await runToEnd(kit);
+    const name = reportNames(kit)[0];
+    const read = readReportNote(kit.vaultRoot, `global/output/${name}`);
+    if (!read.readable) throw new Error("report must be readable");
+    const found = findReport(kit.vaultRoot, read.frontmatter.id);
+    if (found.kind !== "found") throw new Error("expected the report");
+    const page = buildReportItemsPage(kit.vaultRoot, kit.store.db, found.entry);
+    if (!page.ok) throw new Error("refused");
+    const served = ResearchReportItemsPageSchema.parse(page.value).items;
+    expect(served.some((item) => item.quoteUnverified === true)).toBe(false);
+    expect(served.filter((item) => item.quote !== null).length).toBeGreaterThan(0);
   });
 });

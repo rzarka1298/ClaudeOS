@@ -276,15 +276,15 @@ function redirect(location: string | undefined, status = 301): Script {
 }
 
 describe("Task 3 Test 1 (redirects): manual, re-validated, at most three", () => {
-  it("follows a 301 to another https host and reports the final address", async () => {
+  it("follows a 301 on the same host and reports the final address", async () => {
     const target = rig(
       routed({
-        "a.example.invalid/start": redirect("https://b.example.invalid/next#frag"),
-        "b.example.invalid/next": OK_PAGE,
+        "a.example.invalid/start": redirect("https://a.example.invalid/next#frag"),
+        "a.example.invalid/next": OK_PAGE,
       }),
     );
     const result = await run(target, "https://a.example.invalid/start");
-    expect(result.ok && result.finalUrl).toBe("https://b.example.invalid/next");
+    expect(result.ok && result.finalUrl).toBe("https://a.example.invalid/next");
     expect(target.fake.calls).toHaveLength(2);
     // Every hop carries the validator, the same agent and the same fixed headers.
     const [first, second] = target.fake.calls;
@@ -299,8 +299,8 @@ describe("Task 3 Test 1 (redirects): manual, re-validated, at most three", () =>
     it(`follows status ${status}`, async () => {
       const target = rig(
         routed({
-          "a.example.invalid/": redirect("https://b.example.invalid/", status),
-          "b.example.invalid/": OK_PAGE,
+          "a.example.invalid/": redirect("https://a.example.invalid/next", status),
+          "a.example.invalid/next": OK_PAGE,
         }),
       );
       expect((await run(target, "https://a.example.invalid/")).ok).toBe(true);
@@ -322,17 +322,17 @@ describe("Task 3 Test 1 (redirects): manual, re-validated, at most three", () =>
     const chain = (length: number): Routes => {
       const routes: Record<string, Script> = {};
       for (let i = 0; i < length; i += 1) {
-        routes[`h${i}.example.invalid/`] = redirect(`https://h${i + 1}.example.invalid/`);
+        routes[`h.example.invalid/${i}`] = redirect(`https://h.example.invalid/${i + 1}`);
       }
-      routes[`h${length}.example.invalid/`] = OK_PAGE;
+      routes[`h.example.invalid/${length}`] = OK_PAGE;
       return routes;
     };
     const three = rig(routed(chain(3)));
-    expect((await run(three, "https://h0.example.invalid/")).ok).toBe(true);
+    expect((await run(three, "https://h.example.invalid/0")).ok).toBe(true);
     expect(three.fake.calls).toHaveLength(4);
 
     const four = rig(routed(chain(4)));
-    expect(await run(four, "https://h0.example.invalid/")).toEqual({
+    expect(await run(four, "https://h.example.invalid/0")).toEqual({
       ok: false,
       code: "redirect-limit",
     });
@@ -395,14 +395,141 @@ describe("Task 3 Test 1 (redirects): manual, re-validated, at most three", () =>
   it("returns http-status for a failing status after a redirect", async () => {
     const target = rig(
       routed({
-        "a.example.invalid/": redirect("https://b.example.invalid/"),
-        "b.example.invalid/": { status: 500 },
+        "a.example.invalid/": redirect("https://a.example.invalid/next"),
+        "a.example.invalid/next": { status: 500 },
       }),
     );
     expect(await run(target, "https://a.example.invalid/")).toEqual({
       ok: false,
       code: "http-status",
     });
+  });
+});
+
+describe("07-FIX8 item 4: a redirect may not leave the source's host", () => {
+  // An open redirect on an allowlisted site would otherwise launder another site's text into the
+  // evidence recorded and shown for the allowlisted address. The fetch refuses it instead.
+  const crossHost: readonly (readonly [string, string, string])[] = [
+    ["another host", "https://a.example.invalid/", "https://b.example.invalid/x"],
+    [
+      "a subdomain of the source host",
+      "https://a.example.invalid/",
+      "https://sub.a.example.invalid/x",
+    ],
+    [
+      "the parent domain of the source host",
+      "https://sub.a.example.invalid/",
+      "https://a.example.invalid/x",
+    ],
+    [
+      "a host that only starts with www",
+      "https://a.example.invalid/",
+      "https://wwwa.example.invalid/x",
+    ],
+    ["a second www label", "https://a.example.invalid/", "https://www.www.a.example.invalid/x"],
+    [
+      "a look-alike that contains the source host",
+      "https://a.example.invalid/",
+      "https://a.example.invalid.other.invalid/x",
+    ],
+    ["a protocol-relative other host", "https://a.example.invalid/", "//b.example.invalid/x"],
+    ["www on another host", "https://a.example.invalid/", "https://www.b.example.invalid/x"],
+  ];
+  for (const [name, start, location] of crossHost) {
+    it(`refuses a redirect to ${name} as unsafe-redirect and makes no second request`, async () => {
+      const target = rig(
+        routed({ [start.replace(/^https:\/\//, "")]: redirect(location) }, OK_PAGE),
+      );
+      expect(await run(target, start)).toEqual({ ok: false, code: "unsafe-redirect" });
+      expect(target.fake.calls).toHaveLength(1);
+    });
+  }
+
+  it("refuses the other host's text even when it would have been a clean page", async () => {
+    const target = rig(
+      routed({
+        "a.example.invalid/": redirect("https://b.example.invalid/page"),
+        "b.example.invalid/page": { headers: HTML, body: "<p>laundered-evidence</p>" },
+      }),
+    );
+    const result = await run(target, "https://a.example.invalid/");
+    expect(result).toEqual({ ok: false, code: "unsafe-redirect" });
+    expect(JSON.stringify(result)).not.toContain("laundered");
+  });
+
+  it("refuses a cross-host redirect after a same-host one", async () => {
+    const target = rig(
+      routed({
+        "a.example.invalid/": redirect("https://a.example.invalid/next"),
+        "a.example.invalid/next": redirect("https://b.example.invalid/x"),
+        "b.example.invalid/x": OK_PAGE,
+      }),
+    );
+    expect(await run(target, "https://a.example.invalid/")).toEqual({
+      ok: false,
+      code: "unsafe-redirect",
+    });
+    expect(target.fake.calls).toHaveLength(2);
+  });
+
+  it("allows a redirect to the same host, a feed too", async () => {
+    const target = rig(
+      routed({
+        "a.example.invalid/old": redirect("https://a.example.invalid/new?x=1"),
+        "a.example.invalid/new?x=1": OK_PAGE,
+      }),
+    );
+    const result = await run(target, "https://a.example.invalid/old", "feed");
+    expect(result.ok && result.finalUrl).toBe("https://a.example.invalid/new?x=1");
+  });
+
+  it("allows the same host with a leading www added", async () => {
+    const target = rig(
+      routed({
+        "a.example.invalid/": redirect("https://www.a.example.invalid/home"),
+        "www.a.example.invalid/home": OK_PAGE,
+      }),
+    );
+    const result = await run(target, "https://a.example.invalid/");
+    expect(result.ok && result.finalUrl).toBe("https://www.a.example.invalid/home");
+  });
+
+  it("allows the same host with a leading www dropped, and back again", async () => {
+    const target = rig(
+      routed({
+        "www.a.example.invalid/": redirect("https://a.example.invalid/mid"),
+        "a.example.invalid/mid": redirect("https://www.a.example.invalid/end"),
+        "www.a.example.invalid/end": OK_PAGE,
+      }),
+    );
+    const result = await run(target, "https://www.a.example.invalid/");
+    expect(result.ok && result.finalUrl).toBe("https://www.a.example.invalid/end");
+    expect(target.fake.calls).toHaveLength(3);
+  });
+
+  it("still refuses a www name that resolves to a private address, as refused-address", async () => {
+    const target = rig(
+      routed({ "a.example.invalid/": redirect("https://www.a.example.invalid/x") }, OK_PAGE),
+      { "www.a.example.invalid": ["127.0.0.1"] },
+    );
+    expect(await run(target, "https://a.example.invalid/")).toEqual({
+      ok: false,
+      code: "refused-address",
+    });
+  });
+
+  it("leaves the cap as it was: three redirects on one host, the fourth is redirect-limit", async () => {
+    const routes: Record<string, Script> = {};
+    for (let i = 0; i < 4; i += 1) {
+      routes[`a.example.invalid/${i}`] = redirect(`https://a.example.invalid/${i + 1}`);
+    }
+    routes["a.example.invalid/4"] = OK_PAGE;
+    const target = rig(routed(routes));
+    expect(await run(target, "https://a.example.invalid/0")).toEqual({
+      ok: false,
+      code: "redirect-limit",
+    });
+    expect(target.fake.calls).toHaveLength(4);
   });
 });
 
@@ -427,15 +554,16 @@ describe("Task 3 Test 1b (resolved addresses): a name is allowed only by what it
       expect(target.fake.calls.every((call) => call.bytesDelivered === 0)).toBe(true);
     });
 
-    it(`refuses a redirect to ${name} with refused-address`, async () => {
+    it(`refuses a redirect to ${name} as unsafe-redirect (another host), with no second request`, async () => {
       const target = rig(
         routed({ "a.example.invalid/": redirect(`https://${name}/x`) }, OK_PAGE),
         HOSTILE,
       );
       expect(await run(target, "https://a.example.invalid/")).toEqual({
         ok: false,
-        code: "refused-address",
+        code: "unsafe-redirect",
       });
+      expect(target.fake.calls).toHaveLength(1);
     });
   }
 
@@ -664,22 +792,22 @@ describe("Task 3 Test 3 (time): idle and total deadlines, with every socket rele
     vi.useFakeTimers();
     const target = rig(
       routed({
-        "h0.example.invalid/": {
-          ...redirect("https://h1.example.invalid/"),
+        "h.example.invalid/0": {
+          ...redirect("https://h.example.invalid/1"),
           responseDelayMs: 7_000,
         },
-        "h1.example.invalid/": {
-          ...redirect("https://h2.example.invalid/"),
+        "h.example.invalid/1": {
+          ...redirect("https://h.example.invalid/2"),
           responseDelayMs: 7_000,
         },
-        "h2.example.invalid/": {
-          ...redirect("https://h3.example.invalid/"),
+        "h.example.invalid/2": {
+          ...redirect("https://h.example.invalid/3"),
           responseDelayMs: 7_000,
         },
-        "h3.example.invalid/": OK_PAGE,
+        "h.example.invalid/3": OK_PAGE,
       }),
     );
-    const pending = run(target, "https://h0.example.invalid/");
+    const pending = run(target, "https://h.example.invalid/0");
     await vi.advanceTimersByTimeAsync(TOTAL_TIMEOUT_MS + 1);
     expect(await pending).toEqual({ ok: false, code: "timeout" });
   });
@@ -793,11 +921,12 @@ describe("Task 3 Test 4 (errors): one closed code, no remote text", () => {
   it("sends no cookie, authorization or referer on any hop", async () => {
     const target = rig(
       routed({
-        "a.example.invalid/": redirect("https://b.example.invalid/"),
-        "b.example.invalid/": OK_PAGE,
+        "a.example.invalid/": redirect("https://a.example.invalid/next"),
+        "a.example.invalid/next": OK_PAGE,
       }),
     );
     await run(target, "https://a.example.invalid/");
+    expect(target.fake.calls).toHaveLength(2);
     for (const call of target.fake.calls) {
       const names = Object.keys(call.options.headers).map((name) => name.toLowerCase());
       for (const forbidden of ["cookie", "authorization", "referer", "proxy-authorization"]) {

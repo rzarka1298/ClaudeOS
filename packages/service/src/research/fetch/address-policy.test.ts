@@ -71,6 +71,15 @@ const BLOCKED: readonly string[] = [
   // Teredo (embeds an IPv4 target, obfuscated)
   "2001::1",
   "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+  // ORCHID (deprecated) and ORCHIDv2, the new documentation block, and SRv6 SIDs (07-FIX8)
+  "2001:10::1",
+  "2001:1f:ffff::1",
+  "2001:20::1",
+  "2001:2f:ffff::1",
+  "3fff::1",
+  "3fff:fff:ffff::1",
+  "5f00::1",
+  "5f00:ffff::1",
   // not a literal the connection layer would accept
   "fe80::1%eth0",
   "",
@@ -90,6 +99,13 @@ const ALLOWED: readonly string[] = [
   "::ffff:5db8:d822",
   "2a00:1450:4001:81b::200e",
   "2001:4860:4860::8888",
+  // just outside each new block
+  "2001:30::1",
+  "2001:f::1",
+  "3ffe::1",
+  "4000::1",
+  "5e00::1",
+  "6000::1",
 ];
 
 describe("Test 1 (address table): isBlockedAddress", () => {
@@ -140,6 +156,10 @@ describe("Test 1 (address table): isBlockedAddress", () => {
       "ff00::/8",
       "64:ff9b::/96",
       "2001:db8::/32",
+      "2001:10::/28",
+      "2001:20::/28",
+      "3fff::/20",
+      "5f00::/16",
     ]) {
       expect(v6).toContain(range);
     }

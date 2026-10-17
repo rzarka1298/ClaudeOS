@@ -9,6 +9,12 @@ import { isTasksFolderPath, type TaskStatusCounts } from "./managed-folders.js";
 /** The one generated file this module owns, in every managed folder. */
 const INDEX_FILENAME = "index.md";
 
+/**
+ * The most bytes the generator reads from one note or from an existing index (07-FIX8). A note
+ * over it is listed as unreadable rather than read whole. It is above every managed note cap.
+ */
+export const INDEX_NOTE_READ_MAX_BYTES = 2 * 1024 * 1024;
+
 /** The managed root beneath which every workspace tree lives. */
 const WORKSPACES_FOLDER = "workspaces";
 

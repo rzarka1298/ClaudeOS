@@ -528,7 +528,9 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     expect(timer.timers).toHaveLength(1);
     expect(timer.timers[0]?.ms).toBe(1234);
     timer.timers[0]?.fire();
-    await kit.services.idle();
+    // The run row ends at once; idle() also waits for the pipeline call itself (07-FIX8).
+    const live = kit;
+    await until(() => lastRow(live)?.state === "failed");
 
     const row = lastRow(kit);
     expect(row?.outcome).toBe("failure");
@@ -541,7 +543,7 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     // The hung call finally answers: nothing is written, recorded or announced.
     const eventsBefore = kit.events.length;
     release(extractiveSummary(kit.transportInputs[0] ?? ""));
-    await new Promise((r) => setTimeout(r, 30));
+    await kit.services.idle();
     expect(files(kit, "global/output")).toEqual([]);
     expect(files(kit, "global/wiki")).toEqual([]);
     expect(kit.events).toHaveLength(eventsBefore);
@@ -568,7 +570,8 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     if (!started.ok) throw new Error("refused");
     await until(() => timer.timers.length === 1);
     timer.timers[0]?.fire();
-    await kit.services.idle();
+    const live = kit;
+    await until(() => lastRow(live)?.state === "failed");
     const row = lastRow(kit);
     expect(row?.outcome).toBe("failure");
     expect(row?.errorCode).toBe("interrupted");
@@ -584,13 +587,49 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     // The fetches finally answer with good feeds: nothing is written, called or announced.
     const eventsBefore = kit.events.length;
     release();
-    await new Promise((r) => setTimeout(r, 50));
+    await kit.services.idle();
     expect(files(kit, "global/raw")).toEqual([]);
     expect(files(kit, "global/wiki")).toEqual([]);
     expect(files(kit, "global/output")).toEqual([]);
     expect(kit.transportInputs).toHaveLength(0);
     expect(kit.events).toHaveLength(eventsBefore);
     expect(lastRow(kit)?.stageLog.map((e) => e.stage)).toEqual(["capture"]);
+  });
+
+  it("idle() still waits for the cut-off pipeline call to finish (07-FIX8)", async () => {
+    const timer = manualTimer();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    kit = createKit({
+      respond: async (input) => {
+        await gate;
+        return defaultResponses()[input.url] ?? { ok: false, code: "network-error" };
+      },
+      scheduleTimeout: (fire, ms) => timer.schedule(fire, ms),
+    });
+    const started = kit.services.runNow();
+    if (!started.ok) throw new Error("refused");
+    await until(() => timer.timers.length === 1);
+    timer.timers[0]?.fire();
+    const live = kit;
+    await until(() => lastRow(live)?.state === "failed");
+
+    // The run row is over, but the abandoned pipeline call is still hanging inside the fetcher.
+    let idleDone = false;
+    const idle = kit.services.idle().then(() => {
+      idleDone = true;
+    });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(idleDone).toBe(false);
+
+    release();
+    await idle;
+    expect(idleDone).toBe(true);
+    // Nothing the late answer could have done happened.
+    expect(files(kit, "global/raw")).toEqual([]);
+    expect(kit.transportInputs).toHaveLength(0);
   });
 
   it("starts no fetch when the summariser is chosen after the watchdog already fired", async () => {
@@ -608,11 +647,12 @@ describe("the watchdog: a hung pipeline ends as a failed run with a closed code"
     await until(() => timer.timers.length === 1);
     // The watchdog fires while the Keychain prompt (the chooser) is still unanswered.
     timer.timers[0]?.fire();
-    await kit.services.idle();
+    const live = kit;
+    await until(() => lastRow(live)?.state === "failed");
     expect(lastRow(kit)?.errorCode).toBe("interrupted");
     // The prompt is finally answered: the run is over, so nothing may be fetched for it.
     choose({ transport: createExtractiveTransport(), id: "extractive" });
-    await new Promise((r) => setTimeout(r, 50));
+    await kit.services.idle();
     expect(kit.fetchCalls).toHaveLength(0);
     expect(kit.effects).not.toContain("research.fetch-sources");
     expect(files(kit, "global/raw")).toEqual([]);

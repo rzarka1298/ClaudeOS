@@ -34,6 +34,7 @@ export {
   escapeMarkdownText,
   fenceUntrustedBlock,
   inlineCode,
+  UNTRUSTED_DERIVED_BANNER,
   UNTRUSTED_FENCE_INFO,
 } from "./markdown-escape.js";
 export type {

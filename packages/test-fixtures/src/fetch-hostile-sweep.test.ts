@@ -157,7 +157,7 @@ describe("hostile names are allowed only by the address they resolve to", () => 
       expect(code).toBe(REFUSED_ADDRESS_CODE);
     });
 
-    it(`${host.name}: the fetcher answers refused-address, as a source and as a redirect`, async () => {
+    it(`${host.name}: the fetcher answers refused-address as a source, and unsafe-redirect as another host's redirect target`, async () => {
       const direct = fakeTransport(() => ({
         status: 200,
         headers: { "content-type": "text/html" },
@@ -174,12 +174,14 @@ describe("hostile names are allowed only by the address they resolve to", () => 
           ? { status: 302, headers: { location: `https://${host.name}/next` } }
           : { status: 200, headers: { "content-type": "text/html" } },
       );
+      // 07-FIX8: a redirect off the source's host is refused before any lookup of the new name.
       expect(
         await fetcherOver(hop, table).fetchSource({
           url: "https://start.example.invalid/",
           kind: "page",
         }),
-      ).toEqual({ ok: false, code: "refused-address" });
+      ).toEqual({ ok: false, code: "unsafe-redirect" });
+      expect(hop.requested).toEqual(["start.example.invalid/"]);
     });
   }
 });

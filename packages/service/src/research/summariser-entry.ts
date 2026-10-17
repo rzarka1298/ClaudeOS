@@ -26,6 +26,7 @@ export {
   type AnthropicResponseStream,
   type AnthropicTransportDeps,
   createAnthropicTransport,
+  isUsableApiKey,
   REQUEST_TIMEOUT_MS,
   RESPONSE_BYTE_CAP,
 } from "./anthropic-transport.js";

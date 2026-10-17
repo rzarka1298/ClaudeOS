@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -315,5 +315,60 @@ describe("overrides are refused when the runtime directory is the owner's defaul
         home: HOME,
       }),
     ).toEqual({});
+  });
+});
+
+describe("07-FIX8: the default-directory comparison follows links on both sides", () => {
+  it("refuses a runtime directory that is a link to the default one", () => {
+    const home = join(dir, "home");
+    const defaultDir = join(home, ".claude-command-center");
+    mkdirSync(defaultDir, { recursive: true });
+    const link = join(dir, "looks-temporary");
+    symlinkSync(defaultDir, link);
+    expect(() =>
+      resolveResearchTestOverrides({ [FLAG]: "1", [SUMMARISER]: "extractive" }, log, {
+        runtimeDir: link,
+        home,
+      }),
+    ).toThrow(ResearchOverrideError);
+  });
+
+  it("refuses the default directory reached through a home that is itself a link", () => {
+    const realHome = join(dir, "real-home");
+    mkdirSync(join(realHome, ".claude-command-center"), { recursive: true });
+    const linkedHome = join(dir, "linked-home");
+    symlinkSync(realHome, linkedHome);
+    expect(() =>
+      resolveResearchTestOverrides({ [FLAG]: "1", [SUMMARISER]: "extractive" }, log, {
+        runtimeDir: join(realHome, ".claude-command-center"),
+        home: linkedHome,
+      }),
+    ).toThrow(ResearchOverrideError);
+  });
+
+  it("refuses a not-yet-created default directory below a linked parent", () => {
+    const realHome = join(dir, "real-home2");
+    mkdirSync(realHome, { recursive: true });
+    const linkedHome = join(dir, "linked-home2");
+    symlinkSync(realHome, linkedHome);
+    expect(() =>
+      resolveResearchTestOverrides({ [FLAG]: "1", [SUMMARISER]: "extractive" }, log, {
+        runtimeDir: join(realHome, ".claude-command-center"),
+        home: linkedHome,
+      }),
+    ).toThrow(ResearchOverrideError);
+  });
+
+  it("still allows a real temporary directory beside a linked home", () => {
+    const realHome = join(dir, "real-home3");
+    mkdirSync(realHome, { recursive: true });
+    const linkedHome = join(dir, "linked-home3");
+    symlinkSync(realHome, linkedHome);
+    expect(
+      resolveResearchTestOverrides({ [FLAG]: "1", [SUMMARISER]: "extractive" }, log, {
+        runtimeDir: join(dir, "runtime"),
+        home: linkedHome,
+      }).transport,
+    ).toBeDefined();
   });
 });

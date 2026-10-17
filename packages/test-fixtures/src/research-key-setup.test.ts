@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { RESEARCH_API_KEY_ACCOUNT } from "@ccc/service/research-summariser";
+import { isUsableApiKey, RESEARCH_API_KEY_ACCOUNT } from "@ccc/service/research-summariser";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -257,5 +257,47 @@ describe("the script's source", () => {
   it("never passes an argument to the store", () => {
     expect(source).not.toMatch(/set\([^)]*argv/);
     expect(source).not.toMatch(/process\.argv\[[2-9]\]/);
+  });
+});
+
+describe("07-FIX8: the key is checked against the transport's alphabet before it is stored", () => {
+  const UNUSABLE: readonly string[] = [
+    "key with a space",
+    " leading-space-key",
+    "trailing-space-key ",
+    "key\twith-tab",
+    "key\u0000nul",
+    'quote"in-key',
+    "semi;colon-key",
+    "colon:key",
+    "star*key",
+    `${"a".repeat(513)}`,
+    "caf\u00e9-key",
+    "multi\nline-key",
+  ];
+
+  for (const key of UNUSABLE) {
+    it(`refuses ${JSON.stringify(key.length > 40 ? `${key.slice(0, 8)}...` : "an unusable key")} (length ${key.length}) without storing or echoing it`, async () => {
+      const { main } = await load();
+      const h = harness({ key });
+      const code = await main(h.deps);
+      expect(code).not.toBe(0);
+      expect(h.sets).toEqual([]);
+      const text = everything(h);
+      for (const piece of key.split(/[\s"]/).filter((part) => part.length >= 4)) {
+        expect(text).not.toContain(piece);
+      }
+      expect(h.stderr.join("\n").length).toBeGreaterThan(0);
+    });
+  }
+
+  it("stores a key the transport accepts, and the two agree on every sample", async () => {
+    const { main } = await load();
+    for (const key of [DUMMY_KEY, "AbC+/=_-0123", "a", "a".repeat(512), ...UNUSABLE]) {
+      const h = harness({ key });
+      const code = await main(h.deps);
+      expect(code === 0).toBe(isUsableApiKey(key));
+      expect(h.sets.length).toBe(isUsableApiKey(key) ? 1 : 0);
+    }
   });
 });

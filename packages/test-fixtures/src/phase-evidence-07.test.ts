@@ -470,6 +470,21 @@ run("security scan inputs (Test 5)", () => {
     }
   });
 
+  it("states the redirect rules the fetcher enforces (07-FIX8)", () => {
+    const rows = scan.split("\n").filter((line) => /^\| `redirect/.test(line));
+    const row = (needle: string): string => rows.find((line) => line.includes(needle)) ?? "";
+    // Another host is refused after one request; the same host or a www. toggle is followed.
+    expect(row("another host")).toContain("unsafe-redirect after one request");
+    expect(row("the same host")).toContain("followed");
+    expect(row("the same host")).toContain("www.");
+    // The cap: the code is redirect-limit, on the fourth redirect response, four requests in all.
+    const cap = row("more than three hops");
+    expect(cap).toContain("redirect-limit");
+    expect(cap).toContain("four requests");
+    expect(cap).not.toContain("unsafe-redirect");
+    expect(cap).not.toContain("no fourth request");
+  });
+
   it("lists only paths that exist", () => {
     const paths = [...scan.matchAll(/`((?:packages|docs|scripts)\/[^`\s]+)`/g)].map((m) => m[1]);
     expect(paths.length).toBeGreaterThan(20);
