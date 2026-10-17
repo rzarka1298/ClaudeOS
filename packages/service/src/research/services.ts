@@ -154,6 +154,23 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
     deps.eventBus.publish("research.updated", payload);
   };
 
+  /**
+   * Keeps a run's own pipeline promise in the tracked set until it settles, however the run ended:
+   * after the watchdog cuts a run off the pipeline call can still be hanging, and `idle()` waits
+   * for it too (07-FIX8).
+   */
+  function trackPipeline(pipeline: Promise<unknown>): void {
+    const settled: Promise<void> = pipeline
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        tracked.delete(settled);
+      });
+    tracked.add(settled);
+  }
+
   function launch(pipelineDeps: ResearchPipelineDeps, runId: RunId, startedAt: string): void {
     const trace = createRunTrace(runId, startedAt);
     current = { runId };
@@ -170,7 +187,7 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
       }
       recordRunNote(pipelineDeps, trace, null, null);
       const promise: Promise<void> = Promise.resolve()
-        .then(() => executeResearchRun(pipelineDeps, trace, watchdog))
+        .then(() => executeResearchRun(pipelineDeps, trace, watchdog, trackPipeline))
         .catch(() => {
           // executeResearchRun does not reject; if it ever did, the run still must not stay in flight.
           finishRun(pipelineDeps, trace, {

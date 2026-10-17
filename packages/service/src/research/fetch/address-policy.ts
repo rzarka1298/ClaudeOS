@@ -41,8 +41,10 @@ export const IPV4_BLOCKED_RANGES: readonly AddressRange[] = [
 
 /**
  * IPv6: unspecified, loopback, the deprecated IPv4-compatible block, unique-local, link-local,
- * site-local, multicast, discard, NAT64 (well-known and local-use), documentation, the IPv4-
- * translated block, Teredo and 6to4 (both embed an IPv4 target in the address). The embedded-IPv4
+ * site-local, multicast, discard, NAT64 (well-known and local-use), documentation (2001:db8::/32
+ * and the newer 3fff::/20), the IPv4-translated block, Teredo and 6to4 (both embed an IPv4 target
+ * in the address), the deprecated ORCHID and ORCHIDv2 blocks (2001:10::/28, 2001:20::/28) and the
+ * SRv6 segment identifier block (5f00::/16). The embedded-IPv4
  * prefixes are refused whole rather than decoded: no legitimate research source is served from them.
  *
  * The IPv4-mapped prefix (::ffff:0:0/96) is deliberately NOT here: listing it blocks every IPv4
@@ -62,8 +64,12 @@ export const IPV6_BLOCKED_RANGES: readonly AddressRange[] = [
   ["64:ff9b::", 96],
   ["64:ff9b:1::", 48],
   ["2001::", 32],
+  ["2001:10::", 28],
+  ["2001:20::", 28],
   ["2001:db8::", 32],
   ["2002::", 16],
+  ["3fff::", 20],
+  ["5f00::", 16],
 ];
 
 const blocked = new net.BlockList();

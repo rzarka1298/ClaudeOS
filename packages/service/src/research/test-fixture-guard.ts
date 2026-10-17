@@ -1,5 +1,6 @@
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { TextTransport } from "../untrusted/index.js";
 import { createExtractiveTransport } from "./extractive-transport.js";
 import type { SafeFetcher } from "./fetch/safe-fetch.js";
@@ -24,9 +25,10 @@ import { RESEARCH_API_KEY_ACCOUNT } from "./research-key.js";
  *   live-UAT account prefix, and it can never be an account the service itself uses (the
  *   research key, the install secret, or the install-secret account this process was told to use).
  *
- * No override is accepted when the runtime directory is the owner's default one: an automated run
- * always has its own temporary directory, so the installed service (which uses the default) cannot
- * be turned into a fixture-fed one by a variable left in a shell or in `launchctl setenv`.
+ * No override is accepted when the runtime directory is the owner's default one (compared as real
+ * paths, so a link to it counts): an automated run always has its own temporary directory, so the
+ * installed service (which uses the default) cannot be turned into a fixture-fed one by a variable
+ * left in a shell or in `launchctl setenv`.
  *
  * It never weakens the real fetcher: no plain HTTP or loopback fetching is added anywhere.
  * An unusable value is refused at startup with a code-only log line and a thrown
@@ -79,6 +81,26 @@ export interface ResolveOverridesOptions {
   readonly fixture?: Omit<FixtureFetcherOptions, "dir">;
 }
 
+/**
+ * The real path of `path`, or, when it does not exist yet, the real path of its nearest existing
+ * ancestor with the missing tail put back, so a directory that has not been created is compared
+ * by where it would be.
+ */
+function realPathOf(path: string): string {
+  let existing = resolve(path);
+  const missing: string[] = [];
+  for (;;) {
+    try {
+      return join(realpathSync.native(existing), ...missing);
+    } catch {
+      const parent = dirname(existing);
+      if (parent === existing) return resolve(path);
+      missing.unshift(basename(existing));
+      existing = parent;
+    }
+  }
+}
+
 export function resolveResearchTestOverrides(
   env: NodeJS.ProcessEnv,
   log: OverrideLog,
@@ -101,12 +123,13 @@ export function resolveResearchTestOverrides(
     keyAccount?: string;
   } = {};
   try {
-    // Computed from the path alone (nothing is stat-ed or created): the directory the installed
-    // service uses is never the directory of an automated run.
+    // The directory the installed service uses is never the directory of an automated run.
+    // Both sides are compared as real paths (nothing is created): a runtime directory that is a
+    // link to the default one, or a home reached through a link, is the same directory.
     const wantsOverride =
       fixtureDir !== undefined || summariser !== undefined || keyAccount !== undefined;
-    const defaultDir = resolve(join(options.home ?? homedir(), DEFAULT_RUNTIME_DIR_NAME));
-    if (wantsOverride && resolve(options.runtimeDir) === defaultDir) {
+    const defaultDir = realPathOf(join(options.home ?? homedir(), DEFAULT_RUNTIME_DIR_NAME));
+    if (wantsOverride && realPathOf(options.runtimeDir) === defaultDir) {
       throw new ResearchOverrideError("default-runtime-dir");
     }
     if (fixtureDir !== undefined) {

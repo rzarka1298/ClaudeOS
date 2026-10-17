@@ -29,8 +29,18 @@ export const RESEARCH_KEY_ACCOUNT = "anthropic-api-key";
 /** A real key is about 110 characters; more than this on stdin is a mistake, not a key. */
 const MAX_KEY_CHARS = 512;
 
+/**
+ * What the summariser transport accepts as a key: the keychain package's safe alphabet, so a header
+ * value is inert. Duplicated from `KEY_PATTERN` in `packages/service/src/research/anthropic-transport.ts`
+ * (this script does not need the service build); `packages/test-fixtures/src/research-key-setup.test.ts`
+ * checks the two agree on a set of samples. A key outside it would be stored and then never used.
+ */
+const KEY_PATTERN = /^[A-Za-z0-9+/=_-]{1,512}$/;
+
 const REFUSED_ARGUMENTS_MESSAGE =
   "this script takes no arguments except --check and --help; the key is read from standard input";
+const UNUSABLE_KEY_MESSAGE =
+  "the key was not stored: it is not in the form the research summariser accepts (letters, digits and + / = _ - only, 1 to 512 characters)";
 const WRAPPER_REFUSAL_MESSAGE = "the key contains characters the keychain wrapper refuses";
 
 function helpLines(serviceName) {
@@ -156,6 +166,11 @@ export async function main(deps) {
   }
   if (typeof key !== "string" || key.trim().length === 0) {
     err("no key was provided on standard input");
+    return 1;
+  }
+  // Nothing about the key is echoed, not even which character is wrong.
+  if (!KEY_PATTERN.test(key)) {
+    err(UNUSABLE_KEY_MESSAGE);
     return 1;
   }
   try {

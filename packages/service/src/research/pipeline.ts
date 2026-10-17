@@ -1073,6 +1073,12 @@ export async function executeResearchRun(
   deps: ResearchPipelineDeps,
   trace: RunTrace,
   watchdog: Watchdog,
+  /**
+   * Called with the pipeline's own promise, so the caller can keep waiting for it after the
+   * watchdog has ended the run (07-FIX8): a cut-off call that is still hanging inside a fetch or a
+   * summariser must still be drained before the service is called idle.
+   */
+  track?: (pipeline: Promise<unknown>) => void,
 ): Promise<void> {
   let result: PipelineResult;
   let cancel: () => void = () => {};
@@ -1086,7 +1092,9 @@ export async function executeResearchRun(
         resolve(failureResult(trace, "interrupted"));
       }, watchdog.ms);
     });
-    result = await Promise.race([runResearchPipeline(deps, trace), hung]);
+    const pipeline = runResearchPipeline(deps, trace);
+    track?.(pipeline);
+    result = await Promise.race([pipeline, hung]);
   } catch {
     result = failureResult(trace, PHASE_ERROR_CODE[trace.phase]);
   } finally {
