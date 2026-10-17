@@ -377,6 +377,21 @@ function fetchHop(url: URL, context: HopContext): Promise<HopOutcome> {
   });
 }
 
+/** The host with one leading "www." removed, so the bare and the www form compare equal. */
+function hostWithoutWww(url: URL): string {
+  return url.hostname.startsWith("www.") ? url.hostname.slice("www.".length) : url.hostname;
+}
+
+/**
+ * True when a redirect target is on the source's own host: the same host name, or the same host
+ * with or without one leading "www.". A subdomain, the parent domain, a second "www." label or a
+ * look-alike is another host. (Every address that reaches here is https on port 443, the policy
+ * having been applied to both.)
+ */
+function sameSourceHost(source: URL, target: URL): boolean {
+  return hostWithoutWww(source) === hostWithoutWww(target);
+}
+
 function defaultLog(entry: FetchLogEntry): void {
   childLogger({ component: "research-fetch" }).warn(entry);
 }
@@ -426,6 +441,10 @@ export function createSafeFetcher(deps: SafeFetcherDeps = {}): SafeFetcher {
           if (outcome.location === undefined) return fail("unsafe-redirect");
           const next = resolveRedirectTarget(outcome.location, current);
           if (!next.ok) return fail(next.code);
+          // An open redirect on an allowlisted site must not launder another site's text into the
+          // evidence recorded for the allowlisted address (07-FIX8): the target stays on the
+          // source's own host, give or take a leading "www.".
+          if (!sameSourceHost(first.url, next.url)) return fail("unsafe-redirect");
           current = next.url;
           redirects += 1;
           continue;

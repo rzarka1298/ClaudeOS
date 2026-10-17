@@ -159,6 +159,21 @@ text; the same texts from a genuine run still are).
   the store and are still taken from the raw note or the report (the digest covers the report's copy of them, so a
   report cannot change them after the run, but a raw note can still differ from them in those fields).
 
+### 6. A fetched source stays on its own host (07-FIX8)
+
+A source record vouches that the stored body is what the recorded address served. The fetcher used to follow a redirect
+to any public https host and the pipeline discarded the final address, so an open redirect on an allowlisted site
+(`https://allowed.example/go?to=...`) could launder another site's text into the evidence recorded, and shown as
+verified, for the allowlisted address. A fetch now follows a redirect only when its target is on the source's own host:
+the same host name, or the same host with or without one leading `www.` (compared after the address policy has been
+applied to the target). A different host, a subdomain, the parent domain, a second `www.` label or a look-alike is
+refused with the existing closed code `unsafe-redirect` before any further request is made, and the source fails alone
+(`packages/service/src/research/fetch/safe-fetch.ts`; tests "07-FIX8 item 4: a redirect may not leave the source's
+host" and the hostile sweep). The redirect cap is unchanged: three redirects are followed, the fourth redirect response
+ends the fetch as `redirect-limit` after four requests. No domain code was added, so the closed-code tables are
+unchanged. What is still not defended: an allowlisted host that itself serves another party's text (a hosting or
+comment page) is recorded as fetched, which is the "genuine fetch of a page that lies" limit already stated above.
+
 ## Consequences
 
 - The pipeline's raw stage and its finalise write to the store; a store fault there fails the run with
