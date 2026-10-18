@@ -3,8 +3,9 @@
  * value docs/adr/0023-design-system-and-reduced-motion.md recorded for
  * direction `c`. Nothing below leaks: every selector is a descendant of
  * `.ccc-command-center`, no rule touches Obsidian's own chrome, no rule
- * references an Obsidian custom property, and there is no importance
- * override anywhere — so the command center stays near-black in Obsidian's
+ * reads an Obsidian custom property (it DEFINES a few, once, in "The control
+ * floor" below, so Obsidian's own control rules resolve to these tokens), and
+ * there is no importance override anywhere — so the command center stays near-black in Obsidian's
  * light theme and its dark theme alike, and a user snippet can still beat
  * any token.
  *
@@ -91,6 +92,55 @@
   font-size: var(--ccc-text-body);
   font-weight: var(--ccc-weight-regular);
   line-height: var(--ccc-leading-prose);
+}
+
+/*
+ * The control floor (Phase 7 live-UAT trial, accessibility constraint: minimum
+ * contrast overrides visual fidelity).
+ *
+ * Obsidian styles every `button`, `select`, `textarea` and `input` globally,
+ * from its theme variables: a light or pale-grey face and `#222` text in the
+ * light theme, a mid-grey face in the dark one. Those rules (specificity 0,1,1
+ * and 0,2,1) out-rank a plain `.ccc-*` class (0,1,0), so a control kept the
+ * command center's light ink but took the theme's light face: the active tab
+ * label measured 1.15 : 1 and every pill button under 3 : 1 in the light theme,
+ * and the pills 4.31 : 1 in the dark one (contrast.spec.ts reproduces both).
+ *
+ * The fix is to define, inside this root and nowhere else, the variables those
+ * Obsidian rules read, so they resolve to the command center's own audited
+ * tokens whatever theme the owner runs. A variable beats no specificity race and
+ * loses none, and it reaches controls no `.ccc-*` class names (the two unclassed
+ * buttons, a future control). Every value below is a `--ccc-*` token already
+ * audited in the contrast matrix (tokens.test.ts): ink and muted ink on the
+ * surface and the page, accent as the 3 : 1 edge and focus ring. Obsidian
+ * computes `--dropdown-*` and `--input-placeholder-color` once, on its own root,
+ * so they are restated here rather than left to follow `--interactive-*`.
+ * Definitions only: nothing here reads an Obsidian variable, and nothing outside
+ * `.ccc-command-center` is touched.
+ *
+ * A button's label colour is the one thing a variable cannot carry, because
+ * Obsidian's `button` sets `--text-color` on the element itself and then
+ * `color: var(--text-color)` at (0,1,1). Every control rule below that states
+ * a `color` at a specificity under (0,2,0) therefore states `--text-color`
+ * beside it (tokens.test.ts enforces the pairing), so muted, inverse and danger
+ * labels keep their meaning instead of collapsing to the theme's text colour.
+ */
+.ccc-command-center {
+  --text-normal: var(--ccc-ink);
+  --text-muted: var(--ccc-ink-muted);
+  --text-faint: var(--ccc-ink-muted);
+  --interactive-normal: transparent;
+  --interactive-hover: var(--ccc-surface);
+  --input-shadow: none;
+  --input-shadow-hover: none;
+  --background-modifier-form-field: var(--ccc-surface);
+  --background-modifier-form-field-hover: var(--ccc-surface);
+  --background-modifier-border: var(--ccc-ink-muted);
+  --background-modifier-border-hover: var(--ccc-ink);
+  --background-modifier-border-focus: var(--ccc-accent);
+  --dropdown-background: var(--ccc-surface);
+  --dropdown-background-hover: var(--ccc-surface);
+  --input-placeholder-color: var(--ccc-ink-muted);
 }
 
 /*
@@ -331,6 +381,7 @@
   padding: var(--ccc-space-xs) var(--ccc-space-sm);
   background: transparent;
   color: var(--ccc-ink-muted);
+  --text-color: var(--ccc-ink-muted);
   font-family: inherit;
   font-size: var(--ccc-text-label);
   font-weight: var(--ccc-weight-regular);
@@ -724,6 +775,7 @@
   border-radius: var(--ccc-radius-pill);
   background: transparent;
   color: var(--ccc-ink-muted);
+  --text-color: var(--ccc-ink-muted);
   font-family: inherit;
   font-size: var(--ccc-text-label);
   letter-spacing: var(--ccc-tracking-label);
@@ -738,6 +790,7 @@
   text-transform: none;
   letter-spacing: normal;
   color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
 }
 
 .ccc-source-button:hover,
@@ -785,6 +838,7 @@
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
   font-size: var(--ccc-text-body);
 }
 
@@ -872,6 +926,7 @@
   border-radius: var(--ccc-radius-pill);
   background: transparent;
   color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
   font-family: inherit;
   font-size: var(--ccc-text-label);
   cursor: pointer;
@@ -880,6 +935,7 @@
 
 .ccc-list-more {
   color: var(--ccc-ink-muted);
+  --text-color: var(--ccc-ink-muted);
 }
 
 .ccc-quick-action:hover,
@@ -1051,6 +1107,7 @@
   border-radius: var(--ccc-radius-pill);
   background: transparent;
   color: var(--ccc-ink-muted);
+  --text-color: var(--ccc-ink-muted);
   font-family: inherit;
   font-size: var(--ccc-text-label);
   cursor: pointer;
@@ -1210,6 +1267,7 @@
     border-radius: var(--ccc-radius-pill);
     background: transparent;
     color: var(--ccc-ink);
+    --text-color: var(--ccc-ink);
     font-family: inherit;
     font-size: var(--ccc-text-label);
     cursor: pointer;
@@ -1539,6 +1597,7 @@
     border-radius: var(--ccc-radius-pill);
     background: transparent;
     color: var(--ccc-ink);
+    --text-color: var(--ccc-ink);
     font-family: inherit;
     font-size: var(--ccc-text-label);
     cursor: pointer;
@@ -1586,6 +1645,7 @@
   border: none;
   background: transparent;
   color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
   font-family: inherit;
   font-size: var(--ccc-text-body);
   text-align: left;
@@ -1822,6 +1882,7 @@
   border-radius: var(--ccc-radius-pill);
   background: transparent;
   color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
   font-family: inherit;
   font-size: var(--ccc-text-label);
   cursor: pointer;
@@ -1977,6 +2038,7 @@
     border-radius: var(--ccc-radius-pill);
     background: transparent;
     color: var(--ccc-ink);
+    --text-color: var(--ccc-ink);
     font-family: inherit;
     font-size: var(--ccc-text-label);
     cursor: pointer;
@@ -2418,6 +2480,7 @@
   border-radius: var(--ccc-radius-pill);
   background: transparent;
   color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
   font-family: inherit;
   font-size: var(--ccc-text-label);
   text-align: left;
@@ -3355,6 +3418,7 @@
   border-radius: var(--ccc-radius-sm);
   background: transparent;
   color: var(--ccc-danger);
+  --text-color: var(--ccc-danger);
   font-family: inherit;
   font-size: var(--ccc-text-label);
   cursor: pointer;

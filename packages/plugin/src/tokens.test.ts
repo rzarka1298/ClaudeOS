@@ -286,6 +286,103 @@ describe("leak gate (D-18, UI-SPEC Non-Negotiables 1-2)", () => {
     expect(references.length).toBeGreaterThan(0);
   });
 
+  it("defines Obsidian's control variables only in the one control-floor block, each as a --ccc-* token", () => {
+    const FLOOR_VARIABLES = [
+      "--text-normal",
+      "--text-muted",
+      "--text-faint",
+      "--interactive-normal",
+      "--interactive-hover",
+      "--input-shadow",
+      "--input-shadow-hover",
+      "--background-modifier-form-field",
+      "--background-modifier-form-field-hover",
+      "--background-modifier-border",
+      "--background-modifier-border-hover",
+      "--background-modifier-border-focus",
+      "--dropdown-background",
+      "--dropdown-background-hover",
+      "--input-placeholder-color",
+    ];
+    const foreign = (rule: StyleRule): Declaration[] =>
+      declarationsOf(rule).filter(
+        (declaration) =>
+          declaration.property.startsWith("--") &&
+          !declaration.property.startsWith("--ccc-") &&
+          declaration.property !== "--text-color",
+      );
+    const floor = RULES.filter((rule) => rule.selector === ".ccc-command-center").filter(
+      (rule) => foreign(rule).length > 0,
+    );
+    expect(floor).toHaveLength(1);
+    const defined = foreign(floor[0] as StyleRule);
+    expect(defined.map((declaration) => declaration.property).sort()).toEqual(
+      [...FLOOR_VARIABLES].sort(),
+    );
+    for (const declaration of defined) {
+      expect(declaration.value, declaration.property).toMatch(
+        /^(var\(--ccc-[a-z-]+\)|transparent|none)$/,
+      );
+    }
+    // No other rule defines one (`--text-color` is the label carrier, checked below).
+    expect(
+      RULES.filter((rule) => rule !== floor[0])
+        .filter((rule) => !IN_KEYFRAMES(rule))
+        .flatMap(foreign),
+    ).toEqual([]);
+  });
+
+  it("states --text-color beside every control `color` that Obsidian's own button rule would out-rank", () => {
+    // Obsidian: `button:not(.clickable-icon) { color: var(--text-color) }` at (0,1,1). A plain
+    // class (0,1,0) loses to it, so the label colour must travel through `--text-color` too.
+    const CONTROLS = [
+      "ccc-approval-button",
+      "ccc-approval-row-button",
+      "ccc-approvals-back",
+      "ccc-back-to-sessions",
+      "ccc-button-danger",
+      "ccc-connect-button",
+      "ccc-filter-chip",
+      "ccc-list-more",
+      "ccc-list-primary",
+      "ccc-quick-action",
+      "ccc-nav-item",
+      "ccc-range-pill",
+      "ccc-report-row-button",
+      "ccc-row-action",
+      "ccc-session-row-link",
+      "ccc-source-button",
+      "ccc-task-action",
+      "ccc-task-dependency",
+      "ccc-task-title",
+      "ccc-tasks-back",
+    ];
+    const lastCompound = (selector: string): string => selector.split(/[\s>+~]+/).pop() ?? "";
+    const specificity = (selector: string): number =>
+      selector
+        .replace(/:where\([^)]*\)/g, "")
+        .replace(/::[a-z-]+/g, "")
+        .split(/(?=[.[:])/)
+        .filter((part) => /^[.[:]/.test(part)).length;
+    const offenders: string[] = [];
+    let checked = 0;
+    for (const rule of RULES.filter((candidate) => !IN_KEYFRAMES(candidate))) {
+      const selectors = rule.selector.split(",").map((selector) => selector.trim());
+      const lifted = selectors.filter((selector) =>
+        CONTROLS.some((name) => lastCompound(selector).includes(`.${name}`)),
+      );
+      if (lifted.length === 0 || Math.min(...lifted.map(specificity)) >= 2) continue;
+      const declarations = declarationsOf(rule);
+      const colour = declarations.find((declaration) => declaration.property === "color");
+      if (colour === undefined) continue;
+      checked += 1;
+      const carrier = declarations.find((declaration) => declaration.property === "--text-color");
+      if (carrier?.value !== colour.value) offenders.push(`${rule.selector} { color }`);
+    }
+    expect(checked).toBeGreaterThan(10);
+    expect(offenders).toEqual([]);
+  });
+
   it("uses no importance override, so a user snippet can still win", () => {
     expect(codeOnly(STYLESHEET)).not.toMatch(/!\s*important/);
   });

@@ -55,17 +55,10 @@ const PAGES: readonly PageSpec[] = [
   {
     name: "research reader and tabs",
     params: { view: "research", case: "research-report-full", width: "full", nav: "1" },
-    mustSample: [
-      "RESEARCH",
-      "Overview",
-      "Back to reports",
-      "Open note",
-      "Cached",
-      "[1]",
-      "Quoted from source",
-    ],
+    mustSample: ["RESEARCH", "Overview", "Open note", "Cached", "[1]", "Quoted from source"],
   },
   {
+    // Narrow, the open report replaces the list and the Back button appears.
     name: "research reader narrow",
     params: { view: "research", case: "research-report-full", width: "narrow", nav: "1" },
     mustSample: ["Back to reports", "Open note"],

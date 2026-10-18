@@ -174,10 +174,15 @@ describe("Test 1: the CSS contract of the Tasks family", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("names every custom property it reads, and declares none", () => {
+  it("names every custom property it reads, and declares no token", () => {
     for (const rule of NEW_RULES) {
       for (const declaration of declarations(rule)) {
-        expect(declaration.property.startsWith("--"), declaration.property).toBe(false);
+        // No new token. The one exception is `--text-color`, the control floor's foreground carrier
+        // (styles.css "The control floor"), which must sit beside every `color` under (0,2,0).
+        expect(
+          declaration.property === "--text-color" || !declaration.property.startsWith("--"),
+          declaration.property,
+        ).toBe(true);
         for (const reference of declaration.value.matchAll(/var\(\s*(--[\w-]+)/g)) {
           expect(reference[1]?.startsWith("--ccc-"), `${declaration.value}`).toBe(true);
         }
