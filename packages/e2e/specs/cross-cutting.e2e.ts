@@ -86,13 +86,15 @@ import {
   scanForAlwaysAllow,
 } from "../src/spec-support/cross-support.js";
 import { waitUntilQuiet } from "../src/spec-support/quiescence.js";
+import { fitWindowToWorkArea, type ShotBrowser } from "../src/spec-support/research-shots.js";
 import {
   bringSubjectIntoView,
+  hideNotices,
   maximizeCommandCenter,
-  readAvailableScreen,
   recoverFocus,
   rememberFocus,
   restoreLayout,
+  showNotices,
 } from "../src/spec-support/shot-layout.js";
 import { TASKS_CLASSES, TASKS_TEXT } from "../src/spec-support/tasks-copy.js";
 import {
@@ -104,6 +106,7 @@ import {
   selectRow,
   showFilter,
 } from "../src/spec-support/tasks-support.js";
+import { describeFit } from "../src/spec-support/window-fit.js";
 import { copyStore, queryStore } from "../src/store-copy.js";
 
 const asDriver = (): DriverBrowser => browser as unknown as DriverBrowser;
@@ -235,38 +238,37 @@ async function shot(
   if (dir === undefined) throw new Error("No shots folder: a look item cannot record images.");
   const path = shotPath(dir, item, label);
   assertShotInside(dir, path);
-  // The owner asked for full-size shots: the sandboxed window takes the display's usable size
-  // (when the window manager lets it) and the command center the width of the window, measured so
-  // its right edge stays inside; the sidebars go back afterwards. Focus must be where it was
-  // (item 22 shoots focused controls), and the subject of the shot is scrolled into view and
-  // checked, because the re-layout moved the scroll position (run 18).
-  const screen = await browser.execute(readAvailableScreen);
-  if (screen.width > 0 && screen.height > 0) {
-    try {
-      await browser.setWindowRect(0, 0, screen.width, screen.height);
-    } catch {
-      await browser.maximizeWindow().catch(() => undefined);
-    }
-  }
+  // The owner asked for full-size shots: the sandboxed window takes the display's work area
+  // (Obsidian's own window API, then WebDriver, then maximize; a window that stayed small is named
+  // in the failure), and the command center the width of the window, measured so its right edge
+  // stays inside; the sidebars and the window go back afterwards. Notices are dismissed so a toast
+  // cannot cover the header. Focus must be where it was (item 22 shoots focused controls), and the
+  // subject of the shot is scrolled into view and checked, because the re-layout moved the scroll
+  // position (run 18).
+  const shotBrowser = browser as unknown as ShotBrowser;
+  const { fit, restore: restoreWindow } = await fitWindowToWorkArea(shotBrowser);
   await browser.execute(rememberFocus);
   const layout = await browser.execute(maximizeCommandCenter, APPROVALS_COPY.commandCenterViewType);
   try {
     if (!layout.fits) {
       throw new Error(
-        `The command center would be clipped for the screenshot (right edge ${layout.rightEdge} of ${layout.innerWidth}).`,
+        `The command center would be clipped for the screenshot (right edge ${layout.rightEdge} of ${layout.innerWidth}; ${describeFit(fit)}).`,
       );
     }
     await browser.pause(SHOT_SETTLE_MS);
     const focusKept = await browser.execute(recoverFocus);
     if (!focusKept) throw new Error("Focus moved when the layout was enlarged for the screenshot.");
+    await browser.execute(hideNotices);
     const seen = await browser.execute(bringSubjectIntoView, subject.selector, subject.block);
     if (!seen.found || !seen.inView) {
       throw new Error(`The subject of the screenshot (${subject.selector}) is not on screen.`);
     }
     await browser.saveScreenshot(path);
   } finally {
+    await browser.execute(showNotices).catch(() => false);
     await browser.execute(restoreLayout, layout);
     await browser.execute(recoverFocus);
+    await restoreWindow();
   }
   return label;
 }

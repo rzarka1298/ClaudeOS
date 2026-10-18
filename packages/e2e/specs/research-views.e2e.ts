@@ -13,6 +13,11 @@ import { assertSandboxConnected, pollUntil } from "../src/driver.js";
 import { scenarioSources } from "../src/research-uat-fixture.js";
 import { loadRunContext } from "../src/spec-context.js";
 import { APPROVALS_COPY } from "../src/spec-support/approvals-copy.js";
+import {
+  contrastFailures,
+  lowestRatios,
+  readContrastInBothThemes,
+} from "../src/spec-support/contrast-probe.js";
 import { recordLookPending, sampleMotionInRenderer } from "../src/spec-support/cross-support.js";
 import { RESEARCH_CLASSES, RESEARCH_TEXT } from "../src/spec-support/research-copy.js";
 import {
@@ -68,6 +73,7 @@ import {
   rendererClick,
   runSetUpManagedVault,
 } from "../src/spec-support/tasks-support.js";
+import { decideWideLayout, describeFit } from "../src/spec-support/window-fit.js";
 
 const rb = asResearchBrowser(browser);
 const tb = asTasksBrowser(browser);
@@ -115,6 +121,14 @@ describe("research views", () => {
     return openReport(rb, 0, { items: FINDINGS, sources: SOURCES });
   }
 
+  /**
+   * Opens the long report again. A shot taken in the main area runs in a new command center view,
+   * and the sidebar view is new again after the layout goes back, so each starts on the Overview.
+   */
+  const reopenReport = async (): Promise<void> => {
+    await openLongReport();
+  };
+
   /** Presses Tab and reads where focus landed. */
   async function tab(): Promise<ResearchFocus | null> {
     await browser.keys(Key.Tab);
@@ -157,7 +171,7 @@ describe("research views", () => {
   it("[07-UAT#15] A long report reads as an article", async () => {
     await openLongReport();
     const subject = { selector: READER, block: "start" } as const;
-    // Side pane: the command center as it sits in the right sidebar.
+    // Side pane: the command center as it sits in the right sidebar, in a window at the display's size.
     expect(checkArticleFacts(await readArticle(rb), { findings: FINDINGS })).toEqual([]);
     const labels = [
       await captureLook(sb, {
@@ -166,23 +180,28 @@ describe("research views", () => {
         label: "side-pane",
         subject,
         viewType: VIEW_TYPE,
-        enlarge: false,
+        placement: "window",
       }),
     ];
-    // Full width: the sidebar widened to the window.
-    await withEnlargedLayout(sb, VIEW_TYPE, async () => {
-      expect(checkArticleFacts(await readArticle(rb), { findings: FINDINGS })).toEqual([]);
-      labels.push(
-        await captureLook(sb, {
-          shotsDir: env.context.shotsDir,
-          item: 15,
-          label: "full-width",
-          subject,
-          viewType: VIEW_TYPE,
-          enlarge: false,
-        }),
-      );
-    });
+    // Full width: a main-area tab in a window at the display's size, both sidebars collapsed.
+    await withEnlargedLayout(
+      sb,
+      VIEW_TYPE,
+      async () => {
+        expect(checkArticleFacts(await readArticle(rb), { findings: FINDINGS })).toEqual([]);
+        labels.push(
+          await captureLook(sb, {
+            shotsDir: env.context.shotsDir,
+            item: 15,
+            label: "full-width",
+            subject,
+            viewType: VIEW_TYPE,
+            placement: "as-is",
+          }),
+        );
+      },
+      { reopen: reopenReport },
+    );
     recordLookPending({ runRoot: env.context.runRoot, item: 15, labels });
   });
 
@@ -191,27 +210,44 @@ describe("research views", () => {
     const original = await rememberLayout(sb, VIEW_TYPE);
     const labels: string[] = [];
     try {
-      const wide = await withEnlargedLayout(sb, VIEW_TYPE, async () => {
-        await pollUntil(async () => (await readLayout(rb)).mode === "side" || null, {
-          timeoutMs: 10_000,
-          intervalMs: 250,
-          describe: "the layout to measure side by side",
-        }).catch(() => undefined);
-        labels.push(
-          await captureLook(sb, {
-            shotsDir: env.context.shotsDir,
-            item: 16,
-            label: "full-width",
-            subject: { selector: `.${RESEARCH_CLASSES.layout}`, block: "start" },
-            viewType: VIEW_TYPE,
-            enlarge: false,
-          }),
-        );
-        return readLayout(rb);
+      const wide = await withEnlargedLayout(
+        sb,
+        VIEW_TYPE,
+        async ({ fit }) => {
+          await pollUntil(async () => (await readLayout(rb)).mode === "side" || null, {
+            timeoutMs: 10_000,
+            intervalMs: 250,
+            describe: `the layout to measure side by side (${describeFit(fit)})`,
+          }).catch(() => undefined);
+          labels.push(
+            await captureLook(sb, {
+              shotsDir: env.context.shotsDir,
+              item: 16,
+              label: "full-width",
+              subject: { selector: `.${RESEARCH_CLASSES.layout}`, block: "start" },
+              viewType: VIEW_TYPE,
+              placement: "as-is",
+            }),
+          );
+          return { layout: await readLayout(rb), fit };
+        },
+        { reopen: reopenReport },
+      );
+      // The window took the display's size and the view the whole main area, so a layout that is
+      // still not side by side is a fault, not a reason to skip. The one skip left is a screen
+      // that is itself narrower than the breakpoint, and it says so.
+      const verdict = decideWideLayout({
+        gridWidth: wide.layout.gridWidth,
+        breakpointPx: 48 * wide.layout.rootFontPx,
+        workAreaWidth: wide.fit.workArea?.width ?? null,
+        windowFilled: wide.fit.filled,
       });
-      if (wide.found && wide.gridWidth < 48 * wide.rootFontPx) {
-        // The window cannot be made wide enough on this display: nothing to compare.
+      if (wide.layout.found && verdict.kind === "skip") {
+        console.warn(`[07-UAT#16] skipped: ${verdict.reason}`);
         this.skip();
+      }
+      if (wide.layout.found && verdict.kind === "fail") {
+        throw new Error(`${verdict.reason} (${describeFit(wide.fit)})`);
       }
       await browser.execute(restoreLayout, {
         ...original,
@@ -232,11 +268,11 @@ describe("research views", () => {
           label: "narrow-pane",
           subject: { selector: `.${RESEARCH_CLASSES.layout}`, block: "start" },
           viewType: VIEW_TYPE,
-          enlarge: false,
+          placement: "window",
         }),
       );
       const narrow = await readLayout(rb);
-      expect(checkLayouts({ wide, narrow })).toEqual([]);
+      expect(checkLayouts({ wide: wide.layout, narrow })).toEqual([]);
     } finally {
       await browser.execute(restoreLayout, original);
     }
@@ -248,44 +284,49 @@ describe("research views", () => {
     const original = await rememberLayout(sb, VIEW_TYPE);
     try {
       // Full width, so the list and the reader are both in the tab order.
-      await withEnlargedLayout(sb, VIEW_TYPE, async () => {
-        await pollUntil(async () => (await readLayout(rb)).mode === "side" || null, {
-          timeoutMs: 10_000,
-          intervalMs: 250,
-          describe: "the layout to measure side by side",
-        });
-        expect(await focusRunNow(rb)).toBe(true);
-        const walk: ResearchFocus[] = [];
-        const first = await focusNow();
-        if (first !== null) walk.push(first);
-        await tabUntil(
-          (focus) => focus.inReader && focus.name === RESEARCH_TEXT.openRunNoteLabel,
-          walk,
-        );
-        expect(
-          checkTabOrder(walk, {
-            sourcesCount: scenarioSources("long").length,
-            skipRingOnFirst: true,
-          }),
-        ).toEqual([]);
+      await withEnlargedLayout(
+        sb,
+        VIEW_TYPE,
+        async ({ fit }) => {
+          await pollUntil(async () => (await readLayout(rb)).mode === "side" || null, {
+            timeoutMs: 10_000,
+            intervalMs: 250,
+            describe: `the layout to measure side by side (${describeFit(fit)})`,
+          });
+          expect(await focusRunNow(rb)).toBe(true);
+          const walk: ResearchFocus[] = [];
+          const first = await focusNow();
+          if (first !== null) walk.push(first);
+          await tabUntil(
+            (focus) => focus.inReader && focus.name === RESEARCH_TEXT.openRunNoteLabel,
+            walk,
+          );
+          expect(
+            checkTabOrder(walk, {
+              sourcesCount: scenarioSources("long").length,
+              skipRingOnFirst: true,
+            }),
+          ).toEqual([]);
 
-        // A citation moves focus to its source, and Back to finding returns it.
-        expect(await focusRunNow(rb)).toBe(true);
-        const toCitation: ResearchFocus[] = [];
-        const cite = await tabUntil((focus) => focus.cite !== null, toCitation);
-        await browser.keys(Key.Enter);
-        const source = await pollUntil(
-          async () => {
-            const found = await focusNow();
-            return found?.tag === "h5" ? found : null;
-          },
-          { timeoutMs: 10_000, intervalMs: 250, describe: "focus to move to the cited source" },
-        );
-        const next = await tab();
-        await browser.keys(Key.Enter);
-        const returned = await focusNow();
-        expect(checkCitationRoundTrip({ cite, source, next, returned })).toEqual([]);
-      });
+          // A citation moves focus to its source, and Back to finding returns it.
+          expect(await focusRunNow(rb)).toBe(true);
+          const toCitation: ResearchFocus[] = [];
+          const cite = await tabUntil((focus) => focus.cite !== null, toCitation);
+          await browser.keys(Key.Enter);
+          const source = await pollUntil(
+            async () => {
+              const found = await focusNow();
+              return found?.tag === "h5" ? found : null;
+            },
+            { timeoutMs: 10_000, intervalMs: 250, describe: "focus to move to the cited source" },
+          );
+          const next = await tab();
+          await browser.keys(Key.Enter);
+          const returned = await focusNow();
+          expect(checkCitationRoundTrip({ cite, source, next, returned })).toEqual([]);
+        },
+        { reopen: reopenReport },
+      );
 
       // One column: Escape closes the reader and returns focus to the row it came from.
       await browser.execute(restoreLayout, {
@@ -434,8 +475,33 @@ describe("research views", () => {
     // an article rather than a dashboard stays the owner's judgement.
     await openLongReport();
     expect(checkArticleFacts(await readArticle(rb), { findings: FINDINGS })).toEqual([]);
-    await withEnlargedLayout(sb, VIEW_TYPE, async () => {
-      expect(checkArticleFacts(await readArticle(rb), { findings: FINDINGS })).toEqual([]);
-    });
+    await withEnlargedLayout(
+      sb,
+      VIEW_TYPE,
+      async () => {
+        expect(checkArticleFacts(await readArticle(rb), { findings: FINDINGS })).toEqual([]);
+        // The same reader, the tab strip and every button and chip in it, measured in the real
+        // window under BOTH Obsidian base themes: Obsidian's own control rules once left the
+        // active tab label at 1.15:1 and the pills under 3:1 in the light theme (trial run
+        // da14049b). Text needs 4.5:1 (3:1 large), a form edge 3:1.
+        const readings = await readContrastInBothThemes(sb, ".ccc-command-center");
+        for (const reading of readings) {
+          console.log(
+            `[07-UAT#23] ${reading.base} lowest:\n  ${lowestRatios(reading.measured).join("\n  ")}`,
+          );
+          expect(reading.problems.map((line) => `${reading.base}: ${line}`)).toEqual([]);
+          const unmeasured = ["research", "open note", "cached", "source"].filter(
+            (wanted) => !reading.texts.some((text) => text.toLowerCase().includes(wanted)),
+          );
+          expect(
+            unmeasured.map((wanted) => `${reading.base}: "${wanted}" was not measured`),
+          ).toEqual([]);
+          expect(
+            contrastFailures(reading.measured).map((line) => `${reading.base}: ${line}`),
+          ).toEqual([]);
+        }
+      },
+      { reopen: reopenReport },
+    );
   });
 });

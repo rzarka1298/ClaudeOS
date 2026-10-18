@@ -23,7 +23,15 @@ const SUPPORT_FILES = [
   "synthetic-session.ts",
   "shot-layout.ts",
   "research-support.ts",
+  // Calls the shot-layout renderers (window facts and bounds, the main-area move, notices); their
+  // declarations live in shot-layout.ts.
+  "research-shots.ts",
+  // The live-Obsidian contrast probe: its harvest and theme-swap renderers are declared where called.
+  "contrast-probe.ts",
 ];
+
+/** Where a support file's renderer functions are declared when not in the file that calls them. */
+const DECLARED_IN: Readonly<Record<string, string>> = { "research-shots.ts": "shot-layout.ts" };
 
 interface EsbuildLike {
   transformSync(
@@ -80,8 +88,10 @@ function collect(): Found[] {
     const source = readFileSync(join(HERE, file), "utf8");
     const names = new Set<string>();
     for (const match of source.matchAll(CALL)) names.add(match[1] as string);
+    const elsewhere = DECLARED_IN[file];
+    const otherSource = elsewhere === undefined ? "" : readFileSync(join(HERE, elsewhere), "utf8");
     for (const name of names) {
-      const declaration = declarationOf(source, name);
+      const declaration = declarationOf(source, name) ?? declarationOf(otherSource, name);
       // A name defined elsewhere (renderer-spies) is covered by renderer-spies-serialise.test.ts.
       if (declaration === null) continue;
       found.push({ file, name, text: rendererText(declaration, name) });
@@ -96,6 +106,24 @@ describe("spec-support renderer functions survive wdio's keepNames transform", (
   it("finds the named renderer functions of the approvals and tasks support modules", () => {
     for (const file of ["approvals-support.ts", "tasks-support.ts"]) {
       expect(renderers.filter((entry) => entry.file === file).length, file).toBeGreaterThan(0);
+    }
+  });
+
+  it("covers the shot-layout renderers that the research shots send", () => {
+    const names = renderers
+      .filter((entry) => entry.file === "research-shots.ts")
+      .map((e) => e.name);
+    for (const name of [
+      "readWindowFacts",
+      "applyWindowBounds",
+      "moveCommandCenterToMain",
+      "moveCommandCenterToSidebar",
+      "collapseSidebars",
+      "readShotLayout",
+      "hideNotices",
+      "showNotices",
+    ]) {
+      expect(names, name).toContain(name);
     }
   });
 
