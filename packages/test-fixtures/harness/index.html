@@ -6,6 +6,18 @@
     <title>Widget harness</title>
     <!-- Local files only (T-03-06): the production stylesheet, then the frozen
          font stack Playwright also injects through stylePath. -->
+    <!-- The contrast guard only (visual/contrast.spec.ts): `?host=light|dark` loads a
+         stand-in for Obsidian's own control and theme rules BEFORE the production stylesheet,
+         the order Obsidian uses. Without the parameter nothing changes. -->
+    <script>
+      (function () {
+        var base = new URLSearchParams(location.search).get("host");
+        if (base === "light" || base === "dark") {
+          document.documentElement.classList.add("theme-" + base);
+          document.write('<link rel="stylesheet" href="./obsidian-base.css">');
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="./dist/styles.css" />
     <link rel="stylesheet" href="./harness-fonts.css" />
   </head>

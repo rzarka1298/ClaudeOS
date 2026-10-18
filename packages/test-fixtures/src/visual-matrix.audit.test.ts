@@ -116,6 +116,8 @@ const MERGED_TREE_CELLS = 121;
 const CODEX_SPEC_CELLS = 47;
 /** The Research spec's cells (plan 07-16): one baseline each, in its own spec file. */
 const RESEARCH_SPEC_CELLS = 17;
+/** The contrast guard's tests (`contrast.spec.ts`): 9 pages under a light and a dark host, no image. */
+const CONTRAST_GUARD_TESTS = 18;
 
 /** The titles `playwright test --list` prints for one spec file. */
 function titlesOf(listing: string, specFile: string): string[] {
@@ -129,7 +131,7 @@ describe("visual matrix (audit)", () => {
   it("lists the merged-tree 121 cells (9 widgets x 8 presentations + 5 motion + 4 Agent runs + 21 approvals + 19 tasks) plus the Codex spec's own", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
     expect(out).toContain(
-      `Total: ${MERGED_TREE_CELLS + CODEX_SPEC_CELLS + RESEARCH_SPEC_CELLS} tests in 6 files`,
+      `Total: ${MERGED_TREE_CELLS + CODEX_SPEC_CELLS + RESEARCH_SPEC_CELLS + CONTRAST_GUARD_TESTS} tests in 7 files`,
     );
     expect(titlesOf(out, "research.spec.ts")).toHaveLength(RESEARCH_SPEC_CELLS);
     expect(CODEX_CELLS).toHaveLength(CODEX_SPEC_CELLS);

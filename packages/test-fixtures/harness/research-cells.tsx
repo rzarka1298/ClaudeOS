@@ -40,6 +40,7 @@ import type {
 import {
   configureResearch,
   connectionState,
+  DestinationTabs,
   motionMode,
   ResearchApiError,
   ResearchDestination,
@@ -256,9 +257,13 @@ export function ResearchCell({ params }: { readonly params: URLSearchParams }): 
   connectionState.value = connection;
   configureOnce(fixture);
   startReady(fixture, width);
+  // `nav=1` adds the real tab strip above the destination (the contrast guard reads it). No
+  // baseline sets it, so the committed images are unchanged.
+  const withNav = params.get("nav") === "1";
   return (
     <div className="ccc-command-center" data-motion={motionMode.value}>
       <div data-harness-width={width} style={{ width: PANE_WIDTH[width] }}>
+        {withNav ? <DestinationTabs activeId="research" pendingCount={0} /> : null}
         <div className="ccc-content">
           <ResearchDestination connection={connection} now={NOW} zone={FIXTURES.zone} />
         </div>

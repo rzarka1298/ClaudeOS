@@ -30,6 +30,10 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PLAYWRIGHT = join(REPO_ROOT, "node_modules", ".bin", "playwright");
 const ANNOTATION = "baseline";
+// A test that renders and measures but owns no image (the contrast guard,
+// `contrast.spec.ts`) says so with this annotation instead; it is then skipped
+// here, and it can never be mistaken for a missing baseline.
+const NO_BASELINE_ANNOTATION = "contrast-guard";
 const PLATFORM = "linux";
 const STEM = /^[a-z0-9][a-z0-9-]*\.png$/;
 
@@ -74,6 +78,7 @@ function visit(suite, fileName) {
   for (const spec of suite.specs ?? []) {
     for (const test of spec.tests ?? []) {
       tests++;
+      if ((test.annotations ?? []).some((a) => a.type === NO_BASELINE_ANNOTATION)) continue;
       const declared = (test.annotations ?? []).filter((a) => a.type === ANNOTATION);
       if (declared.length !== 1) {
         refuse(

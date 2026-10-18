@@ -50,11 +50,21 @@ const RESEARCH_SPEC_PATH = join(
   "visual",
   "research.spec.ts",
 );
+/** The contrast guard (Phase 7 live-UAT trial): a fifth spec file over the same harness page, under
+ * the identical purity contract. It renders and measures; it owns no image. */
+const CONTRAST_SPEC_PATH = join(
+  REPO_ROOT,
+  "packages",
+  "test-fixtures",
+  "visual",
+  "contrast.spec.ts",
+);
 const SPEC_PATHS = [
   ["widgets.spec.ts", SPEC_PATH],
   ["agent-runs.spec.ts", AGENT_RUNS_SPEC_PATH],
   ["codex.spec.ts", CODEX_SPEC_PATH],
   ["research.spec.ts", RESEARCH_SPEC_PATH],
+  ["contrast.spec.ts", CONTRAST_SPEC_PATH],
 ] as const;
 
 /** The exact set of modules the visual spec may import. */
