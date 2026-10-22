@@ -31,6 +31,7 @@ import {
   TestLines,
 } from "./launcher-panel-kit.js";
 import { launchersFocusRequested } from "./launchers-focus.js";
+import { type Announce, statusRole, useAnnounceOnChange } from "./quiet-announce.js";
 
 export { createLaunchersSession, type LaunchersSession } from "./launcher-panel-kit.js";
 export { requestLaunchersFocus } from "./launchers-focus.js";
@@ -146,6 +147,13 @@ export interface LaunchersSettingsProps {
   readonly now: number;
   /** The view's session; a standalone mount creates its own. */
   readonly session?: LaunchersSession | undefined;
+  /**
+   * Quiet mode (FIX2B M1), set by the Settings destination that owns the one live region: every
+   * status line below is a plain paragraph and its words go here instead. Opening the section
+   * (including its one automatic detection) announces nothing; only the owner's Detect apps,
+   * Save launcher, Test and Check Codex health outcomes do.
+   */
+  readonly announce?: Announce | undefined;
 }
 
 export function LaunchersSettings({
@@ -153,11 +161,19 @@ export function LaunchersSettings({
   connection,
   now,
   session: providedSession,
+  announce,
 }: LaunchersSettingsProps): VNode {
   const [ownSession] = useState(createLaunchersSession);
   const session = providedSession ?? ownSession;
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const disconnected = connection.kind === "disconnected";
+  // The automatic detection on open is data, not an outcome: only a pressed Detect apps speaks.
+  const detectPressed = useRef(false);
+  const detectLineRef = useAnnounceOnChange<HTMLParagraphElement>(
+    announce,
+    `${session.detectPhase.value}|${session.detection.value?.detectedAt ?? ""}`,
+    () => detectPressed.current,
+  );
 
   function runDetect(): void {
     if (disconnected || session.detectPhase.value === "detecting") return;
@@ -209,7 +225,7 @@ export function LaunchersSettings({
   return (
     <section className="ccc-settings-section ccc-projects-section">
       <div className="ccc-card-header">
-        <h3 ref={headingRef} tabIndex={-1}>
+        <h3 ref={headingRef} tabIndex={-1} className="ccc-settings-section-title">
           Launchers
         </h3>
       </div>
@@ -229,12 +245,15 @@ export function LaunchersSettings({
           type="button"
           className="ccc-connect-button"
           aria-disabled={disconnected || detectPhase === "detecting" ? "true" : undefined}
-          onClick={() => runDetect()}
+          onClick={() => {
+            detectPressed.current = true;
+            runDetect();
+          }}
         >
           Detect apps
         </button>
       </div>
-      <p role="status" className="ccc-launch-status">
+      <p ref={detectLineRef} role={statusRole(announce)} className="ccc-launch-status">
         {detectPhase === "detecting" && "Detecting apps…"}
         {detectPhase !== "detecting" &&
           detection !== null &&
@@ -257,6 +276,7 @@ export function LaunchersSettings({
         session={session}
         now={now}
         disabled={disconnected}
+        announce={announce}
       />
       <ClaudeCodePanel
         actions={actions}
@@ -264,6 +284,7 @@ export function LaunchersSettings({
         connection={connection}
         now={now}
         sampleDisplayPath={sampleDisplayPath()}
+        announce={announce}
       />
       <CodexLauncherPanel
         actions={actions}
@@ -271,6 +292,7 @@ export function LaunchersSettings({
         connection={connection}
         now={now}
         sampleDisplayPath={sampleDisplayPath()}
+        announce={announce}
       />
       <AppLauncherPanel
         id="claude-desktop"
@@ -278,6 +300,7 @@ export function LaunchersSettings({
         session={session}
         now={now}
         disabled={disconnected}
+        announce={announce}
       />
       <NoSetupPanel
         id="finder"
@@ -285,6 +308,7 @@ export function LaunchersSettings({
         session={session}
         now={now}
         disabled={disconnected}
+        announce={announce}
       />
       <NoSetupPanel
         id="github"
@@ -292,6 +316,7 @@ export function LaunchersSettings({
         session={session}
         now={now}
         disabled={disconnected}
+        announce={announce}
       />
     </section>
   );
@@ -304,6 +329,8 @@ interface PanelProps<Id extends LaunchAction> {
   readonly now: number;
   /** The service is disconnected: last-known values, every control `aria-disabled`. */
   readonly disabled: boolean;
+  /** Quiet mode (FIX2B M1): the status line is plain and its words go here. */
+  readonly announce?: Announce | undefined;
 }
 
 /** Finder and GitHub: nothing to set up, but each still has its Test step (RR-15). */
@@ -313,6 +340,7 @@ function NoSetupPanel({
   session,
   now,
   disabled,
+  announce,
 }: PanelProps<"finder" | "github">): VNode {
   const headingId = useId();
   const testButtonRef = useRef<HTMLButtonElement>(null);
@@ -334,7 +362,13 @@ function NoSetupPanel({
           onTest={() => runLauncherTest(session, actions, id, null)}
         />
       </div>
-      <PanelStatusLine id={id} status={status} now={now} copy={defaultTestCopy(id)} />
+      <PanelStatusLine
+        id={id}
+        status={status}
+        now={now}
+        copy={defaultTestCopy(id)}
+        announce={announce}
+      />
       <PanelFollowUps
         id={id}
         status={status}
@@ -363,6 +397,7 @@ function AppLauncherPanel({
   session,
   now,
   disabled,
+  announce,
 }: PanelProps<AppLauncherId>): VNode {
   const headingId = useId();
   const groupName = useId();
@@ -567,7 +602,13 @@ function AppLauncherPanel({
           </button>
         )}
       </div>
-      <PanelStatusLine id={id} status={status} now={now} copy={defaultTestCopy(id)} />
+      <PanelStatusLine
+        id={id}
+        status={status}
+        now={now}
+        copy={defaultTestCopy(id)}
+        announce={announce}
+      />
       <PanelFollowUps
         id={id}
         status={status}

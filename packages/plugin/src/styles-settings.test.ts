@@ -240,7 +240,11 @@ describe("Task 1 (tracer): the root and the new controls state their own colours
   });
 
   it("Test 4: disabled looks come from aria-disabled only, never :disabled", () => {
-    expect(declaredValue("ccc-switch", "opacity", '[aria-disabled="true"]')).toBe("0.55");
+    // M4: the audited dim token, and not while pending (the word shows the value being saved).
+    const unavailable = '[aria-disabled="true"]:not([aria-busy="true"])';
+    expect(declaredValue("ccc-switch", "opacity", unavailable)).toBe("var(--ccc-dim-opacity)");
+    expect(declaredValue("ccc-switch", "opacity", '[aria-busy="true"]')).toBeUndefined();
+    expect(declaredValue("ccc-switch", "opacity", '[aria-disabled="true"]')).toBeUndefined();
     for (const name of NEW_CONTROLS) {
       for (const rule of rulesNaming(name)) {
         for (const selector of rule.selectors) expect(selector, name).not.toMatch(/:disabled/);
@@ -316,11 +320,11 @@ describe("Task 1 (tracer): the root and the new controls state their own colours
     expect(declaredValue("ccc-settings-nav-item", "overflow-wrap")).toBe("break-word");
   });
 
-  it("the display path wraps anywhere and stays selectable mono text", () => {
-    expect(declaredValue("ccc-display-path", "overflow-wrap")).toBe("anywhere");
-    expect(declaredValue("ccc-display-path", "font-family")).toBe("var(--ccc-font-mono)");
-    expect(declaredValue("ccc-display-path", "font-size")).toBe("var(--ccc-text-label)");
-    expect(declaredValue("ccc-display-path", "user-select")).toBe("text");
+  it("the Settings path wraps anywhere and stays selectable mono text", () => {
+    expect(declaredValue("ccc-setting-path", "overflow-wrap")).toBe("anywhere");
+    expect(declaredValue("ccc-setting-path", "font-family")).toBe("var(--ccc-font-mono)");
+    expect(declaredValue("ccc-setting-path", "font-size")).toBe("var(--ccc-text-label)");
+    expect(declaredValue("ccc-setting-path", "user-select")).toBe("text");
   });
 });
 
@@ -407,7 +411,7 @@ describe("Task 2: status chips never use colour alone (D-07, D-33, R-05, R-06, R
     expect(declaredValue("ccc-health-command", "overflow-wrap")).toBe("anywhere");
     expect(declaredValue("ccc-health-command", "font-family")).toBe("var(--ccc-font-mono)");
     expect(declaredValue("ccc-health-command", "font-size")).toBe("var(--ccc-text-label)");
-    expect(declaredValue("ccc-display-path", "overflow-wrap")).toBe("anywhere");
+    expect(declaredValue("ccc-setting-path", "overflow-wrap")).toBe("anywhere");
   });
 
   it("Test 3: the bundle preview is mono at the label size, wraps, and scrolls vertically only", () => {
@@ -462,13 +466,16 @@ describe("Task 2: status chips never use colour alone (D-07, D-33, R-05, R-06, R
       "ccc-settings-nav",
       "ccc-settings-nav-item",
       "ccc-settings-content",
+      "ccc-settings-section-title",
+      "ccc-settings-group-title",
+      "ccc-settings-item-title",
       "ccc-setting-row",
       "ccc-setting-row-text",
       "ccc-setting-row-control",
       "ccc-switch",
       "ccc-select-wrap",
       "ccc-select",
-      "ccc-display-path",
+      "ccc-setting-path",
       "ccc-health",
       "ccc-health-summary",
       "ccc-health-list",
@@ -516,5 +523,75 @@ describe("Task 2: status chips never use colour alone (D-07, D-33, R-05, R-06, R
       .map((m) => m[1] ?? "")
       .filter((token) => !TOKEN_NAMES.has(token));
     expect(unknown).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FIX2B: the Phase 8 section must not restyle anything Phase 4 (and earlier) owns
+// ---------------------------------------------------------------------------
+
+/** Selector text and source offsets of every non-at-rule prelude in the section. */
+const SECTION_SELECTORS = SECTION_RULES.flatMap((rule) => rule.selectors);
+
+describe("FIX2B: the Phase 8 section scopes its rules to classes it owns (M2, M3, M4)", () => {
+  // Classes the section deliberately extends rather than introduces: the root; `.ccc-badge`
+  // (a status chip IS a badge, `.ccc-badge[data-status]`); `.ccc-settings` (the Phase 7 research
+  // container the Settings frame reuses, to which Phase 8 only adds a descendant focus ring).
+  const EXTENDED = new Set(["ccc-command-center", "ccc-badge", "ccc-settings"]);
+
+  const classesIn = (selector: string): string[] =>
+    [...selector.matchAll(/\.(ccc-[\w-]+)/g)].map((match) => match[1] ?? "");
+
+  it("M2: no class first introduced in the Phase 8 section already appears in a rule before it", () => {
+    const earlier = parseRules(codeOnly(STYLESHEET.slice(0, SECTION_START)));
+    const earlierClasses = new Set(
+      earlier.flatMap((rule) => rule.selectors.flatMap((selector) => classesIn(selector))),
+    );
+    const collisions = [
+      ...new Set(
+        SECTION_SELECTORS.flatMap(classesIn).filter(
+          (name) => !EXTENDED.has(name) && earlierClasses.has(name),
+        ),
+      ),
+    ];
+    expect(collisions).toEqual([]);
+  });
+
+  it("M2: the Settings path has its own class and the Phase 4 .ccc-display-path is left muted", () => {
+    expect(rulesNaming("ccc-setting-path").length).toBeGreaterThan(0);
+    const phase8Rules = SECTION_RULES.filter((rule) =>
+      rule.selectors.some((selector) => classesIn(selector).includes("ccc-display-path")),
+    );
+    expect(phase8Rules).toEqual([]);
+  });
+
+  it("M3: no Phase 8 rule selects a bare h3, h4 or h5, or the Phase 4 section label", () => {
+    const bareHeading = /(?:^|[\s>+~])h[345](?![\w-])/;
+    expect(SECTION_SELECTORS.filter((selector) => bareHeading.test(selector))).toEqual([]);
+    expect(
+      SECTION_SELECTORS.filter((selector) => classesIn(selector).includes("ccc-section-label")),
+    ).toEqual([]);
+  });
+
+  it("M3: the frame's own headings carry explicit classes", () => {
+    expect(declaredValue("ccc-settings-section-title", "font-size")).toBe(
+      "var(--ccc-text-heading)",
+    );
+    expect(declaredValue("ccc-settings-group-title", "text-transform")).toBe("uppercase");
+    expect(declaredValue("ccc-settings-item-title", "font-weight")).toBe(
+      "var(--ccc-weight-strong)",
+    );
+  });
+
+  it("M4: every opacity in the Phase 8 section is a token, or the explicit no-dim 1", () => {
+    const opacities = SECTION_RULES.flatMap((rule) =>
+      declarationsOf(rule)
+        .filter((declaration) => declaration.property === "opacity")
+        .map((declaration) => declaration.value),
+    );
+    expect(opacities.length).toBeGreaterThan(0);
+    expect(
+      opacities.filter((value) => value !== "1" && !/^var\(--ccc-[\w-]+\)$/.test(value)),
+    ).toEqual([]);
   });
 });

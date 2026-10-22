@@ -3703,7 +3703,7 @@ fieldset.ccc-template-rows > legend {
   min-width: 0;
 }
 
-.ccc-command-center .ccc-settings-content h3 {
+.ccc-command-center .ccc-settings-section-title {
   margin: 0;
   padding-inline: var(--ccc-space-xs);
   overflow-wrap: break-word;
@@ -3713,8 +3713,11 @@ fieldset.ccc-template-rows > legend {
 
 /* Sub-headings (Subsystems, Not part of this version, Diagnostic bundle, a
  * Settings group): Label, uppercase, a step of space above - hierarchy by
- * space, not by a bigger size. */
-.ccc-command-center .ccc-settings-content h4 {
+ * space, not by a bigger size. Explicit classes, never bare `h3`/`h4`/`h5`
+ * descendants: the Phase 4 panels embedded in a section (scan folders,
+ * launchers, the Claude Code panel) carry their own `.ccc-section-label`
+ * headings and must keep their Phase 4 look. */
+.ccc-command-center .ccc-settings-group-title {
   margin: var(--ccc-space-xl) 0 0;
   color: var(--ccc-ink-muted);
   font-size: var(--ccc-text-label);
@@ -3723,7 +3726,7 @@ fieldset.ccc-template-rows > legend {
   text-transform: uppercase;
 }
 
-.ccc-command-center .ccc-settings-content h5 {
+.ccc-command-center .ccc-settings-item-title {
   margin: 0;
   font-size: var(--ccc-text-body);
   font-weight: var(--ccc-weight-strong);
@@ -3858,11 +3861,18 @@ fieldset.ccc-template-rows > legend {
   box-shadow: inset var(--ccc-focus-ring) 0 0 0 var(--ccc-ink);
 }
 
-/* Pending or unavailable: dimmed, never actually disabled, so the button stays
- * in the tab order. The reason is a separate undimmed line (aria-describedby). */
-.ccc-command-center .ccc-switch[aria-disabled="true"] {
+/* Unavailable: dimmed through the one audited token, never actually disabled,
+ * so the button stays in the tab order. The reason is a separate undimmed line
+ * (aria-describedby). A pending switch is aria-disabled too, but it is NOT
+ * dimmed: its On/Off word shows the value being saved and stays at full
+ * contrast; the busy cursor says it is working. */
+.ccc-command-center .ccc-switch[aria-disabled="true"]:not([aria-busy="true"]) {
   cursor: default;
-  opacity: 0.55;
+  opacity: var(--ccc-dim-opacity);
+}
+
+.ccc-command-center .ccc-switch[aria-busy="true"] {
+  cursor: progress;
 }
 
 .ccc-command-center .ccc-switch:focus-visible {
@@ -3917,9 +3927,11 @@ fieldset.ccc-template-rows > legend {
 
 /* ---- S2 Paths: display paths ------------------------------------------- */
 
-/* A `~/...` display path: selectable mono text, never an input, so it cannot
- * look editable. It wraps rather than scrolling sideways. */
-.ccc-command-center .ccc-display-path {
+/* A `~/...` display path in a Settings section: selectable mono text, never an
+ * input, so it cannot look editable. It wraps rather than scrolling sideways.
+ * Its own class: the Phase 4 `.ccc-display-path` (project cards, scan folders,
+ * launcher panels) is muted and unselectable-by-default and is left alone. */
+.ccc-command-center .ccc-setting-path {
   color: var(--ccc-ink);
   font-family: var(--ccc-font-mono);
   font-size: var(--ccc-text-label);

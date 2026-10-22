@@ -146,7 +146,7 @@ describe("Task 2: Projects in Settings, with the register flow, scan folders and
     expect(screen.getByText("~/ExampleCode")).toBeTruthy();
   });
 
-  it("Test 1: registering a typed path calls the action, says Project registered. and offers the Projects destination", async () => {
+  it("Test 1: registering a typed path calls the action, says Registered demo. once and offers the Projects destination", async () => {
     const register = vi.fn(
       (): Promise<ProjectActionOutcome> =>
         Promise.resolve({ kind: "registered", projectId: newProjectId() }),
@@ -157,14 +157,15 @@ describe("Task 2: Projects in Settings, with the register flow, scan folders and
 
     fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
     fireEvent.input(screen.getByLabelText("Folder path"), {
-      target: { value: "/Users/example/code/demo" },
+      target: { value: "/Users/USERNAME/code/demo" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
     await settle();
 
     expect(register).toHaveBeenCalledTimes(1);
-    expect(register).toHaveBeenCalledWith("/Users/example/code/demo");
-    expect(statusLine()).toBe("Project registered.");
+    expect(register).toHaveBeenCalledWith("/Users/USERNAME/code/demo");
+    // FIX2B M1: the flow's own words reach the one status line; there is no second message.
+    expect(statusLine()).toBe("Registered demo.");
 
     const link = screen.getByRole("button", { name: "Go to the projects view" });
     expect(link.className).toContain("ccc-list-more");
@@ -189,14 +190,34 @@ describe("Task 2: Projects in Settings, with the register flow, scan folders and
     renderSettings({ scan: scanActions(FAILED) });
     await settle();
     expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+    // FIX2B m2: no pointer at a Diagnostics section that may not exist yet.
     expect(
       screen.getByText(
-        "▲ Couldn't load projects. Check the service in Settings → Diagnostics, then refresh.",
+        "▲ Couldn't load projects. Check that the service is running, then try again.",
       ),
     ).toBeTruthy();
+    expect(document.body.textContent).not.toContain("Diagnostics");
     expect(
       screen.getByRole("button", { name: "Register a project" }).getAttribute("aria-disabled"),
     ).toBeNull();
+  });
+
+  it("FIX2B m2: a failed scan load offers Try again, which reads the scan state once more", async () => {
+    const list = vi
+      .fn<() => Promise<ScanActionOutcome>>()
+      .mockResolvedValueOnce({ kind: "failed" })
+      .mockResolvedValue({ kind: "state", state: WITH_ONE_FOLDER });
+    renderSettings({ scan: scanActions(list) });
+    await settle();
+    expect(list).toHaveBeenCalledTimes(1);
+    const retry = screen.getByRole("button", { name: "Try again" });
+    expect(retry.className).toContain("ccc-list-more");
+
+    fireEvent.click(retry);
+    await settle();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.getByText("~/ExampleCode")).toBeTruthy();
   });
 
   it("Test 2: a failed register keeps the existing triangle line and the submit button as the retry", async () => {
@@ -204,14 +225,19 @@ describe("Task 2: Projects in Settings, with the register flow, scan folders and
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
     fireEvent.input(screen.getByLabelText("Folder path"), {
-      target: { value: "/Users/example/code/demo" },
+      target: { value: "/Users/USERNAME/code/demo" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
     await settle();
-    expect(screen.getByText(/Couldn't register this folder\./)).toBeTruthy();
+    // The flow shows its words in a plain paragraph and the one status line says them once.
+    const message = statusLine();
+    expect(message).toMatch(/^▲? ?Couldn't register this folder\./);
+    const inFlow = screen
+      .getAllByText(/Couldn't register this folder\./)
+      .filter((el) => !el.classList.contains("ccc-settings-status"));
+    expect(inFlow).toHaveLength(1);
+    expect(inFlow[0]?.getAttribute("role")).toBeNull();
     expect(screen.getByRole("button", { name: "Register folder" })).toBeTruthy();
-    // A failed register is not a success: the destination status line stays quiet.
-    expect(statusLine()).toBe("");
   });
 
   it("Test 3: with the service disconnected the note says the sections are read-only and both forms are aria-disabled with a visible reason", async () => {
@@ -273,7 +299,7 @@ describe("Task 2: Projects in Settings, with the register flow, scan folders and
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
     fireEvent.input(screen.getByLabelText("Folder path"), {
-      target: { value: "/Users/example/code/demo" },
+      target: { value: "/Users/USERNAME/code/demo" },
     });
     view.rerender(
       <SettingsDestination

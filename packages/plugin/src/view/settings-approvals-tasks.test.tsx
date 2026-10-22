@@ -18,6 +18,7 @@ import {
   rebuildSuccessNotice,
   SEND_TEST_APPROVAL_DESC,
 } from "./settings-model.js";
+import { resetPendingActions } from "./settings-pending.js";
 import { takeSettingsSectionRequest } from "./settings-sections.js";
 
 /**
@@ -125,10 +126,12 @@ function statusLine(): string {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -138,6 +141,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  resetPendingActions();
   motionMode.value = "full";
   connectionState.value = { kind: "connecting" };
   takeSettingsSectionRequest();
@@ -239,7 +243,10 @@ describe("Task 3 Test 3: Approvals and tasks", () => {
     // The persistent result line under the row, for the runner to assert.
     const result = document.querySelector('[data-result="rebuild"]');
     expect(result?.textContent).toBe(expected);
-    expect(result?.getAttribute("role")).toBe("status");
+    // FIX2B m3: a plain paragraph, neither a status role nor an aria-live of any value.
+    expect(result?.tagName).toBe("P");
+    expect(result?.hasAttribute("role")).toBe(false);
+    expect(result?.hasAttribute("aria-live")).toBe(false);
     expect(result?.closest(".ccc-setting-row")).toBe(
       screen.getByRole("group", { name: "Rebuild task index" }),
     );
@@ -312,18 +319,131 @@ describe("Task 3 Test 4: the one status line", () => {
     expect(statusLine()).toBe("");
   });
 
-  it("the row-level result line is not a live region, so nothing is announced twice", async () => {
+  it("the row-level result line is a plain paragraph, so nothing is announced twice", async () => {
     const f = fixture();
     renderSection(f.host, "Approvals and tasks");
     fireEvent.click(screen.getByRole("button", { name: "Rebuild task index" }));
     await flush();
     const result = document.querySelector('[data-result="rebuild"]');
-    expect(result?.getAttribute("aria-live")).toBe("off");
-    const live = [...document.querySelectorAll('[role="status"]')].filter(
-      (element) => element.getAttribute("aria-live") !== "off",
-    );
+    expect(result?.hasAttribute("role")).toBe(false);
+    expect(result?.hasAttribute("aria-live")).toBe(false);
+    const live = document.querySelectorAll("[role=status], [aria-live]:not([aria-live=off])");
     expect(live).toHaveLength(1);
     expect(live[0]?.className).toContain("ccc-settings-status");
+  });
+});
+
+function openSection(name: string): void {
+  fireEvent.click(
+    within(screen.getByRole("navigation", { name: "Settings sections" })).getByRole("button", {
+      name,
+    }),
+  );
+}
+
+describe("FIX2B m4: an action in flight survives a section switch", () => {
+  it("a running rebuild is still busy after switching away and back, and cannot be started twice", async () => {
+    const f = fixture();
+    const pending = deferred<{ tasks: number; attention: number }>();
+    f.rebuildTaskIndex.mockReturnValue(pending.promise);
+    renderSection(f.host, "Approvals and tasks");
+    fireEvent.click(screen.getByRole("button", { name: "Rebuild task index" }));
+    await flush();
+    expect(f.rebuildTaskIndex).toHaveBeenCalledTimes(1);
+
+    openSection("Visual");
+    await flush();
+    openSection("Approvals and tasks");
+    await flush();
+    const button = screen.getByRole("button", { name: "Rebuild task index" });
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(button);
+    await flush();
+    expect(f.rebuildTaskIndex).toHaveBeenCalledTimes(1);
+
+    pending.resolve({ tasks: 4, attention: 0 });
+    await flush();
+    expect(button.getAttribute("aria-busy")).toBeNull();
+    expect(button.getAttribute("aria-disabled")).toBeNull();
+    // The outcome of the run that outlived the section is still on the row.
+    expect(document.querySelector('[data-result="rebuild"]')?.textContent).toBe(
+      "Task index rebuilt. 4 tasks found.",
+    );
+  });
+
+  it("a rebuild that finishes while another section is open still posts its outcome and leaves the button idle on return", async () => {
+    const f = fixture();
+    const pending = deferred<{ tasks: number; attention: number }>();
+    f.rebuildTaskIndex.mockReturnValue(pending.promise);
+    renderSection(f.host, "Approvals and tasks");
+    fireEvent.click(screen.getByRole("button", { name: "Rebuild task index" }));
+    await flush();
+    openSection("Visual");
+    pending.resolve({ tasks: 1, attention: 0 });
+    await flush();
+    expect(statusLine()).toBe("Task index rebuilt. 1 task found.");
+    openSection("Approvals and tasks");
+    await flush();
+    const button = screen.getByRole("button", { name: "Rebuild task index" });
+    expect(button.getAttribute("aria-busy")).toBeNull();
+    expect(document.querySelector('[data-result="rebuild"]')?.textContent).toBe(
+      "Task index rebuilt. 1 task found.",
+    );
+  });
+
+  it("a switch whose save is pending is still pending after a section switch, and reverts if the save fails", async () => {
+    const f = fixture();
+    const save = deferred<void>();
+    (f.host.saveSettings as ReturnType<typeof vi.fn>).mockReturnValueOnce(save.promise);
+    renderSection(f.host, "Approvals and tasks");
+    fireEvent.click(screen.getByRole("switch", { name: "Approval notifications" }));
+    await flush();
+
+    openSection("Visual");
+    await flush();
+    openSection("Approvals and tasks");
+    await flush();
+    const toggle = screen.getByRole("switch", { name: "Approval notifications" });
+    expect(toggle.getAttribute("aria-busy")).toBe("true");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    await flush();
+    expect(f.host.saveSettings).toHaveBeenCalledTimes(1);
+
+    save.reject(new Error("disk"));
+    await flush();
+    expect(toggle.getAttribute("aria-busy")).toBeNull();
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(f.host.settings.notifyApprovals).toBe(true);
+  });
+
+  it("a select whose save is pending is still busy after a section switch", async () => {
+    const f = fixture();
+    const save = deferred<void>();
+    (f.host.saveSettings as ReturnType<typeof vi.fn>).mockReturnValueOnce(save.promise);
+    renderSection(f.host, "Visual");
+    fireEvent.change(screen.getByRole("combobox", { name: "Reduced motion" }), {
+      target: { value: "reduced" },
+    });
+    await flush();
+
+    openSection("Approvals and tasks");
+    await flush();
+    openSection("Visual");
+    await flush();
+    const select = screen.getByRole<HTMLSelectElement>("combobox", { name: "Reduced motion" });
+    expect(select.getAttribute("aria-busy")).toBe("true");
+    expect(select.value).toBe("reduced");
+    fireEvent.change(select, { target: { value: "auto" } });
+    await flush();
+    expect(f.host.saveSettings).toHaveBeenCalledTimes(1);
+    expect(select.value).toBe("reduced");
+
+    save.resolve();
+    await flush();
+    expect(select.getAttribute("aria-busy")).toBeNull();
+    expect(select.value).toBe("reduced");
   });
 });
 

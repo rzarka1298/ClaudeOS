@@ -20,6 +20,7 @@ import {
   suggestionTotal,
 } from "../projects/scan-state.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
+import { type Announce, statusRole, useAnnounceOnChange } from "./quiet-announce.js";
 import { PROTECTED_LOCATION_LABELS, validateTypedPath } from "./register-flow.js";
 
 /**
@@ -154,9 +155,16 @@ type StatusLine =
 const NO_STATUS: StatusLine = { kind: "none" };
 
 /** The persistent `role="status"` region (Accessibility Floor 2): always mounted, its content changes. */
-function StatusRegion({ line }: { readonly line: StatusLine }): VNode {
+function StatusRegion({
+  line,
+  announce,
+}: {
+  readonly line: StatusLine;
+  readonly announce?: Announce | undefined;
+}): VNode {
+  const ref = useAnnounceOnChange<HTMLDivElement>(announce, line);
   return (
-    <div role="status">
+    <div ref={ref} role={statusRole(announce)}>
       {line.kind === "text" && <p className="ccc-state-body">{line.text}</p>}
       {line.kind === "problem" && <ProblemLines problem={line.problem} />}
     </div>
@@ -172,6 +180,8 @@ export interface AddScanFolderFlowProps {
    * nothing. The caller renders the reason once; the native `disabled` attribute is never used.
    */
   readonly unavailable?: { readonly reasonId: string } | undefined;
+  /** Quiet mode (FIX2B M1): the status is a plain region and each message goes here instead. */
+  readonly announce?: Announce | undefined;
 }
 
 type AddStep =
@@ -188,6 +198,7 @@ export function AddScanFolderFlow({
   actions,
   pickFolder,
   unavailable,
+  announce,
 }: AddScanFolderFlowProps): VNode {
   const blocked = unavailable !== undefined;
   const blockedAttrs = blocked
@@ -319,7 +330,7 @@ export function AddScanFolderFlow({
           Type a path instead
         </button>
       </div>
-      <StatusRegion line={status} />
+      <StatusRegion line={status} announce={announce} />
       {step.kind === "form" && (
         // biome-ignore lint/a11y/noStaticElementInteractions: the Escape handler is a keyboard-only affordance for this form; it gains no role or tabindex itself.
         <div className="ccc-inline-form" onKeyDown={handleKeyDown}>
@@ -405,6 +416,8 @@ export interface ScanFoldersProps {
   readonly actions: ScanActions;
   /** The render clock (ms), so "Scanned {relative time}" is a pure function of props. */
   readonly now: number;
+  /** Quiet mode (FIX2B M1): every status region below is plain, and its messages go here. */
+  readonly announce?: Announce | undefined;
 }
 
 /**
@@ -439,7 +452,7 @@ function rowButton(container: HTMLElement | null, selector: string, index: numbe
  * The Suggestions and Scan folders sections (UI-SPEC S3 reading order 5 and
  * 6, S5). Suggestions render only while at least one scan folder exists.
  */
-export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
+export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps): VNode {
   const roots = state?.scanRoots ?? [];
   const suggestions = state?.suggestions ?? [];
   const groups = roots.map((root) => {
@@ -648,7 +661,7 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
           </h3>
           {suggestionCount > 0 && <p className="ccc-list-meta">{folderCount(suggestionCount)}</p>}
           {suggestionCount > 0 && partial && <p className="ccc-list-meta">{PARTIAL_LIST_NOTE}</p>}
-          <StatusRegion line={announcement} />
+          <StatusRegion line={announcement} announce={announce} />
           {suggestionCount === 0 ? (
             <div>
               <p className="ccc-state-heading">No suggestions.</p>
@@ -752,6 +765,7 @@ export function ScanFolders({ state, actions, now }: ScanFoldersProps): VNode {
                 root={root}
                 actions={actions}
                 now={now}
+                announce={announce}
                 onRemoved={() => setFocusTarget({ kind: "root", index })}
               />
             ))}
@@ -772,6 +786,7 @@ interface ScanFolderRowProps {
   readonly root: ScanRootView;
   readonly actions: ScanActions;
   readonly now: number;
+  readonly announce?: Announce | undefined;
   /** Called once this row's folder was removed, so the list can move focus on. */
   readonly onRemoved: () => void;
 }
@@ -781,7 +796,7 @@ interface ScanFolderRowProps {
  * `Stop scanning` with the inline confirmation. Each row owns its own
  * in-flight state, so scanning one folder never blocks another (S5 loading).
  */
-function ScanFolderRow({ root, actions, now, onRemoved }: ScanFolderRowProps): VNode {
+function ScanFolderRow({ root, actions, now, announce, onRemoved }: ScanFolderRowProps): VNode {
   const [status, setStatus] = useState<RowStatus>({ kind: "idle" });
   const [confirming, setConfirming] = useState(false);
   const [returnFocus, setReturnFocus] = useState(false);
@@ -794,6 +809,7 @@ function ScanFolderRow({ root, actions, now, onRemoved }: ScanFolderRowProps): V
   const keepRef = useRef<HTMLButtonElement | null>(null);
   const depthId = `ccc-scan-depth-${root.scanRootId}`;
   const shownDepth = String(pendingDepth ?? root.depth);
+  const statusRef = useAnnounceOnChange<HTMLDivElement>(announce, status);
 
   useEffect(() => {
     if (confirming) keepRef.current?.focus();
@@ -897,7 +913,7 @@ function ScanFolderRow({ root, actions, now, onRemoved }: ScanFolderRowProps): V
               {line}
             </p>
           ))}
-        <div role="status">
+        <div ref={statusRef} role={statusRole(announce)}>
           {scanning && <p className="ccc-state-body">Scanning…</p>}
           {status.kind === "result" && scanProblem === null && (
             <p className="ccc-state-body">{scanResultLine(status.found, status.partial)}</p>

@@ -35,6 +35,7 @@ import {
   terminalInSentence,
   terminalTestSentences,
 } from "./launcher-panel-kit.js";
+import type { Announce } from "./quiet-announce.js";
 import { checkTemplate, refusalCopy, TemplateEditor } from "./template-editor.js";
 
 /**
@@ -220,6 +221,8 @@ export interface ClaudeCodePanelProps {
   readonly now: number;
   /** The sample project's display path for `{projectPath}` in the preview (RR-24). */
   readonly sampleDisplayPath: string;
+  /** Quiet mode (FIX2B M1): the status line is a plain paragraph whose words go here. */
+  readonly announce?: Announce | undefined;
 }
 
 /** A Test or a mark-tested call is in flight: the Test button waits. */
@@ -241,6 +244,7 @@ export function ClaudeCodePanel({
   connection,
   now,
   sampleDisplayPath,
+  announce,
 }: ClaudeCodePanelProps): VNode {
   const headingId = useId();
   const executableGroup = useId();
@@ -620,6 +624,7 @@ export function ClaudeCodePanel({
         id="claude-code"
         status={status}
         now={now}
+        announce={announce}
         copy={{
           appName: LAUNCHER_PANEL_NAMES["claude-code"],
           question: terminalTestSentences(savedTerminalRaw, "Claude Code").question,

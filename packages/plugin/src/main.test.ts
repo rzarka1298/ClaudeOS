@@ -46,59 +46,12 @@ describe("main.ts wires the Phase 6 modules once, through the registry (plan 06-
   });
 });
 
-describe("main.ts builds ONE SettingsHost and shares it (plan 08-11, D-15)", () => {
-  const viewSource = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), "view", "command-center-view.ts"),
-    "utf8",
-  );
-
-  it("builds the host once and hands the same instance to the native tab and the view", () => {
-    expect(source.match(/const settingsHost: SettingsHost = \{/g)).toHaveLength(1);
-    // The tab gets the instance itself, not a second literal.
-    expect(source).toMatch(/new CommandCenterSettingTab\(this\.app, this, settingsHost\)/);
-    // The view reads it off the plugin, which is its host.
-    expect(source).toMatch(/this\.settingsHost = settingsHost;/);
-    expect(viewSource).toMatch(/readonly settingsHost\?: SettingsHost \| undefined;/);
-    expect(viewSource).toMatch(/settingsHost: this\.host\.settingsHost/);
-  });
-
-  it("carries the members the sections need, so later waves add no main.ts change", () => {
-    const start = source.indexOf("const settingsHost: SettingsHost = {");
-    const end = source.indexOf("this.settingsHost = settingsHost;");
-    expect(start).toBeGreaterThan(-1);
-    const literal = source.slice(start, end);
-    for (const member of [
-      "settings: this.settings",
-      "saveSettings:",
-      "mql:",
-      "claude:",
-      "codex:",
-      "approvals:",
-      "tasks:",
-      "openDeleteUsageModal:",
-      "copyText:",
-      "runVaultSetup:",
-      "display:",
-      "homeDir:",
-      "socketPath,",
-      "vaultBasePath:",
-      "vaultName:",
-      "userName:",
-      "pluginVersion:",
-      "obsidianVersion:",
-    ]) {
-      expect(literal, member).toContain(member);
-    }
-  });
-
+describe("main.ts has one write path to plugin data (plan 08-11, D-16)", () => {
+  // The SettingsHost wiring itself (one object for the native tab and the view, exactly four
+  // keys saved) is proven by running the real onload in main.runtime.test.tsx. What a runtime
+  // test cannot see is a SECOND write path added elsewhere, so that stays a source scan.
   it("persists no display string: the only saveData path is the guarded saveSettings", () => {
     expect(source.match(/this\.saveData\(/g)).toHaveLength(1);
     expect(source).toMatch(/assertNoPrivatePathValues\(this\.settings\)/);
-    // The display inputs live on the host object, never on the settings object.
-    const start = source.indexOf("display: {");
-    expect(start).toBeGreaterThan(-1);
-    expect(source.slice(0, start)).not.toMatch(
-      /this\.settings\.(homeDir|vaultBasePath|socketPath)\b/,
-    );
   });
 });

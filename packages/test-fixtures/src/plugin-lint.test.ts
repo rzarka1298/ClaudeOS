@@ -19,7 +19,7 @@
 // parameterised by config path and run with `cwd: packages/plugin` to match
 // how `ci:obsidianmd` invokes ESLint.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
@@ -301,25 +301,47 @@ describe("the production plugin config carries what the fixtures prove (plan 03-
 const SENTENCE_CASE_RULE_ID = "obsidianmd/ui/sentence-case";
 const SENTENCE_FIXTURE = join(FIXTURES_DIR, "sentence-case-jsx-text.tsx");
 
-function sentenceCaseLines(): string[] {
-  const source = readFileSync(SENTENCE_FIXTURE, "utf8").split("\n");
-  return runEslintJson(FIXTURES_CONFIG, SENTENCE_FIXTURE)
+/**
+ * Variants of the sentence-case fixture are written HERE, never over the committed fixture
+ * (FIX2B m5): a test that rewrites a tracked file and restores it in `afterEach` leaves the
+ * working tree dirty if the run is killed, and two runs at once would corrupt each other.
+ *
+ * The directory sits inside `lint-fixtures/` because the fixtures config matches by path and ESLint
+ * ignores files outside the config's base directory (`os.tmpdir()` is rejected as "outside of base
+ * path"; a copied config cannot resolve the plugin's own dependencies from there). It is
+ * gitignored, listed in the fixtures config, and removed after every test.
+ */
+const SCRATCH_DIR = join(FIXTURES_DIR, "scratch");
+
+function sentenceCaseLines(file: string = SENTENCE_FIXTURE): string[] {
+  const source = readFileSync(file, "utf8").split("\n");
+  return runEslintJson(FIXTURES_CONFIG, file)
     .flatMap((r) => r.messages)
     .filter((m) => m.ruleId === SENTENCE_CASE_RULE_ID)
     .map((m) => (source[(m.line ?? 0) - 1] ?? "").trim());
 }
 
 describe("the sentence-case rule's reach into Preact copy (plan 08-10, R-F1)", () => {
-  const restorers: Array<() => void> = [];
   afterEach(() => {
-    while (restorers.length > 0) restorers.pop()?.();
+    rmSync(SCRATCH_DIR, { recursive: true, force: true });
   });
 
-  function withContent(content: string): void {
-    const original = readFileSync(SENTENCE_FIXTURE, "utf8");
-    writeFileSync(SENTENCE_FIXTURE, content);
-    restorers.push(() => writeFileSync(SENTENCE_FIXTURE, original));
+  /** Writes a variant to the scratch directory and returns its path. */
+  function withContent(name: string, content: string): string {
+    mkdirSync(SCRATCH_DIR, { recursive: true });
+    const file = join(SCRATCH_DIR, `${name}.ts`);
+    writeFileSync(file, content);
+    return file;
   }
+
+  test("never rewrites the committed fixture: variants live in the gitignored scratch directory", () => {
+    const before = readFileSync(SENTENCE_FIXTURE, "utf8");
+    const file = withContent("probe", "export const probe = 1;\n");
+    expect(file.startsWith(SCRATCH_DIR)).toBe(true);
+    expect(readFileSync(SENTENCE_FIXTURE, "utf8")).toBe(before);
+    rmSync(SCRATCH_DIR, { recursive: true, force: true });
+    expect(readFileSync(SENTENCE_FIXTURE, "utf8")).toBe(before);
+  });
 
   test("reaches new Notice and createEl text, so a Title Case section name there is reported", () => {
     const flagged = sentenceCaseLines();
@@ -338,20 +360,22 @@ describe("the sentence-case rule's reach into Preact copy (plan 08-10, R-F1)", (
   });
 
   test("the lowercase section reference (R-F1) is accepted where the rule does reach", () => {
-    withContent(
+    const file = withContent(
+      "lowercase-section",
       "declare class Notice {\n  constructor(message: string);\n}\n" +
         'export function announce(): void {\n  new Notice("Go to the projects section");\n}\n',
     );
-    expect(sentenceCaseLines()).toEqual([]);
+    expect(sentenceCaseLines(file)).toEqual([]);
   });
 
   test("Gmail and Google Calendar are brands: accepted capitalised anywhere in a reached string", () => {
-    withContent(
+    const file = withContent(
+      "brands",
       "declare class Notice {\n  constructor(message: string);\n}\n" +
         "export function announce(): void {\n" +
         '  new Notice("Google Calendar and Gmail aren\'t part of this version");\n}\n',
     );
-    expect(sentenceCaseLines()).toEqual([]);
+    expect(sentenceCaseLines(file)).toEqual([]);
   });
 
   test("the production config runs the same rule with the Phase 8 brands", () => {

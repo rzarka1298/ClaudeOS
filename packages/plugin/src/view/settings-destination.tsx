@@ -76,12 +76,13 @@ export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionVie
     <ApprovalsTasksSettings host={host} connection={connection} notify={notify} />
   ),
   visual: ({ host, notify }) => <VisualSettings host={host} notify={notify} />,
-  launchers: ({ connection, now, launchersActions, launchersSession }) => (
+  launchers: ({ connection, now, notify, launchersActions, launchersSession }) => (
     <LaunchersSettings
       actions={launchersActions}
       connection={connection}
       now={now}
       session={launchersSession}
+      announce={notify}
     />
   ),
 };
@@ -116,6 +117,9 @@ export interface SettingsDestinationProps {
   readonly connection: ConnectionState;
   readonly now: number;
 }
+
+/** How long the status line stays empty before a repeated identical message is set again. */
+const REPEAT_GAP_MS = 60;
 
 /** Resolves `failed` for every scan action, so the section renders honestly without a host. */
 const FAILED_SCAN = (): Promise<{ kind: "failed" }> => Promise.resolve({ kind: "failed" });
@@ -174,18 +178,59 @@ export function SettingsDestination({
   );
   const [focusTick, setFocusTick] = useState(0);
   const [status, setStatus] = useState("");
+  // The words on the status line now, and a counter that voids a message still waiting to be set
+  // when the owner has already moved on (a section change clears the line).
+  const shownRef = useRef("");
+  const epochRef = useRef(0);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Partial<Record<SettingsSectionId, HTMLButtonElement | null>>>({});
 
   const sections = registeredSections();
 
+  // The ONE way a section speaks (FIX2B M1, m1). A live region announces a CHANGE, so a message
+  // identical to the one on the line would be silent. It is cleared first and set again after a
+  // beat: the gap has to cross a task (and a frame), because two DOM changes made in one task
+  // reach assistive technology as no change at all.
+  const timerRef = useRef<number | null>(null);
+  const cancelPending = useCallback((): void => {
+    epochRef.current += 1;
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }, []);
+  useEffect(() => cancelPending, [cancelPending]);
+
+  const notify = useCallback(
+    (message: string): void => {
+      cancelPending();
+      if (message === shownRef.current && message !== "") {
+        const epoch = epochRef.current;
+        shownRef.current = "";
+        setStatus("");
+        timerRef.current = window.setTimeout(() => {
+          if (epochRef.current !== epoch) return;
+          timerRef.current = null;
+          shownRef.current = message;
+          setStatus(message);
+        }, REPEAT_GAP_MS);
+        return;
+      }
+      shownRef.current = message;
+      setStatus(message);
+    },
+    [cancelPending],
+  );
+
   const activate = useCallback(
     (id: SettingsSectionId): void => {
+      // A new section starts with a quiet line: the previous section's outcome is not its own.
+      cancelPending();
+      shownRef.current = "";
+      setStatus("");
       setActiveId(id);
       if (settingsSession !== undefined) settingsSession.section.value = id;
       setFocusTick((tick) => tick + 1);
     },
-    [settingsSession],
+    [settingsSession, cancelPending],
   );
 
   // A deep link: consumed once (the read clears it), on mount and whenever one arrives. The
@@ -254,7 +299,7 @@ export function SettingsDestination({
               host={settingsHost}
               connection={connection}
               now={now}
-              notify={setStatus}
+              notify={notify}
               launchersActions={launchersActions}
               launchersSession={launchersSession}
               projectsActions={projectsActions}

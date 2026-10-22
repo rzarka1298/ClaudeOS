@@ -1,5 +1,5 @@
 import type { VNode } from "preact";
-import { useId, useRef, useState } from "preact/hooks";
+import { useId } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { SERVICE_AWAY_REASON, SettingRow, SettingSwitch } from "./settings-controls.js";
 import type { SettingsHost } from "./settings-host.js";
@@ -15,6 +15,7 @@ import {
   SEND_TEST_APPROVAL_DESC,
   SEND_TEST_APPROVAL_NAME,
 } from "./settings-model.js";
+import { setActionResult, useActionGate, useActionResult } from "./settings-pending.js";
 
 /**
  * The Approvals and tasks section (plan 08-11 Task 3; 08-UI-SPEC S2, D-44, G5).
@@ -24,11 +25,16 @@ import {
  * `Rebuild task index`. The two buttons need the companion service: while it is away they are
  * `aria-disabled` with a visible, undimmed reason they are described by, never natively
  * `disabled`. A rebuild reports in the destination's status line AND in a result line under its
- * row that stays after the status line moves on, so the runner can read it. That line is a
- * `role="status"` with `aria-live="off"`: it keeps the role the stylesheet and the runner look
- * for without a second live region announcing the same words twice (the status line stays the
- * destination's one live region). Its words are the moved strings, unchanged.
+ * row that stays after the status line moves on, so the runner can read it. That line is a plain
+ * paragraph (`data-result="rebuild"`, no role, no aria-live): the status line stays the
+ * destination's one live region, and the words are the moved strings, unchanged.
+ *
+ * A rebuild in flight, and its outcome line, are held outside the component (`settings-pending`):
+ * switching sections and coming back finds the button still busy and refusing a second run.
  */
+
+/** The shared key of the rebuild action: one service call, whichever view started it. */
+const REBUILD_ACTION = "rebuild-task-index";
 
 export const APPROVALS_TASKS_DESCRIPTION =
   "Notifications for approval requests and the task index.";
@@ -48,9 +54,9 @@ export function ApprovalsTasksSettings({
 }: ApprovalsTasksSettingsProps): VNode {
   const approvalsReasonId = useId();
   const tasksReasonId = useId();
-  const [running, setRunning] = useState(false);
-  const runningRef = useRef(false);
-  const [rebuildResult, setRebuildResult] = useState<string | null>(null);
+  const rebuildGate = useActionGate(REBUILD_ACTION);
+  const running = rebuildGate.busy;
+  const rebuildResult = useActionResult(REBUILD_ACTION);
 
   // The seams read the live connection; `connection` is a prop so the section re-renders when it moves.
   const approvalsAway = connection.kind === "disconnected" || !host.approvals.serviceAvailable();
@@ -62,9 +68,7 @@ export function ApprovalsTasksSettings({
   }
 
   async function rebuild(): Promise<void> {
-    if (tasksAway || runningRef.current) return;
-    runningRef.current = true;
-    setRunning(true);
+    if (tasksAway || !rebuildGate.begin()) return;
     notify(REBUILD_STARTED_NOTICE);
     let result: string;
     try {
@@ -73,15 +77,16 @@ export function ApprovalsTasksSettings({
     } catch {
       result = REBUILD_FAILED_NOTICE;
     }
+    setActionResult(REBUILD_ACTION, result);
+    rebuildGate.end();
     notify(result);
-    setRebuildResult(result);
-    runningRef.current = false;
-    setRunning(false);
   }
 
   return (
     <>
-      <h3 tabIndex={-1}>Approvals and tasks</h3>
+      <h3 tabIndex={-1} className="ccc-settings-section-title">
+        Approvals and tasks
+      </h3>
       <p>{APPROVALS_TASKS_DESCRIPTION}</p>
       <SettingRow
         name={NOTIFY_APPROVALS_NAME}
@@ -89,6 +94,7 @@ export function ApprovalsTasksSettings({
         control={({ nameId, descriptionId }) => (
           <SettingSwitch
             checked={host.settings.notifyApprovals}
+            pendingKey="notify-approvals"
             labelledBy={nameId}
             describedBy={descriptionId}
             onChange={(next) => applyNotifyApprovalsChange(host, next, notify)}
@@ -137,11 +143,7 @@ export function ApprovalsTasksSettings({
         )}
       >
         {tasksAway && <p id={tasksReasonId}>{SERVICE_AWAY_REASON}</p>}
-        {rebuildResult !== null && (
-          <p role="status" aria-live="off" data-result="rebuild">
-            {rebuildResult}
-          </p>
-        )}
+        {rebuildResult !== null && <p data-result="rebuild">{rebuildResult}</p>}
       </SettingRow>
     </>
   );
