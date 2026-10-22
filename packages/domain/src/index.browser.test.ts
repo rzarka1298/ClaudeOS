@@ -65,6 +65,7 @@ describe("the browser barrel (index.browser.ts)", () => {
     for (const name of [
       "DIAGNOSTICS_HEALTH_PATH",
       "DiagnosticsHealthResponseSchema",
+      "HealthTriggerSchema",
       "toDisplayPath",
       "DisplayPathSchema",
     ]) {

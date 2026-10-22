@@ -77,8 +77,68 @@ export function CLAUDE_CANDIDATE_PATHS(homeDir: string): readonly ClaudeCandidat
   ];
 }
 
+type HomeScope =
+  | { readonly kind: "home" }
+  | { readonly kind: "disabled" }
+  | { readonly kind: "dir"; readonly dir: string };
+
+/**
+ * Where the home-relative Claude candidates live (UAT sandbox override, the same
+ * shape as the Codex one in `codex/detection.ts`). A service started in a
+ * sandbox inherits the real HOME, so a sandboxed run must be able to keep
+ * detection away from it:
+ *
+ *   - `CCC_CLAUDE_CANDIDATES_DISABLED=1` (exactly "1"): no home-relative
+ *     candidate and no `~/Applications` scan.
+ *   - `CCC_CLAUDE_CANDIDATES_DIR=<absolute dir>`: the home-relative candidate
+ *     becomes `<dir>/claude` and the `~/Applications` scan becomes
+ *     `<dir>/Applications`.
+ *
+ * `disabled` wins. A `DIR` that is set but not an absolute, NUL-free path
+ * fails closed to disabled. `/Applications`, `/System/Applications`, Homebrew
+ * and `/usr/local` are system locations and never change.
+ */
+function homeScope(env: Readonly<Record<string, string | undefined>>): HomeScope {
+  if (env.CCC_CLAUDE_CANDIDATES_DISABLED === "1") return { kind: "disabled" };
+  const dir = env.CCC_CLAUDE_CANDIDATES_DIR;
+  if (dir === undefined) return { kind: "home" };
+  if (dir.startsWith("/") && !dir.includes("\0")) {
+    return { kind: "dir", dir: dir.replace(/\/+$/, "") };
+  }
+  return { kind: "disabled" };
+}
+
+/** The Claude candidate list for this environment (see {@link homeScope}). */
+export function claudeCandidatesFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  homeDir: string,
+): readonly ClaudeCandidate[] {
+  const scope = homeScope(env);
+  const system = CLAUDE_CANDIDATE_PATHS(homeDir).filter(
+    (candidate) => candidate.candidateId !== "local-bin",
+  );
+  if (scope.kind === "home") return CLAUDE_CANDIDATE_PATHS(homeDir);
+  if (scope.kind === "disabled") return system;
+  return [{ candidateId: "local-bin", path: `${scope.dir}/claude` }, ...system];
+}
+
+/** The folder standing in for `~/Applications` in the fallback scan, or `null` when there is none. */
+export function homeApplicationsFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  homeDir: string,
+): string | null {
+  const scope = homeScope(env);
+  if (scope.kind === "home") return `${homeDir}/Applications`;
+  return scope.kind === "dir" ? `${scope.dir}/Applications` : null;
+}
+
 export interface DetectorDeps {
   readonly runner: CommandRunner;
+  /**
+   * The process environment, read only for the `CCC_CLAUDE_CANDIDATES_*`
+   * sandbox override ({@link claudeCandidatesFromEnv}). Absent: the real home.
+   */
+  readonly env?: Readonly<Record<string, string | undefined>>;
   /** The resolved home directory (`resolveHomeDir`). */
   readonly homeDir: string;
   /** Lists a directory's entry names; defaults to `fs.promises.readdir`. Used by the Spotlight fallback. */
@@ -112,17 +172,22 @@ export interface Detector {
    * A bounded, read-only existence check of one saved bundle ID for the health
    * probe (plan 08-04, D-49, T-08-07, T-08-08). It differs from
    * {@link Detector.findBundle} on purpose: exactly one `mdfind` (capped at
-   * {@link PROBE_MDFIND_TIMEOUT_MS}) and at most one `plutil` on the first
-   * returned `.app` (capped at {@link PROBE_PLUTIL_TIMEOUT_MS}), both clamped to
-   * `options.timeoutMs` and killed by `options.signal`; **no fallback folder
-   * scan**, no launch, no write, and nothing the children print is logged or
-   * returned.
+   * {@link PROBE_MDFIND_TIMEOUT_MS}) that asks for the target AND the control
+   * bundle `com.apple.Terminal`, and at most two `plutil` reads on the first two
+   * target `.app` hits (together capped at {@link PROBE_PLUTIL_TIMEOUT_MS}), all
+   * clamped to `options.timeoutMs` and killed by `options.signal`; **no
+   * fallback folder scan**, no launch, no write, and nothing the children print
+   * is logged or returned.
    *
-   * `not-found` only when Spotlight answered cleanly with no hit. `found` only
-   * when the first hit's own `Info.plist` names exactly this bundle. Everything
-   * else (a timeout, an abort, a failed or oversized answer, a hit that is not
-   * an absolute `.app` path, an unreadable or different plist, a hostile id)
-   * is `indeterminate`: a probe never invents an absence from a stale index.
+   * `not-found` only when Spotlight demonstrably answered (the control is in the
+   * answer) and the target is not. `found` only when a target hit's own
+   * `Info.plist` names exactly this bundle. Everything else (a timeout, an
+   * abort, a failed or oversized answer, a missing control, which means Spotlight
+   * is off or stale, a hit that is not an absolute `.app` path, an unreadable or
+   * different plist, a hostile id) is `indeterminate`: a probe never invents an
+   * absence from an index that is not answering. When the target is itself
+   * `com.apple.Terminal` there is no control, so an empty answer is
+   * `indeterminate`.
    */
   probeBundle(bundleId: string, options?: BundleProbeOptions): Promise<BundleProbeResult>;
   /**
@@ -151,6 +216,11 @@ const PLUTIL_TIMEOUT_MS = 2000;
 export const PROBE_MDFIND_TIMEOUT_MS = 1500;
 export const PROBE_PLUTIL_TIMEOUT_MS = 500;
 const PROBE_BUDGET_MS = PROBE_MDFIND_TIMEOUT_MS + PROBE_PLUTIL_TIMEOUT_MS;
+/** At most this many target hits have their Info.plist read by one probe. */
+const PROBE_MAX_PLIST_READS = 2;
+/** The control bundle: an app every Mac has, so its absence means Spotlight is not answering. */
+const CONTROL_BUNDLE_ID = "com.apple.Terminal";
+const CONTROL_APP_SUFFIX = "/Terminal.app";
 /** The domain caps each detection group at this many apps. */
 const MAX_APPS_PER_GROUP = 32;
 const MAX_NAME_LENGTH = 255;
@@ -197,20 +267,30 @@ export function createDetector(deps: DetectorDeps): Detector {
   const isExecutable = deps.isExecutable ?? isExecutableFile;
   const findGit = deps.resolveGit ?? (() => resolveGit(deps.runner));
   const now = deps.now ?? (() => new Date());
-  const homeApplications = `${deps.homeDir}/Applications`;
+  const env = deps.env ?? {};
+  const claudeCandidates = claudeCandidatesFromEnv(env, deps.homeDir);
+  const homeApplications = homeApplicationsFromEnv(env, deps.homeDir);
+  /**
+   * With the sandbox override on, the REAL `~/Applications` is off limits: not
+   * scanned, and a Spotlight hit under it is neither read nor reported.
+   */
+  const blockedHomeApplications =
+    homeScope(env).kind === "home" ? null : `${deps.homeDir}/Applications`;
+  const allowedPath = (path: string): boolean =>
+    blockedHomeApplications === null || !underDir(path, blockedHomeApplications);
   /** The Spotlight fallback's folders: the system ones and the owner's own. */
   const fallbackDirs = [
     "/Applications",
     "/Applications/Utilities",
     "/System/Applications",
     "/System/Applications/Utilities",
-    homeApplications,
+    ...(homeApplications === null ? [] : [homeApplications]),
   ];
   /** The last detection's claude candidates, by id. Memory only (D-21). */
   let candidates = new Map<string, string>();
 
   const locationOf = (path: string): DetectedApp["location"] => {
-    if (underDir(path, homeApplications)) return "user-applications";
+    if (homeApplications !== null && underDir(path, homeApplications)) return "user-applications";
     if (underDir(path, "/Applications") || underDir(path, "/System/Applications")) {
       return "applications";
     }
@@ -239,33 +319,31 @@ export function createDetector(deps: DetectorDeps): Detector {
   };
 
   /**
-   * Spotlight's raw answer for one query (non-blank lines, unfiltered), or
-   * `null` when it failed. `noted` is true when stderr carried anything: the
-   * text is never kept, only the fact that Spotlight said something.
+   * Spotlight's raw answer for one `mdfind` expression (non-blank lines,
+   * unfiltered), or `null` when it failed. What the child prints on stderr is
+   * never read: an empty answer is judged by the control bundle (see
+   * `probeBundle`), not by guessing at diagnostics.
    */
   const spotlightAnswer = async (
-    query: string,
+    expression: string,
     caps?: SpawnCaps,
-  ): Promise<{ lines: string[]; noted: boolean } | null> => {
+  ): Promise<string[] | null> => {
     const outcome = await deps.runner.run(
       MDFIND,
-      [`kMDItemCFBundleIdentifier == '${query}'`],
+      [expression],
       runOptions(MDFIND_TIMEOUT_MS, caps),
     );
     if (outcome.exitCode !== 0 || outcome.truncated) return null;
-    return {
-      lines: outcome.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0),
-      noted: outcome.stderr.trim().length > 0,
-    };
+    return outcome.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
   };
 
   /** Spotlight's answer for one query, or `null` when it failed. */
   const spotlight = async (query: string): Promise<string[] | null> => {
-    const answer = await spotlightAnswer(query);
-    return answer === null ? null : answer.lines.filter(isAppPath);
+    const answer = await spotlightAnswer(`kMDItemCFBundleIdentifier == '${query}'`);
+    return answer === null ? null : answer.filter((line) => isAppPath(line) && allowedPath(line));
   };
 
   /**
@@ -357,7 +435,7 @@ export function createDetector(deps: DetectorDeps): Detector {
 
   const detectClaude = async (): Promise<DetectionResponse["claudeExecutables"]> => {
     const found = new Map<string, string>();
-    for (const candidate of CLAUDE_CANDIDATE_PATHS(deps.homeDir)) {
+    for (const candidate of claudeCandidates) {
       if (await isExecutable(candidate.path)) found.set(candidate.candidateId, candidate.path);
     }
     candidates = found;
@@ -418,34 +496,60 @@ export function createDetector(deps: DetectorDeps): Detector {
       }
       const startedAt = Date.now();
 
-      const answer = await spotlightAnswer(bundleId, {
+      // One mdfind asks for the target and a control bundle that every Mac has
+      // (Terminal). A Spotlight that is off, still indexing or stale answers
+      // without the control; that is not evidence the target is absent. When
+      // the target IS Terminal there is no second clause, so an empty answer
+      // can never be "not-found".
+      const targetIsControl = bundleId === CONTROL_BUNDLE_ID;
+      const expression = targetIsControl
+        ? `kMDItemCFBundleIdentifier == '${bundleId}'`
+        : `kMDItemCFBundleIdentifier == '${bundleId}' || kMDItemCFBundleIdentifier == '${CONTROL_BUNDLE_ID}'`;
+      const lines = await spotlightAnswer(expression, {
         timeoutMs: Math.floor(Math.min(PROBE_MDFIND_TIMEOUT_MS, budgetMs)),
         signal,
       });
-      if (answer === null || aborted()) return "indeterminate";
-      if (answer.lines.length === 0) {
-        // A clean empty answer is an absence; an empty answer that came with a
-        // diagnostic (Spotlight off or disabled) is not.
-        return answer.noted ? "indeterminate" : "not-found";
-      }
-      const first = answer.lines.find(isAppPath);
-      if (first === undefined) return "indeterminate";
+      if (lines === null || aborted()) return "indeterminate";
 
-      const remainingMs = Math.floor(budgetMs - (Date.now() - startedAt));
-      if (remainingMs < 1) return "indeterminate";
-      const found = await readBundleId(first, {
-        timeoutMs: Math.min(PROBE_PLUTIL_TIMEOUT_MS, remainingMs),
-        signal,
-      });
-      // No fallback: a plist that cannot be read, or names another bundle, is a
-      // stale or odd index entry, not proof of absence.
-      return found === bundleId && !aborted() ? "found" : "indeterminate";
+      // The control's lines are removed before any target hit is chosen. (A
+      // third-party bundle that happens to be named Terminal.app is lost to
+      // this filter too; that errs towards "indeterminate", never a false
+      // "not-found", because the control is then still present.)
+      const isControl = (line: string): boolean =>
+        !targetIsControl && line.startsWith("/") && line.endsWith(CONTROL_APP_SUFFIX);
+      const controlPresent = lines.some(isControl);
+      const rest = lines.filter((line) => !isControl(line));
+      if (!targetIsControl && !controlPresent) return "indeterminate";
+      if (rest.length === 0) return targetIsControl ? "indeterminate" : "not-found";
+      const hits = rest.filter((line) => isAppPath(line) && allowedPath(line));
+      if (hits.length === 0) {
+        // Under the sandbox override a hit in the real ~/Applications is dropped, not read:
+        // that is an absence here, not an odd index entry.
+        return rest.some(isAppPath) ? "not-found" : "indeterminate";
+      }
+
+      // At most the first PROBE_MAX_PLIST_READS hits are read, all inside one
+      // shared plutil budget (so two reads still fit the 500 ms plutil cap).
+      // A third hit is not read: the answer stays "indeterminate".
+      const plutilStartedAt = Date.now();
+      const plutilBudgetMs = Math.min(
+        PROBE_PLUTIL_TIMEOUT_MS,
+        Math.floor(budgetMs - (plutilStartedAt - startedAt)),
+      );
+      for (const hit of hits.slice(0, PROBE_MAX_PLIST_READS)) {
+        const remainingMs = Math.floor(plutilBudgetMs - (Date.now() - plutilStartedAt));
+        if (remainingMs < 1 || aborted()) return "indeterminate";
+        const found = await readBundleId(hit, { timeoutMs: remainingMs, signal });
+        // No fallback: a plist that cannot be read, or names another bundle, is a
+        // stale or odd index entry, not proof of absence.
+        if (found === bundleId && !aborted()) return "found";
+      }
+      return "indeterminate";
     },
     candidatePath(candidateId) {
       return (
         candidates.get(candidateId) ??
-        CLAUDE_CANDIDATE_PATHS(deps.homeDir).find((known) => known.candidateId === candidateId)
-          ?.path ??
+        claudeCandidates.find((known) => known.candidateId === candidateId)?.path ??
         null
       );
     },

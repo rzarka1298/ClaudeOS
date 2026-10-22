@@ -53,6 +53,13 @@ export const SUBSYSTEM_IDS = [
 ] as const;
 export type SubsystemId = (typeof SUBSYSTEM_IDS)[number];
 
+/** A recognised status as itself, anything else as `unknown`. */
+function asKnownStatus(status: unknown): SubsystemStatus {
+  return (SUBSYSTEM_STATUSES as readonly unknown[]).includes(status)
+    ? (status as SubsystemStatus)
+    : "unknown";
+}
+
 /** The ranks the roll-up uses. `setup-needed` is handled separately (see {@link rollupStatus}). */
 const ROLLUP_RANK = {
   failing: 4,
@@ -71,9 +78,11 @@ const ROLLUP_RANK = {
  */
 export function rollupStatus(statuses: readonly SubsystemStatus[]): SubsystemStatus {
   if (statuses.length === 0) return "unknown";
-  if (statuses.every((status) => status === "setup-needed")) return "setup-needed";
+  // A status the table does not know is unknown, never ok (a value that skipped parsing must not read as working).
+  const known = statuses.map(asKnownStatus);
+  if (known.every((status) => status === "setup-needed")) return "setup-needed";
   let worst: SubsystemStatus = "ok";
-  for (const status of statuses) {
+  for (const status of known) {
     if (ROLLUP_RANK[status] > ROLLUP_RANK[worst]) worst = status;
   }
   return worst;
@@ -109,15 +118,32 @@ export function rollupPartStatuses(
 
 /**
  * Codes any service-side subsystem can answer with when the probe itself did
- * not finish (D-05) plus the plugin-synthesised `service-not-running` (D-03).
- * All `unknown`: a check that did not run is never `ok`.
+ * not finish (D-05). All `unknown`: a check that did not run is never `ok`.
+ * These are the only reasons a row without parts may carry, and the only
+ * shared codes a single part may carry.
  */
-export const SHARED_REASONS = [
-  "probe-timeout",
-  "probe-error",
-  "subsystem-not-wired",
+export const PROBE_REASONS = ["probe-timeout", "probe-error", "subsystem-not-wired"] as const;
+
+/**
+ * Reasons only the plugin ever produces (FIX1A MINOR 4). The service never
+ * sends them and the strict service response schema refuses them: the plugin
+ * overlays `vault-mismatch` / `vault-check-unavailable` after comparing the
+ * salted fingerprint (D-36) with the vault open in Obsidian, and clears every
+ * service-dependent row to `service-not-running` while the service is away
+ * (D-03). They stay in the full per-subsystem lists and status tables below
+ * (the plugin's copy table must cover them); {@link SERVICE_SIDE_REASONS} is
+ * those lists minus these codes. A row carrying one is typed
+ * {@link DisplayedRow}, not {@link ServiceSideRow}.
+ */
+export const OVERLAY_ONLY_REASONS = [
+  "vault-mismatch",
+  "vault-check-unavailable",
   "service-not-running",
 ] as const;
+export type OverlayOnlyReason = (typeof OVERLAY_ONLY_REASONS)[number];
+
+/** The probe-did-not-finish codes plus the plugin-synthesised `service-not-running` (D-03). */
+export const SHARED_REASONS = [...PROBE_REASONS, "service-not-running"] as const;
 export type SharedReason = (typeof SHARED_REASONS)[number];
 const SHARED_REASON_STATUS = {
   "probe-timeout": "unknown",
@@ -127,7 +153,7 @@ const SHARED_REASON_STATUS = {
 } as const satisfies Record<SharedReason, SubsystemStatus>;
 
 /** The shared codes a single part can carry (the plugin clears whole rows for `service-not-running`). */
-const PART_PROBE_REASONS = ["probe-timeout", "probe-error", "subsystem-not-wired"] as const;
+const PART_PROBE_REASONS = PROBE_REASONS;
 
 /** The companion service row is computed by the plugin from its connection state (D-03). */
 export const SERVICE_REASONS = [
@@ -145,9 +171,10 @@ export const SERVICE_REASON_STATUS = {
 // -- Vault access ------------------------------------------------------------
 
 /**
- * `vault-mismatch` and `vault-check-unavailable` are overlaid by the plugin
- * after it compares the salted fingerprint (D-36) with the vault open in
- * Obsidian; the service never sends them.
+ * The full list the plugin can display. `vault-mismatch` and
+ * `vault-check-unavailable` are overlaid by the plugin after it compares the
+ * salted fingerprint (D-36) with the vault open in Obsidian; the service never
+ * sends them (see {@link OVERLAY_ONLY_REASONS} and {@link SERVICE_SIDE_REASONS}).
  */
 export const VAULT_REASONS = [
   "vault-ready",
@@ -331,6 +358,12 @@ export const SCHEDULER_PART_IDS = ["last-run", "research-key", "sources"] as con
 export type SchedulerPartId = (typeof SCHEDULER_PART_IDS)[number];
 
 /**
+ * Scheduler parts that never lift a setup-needed row (D-34a): default sources are
+ * configured on a fresh install, which is not "the scheduler works".
+ */
+export const SCHEDULER_PASSIVE_PART_IDS = ["sources"] as const satisfies readonly SchedulerPartId[];
+
+/**
  * One reason per `RUN_ERROR_CODES` member (D-04). The two checks below make a
  * new run error code fail the build until it has a health reason, in both
  * directions: a code without a reason, and a reason without a code.
@@ -373,6 +406,7 @@ const RESEARCH_KEY_REASONS = [
   "research-key-present",
   "research-key-missing",
   "research-key-check-failed",
+  "research-key-not-checked",
 ] as const;
 const SOURCES_REASONS = ["sources-configured", "sources-config-unusable"] as const;
 
@@ -397,6 +431,8 @@ export const SCHEDULER_REASON_STATUS = {
   "research-key-present": "ok",
   "research-key-missing": "setup-needed",
   "research-key-check-failed": "unknown",
+  // No owner gesture has checked the key since the service started (ADR-0017 amendment, plan 08-07 A1).
+  "research-key-not-checked": "unknown",
   "sources-configured": "ok",
   "sources-config-unusable": "degraded",
   ...SHARED_REASON_STATUS,
@@ -437,6 +473,26 @@ export const LAUNCHERS_REASON_STATUS = {
   "bundle-check-unavailable": "unknown",
   ...SHARED_REASON_STATUS,
 } as const satisfies Record<LaunchersReason, SubsystemStatus>;
+
+function withoutOverlayReasons<const R extends readonly [string, ...string[]]>(
+  reasons: R,
+): readonly [Exclude<R[number], OverlayOnlyReason>, ...Exclude<R[number], OverlayOnlyReason>[]] {
+  const overlay: readonly string[] = OVERLAY_ONLY_REASONS;
+  return reasons.filter((reason) => !overlay.includes(reason)) as never;
+}
+
+/**
+ * The reasons the service may send for each of its five rows: the full lists
+ * above minus {@link OVERLAY_ONLY_REASONS}. The strict response schema is built
+ * from these, so a response carrying a plugin-only reason is refused.
+ */
+export const SERVICE_SIDE_REASONS = {
+  vault: withoutOverlayReasons(VAULT_REASONS),
+  hooks: withoutOverlayReasons(HOOKS_REASONS),
+  collectors: withoutOverlayReasons(COLLECTORS_REASONS),
+  scheduler: withoutOverlayReasons(SCHEDULER_REASONS),
+  launchers: withoutOverlayReasons(LAUNCHERS_REASONS),
+} as const;
 
 // ---------------------------------------------------------------------------
 // Setup actions (closed, D-08, D-39): the service sends ids, the plugin owns the text
@@ -549,8 +605,10 @@ function partSchema<Id extends string, R extends readonly [string, ...string[]]>
 /**
  * A row made of parts: the status is the roll-up of its parts (passive parts
  * excepted from the ok-versus-setup-needed decision, D-34a) and the reason is
- * the deciding part's. A row with no parts (a probe that timed out, or a
- * tracer) carries any of the row's reasons and its own status.
+ * the deciding part's. A row with no parts is accepted only when its reason is
+ * a probe-did-not-finish code ({@link PROBE_REASONS}): the probe never produced
+ * the parts, so the row says nothing but `unknown`. Any other reason would let
+ * a row claim `ok` (or anything else) with no evidence (FIX1A M3).
  */
 function rowWithPartsRefinement(passivePartIds: readonly string[]) {
   return (row: {
@@ -559,7 +617,7 @@ function rowWithPartsRefinement(passivePartIds: readonly string[]) {
     parts?: readonly PartLike[] | undefined;
   }): boolean => {
     const parts = row.parts;
-    if (parts === undefined) return true;
+    if (parts === undefined) return (PROBE_REASONS as readonly string[]).includes(row.reasonCode);
     if (row.status !== rollupPartStatuses(parts, passivePartIds)) return false;
     return parts.some((part) => part.status === row.status && part.reasonCode === row.reasonCode);
   };
@@ -613,13 +671,22 @@ function serviceSideRowWithParts<
       path: ["status"],
     })
     .refine(rowWithPartsRefinement(passivePartIds), {
-      message: "status must equal the roll-up of the parts and the reason must be a part's",
+      message:
+        "status must equal the roll-up of the parts and the reason must be a part's, or the probe did not finish",
       path: ["parts"],
     });
 }
 
-export const VaultRowSchema = serviceSideRow("vault", VAULT_REASONS, VAULT_REASON_STATUS);
-export const HooksRowSchema = serviceSideRow("hooks", HOOKS_REASONS, HOOKS_REASON_STATUS);
+export const VaultRowSchema = serviceSideRow(
+  "vault",
+  SERVICE_SIDE_REASONS.vault,
+  VAULT_REASON_STATUS,
+);
+export const HooksRowSchema = serviceSideRow(
+  "hooks",
+  SERVICE_SIDE_REASONS.hooks,
+  HOOKS_REASON_STATUS,
+);
 
 const collectorPart = <Id extends CollectorsPartId>(id: Id) =>
   partSchema(id, COLLECTORS_PART_REASONS[id], COLLECTORS_REASON_STATUS);
@@ -637,7 +704,7 @@ export const CollectorsPartsSchema = z.tuple([
 ]);
 export const CollectorsRowSchema = serviceSideRowWithParts(
   "collectors",
-  COLLECTORS_REASONS,
+  SERVICE_SIDE_REASONS.collectors,
   COLLECTORS_REASON_STATUS,
   CollectorsPartsSchema,
   COLLECTORS_PASSIVE_PART_IDS,
@@ -653,9 +720,10 @@ export const SchedulerPartsSchema = z.tuple([
 ]);
 export const SchedulerRowSchema = serviceSideRowWithParts(
   "scheduler",
-  SCHEDULER_REASONS,
+  SERVICE_SIDE_REASONS.scheduler,
   SCHEDULER_REASON_STATUS,
   SchedulerPartsSchema,
+  SCHEDULER_PASSIVE_PART_IDS,
 );
 
 const launcherPart = <Id extends LauncherPartId>(id: Id) =>
@@ -679,7 +747,7 @@ export const LauncherPartsSchema = z.union([
 ]);
 export const LaunchersRowSchema = serviceSideRowWithParts(
   "launchers",
-  LAUNCHERS_REASONS,
+  SERVICE_SIDE_REASONS.launchers,
   LAUNCHERS_REASON_STATUS,
   LauncherPartsSchema,
 );
@@ -766,6 +834,28 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
  */
 export type ProbeOutcome = DistributiveOmit<ServiceSideRow, "checkedAt" | "freshness">;
 
+/**
+ * A service-side row as the plugin holds and shows it: either exactly what the
+ * service sent, or a row the plugin itself produced with a plugin-only reason
+ * ({@link OverlayOnlyReason}: the vault overlay, or a row cleared to
+ * `service-not-running`). Only the first kind can cross the wire.
+ */
+export type DisplayedRow =
+  | ServiceSideRow
+  | (DistributiveOmit<ServiceSideRow, "reasonCode"> & { readonly reasonCode: OverlayOnlyReason });
+
+// ---------------------------------------------------------------------------
+// Health trigger (plan 08-07 Amendment A1)
+
+/**
+ * Why a health check was requested: `gesture` is an owner action (opening the
+ * section, `Run checks again`) and is the only trigger allowed to spawn
+ * `security`; `reconnect` is the automatic refetch after a reconnect and never
+ * does. A missing or unrecognised value is treated as `reconnect` by the route.
+ */
+export const HealthTriggerSchema = z.enum(["gesture", "reconnect"]);
+export type HealthTrigger = z.infer<typeof HealthTriggerSchema>;
+
 // ---------------------------------------------------------------------------
 // Errors (the plugin owns the copy; no body carries a message or a path)
 
@@ -840,7 +930,10 @@ export interface RowSummary {
   readonly ok: number;
 }
 
-/** Counts rows by status. Pure, so the Diagnostics view and the bundle call the same code. */
+/**
+ * Counts rows by status. Pure, so the Diagnostics view and the bundle call the
+ * same code. A status that is not one of the five counts as `unknown`, never `ok`.
+ */
 export function summariseRows(rows: readonly { readonly status: SubsystemStatus }[]): RowSummary {
   let failing = 0;
   let degraded = 0;
@@ -848,10 +941,11 @@ export function summariseRows(rows: readonly { readonly status: SubsystemStatus 
   let setupNeeded = 0;
   let ok = 0;
   for (const row of rows) {
-    if (row.status === "failing") failing += 1;
-    else if (row.status === "degraded") degraded += 1;
-    else if (row.status === "unknown") unknown += 1;
-    else if (row.status === "setup-needed") setupNeeded += 1;
+    const status = asKnownStatus(row.status);
+    if (status === "failing") failing += 1;
+    else if (status === "degraded") degraded += 1;
+    else if (status === "unknown") unknown += 1;
+    else if (status === "setup-needed") setupNeeded += 1;
     else ok += 1;
   }
   return { failing, degraded, unknown, setupNeeded, ok };

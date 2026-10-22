@@ -35,7 +35,7 @@ describe("security-cli", () => {
   it("calls execa with an argument array of separate strings for get()", async () => {
     execaMock.mockResolvedValueOnce({ stdout: "value" });
     await getSecret("my-account");
-    expect(execaMock).toHaveBeenCalledWith("security", [
+    expect(execaMock).toHaveBeenCalledWith("/usr/bin/security", [
       "find-generic-password",
       "-a",
       "my-account",
@@ -60,7 +60,7 @@ describe("security-cli", () => {
     await setSecret("my-account", "my-value");
     expect(execaMock).toHaveBeenCalledTimes(1);
     const [bin, args, options] = execaMock.mock.calls[0] as [string, string[], { input?: string }];
-    expect(bin).toBe("security");
+    expect(bin).toBe("/usr/bin/security");
     // argv contains only "-i" — no account, no service name, no secret.
     expect(args).toEqual(["-i"]);
     for (const arg of args) {
@@ -130,7 +130,7 @@ describe("security-cli", () => {
   it("calls execa with an argument array of separate strings for delete()", async () => {
     execaMock.mockResolvedValueOnce({ stdout: "" });
     await deleteSecret("my-account");
-    expect(execaMock).toHaveBeenCalledWith("security", [
+    expect(execaMock).toHaveBeenCalledWith("/usr/bin/security", [
       "delete-generic-password",
       "-a",
       "my-account",
@@ -237,5 +237,23 @@ describe("hasSecret", () => {
     await getSecret("my-account");
     const [, args] = execaMock.mock.calls[0] as [string, string[]];
     expect(args).toContain("-w");
+  });
+});
+
+describe("FIX1A hardening: every spawn is the absolute /usr/bin/security, never a PATH lookup", () => {
+  it("get, set, delete and has all spawn the absolute binary", async () => {
+    execaMock.mockReset();
+    execaMock.mockResolvedValue({ stdout: "v", exitCode: 0, failed: false });
+    await getSecret("my-account");
+    await setSecret("my-account", "abc123");
+    await deleteSecret("my-account");
+    await hasSecret("my-account");
+    const binaries = execaMock.mock.calls.map((call) => call[0]);
+    expect(binaries).toEqual([
+      "/usr/bin/security",
+      "/usr/bin/security",
+      "/usr/bin/security",
+      "/usr/bin/security",
+    ]);
   });
 });
