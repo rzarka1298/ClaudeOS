@@ -1,14 +1,19 @@
 import type { ClaudeIntegrationStatus } from "@ccc/domain";
 import { effect } from "@preact/signals";
 import { type App, Notice, type Plugin, PluginSettingTab } from "obsidian";
-import {
-  applyMotionPreference,
-  type MediaQueryListLike,
-  type MotionPreference,
-} from "../motion.js";
+import type { MediaQueryListLike, MotionPreference } from "../motion.js";
 import { codexIntegration, codexSnapshotEpoch } from "../widgets/codex-signals.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 import { buildCodexGroup, CodexSettingsState, type SettingsCodexSeam } from "./codex-settings.js";
+import {
+  asMotionPreference,
+  applyReducedMotionChange as modelApplyReducedMotionChange,
+  REDUCED_MOTION_DESC,
+  REDUCED_MOTION_KEY,
+  REDUCED_MOTION_NAME,
+  REDUCED_MOTION_OPTIONS,
+  type ReducedMotionOutcome,
+} from "./settings-model.js";
 
 /**
  * The plugin's Settings tab — the owner's override for reduced motion
@@ -29,20 +34,17 @@ import { buildCodexGroup, CodexSettingsState, type SettingsCodexSeam } from "./c
  * chrome, and D-18 says the plugin does not restyle chrome it does not own.
  */
 
-export const REDUCED_MOTION_KEY = "reducedMotion";
-
-/** Sentence case throughout — `obsidianmd/ui/sentence-case` runs at error. */
-export const REDUCED_MOTION_NAME = "Reduced motion";
-export const REDUCED_MOTION_DESC =
-  "Turn off number easing, the background twinkle and decorative transitions. " +
-  "System follows the macOS accessibility setting.";
-export const REDUCED_MOTION_SAVE_FAILED = "Couldn't save the reduced motion setting.";
-
-/** The two option labels, exactly as the owner reads them. */
-export const REDUCED_MOTION_OPTIONS: Readonly<Record<MotionPreference, string>> = {
-  auto: "System",
-  reduced: "Always reduced",
-};
+// The reduced-motion words and the decision now live in the Obsidian-free `settings-model.ts`
+// (plan 08-02) and are re-exported here under the same names.
+export {
+  asMotionPreference,
+  REDUCED_MOTION_DESC,
+  REDUCED_MOTION_KEY,
+  REDUCED_MOTION_NAME,
+  REDUCED_MOTION_OPTIONS,
+  REDUCED_MOTION_SAVE_FAILED,
+  type ReducedMotionOutcome,
+} from "./settings-model.js";
 
 // --- Claude section (UI-SPEC S5, D-48) ------------------------------------
 // A "Claude" group appended to the settings tab: hook status, the owner-run
@@ -303,36 +305,23 @@ export interface SettingsTabHost {
     | undefined;
 }
 
-/** What `applyReducedMotionChange` did, so a caller can revert its own control. */
-export type ReducedMotionOutcome = "saved" | "reverted";
+/** The outcome channel the native tab hands the model: the host's notifier, else Obsidian's `Notice`. */
+function tabNotifier(host: SettingsTabHost): (message: string) => void {
+  return (message) => {
+    if (host.notify) host.notify(message);
+    else new Notice(message);
+  };
+}
 
 /**
- * The whole decision, extracted from the renderer so it is testable without
- * Obsidian's DOM.
- *
- * Ordering is the point: the setting is persisted FIRST and the root attribute
- * is rewritten only after the save resolves. A UI that changed first and saved
- * second would show the owner a state the next reload silently discards. On
- * failure the in-memory setting is restored to what is actually on disk, a
- * `Notice` says so, and the motion mode is left exactly as it was — the caller
- * reverts its own control to match (UI-SPEC E8 error row).
+ * The native tab's reduced-motion decision: the model's, with failures posted through the host's
+ * notifier or, when it has none, Obsidian's own `Notice`.
  */
-export async function applyReducedMotionChange(
+export function applyReducedMotionChange(
   host: SettingsTabHost,
   value: MotionPreference,
 ): Promise<ReducedMotionOutcome> {
-  const previous = host.settings.reducedMotion;
-  host.settings.reducedMotion = value;
-  try {
-    await host.saveSettings();
-  } catch {
-    host.settings.reducedMotion = previous;
-    if (host.notify) host.notify(REDUCED_MOTION_SAVE_FAILED);
-    else new Notice(REDUCED_MOTION_SAVE_FAILED);
-    return "reverted";
-  }
-  applyMotionPreference(value, host.mql);
-  return "saved";
+  return modelApplyReducedMotionChange(host, value, tabNotifier(host));
 }
 
 /**
@@ -356,11 +345,6 @@ export async function applyNotifyApprovalsChange(
     return "reverted";
   }
   return "saved";
-}
-
-/** Narrows an arbitrary persisted value; anything unrecognised is `auto` (T-03-12). */
-export function asMotionPreference(value: unknown): MotionPreference {
-  return value === "reduced" ? "reduced" : "auto";
 }
 
 export class CommandCenterSettingTab extends PluginSettingTab {
