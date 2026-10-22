@@ -1,3 +1,4 @@
+import type { ResearchStatusResponse } from "@ccc/domain/research-routes.js";
 import type { TaskDueTodayResponse } from "@ccc/domain/tasks.js";
 import { createSocketApiClient } from "@ccc/service-api-client";
 import { type ReadonlySignal, type Signal, signal } from "@preact/signals";
@@ -7,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import { configureOverviewZone, resetOverviewFeeds } from "../overview/overview-feeds.js";
+import { configureResearch, type ResearchApi } from "../research/api.js";
 import { configureTasksApi, type TasksApi } from "../tasks/api.js";
 import { fakeTasksApi } from "../test-support/tasks-api-fake.js";
 import { nowTick } from "../widgets/clock.js";
@@ -236,7 +238,11 @@ function syntheticSession(i: number): unknown {
 /** Minimal, synthetic body data per widget — shaped to each body's data type. */
 const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
   "service-health": { connection: "live" },
-  today: { tasks: { rows: [], nextOpen: null } },
+  today: {
+    tasks: { rows: [], nextOpen: null },
+    automation: { failure: null, unknownRun: false },
+    nowMs: Date.parse("2026-09-25T11:58:00Z"),
+  },
   "active-sessions": {
     sessions: [syntheticSession(1)],
     nowMs: Date.parse("2026-09-25T11:58:00Z"),
@@ -592,6 +598,8 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
     nowTick.value = TODAY_NOW;
     configureOverviewZone("America/Chicago");
     resetOverviewFeeds();
+    // A clean research status unless a test says otherwise, so the task feed is what each test varies.
+    configureStatus(() => Promise.resolve(NO_RUNS));
   });
 
   afterEach(() => {
@@ -617,6 +625,33 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
         onNavigate={onNavigate}
       />,
     );
+  }
+
+  // ---- Task 2 (plan 08-14): the automation line and per-feed failures, end to end ----
+
+  const NO_RUNS: ResearchStatusResponse = {
+    lastSuccess: null,
+    lastFailure: null,
+    inFlight: null,
+    latestUnknown: null,
+    configuredSources: null,
+    topicLabel: null,
+  };
+
+  function configureStatus(status: () => Promise<ResearchStatusResponse>): void {
+    const api: ResearchApi = {
+      run: () => Promise.reject(new Error("unused")),
+      status,
+      list: () => Promise.reject(new Error("unused")),
+      report: () => Promise.reject(new Error("unused")),
+    };
+    configureResearch({
+      api,
+      notify: () => undefined,
+      openNote: () => false,
+      copyText: () => false,
+      requestRunNow: () => undefined,
+    });
   }
 
   const DUE_RESPONSE: TaskDueTodayResponse = {
@@ -658,8 +693,17 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith("tasks", { taskId: TASK_ID });
   });
 
-  it("Test 4: with the tasks API unconfigured the card never reports ready", async () => {
+  it("Test 4: with the tasks API unconfigured the card never shows a due list or `Nothing is due today.`", async () => {
     connectionState.value = { kind: "live" };
+    const { container } = renderToday();
+    await screen.findByText("Due tasks unavailable.");
+    expect(container.textContent).not.toContain("Nothing is due today.");
+    expect(container.querySelector(".ccc-list-row")).toBeNull();
+  });
+
+  it("Test 4: with neither API configured the card never reports ready", async () => {
+    connectionState.value = { kind: "live" };
+    configureResearch(null);
     const { container } = renderToday();
     await vi.waitFor(() => {
       expect(container.querySelector("section.ccc-card")?.getAttribute("data-presentation")).toBe(
@@ -693,5 +737,89 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
       connectionState.value = { kind: "live" };
     });
     expect(fake.dueToday).toHaveBeenCalledTimes(1);
+  });
+
+  afterEach(() => configureResearch(null));
+
+  it("Task 2: a failed run newer than the last success shows the failure line and opens the research view", async () => {
+    connectionState.value = { kind: "live" };
+    configureDue({ due: [], overdue: [], nextOpen: null });
+    configureStatus(() =>
+      Promise.resolve({
+        ...NO_RUNS,
+        lastFailure: {
+          runId: "run-1",
+          endedAt: "2026-10-22T16:00:00Z",
+          errorCode: "summariser-unconfigured",
+        },
+      }),
+    );
+    const onNavigate = vi.fn();
+    const { container } = renderToday(onNavigate);
+
+    await screen.findByText(/Research run failed 2 hours ago: the summariser isn't set up\./);
+    expect(container.textContent).not.toContain("No automation failures.");
+    fireEvent.click(screen.getByRole("button", { name: "Open the research view" }));
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("research");
+  });
+
+  it("Task 2, Test 3: a rejected tasks fetch reads `Due tasks unavailable.` while the automation block renders", async () => {
+    connectionState.value = { kind: "live" };
+    const fake = fakeTasksApi([], { dueToday: vi.fn(() => Promise.reject(new Error("down"))) });
+    configureTasksApi(fake as unknown as TasksApi);
+    configureStatus(() => Promise.resolve(NO_RUNS));
+    const { container } = renderToday();
+
+    await screen.findByText("Due tasks unavailable.");
+    expect(container.textContent).toContain("No automation failures.");
+    expect(container.querySelector("section.ccc-card")?.getAttribute("data-presentation")).toBe(
+      "stale",
+    );
+    expect(container.textContent).not.toMatch(/\b0\b/);
+  });
+
+  it("Task 2, Test 3: both feeds rejected while connected is the frame error with the diagnostics follow-up", async () => {
+    connectionState.value = { kind: "live" };
+    const fake = fakeTasksApi([], { dueToday: vi.fn(() => Promise.reject(new Error("down"))) });
+    configureTasksApi(fake as unknown as TasksApi);
+    configureStatus(() => Promise.reject(new Error("down")));
+    const { container } = renderToday();
+
+    await screen.findByText("Couldn't load today.");
+    expect(container.textContent).toContain(
+      "Check the service in Settings → Diagnostics, then refresh.",
+    );
+    expect(container.querySelector("section.ccc-card")?.getAttribute("data-presentation")).toBe(
+      "error",
+    );
+  });
+
+  it("Task 2, Test 4: with nothing to show from either feed the card reads `Nothing here yet` and keeps the note", async () => {
+    connectionState.value = { kind: "live" };
+    configureDue({ due: [], overdue: [], nextOpen: null });
+    configureStatus(() => Promise.resolve(NO_RUNS));
+    const { container } = renderToday();
+
+    await screen.findByText("No open tasks and no automation failures.");
+    expect(container.querySelector("section.ccc-card")?.getAttribute("data-presentation")).toBe(
+      "empty",
+    );
+    expect(container.textContent).toContain("Nothing here yet");
+    expect(container.textContent).toContain("Google Calendar and Gmail: not part of this version.");
+  });
+
+  it("Task 2: the next open task shows when nothing is due", async () => {
+    connectionState.value = { kind: "live" };
+    configureDue({
+      due: [],
+      overdue: [],
+      nextOpen: { taskId: TASK_ID, title: "Plan the Q4 review", dueDate: "2026-10-25" },
+    });
+    configureStatus(() => Promise.resolve(NO_RUNS));
+    const { container } = renderToday();
+
+    await screen.findByRole("button", { name: "Open task: Plan the Q4 review, Next due Oct 25" });
+    expect(container.textContent).toContain("Next open task");
+    expect(container.textContent).toContain("Nothing is due today.");
   });
 });

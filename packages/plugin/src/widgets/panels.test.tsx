@@ -95,7 +95,17 @@ function todayTask(n: number, extra: Partial<TodayTask> = {}): TodayTask {
   return { taskId: TASK_ID(n), title: `Task ${n}`, meta: `Due Oct ${n}`, ...extra };
 }
 
-const TODAY_BASE = { tasks: { rows: [] as TodayTask[], nextOpen: null } };
+const NOW_MS = Date.parse(OBSERVED);
+const NO_FAILURES = { failure: null, unknownRun: false };
+const TODAY_BASE = {
+  tasks: { rows: [] as TodayTask[], nextOpen: null },
+  automation: NO_FAILURES,
+  nowMs: NOW_MS,
+};
+/** Today data with the given task block; automation is clean and the clock is fixed. */
+function todayData(tasks: unknown, automation: unknown = NO_FAILURES): unknown {
+  return { tasks, automation, nowMs: NOW_MS };
+}
 
 /** Renders the Today card body with an `onNavigate` spy and returns the container. */
 function todayCard(data: unknown, size: "medium" | "wide" = "wide") {
@@ -115,7 +125,7 @@ function todayCard(data: unknown, size: "medium" | "wide" = "wide") {
 
 describe("Today: an unavailable feed is said, never shown as zero (plan 08-14)", () => {
   it("an unavailable task feed reads `Due tasks unavailable.`, not a count and not `Nothing is due today.`", () => {
-    const text = cardText("today", { tasks: null });
+    const text = cardText("today", todayData(null));
     expectNoLeak(text);
     expect(text).toContain("Due tasks unavailable.");
     expect(text).not.toContain("Nothing is due today.");
@@ -131,17 +141,17 @@ describe("Today: an unavailable feed is said, never shown as zero (plan 08-14)",
 
 describe("Today: block order, rows and the always-present note (plan 08-14, UI-SPEC S6)", () => {
   it("renders the Due today heading, then rows with their meta, then the not-in-version note", () => {
-    const { container } = todayCard({
-      tasks: {
+    const { container } = todayCard(
+      todayData({
         rows: [todayTask(1, { meta: "Overdue since Oct 18" }), todayTask(2)],
         nextOpen: null,
-      },
-    });
+      }),
+    );
     const body = container.querySelector(".ccc-card-body");
     const headings = [...(body?.querySelectorAll(".ccc-today-section") ?? [])].map(
       (h) => h.textContent,
     );
-    expect(headings).toEqual(["Due today"]);
+    expect(headings).toEqual(["Due today", "Automation"]);
     expect([...container.querySelectorAll(".ccc-list-meta")].map((m) => m.textContent)).toEqual([
       "Overdue since Oct 18",
       "Due Oct 2",
@@ -152,15 +162,15 @@ describe("Today: block order, rows and the always-present note (plan 08-14, UI-S
   });
 
   it("a row is a button named `Open task: {title}, {meta}` that opens the task", () => {
-    const { getByRole, onNavigate } = todayCard({
-      tasks: { rows: [todayTask(3)], nextOpen: null },
-    });
+    const { getByRole, onNavigate } = todayCard(
+      todayData({ rows: [todayTask(3)], nextOpen: null }),
+    );
     fireEvent.click(getByRole("button", { name: "Open task: Task 3, Due Oct 3" }));
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith("tasks", { taskId: TASK_ID(3) });
   });
 
   it("one row has no count chrome", () => {
-    const { container } = todayCard({ tasks: { rows: [todayTask(1)], nextOpen: null } });
+    const { container } = todayCard(todayData({ rows: [todayTask(1)], nextOpen: null }));
     expect(container.querySelector(".ccc-list-more")).toBeNull();
     expect(container.querySelectorAll(".ccc-list-row")).toHaveLength(1);
     expect(container.querySelector(".ccc-card-body")?.textContent).not.toMatch(/\b1 (task|row)/);
@@ -168,7 +178,7 @@ describe("Today: block order, rows and the always-present note (plan 08-14, UI-S
 
   it("caps the rows by size and offers `Show more in the tasks view`, which opens the tasks destination", () => {
     const rows = Array.from({ length: 9 }, (_, index) => todayTask(index + 1));
-    const { container, getByRole, onNavigate } = todayCard({ tasks: { rows, nextOpen: null } });
+    const { container, getByRole, onNavigate } = todayCard(todayData({ rows, nextOpen: null }));
     expect(container.querySelectorAll(".ccc-list-row")).toHaveLength(6);
     fireEvent.click(getByRole("button", { name: "Show more in the tasks view" }));
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith("tasks");
@@ -176,9 +186,9 @@ describe("Today: block order, rows and the always-present note (plan 08-14, UI-S
 
   it("clamps a long title to two lines with the full text in `title`, as a text node", () => {
     const hostile = `<img src=x onerror=alert(1)> ${"long ".repeat(40)}`;
-    const { container } = todayCard({
-      tasks: { rows: [todayTask(1, { title: hostile })], nextOpen: null },
-    });
+    const { container } = todayCard(
+      todayData({ rows: [todayTask(1, { title: hostile })], nextOpen: null }),
+    );
     const primary = container.querySelector("button.ccc-list-primary");
     expect(primary?.classList.contains("ccc-clamp-2")).toBe(true);
     expect(primary?.getAttribute("title")).toBe(hostile);
@@ -188,9 +198,10 @@ describe("Today: block order, rows and the always-present note (plan 08-14, UI-S
 
   it("never prints the calendar-empty, commitments or scheduled-or-due phrases", () => {
     for (const data of [
-      { tasks: null },
+      todayData(null),
+      todayData(null, null),
       TODAY_BASE,
-      { tasks: { rows: [todayTask(1)], nextOpen: null } },
+      todayData({ rows: [todayTask(1)], nextOpen: null }),
     ]) {
       const text = cardText("today", data);
       expect(text).not.toContain("Nothing else on the calendar today.");
@@ -198,6 +209,110 @@ describe("Today: block order, rows and the always-present note (plan 08-14, UI-S
       expect(text).not.toContain("Nothing is scheduled or due today.");
       cleanup();
     }
+  });
+});
+
+describe("Today: the next open task (plan 08-14 Task 2, D-21, D-45)", () => {
+  it("shows one `Next open task` row with its `Next due` meta when nothing is due", () => {
+    const next = todayTask(7, { meta: "Next due Oct 22" });
+    const { container, getByRole } = todayCard(todayData({ rows: [], nextOpen: next }));
+    const headings = [...container.querySelectorAll(".ccc-today-section")].map(
+      (h) => h.textContent,
+    );
+    expect(headings).toEqual(["Due today", "Next open task", "Automation"]);
+    expect(container.textContent).toContain("Nothing is due today.");
+    expect(getByRole("button", { name: "Open task: Task 7, Next due Oct 22" })).toBeTruthy();
+    // Labelled as the next open task, never styled as due today.
+    expect(container.querySelector('[data-focal="true"]')?.textContent).toBe("Next open task");
+  });
+
+  it("reads `Most recent open task` for an undated task", () => {
+    const next = todayTask(8, { meta: "Most recent open task" });
+    const { container } = todayCard(todayData({ rows: [], nextOpen: next }));
+    expect(container.querySelector(".ccc-list-meta")?.textContent).toBe("Most recent open task");
+  });
+
+  it("is absent when any row is due or overdue, and the Due today heading is the focal anchor", () => {
+    const { container } = todayCard(
+      todayData({ rows: [todayTask(1)], nextOpen: todayTask(7, { meta: "Next due Oct 22" }) }),
+    );
+    expect(container.textContent).not.toContain("Next open task");
+    expect(container.querySelector('[data-focal="true"]')?.textContent).toBe("Due today");
+  });
+
+  it("an absent next open task shows no block and no invented line", () => {
+    const { container } = todayCard(todayData({ rows: [], nextOpen: null }));
+    expect(container.textContent).not.toContain("Next open task");
+    expect(container.textContent).toContain("Nothing is due today.");
+  });
+});
+
+describe("Today: the automation line (plan 08-14 Task 2, D-20)", () => {
+  const FAILED_AT = new Date(NOW_MS - 2 * 60 * 60_000).toISOString();
+
+  it("no failure reads `No automation failures.`", () => {
+    const text = cardText("today", TODAY_BASE);
+    expect(text).toContain("No automation failures.");
+    expect(text).not.toContain("Research run failed");
+  });
+
+  it("a failure reads the sentence with its relative time and reason, and opens the research view", () => {
+    const { container, getByRole, onNavigate } = todayCard(
+      todayData(
+        { rows: [], nextOpen: null },
+        {
+          failure: { endedAt: FAILED_AT, reason: "the summariser isn't set up" },
+          unknownRun: false,
+        },
+      ),
+    );
+    const text = container.querySelector(".ccc-card-body")?.textContent ?? "";
+    expect(text).toContain("✕ Research run failed 2 hours ago: the summariser isn't set up.");
+    expect(text).not.toContain("No automation failures.");
+    expect(container.querySelector(".ccc-error-glyph")?.getAttribute("aria-hidden")).toBe("true");
+    fireEvent.click(getByRole("button", { name: "Open the research view" }));
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("research");
+  });
+
+  it("an unknown run adds `? The last research run ended without reporting.` and never reads as success or failure", () => {
+    const text = cardText(
+      "today",
+      todayData({ rows: [], nextOpen: null }, { failure: null, unknownRun: true }),
+    );
+    expect(text).toContain("? The last research run ended without reporting.");
+    expect(text).not.toContain("No automation failures.");
+    expect(text).not.toContain("Research run failed");
+  });
+
+  it("an unavailable status reads `Automation failure status unavailable.`, not a clean line", () => {
+    const text = cardText("today", todayData({ rows: [], nextOpen: null }, null));
+    expect(text).toContain("Automation failure status unavailable.");
+    expect(text).not.toContain("No automation failures.");
+  });
+
+  it("one feed failing leaves the other block rendering", () => {
+    const tasksDown = cardText("today", todayData(null));
+    expect(tasksDown).toContain("Due tasks unavailable.");
+    expect(tasksDown).toContain("No automation failures.");
+    cleanup();
+    const automationDown = cardText(
+      "today",
+      todayData({ rows: [todayTask(1)], nextOpen: null }, null),
+    );
+    expect(automationDown).toContain("Task 1");
+    expect(automationDown).toContain("Automation failure status unavailable.");
+  });
+});
+
+describe("Today: the honest empty state (plan 08-14 Task 2, R-13)", () => {
+  it("an empty card reads `Nothing here yet`, the body line, and still names the unavailable sources", () => {
+    const body = cardBody("today", todayData({ rows: [], nextOpen: null }), { isEmpty: true });
+    const text = body.textContent ?? "";
+    expect(text).toContain("Nothing here yet");
+    expect(text).toContain("No open tasks and no automation failures.");
+    expect(text).toContain("Google Calendar and Gmail: not part of this version.");
+    expect(text).not.toContain("Nothing is scheduled or due today.");
+    expect(body.querySelector(".ccc-state-heading")?.textContent).toBe("Nothing here yet");
   });
 });
 

@@ -1,17 +1,21 @@
+import type { ResearchStatusResponse } from "@ccc/domain/research-routes.js";
 import type { TaskDueTodayResponse, TaskDueTodayRow } from "@ccc/domain/tasks.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState } from "../connection-state.js";
+import { configureResearch, type ResearchApi } from "../research/api.js";
 import { configureTasksApi, type TasksApi } from "../tasks/api.js";
 import { resetTasksGeneration, tasksGeneration } from "../tasks/events.js";
 import { fakeTasksApi } from "../test-support/tasks-api-fake.js";
 import { nowTick } from "../widgets/clock.js";
 import { CONSTANT_STATE_WIDGET_IDS, widgetStateFor } from "../widgets/widget-data.js";
 import {
+  automationFeed,
   configureOverviewZone,
   dueTodayFeed,
   type FeedSnapshot,
   LIVE_WINDOW_MS,
+  refreshAutomation,
   refreshDueToday,
   refreshOnTick,
   resetOverviewFeeds,
@@ -51,6 +55,57 @@ function feed(
   };
 }
 
+const NO_RUNS: ResearchStatusResponse = {
+  lastSuccess: null,
+  lastFailure: null,
+  inFlight: null,
+  latestUnknown: null,
+  configuredSources: null,
+  topicLabel: null,
+};
+
+function autoFeed(
+  value: ResearchStatusResponse | null,
+  extra: Partial<FeedSnapshot<ResearchStatusResponse>> = {},
+): FeedSnapshot<ResearchStatusResponse> {
+  return {
+    settled: true,
+    value,
+    fetchedAt: value === null ? null : NOW - 500,
+    failed: false,
+    ...extra,
+  };
+}
+
+/**
+ * A `lastFailure` record. The code is typed as a string on purpose: a newer
+ * service may send a code this build does not know, and the card must still
+ * show a fixed reason for it (never the remote string).
+ */
+function failed(
+  runId: string,
+  endedAt: string,
+  errorCode: string,
+): ResearchStatusResponse["lastFailure"] {
+  return { runId, endedAt, errorCode } as ResearchStatusResponse["lastFailure"];
+}
+
+const AUTO_OK = autoFeed(NO_RUNS);
+const UNSETTLED_AUTO: FeedSnapshot<ResearchStatusResponse> = {
+  settled: false,
+  value: null,
+  fetchedAt: null,
+  failed: false,
+};
+
+/** Both feeds for `todayStateFor`; the automation feed is clean unless a test says otherwise. */
+function both(
+  tasks: FeedSnapshot<TaskDueTodayResponse>,
+  automation: FeedSnapshot<ResearchStatusResponse> = AUTO_OK,
+) {
+  return { tasks, automation };
+}
+
 const REVIEW = row({
   taskId: "0mfk1a2b30000000000000001",
   title: "Review release notes",
@@ -60,6 +115,7 @@ const REVIEW = row({
 afterEach(() => {
   vi.useRealTimers();
   configureTasksApi(null);
+  configureResearch(null);
   configureOverviewZone(null);
   resetOverviewFeeds();
   resetTasksGeneration();
@@ -76,7 +132,7 @@ describe("Task 1 (tracer): the registry no longer treats Today as a constant", (
 describe("todayStateFor: tasks only (Task 1)", () => {
   it("is loading while connecting and nothing has been fetched", () => {
     const state = todayStateFor(
-      { tasks: { settled: false, value: null, fetchedAt: null, failed: false } },
+      both({ settled: false, value: null, fetchedAt: null, failed: false }, UNSETTLED_AUTO),
       { kind: "connecting" },
       NOW,
       ZONE,
@@ -86,7 +142,7 @@ describe("todayStateFor: tasks only (Task 1)", () => {
 
   it("is unavailable while disconnected and nothing has been fetched (the frame shows disconnected)", () => {
     const state = todayStateFor(
-      { tasks: { settled: false, value: null, fetchedAt: null, failed: false } },
+      both({ settled: false, value: null, fetchedAt: null, failed: false }, UNSETTLED_AUTO),
       { kind: "disconnected", reason: "closed" },
       NOW,
       ZONE,
@@ -96,7 +152,10 @@ describe("todayStateFor: tasks only (Task 1)", () => {
 
   it("is the frame error, never unavailable, when the feed failed while connected", () => {
     const state = todayStateFor(
-      { tasks: { settled: true, value: null, fetchedAt: null, failed: true } },
+      both(
+        { settled: true, value: null, fetchedAt: null, failed: true },
+        autoFeed(null, { failed: true }),
+      ),
       LIVE,
       NOW,
       ZONE,
@@ -105,12 +164,13 @@ describe("todayStateFor: tasks only (Task 1)", () => {
   });
 
   it("maps a due task to a ready, partial, live card dated by the fetch", () => {
-    const state = todayStateFor({ tasks: feed({ due: [REVIEW], overdue: [] }) }, LIVE, NOW, ZONE);
+    const state = todayStateFor(both(feed({ due: [REVIEW], overdue: [] })), LIVE, NOW, ZONE);
     expect(state.kind).toBe("ready");
     if (state.kind !== "ready") return;
     expect(state.freshness).toBe("live");
     expect(state.partiality.partial).toBe(true);
-    expect(state.observedAt).toBe(new Date(NOW - 1000).toISOString());
+    // Dated by the newest answer: the automation feed arrived 500 ms ago, the task feed 1000 ms ago.
+    expect(state.observedAt).toBe(new Date(NOW - 500).toISOString());
     expect(state.data.tasks?.rows).toEqual([
       { taskId: REVIEW.taskId, title: REVIEW.title, meta: "Due 5:00 PM" },
     ]);
@@ -128,7 +188,7 @@ describe("todayStateFor: tasks only (Task 1)", () => {
       dueDate: "2026-10-22",
     });
     const state = todayStateFor(
-      { tasks: feed({ due: [REVIEW, dated], overdue: [overdue] }) },
+      both(feed({ due: [REVIEW, dated], overdue: [overdue] })),
       LIVE,
       NOW,
       ZONE,
@@ -155,7 +215,7 @@ describe("todayStateFor: tasks only (Task 1)", () => {
       dueAt: "2026-10-20T02:00:00Z",
     });
     const state = todayStateFor(
-      { tasks: feed({ due: [], overdue: [allDay, lateNight] }) },
+      both(feed({ due: [], overdue: [allDay, lateNight] })),
       LIVE,
       NOW,
       ZONE,
@@ -170,30 +230,25 @@ describe("todayStateFor: tasks only (Task 1)", () => {
       title: "Plan the week",
       scheduledAt: "2026-10-22T20:30:00Z",
     });
-    const state = todayStateFor(
-      { tasks: feed({ due: [scheduled], overdue: [] }) },
-      LIVE,
-      NOW,
-      ZONE,
-    );
+    const state = todayStateFor(both(feed({ due: [scheduled], overdue: [] })), LIVE, NOW, ZONE);
     if (state.kind !== "ready") throw new Error("not ready");
     expect(state.data.tasks?.rows[0]?.meta).toBe("Scheduled 3:30 PM");
   });
 
   it("goes stale when the answer is older than the live window, and never live while disconnected", () => {
     const old = feed({ due: [REVIEW], overdue: [] }, { fetchedAt: NOW - LIVE_WINDOW_MS - 1 });
-    const stale = todayStateFor({ tasks: old }, LIVE, NOW, ZONE);
+    const stale = todayStateFor(both(old), LIVE, NOW, ZONE);
     if (stale.kind !== "ready") throw new Error("not ready");
     expect(stale.freshness).toBe("stale");
     const fresh = feed({ due: [REVIEW], overdue: [] });
-    const away = todayStateFor({ tasks: fresh }, { kind: "disconnected", reason: "x" }, NOW, ZONE);
+    const away = todayStateFor(both(fresh), { kind: "disconnected", reason: "x" }, NOW, ZONE);
     if (away.kind !== "ready") throw new Error("not ready");
     expect(away.freshness).toBe("stale");
   });
 
   it("keeps the last good rows when a refresh fails, marks the card stale and names the source", () => {
     const failed = feed({ due: [REVIEW], overdue: [] }, { failed: true });
-    const state = todayStateFor({ tasks: failed }, LIVE, NOW, ZONE);
+    const state = todayStateFor(both(failed), LIVE, NOW, ZONE);
     if (state.kind !== "ready") throw new Error("not ready");
     expect(state.freshness).toBe("stale");
     expect(state.partiality.missingSources).toContain("Managed task store");
@@ -336,5 +391,327 @@ describe("the triggers: mount, going live, tasks.changed and the shared tick (Ta
     refreshOnTick();
     expect(fake.dueToday).toHaveBeenCalledTimes(2);
     stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: next open task, the automation line, feed failures, the empty rule
+// ---------------------------------------------------------------------------
+
+function ready(
+  tasks: FeedSnapshot<TaskDueTodayResponse>,
+  automation: FeedSnapshot<ResearchStatusResponse> = AUTO_OK,
+  connection: ConnectionState = LIVE,
+) {
+  const state = todayStateFor(both(tasks, automation), connection, NOW, ZONE);
+  if (state.kind !== "ready") throw new Error(`expected ready, got ${state.kind}`);
+  return state;
+}
+
+const NEXT = row({
+  taskId: "0mfk1a2b30000000000000009",
+  title: "Plan the Q4 review",
+  dueAt: "2026-10-25T15:00:00Z",
+});
+const UNDATED = row({ taskId: "0mfk1a2b3000000000000000a", title: "Tidy the inbox" });
+const FAILED_AT = "2026-10-22T16:00:00Z";
+const OK_RUN = {
+  runId: "run-ok",
+  endedAt: "2026-10-22T10:00:00Z",
+  outcome: "success" as const,
+  sourceCount: 3,
+  sourceTotal: 3,
+  reportNoteId: "0mfk1a2b3000000000000000b",
+};
+
+describe("Task 2, Test 1: the next open task", () => {
+  it("a dated next open task reads `Next due {Mon D}` when nothing is due or overdue", () => {
+    const state = ready(feed({ due: [], overdue: [], nextOpen: NEXT }));
+    expect(state.data.tasks?.rows).toEqual([]);
+    expect(state.data.tasks?.nextOpen).toEqual({
+      taskId: NEXT.taskId,
+      title: NEXT.title,
+      meta: "Next due Oct 25",
+    });
+  });
+
+  it("an undated next open task reads `Most recent open task`", () => {
+    const state = ready(feed({ due: [], overdue: [], nextOpen: UNDATED }));
+    expect(state.data.tasks?.nextOpen?.meta).toBe("Most recent open task");
+  });
+
+  it("is absent whenever any row is due or overdue", () => {
+    const withDue = ready(feed({ due: [REVIEW], overdue: [], nextOpen: NEXT }));
+    expect(withDue.data.tasks?.nextOpen).toBeNull();
+    const withOverdue = ready(
+      feed({
+        due: [],
+        overdue: [
+          row({ taskId: "0mfk1a2b3000000000000000c", title: "Late", dueDate: "2026-10-01" }),
+        ],
+        nextOpen: NEXT,
+      }),
+    );
+    expect(withOverdue.data.tasks?.nextOpen).toBeNull();
+  });
+
+  it("an absent nextOpen (an older service) shows no block and is not treated as empty", () => {
+    const state = ready(feed({ due: [], overdue: [] }));
+    expect(state.data.tasks?.nextOpen).toBeNull();
+    expect(state.isEmpty).toBe(false);
+  });
+
+  it("shows the year when the next due date is in another year", () => {
+    const later = row({
+      taskId: "0mfk1a2b3000000000000000d",
+      title: "Renew",
+      dueDate: "2027-01-05",
+    });
+    const state = ready(feed({ due: [], overdue: [], nextOpen: later }));
+    expect(state.data.tasks?.nextOpen?.meta).toBe("Next due Jan 5, 2027");
+  });
+});
+
+describe("Task 2, Test 2: the automation line", () => {
+  const empty = feed({ due: [], overdue: [] });
+
+  it("no failure and no unknown run", () => {
+    expect(ready(empty).data.automation).toEqual({ failure: null, unknownRun: false });
+  });
+
+  it("a failure with no success reads the Phase 7 reason", () => {
+    const status = {
+      ...NO_RUNS,
+      lastFailure: failed("run-1", FAILED_AT, "summariser-unconfigured"),
+    };
+    expect(ready(empty, autoFeed(status)).data.automation).toEqual({
+      failure: { endedAt: FAILED_AT, reason: "the summariser isn't set up" },
+      unknownRun: false,
+    });
+  });
+
+  it("a failure newer than the newest success still counts", () => {
+    const status = {
+      ...NO_RUNS,
+      lastSuccess: OK_RUN,
+      lastFailure: failed("run-2", FAILED_AT, "all-sources-failed"),
+    };
+    expect(ready(empty, autoFeed(status)).data.automation?.failure?.reason).toBe(
+      "no source could be fetched",
+    );
+  });
+
+  it("a success newer than the failure leaves no failure line", () => {
+    const status = {
+      ...NO_RUNS,
+      lastSuccess: { ...OK_RUN, endedAt: "2026-10-22T17:00:00Z" },
+      lastFailure: failed("run-2", FAILED_AT, "all-sources-failed"),
+    };
+    expect(ready(empty, autoFeed(status)).data.automation).toEqual({
+      failure: null,
+      unknownRun: false,
+    });
+  });
+
+  it("an unknown error code is a failure with the forward-compatible reason, never a remote string", () => {
+    const status = {
+      ...NO_RUNS,
+      lastFailure: failed("run-3", FAILED_AT, "something-new"),
+    };
+    expect(ready(empty, autoFeed(status)).data.automation?.failure?.reason).toBe(
+      "something went wrong",
+    );
+  });
+
+  it("a latest unknown run is its own line, while it is the newest run", () => {
+    const status = { ...NO_RUNS, latestUnknown: { runId: "run-4", startedAt: FAILED_AT } };
+    expect(ready(empty, autoFeed(status)).data.automation).toEqual({
+      failure: null,
+      unknownRun: true,
+    });
+  });
+
+  it("an unknown run older than a success is not shown", () => {
+    const status = {
+      ...NO_RUNS,
+      lastSuccess: { ...OK_RUN, endedAt: "2026-10-22T17:00:00Z" },
+      latestUnknown: { runId: "run-4", startedAt: FAILED_AT },
+    };
+    expect(ready(empty, autoFeed(status)).data.automation?.unknownRun).toBe(false);
+  });
+
+  it("an interrupted run is unknown, never a failure", () => {
+    const status = {
+      ...NO_RUNS,
+      lastFailure: failed("run-5", FAILED_AT, "interrupted"),
+    };
+    expect(ready(empty, autoFeed(status)).data.automation).toEqual({
+      failure: null,
+      unknownRun: true,
+    });
+  });
+
+  it("carries the clock the relative time is read against", () => {
+    expect(ready(empty).data.nowMs).toBe(NOW);
+  });
+});
+
+describe("Task 2, Tests 3 and 4: feed failures and the honest empty rule", () => {
+  const empty = feed({ due: [], overdue: [], nextOpen: null });
+
+  it("a failed tasks feed is `null`, never an empty list, while the automation block still maps", () => {
+    const state = ready({ settled: true, value: null, fetchedAt: null, failed: true }, AUTO_OK);
+    expect(state.data.tasks).toBeNull();
+    expect(state.data.automation).toEqual({ failure: null, unknownRun: false });
+    expect(state.isEmpty).toBe(false);
+    expect(state.freshness).toBe("stale");
+    expect(state.partiality.missingSources).toContain("Managed task store");
+  });
+
+  it("a failed automation feed is `null` while the tasks still map, and the chip names it", () => {
+    const state = ready(feed({ due: [REVIEW], overdue: [] }), autoFeed(null, { failed: true }));
+    expect(state.data.automation).toBeNull();
+    expect(state.data.tasks?.rows).toHaveLength(1);
+    expect(state.isEmpty).toBe(false);
+    expect(state.partiality.missingSources).toContain("Automation runs");
+  });
+
+  it("both feeds failing while connected is the frame error, never unavailable", () => {
+    const state = todayStateFor(
+      both(
+        { settled: true, value: null, fetchedAt: null, failed: true },
+        autoFeed(null, { failed: true }),
+      ),
+      LIVE,
+      NOW,
+      ZONE,
+    );
+    expect(state.kind).toBe("error");
+  });
+
+  it("stays loading until both feeds have answered once", () => {
+    const state = todayStateFor(
+      both(feed({ due: [REVIEW], overdue: [] }), UNSETTLED_AUTO),
+      LIVE,
+      NOW,
+      ZONE,
+    );
+    expect(state).toEqual({ kind: "loading" });
+  });
+
+  it("is empty only when both feeds succeeded and there is nothing to show", () => {
+    expect(ready(empty).isEmpty).toBe(true);
+  });
+
+  it("is not empty with a next open task, a due row, a failure or an unknown run", () => {
+    expect(ready(feed({ due: [], overdue: [], nextOpen: NEXT })).isEmpty).toBe(false);
+    expect(ready(feed({ due: [REVIEW], overdue: [], nextOpen: null })).isEmpty).toBe(false);
+    const failing = {
+      ...NO_RUNS,
+      lastFailure: failed("run-1", FAILED_AT, "all-sources-failed"),
+    };
+    expect(ready(empty, autoFeed(failing)).isEmpty).toBe(false);
+    const unknown = { ...NO_RUNS, latestUnknown: { runId: "run-4", startedAt: FAILED_AT } };
+    expect(ready(empty, autoFeed(unknown)).isEmpty).toBe(false);
+  });
+
+  it("an older service that sends no nextOpen is not empty, however clean the rest", () => {
+    expect(ready(feed({ due: [], overdue: [] })).isEmpty).toBe(false);
+  });
+
+  it("a failed refresh of a feed that once answered empty is not empty", () => {
+    expect(ready({ ...empty, failed: true }).isEmpty).toBe(false);
+  });
+});
+
+describe("Task 2, Test 5 (honesty): no state holds a false calendar line", () => {
+  it("no Today data mentions the calendar-empty, commitments or scheduled-or-due phrases", () => {
+    const states = [
+      ready(feed({ due: [], overdue: [], nextOpen: null })),
+      ready(feed({ due: [REVIEW], overdue: [], nextOpen: NEXT })),
+      ready({ settled: true, value: null, fetchedAt: null, failed: true }),
+    ];
+    for (const state of states) {
+      const text = JSON.stringify(state.data);
+      expect(text).not.toContain("Nothing else on the calendar today.");
+      expect(text).not.toContain("commitments unavailable");
+      expect(text).not.toContain("Nothing is scheduled or due today.");
+    }
+  });
+});
+
+describe("Task 2: the automation feed and the triggers (Test 6)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    nowTick.value = NOW;
+  });
+
+  function wire() {
+    const status = vi.fn(() => Promise.resolve(NO_RUNS));
+    const api: ResearchApi = {
+      run: () => Promise.reject(new Error("unused")),
+      status,
+      list: () => Promise.reject(new Error("unused")),
+      report: () => Promise.reject(new Error("unused")),
+    };
+    configureResearch({
+      api,
+      notify: () => undefined,
+      openNote: () => false,
+      copyText: () => false,
+      requestRunNow: () => undefined,
+    });
+    const tasks = fakeTasksApi([], {
+      dueToday: vi.fn(() => Promise.resolve({ due: [], overdue: [] })),
+    });
+    configureTasksApi(tasks as unknown as TasksApi);
+    return { status, dueToday: tasks.dueToday };
+  }
+
+  it("stores the status answer with its fetch time, and a failure keeps the last good one", async () => {
+    const { status } = wire();
+    await refreshAutomation();
+    expect(automationFeed.value).toEqual({
+      settled: true,
+      value: NO_RUNS,
+      fetchedAt: NOW,
+      failed: false,
+    });
+    status.mockImplementation(() => Promise.reject(new Error("down")));
+    await refreshAutomation();
+    expect(automationFeed.value).toMatchObject({ failed: true, value: NO_RUNS, fetchedAt: NOW });
+  });
+
+  it("going live refreshes both feeds; tasks.changed refreshes only the task feed; a tick refreshes both", () => {
+    const { status, dueToday } = wire();
+    const stop = startOverviewFeeds();
+    connectionState.value = LIVE;
+    expect([dueToday.mock.calls.length, status.mock.calls.length]).toEqual([1, 1]);
+
+    tasksGeneration.value = 3;
+    expect([dueToday.mock.calls.length, status.mock.calls.length]).toEqual([2, 1]);
+
+    vi.setSystemTime(NOW + 60_000);
+    refreshOnTick();
+    expect([dueToday.mock.calls.length, status.mock.calls.length]).toEqual([3, 2]);
+    stop();
+  });
+
+  it("never refreshes twice within a minute without a trigger", () => {
+    const { status, dueToday } = wire();
+    connectionState.value = LIVE;
+    const stop = startOverviewFeeds();
+    for (let seconds = 1; seconds < 45; seconds += 4) {
+      vi.setSystemTime(NOW + seconds * 1000);
+      refreshOnTick();
+    }
+    expect([dueToday.mock.calls.length, status.mock.calls.length]).toEqual([1, 1]);
+    stop();
+  });
+
+  it("an unconfigured research API leaves the automation feed failed and the card never ready alone", async () => {
+    await refreshAutomation();
+    expect(automationFeed.value).toMatchObject({ settled: true, value: null, failed: true });
   });
 });

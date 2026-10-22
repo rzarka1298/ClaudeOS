@@ -224,7 +224,13 @@ function adaptToday(data: Fields): TodayData {
     title: task.title,
     meta: task.overdue ? "Overdue since Sep 20" : "Due 5:00 PM",
   }));
-  return { tasks: { rows, nextOpen: null } };
+  // The prototype fixtures model failures as whole-card `failure` variants, never as a
+  // line inside a ready card, so the automation block is the clean one.
+  return {
+    tasks: { rows, nextOpen: null },
+    automation: { failure: null, unknownRun: false },
+    nowMs: NOW,
+  };
 }
 
 /**

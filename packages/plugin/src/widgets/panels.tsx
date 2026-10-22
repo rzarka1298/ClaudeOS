@@ -14,6 +14,7 @@ import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
 import { ListBody } from "./list-body.js";
+import { formatRelativeTime } from "./relative-time.js";
 import { WidgetHostContext } from "./widget-host.js";
 
 /**
@@ -104,14 +105,34 @@ export interface TodayTasks {
   readonly nextOpen: TodayTask | null;
 }
 
+/** The newest research failure, only while no newer success exists. `reason` is a fixed Phase 7 sentence, never a remote string. */
+export interface TodayFailure {
+  readonly endedAt: string;
+  readonly reason: string;
+}
+
+/**
+ * What the research status says about automation: at most one failure (so the
+ * copy is singular by construction) and whether the latest run ended without
+ * reporting. Neither means no failures.
+ */
+export interface TodayAutomation {
+  readonly failure: TodayFailure | null;
+  readonly unknownRun: boolean;
+}
+
 /**
  * `tasks` is `null` when the due-today feed has no answer: the body says
  * `Due tasks unavailable.` and never an empty list that would read as nothing
- * due. Calendar and Gmail are not part of this version and are not data here;
- * the body names them as such.
+ * due. `automation` is `null` for the same reason (`Automation failure status
+ * unavailable.`). Calendar and Gmail are not part of this version and are not
+ * data here; the body names them as such. `nowMs` is the clock the relative
+ * time of a failure is read against.
  */
 export interface TodayData {
   readonly tasks: TodayTasks | null;
+  readonly automation: TodayAutomation | null;
+  readonly nowMs: number;
 }
 
 /** The Today card's heading for a section of the body (UI-SPEC S6 block order). */
@@ -155,6 +176,47 @@ function TodayRows({
   );
 }
 
+/** One short line per automation fact, from the closed UI-SPEC S6 strings. */
+function AutomationLines({
+  automation,
+  nowMs,
+  onNavigate,
+}: {
+  readonly automation: TodayAutomation | null;
+  readonly nowMs: number;
+  readonly onNavigate: WidgetBodyProps<TodayData>["onNavigate"];
+}): VNode {
+  if (automation === null) {
+    return <p className="ccc-state-body">Automation failure status unavailable.</p>;
+  }
+  const { failure, unknownRun } = automation;
+  return (
+    <>
+      {failure === null ? null : (
+        <>
+          <p className="ccc-state-body">
+            <span className="ccc-error-glyph" aria-hidden="true">
+              ✕
+            </span>{" "}
+            {`Research run failed ${formatRelativeTime(failure.endedAt, nowMs)}: ${failure.reason}.`}
+          </p>
+          <button type="button" className="ccc-list-more" onClick={() => onNavigate?.("research")}>
+            Open the research view
+          </button>
+        </>
+      )}
+      {unknownRun ? (
+        <p className="ccc-state-body">
+          <span aria-hidden="true">?</span> The last research run ended without reporting.
+        </p>
+      ) : null}
+      {failure === null && !unknownRun ? (
+        <p className="ccc-state-body">No automation failures.</p>
+      ) : null}
+    </>
+  );
+}
+
 function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNode {
   const tasks = data.tasks;
   // The next open task shows only when nothing is due or overdue (D-21, UI-SPEC R-13).
@@ -175,6 +237,8 @@ function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNod
           <TodayRows rows={[nextOpen]} size={size} onNavigate={onNavigate} />
         </>
       )}
+      <TodayHeading>Automation</TodayHeading>
+      <AutomationLines automation={data.automation} nowMs={data.nowMs} onNavigate={onNavigate} />
       <TodayNote />
     </>
   );

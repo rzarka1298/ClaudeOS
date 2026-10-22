@@ -1,20 +1,23 @@
+import type { ResearchStatusResponse } from "@ccc/domain/research-routes.js";
 import { isValidZone, resolvedZone, zonedLocalToInstant } from "@ccc/domain/task-time.js";
 import type { TaskDueTodayResponse, TaskDueTodayRow } from "@ccc/domain/tasks.js";
 import { computed, effect, signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { type ConnectionState, connectionState } from "../connection-state.js";
+import { researchApi } from "../research/api.js";
 import { tasksApi } from "../tasks/api.js";
 import { tasksGeneration } from "../tasks/events.js";
+import { failureCopy, isFailureCode } from "../view/research-copy.js";
 import { nowTick } from "../widgets/clock.js";
 import type { WidgetState } from "../widgets/contract.js";
-import type { TodayData, TodayTask } from "../widgets/panels.js";
+import type { TodayAutomation, TodayData, TodayTask } from "../widgets/panels.js";
 
 /**
  * The Overview's own feeds (plan 08-14; research B 2.4 and 2.6, D-20, D-21).
  *
  * The Today card reads two service routes the Overview used to leave alone:
- * the due-today route (due, overdue and the next open task) and, from task 2,
- * the research status route (automation failures). This module owns their
+ * the due-today route (due, overdue and the next open task) and the research
+ * status route (automation failures). This module owns their
  * fetching, the last good answer of each and the pure mapping from both to a
  * `WidgetState<TodayData>`.
  *
@@ -45,6 +48,9 @@ const NEVER: FeedSnapshot<never> = { settled: false, value: null, fetchedAt: nul
 
 /** Due, overdue and the next open task, from `POST /tasks/due-today`. */
 export const dueTodayFeed = signal<FeedSnapshot<TaskDueTodayResponse>>(NEVER);
+
+/** The latest research run outcomes, from `POST /research/status`. */
+export const automationFeed = signal<FeedSnapshot<ResearchStatusResponse>>(NEVER);
 
 // ---------------------------------------------------------------------------
 // Time zone seam
@@ -93,15 +99,37 @@ export async function refreshDueToday(): Promise<void> {
       : { settled: true, value: answer, fetchedAt: Date.now(), failed: false };
 }
 
+let automationSeq = 0;
+
+/** Asks the service for the research status. Same contract as {@link refreshDueToday}. */
+export async function refreshAutomation(): Promise<void> {
+  const seq = ++automationSeq;
+  let answer: ResearchStatusResponse | null = null;
+  try {
+    answer = await researchApi().status();
+  } catch {
+    answer = null;
+  }
+  if (seq !== automationSeq) return;
+  const previous = automationFeed.peek();
+  automationFeed.value =
+    answer === null
+      ? { ...previous, settled: true, failed: true }
+      : { settled: true, value: answer, fetchedAt: Date.now(), failed: false };
+}
+
 /** Refreshes every Overview feed. */
 export function refreshOverviewFeeds(): void {
   void refreshDueToday();
+  void refreshAutomation();
 }
 
 /** Clears every feed and invalidates answers still in flight (tests, and unload). */
 export function resetOverviewFeeds(): void {
   dueSeq += 1;
+  automationSeq += 1;
   dueTodayFeed.value = NEVER;
+  automationFeed.value = NEVER;
   lastRefreshAt = 0;
 }
 
@@ -344,18 +372,71 @@ interface TodayRowInput {
 /** What `todayStateFor` reads. */
 export interface TodayFeeds {
   readonly tasks: FeedSnapshot<TaskDueTodayResponse>;
+  readonly automation: FeedSnapshot<ResearchStatusResponse>;
 }
+
+function ms(iso: string): number {
+  return Date.parse(iso);
+}
+
+/**
+ * Maps the research status to the card's automation block (UI-SPEC S6).
+ *
+ * A failure shows only while it is newer than the newest success, so the count
+ * is 0 or 1 and the copy is singular by construction. `interrupted` is not a
+ * failure: it is a run that ended without reporting, as is a stale in-flight
+ * run (`latestUnknown`); either shows as the unknown-run line, and only while
+ * it is the newest run. The same rules as the Research view's own status
+ * section (`view/research-status.tsx`), read from the same record.
+ */
+function automationOf(status: ResearchStatusResponse): TodayAutomation {
+  const recorded = status.lastFailure;
+  const failure = recorded !== null && isFailureCode(recorded.errorCode) ? recorded : null;
+  const successAt = status.lastSuccess === null ? null : ms(status.lastSuccess.endedAt);
+
+  const failureShows = failure !== null && (successAt === null || ms(failure.endedAt) > successAt);
+
+  const unknownCandidates: string[] = [];
+  if (status.latestUnknown !== null) unknownCandidates.push(status.latestUnknown.startedAt);
+  if (recorded !== null && !isFailureCode(recorded.errorCode)) {
+    unknownCandidates.push(recorded.endedAt);
+  }
+  let unknownRun = false;
+  if (unknownCandidates.length > 0) {
+    const newest = Math.max(...unknownCandidates.map(ms));
+    unknownRun =
+      (successAt === null || newest > successAt) &&
+      (failure === null || newest > ms(failure.endedAt)) &&
+      (status.inFlight === null || ms(status.inFlight.startedAt) <= newest);
+  }
+
+  return {
+    failure: failureShows
+      ? { endedAt: failure.endedAt, reason: failureCopy(failure.errorCode).reason ?? "" }
+      : null,
+    unknownRun,
+  };
+}
+
+const SOURCE_AUTOMATION = "Automation runs";
 
 /**
  * The Today card's state (research B 2.4), a pure function of the feeds, the
  * connection and the clock.
  *
- * - Nothing fetched yet: `loading` while connecting or live, `unavailable` while
- *   disconnected (the frame turns that into `disconnected`).
- * - Every feed failed while connected: `error`, never `unavailable`.
+ * - Either feed has not answered yet: `loading` while connecting or live,
+ *   `unavailable` while disconnected (the frame turns that into
+ *   `disconnected`). Both requests start together, so this is brief.
+ * - Both feeds answered and neither ever held a value, while connected: `error`,
+ *   never `unavailable`.
  * - Otherwise `ready`, always partial (Calendar and Gmail are not part of this
- *   version), dated by the newest fetch; `live` only while connected, every
- *   feed answered and the oldest answer is within {@link LIVE_WINDOW_MS}.
+ *   version), dated by the newest fetch. A feed that failed keeps its last good
+ *   value when it has one, otherwise its block is `null` and reads
+ *   unavailable, never empty and never zero. `live` only while connected, no
+ *   feed failed and the oldest answer is within {@link LIVE_WINDOW_MS}.
+ * - `isEmpty` only when both feeds succeeded and there is no due row, no
+ *   overdue row, no next open task (an absent one is unknown, not none), no
+ *   failure and no unknown run (UI-SPEC R-13).
  */
 export function todayStateFor(
   feeds: TodayFeeds,
@@ -363,45 +444,77 @@ export function todayStateFor(
   nowMs: number,
   zone: string = currentZone(),
 ): WidgetState<TodayData> {
-  const { tasks } = feeds;
-  if (tasks.value === null) {
-    if (tasks.settled && connection.kind === "live") {
-      return { kind: "error", message: "Couldn't load today." };
-    }
+  const { tasks, automation } = feeds;
+  const settled = tasks.settled && automation.settled;
+  if (!settled) {
     return connection.kind === "disconnected" ? { kind: "unavailable" } : { kind: "loading" };
+  }
+  if (tasks.value === null && automation.value === null) {
+    return connection.kind === "live"
+      ? { kind: "error", message: "Couldn't load today." }
+      : connection.kind === "disconnected"
+        ? { kind: "unavailable" }
+        : { kind: "loading" };
   }
 
   const response = tasks.value;
-  const overdue = ranked(response.overdue, zone).map((row) =>
-    todayTask({ row, meta: rowMeta(row, "overdue", nowMs, zone) }),
-  );
-  const due = ranked(response.due, zone).map((row) =>
-    todayTask({ row, meta: rowMeta(row, "due", nowMs, zone) }),
-  );
-  const rows = [...overdue, ...due];
-  const nextOpen =
-    rows.length === 0 && response.nextOpen !== undefined && response.nextOpen !== null
-      ? todayTask({
-          row: response.nextOpen,
-          meta: nextOpenMeta(response.nextOpen, nowMs, zone),
-        })
-      : null;
+  let taskBlock: TodayData["tasks"] = null;
+  if (response !== null) {
+    const overdue = ranked(response.overdue, zone).map((row) =>
+      todayTask({ row, meta: rowMeta(row, "overdue", nowMs, zone) }),
+    );
+    const due = ranked(response.due, zone).map((row) =>
+      todayTask({ row, meta: rowMeta(row, "due", nowMs, zone) }),
+    );
+    const rows = [...overdue, ...due];
+    const next = response.nextOpen;
+    taskBlock = {
+      rows,
+      nextOpen:
+        rows.length === 0 && next !== undefined && next !== null
+          ? todayTask({ row: next, meta: nextOpenMeta(next, nowMs, zone) })
+          : null,
+    };
+  }
+  const automationBlock = automation.value === null ? null : automationOf(automation.value);
 
-  const fetchedAt = tasks.fetchedAt ?? nowMs;
-  const fresh = connection.kind === "live" && !tasks.failed && nowMs - fetchedAt <= LIVE_WINDOW_MS;
-  const missingSources = tasks.failed ? [SOURCE_TASKS] : [];
+  const answered = [tasks, automation].filter((entry) => entry.value !== null);
+  const fetchedTimes = answered.map((entry) => entry.fetchedAt ?? nowMs);
+  const anyFailed = tasks.failed || automation.failed;
+  const fresh =
+    connection.kind === "live" &&
+    !anyFailed &&
+    fetchedTimes.every((at) => nowMs - at <= LIVE_WINDOW_MS);
+  const failedSources = [
+    ...(tasks.failed ? [SOURCE_TASKS] : []),
+    ...(automation.failed ? [SOURCE_AUTOMATION] : []),
+  ];
+
+  const isEmpty =
+    !anyFailed &&
+    response !== null &&
+    response.due.length === 0 &&
+    response.overdue.length === 0 &&
+    response.nextOpen === null &&
+    automationBlock !== null &&
+    automationBlock.failure === null &&
+    !automationBlock.unknownRun;
 
   return {
     kind: "ready",
-    data: { tasks: { rows, nextOpen } },
-    observedAt: new Date(fetchedAt).toISOString(),
+    data: { tasks: taskBlock, automation: automationBlock, nowMs },
+    observedAt: new Date(Math.max(...fetchedTimes)).toISOString(),
     freshness: fresh ? "live" : "stale",
-    partiality: { partial: true, missingSources: ["Google Calendar", "Gmail", ...missingSources] },
-    isEmpty: false,
+    partiality: { partial: true, missingSources: ["Google Calendar", "Gmail", ...failedSources] },
+    isEmpty,
   };
 }
 
 /** The Today card's live signal: replaces the permission-required constant in `widget-data.ts`. */
 export const todayState = computed<WidgetState<TodayData>>(() =>
-  todayStateFor({ tasks: dueTodayFeed.value }, connectionState.value, nowTick.value),
+  todayStateFor(
+    { tasks: dueTodayFeed.value, automation: automationFeed.value },
+    connectionState.value,
+    nowTick.value,
+  ),
 );
