@@ -43,7 +43,8 @@ export default [
     // sentence-case rule reaches. The rule needs no type information, so it runs
     // here under the same untyped parser as the rest of the fixtures, with the
     // production options imported rather than restated.
-    files: ["lint-fixtures/sentence-case-jsx-text.tsx"],
+    // FIX2B m5: and the gitignored scratch directory where the test writes its variants.
+    files: ["lint-fixtures/sentence-case-jsx-text.tsx", "lint-fixtures/scratch/**/*.ts"],
     plugins: { obsidianmd },
     rules: { "obsidianmd/ui/sentence-case": SENTENCE_CASE_RULE },
   },

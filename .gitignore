@@ -52,3 +52,5 @@ packages/plugin/layout.json
 # Codex wrapper runtime state (reports, sessions, live logs, pending resume):
 # local-only, may hold command output and absolute worktree paths.
 .planning/codex/
+# plugin-lint.test.ts writes its sentence-case variants here and removes them (FIX2B m5).
+packages/plugin/lint-fixtures/scratch/
