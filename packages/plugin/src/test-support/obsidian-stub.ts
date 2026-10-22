@@ -520,3 +520,107 @@ export class StubPlugin {
     for (const callback of this.unloadCallbacks.splice(0)) callback();
   }
 }
+
+/** A folder in the stub vault. `instanceof TFolder` is how the plugin tells folders from files. */
+export class TFolder {
+  children: unknown[] = [];
+  name = "";
+}
+
+/** What a stub plugin registered with Obsidian, for tests that run the REAL `onload`. */
+export interface StubRegistrations {
+  readonly views: Map<string, (leaf: never) => unknown>;
+  readonly settingTabs: unknown[];
+  readonly commands: { id: string; name: string }[];
+}
+
+/**
+ * A stand-in for Obsidian's `Plugin` base class (FIX2B m8), enough for the plugin's own `onload`
+ * to run under the test runner: it records the views, setting tabs and commands the plugin
+ * registers, keeps `loadData`/`saveData` in memory (so a test can assert exactly what would reach
+ * `data.json`), and never fires the layout-ready callbacks (no event stream, no vault watcher).
+ * Like the rest of this file it models only what the code under test reads.
+ */
+export class Plugin extends StubPlugin {
+  declare readonly app: StubPlugin["app"] & {
+    readonly vault: StubPlugin["app"]["vault"] & {
+      getName(): string;
+      getFileByPath(path: string): null;
+      getFolderByPath(path: string): null;
+      readonly configDir: string;
+      readonly adapter: unknown;
+    };
+    readonly workspace: StubPlugin["app"]["workspace"] & {
+      on(name: string, handler: (payload?: unknown) => void): unknown;
+      trigger(name: string, payload?: unknown): void;
+      getLeavesOfType(type: string): unknown[];
+    };
+    readonly metadataCache: { getFileCache(file: unknown): null };
+  };
+  readonly manifest: { id: string; version: string };
+  readonly registrations: StubRegistrations = {
+    views: new Map(),
+    settingTabs: [],
+    commands: [],
+  };
+  /** The value `loadData` returns. */
+  stored: unknown = null;
+  /** Every value `saveData` was handed, as it was at the time (cloned, so later edits do not leak in). */
+  readonly saved: unknown[] = [];
+
+  constructor(app?: unknown, manifest?: { id: string; version: string }) {
+    super();
+    const base = this.app;
+    (this as { app: unknown }).app = {
+      ...base,
+      vault: {
+        ...base.vault,
+        getName: () => "Test vault",
+        getFileByPath: () => null,
+        getFolderByPath: () => null,
+        configDir: ".obsidian",
+        adapter: {
+          stat: () => Promise.resolve(null),
+          read: () => Promise.reject(new Error("no such file")),
+          exists: () => Promise.resolve(false),
+        },
+      },
+      workspace: {
+        ...base.workspace,
+        on: (): unknown => ({}),
+        trigger: (): void => {},
+        getLeavesOfType: (): unknown[] => [],
+      },
+      metadataCache: { getFileCache: () => null },
+    };
+    void app;
+    this.manifest = manifest ?? { id: "claude-command-center", version: "0.0.0" };
+  }
+
+  loadData(): Promise<unknown> {
+    return Promise.resolve(this.stored);
+  }
+
+  saveData(data: unknown): Promise<void> {
+    this.saved.push(JSON.parse(JSON.stringify(data)));
+    return Promise.resolve();
+  }
+
+  registerView(type: string, factory: (leaf: never) => unknown): void {
+    this.registrations.views.set(type, factory);
+  }
+
+  addSettingTab(tab: unknown): void {
+    this.registrations.settingTabs.push(tab);
+  }
+
+  addCommand(command: { id: string; name: string }): void {
+    this.registrations.commands.push(command);
+  }
+
+  addRibbonIcon(): void {}
+
+  registerInterval(): void {}
+
+  registerDomEvent(): void {}
+}

@@ -110,6 +110,3 @@ export function createInertSettingsHost(): SettingsHost {
     },
   };
 }
-
-/** A shared instance for static renders. Do not mutate it: use {@link createInertSettingsHost}. */
-export const inertSettingsHost: SettingsHost = createInertSettingsHost();
