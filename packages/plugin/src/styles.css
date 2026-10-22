@@ -82,6 +82,12 @@
 .ccc-command-center {
   position: relative;
   container-type: inline-size;
+  /* The command center is dark in both Obsidian themes (ADR-0023 D-18), so the
+   * form internals it cannot style from here (a select's popup, scrollbars, the
+   * caret) must follow: `color-scheme: dark` makes them dark whatever the host
+   * theme is (08-UI-SPEC R-08). A property, not a custom property; it adds no
+   * host variable to the control floor below. */
+  color-scheme: dark;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -2585,7 +2591,8 @@
  * classes arrive with plan 07-13.
  * ========================================================================= */
 
-.ccc-command-center .ccc-research {
+.ccc-command-center .ccc-research,
+.ccc-command-center .ccc-settings {
   container-type: inline-size;
   display: flex;
   flex-direction: column;
@@ -3557,6 +3564,385 @@ fieldset.ccc-template-rows > legend {
  * paragraph of launcher help text does not stretch edge to edge. */
 .ccc-settings-section {
   max-width: 68ch;
+}
+
+/* ===========================================================================
+ * Phase 8 - Settings, Diagnostics and the Overview slice panels
+ * (08-UI-SPEC.md S1 to S4, S6, S7, "Control colours (binding)"; plan 08-10)
+ *
+ * The whole Phase 8 class set in one place, so the Settings, Diagnostics and
+ * Overview plans never share this file. Every value is an existing token or a
+ * container threshold the file already uses (48rem, 34rem, 24rem); no new
+ * token, no new size or weight, no inline style, no animation beyond the three
+ * motion tokens. State reaches CSS through data-* and aria-* attributes only.
+ * The accent is spent on focus rings alone.
+ *
+ * D-31: every control family states its own text, fill, edge and focus colour
+ * on its own class, so Obsidian's global `button`, `select`, `input` and
+ * `textarea` rules (which differ between its light and dark themes, and which
+ * out-rank a bare class) never decide a face, edge or label. A rule that sets
+ * `color` on a control also sets `--text-color` beside it (tokens.test.ts
+ * pins the pairing), and a disabled-looking control is `aria-disabled`, never
+ * a native `disabled` (the contrast harvest exempts only the former, and a
+ * native disabled button loses focus).
+ *
+ * Markup contract for the component plans: the Settings frame is
+ * `.ccc-settings` > (`.ccc-settings-header`, `.ccc-settings-layout` >
+ * (`nav.ccc-settings-nav` > ul > li > `button.ccc-settings-nav-item`,
+ * `.ccc-settings-content`)); a row is `.ccc-setting-row` > (`.ccc-setting-row-text`
+ * whose FIRST child is the row name and whose paragraphs are the description
+ * and status, `.ccc-setting-row-control`).
+ * ========================================================================= */
+
+/* ---- S1 frame ---------------------------------------------------------- */
+
+.ccc-command-center .ccc-settings-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+}
+
+.ccc-command-center .ccc-settings-header h2 {
+  margin: 0;
+  padding-inline: var(--ccc-space-xs);
+  overflow-wrap: break-word;
+  font-size: var(--ccc-text-heading);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-command-center .ccc-settings-header > p {
+  margin: 0;
+  max-width: 68ch;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+}
+
+/* The one polite status line: empty before its first message, Label size,
+ * muted ink. It is the destination's only live region. */
+.ccc-command-center .ccc-settings-header > .ccc-settings-status,
+.ccc-command-center .ccc-settings > .ccc-settings-status {
+  min-block-size: var(--ccc-space-md);
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+/* Every heading that takes programmatic focus (tabindex -1: the Settings
+ * title, a section title, the bundle refusal heading) shows the ring when
+ * focus arrives from the keyboard. */
+.ccc-command-center .ccc-settings [tabindex="-1"]:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* Nav at 10 to 14rem (token multiples of 4rem), content takes the rest. */
+.ccc-command-center .ccc-settings-layout {
+  display: grid;
+  grid-template-columns:
+    minmax(calc(var(--ccc-space-3xl) * 2.5), calc(var(--ccc-space-3xl) * 3.5))
+    minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ccc-space-lg);
+}
+
+.ccc-command-center .ccc-settings-nav ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A nav item is a quiet button; the selected one is told apart by weight, a
+ * surface fill and an inset ink bar, never by the accent (which is the ring). */
+.ccc-command-center .ccc-settings-nav-item {
+  display: block;
+  width: 100%;
+  min-block-size: var(--ccc-space-lg);
+  min-inline-size: var(--ccc-space-lg);
+  padding: var(--ccc-space-sm) var(--ccc-space-md);
+  border: 0;
+  border-radius: var(--ccc-radius-sm);
+  background-color: transparent;
+  color: var(--ccc-ink-muted);
+  --text-color: var(--ccc-ink-muted);
+  font-family: inherit;
+  font-size: var(--ccc-text-body);
+  font-weight: var(--ccc-weight-regular);
+  text-align: start;
+  overflow-wrap: break-word;
+  cursor: pointer;
+  transition:
+    color var(--ccc-motion-fast) ease-out,
+    background-color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-command-center .ccc-settings-nav-item:hover {
+  color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
+}
+
+.ccc-command-center .ccc-settings-nav-item[aria-current="page"] {
+  background-color: var(--ccc-surface);
+  color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
+  font-weight: var(--ccc-weight-strong);
+  box-shadow: inset var(--ccc-focus-ring) 0 0 0 var(--ccc-ink);
+}
+
+.ccc-command-center .ccc-settings-nav-item:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+.ccc-command-center .ccc-settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+  min-width: 0;
+}
+
+.ccc-command-center .ccc-settings-content h3 {
+  margin: 0;
+  padding-inline: var(--ccc-space-xs);
+  overflow-wrap: break-word;
+  font-size: var(--ccc-text-heading);
+  font-weight: var(--ccc-weight-strong);
+}
+
+/* Sub-headings (Subsystems, Not part of this version, Diagnostic bundle, a
+ * Settings group): Label, uppercase, a step of space above - hierarchy by
+ * space, not by a bigger size. */
+.ccc-command-center .ccc-settings-content h4 {
+  margin: var(--ccc-space-xl) 0 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-command-center .ccc-settings-content h5 {
+  margin: 0;
+  font-size: var(--ccc-text-body);
+  font-weight: var(--ccc-weight-strong);
+}
+
+/* Prose in a section keeps the reading measure. */
+.ccc-command-center .ccc-settings-content > p {
+  margin: 0;
+  max-width: 68ch;
+  overflow-wrap: break-word;
+}
+
+/* Below 48rem the nav is a wrapping row above the content, and the selected
+ * item's bar moves to the bottom edge. */
+@container (max-width: 48rem) {
+  .ccc-command-center .ccc-settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ccc-space-md);
+  }
+
+  .ccc-command-center .ccc-settings-nav ul {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .ccc-command-center .ccc-settings-nav-item {
+    width: auto;
+  }
+
+  .ccc-command-center .ccc-settings-nav-item[aria-current="page"] {
+    box-shadow: inset 0 calc(-1 * var(--ccc-focus-ring)) 0 0 var(--ccc-ink);
+  }
+}
+
+/* Below 24rem each nav item takes the full width and the items stack. */
+@container (max-width: 24rem) {
+  .ccc-command-center .ccc-settings-nav ul {
+    flex-direction: column;
+  }
+
+  .ccc-command-center .ccc-settings-nav-item {
+    width: 100%;
+  }
+}
+
+/* ---- S2 setting rows --------------------------------------------------- */
+
+.ccc-command-center .ccc-setting-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ccc-space-sm) var(--ccc-space-md);
+  min-width: 0;
+  padding-block: var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-setting-row-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  min-width: 0;
+  max-width: 68ch;
+  overflow-wrap: break-word;
+}
+
+.ccc-command-center .ccc-setting-row-text > p {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+}
+
+/* The row name: Body 600 in full ink. It out-ranks the paragraph rule above
+ * when the name itself is a paragraph. */
+.ccc-command-center .ccc-setting-row-text > :first-child {
+  color: var(--ccc-ink);
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-command-center .ccc-setting-row-control {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+}
+
+/* Below 34rem the control wraps under the text. */
+@container (max-width: 34rem) {
+  .ccc-command-center .ccc-setting-row-control {
+    flex-basis: 100%;
+  }
+}
+
+/* ---- S2 controls: the switch ------------------------------------------- */
+
+/* A button, never a checkbox: Obsidian's --checkbox-* variables never apply,
+ * and the contrast harvest measures it as text and as a field edge. Off is a
+ * muted edge on a transparent fill at weight 400; On is an ink edge, a surface
+ * fill, weight 600 and an inset ink bar, so the state survives greyscale. The
+ * visible On/Off word is inside the button. */
+.ccc-command-center .ccc-switch,
+.ccc-command-center .ccc-switch[aria-checked="false"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ccc-space-xs);
+  min-block-size: var(--ccc-space-lg);
+  min-inline-size: var(--ccc-space-lg);
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  border: var(--ccc-border-hairline) solid var(--ccc-ink-muted);
+  border-radius: var(--ccc-radius-sm);
+  background-color: transparent;
+  color: var(--ccc-ink-muted);
+  --text-color: var(--ccc-ink-muted);
+  font-family: inherit;
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-regular);
+  cursor: pointer;
+  transition:
+    color var(--ccc-motion-fast) ease-out,
+    background-color var(--ccc-motion-fast) ease-out,
+    border-color var(--ccc-motion-fast) ease-out;
+}
+
+.ccc-command-center .ccc-switch[aria-checked="true"] {
+  border: var(--ccc-border-hairline) solid var(--ccc-ink);
+  background-color: var(--ccc-surface);
+  color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
+  font-weight: var(--ccc-weight-strong);
+  box-shadow: inset var(--ccc-focus-ring) 0 0 0 var(--ccc-ink);
+}
+
+/* Pending or unavailable: dimmed, never actually disabled, so the button stays
+ * in the tab order. The reason is a separate undimmed line (aria-describedby). */
+.ccc-command-center .ccc-switch[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.ccc-command-center .ccc-switch:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* ---- S2 controls: the select ------------------------------------------- */
+
+.ccc-command-center .ccc-select-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* The host theme draws its own arrow in its own colour; this one is ink, and
+ * CSS content is not read out. */
+.ccc-command-center .ccc-select-wrap::after {
+  content: "▾";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: var(--ccc-space-sm);
+  display: flex;
+  align-items: center;
+  color: var(--ccc-ink);
+  font-size: var(--ccc-text-label);
+  pointer-events: none;
+}
+
+.ccc-command-center select.ccc-select {
+  appearance: none;
+  background-image: none;
+  background-color: var(--ccc-surface);
+  color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
+  min-block-size: var(--ccc-space-lg);
+  min-inline-size: var(--ccc-space-lg);
+  max-width: 100%;
+  padding: var(--ccc-space-xs) calc(var(--ccc-space-sm) + var(--ccc-space-md)) var(--ccc-space-xs)
+    var(--ccc-space-sm);
+  border: var(--ccc-border-hairline) solid var(--ccc-ink-muted);
+  border-radius: var(--ccc-radius-sm);
+  font-family: inherit;
+  font-size: var(--ccc-text-body);
+  cursor: pointer;
+}
+
+.ccc-command-center select.ccc-select:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* ---- S2 Paths: display paths ------------------------------------------- */
+
+/* A `~/...` display path: selectable mono text, never an input, so it cannot
+ * look editable. It wraps rather than scrolling sideways. */
+.ccc-command-center .ccc-display-path {
+  color: var(--ccc-ink);
+  font-family: var(--ccc-font-mono);
+  font-size: var(--ccc-text-label);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* ---- S4 diagnostic bundle preview (colours and focus; shape follows) ---- */
+
+.ccc-command-center .ccc-bundle-preview {
+  min-block-size: var(--ccc-space-lg);
+  min-inline-size: var(--ccc-space-lg);
+  margin: 0;
+  padding: var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-ink-muted);
+  border-radius: var(--ccc-radius-sm);
+  background-color: var(--ccc-surface);
+  color: var(--ccc-ink);
+  --text-color: var(--ccc-ink);
+}
+
+.ccc-command-center .ccc-bundle-preview:focus-visible {
+  outline: var(--ccc-focus-ring) solid var(--ccc-accent);
+  outline-offset: calc(-1 * var(--ccc-focus-ring));
 }
 
 /* Phase 05.1 wave-5 visual fixes, scoped to the Codex sections and launcher
