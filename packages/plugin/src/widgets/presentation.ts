@@ -30,7 +30,8 @@ export type SourceStatus =
   | "disconnected"
   | "failed"
   | "no-source"
-  | "not-connected";
+  | "not-connected"
+  | "not-in-version";
 
 export interface FooterSource {
   readonly label: string;
@@ -68,19 +69,27 @@ export type CardPresentation =
       readonly reason?: UnavailableReason | undefined;
     };
 
-/** Every declared key reported with the same status. */
+/**
+ * Every declared key reported with the same status, except a key declared
+ * `not-in-version`: this build never reads that source, so no state of the card
+ * can make it connected, failed, disconnected or missing (UI-SPEC R-12).
+ */
 function sourcesWith(
   dataKeys: readonly DataDependencyKey[],
   status: SourceStatus,
 ): readonly FooterSource[] {
-  return dataKeys.map((key) => ({ label: key.sourceLabel, status }));
+  return dataKeys.map((key) => ({
+    label: key.sourceLabel,
+    status: key.availability === "not-in-version" ? ("not-in-version" as const) : status,
+  }));
 }
 
 /**
  * The Source panel's row per declared key for a card that DID observe: a key
  * named in `partiality.missingSources` is reported `missing`, every other key
- * `ok`. This is what makes the partial badge checkable rather than decorative
- * (ADR-0002).
+ * `ok`, and a key declared `not-in-version` is reported so whatever
+ * `missingSources` holds. This is what makes the partial badge checkable rather
+ * than decorative (ADR-0002).
  */
 function observedSources(
   dataKeys: readonly DataDependencyKey[],
@@ -89,7 +98,12 @@ function observedSources(
   const missing = new Set(partiality.missingSources ?? []);
   return dataKeys.map((key) => ({
     label: key.sourceLabel,
-    status: missing.has(key.sourceLabel) ? ("missing" as const) : ("ok" as const),
+    status:
+      key.availability === "not-in-version"
+        ? ("not-in-version" as const)
+        : missing.has(key.sourceLabel)
+          ? ("missing" as const)
+          : ("ok" as const),
   }));
 }
 
@@ -175,7 +189,12 @@ export function resolveCardPresentation<T>(
             freshness: "unavailable",
             sources: dataKeys.map((key) => ({
               label: key.sourceLabel,
-              status: key.transport === "service" ? ("disconnected" as const) : ("ok" as const),
+              status:
+                key.availability === "not-in-version"
+                  ? ("not-in-version" as const)
+                  : key.transport === "service"
+                    ? ("disconnected" as const)
+                    : ("ok" as const),
             })),
           },
         };

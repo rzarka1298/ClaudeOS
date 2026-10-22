@@ -13,4 +13,14 @@ export type Freshness = "live" | "cached" | "stale" | "unavailable";
 export interface Partiality {
   readonly partial: boolean;
   readonly missingSources?: readonly string[];
+  /**
+   * A plain, slash-free sentence for the Partial chip's hidden description
+   * (plan 08-14, UI-SPEC R-12). When present it replaces the description the
+   * footer would generate from `missingSources` (`N sources didn't respond: …`),
+   * which falsely implies a failed attempt for a source that is simply not part
+   * of this version. The visible chip word stays `Partial`. A display string
+   * built by the widget; it never travels on the wire (`PartialitySchema` does
+   * not carry it).
+   */
+  readonly summary?: string;
 }

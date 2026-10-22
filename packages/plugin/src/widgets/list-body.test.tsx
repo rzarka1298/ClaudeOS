@@ -453,3 +453,66 @@ describe("renderActions / renderStatus (UI-SPEC S1, S2 toolbar slot, plan 04-10)
     expect(row?.children).toHaveLength(2);
   });
 });
+
+describe("renderSelectLabel, renderPrimaryContent and moreLabel (plan 08-14, additive)", () => {
+  interface Task {
+    readonly id: string;
+    readonly title: string;
+    readonly meta: string;
+  }
+  const TASKS: readonly Task[] = Array.from({ length: 8 }, (_, index) => ({
+    id: `t${index}`,
+    title: `Task ${index}`,
+    meta: `Due Oct ${index + 1}`,
+  }));
+
+  function renderTasks(extra: Partial<Parameters<typeof ListBody<Task>>[0]> = {}) {
+    const onMore = vi.fn();
+    const onSelectRow = vi.fn();
+    const view = render(
+      <ListBody<Task>
+        rows={TASKS}
+        size="medium"
+        keyOf={(task) => task.id}
+        renderPrimary={(task) => task.title}
+        renderMeta={(task) => task.meta}
+        moreDestination="tasks"
+        onMore={onMore}
+        onSelectRow={onSelectRow}
+        {...extra}
+      />,
+    );
+    return { ...view, onMore, onSelectRow };
+  }
+
+  it("gives the row button an accessible name that contains the visible text", () => {
+    renderTasks({ renderSelectLabel: (task) => `Open task: ${task.title}, ${task.meta}` });
+    const button = screen.getByRole("button", { name: "Open task: Task 0, Due Oct 1" });
+    expect(button.textContent).toBe("Task 0");
+    expect(button.getAttribute("title")).toBe("Task 0");
+  });
+
+  it("leaves the button's name as its text when no label is given", () => {
+    renderTasks();
+    expect(screen.getByRole("button", { name: "Task 0" }).getAttribute("aria-label")).toBeNull();
+  });
+
+  it("draws renderPrimaryContent inside the line while `title` stays the text form", () => {
+    renderTasks({ renderPrimaryContent: (task) => <em>{task.title}</em> });
+    const button = screen.getByRole("button", { name: "Task 0" });
+    expect(button.querySelector("em")?.textContent).toBe("Task 0");
+    expect(button.getAttribute("title")).toBe("Task 0");
+  });
+
+  it("replaces `+{n} more` with a fixed label that still focuses the owning destination", () => {
+    const { onMore } = renderTasks({ moreLabel: "Show more in the tasks view" });
+    expect(screen.queryByText(/^\+\d+ more$/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show more in the tasks view" }));
+    expect(onMore).toHaveBeenCalledExactlyOnceWith("tasks");
+  });
+
+  it("keeps `+{n} more` when no label is given", () => {
+    renderTasks();
+    expect(screen.getByRole("button", { name: "+2 more" })).toBeTruthy();
+  });
+});

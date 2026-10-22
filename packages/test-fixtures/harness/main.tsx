@@ -202,25 +202,34 @@ function adaptServiceHealth(data: Fields): ServiceHealthData {
       };
 }
 
+/**
+ * `TodayData` (plan 08-14) is the managed-task feed's answer: rows already
+ * carrying their finished meta line. The prototype fixture's `dueTasks` are the
+ * only part of it with a counterpart; its calendar, unread and KPI members are
+ * not data on the live card any more (Calendar and Gmail are not part of this
+ * version), so they are ignored here. The ids and times below are harness-only
+ * and never reach a plugin build.
+ */
 function adaptToday(data: Fields): TodayData {
-  const nextEvent = data.nextEvent as Fields | null | undefined;
-  const tasks = list(data.dueTasks).map((task) => ({
+  const tasks = list(data.dueTasks).map((task, index) => ({
+    taskId: `0mfk1a2b3${index.toString(16).padStart(16, "0")}`,
     title: text(task.title),
-    dueAt: text(task.due),
+    overdue: text(task.due) === "Overdue",
   }));
-  const unread = data.unread as Fields | null | undefined;
+  const rows = [
+    ...tasks.filter((task) => task.overdue),
+    ...tasks.filter((task) => !task.overdue),
+  ].map((task) => ({
+    taskId: task.taskId,
+    title: task.title,
+    meta: task.overdue ? "Overdue since Sep 20" : "Due 5:00 PM",
+  }));
+  // The prototype fixtures model failures as whole-card `failure` variants, never as a
+  // line inside a ready card, so the automation block is the clean one.
   return {
-    nextEvent:
-      nextEvent === null || nextEvent === undefined
-        ? null
-        : { title: text(nextEvent.title), startsAt: text(nextEvent.time) },
-    remainingCount: quantity(data.kpi),
-    dueTasks: tasks.filter((task) => task.dueAt !== "Overdue"),
-    overdueTasks: tasks.filter((task) => task.dueAt === "Overdue"),
-    unreadSummary: unread === null || unread === undefined ? null : text(unread.summary),
-    // No prototype counterpart: the fixtures model failures as whole-card
-    // `failure` variants, never as a line inside a ready card.
-    failures: [],
+    tasks: { rows, nextOpen: null },
+    automation: { failure: null, unknownRun: false },
+    nowMs: NOW,
   };
 }
 
@@ -505,6 +514,12 @@ interface CellInputs {
 
 const LIVE: ConnectionState = { kind: "live" };
 
+const TODAY_PARTIALITY = {
+  partial: true,
+  missingSources: [],
+  summary: "Google Calendar and Gmail aren't part of this version",
+} as const;
+
 function readyFrom(
   id: WidgetId,
   states: FixturePanel["states"],
@@ -517,13 +532,17 @@ function readyFrom(
     data: ADAPTERS[id](variant.data, key),
     observedAt: variant.observedAt,
     freshness: variant.freshness,
+    // Today is always partial on the live card (plan 08-14): Calendar and Gmail are
+    // declared not part of this version, so the fixture's own partiality is replaced.
     partiality:
-      variant.partiality.missingSources === undefined
-        ? { partial: variant.partiality.partial }
-        : {
-            partial: variant.partiality.partial,
-            missingSources: [...variant.partiality.missingSources],
-          },
+      id === "today"
+        ? TODAY_PARTIALITY
+        : variant.partiality.missingSources === undefined
+          ? { partial: variant.partiality.partial }
+          : {
+              partial: variant.partiality.partial,
+              missingSources: [...variant.partiality.missingSources],
+            },
     isEmpty,
   };
 }

@@ -1,5 +1,5 @@
 import type { SizeHint } from "@ccc/domain";
-import { Fragment, type VNode } from "preact";
+import { type ComponentChildren, Fragment, type VNode } from "preact";
 import type { DestinationId } from "../view/destinations.js";
 import type { QuickActionDescriptor } from "./contract.js";
 
@@ -112,6 +112,26 @@ export interface ListBodyProps<Row> {
    * `onNavigate("agent-runs", { runId })`).
    */
   readonly onSelectRow?: ((row: Row) => void) | undefined;
+  /**
+   * The accessible name of the row button when the visible primary text alone
+   * would not say what pressing it does (`Open task: {title}, {meta}`, plan
+   * 08-14). Must contain the visible text (WCAG 2.5.3). Only read with
+   * {@link onSelectRow}.
+   */
+  readonly renderSelectLabel?: ((row: Row) => string) | undefined;
+  /**
+   * The primary line's children when plain text is not enough (the Today card
+   * renders task titles through `UntrustedText`, plan 08-14). `renderPrimary`
+   * stays the TEXT form for `title` and for the cap; this only replaces what
+   * is drawn inside the line.
+   */
+  readonly renderPrimaryContent?: ((row: Row) => ComponentChildren) | undefined;
+  /**
+   * Replaces the default `+{n} more` overflow label with a fixed, locational
+   * one (`Show more in the tasks view`, UI-SPEC G14 overflow, R-F1). The
+   * control still focuses {@link moreDestination}.
+   */
+  readonly moreLabel?: string | undefined;
 }
 
 /** The meta line as segments — `renderMetaSegments`' contract (UI-SPEC S1, A11Y-04). */
@@ -151,6 +171,9 @@ export function ListBody<Row>({
   renderActionLabel,
   onAction,
   onSelectRow,
+  renderSelectLabel,
+  renderPrimaryContent,
+  moreLabel,
 }: ListBodyProps<Row>): VNode | null {
   if (rows.length === 0) return null;
 
@@ -165,6 +188,8 @@ export function ListBody<Row>({
         const action = renderAction?.(row) ?? null;
         const badge = primaryBadge?.(row) ?? null;
         const segments = renderMetaSegments?.(row);
+        const primaryContent =
+          renderPrimaryContent === undefined ? primary : renderPrimaryContent(row);
         return (
           <li className="ccc-list-row" key={keyOf(row)}>
             {/* The clamp is CSS-only, so the full value stays in the DOM and
@@ -176,9 +201,10 @@ export function ListBody<Row>({
                 type="button"
                 className="ccc-list-primary ccc-clamp-2 ccc-session-row-link"
                 title={primary}
+                aria-label={renderSelectLabel?.(row)}
                 onClick={() => onSelectRow(row)}
               >
-                {primary}
+                {primaryContent}
               </button>
             ) : (
               <p className="ccc-list-primary ccc-clamp-2" title={primary}>
@@ -190,7 +216,7 @@ export function ListBody<Row>({
                     </span>{" "}
                   </>
                 )}
-                {primary}
+                {primaryContent}
               </p>
             )}
             {segments === undefined ? (
@@ -219,7 +245,7 @@ export function ListBody<Row>({
           {/* Plural-safe by construction: `+1 more` and `+3 more` are the same
               string, so `1 mores` cannot be written (UI-SPEC zero-one-many). */}
           <button type="button" className="ccc-list-more" onClick={() => onMore?.(moreDestination)}>
-            {`+${hidden} more`}
+            {moreLabel ?? `+${hidden} more`}
           </button>
         </li>
       )}

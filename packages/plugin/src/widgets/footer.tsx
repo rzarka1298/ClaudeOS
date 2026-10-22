@@ -44,6 +44,7 @@ const SOURCE_STATUS_TEXT: Readonly<Record<SourceStatus, string>> = {
   failed: "failed",
   "no-source": "no source yet",
   "not-connected": "not connected",
+  "not-in-version": "not part of this version",
 };
 
 /**
@@ -82,7 +83,16 @@ export function WidgetFooter({
 
   const absolute = model.observedAt === null ? null : formatAbsoluteTime(model.observedAt);
   const relative = model.observedAt === null ? "—" : formatRelativeTime(model.observedAt, now);
-  const missing = model.partiality?.partial === true ? (model.partiality.missingSources ?? []) : [];
+  const partial = model.partiality?.partial === true ? model.partiality : null;
+  const missing = partial?.missingSources ?? [];
+  // A summary is the whole description when present (UI-SPEC R-12); the chip shows
+  // for a summarised partial result even when no source in particular is missing.
+  const partialDescription =
+    partial?.summary !== undefined && partial.summary !== ""
+      ? partial.summary
+      : missing.length > 0
+        ? missingSourcesText(missing)
+        : null;
 
   function toggle(): void {
     if (disabled === true) return;
@@ -156,7 +166,7 @@ export function WidgetFooter({
           <span className="ccc-badge-label">{FRESHNESS_LABEL[model.freshness]}</span>
         </span>
       )}
-      {missing.length > 0 && (
+      {partialDescription !== null && (
         // An INDEPENDENT chip beside the freshness chip, never merged into it:
         // ADR-0002 makes partiality orthogonal to freshness, and two
         // same-shaped chips are what make that independence visible.
@@ -165,7 +175,7 @@ export function WidgetFooter({
             ◈
           </span>
           <span className="ccc-badge-label">Partial</span>
-          <span className="ccc-visually-hidden">{` — ${missingSourcesText(missing)}`}</span>
+          <span className="ccc-visually-hidden">{` — ${partialDescription}`}</span>
         </span>
       )}
       <button

@@ -3,6 +3,7 @@ import type { ReadonlySignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useId } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
+import { useOverviewFeeds } from "../overview/overview-feeds.js";
 import type { QuickActionDescriptor, WidgetState } from "../widgets/contract.js";
 import { WidgetFrame } from "../widgets/frame.js";
 import type { LayoutResolution } from "../widgets/layout.js";
@@ -43,6 +44,8 @@ export function Overview({
   onNavigate,
 }: OverviewProps): VNode {
   const emptyTitleId = `${useId()}-title`;
+  // The feeds behind the Today card refresh while the Overview is mounted (plan 08-14).
+  useOverviewFeeds(now);
   if (layout.entries.length === 0) {
     return (
       <div className="ccc-overview-grid">

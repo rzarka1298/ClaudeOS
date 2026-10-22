@@ -1,31 +1,42 @@
-import type { GithubTarget, LaunchersSummary, ProjectGitState, ProjectId } from "@ccc/domain";
+import type {
+  GithubTarget,
+  LaunchersSummary,
+  ProjectGitState,
+  ProjectId,
+  SizeHint,
+} from "@ccc/domain";
 import type { VNode } from "preact";
 import { useContext } from "preact/hooks";
 import { launchStatus, launchStatusKey } from "../projects/launch-status.js";
+import { UntrustedText } from "../view/approval-text.js";
 import type { DestinationId } from "../view/destinations.js";
 import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
 import { ListBody } from "./list-body.js";
+import { formatRelativeTime } from "./relative-time.js";
 import { WidgetHostContext } from "./widget-host.js";
 
 /**
  * The seven PRD §7.1 panels, in the PRD's own desktop ordering.
  *
- * None of them is backed by data in this phase — Today and GitHub discoveries
- * render `permission-required`, the other five render `unavailable` (ADR-0023
- * "Panel state assignment"). That is deliberate and structural rather than a
- * placeholder: `widget-data.ts` holds their states as CONSTANTS, so there is
- * no code path through which fixture data could reach a plugin card at all.
- * A card that looks real must be real (`D-17`); fixtures live in the harness
- * and the prototypes only.
+ * Most are backed by data by now. Today is service-fed from the Overview feeds
+ * (`overview/overview-feeds.ts`, plan 08-14) and always partial: Calendar and
+ * Gmail are not part of this version and are named as such, never read as zero.
+ * Active sessions, Project shortcuts, Claude usage, Codex and Quick actions read
+ * live signals. GitHub discoveries renders `permission-required` and Technology
+ * and market intelligence renders `unavailable` (ADR-0023 "Panel state
+ * assignment"); their states are CONSTANTS in `widget-data.ts`, recorded in
+ * `CONSTANT_STATE_WIDGET_IDS`, so there is no code path through which fixture
+ * data could reach a plugin card at all. A card that looks real must be real
+ * (`D-17`); fixtures live in the harness and the prototypes only.
  *
- * What each definition DOES carry now is the full UI-04 contract — the data
- * keys the owning phase will resolve, the refresh policy it will honour, the
- * size the grid will lay it out at, and a body typed to a data shape read off
- * PRD §7.1's listed contents. The owning phase (4–7) swaps one constant in
- * `widget-data.ts` for a client-fed signal and the card lights up; it does not
- * touch the frame, the contract or the registry.
+ * What each definition carries is the full UI-04 contract: the data keys the
+ * card resolves, the refresh policy it honours, the size the grid will lay it
+ * out at, and a body typed to a data shape read off PRD §7.1's listed contents.
+ * A phase that gives a card a route swaps one constant in `widget-data.ts` for a
+ * client-fed signal and the card lights up; it does not touch the frame, the
+ * contract or the registry.
  *
  * Nothing here imports `obsidian`, and nothing here imports a fixture.
  */
@@ -67,92 +78,202 @@ function count(
   return `${grouped(n)} ${n === 1 ? singular : plural}`;
 }
 
-/** Sentence case for a line assembled from mid-sentence pieces. */
-function upperFirst(line: string): string {
-  return line.charAt(0).toUpperCase() + line.slice(1);
-}
-
 // ---------------------------------------------------------------------------
-// 1. Today (PRD §7.1.1) — permission-required behind `google`
+// 1. Today (PRD §7.1.1) — service-fed, always partial (plan 08-14, D-20)
 // ---------------------------------------------------------------------------
 
-export interface TodayEvent {
-  readonly title: string;
-  readonly startsAt: string;
-}
-
+/**
+ * One task row on the Today card. `meta` is the finished meta line
+ * (`Due 5:00 PM`, `Overdue since Oct 18`, `Next due Oct 22`), built by
+ * `overview/overview-feeds.ts` from the service's dates and the owner's zone,
+ * so this body formats nothing and cannot disagree with the feed.
+ */
 export interface TodayTask {
+  /** The task's note id, so the card can open the task in Tasks (plan 06-18, D-38). */
+  readonly taskId: string;
+  /** The task's title: owner- or agent-authored vault text, rendered as text only. */
   readonly title: string;
-  readonly dueAt: string;
-  /** The task's note id, so a Today card can open the task (plan 06-18, D-38). Absent for a source with no ids. */
-  readonly taskId?: string | undefined;
+  readonly meta: string;
 }
 
 /**
- * Four independent sources (see `dataKeys`), any of which can be unreachable
- * while the others answer. A `null` list or count is "that source did not
- * say", rendered as unavailable — never an empty list that would read as
- * `0 tasks due` or as no failures.
+ * The managed-task feed's answer. `rows` is the overdue rows first and then
+ * the rows due today. `nextOpen` is set only when `rows` is empty and the
+ * service named a next open task; an older service that names none leaves it
+ * `null`, which never reads as "no open task" (the empty rule lives in the
+ * state mapping, not here).
+ */
+export interface TodayTasks {
+  readonly rows: readonly TodayTask[];
+  readonly nextOpen: TodayTask | null;
+}
+
+/** The newest research failure, only while no newer success exists. `reason` is a fixed Phase 7 sentence, never a remote string. */
+export interface TodayFailure {
+  readonly endedAt: string;
+  readonly reason: string;
+}
+
+/**
+ * What the research status says about automation: at most one failure (so the
+ * copy is singular by construction) and whether the latest run ended without
+ * reporting. Neither means no failures.
+ */
+export interface TodayAutomation {
+  readonly failure: TodayFailure | null;
+  readonly unknownRun: boolean;
+}
+
+/**
+ * `tasks` is `null` when the due-today feed has no answer: the body says
+ * `Due tasks unavailable.` and never an empty list that would read as nothing
+ * due. `automation` is `null` for the same reason (`Automation failure status
+ * unavailable.`). Calendar and Gmail are not part of this version and are not
+ * data here; the body names them as such. `nowMs` is the clock the relative
+ * time of a failure is read against.
  */
 export interface TodayData {
-  readonly nextEvent: TodayEvent | null;
-  readonly remainingCount: MaybeCount;
-  readonly dueTasks: readonly TodayTask[] | null;
-  readonly overdueTasks: readonly TodayTask[] | null;
-  readonly unreadSummary: string | null;
-  readonly failures: readonly string[] | null;
+  readonly tasks: TodayTasks | null;
+  readonly automation: TodayAutomation | null;
+  readonly nowMs: number;
+}
+
+/** The Today card's heading for a section of the body (UI-SPEC S6 block order). */
+function TodayHeading({
+  children,
+  focal,
+}: {
+  readonly children: string;
+  readonly focal?: boolean;
+}): VNode {
+  return (
+    <h4 className="ccc-today-section" data-focal={focal === true ? "true" : undefined}>
+      {children}
+    </h4>
+  );
+}
+
+function TodayRows({
+  rows,
+  size,
+  onNavigate,
+}: {
+  readonly rows: readonly TodayTask[];
+  readonly size: SizeHint;
+  readonly onNavigate: WidgetBodyProps<TodayData>["onNavigate"];
+}): VNode | null {
+  return (
+    <ListBody<TodayTask>
+      rows={rows}
+      size={size}
+      keyOf={(task) => task.taskId}
+      renderPrimary={(task) => task.title}
+      renderPrimaryContent={(task) => <UntrustedText text={task.title} />}
+      renderMeta={(task) => task.meta}
+      renderSelectLabel={(task) => `Open task: ${task.title}, ${task.meta}`}
+      onSelectRow={(task) => onNavigate?.("tasks", { taskId: task.taskId })}
+      moreDestination="tasks"
+      moreLabel="Show more in the tasks view"
+      onMore={onNavigate}
+    />
+  );
+}
+
+/** One short line per automation fact, from the closed UI-SPEC S6 strings. */
+function AutomationLines({
+  automation,
+  nowMs,
+  onNavigate,
+}: {
+  readonly automation: TodayAutomation | null;
+  readonly nowMs: number;
+  readonly onNavigate: WidgetBodyProps<TodayData>["onNavigate"];
+}): VNode {
+  if (automation === null) {
+    return <p className="ccc-state-body">Automation failure status unavailable.</p>;
+  }
+  const { failure, unknownRun } = automation;
+  return (
+    <>
+      {failure === null ? null : (
+        <>
+          <p className="ccc-state-body">
+            <span className="ccc-error-glyph" aria-hidden="true">
+              ✕
+            </span>{" "}
+            {`Research run failed ${formatRelativeTime(failure.endedAt, nowMs)}: ${failure.reason}.`}
+          </p>
+          <button type="button" className="ccc-list-more" onClick={() => onNavigate?.("research")}>
+            Open the research view
+          </button>
+        </>
+      )}
+      {unknownRun ? (
+        <p className="ccc-state-body">
+          <span aria-hidden="true">?</span> The last research run ended without reporting.
+        </p>
+      ) : null}
+      {failure === null && !unknownRun ? (
+        <p className="ccc-state-body">No automation failures.</p>
+      ) : null}
+    </>
+  );
 }
 
 function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNode {
+  const tasks = data.tasks;
+  // The next open task shows only when nothing is due or overdue (D-21, UI-SPEC R-13).
+  const nextOpen = tasks !== null && tasks.rows.length === 0 ? tasks.nextOpen : null;
   return (
     <>
-      <p className="ccc-state-body ccc-clamp-2">
-        {data.nextEvent === null ? "Nothing else on the calendar today." : data.nextEvent.title}
-      </p>
-      <p className="ccc-state-body">
-        {upperFirst(
-          [
-            count(
-              data.remainingCount,
-              "commitment left",
-              "commitments left",
-              "commitments unavailable",
-            ),
-            count(data.dueTasks?.length ?? null, "task due", "tasks due", "due tasks unavailable"),
-            count(data.overdueTasks?.length ?? null, "overdue task", "overdue tasks"),
-          ].join(" · "),
-        )}
-      </p>
-      <ListBody<TodayTask>
-        rows={[...(data.overdueTasks ?? []), ...(data.dueTasks ?? [])]}
-        size={size}
-        keyOf={(task) => `${task.dueAt}-${task.title}`}
-        renderPrimary={(task) => task.title}
-        renderMeta={(task) => `Due ${task.dueAt}`}
-        moreDestination="tasks"
-        onMore={onNavigate}
-      />
-      {data.unreadSummary === null ? null : (
-        <p className="ccc-state-body ccc-clamp-2">{data.unreadSummary}</p>
+      <TodayHeading focal={nextOpen === null}>Due today</TodayHeading>
+      {tasks === null ? (
+        <p className="ccc-state-body">Due tasks unavailable.</p>
+      ) : tasks.rows.length === 0 ? (
+        <p className="ccc-state-body">Nothing is due today.</p>
+      ) : (
+        <TodayRows rows={tasks.rows} size={size} onNavigate={onNavigate} />
       )}
-      {data.failures === null ? (
-        <p className="ccc-state-body">Failure status unavailable</p>
-      ) : data.failures.length === 0 ? null : (
-        <p className="ccc-state-body">
-          {count(data.failures.length, "failure needs attention", "failures need attention")}
-        </p>
+      {nextOpen === null ? null : (
+        <>
+          <TodayHeading focal>Next open task</TodayHeading>
+          <TodayRows rows={[nextOpen]} size={size} onNavigate={onNavigate} />
+        </>
       )}
+      <TodayHeading>Automation</TodayHeading>
+      <AutomationLines automation={data.automation} nowMs={data.nowMs} onNavigate={onNavigate} />
+      <TodayNote />
     </>
+  );
+}
+
+/** The unavailable-sources note: always present, never a zero (D-20, D-48, UI-SPEC R-12). */
+function TodayNote(): VNode {
+  return (
+    <p className="ccc-today-note">
+      <span aria-hidden="true">∅</span> Google Calendar and Gmail: not part of this version.
+    </p>
   );
 }
 
 export const todayWidget: WidgetDefinition<TodayData> = {
   id: "today",
   title: "Today",
-  description: "Calendar, tasks, mail and failures for today. Filled in by phases 6 and 7.",
+  description:
+    "Tasks due today and automation failures. Calendar and Gmail aren't part of this version.",
   dataKeys: [
-    { key: "calendar.today", transport: "service", sourceLabel: "Google Calendar" },
-    { key: "mail.important-unread", transport: "service", sourceLabel: "Gmail" },
+    {
+      key: "calendar.today",
+      transport: "service",
+      sourceLabel: "Google Calendar",
+      availability: "not-in-version",
+    },
+    {
+      key: "mail.important-unread",
+      transport: "service",
+      sourceLabel: "Gmail",
+      availability: "not-in-version",
+    },
     { key: "tasks.due-today", transport: "service", sourceLabel: "Managed task store" },
     { key: "automation.failures", transport: "service", sourceLabel: "Automation runs" },
   ],
@@ -162,7 +283,14 @@ export const todayWidget: WidgetDefinition<TodayData> = {
   featureFlag: "widget.today",
   quickActions: [],
   renderBody: TodayBody,
-  renderEmpty: () => <p className="ccc-state-body">Nothing is scheduled or due today.</p>,
+  ownsEmptyCopy: true,
+  renderEmpty: () => (
+    <>
+      <p className="ccc-state-heading">Nothing here yet</p>
+      <p className="ccc-state-body">No open tasks and no automation failures.</p>
+      <TodayNote />
+    </>
+  ),
 };
 
 // ---------------------------------------------------------------------------

@@ -36,8 +36,10 @@ describe("widgetStateFor is one signal per widget", () => {
   // D-17 property it must still hold — no fixture data reaches it — is
   // checked below by source scan and by its honest pre-connection state.
   // `project-shortcuts` and `quick-actions` are real too (Phase 4).
+  // Plan 08-14: `today` is service-fed too (a computed over the Overview feeds).
   const CONSTANT_PANEL_ORDER = PRD_PANEL_ORDER.filter(
     (id) =>
+      id !== "today" &&
       id !== "active-sessions" &&
       id !== "project-shortcuts" &&
       id !== "quick-actions" &&
@@ -97,6 +99,19 @@ describe("no plugin card is backed by fixture data (D-17)", () => {
   );
 });
 
+// Plan 08-14 (research B 2.8, layer 2): the Today feed module is production code
+// on the Overview path, so it is held to the same rule as the widget table.
+describe("the Overview feed module reads no fixture, harness or JSON (D-22)", () => {
+  it("overview-feeds.ts imports no fixture, mock, harness, client package or JSON module", () => {
+    const source = readFileSync(join(SRC_DIR, "../overview/overview-feeds.ts"), "utf8");
+    const imports = source.split("\n").filter((line) => /^\s*import\b|from\s+["']/.test(line));
+    expect(imports.length).toBeGreaterThan(0);
+    for (const line of imports) {
+      expect(line).not.toMatch(/fixture|mock|harness|test-support|\.json|service-api-client/i);
+    }
+  });
+});
+
 describe("every button on every registered card routes through the dispatcher", () => {
   it.each(WIDGET_IDS.filter((id) => id !== "service-health"))(
     "%s: clicking every action only ever navigates to settings",
@@ -133,7 +148,27 @@ describe("every button on every registered card routes through the dispatcher", 
     },
   );
 
-  it("Today's Connect button lands on settings and names Google Calendar and Gmail", () => {
+  // Rewritten, not deleted (plan 08-14): Today used to carry a Connect button for
+  // Google Calendar and Gmail. Both are now named as not part of this version, so
+  // the card offers no way to "connect" them and emits no `connect:` descriptor;
+  // GitHub discoveries keeps the one Connect button the dispatcher still routes.
+  it("Today offers no Connect control for Google Calendar and Gmail, and emits nothing", () => {
+    const emitted: QuickActionDescriptor[] = [];
+    const { container, queryByRole } = render(
+      <WidgetFrame
+        definition={WIDGETS.today as AnyWidgetDefinition}
+        state={widgetStateFor("today").value}
+        connection={{ kind: "live" }}
+        now={NOW}
+        onQuickAction={(descriptor) => emitted.push(descriptor)}
+      />,
+    );
+    expect(queryByRole("button", { name: /^Connect/ })).toBeNull();
+    for (const button of container.querySelectorAll("button")) fireEvent.click(button);
+    expect(emitted).toEqual([]);
+  });
+
+  it("GitHub discoveries' Connect button still lands on settings and names GitHub", () => {
     const ctx = {
       navigate: vi.fn(),
       notify: vi.fn(),
@@ -142,16 +177,16 @@ describe("every button on every registered card routes through the dispatcher", 
     };
     const { getByRole } = render(
       <WidgetFrame
-        definition={WIDGETS.today as AnyWidgetDefinition}
-        state={widgetStateFor("today").value}
+        definition={WIDGETS["github-discoveries"] as AnyWidgetDefinition}
+        state={widgetStateFor("github-discoveries").value}
         connection={{ kind: "live" }}
         now={NOW}
         onQuickAction={(descriptor) => dispatchQuickAction(descriptor, ctx)}
       />,
     );
-    fireEvent.click(getByRole("button", { name: "Connect Google Calendar and Gmail" }));
+    fireEvent.click(getByRole("button", { name: "Connect GitHub" }));
     expect(ctx.navigate).toHaveBeenCalledExactlyOnceWith("settings");
-    expect(ctx.notify.mock.calls[0]?.[0]).toMatch(/Google Calendar and Gmail.*Settings/);
+    expect(ctx.notify.mock.calls[0]?.[0]).toMatch(/GitHub.*Settings/);
   });
 
   // SC-6 (rewritten, not deleted): the live Quick actions (D-38, PR-08, and

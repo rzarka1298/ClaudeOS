@@ -130,7 +130,8 @@ describe("PERF-03: a slow source settling later changes only its own card", () =
 describe("quick actions move focus to the owning destination (C-11 focus)", () => {
   it("focuses the Settings tab, not the unmounted button, after a connect action", () => {
     render(<Shell notify={vi.fn()} />);
-    const button = screen.getByRole("button", { name: "Connect Google Calendar and Gmail" });
+    // Plan 08-14: Today has no Connect button any more; GitHub discoveries keeps one.
+    const button = screen.getByRole("button", { name: "Connect GitHub" });
     button.focus();
     fireEvent.click(button);
 

@@ -1,4 +1,5 @@
 import { type ReadonlySignal, signal } from "@preact/signals";
+import { todayState } from "../overview/overview-feeds.js";
 import { projectShortcutsState, quickActionsState } from "../projects/projects-state.js";
 import { codexState } from "./codex-signals.js";
 import type { WidgetState } from "./contract.js";
@@ -16,12 +17,13 @@ import { claudeUsageState } from "./usage-signals.js";
  * That is the same structural move Phase 1 made for PERF-01 — paint first,
  * attach the client after — applied one level down.
  *
- * In this phase six of these signals hold CONSTANTS, which is what makes
- * `D-17` structural rather than a review rule: a panel says
+ * Two of these signals still hold CONSTANTS (`github-discoveries`, and
+ * `tech-intel` until plan 08-17), recorded in {@link CONSTANT_STATE_WIDGET_IDS}.
+ * That is what makes `D-17` structural rather than a review rule: a panel says
  * `permission-required` or `unavailable` because there is nothing else it
  * could say, not because someone remembered not to fake it. The phase that
  * gives a panel a route replaces its constant here with a client-fed signal
- * and changes nothing else.
+ * and changes nothing else; `today` was the last to move (plan 08-14).
  */
 
 /** No route exists for this widget in this build (ADR-0023). */
@@ -35,17 +37,36 @@ export function permissionRequiredState(
   return { kind: "permission-required", capability, sourceLabel };
 }
 
+/**
+ * The widgets whose state is a CONSTANT in this build, recorded as they are
+ * built (plan 08-14, research B 2.8). A structural test asserts the Overview
+ * slice widgets are never in it, so "no widget on the Overview reads a fixture
+ * or a mock in a production build" (D-22) is checked, not remembered.
+ */
+const constantIds = new Set<WidgetId>();
+export const CONSTANT_STATE_WIDGET_IDS: ReadonlySet<WidgetId> = constantIds;
+
 /** A constant state as a signal, so every widget is read through one shape. */
-function constantState(state: WidgetState<never>): ReadonlySignal<WidgetState<unknown>> {
+function constantState(
+  id: WidgetId,
+  state: WidgetState<never>,
+): ReadonlySignal<WidgetState<unknown>> {
+  constantIds.add(id);
   return signal<WidgetState<unknown>>(state);
 }
 
 const WIDGET_STATES: Readonly<Record<WidgetId, ReadonlySignal<WidgetState<unknown>>>> = {
   // The phase's one real widget: a `computed` over the live connection signals.
   "service-health": serviceHealthState,
-  // The only two panels that will sit behind a real OAuth capability gate.
-  today: constantState(permissionRequiredState("google", "Google Calendar and Gmail")),
-  "github-discoveries": constantState(permissionRequiredState("github", "GitHub")),
+  // Plan 08-14: a computed over the Overview feeds (`overview/overview-feeds.ts`),
+  // service-fed and always partial. Calendar and Gmail are named as not part of
+  // this version; they are not a capability gate any more.
+  today: todayState,
+  // The one panel that still sits behind a capability gate.
+  "github-discoveries": constantState(
+    "github-discoveries",
+    permissionRequiredState("github", "GitHub"),
+  ),
   // The two panels this phase gives a route: a computed over the live
   // session/usage signals (`session-signals.ts`, `usage-signals.ts`),
   // following the same "replace the constant with a client-fed signal,
@@ -54,11 +75,12 @@ const WIDGET_STATES: Readonly<Record<WidgetId, ReadonlySignal<WidgetState<unknow
   "active-sessions": activeSessionsState,
   "claude-usage": claudeUsageState,
   codex: codexState,
-  // The three with no connector to click: `unavailable`, not a plausible lie
-  // that reads as "one click away" (ADR-0023 rejected alternative).
+  // `tech-intel` has no connector to click: `unavailable`, not a plausible lie
+  // that reads as "one click away" (ADR-0023 rejected alternative). Plan 08-17
+  // replaces it with a service-fed signal.
   // Plan 04-07: a service-fed signal (D-35), replacing the constant above.
   "project-shortcuts": projectShortcutsState,
-  "tech-intel": constantState(UNAVAILABLE_STATE),
+  "tech-intel": constantState("tech-intel", UNAVAILABLE_STATE),
   "quick-actions": quickActionsState,
 };
 

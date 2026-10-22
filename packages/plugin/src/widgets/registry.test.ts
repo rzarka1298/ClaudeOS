@@ -13,7 +13,7 @@ import {
   type WidgetId,
 } from "./registry.js";
 import { serviceHealthState } from "./service-health.js";
-import { widgetStateFor } from "./widget-data.js";
+import { CONSTANT_STATE_WIDGET_IDS, widgetStateFor } from "./widget-data.js";
 
 /**
  * The UI-04 contract test (research Pattern 2, threat T-03-04).
@@ -171,12 +171,29 @@ describe("honest panel states (D-17, ADR-0023 Panel state assignment)", () => {
     expect(widgetStateFor("service-health")).toBe(serviceHealthState);
   });
 
-  it("gates Today behind the google capability", () => {
-    expect(widgetStateFor("today").value).toEqual({
-      kind: "permission-required",
-      capability: "google",
-      sourceLabel: "Google Calendar and Gmail",
-    });
+  // Plan 08-14 (D-20): Today is service-fed. Calendar and Gmail are named as
+  // not part of this version, so there is no capability to gate it behind; it is
+  // `loading` before anything has been fetched, never a fixture and never a
+  // constant (`CONSTANT_STATE_WIDGET_IDS` does not list it).
+  it("Today is service-fed: loading before anything is fetched, never permission-required", () => {
+    expect(widgetStateFor("today").value.kind).toBe("loading");
+    expect(widgetStateFor("today").value.kind).not.toBe("permission-required");
+  });
+
+  // The intent of every pinned truth above is "no fixture data reaches a card":
+  // the constant table now lists exactly the two cards that still have no route.
+  it("records exactly github-discoveries and tech-intel as constant-state widgets (08-17 empties tech-intel)", () => {
+    expect([...CONSTANT_STATE_WIDGET_IDS].sort()).toEqual(["github-discoveries", "tech-intel"]);
+  });
+
+  it("declares Today's four data keys, Calendar and Gmail as not part of this version", () => {
+    const keys = WIDGETS.today.dataKeys.map((key) => [key.sourceLabel, key.availability]);
+    expect(keys).toEqual([
+      ["Google Calendar", "not-in-version"],
+      ["Gmail", "not-in-version"],
+      ["Managed task store", undefined],
+      ["Automation runs", undefined],
+    ]);
   });
 
   it("gates GitHub discoveries behind the github capability", () => {
@@ -226,15 +243,16 @@ describe("a registered panel renders its honest state through the shared frame",
     );
   }
 
-  it("Today asks to connect Google Calendar and Gmail, and executes nothing", () => {
+  it("Today renders its live loading state before anything is fetched, with no Connect button", () => {
     const { container } = renderWidget("today");
     const card = container.querySelector("section.ccc-card");
 
-    expect(card?.getAttribute("data-presentation")).toBe("permission-required");
-    expect(card?.textContent).toContain("Google Calendar and Gmail isn't connected");
+    expect(card?.getAttribute("data-presentation")).toBe("loading");
+    expect(card?.getAttribute("aria-busy")).toBe("true");
+    expect(card?.textContent).not.toContain("isn't connected");
 
     const labels = [...container.querySelectorAll("button")].map((button) => button.textContent);
-    expect(labels).toEqual(["Connect Google Calendar and Gmail", "Source"]);
+    expect(labels).toEqual(["Source"]);
   });
 
   // 05-06: `active-sessions` is a live hero card now, not a constant. Before
