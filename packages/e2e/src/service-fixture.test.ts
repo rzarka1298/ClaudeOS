@@ -61,6 +61,7 @@ function setup(
     startService,
     wait: wait ?? (() => new Promise<void>(() => undefined)),
     home: join(base, "home"),
+    base,
   });
   return { sandbox, startService, fixture };
 }
@@ -73,7 +74,7 @@ describe("service fixture start (Test 5)", () => {
     expect(startService).toHaveBeenCalledWith({
       socketPath: paths.socketPath,
       dbPath: paths.dbPath,
-      env: buildServiceEnv(paths, ACCOUNT, "normal"),
+      env: buildServiceEnv(paths, ACCOUNT, "normal", { base, home: join(base, "home") }),
     });
     expect(sandbox.registerService).toHaveBeenCalledWith(handle, SERVICE_ENTRY);
     expect(fixture.isRunning()).toBe(true);
@@ -198,6 +199,7 @@ describe("service fixture stop, restart, reset (Test 6)", () => {
       startService: () => Promise.reject(failure),
       wait: () => new Promise<void>(() => undefined),
       home: join(base, "home"),
+      base,
     });
     await expect(fixture.start({})).rejects.toBe(failure);
     expect(sandbox.registerService).toHaveBeenCalledWith(orphan, SERVICE_ENTRY);

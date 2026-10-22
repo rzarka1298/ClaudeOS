@@ -23,6 +23,21 @@ export function isSameOrInside(outer: string, inner: string): boolean {
   return inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : `${outer}${sep}`);
 }
 
+/**
+ * A path as the default macOS volume sees it: letters folded and Unicode normalised, because
+ * APFS treats `.Claude-Command-Center` and `.claude-command-center` (and a composed and a
+ * decomposed accent) as one folder. Used only for refusals about the owner's folders, where a
+ * false match on a case-sensitive volume is harmless and a missed match is not.
+ */
+export function foldedPath(path: string): string {
+  return path.normalize("NFC").toLowerCase();
+}
+
+/** {@link isSameOrInside} after {@link foldedPath} on both sides. */
+export function isSameOrInsideFolded(outer: string, inner: string): boolean {
+  return isSameOrInside(foldedPath(outer), foldedPath(inner));
+}
+
 export function isStrictlyInside(outer: string, inner: string): boolean {
   return inner !== outer && isSameOrInside(outer, inner);
 }

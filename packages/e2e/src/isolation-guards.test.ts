@@ -210,8 +210,44 @@ describe("service env (Test 4)", () => {
         "CCC_CODEX_CANDIDATES_DISABLED",
         "CCC_CODEX_CANDIDATES_DIR",
         "CCC_CODEX_BRIDGE_HOME",
+        "CCC_CODEX_HOME",
+        "XDG_STATE_HOME",
       ].sort(),
     );
+  });
+
+  it("points the service's own Codex home and bridge state home at the run root (B-MINOR 1)", () => {
+    const env = buildServiceEnv(paths(root), account, "normal");
+    // The service reads CCC_CODEX_HOME before CODEX_HOME, and derives the bridge state from
+    // XDG_STATE_HOME: neither may be left to the inherited environment.
+    expect(env.CCC_CODEX_HOME).toBe(join(root, "codex"));
+    expect(env.XDG_STATE_HOME).toBe(join(root, "codex-bridge"));
+    for (const key of ["CCC_CODEX_HOME", "XDG_STATE_HOME"] as const) {
+      expect(env[key]?.startsWith(`${root}/`)).toBe(true);
+    }
+  });
+
+  it("checks the run root's shape itself and refuses one outside the allowed base (B-M5)", () => {
+    expect(() => buildServiceEnv(paths(join("/tmp", "plain-folder")), account, "normal")).toThrow(
+      /run root/,
+    );
+    expect(() => buildServiceEnv(paths(join(scratch, RUN_ROOT_NAME)), account, "normal")).toThrow(
+      /run root/,
+    );
+    // The same root is fine once it is under the base the caller names.
+    mkdirSync(join(base, RUN_ROOT_NAME));
+    expect(() =>
+      buildServiceEnv(paths(join(base, RUN_ROOT_NAME)), account, "normal", { base, home }),
+    ).not.toThrow();
+    // A root below the owner's home is refused whatever the base.
+    const inHome = join(home, "tmp");
+    mkdirSync(inHome);
+    expect(() =>
+      buildServiceEnv(paths(join(inHome, RUN_ROOT_NAME)), account, "normal", {
+        base: inHome,
+        home,
+      }),
+    ).toThrow(/run root/);
   });
 
   it("seals the owner's Codex off: disabled flag plus candidate and bridge folders in the run root (Test 1)", () => {
@@ -262,11 +298,14 @@ describe("service env (Test 4)", () => {
       const link = join(realRoot, `link-${field}`);
       symlinkSync(owners, link);
       expect(() =>
-        buildServiceEnv({ ...paths(realRoot), [field]: link }, account, "normal"),
+        buildServiceEnv({ ...paths(realRoot), [field]: link }, account, "normal", { base, home }),
       ).toThrow(/outside the run root/);
       // A child path under a symlinked parent is refused as well.
       expect(() =>
-        buildServiceEnv({ ...paths(realRoot), [field]: join(link, "child") }, account, "normal"),
+        buildServiceEnv({ ...paths(realRoot), [field]: join(link, "child") }, account, "normal", {
+          base,
+          home,
+        }),
       ).toThrow(/outside the run root/);
     }
   });
@@ -276,7 +315,7 @@ describe("service env (Test 4)", () => {
     expect(env.CCC_ENABLE_TEST_OVERRIDES).toBe("1");
     expect(env.CCC_APPROVAL_TEST_TTL_MS).toBe("15000");
     expect(env.CCC_APPROVAL_SWEEP_MS).toBe("500");
-    expect(Object.keys(env)).toHaveLength(11);
+    expect(Object.keys(env)).toHaveLength(13);
   });
 
   it("refuses the default install-secret account and an account outside the ccc-uat family", () => {
@@ -299,6 +338,8 @@ describe("service env (Test 4)", () => {
       CCC_CODEX_CANDIDATES_DISABLED: "0",
       CCC_CODEX_CANDIDATES_DIR: "/real/codex/bin",
       CCC_CODEX_BRIDGE_HOME: "/real/bridge-home",
+      CCC_CODEX_HOME: "/real/codex-home",
+      XDG_STATE_HOME: "/real/state",
     };
     const scrubbed = scrubInheritedEnv(inherited);
     expect(scrubbed).toEqual({ PATH: "/usr/bin", HOME: "/home-x" });
@@ -314,6 +355,41 @@ describe("service env (Test 4)", () => {
       KEEP: "yes",
     });
     expect(scrubbed).toEqual({ KEEP: "yes" });
+  });
+});
+
+describe("owner-folder checks ignore letter case and Unicode form (B-M5)", () => {
+  const safe = (root: string) => ({
+    runtimeDir: join(root, "rt"),
+    socketPath: join(root, "rt", "svc.sock"),
+    claudeConfigDir: join(root, "claude"),
+  });
+
+  it("refuses a differently cased spelling of the owner's runtime and Claude folders", () => {
+    const good = safe(join(base, RUN_ROOT_NAME));
+    const cased = join(home, ".Claude-Command-Center");
+    expect(() => refuseRealPaths({ ...good, runtimeDir: cased }, { home })).toThrow(/runtime/);
+    expect(() =>
+      refuseRealPaths({ ...good, socketPath: join(cased, "svc.sock") }, { home }),
+    ).toThrow(/socket/);
+    expect(() =>
+      refuseRealPaths({ ...good, claudeConfigDir: join(home, ".CLAUDE", "projects") }, { home }),
+    ).toThrow(/Claude config/);
+    // The same holds once the owner's folders exist, where the volume may fold the case itself.
+    mkdirSync(realRuntimeDir(home));
+    expect(() => refuseRealPaths({ ...good, runtimeDir: cased }, { home })).toThrow(/runtime/);
+  });
+
+  it("refuses a run root spelled with a different-case home", () => {
+    const spelled = join(scratch, "HOME", "tmp");
+    expect(() => assertRunRootShape(join(spelled, RUN_ROOT_NAME), { base: spelled, home })).toThrow(
+      /run root/,
+    );
+    // The runtime folder's own spelling variant, as a base, is refused too.
+    const runtimeBase = join(home, ".CLAUDE-COMMAND-CENTER", "base");
+    expect(() =>
+      assertRunRootShape(join(runtimeBase, RUN_ROOT_NAME), { base: runtimeBase, home }),
+    ).toThrow(/run root/);
   });
 });
 

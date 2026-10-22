@@ -1,6 +1,12 @@
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import {
+  canonicalPath,
+  foldedPath,
+  isSameOrInside,
+  isSameOrInsideFolded,
+} from "./canonical-path.js";
 import type { UatProfile } from "./profile.js";
 import type { RunRootPaths } from "./run-root.js";
 
@@ -40,30 +46,14 @@ export class IsolationError extends Error {
   }
 }
 
-/** True when `inner` equals `outer` or sits below it (boundary-safe, never a prefix match). */
-function isSameOrInside(outer: string, inner: string): boolean {
-  return inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : `${outer}${sep}`);
-}
-
 /**
- * The real location of `path` even when it does not exist yet: the deepest existing ancestor
- * is resolved through symlinks and the missing remainder is appended.
+ * The real location of `path` even when it does not exist yet: the deepest existing ancestor is
+ * resolved through symlinks with `realpath.native`, which reports the on-disk spelling on a
+ * case-insensitive volume, and the missing remainder is appended. A path that cannot be resolved
+ * for any other reason is refused rather than guessed (the shared canonical-path module).
  */
 function resolveReal(path: string): string {
-  const absolute = resolve(path);
-  const missing: string[] = [];
-  let probe = absolute;
-  for (;;) {
-    try {
-      const real = realpathSync(probe);
-      return missing.length === 0 ? real : join(real, ...missing.reverse());
-    } catch {
-      const parent = dirname(probe);
-      if (parent === probe) return absolute;
-      missing.push(basename(probe));
-      probe = parent;
-    }
-  }
+  return canonicalPath(path);
 }
 
 // --- the owner's real locations (read-only path builders) --------------------------------
@@ -125,9 +115,8 @@ export function assertRunRootShape(path: string, options: RunRootShapeOptions = 
   const root = resolve(path);
   if (dirname(root) !== base || !RUN_ROOT_NAME.test(basename(root))) throw refusal();
   if (
-    isSameOrInside(resolveReal(realRuntimeDir(home)), resolveReal(base)) ||
-    isSameOrInside(resolveReal(home), resolveReal(root)) ||
-    resolveReal(root) === resolveReal(home)
+    isSameOrInsideFolded(resolveReal(realRuntimeDir(home)), resolveReal(base)) ||
+    isSameOrInsideFolded(resolveReal(home), resolveReal(root))
   ) {
     throw refusal();
   }
@@ -136,7 +125,9 @@ export function assertRunRootShape(path: string, options: RunRootShapeOptions = 
   } catch {
     return; // not created yet: the lexical shape is all there is to check
   }
-  if (resolveReal(root) !== join(resolveReal(base), basename(root))) throw refusal();
+  if (foldedPath(resolveReal(root)) !== foldedPath(join(resolveReal(base), basename(root)))) {
+    throw refusal();
+  }
 }
 
 // --- real paths refused -------------------------------------------------------------------
@@ -158,13 +149,13 @@ export function refuseRealPaths(
   const home = options.home ?? homedir();
   const realRuntime = resolveReal(realRuntimeDir(home));
   const realClaude = resolveReal(realClaudeConfigDir(home));
-  if (isSameOrInside(realRuntime, resolveReal(locations.runtimeDir))) {
+  if (isSameOrInsideFolded(realRuntime, resolveReal(locations.runtimeDir))) {
     throw new IsolationError("Refusing the owner's real runtime directory.");
   }
-  if (isSameOrInside(realRuntime, resolveReal(locations.socketPath))) {
+  if (isSameOrInsideFolded(realRuntime, resolveReal(locations.socketPath))) {
     throw new IsolationError("Refusing the owner's real socket.");
   }
-  if (isSameOrInside(realClaude, resolveReal(locations.claudeConfigDir))) {
+  if (isSameOrInsideFolded(realClaude, resolveReal(locations.claudeConfigDir))) {
     throw new IsolationError("Refusing the owner's real Claude config directory.");
   }
   if (Buffer.byteLength(locations.socketPath) >= SOCKET_PATH_MAX_BYTES) {
@@ -176,13 +167,19 @@ export function refuseRealPaths(
 
 export type ServiceKind = "normal" | "expiry";
 
-/** Everything the throwaway service receives, all inside the run root (D-05). */
+/**
+ * Everything the throwaway service receives, all inside the run root (D-05). The run root itself
+ * must have the `ccc-uat.XXXXXX` shape under the allowed base; `shape` names another base or home
+ * for tests only.
+ */
 export function buildServiceEnv(
   paths: RunRootPaths,
   account: string,
   kind: ServiceKind,
+  shape: RunRootShapeOptions = {},
 ): Record<string, string> {
   assertUatAccount(account);
+  assertRunRootShape(paths.root, shape);
   const root = resolve(paths.root);
   const realRoot = resolveReal(root);
   for (const inside of [
@@ -214,6 +211,10 @@ export function buildServiceEnv(
     CCC_SOCKET_PATH: paths.socketPath,
     CLAUDE_CONFIG_DIR: paths.claudeConfigDir,
     CODEX_HOME: paths.codexHome,
+    // The service reads CCC_CODEX_HOME before CODEX_HOME and derives the Codex bridge state from
+    // XDG_STATE_HOME, so both are set here and neither is left to the inherited environment.
+    CCC_CODEX_HOME: paths.codexHome,
+    XDG_STATE_HOME: paths.codexBridgeHome,
     CCC_INSTALL_SECRET_ACCOUNT: account,
     // A sandboxed service never probes the owner's Codex install or bridge folder (D-42,
     // research Pitfall 4). "Disabled" wins in detection; the folders are the fallback for a
@@ -238,6 +239,8 @@ const SCRUBBED_ENV_KEYS: readonly string[] = [
   "CCC_SOCKET_PATH",
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
+  "CCC_CODEX_HOME",
+  "XDG_STATE_HOME",
   "CCC_INSTALL_SECRET_ACCOUNT",
   "CCC_SPOOL_PATH",
   "CCC_CODEX_CANDIDATES_DISABLED",

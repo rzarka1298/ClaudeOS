@@ -233,6 +233,7 @@ describe("early ledgering of the service pid (MEDIUM-2b)", () => {
         return { pid: 4242, stop: immediate, kill: immediate } as Stoppable;
       },
       home: join(base, "home"),
+      base,
     });
     await fixture.start();
     expect(events).toEqual(["ledger:4242", "socket-wait"]);
