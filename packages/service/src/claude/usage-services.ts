@@ -506,7 +506,14 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
     refreshIntegration,
     refreshSettingsFacts() {
       claudeSettings = readClaudeSettingsFacts(settingsPath, runtimeDir);
+      const previousBin = installRecord?.claudeBin ?? null;
       installRecord = readInstallRecord(runtimeDir);
+      // The cached version belongs to the binary it was probed from: a different
+      // binary has no known version until the next background probe.
+      if ((installRecord?.claudeBin ?? null) !== previousBin) detectedClaudeVersion = null;
+      // The same publish-if-changed path as the background refresh, so a subscriber
+      // sees what the health check sees (no refresh listener, no version probe).
+      publishIntegrationIfChanged();
       return integration();
     },
     async setTranscriptAnalysis(enabled) {

@@ -151,7 +151,8 @@ describe("the Phase 05.1 hooks of the usage services", () => {
 
 // ---------------------------------------------------------------------------
 // refreshSettingsFacts (plan 08-04, research A 1.3): the health check's cheap
-// re-read. Two bounded file reads, no `claude --version`, no event.
+// re-read. Two bounded file reads, no `claude --version`; it publishes the
+// integration status only when it changed.
 
 describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
   const FAKE_CLAUDE = "/opt/fake/claude";
@@ -226,23 +227,59 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
     expect(services.refreshSettingsFacts().hookRuntimeMissing).toBe(false);
   });
 
-  it("publishes no event and calls no refresh listener; the next background refresh still publishes the change", async () => {
+  it("MINOR 5: publishes claude-integration.updated once when the facts changed (subscribers see the same state), and never calls the refresh listener", async () => {
     writeSettings({});
     const bus = createEventBus();
     const publish = vi.spyOn(bus, "publish");
     const onIntegrationRefresh = vi.fn();
     const services = start({ bus, onIntegrationRefresh, versionProbe: fakeProber().deps });
-    const publishedBefore = publish.mock.calls.length;
+    const updates = () =>
+      publish.mock.calls.filter((call) => call[0] === "claude-integration.updated").length;
+    const before = updates();
+
+    // Nothing changed: nothing is published.
+    services.refreshSettingsFacts();
+    expect(updates()).toBe(before);
 
     writeSettings({ disableAllHooks: true });
-    services.refreshSettingsFacts();
-    expect(publish.mock.calls.length).toBe(publishedBefore);
+    const status = services.refreshSettingsFacts();
+    expect(status.disableAllHooks).toBe(true);
+    expect(updates()).toBe(before + 1);
+    const last = publish.mock.calls
+      .filter((call) => call[0] === "claude-integration.updated")
+      .at(-1);
+    expect(last?.[1]).toMatchObject({ disableAllHooks: true });
     expect(onIntegrationRefresh).not.toHaveBeenCalled();
 
+    // The same state is not published twice: a repeat and the next background refresh stay quiet.
+    services.refreshSettingsFacts();
     await services.refreshIntegration();
-    const types = publish.mock.calls.slice(publishedBefore).map((call) => call[0]);
-    expect(types).toContain("claude-integration.updated");
+    expect(updates()).toBe(before + 1);
     expect(onIntegrationRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("MINOR 5: a changed claudeBin clears the cached version at once (the old binary's version is not shown for the new one), with no probe", async () => {
+    writeSettings({});
+    writeInstallRecord({ claudeBin: FAKE_CLAUDE });
+    const prober = fakeProber();
+    const services = start({ versionProbe: prober.deps });
+    expect((await services.refreshIntegration()).detectedClaudeVersion).toBe("2.1.5");
+
+    // Same binary: the cached version stays.
+    expect(services.refreshSettingsFacts().detectedClaudeVersion).toBe("2.1.5");
+
+    writeInstallRecord({ claudeBin: "/opt/other/claude" });
+    expect(services.refreshSettingsFacts().detectedClaudeVersion).toBeNull();
+    expect(services.integration().detectedClaudeVersion).toBeNull();
+    expect(prober.execFile).toHaveBeenCalledTimes(1);
+
+    // The next background refresh probes the new binary.
+    expect((await services.refreshIntegration()).detectedClaudeVersion).toBe("2.1.5");
+    expect(prober.execFile).toHaveBeenCalledTimes(2);
+
+    // Removing the record clears it too.
+    rmSync(join(dir, "hooks", "install.json"));
+    expect(services.refreshSettingsFacts().detectedClaudeVersion).toBeNull();
   });
 
   it("never throws on a missing or unreadable settings file; the status reads unknown", () => {
