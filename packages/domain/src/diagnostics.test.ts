@@ -10,6 +10,8 @@ import {
   DIAGNOSTICS_HEALTH_PATH,
   DiagnosticsErrorBodySchema,
   DiagnosticsHealthResponseSchema,
+  type DisplayedRow,
+  HealthTriggerSchema,
   HOOK_SILENT_THRESHOLD_MS,
   HOOKS_REASON_STATUS,
   HOOKS_REASONS,
@@ -17,12 +19,14 @@ import {
   LAUNCHERS_REASON_STATUS,
   LAUNCHERS_REASONS,
   NOT_IN_VERSION_GLYPH,
+  OVERLAY_ONLY_REASONS,
   rollupPartStatuses,
   rollupStatus,
   SCHEDULER_PART_IDS,
   SCHEDULER_REASON_STATUS,
   SCHEDULER_REASONS,
   SERVICE_REASON_STATUS,
+  SERVICE_SIDE_REASONS,
   SETTINGS_SECTION_IDS,
   SETUP_COMMAND_IDS,
   SetupActionSchema,
@@ -72,7 +76,30 @@ function freshCollectorsParts() {
   ];
 }
 
-/** The fresh-install response: five service-side rows, all setup-needed (D-34). */
+/** Three scheduler parts at a fresh install: never run, no key, default sources (D-06: sources ok lifts the row). */
+function freshSchedulerParts() {
+  return [
+    { partId: "last-run", status: "setup-needed", reasonCode: "never-run" },
+    { partId: "research-key", status: "setup-needed", reasonCode: "research-key-missing" },
+    { partId: "sources", status: "ok", reasonCode: "sources-configured" },
+  ];
+}
+
+/** Four launcher parts, none set up. */
+function freshLauncherParts() {
+  return ["antigravity", "claude-code", "claude-desktop", "codex"].map((partId) => ({
+    partId,
+    status: "setup-needed" as const,
+    reasonCode: "launcher-not-set-up",
+  }));
+}
+
+/**
+ * The fresh-install response (D-34) with real parts on every row that has parts
+ * (FIX1A M3: a parts-less row can only say the probe did not finish). Vault and
+ * hooks are setup-needed; collectors and launchers are setup-needed by their
+ * parts; the scheduler reads ok because its default sources are configured.
+ */
 function freshInstall() {
   return {
     generatedAt: T0,
@@ -81,8 +108,8 @@ function freshInstall() {
       row("vault", "vault-not-set-up"),
       row("hooks", "hooks-not-installed"),
       row("collectors", "statusline-not-installed", { parts: freshCollectorsParts() }),
-      row("scheduler", "never-run"),
-      row("launchers", "launcher-not-set-up"),
+      row("scheduler", "sources-configured", { status: "ok", parts: freshSchedulerParts() }),
+      row("launchers", "launcher-not-set-up", { parts: freshLauncherParts() }),
     ],
     keychain: { installSecret: "present", researchKey: "absent" },
     paths: {
@@ -108,8 +135,8 @@ describe("Task 1 (tracer): a fresh-install health response", () => {
       failing: 0,
       degraded: 0,
       unknown: 0,
-      setupNeeded: 5,
-      ok: 1,
+      setupNeeded: 4,
+      ok: 2,
     });
   });
 
@@ -216,6 +243,7 @@ const EXPECTED: Record<string, Record<string, SubsystemStatus>> = {
     "research-key-present": "ok",
     "research-key-missing": "setup-needed",
     "research-key-check-failed": "unknown",
+    "research-key-not-checked": "unknown",
     "sources-configured": "ok",
     "sources-config-unusable": "degraded",
     ...SHARED,
@@ -698,10 +726,11 @@ describe("D-34a (passive parts)", () => {
       reasonCode: "statusline-not-installed",
     });
     expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
-    // The whole fresh-install response, with the real parts, parses and summarises as five setup states.
+    // The whole fresh-install response, with the real parts, parses and summarises as four setup states
+    // (the scheduler's default sources are configured, so its row is ok).
     const fresh = freshInstall();
     expect(DiagnosticsHealthResponseSchema.safeParse(fresh).success).toBe(true);
-    expect(summariseRows(fresh.rows).setupNeeded).toBe(5);
+    expect(summariseRows(fresh.rows).setupNeeded).toBe(4);
     // The old ok roll-up is now refused for those parts.
     const asOk = collectorsResponse({
       parts: freshCollectorsParts(),
@@ -796,5 +825,192 @@ describe("D-34a (passive parts)", () => {
         [],
       ),
     ).toBe("ok");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FIX1A
+
+describe("FIX1A M2: the scheduler key-not-checked reason and the health trigger", () => {
+  it("research-key-not-checked is a scheduler reason with status unknown, and a research-key part may carry it", () => {
+    expect(SCHEDULER_REASONS).toContain("research-key-not-checked");
+    expect(SCHEDULER_REASON_STATUS["research-key-not-checked"]).toBe("unknown");
+    const parts = [
+      { partId: "last-run", status: "setup-needed", reasonCode: "never-run" },
+      { partId: "research-key", status: "unknown", reasonCode: "research-key-not-checked" },
+      { partId: "sources", status: "ok", reasonCode: "sources-configured" },
+    ];
+    const response = freshInstall();
+    // Roll-up: unknown beats ok; the deciding part is the key.
+    response.rows[3] = row("scheduler", "research-key-not-checked", {
+      status: "unknown",
+      parts,
+    }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+    // Not a valid reason on another scheduler part.
+    const wrongPart = freshInstall();
+    wrongPart.rows[3] = row("scheduler", "research-key-not-checked", {
+      status: "unknown",
+      parts: [
+        { partId: "last-run", status: "unknown", reasonCode: "research-key-not-checked" },
+        parts[1],
+        parts[2],
+      ],
+    }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(wrongPart).success).toBe(false);
+  });
+
+  it("HealthTriggerSchema is exactly gesture or reconnect", () => {
+    expect(HealthTriggerSchema.options).toEqual(["gesture", "reconnect"]);
+    expect(HealthTriggerSchema.safeParse("gesture").success).toBe(true);
+    expect(HealthTriggerSchema.safeParse("reconnect").success).toBe(true);
+    for (const bad of ["", "Gesture", "timer", undefined, null, 1]) {
+      expect(HealthTriggerSchema.safeParse(bad).success, String(bad)).toBe(false);
+    }
+  });
+});
+
+describe("FIX1A M3: a row of parts needs its parts unless the probe did not finish", () => {
+  const cases = [
+    { index: 2, id: "collectors", ok: "telemetry-ok" },
+    { index: 3, id: "scheduler", ok: "last-run-succeeded" },
+    { index: 4, id: "launchers", ok: "launcher-ready" },
+  ] as const;
+
+  it.each(cases)("$id: a parts-less $ok row claiming ok is refused", ({ index, id, ok }) => {
+    const response = freshInstall();
+    response.rows[index] = row(id, ok, { status: "ok" }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(false);
+  });
+
+  it.each(cases)(
+    "$id: a parts-less not-set-up or other own-reason row is refused",
+    ({ index, id }) => {
+      const own = {
+        collectors: "statusline-not-installed",
+        scheduler: "never-run",
+        launchers: "launcher-not-set-up",
+      }[id];
+      const response = freshInstall();
+      response.rows[index] = row(id, own) as never;
+      expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(false);
+    },
+  );
+
+  it.each(cases)("$id: a parts-less probe-did-not-finish row is accepted", ({ index, id }) => {
+    for (const reason of ["probe-timeout", "probe-error", "subsystem-not-wired"]) {
+      const response = freshInstall();
+      response.rows[index] = row(id, reason, { status: "unknown" }) as never;
+      expect(DiagnosticsHealthResponseSchema.safeParse(response).success, reason).toBe(true);
+    }
+  });
+
+  it("vault and hooks rows stay parts-less by design", () => {
+    expect(DiagnosticsHealthResponseSchema.safeParse(freshInstall()).success).toBe(true);
+  });
+});
+
+describe("FIX1A MINOR 3: an unrecognised status is unknown, never ok", () => {
+  it("summariseRows counts it as unknown", () => {
+    const rows = [{ status: "ok" }, { status: "bogus" }, { status: undefined }, { status: "fine" }];
+    expect(summariseRows(rows as never)).toEqual({
+      failing: 0,
+      degraded: 0,
+      unknown: 3,
+      setupNeeded: 0,
+      ok: 1,
+    });
+  });
+
+  it("rollupStatus reads an unrecognised status as unknown, and it still loses to degraded or failing", () => {
+    expect(rollupStatus(["bogus"] as never)).toBe("unknown");
+    expect(rollupStatus(["ok", "bogus"] as never)).toBe("unknown");
+    expect(rollupStatus(["setup-needed", "bogus"] as never)).toBe("unknown");
+    expect(rollupStatus(["degraded", "bogus"] as never)).toBe("degraded");
+    expect(rollupStatus(["failing", "bogus"] as never)).toBe("failing");
+  });
+});
+
+describe("FIX1A MINOR 4: service-side reasons are separate from the plugin-overlay-only ones", () => {
+  it("lists the three overlay-only codes", () => {
+    expect([...OVERLAY_ONLY_REASONS].sort()).toEqual(
+      ["service-not-running", "vault-check-unavailable", "vault-mismatch"].sort(),
+    );
+  });
+
+  it("the full lists still hold every reason, so the plugin's copy table covers the overlay", () => {
+    for (const code of OVERLAY_ONLY_REASONS) {
+      const holders = [
+        VAULT_REASONS,
+        HOOKS_REASONS,
+        COLLECTORS_REASONS,
+        SCHEDULER_REASONS,
+        LAUNCHERS_REASONS,
+      ].filter((list) => (list as readonly string[]).includes(code));
+      expect(holders.length, code).toBeGreaterThan(0);
+    }
+    expect(VAULT_REASONS).toContain("vault-mismatch");
+    expect(VAULT_REASONS).toContain("vault-check-unavailable");
+    for (const list of [
+      VAULT_REASONS,
+      HOOKS_REASONS,
+      COLLECTORS_REASONS,
+      SCHEDULER_REASONS,
+      LAUNCHERS_REASONS,
+    ]) {
+      expect(list).toContain("service-not-running");
+    }
+  });
+
+  it("the service-side lists are the full lists minus the overlay-only codes", () => {
+    const full = {
+      vault: VAULT_REASONS,
+      hooks: HOOKS_REASONS,
+      collectors: COLLECTORS_REASONS,
+      scheduler: SCHEDULER_REASONS,
+      launchers: LAUNCHERS_REASONS,
+    };
+    for (const [id, all] of Object.entries(full)) {
+      const service = SERVICE_SIDE_REASONS[id as keyof typeof SERVICE_SIDE_REASONS];
+      const expected = (all as readonly string[]).filter(
+        (code) => !(OVERLAY_ONLY_REASONS as readonly string[]).includes(code),
+      );
+      expect([...service], id).toEqual(expected);
+    }
+  });
+
+  it.each([
+    [0, "vault", "vault-mismatch", "degraded"],
+    [0, "vault", "vault-check-unavailable", "unknown"],
+    [0, "vault", "service-not-running", "unknown"],
+    [1, "hooks", "service-not-running", "unknown"],
+    [2, "collectors", "service-not-running", "unknown"],
+    [3, "scheduler", "service-not-running", "unknown"],
+    [4, "launchers", "service-not-running", "unknown"],
+  ] as const)("the service response refuses row %i (%s) with %s", (index, id, reason, status) => {
+    const response = freshInstall();
+    response.rows[index] = row(id, reason, { status }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(false);
+  });
+
+  it("the plugin's overlay type allows the overlay-only reasons (compile-time)", () => {
+    const cleared: DisplayedRow = {
+      id: "hooks",
+      status: "unknown",
+      reasonCode: "service-not-running",
+      checkedAt: T0,
+      freshness: "unavailable",
+    };
+    const mismatch: DisplayedRow = {
+      id: "vault",
+      status: "degraded",
+      reasonCode: "vault-mismatch",
+      checkedAt: T0,
+      freshness: "live",
+    };
+    expect([cleared.reasonCode, mismatch.reasonCode]).toEqual([
+      "service-not-running",
+      "vault-mismatch",
+    ]);
   });
 });
