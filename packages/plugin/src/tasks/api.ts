@@ -33,6 +33,12 @@ export interface TasksApi {
   changed(request: TaskChangedRequest): Promise<TaskChangedResponse>;
   rebuild(): Promise<TaskRebuildResponse>;
   attention(request: TaskAttentionRequest): Promise<TaskAttentionResponse>;
+  /**
+   * The due-today feed and, since plan 08-03, the next open task. `nextOpen` is
+   * optional on the wire: `undefined` (the key absent, an older service) means
+   * **unknown**, never "no open task"; only an explicit `null` says nothing is
+   * open. Callers must not treat an absent `nextOpen` as an empty state.
+   */
   dueToday(request: TaskDueTodayRequest): Promise<TaskDueTodayResponse>;
 }
 

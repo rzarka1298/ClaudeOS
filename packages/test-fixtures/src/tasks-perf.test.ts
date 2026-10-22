@@ -154,6 +154,18 @@ describe("10,000 tasks through the real routes (Task 2, Tests 1, 2, 5, 6)", () =
     expect(feed.reply.status).toBe(200);
     expect(feed.reply.body.due.length).toBeGreaterThan(0);
     expect(feed.ms).toBeLessThan(QUERY_CEILING_MS);
+    // 08-03: the extra next-open query rides the same route inside the same ceiling,
+    // in every scope; 10,000 generated tasks always include open ones.
+    expect(feed.reply.body.nextOpen).toBeTruthy();
+    for (const scopeName of SCOPE_NAMES) {
+      const scoped = await bestOfThree<TaskDueTodayResponse>(
+        `due-today feed with next open in ${scopeName}`,
+        () => post(session, TASK_DUE_TODAY_PATH, { zone: ZONE, scope: scopeOf(scopeName) }),
+      );
+      expect(scoped.reply.status).toBe(200);
+      expect(scoped.reply.body.nextOpen, scopeName).toBeTruthy();
+      expect(scoped.ms, `due-today feed in ${scopeName}`).toBeLessThan(QUERY_CEILING_MS);
+    }
   }, 300_000);
 
   it("keeps every chip count equal to the length of its list paged to the end, and equal to the oracle", async () => {

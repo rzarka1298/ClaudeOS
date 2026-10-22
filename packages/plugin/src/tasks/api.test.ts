@@ -41,3 +41,33 @@ describe("Test 8: the task API holder", () => {
     await expect(tasksApi().changed({ rescan: true })).rejects.toBeInstanceOf(TasksApiError);
   });
 });
+
+describe("08-03 Task 3 Test 2: dueToday carries nextOpen unchanged", () => {
+  const request = { zone: "UTC" };
+  const next = {
+    taskId: "abcdefghi0123456789abcdef",
+    title: "Plan the offsite",
+    dueDate: "2026-10-12",
+  };
+
+  it("resolves the field exactly as the service sent it, including null", async () => {
+    for (const nextOpen of [next, null]) {
+      const response = { due: [], overdue: [], nextOpen };
+      const dueToday = vi.fn(() => Promise.resolve(response));
+      configureTasksApi({ dueToday } as unknown as TasksApi);
+      const result = await tasksApi().dueToday(request);
+      expect(result).toBe(response);
+      expect(result.nextOpen).toEqual(nextOpen);
+      expect(dueToday).toHaveBeenCalledWith(request);
+    }
+  });
+
+  it("an older service that omits it leaves nextOpen undefined, which means unknown, never no open task", async () => {
+    const response = { due: [], overdue: [] };
+    configureTasksApi({ dueToday: () => Promise.resolve(response) } as unknown as TasksApi);
+    const result = await tasksApi().dueToday(request);
+    expect("nextOpen" in result).toBe(false);
+    expect(result.nextOpen).toBeUndefined();
+    expect(result.nextOpen).not.toBeNull();
+  });
+});
