@@ -272,6 +272,22 @@ describe("Test 3 (Overview untouched): no research state reaches the Overview", 
       ).toEqual([]);
     }
   });
+
+  // The feeds module is the one place the Overview reads research data, through the holder
+  // (`research/api.js`) and the epoch signal (`research/events.js`) and nothing else: not the
+  // Research view's state (reset when its last view unmounts), not the client, not the wiring.
+  it("the Overview feeds read research data only through the API holder and the event epoch", () => {
+    const source = readFileSync(join(SRC_DIR, "../overview/overview-feeds.ts"), "utf8");
+    const imports = source.split("\n").filter((line) => /^\s*import\b|from "/.test(line));
+    const research = imports.filter((line) => /research/i.test(line));
+    expect(research.some((line) => line.includes('"../research/api.js"'))).toBe(true);
+    expect(research.some((line) => line.includes('"../research/events.js"'))).toBe(true);
+    for (const line of research) {
+      expect(line, line).not.toMatch(
+        /research\/(state|reader-state|client-api|wiring)\.js|service-api-client|view\/research\.js/,
+      );
+    }
+  });
 });
 
 describe("Test 4 (notices): only a press in this session posts the outcome Notice", () => {

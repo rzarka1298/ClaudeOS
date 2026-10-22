@@ -565,6 +565,33 @@ token test and the contrast matrix are unchanged.
   buttons, status lines and badges; 600 for section labels, field labels and
   primary buttons) — still exactly two weights.
 
+### Phase 8 (slice proof)
+
+The Overview proves the milestone's vertical slice from real sources
+(`08-UI-SPEC.md` S6 and S7, `D-19`, `D-20`, `D-22`). This amends
+`## Panel state assignment` for the two cards that were still constants there.
+**No token change**: no value moved, nothing was added, and the contrast matrix and
+the `A11Y-02` token test are untouched.
+
+- **Today is service-fed and partial.** It is no longer `permission-required`. It reads
+  the managed task store (due and overdue tasks, else the single next open task) and the
+  research status (the latest automation failure), and it is always `partial`: Google
+  Calendar and Gmail are named as **not part of this version** on the card, in the Source
+  panel and in the Partial chip, never as zero and never as "no response". It is empty
+  only when both feeds answered and nothing exists.
+- **Technology and market intelligence is service-fed.** It shows the latest cited report
+  (the newest readable row of the report list): its title as untrusted text, source and
+  item counts, the AI-generated line and `Open report`, which selects that report in the
+  Research reader. Its freshness is `cached`, or `stale` after 36 hours, and never `live`
+  (a report is a stored artifact). A partial report adds the Partial badge and the
+  `{u} of {m} research sources were unavailable` summary.
+- **GitHub discoveries is unchanged**: `permission-required`, capability `github`, a
+  constant. It is the only constant-state card left, and a test asserts the production
+  widget table holds no constant for the five slice widgets (project shortcuts, quick
+  actions, active sessions, Today, Technology), so a fixture can never fake the slice.
+- **The freshness vocabulary is unchanged**: four values (`ADR-0002`). "Not part of this
+  version" is a source status and an optional chip summary, not a fifth freshness.
+
 ## Consequences
 
 The costs this ADR accepts, stated plainly so a later reader does not mistake

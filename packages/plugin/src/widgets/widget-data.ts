@@ -17,13 +17,15 @@ import { claudeUsageState } from "./usage-signals.js";
  * That is the same structural move Phase 1 made for PERF-01 — paint first,
  * attach the client after — applied one level down.
  *
- * Two of these signals still hold CONSTANTS (`github-discoveries`, and
- * `tech-intel` until plan 08-17), recorded in {@link CONSTANT_STATE_WIDGET_IDS}.
- * That is what makes `D-17` structural rather than a review rule: a panel says
- * `permission-required` or `unavailable` because there is nothing else it
- * could say, not because someone remembered not to fake it. The phase that
- * gives a panel a route replaces its constant here with a client-fed signal
- * and changes nothing else; `today` was the last to move (plan 08-14).
+ * One of these signals still holds a CONSTANT (`github-discoveries`), recorded in
+ * {@link CONSTANT_STATE_WIDGET_IDS}. That is what makes `D-17` structural rather
+ * than a review rule: a panel says `permission-required` or `unavailable` because
+ * there is nothing else it could say, not because someone remembered not to fake
+ * it. The phase that gives a panel a route replaces its constant here with a
+ * client-fed signal and changes nothing else; `today` moved in plan 08-14 and
+ * `tech-intel` in plan 08-17, so none of the five Overview slice widgets
+ * (project shortcuts, quick actions, active sessions, Today, Technology) is a
+ * constant, and `widget-data-slice.test.ts` fails if one ever is (`D-22`).
  */
 
 /** No route exists for this widget in this build (ADR-0023). */
