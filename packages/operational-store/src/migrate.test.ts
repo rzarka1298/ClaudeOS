@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyMigrations, SchemaAheadOfCodeError } from "./migrate.js";
+import { applyMigrations, readSchemaVersion, SchemaAheadOfCodeError } from "./migrate.js";
 
 const REAL_MIGRATIONS_DIR = join(import.meta.dirname, "../migrations");
 
@@ -310,5 +310,40 @@ describe("applyMigrations", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("readSchemaVersion (plan 08-04: the bundle's store schema version)", () => {
+  let dir: string;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "ccc-schema-version-"));
+    db = new Database(join(dir, "operational.db"));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("Test 3: returns the applied version on a migrated store", () => {
+    applyMigrations(db, REAL_MIGRATIONS_DIR);
+    expect(readSchemaVersion(db)).toBe(EXPECTED_SCHEMA_VERSION);
+  });
+
+  it("does not write: no row changes and the recorded version is untouched", () => {
+    applyMigrations(db, REAL_MIGRATIONS_DIR);
+    const before = (db.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
+    readSchemaVersion(db);
+    readSchemaVersion(db);
+    const after = (db.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
+    expect(after).toBe(before);
+    expect(readSchemaVersion(db)).toBe(EXPECTED_SCHEMA_VERSION);
+  });
+
+  it("is exported from the package index", async () => {
+    const index = await import("./index.js");
+    expect(index.readSchemaVersion).toBe(readSchemaVersion);
   });
 });
