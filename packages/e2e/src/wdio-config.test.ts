@@ -23,6 +23,8 @@ const paths: RunRootPaths = {
   dbPath: `${ROOT}/rt/operational.db`,
   claudeConfigDir: `${ROOT}/claude`,
   codexHome: `${ROOT}/codex`,
+  codexCandidatesDir: `${ROOT}/codex-candidates`,
+  codexBridgeHome: `${ROOT}/codex-bridge`,
   vaultsDir: `${ROOT}/vaults`,
   pluginStageDir: `${ROOT}/plugin-stage`,
   tmpDir: `${ROOT}/tmp`,

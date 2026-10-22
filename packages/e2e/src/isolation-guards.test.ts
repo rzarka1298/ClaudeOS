@@ -43,6 +43,8 @@ function paths(root: string) {
     dbPath: join(root, "rt", "operational.db"),
     claudeConfigDir: join(root, "claude"),
     codexHome: join(root, "codex"),
+    codexCandidatesDir: join(root, "codex-candidates"),
+    codexBridgeHome: join(root, "codex-bridge"),
     vaultsDir: join(root, "vaults"),
     pluginStageDir: join(root, "plugin-stage"),
     tmpDir: join(root, "tmp"),
@@ -205,8 +207,68 @@ describe("service env (Test 4)", () => {
         "CCC_SOCKET_PATH",
         "CLAUDE_CONFIG_DIR",
         "CODEX_HOME",
+        "CCC_CODEX_CANDIDATES_DISABLED",
+        "CCC_CODEX_CANDIDATES_DIR",
+        "CCC_CODEX_BRIDGE_HOME",
       ].sort(),
     );
+  });
+
+  it("seals the owner's Codex off: disabled flag plus candidate and bridge folders in the run root (Test 1)", () => {
+    const env = buildServiceEnv(paths(root), account, "normal");
+    expect(env.CCC_CODEX_CANDIDATES_DISABLED).toBe("1");
+    expect(env.CCC_CODEX_CANDIDATES_DIR).toBe(join(root, "codex-candidates"));
+    expect(env.CCC_CODEX_BRIDGE_HOME).toBe(join(root, "codex-bridge"));
+    for (const key of ["CCC_CODEX_CANDIDATES_DIR", "CCC_CODEX_BRIDGE_HOME"] as const) {
+      expect(env[key]?.startsWith(`${root}/`)).toBe(true);
+    }
+    expect(buildServiceEnv(paths(root), account, "expiry").CCC_CODEX_CANDIDATES_DISABLED).toBe("1");
+  });
+
+  it("throws before returning when a Codex folder points outside the run root (Test 2)", () => {
+    const outside = join(scratch, "home", ".codex");
+    for (const field of ["codexCandidatesDir", "codexBridgeHome"] as const) {
+      expect(() =>
+        buildServiceEnv({ ...paths(root), [field]: outside }, account, "normal"),
+      ).toThrow(/outside the run root/);
+      // A sibling that merely shares the run root's name as a prefix is outside too.
+      expect(() =>
+        buildServiceEnv({ ...paths(root), [field]: `${root}-sibling/x` }, account, "normal"),
+      ).toThrow(/outside the run root/);
+      // The run root itself is not a valid folder for these variables.
+      expect(() => buildServiceEnv({ ...paths(root), [field]: root }, account, "normal")).toThrow(
+        /outside the run root/,
+      );
+    }
+  });
+
+  it("refuses a relative or NUL-carrying Codex folder, which the service would ignore in favour of the real home", () => {
+    for (const field of ["codexCandidatesDir", "codexBridgeHome"] as const) {
+      expect(() =>
+        buildServiceEnv({ ...paths(root), [field]: "codex-bridge" }, account, "normal"),
+      ).toThrow(/outside the run root/);
+      expect(() =>
+        buildServiceEnv({ ...paths(root), [field]: `${root}/x\0y` }, account, "normal"),
+      ).toThrow(/outside the run root/);
+    }
+  });
+
+  it("refuses a Codex folder that is a symlink inside the run root pointing at a real folder", () => {
+    const realRoot = join(base, RUN_ROOT_NAME);
+    const owners = join(scratch, "owners-codex");
+    mkdirSync(realRoot, { recursive: true });
+    mkdirSync(owners, { recursive: true });
+    for (const field of ["codexCandidatesDir", "codexBridgeHome"] as const) {
+      const link = join(realRoot, `link-${field}`);
+      symlinkSync(owners, link);
+      expect(() =>
+        buildServiceEnv({ ...paths(realRoot), [field]: link }, account, "normal"),
+      ).toThrow(/outside the run root/);
+      // A child path under a symlinked parent is refused as well.
+      expect(() =>
+        buildServiceEnv({ ...paths(realRoot), [field]: join(link, "child") }, account, "normal"),
+      ).toThrow(/outside the run root/);
+    }
   });
 
   it("expiry kind adds exactly the three test-override variables", () => {
@@ -214,7 +276,7 @@ describe("service env (Test 4)", () => {
     expect(env.CCC_ENABLE_TEST_OVERRIDES).toBe("1");
     expect(env.CCC_APPROVAL_TEST_TTL_MS).toBe("15000");
     expect(env.CCC_APPROVAL_SWEEP_MS).toBe("500");
-    expect(Object.keys(env)).toHaveLength(8);
+    expect(Object.keys(env)).toHaveLength(11);
   });
 
   it("refuses the default install-secret account and an account outside the ccc-uat family", () => {
@@ -234,10 +296,24 @@ describe("service env (Test 4)", () => {
       CODEX_HOME: "/x",
       CCC_INSTALL_SECRET_ACCOUNT: "install-secret",
       CCC_SPOOL_PATH: "/spool",
+      CCC_CODEX_CANDIDATES_DISABLED: "0",
+      CCC_CODEX_CANDIDATES_DIR: "/real/codex/bin",
+      CCC_CODEX_BRIDGE_HOME: "/real/bridge-home",
     };
     const scrubbed = scrubInheritedEnv(inherited);
     expect(scrubbed).toEqual({ PATH: "/usr/bin", HOME: "/home-x" });
     expect(inherited.CCC_SPOOL_PATH).toBe("/spool");
+    expect(inherited.CCC_CODEX_BRIDGE_HOME).toBe("/real/bridge-home");
+  });
+
+  it("scrubInheritedEnv removes all three Codex isolation variables set to real folders (Test 3)", () => {
+    const scrubbed = scrubInheritedEnv({
+      CCC_CODEX_CANDIDATES_DISABLED: "1",
+      CCC_CODEX_CANDIDATES_DIR: "/real/codex/bin",
+      CCC_CODEX_BRIDGE_HOME: "/real/bridge-home",
+      KEEP: "yes",
+    });
+    expect(scrubbed).toEqual({ KEEP: "yes" });
   });
 });
 
