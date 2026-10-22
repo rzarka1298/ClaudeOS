@@ -1,8 +1,13 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   DiagnosticsHealthResponseSchema,
   type HealthTrigger,
   type ProbeOutcome,
 } from "@ccc/domain";
+import { initializeVault } from "@ccc/vault-repo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PER_PROBE_CAP_MS, type Probe, type ProbeLogEntry } from "./run-probes.js";
 import { createDiagnosticsServices, type DiagnosticsPorts } from "./services.js";
@@ -209,5 +214,77 @@ describe("caps through the services", () => {
     const again = await services.check("reconnect");
     expect(again.rows[3]).toMatchObject({ reasonCode: "probe-timeout", freshness: "unavailable" });
     expect(again.rows[0]?.freshness).toBe("cached");
+  });
+});
+
+describe("Test 5: the salted vault fingerprint and the display paths (D-36)", () => {
+  const created: string[] = [];
+  afterEach(() => {
+    for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function readyVault(): string {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "ccc-diag-fp-")));
+    created.push(root);
+    mkdirSync(join(root, ".obsidian"));
+    initializeVault(root);
+    return root;
+  }
+
+  it("carries { salt, digest } with the digest the first 16 hex of SHA-256 over salt + ':' + root, and never the root", async () => {
+    const root = readyVault();
+    const response = await build({ vault: { readRoot: () => root } }).check("reconnect");
+    expect(response.rows[0]).toMatchObject({
+      id: "vault",
+      status: "ok",
+      reasonCode: "vault-ready",
+    });
+    const fingerprint = response.vaultFingerprint;
+    expect(fingerprint).not.toBeNull();
+    expect(fingerprint?.salt).toMatch(/^[0-9a-f]{32}$/);
+    const expected = createHash("sha256")
+      .update(`${fingerprint?.salt}:${root}`)
+      .digest("hex")
+      .slice(0, 16);
+    expect(fingerprint?.digest).toBe(expected);
+
+    const wire = JSON.stringify(response);
+    expect(wire).not.toContain(root);
+    expect(response.paths.vault?.startsWith("~/") || response.paths.vault?.startsWith("…/")).toBe(
+      true,
+    );
+    expect(response.paths.vault).not.toContain(tmpdir());
+  });
+
+  it("keeps the salt stable within one service and gives another service a different one", async () => {
+    const root = readyVault();
+    const first = build({ vault: { readRoot: () => root } });
+    const a = await first.check("reconnect");
+    vi.advanceTimersByTime(2500);
+    const b = await first.check("reconnect");
+    expect(b.vaultFingerprint).toEqual(a.vaultFingerprint);
+
+    const other = await build({ vault: { readRoot: () => root } }).check("reconnect");
+    expect(other.vaultFingerprint?.salt).not.toBe(a.vaultFingerprint?.salt);
+    expect(other.vaultFingerprint?.digest).not.toBe(a.vaultFingerprint?.digest);
+  });
+
+  it("reports a null fingerprint and a null vault path while no vault is set up", async () => {
+    const response = await build().check("reconnect");
+    expect(response.vaultFingerprint).toBeNull();
+    expect(response.paths.vault).toBeNull();
+  });
+
+  it("still fingerprints a persisted root whose folder has gone, so the plugin can tell which vault the service lost", async () => {
+    const root = join(readyVault(), "gone");
+    const response = await build({ vault: { readRoot: () => root } }).check("reconnect");
+    expect(response.rows[0]).toMatchObject({ reasonCode: "vault-root-missing" });
+    expect(response.vaultFingerprint).not.toBeNull();
+  });
+
+  it("builds the display paths from the service facts with the domain toDisplayPath", async () => {
+    const response = await build().check("reconnect");
+    expect(response.paths.runtimeDir).toBe("~/.example-runtime");
+    expect(response.paths.socket).toBe("~/.example-runtime/svc.sock");
   });
 });

@@ -1,4 +1,5 @@
-import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -7,6 +8,7 @@ import {
   HEALTH_PATH,
   type HealthResponse,
   SUBSYSTEM_IDS,
+  VAULT_SETUP_PATH,
 } from "@ccc/domain";
 import {
   createAuthenticatedClient,
@@ -14,7 +16,12 @@ import {
   getDiagnosticsHealth,
 } from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { setUpServiceEnvironment, tearDownServiceEnvironment } from "./approval-int-support.js";
+import {
+  authedRequest,
+  handshake,
+  setUpServiceEnvironment,
+  tearDownServiceEnvironment,
+} from "./approval-int-support.js";
 import { startServiceForTest, type TestServiceHandle } from "./service-harness.js";
 import { withTempSocketDir } from "./socket-fixture.js";
 
@@ -126,6 +133,76 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
         path: `${DIAGNOSTICS_HEALTH_PATH}?trigger=bogus`,
       });
       expect(odd.status).toBe(200);
+    });
+  });
+});
+
+describe("Test 6 (real process): the vault row after a throwaway vault is set up", () => {
+  const extraDirs: string[] = [];
+  afterEach(() => {
+    for (const dir of extraDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reads vault-ready with a display path and a salted fingerprint, and never the root", async () => {
+    await withService(async ({ socketPath }) => {
+      const base = join(homedir(), ".ccc-test");
+      mkdirSync(base, { recursive: true });
+      const vaultRoot = mkdtempSync(join(base, "dv-"));
+      extraDirs.push(vaultRoot);
+      mkdirSync(join(vaultRoot, ".obsidian"), { recursive: true });
+
+      const token = await handshake(socketPath);
+      const setup = await authedRequest<unknown>(socketPath, token, {
+        method: "POST",
+        path: VAULT_SETUP_PATH,
+        body: { vaultRoot },
+      });
+      expect(setup.status).toBe(200);
+
+      const client = createAuthenticatedClient({ socketPath });
+      const health = await getDiagnosticsHealth(client, "gesture");
+      expect(health.rows[0]).toMatchObject({
+        id: "vault",
+        status: "ok",
+        reasonCode: "vault-ready",
+      });
+      expect(health.paths.vault?.startsWith("~/")).toBe(true);
+      expect(health.paths.vault).toBe(`~/.ccc-test/${vaultRoot.split("/").at(-1)}`);
+
+      const fingerprint = health.vaultFingerprint;
+      expect(fingerprint).not.toBeNull();
+      const digest = createHash("sha256")
+        .update(`${fingerprint?.salt}:${vaultRoot}`)
+        .digest("hex")
+        .slice(0, 16);
+      expect(fingerprint?.digest).toBe(digest);
+
+      const raw = await client.request<unknown>({ method: "GET", path: DIAGNOSTICS_HEALTH_PATH });
+      expect(JSON.stringify(raw.body)).not.toContain(vaultRoot);
+    });
+  });
+
+  it("reads vault-root-missing once the root is removed", async () => {
+    await withService(async ({ socketPath }) => {
+      const base = join(homedir(), ".ccc-test");
+      mkdirSync(base, { recursive: true });
+      const vaultRoot = mkdtempSync(join(base, "dv-"));
+      extraDirs.push(vaultRoot);
+      mkdirSync(join(vaultRoot, ".obsidian"), { recursive: true });
+      const token = await handshake(socketPath);
+      await authedRequest<unknown>(socketPath, token, {
+        method: "POST",
+        path: VAULT_SETUP_PATH,
+        body: { vaultRoot },
+      });
+      rmSync(vaultRoot, { recursive: true, force: true });
+
+      const health = await getDiagnosticsHealth(
+        createAuthenticatedClient({ socketPath }),
+        "gesture",
+      );
+      expect(health.rows[0]).toMatchObject({ status: "failing", reasonCode: "vault-root-missing" });
+      expect(health.vaultFingerprint).not.toBeNull();
     });
   });
 });

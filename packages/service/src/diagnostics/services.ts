@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   type DiagnosticsHealthResponse,
   DiagnosticsHealthResponseSchema,
@@ -15,6 +16,7 @@ import {
   runProbes,
   type SubsystemRowId,
 } from "./run-probes.js";
+import { probeVault, type VaultProbePorts, vaultFingerprint } from "./vault-probe.js";
 
 /**
  * The diagnostics services behind `GET /api/v1/diagnostics/health` (plan 08-07; D-02, D-04, D-05).
@@ -44,8 +46,12 @@ export interface DiagnosticsServiceFacts {
 }
 
 export interface DiagnosticsPorts {
-  /** The persisted vault root, read fresh each time; null when no vault has been set up. */
-  readonly vault: { readonly readRoot: () => string | null };
+  /**
+   * The persisted vault root, read fresh on each check (null when no vault has been set up), plus
+   * the probe's optional file-system, forbidden-root and plan ports for tests. `salt` fixes the
+   * fingerprint salt; by default one is drawn at random once per service.
+   */
+  readonly vault: VaultProbePorts & { readonly salt?: string | undefined };
   readonly hooks?: Probe | undefined;
   readonly collectors?: Probe | undefined;
   readonly scheduler?: Probe | undefined;
@@ -78,19 +84,9 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
   const log = ports.log ?? logProbe;
   const cache = createHealthCache({ nowMs: () => ports.now().getTime() });
 
-  // Task 1 vault probe: the real probe replaces this in Task 3.
-  const probeVaultInline: Probe = () => {
-    const root = ports.vault.readRoot();
-    if (root === null) {
-      return Promise.resolve({
-        id: "vault",
-        status: "setup-needed",
-        reasonCode: "vault-not-set-up",
-        setupAction: { kind: "run-plugin-command", command: "vault-setup" },
-      } as ProbeOutcome);
-    }
-    return Promise.resolve(notWired("vault"));
-  };
+  // One salt per service process (D-36): a fingerprint observed in one process says nothing
+  // about another, and the salt never leaves the machine except inside the response.
+  const salt = ports.vault.salt ?? randomBytes(16).toString("hex");
 
   const wired = (id: SubsystemRowId, probe: Probe | undefined): NamedProbe => ({
     id,
@@ -98,9 +94,22 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
   });
 
   const compute = async (trigger: HealthTrigger): Promise<DiagnosticsHealthResponse> => {
+    // The persisted root is read once per check so the vault row, the display path and the
+    // fingerprint always describe the same value.
+    const root = ports.vault.readRoot();
     const rows = await runProbes(
       [
-        wired("vault", probeVaultInline),
+        wired("vault", (signal) =>
+          probeVault(
+            {
+              readRoot: () => root,
+              fs: ports.vault.fs,
+              isForbiddenRoot: ports.vault.isForbiddenRoot,
+              plan: ports.vault.plan,
+            },
+            signal,
+          ),
+        ),
         wired("hooks", ports.hooks),
         wired("collectors", ports.collectors),
         wired("scheduler", ports.scheduler),
@@ -109,7 +118,6 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
       trigger,
       { now: ports.now, log },
     );
-    const root = ports.vault.readRoot();
     const display = (path: string): string =>
       toDisplayPath(path, serviceFacts.homeDir) ?? "…/unknown";
     // The strict parse is the last guard: a response that does not parse is an internal error
@@ -128,7 +136,7 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
         runtimeDir: display(serviceFacts.runtimeDir),
         socket: display(serviceFacts.socketPath),
       },
-      vaultFingerprint: null,
+      vaultFingerprint: root === null ? null : vaultFingerprint(salt, root),
       counts: { projects: null, scanFolders: null, openTasks: null, reports: null },
     });
   };
