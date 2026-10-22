@@ -95,11 +95,36 @@ export interface DetectorDeps {
   readonly codex?: CodexDetection;
 }
 
+/** What {@link Detector.probeBundle} concluded about one saved bundle ID. */
+export type BundleProbeResult = "found" | "not-found" | "indeterminate";
+
+export interface BundleProbeOptions {
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+}
+
 export interface Detector {
   /** Everything installed that a launcher could use. Proposes only; stores nothing. */
   detect(): Promise<DetectionResponse>;
   /** Whether an app with exactly this bundle ID is installed (the save-time check). */
   findBundle(bundleId: string): Promise<boolean>;
+  /**
+   * A bounded, read-only existence check of one saved bundle ID for the health
+   * probe (plan 08-04, D-49, T-08-07, T-08-08). It differs from
+   * {@link Detector.findBundle} on purpose: exactly one `mdfind` (capped at
+   * {@link PROBE_MDFIND_TIMEOUT_MS}) and at most one `plutil` on the first
+   * returned `.app` (capped at {@link PROBE_PLUTIL_TIMEOUT_MS}), both clamped to
+   * `options.timeoutMs` and killed by `options.signal`; **no fallback folder
+   * scan**, no launch, no write, and nothing the children print is logged or
+   * returned.
+   *
+   * `not-found` only when Spotlight answered cleanly with no hit. `found` only
+   * when the first hit's own `Info.plist` names exactly this bundle. Everything
+   * else (a timeout, an abort, a failed or oversized answer, a hit that is not
+   * an absolute `.app` path, an unreadable or different plist, a hostile id)
+   * is `indeterminate`: a probe never invents an absence from a stale index.
+   */
+  probeBundle(bundleId: string, options?: BundleProbeOptions): Promise<BundleProbeResult>;
   /**
    * The absolute path of a claude candidate: the one the last detection
    * found or, when this service run has not detected it (a restart since the
@@ -122,6 +147,10 @@ const PLUTIL = "/usr/bin/plutil";
 const RUN_ENV: Readonly<Record<string, string>> = { PATH: "/usr/bin:/bin", LC_ALL: "C" };
 const MDFIND_TIMEOUT_MS = 5000;
 const PLUTIL_TIMEOUT_MS = 2000;
+/** The health probe's own caps (D-05: the whole probe fits in the 2 s per-probe cap). */
+export const PROBE_MDFIND_TIMEOUT_MS = 1500;
+export const PROBE_PLUTIL_TIMEOUT_MS = 500;
+const PROBE_BUDGET_MS = PROBE_MDFIND_TIMEOUT_MS + PROBE_PLUTIL_TIMEOUT_MS;
 /** The domain caps each detection group at this many apps. */
 const MAX_APPS_PER_GROUP = 32;
 const MAX_NAME_LENGTH = 255;
@@ -146,6 +175,21 @@ function isAppPath(line: string): boolean {
 
 function underDir(path: string, dir: string): boolean {
   return path.startsWith(`${dir}/`);
+}
+
+/** The cap and abort signal one probe spawn runs under. */
+interface SpawnCaps {
+  readonly timeoutMs: number;
+  readonly signal?: AbortSignal | undefined;
+}
+
+/** Fixed environment, the spawn's own cap (or the default) and the caller's signal, if any. */
+function runOptions(defaultTimeoutMs: number, caps: SpawnCaps | undefined) {
+  return {
+    timeoutMs: caps?.timeoutMs ?? defaultTimeoutMs,
+    env: RUN_ENV,
+    ...(caps?.signal === undefined ? {} : { signal: caps.signal }),
+  };
 }
 
 export function createDetector(deps: DetectorDeps): Detector {
@@ -174,33 +218,54 @@ export function createDetector(deps: DetectorDeps): Detector {
   };
 
   /** One `Info.plist` key, or `null` when plutil fails or the value is unusable. */
-  const readPlistKey = async (app: string, key: string): Promise<string | null> => {
+  const readPlistKey = async (
+    app: string,
+    key: string,
+    caps?: SpawnCaps,
+  ): Promise<string | null> => {
     const outcome = await deps.runner.run(
       PLUTIL,
       ["-extract", key, "raw", "-o", "-", `${app}/Contents/Info.plist`],
-      { timeoutMs: PLUTIL_TIMEOUT_MS, env: RUN_ENV },
+      runOptions(PLUTIL_TIMEOUT_MS, caps),
     );
     if (outcome.exitCode !== 0) return null;
     const value = outcome.stdout.trim();
     return value.length === 0 || hasControlCharacter(value) ? null : value;
   };
 
-  const readBundleId = async (app: string): Promise<string | null> => {
-    const value = await readPlistKey(app, "CFBundleIdentifier");
+  const readBundleId = async (app: string, caps?: SpawnCaps): Promise<string | null> => {
+    const value = await readPlistKey(app, "CFBundleIdentifier", caps);
     return value !== null && BundleIdSchema.safeParse(value).success ? value : null;
+  };
+
+  /**
+   * Spotlight's raw answer for one query (non-blank lines, unfiltered), or
+   * `null` when it failed. `noted` is true when stderr carried anything: the
+   * text is never kept, only the fact that Spotlight said something.
+   */
+  const spotlightAnswer = async (
+    query: string,
+    caps?: SpawnCaps,
+  ): Promise<{ lines: string[]; noted: boolean } | null> => {
+    const outcome = await deps.runner.run(
+      MDFIND,
+      [`kMDItemCFBundleIdentifier == '${query}'`],
+      runOptions(MDFIND_TIMEOUT_MS, caps),
+    );
+    if (outcome.exitCode !== 0 || outcome.truncated) return null;
+    return {
+      lines: outcome.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0),
+      noted: outcome.stderr.trim().length > 0,
+    };
   };
 
   /** Spotlight's answer for one query, or `null` when it failed. */
   const spotlight = async (query: string): Promise<string[] | null> => {
-    const outcome = await deps.runner.run(MDFIND, [`kMDItemCFBundleIdentifier == '${query}'`], {
-      timeoutMs: MDFIND_TIMEOUT_MS,
-      env: RUN_ENV,
-    });
-    if (outcome.exitCode !== 0 || outcome.truncated) return null;
-    return outcome.stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(isAppPath);
+    const answer = await spotlightAnswer(query);
+    return answer === null ? null : answer.lines.filter(isAppPath);
   };
 
   /**
@@ -334,6 +399,47 @@ export function createDetector(deps: DetectorDeps): Detector {
       // An exact ID only: a saved launcher names one bundle, never a prefix.
       if (!BundleIdSchema.safeParse(bundleId).success) return false;
       return (await lookup(bundleId, scanOnce())).length > 0;
+    },
+    async probeBundle(bundleId, options = {}) {
+      // The id is checked before anything is spawned; an exact id only, never a prefix query.
+      if (
+        !BundleIdSchema.safeParse(bundleId).success ||
+        !DETECTION_QUERY_PATTERN.test(bundleId) ||
+        bundleId.endsWith("*")
+      ) {
+        return "indeterminate";
+      }
+      const signal = options.signal;
+      // A function, not a flag: the signal can fire between the awaits below.
+      const aborted = (): boolean => signal?.aborted === true;
+      const budgetMs = Math.min(options.timeoutMs ?? PROBE_BUDGET_MS, PROBE_BUDGET_MS);
+      if (aborted() || !Number.isFinite(budgetMs) || budgetMs < 1) {
+        return "indeterminate";
+      }
+      const startedAt = Date.now();
+
+      const answer = await spotlightAnswer(bundleId, {
+        timeoutMs: Math.floor(Math.min(PROBE_MDFIND_TIMEOUT_MS, budgetMs)),
+        signal,
+      });
+      if (answer === null || aborted()) return "indeterminate";
+      if (answer.lines.length === 0) {
+        // A clean empty answer is an absence; an empty answer that came with a
+        // diagnostic (Spotlight off or disabled) is not.
+        return answer.noted ? "indeterminate" : "not-found";
+      }
+      const first = answer.lines.find(isAppPath);
+      if (first === undefined) return "indeterminate";
+
+      const remainingMs = Math.floor(budgetMs - (Date.now() - startedAt));
+      if (remainingMs < 1) return "indeterminate";
+      const found = await readBundleId(first, {
+        timeoutMs: Math.min(PROBE_PLUTIL_TIMEOUT_MS, remainingMs),
+        signal,
+      });
+      // No fallback: a plist that cannot be read, or names another bundle, is a
+      // stale or odd index entry, not proof of absence.
+      return found === bundleId && !aborted() ? "found" : "indeterminate";
     },
     candidatePath(candidateId) {
       return (
