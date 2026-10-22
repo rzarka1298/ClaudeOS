@@ -1,5 +1,6 @@
 import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
+import { useActionGate } from "./settings-pending.js";
 
 /**
  * The controls the Settings sections share (plan 08-11 Task 3; 08-UI-SPEC S2 Controls,
@@ -66,6 +67,12 @@ export interface SettingSwitchProps {
   /** True when the setting cannot be changed now (the service is away): `aria-disabled`, inert. */
   readonly unavailable?: boolean | undefined;
   /**
+   * Names the setting so a pending save outlives the section: switching away and back finds the
+   * switch still busy (and refusing a second press) instead of idle (FIX2B m4). Unique per
+   * setting; absent, the pending state is local to this component.
+   */
+  readonly pendingKey?: string | undefined;
+  /**
    * Applies the change. `saved` keeps the new value, `reverted` (or a rejection) puts the
    * previous one back; the caller reports the outcome to the status line.
    */
@@ -84,23 +91,28 @@ export function SettingSwitch({
   labelledBy,
   describedBy,
   unavailable = false,
+  pendingKey,
   onChange,
 }: SettingSwitchProps): VNode {
   const [shown, setShown] = useState(checked);
-  const [pending, setPending] = useState(false);
-  // The rendered `pending` only reaches the handler on the next render; the ref is read at once,
-  // so a second activation in the same tick is refused too.
+  // A save that was already running when this switch mounted (the owner switched sections and
+  // came back) settles without this instance's help: take the committed value then.
+  const latest = useRef(checked);
+  latest.current = checked;
+  const gate = useActionGate(pendingKey, () => setShown(latest.current));
+  const pending = gate.busy;
+  // The gate is claimed synchronously, so a second activation in the same tick is refused too.
   const pendingRef = useRef(false);
+  pendingRef.current = pending;
 
   useEffect(() => {
     if (!pendingRef.current) setShown(checked);
   }, [checked]);
 
   async function activate(): Promise<void> {
-    if (pendingRef.current || unavailable) return;
+    if (unavailable || !gate.begin()) return;
     const previous = shown;
     pendingRef.current = true;
-    setPending(true);
     setShown(!previous);
     let outcome: SettingChangeOutcome;
     try {
@@ -109,7 +121,7 @@ export function SettingSwitch({
       outcome = "reverted";
     }
     pendingRef.current = false;
-    setPending(false);
+    gate.end();
     if (outcome === "reverted") setShown(previous);
   }
 
@@ -136,6 +148,8 @@ export interface SettingSelectProps {
   readonly options: Readonly<Record<string, string>>;
   readonly labelledBy: string;
   readonly describedBy?: string | undefined;
+  /** See {@link SettingSwitchProps.pendingKey}. */
+  readonly pendingKey?: string | undefined;
   readonly onChange: (value: string) => Promise<SettingChangeOutcome>;
 }
 
@@ -149,11 +163,16 @@ export function SettingSelect({
   options,
   labelledBy,
   describedBy,
+  pendingKey,
   onChange,
 }: SettingSelectProps): VNode {
   const [shown, setShown] = useState(value);
-  const [pending, setPending] = useState(false);
+  const latest = useRef(value);
+  latest.current = value;
+  const gate = useActionGate(pendingKey, () => setShown(latest.current));
+  const pending = gate.busy;
   const pendingRef = useRef(false);
+  pendingRef.current = pending;
 
   useEffect(() => {
     if (!pendingRef.current) setShown(value);
@@ -167,8 +186,11 @@ export function SettingSelect({
     const previous = shown;
     const next = select.value;
     if (next === previous) return;
+    if (!gate.begin()) {
+      select.value = shown;
+      return;
+    }
     pendingRef.current = true;
-    setPending(true);
     setShown(next);
     let outcome: SettingChangeOutcome;
     try {
@@ -177,7 +199,7 @@ export function SettingSelect({
       outcome = "reverted";
     }
     pendingRef.current = false;
-    setPending(false);
+    gate.end();
     if (outcome === "reverted") setShown(previous);
   }
 

@@ -41,6 +41,7 @@ export function VisualSettings({ host, notify }: VisualSettingsProps): VNode {
         control={({ nameId, descriptionId }) => (
           <SettingSelect
             value={host.settings.reducedMotion}
+            pendingKey="reduced-motion"
             options={REDUCED_MOTION_OPTIONS}
             labelledBy={nameId}
             describedBy={descriptionId}
