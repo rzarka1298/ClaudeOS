@@ -89,59 +89,115 @@ afterEach(() => {
   resetProjectsState();
 });
 
-const TODAY_BASE = {
-  nextEvent: null,
-  remainingCount: 2,
-  dueTasks: [],
-  overdueTasks: [],
-  unreadSummary: null,
-  failures: [],
-};
+const TASK_ID = (n: number): string => `0mfk1a2b3${n.toString(16).padStart(16, "0")}`;
 
-describe("Today: every count names its own unavailability", () => {
-  it("an unavailable calendar count reads unavailable, not zero", () => {
-    const text = cardText("today", { ...TODAY_BASE, remainingCount: null });
+function todayTask(n: number, extra: Partial<TodayTask> = {}): TodayTask {
+  return { taskId: TASK_ID(n), title: `Task ${n}`, meta: `Due Oct ${n}`, ...extra };
+}
+
+const TODAY_BASE = { tasks: { rows: [] as TodayTask[], nextOpen: null } };
+
+/** Renders the Today card body with an `onNavigate` spy and returns the container. */
+function todayCard(data: unknown, size: "medium" | "wide" = "wide") {
+  const onNavigate = vi.fn();
+  const state: ReadonlySignal<WidgetState<unknown>> = signal(ready(data));
+  const view = render(
+    <Overview
+      layout={{ entries: [{ widgetId: "today", size }], skipped: [] }}
+      stateFor={() => state}
+      connection={{ kind: "live" }}
+      now={Date.parse(OBSERVED)}
+      onNavigate={onNavigate}
+    />,
+  );
+  return { ...view, onNavigate };
+}
+
+describe("Today: an unavailable feed is said, never shown as zero (plan 08-14)", () => {
+  it("an unavailable task feed reads `Due tasks unavailable.`, not a count and not `Nothing is due today.`", () => {
+    const text = cardText("today", { tasks: null });
     expectNoLeak(text);
-    expect(text).not.toMatch(/\b0 commitments/);
-    expect(text).toMatch(/Commitments unavailable/);
+    expect(text).toContain("Due tasks unavailable.");
+    expect(text).not.toContain("Nothing is due today.");
+    expect(text).not.toMatch(/\b0\b/);
   });
 
-  it("unavailable task lists read unavailable, not 0 tasks due", () => {
-    const text = cardText("today", { ...TODAY_BASE, dueTasks: null, overdueTasks: null });
-    expectNoLeak(text);
-    expect(text).not.toMatch(/\b0 (tasks due|overdue tasks)/);
-    expect(text).toMatch(/due tasks unavailable/);
-    expect(text).toMatch(/overdue tasks unavailable/);
-  });
-
-  it("unavailable failure status is said, not silently hidden as none", () => {
-    const text = cardText("today", { ...TODAY_BASE, failures: null });
-    expectNoLeak(text);
-    expect(text).toMatch(/Failure status unavailable/);
-  });
-
-  it("known counts still render as plural-safe numbers", () => {
-    const text = cardText("today", {
-      ...TODAY_BASE,
-      remainingCount: 1,
-      dueTasks: [{ title: "Write", dueAt: "17:00" }],
-    });
-    expect(text).toMatch(/1 commitment left · 1 task due · 0 overdue tasks/);
+  it("a feed that answered with no rows reads `Nothing is due today.`", () => {
+    const text = cardText("today", TODAY_BASE);
+    expect(text).toContain("Nothing is due today.");
+    expect(text).not.toContain("unavailable");
   });
 });
 
-describe("Today tasks carry an optional task id (plan 06-18, Test 9, D-38)", () => {
-  it("accepts a task with an id and one without, and renders both the same way", () => {
-    const withId: TodayTask = {
-      title: "Write",
-      dueAt: "17:00",
-      taskId: "0mfk1a2b30000000000000001",
-    };
-    const withoutId: TodayTask = { title: "Read", dueAt: "18:00" };
-    expect(withId.taskId).toBe("0mfk1a2b30000000000000001");
-    expect(withoutId.taskId).toBeUndefined();
-    const text = cardText("today", { ...TODAY_BASE, dueTasks: [withId, withoutId] });
-    expect(text).toMatch(/2 tasks due/);
+describe("Today: block order, rows and the always-present note (plan 08-14, UI-SPEC S6)", () => {
+  it("renders the Due today heading, then rows with their meta, then the not-in-version note", () => {
+    const { container } = todayCard({
+      tasks: {
+        rows: [todayTask(1, { meta: "Overdue since Oct 18" }), todayTask(2)],
+        nextOpen: null,
+      },
+    });
+    const body = container.querySelector(".ccc-card-body");
+    const headings = [...(body?.querySelectorAll(".ccc-today-section") ?? [])].map(
+      (h) => h.textContent,
+    );
+    expect(headings).toEqual(["Due today"]);
+    expect([...container.querySelectorAll(".ccc-list-meta")].map((m) => m.textContent)).toEqual([
+      "Overdue since Oct 18",
+      "Due Oct 2",
+    ]);
+    const note = container.querySelector(".ccc-today-note");
+    expect(note?.textContent).toContain("Google Calendar and Gmail: not part of this version.");
+    expect(note?.querySelector("[aria-hidden='true']")?.textContent).toBe("∅");
+  });
+
+  it("a row is a button named `Open task: {title}, {meta}` that opens the task", () => {
+    const { getByRole, onNavigate } = todayCard({
+      tasks: { rows: [todayTask(3)], nextOpen: null },
+    });
+    fireEvent.click(getByRole("button", { name: "Open task: Task 3, Due Oct 3" }));
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("tasks", { taskId: TASK_ID(3) });
+  });
+
+  it("one row has no count chrome", () => {
+    const { container } = todayCard({ tasks: { rows: [todayTask(1)], nextOpen: null } });
+    expect(container.querySelector(".ccc-list-more")).toBeNull();
+    expect(container.querySelectorAll(".ccc-list-row")).toHaveLength(1);
+    expect(container.querySelector(".ccc-card-body")?.textContent).not.toMatch(/\b1 (task|row)/);
+  });
+
+  it("caps the rows by size and offers `Show more in the tasks view`, which opens the tasks destination", () => {
+    const rows = Array.from({ length: 9 }, (_, index) => todayTask(index + 1));
+    const { container, getByRole, onNavigate } = todayCard({ tasks: { rows, nextOpen: null } });
+    expect(container.querySelectorAll(".ccc-list-row")).toHaveLength(6);
+    fireEvent.click(getByRole("button", { name: "Show more in the tasks view" }));
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("tasks");
+  });
+
+  it("clamps a long title to two lines with the full text in `title`, as a text node", () => {
+    const hostile = `<img src=x onerror=alert(1)> ${"long ".repeat(40)}`;
+    const { container } = todayCard({
+      tasks: { rows: [todayTask(1, { title: hostile })], nextOpen: null },
+    });
+    const primary = container.querySelector("button.ccc-list-primary");
+    expect(primary?.classList.contains("ccc-clamp-2")).toBe(true);
+    expect(primary?.getAttribute("title")).toBe(hostile);
+    expect(primary?.querySelector("img")).toBeNull();
+    expect(primary?.textContent).toBe(hostile);
+  });
+
+  it("never prints the calendar-empty, commitments or scheduled-or-due phrases", () => {
+    for (const data of [
+      { tasks: null },
+      TODAY_BASE,
+      { tasks: { rows: [todayTask(1)], nextOpen: null } },
+    ]) {
+      const text = cardText("today", data);
+      expect(text).not.toContain("Nothing else on the calendar today.");
+      expect(text).not.toContain("commitments unavailable");
+      expect(text).not.toContain("Nothing is scheduled or due today.");
+      cleanup();
+    }
   });
 });
 

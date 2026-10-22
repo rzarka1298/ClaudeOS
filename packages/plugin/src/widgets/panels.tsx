@@ -1,7 +1,14 @@
-import type { GithubTarget, LaunchersSummary, ProjectGitState, ProjectId } from "@ccc/domain";
+import type {
+  GithubTarget,
+  LaunchersSummary,
+  ProjectGitState,
+  ProjectId,
+  SizeHint,
+} from "@ccc/domain";
 import type { VNode } from "preact";
 import { useContext } from "preact/hooks";
 import { launchStatus, launchStatusKey } from "../projects/launch-status.js";
+import { UntrustedText } from "../view/approval-text.js";
 import type { DestinationId } from "../view/destinations.js";
 import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
@@ -67,89 +74,126 @@ function count(
   return `${grouped(n)} ${n === 1 ? singular : plural}`;
 }
 
-/** Sentence case for a line assembled from mid-sentence pieces. */
-function upperFirst(line: string): string {
-  return line.charAt(0).toUpperCase() + line.slice(1);
-}
-
 // ---------------------------------------------------------------------------
-// 1. Today (PRD §7.1.1) — permission-required behind `google`
+// 1. Today (PRD §7.1.1) — service-fed, always partial (plan 08-14, D-20)
 // ---------------------------------------------------------------------------
 
-export interface TodayEvent {
-  readonly title: string;
-  readonly startsAt: string;
-}
-
+/**
+ * One task row on the Today card. `meta` is the finished meta line
+ * (`Due 5:00 PM`, `Overdue since Oct 18`, `Next due Oct 22`), built by
+ * `overview/overview-feeds.ts` from the service's dates and the owner's zone,
+ * so this body formats nothing and cannot disagree with the feed.
+ */
 export interface TodayTask {
+  /** The task's note id, so the card can open the task in Tasks (plan 06-18, D-38). */
+  readonly taskId: string;
+  /** The task's title: owner- or agent-authored vault text, rendered as text only. */
   readonly title: string;
-  readonly dueAt: string;
-  /** The task's note id, so a Today card can open the task (plan 06-18, D-38). Absent for a source with no ids. */
-  readonly taskId?: string | undefined;
+  readonly meta: string;
 }
 
 /**
- * Four independent sources (see `dataKeys`), any of which can be unreachable
- * while the others answer. A `null` list or count is "that source did not
- * say", rendered as unavailable — never an empty list that would read as
- * `0 tasks due` or as no failures.
+ * The managed-task feed's answer. `rows` is the overdue rows first and then
+ * the rows due today. `nextOpen` is set only when `rows` is empty and the
+ * service named a next open task; an older service that names none leaves it
+ * `null`, which never reads as "no open task" (the empty rule lives in the
+ * state mapping, not here).
+ */
+export interface TodayTasks {
+  readonly rows: readonly TodayTask[];
+  readonly nextOpen: TodayTask | null;
+}
+
+/**
+ * `tasks` is `null` when the due-today feed has no answer: the body says
+ * `Due tasks unavailable.` and never an empty list that would read as nothing
+ * due. Calendar and Gmail are not part of this version and are not data here;
+ * the body names them as such.
  */
 export interface TodayData {
-  readonly nextEvent: TodayEvent | null;
-  readonly remainingCount: MaybeCount;
-  readonly dueTasks: readonly TodayTask[] | null;
-  readonly overdueTasks: readonly TodayTask[] | null;
-  readonly unreadSummary: string | null;
-  readonly failures: readonly string[] | null;
+  readonly tasks: TodayTasks | null;
+}
+
+/** The Today card's heading for a section of the body (UI-SPEC S6 block order). */
+function TodayHeading({
+  children,
+  focal,
+}: {
+  readonly children: string;
+  readonly focal?: boolean;
+}): VNode {
+  return (
+    <h4 className="ccc-today-section" data-focal={focal === true ? "true" : undefined}>
+      {children}
+    </h4>
+  );
+}
+
+function TodayRows({
+  rows,
+  size,
+  onNavigate,
+}: {
+  readonly rows: readonly TodayTask[];
+  readonly size: SizeHint;
+  readonly onNavigate: WidgetBodyProps<TodayData>["onNavigate"];
+}): VNode | null {
+  return (
+    <ListBody<TodayTask>
+      rows={rows}
+      size={size}
+      keyOf={(task) => task.taskId}
+      renderPrimary={(task) => task.title}
+      renderPrimaryContent={(task) => <UntrustedText text={task.title} />}
+      renderMeta={(task) => task.meta}
+      renderSelectLabel={(task) => `Open task: ${task.title}, ${task.meta}`}
+      onSelectRow={(task) => onNavigate?.("tasks", { taskId: task.taskId })}
+      moreDestination="tasks"
+      moreLabel="Show more in the tasks view"
+      onMore={onNavigate}
+    />
+  );
 }
 
 function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNode {
+  const tasks = data.tasks;
+  // The next open task shows only when nothing is due or overdue (D-21, UI-SPEC R-13).
+  const nextOpen = tasks !== null && tasks.rows.length === 0 ? tasks.nextOpen : null;
   return (
     <>
-      <p className="ccc-state-body ccc-clamp-2">
-        {data.nextEvent === null ? "Nothing else on the calendar today." : data.nextEvent.title}
-      </p>
-      <p className="ccc-state-body">
-        {upperFirst(
-          [
-            count(
-              data.remainingCount,
-              "commitment left",
-              "commitments left",
-              "commitments unavailable",
-            ),
-            count(data.dueTasks?.length ?? null, "task due", "tasks due", "due tasks unavailable"),
-            count(data.overdueTasks?.length ?? null, "overdue task", "overdue tasks"),
-          ].join(" · "),
-        )}
-      </p>
-      <ListBody<TodayTask>
-        rows={[...(data.overdueTasks ?? []), ...(data.dueTasks ?? [])]}
-        size={size}
-        keyOf={(task) => `${task.dueAt}-${task.title}`}
-        renderPrimary={(task) => task.title}
-        renderMeta={(task) => `Due ${task.dueAt}`}
-        moreDestination="tasks"
-        onMore={onNavigate}
-      />
-      {data.unreadSummary === null ? null : (
-        <p className="ccc-state-body ccc-clamp-2">{data.unreadSummary}</p>
+      <TodayHeading focal={nextOpen === null}>Due today</TodayHeading>
+      {tasks === null ? (
+        <p className="ccc-state-body">Due tasks unavailable.</p>
+      ) : tasks.rows.length === 0 ? (
+        <p className="ccc-state-body">Nothing is due today.</p>
+      ) : (
+        <TodayRows rows={tasks.rows} size={size} onNavigate={onNavigate} />
       )}
-      {data.failures === null ? (
-        <p className="ccc-state-body">Failure status unavailable</p>
-      ) : data.failures.length === 0 ? null : (
-        <p className="ccc-state-body">
-          {count(data.failures.length, "failure needs attention", "failures need attention")}
-        </p>
+      {nextOpen === null ? null : (
+        <>
+          <TodayHeading focal>Next open task</TodayHeading>
+          <TodayRows rows={[nextOpen]} size={size} onNavigate={onNavigate} />
+        </>
       )}
+      <TodayNote />
     </>
+  );
+}
+
+/** The unavailable-sources note: always present, never a zero (D-20, D-48, UI-SPEC R-12). */
+function TodayNote(): VNode {
+  return (
+    <p className="ccc-today-note">
+      <span aria-hidden="true">∅</span> Google Calendar and Gmail: not part of this version.
+    </p>
   );
 }
 
 export const todayWidget: WidgetDefinition<TodayData> = {
   id: "today",
   title: "Today",
-  description: "Calendar, tasks, mail and failures for today. Filled in by phases 6 and 7.",
+  description:
+    "Tasks due today and automation failures. Calendar and Gmail aren't part of this version.",
   dataKeys: [
     { key: "calendar.today", transport: "service", sourceLabel: "Google Calendar" },
     { key: "mail.important-unread", transport: "service", sourceLabel: "Gmail" },
@@ -162,7 +206,14 @@ export const todayWidget: WidgetDefinition<TodayData> = {
   featureFlag: "widget.today",
   quickActions: [],
   renderBody: TodayBody,
-  renderEmpty: () => <p className="ccc-state-body">Nothing is scheduled or due today.</p>,
+  ownsEmptyCopy: true,
+  renderEmpty: () => (
+    <>
+      <p className="ccc-state-heading">Nothing here yet</p>
+      <p className="ccc-state-body">No open tasks and no automation failures.</p>
+      <TodayNote />
+    </>
+  ),
 };
 
 // ---------------------------------------------------------------------------

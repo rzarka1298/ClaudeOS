@@ -1,3 +1,4 @@
+import type { TaskDueTodayResponse } from "@ccc/domain/tasks.js";
 import { createSocketApiClient } from "@ccc/service-api-client";
 import { type ReadonlySignal, type Signal, signal } from "@preact/signals";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
@@ -5,6 +6,10 @@ import { options } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
+import { configureOverviewZone, resetOverviewFeeds } from "../overview/overview-feeds.js";
+import { configureTasksApi, type TasksApi } from "../tasks/api.js";
+import { fakeTasksApi } from "../test-support/tasks-api-fake.js";
+import { nowTick } from "../widgets/clock.js";
 import type { WidgetState } from "../widgets/contract.js";
 import { ENABLED_FLAGS } from "../widgets/feature-flags.js";
 import { WidgetFrame } from "../widgets/frame.js";
@@ -231,14 +236,7 @@ function syntheticSession(i: number): unknown {
 /** Minimal, synthetic body data per widget — shaped to each body's data type. */
 const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
   "service-health": { connection: "live" },
-  today: {
-    nextEvent: null,
-    remainingCount: 0,
-    dueTasks: [],
-    overdueTasks: [],
-    unreadSummary: null,
-    failures: [],
-  },
+  today: { tasks: { rows: [], nextOpen: null } },
   "active-sessions": {
     sessions: [syntheticSession(1)],
     nowMs: Date.parse("2026-09-25T11:58:00Z"),
@@ -455,7 +453,9 @@ describe("quick actions reach the one dispatcher through the shell (C-11)", () =
     const notify = vi.fn();
     render(<Shell notify={notify} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect Google Calendar and Gmail" }));
+    // Plan 08-14: Today no longer carries a Connect button (Calendar and Gmail are
+    // not part of this version); GitHub discoveries is the remaining capability gate.
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
 
     expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe(
       "true",
@@ -579,5 +579,119 @@ describe("the layout decides each list body's row budget (review MAJOR 2)", () =
   it("grants a medium-preferring list the tall budget when the layout places it tall", () => {
     const { container } = renderPlaced([{ widgetId: "project-shortcuts", size: "tall" }]);
     expect(rowsAndMore(container, "Project shortcuts")).toEqual([10, "+2 more"]);
+  });
+});
+
+describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today card with live freshness", () => {
+  const TODAY_NOW = Date.parse("2026-10-22T18:00:00Z");
+  const TASK_ID = "0mfk1a2b30000000000000001";
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(TODAY_NOW);
+    nowTick.value = TODAY_NOW;
+    configureOverviewZone("America/Chicago");
+    resetOverviewFeeds();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    configureTasksApi(null);
+    configureOverviewZone(null);
+    resetOverviewFeeds();
+  });
+
+  function configureDue(response: TaskDueTodayResponse): ReturnType<typeof fakeTasksApi> {
+    const fake = fakeTasksApi([], { dueToday: vi.fn(() => Promise.resolve(response)) });
+    configureTasksApi(fake as unknown as TasksApi);
+    return fake;
+  }
+
+  function renderToday(onNavigate?: (...args: unknown[]) => void) {
+    return render(
+      <Overview
+        layout={{ entries: [{ widgetId: "today", size: "wide" }], skipped: [] }}
+        stateFor={widgetStateFor}
+        connection={{ kind: "live" }}
+        now={TODAY_NOW}
+        onNavigate={onNavigate}
+      />,
+    );
+  }
+
+  const DUE_RESPONSE: TaskDueTodayResponse = {
+    due: [{ taskId: TASK_ID, title: "Review release notes", dueAt: "2026-10-22T22:00:00Z" }],
+    overdue: [],
+  };
+
+  it("Test 1: mounting fetches once and renders the due task as a button with live freshness and the Partial badge", async () => {
+    connectionState.value = { kind: "live" };
+    const fake = configureDue(DUE_RESPONSE);
+    const { container } = renderToday();
+
+    const row = await screen.findByRole("button", {
+      name: "Open task: Review release notes, Due 5:00 PM",
+    });
+    expect(row).toBeTruthy();
+    expect(fake.dueToday).toHaveBeenCalledTimes(1);
+
+    const card = container.querySelector("section.ccc-card");
+    expect(card?.getAttribute("data-presentation")).toBe("ready");
+    expect(card?.querySelector(".ccc-today-section")?.textContent).toBe("Due today");
+    expect(card?.querySelector('.ccc-badge[data-badge="live"] .ccc-badge-label')?.textContent).toBe(
+      "Live",
+    );
+    expect(
+      card?.querySelector('.ccc-badge[data-badge="partial"] .ccc-badge-label')?.textContent,
+    ).toBe("Partial");
+  });
+
+  it("Test 3: activating the row emits NavigationSelection { taskId } for the tasks destination", async () => {
+    connectionState.value = { kind: "live" };
+    configureDue(DUE_RESPONSE);
+    const onNavigate = vi.fn();
+    renderToday(onNavigate);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Open task: Review release notes/ }),
+    );
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("tasks", { taskId: TASK_ID });
+  });
+
+  it("Test 4: with the tasks API unconfigured the card never reports ready", async () => {
+    connectionState.value = { kind: "live" };
+    const { container } = renderToday();
+    await vi.waitFor(() => {
+      expect(container.querySelector("section.ccc-card")?.getAttribute("data-presentation")).toBe(
+        "error",
+      );
+    });
+    expect(container.querySelector('section.ccc-card[data-presentation="ready"]')).toBeNull();
+  });
+
+  it("does not fetch while the connection is not live, and fetches when it becomes live", async () => {
+    connectionState.value = { kind: "connecting" };
+    const fake = configureDue(DUE_RESPONSE);
+    renderToday();
+    expect(fake.dueToday).not.toHaveBeenCalled();
+
+    act(() => {
+      connectionState.value = { kind: "live" };
+    });
+    expect(fake.dueToday).toHaveBeenCalledTimes(1);
+    await screen.findByRole("button", { name: /^Open task: Review release notes/ });
+  });
+
+  it("stops refreshing when the Overview unmounts", () => {
+    connectionState.value = { kind: "live" };
+    const fake = configureDue(DUE_RESPONSE);
+    const { unmount } = renderToday();
+    expect(fake.dueToday).toHaveBeenCalledTimes(1);
+    unmount();
+    act(() => {
+      connectionState.value = { kind: "disconnected", reason: "x" };
+      connectionState.value = { kind: "live" };
+    });
+    expect(fake.dueToday).toHaveBeenCalledTimes(1);
   });
 });

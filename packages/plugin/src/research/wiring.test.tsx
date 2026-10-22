@@ -243,12 +243,15 @@ describe("Test 2 (lifecycle): load, unload and reload leave one handler and no l
 });
 
 describe("Test 3 (Overview untouched): no research state reaches the Overview", () => {
-  it("the Today widget stays permission-required and tech-intel stays unavailable, wired or not", () => {
+  // Plan 08-14: Today is service-fed from the Overview feeds, not from the
+  // research wiring; it is `loading` before anything is fetched. Wiring the
+  // research code changes neither it nor the still-constant tech-intel.
+  it("the Today widget stays loading and tech-intel stays unavailable, wired or not", () => {
     const before = [widgetStateFor("today").value, widgetStateFor("tech-intel").value];
     const { registry } = setup();
     const after = [widgetStateFor("today").value, widgetStateFor("tech-intel").value];
     expect(after).toEqual(before);
-    expect(after[0]).toMatchObject({ kind: "permission-required" });
+    expect(after[0]).toEqual({ kind: "loading" });
     expect(after[1]).toEqual({ kind: "unavailable" });
     registry.disposeAll();
   });

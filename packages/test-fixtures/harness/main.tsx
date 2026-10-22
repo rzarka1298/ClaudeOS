@@ -202,26 +202,29 @@ function adaptServiceHealth(data: Fields): ServiceHealthData {
       };
 }
 
+/**
+ * `TodayData` (plan 08-14) is the managed-task feed's answer: rows already
+ * carrying their finished meta line. The prototype fixture's `dueTasks` are the
+ * only part of it with a counterpart; its calendar, unread and KPI members are
+ * not data on the live card any more (Calendar and Gmail are not part of this
+ * version), so they are ignored here. The ids and times below are harness-only
+ * and never reach a plugin build.
+ */
 function adaptToday(data: Fields): TodayData {
-  const nextEvent = data.nextEvent as Fields | null | undefined;
-  const tasks = list(data.dueTasks).map((task) => ({
+  const tasks = list(data.dueTasks).map((task, index) => ({
+    taskId: `0mfk1a2b3${index.toString(16).padStart(16, "0")}`,
     title: text(task.title),
-    dueAt: text(task.due),
+    overdue: text(task.due) === "Overdue",
   }));
-  const unread = data.unread as Fields | null | undefined;
-  return {
-    nextEvent:
-      nextEvent === null || nextEvent === undefined
-        ? null
-        : { title: text(nextEvent.title), startsAt: text(nextEvent.time) },
-    remainingCount: quantity(data.kpi),
-    dueTasks: tasks.filter((task) => task.dueAt !== "Overdue"),
-    overdueTasks: tasks.filter((task) => task.dueAt === "Overdue"),
-    unreadSummary: unread === null || unread === undefined ? null : text(unread.summary),
-    // No prototype counterpart: the fixtures model failures as whole-card
-    // `failure` variants, never as a line inside a ready card.
-    failures: [],
-  };
+  const rows = [
+    ...tasks.filter((task) => task.overdue),
+    ...tasks.filter((task) => !task.overdue),
+  ].map((task) => ({
+    taskId: task.taskId,
+    title: task.title,
+    meta: task.overdue ? "Overdue since Sep 20" : "Due 5:00 PM",
+  }));
+  return { tasks: { rows, nextOpen: null } };
 }
 
 /**
